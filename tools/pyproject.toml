@@ -8,6 +8,8 @@ dependencies = [
     "memory",
     "llm-providers",
     "python-dotenv>=1.0.0",
+    "prompt-toolkit>=3.0.50",
+    "rich>=13.9.0",
 ]
 
 [tool.uv.sources]
