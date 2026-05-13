@@ -42,3 +42,57 @@ logs/
 .cache/
 tmp/
 .tmp/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+# .python-version 应当 commit，由 uv 生成用于锁定 Python 版本
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+*.egg
+build/
+dist/
+# uv 锁文件应当 commit，不在此忽略
+
+# ===== Node / TypeScript =====
+node_modules/
+.pnpm-store/
+.npm/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Rust / Tauri =====
+target/
+**/*.rs.bk
+# Cargo.lock 在 application 中应 commit，在 library 中可忽略；按目录粒度处理
+
+# ===== Local data / models =====
+# 本地 SQLite / 向量库数据
+*.sqlite
+*.sqlite3
+*.db
+data/
+# Chroma 持久化目录
+chroma_db/
+.chroma/
+# 本地下载的模型缓存（如 sentence-transformers / huggingface）
+models/
+.cache/huggingface/
+
+# ===== Tauri build output =====
+src-tauri/target/
+src-tauri/gen/
