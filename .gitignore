@@ -1,0 +1,44 @@
+# ===== macOS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ===== Windows =====
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ===== Linux =====
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ===== Editors / IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# ===== Secrets / Env =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== Logs / Temp =====
+*.log
+logs/
+.cache/
+tmp/
+.tmp/
