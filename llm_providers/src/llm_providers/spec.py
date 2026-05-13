@@ -15,7 +15,10 @@ from .errors import LLMAuthError
 
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "DEEPSEEK": {
-        "model": "deepseek/deepseek-chat",
+        # 注意：旧模型 ``deepseek-chat`` / ``deepseek-reasoner`` 将于
+        # 2026/07/24 弃用，已改为指向 V4 系列的高性价比款 ``v4-flash``。
+        # 切换到旗舰款用 ``deepseek/deepseek-v4-pro``，详见 .env.example。
+        "model": "deepseek/deepseek-v4-flash",
         "api_base": None,
     },
 }

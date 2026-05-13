@@ -18,6 +18,7 @@ M0.2 范围（详见 design.md §2.2）：
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 
 from dotenv import load_dotenv
@@ -42,6 +43,19 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
+    # CLI 这个 use case 的偏好：对 DeepSeek V4 系列默认关闭 thinking 模式
+    # （避免 chain-of-thought 带来的延迟与 token 消耗，对话场景不需要）。
+    # 这是**调用方**（CLI）注入的偏好，不是 provider 级默认；未来 API 层
+    # 会按用户请求决定是否开启，所以不放在 PROVIDER_DEFAULTS 里。
+    if "deepseek" in spec.model.lower():
+        spec = dataclasses.replace(
+            spec,
+            defaults={
+                **spec.defaults,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            },
+        )
 
     conv = Conversation(
         llm_client=LLMClient(spec),
