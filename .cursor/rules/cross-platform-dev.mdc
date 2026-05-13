@@ -1,0 +1,47 @@
+---
+description: agent-friend 项目跨平台开发支持与 scripts/ 规范
+alwaysApply: true
+---
+
+# 跨平台开发支持
+
+本项目支持 **mac/linux** 和 **windows** 两端开发。**任何"非写代码"的操作必须通过 `scripts/` 提供脚本**——开发者只应该接触：写代码 + 跑 `./scripts/{name}/run.{sh|ps1}`，不需要记忆 `uv run python -m ...` 这种长命令。
+
+## 强制约定（必读）
+
+1. 启动服务、依赖安装、运行测试、lint、构建、清理等操作 → 加到 `scripts/{name}/` 下
+2. 每个脚本必须**同时**提供 `run.sh`（mac/linux）和 `run.ps1`（windows）两个版本
+3. 两端脚本**语义一致、输出格式尽量一致**，避免一边能跑一边跑不通
+4. 新增脚本后必须在 `scripts/README.md` 加一行表格说明（名字 / 用途 / mac 用法 / win 用法）
+5. 现有脚本若改了行为，同步更新 `scripts/README.md` 和两个 `run.*` 文件
+6. **不要让开发者直接记忆** `uv run python -m ...` / `pytest` / `mypy ...` 等命令——这些必须被 `scripts/{name}/` 包装
+
+## 脚本编写规范
+
+### bash (`run.sh`)
+
+- 文件首行：`#!/usr/bin/env bash`
+- 必须 `set -euo pipefail`
+- 必须 `cd "$(dirname "$0")/../.."` 切换到项目根
+- 文件需要 `chmod +x` 可执行权限
+- 透传参数用 `"$@"`，最终执行用 `exec uv run ...`（让 shell 替换为 uv 进程）
+
+### PowerShell (`run.ps1`)
+
+- 文件首行：`$ErrorActionPreference = "Stop"`
+- 必须 `Set-Location (Join-Path $PSScriptRoot "..\..")` 切换到项目根
+- 透传参数用 `@args`
+
+## 不应擅自做的事
+
+- **不要在脚本里自动安装系统级工具**（uv、git 等）。要么检测到缺失就友好提示安装命令并退出，要么由开发者手动装
+- **不要在脚本里改 PowerShell execution policy** 或其他系统级设置；遇到问题在 `scripts/README.md` 显眼处提示开发者怎么改
+
+## 例外
+
+仅以下情况允许"非写代码"操作不进 `scripts/`：
+
+- 一次性的 git 操作（commit、merge、branch 切换等）
+- 调试代码时的临时一次性命令
+
+> 任何**会重复 ≥ 2 次**的操作，都应该被脚本化。
