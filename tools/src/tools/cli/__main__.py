@@ -1,16 +1,19 @@
-"""agent-friend CLI 入口（M0.1 单轮通话版）。
+"""agent-friend CLI 入口（M0.2 多轮 + 流式版）。
 
 用法::
 
     uv run python -m tools.cli
+    # 或
+    ./scripts/cli/run.sh
 
 需要在项目根目录的 ``.env`` 文件中配置 ``DEEPSEEK_API_KEY``。
 
-M0.1 严格边界（详见 design.md §2.1）：
-- 仅单轮：每条输入独立调用 LLM，**不维护对话历史**
-- 无流式：等完整回复后一次性打印
-- 无人设：不附加任何 system prompt
-- 错误处理：仅捕获 ``LLMError`` 基类，不做差异化（M0.3 才精细化）
+M0.2 范围（详见 design.md §2.2）：
+- 多轮对话：维护 ``Conversation`` history，模型能记住前文
+- 流式输出：边收边打印（打字机效果）
+- 默认人设：从 ``agent/personas/default.md`` 加载
+- 错误处理：仍然只捕获 ``LLMError`` 基类（不差异化，M0.3 才精细化）
+- 不持久化：``/quit`` 直接丢弃历史（dump/load 接口已就位但 CLI 未接入）
 """
 
 from __future__ import annotations
@@ -19,6 +22,11 @@ import sys
 
 from dotenv import load_dotenv
 
+from agent import (
+    Conversation,
+    MarkdownPromptBuilder,
+    NaiveContextManager,
+)
 from llm_providers import LLMAuthError, LLMClient, LLMError, ProviderSpec
 
 
@@ -35,11 +43,15 @@ def main() -> int:
         )
         return 1
 
-    client = LLMClient(spec)
+    conv = Conversation(
+        llm_client=LLMClient(spec),
+        context_manager=NaiveContextManager(),
+        prompt_builder=MarkdownPromptBuilder(persona_name="default"),
+    )
 
-    print("agent-friend · M0.1 单轮通话 demo")
+    print("agent-friend · M0.2 多轮对话 + 流式 demo")
     print(f"模型：{spec.model}")
-    print("输入 q / exit / quit 退出，Ctrl+D / Ctrl+C 也行。\n")
+    print("命令：q / exit / quit 退出；/reset 清空历史；Ctrl+D / Ctrl+C 也可退出。\n")
 
     while True:
         try:
@@ -53,14 +65,23 @@ def main() -> int:
         if user_input.lower() in ("q", "exit", "quit"):
             print("再见！")
             return 0
-
-        try:
-            reply = client.complete(messages=[{"role": "user", "content": user_input}])
-        except LLMError as e:
-            print(f"[出错了] {type(e).__name__}: {e}\n", file=sys.stderr)
+        if user_input.lower() == "/reset":
+            conv.reset()
+            print("[已清空历史]\n")
             continue
 
-        print(f"AI: {reply}\n")
+        print("AI: ", end="", flush=True)
+        try:
+            for chunk in conv.stream(user_input):
+                print(chunk, end="", flush=True)
+        except LLMError as e:
+            print(f"\n[出错了] {type(e).__name__}: {e}\n", file=sys.stderr)
+            continue
+        except KeyboardInterrupt:
+            print("\n[已中断本轮回复，历史已记录部分内容]\n", file=sys.stderr)
+            continue
+
+        print("\n")
 
 
 if __name__ == "__main__":
