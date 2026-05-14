@@ -13,6 +13,19 @@ from .prompts import (
     MarkdownPromptBuilder,
     PromptBuilder,
 )
+from .sessions import (
+    Event,
+    EventType,
+    JsonlSessionStore,
+    Session,
+    SessionCorruptError,
+    SessionError,
+    SessionManager,
+    SessionNotFoundError,
+    SessionPersistError,
+    SessionStore,
+    SessionSummary,
+)
 
 __version__ = "0.1.0"
 
@@ -22,11 +35,22 @@ __all__ = [
     "BuildResult",
     "ContextManager",
     "Conversation",
+    "Event",
+    "EventType",
+    "JsonlSessionStore",
     "MarkdownPromptBuilder",
     "Message",
     "NaiveContextManager",
     "PersonaNotFoundError",
     "PromptBuilder",
     "Role",
+    "Session",
+    "SessionCorruptError",
+    "SessionError",
+    "SessionManager",
+    "SessionNotFoundError",
+    "SessionPersistError",
+    "SessionStore",
+    "SessionSummary",
     "random_fallback",
 ]
