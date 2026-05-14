@@ -35,6 +35,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.shortcuts import clear as pt_clear
 from rich.console import Console
 from rich.table import Table
 
@@ -235,6 +236,90 @@ def _match_session_prefix(mgr: SessionManager, prefix: str) -> SessionSummary | 
 # ===== 显示 =====
 
 
+def _clear_screen() -> None:
+    """软清屏：清当前可见屏幕 + 光标回顶，**不动 terminal scrollback buffer**。
+
+    用 ``prompt_toolkit.shortcuts.clear()``——它通过 prompt_toolkit 内部的
+    ``Output`` 抽象写 ANSI 控制序列，与 ``PromptSession`` 共享同一个 output
+    通道。实测下，若改用 ``sys.stdout.write("\\x1b[2J\\x1b[H")`` 或 rich
+    ``Console.clear()``，prompt_toolkit 接管/释放 TTY 的过程会让清屏只清掉
+    "光标之后"的部分（变成 ``\\x1b[J`` 的行为），导致 banner 留底、每次
+    切会话叠一层。
+
+    Non-TTY（pipe）场景下主动跳过——避免污染 pipe 数据流。
+    """
+    if not sys.stdout.isatty():
+        return
+    pt_clear()
+
+
+def _replay_history(session: Session) -> None:
+    """重放 session 的事件流，让用户看到完整的"对话历史"。
+
+    渲染规则（与正常对话循环视觉一致）：
+
+    - ``user_message`` → ``你: <content>``
+    - ``assistant_message`` → ``AI: <content>`` ；若 ``partial`` 加 ``(中断)`` 后缀
+    - ``persona_change`` → ``→ persona: from → to`` 灰字
+    - ``model_change`` → ``→ model: from → to`` 灰字
+
+    末尾打一行分隔线：``─── 以上是历史 (N 条消息) ───``。若 session 没有任何
+    user/assistant 事件（如刚创建的空 session），整个函数直接 no-op。
+    """
+    msg_count = 0
+    lines_to_print: list[tuple[str, str, bool]] = []
+    for ev in session.events:
+        if ev.type == "user_message":
+            lines_to_print.append(("user", ev.payload.get("content", ""), False))
+            msg_count += 1
+        elif ev.type == "assistant_message":
+            lines_to_print.append(
+                (
+                    "assistant",
+                    ev.payload.get("content", ""),
+                    bool(ev.payload.get("partial")),
+                )
+            )
+            msg_count += 1
+        elif ev.type == "persona_change":
+            lines_to_print.append(
+                (
+                    "persona_change",
+                    f"{ev.payload.get('from', '?')} → {ev.payload.get('to', '?')}",
+                    False,
+                )
+            )
+        elif ev.type == "model_change":
+            lines_to_print.append(
+                (
+                    "model_change",
+                    f"{ev.payload.get('from', '?')} → {ev.payload.get('to', '?')}",
+                    False,
+                )
+            )
+
+    if msg_count == 0:
+        return
+
+    for kind, text, partial in lines_to_print:
+        if kind == "user":
+            stdout.print("[ansiblue]你:[/ansiblue] ", end="")
+            stdout.print(text, markup=False, highlight=False)
+        elif kind == "assistant":
+            stdout.print("[bold green]AI:[/bold green] ", end="")
+            stdout.print(text, end="", style="green", markup=False, highlight=False)
+            if partial:
+                stdout.print(" [dim](中断)[/dim]")
+            else:
+                stdout.print()
+        elif kind == "persona_change":
+            stdout.print(f"[dim]→ persona: {text}[/dim]")
+        elif kind == "model_change":
+            stdout.print(f"[dim]→ model: {text}[/dim]")
+
+    stdout.print(f"[dim]─── 以上是历史 ({msg_count} 条消息) ───[/dim]\n")
+
+
 def _print_banner(ctx: _CliContext) -> None:
     stdout.print("[bold]agent-friend · M2 demo[/bold]")
     if ctx.is_bound():
@@ -313,6 +398,9 @@ def _cmd_open(ctx: _CliContext, prefix: str) -> None:
         stderr.print(rf"[red]\[配置错误] {e}[/red]")
         return
     ctx.bind(new_session, new_conv)
+    _clear_screen()
+    _print_banner(ctx)
+    _replay_history(new_session)
     _print_state_line(
         "切换会话",
         f"{new_session.session_id[:8]} (persona={new_session.current_persona}, "
@@ -343,6 +431,8 @@ def _cmd_new(ctx: _CliContext) -> None:
         stderr.print(rf"[red]\[配置错误] {e}[/red]")
         return
     ctx.bind(new_session, new_conv)
+    _clear_screen()
+    _print_banner(ctx)
     _print_state_line("新建会话", f"{new_session.session_id[:8]}")
 
 
@@ -545,7 +635,13 @@ def main() -> int:
         pending_persona=pending_persona,
         pending_model=pending_model,
     )
+    if ctx.is_bound():
+        # --resume 命中：清屏让进入新会话像"打开一个新视图"；scrollback 保留
+        _clear_screen()
     _print_banner(ctx)
+    if ctx.is_bound():
+        assert ctx.session is not None
+        _replay_history(ctx.session)
     return _interactive_loop(ctx)
 
 

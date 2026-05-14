@@ -119,6 +119,26 @@ COMPLETED
 
 **未改 design.md**：本次修正属于 CLI 层策略调整，引擎层接口未变。design §4.8.1 的 `_select_session` 描述与新实现有差异——计划在 002 全部 AC 验收后做一次 design.md 回滚校准。
 
+> 后已校准：2026-05-14 §4.8 全节同步为懒加载版本。
+
+### M2.3 follow-up #2 · 切换会话时清屏 + 重放历史
+
+**触发原因**：commit `dc112a2` 推后用户 review 发现——`/open <id>` 与 `--resume <id>` 切到非空会话时，CLI 只打一行 `→ 切换会话: ...` 状态行，**不展示会话历史**。引擎侧 `context_manager` 把历史注入 LLM 是正常的（LLM "记得"上下文），但**用户屏幕上看不到**，体验像"切回来 AI 啥都不记得"。
+
+**修正方案**：
+
+- 切换 / 恢复会话时清屏 + 重新打 banner + 重放历史（详见 design.md §4.8.6）
+- 清屏用 rich `Console.clear()`（ANSI `\033[2J\033[H`）；**不动 terminal scrollback**，用户上滚仍能看到 CLI 启动前的 shell 内容
+- 触发点：`--resume <id>` / `--resume` 启动 + `/open <id>` + `/new`；`/persona` / `/model` 不清（属会话内状态调整）；未绑定启动不清（保留 CLI 启动前 terminal 内容）
+- 历史重放从 `session.events` 派生，包含 `persona_change` / `model_change` 切换事件，让用户看到完整时序
+
+**验证**：
+
+- pipe 模式（stdin 喂入）冷烟：重放渲染逻辑正确（user / assistant / persona_change / model_change / 分隔线全部正常）；清屏 ANSI escape 被 rich 静默跳过（合理——避免污染 pipe）
+- TTY 模式清屏效果需用户手动 run CLI 验证（pipe 模式测不了）
+
+**回放期间发现的趣事**：测试 `--resume ef73b760` 时发现 jsonl 文件多出一条"幽灵 persona_change cute_friend → default" 事件（时间戳在最初 AC 写入 28 分钟后）。复现无果——最可能是 commit 推送后到改造之前，开发者在某个 IDE terminal 手动跑过 `/persona default` 但忘了。代码层 grep 全部 `append_event` 调用点，确认**只**在 `Conversation.{send, stream, switch_persona, switch_model}` 显式触发，没有任何自动写事件路径，无隐患。
+
 ## 实现日志
 
 | 日期 | 完成内容 | 备注 |
@@ -129,3 +149,4 @@ COMPLETED
 | 2026-05-14 | M2.3 CLI 改造完成；self-check 冷烟通过；修复 `switch_persona` 预检 bug | 等待用户跑真 LLM 验收 |
 | 2026-05-14 | M2.3 follow-up：CLI 改为懒加载（不再"启动即建"空 session）；冷烟 3 case 全过 | review 后修正 |
 | 2026-05-14 | AC-1 ~ AC-8 全部 PASS（详见 §AC 验收记录）；Token ≈ 2 k；耗时 < 1 min | 002 整体完成 |
+| 2026-05-14 | M2.3 follow-up #2：切换会话清屏 + 重放历史（design.md §4.8.6） | review 后修正 |

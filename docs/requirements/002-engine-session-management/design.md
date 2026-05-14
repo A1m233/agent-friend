@@ -664,6 +664,50 @@ agent-friend · M2 demo
 [dim]→ 默认 persona: cute_friend（将在首条消息时生效）[/dim]
 ```
 
+#### 4.8.6 切换会话时的清屏 + 历史回放
+
+切换 / 恢复会话时，**清当前可见屏幕 + 重新打 banner + 重放历史**——目的是让进入新会话像"打开一个新视图"，视觉上不被旧会话的输出干扰；同时尽量不破坏 terminal 既有的 scrollback。
+
+**触发点**：
+
+| 入口 | 清屏 | 重放历史 |
+|---|---|---|
+| `--resume <id>` / `--resume`（latest 命中）启动 | ✅ | ✅（若 session 有 user/assistant 事件） |
+| `/open <id>` 命中切换 | ✅ | ✅（同上） |
+| `/new` 显式新建 | ✅ | —（新会话无历史） |
+| `/persona` / `/model` 切换 | ❌ | ❌（是会话内状态调整，不是换会话） |
+| 启动时未绑定（无 `--resume`） | ❌ | ❌（保留 CLI 启动前的 terminal 内容做参考） |
+
+**清屏实现**：rich `Console.clear()` 内部为 ANSI `\033[2J\033[H`（清当前可见屏幕 + 光标回 (0,0)），**不动 terminal 的 scrollback buffer**。用户向上滚动仍可看到 CLI 启动前的 shell 历史与之前的 CLI 输出。Non-TTY（stdin 被 pipe 喂入）场景下 rich 静默跳过 ANSI 控制序列——这是合理行为，避免污染 pipe 数据流。
+
+**历史回放渲染**（从 `session.events` 派生，与正常对话视觉一致）：
+
+```
+你: 请用一句话介绍你自己。
+AI: 嗨，我是 Echo，一个可以陪你聊天的虚拟朋友……
+你: 最喜欢的颜色？
+AI: 蓝色……
+→ persona: default → cute_friend
+你: 再次介绍你自己。
+AI: 哇塞，小可爱我又来啦！……
+→ model: deepseek/deepseek-v4-flash → deepseek/deepseek-v4-pro
+─── 以上是历史 (6 条消息) ───
+```
+
+规则：
+
+- `user_message` → `你: <content>`
+- `assistant_message` → `AI: <content>`；若 `payload.partial == True` 加 `(中断)` 后缀
+- `persona_change` / `model_change` → 灰字行内显示 `from → to`（同正常切换状态行的视觉）
+- 末尾打一行分隔线 `─── 以上是历史 (N 条消息) ───`，N = user/assistant 总条数
+- 若 session 没有任何 user/assistant 事件（空 session 或刚 `create` 后什么都没发）→ 整个回放 no-op，只走清屏 + banner
+
+**反例 / YAGNI 边界**：
+
+- 不做"只显示最近 N 条"分页 —— 孵化期单会话 < 100 条，全量重放在终端可接受
+- 不做 `--no-replay` flag 关闭历史 —— 需要才加
+- 不做"折叠 + `/history` 命令展开" —— 与"打开新视图就该看到全貌"的直觉相反，目前不需要
+
 ### 4.9 持久化错误处理整体策略
 
 按 D-3 决策：**抛异常上抛**。
@@ -774,4 +818,6 @@ agent-friend · M2 demo
 - **状态**：已实施（Implemented）—— AC-1 ~ AC-8 验收通过，详见 [progress.md](./progress.md)
 - **创建时间**：2026-05-14
 - **确认时间**：2026-05-14
-- **最近修订**：2026-05-14 · §4.8 同步为 CLI 懒加载策略（M2.3 follow-up），其它小节未变
+- **最近修订**：
+  - 2026-05-14 · §4.8 同步为 CLI 懒加载策略（M2.3 follow-up #1）
+  - 2026-05-14 · 新增 §4.8.6 切换会话时的清屏 + 历史回放（M2.3 follow-up #2）
