@@ -1,0 +1,43 @@
+---
+description: agent-friend 项目需求开发流程：每个需求走独立分支，验收 OK 再合入 main
+alwaysApply: true
+---
+
+# 需求开发流程
+
+每个需求（`docs/requirements/<NNN>-xxx`）作为一次独立交付，必须走"独立分支 → 验收 → 合入 main"的流程，不在 main 上直接累积需求实现。
+
+## 分支策略
+
+- 开始落地某个需求前，从最新 `main` 切出独立分支。
+- 分支命名：`feature/<3 位需求编号>-<kebab-case slug>`，编号与 `docs/requirements/` 下目录一致。
+  - 例：需求 `004-xxx-yyy` → `feature/004-xxx-yyy`。
+- 同一需求内的多个里程碑（M0.1 / M0.2 等）共用同一条 feature 分支，按需多次提交。
+- 一个需求只对应一条分支；如需拆分，先在 `docs/requirements/` 拆需求目录，再各自开分支。
+
+## 合入 main 的前置条件
+
+以下条件全部满足才能合入 main：
+
+- 需求文档 `requirement.md` 中列出的全部验收标准（AC）已跑通。
+- 用户明确确认本次需求已经验收完成。
+- 分支已合并或 rebase 最新 main，无遗留冲突。
+
+合入时保留 merge commit，便于后续从历史看到"哪些 commit 属于哪个需求"。
+
+## 允许直接提交 main 的例外
+
+以下小型改动可不开分支，直接在 main 上提交：
+
+- 纯 `docs/` 文档微调（不涉及需求级新增）。
+- `.cursor/rules/` 规则增删改。
+- `scripts/` 脚本小幅修复（非需求新增能力）。
+- 明确的 hotfix（线上 / 当前主线问题修复，需在 commit message 注明）。
+
+需求级的新增 / 修改不属于例外，必须走分支。
+
+## 反模式
+
+- 多个需求的实现在同一条分支上累积。
+- 在 main 上直接开发，事后再"补一条分支"圈历史。
+- 需求 AC 未跑通就合入 main，留待"以后再补"。
