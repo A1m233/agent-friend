@@ -1,0 +1,161 @@
+"""``SystemPromptComposer`` —— 有序的若干 :class:`Section` 的不可变装配。
+
+详见 docs/requirements/004-engine-system-prompt-composer/design.md §4.1, §4.3。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import ClassVar, Protocol, runtime_checkable
+
+from ..personas import PersonaCatalog
+
+_PROJECT_IDENTITY_KEY = "project_identity"
+_PERSONA_KEY = "persona"
+_PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
+
+
+@runtime_checkable
+class Section(Protocol):
+    """system_prompt 单个槽位的协议。
+
+    实现类必须暴露：
+
+    - ``key``：稳定的槽位标识，**只读**；用于装配（替换 / 关闭）和测试断言
+    - :meth:`render`：输出该段文本；返回 ``None`` 表示本轮跳过该段（为未来
+      按上下文条件输出预留扩展位）
+
+    本期默认实现（:class:`StaticSection` / :class:`PersonaSection`）都是
+    ``frozen=True`` 数据类，``key`` 字段对外是 read-only；Protocol 用
+    ``@property`` 匹配此约束。
+    """
+
+    @property
+    def key(self) -> str:
+        """槽位标识，**只读**。"""
+        ...
+
+    def render(self) -> str | None:
+        """渲染本段；返回 ``None`` 表示跳过。"""
+        ...
+
+
+@dataclass(frozen=True)
+class SystemPromptComposer:
+    """有序的若干 :class:`Section` 的不可变装配。
+
+    Args:
+        sections: 槽位元组。**插入顺序即渲染顺序**。每个 ``section.key`` 在
+            元组内必须唯一（装配 API 依赖此前提）。
+
+    渲染规则（见 :meth:`compose`）：
+
+    - 按 ``sections`` 元组顺序遍历
+    - 每个 section 调 ``render()``；返回 ``None`` 时跳过
+    - 剩余文本以双换行（``"\\n\\n"``）拼接
+
+    装配方法（:meth:`with_section` / :meth:`without` / :meth:`default`）都
+    返回**新的 composer 实例**，原实例不变（``frozen=True`` + 元组存储）。
+    """
+
+    sections: tuple[Section, ...]
+
+    DEFAULT_KEYS: ClassVar[tuple[str, ...]] = (
+        _PROJECT_IDENTITY_KEY,
+        _PERSONA_KEY,
+        _PERSONA_SWITCH_STRATEGY_KEY,
+    )
+    """默认装配（:meth:`default`）下三个槽位的 key，按渲染顺序。"""
+
+    def compose(self) -> str:
+        """渲染所有 section、按双换行拼接。
+
+        Returns:
+            最终 system_prompt 字符串。所有槽位都跳过时返回空串。
+        """
+        parts: list[str] = []
+        for section in self.sections:
+            rendered = section.render()
+            if rendered is None:
+                continue
+            parts.append(rendered)
+        return "\n\n".join(parts)
+
+    def with_section(self, section: Section) -> SystemPromptComposer:
+        """按 ``section.key`` 替换同 key 的槽位，返回新 composer。
+
+        Args:
+            section: 新的 Section 实现；其 ``key`` 必须与某现有槽位匹配。
+
+        Returns:
+            新的 composer 实例；原实例不变。
+
+        Raises:
+            KeyError: ``section.key`` 不在当前 composer 的槽位中。
+        """
+        target_key = section.key
+        if not any(existing.key == target_key for existing in self.sections):
+            raise KeyError(
+                f"with_section: 找不到 key={target_key!r} 的槽位；"
+                f"当前槽位: {[s.key for s in self.sections]}"
+            )
+        new_sections = tuple(
+            section if existing.key == target_key else existing for existing in self.sections
+        )
+        return replace(self, sections=new_sections)
+
+    def without(self, key: str) -> SystemPromptComposer:
+        """移除指定 key 的槽位，返回新 composer。
+
+        Args:
+            key: 要移除的槽位 key。
+
+        Returns:
+            新的 composer 实例；原实例不变。
+
+        Raises:
+            KeyError: ``key`` 不在当前 composer 的槽位中。
+        """
+        new_sections = tuple(s for s in self.sections if s.key != key)
+        if len(new_sections) == len(self.sections):
+            raise KeyError(
+                f"without: 找不到 key={key!r} 的槽位；当前槽位: {[s.key for s in self.sections]}"
+            )
+        return replace(self, sections=new_sections)
+
+    @classmethod
+    def default(
+        cls,
+        persona_id: str,
+        *,
+        catalog: PersonaCatalog,
+    ) -> SystemPromptComposer:
+        """构造默认装配：3 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
+
+        - ``project_identity``：项目定位级硬约束（:class:`StaticSection`，
+          文本来自 ``prompt_sections/project_identity.md``）
+        - ``persona``：当前 persona body（:class:`PersonaSection`，动态读
+          catalog）
+        - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
+          文本来自 ``prompt_sections/persona_switch_strategy.md``）
+
+        Args:
+            persona_id: 目标 persona 的 UUID。
+            catalog: persona 真相源；必传（避免内部凭空构造，便于测试注入）。
+
+        Returns:
+            含 3 个默认槽位的 composer。
+        """
+        from .defaults import load_default_static_section
+        from .sections import PersonaSection
+
+        section_list: list[Section] = [
+            load_default_static_section(_PROJECT_IDENTITY_KEY),
+            PersonaSection(
+                key=_PERSONA_KEY,
+                persona_id=persona_id,
+                catalog=catalog,
+            ),
+            load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
+        ]
+        return cls(sections=tuple(section_list))

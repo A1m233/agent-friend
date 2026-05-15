@@ -39,6 +39,12 @@ from .sessions import (
     SessionStore,
     SessionSummary,
 )
+from .system_prompt import (
+    PersonaSection,
+    Section,
+    StaticSection,
+    SystemPromptComposer,
+)
 
 __version__ = "0.1.0"
 
@@ -63,8 +69,10 @@ __all__ = [
     "PersonaNotFoundError",
     "PersonaPersistError",
     "PersonaReadOnlyError",
+    "PersonaSection",
     "PromptBuilder",
     "Role",
+    "Section",
     "Session",
     "SessionCorruptError",
     "SessionError",
@@ -73,5 +81,7 @@ __all__ = [
     "SessionPersistError",
     "SessionStore",
     "SessionSummary",
+    "StaticSection",
+    "SystemPromptComposer",
     "random_fallback",
 ]
