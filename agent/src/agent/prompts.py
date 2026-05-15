@@ -7,8 +7,13 @@
 - 003: **重设计** —— name 退化为 user 维度唯一的 slug，**id 是主键**。
   :class:`MarkdownPromptBuilder` 改为持有 ``persona_id``，构建 prompt 时
   委托 :class:`PersonaCatalog.read_content`，**单一真相源**。
+- 004: ``build()`` 委托 :class:`SystemPromptComposer`，按职责解耦的若干
+  Section 组合输出（项目级硬约束 + persona body + 切换策略）。
+  ``__init__`` 新增 keyword-only ``composer`` 参数；``None`` 时用
+  :meth:`SystemPromptComposer.default` 构造默认装配。
 
-frontmatter 解析 / id 寻址 / lazy 补 id 等都在 catalog 一处实现。
+frontmatter 解析 / id 寻址 / lazy 补 id 等都在 catalog 一处实现；section
+装配 / 顺序 / 默认 markdown 加载都在 :mod:`agent.system_prompt` 一处实现。
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from typing import Protocol
 from .errors import PersonaNotFoundError
 from .personas import PersonaCatalog
 from .personas.catalog import DEFAULT_EXTERNAL_DIR as _DEFAULT_EXTERNAL_DIR
+from .system_prompt import SystemPromptComposer
 
 DEFAULT_EXTERNAL_PERSONAS_DIR: Path = _DEFAULT_EXTERNAL_DIR
 """默认的用户自定义人设目录（项目根 ``data/personas/``）。
@@ -36,7 +42,8 @@ class PromptBuilder(Protocol):
 
 
 class MarkdownPromptBuilder:
-    """003 实现：按 ``persona_id`` 委托 :class:`PersonaCatalog` 读 markdown body。
+    """004 实现：按 ``persona_id`` 委托 :class:`SystemPromptComposer` 输出
+    按职责解耦的 system_prompt（项目级规则 + persona body + 切换策略）。
 
     Args:
         persona_id: 目标 persona 的 UUID。
@@ -44,6 +51,10 @@ class MarkdownPromptBuilder:
             构造一个新的（孵化期每次扫盘 OK）。
         external_dir: 用户自定义 persona 目录（仅当 ``catalog`` 未传时生效）。
             ``None`` 时用 :data:`DEFAULT_EXTERNAL_PERSONAS_DIR`。
+        composer: 可选 :class:`SystemPromptComposer`；``None`` 时调
+            :meth:`SystemPromptComposer.default` 构造含 3 个默认槽位的装配。
+            调用方需要变体（如替换 ``persona_switch_strategy`` / 关闭某槽位）
+            时自行构造并传入。
 
     Raises:
         PersonaNotFoundError: 调 :meth:`build` 时 ``persona_id`` 不存在。
@@ -55,17 +66,20 @@ class MarkdownPromptBuilder:
         *,
         catalog: PersonaCatalog | None = None,
         external_dir: Path | None = None,
+        composer: SystemPromptComposer | None = None,
     ):
         self.persona_id = persona_id
         self._catalog = catalog or PersonaCatalog(external_dir=external_dir)
+        self._composer = composer or SystemPromptComposer.default(persona_id, catalog=self._catalog)
 
     def build(self) -> str:
-        """返回 persona 的 prompt 正文（**不含 frontmatter**）。
+        """返回组合后的 system_prompt 字符串。
 
         Raises:
-            PersonaNotFoundError: ``persona_id`` 在 catalog 找不到。
+            PersonaNotFoundError: ``persona_id`` 在 catalog 找不到（由内部
+                :class:`PersonaSection` 在渲染时抛出）。
         """
-        return self._catalog.read_content(self.persona_id)
+        return self._composer.compose()
 
 
 __all__ = [
