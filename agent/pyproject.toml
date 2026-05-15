@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "memory",
     "llm-providers",
+    "PyYAML>=6.0",
 ]
 
 [tool.uv.sources]

@@ -18,12 +18,14 @@ source = { editable = "agent" }
 dependencies = [
     { name = "llm-providers" },
     { name = "memory" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "llm-providers", editable = "llm_providers" },
     { name = "memory", editable = "memory" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

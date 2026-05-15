@@ -39,6 +39,7 @@ from memory import Memory
 from .context import ContextManager
 from .errors import AgentError
 from .messages import Message
+from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 
@@ -59,8 +60,10 @@ class Conversation:
             **构造时立刻 build 一次**并缓存；切换 persona 时会通过工厂重建。
         llm_client_factory: 接 model 名 → :class:`LLMClient`，用于 :meth:`switch_model`。
             未注入时调 :meth:`switch_model` 会抛 :class:`AgentError`。
-        prompt_builder_factory: 接 persona 名 → :class:`PromptBuilder`，用于
+        prompt_builder_factory: 接 **persona_id** → :class:`PromptBuilder`，用于
             :meth:`switch_persona`。未注入时调 :meth:`switch_persona` 会抛 :class:`AgentError`。
+        catalog: 用于 ``switch_persona`` 时通过 id 反查 name 写双字段事件 hint。
+            ``None`` 时新建一个默认的（孵化期接受）。
         memory: 可选的 :class:`memory.Memory` 实现，阶段 1 不传（占位）。
 
     Note:
@@ -77,6 +80,7 @@ class Conversation:
         prompt_builder: PromptBuilder,
         llm_client_factory: LLMClientFactory | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
+        catalog: PersonaCatalog | None = None,
         memory: Memory | None = None,
     ):
         self._session = session
@@ -86,6 +90,7 @@ class Conversation:
         self._prompt_builder = prompt_builder
         self._llm_client_factory = llm_client_factory
         self._prompt_builder_factory = prompt_builder_factory
+        self._catalog = catalog or PersonaCatalog()
         self._memory = memory
         self._system_prompt = prompt_builder.build()
 
@@ -134,7 +139,8 @@ class Conversation:
             **LLM 失败时事件不会落盘**——本轮的 user / assistant 消息都不会进
             session.events，下次重试是干净的。
         """
-        persona_snapshot = self._session.current_persona
+        persona_name = self._session.current_persona_name
+        persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
         openai_messages = self._build_openai_messages(user_input)
         reply = self._llm_client.complete(openai_messages)
@@ -143,7 +149,8 @@ class Conversation:
         self._append_assistant_event(
             reply,
             partial=False,
-            persona=persona_snapshot,
+            persona_name=persona_name,
+            persona_id=persona_id,
             model=model_snapshot,
         )
         return reply
@@ -172,7 +179,8 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 也会被识别为部分回复
             （通过 :func:`sys.exc_info`）。
         """
-        persona_snapshot = self._session.current_persona
+        persona_name = self._session.current_persona_name
+        persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
         openai_messages = self._build_openai_messages(user_input)
 
@@ -191,49 +199,56 @@ class Conversation:
                 self._append_assistant_event(
                     "".join(buffer),
                     partial=interrupted,
-                    persona=persona_snapshot,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
                     model=model_snapshot,
                 )
 
     # ----- 切换 persona / model -----
 
-    def switch_persona(self, name: str) -> None:
-        """切换 persona：落盘 ``persona_change`` 事件 + 重建 :class:`PromptBuilder`。
+    def switch_persona(self, persona_id: str) -> None:
+        """切换 persona：落盘 ``persona_change`` 事件（双字段 id+name）+ 重建 PromptBuilder。
 
         若新 persona 与当前相同则**无操作直接返回**（不写事件）。
 
         Args:
-            name: 目标 persona 名。
+            persona_id: 目标 persona 的 UUID。
 
         Raises:
             AgentError: ``prompt_builder_factory`` 未注入。
-            PersonaNotFoundError: 新 persona 在 external_dir 与内置中都找不到。
-                **此时事件未落盘**，状态完全不变。
+            PersonaNotFoundError: 该 id 在 catalog 找不到。**此时事件未落盘**，
+                状态完全不变。
             SessionPersistError: 事件落盘失败。**此时 PromptBuilder 已构造但未替换**，
                 状态完全不变。
 
         Note:
-            实施顺序：``factory(name)`` + 预先 ``build()`` → ``store.append_event`` →
-            ``session.append`` → swap 内部依赖。``build()`` 提前做客户端预检（验
-            persona 文件存在）——失败时事件不落盘，状态完全不变。
+            实施顺序：``catalog.get(id)`` 取 name → ``factory(id)`` + 预先 ``build()``
+            （客户端预检）→ ``store.append_event`` → ``session.append`` → swap 内部依赖。
         """
         if self._prompt_builder_factory is None:
             raise AgentError(
                 "switch_persona 需要 prompt_builder_factory 注入（请通过 SessionManager 装配）"
             )
 
-        from_persona = self._session.current_persona
-        if from_persona == name:
+        from_id = self._session.current_persona_id
+        from_name = self._session.current_persona_name
+        if from_id == persona_id:
             return
 
-        new_builder = self._prompt_builder_factory(name)
+        new_info = self._catalog.get(persona_id)
+        new_builder = self._prompt_builder_factory(persona_id)
         new_system_prompt = new_builder.build()
 
         event = Event(
             type="persona_change",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={"from": from_persona, "to": name},
+            payload={
+                "from_id": from_id,
+                "from": from_name,
+                "to_id": persona_id,
+                "to": new_info.name,
+            },
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -293,15 +308,19 @@ class Conversation:
         content: str,
         *,
         partial: bool,
-        persona: str,
+        persona_name: str,
+        persona_id: str | None,
         model: str,
     ) -> None:
+        meta: dict[str, Any] = {"persona": persona_name, "model": model}
+        if persona_id is not None:
+            meta["persona_id"] = persona_id
         event = Event(
             type="assistant_message",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
             payload={"content": content, "partial": partial},
-            meta={"persona": persona, "model": model},
+            meta=meta,
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)

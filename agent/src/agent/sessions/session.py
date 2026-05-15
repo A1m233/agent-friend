@@ -57,6 +57,7 @@ class Session:
         persona: str,
         model: str,
         *,
+        persona_id: str | None = None,
         session_id: str | None = None,
         created_at: datetime | None = None,
     ) -> Session:
@@ -64,8 +65,11 @@ class Session:
 
         Args:
             title: 初始标题。
-            persona: 初始 persona 名。
+            persona: 初始 persona 名（slug；显示用）。
             model: 初始 model 名（LiteLLM 风格，如 ``"deepseek/deepseek-chat"``）。
+            persona_id: 初始 persona 的 UUID（003 起的主键）；为兼容入参传 ``None``
+                时不写入 ``initial_persona_id`` 字段——读老文件场景配套。**新建场景
+                推荐显式传**。
             session_id: 可选；不传则自动 uuid4。
             created_at: 可选；不传则用 :func:`datetime.now` UTC 当前时间。
 
@@ -77,16 +81,19 @@ class Session:
         """
         sid = session_id or _new_session_id()
         ts = _ensure_utc(created_at) if created_at else datetime.now(UTC)
+        payload: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "initial_title": title,
+            "initial_persona": persona,
+            "initial_model": model,
+        }
+        if persona_id is not None:
+            payload["initial_persona_id"] = persona_id
         meta_event = Event(
             type="session_meta",
             uuid=sid,
             ts=ts,
-            payload={
-                "schema_version": SCHEMA_VERSION,
-                "initial_title": title,
-                "initial_persona": persona,
-                "initial_model": model,
-            },
+            payload=payload,
             meta={},
         )
         return cls(
@@ -132,13 +139,50 @@ class Session:
 
     @property
     def current_persona(self) -> str:
-        """当前激活 persona：反向扫事件流找最后一条 ``persona_change``，没有则用 initial。"""
+        """当前激活 persona 的 **name**（向后兼容名；003 起等同 :attr:`current_persona_name`）。
+
+        反向扫事件流找最后一条 ``persona_change``，没有则用 ``initial_persona``。
+        """
+        return self.current_persona_name
+
+    @property
+    def current_persona_name(self) -> str:
+        """当前激活 persona 的 name（slug）。
+
+        反向扫 ``persona_change`` 事件：优先 ``payload.to``（新 schema 与旧 schema 都
+        把 name 存在 ``to``），没有 persona_change 时用 ``initial_persona``。
+        """
         for ev in reversed(self.events):
             if ev.type == "persona_change":
                 to = ev.payload.get("to")
                 if isinstance(to, str):
                     return to
         return self.initial_persona
+
+    @property
+    def current_persona_id(self) -> str | None:
+        """当前激活 persona 的 UUID（003 起的主键）。
+
+        反向扫 ``persona_change`` 事件：优先 ``payload.to_id``（003 新 schema）；
+        若事件只含老字段 ``to`` 则**本属性放弃尝试在此处查 catalog**（保持 sessions
+        模块独立于 personas），返回 ``None``。没有 persona_change 时 fallback 到
+        ``session_meta.payload.initial_persona_id``（可能也是 ``None``，老文件）。
+
+        调用方拿到 ``None`` 时应自行用 :class:`PersonaCatalog.find_by_name(current_persona_name)`
+        反查。
+        """
+        for ev in reversed(self.events):
+            if ev.type == "persona_change":
+                to_id = ev.payload.get("to_id")
+                if isinstance(to_id, str):
+                    return to_id
+                return None  # 老事件无 to_id，不再继续向前扫（语义已断）
+        head = self.events[0] if self.events else None
+        if head is not None and head.type == "session_meta":
+            initial_id = head.payload.get("initial_persona_id")
+            if isinstance(initial_id, str):
+                return initial_id
+        return None
 
     @property
     def current_model(self) -> str:

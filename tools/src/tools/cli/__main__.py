@@ -44,6 +44,8 @@ from agent import (
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
+    PersonaCatalog,
+    PersonaInfo,
     PersonaNotFoundError,
     Session,
     SessionCorruptError,
@@ -125,8 +127,8 @@ def _llm_factory(model: str) -> LLMClient:
     return LLMClient(make_spec_with_thinking_off(model))
 
 
-def _prompt_factory(persona: str) -> MarkdownPromptBuilder:
-    return MarkdownPromptBuilder(persona_name=persona)
+def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
+    return MarkdownPromptBuilder(persona_id=persona_id)
 
 
 # ===== CliContext =====
@@ -139,15 +141,18 @@ class _CliContext:
     状态：
 
     - **未绑定**（``session is None and conv is None``）：用户尚未开始任何对话。
-      此时 :attr:`pending_persona` / :attr:`pending_model` 持有"待应用"的默认值，
-      首条消息（或显式 ``/new``）触发 ``mgr.create`` + ``start_conversation``。
+      此时 :attr:`pending_persona_id` / :attr:`pending_persona_name` /
+      :attr:`pending_model` 持有"待应用"的默认值，首条消息（或显式 ``/new``）
+      触发 ``mgr.create`` + ``start_conversation``。
     - **已绑定**：``session`` 和 ``conv`` 都非 None。
     """
 
     mgr: SessionManager
+    catalog: PersonaCatalog
     session: Session | None
     conv: Conversation | None
-    pending_persona: str
+    pending_persona_id: str
+    pending_persona_name: str
     pending_model: str
 
     def is_bound(self) -> bool:
@@ -158,14 +163,15 @@ class _CliContext:
 
         Raises:
             SessionPersistError: 落盘失败。
-            PersonaNotFoundError: ``pending_persona`` 文件不存在。
+            PersonaNotFoundError: pending persona id 在 catalog 找不到。
             LLMAuthError: 工厂构造 LLMClient 失败。
         """
         if self.is_bound():
             return
         new_session = self.mgr.create(
-            persona=self.pending_persona,
+            persona=self.pending_persona_name,
             model=self.pending_model,
+            persona_id=self.pending_persona_id,
         )
         new_conv = self.mgr.start_conversation(new_session)
         self.session = new_session
@@ -187,21 +193,26 @@ class _CliContext:
 
 def _select_initial_state(
     mgr: SessionManager,
+    catalog: PersonaCatalog,
     args: argparse.Namespace,
-) -> tuple[Session | None, str, str]:
+) -> tuple[Session | None, str, str, str]:
     """根据 ``--resume`` 决定 CLI 启动时的初始 session（可能为 None）+ pending 默认值。
 
     Returns:
-        ``(initial_session, pending_persona, pending_model)`` 三元组。
-        ``initial_session`` 为 None 表示启动时**未绑定**，等首条消息触发创建。
+        ``(initial_session, pending_persona_id, pending_persona_name, pending_model)``
+        四元组。``initial_session`` 为 None 表示启动时**未绑定**，等首条消息触发创建。
 
     Raises:
         SessionNotFoundError / SessionCorruptError: ``--resume <id>`` 时。
+        PersonaNotFoundError: ``--persona`` 指定的名字在 catalog 找不到。
     """
     initial_model = args.model or make_spec_with_thinking_off().model
 
+    # 解析 --persona name 为 (id, name)
+    pending_info = _resolve_persona_input(args.persona, catalog)
+
     if args.resume is None:
-        return None, args.persona, initial_model
+        return None, pending_info.id, pending_info.name, initial_model
 
     if args.resume == RESUME_LATEST_SENTINEL:
         latest = mgr.latest()
@@ -209,14 +220,35 @@ def _select_initial_state(
             stderr.print(
                 "[yellow]找不到任何已保存的会话。发首条消息或 /new 即可创建新会话。[/yellow]"
             )
-            return None, args.persona, initial_model
-        return latest, latest.current_persona, latest.current_model
+            return None, pending_info.id, pending_info.name, initial_model
+        # 已恢复会话；pending 仍保留作为 /new 时的默认值
+        return latest, pending_info.id, pending_info.name, latest.current_model
 
     matched = _match_session_prefix(mgr, args.resume)
     if matched is None:
         sys.exit(1)
     session = mgr.open(matched.session_id)
-    return session, session.current_persona, session.current_model
+    return session, pending_info.id, pending_info.name, session.current_model
+
+
+def _resolve_persona_input(raw: str, catalog: PersonaCatalog) -> PersonaInfo:
+    """解析 ``/persona`` 或 ``--persona`` 后的参数。
+
+    支持的形态：
+
+    - ``foo``: 按 "user 优先" 查 user 然后 builtin
+    - ``user:foo``: 显式仅查 user
+    - ``builtin:foo``: 显式仅查 builtin
+
+    Raises:
+        PersonaNotFoundError: 没找到，或前缀非法。
+    """
+    if ":" in raw:
+        src, _, name = raw.partition(":")
+        if src not in ("user", "builtin"):
+            raise PersonaNotFoundError(f"无效的 source 前缀: {src!r}（合法：user / builtin）")
+        return catalog.find_by_name(name, source=src)  # type: ignore[arg-type]
+    return catalog.find_by_name(raw)
 
 
 def _match_session_prefix(mgr: SessionManager, prefix: str) -> SessionSummary | None:
@@ -335,10 +367,10 @@ def _print_banner(ctx: _CliContext) -> None:
             "/sessions 看所有）[/dim]"
         )
         stdout.print(
-            f"[dim]默认 persona: {ctx.pending_persona} · 默认 model: {ctx.pending_model}[/dim]"
+            f"[dim]默认 persona: {ctx.pending_persona_name} · 默认 model: {ctx.pending_model}[/dim]"
         )
     stdout.print(
-        "[dim]命令：/sessions /open <id> /persona <name> /model <name> "
+        "[dim]命令：/sessions /open <id> /persona <name> /personas /model <name> "
         "/new /quit  ·  Ctrl+D 退出 · Ctrl+C 取消当前输入[/dim]\n"
     )
 
@@ -411,14 +443,20 @@ def _cmd_open(ctx: _CliContext, prefix: str) -> None:
 def _cmd_new(ctx: _CliContext) -> None:
     """``/new`` —— 用当前 persona/model（绑定后）或 pending（未绑定）显式创建新会话。"""
     if ctx.is_bound():
-        assert ctx.conv is not None
-        persona = ctx.conv.current_persona
+        assert ctx.conv is not None and ctx.session is not None
+        persona_name = ctx.session.current_persona_name
+        persona_id = ctx.session.current_persona_id or ctx.pending_persona_id
         model = ctx.conv.current_model
     else:
-        persona = ctx.pending_persona
+        persona_name = ctx.pending_persona_name
+        persona_id = ctx.pending_persona_id
         model = ctx.pending_model
     try:
-        new_session = ctx.mgr.create(persona=persona, model=model)
+        new_session = ctx.mgr.create(
+            persona=persona_name,
+            model=model,
+            persona_id=persona_id,
+        )
     except SessionPersistError as e:
         stderr.print(rf"[red]\[新建会话失败] {e}[/red]")
         return
@@ -436,30 +474,61 @@ def _cmd_new(ctx: _CliContext) -> None:
     _print_state_line("新建会话", f"{new_session.session_id[:8]}")
 
 
-def _cmd_persona(ctx: _CliContext, name: str) -> None:
-    """``/persona <name>`` —— 已绑定则 ``switch_persona``，未绑定则客户端预检后更新 pending。"""
-    if not name:
-        stdout.print("[yellow]用法：/persona <name>[/yellow]")
+def _cmd_persona(ctx: _CliContext, raw: str) -> None:
+    """``/persona <name|user:name|builtin:name>`` —— 切换 / 更新 pending。
+
+    支持消歧前缀：``user:foo`` / ``builtin:foo``；无前缀按 "user 优先" 解析。
+    """
+    if not raw:
+        stdout.print(
+            "[yellow]用法：/persona <name>"
+            "（user/builtin 同名时用 user:name 或 builtin:name 显式消歧）[/yellow]"
+        )
         return
+    try:
+        info = _resolve_persona_input(raw, ctx.catalog)
+    except PersonaNotFoundError as e:
+        stderr.print(rf"[red]\[人设错误] {e}[/red]")
+        return
+
     if ctx.is_bound():
         assert ctx.conv is not None
         try:
-            ctx.conv.switch_persona(name)
+            ctx.conv.switch_persona(info.id)
         except PersonaNotFoundError as e:
             stderr.print(rf"[red]\[人设错误] {e}[/red]")
             return
         except SessionPersistError as e:
             stderr.print(rf"[red]\[会话保存失败] {e}[/red]")
             return
-        _print_state_line("persona", ctx.conv.current_persona)
+        _print_state_line(
+            "persona",
+            f"{info.name} ({info.source}, id={info.id[:8]})",
+        )
     else:
-        try:
-            _prompt_factory(name).build()
-        except PersonaNotFoundError as e:
-            stderr.print(rf"[red]\[人设错误] {e}[/red]")
-            return
-        ctx.pending_persona = name
-        _print_state_line("默认 persona", f"{name}（将在首条消息时生效）")
+        ctx.pending_persona_id = info.id
+        ctx.pending_persona_name = info.name
+        _print_state_line(
+            "默认 persona",
+            f"{info.name} ({info.source}, id={info.id[:8]}) — 将在首条消息时生效",
+        )
+
+
+def _cmd_personas(ctx: _CliContext) -> None:
+    """``/personas`` —— 列出所有 user + builtin persona。"""
+    infos = ctx.catalog.list()
+    if not infos:
+        stdout.print("[dim]（暂无 persona）[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold", show_lines=False)
+    table.add_column("name", style="cyan", no_wrap=True)
+    table.add_column("source", style="dim")
+    table.add_column("id (short)", style="dim")
+    table.add_column("description", style="white")
+    for info in infos:
+        desc = info.description if info.description else "[dim](无描述)[/dim]"
+        table.add_row(info.name, info.source, info.id[:8], desc)
+    stdout.print(table)
 
 
 def _cmd_model(ctx: _CliContext, name: str) -> None:
@@ -499,13 +568,16 @@ def _handle_slash_command(cmd_line: str, ctx: _CliContext) -> None:
         _cmd_new(ctx)
     elif cmd == "/persona":
         _cmd_persona(ctx, arg)
+    elif cmd == "/personas":
+        _cmd_personas(ctx)
     elif cmd == "/model":
         _cmd_model(ctx, arg)
     elif cmd == "/reset":
         stdout.print("[yellow]/reset 已删除（与 /new 语义重复）。请用 /new 新建会话。[/yellow]")
     else:
         stdout.print(
-            f"[yellow]未知命令: {cmd}（可用：/sessions /open /persona /model /new /quit）[/yellow]"
+            f"[yellow]未知命令: {cmd}"
+            f"（可用：/sessions /open /persona /personas /model /new /quit）[/yellow]"
         )
 
 
@@ -607,14 +679,26 @@ def main() -> int:
         prompt_builder_factory=_prompt_factory,
         context_manager=NaiveContextManager(),
     )
+    catalog = PersonaCatalog()
 
     try:
-        initial_session, pending_persona, pending_model = _select_initial_state(mgr, args)
+        (
+            initial_session,
+            pending_persona_id,
+            pending_persona_name,
+            pending_model,
+        ) = _select_initial_state(mgr, catalog, args)
     except SessionNotFoundError as e:
         stderr.print(rf"[red]\[找不到会话] {e}[/red]")
         return 1
     except SessionCorruptError as e:
         stderr.print(rf"[red]\[会话文件损坏] {e}[/red]")
+        return 1
+    except PersonaNotFoundError as e:
+        stderr.print(rf"[red]\[人设错误] {e}[/red]")
+        stderr.print(
+            "[dim]提示：检查 ``--persona`` 参数；可用 personas 在 /personas 命令里看到。[/dim]"
+        )
         return 1
 
     initial_conv: Conversation | None = None
@@ -630,9 +714,11 @@ def main() -> int:
 
     ctx = _CliContext(
         mgr=mgr,
+        catalog=catalog,
         session=initial_session,
         conv=initial_conv,
-        pending_persona=pending_persona,
+        pending_persona_id=pending_persona_id,
+        pending_persona_name=pending_persona_name,
         pending_model=pending_model,
     )
     if ctx.is_bound():

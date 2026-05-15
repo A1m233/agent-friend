@@ -74,14 +74,19 @@ class SessionManager:
         persona: str,
         model: str,
         title: str | None = None,
+        *,
+        persona_id: str | None = None,
     ) -> Session:
         """创建新会话并落盘首行 ``session_meta`` 事件。
 
         Args:
-            persona: 初始 persona 名。
+            persona: 初始 persona 名（slug；显示用）。
             model: 初始 model 名。
             title: 可选；不传则按以下顺序回落：
                 ``title_generator(session)`` → :func:`_default_title`。
+            persona_id: 初始 persona 的 UUID（003 起的主键）。``None`` 时为兼容
+                老调用方接受，session_meta 不写 ``initial_persona_id`` 字段，
+                效果与 002 完全一致。**新调用方推荐显式传**。
 
         Returns:
             已落盘的新 Session 实例。
@@ -93,6 +98,7 @@ class SessionManager:
             title=title or _default_title(),
             persona=persona,
             model=model,
+            persona_id=persona_id,
         )
         if title is None and self._title_generator is not None:
             generated = self._title_generator(session)
@@ -142,7 +148,7 @@ class SessionManager:
     # ----- 装配 Conversation -----
 
     def start_conversation(self, session: Session) -> Conversation:
-        """根据 ``session.current_persona / current_model`` 装配 :class:`Conversation`。
+        """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
 
         Args:
             session: 目标 session（用 :meth:`create` 或 :meth:`open` 拿到）。
@@ -155,7 +161,8 @@ class SessionManager:
             AgentError: ``llm_client_factory`` / ``prompt_builder_factory`` /
                 ``context_manager`` 任一未注入。
             LLMAuthError / ValueError: ``llm_client_factory`` 抛出。
-            PersonaNotFoundError: ``prompt_builder_factory`` 抛出。
+            PersonaNotFoundError: 当前 persona id（或老 session name fallback）
+                在 catalog 找不到。
         """
         if (
             self._llm_client_factory is None
@@ -167,9 +174,35 @@ class SessionManager:
                 "context_manager 全部注入；当前 SessionManager 未配置完整。"
             )
         from ..conversation import Conversation  # 避免顶层循环 import
+        from ..personas import PersonaCatalog  # 同上
+
+        catalog = PersonaCatalog()
+
+        # 解析当前 persona id：优先 session.current_persona_id；老 session（None）
+        # fallback：按 current_persona_name 查 user 优先
+        persona_id = session.current_persona_id
+        if persona_id is None:
+            from ..errors import PersonaNotFoundError
+
+            try:
+                info = catalog.find_by_name(session.current_persona_name)
+                persona_id = info.id
+            except PersonaNotFoundError:
+                # 老 session 引用的 persona 已不存在 → fallback 到 builtin default
+                import warnings
+
+                from ..personas import BUILTIN_DEFAULT_PERSONA_ID
+
+                warnings.warn(
+                    f"老 session 引用的 persona name "
+                    f"{session.current_persona_name!r} 在 catalog 找不到；"
+                    f"fallback 到 builtin default",
+                    stacklevel=2,
+                )
+                persona_id = BUILTIN_DEFAULT_PERSONA_ID
 
         llm_client = self._llm_client_factory(session.current_model)
-        prompt_builder = self._prompt_builder_factory(session.current_persona)
+        prompt_builder = self._prompt_builder_factory(persona_id)
         return Conversation(
             session=session,
             store=self._store,
@@ -178,4 +211,5 @@ class SessionManager:
             prompt_builder=prompt_builder,
             llm_client_factory=self._llm_client_factory,
             prompt_builder_factory=self._prompt_builder_factory,
+            catalog=catalog,
         )
