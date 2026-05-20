@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..context import ContextManager
     from ..conversation import Conversation
     from ..prompts import PromptBuilder
+    from ..tools import ToolRegistry
 
 
 TitleGenerator = Callable[[Session], str]
@@ -51,6 +52,10 @@ class SessionManager:
         context_manager: 上下文管理策略。同上。
         title_generator: 可选；若提供，:meth:`create` 在未显式传 ``title`` 时
             会调用它，否则用 :func:`_default_title` 兜底。
+        tool_registry: 可选；若提供，:meth:`start_conversation` 装配出的
+            :class:`Conversation` 会挂上同一个 registry，让 AI 能调用其中的工具。
+            005 起新增。``None``（默认）等价于"不开放任何工具"，行为与 002~004
+            完全一致。
     """
 
     def __init__(
@@ -60,12 +65,14 @@ class SessionManager:
         prompt_builder_factory: PromptBuilderFactory | None = None,
         context_manager: ContextManager | None = None,
         title_generator: TitleGenerator | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
         self._prompt_builder_factory = prompt_builder_factory
         self._context_manager = context_manager
         self._title_generator = title_generator
+        self._tool_registry = tool_registry
 
     # ----- 会话 CRUD -----
 
@@ -212,4 +219,5 @@ class SessionManager:
             llm_client_factory=self._llm_client_factory,
             prompt_builder_factory=self._prompt_builder_factory,
             catalog=catalog,
+            tool_registry=self._tool_registry,
         )

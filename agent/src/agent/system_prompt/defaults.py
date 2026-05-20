@@ -10,14 +10,21 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from .sections import StaticSection
+from .sections import RuntimeContextSection, StaticSection
 
 _RESOURCE_PACKAGE = "agent.prompt_sections"
 
 _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "project_identity": "project_identity.md",
     "persona_switch_strategy": "persona_switch_strategy.md",
+    "runtime_context": "runtime_context.md",
 }
+
+
+def _load_section_text(key: str) -> str:
+    filename = _SECTION_KEY_TO_FILENAME[key]
+    resource = files(_RESOURCE_PACKAGE) / filename
+    return resource.read_text(encoding="utf-8").strip()
 
 
 def load_default_static_section(key: str) -> StaticSection:
@@ -34,7 +41,26 @@ def load_default_static_section(key: str) -> StaticSection:
         KeyError: ``key`` 不是已知默认 key。
         FileNotFoundError: 资源文件缺失（包资产损坏，应在打包阶段发现）。
     """
-    filename = _SECTION_KEY_TO_FILENAME[key]
-    resource = files(_RESOURCE_PACKAGE) / filename
-    text = resource.read_text(encoding="utf-8").strip()
+    text = _load_section_text(key)
     return StaticSection(key=key, text=text)
+
+
+def load_default_runtime_context_section(
+    key: str = "runtime_context",
+) -> RuntimeContextSection:
+    """从包资源加载 ``runtime_context.md`` 模板并构造 :class:`RuntimeContextSection`。
+
+    模板必须含 ``{current_time}`` 占位符；其它替换语义见 :class:`RuntimeContextSection`。
+
+    Args:
+        key: 槽位标识，默认 ``"runtime_context"``。
+
+    Returns:
+        RuntimeContextSection 实例，使用默认时钟（本地当前时间）。
+
+    Raises:
+        KeyError: ``key`` 不是 :data:`_SECTION_KEY_TO_FILENAME` 中已知的 key。
+        FileNotFoundError: 资源文件缺失。
+    """
+    template = _load_section_text(key)
+    return RuntimeContextSection(key=key, template=template)

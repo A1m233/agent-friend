@@ -59,6 +59,7 @@ from .tools import (
     ToolNotFoundError,
     ToolRegistry,
     ToolResult,
+    make_default_registry,
 )
 
 __version__ = "0.1.0"
@@ -110,5 +111,6 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "TurnDone",
+    "make_default_registry",
     "random_fallback",
 ]

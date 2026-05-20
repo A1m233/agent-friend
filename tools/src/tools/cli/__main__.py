@@ -55,6 +55,7 @@ from agent import (
     SessionSummary,
     TextDelta,
     TurnDone,
+    make_default_registry,
     random_fallback,
 )
 from llm_providers import (
@@ -679,11 +680,13 @@ def main() -> int:
         stderr.print(rf"[red]\[初始化失败] 无法创建会话目录: {e}[/red]")
         return 1
 
+    tool_registry = make_default_registry()
     mgr = SessionManager(
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
         context_manager=NaiveContextManager(),
+        tool_registry=tool_registry,
     )
     catalog = PersonaCatalog()
 

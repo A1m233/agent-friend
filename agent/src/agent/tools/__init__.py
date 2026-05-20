@@ -8,6 +8,7 @@
 """
 
 from .errors import ToolDuplicateError, ToolError, ToolNotFoundError
+from .factory import make_default_registry
 from .protocol import Tool, ToolResult
 from .registry import ToolRegistry
 
@@ -18,4 +19,5 @@ __all__ = [
     "ToolNotFoundError",
     "ToolRegistry",
     "ToolResult",
+    "make_default_registry",
 ]

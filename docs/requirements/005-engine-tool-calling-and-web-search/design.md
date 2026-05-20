@@ -696,15 +696,61 @@ def send(self, user_input: str) -> str:
 - `send()` 在工具调用过程中**不暴露**任何 tool 信息——这是 send 这个方法名所代表的"问一句答一句"语义所要求的
 - 测试场景或 headless 调用方使用 send() 时仍可正常工作
 
-### 4.7 `WebSearchTool` 实现（`agent/tools/builtin/web_search.py`）
+### 4.7 `WebSearchTool` 实现（`agent/tools/builtin/web_search/`）
 
-#### 4.7.1 类骨架
+#### 4.7.1 模块结构
+
+`web_search` 内部把"搜索能力的对外形态"和"具体 provider 实现"切成两层，让对外 Tool 不依赖任何具体 provider，未来切换 / 新增 provider 通过新增类即可，不动 Tool 主体。
+
+```
+agent/src/agent/tools/builtin/web_search/
+├── __init__.py            # 仅导出 WebSearchTool
+├── tool.py                # SearchHit + WebSearchProvider Protocol + WebSearchTool
+└── providers/             # 具体 provider 实现集中在此
+    ├── __init__.py
+    └── tavily.py          # 本期唯一具体实现（TavilyProvider）
+```
+
+依赖方向：`providers/tavily.py` → `tool.py`（import `WebSearchProvider` Protocol + `SearchHit`）；反向不依赖。这样 `tool.py` 不感知任何 provider 名字。
+
+#### 4.7.2 `tool.py`：对外接口集
+
+三件套：
 
 ```python
+@dataclass(frozen=True)
+class SearchHit:
+    """provider 解耦的结果数据结构。"""
+    title: str
+    url: str
+    snippet: str
+
+
+class WebSearchProvider(Protocol):
+    """搜索 provider 的最小契约。仅 web_search 内部消费，不暴露到 agent.tools 公共 API。"""
+
+    name: ClassVar[str]                            # "tavily" / 未来 "bocha" / ...
+
+    def search(self, query: str, max_results: int) -> list[SearchHit]:
+        """同步发起搜索请求。
+
+        Raises:
+            WebSearchAuthError: 认证错（key 错或失效）
+            WebSearchRateLimitError: 触达 provider 限流
+            WebSearchNetworkError: 网络错或超时
+            WebSearchProviderError: 其它 provider 侧错（含未分类）
+        """
+        ...
+
+
 class WebSearchTool:
-    name = "web_search"
-    description = "搜索互联网获取实时信息（新闻、天气、价格、时事等）。当用户问及超出训练数据时间范围的信息时使用。"
-    parameters_schema = {
+    """对外的 Tool（LLM 看到的）。不依赖具体 provider。"""
+    name: ClassVar[str] = "web_search"
+    description: ClassVar[str] = (
+        "搜索互联网获取实时信息（新闻、天气、价格、时事等）。"
+        "当用户问及超出训练数据时间范围的信息时使用。"
+    )
+    parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
             "query": {
@@ -715,62 +761,124 @@ class WebSearchTool:
         "required": ["query"],
     }
 
-    def __init__(self, api_key: str | None = None, max_results: int = 5) -> None:
-        self._api_key = api_key or os.environ.get("TAVILY_API_KEY")
+    def __init__(self, provider: WebSearchProvider, max_results: int = 5) -> None:
+        self._provider = provider
         self._max_results = max_results
-        if not self._api_key:
-            raise RuntimeError("TAVILY_API_KEY not set")
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         query = args["query"]
         start = time.monotonic()
         try:
-            from tavily import TavilyClient
-            client = TavilyClient(api_key=self._api_key)
-            resp = client.search(query=query, max_results=self._max_results)
-        except AuthenticationError:
+            hits = self._provider.search(query, self._max_results)
+        except WebSearchAuthError:
             return ToolResult(text="搜索失败：API 鉴权错误", is_error=True)
-        except RateLimitError:
+        except WebSearchRateLimitError:
             return ToolResult(text="搜索失败：触达限流", is_error=True)
-        except (ConnectionError, Timeout):
+        except WebSearchNetworkError:
             return ToolResult(text="搜索失败：网络错误", is_error=True)
-        except Exception as exc:
+        except WebSearchProviderError as exc:
             return ToolResult(text=f"搜索失败：{exc}", is_error=True)
 
-        text = self._format(query, resp)
+        text = _format(query, hits)
         duration = time.monotonic() - start
         return ToolResult(
             text=text,
             is_error=False,
-            meta={"duration_seconds": duration, "result_count": len(resp.get("results", []))},
+            meta={
+                "duration_seconds": duration,
+                "result_count": len(hits),
+                "provider": self._provider.name,
+            },
         )
 
-    def _format(self, query: str, resp: dict) -> str:
-        results = resp.get("results", [])
-        if not results:
-            return f"对 '{query}' 的搜索没找到相关结果。"
-        lines = [f"对 '{query}' 的搜索结果（top {len(results)}）："]
-        for i, r in enumerate(results, 1):
-            lines.append(f"\n[{i}] {r['title']}\nURL: {r['url']}\n{r.get('content', '')[:500]}")
-        lines.append(
-            "\n\n请基于以上信息用自己的话回答用户。如果引用了具体内容，"
-            "用拟人化方式提及来源（例如'我在新闻里看到...'），不要直接贴 URL。"
-        )
-        return "\n".join(lines)
+
+def _format(query: str, hits: list[SearchHit]) -> str:
+    """把 SearchHit 列表拼成喂给 LLM 的纯文本。
+
+    Provider 无关——任何 provider 返回的 SearchHit 都用同一格式化逻辑，
+    便于未来加新 provider 时复用 + 视觉一致。
+    """
+    if not hits:
+        return f"对 '{query}' 的搜索没找到相关结果。"
+    lines = [f"对 '{query}' 的搜索结果（top {len(hits)}）："]
+    for i, h in enumerate(hits, 1):
+        lines.append(f"\n[{i}] {h.title}\nURL: {h.url}\n{h.snippet[:500]}")
+    lines.append(
+        "\n\n请基于以上信息用自己的话回答用户。如果引用了具体内容，"
+        "用拟人化方式提及来源（例如'我在新闻里看到...'），不要直接贴 URL。"
+    )
+    return "\n".join(lines)
 ```
+
+#### 4.7.3 `providers/tavily.py`：本期唯一具体实现
+
+```python
+class TavilyProvider:
+    """Tavily Search API 的 WebSearchProvider 实现。"""
+
+    name: ClassVar[str] = "tavily"
+
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+
+    def search(self, query: str, max_results: int) -> list[SearchHit]:
+        from tavily import TavilyClient
+
+        try:
+            client = TavilyClient(api_key=self._api_key)
+            resp = client.search(query=query, max_results=max_results)
+        except <tavily AuthenticationError> as e:
+            raise WebSearchAuthError(str(e)) from e
+        except <tavily RateLimitError> as e:
+            raise WebSearchRateLimitError(str(e)) from e
+        except <connection / timeout> as e:
+            raise WebSearchNetworkError(str(e)) from e
+        except Exception as e:
+            raise WebSearchProviderError(str(e)) from e
+
+        return [
+            SearchHit(
+                title=r.get("title", ""),
+                url=r.get("url", ""),
+                snippet=r.get("content", ""),
+            )
+            for r in resp.get("results", [])
+        ]
+```
+
+> 异常类的具体名字（`AuthenticationError` / `RateLimitError` / 网络错）待 M5.2 实施时按 `tavily-python` 实际 API 校准。
 
 **设计要点**：
 
-- **错误分类映射到 is_error=True**：循环编排层会把它作为 tool message 回喂 LLM，让 LLM 决定要不要换路或直接告诉用户。错误的 `text` 内容**只面向 LLM**，CLI 拿到 `tool_call_result` 事件后用自己的渲染规则给开发者看（不直接贴给用户）；用户可见的拟人化兜底由 LLM 接收 error result 后自行表达
+- **WebSearchProvider 抽象在 web_search 内部**：不上升到 `agent.tools` 公共 API。引擎层只看到 `Tool` / `ToolRegistry`；`WebSearchProvider` 是 web_search 模块的实现细节
+- **错误用本模块自有异常向上传**：`WebSearchAuthError` / `RateLimitError` / `NetworkError` / `ProviderError` 在 `tool.py` 中定义，provider 实现负责把各自 SDK 的异常 catch 后映射成本模块异常向上传。这样 `WebSearchTool.invoke` 只需 catch 本模块异常，不感知具体 SDK
+- **`_format` 抽成模块级函数**：与 provider 解耦，所有 provider 返回的 `SearchHit` 共用同一格式化路径
+- **错误分类映射到 is_error=True**：循环编排层把它作为 tool message 回喂 LLM 让其换路；用户可见的拟人化兜底由 LLM 自行表达
 - **inline reminder**：`_format` 末尾的"请基于以上信息用自己的话回答用户...不要直接贴 URL"是引导语，与 product vision §3.1 的"像真人朋友"原则一致
-- **不实现 retry**：单次失败直接返回 error；LLM 自己决定要不要再调一次（如果 LLM 决定再调，下一轮会再发一次请求）。Tavily 客户端自带的轻度重试已足够
-- **异常类的具体名字**待 M5.2 实施时按 `tavily-python` 实际 API 校准
+- **不实现 retry**：单次失败直接返回 error；LLM 自己决定要不要再调一次
 
-#### 4.7.2 配置来源
+#### 4.7.4 配置来源
 
-`TAVILY_API_KEY` 通过 `.env`（已 git-ignore）+ `os.environ.get` 读取，与 0002 §3.17 一致。Tool 构造时若读不到 key，立即 raise（fail-fast，不允许"运行时第一次调用才发现"）。
+`TAVILY_API_KEY` 通过 `.env`（已 git-ignore）+ `os.environ.get` 读取，与 0002 §3.17 一致。
 
-`make_default_registry()` 工厂内部 catch `RuntimeError("TAVILY_API_KEY not set")`，**降级**为返回空 registry（无 tool）；CLI 启动时给一行 stderr 提示"未配置 TAVILY_API_KEY，搜索能力已关闭"——保证未配置 key 的用户也能正常使用基础对话。
+`TavilyProvider` 构造期不读 env（接受外部传入的 `api_key`），让 provider 可独立测试 / 多账号场景中可注入；env 读取统一在工厂层（§4.7.5）做。
+
+#### 4.7.5 `make_default_registry()` 工厂
+
+放在 `agent/tools/factory.py`。职责：
+
+- 读 `TAVILY_API_KEY` 环境变量
+- 若读不到：返回空 `ToolRegistry`（无 tool），并 stderr 提示一行"未配置 TAVILY_API_KEY，搜索能力已关闭"——保证未配置 key 的用户也能正常使用基础对话
+- 若读到：构造 `TavilyProvider(api_key=...)` → `WebSearchTool(provider=provider)` → `ToolRegistry([web_search])`
+
+未来加新 provider（如 Bocha）时：
+
+- 新增 `web_search/providers/bocha.py`（不动 `tool.py`）
+- `make_default_registry` 加挑选逻辑（优先级 / 优先用某家等，约 5 行）
+- `.env.example` 加 `BOCHA_API_KEY` 占位
+- `pyproject.toml` 加新 SDK 依赖
+
+`WebSearchTool` / `Tool` Protocol / 引擎调用循环 / CLI 全部 0 改动。
 
 ### 4.8 `tools/cli/__main__.py` 主循环升级
 
@@ -812,6 +920,59 @@ except SessionPersistError as e:
 
 这是 requirement R-4.4 的兜底落实点。
 
+### 4.10 `RuntimeContextSection` 与运行时上下文注入
+
+**问题来源**：M5.2 真调 smoke 暴露了"自主决策路径不稳定"——LLM 不知道当前真实日期（默认按训练数据 cutoff 推算），导致：
+
+- 即使代码链路正确（`tool_specs` 正常透传），LLM **不一定**主动调用 `web_search`
+- 即使调了，搜索 query 里的年份用的是训练数据时期（如 2025）而非真实当前年份
+- "Tavily 公司是哪一年成立的"这种具体事实问题，LLM 倾向凭训练数据猜测（v2 smoke 错答 "2023"）
+
+**解法**：复用 004 §6.2 已经允许的扩展点（"增加新 Section 默认实现，如 `DynamicTimeSection`"），新增第 4 个默认 slot。
+
+**位置**：`agent/src/agent/system_prompt/sections.py` 加 `RuntimeContextSection`；模板内容放 `agent/src/agent/prompt_sections/runtime_context.md`；`composer.py::default()` 末尾追加。
+
+**Section 结构**：
+
+```python
+@dataclass(frozen=True)
+class RuntimeContextSection:
+    key: str                                       # 约定 "runtime_context"
+    template: str                                  # 含 "{current_time}" 占位符
+    clock: Callable[[], datetime] = _default_now   # 测试可注入固定时钟
+
+    def render(self) -> str | None:
+        now = self.clock()
+        current_time = now.strftime("%Y-%m-%d %H:%M")
+        rendered = self.template.replace("{current_time}", current_time)
+        return rendered.strip() or None
+```
+
+**模板内容**（`runtime_context.md`）三段式：
+
+1. **当前时间**（动态注入；分钟精度，支持跨 0 点自然滚动）
+2. **knowledge cutoff 提示**（"内部知识不覆盖 2024 下半年起的近期信息"——本期写死 + TODO；未来切其它 provider 时再扩"按 model 推断"）
+3. **强约束工具使用引导**：
+   - 时效性问题**必须**调 web_search（不要凭印象作答）
+   - 搜索 query **必须**用上方"当前时间"中的年份
+   - 涉及具体公司/产品/人物事实如不确定则验证后回答
+   - 整合结果时保持人设语气（不暴露 AI 身份 / 不直接贴 URL）
+   - **额外约束**：与 `project_identity.md` 既有禁令配合——LLM 内部知道 cutoff 但不脱口而出"我的训练数据截止到 X"
+
+**装配位置**：放在 default 装配的**最末尾**（`project_identity` → `persona` → `persona_switch_strategy` → **`runtime_context`**）。理由：
+
+1. **recency bias**：LLM 对靠近 user message 的内容更关注；含强约束的运行时引导放最后效果最好
+2. **逻辑层次**：身份（不变）→ 人设（中变）→ 切换策略（中变）→ 运行时上下文（每会话变）
+3. **cc 同款做法**：cc 的 `# Environment` 也放在 system prompt 中后部，靠近 `# Tools` 而非靠近 `# System`
+
+**为什么不影响 004 接口稳定性**：
+
+- 004 §6.2"允许的扩展"明确列了"增加新默认 slot（追加到 `default()` 末尾、加进 `DEFAULT_KEYS`）"和"增加新 Section 默认实现（如 `DynamicTimeSection`）"
+- `Section` Protocol、`SystemPromptComposer.compose() / with_section / without` 等接口形态完全没动
+- `DEFAULT_KEYS` 元组延长（破坏假设"长度=3"的调用方），但调用方应使用 `DEFAULT_KEYS` 而非硬编码长度（004 §6.1 已承诺 `DEFAULT_KEYS` 是元组）
+
+**验收**：通过 v3 真调 smoke。4 个自然语气 query（含一个明确命令式触发）全部触发 `web_search` 且搜索 query 含正确年份；其中"Tavily 成立年份"由 LLM 主动查证后回答 2024（修复前凭印象答 "2023"）。
+
 ---
 
 ## 5. 决策汇总表
@@ -838,10 +999,33 @@ except SessionPersistError as e:
 | N-3 | `ConversationEvent` 是否复用 `sessions.Event` | **不复用**：两者职责不同（流式输出 vs 持久化记录），强行复用造成歧义 | §4.4.1 设计要点 |
 | N-4 | tool 内部错误是否走 raise | **走 ToolResult.is_error=True**（仅协议级实现 bug 才 raise） | LLM 看到失败信号后能自己决定换路；让循环编排层对失败有统一处理点 |
 | N-5 | `WebSearchTool` 失败时是否本地重试 | **不重试**：直接返回 is_error；让 LLM 决定要不要再调 | LLM 是更高级别的"是否重试"决策者；本地重试会延迟 + 复杂化 |
+| N-6 | `web_search` 内部是否引入 `WebSearchProvider` 抽象 | **是**：`WebSearchTool` 不依赖具体 provider，通过构造期注入 `WebSearchProvider`；`TavilyProvider` 是本期唯一实现，独立放 `providers/tavily.py` | "新增 provider"是已明确预见的需求变化（国内支付限制使 Tavily 在产品化阶段必然被换或并存）；按 coding-design.mdc 该对易变策略做边界拆分。本期仅一个实现 = 不引入新框架；未来加 provider 通过新增类接入，`WebSearchTool` / `Tool` Protocol / 引擎层 0 改动 |
+| N-7 | system prompt 是否注入运行时上下文（当前时间 + knowledge cutoff + 工具使用强约束）| **注入**：新增 `RuntimeContextSection`（见 §4.10）；放 default 装配末尾 | M5.2 smoke 暴露——纯靠 `tools` 协议参数 + 弱 description 时，LLM 自主决策不稳定（不调工具或搜错年份）。借力 004 §6.2 已经允许的扩展点（"增加新 Section 默认实现，如 `DynamicTimeSection`"），不破坏接口稳定性。修复后 v3 smoke 4 个自然语气 query 全部正确触发 |
 
 ### 5.3 与 0002 §3.17（密钥管理）的关系
 
 `TAVILY_API_KEY` 与已有的 `DEEPSEEK_API_KEY` 走同一套：`.env`（git-ignore）+ `os.environ.get`。本期不引入额外的 secret 管理机制。
+
+### 5.4 已知约束：thinking 模式与多轮 tool 循环不兼容
+
+**现象**：DeepSeek 在 thinking 模式开启时（如 `deepseek-reasoner` 系列、或 V4 系列默认开启），LLM 响应会带 `message.reasoning_content` 字段。其协议要求**下一轮请求必须把上一轮的 `reasoning_content` 原样回传**——不传就报错：
+
+```
+DeepseekException: The `reasoning_content` in the thinking mode must be passed back to the API.
+```
+
+本期落地的多轮 tool 循环（`Conversation.stream` 内 LLM → tool → LLM 来回）天然会触发"下一轮"——若 thinking 开着，第二轮起立即 400。M5.2 真调 smoke 已在没关 thinking 时复现过该错误。
+
+**本期采取的兜底**：CLI 入口（`tools/src/tools/cli/__main__.py` 的 `make_spec_with_thinking_off`）对 DeepSeek 模型默认注入 `extra_body={"thinking": {"type": "disabled"}}`——日常使用 CLI 不会踩到。
+
+**未解决的部分**：
+
+- 当前 `agent.Message` / `LLMClient` 抽象没有 `reasoning_content` 字段也没有回传逻辑——切到任何**强制要求**回传 thinking 字段的 provider 配置（如 DeepSeek 开 thinking、Anthropic Extended Thinking + tool use）就会立即崩
+- 各家 provider 的 thinking 协议**互不兼容**（DeepSeek 用 `reasoning_content` 字符串字段；Anthropic 用 `content[]` 内带 signature 的 thinking block；OpenAI o-series 客户端拿不到原文也无法回传）——简单地在 `Message` 加一个 DeepSeek 风格字段会污染抽象层
+
+**未来若要解开**（不在本期 scope）：需先做 provider 适配层——把 `Message.to_openai()` 升级为 `Message + ProviderAdapter → provider-specific dict`，并让 `LLMStreamEvent` 含一个 provider-agnostic 的 thinking 流事件类型。这是个独立 scope 的工作（涉及数据模型重构 + thinking 流的 CLI/UX 决策 + 多 provider 适配），届时另开需求处理。
+
+**为什么本期不做**：与本期"工具调用机制 + Web 搜索"主题正交；当前 CLI 兜底已覆盖日常场景；提前实装会把 005 scope 撑大且方向未明。
 
 ---
 
@@ -856,10 +1040,13 @@ except SessionPersistError as e:
 - `Conversation.switch_persona / switch_model`：002/003 已就位，不动
 - `Message.role` Literal 集：**只增不减**；本期加 `"tool"`
 - `Message.to_openai() -> dict[str, Any]`：稳定（注：本期把签名从 `dict[str, str]` 放宽为 `dict[str, Any]`，兼容 `tool_call_id` / `tool_calls` 等结构化字段）
-- `make_default_registry() -> ToolRegistry`：工厂函数；返回的 registry 内容可能扩展（增加 tool）但接口形态稳定
+- `make_default_registry() -> ToolRegistry`：工厂函数；返回的 registry 内容可能扩展（增加 tool / 切换 provider）但接口形态稳定
 - `ToolRegistry.all_tools / get / invoke / to_openai_tools`：接口形态稳定
 - `Tool` Protocol（四件套）：稳定；扩展通过新增可选方法
 - `ToolResult`（dataclass）：稳定；新增字段时保持向后兼容（默认值）
+- `WebSearchTool` 的 `name` / `description` / `parameters_schema` 三件套：**对 LLM 可见的协议形态稳定**——LLM 永远只看到 `name="web_search"`，未来切 / 加 provider 不改这三项
+- `WebSearchTool.__init__(provider, max_results)` 构造形态稳定；`WebSearchProvider` Protocol（带 `name` + `search(query, max_results)`）形态稳定（**仅 web_search 内部消费，不算引擎对外公共 API**——升级路径同 `LLMStreamEvent`，详见 §6.3 风格）
+- `SearchHit` dataclass 字段集（`title` / `url` / `snippet`）：稳定；新增字段保持向后兼容（默认值）
 - `ConversationEvent` 类型并集：**只增不减**——新增事件类型不算破坏；删除/重命名既有类型才算破坏
 - 各 `ConversationEvent` 子类型的字段：稳定；新增字段时保持向后兼容（带默认值）
 
