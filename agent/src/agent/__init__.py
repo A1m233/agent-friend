@@ -4,7 +4,14 @@
 """
 
 from .context import BuildResult, ContextManager, NaiveContextManager
-from .conversation import Conversation
+from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
+from .conversation_events import (
+    ConversationEvent,
+    TextDelta,
+    ToolCallRequest,
+    ToolCallResult,
+    TurnDone,
+)
 from .errors import (
     AgentError,
     PersonaAlreadyExistsError,
@@ -45,6 +52,14 @@ from .system_prompt import (
     StaticSection,
     SystemPromptComposer,
 )
+from .tools import (
+    Tool,
+    ToolDuplicateError,
+    ToolError,
+    ToolNotFoundError,
+    ToolRegistry,
+    ToolResult,
+)
 
 __version__ = "0.1.0"
 
@@ -52,10 +67,12 @@ __all__ = [
     "BUILTIN_DEFAULT_PERSONA_ID",
     "DEFAULT_EXTERNAL_PERSONAS_DIR",
     "KEEP",
+    "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
     "BuildResult",
     "ContextManager",
     "Conversation",
+    "ConversationEvent",
     "Event",
     "EventType",
     "JsonlSessionStore",
@@ -83,5 +100,15 @@ __all__ = [
     "SessionSummary",
     "StaticSection",
     "SystemPromptComposer",
+    "TextDelta",
+    "Tool",
+    "ToolCallRequest",
+    "ToolCallResult",
+    "ToolDuplicateError",
+    "ToolError",
+    "ToolNotFoundError",
+    "ToolRegistry",
+    "ToolResult",
+    "TurnDone",
     "random_fallback",
 ]

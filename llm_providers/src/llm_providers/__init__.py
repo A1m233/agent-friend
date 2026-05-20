@@ -13,6 +13,12 @@ from .errors import (
     LLMRateLimitError,
 )
 from .spec import ProviderSpec
+from .stream_events import (
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+)
 
 __version__ = "0.1.0"
 
@@ -24,5 +30,9 @@ __all__ = [
     "LLMNetworkError",
     "LLMProviderError",
     "LLMRateLimitError",
+    "LLMStreamEvent",
+    "LLMTextDelta",
+    "LLMToolCallDelta",
+    "LLMTurnDone",
     "ProviderSpec",
 ]

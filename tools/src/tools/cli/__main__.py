@@ -53,6 +53,8 @@ from agent import (
     SessionNotFoundError,
     SessionPersistError,
     SessionSummary,
+    TextDelta,
+    TurnDone,
     random_fallback,
 )
 from llm_providers import (
@@ -625,15 +627,19 @@ def _interactive_loop(ctx: _CliContext) -> int:
 
         stdout.print("[bold green]AI:[/bold green] ", end="")
         try:
-            for chunk in ctx.conv.stream(user_input):
-                stdout.print(
-                    chunk,
-                    end="",
-                    style="green",
-                    markup=False,
-                    highlight=False,
-                )
-            stdout.print()
+            for ev in ctx.conv.stream(user_input):
+                if isinstance(ev, TextDelta):
+                    stdout.print(
+                        ev.text,
+                        end="",
+                        style="green",
+                        markup=False,
+                        highlight=False,
+                    )
+                elif isinstance(ev, TurnDone):
+                    stdout.print()
+                # ToolCallRequest / ToolCallResult / 未知 type：M5.1 阶段忽略
+                # （未配置 tool_registry 时不会触发这些事件；M5.3 接入完整双视图）
         except LLMAuthError as e:
             stdout.print()
             stderr.print(rf"[red]\[配置错误] {e}[/red]")

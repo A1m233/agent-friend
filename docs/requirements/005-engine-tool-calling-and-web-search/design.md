@@ -373,13 +373,15 @@ class ToolRegistry:
 
     def __init__(self, tools: list[Tool]) -> None: ...
 
-    def list(self) -> list[Tool]: ...
+    def all_tools(self) -> list[Tool]: ...
     def get(self, name: str) -> Tool: ...
     def invoke(self, name: str, args: dict[str, Any]) -> ToolResult: ...
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
         """转换为 OpenAI tool calling API 要求的 tools 数组（喂给 LiteLLM）。"""
 ```
+
+> 命名说明：`all_tools()` 而非 `list()`——避免与 Python 内置 `list` 冲突（mypy 会因方法名遮蔽 `list[Tool]` 类型注解而报错）。
 
 **设计要点**：
 
@@ -521,19 +523,14 @@ class TurnDone:
     stop_reason: str = ""        # "end_turn" | "max_turns_reached" | ...
     total_tool_calls: int = 0    # 本 turn 累计 tool 调用次数
 
-@dataclass(frozen=True)
-class TurnError:
-    type: Literal["error"] = "error"
-    message: str = ""            # 已经过拟人化兜底处理的对外文案
-    raw_kind: str = ""           # 原始错误分类（"network" | "auth" | ...），便于观测
-
-ConversationEvent = Union[TextDelta, ToolCallRequest, ToolCallResult, TurnDone, TurnError]
+ConversationEvent = Union[TextDelta, ToolCallRequest, ToolCallResult, TurnDone]
 ```
 
 **设计要点**：
 
 - **discriminated union**：`type` 字段严格 Literal，运行期通过 `match` 或 `if isinstance` 分派
 - **粒度统一**：所有事件都是"流式 chunk + 完成事件"层级，不混杂"整体 message"层级——后者由 sessions 的 `Event` 流承载
+- **错误处理走 `raise` 路径**：LLM 失败抛 `LLMError` 子类（与 001/002 已建立的错误处理体系一致），不在 union 里再加错误事件类型。工具的业务级失败已经通过 `ToolCallResult.is_error=True` 表达，不需要额外的错误事件
 - **未来扩展**：加新事件类型只需新增一个 dataclass + 加进 union 类型；不破坏既有消费方（消费方对未知 `type` 应 fall-through 忽略，但 CLI 在本期阶段还不实现这种宽容——M5.3 时需要把 fall-through 加上以便未来兼容）
 - **不直接复用 `sessions.Event`**：sessions.Event 是"持久化事件"语义；ConversationEvent 是"流式输出事件"语义。两者职责不同，强行复用会造成"该不该入库"的歧义
 
@@ -777,25 +774,32 @@ class WebSearchTool:
 
 ### 4.8 `tools/cli/__main__.py` 主循环升级
 
-伪码：
+伪码（保留既有的 LLMError / KeyboardInterrupt / SessionPersistError 的 `try/except` 分支不动）：
 
 ```python
-for ev in ctx.conv.stream(user_input):
-    match ev:
-        case TextDelta(text=t):
-            sys.stdout.write(t)
-            sys.stdout.flush()
-        case ToolCallRequest(tool_name=n, args=a):
-            args_brief = _brief(a)  # query 长度截断
-            print(f"\n\033[90m[tool] {n}({args_brief})\033[0m", file=sys.stderr)
-        case ToolCallResult(is_error=False, duration_seconds=d, ...):
-            print(f"\033[90m[tool] → done, {d:.1f}s\033[0m", file=sys.stderr)
-        case ToolCallResult(is_error=True, ...):
-            print(f"\033[31m[tool] ✗ {ev.text[:80]}\033[0m", file=sys.stderr)
-        case TurnDone():
-            sys.stdout.write("\n")
-        case TurnError(message=m):
-            sys.stdout.write(f"\n{m}\n")
+try:
+    for ev in ctx.conv.stream(user_input):
+        match ev:
+            case TextDelta(text=t):
+                sys.stdout.write(t)
+                sys.stdout.flush()
+            case ToolCallRequest(tool_name=n, args=a):
+                args_brief = _brief(a)  # query 长度截断
+                print(f"\n\033[90m[tool] {n}({args_brief})\033[0m", file=sys.stderr)
+            case ToolCallResult(is_error=False, duration_seconds=d, ...):
+                print(f"\033[90m[tool] → done, {d:.1f}s\033[0m", file=sys.stderr)
+            case ToolCallResult(is_error=True, ...):
+                print(f"\033[31m[tool] ✗ {ev.text[:80]}\033[0m", file=sys.stderr)
+            case TurnDone():
+                sys.stdout.write("\n")
+            case _:  # 未知 type 忽略，前向兼容
+                pass
+except LLMAuthError as e:
+    ...  # 与既有 001/002 处理一致：拟人化兜底或退出
+except KeyboardInterrupt:
+    ...  # 中断本轮回复
+except SessionPersistError as e:
+    ...  # 落盘失败提示
 ```
 
 `_replay_history` 在重放 session 时按相同规则渲染历史 tool 调用：从 events 流里识别 `tool_call_request` / `tool_call_result` 类型，用与实时模式一致的视觉风格重放。
@@ -853,7 +857,7 @@ for ev in ctx.conv.stream(user_input):
 - `Message.role` Literal 集：**只增不减**；本期加 `"tool"`
 - `Message.to_openai() -> dict[str, Any]`：稳定（注：本期把签名从 `dict[str, str]` 放宽为 `dict[str, Any]`，兼容 `tool_call_id` / `tool_calls` 等结构化字段）
 - `make_default_registry() -> ToolRegistry`：工厂函数；返回的 registry 内容可能扩展（增加 tool）但接口形态稳定
-- `ToolRegistry.list / get / invoke / to_openai_tools`：接口形态稳定
+- `ToolRegistry.all_tools / get / invoke / to_openai_tools`：接口形态稳定
 - `Tool` Protocol（四件套）：稳定；扩展通过新增可选方法
 - `ToolResult`（dataclass）：稳定；新增字段时保持向后兼容（默认值）
 - `ConversationEvent` 类型并集：**只增不减**——新增事件类型不算破坏；删除/重命名既有类型才算破坏
