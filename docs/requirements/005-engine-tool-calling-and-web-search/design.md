@@ -57,6 +57,7 @@ CONFIRMED
 | `Conversation.stream` 返回类型 | **破坏**：`Iterator[str]` → `Iterator[ConversationEvent]` | 协议级升级，所有形态层（CLI/未来 HTTP+SSE/未来语音）共用同一事件协议 |
 | `Conversation.switch_persona / switch_model` | **不破坏** | 002 已就位，本期不动 |
 | `Message.role` Literal 集 | **破坏**：加 `"tool"` | 与 OpenAI/Anthropic `role="tool"` 协议对齐 |
+| `Message.to_openai()` 返回类型 | **破坏**：`dict[str, str]` → `dict[str, Any]` | `role="tool"` 时要带 `tool_call_id`；含 tool_calls 的 assistant 消息要带 `tool_calls: list[dict]` |
 | `Message.content / timestamp / meta / uuid` | **不破坏** | 仅扩 role 集 |
 | `LLMClient.complete` 签名 | **不破坏** | 同步全量 API 路径不感知工具调用细节 |
 | `LLMClient.stream` 签名 | **破坏**：返回类型升级 + 增加可选 `tools` 参数 | 流式 API 必须暴露工具调用 delta |
@@ -412,24 +413,27 @@ EventType = Literal[
 
 `ALLOWED_EVENT_TYPES` 同步加。`SCHEMA_VERSION` **不动**——已有的 1.x 文件读出来不会触发新事件类型的校验路径，是纯加性变更。
 
-#### 4.2.2 新事件类型的 payload 约定
+#### 4.2.2 新事件类型的 payload / meta 字段约定
 
-> **存储侧约定**：`Event` dataclass 形态不变，新事件类型把 payload 放在 `meta` 字段（已有的 dict）里。这样 schema 不动只是 type 多了两个值。
+**字段分配原则**（与既有事件惯例一致）：
+
+- `payload` = 事件的核心业务数据（如既有的 `user_message.payload.content` / `persona_change.payload.from / to`）
+- `meta` = 追加性元信息（如既有的 `assistant_message.meta = {persona, model}`）
 
 **`tool_call_request`**：
 
 ```jsonc
 {
   "type": "tool_call_request",
-  "content": "",              // 不用 content
-  "meta": {
-    "tool_call_id": "call_abc123",  // LLM 给的 ID（OpenAI 协议）
+  "uuid": "...",
+  "ts": "...",
+  "payload": {
+    "tool_call_id": "call_abc123",   // LLM 给的 ID（OpenAI 协议）
     "tool_name": "web_search",
     "args": { "query": "今天的新闻" },
-    "parent_uuid": "..."             // 关联的 assistant message uuid
+    "parent_uuid": "..."              // 关联的 assistant message uuid
   },
-  "uuid": "...",
-  "timestamp": "..."
+  "meta": {}                          // 本期空；未来可加 attempt_idx 等
 }
 ```
 
@@ -438,27 +442,34 @@ EventType = Literal[
 ```jsonc
 {
   "type": "tool_call_result",
-  "content": "搜索结果文本...",  // 喂回 LLM 的 text（来自 ToolResult.text）
-  "meta": {
-    "tool_call_id": "call_abc123", // 同 request 关联
-    "tool_name": "web_search",
-    "is_error": false,
-    "duration_seconds": 1.23,
-    "extra": { ... }                // ToolResult.meta 透传
-  },
   "uuid": "...",
-  "timestamp": "..."
+  "ts": "...",
+  "payload": {
+    "tool_call_id": "call_abc123",   // 同 request 关联
+    "tool_name": "web_search",
+    "content": "搜索结果文本...",     // 喂回 LLM 的 text（来自 ToolResult.text）
+    "is_error": false
+  },
+  "meta": {
+    "duration_seconds": 1.23,
+    "extra": { ... }                  // ToolResult.meta 透传
+  }
 }
 ```
+
+> 字段命名一致性：`tool_call_result.payload.content` 与 `user_message.payload.content` / `assistant_message.payload.content` 同名，便于在派生逻辑里复用 `ev.payload["content"]` 同样的读取方式。
 
 #### 4.2.3 `Session.messages` 派生逻辑扩展
 
 `agent/sessions/session.py` 的 `messages` 属性从 events 流派生 `Message` 列表时：
 
-- `tool_call_request` 不直接产生独立 `Message`——它依附在前一个 `assistant_message` 的 `meta.tool_calls` 上（OpenAI 协议要求 `assistant` role 消息携带 `tool_calls` 字段）
-- `tool_call_result` 产生一条 `role="tool"` 的 `Message`，`content=result.text`，`tool_call_id` 进入 meta 用于回喂 LLM 时关联
+- `tool_call_request` 不直接产生独立 `Message`——它依附在前一个 `assistant_message` 派生出的 Message 的 `meta["tool_calls"]` 上（OpenAI 协议要求 `assistant` role 消息携带 `tool_calls` 字段）
+- `tool_call_result` 产生一条 `role="tool"` 的 `Message`：
+  - `content = ev.payload["content"]`
+  - `meta["tool_call_id"] = ev.payload["tool_call_id"]`（用于 `to_openai()` 时回填）
+  - `meta["tool_name"] = ev.payload["tool_name"]`
 
-这一派生逻辑用确定性算法实现：扫描 events，把连续的 `assistant_message + tool_call_request*+ tool_call_result*` 折叠成 `[assistant message (with tool_calls), tool message, tool message, ...]`。
+派生算法（确定性）：扫描 events，每碰到 `tool_call_request` 就把它累积到上一条 assistant Message 的 `meta["tool_calls"]` 列表里；每碰到 `tool_call_result` 就 emit 一条 tool Message。
 
 #### 4.2.4 老 session 兼容
 
@@ -837,8 +848,10 @@ for ev in ctx.conv.stream(user_input):
 ### 6.1 引擎对外公共 API（`agent/__init__.py` 导出）
 
 - `Conversation.stream(user_input: str) -> Iterator[ConversationEvent]`：协议形态稳定
-- `Conversation.send(user_input: str) -> str`：协议形态稳定
+- `Conversation.send(user_input: str) -> str`：协议形态稳定（内部消费 stream 拼 TextDelta；调用方拿到的是 AI 整合工具结果后的最终文本）
 - `Conversation.switch_persona / switch_model`：002/003 已就位，不动
+- `Message.role` Literal 集：**只增不减**；本期加 `"tool"`
+- `Message.to_openai() -> dict[str, Any]`：稳定（注：本期把签名从 `dict[str, str]` 放宽为 `dict[str, Any]`，兼容 `tool_call_id` / `tool_calls` 等结构化字段）
 - `make_default_registry() -> ToolRegistry`：工厂函数；返回的 registry 内容可能扩展（增加 tool）但接口形态稳定
 - `ToolRegistry.list / get / invoke / to_openai_tools`：接口形态稳定
 - `Tool` Protocol（四件套）：稳定；扩展通过新增可选方法
@@ -850,8 +863,9 @@ for ev in ctx.conv.stream(user_input):
 
 - `Event` dataclass 字段集：稳定
 - `EventType` Literal 集：**只增不减**；本期加 `tool_call_request` / `tool_call_result`；后续若要再加事件类型，按 002 design §6 同样规则（不破坏老文件读取）
-- `tool_call_request` 事件的 `meta` 字段中：`tool_call_id` / `tool_name` / `args` 是稳定字段
-- `tool_call_result` 事件的 `meta` 字段中：`tool_call_id` / `tool_name` / `is_error` 是稳定字段；其余字段视作扩展信息
+- `tool_call_request.payload`：稳定字段为 `tool_call_id` / `tool_name` / `args`；新增字段保持向后兼容
+- `tool_call_result.payload`：稳定字段为 `tool_call_id` / `tool_name` / `content` / `is_error`；新增字段保持向后兼容
+- 上述事件的 `meta`：观测/追加信息位，字段集**非稳定**（本期含 `duration_seconds` 等，未来可能改名）
 
 ### 6.3 LLM provider 抽象（`llm_providers/`）
 
