@@ -91,6 +91,47 @@ class TestPersonaSection:
             section.render()
 
 
+# ===== RuntimeContextSection =====
+
+
+class TestRuntimeContextSection:
+    """注入固定时钟，验证 :class:`RuntimeContextSection` 的模板替换行为可重现。"""
+
+    def test_render_substitutes_current_time_placeholder(self) -> None:
+        from datetime import UTC, datetime
+
+        from agent.system_prompt import RuntimeContextSection
+
+        fixed_now = datetime(2026, 5, 20, 17, 53, tzinfo=UTC)
+        section = RuntimeContextSection(
+            key="runtime_context",
+            template="Now is {current_time}. Use web_search.",
+            clock=lambda: fixed_now,
+        )
+        rendered = section.render()
+        assert rendered == "Now is 2026-05-20 17:53. Use web_search."
+
+    def test_render_returns_none_when_template_is_empty(self) -> None:
+        from agent.system_prompt import RuntimeContextSection
+
+        section = RuntimeContextSection(
+            key="runtime_context",
+            template="   ",
+        )
+        assert section.render() is None
+
+    def test_render_handles_template_without_placeholder(self) -> None:
+        """模板里没有 ``{current_time}`` 占位符也不报错——按原样输出。
+        （边界条件，非主流用法；对模板格式化的健壮性兜底。）"""
+        from agent.system_prompt import RuntimeContextSection
+
+        section = RuntimeContextSection(
+            key="runtime_context",
+            template="static text",
+        )
+        assert section.render() == "static text"
+
+
 # ===== SystemPromptComposer.compose =====
 
 
@@ -202,12 +243,17 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_has_three_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_has_four_slots_in_fixed_order(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         keys = tuple(s.key for s in composer.sections)
         assert keys == SystemPromptComposer.DEFAULT_KEYS
-        assert keys == ("project_identity", "persona", "persona_switch_strategy")
+        assert keys == (
+            "project_identity",
+            "persona",
+            "persona_switch_strategy",
+            "runtime_context",
+        )
 
     def test_default_persona_slot_is_persona_section(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -223,13 +269,32 @@ class TestSystemPromptComposerDefault:
             assert isinstance(slot, StaticSection)
             assert slot.text.strip() != ""
 
-    def test_default_compose_contains_all_three_segments(self, tmp_path: Path) -> None:
+    def test_default_runtime_context_slot_renders_current_time(self, tmp_path: Path) -> None:
+        """``runtime_context`` 槽位用 :class:`RuntimeContextSection`，
+        渲染时把 ``{current_time}`` 占位符替换为实际时间。"""
+        from agent.system_prompt import RuntimeContextSection
+
+        catalog = PersonaCatalog(external_dir=tmp_path)
+        composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
+        rc_slot = next(s for s in composer.sections if s.key == "runtime_context")
+        assert isinstance(rc_slot, RuntimeContextSection)
+        rendered = rc_slot.render()
+        assert rendered is not None
+        # 模板里的占位符已被替换（不应残留 {current_time}）
+        assert "{current_time}" not in rendered
+        # 关键内容存在
+        assert "当前时间" in rendered
+        assert "web_search" in rendered
+
+    def test_default_compose_contains_all_four_segments(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         output = composer.compose()
         assert "项目元规则" in output
         assert "Echo" in output
         assert "关于过往对话的语言风格" in output
+        assert "当前时间" in output
+        assert "web_search" in output
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

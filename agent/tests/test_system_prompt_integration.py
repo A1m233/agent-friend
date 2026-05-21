@@ -22,23 +22,35 @@ from agent import (
     StaticSection,
     SystemPromptComposer,
 )
-from llm_providers import LLMClient
+from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
 
 
 @dataclass
 class _FakeLLMClient:
-    """记录每次 ``complete`` / ``stream`` 收到的 messages，便于断言。"""
+    """记录每次 ``complete`` / ``stream`` 收到的 messages，便于断言。
+
+    005 起 ``stream`` 改 yield :class:`LLMStreamEvent` 序列；这里 yield 一段
+    :class:`LLMTextDelta` 加一条 ``end_turn`` 的 :class:`LLMTurnDone` 模拟
+    一次完整的"无工具调用"LLM turn。
+    """
 
     reply: str = "ok"
-    received: list[list[dict[str, str]]] = field(default_factory=list)
+    received: list[list[dict[str, Any]]] = field(default_factory=list)
 
-    def complete(self, messages: list[dict[str, str]], **overrides: Any) -> str:
+    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
         self.received.append(messages)
         return self.reply
 
-    def stream(self, messages: list[dict[str, str]], **overrides: Any) -> Iterator[str]:
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
         self.received.append(messages)
-        yield self.reply
+        yield LLMTextDelta(text=self.reply)
+        yield LLMTurnDone(stop_reason="end_turn")
 
 
 def _seed_user_persona(catalog: PersonaCatalog, name: str, body: str) -> str:

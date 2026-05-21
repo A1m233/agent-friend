@@ -27,25 +27,63 @@ Note:
 
 from __future__ import annotations
 
+import os
 import sys
+import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from llm_providers import LLMClient
+from llm_providers import (
+    LLMClient,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+)
 from memory import Memory
 
 from .context import ContextManager
+from .conversation_events import (
+    ConversationEvent,
+    TextDelta,
+    ToolCallRequest,
+    ToolCallResult,
+    TurnDone,
+)
 from .errors import AgentError
 from .messages import Message
 from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
+from .tools import ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
     LLMClientFactory = Callable[[str], LLMClient]
     PromptBuilderFactory = Callable[[str], PromptBuilder]
+
+
+MAX_TOOL_TURNS_DEFAULT = 5
+"""工具调用循环的默认硬上限。可被环境变量 ``AGENT_MAX_TOOL_TURNS`` 覆盖。
+
+经验值：单次 turn 通常 1 ~ 2 次 tool 调用足够；3 次以上往往是 LLM 在死循环。
+触上限时由 :meth:`Conversation._finalize_on_tool_loop_limit` 注入收尾 system msg
+引导 LLM 用已有信息直接回复用户。
+
+详见 docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.6.3。
+"""
+
+
+def _resolve_max_tool_turns() -> int:
+    """读 ``AGENT_MAX_TOOL_TURNS`` 环境变量，无效或缺失时回落到默认值。"""
+    raw = os.environ.get("AGENT_MAX_TOOL_TURNS")
+    if not raw:
+        return MAX_TOOL_TURNS_DEFAULT
+    try:
+        v = int(raw)
+        return v if v > 0 else MAX_TOOL_TURNS_DEFAULT
+    except ValueError:
+        return MAX_TOOL_TURNS_DEFAULT
 
 
 class Conversation:
@@ -82,6 +120,7 @@ class Conversation:
         prompt_builder_factory: PromptBuilderFactory | None = None,
         catalog: PersonaCatalog | None = None,
         memory: Memory | None = None,
+        tool_registry: ToolRegistry | None = None,
     ):
         self._session = session
         self._store = store
@@ -92,7 +131,9 @@ class Conversation:
         self._prompt_builder_factory = prompt_builder_factory
         self._catalog = catalog or PersonaCatalog()
         self._memory = memory
+        self._tool_registry = tool_registry
         self._system_prompt = prompt_builder.build()
+        self._max_tool_turns = _resolve_max_tool_turns()
 
     # ----- 只读视图 -----
 
@@ -122,86 +163,174 @@ class Conversation:
     # ----- 对话主流程 -----
 
     def send(self, user_input: str) -> str:
-        """同步发送一轮对话，返回完整回复。
+        """同步发送一轮对话，返回完整回复（含可能的工具调用循环结果）。
+
+        本方法**内部消费 :meth:`stream`**，把所有 :class:`TextDelta` 拼起来
+        作为最终回复——这意味着如果 AI 决定调工具，``send()`` 会等工具执行
+        完毕、AI 整合工具结果生成最终文本后才返回。调用方拿不到工具调用的
+        中间过程信息（按 ``send`` 这个方法名所代表的"问一句答一句"语义）。
 
         Args:
             user_input: 用户输入文本。
 
         Returns:
-            assistant 的完整回复字符串。
+            AI 整合所有工具结果后的完整回复字符串。
+            如果工具调用失败，返回的是 AI 拟人化兜底后的文案（不暴露技术错误）。
 
         Raises:
-            llm_providers.LLMError: 任意子类。
-            SessionPersistError: 事件落盘失败（**LLM 已成功调用、回复已生成**，
-                调用方拿到 reply 后落盘才失败——本轮回复**未持久化**）。
+            llm_providers.LLMError: 任意子类。落盘语义同 :meth:`stream`。
+            SessionPersistError: 事件落盘失败。
 
         Note:
-            **LLM 失败时事件不会落盘**——本轮的 user / assistant 消息都不会进
-            session.events，下次重试是干净的。
+            **如需观测工具调用过程**（CLI / 调试），改用 :meth:`stream`。
         """
-        persona_name = self._session.current_persona_name
-        persona_id = self._session.current_persona_id
-        model_snapshot = self._session.current_model
-        openai_messages = self._build_openai_messages(user_input)
-        reply = self._llm_client.complete(openai_messages)
+        text_buf: list[str] = []
+        for ev in self.stream(user_input):
+            if isinstance(ev, TextDelta):
+                text_buf.append(ev.text)
+        return "".join(text_buf)
 
-        self._append_user_event(user_input)
-        self._append_assistant_event(
-            reply,
-            partial=False,
-            persona_name=persona_name,
-            persona_id=persona_id,
-            model=model_snapshot,
-        )
-        return reply
+    def stream(self, user_input: str) -> Iterator[ConversationEvent]:
+        """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
+        yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
 
-    def stream(self, user_input: str) -> Iterator[str]:
-        """流式发送一轮对话，逐 chunk yield 回复。
+        典型用法（按事件类型分派渲染）::
 
-        典型用法（CLI 边收边打印）::
+            for ev in conv.stream(user_input):
+                if isinstance(ev, TextDelta):
+                    print(ev.text, end="", flush=True)
+                elif isinstance(ev, ToolCallRequest):
+                    log_tool_call(ev)
+                elif isinstance(ev, ToolCallResult):
+                    log_tool_result(ev)
+                elif isinstance(ev, TurnDone):
+                    print()  # 换行
 
-            for chunk in conv.stream(user_input):
-                print(chunk, end="", flush=True)
+        工具调用循环骨架：
+
+        1. 第一轮调 LLM（带 ``tools`` 参数若 ``tool_registry`` 非空）
+        2. 累积文本和 tool_calls；按 ``stop_reason`` 分派：
+
+           - ``end_turn`` 或无 tool_calls → 落盘 assistant_event，yield ``TurnDone``，结束
+           - ``tool_use`` → 落盘 assistant_event + tool_call_request_events，
+             顺序执行所有 tool（捕获异常转 :class:`ToolResult` ``is_error=True``），
+             落盘 tool_call_result_events，进入下一轮
+        3. 触 :data:`MAX_TOOL_TURNS_DEFAULT` 上限 → 走
+           :meth:`_finalize_on_tool_loop_limit` 兜底，注入收尾 system msg
 
         Args:
             user_input: 用户输入文本。
 
         Yields:
-            assistant 文本片段。
+            :class:`TextDelta` / :class:`ToolCallRequest` / :class:`ToolCallResult` /
+            :class:`TurnDone`。
 
         Raises:
-            llm_providers.LLMError: 任意子类。**初始化阶段抛**（如认证错）则
-                事件完全不落盘；**迭代中途抛**（如断网）则会落 user_message +
-                ``payload.partial = True`` 的 assistant_message。
-            SessionPersistError: 事件落盘失败（同 :meth:`send`）。
+            llm_providers.LLMError: 任意子类。**第一轮初始化阶段抛**（如认证错）
+                则事件完全不落盘；**迭代中途抛 / 后续轮抛** 则会落本轮已经累积
+                的部分内容为 ``partial=True`` 的 assistant_message
+                （已成功完成的前几轮 tool 调用都已落盘，不受影响）。
+            SessionPersistError: 事件落盘失败。
 
         Note:
-            ``KeyboardInterrupt`` 等 :class:`BaseException` 也会被识别为部分回复
-            （通过 :func:`sys.exc_info`）。
+            ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
+            通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
-        openai_messages = self._build_openai_messages(user_input)
 
-        buffer: list[str] = []
+        user_event_appended = False
+        current_text_buf: list[str] = []
+        current_tc_acc: dict[int, dict[str, Any]] = {}
+        total_tool_calls = 0
+
         try:
-            for chunk in self._llm_client.stream(openai_messages):
-                buffer.append(chunk)
-                yield chunk
-        finally:
-            exc_info = sys.exc_info()
-            interrupted = exc_info[0] is not None
-            if interrupted and not buffer:
-                pass
-            else:
-                self._append_user_event(user_input)
+            for turn_idx in range(self._max_tool_turns + 1):
+                current_text_buf = []
+                current_tc_acc = {}
+
+                if turn_idx == 0:
+                    openai_messages = self._build_openai_messages_first_turn(user_input)
+                else:
+                    openai_messages = self._build_openai_messages_continuation()
+
+                tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
+
+                stop_reason = ""
+                for ev in self._llm_client.stream(openai_messages, tools=tool_specs):
+                    if isinstance(ev, LLMTextDelta):
+                        current_text_buf.append(ev.text)
+                        yield TextDelta(text=ev.text)
+                    elif isinstance(ev, LLMToolCallDelta):
+                        self._accumulate_tool_call_delta(current_tc_acc, ev)
+                    elif isinstance(ev, LLMTurnDone):
+                        stop_reason = ev.stop_reason
+
+                # 第一轮 LLM 完成才落 user_event（保留"初始化失败完全不落盘"语义）
+                if not user_event_appended:
+                    self._append_user_event(user_input)
+                    user_event_appended = True
+
+                tool_calls = self._finalize_tool_calls(current_tc_acc)
+
                 self._append_assistant_event(
-                    "".join(buffer),
-                    partial=interrupted,
+                    "".join(current_text_buf),
+                    partial=False,
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model=model_snapshot,
+                )
+
+                if not tool_calls or stop_reason != "tool_use":
+                    yield TurnDone(stop_reason="end_turn", total_tool_calls=total_tool_calls)
+                    return
+
+                # 触上限后不再执行 tool（已经做完了 _max_tool_turns 轮）
+                if turn_idx >= self._max_tool_turns:
+                    break
+
+                # 执行本轮的所有 tool_calls（顺序）
+                for tc in tool_calls:
+                    self._append_tool_call_request_event(tc)
+                    yield ToolCallRequest(
+                        tool_call_id=tc["id"],
+                        tool_name=tc["name"],
+                        args=tc["args"],
+                    )
+
+                    start = time.monotonic()
+                    result = self._invoke_tool_safely(tc["name"], tc["args"])
+                    duration = time.monotonic() - start
+
+                    self._append_tool_call_result_event(tc, result, duration)
+                    yield ToolCallResult(
+                        tool_call_id=tc["id"],
+                        tool_name=tc["name"],
+                        text=result.text,
+                        is_error=result.is_error,
+                        duration_seconds=duration,
+                    )
+                    total_tool_calls += 1
+
+            # 走出 for 循环 = 触上限：执行兜底逻辑
+            yield from self._finalize_on_tool_loop_limit(
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model_snapshot=model_snapshot,
+                total_tool_calls=total_tool_calls,
+            )
+        finally:
+            exc_info = sys.exc_info()
+            interrupted = exc_info[0] is not None
+            if interrupted:
+                self._on_interrupt(
+                    user_input=user_input,
+                    user_event_appended=user_event_appended,
+                    current_text_buf=current_text_buf,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model_snapshot=model_snapshot,
                 )
 
     # ----- 切换 persona / model -----
@@ -325,8 +454,9 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
-    def _build_openai_messages(self, user_input: str) -> list[dict[str, str]]:
-        """组装本轮要发给 LLM 的消息列表（OpenAI 风格的 dict）。"""
+    def _build_openai_messages_first_turn(self, user_input: str) -> list[dict[str, Any]]:
+        """工具调用循环第 0 轮：通过 :class:`ContextManager` 把 ``user_input``
+        作为最新一条 user 消息组装。"""
         extra = self._memory.retrieve(user_input) if self._memory else None
         build = self._context_manager.build_messages(
             history=self._session.messages,
@@ -335,6 +465,197 @@ class Conversation:
             extra_context=extra,
         )
         return [m.to_openai() for m in build.messages]
+
+    def _build_openai_messages_continuation(self) -> list[dict[str, Any]]:
+        """工具调用循环第 N>0 轮：直接从 :attr:`Session.messages` 派生
+        （已含 user_event + 历次 assistant_event + tool_call_*_event 折叠后的消息）。
+
+        不再调用 :class:`ContextManager`——它的接口要求传 ``new_user_input``，
+        但本轮没有新的用户输入。
+        """
+        msgs: list[Message] = []
+        if self._system_prompt:
+            msgs.append(Message(role="system", content=self._system_prompt))
+        msgs.extend(self._session.messages)
+        return [m.to_openai() for m in msgs]
+
+    def _accumulate_tool_call_delta(
+        self,
+        acc: dict[int, dict[str, Any]],
+        delta: LLMToolCallDelta,
+    ) -> None:
+        """把 :class:`LLMToolCallDelta` 增量累积到 ``acc`` 字典里（按 index 分组）。"""
+        slot = acc.setdefault(
+            delta.index,
+            {"id": "", "name": "", "args_json": ""},
+        )
+        if delta.tool_call_id:
+            slot["id"] = delta.tool_call_id
+        if delta.tool_name:
+            slot["name"] = delta.tool_name
+        slot["args_json"] += delta.args_json_delta
+
+    def _finalize_tool_calls(self, acc: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+        """把累积好的 tool_call dict 转成最终列表（按 index 顺序）。
+
+        ``args_json`` 字段反序列化为 ``args`` 字典。LLM 偶发吐出
+        非法 JSON 时降级为空 dict（让工具自己处理空入参或返回 is_error）。
+        """
+        import json
+
+        result: list[dict[str, Any]] = []
+        for idx in sorted(acc.keys()):
+            slot = acc[idx]
+            if not slot["id"] or not slot["name"]:
+                continue  # 损坏 / 不完整的 tool_call，丢弃
+            try:
+                args = json.loads(slot["args_json"]) if slot["args_json"] else {}
+                if not isinstance(args, dict):
+                    args = {}
+            except json.JSONDecodeError:
+                args = {}
+            result.append({"id": slot["id"], "name": slot["name"], "args": args})
+        return result
+
+    def _invoke_tool_safely(self, name: str, args: dict[str, Any]) -> ToolResult:
+        """调一次工具，把所有异常转为 :class:`ToolResult` ``is_error=True``。
+
+        Note:
+            :class:`agent.tools.errors.ToolNotFoundError` 也走这里——LLM 调了
+            未注册的工具（拼写错误等）应转 error result 喂回 LLM 让它修正后续调用，
+            而不是 raise 中断整个循环。
+        """
+        if self._tool_registry is None:
+            return ToolResult(
+                text=f"工具 {name!r} 不可用：当前会话未配置工具集",
+                is_error=True,
+            )
+        try:
+            return self._tool_registry.invoke(name, args)
+        except Exception as exc:
+            return ToolResult(
+                text=f"工具 {name!r} 执行出错: {exc}",
+                is_error=True,
+            )
+
+    def _finalize_on_tool_loop_limit(
+        self,
+        *,
+        persona_name: str,
+        persona_id: str | None,
+        model_snapshot: str,
+        total_tool_calls: int,
+    ) -> Iterator[ConversationEvent]:
+        """工具调用循环触达 :attr:`_max_tool_turns` 上限时的兜底策略。
+
+        注入一条临时 system message，引导 LLM 用已有信息直接回复用户、
+        不再调任何工具（``tools=None``）。生成的最终 assistant 文本会落盘。
+
+        **抽出独立方法**便于未来替换不同策略（如改成截断式收尾、
+        或交由用户决定继续）。
+
+        详见 docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.6.2。
+        """
+        extra_system = (
+            "你已经多次调用工具仍未达成目标，请基于已有信息用一两句话直接回复用户，"
+            "不要再调用任何工具。"
+        )
+        msgs: list[Message] = []
+        if self._system_prompt:
+            msgs.append(Message(role="system", content=self._system_prompt))
+        msgs.extend(self._session.messages)
+        msgs.append(Message(role="system", content=extra_system))
+        openai_messages = [m.to_openai() for m in msgs]
+
+        text_buf: list[str] = []
+        for ev in self._llm_client.stream(openai_messages, tools=None):
+            if isinstance(ev, LLMTextDelta):
+                text_buf.append(ev.text)
+                yield TextDelta(text=ev.text)
+            # 触上限兜底中不再处理 tool_call_delta（tools=None，理论上 LLM 不该返回）
+
+        self._append_assistant_event(
+            "".join(text_buf),
+            partial=False,
+            persona_name=persona_name,
+            persona_id=persona_id,
+            model=model_snapshot,
+        )
+        yield TurnDone(
+            stop_reason="max_turns_reached",
+            total_tool_calls=total_tool_calls,
+        )
+
+    def _on_interrupt(
+        self,
+        *,
+        user_input: str,
+        user_event_appended: bool,
+        current_text_buf: list[str],
+        persona_name: str,
+        persona_id: str | None,
+        model_snapshot: str,
+    ) -> None:
+        """被异常 / KeyboardInterrupt 中断时的落盘策略。
+
+        - 第一轮 LLM 还没出任何内容（``not user_event_appended`` 且 buffer 全空）：
+          完全不落盘——下次重试干净（与 001 起的语义一致）
+        - 否则把当前轮已经累积的部分文本落为 ``partial=True`` 的 assistant_event；
+          已成功完成的前几轮 tool 调用事件不受影响
+        """
+        if not user_event_appended:
+            if not current_text_buf:
+                return  # 完全没启动，不落盘
+            # 罕见：LLM 已经流出文本但中途中断，user_event 还没落
+            self._append_user_event(user_input)
+        if current_text_buf:
+            self._append_assistant_event(
+                "".join(current_text_buf),
+                partial=True,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model=model_snapshot,
+            )
+
+    def _append_tool_call_request_event(self, tc: dict[str, Any]) -> None:
+        """落 ``tool_call_request`` 事件。"""
+        event = Event(
+            type="tool_call_request",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "tool_call_id": tc["id"],
+                "tool_name": tc["name"],
+                "args": tc["args"],
+            },
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_tool_call_result_event(
+        self,
+        tc: dict[str, Any],
+        result: ToolResult,
+        duration: float,
+    ) -> None:
+        """落 ``tool_call_result`` 事件。"""
+        meta: dict[str, Any] = {"duration_seconds": duration}
+        if result.meta:
+            meta["extra"] = dict(result.meta)
+        event = Event(
+            type="tool_call_result",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "tool_call_id": tc["id"],
+                "tool_name": tc["name"],
+                "content": result.text,
+                "is_error": result.is_error,
+            },
+            meta=meta,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
 
     # ----- 调试辅助 -----
 

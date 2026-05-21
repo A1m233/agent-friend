@@ -53,6 +53,11 @@ from agent import (
     SessionNotFoundError,
     SessionPersistError,
     SessionSummary,
+    TextDelta,
+    ToolCallRequest,
+    ToolCallResult,
+    TurnDone,
+    make_default_registry,
     random_fallback,
 )
 from llm_providers import (
@@ -268,6 +273,64 @@ def _match_session_prefix(mgr: SessionManager, prefix: str) -> SessionSummary | 
 # ===== 显示 =====
 
 
+def _brief(args: dict[str, object], max_value_len: int = 60) -> str:
+    """简短化 tool 调用入参用于一行展示。
+
+    单个 string value 超长截断为 ``"..."`` 后缀；其他类型 ``str()`` 后同样规则。
+    多个字段用 ``", "`` 拼接。返回串**不带外层括号**——调用方按
+    ``"name(brief)"`` 模板自己加。
+    """
+    if not args:
+        return ""
+    parts: list[str] = []
+    for k, v in args.items():
+        if isinstance(v, str):
+            s = v if len(v) <= max_value_len else v[:max_value_len] + "..."
+            parts.append(f'{k}="{s}"')
+        else:
+            s = str(v)
+            if len(s) > max_value_len:
+                s = s[:max_value_len] + "..."
+            parts.append(f"{k}={s}")
+    return ", ".join(parts)
+
+
+def _print_tool_request(tool_name: str, args: dict[str, object]) -> None:
+    """统一渲染 tool 调用的"请求"行（实时 + 重放共用）。"""
+    stderr.print(
+        f"[tool] {tool_name}({_brief(args)})",
+        style="dim",
+        markup=False,
+        highlight=False,
+    )
+
+
+def _print_tool_result(
+    *,
+    is_error: bool,
+    text: str,
+    duration_seconds: float | None,
+) -> None:
+    """统一渲染 tool 调用的"结果"行（实时 + 重放共用）。
+
+    ``duration_seconds`` 为 ``None`` 时（例如 replay 时 meta 缺字段），
+    显示 ``done`` 不带耗时；``is_error=True`` 时用红字 + 截断文本。
+    """
+    if is_error:
+        stderr.print(
+            f"[tool] ✗ {text[:80]}",
+            style="red",
+            markup=False,
+            highlight=False,
+        )
+        return
+    if duration_seconds is not None:
+        line = f"[tool] → done, {duration_seconds:.1f}s"
+    else:
+        line = "[tool] → done"
+    stderr.print(line, style="dim", markup=False, highlight=False)
+
+
 def _clear_screen() -> None:
     """软清屏：清当前可见屏幕 + 光标回顶，**不动 terminal scrollback buffer**。
 
@@ -294,22 +357,28 @@ def _replay_history(session: Session) -> None:
     - ``assistant_message`` → ``AI: <content>`` ；若 ``partial`` 加 ``(中断)`` 后缀
     - ``persona_change`` → ``→ persona: from → to`` 灰字
     - ``model_change`` → ``→ model: from → to`` 灰字
+    - ``tool_call_request`` → ``[tool] <name>(<args>)`` 灰字 stderr
+    - ``tool_call_result`` → ``[tool] → done, X.Xs`` / ``[tool] ✗ <text>`` stderr
 
-    末尾打一行分隔线：``─── 以上是历史 (N 条消息) ───``。若 session 没有任何
-    user/assistant 事件（如刚创建的空 session），整个函数直接 no-op。
+    工具事件不计入"消息计数"——但若整个 session 只有工具事件没有任何
+    user/assistant 消息（极端损坏数据），保持原有 no-op 语义不变。
+
+    末尾打一行分隔线：``─── 以上是历史 (N 条消息) ───``。
     """
     msg_count = 0
-    lines_to_print: list[tuple[str, str, bool]] = []
+    lines_to_print: list[tuple[str, object]] = []
     for ev in session.events:
         if ev.type == "user_message":
-            lines_to_print.append(("user", ev.payload.get("content", ""), False))
+            lines_to_print.append(("user", ev.payload.get("content", "")))
             msg_count += 1
         elif ev.type == "assistant_message":
             lines_to_print.append(
                 (
                     "assistant",
-                    ev.payload.get("content", ""),
-                    bool(ev.payload.get("partial")),
+                    (
+                        ev.payload.get("content", ""),
+                        bool(ev.payload.get("partial")),
+                    ),
                 )
             )
             msg_count += 1
@@ -318,7 +387,6 @@ def _replay_history(session: Session) -> None:
                 (
                     "persona_change",
                     f"{ev.payload.get('from', '?')} → {ev.payload.get('to', '?')}",
-                    False,
                 )
             )
         elif ev.type == "model_change":
@@ -326,18 +394,45 @@ def _replay_history(session: Session) -> None:
                 (
                     "model_change",
                     f"{ev.payload.get('from', '?')} → {ev.payload.get('to', '?')}",
-                    False,
+                )
+            )
+        elif ev.type == "tool_call_request":
+            lines_to_print.append(
+                (
+                    "tool_request",
+                    (
+                        str(ev.payload.get("tool_name", "")),
+                        dict(ev.payload.get("args", {}) or {}),
+                    ),
+                )
+            )
+        elif ev.type == "tool_call_result":
+            duration_raw = ev.meta.get("duration_seconds")
+            duration: float | None = (
+                float(duration_raw) if isinstance(duration_raw, int | float) else None
+            )
+            lines_to_print.append(
+                (
+                    "tool_result",
+                    (
+                        bool(ev.payload.get("is_error", False)),
+                        str(ev.payload.get("content", "")),
+                        duration,
+                    ),
                 )
             )
 
     if msg_count == 0:
         return
 
-    for kind, text, partial in lines_to_print:
+    for kind, data in lines_to_print:
         if kind == "user":
+            assert isinstance(data, str)
             stdout.print("[ansiblue]你:[/ansiblue] ", end="")
-            stdout.print(text, markup=False, highlight=False)
+            stdout.print(data, markup=False, highlight=False)
         elif kind == "assistant":
+            assert isinstance(data, tuple)
+            text, partial = data
             stdout.print("[bold green]AI:[/bold green] ", end="")
             stdout.print(text, end="", style="green", markup=False, highlight=False)
             if partial:
@@ -345,9 +440,19 @@ def _replay_history(session: Session) -> None:
             else:
                 stdout.print()
         elif kind == "persona_change":
-            stdout.print(f"[dim]→ persona: {text}[/dim]")
+            assert isinstance(data, str)
+            stdout.print(f"[dim]→ persona: {data}[/dim]")
         elif kind == "model_change":
-            stdout.print(f"[dim]→ model: {text}[/dim]")
+            assert isinstance(data, str)
+            stdout.print(f"[dim]→ model: {data}[/dim]")
+        elif kind == "tool_request":
+            assert isinstance(data, tuple)
+            tool_name, args = data
+            _print_tool_request(tool_name, args)
+        elif kind == "tool_result":
+            assert isinstance(data, tuple)
+            is_error, text, duration = data
+            _print_tool_result(is_error=is_error, text=text, duration_seconds=duration)
 
     stdout.print(f"[dim]─── 以上是历史 ({msg_count} 条消息) ───[/dim]\n")
 
@@ -624,16 +729,33 @@ def _interactive_loop(ctx: _CliContext) -> int:
         assert ctx.conv is not None
 
         stdout.print("[bold green]AI:[/bold green] ", end="")
+        text_emitted_in_segment = False
         try:
-            for chunk in ctx.conv.stream(user_input):
-                stdout.print(
-                    chunk,
-                    end="",
-                    style="green",
-                    markup=False,
-                    highlight=False,
-                )
-            stdout.print()
+            for ev in ctx.conv.stream(user_input):
+                if isinstance(ev, TextDelta):
+                    stdout.print(
+                        ev.text,
+                        end="",
+                        style="green",
+                        markup=False,
+                        highlight=False,
+                    )
+                    text_emitted_in_segment = True
+                elif isinstance(ev, ToolCallRequest):
+                    if text_emitted_in_segment:
+                        stdout.print()
+                    text_emitted_in_segment = False
+                    _print_tool_request(ev.tool_name, ev.args)
+                elif isinstance(ev, ToolCallResult):
+                    _print_tool_result(
+                        is_error=ev.is_error,
+                        text=ev.text,
+                        duration_seconds=ev.duration_seconds,
+                    )
+                elif isinstance(ev, TurnDone):
+                    if text_emitted_in_segment:
+                        stdout.print()
+                # 未知 type：前向兼容，静默忽略
         except LLMAuthError as e:
             stdout.print()
             stderr.print(rf"[red]\[配置错误] {e}[/red]")
@@ -673,11 +795,13 @@ def main() -> int:
         stderr.print(rf"[red]\[初始化失败] 无法创建会话目录: {e}[/red]")
         return 1
 
+    tool_registry = make_default_registry()
     mgr = SessionManager(
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
         context_manager=NaiveContextManager(),
+        tool_registry=tool_registry,
     )
     catalog = PersonaCatalog()
 

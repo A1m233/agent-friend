@@ -21,6 +21,8 @@ EventType = Literal[
     "assistant_message",
     "persona_change",
     "model_change",
+    "tool_call_request",
+    "tool_call_result",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -30,13 +32,19 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "assistant_message",
         "persona_change",
         "model_change",
+        "tool_call_request",
+        "tool_call_result",
     }
 )
 
 SCHEMA_VERSION: Final[int] = 1
 """``session_meta.payload.schema_version`` 当前值。
 
-未来真正修改 schema 时递增；本期不做迁移逻辑（design §1.2）。
+未来真正修改 schema 时递增；本期不做迁移逻辑（002 design §1.2）。
+
+005 起新增 ``tool_call_request`` / ``tool_call_result`` 两类事件——这是**纯加性
+变更**，老文件不会触发新校验路径，故 ``SCHEMA_VERSION`` **不递增**
+（详见 005 design §4.2.4）。
 """
 
 

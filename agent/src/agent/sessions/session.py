@@ -196,15 +196,29 @@ class Session:
 
     @property
     def messages(self) -> list[Message]:
-        """过滤 ``user_message`` / ``assistant_message`` 事件，按 ts 顺序转 :class:`Message`。
+        """从事件流派生 :class:`Message` 列表，按时间顺序排列。
 
-        ``Event.uuid`` 直接映射到 ``Message.uuid``（M2.2 起的正式字段，design §4.6）。
-        ``Event.meta`` 复制到 ``Message.meta``；``partial`` 标志合并进 ``Message.meta``。
+        识别的事件类型：
+
+        - ``user_message`` → 一条 ``role="user"`` 消息
+        - ``assistant_message`` → 一条 ``role="assistant"`` 消息
+        - ``tool_call_request`` → **不直接产消息**，依附到上一条 assistant
+          消息的 ``meta["tool_calls"]`` 列表里（OpenAI 协议要求 assistant
+          消息携带 ``tool_calls`` 字段）
+        - ``tool_call_result`` → 一条 ``role="tool"`` 消息
+
+        ``Event.uuid`` 直接映射到 ``Message.uuid``（M2.2 起的正式字段，详见
+        002 design §4.6）。``Event.meta`` 复制到 ``Message.meta``；
+        ``partial`` 标志合并进 ``Message.meta``。
+
+        损坏数据的容忍：``tool_call_request`` 找不到上一条 assistant 时
+        **静默忽略**——避免历史读取爆炸；新写入不会出现这种情况。
 
         Returns:
-            按时间顺序排列的 Message 列表。
+            按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
         result: list[Message] = []
+        last_assistant: Message | None = None
         for ev in self.events:
             if ev.type == "user_message":
                 result.append(
@@ -216,16 +230,43 @@ class Session:
                         uuid=ev.uuid,
                     )
                 )
+                last_assistant = None
             elif ev.type == "assistant_message":
                 msg_meta: dict[str, Any] = dict(ev.meta)
                 if ev.payload.get("partial"):
                     msg_meta["partial"] = True
+                msg = Message(
+                    role="assistant",
+                    content=ev.payload.get("content", ""),
+                    timestamp=ev.ts,
+                    meta=msg_meta,
+                    uuid=ev.uuid,
+                )
+                result.append(msg)
+                last_assistant = msg
+            elif ev.type == "tool_call_request":
+                if last_assistant is None:
+                    continue  # 数据损坏，静默忽略
+                tool_calls = list(last_assistant.meta.get("tool_calls", []))
+                tool_calls.append(
+                    {
+                        "id": ev.payload.get("tool_call_id", ""),
+                        "name": ev.payload.get("tool_name", ""),
+                        "args": ev.payload.get("args", {}),
+                    }
+                )
+                last_assistant.meta["tool_calls"] = tool_calls
+            elif ev.type == "tool_call_result":
+                tool_meta: dict[str, Any] = dict(ev.meta)
+                tool_meta["tool_call_id"] = ev.payload.get("tool_call_id", "")
+                tool_meta["tool_name"] = ev.payload.get("tool_name", "")
+                tool_meta["is_error"] = ev.payload.get("is_error", False)
                 result.append(
                     Message(
-                        role="assistant",
+                        role="tool",
                         content=ev.payload.get("content", ""),
                         timestamp=ev.ts,
-                        meta=msg_meta,
+                        meta=tool_meta,
                         uuid=ev.uuid,
                     )
                 )

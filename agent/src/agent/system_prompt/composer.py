@@ -13,6 +13,7 @@ from ..personas import PersonaCatalog
 _PROJECT_IDENTITY_KEY = "project_identity"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
+_RUNTIME_CONTEXT_KEY = "runtime_context"
 
 
 @runtime_checkable
@@ -64,8 +65,13 @@ class SystemPromptComposer:
         _PROJECT_IDENTITY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
+        _RUNTIME_CONTEXT_KEY,
     )
-    """默认装配（:meth:`default`）下三个槽位的 key，按渲染顺序。"""
+    """默认装配（:meth:`default`）下槽位的 key，按渲染顺序。
+
+    005 起追加 ``runtime_context`` 槽位（最末尾）——按 cc 的"前部稳定指令、
+    后部运行时变化信息"+ recency bias 原则放置。详见 005 design §4.10。
+    """
 
     def compose(self) -> str:
         """渲染所有 section、按双换行拼接。
@@ -138,15 +144,21 @@ class SystemPromptComposer:
           catalog）
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
           文本来自 ``prompt_sections/persona_switch_strategy.md``）
+        - ``runtime_context``：当前会话运行时上下文（:class:`RuntimeContextSection`，
+          模板来自 ``prompt_sections/runtime_context.md``）。005 起新增，含
+          当前时间 / knowledge cutoff 提示 / web_search 工具使用强约束。
 
         Args:
             persona_id: 目标 persona 的 UUID。
             catalog: persona 真相源；必传（避免内部凭空构造，便于测试注入）。
 
         Returns:
-            含 3 个默认槽位的 composer。
+            含 4 个默认槽位的 composer。
         """
-        from .defaults import load_default_static_section
+        from .defaults import (
+            load_default_runtime_context_section,
+            load_default_static_section,
+        )
         from .sections import PersonaSection
 
         section_list: list[Section] = [
@@ -157,5 +169,6 @@ class SystemPromptComposer:
                 catalog=catalog,
             ),
             load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
+            load_default_runtime_context_section(_RUNTIME_CONTEXT_KEY),
         ]
         return cls(sections=tuple(section_list))
