@@ -96,3 +96,16 @@ models/
 # ===== Tauri build output =====
 src-tauri/target/
 src-tauri/gen/
+
+# ===== Spike: voice-poc =====
+# 官方 demo 入仓留档，但排除以下不该入的：
+#   1. node_modules（重装就有）
+#   2. demo 自己的 .git 历史（别人仓库的 commit）
+#   3. 构建产物 / 缓存
+experiments/voice-poc/rtc-aigc-demo/node_modules/
+experiments/voice-poc/rtc-aigc-demo/**/node_modules/
+experiments/voice-poc/rtc-aigc-demo/.git/
+experiments/voice-poc/rtc-aigc-demo/build/
+experiments/voice-poc/rtc-aigc-demo/dist/
+# Phase 2 cloudflared 临时配置 / 凭据（如果有）
+experiments/voice-poc/.cloudflared/
