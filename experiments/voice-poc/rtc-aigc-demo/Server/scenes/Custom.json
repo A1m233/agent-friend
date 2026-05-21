@@ -1,0 +1,80 @@
+{
+  "SceneConfig": {
+    "icon": "https://lf3-rtc-demo.volccdn.com/obj/rtc-aigc-assets/DoubaoAvatar.png",
+    "name": "agent-friend voice-poc"
+  },
+  "AccountConfig": {
+    "accessKeyId": "example-account-value",
+    "secretKey": "example-account-value"
+  },
+  "RTCConfig": {
+    "AppId": "example-account-value",
+    "AppKey": "example-account-value",
+    "RoomId": "",
+    "UserId": "",
+    "Token": ""
+  },
+  "VoiceChat": {
+    "AppId": "example-account-value",
+    "RoomId": "",
+    "TaskId": "",
+    "AgentConfig": {
+      "TargetUserId": [
+        ""
+      ],
+      "WelcomeMessage": "嗨，我是 agent-friend 的语音 spike demo，你能听到我说话吗？",
+      "UserId": "",
+      "EnableConversationStateCallback": true
+    },
+    "Config": {
+      "ASRConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "Mode": "bigmodel",
+          "StreamMode": 0,
+          "AppId": "example-account-value",
+          "AccessToken": "example-account-value"
+        },
+        "VADConfig": {
+          "SilenceTime": 300,
+          "AIVAD": true
+        }
+      },
+      "TTSConfig": {
+        "Provider": "volcano",
+        "ProviderParams": {
+          "app": {
+            "appid": "example-account-value",
+            "cluster": "volcano_tts"
+          },
+          "audio": {
+            "voice_type": "zh_female_linjianvhai_moon_bigtts",
+            "speed_ratio": 1,
+            "pitch_ratio": 1,
+            "volume_ratio": 1
+          }
+        }
+      },
+      "LLMConfig": {
+        "Mode": "ArkV3",
+        "EndPointId": "example-account-value",
+        "SystemMessages": [
+          "你是 agent-friend 语音 spike 模式下的临时助手，说话简洁自然、像真人聊天，单次回复尽量在 30 字以内。"
+        ],
+        "VisionConfig": {
+          "Enable": false
+        }
+      },
+      "AvatarConfig": {
+        "Enabled": false,
+        "AvatarType": "3min",
+        "AvatarRole": "250623-zhibo-linyunzhi",
+        "BackgroundUrl": "",
+        "VideoBitrate": 2000,
+        "AvatarAppID": "",
+        "AvatarToken": ""
+      },
+      "InterruptMode": 0
+    }
+  }
+}
