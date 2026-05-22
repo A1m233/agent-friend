@@ -70,19 +70,25 @@ class BridgeRuntime:
     Attributes:
         settings: 解析后的 :class:`BridgeSettings`。
         persistent_store: 持久化 store（JSONL），AG-UI / OpenAI 升级模式用。
-            **本期暂未使用**——M6.1 只接 OpenAI 默认无状态分支；保留入口便于
-            M6.2 接入 AG-UI 时零改动复用。
+            ``persistent_session_manager`` 持有它的引用——本字段保留供 meta
+            路由直接做 :meth:`SessionStore.list` / :meth:`load` 等只读查询。
         transient_store: ``NullSessionStore`` 实例；OpenAI 默认无状态分支用。
+        persistent_session_manager: 进程级唯一的持久化 :class:`SessionManager`
+            （注入 ``persistent_store``）。AG-UI 出口 + meta 路由共享同一实例，
+            保证 ``in-memory session cache``、``store`` 文件锁行为在多请求间一致。
         catalog: persona catalog。
         tool_registry: 全局工具注册表。
+        default_persona: 自动创建 session 时的默认 persona name（slug）。
         default_model: 没指定 model 时的默认值（从 ``DEEPSEEK_MODEL`` 解析）。
     """
 
     settings: BridgeSettings
     persistent_store: SessionStore
     transient_store: SessionStore
+    persistent_session_manager: SessionManager
     catalog: PersonaCatalog
     tool_registry: ToolRegistry
+    default_persona: str
     default_model: str
 
     def make_transient_session_manager(self) -> SessionManager:
@@ -101,6 +107,18 @@ class BridgeRuntime:
         )
 
 
+def _make_persistent_session_manager(
+    store: SessionStore, tool_registry: ToolRegistry
+) -> SessionManager:
+    return SessionManager(
+        store=store,
+        llm_client_factory=_llm_factory,
+        prompt_builder_factory=_prompt_factory,
+        context_manager=NaiveContextManager(),
+        tool_registry=tool_registry,
+    )
+
+
 def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     """进程启动期一次性装配 :class:`BridgeRuntime`。
 
@@ -113,13 +131,17 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     transient_store = NullSessionStore()
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
+    persistent_session_manager = _make_persistent_session_manager(persistent_store, tool_registry)
+    default_persona = catalog.find_by_name("default").name
     default_model = _make_spec_with_thinking_off().model
 
     return BridgeRuntime(
         settings=settings,
         persistent_store=persistent_store,
         transient_store=transient_store,
+        persistent_session_manager=persistent_session_manager,
         catalog=catalog,
         tool_registry=tool_registry,
+        default_persona=default_persona,
         default_model=default_model,
     )

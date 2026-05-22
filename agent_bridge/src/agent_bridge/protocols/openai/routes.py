@@ -56,7 +56,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         boot = TransientBootstrap(
             history=decoded.history,
             latest_user_input=decoded.latest_user_input,
-            persona="default",
+            persona=runtime.default_persona,
             model=model,
         )
         conv = bridge.start_transient(boot)

@@ -3,8 +3,8 @@
 :func:`create_app` 是 ``uvicorn --factory`` 模式的入口：
 
 - 进程启动时调用一次，构造 :class:`BridgeRuntime` 与 :class:`FastAPI` 实例
-- 把各协议层的路由（M6.1：仅 OpenAI；M6.2 起：+ AG-UI / sessions / personas）
-  挂到同一个 :class:`FastAPI` 实例
+- 把各协议层的路由（M6.1：OpenAI；M6.2 起：+ AG-UI + meta REST）挂到
+  同一个 :class:`FastAPI` 实例
 - 注册健康检查 ``GET /healthz``
 
 详见 docs/requirements/006-agent-bridge/design.md §4.2 + §4.10。
@@ -17,7 +17,9 @@ import logging
 from fastapi import FastAPI
 
 from .assembly import build_runtime
+from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.openai import register_routes as register_openai_routes
+from .routes.meta import register_routes as register_meta_routes
 from .settings import BridgeSettings
 
 
@@ -35,7 +37,7 @@ def create_app() -> FastAPI:
         title="agent-bridge",
         version="0.1.0",
         description=(
-            "agent-friend 的 HTTP SSE 出口；本期 M6.1 仅启用 OpenAI ChatCompletion 协议。"
+            "agent-friend 的 HTTP SSE 出口；M6.2 启用 OpenAI + AG-UI 双协议 + meta REST。"
         ),
     )
 
@@ -44,6 +46,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     register_openai_routes(app, runtime)
+    register_ag_ui_routes(app, runtime)
+    register_meta_routes(app, runtime)
 
     return app
 

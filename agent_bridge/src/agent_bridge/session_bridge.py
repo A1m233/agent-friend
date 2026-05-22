@@ -1,19 +1,16 @@
 """``SessionBridge`` —— bridge 进程的"会话桥"。
 
-承担三种语义模式的统一调度（本期 M6.1 只实现其中两种与 OpenAI 相关的部分）：
+承担三种语义模式的统一调度：
 
 1. **transient（OpenAI 默认无状态）**：客户端在 messages 数组里发完整历史；
    bridge 进程内为这一次请求构造 in-memory :class:`Session` + :class:`Conversation`，
    跑完即丢——磁盘不留任何痕迹。
-2. **persistent（OpenAI 扩展位 / AG-UI）**：客户端通过 ``X-Agent-Friend-Session-Id``
-   header（OpenAI）或 ``thread_id`` 字段（AG-UI）指定持久化 session id；
-   bridge 读 / 写 ``data/sessions/{id}.jsonl``。
-3. **auto-create（AG-UI）**：客户端发的 ``thread_id`` 不存在时，自动以该
-   ``thread_id`` 作为 ``session_id`` 创建新 session（详见 design §4.4 N-2）。
-
-M6.1 范围：只实现 **transient** 模式。**persistent / auto-create** 留 M6.2
-接入 AG-UI 时再加。本类暴露的接口已为后续模式预留扩展位（同样返回
-:class:`agent.Conversation` 与一次性 in-memory :class:`Session`）。
+2. **persistent + auto-create（AG-UI 默认）**：客户端在 body 里发 ``thread_id``；
+   bridge 把 ``thread_id`` 直接当 ``session_id``，存在则 ``open``、不存在则
+   ``create(session_id=thread_id)``，落盘 ``data/sessions/{thread_id}.jsonl``。
+3. **persistent（OpenAI 扩展位，本期不暴露 CLI 入口）**：客户端通过
+   ``X-Agent-Friend-Session-Id`` header 显式指定已存在的 session id；
+   M6.2 仅暴露 AG-UI 通道，OpenAI 扩展位的接入由后续里程碑决定是否启用。
 
 详见 docs/requirements/006-agent-bridge/design.md §4.4。
 """
@@ -22,9 +19,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent import Conversation, Message, Session
+from agent import Conversation, Message, Session, SessionNotFoundError
 
 from .assembly import BridgeRuntime
+
+
+@dataclass(frozen=True)
+class PersistentBootstrap:
+    """AG-UI 持久化分支的输入。
+
+    Attributes:
+        thread_id: AG-UI ``RunAgentInput.thread_id``；bridge 把它当 ``session_id`` 用。
+            不存在时**自动创建**新 session（id 即 thread_id），用 ``default_persona``
+            / ``default_model`` 装配。这是 AG-UI 协议"无感"语义的体现，详见
+            design §4.4.2。
+        new_user_input: 本轮 user 新输入文本。AG-UI ``messages`` 里之前的历史
+            **不**被搬到 bridge——bridge 假设 ``thread_id`` 对应的 jsonl 已经
+            落盘了之前所有事件，session ``open`` 时会自然 replay 进 in-memory
+            事件流。
+        default_persona: 自动创建时的默认 persona（与 OpenAI 出口共享同一个默认）。
+        default_model: 自动创建时的默认 model。
+    """
+
+    thread_id: str
+    new_user_input: str
+    default_persona: str
+    default_model: str
 
 
 @dataclass(frozen=True)
@@ -90,6 +110,43 @@ class SessionBridge:
 
         for msg in boot.history:
             self._append_history_message_in_memory(session, msg)
+
+        return mgr.start_conversation(session)
+
+    def bind_persistent(self, boot: PersistentBootstrap) -> Conversation:
+        """AG-UI 持久化分支：``thread_id`` ↔ ``session_id`` 一对一。
+
+        - ``thread_id`` 已存在（jsonl 落盘）→ ``open(thread_id)``，事件流自动 replay
+        - ``thread_id`` 不存在 → ``create(persona=default, model=default, session_id=thread_id)``
+          落盘 ``data/sessions/{thread_id}.jsonl`` 首行 ``session_meta``
+
+        本期不暴露"客户端能控制 auto-create 时用哪个 persona / model"——
+        AG-UI 协议本身没有这个槽位。需要切 persona / model 时，客户端走
+        ``POST /v1/sessions/{id}/persona|model``（design §4.11）。
+
+        Args:
+            boot: 解析完成的 AG-UI 请求中可用的全部信息。
+
+        Returns:
+            装配好的 :class:`Conversation`，可立刻调用 ``stream(new_user_input)``。
+
+        Raises:
+            agent.PersonaNotFoundError: ``default_persona`` 在 catalog 找不到。
+            agent.SessionCorruptError: 已存在的 jsonl 文件解析失败。
+            llm_providers.LLMAuthError: 工厂构造 :class:`LLMClient` 失败。
+        """
+        mgr = self._runtime.persistent_session_manager
+
+        try:
+            session = mgr.open(boot.thread_id)
+        except SessionNotFoundError:
+            persona_info = self._runtime.catalog.find_by_name(boot.default_persona)
+            session = mgr.create(
+                persona=persona_info.name,
+                model=boot.default_model,
+                persona_id=persona_info.id,
+                session_id=boot.thread_id,
+            )
 
         return mgr.start_conversation(session)
 
