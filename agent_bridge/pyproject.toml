@@ -1,0 +1,29 @@
+[project]
+name = "agent-bridge"
+version = "0.1.0"
+description = "agent-friend · 把 agent.Conversation 通过双协议（OpenAI / AG-UI）的 HTTP SSE 网络服务对外暴露"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "agent",
+    "llm-providers",
+    "memory",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.4.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+    "ag-ui-protocol>=0.1.18",
+]
+
+[tool.uv.sources]
+agent = { workspace = true }
+llm-providers = { workspace = true }
+memory = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_bridge"]

@@ -83,6 +83,7 @@ class SessionManager:
         title: str | None = None,
         *,
         persona_id: str | None = None,
+        session_id: str | None = None,
     ) -> Session:
         """创建新会话并落盘首行 ``session_meta`` 事件。
 
@@ -94,18 +95,26 @@ class SessionManager:
             persona_id: 初始 persona 的 UUID（003 起的主键）。``None`` 时为兼容
                 老调用方接受，session_meta 不写 ``initial_persona_id`` 字段，
                 效果与 002 完全一致。**新调用方推荐显式传**。
+            session_id: 可选指定 session id（uuid 字符串）。``None``（默认）时
+                由 :meth:`Session.new` 自动生成 uuid4。
+                006 起新增以支持 ``agent-bridge`` 的 AG-UI 协议出口需要
+                ``thread_id`` 与 ``session_id`` 一一对应的场景；该出口收到一个
+                未知 ``thread_id`` 时会用它作为 ``session_id`` 创建新会话。
+                **本参数仅当调用方有跨进程 / 跨协议的稳定 id 来源时使用**——
+                CLI / 普通脚本继续不传，行为与 002 完全一致。
 
         Returns:
             已落盘的新 Session 实例。
 
         Raises:
-            SessionPersistError: 落盘失败。
+            SessionPersistError: 落盘失败（包括 ``session_id`` 已存在）。
         """
         session = Session.new(
             title=title or _default_title(),
             persona=persona,
             model=model,
             persona_id=persona_id,
+            session_id=session_id,
         )
         if title is None and self._title_generator is not None:
             generated = self._title_generator(session)

@@ -8,7 +8,11 @@
     ./scripts/cli/run.sh --resume                # 用户显式想恢复：立刻 open 最近会话
     ./scripts/cli/run.sh --resume <session_id>   # 显式 id（支持前缀）：立刻 open
 
-需要在项目根 ``.env`` 中配置 ``DEEPSEEK_API_KEY``。
+    # bridge 模式：远端 agent-bridge 作 backend
+    ./scripts/cli/run.sh --bridge http://127.0.0.1:18800
+
+需要在项目根 ``.env`` 中配置 ``DEEPSEEK_API_KEY``（**仅 in-process 模式**——
+bridge 模式 LLM 凭证在 bridge 进程那边，CLI 不需要）。
 
 M2 范围（详见 002 design.md §4.8 + progress.md 实施日志）：
 
@@ -20,16 +24,29 @@ M2 范围（详见 002 design.md §4.8 + progress.md 实施日志）：
 - 新 slash 命令：``/sessions`` ``/open`` ``/persona`` ``/model`` ``/new``
 - ``/reset`` **已删除**（语义与 ``/new`` 重复，统一用 ``/new``）
 - 持久化错误（``SessionPersistError``）红字提示但不中断主循环
+
+M6.3 bridge 模式（详见 006 design.md §4.7）：
+
+- ``--bridge URL`` 或 ``AGENT_BRIDGE_URL`` 启用 bridge 模式
+- 此模式下 CLI **不**初始化 :class:`SessionManager` / :class:`LLMClient` /
+  :class:`PersonaCatalog`，所有状态在远端 bridge
+- ``/sessions`` / ``/open`` / ``/persona`` / ``/model`` 全部走 bridge meta REST
+- 对话走 AG-UI ``POST /ag-ui/run``，client 反解 SSE 事件成 ConversationEvent，
+  现有渲染层原样复用
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
+import httpx
 from dotenv import load_dotenv
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -70,6 +87,8 @@ from llm_providers import (
     ProviderSpec,
 )
 
+from .bridge_client import BridgeClient, BridgeRunError, BridgeSessionSummary
+
 DATA_DIR = Path("data")
 SESSIONS_DIR = DATA_DIR / "sessions"
 HISTORY_FILE = DATA_DIR / ".cli_history"
@@ -108,6 +127,14 @@ def parse_args() -> argparse.Namespace:
         metavar="SESSION_ID",
         help="**显式恢复**已有会话；不带参数取最近活跃；带 id（支持前缀）则打开指定。"
         "未指定 --resume 时启动后处于**未绑定**状态，首条消息才创建新会话",
+    )
+    p.add_argument(
+        "--bridge",
+        default=None,
+        metavar="URL",
+        help="bridge 模式：把对话与会话管理委托给远端 agent-bridge "
+        "(如 http://127.0.0.1:18800)；不传则走 in-process 模式（默认）。"
+        "环境变量 ``AGENT_BRIDGE_URL`` 同义，CLI 参数优先。",
     )
     return p.parse_args()
 
@@ -782,6 +809,10 @@ def main() -> int:
     args = parse_args()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+    bridge_url = args.bridge or os.environ.get("AGENT_BRIDGE_URL")
+    if bridge_url:
+        return _run_bridge_mode(args, bridge_url)
+
     try:
         make_spec_with_thinking_off()
     except LLMAuthError as e:
@@ -853,6 +884,482 @@ def main() -> int:
         assert ctx.session is not None
         _replay_history(ctx.session)
     return _interactive_loop(ctx)
+
+
+# =====================================================================
+# Bridge 模式（M6.3 · 详见 006 design.md §4.7）
+# =====================================================================
+#
+# 与 in-process 模式平行的一套精简 CLI 路径：
+#
+# - 不初始化 SessionManager / LLMClient / PersonaCatalog —— 全在远端 bridge
+# - 状态只剩 ``thread_id`` + 一组 pending 显示字段；首条消息触发 bridge auto-create
+# - slash 命令全部走 ``BridgeClient`` 的 meta REST + AG-UI run
+
+
+@dataclass
+class _BridgeContext:
+    """bridge 模式下的 CLI 运行时状态。
+
+    与 in-process 的 :class:`_CliContext` 平行但更轻——bridge 模式下"会话"完全
+    存在远端，CLI 只持 ``thread_id`` 和一组用于 banner 展示的字段。
+
+    Attributes:
+        client: 远程 :class:`BridgeClient`。
+        thread_id: 当前活跃的远端 session_id。``--resume`` / ``/open`` 命中
+            既有会话则取 bridge 上已存在的 id；``/new`` 或新启动则现场生成
+            一个新 uuid（**尚未** 在 bridge 落盘，等首条消息触发 auto-create）。
+        known_in_bridge: ``thread_id`` 是否已确认存在于 bridge 端。
+            ``True`` 时 ``/persona`` ``/model`` 可直接调 POST meta API；
+            ``False`` 时只能更新 pending 显示字段，提示用户"先发首条消息"。
+        pending_persona_name: banner 显示用；bridge auto-create 实际使用的是
+            bridge 进程的 ``default_persona``，CLI 这边无法干预。
+        pending_model: 同上。
+    """
+
+    client: BridgeClient
+    thread_id: str
+    known_in_bridge: bool
+    pending_persona_name: str
+    pending_model: str
+
+
+def _bridge_print_banner(ctx: _BridgeContext) -> None:
+    stdout.print("[bold]agent-friend · bridge mode[/bold]")
+    if ctx.known_in_bridge:
+        stdout.print(
+            f"[dim]session: {ctx.thread_id[:8]} · "
+            f"persona: {ctx.pending_persona_name} · model: {ctx.pending_model}[/dim]"
+        )
+    else:
+        stdout.print(
+            f"[dim]未绑定会话（id 占位: {ctx.thread_id[:8]}，首条消息会在 bridge 上 auto-create）[/dim]"
+        )
+        stdout.print(
+            f"[dim]默认 persona: {ctx.pending_persona_name} · "
+            f"默认 model: {ctx.pending_model} （bridge 端 default 生效）[/dim]"
+        )
+    stdout.print(
+        "[dim]命令：/sessions /open <id> /persona <name> /personas /model <name> "
+        "/new /quit  ·  Ctrl+D 退出 · Ctrl+C 取消当前输入[/dim]\n"
+    )
+
+
+def _bridge_replay_remote_events(events: list[dict[str, Any]]) -> None:
+    """bridge 模式：replay 远端 ``GET /v1/sessions/{id}`` 返回的 events dict 列表。
+
+    渲染规则与 :func:`_replay_history` 完全对齐（用户视觉一致），但吃 dict
+    不吃 :class:`agent.Session`——避免反序列化 ``datetime`` 等不必要的工作。
+    """
+    msg_count = 0
+    rendered: list[tuple[str, object]] = []
+    for ev in events:
+        ev_type = ev.get("type")
+        payload: dict[str, Any] = ev.get("payload") or {}
+        meta: dict[str, Any] = ev.get("meta") or {}
+        if ev_type == "user_message":
+            rendered.append(("user", str(payload.get("content", ""))))
+            msg_count += 1
+        elif ev_type == "assistant_message":
+            rendered.append(
+                (
+                    "assistant",
+                    (
+                        str(payload.get("content", "")),
+                        bool(payload.get("partial")),
+                    ),
+                )
+            )
+            msg_count += 1
+        elif ev_type == "persona_change":
+            rendered.append(
+                (
+                    "persona_change",
+                    f"{payload.get('from', '?')} → {payload.get('to', '?')}",
+                )
+            )
+        elif ev_type == "model_change":
+            rendered.append(
+                (
+                    "model_change",
+                    f"{payload.get('from', '?')} → {payload.get('to', '?')}",
+                )
+            )
+        elif ev_type == "tool_call_request":
+            rendered.append(
+                (
+                    "tool_request",
+                    (
+                        str(payload.get("tool_name", "")),
+                        dict(payload.get("args") or {}),
+                    ),
+                )
+            )
+        elif ev_type == "tool_call_result":
+            duration_raw = meta.get("duration_seconds")
+            duration: float | None = (
+                float(duration_raw) if isinstance(duration_raw, int | float) else None
+            )
+            rendered.append(
+                (
+                    "tool_result",
+                    (
+                        bool(payload.get("is_error", False)),
+                        str(payload.get("content", "")),
+                        duration,
+                    ),
+                )
+            )
+
+    if msg_count == 0:
+        return
+
+    for kind, data in rendered:
+        if kind == "user":
+            assert isinstance(data, str)
+            stdout.print("[ansiblue]你:[/ansiblue] ", end="")
+            stdout.print(data, markup=False, highlight=False)
+        elif kind == "assistant":
+            assert isinstance(data, tuple)
+            text, partial = data
+            stdout.print("[bold green]AI:[/bold green] ", end="")
+            stdout.print(text, end="", style="green", markup=False, highlight=False)
+            if partial:
+                stdout.print(" [dim](中断)[/dim]")
+            else:
+                stdout.print()
+        elif kind == "persona_change":
+            assert isinstance(data, str)
+            stdout.print(f"[dim]→ persona: {data}[/dim]")
+        elif kind == "model_change":
+            assert isinstance(data, str)
+            stdout.print(f"[dim]→ model: {data}[/dim]")
+        elif kind == "tool_request":
+            assert isinstance(data, tuple)
+            tool_name, args = data
+            _print_tool_request(tool_name, args)
+        elif kind == "tool_result":
+            assert isinstance(data, tuple)
+            is_error, text, duration = data
+            _print_tool_result(is_error=is_error, text=text, duration_seconds=duration)
+
+    stdout.print(f"[dim]─── 以上是历史 ({msg_count} 条消息) ───[/dim]\n")
+
+
+def _bridge_match_session_prefix(client: BridgeClient, prefix: str) -> BridgeSessionSummary | None:
+    """bridge 模式下对 ``list_sessions()`` 做 session_id 前缀匹配。"""
+    sessions = client.list_sessions()
+    candidates = [s for s in sessions if s.session_id.startswith(prefix)]
+    if not candidates:
+        stderr.print(f"[red]找不到匹配的会话: {prefix}[/red]")
+        return None
+    if len(candidates) > 1:
+        stderr.print(f"[red]前缀 {prefix!r} 匹配到 {len(candidates)} 个会话，请用更长的 id：[/red]")
+        for s in candidates[:5]:
+            stderr.print(f"  [dim]{s.session_id[:12]} - {s.title}[/dim]")
+        return None
+    return candidates[0]
+
+
+def _bridge_load_and_apply(ctx: _BridgeContext, session_id: str) -> None:
+    """bridge 模式 ``/open`` / ``--resume`` 命中后的共通逻辑：
+    更新 ctx + clear screen + banner + replay。"""
+    try:
+        detail = ctx.client.get_session_events(session_id)
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 拉历史失败] {e}[/red]")
+        return
+    ctx.thread_id = session_id
+    ctx.known_in_bridge = True
+    ctx.pending_persona_name = str(detail.get("persona", ctx.pending_persona_name))
+    ctx.pending_model = str(detail.get("model", ctx.pending_model))
+    _clear_screen()
+    _bridge_print_banner(ctx)
+    events = detail.get("events") or []
+    _bridge_replay_remote_events(events)
+
+
+# ---------- bridge slash 命令 ----------
+
+
+def _bridge_cmd_sessions(client: BridgeClient) -> None:
+    try:
+        summaries = client.list_sessions()
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 拉列表失败] {e}[/red]")
+        return
+    if not summaries:
+        stdout.print("[dim]（暂无会话）[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold", show_lines=False)
+    table.add_column("id", style="cyan", no_wrap=True)
+    table.add_column("title", style="white")
+    table.add_column("初始 persona", style="dim")
+    table.add_column("初始 model", style="dim")
+    table.add_column("最近活跃", style="dim")
+    for s in summaries:
+        table.add_row(s.session_id[:8], s.title, s.persona, s.model, s.updated_at)
+    stdout.print(table)
+
+
+def _bridge_cmd_open(ctx: _BridgeContext, prefix: str) -> None:
+    if not prefix:
+        stdout.print("[yellow]用法：/open <session_id 前缀>[/yellow]")
+        return
+    try:
+        matched = _bridge_match_session_prefix(ctx.client, prefix)
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 拉列表失败] {e}[/red]")
+        return
+    if matched is None:
+        return
+    if matched.session_id == ctx.thread_id and ctx.known_in_bridge:
+        stdout.print("[dim]当前已经在这个会话中。[/dim]")
+        return
+    _bridge_load_and_apply(ctx, matched.session_id)
+
+
+def _bridge_cmd_new(ctx: _BridgeContext) -> None:
+    """``/new``：生成新 uuid 作 thread_id；待首条消息触发 bridge auto-create。"""
+    ctx.thread_id = uuid4().hex
+    ctx.known_in_bridge = False
+    _clear_screen()
+    _bridge_print_banner(ctx)
+    _print_state_line("新建会话", f"{ctx.thread_id[:8]} （待首条消息时 bridge 落盘）")
+
+
+def _bridge_cmd_persona(ctx: _BridgeContext, raw: str) -> None:
+    if not raw:
+        stdout.print("[yellow]用法：/persona <name>[/yellow]")
+        return
+    if not ctx.known_in_bridge:
+        stderr.print(
+            "[yellow]bridge 模式下 /persona 需要会话已存在 bridge 上。"
+            "先发首条消息建会话后再切。[/yellow]"
+        )
+        return
+    try:
+        result = ctx.client.switch_persona(ctx.thread_id, raw)
+    except httpx.HTTPStatusError as e:
+        stderr.print(rf"[red]\[persona 切换失败] {e.response.status_code}: {e.response.text}[/red]")
+        return
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 通信失败] {e}[/red]")
+        return
+    new_persona = str(result.get("persona", raw))
+    ctx.pending_persona_name = new_persona
+    _print_state_line("persona", new_persona)
+
+
+def _bridge_cmd_personas(client: BridgeClient) -> None:
+    try:
+        infos = client.list_personas()
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 拉 persona 列表失败] {e}[/red]")
+        return
+    if not infos:
+        stdout.print("[dim]（暂无 persona）[/dim]")
+        return
+    table = Table(show_header=True, header_style="bold", show_lines=False)
+    table.add_column("name", style="cyan", no_wrap=True)
+    table.add_column("source", style="dim")
+    table.add_column("id (short)", style="dim")
+    table.add_column("description", style="white")
+    for info in infos:
+        desc = info.description if info.description else "[dim](无描述)[/dim]"
+        table.add_row(info.name, info.source, info.id[:8], desc)
+    stdout.print(table)
+
+
+def _bridge_cmd_model(ctx: _BridgeContext, name: str) -> None:
+    if not name:
+        stdout.print("[yellow]用法：/model <model_name>[/yellow]")
+        return
+    if not ctx.known_in_bridge:
+        stderr.print(
+            "[yellow]bridge 模式下 /model 需要会话已存在 bridge 上。"
+            "先发首条消息建会话后再切。[/yellow]"
+        )
+        return
+    try:
+        result = ctx.client.switch_model(ctx.thread_id, name)
+    except httpx.HTTPStatusError as e:
+        stderr.print(rf"[red]\[model 切换失败] {e.response.status_code}: {e.response.text}[/red]")
+        return
+    except httpx.HTTPError as e:
+        stderr.print(rf"[red]\[bridge 通信失败] {e}[/red]")
+        return
+    new_model = str(result.get("model", name))
+    ctx.pending_model = new_model
+    _print_state_line("model", new_model)
+
+
+def _bridge_handle_slash(cmd_line: str, ctx: _BridgeContext) -> None:
+    parts = cmd_line.split(maxsplit=1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    if cmd == "/sessions":
+        _bridge_cmd_sessions(ctx.client)
+    elif cmd == "/open":
+        _bridge_cmd_open(ctx, arg)
+    elif cmd == "/new":
+        _bridge_cmd_new(ctx)
+    elif cmd == "/persona":
+        _bridge_cmd_persona(ctx, arg)
+    elif cmd == "/personas":
+        _bridge_cmd_personas(ctx.client)
+    elif cmd == "/model":
+        _bridge_cmd_model(ctx, arg)
+    elif cmd == "/reset":
+        stdout.print("[yellow]/reset 已删除（与 /new 语义重复）。请用 /new 新建会话。[/yellow]")
+    else:
+        stdout.print(
+            f"[yellow]未知命令: {cmd}"
+            f"（可用：/sessions /open /persona /personas /model /new /quit）[/yellow]"
+        )
+
+
+def _bridge_interactive_loop(ctx: _BridgeContext) -> int:
+    prompt_session: PromptSession[str] = PromptSession(
+        history=FileHistory(str(HISTORY_FILE)),
+        auto_suggest=AutoSuggestFromHistory(),
+    )
+
+    while True:
+        try:
+            user_input = prompt_session.prompt(HTML("<ansiblue>你: </ansiblue>")).strip()
+        except KeyboardInterrupt:
+            continue
+        except EOFError:
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("q", "exit", "quit", "/quit"):
+            break
+
+        if user_input.startswith("/"):
+            _bridge_handle_slash(user_input, ctx)
+            continue
+
+        stdout.print("[bold green]AI:[/bold green] ", end="")
+        text_emitted_in_segment = False
+        try:
+            for ev in ctx.client.run(thread_id=ctx.thread_id, user_input=user_input):
+                if isinstance(ev, TextDelta):
+                    stdout.print(
+                        ev.text,
+                        end="",
+                        style="green",
+                        markup=False,
+                        highlight=False,
+                    )
+                    text_emitted_in_segment = True
+                elif isinstance(ev, ToolCallRequest):
+                    if text_emitted_in_segment:
+                        stdout.print()
+                    text_emitted_in_segment = False
+                    _print_tool_request(ev.tool_name, ev.args)
+                elif isinstance(ev, ToolCallResult):
+                    _print_tool_result(
+                        is_error=ev.is_error,
+                        text=ev.text,
+                        duration_seconds=None,
+                    )
+                elif isinstance(ev, TurnDone):
+                    if text_emitted_in_segment:
+                        stdout.print()
+            # 第一条成功的消息也意味着 bridge 端 session 一定已经存在（auto-create
+            # 或本就存在）。标 known_in_bridge 让 /persona /model 启用
+            ctx.known_in_bridge = True
+        except BridgeRunError as e:
+            stdout.print()
+            stdout.print(f"[yellow]{e}[/yellow] [dim](code={e.code})[/dim]\n")
+        except httpx.HTTPStatusError as e:
+            stdout.print()
+            stderr.print(
+                rf"[red]\[bridge HTTP 错误] {e.response.status_code}: {e.response.text[:200]}[/red]\n"
+            )
+        except httpx.HTTPError as e:
+            stdout.print()
+            stderr.print(rf"[red]\[bridge 通信失败] {e}[/red]\n")
+        except KeyboardInterrupt:
+            stdout.print("\n[dim][已中断本轮回复][/dim]\n")
+
+    stdout.print("[dim]再见！[/dim]")
+    return 0
+
+
+def _run_bridge_mode(args: argparse.Namespace, base_url: str) -> int:
+    """bridge 模式主入口（与 in-process :func:`main` 平行）。"""
+    with BridgeClient(base_url) as client:
+        # 探活：拉一次 /sessions 验证 bridge 可达 + URL 正确
+        try:
+            initial_sessions = client.list_sessions()
+        except httpx.HTTPError as e:
+            stderr.print(rf"[red]\[bridge 不可达] {base_url}: {e}[/red]")
+            stderr.print("[dim]提示：先用 ./scripts/bridge/run.sh 启动 agent-bridge[/dim]")
+            return 1
+
+        # 解析 --resume
+        if args.resume is None:
+            ctx = _BridgeContext(
+                client=client,
+                thread_id=uuid4().hex,
+                known_in_bridge=False,
+                pending_persona_name=args.persona,
+                pending_model=args.model or "(bridge default)",
+            )
+            _bridge_print_banner(ctx)
+            return _bridge_interactive_loop(ctx)
+
+        if args.resume == RESUME_LATEST_SENTINEL:
+            if not initial_sessions:
+                stderr.print(
+                    "[yellow]bridge 上找不到任何已保存的会话。发首条消息或 /new 即可创建。[/yellow]"
+                )
+                ctx = _BridgeContext(
+                    client=client,
+                    thread_id=uuid4().hex,
+                    known_in_bridge=False,
+                    pending_persona_name=args.persona,
+                    pending_model=args.model or "(bridge default)",
+                )
+                _bridge_print_banner(ctx)
+                return _bridge_interactive_loop(ctx)
+            latest = initial_sessions[0]
+            ctx = _BridgeContext(
+                client=client,
+                thread_id=latest.session_id,
+                known_in_bridge=True,
+                pending_persona_name=latest.persona,
+                pending_model=latest.model,
+            )
+            _bridge_load_and_apply(ctx, latest.session_id)
+            return _bridge_interactive_loop(ctx)
+
+        # --resume <prefix>
+        candidates = [s for s in initial_sessions if s.session_id.startswith(args.resume)]
+        if not candidates:
+            stderr.print(f"[red]找不到匹配的会话: {args.resume}[/red]")
+            return 1
+        if len(candidates) > 1:
+            stderr.print(
+                f"[red]前缀 {args.resume!r} 匹配到 {len(candidates)} 个会话，请用更长的 id：[/red]"
+            )
+            for s in candidates[:5]:
+                stderr.print(f"  [dim]{s.session_id[:12]} - {s.title}[/dim]")
+            return 1
+        matched = candidates[0]
+        ctx = _BridgeContext(
+            client=client,
+            thread_id=matched.session_id,
+            known_in_bridge=True,
+            pending_persona_name=matched.persona,
+            pending_model=matched.model,
+        )
+        _bridge_load_and_apply(ctx, matched.session_id)
+        return _bridge_interactive_loop(ctx)
 
 
 if __name__ == "__main__":

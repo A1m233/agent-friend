@@ -20,7 +20,7 @@ from .manager import (
     TitleGenerator,
 )
 from .session import Session
-from .store import JsonlSessionStore, SessionStore, SessionSummary
+from .store import JsonlSessionStore, NullSessionStore, SessionStore, SessionSummary
 
 __all__ = [
     "ALLOWED_EVENT_TYPES",
@@ -29,6 +29,7 @@ __all__ = [
     "EventType",
     "JsonlSessionStore",
     "LLMClientFactory",
+    "NullSessionStore",
     "PromptBuilderFactory",
     "Session",
     "SessionCorruptError",

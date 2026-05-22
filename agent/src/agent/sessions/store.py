@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+import portalocker
+from portalocker.exceptions import LockException
+
 from .errors import (
     SessionCorruptError,
     SessionNotFoundError,
@@ -20,6 +23,13 @@ from .errors import (
 )
 from .events import Event
 from .session import Session
+
+_LOCK_TIMEOUT_SECONDS = 10.0
+"""``JsonlSessionStore`` 写操作等待 OS advisory 文件锁的最长秒数。
+
+单条 ``append_event`` 实际写盘开销 < 1ms；正常情况下不会逼近这个上限。撞到
+意味着有别的进程长时间持锁——按 SessionPersistError 抛出由上层决定如何
+重试或降级。"""
 
 
 @dataclass(frozen=True)
@@ -106,8 +116,13 @@ class JsonlSessionStore:
     文件布局：``{base_dir}/{session_id}.jsonl``，每行一个 :class:`Event` 的 JSON
     序列化结果。文件第一行**必须**是 ``session_meta`` 事件。
 
-    每次 ``append_event`` **重新 open/close 文件**（不持有句柄）——孵化期单进程
-    使用，简单且跨进程安全（详见 design §5 决策 D-4）。
+    每次 ``create`` / ``append_event`` **重新 open/close 文件**（不持有句柄）。
+    写操作通过 :mod:`portalocker` 取 OS advisory exclusive 锁，多进程并发写
+    同一 ``{session_id}.jsonl`` 时排队进入；锁超时（``_LOCK_TIMEOUT_SECONDS``）
+    抛 :class:`SessionPersistError`。
+
+    详见 docs/requirements/006-agent-bridge/design.md §4.5 / R-4.3.2，以及
+    docs/requirements/002-engine-session-management/design.md §4.3。
     """
 
     def __init__(self, base_dir: Path | str) -> None:
@@ -138,10 +153,14 @@ class JsonlSessionStore:
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
             )
         try:
-            with path.open("w", encoding="utf-8") as f:
+            with portalocker.Lock(path, "w", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
                 for ev in session.events:
                     f.write(ev.to_jsonl())
                     f.write("\n")
+        except LockException as e:
+            raise SessionPersistError(
+                f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
+            ) from e
         except OSError as e:
             raise SessionPersistError(f"写入会话文件失败: {path}: {e}") from e
 
@@ -150,9 +169,13 @@ class JsonlSessionStore:
         if not path.exists():
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
-            with path.open("a", encoding="utf-8") as f:
+            with portalocker.Lock(path, "a", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
                 f.write(event.to_jsonl())
                 f.write("\n")
+        except LockException as e:
+            raise SessionPersistError(
+                f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
+            ) from e
         except OSError as e:
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
 
@@ -233,3 +256,47 @@ class JsonlSessionStore:
             persona=persona,
             model=model,
         )
+
+
+class NullSessionStore:
+    """无副作用 :class:`SessionStore` 实现，用于"会话只在内存中存在"的场景。
+
+    所有写方法都是 no-op；查询方法返回"空"语义：
+
+    - :meth:`create` / :meth:`append_event` / :meth:`delete` 直接返回，不抛异常
+    - :meth:`load` 抛 :class:`SessionNotFoundError`（没有任何文件可加载）
+    - :meth:`list` 返回空列表；:meth:`latest` 返回 ``None``
+
+    典型场景：``agent-bridge`` 实现 OpenAI ChatCompletion **默认无状态**语义时，
+    客户端每次发送完整 messages 历史，bridge 进程内为这一次请求构造 in-memory
+    :class:`Session` + :class:`Conversation` 跑一轮、丢弃。bridge 不应在磁盘上
+    留下任何 jsonl 文件 —— 注入本 store 即可让 :class:`Conversation` 的所有
+    ``append_event`` 调用无副作用，同时保持 :class:`Conversation` 自身的代码
+    路径完全不变（不需要 ``if self._store is None`` 守卫）。
+
+    详见 docs/requirements/006-agent-bridge/design.md §4.4（SessionBridge 双语义）
+    与 §5.2 N-1 决策。
+
+    Note:
+        本实现满足 :class:`SessionStore` Protocol 的全部方法签名，因此可作为
+        :class:`SessionManager` / :class:`Conversation` 的 ``store`` 参数直接注入，
+        无需任何额外适配。
+    """
+
+    def create(self, session: Session) -> None:
+        return None
+
+    def append_event(self, session_id: str, event: Event) -> None:
+        return None
+
+    def load(self, session_id: str) -> Session:
+        raise SessionNotFoundError(f"NullSessionStore 不持有任何会话；无法加载 {session_id!r}")
+
+    def list(self) -> list[SessionSummary]:
+        return []
+
+    def delete(self, session_id: str) -> None:
+        return None
+
+    def latest(self) -> SessionSummary | None:
+        return None
