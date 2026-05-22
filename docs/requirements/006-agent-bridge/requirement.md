@@ -79,7 +79,7 @@ CONFIRMED
 - **bridge 进程的守护化 / 系统服务化**（systemd / launchd 等）—— 孵化期手动 / scripts 启动足够
 - **SSE 自动重连 / 客户端容错** —— 协议层兼容即可（火山 RTC 等下游自己处理）
 - **OpenAPI / Swagger 文档生成** —— FastAPI 顺手能出 Swagger 是副产物，不作为本期承诺
-- **跨进程并发写同一 jsonl 的强一致性保障** —— 孵化期单设备单用户假设，并发写边角场景留痕到 §7 Q-4
+- **分布式 / 跨主机的会话一致性** —— 同主机多进程并发写已通过 `portalocker` 文件锁解决（详见 `design.md`），跨主机协调留给未来「agent 上云」决策
 
 ---
 
@@ -120,7 +120,7 @@ CONFIRMED
 需求点：
 
 - **R-4.3.1 装配点复用**：bridge 进程启动时按 `agent-cli` 同样的方式装配 `SessionManager` + `PersonaCatalog` + `NaiveContextManager` + `ToolRegistry` + `LLMClientFactory` + `PromptBuilderFactory`。不再从零写一份装配逻辑。
-- **R-4.3.2 数据共享**：sessions 默认共用 [001](../001-foundation-chat-and-memory/requirement.md) ~ [002](../002-engine-session-management/requirement.md) 已经在用的 `data/sessions/` 路径——`agent-cli` in-process 模式与 bridge AG-UI 出口看到**同一份会话视图**。这条假设建立在**孵化期单设备单用户**前提下，跨进程并发写同一 jsonl 的边角场景留痕到 §7 Q-4。
+- **R-4.3.2 数据共享**：sessions 默认共用 [001](../001-foundation-chat-and-memory/requirement.md) ~ [002](../002-engine-session-management/requirement.md) 已经在用的 `data/sessions/` 路径——`agent-cli` in-process 模式与 bridge AG-UI 出口看到**同一份会话视图**。本期通过在 `JsonlSessionStore` 集成 `portalocker` OS 文件锁实现跨进程并发写入的串行化保护，多 surface（CLI / bridge / 未来 IM bot / 桌宠等）写同一 session 安全（详见 `design.md`）。
 - **R-4.3.3 路径符合 §3.19**：本期**不在** `data/` 下新增任何持久化子目录。本期所有持久化都复用已有的 `data/sessions/` 与 `data/personas/`。如果 design.md 评估发现确实需要新增持久化（如 bridge 自身的 runtime 状态缓存），按 [`0002 §3.19`](../../decisions/0002-incubation-tech-stack/README.md) 走系统标准用户数据目录，不再往 `data/` 加东西。
 - **R-4.3.4 引擎纯库无侵入**：本期不为了适配 bridge 改动 `agent` 核心库的公开 API。bridge 通过现有 `Conversation.stream(...)` / `SessionManager.*` / `PersonaCatalog.*` 等公开接口完成所有事——保持 [`0002 §3.11`](../../decisions/0002-incubation-tech-stack/README.md) 「核心库 + 薄包装」的纯库不被污染。
 
@@ -199,7 +199,7 @@ CONFIRMED
   - 让 AI 触发一次搜索 tool；OpenAI 出口流里看到 `tool_calls` delta + 后续整合回复（中间过程 OpenAI 协议天然不可见）
   - AG-UI 出口流里看到 `TOOL_CALL_START` / `_ARGS` / `_END` / `_RESULT` 完整序列 + assistant 文本三段式
 - **AC-5 `agent-cli --bridge` 行为等价**：用 `agent-cli` 跑一段含「多轮对话 + 工具调用 + persona/model 切换」的序列，记录 in-process 模式的用户可见行为；同一序列在 `--bridge http://...` 模式下产生等价的用户可见行为（文本内容、tool 调用渲染、状态切换提示等不存在用户能察觉的退化）。
-- **AC-6 跨进程共享会话**：`agent-cli` in-process 模式下创建并写完 session A；启动 bridge 进程，通过 AG-UI 出口（`thread_id` 指向 session A）拉到该 session 的上下文并继续对话。**前提**：本期承诺仅在孵化期单设备单用户假设下成立，并发写同一 jsonl 的边角场景留痕到 §7 Q-4。
+- **AC-6 跨进程共享会话**：`agent-cli` in-process 模式下创建并写完 session A；启动 bridge 进程，通过 AG-UI 出口（`thread_id` 指向 session A）拉到该 session 的上下文并继续对话。**反之同样成立**——bridge 创建的 session 也能在 `agent-cli` in-process 模式下打开继续。本期通过 `portalocker` 文件锁实现跨进程串行化写入，并发写不会破坏 jsonl 完整性（详见 `design.md`）。
 - **AC-7 跨进程错误模型**：模拟 LLM 限流 / 网络瞬断 / 工具失败（参考 [005 AC-2](../005-engine-tool-calling-and-web-search/requirement.md) 同款手法），客户端通过 AG-UI 出口能看到拟人兜底的文本输出，**不暴露** HTTP 状态码或 Python 异常名；只有当模拟不可恢复错误（API key 错 / 引擎崩溃）时才以 `RUN_ERROR` 事件返回客户端。
 - **AC-8 既有行为不退化**：001 ~ 005 已交付的所有行为（多轮对话、流式输出、跨会话恢复、persona / model 切换、system prompt 三段装配、工具调用 + 搜索、`agent-cli` in-process 模式）在本期落地后**全部继续可用**，无回归。
 - **AC-9 §3.19 不违反**：本期落地后，`data/` 下**没有**任何新增的持久化子目录。所有 sessions 仍走 `data/sessions/`，没有 `data/bridge/` 或类似新增。
@@ -214,7 +214,7 @@ CONFIRMED
 - **Q-1 OpenAI 出口扩展字段命名**：用 HTTP header（如 `X-Agent-Friend-Session-Id`）、body 顶层字段、还是 `metadata.session_id`？哪种与主流 OpenAI 客户端（OpenAI SDK / 火山 RTC `CustomLLM` / LiteLLM 等）兼容最好？
 - **Q-2 AG-UI 事件粒度细节**：单条 assistant 回复内若有 tool 调用穿插，`message_id` 怎么切（每段一个 vs 整轮一个）？persona_change / model_change 等 002 事件类型怎么映射到 AG-UI 事件？
 - **Q-3 AG-UI `thread_id` 语义**：客户端传一个不存在的 `thread_id` 时自动创建 session 还是 404？不带 `thread_id` 时怎么处理？
-- **Q-4 跨进程并发写 `data/sessions/*.jsonl` 的处理**：本期是否加最小化文件锁、单写者 + 多读者模型、还是仅依赖单设备单用户假设 + 文档提示？孵化期边角风险可接受，但 design.md 需正面回应。
+- ~~**Q-4 跨进程并发写 `data/sessions/*.jsonl` 的处理**~~：**已决策** —— 在 `JsonlSessionStore.append_event` 集成 `portalocker` OS 文件锁，跨进程串行化写入，多 surface（CLI / bridge / 未来 IM / 桌宠等）写同一 session 都安全。详见 `design.md`。
 - **Q-5 服务监听形态**：默认 host/port（建议 `127.0.0.1:8000`）？是否仅 bind 本机？是否在 `.env` / 配置文件 / CLI 参数里配置？
 - **Q-6 健康检查 endpoint**：`/healthz` / `/readyz` / `/v1/models` 等是否本期就位？
 - **Q-7 bridge 进程启停管理**：CLI 命令形态（`agent-bridge serve` / `python -m agent_bridge` / 其他）？日志输出路径（stdout / 系统标准日志目录 / 文件）？
@@ -230,6 +230,7 @@ CONFIRMED
 | 日期 | 变更内容 | 影响范围 |
 |------|---------|---------|
 | 2026-05-22 | 初版确认通过 | 全文 |
+| 2026-05-22 | design 阶段决策 Q-4 集成 portalocker 文件锁，同步收紧 §3 非范围 / §4.3 R-4.3.2 / §6 AC-6 / §7 Q-4 表述 | §3 / §4.3 / §6 / §7 |
 
 ---
 
