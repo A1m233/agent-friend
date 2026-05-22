@@ -8,6 +8,7 @@ dependencies = [
     "llm-providers",
     "PyYAML>=6.0",
     "tavily-python>=0.7.24",
+    "portalocker>=3.2.0",
 ]
 
 [tool.uv.sources]

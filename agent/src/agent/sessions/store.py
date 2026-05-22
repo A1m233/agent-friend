@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+import portalocker
+from portalocker.exceptions import LockException
+
 from .errors import (
     SessionCorruptError,
     SessionNotFoundError,
@@ -20,6 +23,13 @@ from .errors import (
 )
 from .events import Event
 from .session import Session
+
+_LOCK_TIMEOUT_SECONDS = 10.0
+"""``JsonlSessionStore`` 写操作等待 OS advisory 文件锁的最长秒数。
+
+单条 ``append_event`` 实际写盘开销 < 1ms；正常情况下不会逼近这个上限。撞到
+意味着有别的进程长时间持锁——按 SessionPersistError 抛出由上层决定如何
+重试或降级。"""
 
 
 @dataclass(frozen=True)
@@ -106,8 +116,13 @@ class JsonlSessionStore:
     文件布局：``{base_dir}/{session_id}.jsonl``，每行一个 :class:`Event` 的 JSON
     序列化结果。文件第一行**必须**是 ``session_meta`` 事件。
 
-    每次 ``append_event`` **重新 open/close 文件**（不持有句柄）——孵化期单进程
-    使用，简单且跨进程安全（详见 design §5 决策 D-4）。
+    每次 ``create`` / ``append_event`` **重新 open/close 文件**（不持有句柄）。
+    写操作通过 :mod:`portalocker` 取 OS advisory exclusive 锁，多进程并发写
+    同一 ``{session_id}.jsonl`` 时排队进入；锁超时（``_LOCK_TIMEOUT_SECONDS``）
+    抛 :class:`SessionPersistError`。
+
+    详见 docs/requirements/006-agent-bridge/design.md §4.5 / R-4.3.2，以及
+    docs/requirements/002-engine-session-management/design.md §4.3。
     """
 
     def __init__(self, base_dir: Path | str) -> None:
@@ -138,10 +153,14 @@ class JsonlSessionStore:
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
             )
         try:
-            with path.open("w", encoding="utf-8") as f:
+            with portalocker.Lock(path, "w", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
                 for ev in session.events:
                     f.write(ev.to_jsonl())
                     f.write("\n")
+        except LockException as e:
+            raise SessionPersistError(
+                f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
+            ) from e
         except OSError as e:
             raise SessionPersistError(f"写入会话文件失败: {path}: {e}") from e
 
@@ -150,9 +169,13 @@ class JsonlSessionStore:
         if not path.exists():
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
-            with path.open("a", encoding="utf-8") as f:
+            with portalocker.Lock(path, "a", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
                 f.write(event.to_jsonl())
                 f.write("\n")
+        except LockException as e:
+            raise SessionPersistError(
+                f"获取会话文件写锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {session_id}: {e}"
+            ) from e
         except OSError as e:
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
 

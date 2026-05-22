@@ -18,12 +18,17 @@ agent-bridge 是服务端自执行模型，所以工具调用中间过程对 Ope
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
 
 from agent import Conversation, TextDelta, TurnDone
+
+from ...errors import build_openai_error_envelope, map_exception
+
+logger = logging.getLogger(__name__)
 
 
 def _chunk_id() -> str:
@@ -70,6 +75,7 @@ def encode_streaming(
         )
     )
 
+    errored = False
     try:
         for ev in conv.stream(user_input):
             if isinstance(ev, TextDelta):
@@ -85,16 +91,24 @@ def encode_streaming(
             elif isinstance(ev, TurnDone) and ev.stop_reason == "max_turns_reached":
                 finish_reason = "length"
             # ToolCallRequest / ToolCallResult: OpenAI 协议下不外露
+    except Exception as exc:
+        # 流式响应 HTTP 头已经发出（200 OK），无法改状态码；按 design §4.6.2 在
+        # SSE 流中段补一条 error chunk，再 [DONE] 收尾——OpenAI SDK 能识别。
+        errored = True
+        logger.exception("OpenAI 流式编码失败")
+        err = map_exception(exc)
+        yield _sse_data(build_openai_error_envelope(err))
     finally:
-        yield _sse_data(
-            _build_chunk(
-                response_id=response_id,
-                created=created,
-                model=model,
-                delta={},
-                finish_reason=finish_reason,
+        if not errored:
+            yield _sse_data(
+                _build_chunk(
+                    response_id=response_id,
+                    created=created,
+                    model=model,
+                    delta={},
+                    finish_reason=finish_reason,
+                )
             )
-        )
         yield b"data: [DONE]\n\n"
 
 

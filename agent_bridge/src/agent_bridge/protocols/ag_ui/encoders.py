@@ -18,9 +18,9 @@
   ``message_id``）；AG-UI 协议规范如此，且 client SDK 据此分行展示
 - ``ToolCallResult.is_error=True`` 时在 ``content`` 前缀 ``[error] ``——AG-UI
   ``ToolCallResultEvent`` 无专用 ``is_error`` 字段，约定字符串前缀承担信号
-- 出错时 :class:`ag_ui.core.RunErrorEvent.message` 用拟人化文案兜底；技术细节
-  写入 ``code`` 字段（design §4.6 错误模型）。本期只在最外层 try/except 兜底，
-  完整错误模型转换层留 M6.3
+- 出错时 :class:`ag_ui.core.RunErrorEvent.message` / ``code`` 来自
+  :func:`agent_bridge.errors.map_exception`——可恢复 vs 不可恢复的分类、
+  拟人化文案、错误码标识全部由错误模型转换层集中决定（design §4.6）
 """
 
 from __future__ import annotations
@@ -53,6 +53,8 @@ from agent import (
     ToolCallResult,
     TurnDone,
 )
+
+from ...errors import map_exception
 
 logger = logging.getLogger(__name__)
 
@@ -174,11 +176,12 @@ def encode_stream(
             )
             open_message_id = None
         logger.exception("AG-UI run %s 失败", run_id)
+        err = map_exception(exc)
         yield _encode(
             RunErrorEvent(
                 type=EventType.RUN_ERROR,
-                message="出了点小状况，刚刚没顺利想完那段，可以再说一次试试。",
-                code=type(exc).__name__,
+                message=err.message,
+                code=err.code,
             )
         )
         return

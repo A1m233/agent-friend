@@ -1,23 +1,24 @@
 """OpenAI ChatCompletion 路由层：把 HTTP 请求接进来、装配 :class:`Conversation`、
 按 ``stream: true|false`` 分支调编码器。
 
-本期错误处理是**最小可用**版本：
+错误模型（详见 docs/requirements/006-agent-bridge/design.md §4.6.2）：
 
-- 解码失败 → HTTP 400
-- 装配失败（persona / LLMAuth）→ HTTP 500（暂时直接抛，M6.3 接入完整错误模型
-  转换层后再统一拟人化）
+- 解码失败 / 装配失败 → HTTP 4xx/5xx + OpenAI 标准 ``{"error": {...}}`` envelope
+- 流式 ``conv.stream`` 中段抛错 → 在 SSE 流里 emit 一个 error chunk + ``[DONE]``
+  （在 :func:`encode_streaming` 内部完成，路由层只负责装配阶段失败）
 
-详见 docs/requirements/006-agent-bridge/design.md §4.3.2 / §4.6。
+所有未识别异常统一走 :func:`agent_bridge.errors.map_exception` 兜底拟人化文案。
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...assembly import BridgeRuntime
+from ...errors import ProtocolError, build_openai_error_envelope, map_exception
 from ...session_bridge import SessionBridge, TransientBootstrap
 from .decoders import DecodeError, decode_chat_completion_request
 from .encoders import encode_nonstreaming, encode_streaming
@@ -44,22 +45,42 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         try:
             body = await request.json()
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"非法 JSON body: {e}") from e
+            return _error_response(
+                ProtocolError(
+                    http_status=400,
+                    code="bad_request",
+                    message=f"非法 JSON body: {e}",
+                    recoverable=False,
+                )
+            )
 
         try:
             decoded = decode_chat_completion_request(body)
         except DecodeError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+            return _error_response(
+                ProtocolError(
+                    http_status=400,
+                    code="bad_request",
+                    message=str(e),
+                    recoverable=False,
+                )
+            )
 
         model = decoded.model or runtime.default_model
-
         boot = TransientBootstrap(
             history=decoded.history,
             latest_user_input=decoded.latest_user_input,
             persona=runtime.default_persona,
             model=model,
         )
-        conv = bridge.start_transient(boot)
+
+        # 装配阶段失败在 200 之前——可以正常 4xx/5xx + envelope。stream 之后的
+        # 错误由 encoder 在 SSE 流里 emit error chunk 处理。
+        try:
+            conv = bridge.start_transient(boot)
+        except Exception as exc:
+            logger.exception("OpenAI 装配 Conversation 失败")
+            return _error_response(map_exception(exc))
 
         if decoded.stream:
             return StreamingResponse(
@@ -71,7 +92,19 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 },
             )
 
-        payload = encode_nonstreaming(conv, decoded.latest_user_input, model=model)
+        try:
+            payload = encode_nonstreaming(conv, decoded.latest_user_input, model=model)
+        except Exception as exc:
+            logger.exception("OpenAI 非流式编码失败")
+            return _error_response(map_exception(exc))
         return JSONResponse(content=payload)
 
     app.include_router(router)
+
+
+def _error_response(err: ProtocolError) -> JSONResponse:
+    """统一构造 OpenAI 错误响应（HTTP status + 标准 envelope）。"""
+    return JSONResponse(
+        status_code=err.http_status,
+        content=build_openai_error_envelope(err),
+    )
