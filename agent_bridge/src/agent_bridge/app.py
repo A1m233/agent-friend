@@ -1,0 +1,55 @@
+"""FastAPI 应用装配。
+
+:func:`create_app` 是 ``uvicorn --factory`` 模式的入口：
+
+- 进程启动时调用一次，构造 :class:`BridgeRuntime` 与 :class:`FastAPI` 实例
+- 把各协议层的路由（M6.1：仅 OpenAI；M6.2 起：+ AG-UI / sessions / personas）
+  挂到同一个 :class:`FastAPI` 实例
+- 注册健康检查 ``GET /healthz``
+
+详见 docs/requirements/006-agent-bridge/design.md §4.2 + §4.10。
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import FastAPI
+
+from .assembly import build_runtime
+from .protocols.openai import register_routes as register_openai_routes
+from .settings import BridgeSettings
+
+
+def create_app() -> FastAPI:
+    """``uvicorn --factory`` 入口；进程启动时被调用一次。
+
+    本函数**不**显式接受参数；设置全部从 :class:`BridgeSettings`（环境变量 /
+    ``.env``）读取。需要不同配置时通过环境变量覆盖，便于命令行与测试一致。
+    """
+    settings = BridgeSettings()
+    _configure_logging(settings.log_level)
+    runtime = build_runtime(settings)
+
+    app = FastAPI(
+        title="agent-bridge",
+        version="0.1.0",
+        description=(
+            "agent-friend 的 HTTP SSE 出口；本期 M6.1 仅启用 OpenAI ChatCompletion 协议。"
+        ),
+    )
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    register_openai_routes(app, runtime)
+
+    return app
+
+
+def _configure_logging(level: str) -> None:
+    logging.basicConfig(
+        level=level.upper(),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )

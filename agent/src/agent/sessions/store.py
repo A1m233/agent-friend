@@ -233,3 +233,47 @@ class JsonlSessionStore:
             persona=persona,
             model=model,
         )
+
+
+class NullSessionStore:
+    """无副作用 :class:`SessionStore` 实现，用于"会话只在内存中存在"的场景。
+
+    所有写方法都是 no-op；查询方法返回"空"语义：
+
+    - :meth:`create` / :meth:`append_event` / :meth:`delete` 直接返回，不抛异常
+    - :meth:`load` 抛 :class:`SessionNotFoundError`（没有任何文件可加载）
+    - :meth:`list` 返回空列表；:meth:`latest` 返回 ``None``
+
+    典型场景：``agent-bridge`` 实现 OpenAI ChatCompletion **默认无状态**语义时，
+    客户端每次发送完整 messages 历史，bridge 进程内为这一次请求构造 in-memory
+    :class:`Session` + :class:`Conversation` 跑一轮、丢弃。bridge 不应在磁盘上
+    留下任何 jsonl 文件 —— 注入本 store 即可让 :class:`Conversation` 的所有
+    ``append_event`` 调用无副作用，同时保持 :class:`Conversation` 自身的代码
+    路径完全不变（不需要 ``if self._store is None`` 守卫）。
+
+    详见 docs/requirements/006-agent-bridge/design.md §4.4（SessionBridge 双语义）
+    与 §5.2 N-1 决策。
+
+    Note:
+        本实现满足 :class:`SessionStore` Protocol 的全部方法签名，因此可作为
+        :class:`SessionManager` / :class:`Conversation` 的 ``store`` 参数直接注入，
+        无需任何额外适配。
+    """
+
+    def create(self, session: Session) -> None:
+        return None
+
+    def append_event(self, session_id: str, event: Event) -> None:
+        return None
+
+    def load(self, session_id: str) -> Session:
+        raise SessionNotFoundError(f"NullSessionStore 不持有任何会话；无法加载 {session_id!r}")
+
+    def list(self) -> list[SessionSummary]:
+        return []
+
+    def delete(self, session_id: str) -> None:
+        return None
+
+    def latest(self) -> SessionSummary | None:
+        return None
