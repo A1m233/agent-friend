@@ -243,15 +243,35 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_has_four_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_without_session_has_four_slots(self, tmp_path: Path) -> None:
+        """``session=None`` 时 channel 槽位被跳过，行为与 005 / 006 字节兼容。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
+        keys = tuple(s.key for s in composer.sections)
+        assert keys == (
+            "project_identity",
+            "persona",
+            "persona_switch_strategy",
+            "runtime_context",
+        )
+
+    def test_default_with_session_has_five_slots_in_fixed_order(self, tmp_path: Path) -> None:
+        """传入 session 时，channel 槽位被插入在 persona_switch_strategy 与
+        runtime_context 之间（007 起新增）。"""
+        from agent import Session
+
+        catalog = PersonaCatalog(external_dir=tmp_path)
+        session = Session.new(title="t", persona="default", model="m")
+        composer = SystemPromptComposer.default(
+            _builtin_default_persona_id(), catalog=catalog, session=session
+        )
         keys = tuple(s.key for s in composer.sections)
         assert keys == SystemPromptComposer.DEFAULT_KEYS
         assert keys == (
             "project_identity",
             "persona",
             "persona_switch_strategy",
+            "channel",
             "runtime_context",
         )
 

@@ -24,6 +24,7 @@ from typing import Protocol
 from .errors import PersonaNotFoundError
 from .personas import PersonaCatalog
 from .personas.catalog import DEFAULT_EXTERNAL_DIR as _DEFAULT_EXTERNAL_DIR
+from .sessions import Session
 from .system_prompt import SystemPromptComposer
 
 DEFAULT_EXTERNAL_PERSONAS_DIR: Path = _DEFAULT_EXTERNAL_DIR
@@ -52,9 +53,14 @@ class MarkdownPromptBuilder:
         external_dir: 用户自定义 persona 目录（仅当 ``catalog`` 未传时生效）。
             ``None`` 时用 :data:`DEFAULT_EXTERNAL_PERSONAS_DIR`。
         composer: 可选 :class:`SystemPromptComposer`；``None`` 时调
-            :meth:`SystemPromptComposer.default` 构造含 3 个默认槽位的装配。
+            :meth:`SystemPromptComposer.default` 构造含 4 个默认槽位的装配。
             调用方需要变体（如替换 ``persona_switch_strategy`` / 关闭某槽位）
             时自行构造并传入。
+        session: 可选 :class:`Session`（007 起新增）。传入时
+            :meth:`SystemPromptComposer.default` 会追加 :class:`ChannelSection`
+            槽位，让 system_prompt 按 ``session.current_channel`` 动态调整。
+            ``composer`` 显式传入时本参数被忽略（调用方需要在 composer 里自己
+            装 ChannelSection）。
 
     Raises:
         PersonaNotFoundError: 调 :meth:`build` 时 ``persona_id`` 不存在。
@@ -67,10 +73,33 @@ class MarkdownPromptBuilder:
         catalog: PersonaCatalog | None = None,
         external_dir: Path | None = None,
         composer: SystemPromptComposer | None = None,
+        session: Session | None = None,
     ):
         self.persona_id = persona_id
         self._catalog = catalog or PersonaCatalog(external_dir=external_dir)
-        self._composer = composer or SystemPromptComposer.default(persona_id, catalog=self._catalog)
+        self._session = session
+        self._composer = composer or SystemPromptComposer.default(
+            persona_id,
+            catalog=self._catalog,
+            session=session,
+        )
+
+    def with_session(self, session: Session) -> MarkdownPromptBuilder:
+        """返回同 persona / catalog 但绑定指定 session 的新 builder。
+
+        007 起新增，用于 :meth:`agent.SessionManager.start_conversation` 把
+        per-conversation 的 :class:`Session` 绑到工厂返回的 builder 上，让
+        :class:`ChannelSection` 槽位生效。
+
+        Note:
+            返回的新 builder 重建了内部 composer——若调用方曾传入自定义
+            ``composer``，本方法**不**保留它（语义优先级：session > 自定义 composer）。
+        """
+        return MarkdownPromptBuilder(
+            persona_id=self.persona_id,
+            catalog=self._catalog,
+            session=session,
+        )
 
     def build(self) -> str:
         """返回组合后的 system_prompt 字符串。

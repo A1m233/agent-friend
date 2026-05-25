@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from importlib.resources import files
 
-from .sections import RuntimeContextSection, StaticSection
+from ..sessions import Session
+from .sections import ChannelSection, RuntimeContextSection, StaticSection
 
 _RESOURCE_PACKAGE = "agent.prompt_sections"
 
@@ -18,6 +19,7 @@ _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "project_identity": "project_identity.md",
     "persona_switch_strategy": "persona_switch_strategy.md",
     "runtime_context": "runtime_context.md",
+    "channel": "channel_voice.md",
 }
 
 
@@ -64,3 +66,25 @@ def load_default_runtime_context_section(
     """
     template = _load_section_text(key)
     return RuntimeContextSection(key=key, template=template)
+
+
+def load_default_channel_section(session: Session, key: str = "channel") -> ChannelSection:
+    """从包资源加载 ``channel_voice.md`` 模板并构造 :class:`ChannelSection`。
+
+    007 起新增。
+
+    Args:
+        session: 目标 :class:`Session`；ChannelSection 持有它的引用，每次 render
+            时按 :attr:`Session.current_channel` 决定输出。
+        key: 槽位标识，默认 ``"channel"``。
+
+    Returns:
+        ChannelSection 实例。``text`` 通道下渲染 ``None``（不输出任何内容），
+        ``voice`` 通道下输出 ``channel_voice.md`` 文件内容。
+
+    Raises:
+        KeyError: ``key`` 不是 :data:`_SECTION_KEY_TO_FILENAME` 中已知的 key。
+        FileNotFoundError: 资源文件缺失。
+    """
+    voice_template = _load_section_text(key)
+    return ChannelSection(key=key, session=session, voice_template=voice_template)

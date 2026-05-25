@@ -84,6 +84,7 @@ class SessionManager:
         *,
         persona_id: str | None = None,
         session_id: str | None = None,
+        channel: str = "text",
     ) -> Session:
         """创建新会话并落盘首行 ``session_meta`` 事件。
 
@@ -102,19 +103,25 @@ class SessionManager:
                 未知 ``thread_id`` 时会用它作为 ``session_id`` 创建新会话。
                 **本参数仅当调用方有跨进程 / 跨协议的稳定 id 来源时使用**——
                 CLI / 普通脚本继续不传，行为与 002 完全一致。
+            channel: 初始 channel（007 起新增）。``"text"`` / ``"voice"``。
+                ``"text"`` 时与 002~006 行为完全字节兼容（不写入 ``initial_channel``）。
 
         Returns:
             已落盘的新 Session 实例。
 
         Raises:
             SessionPersistError: 落盘失败（包括 ``session_id`` 已存在）。
+            ValueError: ``channel`` 不在 ``("voice", "text")`` 中。
         """
+        if channel not in ("voice", "text"):
+            raise ValueError(f"channel 必须是 voice / text，实际: {channel!r}")
         session = Session.new(
             title=title or _default_title(),
             persona=persona,
             model=model,
             persona_id=persona_id,
             session_id=session_id,
+            channel=channel,  # type: ignore[arg-type]
         )
         if title is None and self._title_generator is not None:
             generated = self._title_generator(session)
@@ -218,7 +225,21 @@ class SessionManager:
                 persona_id = BUILTIN_DEFAULT_PERSONA_ID
 
         llm_client = self._llm_client_factory(session.current_model)
-        prompt_builder = self._prompt_builder_factory(persona_id)
+
+        # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session，
+        # 使 ChannelSection 槽位能读 session.current_channel。如果 builder 没有
+        # ``with_session`` 方法（自定义实现），保持原行为——向后兼容。
+        base_factory = self._prompt_builder_factory
+
+        def _session_aware_factory(pid: str) -> PromptBuilder:
+            builder = base_factory(pid)
+            with_session = getattr(builder, "with_session", None)
+            if callable(with_session):
+                bound: PromptBuilder = with_session(session)
+                return bound
+            return builder
+
+        prompt_builder = _session_aware_factory(persona_id)
         return Conversation(
             session=session,
             store=self._store,
@@ -226,7 +247,7 @@ class SessionManager:
             context_manager=self._context_manager,
             prompt_builder=prompt_builder,
             llm_client_factory=self._llm_client_factory,
-            prompt_builder_factory=self._prompt_builder_factory,
+            prompt_builder_factory=_session_aware_factory,
             catalog=catalog,
             tool_registry=self._tool_registry,
         )

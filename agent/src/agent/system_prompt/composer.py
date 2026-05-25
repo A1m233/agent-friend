@@ -9,10 +9,12 @@ from dataclasses import dataclass, replace
 from typing import ClassVar, Protocol, runtime_checkable
 
 from ..personas import PersonaCatalog
+from ..sessions import Session
 
 _PROJECT_IDENTITY_KEY = "project_identity"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
+_CHANNEL_KEY = "channel"
 _RUNTIME_CONTEXT_KEY = "runtime_context"
 
 
@@ -65,12 +67,18 @@ class SystemPromptComposer:
         _PROJECT_IDENTITY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
+        _CHANNEL_KEY,
         _RUNTIME_CONTEXT_KEY,
     )
     """默认装配（:meth:`default`）下槽位的 key，按渲染顺序。
 
     005 起追加 ``runtime_context`` 槽位（最末尾）——按 cc 的"前部稳定指令、
     后部运行时变化信息"+ recency bias 原则放置。详见 005 design §4.10。
+
+    007 起在 ``persona_switch_strategy`` 与 ``runtime_context`` 之间追加
+    ``channel`` 槽位——persona 给基调 → 切换策略 → 通道适应（"在这个通道下
+    怎么说"）→ 运行时上下文。文字通道下 ChannelSection.render() 返回 ``None``，
+    与既有装配行为完全字节兼容。详见 007 design §4.9.5。
     """
 
     def compose(self) -> str:
@@ -135,8 +143,9 @@ class SystemPromptComposer:
         persona_id: str,
         *,
         catalog: PersonaCatalog,
+        session: Session | None = None,
     ) -> SystemPromptComposer:
-        """构造默认装配：3 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
+        """构造默认装配：5 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
 
         - ``project_identity``：项目定位级硬约束（:class:`StaticSection`，
           文本来自 ``prompt_sections/project_identity.md``）
@@ -144,6 +153,8 @@ class SystemPromptComposer:
           catalog）
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
           文本来自 ``prompt_sections/persona_switch_strategy.md``）
+        - ``channel``：当前通道指令（:class:`ChannelSection`，007 起新增；
+          ``text`` 通道下不输出任何内容，与老 session 行为字节兼容）
         - ``runtime_context``：当前会话运行时上下文（:class:`RuntimeContextSection`，
           模板来自 ``prompt_sections/runtime_context.md``）。005 起新增，含
           当前时间 / knowledge cutoff 提示 / web_search 工具使用强约束。
@@ -151,11 +162,16 @@ class SystemPromptComposer:
         Args:
             persona_id: 目标 persona 的 UUID。
             catalog: persona 真相源；必传（避免内部凭空构造，便于测试注入）。
+            session: 当前 :class:`Session`，:class:`ChannelSection` 持有它的引用
+                以读 ``current_channel``。002~006 调用方未传 ``session`` 时，
+                channel 槽位会被跳过——保持完全向后兼容。**新调用方推荐显式传**。
 
         Returns:
-            含 4 个默认槽位的 composer。
+            含 4~5 个默认槽位的 composer。``session is None`` 时只返回 4 个
+            槽位（与 005 行为完全一致）；传了 ``session`` 时多出 channel 槽位。
         """
         from .defaults import (
+            load_default_channel_section,
             load_default_runtime_context_section,
             load_default_static_section,
         )
@@ -169,6 +185,8 @@ class SystemPromptComposer:
                 catalog=catalog,
             ),
             load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
-            load_default_runtime_context_section(_RUNTIME_CONTEXT_KEY),
         ]
+        if session is not None:
+            section_list.append(load_default_channel_section(session, _CHANNEL_KEY))
+        section_list.append(load_default_runtime_context_section(_RUNTIME_CONTEXT_KEY))
         return cls(sections=tuple(section_list))

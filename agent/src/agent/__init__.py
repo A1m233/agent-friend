@@ -48,6 +48,7 @@ from .sessions import (
     SessionSummary,
 )
 from .system_prompt import (
+    ChannelSection,
     PersonaSection,
     Section,
     StaticSection,
@@ -72,6 +73,7 @@ __all__ = [
     "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
     "BuildResult",
+    "ChannelSection",
     "ContextManager",
     "Conversation",
     "ConversationEvent",

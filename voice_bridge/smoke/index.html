@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>voice-bridge · smoke</title>
+    <!-- 火山 RTC Web SDK；版本与 spike 期一致 -->
+    <script
+      crossorigin
+      src="https://lf-unpkg.volccdn.com/obj/vcloudfe/sdk/@volcengine/rtc/4.66.13/index.min.js"
+    ></script>
+    <style>
+      :root {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        max-width: 720px;
+        margin: 32px auto;
+        padding: 16px;
+        line-height: 1.6;
+      }
+      label {
+        display: block;
+        margin: 12px 0 4px;
+        color: #333;
+      }
+      input,
+      button,
+      textarea {
+        font-size: 14px;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 6px 8px;
+        box-sizing: border-box;
+      }
+      button {
+        padding: 8px 16px;
+        margin-right: 8px;
+        margin-top: 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      pre {
+        background: #f5f5f5;
+        padding: 12px;
+        max-height: 320px;
+        overflow: auto;
+      }
+      .row {
+        margin: 16px 0;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: #eee;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .pill[data-state="active"] {
+        background: #cce8d3;
+      }
+      .pill[data-state="stopped"] {
+        background: #ddd;
+      }
+      .pill[data-state="error"] {
+        background: #f5c6c6;
+      }
+      .warn {
+        padding: 8px 12px;
+        background: #fff8d2;
+        border-left: 4px solid #d4a300;
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>voice-bridge · smoke client</h2>
+    <div class="warn">
+      非产品代码——仅供开发者在合规允许公网穿透的环境跑 007 voice-call 端到端验证。详见 <code>README.md</code>。
+    </div>
+
+    <div class="row">
+      <label for="vb">voice_bridge URL</label>
+      <input type="text" id="vb" value="http://127.0.0.1:18900" />
+    </div>
+
+    <div class="row">
+      <label>可选：续上已有 session_id</label>
+      <input type="text" id="sess" placeholder="留空则新建" />
+    </div>
+
+    <div class="row">
+      <button id="btn-start">拨打通话</button>
+      <button id="btn-stop" disabled>挂断</button>
+      <span class="pill" data-state="-" id="state">未开始</span>
+    </div>
+
+    <div class="row">
+      <label>调用日志</label>
+      <pre id="log"></pre>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const log = (...args) => {
+        const line = args
+          .map((a) => (typeof a === "string" ? a : JSON.stringify(a, null, 2)))
+          .join(" ");
+        $("log").textContent += line + "\n";
+      };
+
+      let engine = null;
+      let currentCallId = null;
+
+      function setState(s) {
+        const pill = $("state");
+        pill.textContent = s;
+        pill.dataset.state = s;
+      }
+
+      async function postJson(url, body) {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(`${resp.status}: ${JSON.stringify(data)}`);
+        return data;
+      }
+
+      async function startCall() {
+        const vb = $("vb").value.trim();
+        const sessionId = $("sess").value.trim() || undefined;
+        $("btn-start").disabled = true;
+        try {
+          log("[start] POST /voice/calls ...");
+          const data = await postJson(`${vb}/voice/calls`, {
+            session_id: sessionId,
+          });
+          log("[start] 拿到凭证:", data);
+          currentCallId = data.call_id;
+          setState(data.state);
+
+          engine = window.VERTC.createEngine(data.rtc_app_id);
+          engine.on(window.VERTC.events.onUserPublishStream, (e) => {
+            log("[rtc] 用户发布流:", e);
+          });
+          engine.on(window.VERTC.events.onUserUnpublishStream, (e) => {
+            log("[rtc] 用户取消发布:", e);
+          });
+          await engine.startAudioCapture();
+          await engine.joinRoom(
+            data.token,
+            data.room_id,
+            { userId: data.user_id },
+            { isAutoPublish: true, isAutoSubscribeAudio: true },
+          );
+          log("[rtc] 已加入房间", data.room_id, "as", data.user_id);
+          $("btn-stop").disabled = false;
+        } catch (e) {
+          log("[start] 失败:", String(e));
+          setState("error");
+          $("btn-start").disabled = false;
+        }
+      }
+
+      async function stopCall() {
+        const vb = $("vb").value.trim();
+        if (!currentCallId) return;
+        $("btn-stop").disabled = true;
+        try {
+          log("[stop] POST /voice/calls/{id}/stop ...");
+          const data = await postJson(`${vb}/voice/calls/${currentCallId}/stop`);
+          log("[stop] 完成:", data);
+          setState(data.state);
+          if (engine) {
+            try {
+              await engine.leaveRoom();
+              window.VERTC.destroyEngine(engine);
+            } catch (e) {
+              log("[rtc] 清理引擎失败（忽略）:", String(e));
+            }
+            engine = null;
+          }
+        } catch (e) {
+          log("[stop] 失败:", String(e));
+        } finally {
+          currentCallId = null;
+          $("btn-start").disabled = false;
+        }
+      }
+
+      $("btn-start").addEventListener("click", startCall);
+      $("btn-stop").addEventListener("click", stopCall);
+    </script>
+  </body>
+</html>

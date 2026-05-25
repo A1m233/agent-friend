@@ -1,11 +1,13 @@
 """非对话元数据 REST 接口（design §4.11）。
 
-| Endpoint                          | 用途                                  | 等价 CLI 命令      |
-| --------------------------------- | ------------------------------------- | ------------------ |
+| Endpoint                          | 用途                                   | 等价 CLI 命令      |
+| --------------------------------- | -------------------------------------- | ------------------ |
 | ``GET /v1/sessions``              | 列出 sessions                          | ``/sessions``      |
+| ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
 | ``POST /v1/sessions/{id}/persona`` | 切换 persona                          | ``/persona <name>``|
-| ``POST /v1/sessions/{id}/model``  | 切换 model                            | ``/model <name>``  |
+| ``POST /v1/sessions/{id}/model``  | 切换 model                             | ``/model <name>``  |
+| ``POST /v1/sessions/{id}/channel`` | 切换 channel（007 起）                | （内部）           |
 | ``GET /v1/personas``              | 列出可用 persona                       | ``/personas``      |
 
 这些接口**不**遵循 OpenAI 或 AG-UI 协议——是 bridge 自家的 REST，客户端是
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -41,6 +43,22 @@ class ModelSwitchBody(BaseModel):
     model: str = Field(..., description="目标 model 名（LiteLLM 风格）")
 
 
+class CreateSessionBody(BaseModel):
+    """``POST /v1/sessions`` 请求体（007 起新增）。"""
+
+    persona: str | None = Field(None, description="目标 persona name；不传走 bridge 默认")
+    model: str | None = Field(None, description="目标 model 名；不传走 bridge 默认")
+    channel: Literal["voice", "text"] = Field(
+        "text", description="初始 channel；voice_bridge 拨打通话时传 voice"
+    )
+
+
+class ChannelSwitchBody(BaseModel):
+    """``POST /v1/sessions/{id}/channel`` 请求体（007 起新增）。"""
+
+    channel: Literal["voice", "text"] = Field(..., description="目标 channel")
+
+
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     """把 meta 路由挂到 :class:`FastAPI` 实例。"""
     router = APIRouter(prefix="/v1", tags=["meta"])
@@ -50,6 +68,36 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def list_sessions() -> list[dict[str, Any]]:
         """返回 ``list[SessionSummary]``（按 :meth:`SessionStore.list` 自然顺序）。"""
         return [_dataclass_to_dict(s) for s in runtime.persistent_store.list()]
+
+    @router.post("/sessions")
+    def create_session(body: CreateSessionBody) -> dict[str, Any]:
+        """显式创建 session（007 起新增；voice_bridge 拨打通话时调用）。
+
+        - body 不传 ``persona`` / ``model`` 时走 bridge 默认
+        - ``channel`` 默认 ``"text"``，voice_bridge 创建通话时传 ``"voice"``
+        - 创建即落盘 ``session_meta`` 事件（含 ``initial_channel`` 字段）
+        """
+        persona_name = body.persona or runtime.default_persona
+        try:
+            persona_info = runtime.catalog.find_by_name(persona_name)
+        except (PersonaNotFoundError, PersonaAmbiguousError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        model_name = body.model or runtime.default_model
+        try:
+            session = mgr.create(
+                persona=persona_info.name,
+                model=model_name,
+                persona_id=persona_info.id,
+                channel=body.channel,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "session_id": session.session_id,
+            "persona": session.current_persona,
+            "model": session.current_model,
+            "channel": session.current_channel,
+        }
 
     @router.get("/sessions/{session_id}")
     def get_session(session_id: str) -> dict[str, Any]:
@@ -101,6 +149,25 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         return {
             "session_id": session.session_id,
             "model": session.current_model,
+        }
+
+    @router.post("/sessions/{session_id}/channel")
+    def switch_channel(session_id: str, body: ChannelSwitchBody) -> dict[str, Any]:
+        """切换 session 当前 channel（007 起新增）；落盘 ``channel_change`` 事件。
+
+        与 persona / model 切换同模式：幂等（与当前 channel 相同时 no-op）。
+        """
+        try:
+            session = mgr.open(session_id)
+        except SessionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        conv = mgr.start_conversation(session)
+        conv.switch_channel(body.channel)
+
+        return {
+            "session_id": session.session_id,
+            "channel": session.current_channel,
         }
 
     @router.get("/personas")

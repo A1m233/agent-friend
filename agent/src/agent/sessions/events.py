@@ -21,6 +21,7 @@ EventType = Literal[
     "assistant_message",
     "persona_change",
     "model_change",
+    "channel_change",
     "tool_call_request",
     "tool_call_result",
 ]
@@ -32,6 +33,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "assistant_message",
         "persona_change",
         "model_change",
+        "channel_change",
         "tool_call_request",
         "tool_call_result",
     }
@@ -45,6 +47,9 @@ SCHEMA_VERSION: Final[int] = 1
 005 起新增 ``tool_call_request`` / ``tool_call_result`` 两类事件——这是**纯加性
 变更**，老文件不会触发新校验路径，故 ``SCHEMA_VERSION`` **不递增**
 （详见 005 design §4.2.4）。
+
+007 起新增 ``channel_change`` 事件 + ``session_meta.payload.initial_channel`` 字段，
+继续遵循"纯加性变更不递增 SCHEMA_VERSION"约定（详见 007 design §4.9.1）。
 """
 
 
