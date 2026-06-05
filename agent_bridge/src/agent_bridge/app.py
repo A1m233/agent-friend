@@ -16,7 +16,7 @@ import logging
 
 from fastapi import FastAPI
 
-from .assembly import build_runtime
+from .assembly import BridgeRuntime, build_runtime
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .routes.meta import register_routes as register_meta_routes
@@ -32,7 +32,14 @@ def create_app() -> FastAPI:
     settings = BridgeSettings()
     _configure_logging(settings.log_level)
     runtime = build_runtime(settings)
+    return create_app_with_runtime(runtime)
 
+
+def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
+    """测试 helper：直接传入已经装配好的 :class:`BridgeRuntime`，绕过环境变量加载。
+
+    006 起新增。生产用 :func:`create_app`，测试 / 集成场景注入 runtime。
+    """
     app = FastAPI(
         title="agent-bridge",
         version="0.1.0",

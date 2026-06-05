@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from ..personas import PersonaCatalog
+from ..sessions import Session
 
 
 def _default_now() -> datetime:
@@ -102,4 +103,42 @@ class RuntimeContextSection:
         current_time = now.strftime("%Y-%m-%d %H:%M")
         rendered = self.template.replace("{current_time}", current_time)
         stripped = rendered.strip()
+        return stripped if stripped else None
+
+
+@dataclass(frozen=True)
+class ChannelSection:
+    """根据 ``session.current_channel`` 输出对应通道的 system_prompt 片段。
+
+    007 起新增。让 LLM 知道当前是语音 / 文字通道，生成对应表达风格的回复
+    （语音通道下"短句、口语化、避免 markdown"等）。
+
+    Args:
+        key: 槽位标识，约定为 ``"channel"``。
+        session: 目标 Session；render 时读 :attr:`Session.current_channel` 决定输出。
+        voice_template: ``"voice"`` 通道下输出的 prompt 文本（一般来自
+            ``prompt_sections/channel_voice.md``）。
+        text_template: ``"text"`` 通道下输出的 prompt 文本；默认空字符串——
+            语义是"文字通道用 persona / 项目级指令默认风格即可，不再追加约束"。
+            **空字符串 / 仅空白时 :meth:`render` 返回 ``None``**，与既有
+            老 session（``current_channel="text"``）行为完全一致。
+
+    Note:
+        本 section 持有 ``Session`` 引用，每次 render 都重新读
+        :attr:`Session.current_channel` ——同一 :class:`Conversation` 内
+        若中途调 :meth:`Conversation.switch_channel`，下一轮 compose 即生效，
+        不需要外部重建 composer。
+    """
+
+    key: str
+    session: Session
+    voice_template: str
+    text_template: str = ""
+
+    def render(self) -> str | None:
+        """读 ``session.current_channel`` 选模板并返回。"""
+        if self.session.current_channel == "voice":
+            stripped = self.voice_template.strip()
+            return stripped if stripped else None
+        stripped = self.text_template.strip()
         return stripped if stripped else None

@@ -10,12 +10,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from ..messages import Message
 from .errors import SessionCorruptError
 from .events import SCHEMA_VERSION, Event, _ensure_utc, _parse_ts, _serialize_ts
+
+Channel = Literal["voice", "text"]
+"""会话与用户的交流模态。
+
+007 起引入：``"voice"`` 表示语音通话场景，``"text"`` 表示传统文字对话。
+session 默认为 ``"text"``——所有 007 之前创建的老 session 在
+``current_channel`` 上都会 fallback 到 ``"text"``，行为完全向后兼容。
+"""
 
 
 def _new_session_id() -> str:
@@ -60,6 +68,7 @@ class Session:
         persona_id: str | None = None,
         session_id: str | None = None,
         created_at: datetime | None = None,
+        channel: Channel = "text",
     ) -> Session:
         """创建一个**全新**的 :class:`Session`，并自动生成首行 ``session_meta`` 事件。
 
@@ -72,6 +81,10 @@ class Session:
                 推荐显式传**。
             session_id: 可选；不传则自动 uuid4。
             created_at: 可选；不传则用 :func:`datetime.now` UTC 当前时间。
+            channel: 初始 channel（007 起新增）。``"text"`` 时**不**写入
+                ``session_meta.payload.initial_channel`` 字段（与 002~006 老文件
+                完全字节兼容）；``"voice"`` 时写入，让 :attr:`current_channel`
+                能从 session_meta 派生。
 
         Returns:
             包含一条 ``session_meta`` 事件的新 Session 实例。
@@ -89,6 +102,8 @@ class Session:
         }
         if persona_id is not None:
             payload["initial_persona_id"] = persona_id
+        if channel != "text":
+            payload["initial_channel"] = channel
         meta_event = Event(
             type="session_meta",
             uuid=sid,
@@ -193,6 +208,26 @@ class Session:
                 if isinstance(to, str):
                     return to
         return self.initial_model
+
+    @property
+    def current_channel(self) -> Channel:
+        """当前激活 channel（007 起新增）。
+
+        反向扫 ``channel_change`` 事件：优先 ``payload.to``。没有 channel_change
+        时 fallback 到 ``session_meta.payload.initial_channel``；老文件无该字段时
+        默认 ``"text"``。
+        """
+        for ev in reversed(self.events):
+            if ev.type == "channel_change":
+                to = ev.payload.get("to")
+                if isinstance(to, str) and to in ("voice", "text"):
+                    return to  # type: ignore[return-value]
+        head = self.events[0] if self.events else None
+        if head is not None and head.type == "session_meta":
+            initial = head.payload.get("initial_channel")
+            if isinstance(initial, str) and initial in ("voice", "text"):
+                return initial  # type: ignore[return-value]
+        return "text"
 
     @property
     def messages(self) -> list[Message]:

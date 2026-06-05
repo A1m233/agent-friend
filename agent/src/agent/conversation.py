@@ -132,8 +132,12 @@ class Conversation:
         self._catalog = catalog or PersonaCatalog()
         self._memory = memory
         self._tool_registry = tool_registry
-        self._system_prompt = prompt_builder.build()
         self._max_tool_turns = _resolve_max_tool_turns()
+        # 007 起 ``_system_prompt`` 不再缓存——每次调用 :attr:`_current_system_prompt`
+        # 让 :class:`agent.system_prompt.ChannelSection` 等动态 section 在 channel
+        # 切换后立刻生效。``__init__`` 时仍 build 一次做客户端预检（persona 不存在
+        # 等错误尽早暴露）。
+        prompt_builder.build()
 
     # ----- 只读视图 -----
 
@@ -149,6 +153,18 @@ class Conversation:
         每次访问都会遍历事件流（O(n)），孵化期 n < 1000，无性能问题。
         """
         return self._session.messages
+
+    @property
+    def _system_prompt(self) -> str:
+        """每轮重建 system_prompt（007 起；让 ChannelSection 等动态 section 生效）。
+
+        本属性内部封装 :meth:`PromptBuilder.build`；调用频率为每轮 send / stream
+        各 1~2 次（首轮 + 工具循环续轮），开销主要是 persona body 文件读 + 默认
+        section 资源读，单次 < 1ms，孵化期可接受。
+
+        switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona。
+        """
+        return self._prompt_builder.build()
 
     @property
     def current_persona(self) -> str:
@@ -366,7 +382,7 @@ class Conversation:
 
         new_info = self._catalog.get(persona_id)
         new_builder = self._prompt_builder_factory(persona_id)
-        new_system_prompt = new_builder.build()
+        new_builder.build()  # 客户端预检：persona body 加载失败应在落事件前抛出
 
         event = Event(
             type="persona_change",
@@ -383,7 +399,6 @@ class Conversation:
         self._session.append(event)
 
         self._prompt_builder = new_builder
-        self._system_prompt = new_system_prompt
 
     def switch_model(self, name: str) -> None:
         """切换 model：落盘 ``model_change`` 事件 + 重建 :class:`LLMClient`。
@@ -419,6 +434,40 @@ class Conversation:
         self._session.append(event)
 
         self._llm_client = new_client
+
+    def switch_channel(self, to: str) -> None:
+        """切换 channel：落盘 ``channel_change`` 事件（007 起新增）。
+
+        若新 channel 与当前相同则**无操作直接返回**（幂等）。
+
+        与 :meth:`switch_persona` / :meth:`switch_model` 不同，channel 切换不
+        重建 LLMClient 也不重建 PromptBuilder——通道差异化通过
+        :class:`agent.system_prompt.ChannelSection` 在每轮 :class:`SystemPromptComposer`
+        compose 时根据 ``session.current_channel`` 动态生效，无需 conversation
+        持有的依赖动手术。
+
+        Args:
+            to: 目标 channel：``"voice"`` 或 ``"text"``。
+
+        Raises:
+            ValueError: ``to`` 不在 ``("voice", "text")`` 中。
+            SessionPersistError: 事件落盘失败。
+        """
+        if to not in ("voice", "text"):
+            raise ValueError(f"channel 必须是 voice / text，实际: {to!r}")
+
+        from_channel = self._session.current_channel
+        if from_channel == to:
+            return
+
+        event = Event(
+            type="channel_change",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={"from": from_channel, "to": to},
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
 
     # ----- 内部辅助 -----
 

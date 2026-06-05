@@ -19,6 +19,8 @@
 | `setup/` | 一键环境初始化（检查 uv → `uv sync` → 创建 `.env`） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
 | `cli/` | 启动 CLI 调试 UI（默认 in-process；加 `--bridge URL` 连远端 bridge） | `./scripts/cli/run.sh [--bridge URL]` | `.\scripts\cli\run.ps1 [--bridge URL]` |
 | `bridge/` | 启动 agent-bridge HTTP SSE 服务（默认 `127.0.0.1:18800`；OpenAI + AG-UI 双协议） | `./scripts/bridge/run.sh` | `.\scripts\bridge\run.ps1` |
+| `voice/run` | 启动 voice-bridge 控制平面 + LLM 入站代理（默认 `127.0.0.1:18900`；007 voice-call） | `./scripts/voice/run.sh` | `.\scripts\voice\run.ps1` |
+| `voice/tunnel` | 启动 cloudflared 公网穿透样例（仅 mac/linux；详见脚本头部注释；windows 自行起隧道） | `./scripts/voice/tunnel.sh` | （单端例外） |
 | `test/` | 跑 pytest（参数透传） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
