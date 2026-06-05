@@ -1,49 +1,72 @@
-"""agent-friend · 记忆系统模块。
+"""agent-friend · 长期记忆系统。
 
-阶段 1 仅占位：定义 :class:`Memory` Protocol 的最小签名，
-让 ``agent.Conversation`` 可以预留 ``memory: Memory | None`` 参数。
+从 001 阶段 2 预留的占位演进为可用实现（需求 008）：
 
-阶段 2 会单独写实现（基于 SQLite + 可选向量检索），届时本模块会扩展，
-但 :meth:`Memory.retrieve` 的核心签名只能向后兼容（加可选参数），
-不能改已有签名。
+- **写路径**：``Memory.observe(fragment)`` 非阻塞入队 → 异步 LLM 抽取出
+  episodic 摘要 + semantic 事实，落 SQLite。
+- **读路径**：``Memory.retrieve(query, ...)`` 召回 pinned + 相关记忆，渲染成
+  :class:`MemoryContext`，由 ``agent.Conversation`` 注入对话上下文。
 
-详见 docs/requirements/001-foundation-chat-and-memory/design.md §4.6。
+模块边界：``memory`` 只认识 :class:`ConversationFragment` / :class:`Utterance`
+（由 ``agent.memory_feed`` 投影产出），**运行时不依赖 ``agent``**。
+
+详见 docs/requirements/008-engine-memory/design.md。
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from .contracts import (
+    DEFAULT_OWNER_USER_ID,
+    ConversationFragment,
+    Layer,
+    MemoryContext,
+    MemoryItem,
+    Speaker,
+    Utterance,
+)
+from .extraction import (
+    AsyncExtractionWorker,
+    ExtractionOutput,
+    ExtractionResult,
+    Extractor,
+    Reconciler,
+    SemanticOp,
+)
+from .facade import Memory
+from .factory import build_memory
+from .retrieval import (
+    Candidate,
+    KeywordRetrieval,
+    Renderer,
+    RetrievalStrategy,
+    ScoreWeights,
+)
+from .store import EpisodicRow, SemanticRow, SqliteMemoryStore
 
-if TYPE_CHECKING:
-    from agent.messages import Message
+__version__ = "0.2.0"
 
-__version__ = "0.1.0"
-
-
-class Memory(Protocol):
-    """记忆系统的接口契约（阶段 1 仅占位）。
-
-    Note:
-        循环依赖处理：本模块在运行时**不 import** ``agent.messages``，
-        通过 ``TYPE_CHECKING`` + ``from __future__ import annotations`` 让
-        ``Message`` 类型注解只在静态类型检查时被解析。
-    """
-
-    def retrieve(self, query: str) -> list[Message]:
-        """检索与 ``query`` 相关的历史消息。
-
-        Args:
-            query: 当前用户输入或检索关键词。
-
-        Returns:
-            按相关度排序的历史消息列表，由 ``Conversation`` 作为
-            ``extra_context`` 注入到 ``ContextManager.build_messages``。
-
-        Note:
-            阶段 2 会向后兼容地扩展此方法（如加 ``top_k`` / ``filters`` 等
-            可选参数），但已有签名不变。
-        """
-        ...
-
-
-__all__ = ["Memory"]
+__all__ = [
+    "DEFAULT_OWNER_USER_ID",
+    "AsyncExtractionWorker",
+    "Candidate",
+    "ConversationFragment",
+    "EpisodicRow",
+    "ExtractionOutput",
+    "ExtractionResult",
+    "Extractor",
+    "KeywordRetrieval",
+    "Layer",
+    "Memory",
+    "MemoryContext",
+    "MemoryItem",
+    "Reconciler",
+    "Renderer",
+    "RetrievalStrategy",
+    "ScoreWeights",
+    "SemanticOp",
+    "SemanticRow",
+    "Speaker",
+    "SqliteMemoryStore",
+    "Utterance",
+    "build_memory",
+]

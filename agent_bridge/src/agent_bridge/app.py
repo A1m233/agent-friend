@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -46,6 +48,7 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
         description=(
             "agent-friend 的 HTTP SSE 出口；M6.2 启用 OpenAI + AG-UI 双协议 + meta REST。"
         ),
+        lifespan=_make_lifespan(runtime),
     )
 
     @app.get("/healthz")
@@ -57,6 +60,17 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
     register_meta_routes(app, runtime)
 
     return app
+
+
+def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
+    """构造 FastAPI lifespan：进程退出时 drain 记忆抽取队列并关库（008）。"""
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        runtime.close()
+
+    return lifespan
 
 
 def _configure_logging(level: str) -> None:

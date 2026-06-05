@@ -41,6 +41,7 @@ import argparse
 import dataclasses
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,12 +87,16 @@ from llm_providers import (
     LLMRateLimitError,
     ProviderSpec,
 )
+from memory import ExtractionResult, Memory, build_memory
 
 from .bridge_client import BridgeClient, BridgeRunError, BridgeSessionSummary
 
 DATA_DIR = Path("data")
 SESSIONS_DIR = DATA_DIR / "sessions"
+MEMORY_DB = DATA_DIR / "memory" / "memory.db"
 HISTORY_FILE = DATA_DIR / ".cli_history"
+
+MEMORY_DEBUG_ENV = "AGENT_FRIEND_MEMORY_DEBUG"
 
 RESUME_LATEST_SENTINEL = "__latest__"
 
@@ -186,6 +191,7 @@ class _CliContext:
     pending_persona_id: str
     pending_persona_name: str
     pending_model: str
+    memory_debug: bool = False
 
     def is_bound(self) -> bool:
         return self.session is not None and self.conv is not None
@@ -511,6 +517,35 @@ def _print_state_line(label: str, value: str) -> None:
     stdout.print(f"[dim]→ {label}: {value}[/dim]")
 
 
+def _print_memory_recall(conv: Conversation) -> None:
+    """调试区：展示本轮 ``retrieve`` 召回了哪些记忆（仅 memory debug 模式）。"""
+    mc = conv.last_memory_context
+    if mc is None or mc.is_empty():
+        return
+    n_pinned = sum(1 for i in mc.items if i.layer == "pinned")
+    n_other = len(mc.items) - n_pinned
+    stderr.print(f"[dim][记忆] 想起 {len(mc.items)} 条（常驻 {n_pinned} · 召回 {n_other}）[/dim]")
+    for item in mc.items:
+        stderr.print(f"  - ({item.layer}) {item.text}", style="dim", markup=False, highlight=False)
+
+
+def _make_memory_debug_callback() -> Callable[[ExtractionResult], None]:
+    """构造抽取落库回调：把"记住 / 更新了什么"打到调试区。"""
+
+    def _cb(result: ExtractionResult) -> None:
+        parts: list[str] = []
+        if result.added_semantic:
+            parts.append("记住 " + "；".join(result.added_semantic))
+        if result.superseded_semantic:
+            parts.append("更新（旧：" + "；".join(result.superseded_semantic) + "）")
+        if result.episodic_id:
+            parts.append("记下这段经历")
+        if parts:
+            stderr.print(f"[dim][记忆] {' · '.join(parts)}[/dim]")
+
+    return _cb
+
+
 # ===== Slash 命令 =====
 
 
@@ -800,6 +835,9 @@ def _interactive_loop(ctx: _CliContext) -> int:
             stdout.print()
             stderr.print(rf"[red]\[会话保存失败] {e}（本轮已回复但未持久化）[/red]\n")
 
+        if ctx.memory_debug and ctx.conv is not None:
+            _print_memory_recall(ctx.conv)
+
     stdout.print("[dim]再见！[/dim]")
     return 0
 
@@ -827,12 +865,26 @@ def main() -> int:
         return 1
 
     tool_registry = make_default_registry()
+
+    memory_debug = bool(os.environ.get(MEMORY_DEBUG_ENV))
+    memory_obj: Memory | None = None
+    try:
+        memory_obj = build_memory(
+            MEMORY_DB,
+            _llm_factory(make_spec_with_thinking_off().model),
+            on_extracted=_make_memory_debug_callback() if memory_debug else None,
+        )
+    except Exception as e:
+        stderr.print(rf"[yellow]\[记忆] 初始化失败，本次不启用记忆：{e}[/yellow]")
+        memory_obj = None
+
     mgr = SessionManager(
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
         context_manager=NaiveContextManager(),
         tool_registry=tool_registry,
+        memory=memory_obj,
     )
     catalog = PersonaCatalog()
 
@@ -875,6 +927,7 @@ def main() -> int:
         pending_persona_id=pending_persona_id,
         pending_persona_name=pending_persona_name,
         pending_model=pending_model,
+        memory_debug=memory_debug,
     )
     if ctx.is_bound():
         # --resume 命中：清屏让进入新会话像"打开一个新视图"；scrollback 保留
@@ -883,7 +936,12 @@ def main() -> int:
     if ctx.is_bound():
         assert ctx.session is not None
         _replay_history(ctx.session)
-    return _interactive_loop(ctx)
+    try:
+        return _interactive_loop(ctx)
+    finally:
+        # 退出前 drain 抽取队列，把没抽完的记忆落库（design §5.1）
+        if memory_obj is not None:
+            memory_obj.close()
 
 
 # =====================================================================

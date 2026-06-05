@@ -663,6 +663,12 @@ wheels = [
 name = "memory"
 version = "0.1.0"
 source = { editable = "memory" }
+dependencies = [
+    { name = "llm-providers" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "llm-providers", editable = "llm_providers" }]
 
 [[package]]
 name = "multidict"
