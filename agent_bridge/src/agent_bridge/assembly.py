@@ -28,6 +28,7 @@ from agent import (
     make_default_registry,
 )
 from llm_providers import LLMClient, ProviderSpec
+from memory import Memory, build_memory
 
 from .settings import BridgeSettings
 
@@ -80,6 +81,9 @@ class BridgeRuntime:
         tool_registry: 全局工具注册表。
         default_persona: 自动创建 session 时的默认 persona name（slug）。
         default_model: 没指定 model 时的默认值（从 ``DEEPSEEK_MODEL`` 解析）。
+        memory: 进程级长期记忆门面（008）；``None`` 表示本进程未启用记忆
+            （``settings.memory_enabled=False``）。**只挂在持久化分支**——
+            OpenAI 无状态分支跑完即丢，不接记忆。退出时由 :meth:`close` drain。
     """
 
     settings: BridgeSettings
@@ -90,6 +94,7 @@ class BridgeRuntime:
     tool_registry: ToolRegistry
     default_persona: str
     default_model: str
+    memory: Memory | None = None
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -97,6 +102,8 @@ class BridgeRuntime:
         每个 OpenAI 请求都新建一个临时 :class:`SessionManager` + in-memory
         :class:`Session`，跑完即丢——所有 ``store.*`` 调用都是 no-op
         （:class:`NullSessionStore`）。装配开销 < 1ms，本期不缓存。
+
+        **不挂记忆**：无状态分支没有持久身份，记下来也无处归属。
         """
         return SessionManager(
             store=self.transient_store,
@@ -106,9 +113,14 @@ class BridgeRuntime:
             tool_registry=self.tool_registry,
         )
 
+    def close(self) -> None:
+        """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.memory is not None:
+            self.memory.close()
+
 
 def _make_persistent_session_manager(
-    store: SessionStore, tool_registry: ToolRegistry
+    store: SessionStore, tool_registry: ToolRegistry, memory: Memory | None
 ) -> SessionManager:
     return SessionManager(
         store=store,
@@ -116,6 +128,7 @@ def _make_persistent_session_manager(
         prompt_builder_factory=_prompt_factory,
         context_manager=NaiveContextManager(),
         tool_registry=tool_registry,
+        memory=memory,
     )
 
 
@@ -131,9 +144,16 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     transient_store = NullSessionStore()
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
-    persistent_session_manager = _make_persistent_session_manager(persistent_store, tool_registry)
     default_persona = catalog.find_by_name("default").name
     default_model = _make_spec_with_thinking_off().model
+
+    memory: Memory | None = None
+    if settings.memory_enabled:
+        memory = build_memory(settings.memory_db, _llm_factory(default_model))
+
+    persistent_session_manager = _make_persistent_session_manager(
+        persistent_store, tool_registry, memory
+    )
 
     return BridgeRuntime(
         settings=settings,
@@ -144,4 +164,5 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         tool_registry=tool_registry,
         default_persona=default_persona,
         default_model=default_model,
+        memory=memory,
     )

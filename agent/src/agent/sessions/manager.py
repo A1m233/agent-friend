@@ -23,6 +23,7 @@ from .store import SessionStore, SessionSummary
 
 if TYPE_CHECKING:
     from llm_providers import LLMClient
+    from memory import Memory
 
     from ..context import ContextManager
     from ..conversation import Conversation
@@ -56,6 +57,10 @@ class SessionManager:
             :class:`Conversation` 会挂上同一个 registry，让 AI 能调用其中的工具。
             005 起新增。``None``（默认）等价于"不开放任何工具"，行为与 002~004
             完全一致。
+        memory: 可选；若提供，:meth:`start_conversation` 装配出的
+            :class:`Conversation` 会挂上**同一个** memory 实例（记忆是 user 维度的
+            全局单例，跨会话共享）。008 起新增。``None``（默认）等价于"不启用记忆"，
+            行为与 002~007 完全一致。
     """
 
     def __init__(
@@ -66,6 +71,7 @@ class SessionManager:
         context_manager: ContextManager | None = None,
         title_generator: TitleGenerator | None = None,
         tool_registry: ToolRegistry | None = None,
+        memory: Memory | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -73,6 +79,7 @@ class SessionManager:
         self._context_manager = context_manager
         self._title_generator = title_generator
         self._tool_registry = tool_registry
+        self._memory = memory
 
     # ----- 会话 CRUD -----
 
@@ -249,5 +256,6 @@ class SessionManager:
             llm_client_factory=self._llm_client_factory,
             prompt_builder_factory=_session_aware_factory,
             catalog=catalog,
+            memory=self._memory,
             tool_registry=self._tool_registry,
         )

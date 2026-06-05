@@ -41,7 +41,7 @@ from llm_providers import (
     LLMToolCallDelta,
     LLMTurnDone,
 )
-from memory import Memory
+from memory import Memory, MemoryContext
 
 from .context import ContextManager
 from .conversation_events import (
@@ -133,6 +133,7 @@ class Conversation:
         self._memory = memory
         self._tool_registry = tool_registry
         self._max_tool_turns = _resolve_max_tool_turns()
+        self._last_memory_context: MemoryContext | None = None
         # 007 起 ``_system_prompt`` 不再缓存——每次调用 :attr:`_current_system_prompt`
         # 让 :class:`agent.system_prompt.ChannelSection` 等动态 section 在 channel
         # 切换后立刻生效。``__init__`` 时仍 build 一次做客户端预检（persona 不存在
@@ -175,6 +176,14 @@ class Conversation:
     def current_model(self) -> str:
         """当前激活 model 名（从 session 派生）。"""
         return self._session.current_model
+
+    @property
+    def last_memory_context(self) -> MemoryContext | None:
+        """最近一轮 :meth:`memory.Memory.retrieve` 的结果（observability / 调试）。
+
+        无 memory 或尚未对话时为 ``None``；空召回时是 ``MemoryContext.empty()``。
+        """
+        return self._last_memory_context
 
     # ----- 对话主流程 -----
 
@@ -260,6 +269,7 @@ class Conversation:
         current_text_buf: list[str] = []
         current_tc_acc: dict[int, dict[str, Any]] = {}
         total_tool_calls = 0
+        turn_start_idx = len(self._session.events)
 
         try:
             for turn_idx in range(self._max_tool_turns + 1):
@@ -348,6 +358,8 @@ class Conversation:
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
                 )
+            else:
+                self._observe_turn(turn_start_idx)
 
     # ----- 切换 persona / model -----
 
@@ -505,8 +517,21 @@ class Conversation:
 
     def _build_openai_messages_first_turn(self, user_input: str) -> list[dict[str, Any]]:
         """工具调用循环第 0 轮：通过 :class:`ContextManager` 把 ``user_input``
-        作为最新一条 user 消息组装。"""
-        extra = self._memory.retrieve(user_input) if self._memory else None
+        作为最新一条 user 消息组装。
+
+        若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条 system 消息走
+        ``extra_context`` 注入（008 design §6.1）。空召回不注入任何记忆段。
+        """
+        extra: list[Message] | None = None
+        if self._memory is not None:
+            ctx = self._memory.retrieve(
+                user_input,
+                persona_id=self._session.current_persona_id or "",
+                session_id=self._session.session_id,
+            )
+            self._last_memory_context = ctx
+            if not ctx.is_empty():
+                extra = [Message(role="system", content=ctx.rendered)]
         build = self._context_manager.build_messages(
             history=self._session.messages,
             system_prompt=self._system_prompt,
@@ -514,6 +539,29 @@ class Conversation:
             extra_context=extra,
         )
         return [m.to_openai() for m in build.messages]
+
+    def _observe_turn(self, start_idx: int) -> None:
+        """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。
+
+        memory 未注入则跳过。投影 / 入队都不应影响对话主流程，出错只吞掉
+        （抽取是旁路；observe 本身是非阻塞入队）。
+        """
+        if self._memory is None:
+            return
+        from .memory_feed import project_turn
+
+        try:
+            new_events = self._session.events[start_idx:]
+            fragment = project_turn(
+                new_events,
+                session_id=self._session.session_id,
+                persona_id=self._session.current_persona_id or "",
+            )
+            self._memory.observe(fragment)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("observe 本轮对话失败", exc_info=True)
 
     def _build_openai_messages_continuation(self) -> list[dict[str, Any]]:
         """工具调用循环第 N>0 轮：直接从 :attr:`Session.messages` 派生

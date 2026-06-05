@@ -28,6 +28,10 @@ class BridgeSettings(BaseSettings):
         log_level: uvicorn / FastAPI 日志级别。
         sessions_dir: AG-UI 持久化出口指向的 sessions 目录；与 CLI
             ``data/sessions/`` 共享（参见 006 R-4.3.2）。
+        memory_db: 长期记忆库（SQLite）路径；与 CLI in-process 模式
+            ``data/memory/memory.db`` 共享同一份记忆（008）。父目录自动创建。
+        memory_enabled: 是否启用长期记忆；默认开启。置 ``False`` 时 bridge 的
+            持久化会话不挂记忆（行为回到 007 及以前），便于排查 / 压测。
     """
 
     model_config = SettingsConfigDict(
@@ -41,3 +45,5 @@ class BridgeSettings(BaseSettings):
     port: int = 18800
     log_level: str = "INFO"
     sessions_dir: Path = Path("data/sessions")
+    memory_db: Path = Path("data/memory/memory.db")
+    memory_enabled: bool = True

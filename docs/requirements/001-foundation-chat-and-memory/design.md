@@ -553,7 +553,7 @@ uv run python -m tools.cli --resume data/sessions/last.json   # 恢复对话
 |---|---|
 | `Conversation` 公开 API | 构造参数（仅 `memory` 从 None 变实例）、`send` / `stream` / `history` / `reset` / `dump` / `load` 签名 |
 | `Message` 数据结构 | `role` / `content` / `timestamp` 核心字段 |
-| Protocol 接口签名 | `ContextManager.build_messages` / `PromptBuilder.build` / `Memory.retrieve` 只能向后兼容扩展（加可选参数），不能改已有签名 |
+| Protocol 接口签名 | `ContextManager.build_messages` / `PromptBuilder.build` / `Memory.retrieve` 只能向后兼容扩展（加可选参数），不能改已有签名 ⚠️ **`Memory.retrieve` 返回类型已由 [008](../008-engine-memory/design.md) 演进为 `MemoryContext`——见下方说明** |
 | `LLMClient` 公开 API | `ProviderSpec` 字段、`complete` / `stream` 签名 |
 | 错误模型 | 5 类 `LLMError` 子类不删不改 |
 
@@ -574,7 +574,9 @@ uv run python -m tools.cli --resume data/sessions/last.json   # 恢复对话
 |---|---|---|
 | `Conversation.__init__` 的 `memory: Memory \| None = None` | `agent/Conversation` | 阶段 2 注入实际 memory 对象 |
 | `ContextManager.build_messages` 的 `extra_context` 参数 | `agent/ContextManager` Protocol | Conversation 把 `memory.retrieve()` 结果通过这里传入 |
-| `Memory(Protocol).retrieve(query: str) -> list[Message]` | `memory/__init__.py` | 阶段 2 实现这个 Protocol |
+| `Memory(Protocol).retrieve(query: str) -> list[Message]` | `memory/__init__.py` | 阶段 2 实现这个 Protocol ⚠️ 见下方演进说明 |
+
+> ⚠️ **演进说明（008 落地）**：阶段 2 的记忆能力由独立需求 [`008 引擎层长期记忆`](../008-engine-memory/design.md) 落地。落地时 `Memory.retrieve` 的**返回类型从 `list[Message]` 改为 `MemoryContext{rendered, items}`**（[008 design §3.2](../008-engine-memory/design.md)）。这是一次有意识的破坏性演进——本阶段 `Memory` 始终只是占位、无真实消费方，唯一调用点 `Conversation._build_openai_messages_first_turn` 由 008 同步更新。本文档此处保留原始预留点描述作为历史来源。
 | `Message.meta` 字典 | `agent/Message` | 阶段 2 标记哪些消息是 memory 注入的 |
 
 ---

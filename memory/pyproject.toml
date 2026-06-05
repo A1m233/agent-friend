@@ -3,7 +3,12 @@ name = "memory"
 version = "0.1.0"
 description = "agent-friend · 记忆系统（基于 SQLite，向量栈预备）"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "llm-providers",
+]
+
+[tool.uv.sources]
+llm-providers = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
