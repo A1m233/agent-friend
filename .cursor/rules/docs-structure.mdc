@@ -8,18 +8,19 @@ alwaysApply: true
 > 通用的"文档工程纪律"（产文档前的 declare 流程、三铁律、反模式警告、判定标准等）
 > 已上移到个人级 rule `docs-discipline`。本文件**仅承载本项目特有**的目录与命名约定。
 
-`docs/` 下分三类文档，**职责不重叠**：
+`docs/` 下分四类文档，**职责不重叠**：
 
 | 目录                 | 职责                                                                 |
 | -------------------- | -------------------------------------------------------------------- |
 | `docs/decisions/`    | 项目级重大决策（产品愿景、技术栈、架构原则等长期方向）               |
 | `docs/requirements/` | 具体需求文档与配套技术方案                                           |
 | `docs/explorations/` | 长期话题的探索 / 讨论记录（非决策、非需求，过程笔记性质）            |
+| `docs/issues/`       | 已知但暂不修复的问题 / 技术债登记（待处理 backlog）                  |
 
 每类文档的**详细管理规则**写在各自目录下的 README 里。**改动 docs 任何文件前必须先读对应 README**，包括但不限于：
 
-- 创建新决策 / 新需求 / 新探索主题
-- 修改已有决策 / 需求 / 探索文档
+- 创建新决策 / 新需求 / 新探索主题 / 新 issue
+- 修改已有决策 / 需求 / 探索文档 / issue
 - 调整目录结构
 - 拆分 / 合并文档
 
@@ -28,6 +29,7 @@ alwaysApply: true
 - 决策类：@docs/decisions/README.md
 - 需求类：@docs/requirements/README.md
 - 探索类：@docs/explorations/README.md
+- 问题类：@docs/issues/README.md
 
 ## 本项目特有约定
 
@@ -35,6 +37,8 @@ alwaysApply: true
 - 决策目录命名：`<4 位数字编号>-<kebab-case 英文短语>`（如 `0001-product-vision-and-roadmap`、`0002-incubation-tech-stack`）
 - 需求文档文件名：`requirement.md`（"做什么"）+ `design.md`（"怎么做"，按需创建）
 - 决策文档文件名：`README.md`（每个决策目录下的主文档）
+- 问题（issue）目录命名：`<3 位数字编号>-<kebab-case 英文短语>`，主文档统一叫 `README.md`（一个 issue 一个文件夹，可附带 assets / 复现资料；编号仅在 `docs/issues/` 内连续递增，与需求编号空间互不相干）
+- 发现"暂不修"的问题时，登记到 `docs/issues/`（可用 `add-issue` skill）；马上修的直接改、不登记
 
 详见各目录下 README。
 
