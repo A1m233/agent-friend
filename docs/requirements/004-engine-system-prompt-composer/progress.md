@@ -4,7 +4,7 @@
 
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 
-IN_PROGRESS
+IN_PROGRESS（代码已合入 main；AC-1 ~ AC-6 均为离线验证且全 PASS、无 LLM 阻塞；仅待用户 ack 后转 COMPLETED）
 
 ## 当前里程碑
 

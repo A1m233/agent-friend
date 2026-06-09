@@ -20,7 +20,8 @@ M2 范围（详见 002 design.md §4.8 + progress.md 实施日志）：
 - **懒加载策略**：不像 M0.3 那样"启动即建"会话。用户没发消息 + 没 ``/new`` /
   ``/open`` 就 ``/quit``，**不会留下空 session 文件**。``/persona`` ``/model``
   在未绑定时只更新 pending 默认值，首条消息时一次性应用
-- 持久化：每条消息 / 切换都**实时**落盘到 ``data/sessions/{session_id}.jsonl``
+- 持久化：每条消息 / 切换都**实时**落盘到系统标准用户数据目录下的
+  ``sessions/{session_id}.jsonl``（路径见 :mod:`agent.paths`，决策 0002 §3.19）
 - 新 slash 命令：``/sessions`` ``/open`` ``/persona`` ``/model`` ``/new``
 - ``/reset`` **已删除**（语义与 ``/new`` 重复，统一用 ``/new``）
 - 持久化错误（``SessionPersistError``）红字提示但不中断主循环
@@ -43,7 +44,6 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -74,9 +74,13 @@ from agent import (
     ToolCallRequest,
     ToolCallResult,
     TurnDone,
+    cli_history_path,
     default_context_manager,
     make_default_registry,
+    memory_db_path,
     random_fallback,
+    sessions_dir,
+    user_data_dir,
 )
 from llm_providers import (
     LLMAuthError,
@@ -91,10 +95,11 @@ from memory import ExtractionResult, Memory, build_memory
 
 from .bridge_client import BridgeClient, BridgeRunError, BridgeSessionSummary
 
-DATA_DIR = Path("data")
-SESSIONS_DIR = DATA_DIR / "sessions"
-MEMORY_DB = DATA_DIR / "memory" / "memory.db"
-HISTORY_FILE = DATA_DIR / ".cli_history"
+# 用户数据落系统标准目录（决策 0002 §3.19），可用 AGENT_FRIEND_DATA_DIR 覆盖。
+DATA_DIR = user_data_dir()
+SESSIONS_DIR = sessions_dir()
+MEMORY_DB = memory_db_path()
+HISTORY_FILE = cli_history_path()
 
 MEMORY_DEBUG_ENV = "AGENT_FRIEND_MEMORY_DEBUG"
 
@@ -115,8 +120,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--persona",
         default="default",
-        help="初始 persona（pending；未绑定时为默认值），对应 data/personas/{name}.md "
-        '或内置 personas（默认 "default"）',
+        help="初始 persona（pending；未绑定时为默认值），对应用户数据目录下的 "
+        'personas/{name}.md 或内置 personas（默认 "default"）',
     )
     p.add_argument(
         "--model",

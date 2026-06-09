@@ -14,9 +14,9 @@ from fastapi.testclient import TestClient
 
 from agent import (
     JsonlSessionStore,
+    MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
-    PromptBuilder,
     SessionManager,
     make_default_registry,
 )
@@ -39,9 +39,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
 
         return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
 
-    def _prompt_factory(persona_id: str) -> PromptBuilder:
-        from agent import MarkdownPromptBuilder
-
+    def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)
 
     persistent_session_manager = SessionManager(
@@ -59,6 +57,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
         persistent_session_manager=persistent_session_manager,
         catalog=catalog,
         tool_registry=tool_registry,
+        prompt_builder_factory=_prompt_factory,
         default_persona=catalog.find_by_name("default").name,
         default_model="deepseek/deepseek-chat",
     )

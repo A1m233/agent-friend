@@ -2,7 +2,7 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+IN_PROGRESS（M8.1 ~ M8.3 代码 + 单测全部落地并合入 main；真 LLM 冒烟已覆盖跨会话召回 / 连续感 / 不失忆。AC 逐条 closure 见下方验收小结）
 
 ## 里程碑与任务
 
@@ -42,3 +42,17 @@ IN_PROGRESS
 | 2026-06-05 | M8.1~M8.3 代码 + 单测全部落地 | lint / mypy / 81 测试全绿 |
 | 2026-06-05 | 真 LLM 冒烟通过 | run1 建记忆（name 自动 pinned）→ run2 全新会话隐式想起 Tom 是橘猫 |
 | 2026-06-05 | bridge(HTTP) 模式接入记忆 | assembly 持久化分支注入 memory + lifespan 退出 drain；新增 `memory_db` / `memory_enabled` 配置；transient(OpenAI 无状态)分支不挂 |
+
+## 验收小结
+
+| AC | 标题 | 状态 | 依据 |
+|---|---|---|---|
+| AC-1 | 跨会话显性召回 | ✅ 真 LLM 冒烟 | run2 全新会话召回 run1 写入的「Tom 是橘猫」 |
+| AC-2 | 隐性应用（人工观察） | ✅ 真 LLM 冒烟 | run2 未明说查记忆即自然带出旧信息 |
+| AC-3 | 连续感 | ✅ 真 LLM 冒烟 | run2 开场表现"认识用户"，不重新自我介绍 |
+| AC-4 | 不失忆 + 职责边界 | ✅ 真 LLM 冒烟 | 同上跨会话表现 |
+| AC-5 | 调试可观测 | ✅ 离线 | `AGENT_FRIEND_MEMORY_DEBUG` 展示召回 / 写入 |
+| AC-6 | 持久化跨进程不丢 | ✅ 离线 | SQLite 落盘；store 单测覆盖读写 |
+| AC-7 | 不破坏既有接口 | ✅ 离线 | 全套 pytest 零回归 |
+
+> 召回为概率性能力，AC-1 ~ AC-4 以真 LLM 冒烟的人工确认为准（见上方实现日志 2026-06-05）。

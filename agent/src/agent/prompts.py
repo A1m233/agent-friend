@@ -23,15 +23,8 @@ from typing import Protocol
 
 from .errors import PersonaNotFoundError
 from .personas import PersonaCatalog
-from .personas.catalog import DEFAULT_EXTERNAL_DIR as _DEFAULT_EXTERNAL_DIR
 from .sessions import Session
 from .system_prompt import SystemPromptComposer
-
-DEFAULT_EXTERNAL_PERSONAS_DIR: Path = _DEFAULT_EXTERNAL_DIR
-"""默认的用户自定义人设目录（项目根 ``data/personas/``）。
-
-向后兼容名字保留——内部委托给 :data:`agent.personas.catalog.DEFAULT_EXTERNAL_DIR`。
-"""
 
 
 class PromptBuilder(Protocol):
@@ -51,7 +44,8 @@ class MarkdownPromptBuilder:
         catalog: 可选 :class:`PersonaCatalog` 实例；不传则按 ``external_dir``
             构造一个新的（孵化期每次扫盘 OK）。
         external_dir: 用户自定义 persona 目录（仅当 ``catalog`` 未传时生效）。
-            ``None`` 时用 :data:`DEFAULT_EXTERNAL_PERSONAS_DIR`。
+            ``None`` 时由 :class:`~agent.PersonaCatalog` 用其默认目录
+            （:func:`agent.paths.personas_dir`）。
         composer: 可选 :class:`SystemPromptComposer`；``None`` 时调
             :meth:`SystemPromptComposer.default` 构造含 4 个默认槽位的装配。
             调用方需要变体（如替换 ``persona_switch_strategy`` / 关闭某槽位）
@@ -112,7 +106,6 @@ class MarkdownPromptBuilder:
 
 
 __all__ = [
-    "DEFAULT_EXTERNAL_PERSONAS_DIR",
     "MarkdownPromptBuilder",
     "PersonaNotFoundError",
     "PromptBuilder",

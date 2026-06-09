@@ -33,6 +33,13 @@ from .errors import (
 )
 from .fallbacks import random_fallback
 from .messages import Message, Role
+from .paths import (
+    cli_history_path,
+    memory_db_path,
+    personas_dir,
+    sessions_dir,
+    user_data_dir,
+)
 from .personas import (
     BUILTIN_DEFAULT_PERSONA_ID,
     KEEP,
@@ -40,7 +47,6 @@ from .personas import (
     PersonaInfo,
 )
 from .prompts import (
-    DEFAULT_EXTERNAL_PERSONAS_DIR,
     MarkdownPromptBuilder,
     PromptBuilder,
 )
@@ -79,7 +85,6 @@ __version__ = "0.1.0"
 
 __all__ = [
     "BUILTIN_DEFAULT_PERSONA_ID",
-    "DEFAULT_EXTERNAL_PERSONAS_DIR",
     "KEEP",
     "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
@@ -132,7 +137,12 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "TurnDone",
+    "cli_history_path",
     "default_context_manager",
     "make_default_registry",
+    "memory_db_path",
+    "personas_dir",
     "random_fallback",
+    "sessions_dir",
+    "user_data_dir",
 ]

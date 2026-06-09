@@ -3,6 +3,10 @@
 > **定位**：本篇是**过程笔记**，记录上下文管理的整体蓝图、关键判断与待决问题。
 > 这里只记**思路与倾向**，不构成已锁定方案。具体落地时再到 `docs/requirements/<id>/`
 > 写 `requirement.md` / `design.md`，权威以那里为准。
+>
+> **进展（2026-06-09）**：本篇 L1（度量与预算）+ L2（FIFO 兜底 + 摘要压缩）已由
+> [需求 009](../../requirements/009-engine-context-management/) 落地。下文各处「现状：……」
+> 是 009 之前的快照，已被 009 取代；L3（轮内单条 tool_result 体积控制）仍未实现。
 
 ---
 
@@ -47,7 +51,7 @@ flowchart TD
 \+ `extra_context`（memory 召回，可选）+ `history` + `new_user_input` + `tools`
 \[+ 轮内累积的 tool 结果\]。`build_messages` 即这层产物，不需改动。
 
-### L1 度量与预算（现状：完全没有）
+### L1 度量与预算（009 前：完全没有 → 009 已落地）
 
 要回答"当前占了多少 token、还剩多少窗口"。现状刻意不做（注释里 YAGNI：算 token 要
 跑 tokenizer，成本高）。但 L1 是 L2 的前置——不度量就无法判断"超没超"。
@@ -56,7 +60,7 @@ flowchart TD
 以上一次 LLM 响应里 API 返回的真实 `usage` 为锚点，只对"上次调用之后新增的消息"
 用字符数粗估并做保守 padding（偏上界）。
 
-### L2 削减 + 压缩策略（现状：只有"不削减"）
+### L2 削减 + 压缩策略（009 前：只有"不削减" → 009 已落地 FIFO + 摘要）
 
 真正的可插拔点。`ContextManager` 已是 Protocol，注释预告了 `Fifo` / `TokenBudget` /
 `Summarizing` 三种。本质是一个谱系，见 §3。

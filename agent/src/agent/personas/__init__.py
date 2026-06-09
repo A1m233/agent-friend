@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from . import frontmatter
 from .catalog import (
-    DEFAULT_EXTERNAL_DIR,
     KEEP,
     PersonaCatalog,
     PersonaInfo,
@@ -25,7 +24,6 @@ from .identity import BUILTIN_DEFAULT_PERSONA_ID
 
 __all__ = [
     "BUILTIN_DEFAULT_PERSONA_ID",
-    "DEFAULT_EXTERNAL_DIR",
     "KEEP",
     "PersonaCatalog",
     "PersonaInfo",

@@ -4,11 +4,11 @@
 
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 
-IN_PROGRESS
+COMPLETED（代码已合入 main；离线 AC 全 PASS；AC-6 / AC-9 / AC-10 已用真 LLM（DeepSeek v4-flash）跑通）
 
 ## 当前里程碑
 
-**M3.1 引擎层 + CLI 改造 + 数据迁移 全部落地；lint / typecheck 全过；离线 AC（AC-1 ~ AC-5 / AC-7 / AC-8 / AC-11 / AC-12）全部 PASS。仅 AC-6 / AC-9 / AC-10 需要真 LLM 调用，等用户授权。**
+**M3.1 引擎层 + CLI 改造 + 数据迁移 全部落地；lint / typecheck 全过；离线 AC（AC-1 ~ AC-5 / AC-7 / AC-8 / AC-11 / AC-12）+ 真 LLM AC（AC-6 / AC-9 / AC-10）全部 PASS。**
 
 ## 已完成（M3.1 主体）
 
@@ -38,15 +38,20 @@ IN_PROGRESS
 | AC-11 | 老 session（无 persona_id）兼容 | ✅ PASS | `current_persona_id` 返回 None，`current_persona_name` 正确；`start_conversation` fallback 查 catalog 成功 |
 | AC-12 | 缺 id 字段 lazy 补 | ✅ PASS | 写无 frontmatter 文件 → `catalog.list()` 触发 warn + 自动写回 |
 
-## 待用户授权（需 LLM 调用）
+## 真 LLM AC 验收 —— 全部 PASS（2026-06-09，DeepSeek v4-flash）
 
-| AC | 标题 | 备注 |
-|---|---|---|
-| AC-6 | 跑 001/002 现有 CLI 流程不破 | 起 CLI 发 3 ~ 5 句对话 |
-| AC-9 | CLI 消歧 `/persona user:default` vs `/persona builtin:default` | 配合 LLM 看回复风格差异验证生效 |
-| AC-10 | 新 `persona_change` 事件双字段化 | `/persona xxx` 后 grep jsonl 验证 `persona_id` + `to`(name) 都在 |
+用真实引擎装配（mirror 自 `tools/cli`）+ CLI 的 `_resolve_persona_input` 解析器，
+真实调用 DeepSeek 跑通；会话落到系统用户数据目录（0002 §3.19）。验收用的临时
+user persona 与会话文件已清理。
 
-**Token 预估**：约 1 ~ 1.5k token（DeepSeek v4-flash），约 ¥0.005。
+| AC | 标题 | 状态 | 验证方式 |
+|---|---|---|---|
+| AC-6 | 跑 001/002 现有 CLI 流程不破 | ✅ PASS | builtin default 连发 4 句，多轮对话正常、上下文连贯（追问名字答出「小明」） |
+| AC-9 | `/persona user:default` vs `builtin:default` 消歧 | ✅ PASS | 解析层：`user:` / `builtin:` 前缀分别解析到对应 source+id，裸名 `default` 命中 user（user 优先）；行为层：切到浮夸风 user persona 后同问「给我点鼓励」回复风格明显不同 |
+| AC-10 | 新 `persona_change` 事件双字段化 | ✅ PASS | grep 会话 jsonl，事件含 `from_id`/`from` + `to_id`/`to` 四字段（id+name 双轨），`to_id` 正是目标 user persona 的 UUID |
+
+> 注：AC-10 的「双字段」在实现中是 `to_id`(UUID) + `to`(name)（含对称的 `from_id` + `from`），
+> 非早期草稿里写的 `persona_id` 字段名。
 
 ## M3.1 落地决策小记
 
@@ -141,120 +146,10 @@ IN_PROGRESS
 #### 子任务 12：手动 AC 验收
 
 - [x] 离线 AC（AC-1 / AC-2 / AC-3 / AC-4 / AC-5 / AC-7 / AC-8 / AC-11 / AC-12）全部 PASS
-- [ ] **AC-6 / AC-9 / AC-10 需用户授权 LLM token 调用后验证**
+- [x] **AC-6 / AC-9 / AC-10 已用真 LLM（DeepSeek v4-flash）跑通（2026-06-09）**
 
 ## 实施前置条件
 
 - [x] requirement.md CONFIRMED
 - [x] design.md CONFIRMED
 - [x] 用户授权进入 Phase 3 实施
-
-## Token 消耗预估
-
-主要 AC 跑通需要的 LLM 调用预估：
-
-- AC-3 / AC-6（persona 切换流程不破）：~3 轮对话 × 2 个不同 persona = 6 次小对话 ≈ 1k token
-- AC-10 / AC-11（事件 schema 验证）：跑通 `/persona xxx` + 看 jsonl 即可，最少 1 次对话 ≈ 0.2k token
-- 总计 **≈ 1.5k token**（DeepSeek v4-flash），约 ¥0.005
-
-AC-1 ~ AC-2 / AC-4 ~ AC-5 / AC-7 ~ AC-9 / AC-12 都是离线纯逻辑验证，**不消耗 token**。
-
-## 任务列表
-
-### M3.1 引擎层 PersonaCatalog + 002 事件 schema 双字段化 —— **未开始**
-
-#### 子任务 1：依赖与目录骨架
-
-- [ ] `agent/pyproject.toml` 增加 `PyYAML>=6.0` 依赖
-- [ ] `uv lock` 更新 lockfile
-- [ ] 创建 `agent/src/agent/personas/` 子包目录（升级现有 `default.md` 所在目录为 Python 包）
-- [ ] 新增 `agent/src/agent/personas/README.md`：包说明
-
-#### 子任务 2：identity 常量
-
-- [ ] `agent/src/agent/personas/identity.py`：`BUILTIN_DEFAULT_PERSONA_ID = "00000000-0000-4000-8000-000000000001"` 及注释
-
-#### 子任务 3：frontmatter helper
-
-- [ ] `agent/src/agent/personas/frontmatter.py`：`parse(text)` / `serialize(content, *, id, description)` 双函数
-- [ ] 解析失败 / 未闭合 / 非 dict 的容错（warn + 退化）
-- [ ] frontmatter 字段顺序锁定（`id` 在前）
-
-#### 子任务 4：错误类
-
-- [ ] `agent/src/agent/errors.py` 增加 `PersonaReadOnlyError` / `PersonaAlreadyExistsError` / `PersonaPersistError` / `PersonaAmbiguousError`
-
-#### 子任务 5：PersonaInfo + PersonaCatalog
-
-- [ ] `agent/src/agent/personas/catalog.py`：`PersonaInfo` 数据类（id / name / source / description）
-- [ ] `_KeepSentinel` + `KEEP` 常量
-- [ ] `PersonaCatalog.__init__(external_dir)` + 默认 `data/personas/`
-- [ ] `PersonaCatalog._validate_name`：路径分隔符 / `..` / `.` 前缀 / `.md` 后缀 / `:` 字符校验
-- [ ] `PersonaCatalog._scan()`：内部 helper，构建 `dict[id, (Path, source)]` index；遇到 user 缺 id 时 warn + lazy 补 id 写回；builtin 缺 id 时抛错
-- [ ] `PersonaCatalog.list()` —— 按 name 字母序，同名 user 在前
-- [ ] `PersonaCatalog.get(id)` / `read_content(id)`
-- [ ] `PersonaCatalog.find_by_name(name, *, source=None)` —— user 优先规则
-- [ ] `PersonaCatalog.create(name, content, description=None)` —— 生成 UUID v4
-- [ ] `PersonaCatalog.update(id, *, content=KEEP, description=KEEP)` —— KEEP / None / str 三态
-- [ ] `PersonaCatalog.delete(id)`
-- [ ] `PersonaCatalog.rename(id, new_name)` —— 改文件名 + frontmatter 不动 id
-
-#### 子任务 6：包公开 API
-
-- [ ] `agent/src/agent/personas/__init__.py`：重导出 `PersonaCatalog / PersonaInfo / KEEP / BUILTIN_DEFAULT_PERSONA_ID`
-- [ ] `agent/src/agent/__init__.py`：顶层重导出 + 错误类
-
-#### 子任务 7：MarkdownPromptBuilder 改造
-
-- [ ] `agent/src/agent/prompts.py`：`MarkdownPromptBuilder(persona_id, *, catalog=None)`
-- [ ] `build()` 委托 `catalog.read_content(persona_id)`
-- [ ] **删除**老的"按 name 查文件 + 直接读"路径
-
-#### 子任务 8：002 事件 schema 双字段化
-
-- [ ] `agent/sessions/events.py`：`Event.persona_change(persona_id, persona_name)` factory；序列化 / 反序列化 jsonl 兼容
-- [ ] `Event.from_jsonl` 老事件（仅 `persona_name`）兼容：`persona_id=None` + warn
-- [ ] `Session.current_persona` 改造：返回 id；老事件按 name 查 + warn fallback；找不到时回 `BUILTIN_DEFAULT_PERSONA_ID`
-- [ ] `Conversation.__init__` 加 `catalog: PersonaCatalog | None`（默认 None 时新建）
-- [ ] `Conversation.switch_persona(persona_id)`：用 catalog 取 name → 写双字段事件
-- [ ] 所有内部调用方迁移（`assistant_message.meta` 中的 persona 字段保持原语义，但记 id；hint 名字另存 meta）
-
-> 注：`assistant_message.meta` 的 persona 字段语义是否要从 name 改 id 需要再 review；本期初版倾向 **meta 也记 id**，与事件一致。**未影响 design.md**——这是落地时的细节决策，留到 M3.1 收尾时小记。
-
-#### 子任务 9：数据迁移
-
-- [ ] 升级 `agent/src/agent/personas/default.md`：加 frontmatter（`id: 00000000-0000-4000-8000-000000000001`、`description`）+ 保留原 prompt
-- [ ] 升级 `data/personas/cute_friend.md`：加 frontmatter（新生成的真随机 UUID v4 + description）+ 保留原内容
-
-#### 子任务 10：CLI 接入
-
-- [ ] `tools/cli/__main__.py` 加 `_resolve_persona_input(raw, catalog)`：支持 `foo` / `user:foo` / `builtin:foo`
-- [ ] `_cmd_persona`：调 `_resolve_persona_input` → `conversation.switch_persona(info.id)`
-- [ ] `_cmd_personas`：渲染 list 表格（name / source / id-short / description）
-- [ ] `_handle_slash_command` 加 `/personas` 分支
-- [ ] `_print_banner` 命令提示加 `/personas`
-
-#### 子任务 11：lint / typecheck
-
-- [ ] `./scripts/lint/run.sh`（ruff + mypy）通过
-- [ ] 新增的 `_KeepSentinel` 类型提示与 mypy 兼容（用 `Union | _KeepSentinel`）
-
-#### 子任务 12：手动 AC 验收（12 条）
-
-- [ ] AC-1 ~ AC-12 全部跑过；AC 涉及 LLM 调用的提前估算 token 并和用户确认
-
-## 实施前置条件
-
-- [x] requirement.md CONFIRMED
-- [x] design.md CONFIRMED
-- [ ] 用户授权进入 Phase 3 实施
-
-## Token 消耗预估
-
-主要 AC 跑通需要的 LLM 调用预估：
-
-- AC-3 / AC-6（persona 切换流程不破）：~3 轮对话 × 2 个不同 persona = 6 次小对话 ≈ 1k token
-- AC-10 / AC-11（事件 schema 验证）：跑通 `/persona xxx` + 看 jsonl 即可，最少 1 次对话 ≈ 0.2k token
-- 总计 **≈ 1.5k token**（DeepSeek v4-flash），约 ¥0.004
-
-AC-1 ~ AC-2 / AC-4 ~ AC-5 / AC-7 ~ AC-9 / AC-12 都是离线纯逻辑验证，**不消耗 token**。
