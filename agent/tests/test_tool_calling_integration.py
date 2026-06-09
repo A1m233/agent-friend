@@ -90,6 +90,7 @@ class _ScriptedLLMClient:
     script: list[list[LLMStreamEvent]] = field(default_factory=list)
     turn_idx: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
+    context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
     def complete(
         self, messages: list[dict[str, Any]], **overrides: Any

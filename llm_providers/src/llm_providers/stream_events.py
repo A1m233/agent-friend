@@ -50,6 +50,25 @@ class LLMToolCallDelta:
 
 
 @dataclass(frozen=True)
+class LLMUsage:
+    """单次 LLM 调用的 token 用量（009 起新增）。
+
+    作为上下文管理（009）token 估算的"真实锚点"——流式路径来自带
+    ``stream_options={"include_usage": True}`` 的尾 chunk，非流式来自
+    ``response.usage``。Provider 不透出时调用方应拿到 ``None``、退化到字符估算。
+
+    Attributes:
+        prompt_tokens: 输入（prompt）token 数。009 token 估算的核心锚点。
+        completion_tokens: 输出（completion）token 数。
+        total_tokens: 总 token 数（通常 = prompt + completion）。
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class LLMTurnDone:
     """本次 LLM 流式响应结束。
 
@@ -60,9 +79,14 @@ class LLMTurnDone:
             - ``"tool_use"`` — 决定调用工具（OpenAI ``finish_reason="tool_calls"``）
             - ``"max_tokens"`` — 触达 max_tokens 上限
             - ``"other"`` — 其它（length / content_filter 等罕见情况）
+        usage: 本次调用的真实 token 用量（009 起新增）。仅当 provider 透出时
+            非空——需 ``stream`` 调用方开启 ``stream_options.include_usage``
+            且 provider 在尾 chunk 返回 usage；不支持的 provider 为 ``None``，
+            上层（009 ``Conversation`` / ``budget``）退化到字符估算。
     """
 
     stop_reason: str = ""
+    usage: LLMUsage | None = None
     type: Literal["done"] = "done"
 
 

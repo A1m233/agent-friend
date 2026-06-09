@@ -61,7 +61,6 @@ from agent import (
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
-    NaiveContextManager,
     PersonaCatalog,
     PersonaInfo,
     PersonaNotFoundError,
@@ -75,6 +74,7 @@ from agent import (
     ToolCallRequest,
     ToolCallResult,
     TurnDone,
+    default_context_manager,
     make_default_registry,
     random_fallback,
 )
@@ -882,7 +882,7 @@ def main() -> int:
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
-        context_manager=NaiveContextManager(),
+        context_manager_factory=default_context_manager,
         tool_registry=tool_registry,
         memory=memory_obj,
     )

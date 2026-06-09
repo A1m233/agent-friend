@@ -1,7 +1,8 @@
 """bridge 启动期一次性装配。
 
 把 ``agent-cli`` ``__main__.py`` 已经在用的装配模式抽取出来，让 bridge 进程
-也能跑同一套：``SessionManager`` + ``PersonaCatalog`` + ``NaiveContextManager``
+也能跑同一套：``SessionManager`` + ``PersonaCatalog`` + 上下文管理工厂
+（``default_context_manager``，009 起默认摘要压缩 + FIFO 兜底）
 + ``ToolRegistry`` + ``LLMClientFactory`` + ``PromptBuilderFactory``。
 
 bridge 进程是**单实例多请求**模型——这些组件在进程启动时装配一次，所有请求
@@ -20,11 +21,11 @@ from agent.tools import ToolRegistry
 from agent import (
     JsonlSessionStore,
     MarkdownPromptBuilder,
-    NaiveContextManager,
     NullSessionStore,
     PersonaCatalog,
     SessionManager,
     SessionStore,
+    default_context_manager,
     make_default_registry,
 )
 from llm_providers import LLMClient, ProviderSpec
@@ -109,7 +110,7 @@ class BridgeRuntime:
             store=self.transient_store,
             llm_client_factory=_llm_factory,
             prompt_builder_factory=_prompt_factory,
-            context_manager=NaiveContextManager(),
+            context_manager_factory=default_context_manager,
             tool_registry=self.tool_registry,
         )
 
@@ -126,7 +127,7 @@ def _make_persistent_session_manager(
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
-        context_manager=NaiveContextManager(),
+        context_manager_factory=default_context_manager,
         tool_registry=tool_registry,
         memory=memory,
     )

@@ -249,6 +249,12 @@ class Session:
         损坏数据的容忍：``tool_call_request`` 找不到上一条 assistant 时
         **静默忽略**——避免历史读取爆炸；新写入不会出现这种情况。
 
+        Note:
+            009 起的 ``compaction`` 事件**不参与本投影**（不产 Message）——它只是
+            append-only 流上的摘要折叠点 marker，折叠投影发生在 context manager
+            内部（用 :meth:`latest_compaction` 派生的 summary）。本属性始终返回
+            **原始全量**，memory 抽取不受折叠影响（009 design §6.4）。
+
         Returns:
             按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
@@ -306,6 +312,25 @@ class Session:
                     )
                 )
         return result
+
+    def latest_compaction(self) -> Event | None:
+        """最近一次上下文摘要折叠点（009 M3）；无则 ``None``。
+
+        反向扫事件流找最后一条 ``compaction`` 事件。多次压缩天然叠加——最新
+        compaction 的 summary 已蒸馏了此前全部内容，折叠永远只认最近一条。
+        老文件（无 compaction 事件）返回 ``None``，自然退化为全量上下文。
+
+        由 :class:`Conversation` 派生 :class:`agent.context.PriorSummary` 放进
+        ``RuntimeContext`` 传给 context manager；折叠逻辑在 context manager 内部，
+        不污染 :attr:`messages`（保持 memory 读全量、行为不变，009 design §6.4）。
+
+        Returns:
+            最近一条 ``compaction`` 事件，或 ``None``。
+        """
+        for ev in reversed(self.events):
+            if ev.type == "compaction":
+                return ev
+        return None
 
     def append(self, event: Event) -> None:
         """仅追加事件到**内存**。

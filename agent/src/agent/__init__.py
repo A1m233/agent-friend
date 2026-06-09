@@ -3,7 +3,18 @@
 详见 README.md 与 docs/requirements/001-foundation-chat-and-memory/。
 """
 
-from .context import BuildResult, ContextManager, NaiveContextManager
+from .context import (
+    BudgetSnapshot,
+    BuildResult,
+    CompactionRecord,
+    ContextManager,
+    FifoContextManager,
+    NaiveContextManager,
+    PriorSummary,
+    RuntimeContext,
+    SummarizingContextManager,
+    default_context_manager,
+)
 from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
     ConversationEvent,
@@ -72,13 +83,16 @@ __all__ = [
     "KEEP",
     "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
+    "BudgetSnapshot",
     "BuildResult",
     "ChannelSection",
+    "CompactionRecord",
     "ContextManager",
     "Conversation",
     "ConversationEvent",
     "Event",
     "EventType",
+    "FifoContextManager",
     "JsonlSessionStore",
     "MarkdownPromptBuilder",
     "Message",
@@ -92,8 +106,10 @@ __all__ = [
     "PersonaPersistError",
     "PersonaReadOnlyError",
     "PersonaSection",
+    "PriorSummary",
     "PromptBuilder",
     "Role",
+    "RuntimeContext",
     "Section",
     "Session",
     "SessionCorruptError",
@@ -104,6 +120,7 @@ __all__ = [
     "SessionStore",
     "SessionSummary",
     "StaticSection",
+    "SummarizingContextManager",
     "SystemPromptComposer",
     "TextDelta",
     "Tool",
@@ -115,6 +132,7 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "TurnDone",
+    "default_context_manager",
     "make_default_registry",
     "random_fallback",
 ]

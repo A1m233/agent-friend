@@ -24,6 +24,7 @@ EventType = Literal[
     "channel_change",
     "tool_call_request",
     "tool_call_result",
+    "compaction",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -36,6 +37,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "channel_change",
         "tool_call_request",
         "tool_call_result",
+        "compaction",
     }
 )
 
@@ -50,6 +52,10 @@ SCHEMA_VERSION: Final[int] = 1
 
 007 起新增 ``channel_change`` 事件 + ``session_meta.payload.initial_channel`` 字段，
 继续遵循"纯加性变更不递增 SCHEMA_VERSION"约定（详见 007 design §4.9.1）。
+
+009 起新增 ``compaction`` 事件（上下文摘要折叠点 marker），同样是纯加性——原始
+消息事件一条不删不改，老文件无该事件时自然退化为全量。故 ``SCHEMA_VERSION``
+**不递增**（详见 009 design §6.4）。
 """
 
 
