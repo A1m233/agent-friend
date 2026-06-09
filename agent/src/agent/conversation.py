@@ -43,7 +43,7 @@ from llm_providers import (
 )
 from memory import Memory, MemoryContext
 
-from .context import ContextManager
+from .context import BuildResult, ContextManager, RuntimeContext, make_budget_snapshot
 from .conversation_events import (
     ConversationEvent,
     TextDelta,
@@ -134,6 +134,12 @@ class Conversation:
         self._tool_registry = tool_registry
         self._max_tool_turns = _resolve_max_tool_turns()
         self._last_memory_context: MemoryContext | None = None
+        # 009 M1：上下文管理的会话级运行时状态
+        # ``_last_input_tokens``：上轮真实 usage.prompt_tokens 锚点（消费 LLMTurnDone.usage
+        # 更新）；``_last_context_notes``：最近一轮上下文组装的度量观测（token 估算 /
+        # 有效窗口 / 触发阈值），供调试入口读取（AC-1.3）。
+        self._last_input_tokens: int | None = None
+        self._last_context_notes: dict[str, Any] = {}
         # 007 起 ``_system_prompt`` 不再缓存——每次调用 :attr:`_current_system_prompt`
         # 让 :class:`agent.system_prompt.ChannelSection` 等动态 section 在 channel
         # 切换后立刻生效。``__init__`` 时仍 build 一次做客户端预检（persona 不存在
@@ -184,6 +190,23 @@ class Conversation:
         无 memory 或尚未对话时为 ``None``；空召回时是 ``MemoryContext.empty()``。
         """
         return self._last_memory_context
+
+    @property
+    def last_context_notes(self) -> dict[str, Any]:
+        """最近一轮上下文组装的度量观测（009 M1；observability / 调试，AC-1.3）。
+
+        每次发往 LLM 的上下文组装后刷新，含：
+
+        - ``token_estimate`` — 本轮组装消息的保守 token 估算
+        - ``effective_window`` — 当前 model 的有效输入窗口
+        - ``trigger_threshold`` — 按窗口动态推导的触发阈值
+        - ``last_input_tokens`` — 上轮真实 usage 锚点（无则 ``None``）
+        - ``dropped_count`` — 本轮裁剪条数（Naive 恒 0）
+        - 以及 context manager 经 ``BuildResult.notes`` 透出的其它字段（M2/M3）
+
+        尚未发生任何组装时为空 dict。
+        """
+        return dict(self._last_context_notes)
 
     # ----- 对话主流程 -----
 
@@ -292,6 +315,7 @@ class Conversation:
                         self._accumulate_tool_call_delta(current_tc_acc, ev)
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
+                        self._consume_usage(ev)
 
                 # 第一轮 LLM 完成才落 user_event（保留"初始化失败完全不落盘"语义）
                 if not user_event_appended:
@@ -516,7 +540,7 @@ class Conversation:
         self._session.append(event)
 
     def _build_openai_messages_first_turn(self, user_input: str) -> list[dict[str, Any]]:
-        """工具调用循环第 0 轮：通过 :class:`ContextManager` 把 ``user_input``
+        """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
 
         若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条 system 消息走
@@ -532,13 +556,75 @@ class Conversation:
             self._last_memory_context = ctx
             if not ctx.is_empty():
                 extra = [Message(role="system", content=ctx.rendered)]
+        return self._assemble(new_user_input=user_input, extra_context=extra)
+
+    def _assemble(
+        self,
+        *,
+        new_user_input: str | None = None,
+        extra_context: list[Message] | None = None,
+        trailing_system: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
+
+        首轮 / 工具续轮 / 触上限兜底收尾都经此处，确保上下文管理（度量 /
+        兜底截断 / 摘要压缩）覆盖每一次组装，差异只在 ``new_user_input`` /
+        ``extra_context`` / ``trailing_system``。``history`` 一律传**原始全量**
+        :attr:`Session.messages`（折叠在 context manager 内部发生，见 009 design §6.3）。
+
+        Returns:
+            可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
+        """
+        runtime = self._build_runtime_context()
         build = self._context_manager.build_messages(
             history=self._session.messages,
             system_prompt=self._system_prompt,
-            new_user_input=user_input,
-            extra_context=extra,
+            new_user_input=new_user_input,
+            extra_context=extra_context,
+            trailing_system=trailing_system,
+            runtime=runtime,
         )
+        self._record_context_notes(build, runtime)
         return [m.to_openai() for m in build.messages]
+
+    def _build_runtime_context(self) -> RuntimeContext:
+        """构造本轮 :class:`RuntimeContext`（预算快照 + 当前 llm_client）。
+
+        ``llm_client`` per-call 传入 → ``switch_model`` 后自动跟随新客户端 / 新窗口。
+        ``prior_summary`` 在 M3（摘要落盘）起从 :meth:`Session.latest_compaction` 派生，
+        M1/M2 恒为 ``None``。
+        """
+        budget = make_budget_snapshot(
+            effective_window=self._llm_client.context_window,
+            last_input_tokens=self._last_input_tokens,
+        )
+        return RuntimeContext(
+            budget=budget,
+            llm_client=self._llm_client,
+            prior_summary=None,
+        )
+
+    def _record_context_notes(self, build: BuildResult, runtime: RuntimeContext) -> None:
+        """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
+        from .context import estimate_tokens
+
+        notes: dict[str, Any] = {
+            "token_estimate": estimate_tokens(build.messages),
+            "effective_window": runtime.budget.effective_window,
+            "trigger_threshold": runtime.budget.trigger_threshold,
+            "last_input_tokens": runtime.budget.last_input_tokens,
+            "dropped_count": build.dropped_count,
+        }
+        notes.update(build.notes)
+        self._last_context_notes = notes
+
+    def _consume_usage(self, ev: LLMTurnDone) -> None:
+        """消费 :class:`LLMTurnDone.usage`，更新下一轮估算的真实锚点（009 M1）。
+
+        provider 不透出 usage（``None``）时保留上次锚点，下轮估算退化到纯字符。
+        """
+        if ev.usage is not None and ev.usage.prompt_tokens > 0:
+            self._last_input_tokens = ev.usage.prompt_tokens
 
     def _observe_turn(self, start_idx: int) -> None:
         """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。
@@ -564,17 +650,13 @@ class Conversation:
             logging.getLogger(__name__).warning("observe 本轮对话失败", exc_info=True)
 
     def _build_openai_messages_continuation(self) -> list[dict[str, Any]]:
-        """工具调用循环第 N>0 轮：直接从 :attr:`Session.messages` 派生
-        （已含 user_event + 历次 assistant_event + tool_call_*_event 折叠后的消息）。
+        """工具调用循环第 N>0 轮：经统一入口 :meth:`_assemble` 组装（009 R-0.3）。
 
-        不再调用 :class:`ContextManager`——它的接口要求传 ``new_user_input``，
-        但本轮没有新的用户输入。
+        续轮没有新用户输入（用户输入早进了 :attr:`Session.messages`），故
+        ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
+        续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        msgs: list[Message] = []
-        if self._system_prompt:
-            msgs.append(Message(role="system", content=self._system_prompt))
-        msgs.extend(self._session.messages)
-        return [m.to_openai() for m in msgs]
+        return self._assemble()
 
     def _accumulate_tool_call_delta(
         self,
@@ -657,18 +739,17 @@ class Conversation:
             "你已经多次调用工具仍未达成目标，请基于已有信息用一两句话直接回复用户，"
             "不要再调用任何工具。"
         )
-        msgs: list[Message] = []
-        if self._system_prompt:
-            msgs.append(Message(role="system", content=self._system_prompt))
-        msgs.extend(self._session.messages)
-        msgs.append(Message(role="system", content=extra_system))
-        openai_messages = [m.to_openai() for m in msgs]
+        # 009 R-0.3：兜底收尾也走统一入口，收尾指令作为 trailing_system 注入，
+        # 不再手拼消息（消除与续轮组装的重复）。
+        openai_messages = self._assemble(trailing_system=extra_system)
 
         text_buf: list[str] = []
         for ev in self._llm_client.stream(openai_messages, tools=None):
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield TextDelta(text=ev.text)
+            elif isinstance(ev, LLMTurnDone):
+                self._consume_usage(ev)
             # 触上限兜底中不再处理 tool_call_delta（tools=None，理论上 LLM 不该返回）
 
         self._append_assistant_event(

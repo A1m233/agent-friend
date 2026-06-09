@@ -18,6 +18,7 @@ from .stream_events import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    LLMUsage,
 )
 
 __version__ = "0.1.0"
@@ -34,5 +35,6 @@ __all__ = [
     "LLMTextDelta",
     "LLMToolCallDelta",
     "LLMTurnDone",
+    "LLMUsage",
     "ProviderSpec",
 ]

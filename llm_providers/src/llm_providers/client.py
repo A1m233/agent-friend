@@ -26,7 +26,42 @@ from .errors import (
     LLMRateLimitError,
 )
 from .spec import ProviderSpec
-from .stream_events import LLMStreamEvent, LLMTextDelta, LLMToolCallDelta, LLMTurnDone
+from .stream_events import (
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+    LLMUsage,
+)
+
+DEFAULT_CONTEXT_WINDOW = 8192
+"""litellm 查不到、spec 也没 override 时的保守兜底窗口（009 起）。
+
+取小不取大：窗口估小 → 阈值偏低 → 上下文管理偏早触发裁剪/压缩，安全（宁可早
+压缩，不可漏压缩撑爆）。详见 009 design §3.2。
+"""
+
+
+def _extract_usage(response: Any) -> LLMUsage | None:
+    """从 litellm 响应对象 / 尾 chunk 抽取 token 用量（009 起）。
+
+    litellm 把 OpenAI 风格的 ``usage`` 透到 ``response.usage``（非流式）或带
+    ``stream_options={"include_usage": True}`` 时的尾 chunk 上。Provider 不支持
+    时该字段缺失 / 为 ``None`` → 返回 ``None``，上层退化到字符估算。
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    prompt = getattr(usage, "prompt_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    total = getattr(usage, "total_tokens", None)
+    if prompt is None and completion is None and total is None:
+        return None
+    return LLMUsage(
+        prompt_tokens=int(prompt or 0),
+        completion_tokens=int(completion or 0),
+        total_tokens=int(total or 0),
+    )
 
 
 def _map_exception(e: Exception) -> LLMError:
@@ -73,6 +108,37 @@ class LLMClient:
 
     def __init__(self, spec: ProviderSpec):
         self.spec = spec
+
+    @property
+    def context_window(self) -> int:
+        """当前 model 的最大输入 token 窗口（009 起；三层兜底）。
+
+        解析顺序（009 design §3.2）：
+
+        1. :attr:`ProviderSpec.context_window` override（私有 ``api_base`` /
+           litellm 不认识的 model 时显式指定）
+        2. ``litellm.get_model_info(model)`` 的 ``max_input_tokens`` /
+           ``max_tokens`` 元数据
+        3. :data:`DEFAULT_CONTEXT_WINDOW` 保守兜底（取小，偏早触发上下文管理）
+
+        Note:
+            把 litellm 细节收口在本层，让 ``agent`` 侧的 budget 逻辑只依赖本属性、
+            **不直接 import litellm**，保持现有分层隔离。
+        """
+        if self.spec.context_window is not None:
+            return self.spec.context_window
+        try:
+            info = litellm.get_model_info(self.spec.model)
+        except Exception:
+            return DEFAULT_CONTEXT_WINDOW
+        if isinstance(info, dict):
+            win = info.get("max_input_tokens") or info.get("max_tokens")
+            if win:
+                try:
+                    return int(win)
+                except (ValueError, TypeError):
+                    pass
+        return DEFAULT_CONTEXT_WINDOW
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
         """同步调用 LLM，返回完整的 assistant 文本回复。
@@ -193,11 +259,21 @@ class LLMClient:
         - ``chunk.choices[0].delta.content`` 非空 → :class:`LLMTextDelta`
         - ``chunk.choices[0].delta.tool_calls[*]`` → :class:`LLMToolCallDelta`
           （每个数组元素 yield 一次；同一 ``index`` 可能多次到达，调用方累积）
-        - ``chunk.choices[0].finish_reason`` 非 ``None`` → :class:`LLMTurnDone`
+        - 流结束时统一 yield **一次** :class:`LLMTurnDone`，携带标准化
+          ``stop_reason`` 与（若 provider 透出的）真实 ``usage``
+
+        Note:
+            009 起开启 ``stream_options={"include_usage": True}`` 让 provider 在
+            尾 chunk（``choices`` 为空）返回 token 用量。因 usage chunk **晚于**
+            带 ``finish_reason`` 的 chunk 到达，故把 ``LLMTurnDone`` 的发射推迟到
+            流末——累积 ``stop_reason`` + ``usage`` 后一次性 yield。Provider 不支持
+            ``include_usage`` 时 usage 为 ``None``，上层退化到字符估算。
         """
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
         if tools:
             kwargs["tools"] = tools
+        # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖
+        kwargs.setdefault("stream_options", {"include_usage": True})
 
         try:
             response = litellm.completion(
@@ -211,10 +287,16 @@ class LLMClient:
         except Exception as e:
             raise _map_exception(e) from e
 
+        stop_reason = "end_turn"
+        usage: LLMUsage | None = None
         try:
             for chunk in response:
+                chunk_usage = _extract_usage(chunk)
+                if chunk_usage is not None:
+                    usage = chunk_usage
+
                 if not chunk.choices:
-                    continue
+                    continue  # 尾部 usage-only chunk（choices 为空）等
                 choice = chunk.choices[0]
                 delta = choice.delta
 
@@ -234,6 +316,8 @@ class LLMClient:
 
                 finish_reason = getattr(choice, "finish_reason", None)
                 if finish_reason:
-                    yield LLMTurnDone(stop_reason=_map_finish_reason(finish_reason))
+                    stop_reason = _map_finish_reason(finish_reason)
         except Exception as e:
             raise _map_exception(e) from e
+
+        yield LLMTurnDone(stop_reason=stop_reason, usage=usage)

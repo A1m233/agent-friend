@@ -36,12 +36,17 @@ class ProviderSpec:
             Provider 默认地址。
         defaults: 默认调用参数（``temperature`` / ``max_tokens`` 等），
             可被单次调用的 ``overrides`` 覆盖。
+        context_window: 可选的 context window（最大输入 token）覆盖值（009 起新增）。
+            ``None``（默认）时由 :attr:`LLMClient.context_window` 走 litellm 元数据
+            查询 + 保守兜底。仅当 litellm 不认识该 model（私有 ``api_base`` / 自建
+            网关）时才需显式设置。
     """
 
     model: str
     api_key: str
     api_base: str | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
+    context_window: int | None = None
 
     @classmethod
     def from_env(cls, prefix: str) -> ProviderSpec:
@@ -52,6 +57,7 @@ class ProviderSpec:
         - ``DEEPSEEK_API_KEY``（必填）
         - ``DEEPSEEK_MODEL``（可选，缺省按 :data:`PROVIDER_DEFAULTS`）
         - ``DEEPSEEK_API_BASE``（可选）
+        - ``DEEPSEEK_CONTEXT_WINDOW``（可选，009 起；litellm 不认识私有 model 时显式指定）
 
         Args:
             prefix: 环境变量前缀，按惯例使用 Provider 名称大写。
@@ -73,4 +79,19 @@ class ProviderSpec:
 
         api_base = os.environ.get(f"{prefix}_API_BASE") or provider_defaults.get("api_base")
 
-        return cls(model=model, api_key=api_key, api_base=api_base)
+        context_window: int | None = None
+        raw_window = os.environ.get(f"{prefix}_CONTEXT_WINDOW", "").strip()
+        if raw_window:
+            try:
+                parsed = int(raw_window)
+                if parsed > 0:
+                    context_window = parsed
+            except ValueError:
+                pass  # 非法值忽略，回落到 litellm 查询
+
+        return cls(
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
+            context_window=context_window,
+        )

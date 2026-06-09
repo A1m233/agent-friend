@@ -36,6 +36,7 @@ class _FakeLLMClient:
 
     reply: str = "ok"
     received: list[list[dict[str, Any]]] = field(default_factory=list)
+    context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
         self.received.append(messages)
