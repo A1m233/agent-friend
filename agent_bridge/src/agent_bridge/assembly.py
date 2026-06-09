@@ -109,7 +109,7 @@ class BridgeRuntime:
             store=self.transient_store,
             llm_client_factory=_llm_factory,
             prompt_builder_factory=_prompt_factory,
-            context_manager=NaiveContextManager(),
+            context_manager_factory=NaiveContextManager,
             tool_registry=self.tool_registry,
         )
 
@@ -126,7 +126,7 @@ def _make_persistent_session_manager(
         store=store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
-        context_manager=NaiveContextManager(),
+        context_manager_factory=NaiveContextManager,
         tool_registry=tool_registry,
         memory=memory,
     )

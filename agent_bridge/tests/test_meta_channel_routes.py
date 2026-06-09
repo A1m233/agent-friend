@@ -48,7 +48,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
         store=persistent_store,
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
-        context_manager=NaiveContextManager(),
+        context_manager_factory=NaiveContextManager,
         tool_registry=tool_registry,
     )
 

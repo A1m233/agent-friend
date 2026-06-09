@@ -5,7 +5,8 @@
 - :mod:`protocol` —— ``ContextManager`` Protocol + 数据契约（稳定核心）
 - :mod:`naive` —— ``NaiveContextManager``（全发不截断）
 - :mod:`budget` —— token 度量 + 阈值推导（M1）
-- ``fifo`` / ``summarizing`` —— 防爆窗兜底（M2）/ 摘要压缩（M3），后续里程碑落地
+- :mod:`fifo` —— ``FifoContextManager``（防爆窗兜底，M2）
+- ``summarizing`` —— 摘要压缩（M3），后续里程碑落地
 
 ``Conversation`` 通过（per-session 工厂产出的）实例注入即可切换策略。
 
@@ -21,6 +22,7 @@ from .budget import (
     estimate_tokens,
     make_budget_snapshot,
 )
+from .fifo import RECENT_PROTECT_TURNS, FifoContextManager
 from .naive import NaiveContextManager
 from .protocol import (
     BudgetSnapshot,
@@ -36,10 +38,12 @@ __all__ = [
     "BUFFER_RATIO",
     "CHARS_TO_TOKENS",
     "OUTPUT_RESERVE_RATIO",
+    "RECENT_PROTECT_TURNS",
     "BudgetSnapshot",
     "BuildResult",
     "CompactionRecord",
     "ContextManager",
+    "FifoContextManager",
     "NaiveContextManager",
     "PriorSummary",
     "RuntimeContext",

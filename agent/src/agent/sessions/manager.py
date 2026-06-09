@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 TitleGenerator = Callable[[Session], str]
 LLMClientFactory = Callable[[str], "LLMClient"]
 PromptBuilderFactory = Callable[[str], "PromptBuilder"]
+ContextManagerFactory = Callable[[], "ContextManager"]
 
 
 def _default_title(now: datetime | None = None) -> str:
@@ -50,7 +51,11 @@ class SessionManager:
         llm_client_factory: 接 model 名 → :class:`LLMClient`。M2.1 阶段可不传，
             M2.2 接 Conversation 后必须注入。
         prompt_builder_factory: 接 persona 名 → :class:`PromptBuilder`。同上。
-        context_manager: 上下文管理策略。同上。
+        context_manager_factory: 接 0 参 → :class:`ContextManager`，**每个会话独立
+            产一个实例**（009 起从单例改工厂，与 ``llm_client_factory`` /
+            ``prompt_builder_factory`` 邻居一致）。摘要策略需持会话级 circuit breaker
+            状态，单例会串话；FIFO / Naive 虽无状态，统一走工厂便于按里程碑切换默认。
+            无状态策略可直接传类本身（如 ``context_manager_factory=NaiveContextManager``）。
         title_generator: 可选；若提供，:meth:`create` 在未显式传 ``title`` 时
             会调用它，否则用 :func:`_default_title` 兜底。
         tool_registry: 可选；若提供，:meth:`start_conversation` 装配出的
@@ -68,7 +73,7 @@ class SessionManager:
         store: SessionStore,
         llm_client_factory: LLMClientFactory | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
-        context_manager: ContextManager | None = None,
+        context_manager_factory: ContextManagerFactory | None = None,
         title_generator: TitleGenerator | None = None,
         tool_registry: ToolRegistry | None = None,
         memory: Memory | None = None,
@@ -76,7 +81,7 @@ class SessionManager:
         self._store = store
         self._llm_client_factory = llm_client_factory
         self._prompt_builder_factory = prompt_builder_factory
-        self._context_manager = context_manager
+        self._context_manager_factory = context_manager_factory
         self._title_generator = title_generator
         self._tool_registry = tool_registry
         self._memory = memory
@@ -189,7 +194,7 @@ class SessionManager:
 
         Raises:
             AgentError: ``llm_client_factory`` / ``prompt_builder_factory`` /
-                ``context_manager`` 任一未注入。
+                ``context_manager_factory`` 任一未注入。
             LLMAuthError / ValueError: ``llm_client_factory`` 抛出。
             PersonaNotFoundError: 当前 persona id（或老 session name fallback）
                 在 catalog 找不到。
@@ -197,11 +202,11 @@ class SessionManager:
         if (
             self._llm_client_factory is None
             or self._prompt_builder_factory is None
-            or self._context_manager is None
+            or self._context_manager_factory is None
         ):
             raise AgentError(
                 "start_conversation 需要 llm_client_factory / prompt_builder_factory / "
-                "context_manager 全部注入；当前 SessionManager 未配置完整。"
+                "context_manager_factory 全部注入；当前 SessionManager 未配置完整。"
             )
         from ..conversation import Conversation  # 避免顶层循环 import
         from ..personas import PersonaCatalog  # 同上
@@ -247,11 +252,13 @@ class SessionManager:
             return builder
 
         prompt_builder = _session_aware_factory(persona_id)
+        # 009：每个会话独立产一个 context manager 实例（摘要策略持会话级状态）。
+        context_manager = self._context_manager_factory()
         return Conversation(
             session=session,
             store=self._store,
             llm_client=llm_client,
-            context_manager=self._context_manager,
+            context_manager=context_manager,
             prompt_builder=prompt_builder,
             llm_client_factory=self._llm_client_factory,
             prompt_builder_factory=_session_aware_factory,
