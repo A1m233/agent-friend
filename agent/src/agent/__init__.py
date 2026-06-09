@@ -12,6 +12,8 @@ from .context import (
     NaiveContextManager,
     PriorSummary,
     RuntimeContext,
+    SummarizingContextManager,
+    default_context_manager,
 )
 from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
@@ -118,6 +120,7 @@ __all__ = [
     "SessionStore",
     "SessionSummary",
     "StaticSection",
+    "SummarizingContextManager",
     "SystemPromptComposer",
     "TextDelta",
     "Tool",
@@ -129,6 +132,7 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "TurnDone",
+    "default_context_manager",
     "make_default_registry",
     "random_fallback",
 ]

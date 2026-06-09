@@ -306,13 +306,15 @@ sequenceDiagram
 - 调用走 `LLMClient.complete`（单轮、`tools=None`、文本输出），最终只把 summary 段留进上下文（`<analysis>` 丢弃）。
 - ⚠️ 真实 LLM 调用，触发与验证受 `llm-api-confirm` 约束。
 
-### 6.3 关键决策：最近一次摘要基于"全量原始对话"（不做 summary-of-summary）
+### 6.3 关键决策：摘要基于"全量原始的较旧部分"，保留最近 N 轮逐字（不做 summary-of-summary）
 
-为避免"摘要的摘要"累积失真：**每次触发摘要时，输入用全量原始 `session.messages` 重新蒸馏**，而非在 `prior_summary` 上增量叠加。
+为避免"摘要的摘要"累积失真：**每次触发摘要时，输入用全量原始 `session.messages` 的较旧部分重新蒸馏**，而非在 `prior_summary` 上增量叠加。
 
 - 因此 `Conversation` 三个入口传给 `build_messages` 的 `history` 一律是**原始全量** `session.messages`（不是折叠视图）。
-- 折叠只发生在 context manager 内部：平时（未超阈值）用 `runtime.prior_summary` 折叠展示，省 token；超阈值要重摘时，忽略 prior_summary、直接吃全量原始。
-- **极端退化**：若全量原始本身已超过"摘要输入预算"（很长的会话，摘要调用自己都塞不下），才退回到增量模式（基于 prior_summary + 后续）。常见会话长度下走全量重摘。
+- **保留最近 N 个 user 轮逐字不折**（`SUMMARY_RECENT_TAIL_TURNS`，默认 2）：摘要只覆盖"较旧部分"，最近若干轮原样保留。切点取 **user 轮边界**（复用 M2 FIFO 的保组逻辑）——保证进行中的工具组（assistant `tool_calls` + `tool` 结果）不被折断，也给摘要后的对话留逐字近况、维持连续性。
+- 折叠只发生在 context manager 内部：平时（未超阈值）用 `runtime.prior_summary` 把已覆盖旧段替换为一条 summary system 消息、其后逐字保留，省 token；超阈值要重摘时，忽略 prior_summary、直接吃全量原始的较旧部分。
+- 折叠后的上下文形态：`[system_prompt] + [summary system 消息] + [最近 N 轮逐字] + [new_user?] + [trailing_system?]`。
+- **极端退化**：若较旧部分本身已超过"摘要输入预算"（`trigger_threshold`，很长的会话摘要调用自己都塞不下），才退回到增量模式（`prior_summary` + 其后到切点的原始消息）。常见会话长度下走全量重摘。
 
 ### 6.4 compaction 事件落盘与折叠投影（Q-10，R-3.7）
 
@@ -325,7 +327,7 @@ sequenceDiagram
   "ts": "...",
   "payload": {
     "summary": "结构化摘要文本",
-    "covered_through_uuid": "被折叠覆盖到的最后一条事件 uuid（含）",
+    "covered_through_uuid": "被折叠覆盖到的最后一条事件 uuid（含）= 较旧部分末尾、保护 tail 之前",
     "tokens_before": 12000,   // observability
     "tokens_after": 1800,
     "model": "deepseek/deepseek-v4-flash"
@@ -437,6 +439,7 @@ context_manager = self._context_manager_factory()
 | 日期 | 变更内容 | 影响范围 |
 |------|---------|---------|
 | 2026-06-09 | 初稿：基于与用户逐块讨论拍板的设计落地，回答 requirement Q-1~Q-10。 | 全文 |
+| 2026-06-09 | M3 落地细化：摘要只覆盖"较旧部分"、按 user 轮边界保留最近 N 轮逐字不折（保组完整 + 近期连续性），明确折叠后上下文形态与 `covered_through_uuid` 语义。 | §6.3 / §6.4 |
 
 ---
 

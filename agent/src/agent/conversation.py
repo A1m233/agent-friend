@@ -43,7 +43,14 @@ from llm_providers import (
 )
 from memory import Memory, MemoryContext
 
-from .context import BuildResult, ContextManager, RuntimeContext, make_budget_snapshot
+from .context import (
+    BuildResult,
+    CompactionRecord,
+    ContextManager,
+    PriorSummary,
+    RuntimeContext,
+    make_budget_snapshot,
+)
 from .conversation_events import (
     ConversationEvent,
     TextDelta,
@@ -584,6 +591,9 @@ class Conversation:
             trailing_system=trailing_system,
             runtime=runtime,
         )
+        # 009 M3：context manager 只"生成"摘要，落盘 IO 在此执行（职责边界，design §4.3）。
+        if build.new_compaction is not None:
+            self._append_compaction_event(build.new_compaction)
         self._record_context_notes(build, runtime)
         return [m.to_openai() for m in build.messages]
 
@@ -591,8 +601,9 @@ class Conversation:
         """构造本轮 :class:`RuntimeContext`（预算快照 + 当前 llm_client）。
 
         ``llm_client`` per-call 传入 → ``switch_model`` 后自动跟随新客户端 / 新窗口。
-        ``prior_summary`` 在 M3（摘要落盘）起从 :meth:`Session.latest_compaction` 派生，
-        M1/M2 恒为 ``None``。
+        ``prior_summary`` 从 :meth:`Session.latest_compaction` 派生（M3 起）：有最近
+        折叠点则带上 summary + 覆盖范围，``SummarizingContextManager`` 据此折叠展示；
+        老会话 / 未压缩过为 ``None``。
         """
         budget = make_budget_snapshot(
             effective_window=self._llm_client.context_window,
@@ -601,8 +612,40 @@ class Conversation:
         return RuntimeContext(
             budget=budget,
             llm_client=self._llm_client,
-            prior_summary=None,
+            prior_summary=self._derive_prior_summary(),
         )
+
+    def _derive_prior_summary(self) -> PriorSummary | None:
+        """从最近一条 ``compaction`` 事件派生 :class:`PriorSummary`（无则 ``None``）。"""
+        comp = self._session.latest_compaction()
+        if comp is None:
+            return None
+        summary = comp.payload.get("summary", "")
+        covered = comp.payload.get("covered_through_uuid", "")
+        if not summary or not covered:
+            return None
+        return PriorSummary(summary=summary, covered_through_uuid=covered)
+
+    def _append_compaction_event(self, record: CompactionRecord) -> None:
+        """把本轮新生成的摘要落为 ``compaction`` 事件（append-only，不动原始消息）。
+
+        原始 user/assistant/tool 事件一条不删不改；compaction 只是流上叠加的折叠点
+        marker。下一轮 :meth:`_derive_prior_summary` 会读到它做折叠（009 design §6.4）。
+        """
+        event = Event(
+            type="compaction",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "summary": record.summary,
+                "covered_through_uuid": record.covered_through_uuid,
+                "tokens_before": record.tokens_before,
+                "tokens_after": record.tokens_after,
+                "model": record.model,
+            },
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
 
     def _record_context_notes(self, build: BuildResult, runtime: RuntimeContext) -> None:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
