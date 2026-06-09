@@ -15,29 +15,33 @@
 
 ## 状态
 
-孵化期实现（详见 [`docs/requirements/001-foundation-chat-and-memory/requirement.md`](../docs/requirements/001-foundation-chat-and-memory/requirement.md) 第 4.2 节）。
+需求 008 已落地：写入（LLM 抽取 + reconcile）与检索召回均已实现。
 
 ## 技术栈
 
-- **存储基底**：SQLite
-- **向量栈（预备，是否启用待 `001/design.md`）**：Chroma + 本地 BGE-small-zh
+- **存储基底**：SQLite（semantic / episodic + FTS5 trigram 全文检索）
+- **召回策略（v1）**：`KeywordRetrieval`（基于 FTS5 关键词）
+- **向量栈（预备，未实现）**：Chroma + 本地 BGE-small-zh，留作未来 `RetrievalStrategy` 的可插拔实现
 
-详见 [`docs/decisions/0002-incubation-tech-stack/README.md`](../docs/decisions/0002-incubation-tech-stack/README.md) 第 3.15 / 3.16 节。
+详见 [`docs/decisions/0002-incubation-tech-stack/README.md`](../docs/decisions/0002-incubation-tech-stack/README.md) 第 3.15 / 3.16 节与 [`008 design`](../docs/requirements/008-engine-memory/design.md)。
 
 ## 内部结构
 
-按 0002 第 3.11 节的"双层"约定：
+按职责拆分的扁平布局（无 `api/` 层；记忆通过 `agent` 在对话流中被调用，不直接对外暴露 HTTP）：
 
 ```
 src/memory/
-├── core/      # 纯 Python 库：记忆写入 / 检索（同进程调用）
-└── api/       # （可选）跨进程访问入口
+├── facade.py       # Memory 门面：observe / retrieve 稳定接口
+├── factory.py      # build_memory() 装配入口
+├── store/          # SqliteMemoryStore + schema（FTS5）
+├── extraction/     # LLM 抽取 + reconciler + 异步 worker
+├── retrieval/      # KeywordRetrieval + scoring + renderer
+└── contracts.py    # 跨层数据契约
 ```
 
-`api/` 是否需要、检索策略如何选择、记忆抽取策略，全部由 [`001/design.md`](../docs/requirements/001-foundation-chat-and-memory/) 决定。
+数据库默认落系统标准用户数据目录（`<user_data_dir>/memory/memory.db`，见 `agent.paths`），由调用方（CLI / bridge）通过 `build_memory(db_path=...)` 注入。
 
 ## 与其他模块的依赖
 
-- 依赖 `shared`（跨模块共享类型）
+- 依赖 `llm_providers`（用 LLM 做记忆抽取）
 - 被 `agent` 依赖
-- 与 `llm_providers` 平级，可能被 `memory` 自身用到（如用 LLM 做记忆抽取）

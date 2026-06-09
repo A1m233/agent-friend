@@ -28,11 +28,10 @@ from ..errors import (
     PersonaPersistError,
     PersonaReadOnlyError,
 )
+from ..paths import personas_dir as _default_personas_dir
 from . import frontmatter as fm_mod
 
 Source = Literal["user", "builtin"]
-
-DEFAULT_EXTERNAL_DIR: Final[Path] = Path("data/personas")
 
 
 @dataclass(frozen=True)
@@ -113,9 +112,10 @@ class PersonaCatalog:
     """User + builtin 两层 persona 的统一 CRUD 入口。
 
     Args:
-        external_dir: 用户自定义 persona 目录；``None`` 时用 :data:`DEFAULT_EXTERNAL_DIR`
-            （即项目根 ``data/personas/``）。**接受参数化**让未来 API 层能为多
-            租户场景注入运行时配置。
+        external_dir: 用户自定义 persona 目录；``None`` 时用
+            :func:`agent.paths.personas_dir`（系统标准用户数据目录下的
+            ``personas/``，见决策 0002 §3.19）。**接受参数化**让未来 API 层
+            能为多租户场景注入运行时配置，也便于测试用临时目录隔离。
 
     Note:
         本类**不缓存** index——每次方法调用都重新扫盘构建。孵化期 personas
@@ -123,7 +123,7 @@ class PersonaCatalog:
     """
 
     def __init__(self, external_dir: Path | None = None):
-        self._external_dir = external_dir or DEFAULT_EXTERNAL_DIR
+        self._external_dir = external_dir if external_dir is not None else _default_personas_dir()
 
     # ===== 读 =====
 

@@ -14,7 +14,9 @@ bridge 进程是**单实例多请求**模型——这些组件在进程启动时
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from agent.tools import ToolRegistry
 
@@ -58,8 +60,18 @@ def _llm_factory(model: str) -> LLMClient:
     return LLMClient(_make_spec_with_thinking_off(model))
 
 
-def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
-    return MarkdownPromptBuilder(persona_id=persona_id)
+def _make_prompt_factory(personas_dir: Path) -> Callable[[str], MarkdownPromptBuilder]:
+    """构造 prompt builder 工厂，绑定用户 persona 目录。
+
+    让 meta REST 的 :class:`PersonaCatalog` 与对话期 prompt 构建读取**同一个**
+    用户 persona 目录（默认系统用户数据目录，可被 ``AGENT_BRIDGE_PERSONAS_DIR``
+    或 ``AGENT_FRIEND_DATA_DIR`` 覆盖），避免两者分叉。
+    """
+
+    def factory(persona_id: str) -> MarkdownPromptBuilder:
+        return MarkdownPromptBuilder(persona_id=persona_id, external_dir=personas_dir)
+
+    return factory
 
 
 @dataclass(frozen=True)
@@ -93,6 +105,7 @@ class BridgeRuntime:
     persistent_session_manager: SessionManager
     catalog: PersonaCatalog
     tool_registry: ToolRegistry
+    prompt_builder_factory: Callable[[str], MarkdownPromptBuilder]
     default_persona: str
     default_model: str
     memory: Memory | None = None
@@ -109,7 +122,7 @@ class BridgeRuntime:
         return SessionManager(
             store=self.transient_store,
             llm_client_factory=_llm_factory,
-            prompt_builder_factory=_prompt_factory,
+            prompt_builder_factory=self.prompt_builder_factory,
             context_manager_factory=default_context_manager,
             tool_registry=self.tool_registry,
         )
@@ -121,12 +134,15 @@ class BridgeRuntime:
 
 
 def _make_persistent_session_manager(
-    store: SessionStore, tool_registry: ToolRegistry, memory: Memory | None
+    store: SessionStore,
+    tool_registry: ToolRegistry,
+    memory: Memory | None,
+    prompt_builder_factory: Callable[[str], MarkdownPromptBuilder],
 ) -> SessionManager:
     return SessionManager(
         store=store,
         llm_client_factory=_llm_factory,
-        prompt_builder_factory=_prompt_factory,
+        prompt_builder_factory=prompt_builder_factory,
         context_manager_factory=default_context_manager,
         tool_registry=tool_registry,
         memory=memory,
@@ -143,7 +159,8 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     """
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     transient_store = NullSessionStore()
-    catalog = PersonaCatalog()
+    catalog = PersonaCatalog(external_dir=settings.personas_dir)
+    prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
     tool_registry = make_default_registry()
     default_persona = catalog.find_by_name("default").name
     default_model = _make_spec_with_thinking_off().model
@@ -153,7 +170,7 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         memory = build_memory(settings.memory_db, _llm_factory(default_model))
 
     persistent_session_manager = _make_persistent_session_manager(
-        persistent_store, tool_registry, memory
+        persistent_store, tool_registry, memory, prompt_builder_factory
     )
 
     return BridgeRuntime(
@@ -163,6 +180,7 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         persistent_session_manager=persistent_session_manager,
         catalog=catalog,
         tool_registry=tool_registry,
+        prompt_builder_factory=prompt_builder_factory,
         default_persona=default_persona,
         default_model=default_model,
         memory=memory,

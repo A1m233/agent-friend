@@ -25,6 +25,7 @@
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |
+| `check/` | 一键全绿门禁：串联 lint → typecheck → test，失败即停（合入 main 前必跑；pytest 参数透传） | `./scripts/check/run.sh [pytest 参数]` | `.\scripts\check\run.ps1 [pytest 参数]` |
 
 ## ⚠️ Windows PowerShell 第一次运行
 

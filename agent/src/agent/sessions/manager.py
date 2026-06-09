@@ -1,14 +1,14 @@
 """``SessionManager`` —— 会话业务编排。
 
-所有调用方（CLI / 未来 HTTP / 未来桌宠前端）通过本类访问会话能力：
+所有调用方（CLI / `agent_bridge` HTTP / 未来桌宠前端）通过本类访问会话能力：
 **CRUD + 装配 Conversation**。Manager 不直接做文件 IO（委托 :class:`SessionStore`），
 不直接调 LLM（委托 :class:`Conversation`）。
 
-详见 docs/requirements/002-engine-session-management/design.md §4.4。
+:meth:`start_conversation` 通过注入的 ``llm_client_factory`` /
+``prompt_builder_factory`` / ``context_manager_factory`` 装配并返回
+:class:`~agent.Conversation`。
 
-Note:
-    M2.1 阶段 :meth:`start_conversation` 仅占位抛 ``NotImplementedError``；
-    LLM / PromptBuilder / ContextManager 等装配依赖将在 M2.2 接入 Conversation 时实装。
+详见 docs/requirements/002-engine-session-management/design.md §4.4。
 """
 
 from __future__ import annotations
