@@ -112,6 +112,7 @@ flowchart TD
 - **占位形象**（静态图/简单动画），预留未来 Live2D 的 PixiJS canvas 挂载点
 - 桌宠上**悬浮出操作栏**（窗内浮层），本次**只做一个按钮：打开常规 chatbot 界面**
 - **常规 chatbot 对话界面**（传统形态），接 bridge（AG-UI/SSE）跑通对话——本次核心价值
+  - 这部分"要不要用现成对话组件库、用哪个、用到什么程度"的讨论拆到 [`chat-ui-library.md`](./chat-ui-library.md)
 
 **这次不做（留口子）**：
 - Live2D 实装（①）→ 留占位挂载点
