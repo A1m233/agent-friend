@@ -1,0 +1,29 @@
+---
+description: agent-friend 前端 UI 编写规范：纯 UI 组件复用与颜色 CSS 变量
+globs: frontend/**
+alwaysApply: false
+---
+
+# 前端 UI 编写规范
+
+约束在 `frontend/` 下编写界面代码时的两条硬性规范，保证 UI 一致性与可换肤。
+
+## 交互件一律用封装组件，禁止散写原生件
+
+- 通用纯 UI 件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（button / input / select / textarea / modal / tag 等）。需要时：
+  - 已存在于 `src/components/ui/` → 直接复用。
+  - 不存在 → 在 `src/components/ui/` 新建：**引入 shadcn 组件必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码；完整流程（怎么定组件 / 拉取 / 适配 token 与目录）见 skill `add-shadcn-component`**。仅当 shadcn 没有对应件时才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
+- 对话域组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造。
+- 页面 / 业务代码里**不出现原生交互元素**。这条不靠"自觉"或"占位/MVP 也不例外"这类措辞维持，而是由机械门禁判定：
+  - ESLint `react/forbid-elements` 见到 `<button>` / `<input>` 等原生交互件即报错，接入 `scripts/check`、合 main 前必过、IDE 内即时报错；门禁**不认**"临时 / 占位 / MVP"理由。
+  - `src/components/ui/` 内部豁免该门禁——封装件本就要包原生件。
+  - 规则只讲"该怎么写"，"写错了拦下来"交给门禁。
+- 页面私有、带业务的组件不在"通用件"约束内，按既有目录约定放 `pages/<页>/components/`。
+
+## 颜色：禁止硬编码，统一走 CSS 变量
+
+- **禁止任何硬编码颜色值**：包括 hex（如 `#1677ff`）、`rgb()/rgba()`、`hsl()`、CSS 具名色（如 `red`），以及 Tailwind 内置色板类（如 `bg-red-500`）和任意值色（如 `text-[#333]`）。
+- 颜色一律使用 `src/styles/theme/` 下定义的 CSS 变量（通过 `var(--xxx)`，或映射到这些变量的 Tailwind token 使用）。
+- 新增一种颜色时，**必须先在所有主题文件**（`src/styles/theme/light.css`、`dark.css` 等）中补上**同名、值不同**的变量，再使用——保证每个主题下换肤都完整、不漏色。
+- 主题通过 `html[theme='xxx']` 选择器切换，变量同名不同值；不要绕过该机制单独写一套颜色。
+- 这条同样**不靠自觉**，而是由机械门禁判定：`scripts/frontend/lint`（已并入 `scripts/check`）中的 `color-guard`（`frontend/scripts/check-colors.mjs`）扫描 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错；`src/styles/theme/` 作为颜色定义源头豁免。规则只讲"该怎么写"，"写错了拦下来"交给门禁。

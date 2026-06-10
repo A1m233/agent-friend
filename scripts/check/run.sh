@@ -5,13 +5,21 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
-echo "===> [1/3] lint"
+echo "===> [1/4] lint"
 "$here/../lint/run.sh"
 echo
-echo "===> [2/3] typecheck"
+echo "===> [2/4] typecheck"
 "$here/../typecheck/run.sh"
 echo
-echo "===> [3/3] test"
+echo "===> [3/4] test"
 "$here/../test/run.sh" "$@"
+echo
+echo "===> [4/4] frontend lint + test"
+if command -v node >/dev/null 2>&1 && [ -d "$here/../../frontend/node_modules" ]; then
+    "$here/../frontend/lint.sh"
+    "$here/../frontend/test.sh"
+else
+    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test"
+fi
 echo
 echo "===> check 全部通过"

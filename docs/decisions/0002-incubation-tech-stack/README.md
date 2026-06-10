@@ -143,7 +143,7 @@
 ### 3.7 未来前端技术栈方向
 
 - **决策**：Node LTS（22+）+ TypeScript 5.x + pnpm + Tauri 2.x
-- **状态**：**先记方向，Phase 1 启动时锁版本**
+- **状态**：~~先记方向，Phase 1 启动时锁版本~~ → 框架与版本基线已由 [`0003-frontend-stack-and-phase1-kickoff`](../0003-frontend-stack-and-phase1-kickoff/README.md) 锁定（框架 = React，构建 = Vite）
 - **理由**：业界主流稳定组合；pnpm 比 npm/yarn 在 monorepo 场景下更优（workspace 协议、磁盘占用小）
 - **重评触发**：Phase 1 启动前
 

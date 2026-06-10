@@ -1,0 +1,13 @@
+/* light 主题：与其它主题文件保持变量同名、值不同（见 frontend-ui-conventions 规则）。 */
+html[theme="light"] {
+  --bg: #ffffff;
+  --surface: #f5f6f8;
+  --fg: #1a1a1a;
+  --muted: #6b7280;
+  --accent: #4f46e5;
+  --accent-fg: #ffffff;
+  --border: #e5e7eb;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+}

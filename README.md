@@ -11,7 +11,7 @@
 
 ## 当前状态
 
-处于**孵化期（Phase 0）**：引擎与服务端能力已成型，桌面前端 / 客户端尚未实现。
+处于**孵化期（Phase 0）**：引擎与服务端能力已成型，桌面前端已落地首版（Tauri 桌宠外壳 + 传统对话页，见需求 010）。
 
 技术栈已锁定（见 [`docs/decisions/0002-incubation-tech-stack`](docs/decisions/0002-incubation-tech-stack/README.md)）：Python 3.12 + uv workspace + LiteLLM + SQLite + FastAPI(HTTP/SSE)。
 
@@ -24,6 +24,7 @@
 - 长期记忆（SQLite + FTS5 检索）
 - `agent-bridge`：双协议（OpenAI / AG-UI）HTTP+SSE 服务端
 - 语音通话控制平面（`voice-bridge`，真机 E2E 待验）
+- 桌面前端 `frontend`：Tauri 2 桌宠外壳 + 传统对话页（流式 / 工具调用 / 历史会话）
 
 ## Monorepo 结构
 
@@ -34,14 +35,18 @@
 | `llm_providers/` | LLM 适配层（LiteLLM 封装） |
 | `agent_bridge/` | 把引擎通过 OpenAI / AG-UI 协议暴露为 HTTP+SSE 服务 |
 | `voice_bridge/` | 语音通话控制平面 |
+| `frontend/` | 桌面前端（Tauri 2 + React）：桌宠外壳 + 对话界面 |
 | `tools/` | CLI 调试 UI 等开发工具 |
 
 ## 上手
 
 ```bash
-./scripts/setup/run.sh   # 初始化环境（uv sync + 生成 .env）
+./scripts/setup/run.sh   # 一键初始化（后端 uv sync + .env；并尽力装前端依赖、检查 Rust）
 ./scripts/cli/run.sh     # 启动 CLI 调试 UI
+./scripts/dev/run.sh     # 试用桌面端：一键起 bridge + 桌面双窗口（--web 走浏览器）
 ./scripts/check/run.sh   # 跑 lint + typecheck + test（合入 main 前必须全绿）
 ```
+
+> 桌面端需 Node 22+ / pnpm / Rust；`setup` 会检测并提示，但不替你装系统级工具。
 
 脚本清单见 [`scripts/README.md`](scripts/README.md)。用户数据（会话 / 人格 / 记忆）落在系统标准用户数据目录（见 [`0002 §3.19`](docs/decisions/0002-incubation-tech-stack/README.md)）。

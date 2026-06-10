@@ -18,11 +18,13 @@ Usage: scripts/setup/run.sh [--clean]
 
   --clean   清理 .venv / __pycache__ / .pytest_cache / .mypy_cache / .ruff_cache 后再初始化
 
-完整初始化流程：
+完整初始化流程（一键装全栈）：
   1. 检查 uv 是否已安装（未安装则提示安装命令并退出）
   2. （可选）--clean 时清理缓存
-  3. 跑 uv sync 安装依赖
+  3. 跑 uv sync 安装后端依赖
   4. 检查 .env，没有则从 .env.example 复制
+  5. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
+  6. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
 EOF
             exit 0
             ;;
@@ -75,11 +77,33 @@ else
     echo "  .env 已存在，跳过"
 fi
 
+# 前端依赖 best-effort：工具齐就装，缺工具只提示、不让整个 setup 失败（后端已就绪）。
+echo
+echo "==> 前端依赖（best-effort）"
+if ! command -v node >/dev/null 2>&1; then
+    echo "  [SKIP] 未检测到 node。桌面前端需 Node.js 22+（建议 nvm / fnm）。装好后跑：./scripts/frontend/install.sh"
+elif [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt 22 ]; then
+    echo "  [SKIP] Node 版本过低（当前 $(node -v)），需要 22+。升级后跑：./scripts/frontend/install.sh"
+elif ! command -v pnpm >/dev/null 2>&1; then
+    echo "  [SKIP] 未检测到 pnpm。启用（一次性）：corepack enable pnpm，然后跑：./scripts/frontend/install.sh"
+else
+    echo "  node $(node -v) / pnpm $(pnpm -v)"
+    ( cd frontend && pnpm install )
+fi
+
+echo
+echo "==> 检查 Rust（桌面端 Tauri 需要）"
+if command -v cargo >/dev/null 2>&1; then
+    echo "  cargo $(cargo --version | awk '{print $2}')"
+else
+    echo "  [SKIP] 未检测到 Rust/cargo。仅 web 调试（./scripts/frontend/web.sh）不需要；"
+    echo "         要跑桌面端（./scripts/dev/run.sh）请装：https://rustup.rs"
+fi
+
 echo
 echo "==> 完成！接下来："
 echo "  1. （首次）编辑 .env 填入 DEEPSEEK_API_KEY"
-echo "  2. 启动 CLI：    ./scripts/cli/run.sh"
-echo "  3. 跑测试：      ./scripts/test/run.sh"
-echo "  4. lint 检查：   ./scripts/lint/run.sh"
-echo "  5. 自动修复：    ./scripts/fix/run.sh"
-echo "  6. 类型检查：    ./scripts/typecheck/run.sh"
+echo "  2. 启动 CLI：      ./scripts/cli/run.sh"
+echo "  3. 试用桌面端：    ./scripts/dev/run.sh        （一键起 bridge + 桌面双窗口；--web 走浏览器）"
+echo "  4. 跑测试：        ./scripts/test/run.sh"
+echo "  5. 一键全绿门禁：  ./scripts/check/run.sh"
