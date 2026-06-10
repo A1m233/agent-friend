@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@import "./theme/light.css";
+@import "./theme/dark.css";
+
+/*
+ * 把语义 CSS 变量映射成 Tailwind token。
+ * 用 `inline` 让生成的工具类直接引用 var()，于是切换 html[theme] 即整体换肤。
+ * 颜色一律走这些 token / 变量，禁止硬编码（见 .cursor/rules/frontend-ui-conventions.mdc）。
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-border: var(--border);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* 默认透明：桌宠窗需要透明背景；不透明的页面（如对话窗）自行在根容器设 bg。 */
+  background: transparent;
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+}

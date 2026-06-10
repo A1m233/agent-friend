@@ -1,0 +1,10 @@
+/* dark 主题：与其它主题文件保持变量同名、值不同（见 frontend-ui-conventions 规则）。 */
+html[theme="dark"] {
+  --bg: #0f0f10;
+  --surface: #1a1b1e;
+  --fg: #f5f5f5;
+  --muted: #9ca3af;
+  --accent: #818cf8;
+  --accent-fg: #0f0f10;
+  --border: #2a2c31;
+}

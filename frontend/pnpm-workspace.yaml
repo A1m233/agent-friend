@@ -1,0 +1,4 @@
+# pnpm 11 把部分设置从 package.json 迁到这里（即使是单包项目）。
+# 放行 esbuild 的构建脚本（Vite 依赖；pnpm 默认拦截 postinstall）。
+allowBuilds:
+  esbuild: true
