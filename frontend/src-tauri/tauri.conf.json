@@ -10,14 +10,20 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "pet",
         "url": "pet.html",
         "title": "agent-friend",
-        "width": 360,
-        "height": 420,
-        "resizable": true,
+        "width": 240,
+        "height": 320,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
         "fullscreen": false
       },
       {
@@ -27,6 +33,7 @@
         "width": 420,
         "height": 640,
         "resizable": true,
+        "visible": false,
         "fullscreen": false
       }
     ],

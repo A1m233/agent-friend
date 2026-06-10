@@ -17,11 +17,12 @@ IN_PROGRESS
 - [x] 验收 AC-M1.1 / AC-M1.2：`pnpm build` 三入口产物 OK、`cargo check` 通过含双窗口配置校验、web dev server 三入口均 200、脚本可跑；桌面端 `./scripts/frontend/dev.sh` 双窗口（桌宠窗 + 对话窗）目视渲染确认通过
 
 ### M10.2 · 界面大框架（占位形象 + 操作栏）
-- [ ] 桌宠窗：透明 / 置顶 / 无边框 / 占位形象 + Live2D 挂载点占位
-- [ ] Tauri spike：鼠标穿透 / hit-test / 拖拽 / 托盘（Win/Mac 实测校正）
-- [ ] 操作栏浮层（hover/click，单按钮"打开对话界面"）
-- [ ] 点按钮打开对话窗（本里程碑可占位空壳）
-- [ ] 验收 AC-M2.1 / AC-M2.2 / AC-M2.3
+- [x] 桌宠窗：透明 / 置顶 / 无边框 / skipTaskbar / 无阴影；占位圆形形象 +`#pet-stage`（Live2D PixiJS canvas 未来挂载点）
+- [x] 对话窗默认隐藏（`visible:false`）+ 关闭转隐藏（`on_window_event` 拦截 CloseRequested）；`macOSPrivateApi` 开启
+- [x] Tauri spike：鼠标穿透 hit-test —— Rust 内置 `cursor_position` ~60fps 喂 `pet://cursor`，前端 `usePetPassthrough` 据 DOM 几何（`elementFromPoint`+`[data-hit]`）切 `setIgnoreCursorEvents`；命中判定留缝，Live2D 期换 alpha 采样
+- [x] 形象拖拽（`startDragging`）+ 托盘菜单（打开对话 / 显示隐藏桌宠 / 退出）
+- [x] 操作栏浮层（hover 显示，单按钮"打开对话界面" → `invoke('open_chat')` 显示并聚焦对话窗）
+- [x] 验收 AC-M2.1 / AC-M2.2 / AC-M2.3：实机目视通过（透明悬浮 + 拖拽 + hover 操作栏；圆外直角区穿透 OK；按钮/托盘均能打开对话窗、关后可重开）。caveat：托盘在刘海屏菜单栏溢出时不可见（已确认创建成功，换大屏可见），属 macOS 显示限制
 
 ### M10.3 · 传统对话页
 - [ ] 自写 fetch-SSE 消费 AG-UI（`@ag-ui/core` 类型）+ conversation store
@@ -40,3 +41,7 @@ IN_PROGRESS
 | 2026-06-10 | nvm 升级 Node 22.22.3 并设默认；`corepack enable pnpm`（11.5.2）→ 工具链就绪 | 前置解除 |
 | 2026-06-10 | 落地 M10.1 工程骨架：Vite+React+TS+Tailwind4 多 entry、`src/` 分层、axios 请求层、`tauri init` 双窗口、`scripts/frontend/` 双端脚本 | `pnpm build` / `cargo check` / web 三入口均通过 |
 | 2026-06-10 | 脚本健壮性：dev/web/build 复用 `_ensure-node` 守卫（Node<22 友好提示而非崩溃）；加 `frontend/.nvmrc=22`、`package.json` 的 `engines.node`/`packageManager` | 失败路径已验；旧终端 Node20 跑 dev 崩溃问题定位为环境（需 `nvm use 22`） |
+| 2026-06-10 | 穿透方案定调：弃"小窗规避"，改"真穿透 + 命中缝"。Tauri 2 内置 `cursor_position` 免引 rdev；几何判定起步，Live2D 期只换 hitTest 为 alpha 采样 | 既 de-risk §4.4 最高风险项，又让 Live2D 升级局部化；设计 §4.7 不变 |
+| 2026-06-10 | 落地 M10.2：tauri.conf 桌宠窗透明置顶无边框 + 对话窗隐藏 + macOSPrivateApi；lib.rs 加托盘 / `open_chat` / 光标喂给 / 关闭转隐藏；前端 `usePetPassthrough` + 桌宠页（拖拽 + 操作栏） | `pnpm build` / `cargo check` 通过；AC-M2.* 待实机目视 |
+| 2026-06-10 | 穿透命中精度修正：`data-hit` 从外层容器挪到圆形象/按钮本身（`elementFromPoint` 尊重 border-radius），圆外直角区可穿透；按钮隐藏时 `pointer-events-none` 避免误触与挡穿透 | 实机确认圆外可穿透 |
+| 2026-06-10 | 托盘加文字标签 🐾 + tooltip + 创建日志；日志证实托盘创建成功，刘海屏菜单栏溢出不可见（环境限制），换大屏可见 | M10.2 三条 AC 实机目视通过 |
