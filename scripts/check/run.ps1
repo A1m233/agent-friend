@@ -4,16 +4,24 @@
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 
-Write-Host "===> [1/3] lint"
+Write-Host "===> [1/4] lint"
 & (Join-Path $here "..\lint\run.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [2/3] typecheck"
+Write-Host "===> [2/4] typecheck"
 & (Join-Path $here "..\typecheck\run.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [3/3] test"
+Write-Host "===> [3/4] test"
 & (Join-Path $here "..\test\run.ps1") @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host ""
+Write-Host "===> [4/4] frontend lint"
+if ((Get-Command node -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $here "..\..\frontend\node_modules"))) {
+    & (Join-Path $here "..\frontend\lint.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} else {
+    Write-Host "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint"
+}
 Write-Host ""
 Write-Host "===> check 全部通过"

@@ -8,14 +8,17 @@ alwaysApply: false
 
 约束在 `frontend/` 下编写界面代码时的两条硬性规范，保证 UI 一致性与可换肤。
 
-## 纯 UI 组件：先复用，禁止散写
+## 交互件一律用封装组件，禁止散写原生件
 
-- 纯 UI 组件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（如 button / input / modal / tag 等）。
-- 需要某个纯 UI 组件时，**先去 `src/components/ui/` 查找**：
-  - 已存在 → 直接复用，不在页面 / 业务组件里另写一份。
-  - 不存在 → **先在 `src/components/ui/` 新建该组件**，再 import 引用。
-- 禁止在页面 / 业务组件里就地散写一个纯 UI 元素的完整样式实现（例如直接糊一个带一堆样式类的 `<button>`）。这类元素应抽成 `components/ui/` 下的组件后引用。
-- 页面私有、带业务的组件不在此约束内，按既有目录约定放 `pages/<页>/components/`。
+- 通用纯 UI 件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（button / input / select / textarea / modal / tag 等）。需要时：
+  - 已存在于 `src/components/ui/` → 直接复用。
+  - 不存在 → **先在 `src/components/ui/` 建**（通用件按 shadcn/ui 风格），再 import 引用。
+- 对话域组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造。
+- 页面 / 业务代码里**不出现原生交互元素**。这条不靠"自觉"或"占位/MVP 也不例外"这类措辞维持，而是由机械门禁判定：
+  - ESLint `react/forbid-elements` 见到 `<button>` / `<input>` 等原生交互件即报错，接入 `scripts/check`、合 main 前必过、IDE 内即时报错；门禁**不认**"临时 / 占位 / MVP"理由。
+  - `src/components/ui/` 内部豁免该门禁——封装件本就要包原生件。
+  - 规则只讲"该怎么写"，"写错了拦下来"交给门禁。
+- 页面私有、带业务的组件不在"通用件"约束内，按既有目录约定放 `pages/<页>/components/`。
 
 ## 颜色：禁止硬编码，统一走 CSS 变量
 

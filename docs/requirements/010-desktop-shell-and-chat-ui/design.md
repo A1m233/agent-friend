@@ -36,8 +36,8 @@ CONFIRMED（2026-06-10）
 ### 1.2 不做的事（YAGNI 边界，补充 requirement §3）
 
 - 不引入 `@ag-ui/client`（只用 `@ag-ui/core` 的 TS 类型）
-- 不引入全量组件库（antd / MUI）——避免与 CSS 变量换肤形成两套主题系统
-- 不引入对话 UI 全包库（TDesign Chat / Ant Design X）
+- 不引入全量**通用**组件库（antd / MUI）——通用原子件走 shadcn/ui（§4.5），避免与 CSS 变量换肤形成两套主题系统
+- 不引入对话全家桶式方案（如 Ant Design X）；对话域改用 `@tdesign-react/chat` 散件作底层（见 §4.5）
 - 不做 SSE 自动重连 / 离线缓存 / 请求重试中间件（本期失败即拟人提示）
 - 不做跨平台打包 / 签名 / 自动更新（开发态 dev / 本地 build 验证形态即可）
 - 不做 i18n、不做无障碍完整适配（shadcn 自带的 Radix a11y 够用即可）
@@ -318,18 +318,25 @@ export async function* runAgentStream(
 
 切换历史会话流程：`sessions` 选中 → `conversation` 调 `GET /v1/sessions/{id}` 把历史 events 投影成 messages 渲染 → 后续输入用该 `session_id` 作 `threadId` 续聊。
 
-### 4.5 组件方案（shadcn/ui + `components/ui/`）
+### 4.5 组件方案（双层：通用 shadcn/ui + 对话域 tdesign-chat）
 
-- 用 shadcn/ui CLI 把所需组件 copy 进 `components/ui/`（Button / Input / ScrollArea / Dialog / DropdownMenu / Tooltip 等按需），代码归本仓库。
-- 业务组件（消息气泡、tool 卡片、会话列表项等）放页私有 `pages/<页>/components/` 或跨页 `components/`，组合 `ui/` 原子组件。
-- markdown / 代码高亮：用轻量库（如 `react-markdown` + 高亮插件）渲染 assistant 文本，本期不自造。
+组件按域分两层，**互不取代**（单一库无法覆盖全项目组件）：
+
+- **通用原子层 = shadcn/ui**：copy 进 `components/ui/`（Button / Input / ScrollArea / Dialog / DropdownMenu / Tooltip 等按需），代码归本仓库，用我们既有语义 token（§4.6）。
+- **对话域底层 = `@tdesign-react/chat`（composable 散件）**：`ChatList` / `ChatMessage` / `ChatSender` 等作**受控视图**——吃 `conversation` store 的 messages、`onSend` 回调进 store action；**不**用它自带的 `useChat` / chatEngine（其 chunk 格式 ≠ bridge 的 AG-UI 事件协议，流式仍走 §4.2.2 自写 fetch-SSE）。其依赖的 `tdesign-react` 仅因 chat 引入，通用件不用它写。
+  - 渲染我们的消息结构（含工具调用卡片、思考展示）可能需一层 message 适配；若 `ChatMessage` 不支持纯受控自定义内容，则降级为用 `ChatList` 容器 + 自写气泡，仍优先复用其散件，本期实测校正。
+- **业务组件**（会话列表项等）放页私有 `pages/<页>/components/` 或跨页 `components/`，组合 `ui/` 与 chat 散件。
+- markdown / 代码高亮：优先用 tdesign-chat 自带能力，不足再补轻量库，本期不自造。
+
+> **纪律（机械门禁）**：页面 / 业务代码**禁止散写原生交互件**（`button` / `input` 等），一律用 `components/ui/` 封装件。该约束由 ESLint `react/forbid-elements` 强制、接入 `scripts/check`、合 main 前必过、IDE 内即时报错——不靠自觉，门禁不认"占位 / MVP"理由。详见 `.cursor/rules/frontend-ui-conventions.mdc`。
 
 ### 4.6 主题 / 换肤（`styles/theme/`）
 
 - `styles/index.css` 定义基础 CSS 变量（颜色/圆角/间距 token 的语义名，如 `--color-bg` / `--color-fg` / `--color-accent`）。
 - `theme/light.css`、`theme/dark.css` 在 `html[theme='light']` / `html[theme='dark']` 选择器下声明**同名不同值**的变量。
 - `tailwind.config.ts` 把 token 映射到 CSS 变量（如 `colors.bg = 'var(--color-bg)'`），组件用 Tailwind 工具类即吃变量；切 `html[theme]` 即整体换肤。
-- shadcn 组件本就基于 CSS 变量主题，与本方案同一套，无第二套主题系统。
+- shadcn 组件本就基于 CSS 变量主题，与本方案同一套。
+- tdesign-chat 的 `--td-*` Design Token 同样是 CSS 变量；换肤时在 `styles/theme/` 同处按主题给 shadcn token 与需覆盖的 `--td-*` 一并赋值，一个 `html[theme]` 开关同时驱动两层——故"shadcn + tdesign-chat 并存"仍是**一套**主题机制，不形成两套主题系统。
 
 ### 4.7 桌宠窗形态与占位形象（M10.2，含 Tauri spike）
 
@@ -377,6 +384,8 @@ export async function* runAgentStream(
 - **D-1** 组件方案 = shadcn/ui copy-in 到 `components/ui/`（Tailwind + CSS 变量主题，代码归本仓库，行为基于 Radix），不引全量组件库。
 - **D-2** HTTP 客户端 = axios + 拦截器统一错误、成功才返回；流式自写 fetch-SSE，同放基础请求层统一管理。
 - **D-3** AG-UI = 仅引 `@ag-ui/core` 类型，不引 `@ag-ui/client`。
+- **D-4** 对话域组件 = `@tdesign-react/chat` composable 散件作受控视图底层，与通用层 shadcn/ui 并存；流式仍自写 fetch-SSE（不使用其 `useChat` / engine）。原 §1.2"不引入 TDesign Chat"作废——当初把"对话域专用库"误并入"通用全家桶"，已修正。
+- **D-5** 前端 UI 纪律靠机械门禁落地：ESLint `react/forbid-elements` 禁页面 / 业务散写原生交互件，接入 `scripts/check`；`components/ui/` 内部豁免。
 
 ---
 
@@ -402,6 +411,7 @@ export async function* runAgentStream(
 |------|---------|----------------|
 | 2026-06-10 | 初版起草（DRAFT） | — |
 | 2026-06-10 | 用户确认通过，状态置 CONFIRMED | — |
+| 2026-06-10 | 修订组件方案（§1.2/§4.5/§4.6 + D-4/D-5）：引入 `@tdesign-react/chat` 散件作对话域底层（与 shadcn 并存）；补 ESLint `forbid-elements` 机械门禁 | 否（M10.3 未开工，无返工） |
 
 ---
 

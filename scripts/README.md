@@ -25,11 +25,12 @@
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |
-| `check/` | 一键全绿门禁：串联 lint → typecheck → test，失败即停（合入 main 前必跑；pytest 参数透传） | `./scripts/check/run.sh [pytest 参数]` | `.\scripts\check\run.ps1 [pytest 参数]` |
+| `check/` | 一键全绿门禁：串联 lint → typecheck → test → 前端 lint，失败即停（合入 main 前必跑；pytest 参数透传）。前端 lint 在无 node / 未跑 `frontend/install` 时自动跳过 | `./scripts/check/run.sh [pytest 参数]` | `.\scripts\check\run.ps1 [pytest 参数]` |
 | `frontend/install` | 安装前端依赖（检查 node 22+ / pnpm → `pnpm install` @ frontend/） | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
 | `frontend/dev` | 启动桌面端开发（`pnpm tauri dev`，含桌宠 / 对话双窗口） | `./scripts/frontend/dev.sh` | `.\scripts\frontend\dev.ps1` |
 | `frontend/web` | 仅启动前端 web dev server（浏览器调试，不编译 Rust；访问 /pet.html、/chat.html） | `./scripts/frontend/web.sh` | `.\scripts\frontend\web.ps1` |
 | `frontend/build` | 构建桌面端安装包（`pnpm tauri build`） | `./scripts/frontend/build.sh` | `.\scripts\frontend\build.ps1` |
+| `frontend/lint` | 前端 lint（ESLint，含 `forbid-elements` 原生交互件门禁）+ 类型检查（tsc）；已并入 `check/` | `./scripts/frontend/lint.sh` | `.\scripts\frontend\lint.ps1` |
 
 ## ⚠️ Windows PowerShell 第一次运行
 

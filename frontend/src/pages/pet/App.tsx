@@ -2,6 +2,7 @@ import type { MouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
+import { Button } from "@/components/ui/Button";
 import { usePetPassthrough } from "./usePetPassthrough";
 
 /**
@@ -36,14 +37,15 @@ export function PetApp() {
         >
           占位形象
         </div>
-        <button
-          type="button"
+        <Button
           data-hit
+          variant="outline"
+          size="pill"
           onClick={openChat}
-          className="pointer-events-none whitespace-nowrap rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-fg opacity-0 shadow transition-opacity duration-150 hover:bg-accent hover:text-accent-fg group-hover:pointer-events-auto group-hover:opacity-100"
+          className="pointer-events-none opacity-0 shadow transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100"
         >
           打开对话界面
-        </button>
+        </Button>
       </div>
     </div>
   );
