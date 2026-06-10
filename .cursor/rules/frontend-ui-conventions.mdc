@@ -1,0 +1,25 @@
+---
+description: agent-friend 前端 UI 编写规范：纯 UI 组件复用与颜色 CSS 变量
+globs: frontend/**
+alwaysApply: false
+---
+
+# 前端 UI 编写规范
+
+约束在 `frontend/` 下编写界面代码时的两条硬性规范，保证 UI 一致性与可换肤。
+
+## 纯 UI 组件：先复用，禁止散写
+
+- 纯 UI 组件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（如 button / input / modal / tag 等）。
+- 需要某个纯 UI 组件时，**先去 `src/components/ui/` 查找**：
+  - 已存在 → 直接复用，不在页面 / 业务组件里另写一份。
+  - 不存在 → **先在 `src/components/ui/` 新建该组件**，再 import 引用。
+- 禁止在页面 / 业务组件里就地散写一个纯 UI 元素的完整样式实现（例如直接糊一个带一堆样式类的 `<button>`）。这类元素应抽成 `components/ui/` 下的组件后引用。
+- 页面私有、带业务的组件不在此约束内，按既有目录约定放 `pages/<页>/components/`。
+
+## 颜色：禁止硬编码，统一走 CSS 变量
+
+- **禁止任何硬编码颜色值**：包括 hex（如 `#1677ff`）、`rgb()/rgba()`、`hsl()`、CSS 具名色（如 `red`），以及 Tailwind 内置色板类（如 `bg-red-500`）和任意值色（如 `text-[#333]`）。
+- 颜色一律使用 `src/styles/theme/` 下定义的 CSS 变量（通过 `var(--xxx)`，或映射到这些变量的 Tailwind token 使用）。
+- 新增一种颜色时，**必须先在所有主题文件**（`src/styles/theme/light.css`、`dark.css` 等）中补上**同名、值不同**的变量，再使用——保证每个主题下换肤都完整、不漏色。
+- 主题通过 `html[theme='xxx']` 选择器切换，变量同名不同值；不要绕过该机制单独写一套颜色。
