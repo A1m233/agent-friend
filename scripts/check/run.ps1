@@ -1,7 +1,9 @@
-# scripts/check/run.ps1 — 合入 main 前的一键全绿检查（windows）
+﻿# scripts/check/run.ps1 — 合入 main 前的一键全绿检查（windows）
 # 串联：lint（ruff check + format --check）→ typecheck（mypy strict）→ test（pytest）
 # 任意一步失败立即退出。pytest 参数可透传：.\scripts\check\run.ps1 -k foo
 $ErrorActionPreference = "Stop"
+# 强制 UTF-8 输出，避免中文在终端乱码（Windows PowerShell 5.1 默认按系统 ANSI/GBK 输出）
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $here = $PSScriptRoot
 
 Write-Host "===> [1/4] lint"

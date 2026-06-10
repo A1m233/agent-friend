@@ -1,4 +1,4 @@
-# scripts/dev/run.ps1 — 一键起 bridge + 前端开发（windows）
+﻿# scripts/dev/run.ps1 — 一键起 bridge + 前端开发（windows）
 #
 # 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢）。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
@@ -7,6 +7,8 @@
 # bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理 bridge 进程树。
 # 详见 scripts/README.md
 $ErrorActionPreference = "Stop"
+# 强制 UTF-8 输出，避免中文在终端乱码（Windows PowerShell 5.1 默认按系统 ANSI/GBK 输出）
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $root
 

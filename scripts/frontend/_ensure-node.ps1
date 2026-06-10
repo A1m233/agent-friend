@@ -1,4 +1,4 @@
-# scripts/frontend/_ensure-node.ps1 — node/pnpm 版本守卫
+﻿# scripts/frontend/_ensure-node.ps1 — node/pnpm 版本守卫
 # 注意：本文件供其它 frontend 脚本 dot-source，不直接执行。详见 scripts/README.md
 function Ensure-NodePnpm {
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {

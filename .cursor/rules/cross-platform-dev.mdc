@@ -44,6 +44,8 @@ alwaysApply: true
 - 文件首行：`$ErrorActionPreference = "Stop"`
 - 必须 `Set-Location (Join-Path $PSScriptRoot "..\..")` 切换到项目根
 - 透传参数用 `@args`
+- **文件编码：含非 ASCII 字符（如中文注释）的 `.ps1` 必须存成 UTF-8 **with BOM**。** Windows PowerShell 5.1 读取无 BOM 脚本时按系统 ANSI 代码页（中文系统 = GBK）解析，会把中文错位拼出多余的 `}` / `` ` `` 导致解析失败；加 BOM 后 PS 5.1 / PS 7 / mac/linux 三端都能正确读（`chcp 65001` 无法替代，PS 5.1 读无 BOM 脚本固定用 ANSI 代码页）。
+- **输出编码：脚本顶部（`$ErrorActionPreference` 之后）必须设一行强制 UTF-8 输出**：`$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`。否则 PS 5.1 默认按系统 ANSI/GBK 编码写控制台，而现代终端（Cursor / Windows Terminal）按 UTF-8 渲染，中文会全是乱码（与上一条「读」无关，这是「写」的问题）。
 
 ## 不应擅自做的事
 
