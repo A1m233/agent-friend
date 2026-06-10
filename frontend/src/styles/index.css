@@ -3,6 +3,13 @@
 @import "./theme/dark.css";
 
 /*
+ * 本项目换肤走 html[theme]（见 theme/*.css），不使用 Tailwind 的 .dark 策略。
+ * 把 dark 变体绑死到 .dark（本项目从不加该 class）→ shadcn 源码里的 dark: 工具类一律 inert，
+ * 避免它们跟随系统 prefers-color-scheme 误触发、与 html[theme] 打架。
+ */
+@custom-variant dark (&:is(.dark *));
+
+/*
  * 把语义 CSS 变量映射成 Tailwind token。
  * 用 `inline` 让生成的工具类直接引用 var()，于是切换 html[theme] 即整体换肤。
  * 颜色一律走这些 token / 变量，禁止硬编码（见 .cursor/rules/frontend-ui-conventions.mdc）。
@@ -15,6 +22,19 @@
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-border: var(--border);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+
+  /* shadcn Sidebar 的 token：复用项目语义 token（随 html[theme] 换肤），不另起一套颜色。 */
+  --color-sidebar: var(--surface);
+  --color-sidebar-foreground: var(--fg);
+  --color-sidebar-primary: var(--accent);
+  --color-sidebar-primary-foreground: var(--accent-fg);
+  --color-sidebar-accent: var(--bg);
+  --color-sidebar-accent-foreground: var(--fg);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-ring: var(--accent);
 }
 
 html,

@@ -1,0 +1,13 @@
+/**
+ * components/ui 统一出口（barrel）：页面/业务一律从 `@/components/ui` 导入封装件，
+ * 不直接 import 子目录。新增通用组件时在此补一行 re-export。
+ */
+export * from "./button";
+export * from "./collapsible";
+export * from "./status-dot";
+export * from "./input";
+export * from "./separator";
+export * from "./sheet";
+export * from "./skeleton";
+export * from "./tooltip";
+export * from "./sidebar";

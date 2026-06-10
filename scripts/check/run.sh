@@ -14,11 +14,12 @@ echo
 echo "===> [3/4] test"
 "$here/../test/run.sh" "$@"
 echo
-echo "===> [4/4] frontend lint"
+echo "===> [4/4] frontend lint + test"
 if command -v node >/dev/null 2>&1 && [ -d "$here/../../frontend/node_modules" ]; then
     "$here/../frontend/lint.sh"
+    "$here/../frontend/test.sh"
 else
-    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint"
+    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test"
 fi
 echo
 echo "===> check 全部通过"

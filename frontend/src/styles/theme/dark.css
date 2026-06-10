@@ -7,4 +7,7 @@ html[theme="dark"] {
   --accent: #818cf8;
   --accent-fg: #0f0f10;
   --border: #2a2c31;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warning: #f59e0b;
 }

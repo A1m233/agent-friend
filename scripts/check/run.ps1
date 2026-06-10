@@ -16,12 +16,14 @@ Write-Host "===> [3/4] test"
 & (Join-Path $here "..\test\run.ps1") @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [4/4] frontend lint"
+Write-Host "===> [4/4] frontend lint + test"
 if ((Get-Command node -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $here "..\..\frontend\node_modules"))) {
     & (Join-Path $here "..\frontend\lint.ps1")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & (Join-Path $here "..\frontend\test.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
-    Write-Host "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint"
+    Write-Host "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test"
 }
 Write-Host ""
 Write-Host "===> check 全部通过"

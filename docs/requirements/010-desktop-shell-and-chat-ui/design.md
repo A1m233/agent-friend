@@ -77,7 +77,7 @@ CONFIRMED（2026-06-10）
 ### 2.3 M10.3 · 传统对话页（对齐 requirement §4.3）
 
 - 对话窗：消息列表 + 输入发送 + 流式打字机（自写 fetch-SSE 消费 AG-UI）
-- 工具调用展示（`TOOL_CALL_*`）、思考展示
+- 工具调用展示（`TOOL_CALL_*`）；思考展示本期挂起（bridge 无 reasoning 事件，见 issue 002），仅前端预留渲染位
 - 历史会话列表 + 切换（meta REST `GET /v1/sessions`、`GET /v1/sessions/{id}`）
 - persona 展示与切换（P1，meta REST）
 - 拟人化错误兜底

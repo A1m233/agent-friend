@@ -30,5 +30,21 @@ export default defineConfig({
       ? { protocol: "ws", host, port: 1421 }
       : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
+    // bridge 无 CORS 头（本期零侵入不给它加），故前端走同源相对路径，由这里代理到
+    // bridge（127.0.0.1:18800）。web 调试与 tauri dev 都经 vite，故都免 CORS。
+    proxy: {
+      "/v1": { target: "http://127.0.0.1:18800", changeOrigin: true },
+      "/healthz": { target: "http://127.0.0.1:18800", changeOrigin: true },
+      "/ag-ui": {
+        target: "http://127.0.0.1:18800",
+        changeOrigin: true,
+        // SSE：禁用代理缓冲，保证流式逐字下发。
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.setHeader("Accept-Encoding", "identity");
+          });
+        },
+      },
+    },
   },
 });

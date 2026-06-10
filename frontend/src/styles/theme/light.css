@@ -7,4 +7,7 @@ html[theme="light"] {
   --accent: #4f46e5;
   --accent-fg: #ffffff;
   --border: #e5e7eb;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
 }

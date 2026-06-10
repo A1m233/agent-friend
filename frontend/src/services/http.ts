@@ -1,5 +1,5 @@
 import axios, { type AxiosInstance } from "axios";
-import { BRIDGE_DEFAULT_URL } from "@/constants";
+import { BRIDGE_BASE_URL } from "@/constants";
 
 /**
  * 基础请求层（REST 通道）。
@@ -28,7 +28,7 @@ function toFriendlyError(err: unknown): FriendlyError {
   return { friendly: "我这边好像出了点小问题，能稍后再问我一遍吗？", code: "unknown" };
 }
 
-export function createHttp(baseURL: string = BRIDGE_DEFAULT_URL): AxiosInstance {
+export function createHttp(baseURL: string = BRIDGE_BASE_URL): AxiosInstance {
   const http = axios.create({ baseURL, timeout: 30_000 });
   http.interceptors.response.use(
     (res) => res.data,

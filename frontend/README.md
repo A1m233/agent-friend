@@ -18,9 +18,11 @@
 
 > 任何"非写代码"操作走 `scripts/`，不要手记 `pnpm ...` 长命令。
 
+> 根目录的 `./scripts/setup/run.sh` 已会一并装前端依赖；下面是只想单独操作前端时用。
+
 | 操作 | mac/linux | windows |
 |---|---|---|
-| 安装依赖 | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
+| 安装依赖（也可用根 `setup`） | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
 | 桌面端开发（双窗口） | `./scripts/frontend/dev.sh` | `.\scripts\frontend\dev.ps1` |
 | 仅 web 调试（浏览器） | `./scripts/frontend/web.sh` | `.\scripts\frontend\web.ps1` |
 | 构建安装包 | `./scripts/frontend/build.sh` | `.\scripts\frontend\build.ps1` |

@@ -15,7 +15,7 @@ const forbiddenNativeElements = ["button", "input", "select", "textarea"].map((e
 }));
 
 export default tseslint.config(
-  { ignores: ["dist/**", "src-tauri/**", "node_modules/**", "*.config.{js,ts}"] },
+  { ignores: ["dist/**", "src-tauri/**", "node_modules/**", "scripts/**", "*.config.{js,ts}"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

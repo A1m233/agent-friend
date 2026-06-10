@@ -12,7 +12,7 @@ alwaysApply: false
 
 - 通用纯 UI 件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（button / input / select / textarea / modal / tag 等）。需要时：
   - 已存在于 `src/components/ui/` → 直接复用。
-  - 不存在 → **先在 `src/components/ui/` 建**（通用件按 shadcn/ui 风格），再 import 引用。
+  - 不存在 → 在 `src/components/ui/` 新建：**引入 shadcn 组件必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码；完整流程（怎么定组件 / 拉取 / 适配 token 与目录）见 skill `add-shadcn-component`**。仅当 shadcn 没有对应件时才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
 - 对话域组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造。
 - 页面 / 业务代码里**不出现原生交互元素**。这条不靠"自觉"或"占位/MVP 也不例外"这类措辞维持，而是由机械门禁判定：
   - ESLint `react/forbid-elements` 见到 `<button>` / `<input>` 等原生交互件即报错，接入 `scripts/check`、合 main 前必过、IDE 内即时报错；门禁**不认**"临时 / 占位 / MVP"理由。
@@ -26,3 +26,4 @@ alwaysApply: false
 - 颜色一律使用 `src/styles/theme/` 下定义的 CSS 变量（通过 `var(--xxx)`，或映射到这些变量的 Tailwind token 使用）。
 - 新增一种颜色时，**必须先在所有主题文件**（`src/styles/theme/light.css`、`dark.css` 等）中补上**同名、值不同**的变量，再使用——保证每个主题下换肤都完整、不漏色。
 - 主题通过 `html[theme='xxx']` 选择器切换，变量同名不同值；不要绕过该机制单独写一套颜色。
+- 这条同样**不靠自觉**，而是由机械门禁判定：`scripts/frontend/lint`（已并入 `scripts/check`）中的 `color-guard`（`frontend/scripts/check-colors.mjs`）扫描 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错；`src/styles/theme/` 作为颜色定义源头豁免。规则只讲"该怎么写"，"写错了拦下来"交给门禁。
