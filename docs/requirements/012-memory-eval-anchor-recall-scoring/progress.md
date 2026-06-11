@@ -4,7 +4,9 @@
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 COMPLETED
 
-> 全部 5 个里程碑落地；首份 baseline 已生成（macro=0.133，30/30 全判分），schema 与命名符合 design §6。LoCoMo 路径不退化由 test_locomo / test_adapter / mypy strict 覆盖，不额外真跑。
+> 全部 5 个里程碑落地；首份 baseline 已生成并随代码入 git 归档（macro=0.133，30/30 全判分）。LoCoMo 路径不退化由 test_locomo / test_adapter / mypy strict 覆盖，不额外真跑。
+>
+> 2026-06-11 hotfix：baseline 改为入 git 归档（原方案"不入 git"自相矛盾）；同步删 `.gitignore`、新增 `baselines/README.md`、`memory_eval/README.md` 大改、顶层 README 加索引。详见 [`requirement.md` §7](./requirement.md#7-变更记录) / [`design.md` §10](./design.md#10-变更记录)。
 
 ---
 
@@ -52,6 +54,7 @@ COMPLETED
 | 2026-06-11 | M12.3 print_summary | 新增汇总函数；`print_outcome` 不动；macro 仅基于已判分题、跳过 None |
 | 2026-06-11 | M12.4 baseline 落盘 | `baseline.write` + `BaselineRun` 元数据；git short-sha 失败降级 nogit；`baselines/.gitignore = *.json` |
 | 2026-06-11 | M12.5 离线检查全绿 + 真跑 baseline | `./scripts/check`：ruff + mypy 124 文件 + pytest 253 通过；真跑 PerLTQA 3×10 → macro=0.133，baseline JSON 命中 schema |
+| 2026-06-11 | hotfix：baseline 入 git 归档 | 删 `baselines/.gitignore`；首份 baseline 入仓；新增 `baselines/README.md`；`memory_eval/README.md` 大改；顶层 README 加索引；012 文档同步修订 |
 
 ---
 
@@ -63,6 +66,6 @@ COMPLETED
 |---|---|---|---|
 | AC-1 | 判分器接入 | ✅ | PerLTQA 装配 AnchorRecallJudge；真跑 30/30 全判分、score ∈ [0, 1] |
 | AC-2 | Report 输出 | ✅ | `print_summary` 输出 macro=0.133 + 20 道 0 分错题完整清单（含 anchor + 召回条目） |
-| AC-3 | Baseline 产物 | ✅ | `2026-06-11T07-36-01-c8735f0.json` 含 schema_version=1 / run / macro / per_question 30 条；目录被 `*.json` gitignore 忽略 |
+| AC-3 | Baseline 产物 | ✅ | `2026-06-11T07-36-01-c8735f0.json` 含 schema_version=1 / run / macro / per_question 30 条；文件随代码进 git 归档（hotfix 修订前曾被 `.gitignore` 忽略） |
 | AC-4 | Sanity case 全过 | ✅ | `tests/test_anchor_judge.py` 4 个用例（含全命中/全不命中/部分严格 0.5/空 anchors）单测全绿，纳入 `./scripts/check` |
 | AC-5 | 已有机制不退化 | ✅ | `test_locomo.py` / `test_adapter.py` / mypy strict 全通过；NoopJudge 行为不变 |

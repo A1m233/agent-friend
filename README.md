@@ -25,6 +25,7 @@
 - `agent-bridge`：双协议（OpenAI / AG-UI）HTTP+SSE 服务端
 - 语音通话控制平面（`voice-bridge`，真机 E2E 待验）
 - 桌面前端 `frontend`：Tauri 2 桌宠外壳 + 传统对话页（流式 / 工具调用 / 历史会话）
+- 记忆召回质量评测（[011](docs/requirements/011-memory-recall-eval/) 机制 + [012](docs/requirements/012-memory-eval-anchor-recall-scoring/) PerLTQA 锚点判分 + baseline 归档；详见 [`memory_eval/README.md`](memory_eval/README.md)）
 
 ## Monorepo 结构
 
@@ -32,6 +33,7 @@
 | --- | --- |
 | `agent/` | 引擎核心：对话编排、会话、人格、system prompt、上下文、tools |
 | `memory/` | 长期记忆（SQLite 抽取 / 召回） |
+| `memory_eval/` | 记忆召回质量评测（外部 benchmark + 判分 + baseline 归档） |
 | `llm_providers/` | LLM 适配层（LiteLLM 封装） |
 | `agent_bridge/` | 把引擎通过 OpenAI / AG-UI 协议暴露为 HTTP+SSE 服务 |
 | `voice_bridge/` | 语音通话控制平面 |
