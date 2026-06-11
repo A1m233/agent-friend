@@ -85,6 +85,7 @@ target/
 *.sqlite
 *.sqlite3
 *.db
+# 任意层级的 data/ 目录（含 memory_eval/data/ 下载的 LoCoMo 等基准数据集，不入 git）
 data/
 # Chroma 持久化目录
 chroma_db/

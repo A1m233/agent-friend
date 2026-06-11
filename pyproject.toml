@@ -8,6 +8,7 @@ dependencies = [
     "agent",
     "agent-bridge",
     "memory",
+    "memory-eval",
     "llm-providers",
     "tools",
     "voice-bridge",
@@ -28,6 +29,7 @@ members = [
     "agent",
     "agent_bridge",
     "memory",
+    "memory_eval",
     "llm_providers",
     "tools",
     "voice_bridge",
@@ -37,6 +39,7 @@ members = [
 agent = { workspace = true }
 agent-bridge = { workspace = true }
 memory = { workspace = true }
+memory-eval = { workspace = true }
 llm-providers = { workspace = true }
 tools = { workspace = true }
 voice-bridge = { workspace = true }
@@ -98,4 +101,4 @@ exclude = [
 # ============================================================
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["agent", "agent_bridge", "memory", "llm_providers", "tools", "voice_bridge"]
+testpaths = ["agent", "agent_bridge", "memory", "memory_eval", "llm_providers", "tools", "voice_bridge"]
