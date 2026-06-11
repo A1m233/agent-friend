@@ -83,7 +83,7 @@ PerLTQA 数据**每题自带 `Memory Anchors`**（关键 token + 字符 span，�
 
 - **R-4.3.1 结构化落盘**：每次运行产出一份机器可读的 baseline 文件到 `memory_eval/baselines/`，可被后续运行解析对比。
 - **R-4.3.2 上下文齐备**：baseline 文件包含 git commit、抽取模型、limit 参数、运行时间、每题分数、macro 平均 —— 足以复现条件 / 解释数字。
-- **R-4.3.3 不入版本控制**：baseline 文件不进 git（属运行产物，与 PoC 时期的数据文件同处理）；目录 `.gitignore` 由 `design.md` 决定。
+- **R-4.3.3 入 git 归档**：baseline 文件随代码进 git，作为可在历史上溯源、跨设备 / 跨开发者一致的对比基线。文件名带 ISO 时间 + commit short-sha 天然不冲突；目录下附 `README.md` 解释字段语义，新人 clone 即可看到全部历史。
 
 ### 4.4 判分器自检
 
@@ -110,7 +110,7 @@ PerLTQA 数据**每题自带 `Memory Anchors`**（关键 token + 字符 span，�
 
 - **AC-1 判分器接入**：PerLTQA 评测能调用 AnchorRecallJudge，为每题输出 `[0, 1]` 分数（替换原 NoopJudge）。
 - **AC-2 Report 输出**：评测结束控制台输出包含 macro 平均 + 0 分错题清单（问题 / anchor / 召回条目）；非 0 分题的召回展示不退化。
-- **AC-3 Baseline 产物**：评测结束在 `memory_eval/baselines/` 下生成结构化 baseline 文件，含 commit / 模型 / 参数 / 每题分数 / macro 平均；该目录被 `.gitignore` 忽略。
+- **AC-3 Baseline 产物**：评测结束在 `memory_eval/baselines/` 下生成结构化 baseline 文件，含 commit / 模型 / 参数 / 每题分数 / macro 平均；文件随代码进 git 归档，跨设备 / 跨人可见。
 - **AC-4 Sanity case 全过**：3 个人造测试用例（全命中 / 全不命中 / 部分命中）单测通过，纳入 `./scripts/check`，不依赖真实 LLM。
 - **AC-5 已有机制不退化**：011 落地的 LoCoMo 路径仍能跑通（NoopJudge 保留作兜底），`./scripts/check` 全绿。
 
@@ -120,6 +120,7 @@ PerLTQA 数据**每题自带 `Memory Anchors`**（关键 token + 字符 span，�
 
 | 日期 | 变更内容 | 影响范围 |
 |------|---------|---------|
+| 2026-06-11 | **R-4.3.3 / AC-3 修订**：baseline 由"不入 git"改为"入 git 归档"。原方案让 baseline 不可对比、与本需求"出一个可对比的数字"自相矛盾；持久化到仓库才能跨设备 / 跨时间真正可对比。 | design.md §2 / §6.1 / §6.3 / §9.3 同步修订；删除 `memory_eval/baselines/.gitignore`；新增 `memory_eval/baselines/README.md`；`memory_eval/README.md` 大改同步判分 / 输出 / schema。 |
 
 ---
 

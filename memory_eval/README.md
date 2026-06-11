@@ -1,31 +1,23 @@
 # memory_eval
 
-`agent-friend` 的**记忆召回质量评测**（当前为 PoC）。
+`agent-friend` 的**记忆召回质量评测**：把外部 agent-memory 基准的对话灌进 [`memory`](../memory/) 的真实写路径（`Memory.observe`），再用基准问题走 `Memory.retrieve`，对召回内容**判分** + 落 baseline 文件，作为持续度量记忆策略的工具。
 
-## 定位
+设计文档：[011 评测机制](../docs/requirements/011-memory-recall-eval/) + [012 锚点召回判分](../docs/requirements/012-memory-eval-anchor-recall-scoring/)。
 
-把外部 agent-memory 基准的对话历史灌进 `memory` 的公共接口（`Memory.observe`），再用基准
-问题走 `Memory.retrieve`，观察召回质量。
+## 边界
 
-边界：本包是 `memory` 公共接口的**消费方**，**单向依赖** `memory` + `llm_providers`，
-绝不反向污染 `memory` 核心包的依赖（数据加载、judge 等评测专属依赖只落在这里）。
+本包是 `memory` 公共接口的**消费方**，**单向依赖** `memory` + `llm_providers`，绝不反向污染 `memory` 核心包的依赖（数据加载、judge 等评测专属依赖只落在这里）。
 
-## 支持的基准
+## 支持的基准与判分
 
-| 基准 | 语言 | 取用范围 | 为什么 |
+| 基准 | 语言 | 取用范围 | 判分 |
 |---|---|---|---|
-| **PerLTQA**（默认） | 原生中文 | 仅 **dialogues 子集** | 对话流 + 真实时间戳，与 memory「从对话抽取→召回」范式严丝合缝；profile/关系/events 是结构化记忆、无对话来源，故不取 |
-| LoCoMo | 英文 | 全量 QA | 英文基线，便于对照中英差异 |
+| **PerLTQA**（默认） | 原生中文 | 仅 **dialogues 子集** | **AnchorRecallJudge**：基于 PerLTQA 自带 `Memory Anchors`，substring 匹配召回内容，输出 `命中 anchor 数 / 总 anchor 数 ∈ [0, 1]` |
+| LoCoMo | 英文 | 全量 QA | NoopJudge（无 anchor 数据，不打分；保留作英文基线对照、跑通流程） |
 
-> 实测发现：用英文 LoCoMo 测中文 memory 时，「英文 query × 中文记忆」会让 FTS5 关键词召回
-> 严重失效，分数不反映真实能力——故默认走原生中文的 PerLTQA。
+> 实测发现：用英文 LoCoMo 测中文 memory 时，「英文 query × 中文记忆」会让 FTS5 关键词召回严重失效，分数不反映真实能力——故默认走原生中文的 PerLTQA。
 
-## 现状（PoC scope）
-
-- ✅ PerLTQA（中文，dialogues 子集）/ LoCoMo（英文）数据加载与归一化（`datasets/`）
-- ✅ EvalCase → `observe`/`retrieve` 适配（`adapters/`）
-- ✅ 跑流程 + 召回内容展示（`harness/`）
-- ⏳ **judge 仅留桩**（`NoopJudge`）：真正的召回质量评分需 LLM-as-judge，PoC 先只展示召回内容供肉眼评估，避免引入第二处真实 LLM 调用
+判分器的已知偏差（substring 看不出同义改写）与未来升级路径见 [`012 design §8`](../docs/requirements/012-memory-eval-anchor-recall-scoring/design.md#8-已知偏差与升级路径)。
 
 ## 内部结构
 
@@ -33,7 +25,8 @@
 src/memory_eval/
 ├── datasets/   # 基准数据加载 → 统一 EvalCase（与 memory 无耦合的纯数据层）
 ├── adapters/   # EvalCase → ConversationFragment（observe）；question → retrieve
-├── harness/    # runner（编排）+ judge（判分扩展点）+ report（展示）
+├── harness/    # runner（编排）+ judge（判分扩展点 + AnchorRecallJudge）
+│              # + report（控制台展示 + macro 汇总）+ baseline（落 JSON 归档）
 └── __main__.py # CLI 入口
 ```
 
@@ -41,21 +34,17 @@ src/memory_eval/
 
 数据文件较大，**不纳入版本控制**（被根 `.gitignore` 的 `data/` 规则忽略）。按需下载：
 
-- **PerLTQA**（默认）：从 <https://github.com/Elvin-Yiming-Du/PerLTQA> 的 `Dataset/zh/`
-  下载 `perltmem.json` + `perltqa.json`，放到 `memory_eval/data/perltqa/`
-  （CC BY-NC 4.0，仅非商用研究，勿分发 / 勿用于商用训练）。
-- **LoCoMo**：从 <https://github.com/snap-research/locomo> 下载 `data/locomo10.json`，
-  放到 `memory_eval/data/locomo10.json`。
+- **PerLTQA**（默认）：从 <https://github.com/Elvin-Yiming-Du/PerLTQA> 的 `Dataset/zh/` 下载 `perltmem.json` + `perltqa.json`，放到 `memory_eval/data/perltqa/`（CC BY-NC 4.0，仅非商用研究，勿分发 / 勿用于商用训练）。
+- **LoCoMo**：从 <https://github.com/snap-research/locomo> 下载 `data/locomo10.json`，放到 `memory_eval/data/locomo10.json`。
 
 ## 运行
 
-> ⚠️ **会触发真实 LLM 抽取调用**（每段对话一次抽取）。按项目 `llm-api-confirm` 规则，
-> 运行前需获授权，并在项目根 `.env` 配置 `DEEPSEEK_API_KEY`。单测用 fake LLM，不触发真实调用。
+> ⚠️ **会触发真实 LLM 抽取调用**（每段对话一次抽取）。按项目 `llm-api-confirm` 规则，运行前需获授权，并在项目根 `.env` 配置 `DEEPSEEK_API_KEY`。单测用 fake LLM，不触发真实调用。
 
 ```bash
-# 默认 PerLTQA（中文）
-./scripts/memory-eval/run.sh --limit-samples 1 --limit-questions 5
-# 英文基线 LoCoMo
+# 默认 PerLTQA（中文）+ AnchorRecallJudge
+./scripts/memory-eval/run.sh --limit-samples 3 --limit-questions 10
+# 英文基线 LoCoMo + NoopJudge（不打分，仅展示召回）
 ./scripts/memory-eval/run.sh --dataset locomo --limit-samples 1 --limit-questions 5
 ```
 
@@ -67,3 +56,28 @@ src/memory_eval/
 | `--limit-samples` | `1` | 只跑前 N 个样本（控制成本） |
 | `--limit-questions` | `5` | 每个样本只问前 N 个问题 |
 | `--model` | `.env` 默认 | 覆盖抽取用 model |
+
+## 跑出来会得到什么
+
+1. **控制台逐题输出**：问题 / 标准答案 / 召回到的记忆条目 / 判分（PerLTQA 显示 `hit/total` + 未命中 anchor 清单）。
+2. **跑完汇总**：macro 平均 + 0 分错题完整清单（含 anchor 与召回条目，便于复盘"为什么完全没召回"）。
+3. **baseline 文件落盘**：`memory_eval/baselines/<ISO-datetime>-<short-sha>.json`，含 macro 平均 + 每题分数 + 运行条件（commit / 模型 / limit 参数 / 时间）。
+
+baseline 文件**随代码入 git 归档**，作为可在历史上溯源、跨设备一致的对比基线。字段语义见 [`baselines/README.md`](baselines/README.md)。
+
+## 改 memory 时怎么用 baseline
+
+1. **改之前**：跑一次评测，记下 macro（如 `0.133`）；baseline 文件已自动入仓。
+2. **改 memory 代码**：抽取策略 / 召回排序 / 向量召回 / reflection 等。
+3. **改之后**：再跑一次评测；新 baseline 文件自动入仓。
+4. **对比**：`git log -- memory_eval/baselines/` 看历次 baseline；macro 是涨是跌一目了然；逐题分数能定位"哪些题从对变错 / 从错变对"。
+
+> 注：baseline 不是 CI 门禁 —— 真实 LLM 调用、成本与稳定性都不适合做强制门禁。它是**改动证据**，不是**合并卡口**。
+
+## 测试
+
+```bash
+./scripts/check/run.sh   # 包含 memory_eval 单测（fake LLM，不触发真实调用）
+```
+
+memory_eval 自身的测试覆盖：基准解析（`test_perltqa.py` / `test_locomo.py`）、observe→retrieve 端到端（`test_adapter.py`）、AnchorRecallJudge 行为（`test_anchor_judge.py`，含 sanity case）。

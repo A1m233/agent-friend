@@ -47,7 +47,7 @@ flowchart LR
 | `memory_eval/src/memory_eval/harness/report.py` | 修改（additive） | 新增 `print_summary(outcomes)`；`print_outcome` 不动 |
 | `memory_eval/src/memory_eval/harness/baseline.py` | **新文件** | baseline json 写盘逻辑（独立模块） |
 | `memory_eval/src/memory_eval/__main__.py` | 修改 | PerLTQA 默认 judge 换为 AnchorRecallJudge；跑完调 `print_summary` + `baseline.write` |
-| `memory_eval/baselines/.gitignore` | **新文件** | `*.json` |
+| `memory_eval/baselines/README.md` | **新文件** | 解释 baseline 字段语义、归档目的、不要乱删 |
 | `memory_eval/tests/test_anchor_judge.py` | **新文件** | 3 个 sanity case 单测 |
 
 > **关键取舍**："additive only"。所有 011 已存在的字段、方法签名、调用顺序保持原样；只是末尾追加。这样 011 既有单测 / LoCoMo 路径完全不需要改一行。
@@ -207,7 +207,7 @@ baseline.write(all_outcomes, args, ...) # ← 新增（见 §6）
 - **命名**：`<ISO-datetime>-<short-sha>.json`，如 `2026-06-11T14-30-22-c8735f0.json`
   - ISO datetime 用 `-` 替换 `:`（Windows 路径安全）
   - short-sha 取 `git rev-parse --short HEAD`，失败时填 `nogit`
-- **`.gitignore`**：目录下放 `.gitignore`，内容 `*.json`；目录本身入 git（保证 `mkdir` 不需要、新手 clone 后能直接跑出文件）
+- **入 git 归档**：baseline 文件随代码一起进 git，作为可对比的历史。文件名带 ISO 时间 + sha 天然不冲突，单文件 ~12 KB、运行频率有限，膨胀风险可控。目录下附 `README.md` 解释字段语义。
 
 > **取舍**：每跑一次产一份独立文件，**不覆盖、不 append、不维护"最新" symlink**。理由：本次 baseline 是"跑出一份就够"，多份记录靠文件系统排序就能看到时间线；symlink / 最新指针属未列入范围的便利性优化。
 
@@ -342,8 +342,16 @@ Anchor:        "提升专业能力"
 |---|---|---|
 | substring false negative（§8） | 同义改写被判 0 分 | detail 列未命中清单，作为升级 judge 的数据依据 |
 | Anchor 字段格式漂移 | 未来 PerLTQA 升级数据格式 | `_parse_anchors` 防御式跳过，不抛；不影响整体评测 |
-| baseline 文件膨胀 | 长期累积可能很多 | 不入 git；用户按需手动清理；不维护"保留 N 份" |
+| baseline 文件膨胀 | 长期累积可能很多 | 单文件 ~12 KB、运行频率有限，预期一年内可控；真累积过多再评估"分目录归档" / "保留 N 份"，YAGNI |
 | `git rev-parse` 不可用 | 非 git 环境（如 CI sandbox） | 降级填 `"nogit"`，运行不中断 |
+
+---
+
+## 10. 变更记录
+
+| 日期 | 变更内容 | 是否需要重新实现 |
+|------|---------|----------------|
+| 2026-06-11 | §2 改动地图 / §6.1 / §6.3 R-4.3.3 / §9.3 风险表同步修订：baseline 由"不入 git + 配 .gitignore"改为"入 git 归档"；目录新增 `README.md` 解释字段语义。承接 [`requirement.md` §7](./requirement.md#7-变更记录) 的同日修订。 | 部分：删除 `memory_eval/baselines/.gitignore` + 新增 `memory_eval/baselines/README.md` + 把首份归档 baseline 入 git；其余主流程（runner / judge / report / baseline.write）不动。 |
 
 ---
 
