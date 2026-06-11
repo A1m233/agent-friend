@@ -4,9 +4,11 @@
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 COMPLETED
 
-> 全部 5 个里程碑落地；首份 baseline 已生成并随代码入 git 归档（macro=0.133，30/30 全判分）。LoCoMo 路径不退化由 test_locomo / test_adapter / mypy strict 覆盖，不额外真跑。
+> 全部 5 个里程碑落地；baseline 文件随代码入 git 归档；schema 已升至 v2 含完整召回 + gold answer + 稳定 question_id + 运行可复现字段。LoCoMo 路径不退化由 test_locomo / test_adapter / mypy strict 覆盖，不额外真跑。
 >
-> 2026-06-11 hotfix：baseline 改为入 git 归档（原方案"不入 git"自相矛盾）；同步删 `.gitignore`、新增 `baselines/README.md`、`memory_eval/README.md` 大改、顶层 README 加索引。详见 [`requirement.md` §7](./requirement.md#7-变更记录) / [`design.md` §10](./design.md#10-变更记录)。
+> 2026-06-11 hotfix：baseline 改为入 git 归档（原方案"不入 git"自相矛盾）。
+>
+> 2026-06-11 hotfix-2：baseline schema 补齐到 v2（原方案只存 `recalled_count` 让错题"为什么没召回"无法复盘）。详见 [`requirement.md` §7](./requirement.md#7-变更记录) / [`design.md` §10](./design.md#10-变更记录)。
 
 ---
 
@@ -55,6 +57,7 @@ COMPLETED
 | 2026-06-11 | M12.4 baseline 落盘 | `baseline.write` + `BaselineRun` 元数据；git short-sha 失败降级 nogit；`baselines/.gitignore = *.json` |
 | 2026-06-11 | M12.5 离线检查全绿 + 真跑 baseline | `./scripts/check`：ruff + mypy 124 文件 + pytest 253 通过；真跑 PerLTQA 3×10 → macro=0.133，baseline JSON 命中 schema |
 | 2026-06-11 | hotfix：baseline 入 git 归档 | 删 `baselines/.gitignore`；首份 baseline 入仓；新增 `baselines/README.md`；`memory_eval/README.md` 大改；顶层 README 加索引；012 文档同步修订 |
+| 2026-06-11 | hotfix-2：baseline schema 全量补齐到 v2 | 加完整召回 / gold answer / 稳定 question_id / working_tree_dirty / dataset_files SHA / provider defaults / note / 起止时间；CLI 加 `--note`；新增 `tests/test_baseline.py` 4 个 schema 锁；旧 schema=1 baseline 保留作"减信息版"参照（不重跑覆盖）；memory_eval/README + baselines/README 同步噪声策略 + PerLTQA license attribution。 |
 
 ---
 

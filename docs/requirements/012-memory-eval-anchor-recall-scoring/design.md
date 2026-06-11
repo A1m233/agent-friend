@@ -211,58 +211,87 @@ baseline.write(all_outcomes, args, ...) # ← 新增（见 §6）
 
 > **取舍**：每跑一次产一份独立文件，**不覆盖、不 append、不维护"最新" symlink**。理由：本次 baseline 是"跑出一份就够"，多份记录靠文件系统排序就能看到时间线；symlink / 最新指针属未列入范围的便利性优化。
 
-### 6.2 JSON 结构
+### 6.2 JSON 结构（schema_version=2）
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "run": {
-    "started_at": "2026-06-11T14:30:22Z",
+    "started_at": "2026-06-11T07:36:01.093+00:00",
+    "ended_at": "2026-06-11T07:38:42.521+00:00",
+    "duration_seconds": 161.43,
     "git_commit": "c8735f0",
+    "working_tree_dirty": false,
     "dataset": "perltqa",
-    "model": "deepseek-chat",
     "limit_samples": 3,
-    "limit_questions": 10
+    "limit_questions": 10,
+    "note": "before extraction prompt v2",
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {"temperature": 0.7}
+    },
+    "dataset_files": [
+      {"path": "perltmem.json", "sha256": "<hex>", "bytes": 12345},
+      {"path": "perltqa.json", "sha256": "<hex>", "bytes": 67890}
+    ]
   },
   "macro": {
-    "score_mean": 0.624,
+    "score_mean": 0.133,
     "n_questions_total": 30,
-    "n_questions_scored": 28,
-    "n_questions_zero": 9
+    "n_questions_scored": 30,
+    "n_questions_zero": 20
   },
   "per_question": [
     {
+      "question_id": "张小红#q0",
       "sample_id": "张小红",
       "question": "小明最近感到困惑的是什么？",
+      "answer": "张小明对自己的成长和婚姻家庭领域的发展感到很迷茫。",
       "anchors": ["迷茫"],
       "score": 0.0,
       "detail": "0/1 命中；未命中: ['迷茫']",
-      "recalled_count": 1
+      "recalled_count": 1,
+      "recalled": [
+        {"layer": "pinned", "text": "用户叫张小红", "source_ref": "...", "score": 1.0}
+      ]
     }
   ]
 }
 ```
 
-> **取舍 · 不存完整召回内容**：每题只存 `recalled_count`（条数），不把召回的全文落进 baseline —— 文件会膨胀、且 baseline 是"用来对比的数字"不是"用来重放的快照"。需要看具体召回时人重跑评测即可。
+字段语义说明：
+
+- **`run.working_tree_dirty`**：通过 `git status --porcelain` 判定；非 git 环境为 `null`。让读 baseline 的人能区分"`commit` 字段所指即真实状态"与"还有未提交改动可能影响结果"。
+- **`run.dataset_files`**：每个数据集原始文件的 SHA256 + 字节数。PerLTQA 会更新数据，没有这个字段时旧 baseline 与新 baseline 表面一致但实际样本不同，对比会误导。
+- **`run.provider.defaults.temperature`** 等：抽取阶段实际使用的 provider 参数，影响抽取确定性，必须留痕。
+- **`per_question.question_id`**：稳定问题标识 `<sample_id>#q<idx>`，未来对比工具按此 join 两个 baseline；用 idx 而非 question 文本，规避 PerLTQA 文本微调时配不上的脆弱性。
+- **`per_question.recalled`**：完整召回内容，每条含 `layer / text / source_ref / score`。**让 baseline 同时是"对比基准"和"离线再判分的输入"**——未来想换一个 SemanticAnchorRecallJudge 重判分，不需要重跑 LLM 抽取。
 
 ### 6.3 baseline.py 模块边界
 
 ```python
 def write(
     outcomes: Iterable[CaseOutcome],
-    *,
-    dataset: str,
-    model: str,
-    limit_samples: int,
-    limit_questions: int,
-    started_at: datetime,
+    run: BaselineRun,
     out_dir: Path,
 ) -> Path:
     """序列化 outcomes + 运行上下文到 JSON，返回写入路径。"""
 ```
 
-- 不依赖 `argparse.Namespace`：调用方显式拆参（便于单测）。
-- `git_commit` 通过 `subprocess.run(["git", "rev-parse", "--short", "HEAD"])` 取，**失败降级为 "nogit"**（评测可能在 detached / 非 git 环境跑）。
+- 元数据封进 `BaselineRun` frozen dataclass：`started_at` / `ended_at` / `dataset` / `model` / `api_base` / `provider_defaults` / `limit_samples` / `limit_questions` / `note` / `dataset_paths`。`dataset_paths` 在 `write()` 内转成 hash + bytes。
+- `git_commit` / `working_tree_dirty` 通过 `subprocess.run(["git", ...])` 取，**全部失败降级**：commit 填 `"nogit"`、dirty 填 `null`。
+- 召回 `MemoryItem` 用 `dataclasses.asdict` 序列化，避免硬编码字段名与 `MemoryItem` 演进绑死；非 dataclass 退化为 `{"repr": str(item)}` 保证不抛。
+
+### 6.4 噪声策略
+
+抽取链路是真实 LLM、有抖动；同一份代码 + 同一份数据多跑几次，macro 也会有几个百分点级别的浮动（取决于 `temperature`）。本系统选择**不在 baseline 模块内做多次平均**：
+
+- **当下接受单次跑分数有噪声**：MVP 范围内只对"几个 percent 以上的 delta"作"真有变化"判断，更小的差异先归因到噪声。
+- **由 README 显式提醒读者**：`memory_eval/README.md` 明确写出"重大判断建议手动跑 N 次取人工平均"，避免把单次 0.133 当成确定的值。
+- **暴露关键噪声参数**：`run.provider.defaults.temperature` 让读者一眼看到当时温度；下次想稳定可以改 `.env` 设 `temperature=0`。
+
+工具内置多次平均（自动 N 跑取均值 / 标准差）属未来需要再评估，本次不做。
 
 ---
 
@@ -274,6 +303,7 @@ def write(
 |---|---|
 | `tests/test_perltqa.py` | **扩展**：用人造样本验证 `Memory Anchors` 解析到 `EvalQuestion.anchors`；脏数据（缺字段 / 非 dict / 空 key）走防御路径 |
 | `tests/test_anchor_judge.py` | **新增**：3 个 sanity case（见下） |
+| `tests/test_baseline.py` | **新增（hotfix-2）**：锁 schema_version=2 字段齐备（run / macro / per_question 完整召回 + answer + question_id），覆盖 macro 跳过未判分题、dataset_files 缺失走防御路径 |
 
 ### 7.2 AnchorRecallJudge sanity case（对应 AC-4）
 
@@ -352,6 +382,7 @@ Anchor:        "提升专业能力"
 | 日期 | 变更内容 | 是否需要重新实现 |
 |------|---------|----------------|
 | 2026-06-11 | §2 改动地图 / §6.1 / §6.3 R-4.3.3 / §9.3 风险表同步修订：baseline 由"不入 git + 配 .gitignore"改为"入 git 归档"；目录新增 `README.md` 解释字段语义。承接 [`requirement.md` §7](./requirement.md#7-变更记录) 的同日修订。 | 部分：删除 `memory_eval/baselines/.gitignore` + 新增 `memory_eval/baselines/README.md` + 把首份归档 baseline 入 git；其余主流程（runner / judge / report / baseline.write）不动。 |
+| 2026-06-11 | §6.2 schema 全量重写到 v2（加 working_tree_dirty / dataset_files SHA / provider defaults / note / question_id / answer / 完整 recalled[]）；§6.3 baseline.py 接口签名改用 `BaselineRun` 聚合元数据；§6.4 新增噪声策略段；§7.1 测试表加 test_baseline 行。理由见 [`requirement.md` §7 同日条目](./requirement.md#7-变更记录)。 | 部分：`baseline.py` 大改 + `BaselineRun` 字段扩展 + `__main__.py` 新增 `--note` flag、传入 spec / dataset_paths / ended_at；新增 `tests/test_baseline.py`；其余主流程不动。 |
 
 ---
 
