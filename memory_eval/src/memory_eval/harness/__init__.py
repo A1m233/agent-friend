@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-from .judge import Judge, JudgeResult, NoopJudge
-from .report import print_outcome
+from .judge import AnchorRecallJudge, Judge, JudgeResult, NoopJudge
+from .report import print_outcome, print_summary
 from .runner import CaseOutcome, QuestionOutcome, run_case
 
 __all__ = [
+    "AnchorRecallJudge",
     "CaseOutcome",
     "Judge",
     "JudgeResult",
     "NoopJudge",
     "QuestionOutcome",
     "print_outcome",
+    "print_summary",
     "run_case",
 ]
