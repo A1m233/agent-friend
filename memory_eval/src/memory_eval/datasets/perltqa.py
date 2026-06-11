@@ -72,6 +72,26 @@ def _parse_evidence(raw: object) -> list[str]:
     return []
 
 
+def _parse_anchors(raw: object) -> list[str]:
+    """``Memory Anchors`` 形如 ``[{"建议": [254, 255]}, ...]``，提取 anchor token、丢弃 span。
+
+    每个元素是单键 dict（key 是 anchor token，value 是 [start, end] 字符 span）。判分只
+    需要 token，span 丢弃。脏数据（非 list / 非 dict / 空 key）单条跳过，整体不抛——与
+    本 loader 其它解析的防御式风格一致。
+    """
+    if not isinstance(raw, list):
+        return []
+    tokens: list[str] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        for key in item:
+            if isinstance(key, str) and key.strip():
+                tokens.append(key.strip())
+                break
+    return tokens
+
+
 def _protagonist(mem_entry: dict[str, Any]) -> str | None:
     profile = mem_entry.get("profile")
     if isinstance(profile, dict):
@@ -147,6 +167,7 @@ def _parse_questions(dialogues_qa: object) -> list[EvalQuestion]:
                     answer="" if answer is None else str(answer),
                     category=_CATEGORY_DIALOGUES,
                     evidence=_parse_evidence(raw.get("Reference Memory")),
+                    anchors=_parse_anchors(raw.get("Memory Anchors")),
                 )
             )
     return questions

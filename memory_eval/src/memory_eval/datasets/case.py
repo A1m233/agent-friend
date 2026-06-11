@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -45,12 +45,15 @@ class EvalQuestion:
             ``adversarial``；PerLTQA 用 ``dialogues`` 等。缺失为 ``None``。
         evidence: 支撑答案的来源 id 列表（LoCoMo 的对话 id / PerLTQA 的 memory 索引），
             缺失为空列表。
+        anchors: 答案关键 token 列表（PerLTQA 的 ``Memory Anchors`` token，丢弃字符 span）。
+            仅 PerLTQA 填充，其它基准默认空列表。供 anchor 召回判分器使用。
     """
 
     question: str
     answer: str
     category: str | None
     evidence: list[str]
+    anchors: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

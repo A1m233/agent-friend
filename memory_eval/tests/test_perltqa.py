@@ -89,9 +89,59 @@ def test_dialogue_questions_only(tmp_path: Path) -> None:
     assert q.question == "Tom是什么"
     assert q.category == "dialogues"
     assert q.evidence == ["1_0_0#0"]  # 字符串化列表被解析
+    assert q.anchors == ["Tom"]  # Memory Anchors 提取出 token，丢弃 span
 
 
 def test_limit_samples(tmp_path: Path) -> None:
     mem_path, qa_path = _write(tmp_path)
     cases = load_perltqa(mem_path, qa_path, limit_samples=0)
     assert cases == []
+
+
+def test_anchor_parsing_defensive(tmp_path: Path) -> None:
+    """anchor 解析的脏数据防御：缺字段 / 错类型 / 错元素 / 多键 / 空 key 均不抛。"""
+    mem = [
+        {
+            "profile": {"Protagonist": "X"},
+            "dialogues": {
+                "k#0": {
+                    "events": "k",
+                    "contents": {"2022-05-12 09:00": ["X:hi", "AI助手:hi"]},
+                }
+            },
+        }
+    ]
+    qa = [
+        {
+            "X": {
+                "dialogues": {
+                    "k#0": [
+                        {"Question": "q1", "Answer": "a", "Memory Anchors": [{"good": [0, 1]}]},
+                        {"Question": "q2", "Answer": "a"},  # 字段缺失
+                        {"Question": "q3", "Answer": "a", "Memory Anchors": "not a list"},
+                        {  # 多键 dict：取第一个（dict 保持插入顺序）
+                            "Question": "q4",
+                            "Answer": "a",
+                            "Memory Anchors": [{"first": [0, 1], "second": [2, 3]}],
+                        },
+                        {  # 混合脏数据：空 dict / 空白 key / 字符串元素 / 有效项
+                            "Question": "q5",
+                            "Answer": "a",
+                            "Memory Anchors": [{}, {"   ": [0, 1]}, "string", {"valid": [0, 1]}],
+                        },
+                    ]
+                }
+            }
+        }
+    ]
+    mem_path = tmp_path / "perltmem.json"
+    qa_path = tmp_path / "perltqa.json"
+    mem_path.write_text(json.dumps(mem), encoding="utf-8")
+    qa_path.write_text(json.dumps(qa), encoding="utf-8")
+    case = load_perltqa(mem_path, qa_path)[0]
+    anchors_by_q = {q.question: q.anchors for q in case.questions}
+    assert anchors_by_q["q1"] == ["good"]
+    assert anchors_by_q["q2"] == []  # 字段缺失 → 默认空列表
+    assert anchors_by_q["q3"] == []  # 错类型 → 空
+    assert anchors_by_q["q4"] == ["first"]  # 多键取首个
+    assert anchors_by_q["q5"] == ["valid"]  # 脏元素跳过、有效项保留
