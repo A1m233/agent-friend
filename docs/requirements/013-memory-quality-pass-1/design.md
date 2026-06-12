@@ -124,25 +124,50 @@ prompt 改造为 **首选方案**；颗粒度变细（逐 turn 抽）作为 **�
 
 ---
 
-## 4. 主因 3：FTS5 召回 zero-deps 改进
+## 4. 主因 3：召回加宽（jieba 中文分词）
 
-### 4.1 改动点（仅 `_fts_query` 函数）
+### 4.1 改动点
 
-| 改动 | 现状 | 目标 |
-|---|---|---|
-| trigram 上限 | `_MAX_TRIGRAMS = 64` | 提到 `256`（PerLTQA 长 query 不被截） |
-| 短文本兜底 | chunk 长度 < 3 直接跳过、整 query 凑不出就返回 None | 凑不出 trigram 时**降级 bigram**；bigram 也凑不出（chunk < 2）才返回 None |
-| 中文切分 | `text.split()` —— 中文整段是单 chunk | 不变（trigram + bigram 滑窗已处理） |
+**Design 变更（2026-06-12）**：原方案"FTS5 trigram zero-deps 改进 + bigram 兜底"在实施期发现**架构不可行**——SQLite FTS5 `tokenize='trigram'` 把索引切成 3-字滑窗 token，bigram phrase query（如 `"名字"`/`"宠物"`）无法 substring 命中 trigram 索引；中文短 query（如"我叫什么"）与 pinned 条目（"用户名字是张小红"）**无共享 trigram**（共享的是 bigram "名字"），导致主因 3 + 主因 2 的核心场景都救不回。详见 §11 变更记录。
 
-### 4.2 不引入向量召回的明确边界
+新方案：引入 **jieba 中文分词** 替换 FTS5 内置 trigram tokenizer。
+
+| 文件 | 改动 |
+|---|---|
+| `memory/pyproject.toml` | 加 `jieba` 依赖 |
+| `memory/src/memory/store/schema.py` | `semantic` / `episodic` 表分别加 `statement_tokens` / `summary_tokens` 列（存 jieba 切词后空格连接版本）；`semantic_fts` / `episodic_fts` 改成 `tokenize='unicode61'` 索引新列；schema 版本升 v2，加 lazy migration |
+| `memory/src/memory/store/sqlite_store.py` | `add_semantic` / `add_episodic` 落库时 jieba 切词存 `*_tokens` 列；`_fts_query` 改成 jieba 切词后空格连接；删除 bigram 兜底逻辑（架构不可行） |
+| `memory/src/memory/store/sqlite_store.py` | `fts_match_pinned` 接口实现不变，但底层用 jieba 索引（精度提升） |
+
+### 4.2 落地形态
+
+**为什么改 schema 而不是双索引**：
+- 双索引方案需要 `semantic_fts_trigram` + `semantic_fts_jieba` 双写、双查、合并打分，复杂度高
+- 单索引（jieba 替换 trigram）schema 简洁、维护成本低；旧 trigram 索引在 jieba 路径稳定后已无独立价值
+
+**Schema 演进**：
+- v1（pre-pass-1）：`semantic_fts` 直接索引 `semantic.statement` 列，tokenize=trigram
+- v2（pass-1）：`semantic` 加 `statement_tokens TEXT NOT NULL DEFAULT ''` 列；`semantic_fts` 索引这个新列，tokenize=unicode61
+- `episodic` 同理
+
+**Lazy migration**：`SqliteMemoryStore.__init__` 读 `schema_meta` 表的 `schema_version` 值（项目既有机制，[`schema.py:23` `SCHEMA_VERSION = 1`](../../../memory/src/memory/store/schema.py)），低于 v2 时自动：
+1. `ALTER TABLE semantic ADD COLUMN statement_tokens TEXT NOT NULL DEFAULT ''`
+2. 扫描所有现有行，逐行 `UPDATE ... SET statement_tokens=jieba.cut(statement)`
+3. `DROP TABLE semantic_fts; CREATE VIRTUAL TABLE semantic_fts ...` 用新 schema
+4. `INSERT INTO semantic_fts SELECT rowid, statement_tokens FROM semantic`（rebuild index）
+5. `UPDATE schema_meta SET value='2' WHERE key='schema_version'`
+
+`SCHEMA_VERSION` 常量从 `1` 升到 `2`。评测场景用临时库（`:memory:`），跳过 migration 路径。
+
+### 4.3 不引入向量召回的明确边界
 
 参考 [`requirement.md` §4.3.4](./requirement.md) 与 [`memory/retrieval/strategy.py:1-6`](../../../memory/src/memory/retrieval/strategy.py)（008 已经把 `RetrievalStrategy` 接口抽好留给 future `VectorRetrieval`）：
 
-- 本期**不引入** embedding model / chroma / faiss / jieba / icu 任何新依赖
+- 本期**只引入 jieba**，**不引入** embedding model / chroma / faiss / icu / pkuseg 等其他依赖
 - 本期**不动** `RetrievalStrategy` 抽象层
-- 主因 3 的实质收益主要来源于 **主因 1 抽取改进的副作用**——抽取产物里出现 anchor 字面词后，FTS5 trigram 自然就能命中
+- 主因 3 的实质收益来自两块叠加：① jieba 让中文 query 与记忆按"词"匹配而不是"字符滑窗"（直接收益）；② 主因 1 抽取改进的副作用（抽取产物里出现 anchor 字面词后 jieba 自然能命中）
 
-### 4.3 触发 pass-2 的明确信号
+### 4.4 触发 pass-2 的明确信号
 
 跑完 pass-1 全量 baseline 后，若：
 
@@ -163,7 +188,7 @@ prompt 改造为 **首选方案**；颗粒度变细（逐 turn 抽）作为 **�
 
 ### 5.2 算法
 
-复用 FTS5 trigram 做 zero-deps 相关性打分：
+复用 jieba 分词后的 FTS5 索引（§4 落地的 schema v2）做 zero-extra-deps 相关性打分：
 
 ```python
 def pinned_gate(
@@ -171,16 +196,16 @@ def pinned_gate(
     pinned: list[SemanticRow],
     *,
     store: SqliteMemoryStore,
-    threshold: float,
+    threshold_mode: str,
 ) -> list[SemanticRow]:
     if not query.strip() or not pinned:
         return pinned
-    # 把 query 喂给 FTS5，找出命中了的 pinned id
-    hit_ids = store.fts_match_pinned(query, owner_user_id=..., persona_id=...)
+    # 把 query 喂给 jieba 索引，找出命中了的 pinned id
+    hit_ids = store.fts_match_pinned(query, owner_user_id=...)
     return [p for p in pinned if p.id in hit_ids]
 ```
 
-`store.fts_match_pinned` 是个新增的窄接口：复用现有 `search_semantic` 的 FTS5 索引，但 WHERE 加 `pinned = 1`，返回 hit ids。
+`store.fts_match_pinned` 复用 §4 的 jieba 索引（不需要额外 store 改动）：WHERE 加 `pinned = 1`，返回 hit ids。jieba 切词让"我叫什么名字"与 pinned "用户名字是张小红" 通过共享词 "名字" 命中——这是 §4 引入 jieba 的直接价值在 pinned gate 上的体现。
 
 ### 5.3 阈值的实施期定值
 
@@ -354,7 +379,7 @@ CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等�
 | Q-1 | 抽取颗粒度 | **首选 prompt 改造、不动颗粒度**；颗粒度变细作为回退方案，触发条件见 §3.4 |
 | Q-2 | prompt 改写形态 | 见 §3.2：保留三条原则 + 新增四条硬约束 + few-shot 反例 |
 | Q-3 | pinned 注入策略 | **加 query relevance gate，复用 FTS5 trigram 做相关性判定**，零依赖（§5.2） |
-| Q-4 | 加宽召回的技术路径 | **仅做 FTS5 zero-deps 改进**（trigram 上限 + bigram 兜底）；不引入向量召回（§4） |
+| Q-4 | 加宽召回的技术路径 | **引入 jieba 中文分词**替换 FTS5 trigram tokenizer；schema v2 加 `*_tokens` 列；不引入向量召回 / embedding（§4。原方案"trigram + bigram 兜底"实施期发现架构不可行，见 §11） |
 | Q-5 | 切片 baseline 实现方式 | **三开关 config + runner 透传**（§6） |
 | Q-6 | 评测耗时 / 成本 | **不预设 cost ceiling**，改为观察项跟随 baseline 落盘（§3.5） |
 | Q-7 | schema 兼容性 | **内部 schema 可调（episodic_summary → episodic_entries）、外部 contract 不变**（§3.3 / §8.1） |
@@ -362,7 +387,7 @@ CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等�
 实施期需要 commit 的具体值（标 ⏳）：
 
 - ⏳ pinned gate 阈值档位（§5.3，跑 smoke test 后定）
-- ⏳ FTS5 `_MAX_TRIGRAMS` 值（§4.1，建议 256，实际跑评测看是否需要再调）
+- ✅ ~~FTS5 `_MAX_TRIGRAMS` 值~~ → **原方案废弃**，§4 改用 jieba 分词（trigram 索引被替换，参数已无意义）
 - ✅ **prompt 迭代轮次**（§3.4）：**1 轮一次过**——2026-06-12 用 DeepSeek 对张小红 dialogue block `4_0_1#1` 跑新 prompt，14 个 anchor 字面词命中 12 个（85.7%），远超 7/14 hard floor。无需触发颗粒度回退。
 - ⏳ pass-1 收尾报告位置（§7.4）
 
@@ -372,6 +397,7 @@ CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等�
 
 | 日期 | 变更内容 | 是否需要重新实现 |
 |------|---------|----------------|
+| 2026-06-12 | **§4 主因 3 方案变更**：原方案"FTS5 trigram zero-deps 改进 + bigram 兜底"在 M13.2 实施期被实测推翻——SQLite trigram FTS5 索引 token 是 3-字滑窗，bigram phrase query 无法 substring 命中；中文短 query 与 pinned 条目几乎无共享 trigram（共享的是 bigram），主因 3 / 主因 2 核心场景双双失效。改为引入 jieba 中文分词，schema 升 v2 加 `*_tokens` 列、FTS5 改 unicode61 tokenizer。**§5 pinned gate 算法也跟着改用 jieba 索引**（接口签名不变）。§10 ⏳ "FTS5 `_MAX_TRIGRAMS` 值"项废弃。requirement.md 未变（jieba 在 Q-4 候选里）。 | 是 —— M13.2 / M13.3 任务清单重写，已 commit 的 M13.1 不受影响 |
 
 ---
 

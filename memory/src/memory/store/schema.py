@@ -20,8 +20,14 @@ __all__ = [
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 1
-"""记忆库 schema 版本。未来真正改表时递增；v1 不做迁移逻辑。"""
+SCHEMA_VERSION = 2
+"""记忆库 schema 版本。
+
+- v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
+- v2（pass-1 / 013）：semantic 加 `statement_tokens` 列、episodic 加 `summary_tokens` 列，
+  FTS5 改用 `tokenize='unicode61'` 索引 jieba 切词后空格连接的 tokens 列；中文召回从
+  3-字滑窗换成"按词"匹配。详见 docs/requirements/013-memory-quality-pass-1/design.md §4。
+"""
 
 
 def serialize_ts(dt: datetime | None) -> str | None:
@@ -88,26 +94,28 @@ DDL_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE TABLE IF NOT EXISTS semantic (
-        id             TEXT PRIMARY KEY,
-        statement      TEXT NOT NULL,
-        importance     REAL NOT NULL DEFAULT 0.5,
-        pinned         INTEGER NOT NULL DEFAULT 0,
-        source         TEXT NOT NULL DEFAULT 'extracted',
-        speaker_origin TEXT NOT NULL DEFAULT 'user',
-        valid_from     TEXT,
-        valid_until    TEXT,
-        provenance     TEXT NOT NULL DEFAULT '[]',
-        deleted_at     TEXT,
-        owner_user_id  TEXT NOT NULL DEFAULT 'local',
-        persona_id     TEXT NOT NULL,
-        created_at     TEXT NOT NULL,
-        updated_at     TEXT NOT NULL
+        id               TEXT PRIMARY KEY,
+        statement        TEXT NOT NULL,
+        statement_tokens TEXT NOT NULL DEFAULT '',
+        importance       REAL NOT NULL DEFAULT 0.5,
+        pinned           INTEGER NOT NULL DEFAULT 0,
+        source           TEXT NOT NULL DEFAULT 'extracted',
+        speaker_origin   TEXT NOT NULL DEFAULT 'user',
+        valid_from       TEXT,
+        valid_until      TEXT,
+        provenance       TEXT NOT NULL DEFAULT '[]',
+        deleted_at       TEXT,
+        owner_user_id    TEXT NOT NULL DEFAULT 'local',
+        persona_id       TEXT NOT NULL,
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS episodic (
         id             TEXT PRIMARY KEY,
         summary        TEXT NOT NULL,
+        summary_tokens TEXT NOT NULL DEFAULT '',
         source_ref     TEXT NOT NULL,
         importance     REAL NOT NULL DEFAULT 0.5,
         participants   TEXT NOT NULL DEFAULT '[]',
@@ -118,16 +126,17 @@ DDL_STATEMENTS: tuple[str, ...] = (
         created_at     TEXT NOT NULL
     )
     """,
-    # FTS5 影子表：external content，rowid 关联主表 rowid。
-    # 用 trigram 分词器——unicode61 默认把整段中文当一个 token，无法做中文关键词
-    # 子串匹配；trigram 对中英文都做 3-gram 子串匹配，是中文为主场景的务实选择。
+    # FTS5 影子表：external content，rowid 关联主表 rowid，索引 jieba 切词后的
+    # ``*_tokens`` 列。tokenize='unicode61' 把空格分隔的 token 当词索引（每个
+    # jieba 词成为一个 FTS5 token），中文召回按词匹配而不是 3-字滑窗。详见
+    # docs/requirements/013-memory-quality-pass-1/design.md §4。
     """
     CREATE VIRTUAL TABLE IF NOT EXISTS semantic_fts
-    USING fts5(statement, content='semantic', content_rowid='rowid', tokenize='trigram')
+    USING fts5(statement_tokens, content='semantic', content_rowid='rowid', tokenize='unicode61')
     """,
     """
     CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts
-    USING fts5(summary, content='episodic', content_rowid='rowid', tokenize='trigram')
+    USING fts5(summary_tokens, content='episodic', content_rowid='rowid', tokenize='unicode61')
     """,
     # 常用过滤索引
     "CREATE INDEX IF NOT EXISTS idx_semantic_scope ON semantic(owner_user_id, persona_id)",

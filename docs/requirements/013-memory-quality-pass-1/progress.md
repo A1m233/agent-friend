@@ -31,16 +31,31 @@ IN_PROGRESS
 - [x] **prompt 迭代收敛验证**：**1 轮一次过**——12/14 (85.7%) 远超 7/14 hard floor，无需触发颗粒度回退
 - [x] **回填**：`design.md §10` "prompt 迭代轮次"项已 commit 实测结果
 
-### M13.2 主因 3：FTS5 召回 zero-deps 改进
+### M13.2 主因 3：jieba 中文分词召回（**design 变更，2026-06-12**）
 
-**目标**：FTS5 trigram 配置改进 + 新增 `fts_match_pinned` 接口（为 M13.3 准备）。零依赖，不引入向量召回。
+**原方案 FTS5 trigram zero-deps + bigram 兜底在实施期实测不可行**（trigram FTS5 索引 token 是 3-字滑窗、bigram phrase 无法 substring 命中 / 中文短 query 与 pinned 无共享 trigram），改为引入 jieba 中文分词替换 FTS5 内置 trigram tokenizer。详见 [`design.md §4 / §11`](./design.md)。
 
-- [ ] `memory/src/memory/store/sqlite_store.py`：`_fts_query` 改进
-  - [ ] `_MAX_TRIGRAMS` 从 64 提到 256
-  - [ ] 加 bigram 兜底：trigram 凑不出时降级 bigram；bigram 也凑不出（chunk < 2）才返回 None
-- [ ] `memory/src/memory/store/sqlite_store.py`：新增 `fts_match_pinned(query, *, owner_user_id, persona_id) -> set[str]`——复用 semantic FTS5 索引，WHERE 加 `pinned = 1`，返回命中 id 集合
-- [ ] `memory/tests/test_fts_query.py`：新建（或扩展现有 store 测试）——`_fts_query` 在中文短 query / 长 query / 全短词 query / 极短记忆条目（< 3 字）四类输入下产出符合预期
-- [ ] **回填**：`design.md §10` ⏳ "FTS5 `_MAX_TRIGRAMS` 值"项填入实测值（如评测显示 256 不够 / 太多则调整）
+- [x] `memory/pyproject.toml`：加 `jieba>=0.42.1` 依赖
+- [x] `memory/src/memory/store/schema.py`：升 schema v2
+  - [x] `semantic` 表加 `statement_tokens TEXT NOT NULL DEFAULT ''` 列
+  - [x] `episodic` 表加 `summary_tokens TEXT NOT NULL DEFAULT ''` 列
+  - [x] `semantic_fts` / `episodic_fts` 改成 `tokenize='unicode61'` 索引新 `*_tokens` 列
+  - [x] `SCHEMA_VERSION` 常量从 1 升到 2
+- [x] `memory/src/memory/store/sqlite_store.py`：
+  - [x] 顶层加 `_tokenize(text) -> str`（jieba.cut + 空格连接）
+  - [x] `add_semantic` / `add_episodic` 落库时计算 `*_tokens` 列
+  - [x] `_fts_query` 改成 jieba 切词后空格连接（去重 + 跳过纯标点 token + `_MAX_QUERY_TOKENS=64` 上限）
+  - [x] 新增 `fts_match_pinned(query, *, owner_user_id) -> set[str]` 接口（为 M13.3 准备；底层走 jieba 索引；pinned 是 user 维度只按 owner 过滤）
+  - [x] `SqliteMemoryStore.__init__` 加 lazy migration：`_premigrate_v1_to_v2` 在 DDL 前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；DDL 后 `_backfill_tokens_and_rebuild_fts` 回填并重建索引；最后 UPDATE schema_meta v2
+- [x] `memory/tests/test_store.py`：
+  - [x] 改写 `test_search_too_short_query_returns_empty` → `test_search_single_char_query_now_hits_via_jieba`（反映 jieba 单字也是 token 的新行为）
+  - [x] 新增 `test_search_empty_or_punctuation_query_returns_empty`（空/纯标点仍空）
+  - [x] 新增 `test_search_two_char_chinese_word_hits_via_jieba`（2 字 query "宠物" 命中）
+  - [x] 新增 `test_search_long_chinese_query_hits_via_shared_word`（长 query 共享 "名字" 命中 pinned）
+  - [x] 新增 4 个 `test_fts_match_pinned_*`（命中相关 pinned / 不相关空集 / 非 pinned 忽略 / 空 query 空集）
+  - [x] 新增 `test_v1_to_v2_lazy_migration`（手搓 v1 库 + 验证启动后自动升 v2 + jieba 召回旧数据）
+- [x] `./scripts/check`：ruff + format + mypy + pytest **272 全过**
+- [x] **回填**：`design.md §10` ~~"FTS5 `_MAX_TRIGRAMS` 值"~~ 项已废弃（design §11 变更记录登记）
 
 ### M13.3 主因 2：pinned gate
 
@@ -111,3 +126,7 @@ IN_PROGRESS
 |------|---------|------|
 | 2026-06-12 | M13.1 任务 1–5 + 测试迁移 + tools/cli 适配 | extract.md 重写 / extract_legacy.md 备份 / result.py 双 dataclass 改名 / extractor `_parse_output` 兼容新旧字段 / reconciler 循环写多条 episodic + provenance 累积 / tools/cli 适配 `episodic_ids` / test_extraction.py 15 个测试全过；`./scripts/check`：ruff + format + mypy 124 + pytest 261 全过 |
 | 2026-06-12 | M13.1 任务 6–7 + design.md ⏳ 回填 | test_extractor_pass1.py（cassette 风格 3 断言）；张小红 dialogue block `4_0_1#1` 用新 prompt 真实跑 DeepSeek，**14 个 anchor 命中 12 个 = 85.7%**（pre-pass-1 ~ 0），1 轮一次过、无需颗粒度回退；design.md §10 "prompt 迭代轮次"项回填；mypy 125 files / memory 37 测试全过 |
+| 2026-06-12 | M13.1 commit + 工具链小修 | commit `bc5c28e` feat(memory) M13.1；commit `c84411a` chore(tooling) pyproject 加 `.claude/worktrees` 到 ruff/mypy exclude（之前 worktree 干扰 ruff format --check） |
+| 2026-06-12 | **分支整理**：两 commit 误落 main，迁到 `feature/013-memory-quality-pass-1` | 项目惯例所有 013 改动走 feature 分支；origin/main 未受影响，操作完全本地 |
+| 2026-06-12 | **M13.2 design 变更**：trigram + bigram 兜底实测不可行 → 改 jieba 中文分词 | SQLite FTS5 trigram 索引 token 是 3-字滑窗、bigram phrase 不能 substring 命中；中文短 query 与 pinned 条目无共享 trigram。design.md §4 / §5 / §10 / §11 已同步；M13.2 任务清单重写。requirement.md 未变（jieba 在 Q-4 候选） |
+| 2026-06-12 | M13.2 任务全部完成 | pyproject 加 jieba 依赖；schema 升 v2（`*_tokens` 列 + FTS5 unicode61）；sqlite_store `_tokenize` / `_fts_query` 改 jieba；新增 `fts_match_pinned`；`__init__` 加 v1→v2 lazy migration；test_store 改写既有"过短 query"测试 + 新增 8 个 jieba/migration 测试；`./scripts/check`：ruff + format + mypy + pytest **272 全过**（pre-M13.2 261 + M13.1 3 + M13.2 8） |
