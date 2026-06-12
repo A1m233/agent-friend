@@ -22,6 +22,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from agent.runtime import (
+    AgentRuntime,
+    PushEnvelope,
+    Subscriber,
+    SystemTriggerEvent,
+    UserEvent,
+)
+
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
@@ -31,13 +39,6 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
-)
-from agent.runtime import (
-    AgentRuntime,
-    PushEnvelope,
-    Subscriber,
-    SystemTriggerEvent,
-    UserEvent,
 )
 from llm_providers import (
     LLMClient,
@@ -137,7 +138,13 @@ def test_dispatch_user_event_runs_stream_and_falls_to_listener(tmp_path: Path) -
     """UserEvent → conv.stream 被调 → 每个 ConversationEvent fan-out 给 listener →
     TurnDone 时打包推送一个 envelope（kind=user_turn，含 events 列表）。"""
     fake = _ScriptedLLMClient(
-        script=[[LLMTextDelta(text="hi "), LLMTextDelta(text="there"), LLMTurnDone(stop_reason="end_turn")]]
+        script=[
+            [
+                LLMTextDelta(text="hi "),
+                LLMTextDelta(text="there"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
     )
     conv = _make_conversation(tmp_path, fake_llm=fake)
 
@@ -163,7 +170,9 @@ def test_dispatch_user_event_runs_stream_and_falls_to_listener(tmp_path: Path) -
 
 def test_dispatch_user_event_session_records_messages(tmp_path: Path) -> None:
     """dispatch 跑完 user_message + assistant_message 落入 session JSONL。"""
-    fake = _ScriptedLLMClient(script=[[LLMTextDelta(text="hi"), LLMTurnDone(stop_reason="end_turn")]])
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="hi"), LLMTurnDone(stop_reason="end_turn")]]
+    )
     conv = _make_conversation(tmp_path, fake_llm=fake)
 
     runtime = AgentRuntime(conversation_factory=lambda sid: conv)

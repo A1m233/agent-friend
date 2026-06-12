@@ -13,7 +13,7 @@ import queue
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import pytest
+from agent.runtime import AgentRuntime, SystemTriggerEvent
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -27,7 +27,6 @@ from agent import (
     SessionManager,
     make_default_registry,
 )
-from agent.runtime import AgentRuntime, SystemTriggerEvent
 
 if TYPE_CHECKING:
     from llm_providers import LLMClient
@@ -45,7 +44,7 @@ class _RecordingSource:
         self.fire_count = 0
         self._inbox: queue.Queue[Any] | None = None
 
-    def start(self, inbox: "queue.Queue[Any]") -> None:
+    def start(self, inbox: queue.Queue[Any]) -> None:
         self._inbox = inbox
 
     def stop(self) -> None:
@@ -78,7 +77,7 @@ def _build_runtime(
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
 
-    def _llm_factory(model: str) -> "LLMClient":
+    def _llm_factory(model: str) -> LLMClient:
         from llm_providers import LLMClient, ProviderSpec
 
         return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
@@ -98,8 +97,9 @@ def _build_runtime(
     recording_source: _RecordingSource | None = None
     if with_agent_runtime:
         # 测试用最小 conversation_factory；只在 _dispatch 真跑时才被调
-        from agent import Conversation
         from typing import cast as _cast
+
+        from agent import Conversation
 
         agent_runtime = AgentRuntime(
             conversation_factory=lambda sid: _cast(Conversation, None),
@@ -181,9 +181,7 @@ def test_dev_mode_true_known_source_triggers_fire_now(tmp_path: Path) -> None:
     try:
         app = create_app_with_runtime(runtime)
         client = TestClient(app)
-        resp = client.post(
-            "/dev/fire-source", params={"source_name": "test:recording"}
-        )
+        resp = client.post("/dev/fire-source", params={"source_name": "test:recording"})
         assert resp.status_code == 200
         assert resp.json() == {"status": "fired", "source": "test:recording"}
         assert recording.fire_count == 1

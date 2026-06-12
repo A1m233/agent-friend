@@ -16,10 +16,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from agent.runtime import PushEnvelope, Subscriber
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-
-from agent.runtime import PushEnvelope, Subscriber
 
 from .protocol import encode_envelope_sse
 
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
-def register_routes(app: "FastAPI", runtime: "BridgeRuntime") -> None:
+def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     """挂 push 通道路由（``GET /push/subscribe``）到 FastAPI app。"""
     router = APIRouter()
 
@@ -65,7 +64,7 @@ def register_routes(app: "FastAPI", runtime: "BridgeRuntime") -> None:
         )
         runtime.agent_runtime.listeners.register(sub)
 
-        async def gen() -> "AsyncIterator[bytes]":
+        async def gen() -> AsyncIterator[bytes]:
             try:
                 # 立刻发一条 heartbeat 让客户端确认连接活
                 yield encode_envelope_sse(_heartbeat())
@@ -78,7 +77,7 @@ def register_routes(app: "FastAPI", runtime: "BridgeRuntime") -> None:
                             timeout=HEARTBEAT_INTERVAL_SECONDS,
                         )
                         yield encode_envelope_sse(env)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield encode_envelope_sse(_heartbeat())
             finally:
                 if runtime.agent_runtime is not None:

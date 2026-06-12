@@ -4,6 +4,8 @@
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 IN_PROGRESS
 
+> 8 个里程碑 7.5 个完成：M14.1 ~ M14.7 + M14.8 自动门禁（`./scripts/check` 全绿 332 测试）；剩余 M14.8 手工真跑 bedtime + idle reflection 端到端，按 `llm-api-confirm` rule 待用户授权后跑。
+
 ---
 
 ## 里程碑与任务
@@ -80,9 +82,9 @@ IN_PROGRESS
 - [x] 全 agent_bridge 套件 26 测试不退化；agent 183 测试不退化
 
 ### M14.8 验证
-- [ ] `./scripts/check` 全绿（ruff + mypy 全文件 + 全部 pytest 含本期新增）
+- [x] `./scripts/check` 全绿（ruff check + ruff format check + mypy 全文件 + pytest 全 332 测试通过）—— M14 各模块新增 + 既有模块零退化
 - [ ] 手工真跑一次：起 bridge `dev_mode=true` + `enable_bedtime=true` + `bedtime_hour=立即`（按 llm-api-confirm 授权）→ 另一端跑 `scripts/dev-push-subscribe/run.sh` → 看到 bedtime envelope 落到 CLI；触发 `/dev/fire-source?source_name=idle_reflection` → memory_observation event 落 session JSONL + memory.observe 被调（log 可见）
-- [ ] AC-1 ~ AC-8 全部对应通过
+- [x] AC-1 ~ AC-8 全部对应通过（结构 / 单测层），实跑真启 bridge 留作手工最终验证
 
 ---
 
@@ -97,6 +99,7 @@ IN_PROGRESS
 | 2026-06-12 | M14.5 Bridge 集成 + 12 测试 | settings.py 加 8 个 014 字段（dev_mode/enable_bedtime/idle/...）；agent_runtime_factory.py 新文件含 build_agent_runtime（conversation_factory 闭包注入 post_turn_external=True + tool_hook_invoker）；assembly.py BridgeRuntime 加 agent_runtime 字段；push/ 子包（protocol.py encode_envelope_sse 含 unicode + /push/subscribe GET 长 SSE 端点 含 heartbeat/kind 过滤/disconnect 反注册）；dev/ 子包（fire_source.py POST /dev/fire-source 仅 dev_mode 时挂）；app.py lifespan 启停 agent_runtime + 按 dev_mode 挂 dev router；SessionManager.start_conversation 加 backward-compat 可选参数 tool_hook_invoker + post_turn_external；6 push + 6 dev 测试全绿（结构/边界/encoder 内容；chunk-level SSE 流式投递 ASGITransport 限制下跳过，留 M14.8 真跑验证）；agent_bridge 23 测试全绿（既有 11 + 新 12），agent 183 测试零退化 |
 | 2026-06-12 | M14.6 Pull 路径镜像复制 + 3 测试 | ag_ui + openai encoder 加可选 `agent_runtime` 参数；每 yield ConversationEvent 同步喂 `fan_out_event`（用 conv.session.session_id 作 UserEvent.session_id）；镜像失败 try/except log warning 不打断；ag_ui + openai routes 调 encoder 时透传 runtime.agent_runtime；test_push_mirror.py 用 TestClient 同步 POST + 侧 event loop subscriber 真实收到 envelope 含 TextDelta + TurnDone 验证完整链路；agent_bridge 26 测试全绿（既有 23 + 新 3），agent 183 测试零退化 |
 | 2026-06-12 | M14.7 Dev CLI + packaging + scripts | agent_bridge/dev/push_subscribe.py dev CLI（httpx.stream 订阅 + 美化打印 + KeyboardInterrupt 优雅退出）；agent_bridge/pyproject.toml wheel exclude dev/（用 uv build --wheel 验证 dev/ 不在产物 + push/ 在产物）；scripts/dev-push-subscribe/{sh,ps1} + scripts/dev-fire-source/{sh,ps1} 4 个双端 wrapper（sh: exec uv run python -m；ps1: UTF-8 输出强制）；scripts/README.md 登记两脚本含 dev_mode 警示；agent_bridge 26 / agent 183 测试不退化 |
+| 2026-06-12 | M14.8 验证 sweep | `./scripts/check` 全绿（ruff check + ruff format check + mypy 全 146 文件 + pytest 全 332 测试）；修复 sweep：(a) ruff 自动 fix 41/42 错（unused imports / asyncio.TimeoutError → builtin TimeoutError 等），手动加 `zip(strict=True)`；(b) ruff format 重写 10 文件；(c) mypy 修 17 错——4 个 hooks.py register 内 unused `type: ignore` + 12 个 test_runtime_hooks.py 的 `(append, X)[1]` 不友好 tuple trick 改成 `_pre_turn_logger` / `_pre_tool_logger` 工厂助手 + 1 个 test_push_channel.py unused type ignore；agent / agent_bridge / memory / memory_eval / llm_providers / voice_bridge 跨模块 332 测试全绿，零退化；手工真跑 bedtime + idle reflection 端到端按 llm-api-confirm rule 留待用户授权后跑 |
 
 ---
 

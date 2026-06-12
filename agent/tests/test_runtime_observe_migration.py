@@ -21,6 +21,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from agent.memory_feed import project_turn
+from agent.runtime import (
+    AgentRuntime,
+    PostTurnContext,
+    UserEvent,
+)
+
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
@@ -30,12 +37,6 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
-)
-from agent.memory_feed import project_turn
-from agent.runtime import (
-    AgentRuntime,
-    PostTurnContext,
-    UserEvent,
 )
 from llm_providers import (
     LLMClient,
@@ -200,7 +201,7 @@ def test_observe_migration_fragment_field_equivalence(tmp_path: Path) -> None:
     assert fragment_old.persona_id == fragment_new.persona_id
     assert fragment_old.owner_user_id == fragment_new.owner_user_id
     assert len(fragment_old.utterances) == len(fragment_new.utterances)
-    for u_old, u_new in zip(fragment_old.utterances, fragment_new.utterances):
+    for u_old, u_new in zip(fragment_old.utterances, fragment_new.utterances, strict=True):
         assert u_old.speaker == u_new.speaker  # user / agent
         assert u_old.text == u_new.text  # user 原话 + agent 文本
         assert u_old.ts == u_new.ts  # 时序——同 event ts，必相等

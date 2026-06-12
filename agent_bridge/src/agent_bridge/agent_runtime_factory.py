@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import logging
 
-from agent import Conversation, SessionManager
 from agent.runtime import AgentRuntime
 from agent.runtime.sources import (
     BedtimeSource,
     IdleReflectionSource,
     UserSource,
 )
+
+from agent import Conversation, SessionManager
 from memory import Memory
 
 from .settings import BridgeSettings
@@ -60,8 +61,7 @@ def build_agent_runtime(
     if settings.enable_bedtime:
         if not settings.bedtime_target_session_id:
             logger.warning(
-                "enable_bedtime=True 但 bedtime_target_session_id 为空，"
-                "BedtimeSource 不会注册"
+                "enable_bedtime=True 但 bedtime_target_session_id 为空，BedtimeSource 不会注册"
             )
         else:
             runtime.register_source(

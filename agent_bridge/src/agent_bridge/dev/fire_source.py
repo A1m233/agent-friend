@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def register_routes(app: "FastAPI", runtime: "BridgeRuntime") -> None:
+def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     """挂 dev fire-source 路由到 FastAPI app。
 
     本路由**只在** :func:`agent_bridge.app.create_app_with_runtime` 看到

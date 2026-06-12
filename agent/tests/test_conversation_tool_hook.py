@@ -218,9 +218,7 @@ def test_tool_hook_invoker_none_preserves_default_behavior(tmp_path: Path) -> No
     registry = ToolRegistry([echo])
 
     fake = _ScriptedLLMClient(script=_two_turn_script_invoking_echo())
-    conv = _make_conversation(
-        tmp_path, fake_llm=fake, registry=registry, tool_hook_invoker=None
-    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry, tool_hook_invoker=None)
 
     list(conv.stream("hi"))
 

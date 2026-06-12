@@ -22,6 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from agent.runtime import (
+    AgentRuntime,
+    Subscriber,
+    SystemTriggerEvent,
+)
+
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
@@ -31,11 +37,6 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
-)
-from agent.runtime import (
-    AgentRuntime,
-    Subscriber,
-    SystemTriggerEvent,
 )
 from llm_providers import (
     LLMClient,
@@ -170,7 +171,7 @@ def test_silent_turn_yields_no_envelope_to_listener(tmp_path: Path) -> None:
         )
         try:
             fut.result(timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # ✓ 这是期望路径
         else:
             raise AssertionError("silent turn 不应该向 listener 推 envelope")
@@ -179,7 +180,9 @@ def test_silent_turn_yields_no_envelope_to_listener(tmp_path: Path) -> None:
 def test_silent_turn_writes_marker_and_observation_not_assistant(tmp_path: Path) -> None:
     """silent turn → session 落 system_trigger + memory_observation；**没有** assistant_message。"""
     fake = _ScriptedLLMClient(
-        script=[[LLMTextDelta(text="user has been working hard"), LLMTurnDone(stop_reason="end_turn")]]
+        script=[
+            [LLMTextDelta(text="user has been working hard"), LLMTurnDone(stop_reason="end_turn")]
+        ]
     )
     fake_mem = _FakeMemory()
     conv = _make_conversation(tmp_path, fake_llm=fake, memory=fake_mem)

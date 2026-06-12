@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from agent.runtime import AgentRuntime
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -32,7 +33,6 @@ from agent import (
     SessionManager,
     make_default_registry,
 )
-from agent.runtime import AgentRuntime
 
 if TYPE_CHECKING:
     from llm_providers import LLMClient
@@ -50,7 +50,7 @@ def _build_runtime(tmp_path: Path, *, with_agent_runtime: bool) -> BridgeRuntime
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
 
-    def _llm_factory(model: str) -> "LLMClient":
+    def _llm_factory(model: str) -> LLMClient:
         from llm_providers import LLMClient, ProviderSpec
 
         return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
@@ -166,11 +166,7 @@ def test_encode_envelope_sse_handles_unicode() -> None:
 def test_push_subscribe_route_registered(runtime: BridgeRuntime) -> None:
     """``/push/subscribe`` 路由确实挂载到 app（用 OPTIONS 探，避免触发流式逻辑）。"""
     app = create_app_with_runtime(runtime)
-    paths = [
-        r.path  # type: ignore[attr-defined]
-        for r in app.routes
-        if hasattr(r, "path")
-    ]
+    paths = [r.path for r in app.routes if hasattr(r, "path")]
     assert "/push/subscribe" in paths
 
 

@@ -65,7 +65,7 @@ class UserSource:
     def __init__(self) -> None:
         self._inbox: queue.Queue[Any] | None = None
 
-    def start(self, inbox: "queue.Queue[Any]") -> None:
+    def start(self, inbox: queue.Queue[Any]) -> None:
         self._inbox = inbox
 
     def stop(self) -> None:
@@ -156,14 +156,12 @@ class BedtimeSource:
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
 
-    def start(self, inbox: "queue.Queue[Any]") -> None:
+    def start(self, inbox: queue.Queue[Any]) -> None:
         if self._thread is not None:
             return  # idempotent
         self._inbox = inbox
         self._stop_evt.clear()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="BedtimeSource"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="BedtimeSource")
         self._thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -240,7 +238,7 @@ class IdleReflectionSource:
         self,
         *,
         session_id: str,
-        runtime: "AgentRuntime",
+        runtime: AgentRuntime,
         idle_minutes: int = 30,
         prompt_addendum: str = DEFAULT_IDLE_ADDENDUM,
         now_factory: Callable[[], datetime] | None = None,
@@ -258,14 +256,12 @@ class IdleReflectionSource:
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
 
-    def start(self, inbox: "queue.Queue[Any]") -> None:
+    def start(self, inbox: queue.Queue[Any]) -> None:
         if self._thread is not None:
             return
         self._inbox = inbox
         self._stop_evt.clear()
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="IdleReflectionSource"
-        )
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="IdleReflectionSource")
         self._thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:

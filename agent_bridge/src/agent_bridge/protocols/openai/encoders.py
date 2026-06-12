@@ -24,8 +24,9 @@ from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
 
-from agent import Conversation, TextDelta, TurnDone
 from agent.runtime import AgentRuntime, UserEvent
+
+from agent import Conversation, TextDelta, TurnDone
 
 from ...errors import build_openai_error_envelope, map_exception
 

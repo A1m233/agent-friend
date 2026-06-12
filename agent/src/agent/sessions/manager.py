@@ -186,7 +186,7 @@ class SessionManager:
         self,
         session: Session,
         *,
-        tool_hook_invoker: "ToolHookInvoker | None" = None,
+        tool_hook_invoker: ToolHookInvoker | None = None,
         post_turn_external: bool = False,
     ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。

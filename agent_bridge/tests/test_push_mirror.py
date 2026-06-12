@@ -22,7 +22,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import pytest
+from agent.runtime import (
+    AgentRuntime,
+    PushEnvelope,
+    Subscriber,
+)
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.settings import BridgeSettings
@@ -36,12 +40,6 @@ from agent import (
     SessionManager,
     make_default_registry,
 )
-from agent.runtime import (
-    AgentRuntime,
-    PushEnvelope,
-    Subscriber,
-    UserEvent,
-)
 from llm_providers import (
     LLMClient,
     LLMStreamEvent,
@@ -50,7 +48,7 @@ from llm_providers import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    pass
 
 
 # ----- 辅助：scripted LLM + side event loop -----
@@ -182,9 +180,7 @@ def test_ag_ui_pull_mirrors_user_turn_to_push_listener(tmp_path: Path) -> None:
     """POST /ag-ui/run 跑一轮 → push subscriber 应收到一个 user_turn envelope。"""
     runtime = _build_runtime(
         tmp_path,
-        llm_script=[
-            [LLMTextDelta(text="hi"), LLMTurnDone(stop_reason="end_turn")]
-        ],
+        llm_script=[[LLMTextDelta(text="hi"), LLMTurnDone(stop_reason="end_turn")]],
     )
     assert runtime.agent_runtime is not None
 
@@ -237,7 +233,7 @@ def test_ag_ui_pull_with_no_user_turn_subscriber_not_mirrored(tmp_path: Path) ->
         )
         try:
             fut.result(timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # 期望路径
         else:
             raise AssertionError("agent_turn 订阅者不应收到 user_turn envelope")

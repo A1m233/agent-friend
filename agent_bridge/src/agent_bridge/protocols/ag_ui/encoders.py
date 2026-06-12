@@ -45,6 +45,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
+from agent.runtime import AgentRuntime, UserEvent
 
 from agent import (
     Conversation,
@@ -53,7 +54,6 @@ from agent import (
     ToolCallResult,
     TurnDone,
 )
-from agent.runtime import AgentRuntime, UserEvent
 
 from ...errors import map_exception
 

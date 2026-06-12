@@ -54,7 +54,7 @@ def test_agent_event_frozen() -> None:
 
 def test_inbox_round_trip() -> None:
     """放进 queue 取出后字段完全一致——序列化 hash 一致。"""
-    inbox: "queue.Queue[AgentEvent]" = queue.Queue()
+    inbox: queue.Queue[AgentEvent] = queue.Queue()
     a = UserEvent(session_id="s-1", user_input="a")
     b = SystemTriggerEvent(
         session_id="s-1",

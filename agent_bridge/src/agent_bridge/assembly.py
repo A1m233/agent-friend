@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
 
 from agent import (
@@ -30,7 +31,6 @@ from agent import (
     default_context_manager,
     make_default_registry,
 )
-from agent.runtime import AgentRuntime
 from llm_providers import LLMClient, ProviderSpec
 from memory import Memory, build_memory
 

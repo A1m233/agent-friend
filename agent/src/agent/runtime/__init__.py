@@ -89,7 +89,7 @@ class EventSource(Protocol):
 
     name: ClassVar[str]
 
-    def start(self, inbox: "queue.Queue[Any]") -> None: ...
+    def start(self, inbox: queue.Queue[Any]) -> None: ...
 
     def stop(self) -> None: ...
 
@@ -132,7 +132,7 @@ class AgentRuntime:
     # ----- public API -----
 
     @property
-    def inbox(self) -> "queue.Queue[Any]":
+    def inbox(self) -> queue.Queue[Any]:
         """暴露 inbox 给 EventSource 直接 put（也可在 start 时通过参数注入）。"""
         return self._inbox
 
@@ -192,9 +192,7 @@ class AgentRuntime:
         for src in self._sources:
             src.start(self._inbox)
         self._stop_evt.clear()
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name="AgentRuntime"
-        )
+        self._thread = threading.Thread(target=self._run, daemon=True, name="AgentRuntime")
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -244,7 +242,7 @@ class AgentRuntime:
             and ctx.event.output_visibility == "memory_only"
         ):
             return
-        new_events = ctx.session.events[ctx.turn_start_idx:]
+        new_events = ctx.session.events[ctx.turn_start_idx :]
         fragment = project_turn(
             new_events,
             session_id=ctx.session.session_id,

@@ -93,9 +93,9 @@ class PostTurnContext:
             （如 silent turn 跳过 memory 旁路）。
     """
 
-    session: "Session"
+    session: Session
     turn_start_idx: int
-    event: "AgentEvent"
+    event: AgentEvent
 
 
 PreTurnHook = Callable[["AgentEvent"], PreTurnDecision]
@@ -133,15 +133,15 @@ class HookRegistry:
     ) -> None:
         """注册一个 callback 到对应点位（追加到链尾，注册顺序 = 执行顺序）。"""
         if kind is HookKind.PRE_TURN:
-            self._pre_turn.append(callback)  # type: ignore[arg-type]
+            self._pre_turn.append(callback)
         elif kind is HookKind.POST_TURN:
-            self._post_turn.append(callback)  # type: ignore[arg-type]
+            self._post_turn.append(callback)
         elif kind is HookKind.PRE_TOOL_USE:
-            self._pre_tool_use.append(callback)  # type: ignore[arg-type]
+            self._pre_tool_use.append(callback)
         elif kind is HookKind.POST_TOOL_USE:
-            self._post_tool_use.append(callback)  # type: ignore[arg-type]
+            self._post_tool_use.append(callback)
 
-    def run_pre_turn(self, event: "AgentEvent") -> PreTurnDecision:
+    def run_pre_turn(self, event: AgentEvent) -> PreTurnDecision:
         for cb in self._pre_turn:
             try:
                 decision = cb(event)
@@ -178,7 +178,7 @@ class HookRegistry:
         self,
         name: str,
         args: dict[str, Any],
-        result: "ToolResult",
+        result: ToolResult,
     ) -> None:
         for cb in self._post_tool_use:
             try:

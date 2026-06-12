@@ -22,7 +22,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
 from agent.runtime import SystemTriggerEvent, UserEvent
 from agent.runtime.sources import (
     BedtimeSource,
@@ -30,7 +29,6 @@ from agent.runtime.sources import (
     UserSource,
     _seconds_until_time_of_day,
 )
-
 
 # ===== _seconds_until_time_of_day（基础数学） =====
 

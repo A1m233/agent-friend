@@ -123,7 +123,13 @@ def _make_conversation(
 def test_dispatch_system_turn_user_visibility_yields_text_and_turndone(tmp_path: Path) -> None:
     """user visibility 路径与 stream 同形：yield TextDelta(s) + TurnDone。"""
     fake = _ScriptedLLMClient(
-        script=[[LLMTextDelta(text="很晚"), LLMTextDelta(text="了"), LLMTurnDone(stop_reason="end_turn")]]
+        script=[
+            [
+                LLMTextDelta(text="很晚"),
+                LLMTextDelta(text="了"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
     )
     conv = _make_conversation(tmp_path, fake_llm=fake)
 
@@ -218,7 +224,9 @@ def test_dispatch_system_turn_memory_only_feeds_memory_with_agent_utterance(
     """silent turn 自构 fragment 喂 memory.observe，speaker=agent、1 条 utterance、
     source_ref 与 memory_observation event 的 uuid 关联。"""
     fake = _ScriptedLLMClient(
-        script=[[LLMTextDelta(text="user has been working hard"), LLMTurnDone(stop_reason="end_turn")]]
+        script=[
+            [LLMTextDelta(text="user has been working hard"), LLMTurnDone(stop_reason="end_turn")]
+        ]
     )
     fake_mem = _FakeMemory()
     conv = _make_conversation(tmp_path, fake_llm=fake, memory=fake_mem)

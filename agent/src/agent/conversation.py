@@ -507,9 +507,7 @@ class Conversation:
             except Exception:
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    "silent turn observe 失败", exc_info=True
-                )
+                logging.getLogger(__name__).warning("silent turn observe 失败", exc_info=True)
 
     # ----- 切换 persona / model -----
 

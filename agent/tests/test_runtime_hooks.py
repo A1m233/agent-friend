@@ -22,7 +22,34 @@ from agent.runtime import (
     UserEvent,
     pre_tool_block,
 )
+from agent.runtime.inbox import AgentEvent
 from agent.tools import ToolResult
+
+# ----- 工厂助手：注册时绑定 log 列表 + label + 返回 decision -----
+
+
+def _pre_turn_logger(
+    log: list[str],
+    label: str,
+    decision: PreTurnDecision = PRE_TURN_PROCEED,
+) -> Any:
+    def hook(_ev: AgentEvent) -> PreTurnDecision:
+        log.append(label)
+        return decision
+
+    return hook
+
+
+def _pre_tool_logger(
+    log: list[str],
+    label: str,
+    decision: PreToolUseDecision = PRE_TOOL_PROCEED,
+) -> Any:
+    def hook(_name: str, _args: dict[str, Any]) -> PreToolUseDecision:
+        log.append(label)
+        return decision
+
+    return hook
 
 
 # ===== 注册顺序 = 执行顺序 =====
@@ -31,9 +58,9 @@ from agent.tools import ToolResult
 def test_pre_turn_hooks_run_in_registration_order() -> None:
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("a"), PRE_TURN_PROCEED)[1])
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("b"), PRE_TURN_PROCEED)[1])
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("c"), PRE_TURN_PROCEED)[1])
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "a"))
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "b"))
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "c"))
 
     decision = reg.run_pre_turn(UserEvent(session_id="s", user_input="x"))
     assert decision is PRE_TURN_PROCEED
@@ -43,8 +70,8 @@ def test_pre_turn_hooks_run_in_registration_order() -> None:
 def test_post_turn_hooks_run_in_registration_order() -> None:
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.POST_TURN, lambda ctx: log.append("a"))
-    reg.register(HookKind.POST_TURN, lambda ctx: log.append("b"))
+    reg.register(HookKind.POST_TURN, lambda _ctx: log.append("a"))
+    reg.register(HookKind.POST_TURN, lambda _ctx: log.append("b"))
 
     session = MagicMock()
     reg.run_post_turn(
@@ -60,15 +87,13 @@ def test_post_turn_hooks_run_in_registration_order() -> None:
 # ===== PreTurn SKIP 短路 =====
 
 
-def test_pre_turn_skip_short_circuits(monkeypatch: Any) -> None:
+def test_pre_turn_skip_short_circuits() -> None:
     """任一 PreTurn hook 返回 SKIP 立即终态——后续 hook 不再调。"""
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("a"), PRE_TURN_PROCEED)[1])
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("b"), PRE_TURN_SKIP)[1])
-    reg.register(
-        HookKind.PRE_TURN, lambda ev: (log.append("c-should-not-run"), PRE_TURN_PROCEED)[1]
-    )
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "a"))
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "b", PRE_TURN_SKIP))
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "c-should-not-run"))
 
     decision = reg.run_pre_turn(UserEvent(session_id="s", user_input="x"))
     assert decision.skip is True
@@ -87,18 +112,12 @@ def test_pre_turn_proceed_when_no_hooks() -> None:
 def test_pre_tool_use_block_short_circuits() -> None:
     reg = HookRegistry()
     log: list[str] = []
+    reg.register(HookKind.PRE_TOOL_USE, _pre_tool_logger(log, "a"))
     reg.register(
         HookKind.PRE_TOOL_USE,
-        lambda name, args: (log.append("a"), PRE_TOOL_PROCEED)[1],
+        _pre_tool_logger(log, "b", pre_tool_block("denied by policy")),
     )
-    reg.register(
-        HookKind.PRE_TOOL_USE,
-        lambda name, args: (log.append("b"), pre_tool_block("denied by policy"))[1],
-    )
-    reg.register(
-        HookKind.PRE_TOOL_USE,
-        lambda name, args: (log.append("c-should-not-run"), PRE_TOOL_PROCEED)[1],
-    )
+    reg.register(HookKind.PRE_TOOL_USE, _pre_tool_logger(log, "c-should-not-run"))
 
     decision = reg.run_pre_tool_use("echo", {"message": "hi"})
     assert decision.block is True
@@ -118,9 +137,9 @@ def test_pre_tool_use_proceed_when_no_hooks() -> None:
 def test_post_tool_use_all_hooks_run_regardless() -> None:
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.POST_TOOL_USE, lambda name, args, result: log.append("a"))
-    reg.register(HookKind.POST_TOOL_USE, lambda name, args, result: log.append("b"))
-    reg.register(HookKind.POST_TOOL_USE, lambda name, args, result: log.append("c"))
+    reg.register(HookKind.POST_TOOL_USE, lambda _n, _a, _r: log.append("a"))
+    reg.register(HookKind.POST_TOOL_USE, lambda _n, _a, _r: log.append("b"))
+    reg.register(HookKind.POST_TOOL_USE, lambda _n, _a, _r: log.append("c"))
 
     reg.run_post_tool_use("echo", {}, ToolResult(text="ok"))
     assert log == ["a", "b", "c"]
@@ -134,13 +153,13 @@ def test_single_pre_turn_hook_exception_does_not_break_others() -> None:
     reg = HookRegistry()
     log: list[str] = []
 
-    def raising_hook(ev: Any) -> PreTurnDecision:
+    def raising_hook(_ev: AgentEvent) -> PreTurnDecision:
         log.append("raising")
         raise RuntimeError("boom")
 
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("a"), PRE_TURN_PROCEED)[1])
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "a"))
     reg.register(HookKind.PRE_TURN, raising_hook)
-    reg.register(HookKind.PRE_TURN, lambda ev: (log.append("c"), PRE_TURN_PROCEED)[1])
+    reg.register(HookKind.PRE_TURN, _pre_turn_logger(log, "c"))
 
     decision = reg.run_pre_turn(UserEvent(session_id="s", user_input="x"))
     # 抛异常视为 PROCEED，后续 hook 仍跑
@@ -151,14 +170,14 @@ def test_single_pre_turn_hook_exception_does_not_break_others() -> None:
 def test_single_post_turn_hook_exception_does_not_break_others() -> None:
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.POST_TURN, lambda ctx: log.append("a"))
+    reg.register(HookKind.POST_TURN, lambda _ctx: log.append("a"))
 
-    def raising_hook(ctx: Any) -> None:
+    def raising_hook(_ctx: Any) -> None:
         log.append("raising")
         raise RuntimeError("boom")
 
     reg.register(HookKind.POST_TURN, raising_hook)
-    reg.register(HookKind.POST_TURN, lambda ctx: log.append("c"))
+    reg.register(HookKind.POST_TURN, lambda _ctx: log.append("c"))
 
     session = MagicMock()
     reg.run_post_turn(
@@ -175,15 +194,12 @@ def test_single_pre_tool_use_hook_exception_treated_as_proceed() -> None:
     reg = HookRegistry()
     log: list[str] = []
 
-    def raising_hook(name: str, args: dict[str, Any]) -> PreToolUseDecision:
+    def raising_hook(_name: str, _args: dict[str, Any]) -> PreToolUseDecision:
         log.append("raising")
         raise RuntimeError("boom")
 
     reg.register(HookKind.PRE_TOOL_USE, raising_hook)
-    reg.register(
-        HookKind.PRE_TOOL_USE,
-        lambda name, args: (log.append("after"), PRE_TOOL_PROCEED)[1],
-    )
+    reg.register(HookKind.PRE_TOOL_USE, _pre_tool_logger(log, "after"))
 
     decision = reg.run_pre_tool_use("echo", {})
     assert decision is PRE_TOOL_PROCEED
@@ -193,14 +209,14 @@ def test_single_pre_tool_use_hook_exception_treated_as_proceed() -> None:
 def test_single_post_tool_use_hook_exception_does_not_break_others() -> None:
     reg = HookRegistry()
     log: list[str] = []
-    reg.register(HookKind.POST_TOOL_USE, lambda name, args, result: log.append("a"))
+    reg.register(HookKind.POST_TOOL_USE, lambda _n, _a, _r: log.append("a"))
 
-    def raising_hook(name: str, args: dict[str, Any], result: ToolResult) -> None:
+    def raising_hook(_name: str, _args: dict[str, Any], _result: ToolResult) -> None:
         log.append("raising")
         raise RuntimeError("boom")
 
     reg.register(HookKind.POST_TOOL_USE, raising_hook)
-    reg.register(HookKind.POST_TOOL_USE, lambda name, args, result: log.append("c"))
+    reg.register(HookKind.POST_TOOL_USE, lambda _n, _a, _r: log.append("c"))
 
     reg.run_post_tool_use("echo", {}, ToolResult(text="ok"))
     assert log == ["a", "raising", "c"]
@@ -214,7 +230,7 @@ def test_pre_turn_hook_can_inspect_event_type() -> None:
     reg = HookRegistry()
     seen: list[str] = []
 
-    def inspecting_hook(ev: Any) -> PreTurnDecision:
+    def inspecting_hook(ev: AgentEvent) -> PreTurnDecision:
         if isinstance(ev, UserEvent):
             seen.append("user")
             return PRE_TURN_PROCEED
