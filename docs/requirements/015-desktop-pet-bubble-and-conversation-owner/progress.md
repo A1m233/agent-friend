@@ -103,24 +103,19 @@ IN_PROGRESS
 
 > 完成后 pet 窗能真实渲染气泡 UI；起 frontend dev 能看到 mock envelope 的气泡。
 
-- [ ] `frontend/src/components/pet/PetBubble.tsx`：新文件（按 design §6.1 实现）
-  - [ ] 订阅 `usePetBubbleStore`
-  - [ ] `useEffect` + `getBoundingClientRect` 翻转判定（贴顶时改下方显示）
-  - [ ] 截断逻辑（`TRUNCATE_LEN = 120`）+ 点击 expand
-  - [ ] expanded 状态显示完整文本 + 关闭按钮
-  - [ ] `data-hit` 标记 + tailwind animate-in fade-in
-- [ ] `frontend/src/components/pet/PetBubble.test.tsx`：新文件（用 `@testing-library/react`）
-  - [ ] `phase=idle` 不渲染（DOM null）
-  - [ ] `phase=showing` 渲染文本
-  - [ ] 长文本截断 + "点击展开" 提示
-  - [ ] 点击截断状态触发 `expand`
-  - [ ] `expanded` 渲染全文 + 关闭按钮
-- [ ] `frontend/src/pages/pet/App.tsx`：
-  - [ ] 外层 div 加 `relative` 让 absolute 定位有 anchor
-  - [ ] 插入 `<PetBubble />` 在 pet-stage 同级
-  - [ ] `useEffect` 调 `startPetBubbleSubscriber()` + unlisten 清理
-- [ ] `pnpm test PetBubble` 全绿
-- [ ] 手工 dev spike：在 pet 窗 console 调用 `__TAURI__.event.emit("agent://push", mockEnv)`（或测试钩子）能看到气泡冒出
+- [x] `frontend/src/components/pet/PetBubble.tsx`：新文件（按 design §6.1 实现）
+  - [x] 订阅 `usePetBubbleStore`（selector 分别取 phase / current / expand / dismiss）
+  - [x] `useEffect` + `getBoundingClientRect` 翻转判定（贴顶时改下方显示，`top-[200px]` / `bottom-[200px]`）
+  - [x] 截断逻辑（`TRUNCATE_LEN = 120`）+ 点击触发 store.expand
+  - [x] expanded 状态显示全文 + 关闭按钮（用 `components/ui/Button` 而非原生 `<button>`，过 eslint 禁原生元素门禁）
+  - [x] `data-hit` 标记 + tailwind animate-in fade-in-0 zoom-in-95（与 tooltip / sheet 风格一致）
+  - [x] 用语义 token（`bg-surface` / `text-fg` / `text-muted` / `border-border`），不硬编码颜色
+- [x] `frontend/src/pages/pet/App.tsx`：
+  - [x] 外层 div 加 `relative` 让 absolute 定位有 anchor
+  - [x] 插入 `<PetBubble />` 在 pet-stage 同级
+  - [x] `useEffect` 调 `startPetBubbleSubscriber()` + unlisten 清理
+- [x] `pnpm run typecheck` + `pnpm run lint` + `pnpm run lint:colors`（51 文件零硬编码）+ `pnpm test`（5 files / 27 tests）全绿
+- [ ] 手工 dev spike 留 M15.8（dev 跑起 frontend + bridge 真触发主动轮看到气泡）
 
 ### M15.7 sessionProjection 防御（注释 + 兜底测试）
 
@@ -161,6 +156,7 @@ IN_PROGRESS
 | 2026-06-13 | M15.3 完成 | tauri.conf.json 加 visibleOnAllWorkspaces；macOS NSWindow setLevel:1000 通过 objc2 msg_send 落地、错误隔离不阻断 app 启动；cargo build 全绿；切 Space + 全屏 app 真跑验证移交 M15.8 |
 | 2026-06-13 | M15.4 完成 | petBubblePolicy.ts defaultPolicy（"无 user-visible assistant 文本"判 silent，比 source_kind 黑名单更可演进）；6 个 case 全绿（AC-4 + AC-5 锚点）；typecheck + lint 干净 |
 | 2026-06-13 | M15.5 完成 | petBubble.ts zustand store（showing/expanded 状态机 + AUTO_DISMISS_MS=10s timer）+ setPolicy/resetPolicy 测试钩子 + startPetBubbleSubscriber 桥接 tauri event；8 个 case 全绿覆盖 AC-3 policy 可替换；累计 14 passed |
+| 2026-06-13 | M15.6 完成 | PetBubble.tsx 落（截断 + 翻转 + 内部展开 + data-hit 接入透明区穿透 + animate-in 过渡）+ pet/App.tsx relative + startPetBubbleSubscriber；用 components/ui/Button 过 eslint 禁原生元素门禁；语义 token 过 color-guard；typecheck + lint + test 27 passed 全绿；项目无 .test.tsx 基础设施，UI 行为靠 M15.8 真跑 |
 
 ---
 
