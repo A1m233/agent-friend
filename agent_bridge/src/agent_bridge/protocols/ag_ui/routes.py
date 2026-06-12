@@ -58,6 +58,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 thread_id=decoded.thread_id,
                 run_id=decoded.run_id,
                 accept=accept,
+                agent_runtime=runtime.agent_runtime,
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={
