@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from .judge import AnchorRecallJudge, Judge, JudgeResult, NoopJudge
 from .report import print_outcome, print_summary
-from .runner import CaseOutcome, QuestionOutcome, run_case
+from .runner import CaseOutcome, MemoryConfig, QuestionOutcome, run_case
 
 __all__ = [
     "AnchorRecallJudge",
     "CaseOutcome",
     "Judge",
     "JudgeResult",
+    "MemoryConfig",
     "NoopJudge",
     "QuestionOutcome",
     "print_outcome",

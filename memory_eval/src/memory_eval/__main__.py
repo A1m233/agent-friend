@@ -35,6 +35,7 @@ from memory_eval.harness import (
     AnchorRecallJudge,
     CaseOutcome,
     Judge,
+    MemoryConfig,
     NoopJudge,
     print_outcome,
     print_summary,
@@ -118,6 +119,22 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help='本次跑的注解（如 "before extraction prompt v2"），写入 baseline 文件供未来回看',
     )
+    # pass-1 M13.4 ablation 切片开关：默认都开（pass-1 终态），关掉单个跑切片 baseline。
+    # 详见 docs/requirements/013-memory-quality-pass-1/design.md §6。
+    p.add_argument(
+        "--no-extraction-keep-specifics",
+        dest="extraction_keep_specifics",
+        action="store_false",
+        default=True,
+        help="切片：关闭 pass-1 抽取保具体词改进，用旧 prompt（pre-pass-1 行为）",
+    )
+    p.add_argument(
+        "--no-pinned-relevance-gate",
+        dest="pinned_relevance_gate",
+        action="store_false",
+        default=True,
+        help="切片：关闭 pass-1 pinned relevance gate，pinned 全量注入（pre-pass-1 行为）",
+    )
     return p.parse_args()
 
 
@@ -143,6 +160,10 @@ def main() -> int:
         return 1
 
     judge = _pick_judge(args.dataset)
+    memory_config = MemoryConfig(
+        extraction_keep_specifics=args.extraction_keep_specifics,
+        pinned_relevance_gate=args.pinned_relevance_gate,
+    )
     started_at = datetime.now(UTC)
     all_outcomes: list[CaseOutcome] = []
     with tempfile.TemporaryDirectory(prefix="memory-eval-") as tmp:
@@ -155,6 +176,7 @@ def main() -> int:
                 db_path=db_path,
                 judge=judge,
                 limit_questions=args.limit_questions,
+                memory_config=memory_config,
             )
             print_outcome(outcome)
             all_outcomes.append(outcome)

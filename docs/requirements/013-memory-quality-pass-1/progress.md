@@ -70,18 +70,20 @@ IN_PROGRESS
 - [x] **回填**：`design.md §10` "pinned gate 阈值档位"项已 commit 实测结果
 - [x] `./scripts/check`：ruff + format + mypy + pytest **281 全过**
 
-### M13.4 切片 baseline 配置
+### M13.4 切片 baseline 配置（**design 二次变更，2026-06-12**）
 
-**目标**：`build_memory` 三开关 + evaluator runner 透传 + CLI flag。
+**M13.4 实施期调研 LlamaIndex / Martin Fowler 后**：原"三开关 config 含 `recall_wide`"方案违背业界最佳实践（schema 不可逆迁移后做同进程切片会污染归因）。改为"两开关 + pass-1-baseline 切片对比 pre-pass-1 文件"路线。详见 [`design.md §6 / §11`](./design.md)。
 
-- [ ] `memory/src/memory/factory.py`：`build_memory` 增加 3 个 kw-only 参数（默认 True）
-  - [ ] `extraction_keep_specifics: bool`（True → 用新 prompt；False → 用 `extract_legacy.md`）
-  - [ ] `pinned_relevance_gate: bool`（True → 过 gate；False → pinned 全量注入）
-  - [ ] `recall_wide: bool`（True → 新 trigram + bigram；False → 旧 64 上限 + 不降级）
-- [ ] `memory/src/memory/facade.py`：`Memory.__init__` 接收三开关并据此装配 `Extractor` / `pinned_gate` / `_fts_query` 模式
-- [ ] `memory_eval/src/memory_eval/harness/runner.py`：新增 `MemoryConfig` dataclass + `run_case` 接受 `memory_config` 参数透传给 `build_memory`
-- [ ] `memory_eval/src/memory_eval/__main__.py`：CLI 加 `--no-extraction-keep-specifics` / `--no-pinned-relevance-gate` / `--no-recall-wide` flag
-- [ ] `memory/tests/test_factory_switches.py`：新建（或扩展）——三开关组合的最小 smoke 测试
+- [x] `memory/src/memory/factory.py`：`build_memory` 增加 2 个 kw-only 参数（默认 True）
+  - [x] `extraction_keep_specifics: bool`（True → 用新 prompt；False → 用 `extract_legacy.md`）
+  - [x] `pinned_relevance_gate: bool`（True → 过 gate；False → pinned 全量注入，pre-pass-1 行为）
+  - [x] ~~`recall_wide: bool`~~ → **移除**（jieba schema 迁移已完成，ablation 走文件对比路线）
+- [x] `memory/src/memory/facade.py`：`Memory.__init__` 接收两开关（M13.3 已加 `pinned_relevance_gate`；M13.4 通过 factory 透传）
+- [x] `memory_eval/src/memory_eval/harness/runner.py`：新增 `MemoryConfig` dataclass（2 字段）+ `run_case` 接受 `memory_config` 参数透传给 `build_memory`
+- [x] `memory_eval/src/memory_eval/harness/__init__.py`：导出 `MemoryConfig`
+- [x] `memory_eval/src/memory_eval/__main__.py`：CLI 加 `--no-extraction-keep-specifics` / `--no-pinned-relevance-gate` flag，构造 `MemoryConfig` 透传给 `run_case`
+- [x] `memory/tests/test_factory_switches.py`：新建——5 个 smoke 测试（默认 = pass-1 终态 / 关 extraction 用旧 prompt / 关 gate / 两开关都关 = pass-1-baseline 切片 / 显式 `extractor_prompt` 覆盖开关）
+- [x] `./scripts/check`：ruff + format + mypy + pytest **286 全过**（281 → 286）
 
 ### M13.5 评测与归档
 
@@ -90,10 +92,10 @@ IN_PROGRESS
 - [ ] `./scripts/check` 全绿（ruff + mypy + pytest 全通过）
 - [ ] 跑 PerLTQA smoke（`--limit-samples 3 --limit-questions 10`）确认 4 种切片配置不挂
 - [ ] **跑 4 份全量 baseline**（按 `llm-api-confirm` 单独获授权；预估 8–12 小时，颗粒度回退后 16–24 小时）
-  - [ ] `pass-1-full`：三开关全开
-  - [ ] `pass-1-only-extraction`：extraction=ON, pinned=OFF, recall=OFF
-  - [ ] `pass-1-only-pinned`：extraction=OFF, pinned=ON, recall=OFF
-  - [ ] `pass-1-only-recall`：extraction=OFF, pinned=OFF, recall=ON
+  - [ ] `pass-1-full`：两开关全开（jieba 永远开） —— 对照 pre-pass-1 看 pass-1 总体收益
+  - [ ] `pass-1-only-extraction`：extraction=ON, pinned=OFF —— 对照 pass-1-baseline 看主因 1 单独贡献
+  - [ ] `pass-1-only-pinned`：extraction=OFF, pinned=ON —— 对照 pass-1-baseline 看主因 2 单独贡献
+  - [ ] `pass-1-baseline`：extraction=OFF, pinned=OFF（仅 jieba 永远开）—— 对照 pre-pass-1 看主因 3 jieba 单独贡献
 - [ ] 落到 `memory_eval/baselines/<timestamp>-<commit>-<slice>.json`
 - [ ] **AC 验证**（对照 `2026-06-12T01-31-46-46e810d.json`）
   - [ ] **AC-1a**：665 道"有 episodic 但 0 分"题集的零分率必须可观测下降（不持平、不上升）
@@ -131,3 +133,5 @@ IN_PROGRESS
 | 2026-06-12 | **M13.2 design 变更**：trigram + bigram 兜底实测不可行 → 改 jieba 中文分词 | SQLite FTS5 trigram 索引 token 是 3-字滑窗、bigram phrase 不能 substring 命中；中文短 query 与 pinned 条目无共享 trigram。design.md §4 / §5 / §10 / §11 已同步；M13.2 任务清单重写。requirement.md 未变（jieba 在 Q-4 候选） |
 | 2026-06-12 | M13.2 任务全部完成 | pyproject 加 jieba 依赖；schema 升 v2（`*_tokens` 列 + FTS5 unicode61）；sqlite_store `_tokenize` / `_fts_query` 改 jieba；新增 `fts_match_pinned`；`__init__` 加 v1→v2 lazy migration；test_store 改写既有"过短 query"测试 + 新增 8 个 jieba/migration 测试；`./scripts/check`：ruff + format + mypy + pytest **272 全过**（pre-M13.2 261 + M13.1 3 + M13.2 8） |
 | 2026-06-12 | M13.3 任务全部完成 + design.md ⏳ 回填 | `pinned_gate.py` 新建（`lenient` / `strict` 两档；短 query < 6 字 lenient 放行）；facade `Memory` 加 `pinned_relevance_gate` / `pinned_gate_mode` 开关；retrieval `__init__` 导出；test_pinned_gate 9 个测试 + test_facade 旧 "pinned 永远附带" 改写为 "无关 query 砍 pinned"（反映新默认行为）；design.md §10 "pinned gate 阈值档位"项回填（实施合并"宽松/动态"为 `lenient`）；`./scripts/check`：281 全过（272 → 281）|
+| 2026-06-12 | **M13.4 design 二次变更**：`recall_wide` 切片在 jieba 不可逆迁移下污染归因 → 调研 LlamaIndex / Martin Fowler 后改"两开关 + 文件对比" | WebFetch 三条权威：Strangler Fig（生产迁移并行路径）/ LlamaIndex Component-wise Evaluation（**主流是跑独立评测、比较 baseline 文件**，不在同管线切片）/ Martin Fowler Feature Toggles（劝阻永久 ablation flag）；选 LlamaIndex 路线。design.md §6 改两开关；§11 二次变更登记；切片总数仍为 4 份（`pass-1-full` / `pass-1-only-extraction` / `pass-1-only-pinned` / `pass-1-baseline`），新 `pass-1-baseline` 切片度量 jieba 单独贡献 |
+| 2026-06-12 | M13.4 任务全部完成 | `build_memory` 加 `extraction_keep_specifics` / `pinned_relevance_gate` 两个 kw-only 开关；`extract_legacy.md` 路径常量；runner 新增 `MemoryConfig` dataclass + 透传；harness `__init__` 导出；CLI 加 `--no-extraction-keep-specifics` / `--no-pinned-relevance-gate` flag；新增 `test_factory_switches.py` 5 个 smoke 测试（默认 = pass-1 终态 / 关 extraction 用旧 prompt / 关 gate / 两开关都关 = pass-1-baseline 切片 / 显式 prompt 覆盖开关）；`./scripts/check`：286 全过（281 → 286）|

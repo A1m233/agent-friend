@@ -235,9 +235,9 @@ fixture 在测试 setup 时构造一组 pinned + 一组 query，断言 `pinned_g
 
 ## 6. 切片 baseline 的 config 与跑法
 
-### 6.1 三开关
+### 6.1 两开关（M13.4 实施时 design 二次变更，详见 §11）
 
-`build_memory` 增加 3 个 kw-only 参数（默认值反映 pass-1 终态、即"全开"）：
+`build_memory` 增加 2 个 kw-only 参数（默认值反映 pass-1 终态、即"全开"）：
 
 ```python
 def build_memory(
@@ -247,7 +247,6 @@ def build_memory(
     # ... 既有参数
     extraction_keep_specifics: bool = True,   # 主因 1
     pinned_relevance_gate: bool = True,        # 主因 2
-    recall_wide: bool = True,                  # 主因 3
 ) -> Memory: ...
 ```
 
@@ -255,7 +254,8 @@ def build_memory(
 
 - `extraction_keep_specifics=False` → 用旧 prompt（保留一份在 `prompts/extract_legacy.md`）
 - `pinned_relevance_gate=False` → `retrieve` 跳过 gate，pinned 全量注入（pre-pass-1 行为）
-- `recall_wide=False` → `_fts_query` 走旧 trigram 上限 + 不降级 bigram（pre-pass-1 行为）
+
+**原 `recall_wide` 开关已移除**——M13.2 的 jieba 替换是 schema v1→v2 不可逆迁移，"关 jieba" 在 schema v2 下无对照可走（详见 §11 二次变更记录）。主因 3 的 ablation 改走"对比 pre-pass-1 baseline 文件"路线（§6.3），符合 LlamaIndex / Martin Fowler Feature Toggle 的最佳实践。
 
 ### 6.2 evaluator 透传
 
@@ -266,7 +266,6 @@ def build_memory(
 class MemoryConfig:
     extraction_keep_specifics: bool = True
     pinned_relevance_gate: bool = True
-    recall_wide: bool = True
 
 def run_case(case, llm_client, *, db_path, judge, memory_config: MemoryConfig = MemoryConfig(), ...):
     memory = build_memory(db_path, llm_client, **asdict(memory_config))
@@ -275,18 +274,18 @@ def run_case(case, llm_client, *, db_path, judge, memory_config: MemoryConfig = 
 
 CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等），跑切片 baseline 时关掉对应的开关。
 
-### 6.3 切片 baseline 跑法
+### 6.3 切片 baseline 跑法（4 份，含一份"pass-1-baseline"度量 jieba 单独贡献）
 
-跑 4 份 baseline：
-
-| baseline | 配置 | 用途 |
-|---|---|---|
-| `pass-1-full` | 三开关全开 | 全开效果，对照 pre-pass-1 |
-| `pass-1-only-extraction` | extraction=ON, pinned=OFF, recall=OFF | 主因 1 单独贡献 |
-| `pass-1-only-pinned` | extraction=OFF, pinned=ON, recall=OFF | 主因 2 单独贡献 |
-| `pass-1-only-recall` | extraction=OFF, pinned=OFF, recall=ON | 主因 3 单独贡献 |
+| baseline | 配置 | 对照锚点 | 度量目标 |
+|---|---|---|---|
+| `pass-1-full` | 两开关全开 | pre-pass-1 baseline (`2026-06-12T01-31-46-46e810d.json`) | pass-1 总体收益（三主因叠加） |
+| `pass-1-only-extraction` | extraction=ON, pinned=OFF | pass-1-baseline 切片 | 主因 1 抽取改进的单独贡献 |
+| `pass-1-only-pinned` | extraction=OFF, pinned=ON | pass-1-baseline 切片 | 主因 2 pinned gate 的单独贡献 |
+| `pass-1-baseline` | extraction=OFF, pinned=OFF（仅 jieba 永远开） | pre-pass-1 baseline | **主因 3 jieba 替换的单独贡献** |
 
 落到 `memory_eval/baselines/<timestamp>-<commit>-<slice>.json`，文件名 `slice` 后缀区分。
+
+---
 
 ---
 
@@ -398,6 +397,7 @@ CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等�
 | 日期 | 变更内容 | 是否需要重新实现 |
 |------|---------|----------------|
 | 2026-06-12 | **§4 主因 3 方案变更**：原方案"FTS5 trigram zero-deps 改进 + bigram 兜底"在 M13.2 实施期被实测推翻——SQLite trigram FTS5 索引 token 是 3-字滑窗，bigram phrase query 无法 substring 命中；中文短 query 与 pinned 条目几乎无共享 trigram（共享的是 bigram），主因 3 / 主因 2 核心场景双双失效。改为引入 jieba 中文分词，schema 升 v2 加 `*_tokens` 列、FTS5 改 unicode61 tokenizer。**§5 pinned gate 算法也跟着改用 jieba 索引**（接口签名不变）。§10 ⏳ "FTS5 `_MAX_TRIGRAMS` 值"项废弃。requirement.md 未变（jieba 在 Q-4 候选里）。 | 是 —— M13.2 / M13.3 任务清单重写，已 commit 的 M13.1 不受影响 |
+| 2026-06-12 | **§6 切片 baseline 二次变更**：原方案"三开关 config（含 `recall_wide`）"在 M13.4 实施期被工程实践调研推翻——M13.2 的 jieba 替换是 schema v1→v2 不可逆迁移，"关 jieba" 在 schema v2 下没有对照可走，硬实施会污染评测归因（4 个 fallback 方案都有问题）。调研 [Martin Fowler Strangler Fig](https://martinfowler.com/bliki/StranglerFigApplication.html) / [LlamaIndex Component-wise Evaluation](https://developers.llamaindex.ai/python/framework/optimizing/evaluation/component_wise_evaluation/) / [Martin Fowler Feature Toggles](https://martinfowler.com/articles/feature-toggles.html) 后选定 LlamaIndex 路线：跑独立评测、对比 baseline 文件（不在代码里保留 ablation flag）。删除 `recall_wide` 开关；主因 3 jieba 单独贡献改用"新增 `pass-1-baseline` 切片（两开关都关）对比 pre-pass-1 baseline 文件"度量。切片总数仍为 4 份。 | 是 —— M13.4 任务清单从 3 开关收缩到 2 开关；M13.5 切片清单同步 |
 
 ---
 
