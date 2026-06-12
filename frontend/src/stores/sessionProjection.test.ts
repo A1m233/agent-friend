@@ -71,4 +71,23 @@ describe("projectSessionEvents", () => {
       expect(block.result).toBe("超时了");
     }
   });
+
+  it("忽略 014 引入的 system_trigger / memory_observation 主动轮事件（015 R-4.5.1 / AC-6）", () => {
+    const baseEvents: SessionEvent[] = [
+      ev("user_message", { content: "在吗" }),
+      ev("assistant_message", { content: "在的", partial: false }),
+      ev("tool_call_request", { tool_call_id: "c", tool_name: "t", args: { q: "x" } }),
+      ev("tool_call_result", { tool_call_id: "c", tool_name: "t", content: "ok" }),
+      ev("assistant_message", { content: "好了", partial: false }),
+    ];
+    // 在 base events 中插入 014 主动轮事件（system_trigger 在头 + memory_observation 在尾）；
+    // 投影出的 ChatMessage 序列应与不含时完全一致（断言 toEqual 兜底 AC-6）
+    const withSystemTrigger: SessionEvent[] = [
+      ev("system_trigger", { source_kind: "cron:bedtime" }),
+      ...baseEvents,
+      ev("memory_observation", { extracted: "用户在赶 deadline" }),
+      ev("system_trigger", { source_kind: "idle_reflection" }),
+    ];
+    expect(projectSessionEvents(withSystemTrigger)).toEqual(projectSessionEvents(baseEvents));
+  });
 });

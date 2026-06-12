@@ -121,10 +121,10 @@ IN_PROGRESS
 
 > 独立可插入。被动跳过已天然成立，本期只做"显式声明 + 兜底测试"。
 
-- [ ] `frontend/src/stores/sessionProjection.ts`：顶注释补一段说明 `system_trigger` / `memory_observation` 被动跳过的语义（design §7.2 文案）
-- [ ] `frontend/src/stores/sessionProjection.test.ts`：新增 1 条 case
-  - [ ] `it("ignores system_trigger / memory_observation events (015 R-4.5.1)")`：含两种 type 事件的 session 投影出的 ChatMessage 序列与不含时 `toEqual` —— **AC-6**
-- [ ] `pnpm test sessionProjection` 全绿
+- [x] `frontend/src/stores/sessionProjection.ts`：顶注释补一段说明 `system_trigger` / `memory_observation` 被动跳过的语义（design §7.2 文案）
+- [x] `frontend/src/stores/sessionProjection.test.ts`：新增 1 条 case
+  - [x] `it("忽略 014 引入的 system_trigger / memory_observation 主动轮事件（015 R-4.5.1 / AC-6）")`：含两种 type 事件的 session 投影出的 ChatMessage 序列与不含时 `toEqual` —— **AC-6**
+- [x] `pnpm test sessionProjection` 全绿（5 passed 含新增 1）
 
 ### M15.8 Dev CLI demo + 自动门禁 + 手工真跑
 
@@ -157,6 +157,7 @@ IN_PROGRESS
 | 2026-06-13 | M15.4 完成 | petBubblePolicy.ts defaultPolicy（"无 user-visible assistant 文本"判 silent，比 source_kind 黑名单更可演进）；6 个 case 全绿（AC-4 + AC-5 锚点）；typecheck + lint 干净 |
 | 2026-06-13 | M15.5 完成 | petBubble.ts zustand store（showing/expanded 状态机 + AUTO_DISMISS_MS=10s timer）+ setPolicy/resetPolicy 测试钩子 + startPetBubbleSubscriber 桥接 tauri event；8 个 case 全绿覆盖 AC-3 policy 可替换；累计 14 passed |
 | 2026-06-13 | M15.6 完成 | PetBubble.tsx 落（截断 + 翻转 + 内部展开 + data-hit 接入透明区穿透 + animate-in 过渡）+ pet/App.tsx relative + startPetBubbleSubscriber；用 components/ui/Button 过 eslint 禁原生元素门禁；语义 token 过 color-guard；typecheck + lint + test 27 passed 全绿；项目无 .test.tsx 基础设施，UI 行为靠 M15.8 真跑 |
+| 2026-06-13 | M15.7 完成 | sessionProjection.ts 顶注释显式声明 system_trigger / memory_observation 被动跳过是 015 期望行为；新增 1 条兜底测试断言含主动轮事件投影 toEqual 不含时（AC-6 兜底）；sessionProjection 5 passed |
 
 ---
 

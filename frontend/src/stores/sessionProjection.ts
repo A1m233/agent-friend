@@ -7,6 +7,13 @@
  * 本期投影：user / assistant 文本消息（保证上下文连续）+ 工具调用卡片（与实时一致，
  * 切走再切回不丢卡片）。session_meta / persona_change 等元事件忽略；历史里的工具结果
  * 与实时同样兜底 [error] 前缀语义。
+ *
+ * 015 R-4.5.1 · 014 引入的 `system_trigger` / `memory_observation` 主动轮事件
+ * 不在本投影的已知分支里，会**自然跳过**（不投影到 chat 窗 MessageList）。这是
+ * 015 期望的行为——主动轮 UI 出口是 pet 气泡而非 chat 窗。未来若要 chat 窗也回看
+ * 历史主动轮，加一个 if 分支即可（事件已在 JSONL 保留，数据完整）。
+ * 兜底测试见 sessionProjection.test.ts "忽略 014 引入的 system_trigger /
+ * memory_observation 主动轮事件"。
  */
 
 import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
