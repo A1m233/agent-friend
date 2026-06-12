@@ -26,22 +26,22 @@ IN_PROGRESS
 
 > 完成后能在 dev 模式下抓到 `agent_bridge` push channel 的事件、log 出来。
 
-- [ ] `frontend/src-tauri/src/push_subscriber.rs`：新文件
-  - [ ] `PushEnvelope` struct + `#[derive(Deserialize, Serialize, Clone, Debug)]`
-  - [ ] `find_frame_sep` 纯函数（SSE \n\n / \r\n\r\n 分帧）
-  - [ ] `parse_envelope_frame` 纯函数（取 data: 行拼 JSON 解码）
-  - [ ] `run_loop` async：reqwest `bytes_stream()` → 累积 buf → 按帧切 → 解码 → heartbeat 丢 → `emit_to("pet", "agent://push", env)`
-  - [ ] `spawn_push_subscriber(app, bridge_base_url)`：`tauri::async_runtime::spawn` task 包装
-- [ ] `frontend/src-tauri/src/lib.rs`：
-  - [ ] 顶部加 `mod push_subscriber;`
-  - [ ] 新增 `bridge_base_url()` helper（env `AGENT_FRIEND_BRIDGE_URL` 覆盖、默认 `http://127.0.0.1:18800`）
-  - [ ] `setup` 闭包内调 `push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url())`
-- [ ] `frontend/src-tauri/src/push_subscriber.rs` 内嵌 `#[cfg(test)] mod tests`：
-  - [ ] `find_frame_sep` 4 case（\n\n / \r\n\r\n / 仅一种 / 不完整无分隔）
-  - [ ] `parse_envelope_frame` 4 case（标准 data: + 多行 data: 拼包 + 空帧 / comment 帧 / 解码失败）
-  - [ ] `PushEnvelope` JSON round-trip（serde 兼容 events 任意 dict）
-- [ ] `cargo test --manifest-path frontend/src-tauri/Cargo.toml` 全绿
-- [ ] 手工真跑 spot-check：起 bridge dev_mode + `./scripts/dev-fire-source/run.sh bedtime` + 在 Tauri log 里能看到 envelope 解码记录（这一步对 M15.8 端到端是 dry-run）
+- [x] `frontend/src-tauri/src/push_subscriber.rs`：新文件
+  - [x] `PushEnvelope` struct + `#[derive(Deserialize, Serialize, Clone, Debug)]`
+  - [x] `find_frame_sep` 纯函数（SSE \n\n / \r\n\r\n 分帧）
+  - [x] `parse_envelope_frame` 纯函数（取 data: 行拼 JSON 解码）
+  - [x] `run_loop` async：reqwest `bytes_stream()` → 累积 buf → 按帧切 → 解码 → heartbeat 丢 → `emit_to("pet", "agent://push", env)`
+  - [x] `spawn_push_subscriber(app, bridge_base_url)`：`tauri::async_runtime::spawn` task 包装
+- [x] `frontend/src-tauri/src/lib.rs`：
+  - [x] 顶部加 `mod push_subscriber;`
+  - [x] 新增 `bridge_base_url()` helper（env `AGENT_FRIEND_BRIDGE_URL` 覆盖、默认 `http://127.0.0.1:18800`）
+  - [x] `setup` 闭包内调 `push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url())`
+- [x] `frontend/src-tauri/src/push_subscriber.rs` 内嵌 `#[cfg(test)] mod tests`（**12 个测试全绿**）：
+  - [x] `find_frame_sep` 4 case（\n\n / \r\n\r\n / 仅一种 / 不完整无分隔）
+  - [x] `parse_envelope_frame` 7 case（标准 frame + heartbeat null source_kind + 多行 data: 拼接 + event: 行被自然丢弃 + 空 frame / event-only / comment-only 三种 None / 非 JSON / events 含 UTF-8 透传）
+  - [x] `PushEnvelope` JSON round-trip（serde 兼容 events 任意 dict）
+- [x] `cargo test` 全绿（12 passed）
+- [ ] 手工真跑 spot-check 留给 M15.8 端到端（dry-run 通过 dev demo orchestrator 一起做）
 
 ### M15.3 跨 Space + 全屏浮动（macOS）
 
@@ -153,6 +153,7 @@ IN_PROGRESS
 | 日期 | 完成 | 备注 |
 |------|------|------|
 | 2026-06-13 | M15.1 完成 | types/push.ts + Cargo.toml 依赖；rustls-tls 避免 OpenSSL；macOS-only objc2 + objc2-app-kit；typecheck + cargo build 全绿 |
+| 2026-06-13 | M15.2 完成 | push_subscriber.rs 落（SSE 分帧 / envelope 解码 / reqwest bytes_stream / emit_to 广播）+ lib.rs 接入 setup spawn；12 个单测全绿；spot-check 端到端 dry-run 移交 M15.8 |
 
 ---
 

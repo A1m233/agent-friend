@@ -5,6 +5,18 @@ use tauri::{
     Emitter, Manager,
 };
 
+mod push_subscriber;
+
+/// bridge HTTP base URL。
+///
+/// 默认 `http://127.0.0.1:18800`（与 `frontend/vite.config.ts` proxy target、
+/// `scripts/bridge/run.sh` 监听地址一致）。env `AGENT_FRIEND_BRIDGE_URL` 覆盖留口。
+/// 生产打包不在本期范围（参 015 design §4.3 / 010 design）。
+fn bridge_base_url() -> String {
+    std::env::var("AGENT_FRIEND_BRIDGE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:18800".to_string())
+}
+
 /// 光标相对桌宠窗内容区的逻辑坐标（CSS px），喂给前端做命中判定。
 #[derive(Clone, Serialize)]
 struct CursorPos {
@@ -109,6 +121,8 @@ pub fn run() {
             }
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());
+            // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
+            push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
             Ok(())
         })
         .run(tauri::generate_context!())
