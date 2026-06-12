@@ -5,6 +5,7 @@ description = "agent-friend · 记忆系统（基于 SQLite，向量栈预备）
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "llm-providers",
+    "jieba>=0.42.1",
 ]
 
 [tool.uv.sources]

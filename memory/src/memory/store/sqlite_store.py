@@ -6,6 +6,9 @@
 配合 WAL 模式让读写更顺。
 
 详见 docs/requirements/008-engine-memory/design.md §4.3。
+
+Pass-1（013）：FTS5 索引从 trigram 字符滑窗换成 jieba 词级 unicode61。详见
+docs/requirements/013-memory-quality-pass-1/design.md §4。
 """
 
 from __future__ import annotations
@@ -15,6 +18,8 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
+
+import jieba
 
 from .schema import (
     DDL_STATEMENTS,
@@ -53,10 +58,20 @@ class SqliteMemoryStore:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            # v1 → v2 迁移：在 DDL 跑之前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；
+            # 后续 DDL 的 CREATE IF NOT EXISTS 会用新 unicode61 配置建表，旧表
+            # IF NOT EXISTS 不会改、必须先 DROP。
+            need_backfill = _premigrate_v1_to_v2(self._conn)
             for ddl in DDL_STATEMENTS:
                 self._conn.execute(ddl)
+            if need_backfill:
+                _backfill_tokens_and_rebuild_fts(self._conn)
             self._conn.execute(
                 "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            self._conn.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
                 (str(SCHEMA_VERSION),),
             )
             self._conn.commit()
@@ -65,18 +80,20 @@ class SqliteMemoryStore:
 
     def add_semantic(self, row: SemanticRow) -> None:
         """插入一条语义记忆，同步写 FTS。"""
+        tokens = _tokenize(row.statement)
         with self._lock:
             cur = self._conn.execute(
                 """
                 INSERT INTO semantic
-                    (id, statement, importance, pinned, source, speaker_origin,
+                    (id, statement, statement_tokens, importance, pinned, source, speaker_origin,
                      valid_from, valid_until, provenance, deleted_at,
                      owner_user_id, persona_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.id,
                     row.statement,
+                    tokens,
                     row.importance,
                     1 if row.pinned else 0,
                     row.source,
@@ -92,8 +109,8 @@ class SqliteMemoryStore:
                 ),
             )
             self._conn.execute(
-                "INSERT INTO semantic_fts(rowid, statement) VALUES (?, ?)",
-                (cur.lastrowid, row.statement),
+                "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
+                (cur.lastrowid, tokens),
             )
             self._conn.commit()
 
@@ -116,17 +133,19 @@ class SqliteMemoryStore:
 
     def add_episodic(self, row: EpisodicRow) -> None:
         """插入一条情节记忆，同步写 FTS。"""
+        tokens = _tokenize(row.summary)
         with self._lock:
             cur = self._conn.execute(
                 """
                 INSERT INTO episodic
-                    (id, summary, source_ref, importance, participants,
+                    (id, summary, summary_tokens, source_ref, importance, participants,
                      occurred_at, deleted_at, owner_user_id, persona_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.id,
                     row.summary,
+                    tokens,
                     row.source_ref,
                     row.importance,
                     json.dumps(row.participants, ensure_ascii=False),
@@ -138,8 +157,8 @@ class SqliteMemoryStore:
                 ),
             )
             self._conn.execute(
-                "INSERT INTO episodic_fts(rowid, summary) VALUES (?, ?)",
-                (cur.lastrowid, row.summary),
+                "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
+                (cur.lastrowid, tokens),
             )
             self._conn.commit()
 
@@ -215,6 +234,34 @@ class SqliteMemoryStore:
             ).fetchall()
         return [(_to_episodic(r), float(r["_bm25"])) for r in rows]
 
+    def fts_match_pinned(self, query: str, *, owner_user_id: str) -> set[str]:
+        """返回 ``query`` 命中（jieba 切词 + FTS5 unicode61）的活跃 pinned 条目 id 集合。
+
+        为 [`013 pass-1 §5`](../../../docs/requirements/013-memory-quality-pass-1/design.md)
+        的 pinned relevance gate 服务：retrieve 时用本接口判断 query 是否真的"问到了"
+        pinned 里的事，从而决定是否注入 pinned，避免 query 与 pinned 无关时 pinned
+        作为占位安慰品挤掉 episodic/semantic（issue 003 主因 2）。
+
+        pinned 是 user 维度（跨 persona 共享），与 :meth:`pinned` 一致只按
+        ``owner_user_id`` 过滤；空 query / 切词后为空返回空集。
+        """
+        match = _fts_query(query)
+        if match is None:
+            return set()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT s.id
+                FROM semantic_fts
+                JOIN semantic s ON s.rowid = semantic_fts.rowid
+                WHERE semantic_fts MATCH ?
+                  AND s.pinned = 1 AND s.deleted_at IS NULL AND s.valid_until IS NULL
+                  AND s.owner_user_id = ?
+                """,
+                (match, owner_user_id),
+            ).fetchall()
+        return {str(r["id"]) for r in rows}
+
     def related_semantic(
         self, *, owner_user_id: str, persona_id: str, limit: int = _RELATED_DEFAULT_LIMIT
     ) -> list[SemanticRow]:
@@ -279,35 +326,123 @@ def _to_episodic(r: sqlite3.Row) -> EpisodicRow:
     )
 
 
-_MAX_TRIGRAMS = 64
-"""单次 MATCH 拼接的 3-gram 上限，防止超长 query 生成过多子句。"""
+_MAX_QUERY_TOKENS = 64
+"""单次 MATCH 拼接的 query token 上限，防超长 query 生成过多子句。"""
+
+
+def _tokenize(text: str) -> str:
+    """jieba 切词后空格连接，作为 FTS5 unicode61 索引文本。
+
+    标点 / 空白 token 不显式过滤——FTS5 unicode61 tokenizer 会按 unicode word
+    边界切分并丢掉标点。空字符串 / 全空白输入返回空串。详见
+    docs/requirements/013-memory-quality-pass-1/design.md §4。
+    """
+    if not text or not text.strip():
+        return ""
+    return " ".join(jieba.cut(text))
 
 
 def _fts_query(text: str) -> str | None:
-    """把自由文本转成 trigram FTS5 的 MATCH 串：query 的 3-gram 集合 OR 起来。
+    """把 query 转成 FTS5 MATCH 串：jieba 切词后用 OR 连接。
 
-    为什么不整句作短语：trigram 下"短语"= 子串精确匹配，整句 query 几乎不可能
-    是某条短事实的子串。改成"共享任一 3-gram 即召回"，让查询与记忆按 n-gram 重叠
-    度模糊匹配（bm25 再按重叠多少排序），中英文都适用。
+    Pass-1（013）：与原 trigram 滑窗实现的根本差异——每个 jieba 词成为一个 FTS5
+    query token，跟 unicode61 索引按词匹配；中文短 query "宠物" / 长 query "你还记得
+    我家里有什么宠物吗" 都能命中包含 "宠物" 词的记忆条目。详见 design.md §4。
 
     Returns:
-        OR 连接的 trigram MATCH 串；query 里凑不出任何 3-gram（如全是 1~2 字的
-        碎片）时返回 ``None`` 让调用方跳过检索。
+        OR 连接的 token MATCH 串；query 切词后为空（如纯标点 / 空字符串）返回 ``None``
+        让调用方跳过检索。
     """
-    grams: list[str] = []
+    tokens: list[str] = []
     seen: set[str] = set()
-    for chunk in text.split():
-        if len(chunk) < 3:
+    for tok in jieba.cut(text):
+        tok = tok.strip()
+        if not tok or tok in seen:
             continue
-        for i in range(len(chunk) - 2):
-            g = chunk[i : i + 3]
-            if g not in seen:
-                seen.add(g)
-                grams.append(g)
-                if len(grams) >= _MAX_TRIGRAMS:
-                    break
-        if len(grams) >= _MAX_TRIGRAMS:
+        # FTS5 unicode61 会把纯标点 token 视作无索引内容；query 侧也跳过避免
+        # 'MATCH ".,"' 这种空 phrase 报错
+        if not any(ch.isalnum() for ch in tok):
+            continue
+        seen.add(tok)
+        tokens.append(tok)
+        if len(tokens) >= _MAX_QUERY_TOKENS:
             break
-    if not grams:
+    if not tokens:
         return None
-    return " OR ".join(f'"{g.replace(chr(34), chr(34) * 2)}"' for g in grams)
+    return " OR ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
+
+
+# ===== schema v1 → v2 迁移（pass-1 / 013） =====
+
+
+def _premigrate_v1_to_v2(conn: sqlite3.Connection) -> bool:
+    """检测旧库（schema v1）并做 in-place 结构升级。
+
+    在 :data:`DDL_STATEMENTS` 跑之前调用——必须先 ALTER TABLE 加 ``*_tokens`` 列
+    + DROP 旧 trigram FTS5 表，然后 DDL 的 `CREATE IF NOT EXISTS` 才会用新的
+    unicode61 配置建出新 FTS5。否则旧 FTS5 表存在、`IF NOT EXISTS` 跳过，
+    永远卡在 trigram。
+
+    Returns:
+        ``True`` 表示做了迁移、调用方需要回填 ``*_tokens`` + 重建 FTS5 索引；
+        ``False`` 表示新库 / 已是 v2，无需后续 backfill。
+    """
+    # 全新库：schema_meta 表都不存在，无需迁移
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+    ).fetchone()
+    if row is None:
+        return False
+
+    # 版本检查
+    meta = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+    current = int(meta["value"]) if meta else 1
+    if current >= SCHEMA_VERSION:
+        return False
+
+    # 在 semantic / episodic 表存在的前提下加新列（IF NOT EXISTS 等价物用 try）
+    if _column_missing(conn, "semantic", "statement_tokens"):
+        conn.execute("ALTER TABLE semantic ADD COLUMN statement_tokens TEXT NOT NULL DEFAULT ''")
+    if _column_missing(conn, "episodic", "summary_tokens"):
+        conn.execute("ALTER TABLE episodic ADD COLUMN summary_tokens TEXT NOT NULL DEFAULT ''")
+
+    # 删旧 trigram FTS5 表（如果存在）；后续 DDL 会用新配置重建
+    conn.execute("DROP TABLE IF EXISTS semantic_fts")
+    conn.execute("DROP TABLE IF EXISTS episodic_fts")
+    return True
+
+
+def _column_missing(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    return column not in cols
+
+
+def _backfill_tokens_and_rebuild_fts(conn: sqlite3.Connection) -> None:
+    """v1 → v2 迁移的数据补齐：jieba 切词回填 ``*_tokens`` 列 + 灌入新 FTS5 索引。
+
+    在 :func:`_premigrate_v1_to_v2` 返回 ``True``、且 DDL 已重建新 FTS5 表之后调用。
+    """
+    # semantic
+    rows = conn.execute("SELECT rowid, statement FROM semantic").fetchall()
+    for r in rows:
+        tokens = _tokenize(r["statement"])
+        conn.execute(
+            "UPDATE semantic SET statement_tokens = ? WHERE rowid = ?",
+            (tokens, r["rowid"]),
+        )
+        conn.execute(
+            "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
+            (r["rowid"], tokens),
+        )
+    # episodic
+    rows = conn.execute("SELECT rowid, summary FROM episodic").fetchall()
+    for r in rows:
+        tokens = _tokenize(r["summary"])
+        conn.execute(
+            "UPDATE episodic SET summary_tokens = ? WHERE rowid = ?",
+            (tokens, r["rowid"]),
+        )
+        conn.execute(
+            "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
+            (r["rowid"], tokens),
+        )

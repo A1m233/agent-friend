@@ -56,6 +56,7 @@ extend-exclude = [
     "**/.venv",
     "**/build",
     "**/dist",
+    ".claude/worktrees",
 ]
 
 [tool.ruff.lint]
@@ -94,6 +95,7 @@ exclude = [
     "client",
     "build",
     "dist",
+    ".claude/worktrees",
 ]
 
 # ============================================================

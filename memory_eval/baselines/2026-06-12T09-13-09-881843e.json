@@ -1,0 +1,1965 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-06-12T09:13:09.456385+00:00",
+    "ended_at": "2026-06-12T09:26:30.825763+00:00",
+    "duration_seconds": 801.369,
+    "git_commit": "881843e",
+    "working_tree_dirty": true,
+    "dataset": "perltqa",
+    "limit_samples": 3,
+    "limit_questions": 10,
+    "note": "pass-1-smoke-full",
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {}
+    },
+    "dataset_files": [
+      {
+        "path": "perltmem.json",
+        "sha256": "5869ee39e944cf835af5c163c5213723bd2d30c44eb6705271031a644ee0ab7b",
+        "bytes": 8989686
+      },
+      {
+        "path": "perltqa.json",
+        "sha256": "aa19a0623312b5ffe1153ee5d04e20e0d054ba27eccc4f35baa9710a6e8ca9bd",
+        "bytes": 8634508
+      }
+    ]
+  },
+  "macro": {
+    "score_mean": 0.36457671957671955,
+    "n_questions_total": 30,
+    "n_questions_scored": 30,
+    "n_questions_zero": 13
+  },
+  "per_question": [
+    {
+      "question_id": "张小红#q0",
+      "sample_id": "张小红",
+      "question": "小明最近感到困惑的是什么？",
+      "answer": "张小明对自己的成长和婚姻家庭领域的发展感到很迷茫。",
+      "anchors": [
+        "迷茫"
+      ],
+      "score": 0.0,
+      "detail": "0/1 命中；未命中: ['迷茫']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户有一位大学同学王丽，是建设集团项目经理，参与了上海华盛世大厦的施工",
+          "layer": "semantic",
+          "source_ref": "6d65a684-4d09-4a72-b2af-58db1a16afb2",
+          "score": 1.5376740240073976
+        },
+        {
+          "text": "用户当前的财务目标是长期资产保值和稳定增值，希望投资多元化、降低风险，并持续学习提高金融素质",
+          "layer": "semantic",
+          "source_ref": "f24da8b2-8453-47d1-bfda-1f9e3c5ce0ae",
+          "score": 1.4587307001161052
+        },
+        {
+          "text": "用户最近在农业工程方面有了新想法，正在准备项目",
+          "layer": "episodic",
+          "source_ref": "c98a08fe-03c8-48fa-a43d-c05678215393",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户的大学同学王丽是建设集团项目经理，参与了上海华盛世大厦施工",
+          "layer": "episodic",
+          "source_ref": "ffd7baeb-8676-4c1f-b6e1-5b63f166eae8",
+          "score": 1.108264215189897
+        },
+        {
+          "text": "用户在两年前参加过一次社区文化活动，活动组织者是张美丽",
+          "layer": "episodic",
+          "source_ref": "e9027ad0-06a6-4ce7-989b-c95d6689f65b",
+          "score": 1.0808676775114412
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 0.9699921212393856
+        },
+        {
+          "text": "用户和刘明合作的项目最终开发成功，数据分析方法有效用于农田的巡视和监测",
+          "layer": "semantic",
+          "source_ref": "3813ddf2-9321-4752-b9a0-a9f4b6dbd7b7",
+          "score": 0.8499885257851251
+        },
+        {
+          "text": "用户向刘明提出与农业专家合作和进行实地试验的建议，刘明同意",
+          "layer": "semantic",
+          "source_ref": "b7c4e5fc-2df0-420c-b68f-1b0afd96bba8",
+          "score": 0.8499878559863826
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q1",
+      "sample_id": "张小红",
+      "question": "张小红是如何回应张小明的困惑的？",
+      "answer": "张小红建议参加一些培训课程可以帮助你提升自己的专业能力，并学到一些关于沟通、情绪管理和亲密关系建立的技巧。",
+      "anchors": [
+        "建议",
+        "参加",
+        "培训课程",
+        "提升",
+        "专业能力",
+        "沟通",
+        "情绪管理",
+        "亲密关系建立",
+        "技巧"
+      ],
+      "score": 0.1111111111111111,
+      "detail": "1/9 命中；未命中: ['建议', '培训课程', '提升', '专业能力', '沟通', '情绪管理', '亲密关系建立', '技巧']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.7227267825289276
+        },
+        {
+          "text": "用户有一位大学同学王丽，是建设集团项目经理，参与了上海华盛世大厦的施工",
+          "layer": "semantic",
+          "source_ref": "6d65a684-4d09-4a72-b2af-58db1a16afb2",
+          "score": 1.6808266283185067
+        },
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.6376854037575272
+        },
+        {
+          "text": "用户当前的财务目标是长期资产保值和稳定增值，希望投资多元化、降低风险，并持续学习提高金融素质",
+          "layer": "semantic",
+          "source_ref": "f24da8b2-8453-47d1-bfda-1f9e3c5ce0ae",
+          "score": 1.5854472581705201
+        },
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.5776854037575272
+        },
+        {
+          "text": "用户张小红通过Connect社交应用认识了篮球爱好者刘梅，并一起参加篮球活动、赛后去咖啡馆",
+          "layer": "semantic",
+          "source_ref": "1db2c261-af72-4fa6-aaf0-f2b63a0ebb01",
+          "score": 1.5098337447250019
+        },
+        {
+          "text": "弟弟张小明通过手环翻阅英语启蒙故事和绘本、进行听读和配音活动",
+          "layer": "semantic",
+          "source_ref": "04465afc-1670-454e-89bc-e83f61ccdf37",
+          "score": 1.4955268040028344
+        },
+        {
+          "text": "5月12日用户张小红通过Connect认识年轻篮球爱好者刘梅",
+          "layer": "episodic",
+          "source_ref": "c09c1cc4-bfe7-471b-ad52-f636d9376d2b",
+          "score": 1.3000000000000023
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q2",
+      "sample_id": "张小红",
+      "question": "小明打算如何增强与妻子的亲密关系和家庭凝聚力？",
+      "answer": "一起制定积极的习惯养成计划。",
+      "anchors": [
+        "一起制定积极的习惯养成计划"
+      ],
+      "score": 0.0,
+      "detail": "0/1 命中；未命中: ['一起制定积极的习惯养成计划']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户与张美丽交流过中文和中国文化",
+          "layer": "semantic",
+          "source_ref": "40d0cb47-6a7c-4604-86c6-92842b4624c1",
+          "score": 1.5035380179594677
+        },
+        {
+          "text": "用户向刘明提出与农业专家合作和进行实地试验的建议，刘明同意",
+          "layer": "semantic",
+          "source_ref": "b7c4e5fc-2df0-420c-b68f-1b0afd96bba8",
+          "score": 1.4464028968556735
+        },
+        {
+          "text": "用户对政府债券和企业债券的风险与收益感兴趣",
+          "layer": "semantic",
+          "source_ref": "2dba2e92-d905-495e-8ae3-4965a4d10794",
+          "score": 1.4209366603212759
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 1.3907109741748254
+        },
+        {
+          "text": "用户与王教授保持密切联系，经常交流学术研究",
+          "layer": "semantic",
+          "source_ref": "c4b7824b-cf30-4e2e-a308-a5c221ec15e9",
+          "score": 1.3632563338536672
+        },
+        {
+          "text": "用户与张美丽讨论了中文和中国文化的话题",
+          "layer": "episodic",
+          "source_ref": "2f31677b-dbeb-42a4-a0d8-4095bb805c05",
+          "score": 1.3
+        },
+        {
+          "text": "用户在去年三月与张美丽聊过投资咨询，并认为受益匪浅",
+          "layer": "semantic",
+          "source_ref": "b4ee5c38-08b4-48ef-ab07-dd14f4730d1d",
+          "score": 1.2420650208961321
+        },
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.2289655436768347
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q3",
+      "sample_id": "张小红",
+      "question": "张小明弟弟对佩戴的智能学习手环感觉怎么样？",
+      "answer": "张小明一开始很喜欢那个手环，总是拿着手环在幼儿园里炫耀给小伙伴们看，但随着时间的推移，他开始逐渐理解手环的功能。",
+      "anchors": [
+        "喜欢",
+        "手环",
+        "幼儿园",
+        "炫耀",
+        "小伙伴们",
+        "功能"
+      ],
+      "score": 0.8333333333333334,
+      "detail": "5/6 命中；未命中: ['功能']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.8499832500839517
+        },
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.4101454947457546
+        },
+        {
+          "text": "弟弟张小明通过手环翻阅英语启蒙故事和绘本、进行听读和配音活动",
+          "layer": "semantic",
+          "source_ref": "04465afc-1670-454e-89bc-e83f61ccdf37",
+          "score": 1.2963152372495963
+        },
+        {
+          "text": "用户作为农业工程师，对教育领域的智能互动学习系统感兴趣，并愿意与弟弟一起使用",
+          "layer": "semantic",
+          "source_ref": "217cf6c2-3fec-486f-b52c-b935feb0f054",
+          "score": 1.2647346239745842
+        },
+        {
+          "text": "张小明一开始喜欢拿智能学习手环在幼儿园里向小伙伴们炫耀",
+          "layer": "episodic",
+          "source_ref": "078f92d1-bb38-4816-b995-dc948c91f21f",
+          "score": 1.0251991473590318
+        },
+        {
+          "text": "用户当前的财务目标是长期资产保值和稳定增值，希望投资多元化、降低风险，并持续学习提高金融素质",
+          "layer": "semantic",
+          "source_ref": "f24da8b2-8453-47d1-bfda-1f9e3c5ce0ae",
+          "score": 1.0020673445533235
+        },
+        {
+          "text": "用户对刘明介绍的农业科技项目非常感兴趣，认为该项目有前途",
+          "layer": "semantic",
+          "source_ref": "2aa5aff8-dc4e-4f92-982d-fce425b99f44",
+          "score": 0.971408851782321
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 0.9699920527950423
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q4",
+      "sample_id": "张小红",
+      "question": "张小明弟弟在互动学习系统中参与哪些活动？",
+      "answer": "他喜欢通过手环触摸屏幕翻阅英语启蒙故事和绘本，并尝试进行听读和配音的活动。",
+      "anchors": [
+        "手环触摸屏幕",
+        "英语启蒙故事",
+        "绘本",
+        "听读",
+        "配音"
+      ],
+      "score": 0.8,
+      "detail": "4/5 命中；未命中: ['手环触摸屏幕']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.8499832500065114
+        },
+        {
+          "text": "用户作为农业工程师，对教育领域的智能互动学习系统感兴趣，并愿意与弟弟一起使用",
+          "layer": "semantic",
+          "source_ref": "217cf6c2-3fec-486f-b52c-b935feb0f054",
+          "score": 1.4776546979334533
+        },
+        {
+          "text": "弟弟张小明通过手环翻阅英语启蒙故事和绘本、进行听读和配音活动",
+          "layer": "semantic",
+          "source_ref": "04465afc-1670-454e-89bc-e83f61ccdf37",
+          "score": 1.2895152008941237
+        },
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.2051471186868707
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 1.1931563586790976
+        },
+        {
+          "text": "用户有一位大学同学王丽，是建设集团项目经理，参与了上海华盛世大厦的施工",
+          "layer": "semantic",
+          "source_ref": "6d65a684-4d09-4a72-b2af-58db1a16afb2",
+          "score": 1.1220775563113852
+        },
+        {
+          "text": "用户经常向王丽请教农业工程方面的问题，两人在工作和生活中经常交流合作",
+          "layer": "semantic",
+          "source_ref": "5e4027aa-6c0d-4d07-a034-1c55c7a459e0",
+          "score": 1.1201892807651384
+        },
+        {
+          "text": "李阳在农场花海前向用户表白，用户深受感动",
+          "layer": "semantic",
+          "source_ref": "37e30942-6540-49bd-a87b-627d62266f09",
+          "score": 1.1162068856744631
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q5",
+      "sample_id": "张小红",
+      "question": "张小明弟弟会与张小红分享在学习系统中的成果吗？",
+      "answer": "是的，每天放学回家后，张小明会和张小红一起分享他在系统中的学习成果，并与张小红讨论一些学习上的问题。",
+      "anchors": [
+        "每天放学回家后",
+        "一起分享",
+        "学习成果",
+        "讨论",
+        "学习上的问题"
+      ],
+      "score": 0.6,
+      "detail": "3/5 命中；未命中: ['一起分享', '学习上的问题']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.789983249961338
+        },
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.4627595895571786
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.1844542932231146
+        },
+        {
+          "text": "用户作为农业工程师，对教育领域的智能互动学习系统感兴趣，并愿意与弟弟一起使用",
+          "layer": "semantic",
+          "source_ref": "217cf6c2-3fec-486f-b52c-b935feb0f054",
+          "score": 1.1423582361427291
+        },
+        {
+          "text": "李阳在农场花海前向用户表白，用户深受感动",
+          "layer": "semantic",
+          "source_ref": "37e30942-6540-49bd-a87b-627d62266f09",
+          "score": 1.1000897980877076
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 1.0842871981364508
+        },
+        {
+          "text": "用户经常向王丽请教农业工程方面的问题，两人在工作和生活中经常交流合作",
+          "layer": "semantic",
+          "source_ref": "5e4027aa-6c0d-4d07-a034-1c55c7a459e0",
+          "score": 1.0207145404590452
+        },
+        {
+          "text": "弟弟张小明通过手环翻阅英语启蒙故事和绘本、进行听读和配音活动",
+          "layer": "semantic",
+          "source_ref": "04465afc-1670-454e-89bc-e83f61ccdf37",
+          "score": 1.0046270942097222
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q6",
+      "sample_id": "张小红",
+      "question": "张小明在试用期间学习成果如何？",
+      "answer": "试用期间他的学习兴趣明显增加，他愿意主动参与各种学习活动，并在系统的帮助下取得了一定的学习进步。",
+      "anchors": [
+        "学习兴趣",
+        "主动参与",
+        "学习活动",
+        "学习进步"
+      ],
+      "score": 0.75,
+      "detail": "3/4 命中；未命中: ['学习进步']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户每天放学回家后与弟弟张小明分享学习成果、讨论学习问题",
+          "layer": "semantic",
+          "source_ref": "338509cc-973c-49ac-b10a-66740ae01e3b",
+          "score": 1.4598012409719252
+        },
+        {
+          "text": "试用期间张小明的学习兴趣明显增加，主动参与学习活动",
+          "layer": "episodic",
+          "source_ref": "3dcb9f40-1c56-429e-bf90-45c665a2e636",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.1859673027189364
+        },
+        {
+          "text": "李阳在农场花海前向用户表白，用户深受感动",
+          "layer": "semantic",
+          "source_ref": "37e30942-6540-49bd-a87b-627d62266f09",
+          "score": 1.0886227180618935
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.0214078230113701
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 0.99089900443891
+        },
+        {
+          "text": "用户当前的财务目标是长期资产保值和稳定增值，希望投资多元化、降低风险，并持续学习提高金融素质",
+          "layer": "semantic",
+          "source_ref": "f24da8b2-8453-47d1-bfda-1f9e3c5ce0ae",
+          "score": 0.9632489271229078
+        },
+        {
+          "text": "用户去年在城市剧院观看《丝绸之路之旅》演出，最喜欢中国舞剑表演",
+          "layer": "semantic",
+          "source_ref": "3f8c47ab-0e62-4f29-b221-2ac22644af94",
+          "score": 0.9209995057379139
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q7",
+      "sample_id": "张小红",
+      "question": "作为农业工程师，张小红对教育领域的创新项目很感兴趣。张小红愿意花时间和张小明一起探索智能互动学习系统的各种功能吗？",
+      "answer": "是的，她很愿意，智能互动学习系统不仅对于张小明来说是一种学习工具，更是他们之间的共同话题和交流桥梁。",
+      "anchors": [
+        "很愿意",
+        "智能互动学习系统",
+        "共同话题",
+        "交流桥梁"
+      ],
+      "score": 0.25,
+      "detail": "1/4 命中；未命中: ['很愿意', '共同话题', '交流桥梁']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户作为农业工程师，对教育领域的智能互动学习系统感兴趣，并愿意与弟弟一起使用",
+          "layer": "semantic",
+          "source_ref": "217cf6c2-3fec-486f-b52c-b935feb0f054",
+          "score": 1.4290603849242105
+        },
+        {
+          "text": "用户作为农业工程师，愿意花时间与张小明一起探索智能互动学习系统的各种功能",
+          "layer": "episodic",
+          "source_ref": "42f3718a-6832-485c-ad38-1ff2a57205b1",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户有一个弟弟叫张小明，正在使用智能学习手环和互动学习系统",
+          "layer": "semantic",
+          "source_ref": "67485016-0170-492d-8279-f05b3740d40c",
+          "score": 1.1335265912615742
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.1092513854976112
+        },
+        {
+          "text": "用户对刘明介绍的农业科技项目非常感兴趣，认为该项目有前途",
+          "layer": "semantic",
+          "source_ref": "2aa5aff8-dc4e-4f92-982d-fce425b99f44",
+          "score": 1.0149363884939366
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 0.96492996175669
+        },
+        {
+          "text": "用户和刘明合作的项目最终开发成功，数据分析方法有效用于农田的巡视和监测",
+          "layer": "semantic",
+          "source_ref": "3813ddf2-9321-4752-b9a0-a9f4b6dbd7b7",
+          "score": 0.9192993867620916
+        },
+        {
+          "text": "用户向刘明提出与农业专家合作和进行实地试验的建议，刘明同意",
+          "layer": "semantic",
+          "source_ref": "b7c4e5fc-2df0-420c-b68f-1b0afd96bba8",
+          "score": 0.8874767752025319
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q8",
+      "sample_id": "张小红",
+      "question": "张小红最近在忙什么？",
+      "answer": "张小红忙着准备项目，在农业工程方面有了不少新的想法。",
+      "anchors": [
+        "准备项目",
+        "农业工程",
+        "新的想法"
+      ],
+      "score": 0.6666666666666666,
+      "detail": "2/3 命中；未命中: ['新的想法']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.7394761926635993
+        },
+        {
+          "text": "用户最近在农业工程方面有了新想法，正在准备项目",
+          "layer": "episodic",
+          "source_ref": "c98a08fe-03c8-48fa-a43d-c05678215393",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "李阳在农场花海前向用户表白，用户深受感动",
+          "layer": "semantic",
+          "source_ref": "37e30942-6540-49bd-a87b-627d62266f09",
+          "score": 1.2993831664543305
+        },
+        {
+          "text": "用户张小红通过Connect社交应用认识了篮球爱好者刘梅，并一起参加篮球活动、赛后去咖啡馆",
+          "layer": "semantic",
+          "source_ref": "1db2c261-af72-4fa6-aaf0-f2b63a0ebb01",
+          "score": 1.2289116627811911
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 1.183295876086703
+        },
+        {
+          "text": "用户希望未来在农业科技领域有所发展",
+          "layer": "semantic",
+          "source_ref": "1394167e-c2a8-424c-a40b-65165fc4e85a",
+          "score": 1.1038026173537838
+        },
+        {
+          "text": "用户去年在城市剧院观看《丝绸之路之旅》演出，最喜欢中国舞剑表演",
+          "layer": "semantic",
+          "source_ref": "3f8c47ab-0e62-4f29-b221-2ac22644af94",
+          "score": 1.0898375030186245
+        },
+        {
+          "text": "张小红与刘梅在篮球活动中互相加油鼓励，比赛后一起去了咖啡馆",
+          "layer": "episodic",
+          "source_ref": "3d133a50-1d87-4c4a-b77d-ee5b8f162600",
+          "score": 1.0570391349052475
+        }
+      ]
+    },
+    {
+      "question_id": "张小红#q9",
+      "sample_id": "张小红",
+      "question": "张小红在农业工程方面有什么发现吗？",
+      "answer": "张小红和朋友发现在农田灌溉方面还有不少问题需要解决，她朋友在工程和建筑领域有着丰富的经验和专业知识，他对她帮助很大。",
+      "anchors": [
+        "农田灌溉",
+        "解决",
+        "朋友",
+        "工程",
+        "建筑",
+        "经验",
+        "专业知识"
+      ],
+      "score": 0.14285714285714285,
+      "detail": "1/7 命中；未命中: ['农田灌溉', '解决', '朋友', '建筑', '经验', '专业知识']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户经常向王丽请教农业工程方面的问题，两人在工作和生活中经常交流合作",
+          "layer": "semantic",
+          "source_ref": "5e4027aa-6c0d-4d07-a034-1c55c7a459e0",
+          "score": 1.5668667076877287
+        },
+        {
+          "text": "用户张小红在2015年作为王教授的学生，研究并实现了新型农药的技术创新，获得了农业创新奖",
+          "layer": "semantic",
+          "source_ref": "92e6bf44-6ebf-4061-baad-4c53149d14e7",
+          "score": 1.368319640588835
+        },
+        {
+          "text": "用户最近在农业工程方面有了新想法，正在准备项目",
+          "layer": "episodic",
+          "source_ref": "c98a08fe-03c8-48fa-a43d-c05678215393",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户对刘明介绍的农业科技项目非常感兴趣，认为该项目有前途",
+          "layer": "semantic",
+          "source_ref": "2aa5aff8-dc4e-4f92-982d-fce425b99f44",
+          "score": 1.1132765837886143
+        },
+        {
+          "text": "用户有一个重要关系人李阳，两人通过跳伞加深了情感",
+          "layer": "semantic",
+          "source_ref": "9213807d-c933-41ed-b494-e1aac8cf7b27",
+          "score": 1.1016663996973495
+        },
+        {
+          "text": "李阳在农场花海前向用户表白，用户深受感动",
+          "layer": "semantic",
+          "source_ref": "37e30942-6540-49bd-a87b-627d62266f09",
+          "score": 1.1000903903357688
+        },
+        {
+          "text": "用户希望未来在农业科技领域有所发展",
+          "layer": "semantic",
+          "source_ref": "1394167e-c2a8-424c-a40b-65165fc4e85a",
+          "score": 1.0787833684360015
+        },
+        {
+          "text": "用户去年在中国参加过跳伞活动，与李阳一起",
+          "layer": "semantic",
+          "source_ref": "d13e9e16-75bf-4d78-83bd-cb3068ac7bb4",
+          "score": 1.0003658317933997
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q0",
+      "sample_id": "王小明",
+      "question": "王小明最近的计划是什么？",
+      "answer": "王小明最近正在准备去美国亚利桑那州探索大峡谷，和姐姐一起。",
+      "anchors": [
+        "美国亚利桑那州",
+        "探索大峡谷",
+        "姐姐"
+      ],
+      "score": 0.0,
+      "detail": "0/3 命中；未命中: ['美国亚利桑那州', '探索大峡谷', '姐姐']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户最近提出将纳米颗粒和生物分子结合制作可注射药物的纳米颗粒的研究想法",
+          "layer": "semantic",
+          "source_ref": "02866f2c-d25f-4ab9-b9d7-412d5dba2b24",
+          "score": 1.4872859899359154
+        },
+        {
+          "text": "用户和陈华计划在数学研究上合作，探索克莱因瓶相关的微分几何问题",
+          "layer": "semantic",
+          "source_ref": "262f2c13-7885-492f-9b1c-051cfa1bde9e",
+          "score": 1.442221744675072
+        },
+        {
+          "text": "用户最近投资了一个项目并已获得回报",
+          "layer": "semantic",
+          "source_ref": "550bd267-7f2d-4c53-9a0d-9f9ed6aa0702",
+          "score": 1.4294924157332907
+        },
+        {
+          "text": "用户和刘丽是多年的同事，一起开发软件好几年，刘丽聪明友善",
+          "layer": "semantic",
+          "source_ref": "7421aef6-9790-4bbe-a872-a84d74da4076",
+          "score": 1.3637583587705677
+        },
+        {
+          "text": "用户与导师张文计划参加更高级别风筝冲浪比赛",
+          "layer": "semantic",
+          "source_ref": "ba3ba131-aaa7-4eee-9ec7-391f1423c071",
+          "score": 1.3495189290602305
+        },
+        {
+          "text": "用户和张伟是大学时期的好朋友，经常一起参加篮球比赛和科技活动",
+          "layer": "semantic",
+          "source_ref": "e7df62d2-4ba8-44eb-9f5f-c51759c80063",
+          "score": 1.322126862624884
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.2962892205293715
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q1",
+      "sample_id": "王小明",
+      "question": "王小明和王小红计划在哪一天开始探索？",
+      "answer": "王小明计划在5月12日出发，搭乘飞机前往亚利桑那州。",
+      "anchors": [
+        "5月12日"
+      ],
+      "score": 0.0,
+      "detail": "0/1 命中；未命中: ['5月12日']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和陈华计划在数学研究上合作，探索克莱因瓶相关的微分几何问题",
+          "layer": "semantic",
+          "source_ref": "262f2c13-7885-492f-9b1c-051cfa1bde9e",
+          "score": 1.6706598149415037
+        },
+        {
+          "text": "用户和姐姐计划前往美国亚利桑那州探索大峡谷",
+          "layer": "episodic",
+          "source_ref": "b02c20f9-40d1-43ab-b3e7-4c9791c93071",
+          "score": 1.3000000000000325
+        },
+        {
+          "text": "用户的导师张文对用户的研究成果表示赞赏并鼓励继续深入研究和探索CAR-T细胞疗法的潜力",
+          "layer": "semantic",
+          "source_ref": "9d30a926-aeaf-4653-9300-295f93d81677",
+          "score": 1.1682983475272182
+        },
+        {
+          "text": "用户与导师张文计划参加更高级别风筝冲浪比赛",
+          "layer": "semantic",
+          "source_ref": "ba3ba131-aaa7-4eee-9ec7-391f1423c071",
+          "score": 1.1576167381138502
+        },
+        {
+          "text": "用户在一家科技公司担任高级软件工程师",
+          "layer": "semantic",
+          "source_ref": "7521820e-10e9-4bd6-a8c0-e76233d444cc",
+          "score": 1.0370670619116096
+        },
+        {
+          "text": "用户和好朋友张伟在2012年5月15日参加全国青年科技创新大赛并获得一等奖",
+          "layer": "semantic",
+          "source_ref": "c1115606-1115-4b39-b213-ffc4698260fe",
+          "score": 1.000777178067426
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 0.9647278178117649
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q2",
+      "sample_id": "王小明",
+      "question": "王小明和姐姐已经到达目的地了吗？",
+      "answer": "是的，王小明5月12号就抵达了目的地，租了一辆车前往科罗拉多高原的大峡谷地区。",
+      "anchors": [
+        "王小明",
+        "5月12号",
+        "抵达",
+        "目的地",
+        "科罗拉多高原",
+        "大峡谷地区"
+      ],
+      "score": 0.3333333333333333,
+      "detail": "2/6 命中；未命中: ['5月12号', '抵达', '目的地', '科罗拉多高原']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和姐姐前往美国亚利桑那州大峡谷地区旅行",
+          "layer": "semantic",
+          "source_ref": "631fd727-ef9a-4ee7-b76e-1a50c20ccf71",
+          "score": 1.590194904357084
+        },
+        {
+          "text": "用户对风筝冲浪运动感兴趣并刷新了比赛纪录",
+          "layer": "semantic",
+          "source_ref": "e064bbae-5ce1-4b31-8987-b5d21f5b85cc",
+          "score": 1.124636970568117
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.0753342964227013
+        },
+        {
+          "text": "用户最近投资了一个项目并已获得回报",
+          "layer": "semantic",
+          "source_ref": "550bd267-7f2d-4c53-9a0d-9f9ed6aa0702",
+          "score": 1.0734957770404991
+        },
+        {
+          "text": "用户与张伟在2012年参加了一场篮球比赛并赢得胜利",
+          "layer": "semantic",
+          "source_ref": "87a84395-4694-4798-baf4-5921961bcf50",
+          "score": 1.0484859295473812
+        },
+        {
+          "text": "去年5月10日用户和刘丽在某知名艺术馆参加了奥胖作品发布会，聆听了谢泼德·法里介绍创作过程，深受启发，并考虑在项目中加入艺术元素",
+          "layer": "semantic",
+          "source_ref": "01c99f47-2501-4aa1-b46d-bc02b97e7b21",
+          "score": 1.0370671392525734
+        },
+        {
+          "text": "用户和陈华讨论了Crystal Blossom项链由Xia Zhang设计师设计，注重细节",
+          "layer": "semantic",
+          "source_ref": "a4334510-0854-4ad6-a492-5ad927be5dbe",
+          "score": 1.0341490473603983
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q3",
+      "sample_id": "王小明",
+      "question": "今天王小明和姐姐的计划是什么？",
+      "answer": "他们打算先去参观北卡尼奴峡谷，并欣赏大峡谷的美景。",
+      "anchors": [
+        "参观",
+        "北卡尼奴峡谷",
+        "欣赏",
+        "大峡谷",
+        "美景"
+      ],
+      "score": 0.2,
+      "detail": "1/5 命中；未命中: ['参观', '北卡尼奴峡谷', '欣赏', '美景']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和姐姐前往美国亚利桑那州大峡谷地区旅行",
+          "layer": "semantic",
+          "source_ref": "631fd727-ef9a-4ee7-b76e-1a50c20ccf71",
+          "score": 1.4896082554660408
+        },
+        {
+          "text": "用户和陈华计划在数学研究上合作，探索克莱因瓶相关的微分几何问题",
+          "layer": "semantic",
+          "source_ref": "262f2c13-7885-492f-9b1c-051cfa1bde9e",
+          "score": 1.3677777776873925
+        },
+        {
+          "text": "用户和姐姐计划前往美国亚利桑那州探索大峡谷",
+          "layer": "episodic",
+          "source_ref": "b02c20f9-40d1-43ab-b3e7-4c9791c93071",
+          "score": 1.3000000000000325
+        },
+        {
+          "text": "用户和刘丽是多年的同事，一起开发软件好几年，刘丽聪明友善",
+          "layer": "semantic",
+          "source_ref": "7421aef6-9790-4bbe-a872-a84d74da4076",
+          "score": 1.2991761896797331
+        },
+        {
+          "text": "用户与导师张文计划参加更高级别风筝冲浪比赛",
+          "layer": "semantic",
+          "source_ref": "ba3ba131-aaa7-4eee-9ec7-391f1423c071",
+          "score": 1.2716428408048173
+        },
+        {
+          "text": "用户和张伟是大学时期的好朋友，经常一起参加篮球比赛和科技活动",
+          "layer": "semantic",
+          "source_ref": "e7df62d2-4ba8-44eb-9f5f-c51759c80063",
+          "score": 1.2627769992969
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.243958032704291
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q4",
+      "sample_id": "王小明",
+      "question": "王小明和王小红今天拍到了什么好的照片吗？",
+      "answer": "王小明用相机拍了很多北卡尼奴峡谷的照片，姐姐用手机也记录了不少美好的瞬间。",
+      "anchors": [
+        "北卡尼奴峡谷"
+      ],
+      "score": 0.0,
+      "detail": "0/1 命中；未命中: ['北卡尼奴峡谷']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和张伟是大学时期的好朋友，经常一起参加篮球比赛和科技活动",
+          "layer": "semantic",
+          "source_ref": "e7df62d2-4ba8-44eb-9f5f-c51759c80063",
+          "score": 1.429325316056095
+        },
+        {
+          "text": "用户和好朋友张伟在2012年5月15日参加全国青年科技创新大赛并获得一等奖",
+          "layer": "semantic",
+          "source_ref": "c1115606-1115-4b39-b213-ffc4698260fe",
+          "score": 1.3432011073646157
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.110023133671897
+        },
+        {
+          "text": "用户对风筝冲浪运动感兴趣并刷新了比赛纪录",
+          "layer": "semantic",
+          "source_ref": "e064bbae-5ce1-4b31-8987-b5d21f5b85cc",
+          "score": 1.0711813933450922
+        },
+        {
+          "text": "用户与AI讨论了CAR-T细胞疗法可能面临的免疫反应和治疗成本挑战",
+          "layer": "semantic",
+          "source_ref": "fd98693b-1d80-418d-9158-126a9366066c",
+          "score": 1.0319875831488827
+        },
+        {
+          "text": "用户最近投资了一个项目并已获得回报",
+          "layer": "semantic",
+          "source_ref": "550bd267-7f2d-4c53-9a0d-9f9ed6aa0702",
+          "score": 1.0206924901487888
+        },
+        {
+          "text": "用户与张伟在2012年参加了一场篮球比赛并赢得胜利",
+          "layer": "semantic",
+          "source_ref": "87a84395-4694-4798-baf4-5921961bcf50",
+          "score": 0.9938407822300818
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q5",
+      "sample_id": "王小明",
+      "question": "王小明明天的计划是什么？",
+      "answer": "王小明明天准备去太阳城和其他地方，还希望能看到更多的动植物。",
+      "anchors": [
+        "太阳城",
+        "动植物"
+      ],
+      "score": 1.0,
+      "detail": "2/2 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和陈华计划在数学研究上合作，探索克莱因瓶相关的微分几何问题",
+          "layer": "semantic",
+          "source_ref": "262f2c13-7885-492f-9b1c-051cfa1bde9e",
+          "score": 1.3362976383273502
+        },
+        {
+          "text": "用户和姐姐明天计划去太阳城等地方，希望能看到更多动植物",
+          "layer": "episodic",
+          "source_ref": "8f131a06-5a4f-4838-844e-1bf8e579f64d",
+          "score": 1.3000000000000325
+        },
+        {
+          "text": "用户和刘丽是多年的同事，一起开发软件好几年，刘丽聪明友善",
+          "layer": "semantic",
+          "source_ref": "7421aef6-9790-4bbe-a872-a84d74da4076",
+          "score": 1.2718662506230076
+        },
+        {
+          "text": "用户与导师张文计划参加更高级别风筝冲浪比赛",
+          "layer": "semantic",
+          "source_ref": "ba3ba131-aaa7-4eee-9ec7-391f1423c071",
+          "score": 1.2387116232837752
+        },
+        {
+          "text": "用户和张伟是大学时期的好朋友，经常一起参加篮球比赛和科技活动",
+          "layer": "semantic",
+          "source_ref": "e7df62d2-4ba8-44eb-9f5f-c51759c80063",
+          "score": 1.2376795513459724
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.2218289135953058
+        },
+        {
+          "text": "用户最近提出将纳米颗粒和生物分子结合制作可注射药物的纳米颗粒的研究想法",
+          "layer": "semantic",
+          "source_ref": "02866f2c-d25f-4ab9-b9d7-412d5dba2b24",
+          "score": 0.9869037230655308
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q6",
+      "sample_id": "王小明",
+      "question": "王小明听说了什么展览？",
+      "answer": "王小明听说了一个绿盈居的环保家居作品的展览。",
+      "anchors": [
+        "绿盈居",
+        "环保家居作品"
+      ],
+      "score": 0.0,
+      "detail": "0/2 命中；未命中: ['绿盈居', '环保家居作品']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和陈华在2022年5月15日一起参观珠宝展览，欣赏Crystal Blossom项链",
+          "layer": "semantic",
+          "source_ref": "e8b36430-c2d7-4f84-93d1-d713d7d438ac",
+          "score": 1.43388172746561
+        },
+        {
+          "text": "用户对风筝冲浪运动感兴趣并刷新了比赛纪录",
+          "layer": "semantic",
+          "source_ref": "e064bbae-5ce1-4b31-8987-b5d21f5b85cc",
+          "score": 1.0646426535710458
+        },
+        {
+          "text": "用户最近投资了一个项目并已获得回报",
+          "layer": "semantic",
+          "source_ref": "550bd267-7f2d-4c53-9a0d-9f9ed6aa0702",
+          "score": 1.0142335391806812
+        },
+        {
+          "text": "张伟是一位优秀的软件工程师，用户曾与张伟在科技创新大赛上合作完成了一个创新的软件项目",
+          "layer": "semantic",
+          "source_ref": "c65ab892-6793-4537-a137-e7aec91779f1",
+          "score": 1.0087818701065727
+        },
+        {
+          "text": "用户与张伟在2012年参加了一场篮球比赛并赢得胜利",
+          "layer": "semantic",
+          "source_ref": "87a84395-4694-4798-baf4-5921961bcf50",
+          "score": 0.9871565330519458
+        },
+        {
+          "text": "去年5月10日用户和刘丽在某知名艺术馆参加了奥胖作品发布会，聆听了谢泼德·法里介绍创作过程，深受启发，并考虑在项目中加入艺术元素",
+          "layer": "semantic",
+          "source_ref": "01c99f47-2501-4aa1-b46d-bc02b97e7b21",
+          "score": 0.9747926385680574
+        },
+        {
+          "text": "用户和陈华讨论了Crystal Blossom项链由Xia Zhang设计师设计，注重细节",
+          "layer": "semantic",
+          "source_ref": "a4334510-0854-4ad6-a492-5ad927be5dbe",
+          "score": 0.9716325777169936
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q7",
+      "sample_id": "王小明",
+      "question": "王小明对展览中的什么产品特别感兴趣？",
+      "answer": "王小明对展览中采用了智能温控技术的环保空调系统特别感兴趣。",
+      "anchors": [
+        "智能温控技术",
+        "环保空调系统"
+      ],
+      "score": 1.0,
+      "detail": "2/2 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户对采用智能温控技术的环保空调系统感兴趣",
+          "layer": "semantic",
+          "source_ref": "09d4902b-9b29-451f-a7b1-161b2bdb2418",
+          "score": 1.678968822258042
+        },
+        {
+          "text": "用户对风筝冲浪运动感兴趣并刷新了比赛纪录",
+          "layer": "semantic",
+          "source_ref": "e064bbae-5ce1-4b31-8987-b5d21f5b85cc",
+          "score": 1.6553454478331835
+        },
+        {
+          "text": "用户对投资感兴趣，正积极学习投资知识并实践投资",
+          "layer": "semantic",
+          "source_ref": "2dea47a7-5318-4c4d-9dcc-f446be39552e",
+          "score": 1.6309702015311027
+        },
+        {
+          "text": "用户对贵金属纳米颗粒催化剂在氧化反应中的应用有研究和讨论",
+          "layer": "semantic",
+          "source_ref": "0e51c5c0-41ff-4033-b20c-7b0c0a25014c",
+          "score": 1.6189508121258953
+        },
+        {
+          "text": "用户和陈华在2022年5月15日一起参观珠宝展览，欣赏Crystal Blossom项链",
+          "layer": "semantic",
+          "source_ref": "e8b36430-c2d7-4f84-93d1-d713d7d438ac",
+          "score": 1.4656693977148492
+        },
+        {
+          "text": "用户了解CAR-T细胞疗法中Kymriah用于治疗B细胞急性淋巴细胞白血病的成功案例",
+          "layer": "semantic",
+          "source_ref": "e81b3cc6-6c3c-4b0f-90f2-3fb1eaac96f0",
+          "score": 1.3541516373165488
+        },
+        {
+          "text": "用户在绿盈居展览中看中采用了智能温控技术的环保空调系统",
+          "layer": "episodic",
+          "source_ref": "e9c11974-c94c-46ae-a486-ddd1a5f8bfe9",
+          "score": 1.19236023415531
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q8",
+      "sample_id": "王小明",
+      "question": "绿盈居的展览中的环保家居产品符合什么需求？",
+      "answer": "展览中的环保家居产品符合当今社会追求绿色生活和可持续发展的需求。",
+      "anchors": [
+        "绿色生活",
+        "可持续发展"
+      ],
+      "score": 0.0,
+      "detail": "0/2 命中；未命中: ['绿色生活', '可持续发展']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户邀请AI一同参观绿盈居环保家居展览",
+          "layer": "episodic",
+          "source_ref": "5592835a-be60-4c5d-8e98-fa290a27fcb5",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户对采用智能温控技术的环保空调系统感兴趣",
+          "layer": "semantic",
+          "source_ref": "09d4902b-9b29-451f-a7b1-161b2bdb2418",
+          "score": 1.0795319081098012
+        },
+        {
+          "text": "用户和陈华在2022年5月15日一起参观珠宝展览，欣赏Crystal Blossom项链",
+          "layer": "semantic",
+          "source_ref": "e8b36430-c2d7-4f84-93d1-d713d7d438ac",
+          "score": 1.0637836561056537
+        },
+        {
+          "text": "用户对贵金属纳米颗粒催化剂在氧化反应中的应用有研究和讨论",
+          "layer": "semantic",
+          "source_ref": "0e51c5c0-41ff-4033-b20c-7b0c0a25014c",
+          "score": 1.0345201411724114
+        },
+        {
+          "text": "用户了解CAR-T细胞疗法中Kymriah用于治疗B细胞急性淋巴细胞白血病的成功案例",
+          "layer": "semantic",
+          "source_ref": "e81b3cc6-6c3c-4b0f-90f2-3fb1eaac96f0",
+          "score": 1.0250562771482814
+        },
+        {
+          "text": "用户在绿盈居展览中看中采用了智能温控技术的环保空调系统",
+          "layer": "episodic",
+          "source_ref": "e9c11974-c94c-46ae-a486-ddd1a5f8bfe9",
+          "score": 0.9960886460716017
+        },
+        {
+          "text": "用户最近提出将纳米颗粒和生物分子结合制作可注射药物的纳米颗粒的研究想法",
+          "layer": "semantic",
+          "source_ref": "02866f2c-d25f-4ab9-b9d7-412d5dba2b24",
+          "score": 0.9425196324490563
+        },
+        {
+          "text": "用户曾向导师张文展示使用CRISPR基因编辑技术和病毒载体介导的基因转导改造T细胞的研究成果",
+          "layer": "semantic",
+          "source_ref": "b64bd762-6426-4c83-b88a-4881b2bd10f0",
+          "score": 0.9408907908385221
+        }
+      ]
+    },
+    {
+      "question_id": "王小明#q9",
+      "sample_id": "王小明",
+      "question": "为什么王小明要养更多绿植？",
+      "answer": "因为王小明在展览中看到绿植可以为室内增加湿度和净化空气。",
+      "anchors": [
+        "展览",
+        "绿植",
+        "室内",
+        "湿度",
+        "净化空气"
+      ],
+      "score": 0.0,
+      "detail": "0/5 命中；未命中: ['展览', '绿植', '室内', '湿度', '净化空气']",
+      "recalled_count": 5,
+      "recalled": [
+        {
+          "text": "用户叫王小明",
+          "layer": "pinned",
+          "source_ref": "d2b570f8-0f9b-4742-9edf-a16fede2cef3",
+          "score": 999.0
+        },
+        {
+          "text": "用户和姐姐明天计划去太阳城等地方，希望能看到更多动植物",
+          "layer": "episodic",
+          "source_ref": "8f131a06-5a4f-4838-844e-1bf8e579f64d",
+          "score": 1.3000000000000325
+        },
+        {
+          "text": "用户表示想学习更多投资知识，扩大视野，并已投资某个项目实现回报，会继续调整资产配置",
+          "layer": "episodic",
+          "source_ref": "3d0497a7-4fc4-4817-87f6-768548618bf9",
+          "score": 0.9896178154677638
+        },
+        {
+          "text": "用户与导师张文计划参加更高级别风筝冲浪比赛",
+          "layer": "semantic",
+          "source_ref": "ba3ba131-aaa7-4eee-9ec7-391f1423c071",
+          "score": 0.937442618800107
+        },
+        {
+          "text": "用户与导师张文商讨了更高级别比赛计划和训练目标",
+          "layer": "episodic",
+          "source_ref": "fd6afa35-8d7e-4dcb-b976-ce5e5c43803e",
+          "score": 0.30000000000000226
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q0",
+      "sample_id": "梁欣",
+      "question": "典礼上的氛围如何？",
+      "answer": "AI助手说整个典礼氛围很温馨，让人感觉非常温暖",
+      "anchors": [
+        "温馨",
+        "温暖"
+      ],
+      "score": 0.0,
+      "detail": "0/2 命中；未命中: ['温馨', '温暖']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户在工作坊中展示如何在经济增长的同时实现生态保护",
+          "layer": "semantic",
+          "source_ref": "4fc1fab1-cfc2-4c12-943c-ed84e8f1b6a6",
+          "score": 1.6472288631060528
+        },
+        {
+          "text": "用户梁欣喜欢在天气好的时候坐在室外座位上用餐",
+          "layer": "semantic",
+          "source_ref": "b69ea2fb-9147-406b-96d7-42871619f73b",
+          "score": 1.548911701236128
+        },
+        {
+          "text": "用户在工作坊中向参与者展示如何在经济增长的同时实现生态保护",
+          "layer": "episodic",
+          "source_ref": "389f9dca-ec35-4dda-aece-b426acb5a9dd",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户和李阳在吊桥上玩",
+          "layer": "episodic",
+          "source_ref": "01454202-b0f9-4d9c-a0c0-c579dadb9b90",
+          "score": 1.013628209567773
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 0.9699816558582735
+        },
+        {
+          "text": "导师张敏建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励利用案例分析提升实证性，用户赞同并计划融入论文",
+          "layer": "semantic",
+          "source_ref": "3b16b502-c083-4710-a086-689fb4a24f22",
+          "score": 0.9099932330754621
+        },
+        {
+          "text": "用户和李阳在草地上野餐，吃了三明治、饼干、蔬菜沙拉",
+          "layer": "episodic",
+          "source_ref": "197a60ab-dfff-44d6-9e5f-7a4c53541cf6",
+          "score": 0.8871513041911786
+        },
+        {
+          "text": "用户在川菜百科全书发布会上分享酒店管理经验和川菜文化",
+          "layer": "episodic",
+          "source_ref": "f842517e-d7aa-4693-88ae-85104b1afa88",
+          "score": 0.8871513041911786
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q1",
+      "sample_id": "梁欣",
+      "question": "典礼给梁明带来了什么期望和祝福？",
+      "answer": "梁欣说典礼充满了对未来的期望和祝福，梁明表现得非常出色",
+      "anchors": [
+        "未来",
+        "期望",
+        "祝福",
+        "出色"
+      ],
+      "score": 0.0,
+      "detail": "0/4 命中；未命中: ['未来', '期望', '祝福', '出色']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 1.8499994696562758
+        },
+        {
+          "text": "用户计划将舞蹈和健康相关内容分享给酒店客人",
+          "layer": "semantic",
+          "source_ref": "48d5a7d7-e63b-47f1-9d1c-ab3cdd41feee",
+          "score": 1.5253497116779366
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 1.455993410759758
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 1.337696170450951
+        },
+        {
+          "text": "用户梁欣自制冰凉草莓鸡尾酒并愿意分享给朋友",
+          "layer": "semantic",
+          "source_ref": "348c9f41-24cf-4160-818d-29e185abab77",
+          "score": 1.3367147376813517
+        },
+        {
+          "text": "用户与陈婷在培训中建立了深厚友谊",
+          "layer": "semantic",
+          "source_ref": "045cad92-1d5c-4d14-9fe2-40c96631143a",
+          "score": 1.2774124858761864
+        },
+        {
+          "text": "用户梁欣的花园在几个月内变得很美，用户注意在高温季节给植物浇水",
+          "layer": "semantic",
+          "source_ref": "694d5ec3-a302-4834-8994-1eb3ab2f3207",
+          "score": 1.2344944017118187
+        },
+        {
+          "text": "用户梁欣与张晓讨论军事心理学概念和方法，介绍尤金·O·卡西诺斯和心理操作策略",
+          "layer": "semantic",
+          "source_ref": "007af828-e0a3-4b81-b2e1-9fb39b487e1e",
+          "score": 1.1592425008596978
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q2",
+      "sample_id": "梁欣",
+      "question": "毕业典礼后有什么庆祝活动吗？",
+      "answer": "AI助手说毕业典礼结束后还有私人庆祝活动",
+      "anchors": [
+        "私人庆祝活动"
+      ],
+      "score": 0.0,
+      "detail": "0/1 命中；未命中: ['私人庆祝活动']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 1.6313702329851618
+        },
+        {
+          "text": "李明取得胜利后，用户和张琳一起庆祝并寄予美好祝愿",
+          "layer": "episodic",
+          "source_ref": "c75ed4eb-bd69-40a4-ab2e-b881400b702c",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户计划为王磊举办生日宴会，并已制定包含场地布置、食物、游戏和活动的庆祝计划",
+          "layer": "semantic",
+          "source_ref": "738a61fc-a13b-468f-b7b6-7a5b5ce4d7bb",
+          "score": 1.2887609697524345
+        },
+        {
+          "text": "用户梁欣提议在酒店项目中融入亚洲文化元素，包括摆放有寓意的花朵或图案、推广亚洲美食文化（请知名厨师举办品鉴活动）、营造仿古亚洲街景",
+          "layer": "semantic",
+          "source_ref": "092459e0-5c15-43b7-9ab5-12c45b62f461",
+          "score": 1.1739401789786632
+        },
+        {
+          "text": "用户有一个大学同学叫张琳，两人关系不错",
+          "layer": "semantic",
+          "source_ref": "0e241423-177f-4faa-8122-6d554636d6d8",
+          "score": 1.0936688469737716
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 1.0098022643182647
+        },
+        {
+          "text": "用户（梁欣）在2022年6月15日与张琳一起为李明的比赛提供支持和鼓励，包括张琳担任导师、表演乐器、帮助练习、拍摄照片、陪同比赛和庆祝胜利",
+          "layer": "semantic",
+          "source_ref": "4dcf63d0-d5e1-4056-b758-cb48bd520b03",
+          "score": 0.7899776166900906
+        },
+        {
+          "text": "用户梁欣参加亲戚梁明的毕业典礼，认为梁明今天帅呆了",
+          "layer": "episodic",
+          "source_ref": "72b1a2f4-0323-4998-9c92-fa3dda071184",
+          "score": 0.7730099570101618
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q3",
+      "sample_id": "梁欣",
+      "question": "庆祝活动在哪里举行？",
+      "answer": "梁欣说庆祝活动在市中心一家很有名的高档餐厅的包间里举行",
+      "anchors": [
+        "市中心",
+        "高档餐厅",
+        "包间"
+      ],
+      "score": 1.0,
+      "detail": "3/3 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户计划为王磊举办生日宴会，并已制定包含场地布置、食物、游戏和活动的庆祝计划",
+          "layer": "semantic",
+          "source_ref": "738a61fc-a13b-468f-b7b6-7a5b5ce4d7bb",
+          "score": 1.8499895726968092
+        },
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 1.4045308253258089
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 1.3538760365616858
+        },
+        {
+          "text": "用户梁欣提议在酒店项目中融入亚洲文化元素，包括摆放有寓意的花朵或图案、推广亚洲美食文化（请知名厨师举办品鉴活动）、营造仿古亚洲街景",
+          "layer": "semantic",
+          "source_ref": "092459e0-5c15-43b7-9ab5-12c45b62f461",
+          "score": 1.2625623143172953
+        },
+        {
+          "text": "用户（梁欣）在2022年6月15日与张琳一起为李明的比赛提供支持和鼓励，包括张琳担任导师、表演乐器、帮助练习、拍摄照片、陪同比赛和庆祝胜利",
+          "layer": "semantic",
+          "source_ref": "4dcf63d0-d5e1-4056-b758-cb48bd520b03",
+          "score": 1.2445256305299524
+        },
+        {
+          "text": "用户提议推广亚洲美食文化，请知名厨师举办品鉴活动",
+          "layer": "episodic",
+          "source_ref": "fcbe48f8-7336-44cc-bbb0-856ee1e1fdca",
+          "score": 1.1406508932275445
+        },
+        {
+          "text": "李明取得胜利后，用户和张琳一起庆祝并寄予美好祝愿",
+          "layer": "episodic",
+          "source_ref": "c75ed4eb-bd69-40a4-ab2e-b881400b702c",
+          "score": 1.0219741018986166
+        },
+        {
+          "text": "用户今天想为王磊组织一场盛大的生日宴会来庆祝",
+          "layer": "episodic",
+          "source_ref": "23b403b4-314c-4c4b-941c-54f533dd9444",
+          "score": 1.0219741018986166
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q4",
+      "sample_id": "梁欣",
+      "question": "这家餐厅的食物口味和服务如何？",
+      "answer": "AI助手说那里的食物口味不错，服务也非常棒",
+      "anchors": [
+        "食物口味",
+        "服务",
+        "不错",
+        "棒"
+      ],
+      "score": 0.25,
+      "detail": "1/4 命中；未命中: ['食物口味', '不错', '棒']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户计划为王磊举办生日宴会，并已制定包含场地布置、食物、游戏和活动的庆祝计划",
+          "layer": "semantic",
+          "source_ref": "738a61fc-a13b-468f-b7b6-7a5b5ce4d7bb",
+          "score": 1.777216377496643
+        },
+        {
+          "text": "用户在工作坊中展示如何在经济增长的同时实现生态保护",
+          "layer": "semantic",
+          "source_ref": "4fc1fab1-cfc2-4c12-943c-ed84e8f1b6a6",
+          "score": 1.6472288604573657
+        },
+        {
+          "text": "用户梁欣喜欢墨西哥菜品，尤其喜欢玛格丽塔餐厅的烟肉芝士墨西哥卷饼",
+          "layer": "semantic",
+          "source_ref": "e9a663ac-2a1f-48e8-ab7d-2c272f8cf57a",
+          "score": 1.505027085104693
+        },
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 1.4881419520042245
+        },
+        {
+          "text": "用户于2022年6月12日在上海某知名酒店主持酒店新项目会议，提出创新理念（高科技设备、个性化服务、独特客户体验），并与运营经理王磊紧密合作",
+          "layer": "semantic",
+          "source_ref": "be56b006-7d99-44cf-80b0-18930cedc40d",
+          "score": 1.3624440329635024
+        },
+        {
+          "text": "用户在工作坊中向参与者展示如何在经济增长的同时实现生态保护",
+          "layer": "episodic",
+          "source_ref": "389f9dca-ec35-4dda-aece-b426acb5a9dd",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户梁欣与张晓讨论军事心理学概念和方法，介绍尤金·O·卡西诺斯和心理操作策略",
+          "layer": "semantic",
+          "source_ref": "007af828-e0a3-4b81-b2e1-9fb39b487e1e",
+          "score": 1.1929600041737305
+        },
+        {
+          "text": "用户梁欣可以照顾邻居李佳诚的宠物（猫和狗）",
+          "layer": "semantic",
+          "source_ref": "7a988195-d0ff-4750-9a3d-8c69e223e033",
+          "score": 1.1511100579495113
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q5",
+      "sample_id": "梁欣",
+      "question": "Google翻译是否能够在旅行中使用？",
+      "answer": "是的，Google翻译可以在旅行中使用。它能够实时识别语言和翻译结果，让你在海外旅行时可以与本地人进行交流。同时，它还提供了数百个在线字典，确保你在旅行中有足够准确的翻译服务。",
+      "anchors": [
+        "Google翻译",
+        "旅行中使用",
+        "实时识别语言",
+        "翻译结果",
+        "海外旅行",
+        "本地人",
+        "在线字典",
+        "准确的翻译服务"
+      ],
+      "score": 0.0,
+      "detail": "0/8 命中；未命中: ['Google翻译', '旅行中使用', '实时识别语言', '翻译结果', '海外旅行', '本地人', '在线字典', '准确的翻译服务']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "导师建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励使用案例分析提升实证性",
+          "layer": "episodic",
+          "source_ref": "5c7dcaa6-a169-464f-ad28-29bd629029e0",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "导师张敏建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励利用案例分析提升实证性，用户赞同并计划融入论文",
+          "layer": "semantic",
+          "source_ref": "3b16b502-c083-4710-a086-689fb4a24f22",
+          "score": 1.2320673915058142
+        },
+        {
+          "text": "用户在工作坊中展示如何在经济增长的同时实现生态保护",
+          "layer": "semantic",
+          "source_ref": "4fc1fab1-cfc2-4c12-943c-ed84e8f1b6a6",
+          "score": 1.1845019527647334
+        },
+        {
+          "text": "用户与陈婷在培训中建立了深厚友谊",
+          "layer": "semantic",
+          "source_ref": "045cad92-1d5c-4d14-9fe2-40c96631143a",
+          "score": 1.1321993423509356
+        },
+        {
+          "text": "用户梁欣提议在酒店项目中融入亚洲文化元素，包括摆放有寓意的花朵或图案、推广亚洲美食文化（请知名厨师举办品鉴活动）、营造仿古亚洲街景",
+          "layer": "semantic",
+          "source_ref": "092459e0-5c15-43b7-9ab5-12c45b62f461",
+          "score": 1.0270282159624786
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 1.0110435596631906
+        },
+        {
+          "text": "用户与同事陈婷在恩加尔丘陵地区参加生态修复培训项目，分享酒店管理和可持续发展知识",
+          "layer": "semantic",
+          "source_ref": "3be60fd2-3386-454f-86e7-f94f9e944c8f",
+          "score": 0.9324634195159545
+        },
+        {
+          "text": "用户梁欣的花园在几个月内变得很美，用户注意在高温季节给植物浇水",
+          "layer": "semantic",
+          "source_ref": "694d5ec3-a302-4834-8994-1eb3ab2f3207",
+          "score": 0.8506747325712772
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q6",
+      "sample_id": "梁欣",
+      "question": "Google翻译除了旅行中使用外，还有哪些应用场景？",
+      "answer": "除了旅行，Google翻译还可在文本、邮件和简历上发挥重要作用。不管是在正式交流中，还是在将内容发布到社交媒体网站之前，Google翻译都可以帮助你修补语法错误和不自然的短语和构造，确保你的语言表达准确无误。在商务场合使用Google翻译时，尤其需要逐个调整输出内容，确保达到预期的效果。",
+      "anchors": [
+        "文本",
+        "邮件",
+        "简历",
+        "正式交流",
+        "社交媒体网站",
+        "语法错误",
+        "不自然的短语和构造",
+        "商务场合",
+        "输出内容",
+        "预期的效果"
+      ],
+      "score": 0.0,
+      "detail": "0/10 命中；未命中: ['文本', '邮件', '简历', '正式交流', '社交媒体网站', '语法错误', '不自然的短语和构造', '商务场合', '输出内容', '预期的效果']",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "导师张敏建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励利用案例分析提升实证性，用户赞同并计划融入论文",
+          "layer": "semantic",
+          "source_ref": "3b16b502-c083-4710-a086-689fb4a24f22",
+          "score": 1.3098847137052947
+        },
+        {
+          "text": "导师建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励使用案例分析提升实证性",
+          "layer": "episodic",
+          "source_ref": "5c7dcaa6-a169-464f-ad28-29bd629029e0",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户在工作坊中展示如何在经济增长的同时实现生态保护",
+          "layer": "semantic",
+          "source_ref": "4fc1fab1-cfc2-4c12-943c-ed84e8f1b6a6",
+          "score": 0.9342465239613974
+        },
+        {
+          "text": "用户与陈婷在培训中建立了深厚友谊",
+          "layer": "semantic",
+          "source_ref": "045cad92-1d5c-4d14-9fe2-40c96631143a",
+          "score": 0.9006106091681508
+        },
+        {
+          "text": "用户梁欣提议在酒店项目中融入亚洲文化元素，包括摆放有寓意的花朵或图案、推广亚洲美食文化（请知名厨师举办品鉴活动）、营造仿古亚洲街景",
+          "layer": "semantic",
+          "source_ref": "092459e0-5c15-43b7-9ab5-12c45b62f461",
+          "score": 0.8597429284574493
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 0.849974288408957
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施",
+          "layer": "episodic",
+          "source_ref": "c0a32dbc-1317-4f0e-a18d-d709d0209d39",
+          "score": 0.4359196520894541
+        },
+        {
+          "text": "用户梁欣与同事陈婷在恩加尔丘陵地区的生态修复培训项目中分享酒店管理知识和可持续发展实践",
+          "layer": "episodic",
+          "source_ref": "bc704dcb-a625-487a-a446-b687b29eebec",
+          "score": 0.4296635208308664
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q7",
+      "sample_id": "梁欣",
+      "question": "在2021年5月15日，梁明在智能建筑系统项目中担任了什么职位？",
+      "answer": "梁明是工程师，他负责整个系统的设计和实施。",
+      "anchors": [
+        "工程师"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 1.561128820811378
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施",
+          "layer": "episodic",
+          "source_ref": "c0a32dbc-1317-4f0e-a18d-d709d0209d39",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户（梁欣）在2022年6月15日与张琳一起为李明的比赛提供支持和鼓励，包括张琳担任导师、表演乐器、帮助练习、拍摄照片、陪同比赛和庆祝胜利",
+          "layer": "semantic",
+          "source_ref": "4dcf63d0-d5e1-4056-b758-cb48bd520b03",
+          "score": 1.0505809526298366
+        },
+        {
+          "text": "用户于2022年6月12日在上海某知名酒店主持酒店新项目会议，提出创新理念（高科技设备、个性化服务、独特客户体验），并与运营经理王磊紧密合作",
+          "layer": "semantic",
+          "source_ref": "be56b006-7d99-44cf-80b0-18930cedc40d",
+          "score": 1.0346638089018596
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 1.006561094575944
+        },
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 0.9867719742510431
+        },
+        {
+          "text": "导师张敏建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励利用案例分析提升实证性，用户赞同并计划融入论文",
+          "layer": "semantic",
+          "source_ref": "3b16b502-c083-4710-a086-689fb4a24f22",
+          "score": 0.9772147934602241
+        },
+        {
+          "text": "用户与同事陈婷在恩加尔丘陵地区参加生态修复培训项目，分享酒店管理和可持续发展知识",
+          "layer": "semantic",
+          "source_ref": "3be60fd2-3386-454f-86e7-f94f9e944c8f",
+          "score": 0.9680990282874429
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q8",
+      "sample_id": "梁欣",
+      "question": "梁明在选择IoT技术供应商和设备品牌方面起到了什么作用？",
+      "answer": "梁明紧密合作选择了华为、西门子和海康威视等供应商，他对供应商的了解很全面。",
+      "anchors": [
+        "梁明",
+        "华为",
+        "西门子",
+        "海康威视",
+        "供应商"
+      ],
+      "score": 1.0,
+      "detail": "5/5 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 1.7709639130643906
+        },
+        {
+          "text": "用户梁欣参加了亲戚梁明的毕业典礼，并预订市中心高档餐厅包间庆祝",
+          "layer": "semantic",
+          "source_ref": "a28d23f7-820a-4e5a-b841-215ca6bd3cf0",
+          "score": 1.4061169086917495
+        },
+        {
+          "text": "梁明与华为、西门子、海康威视等IoT供应商紧密合作，并与建筑和能源管理机构合作确保项目完成",
+          "layer": "episodic",
+          "source_ref": "22bd027a-79b3-4561-bc72-36fb07812c53",
+          "score": 1.3000000000000023
+        },
+        {
+          "text": "用户的男友李阳与用户一起去自然保护区游玩，进行了骑车、野餐、吊桥、湖边露营、篝火分享等活动",
+          "layer": "semantic",
+          "source_ref": "fe96b616-2509-4250-87f2-bcc12b0ad225",
+          "score": 1.1361371948244512
+        },
+        {
+          "text": "用户于2022年6月12日在上海某知名酒店主持酒店新项目会议，提出创新理念（高科技设备、个性化服务、独特客户体验），并与运营经理王磊紧密合作",
+          "layer": "semantic",
+          "source_ref": "be56b006-7d99-44cf-80b0-18930cedc40d",
+          "score": 1.1329100365354363
+        },
+        {
+          "text": "用户与陈婷在培训中建立了深厚友谊",
+          "layer": "semantic",
+          "source_ref": "045cad92-1d5c-4d14-9fe2-40c96631143a",
+          "score": 1.1318793149531328
+        },
+        {
+          "text": "用户与同事陈婷在恩加尔丘陵地区参加生态修复培训项目，分享酒店管理和可持续发展知识",
+          "layer": "semantic",
+          "source_ref": "3be60fd2-3386-454f-86e7-f94f9e944c8f",
+          "score": 1.0610227524585691
+        },
+        {
+          "text": "用户梁欣与张晓讨论军事心理学概念和方法，介绍尤金·O·卡西诺斯和心理操作策略",
+          "layer": "semantic",
+          "source_ref": "007af828-e0a3-4b81-b2e1-9fb39b487e1e",
+          "score": 0.9800925394730047
+        }
+      ]
+    },
+    {
+      "question_id": "梁欣#q9",
+      "sample_id": "梁欣",
+      "question": "在项目设计和实施过程中，梁明与哪些专业机构合作？",
+      "answer": "梁明经常与专业的建筑和能源管理机构合作，以确保项目顺利完成。",
+      "anchors": [
+        "建筑",
+        "能源管理"
+      ],
+      "score": 1.0,
+      "detail": "2/2 命中",
+      "recalled_count": 8,
+      "recalled": [
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施，并与华为、西门子、海康威视等IoT供应商以及建筑和能源管理机构合作",
+          "layer": "semantic",
+          "source_ref": "48d7e207-ed7b-4209-a90e-c9684f21406d",
+          "score": 1.849974288215173
+        },
+        {
+          "text": "用户的亲戚梁明在2021年5月15日智能建筑系统项目中担任工程师，负责系统设计和实施",
+          "layer": "episodic",
+          "source_ref": "c0a32dbc-1317-4f0e-a18d-d709d0209d39",
+          "score": 1.1754469128440854
+        },
+        {
+          "text": "用户与同事陈婷在恩加尔丘陵地区参加生态修复培训项目，分享酒店管理和可持续发展知识",
+          "layer": "semantic",
+          "source_ref": "3be60fd2-3386-454f-86e7-f94f9e944c8f",
+          "score": 1.1736594255254738
+        },
+        {
+          "text": "梁明与华为、西门子、海康威视等IoT供应商紧密合作，并与建筑和能源管理机构合作确保项目完成",
+          "layer": "episodic",
+          "source_ref": "22bd027a-79b3-4561-bc72-36fb07812c53",
+          "score": 1.12678610898263
+        },
+        {
+          "text": "用户于2022年6月12日在上海某知名酒店主持酒店新项目会议，提出创新理念（高科技设备、个性化服务、独特客户体验），并与运营经理王磊紧密合作",
+          "layer": "semantic",
+          "source_ref": "be56b006-7d99-44cf-80b0-18930cedc40d",
+          "score": 1.1096595052084006
+        },
+        {
+          "text": "导师张敏建议用户在博士论文中深入探讨亚洲文化在酒店管理中的应用，并鼓励利用案例分析提升实证性，用户赞同并计划融入论文",
+          "layer": "semantic",
+          "source_ref": "3b16b502-c083-4710-a086-689fb4a24f22",
+          "score": 1.055828014963799
+        },
+        {
+          "text": "用户与陈婷在培训中建立了深厚友谊",
+          "layer": "semantic",
+          "source_ref": "045cad92-1d5c-4d14-9fe2-40c96631143a",
+          "score": 1.0280616966564855
+        },
+        {
+          "text": "用户梁欣提议在酒店项目中融入亚洲文化元素，包括摆放有寓意的花朵或图案、推广亚洲美食文化（请知名厨师举办品鉴活动）、营造仿古亚洲街景",
+          "layer": "semantic",
+          "source_ref": "092459e0-5c15-43b7-9ab5-12c45b62f461",
+          "score": 1.0233653490187826
+        }
+      ]
+    }
+  ]
+}

@@ -56,16 +56,23 @@ def test_observe_then_retrieve_recalls_fact() -> None:
     mem.close()
 
 
-def test_pinned_always_injected_even_without_query_match() -> None:
+def test_pinned_dropped_when_query_unrelated_with_default_gate() -> None:
+    """pass-1 M13.3：默认开 pinned relevance gate；闲聊 query 与 pinned 无 jieba
+    共享词时，pinned **不再** 作为占位安慰品被注入（issue 003 主因 2）。
+
+    pre-pass-1 行为是 "pinned 永远附带"；本期默认改为 gate 过滤。要恢复旧行为
+    需显式 ``Memory(..., pinned_relevance_gate=False)``（切片 baseline 用），
+    见 ``test_pinned_gate.py``。
+    """
     reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户叫小明", "pinned": true}]}'
     mem = _memory(reply)
     mem.observe(_fragment("我叫小明"))
     mem.flush()
 
-    # query 与 pinned 无关，pinned 仍应注入
-    ctx = mem.retrieve("今天天气怎么样", persona_id="p1")
-    assert "用户叫小明" in ctx.rendered
-    assert any(i.layer == "pinned" for i in ctx.items)
+    # 长闲聊 query 与 "用户叫小明" 无 jieba 共享词 → pinned 砍掉
+    ctx = mem.retrieve("今天天气真好出去走走怎么样", persona_id="p1")
+    assert "用户叫小明" not in ctx.rendered
+    assert not any(i.layer == "pinned" for i in ctx.items)
     mem.close()
 
 

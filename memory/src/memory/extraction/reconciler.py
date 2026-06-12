@@ -49,25 +49,28 @@ class Reconciler:
         existing_facts: list[SemanticRow],
     ) -> ExtractionResult:
         now = datetime.now(UTC)
-        episodic_id: str | None = None
+        episodic_ids: list[str] = []
         provenance: list[str] = []
 
-        if output.episodic_summary:
-            episodic_id = str(uuid4())
+        if output.episodic_entries:
             occurred_at = fragment.utterances[-1].ts if fragment.utterances else now
-            self._store.add_episodic(  # type: ignore[attr-defined]
-                EpisodicRow(
-                    id=episodic_id,
-                    summary=output.episodic_summary,
-                    source_ref=_fragment_source_ref(fragment),
-                    persona_id=fragment.persona_id,
-                    occurred_at=occurred_at,
-                    created_at=now,
-                    importance=0.5,
-                    owner_user_id=fragment.owner_user_id,
+            source_ref = _fragment_source_ref(fragment)
+            for entry in output.episodic_entries:
+                ep_id = str(uuid4())
+                self._store.add_episodic(  # type: ignore[attr-defined]
+                    EpisodicRow(
+                        id=ep_id,
+                        summary=entry,
+                        source_ref=source_ref,
+                        persona_id=fragment.persona_id,
+                        occurred_at=occurred_at,
+                        created_at=now,
+                        importance=0.5,
+                        owner_user_id=fragment.owner_user_id,
+                    )
                 )
-            )
-            provenance = [episodic_id]
+                episodic_ids.append(ep_id)
+            provenance = list(episodic_ids)
 
         added: list[str] = []
         superseded: list[str] = []
@@ -102,7 +105,7 @@ class Reconciler:
 
         return ExtractionResult(
             session_id=fragment.session_id,
-            episodic_id=episodic_id,
+            episodic_ids=episodic_ids,
             added_semantic=added,
             superseded_semantic=superseded,
         )

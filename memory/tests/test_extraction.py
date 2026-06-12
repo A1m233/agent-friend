@@ -49,22 +49,36 @@ def _extractor(reply: str) -> Extractor:
 
 def test_extractor_parses_add_and_supersede() -> None:
     reply = (
-        '{"episodic_summary": "用户分享养猫",'
+        '{"episodic_entries": ["用户分享养猫"],'
         ' "semantic_ops": ['
         '{"op": "add", "statement": "用户养了猫Tom", "importance": 0.7, "pinned": false, "speaker_origin": "user"},'
         '{"op": "supersede", "target_hint": "用户在腾讯工作", "statement": "用户在字节工作"}'
         "]}"
     )
     out = _extractor(reply).extract(_fragment(("user", "我养了猫")), [])
-    assert out.episodic_summary == "用户分享养猫"
+    assert out.episodic_entries == ["用户分享养猫"]
     assert len(out.semantic_ops) == 2
     assert out.semantic_ops[0].op == "add"
     assert out.semantic_ops[1].op == "supersede"
     assert out.semantic_ops[1].target_hint == "用户在腾讯工作"
 
 
+def test_extractor_legacy_episodic_summary_falls_back_to_single_entry() -> None:
+    """旧 prompt 输出 ``episodic_summary: str`` 仍应被解析（兼容性）。"""
+    reply = '{"episodic_summary": "用户分享养猫", "semantic_ops": []}'
+    out = _extractor(reply).extract(_fragment(("user", "x")), [])
+    assert out.episodic_entries == ["用户分享养猫"]
+
+
+def test_extractor_legacy_episodic_summary_null_yields_empty_entries() -> None:
+    reply = '{"episodic_summary": null, "semantic_ops": []}'
+    out = _extractor(reply).extract(_fragment(("user", "x")), [])
+    assert out.episodic_entries == []
+    assert out.is_noop()
+
+
 def test_extractor_strips_code_fence() -> None:
-    reply = '```json\n{"episodic_summary": null, "semantic_ops": []}\n```'
+    reply = '```json\n{"episodic_entries": [], "semantic_ops": []}\n```'
     out = _extractor(reply).extract(_fragment(("user", "hi")), [])
     assert out.is_noop()
 
@@ -109,7 +123,7 @@ class FakeStore:
 def test_reconciler_add_applies_user_said_bonus() -> None:
     store = FakeStore()
     out = ExtractionOutput(
-        episodic_summary="摘要",
+        episodic_entries=["摘要"],
         semantic_ops=[
             SemanticOp(op="add", statement="用户喜欢猫", importance=0.5, speaker_origin="user")
         ],
@@ -120,13 +134,40 @@ def test_reconciler_add_applies_user_said_bonus() -> None:
     assert abs(store.semantics[0].importance - 0.65) < 1e-9  # 0.5 + 0.15 user 加成
     assert len(store.episodics) == 1
     assert result.added_semantic == ["用户喜欢猫"]
-    assert result.episodic_id is not None
+    assert len(result.episodic_ids) == 1
+
+
+def test_reconciler_writes_one_episodic_per_entry() -> None:
+    """多条 episodic_entries 应各自写一行 EpisodicRow，episodic_ids 累积全部。"""
+    store = FakeStore()
+    out = ExtractionOutput(
+        episodic_entries=["条目一", "条目二", "条目三"],
+        semantic_ops=[],
+    )
+    result = Reconciler(store).apply(out, _fragment(("user", "x")), [])
+
+    assert len(store.episodics) == 3
+    assert len(result.episodic_ids) == 3
+    # 每条 episodic 的 id 都不同
+    assert len({ep.id for ep in store.episodics}) == 3  # type: ignore[attr-defined]
+
+
+def test_reconciler_semantic_provenance_links_all_episodics() -> None:
+    """多条 episodic 时，semantic.provenance 应包含全部 episodic_id。"""
+    store = FakeStore()
+    out = ExtractionOutput(
+        episodic_entries=["e1", "e2"],
+        semantic_ops=[SemanticOp(op="add", statement="某事实", speaker_origin="user")],
+    )
+    result = Reconciler(store).apply(out, _fragment(("user", "x")), [])
+    assert len(store.semantics) == 1
+    assert sorted(store.semantics[0].provenance) == sorted(result.episodic_ids)
 
 
 def test_reconciler_agent_said_no_bonus() -> None:
     store = FakeStore()
     out = ExtractionOutput(
-        episodic_summary=None,
+        episodic_entries=[],
         semantic_ops=[SemanticOp(op="add", statement="x", importance=0.5, speaker_origin="agent")],
     )
     Reconciler(store).apply(out, _fragment(("agent", "...")), [])
@@ -139,7 +180,7 @@ def test_reconciler_supersede_matches_existing() -> None:
         id="old", statement="用户在腾讯工作", persona_id="p1", created_at=_now(), updated_at=_now()
     )
     out = ExtractionOutput(
-        episodic_summary=None,
+        episodic_entries=[],
         semantic_ops=[
             SemanticOp(op="supersede", statement="用户在字节工作", target_hint="用户在腾讯工作")
         ],
@@ -154,7 +195,7 @@ def test_reconciler_supersede_matches_existing() -> None:
 def test_reconciler_supersede_no_match_degrades_to_add() -> None:
     store = FakeStore()
     out = ExtractionOutput(
-        episodic_summary=None,
+        episodic_entries=[],
         semantic_ops=[SemanticOp(op="supersede", statement="新事实", target_hint="不存在的旧事实")],
     )
     result = Reconciler(store).apply(out, _fragment(("user", "x")), [])
@@ -169,7 +210,7 @@ def test_worker_processes_and_callbacks() -> None:
     from memory.extraction import AsyncExtractionWorker
 
     store = FakeStore()
-    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养猫"}]}'
+    reply = '{"episodic_entries": [], "semantic_ops": [{"op": "add", "statement": "用户养猫"}]}'
     extractor = _extractor(reply)
     results: list[ExtractionResult] = []
     worker = AsyncExtractionWorker(store, extractor, Reconciler(store), on_extracted=results.append)  # type: ignore[arg-type]

@@ -37,14 +37,21 @@ class SemanticOp:
 
 @dataclass(frozen=True)
 class ExtractionOutput:
-    """对一个 fragment 抽取后、解析好的 LLM 产物。"""
+    """对一个 fragment 抽取后、解析好的 LLM 产物。
 
-    episodic_summary: str | None
+    Attributes:
+        episodic_entries: 这段对话发生了什么的具体记录列表（每条含原话里的具体词；
+            issue 003 root cause——旧 prompt 把对话压成单条话题摘要导致下游召回失败）。
+            空表示没什么可记的。
+        semantic_ops: 提议落库的语义事实操作。
+    """
+
+    episodic_entries: list[str] = field(default_factory=list)
     semantic_ops: list[SemanticOp] = field(default_factory=list)
 
     def is_noop(self) -> bool:
-        """既没有可记的情节摘要、也没有语义操作。"""
-        return not self.episodic_summary and not self.semantic_ops
+        """既没有可记的情节条目、也没有语义操作。"""
+        return not self.episodic_entries and not self.semantic_ops
 
 
 @dataclass(frozen=True)
@@ -52,9 +59,9 @@ class ExtractionResult:
     """一次抽取真正落库的结果，供 observability（design §8）。"""
 
     session_id: str
-    episodic_id: str | None = None
+    episodic_ids: list[str] = field(default_factory=list)
     added_semantic: list[str] = field(default_factory=list)  # "statement" 文本
     superseded_semantic: list[str] = field(default_factory=list)  # 旧 statement 文本
 
     def is_empty(self) -> bool:
-        return self.episodic_id is None and not self.added_semantic and not self.superseded_semantic
+        return not self.episodic_ids and not self.added_semantic and not self.superseded_semantic

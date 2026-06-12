@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING
 
 from .contracts import DEFAULT_OWNER_USER_ID, MemoryContext
 from .extraction import AsyncExtractionWorker
-from .retrieval import Renderer, ScoreWeights, rank
+from .retrieval import Renderer, ScoreWeights, pinned_gate, rank
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .contracts import ConversationFragment
     from .extraction import ExtractionResult, Extractor, Reconciler
-    from .retrieval import Candidate, RetrievalStrategy
+    from .retrieval import Candidate, GateMode, RetrievalStrategy
     from .store import SqliteMemoryStore
 
 __all__ = ["Memory"]
@@ -47,6 +47,13 @@ class Memory:
         on_extracted: 抽取完成回调（observability）。
         owner_user_id: 多 user 预留维度，v1 固定。
         top_k: 召回注入条目上限。
+        pinned_relevance_gate: 是否启用 pinned relevance gate（pass-1 M13.3，
+            issue 003 主因 2）。``True``（默认）→ 用 :func:`pinned_gate` 按 query
+            相关性过滤 pinned；``False`` → pre-pass-1 行为（pinned 全量注入）。
+            切片 baseline 关此开关用作对照。
+        pinned_gate_mode: gate 阈值档位（``strict`` / ``lenient``，详见
+            :data:`memory.retrieval.GateMode`）。仅 ``pinned_relevance_gate=True``
+            时生效。
     """
 
     def __init__(
@@ -61,6 +68,8 @@ class Memory:
         on_extracted: Callable[[ExtractionResult], None] | None = None,
         owner_user_id: str = DEFAULT_OWNER_USER_ID,
         top_k: int = _RETRIEVE_TOP_K,
+        pinned_relevance_gate: bool = True,
+        pinned_gate_mode: GateMode = "lenient",
     ) -> None:
         self._store = store
         self._retrieval = retrieval
@@ -68,6 +77,8 @@ class Memory:
         self._weights = weights or ScoreWeights()
         self._owner = owner_user_id
         self._top_k = top_k
+        self._pinned_gate_enabled = pinned_relevance_gate
+        self._pinned_gate_mode: GateMode = pinned_gate_mode
         self._worker = AsyncExtractionWorker(
             store, extractor, reconciler, on_extracted=on_extracted
         )
@@ -97,6 +108,14 @@ class Memory:
         now = datetime.now(UTC)
 
         pinned = self._store.pinned(owner_user_id=owner, persona_id=persona_id)
+        if self._pinned_gate_enabled:
+            pinned = pinned_gate(
+                query,
+                pinned,
+                store=self._store,
+                owner_user_id=owner,
+                mode=self._pinned_gate_mode,
+            )
 
         recalled: list[tuple[Candidate, float]] = []
         if self._retrieval is not None and query.strip():
