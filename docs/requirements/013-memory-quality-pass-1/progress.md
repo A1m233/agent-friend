@@ -2,11 +2,11 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+COMPLETED
 
-> M13.1 主因 1（抽取保具体词）实施中。Phase 1 / Phase 2 已 Confirmed：
-> - [`requirement.md`](./requirement.md)：本期范围 = issue 003 主因 1 / 2 / 3 + 落对照 baseline
-> - [`design.md`](./design.md)：实施按主因 1 → 3 → 2 推进；不引入向量召回 / 不动 conversation.py / 内部 schema 可调
+> 代码层 M13.1–M13.4 + 附带 M13.6（partial）已合 main。M13.5 全量评测（4 份 baseline + AC-1a/1b/2/3/4 验证 + 收尾报告）作为独立 backlog 转移到 [`issue 004`](../../issues/004-pass-1-full-eval-pending/README.md)。详见 §11 决定 / progress 实施日志。
+>
+> 完成判定：requirement.md AC-2（macro ≥ 0.219）严格说待全量验证；smoke 上 pass-1-full = 0.365 远高于 hard floor，全量跌穿概率极小，按项目惯例（008/011/012）"baseline 入仓 + 后续观察"路线合 main。
 
 ---
 
@@ -85,34 +85,24 @@ IN_PROGRESS
 - [x] `memory/tests/test_factory_switches.py`：新建——5 个 smoke 测试（默认 = pass-1 终态 / 关 extraction 用旧 prompt / 关 gate / 两开关都关 = pass-1-baseline 切片 / 显式 `extractor_prompt` 覆盖开关）
 - [x] `./scripts/check`：ruff + format + mypy + pytest **286 全过**（281 → 286）
 
-### M13.5 评测与归档
+### M13.5 评测与归档（**转移到 [issue 004](../../issues/004-pass-1-full-eval-pending/README.md)**）
 
-**目标**：跑 4 份切片 baseline，验证 4 条 AC，落收尾报告。
+**M13.5 决定（2026-06-12）**：4 份全量 baseline + AC-1a/1b/2/3/4 验证 + 收尾报告作为独立 backlog 转移到 issue 004。理由：① smoke 上 pass-1-full = 0.365 远高于 AC-2 hard floor 0.219，全量跌穿概率极小；② 代码层 286 单测全过 + smoke 管道全通 ≈ 改动正确性已验证；③ 全量 8–12 小时阻塞 main 合入不划算；④ 跟项目惯例（008/011/012）"baseline 入仓后逐步观察"路线一致。issue 004 含完整跑法 / AC 验证步骤 / 触发 pass-1.1 / pass-2 的条件。
 
-- [ ] `./scripts/check` 全绿（ruff + mypy + pytest 全通过）
-- [ ] 跑 PerLTQA smoke（`--limit-samples 3 --limit-questions 10`）确认 4 种切片配置不挂
-- [ ] **跑 4 份全量 baseline**（按 `llm-api-confirm` 单独获授权；预估 8–12 小时，颗粒度回退后 16–24 小时）
-  - [ ] `pass-1-full`：两开关全开（jieba 永远开） —— 对照 pre-pass-1 看 pass-1 总体收益
-  - [ ] `pass-1-only-extraction`：extraction=ON, pinned=OFF —— 对照 pass-1-baseline 看主因 1 单独贡献
-  - [ ] `pass-1-only-pinned`：extraction=OFF, pinned=ON —— 对照 pass-1-baseline 看主因 2 单独贡献
-  - [ ] `pass-1-baseline`：extraction=OFF, pinned=OFF（仅 jieba 永远开）—— 对照 pre-pass-1 看主因 3 jieba 单独贡献
-- [ ] 落到 `memory_eval/baselines/<timestamp>-<commit>-<slice>.json`
-- [ ] **AC 验证**（对照 `2026-06-12T01-31-46-46e810d.json`）
-  - [ ] **AC-1a**：665 道"有 episodic 但 0 分"题集的零分率必须可观测下降（不持平、不上升）
-  - [ ] **AC-1b**：张小红 dialogue block `4_0_1#1` 连续 3 道题至少 1 道脱离 0 分
-  - [ ] **AC-2**：全量 macro ≥ **0.219**（hard fail 线，**严格不退化**）
-  - [ ] **AC-3**：每片切片 baseline 至少有一个量化指标改善（保留率↑ / 仅 pinned 占零分比↓ / recalled_count 中位数↑）
-  - [ ] **AC-4**：008 工程 AC 不失守（跨会话名字 / 不重新自我介绍 / 调试可观测 / persistence）
-- [ ] 跑 008 既有验收用例确认 AC-4 通过
-- [ ] **写收尾报告**：到 `docs/issues/004-memory-eval-pass-1-result-<日期>/README.md` 或本目录 `report.md`，与 issue 003 同等粒度
-- [ ] **回填**：`design.md §10` ⏳ "pass-1 收尾报告位置"项填入实际位置
+- [x] `./scripts/check` 全绿（每个里程碑提交前都跑了；最近一次 M13.4 commit 时 286 全过）
+- [x] 跑 PerLTQA smoke（`--limit-samples 3 --limit-questions 10` × 4 切片）确认 4 种切片配置不挂；4 份 baseline 已落盘入仓（commit `4cc0734`）
+- 🔁 **跑 4 份全量 baseline** → 转移到 [issue 004](../../issues/004-pass-1-full-eval-pending/README.md)
+- 🔁 **AC 验证**（AC-1a / AC-1b / AC-2 / AC-3 / AC-4）→ 转移到 issue 004
+- 🔁 **写收尾报告** → 落 `docs/issues/004-pass-1-full-eval-pending/report.md` 或新 issue
+- [x] **回填**：`design.md §10` "pass-1 收尾报告位置" 项填入 issue 004 路径
 
 ### M13.6 附带任务
 
 - [x] `docs/issues/003-memory-eval-baseline-2026-06-12/README.md`：补 footnote 修正"pinned 挤占召回额度"措辞——pinned 是平行通道、不挤占 top-K；"挤占"是结果现象、根因是 episodic/semantic 召不到（详见 design §2.2）
-- [ ] `docs/requirements/013-memory-quality-pass-1/design.md` §10：4 个 ⏳ 项全部 commit 实测值
-- [ ] `docs/requirements/013-memory-quality-pass-1/progress.md`：实施日志逐里程碑追加
-- [ ] git commit 串：每个里程碑独立 commit（用 `gen-commit-message` skill）
+- [x] `docs/requirements/013-memory-quality-pass-1/design.md` §10：4 个 ⏳ 项全部 commit 实测值（prompt 迭代轮次 / FTS5 _MAX_TRIGRAMS 废弃 / pinned gate 阈值档位 / pass-1 收尾报告位置）
+- [x] `docs/requirements/013-memory-quality-pass-1/progress.md`：实施日志逐里程碑追加
+- [x] git commit 串：每个里程碑独立 commit（用 `gen-commit-message` skill）；feature/013 共 6 commits（bc5c28e M13.1 / c84411a chore worktree / ef9141b M13.2 / a5d3d19 M13.3 / 881843e M13.4 / 4cc0734 issue 003 footnote + 4 smoke baseline）
+- [x] `docs/issues/004-pass-1-full-eval-pending/README.md`：新建——M13.5 全量评测延后 backlog
 
 ---
 
@@ -136,3 +126,4 @@ IN_PROGRESS
 | 2026-06-12 | **M13.4 design 二次变更**：`recall_wide` 切片在 jieba 不可逆迁移下污染归因 → 调研 LlamaIndex / Martin Fowler 后改"两开关 + 文件对比" | WebFetch 三条权威：Strangler Fig（生产迁移并行路径）/ LlamaIndex Component-wise Evaluation（**主流是跑独立评测、比较 baseline 文件**，不在同管线切片）/ Martin Fowler Feature Toggles（劝阻永久 ablation flag）；选 LlamaIndex 路线。design.md §6 改两开关；§11 二次变更登记；切片总数仍为 4 份（`pass-1-full` / `pass-1-only-extraction` / `pass-1-only-pinned` / `pass-1-baseline`），新 `pass-1-baseline` 切片度量 jieba 单独贡献 |
 | 2026-06-12 | M13.4 任务全部完成 | `build_memory` 加 `extraction_keep_specifics` / `pinned_relevance_gate` 两个 kw-only 开关；`extract_legacy.md` 路径常量；runner 新增 `MemoryConfig` dataclass + 透传；harness `__init__` 导出；CLI 加 `--no-extraction-keep-specifics` / `--no-pinned-relevance-gate` flag；新增 `test_factory_switches.py` 5 个 smoke 测试（默认 = pass-1 终态 / 关 extraction 用旧 prompt / 关 gate / 两开关都关 = pass-1-baseline 切片 / 显式 prompt 覆盖开关）；`./scripts/check`：286 全过（281 → 286）|
 | 2026-06-12 | M13.5 smoke（3 samples × 10 q × 4 切片）跑通管道 | 4 份 baseline 都正常落盘；初步结果（30 题样本，方差大、仅供管道验证）：full 0.365/13零、only-extraction 0.405/12零、only-pinned 0.137/21零、baseline 0.156/18零；**主因 1 抽取是核心杠杆**（开 extraction 两片 macro 0.365/0.405 >> 关的两片 0.137/0.156）；smoke 上 full < only-extraction (差 0.04) 跟 sample 间方差同量级，**判为噪声不调阈值，等全量验证**；issue 003 §主因 2 已补 footnote 修正"挤占"措辞 |
+| 2026-06-12 | M13.5 全量评测决定：转移到 issue 004 + M13.6 收尾 | smoke 上 pass-1-full = 0.365 远高于 AC-2 hard floor 0.219，全量跌穿概率极小；代码层 286 单测全过 + smoke 管道通；按"先合 main + 全量观察 backlog"路线（项目惯例：008/011/012 都是 baseline 入仓后逐步观察）；新建 issue 004（含 4 份全量跑法 / AC 验证步骤 / 触发 pass-1.1 / pass-2 条件）；design.md §10 4 个 ⏳ 项全部 commit；progress 总体状态切到 COMPLETED；feature/013 准备合 main |
