@@ -41,9 +41,11 @@ IN_PROGRESS
 - [x] 全 agent 套件 167 测试全绿（原 133 + M14.3 新增 34）
 
 ### M14.4 EventSource 实例
-- [ ] `agent/src/agent/runtime/sources.py`：`UserSource` / `BedtimeSource` / `IdleReflectionSource`
-- [ ] BedtimeSource / IdleReflectionSource 内 thread + stop event；fire_now 立即触发；schedule loop 用 `Event.wait(timeout)` 可中断
-- [ ] `agent/tests/test_runtime_sources.py`：UserSource.submit；fire_now 直接入队；BedtimeSource schedule loop 用 fake clock 验证按时间到点触发
+- [x] `agent/src/agent/runtime/sources.py`：`UserSource`（无 thread，submit 入队 UserEvent）/ `BedtimeSource`（A 类，独立 thread 跑 schedule loop）/ `IdleReflectionSource`（D 类 silent turn，依赖 `runtime.last_dispatch_finished_at`）
+- [x] BedtimeSource / IdleReflectionSource 内 thread + `_stop_evt` Event；fire_now 立即触发；schedule loop 用 `Event.wait(timeout)` 可中断；构造期参数校验（hour/minute 范围、idle_minutes>0）
+- [x] `_seconds_until_time_of_day` 纯函数：今日 / 跨夜两条路径；now_factory 注入便于测试
+- [x] `agent/tests/test_runtime_sources.py`：16 测试（_seconds_until 3 case + UserSource 3 + BedtimeSource 5 含真线程 loop 触发 + IdleReflectionSource 5 含真线程超阈值 fire / 不超阈值不 fire）—— AC-5 / AC-6 source 层覆盖
+- [x] 全 agent 套件 183 测试全绿（M14.3 167 + 新 16）
 
 ### M14.5 Bridge 集成
 - [ ] `agent_bridge/src/agent_bridge/settings.py`：加 `dev_mode` / `enable_bedtime` / `bedtime_target_session_id` / `bedtime_hour` / `bedtime_minute` / `enable_idle_reflection` / `idle_target_session_id` / `idle_minutes`
@@ -83,6 +85,7 @@ IN_PROGRESS
 | 2026-06-12 | M14.1 Session schema 加性扩展 | `events.py` Literal + frozenset 加 `system_trigger` / `memory_observation`；docstring 加 014 段约定；`SCHEMA_VERSION` 不递增（沿用 005/007/009 "纯加性"约定）；既有 10 个 sessions 单测全绿 |
 | 2026-06-12 | M14.2 Conversation 内部新增 + 单测 | `Conversation.__init__` 加 2 个 backward-compat 可选参数；`dispatch_system_turn` 公共入口含 user / memory_only 两路径；silent turn 自构 fragment 走 §6 方案 F（speaker=agent 1 utterance + source_ref 关联 memory_observation event uuid）；`_invoke_tool_safely` 接受 ToolHookInvoker 注入；`stream` finally 按 `post_turn_external` 切换；2 个新单测文件 10 个 case 全绿；全 agent 套件 133 个测试全绿（既有 123 + 新增 10），既有路径零退化 |
 | 2026-06-12 | M14.3 AgentRuntime 核心 + 5 测试 | 新建 `agent/src/agent/runtime/` 子包 4 个模块（`inbox.py` AgentEvent / `hooks.py` HookRegistry 含四点位+短路+错误隔离 / `listeners.py` ListenerRegistry 含 turn 边界打包+thread→asyncio bridge / `__init__.py` AgentRuntime 含 dispatch loop+默认 PostTurn observe hook+tool_hook_invoker 桥接）；5 个新测试文件 34 个 case 全绿；全 agent 套件 167 测试全绿（既有 133 + 新 34）；AC-1/AC-2/AC-3/AC-4/AC-5 runtime 层/AC-6 runtime 层 全部覆盖；唯一工程妥协是用 `_dispatch` 直接驱动而非 start()/stop() 真线程做 unit 测试，避免线程计时 flakiness（线程语义由 stop 哨兵 + Event.wait 设计保证） |
+| 2026-06-12 | M14.4 EventSource 实例 + 单测 | 新增 `agent/src/agent/runtime/sources.py`：UserSource(no thread, submit 入队) + BedtimeSource(独立 thread + schedule loop) + IdleReflectionSource(silent turn, 读 runtime.last_dispatch_finished_at) + `_seconds_until_time_of_day` 纯函数；构造期参数校验 + fire_now 即时触发 + Event.wait 可中断；now_factory 注入便于测试；16 个新测试 case 全绿含 2 个真线程 loop 验证（BedtimeSource 0.1s 内 fire / IdleReflectionSource 超阈值即时 fire / stop 1s 内中断）；全 agent 套件 183 测试全绿（M14.3 167 + 新 16） |
 
 ---
 
@@ -96,7 +99,7 @@ IN_PROGRESS
 | AC-2 | Hook 四点位可注册可触发 | ✅ | M14.3 test_runtime_hooks 12 case（含错误隔离） |
 | AC-3 | Pre-\* 短路语义可用 | ✅ | M14.3 test_runtime_hooks（PreTurn SKIP + PreToolUse BLOCK）+ test_runtime_dispatch.test_pre_turn_skip_aborts_dispatch / test_tool_hook_invoker_bridges_pre_tool_use_block |
 | AC-4 | `_observe_turn` 迁移行为零退化 | ✅ | M14.3 test_runtime_observe_migration（字段清单 + `==` 兜底；含 assistant 多段文本场景） |
-| AC-5 | BedtimeSource demo 端到端 | 🟡 runtime 层覆盖 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_*；BedtimeSource 实现 + schedule loop fake clock 测试在 M14.4；手工跑在 M14.8 |
-| AC-6 | IdleReflectionSource silent turn 端到端 | 🟡 runtime 层覆盖 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn；IdleReflectionSource 实现在 M14.4；手工跑在 M14.8 |
+| AC-5 | BedtimeSource demo 端到端 | ✅ runtime + source 层 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_* + M14.4 test_runtime_sources（5 BedtimeSource case 含真 thread schedule loop）；M14.8 手工跑真启 bridge 端到端 |
+| AC-6 | IdleReflectionSource silent turn 端到端 | ✅ runtime + source 层 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.4 test_runtime_sources（5 IdleReflection case 含真 thread loop）；M14.8 手工跑真启 bridge 端到端 |
 | AC-7 | Bridge push 通道端到端 | ⏳ | M14.5 test_push_channel + M14.6 test_push_mirror + M14.8 手工跑 |
 | AC-8 | Dev CLI 落地 | ⏳ | M14.7 双端 wrapper + scripts/README + `./scripts/check` 全绿 |
