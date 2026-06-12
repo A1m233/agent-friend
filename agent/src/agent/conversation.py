@@ -32,7 +32,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from llm_providers import (
@@ -41,7 +41,7 @@ from llm_providers import (
     LLMToolCallDelta,
     LLMTurnDone,
 )
-from memory import Memory, MemoryContext
+from memory import ConversationFragment, Memory, MemoryContext, Utterance
 
 from .context import (
     BuildResult,
@@ -68,6 +68,10 @@ from .tools import ToolRegistry, ToolResult
 if TYPE_CHECKING:
     LLMClientFactory = Callable[[str], LLMClient]
     PromptBuilderFactory = Callable[[str], PromptBuilder]
+
+
+# 014: tool-hook 注入点。AgentRuntime 装配时传入；None 时 _invoke_tool_safely 走原行为。
+ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
 
 
 MAX_TOOL_TURNS_DEFAULT = 5
@@ -128,6 +132,8 @@ class Conversation:
         catalog: PersonaCatalog | None = None,
         memory: Memory | None = None,
         tool_registry: ToolRegistry | None = None,
+        tool_hook_invoker: ToolHookInvoker | None = None,
+        post_turn_external: bool = False,
     ):
         self._session = session
         self._store = store
@@ -139,6 +145,9 @@ class Conversation:
         self._catalog = catalog or PersonaCatalog()
         self._memory = memory
         self._tool_registry = tool_registry
+        # 014: tool hook 与 PostTurn 外接（由 AgentRuntime 装配时打开）
+        self._tool_hook_invoker = tool_hook_invoker
+        self._post_turn_external = post_turn_external
         self._max_tool_turns = _resolve_max_tool_turns()
         self._last_memory_context: MemoryContext | None = None
         # 009 M1：上下文管理的会话级运行时状态
@@ -390,7 +399,117 @@ class Conversation:
                     model_snapshot=model_snapshot,
                 )
             else:
-                self._observe_turn(turn_start_idx)
+                if not self._post_turn_external:
+                    # 014: 默认行为保留——AgentRuntime 装配时 post_turn_external=True，
+                    # 由 PostTurn hook 调 memory.observe；此处不重复触发
+                    self._observe_turn(turn_start_idx)
+
+    # ----- 系统级触发轮（014：main loop 入口） -----
+
+    def dispatch_system_turn(
+        self,
+        *,
+        source_kind: str,
+        system_prompt_addendum: str,
+        output_visibility: Literal["user", "memory_only"] = "user",
+    ) -> Iterator[ConversationEvent]:
+        """系统级触发轮入口（014 R-4.4）。
+
+        外部（:class:`agent.runtime.AgentRuntime`）按 ``SystemTriggerEvent`` 转译
+        后调本方法，让"非 user 事件"翻译成 conversation 能消费的输入——无需伪装成
+        ``user_message``。
+
+        Args:
+            source_kind: 触发源 kind，落入 ``system_trigger.payload.source_kind``
+                （如 ``"cron:bedtime"`` / ``"idle_reflection"``）。
+            system_prompt_addendum: 追加到 system message 末尾的引导话
+                （如"现在是约定的休息时间……"）。
+            output_visibility: ``"user"`` = 与 :meth:`stream` 同形 yield 事件，
+                上游订阅者（bridge push subscriber）能看到；``"memory_only"`` =
+                silent turn，**不 yield**任何 ConversationEvent；LLM 输出文本写
+                ``memory_observation`` 事件并自构 :class:`memory.ConversationFragment`
+                喂 :meth:`memory.Memory.observe`，``session.messages`` 派生不含
+                此文本（历史天然干净）。
+
+        Yields:
+            ``output_visibility="user"`` 时：:class:`TextDelta` 增量 +
+            :class:`TurnDone`；``output_visibility="memory_only"`` 时：什么都不 yield。
+
+        Note:
+            本期 silent / system 触发轮**不开 tool**（``tools=None``），避免意外
+            副作用 / 长耗时——主动陪伴场景的 tool 调用留下个需求扩展。
+        """
+        persona_name = self._session.current_persona_name
+        persona_id = self._session.current_persona_id
+        model_snapshot = self._session.current_model
+
+        # 1. 落 system_trigger marker（与 compaction 同模式，不参与 messages 派生）
+        self._append_system_trigger_event(
+            source_kind=source_kind,
+            system_prompt_addendum=system_prompt_addendum,
+            output_visibility=output_visibility,
+        )
+
+        # 2. 跑 LLM stream（注入引导话作 trailing system）
+        openai_messages = self._assemble(trailing_system=system_prompt_addendum)
+        text_buf: list[str] = []
+        for ev in self._llm_client.stream(openai_messages, tools=None):
+            if isinstance(ev, LLMTextDelta):
+                text_buf.append(ev.text)
+                if output_visibility == "user":
+                    yield TextDelta(text=ev.text)
+            elif isinstance(ev, LLMTurnDone):
+                self._consume_usage(ev)
+            # silent / system 触发轮不开 tool，不处理 LLMToolCallDelta
+
+        full_text = "".join(text_buf)
+
+        # 3. 按 visibility 分支落事件
+        if output_visibility == "user":
+            self._append_assistant_event(
+                full_text,
+                partial=False,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model=model_snapshot,
+            )
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+            return
+
+        # output_visibility == "memory_only"：silent turn
+        # - 落 memory_observation event（marker，不参与 messages 派生）
+        # - 自构 ConversationFragment 喂 memory.observe（speaker="agent"，1 utterance）
+        # - 不 yield TurnDone，对上游完全不可见
+        obs_uuid = str(uuid4())
+        now = datetime.now(UTC)
+        self._append_memory_observation_event(
+            uuid=obs_uuid,
+            ts=now,
+            text=full_text,
+            source_kind=source_kind,
+            persona_id=persona_id or "",
+        )
+        if self._memory is not None and full_text:
+            fragment = ConversationFragment(
+                session_id=self._session.session_id,
+                utterances=[
+                    Utterance(
+                        speaker="agent",
+                        text=full_text,
+                        ts=now,
+                        source_ref=f"{self._session.session_id}#{obs_uuid}",
+                    )
+                ],
+                persona_id=persona_id or "",
+            )
+            try:
+                self._memory.observe(fragment)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "silent turn observe 失败", exc_info=True
+                )
 
     # ----- 切换 persona / model -----
 
@@ -742,6 +861,9 @@ class Conversation:
     def _invoke_tool_safely(self, name: str, args: dict[str, Any]) -> ToolResult:
         """调一次工具，把所有异常转为 :class:`ToolResult` ``is_error=True``。
 
+        014 起：如果构造时注入了 ``tool_hook_invoker``（AgentRuntime 装配时传入），
+        实际执行走 invoker（让 PreToolUse / PostToolUse hook 能介入）；否则保留原行为。
+
         Note:
             :class:`agent.tools.errors.ToolNotFoundError` 也走这里——LLM 调了
             未注册的工具（拼写错误等）应转 error result 喂回 LLM 让它修正后续调用，
@@ -752,13 +874,21 @@ class Conversation:
                 text=f"工具 {name!r} 不可用：当前会话未配置工具集",
                 is_error=True,
             )
-        try:
-            return self._tool_registry.invoke(name, args)
-        except Exception as exc:
-            return ToolResult(
-                text=f"工具 {name!r} 执行出错: {exc}",
-                is_error=True,
-            )
+
+        registry = self._tool_registry
+
+        def _default_invoke() -> ToolResult:
+            try:
+                return registry.invoke(name, args)
+            except Exception as exc:
+                return ToolResult(
+                    text=f"工具 {name!r} 执行出错: {exc}",
+                    is_error=True,
+                )
+
+        if self._tool_hook_invoker is not None:
+            return self._tool_hook_invoker(name, args, _default_invoke)
+        return _default_invoke()
 
     def _finalize_on_tool_loop_limit(
         self,
@@ -874,6 +1004,60 @@ class Conversation:
                 "is_error": result.is_error,
             },
             meta=meta,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_system_trigger_event(
+        self,
+        *,
+        source_kind: str,
+        system_prompt_addendum: str,
+        output_visibility: str,
+    ) -> None:
+        """落 ``system_trigger`` 事件（014）：non-user 触发轮的 marker。
+
+        与 ``compaction`` 一样不参与 :attr:`Session.messages` 派生——LLM 上下文
+        构造看不到，避免污染历史；session 文件回放仍可见，便于审计 / 复盘。
+        """
+        event = Event(
+            type="system_trigger",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "source_kind": source_kind,
+                "system_prompt_addendum": system_prompt_addendum,
+                "output_visibility": output_visibility,
+            },
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_memory_observation_event(
+        self,
+        *,
+        uuid: str,
+        ts: datetime,
+        text: str,
+        source_kind: str,
+        persona_id: str,
+    ) -> None:
+        """落 ``memory_observation`` 事件（014）：silent turn 的产物 marker。
+
+        payload 含 LLM 反思文本，**不进入** :attr:`Session.messages` 派生（与
+        ``system_trigger`` / ``compaction`` 同模式）。文件回放可见，便于复盘
+        agent 自己对自己说了什么；下次 LLM 上下文构造看不到，避免"用户没听过"
+        的内容污染对话历史。
+        """
+        event = Event(
+            type="memory_observation",
+            uuid=uuid,
+            ts=ts,
+            payload={
+                "text": text,
+                "source_kind": source_kind,
+                "persona_id": persona_id,
+            },
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
