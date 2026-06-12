@@ -62,18 +62,20 @@ IN_PROGRESS
 
 > 不依赖 M15.2 / M15.3 的运行环境，可纯单测驱动跑通。
 
-- [ ] `frontend/src/stores/petBubblePolicy.ts`：新文件
-  - [ ] `BubbleItem` type（`id` / `text` / `sourceKind`）
-  - [ ] `PushPolicy` type alias（`(env: PushEnvelope) => BubbleItem | null`）
-  - [ ] `ASSISTANT_TEXT_TYPES` 常量集合（含 `"assistant_message"`，留 set 是为了未来扩展 TextDone 等）
-  - [ ] `defaultPolicy` 实现（按 design §5.2 规则）
-- [ ] `frontend/src/stores/petBubblePolicy.test.ts`：新文件
-  - [ ] `defaultPolicy: agent_turn + assistant_message → BubbleItem`（含 source_kind 透传）—— **AC-4**
-  - [ ] `defaultPolicy: agent_turn + only memory_observation → null`（silent turn 丢弃）—— **AC-5**
-  - [ ] `defaultPolicy: user_turn → null`（兜底丢弃）
-  - [ ] `defaultPolicy: heartbeat → null`
-  - [ ] `defaultPolicy: 多段 assistant_message → 用 \n\n 拼接`（防御 turn 内多 message）
-- [ ] `pnpm test petBubblePolicy` 全绿
+- [x] `frontend/src/stores/petBubblePolicy.ts`：新文件
+  - [x] `BubbleItem` type（`id` / `text` / `sourceKind`）
+  - [x] `PushPolicy` type alias（`(env: PushEnvelope) => BubbleItem | null`）
+  - [x] `ASSISTANT_TEXT_TYPES` 常量集合（含 `"assistant_message"`，留 set 是为了未来扩展 TextDone 等）
+  - [x] `defaultPolicy` 实现（按 design §5.2 规则）
+- [x] `frontend/src/stores/petBubblePolicy.test.ts`：新文件
+  - [x] `defaultPolicy: agent_turn + assistant_message → BubbleItem`（含 source_kind 透传）—— **AC-4**
+  - [x] `defaultPolicy: agent_turn + only memory_observation → null`（silent turn 丢弃）—— **AC-5**
+  - [x] `defaultPolicy: user_turn → null`（兜底丢弃）
+  - [x] `defaultPolicy: heartbeat → null`
+  - [x] `defaultPolicy: 多段 assistant_message → 用 \n\n 拼接`（防御 turn 内多 message）
+  - [x] `defaultPolicy: content 非 string / 空 / 缺 payload → 全部跳过`（防御性边界）
+- [x] `pnpm test petBubblePolicy` 全绿（6 passed）
+- [x] `pnpm run typecheck` + `pnpm run lint` 全绿
 
 ### M15.5 Store 实现 + 单测
 
@@ -156,6 +158,7 @@ IN_PROGRESS
 | 2026-06-13 | M15.1 完成 | types/push.ts + Cargo.toml 依赖；rustls-tls 避免 OpenSSL；macOS-only objc2 + objc2-app-kit；typecheck + cargo build 全绿 |
 | 2026-06-13 | M15.2 完成 | push_subscriber.rs 落（SSE 分帧 / envelope 解码 / reqwest bytes_stream / emit_to 广播）+ lib.rs 接入 setup spawn；12 个单测全绿；spot-check 端到端 dry-run 移交 M15.8 |
 | 2026-06-13 | M15.3 完成 | tauri.conf.json 加 visibleOnAllWorkspaces；macOS NSWindow setLevel:1000 通过 objc2 msg_send 落地、错误隔离不阻断 app 启动；cargo build 全绿；切 Space + 全屏 app 真跑验证移交 M15.8 |
+| 2026-06-13 | M15.4 完成 | petBubblePolicy.ts defaultPolicy（"无 user-visible assistant 文本"判 silent，比 source_kind 黑名单更可演进）；6 个 case 全绿（AC-4 + AC-5 锚点）；typecheck + lint 干净 |
 
 ---
 
