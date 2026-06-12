@@ -29,15 +29,16 @@ IN_PROGRESS
 - [x] 全 agent 套件 133 测试全绿（原 123 + 新 10），既有路径零退化
 
 ### M14.3 AgentRuntime 核心
-- [ ] `agent/src/agent/runtime/__init__.py`：包导出 + `AgentRuntime` 类（含 `_register_default_hooks` / `_dispatch` / `start` / `stop` / `register_source` / `register_hook` / `add_listener` / `last_dispatch_finished_at` property）
-- [ ] `agent/src/agent/runtime/inbox.py`：`AgentEvent` discriminated union（UserEvent / SystemTriggerEvent）
-- [ ] `agent/src/agent/runtime/hooks.py`：`HookKind` / `PreTurnDecision` / `PreToolUseDecision` / `PostTurnContext` / `HookRegistry`（含短路 + 错误隔离）
-- [ ] `agent/src/agent/runtime/listeners.py`：`_Subscriber` / `ListenerRegistry`（fan_out_event + turn 边界打包 + thread→asyncio bridge）
-- [ ] `agent/tests/test_runtime_inbox.py`：AgentEvent 字段；put/get；哨兵停机
-- [ ] `agent/tests/test_runtime_hooks.py`：四点位注册 + 触发；PreTurn SKIP 短路；PreToolUse BLOCK 短路；单 hook 抛异常不打断其他 hook 与 dispatch（AC-2）
-- [ ] `agent/tests/test_runtime_dispatch.py`：UserEvent dispatch 与 conv.stream 同行为；SystemTriggerEvent (user visibility) 路径出 assistant_message + TurnDone（AC-5 一部分）
-- [ ] `agent/tests/test_runtime_silent_turn.py`：output_visibility="memory_only" 走 §6 silent 路径，listener 收不到事件（AC-6）
-- [ ] `agent/tests/test_runtime_observe_migration.py`：mock memory.observe 拦截 fragment，断言 §7.1 字段清单 + json hash 兜底（AC-4）
+- [x] `agent/src/agent/runtime/__init__.py`：包导出 + `AgentRuntime` 类（含 `_register_default_hooks` / `_dispatch` / `start` / `stop` / `register_source` / `register_hook` / `tool_hook_invoker` 桥接方法 / `last_dispatch_finished_at` property）
+- [x] `agent/src/agent/runtime/inbox.py`：`AgentEvent` discriminated union（UserEvent / SystemTriggerEvent）
+- [x] `agent/src/agent/runtime/hooks.py`：`HookKind` / `PreTurnDecision` / `PreToolUseDecision` / `PostTurnContext` / `HookRegistry`（含 Pre-\* 短路 + 错误隔离 + 抛异常视为 PROCEED）
+- [x] `agent/src/agent/runtime/listeners.py`：`Subscriber` / `PushEnvelope` / `ListenerRegistry`（fan_out_event + turn 边界打包 + thread→asyncio bridge + 满队列/loop closed 不阻塞 dispatch thread）
+- [x] `agent/tests/test_runtime_inbox.py`：5 测试（字段形态、frozen 不可变、queue round-trip）
+- [x] `agent/tests/test_runtime_hooks.py`：12 测试（注册顺序、PreTurn SKIP 短路、PreToolUse BLOCK 短路、四点位错误隔离、hook 据事件类型分支）—— AC-2 + AC-3
+- [x] `agent/tests/test_runtime_dispatch.py`：8 测试（UserEvent dispatch + listener fan-out envelope kind/seq/source_kind/events、SystemTriggerEvent user-visibility 路径、Subscriber kind 过滤、PreTurn SKIP 真的让 dispatch 跳过、tool_hook_invoker 桥接 PreToolUse BLOCK + PostToolUse 旁路）—— AC-1 + AC-5 runtime 层
+- [x] `agent/tests/test_runtime_silent_turn.py`：4 测试（silent turn listener 0 envelope、session 落 system_trigger + memory_observation 没 assistant_message、messages 派生不被污染、memory.observe 调一次—默认 PostTurn hook 正确跳过 silent turn 避免重复）—— AC-6 runtime 层
+- [x] `agent/tests/test_runtime_observe_migration.py`：5 测试（post_turn_external=False 走老 finally / True 跳过老 finally；同一 session.events 两条路径产出 `ConversationFragment` 完全相等：field-by-field + `==` 兜底；带 assistant 多段文本路径；memory=None 默认 hook no-op）—— AC-4
+- [x] 全 agent 套件 167 测试全绿（原 133 + M14.3 新增 34）
 
 ### M14.4 EventSource 实例
 - [ ] `agent/src/agent/runtime/sources.py`：`UserSource` / `BedtimeSource` / `IdleReflectionSource`
@@ -81,6 +82,7 @@ IN_PROGRESS
 |------|---------|------|
 | 2026-06-12 | M14.1 Session schema 加性扩展 | `events.py` Literal + frozenset 加 `system_trigger` / `memory_observation`；docstring 加 014 段约定；`SCHEMA_VERSION` 不递增（沿用 005/007/009 "纯加性"约定）；既有 10 个 sessions 单测全绿 |
 | 2026-06-12 | M14.2 Conversation 内部新增 + 单测 | `Conversation.__init__` 加 2 个 backward-compat 可选参数；`dispatch_system_turn` 公共入口含 user / memory_only 两路径；silent turn 自构 fragment 走 §6 方案 F（speaker=agent 1 utterance + source_ref 关联 memory_observation event uuid）；`_invoke_tool_safely` 接受 ToolHookInvoker 注入；`stream` finally 按 `post_turn_external` 切换；2 个新单测文件 10 个 case 全绿；全 agent 套件 133 个测试全绿（既有 123 + 新增 10），既有路径零退化 |
+| 2026-06-12 | M14.3 AgentRuntime 核心 + 5 测试 | 新建 `agent/src/agent/runtime/` 子包 4 个模块（`inbox.py` AgentEvent / `hooks.py` HookRegistry 含四点位+短路+错误隔离 / `listeners.py` ListenerRegistry 含 turn 边界打包+thread→asyncio bridge / `__init__.py` AgentRuntime 含 dispatch loop+默认 PostTurn observe hook+tool_hook_invoker 桥接）；5 个新测试文件 34 个 case 全绿；全 agent 套件 167 测试全绿（既有 133 + 新 34）；AC-1/AC-2/AC-3/AC-4/AC-5 runtime 层/AC-6 runtime 层 全部覆盖；唯一工程妥协是用 `_dispatch` 直接驱动而非 start()/stop() 真线程做 unit 测试，避免线程计时 flakiness（线程语义由 stop 哨兵 + Event.wait 设计保证） |
 
 ---
 
@@ -90,11 +92,11 @@ IN_PROGRESS
 
 | AC | 标题 | 状态 | 依据 |
 |---|---|---|---|
-| AC-1 | main loop dispatch 可跑通 | ⏳ | M14.3 test_runtime_dispatch + M14.8 手工跑 |
-| AC-2 | Hook 四点位可注册可触发 | ⏳ | M14.3 test_runtime_hooks |
-| AC-3 | Pre-\* 短路语义可用 | ⏳ | M14.3 test_runtime_hooks（PreTurn SKIP + PreToolUse BLOCK 两类） |
-| AC-4 | `_observe_turn` 迁移行为零退化 | ⏳ | M14.3 test_runtime_observe_migration（字段清单 + hash 兜底） |
-| AC-5 | BedtimeSource demo 端到端 | ⏳ | M14.3 test_runtime_dispatch + M14.4 test_runtime_sources + M14.8 手工跑 |
-| AC-6 | IdleReflectionSource silent turn 端到端 | ⏳ | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.8 手工跑 |
+| AC-1 | main loop dispatch 可跑通 | 🟡 runtime 层覆盖 | M14.3 test_runtime_dispatch（_dispatch 直接驱动）；M14.8 手工跑真起 thread 端到端 |
+| AC-2 | Hook 四点位可注册可触发 | ✅ | M14.3 test_runtime_hooks 12 case（含错误隔离） |
+| AC-3 | Pre-\* 短路语义可用 | ✅ | M14.3 test_runtime_hooks（PreTurn SKIP + PreToolUse BLOCK）+ test_runtime_dispatch.test_pre_turn_skip_aborts_dispatch / test_tool_hook_invoker_bridges_pre_tool_use_block |
+| AC-4 | `_observe_turn` 迁移行为零退化 | ✅ | M14.3 test_runtime_observe_migration（字段清单 + `==` 兜底；含 assistant 多段文本场景） |
+| AC-5 | BedtimeSource demo 端到端 | 🟡 runtime 层覆盖 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_*；BedtimeSource 实现 + schedule loop fake clock 测试在 M14.4；手工跑在 M14.8 |
+| AC-6 | IdleReflectionSource silent turn 端到端 | 🟡 runtime 层覆盖 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn；IdleReflectionSource 实现在 M14.4；手工跑在 M14.8 |
 | AC-7 | Bridge push 通道端到端 | ⏳ | M14.5 test_push_channel + M14.6 test_push_mirror + M14.8 手工跑 |
 | AC-8 | Dev CLI 落地 | ⏳ | M14.7 双端 wrapper + scripts/README + `./scripts/check` 全绿 |
