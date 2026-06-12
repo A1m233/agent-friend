@@ -81,13 +81,46 @@ describe("projectSessionEvents", () => {
       ev("assistant_message", { content: "好了", partial: false }),
     ];
     // 在 base events 中插入 014 主动轮事件（system_trigger 在头 + memory_observation 在尾）；
-    // 投影出的 ChatMessage 序列应与不含时完全一致（断言 toEqual 兜底 AC-6）
-    const withSystemTrigger: SessionEvent[] = [
-      ev("system_trigger", { source_kind: "cron:bedtime" }),
+    // memory_only 的 system_trigger 不带紧跟 assistant_message，所以投影结果应与不含时完全一致
+    const withSilentSystemTrigger: SessionEvent[] = [
+      ev("system_trigger", { source_kind: "idle_reflection", output_visibility: "memory_only" }),
       ...baseEvents,
       ev("memory_observation", { extracted: "用户在赶 deadline" }),
-      ev("system_trigger", { source_kind: "idle_reflection" }),
     ];
-    expect(projectSessionEvents(withSystemTrigger)).toEqual(projectSessionEvents(baseEvents));
+    expect(projectSessionEvents(withSilentSystemTrigger)).toEqual(projectSessionEvents(baseEvents));
+  });
+
+  it("user-visible system_trigger 紧跟的 assistant_message 也被跳过（015 R-4.5.1 / R-4.4.2）", () => {
+    // 真实场景：BedtimeSource fire 后 session.events 里是 [user, asst, system_trigger(user), asst]
+    // sessionProjection 应跳过 system_trigger 本身 + 紧跟的 asst（主动轮 user 可见输出归 pet 气泡）
+    const events: SessionEvent[] = [
+      ev("user_message", { content: "在吗" }),
+      ev("assistant_message", { content: "在呢", partial: false }),
+      ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),
+      ev("assistant_message", { content: "很晚了该睡了", partial: false }),
+    ];
+    const out = projectSessionEvents(events);
+    expect(out).toHaveLength(2);  // 只剩 user "在吗" + asst "在呢"
+    expect(out[0].role).toBe("user");
+    expect(out[1].role).toBe("assistant");
+    expect(out[1].blocks).toHaveLength(1);
+    if (out[1].blocks[0].kind === "text") {
+      expect(out[1].blocks[0].text).toBe("在呢");  // 主动轮的 "很晚了该睡了" 不应混进来
+    }
+  });
+
+  it("user-visible system_trigger 之后再来的 user_message 不会被误跳过（flag 只消费一次）", () => {
+    const events: SessionEvent[] = [
+      ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),
+      ev("assistant_message", { content: "很晚了", partial: false }),  // 被跳过
+      ev("user_message", { content: "好我去睡" }),                       // 应保留
+      ev("assistant_message", { content: "晚安", partial: false }),     // 应保留
+    ];
+    const out = projectSessionEvents(events);
+    expect(out).toHaveLength(2);
+    expect(out[0].role).toBe("user");
+    expect((out[0].blocks[0] as { text: string }).text).toBe("好我去睡");
+    expect(out[1].role).toBe("assistant");
+    expect((out[1].blocks[0] as { text: string }).text).toBe("晚安");
   });
 });
