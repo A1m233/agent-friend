@@ -56,6 +56,8 @@ PerLTQA 在这段挂了 14 个 anchor，**全部在用户原话里逐字出现**
 
 ### 主因 2 · pinned 通道挤占了召回额度
 
+> **2026-06-12 修正**（来自 [pass-1 design §2.2 / §11](../../requirements/013-memory-quality-pass-1/design.md)）：标题里"挤占"的措辞跟代码现实有偏差——`memory/facade.py:retrieve` 把 pinned 走**独立平行通道**（`store.pinned()` 全量拉 + episodic/semantic FTS 召回 top-K，`renderer.py:36` 已做去重），pinned **不挤占** episodic/semantic 的 top-K 位置。下文"863 道仅返回 pinned"是**结果**现象，**根因**是"episodic/semantic 召不到"+ "pinned 仍被无条件展示作占位"。pass-1 的修复（M13.3 `pinned_gate`）落在后者——给 pinned 注入加 query 相关性 gate，当无关时 pinned 不注入。
+
 1613 道零分题里 **863 道（53.5%）召回里只有 pinned**——清一色"用户的名字是张小红"、"用户有一个弟弟叫张小明"这种**无论问什么都会出现**的身份事实。一旦 retrieve 在 episodic/semantic 找不到匹配，pinned 就成了"占位安慰品"。
 
 背后是两件事叠加：

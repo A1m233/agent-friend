@@ -109,7 +109,7 @@ IN_PROGRESS
 
 ### M13.6 附带任务
 
-- [ ] `docs/issues/003-memory-eval-baseline-2026-06-12/README.md`：补 footnote 修正"pinned 挤占召回额度"措辞——pinned 是平行通道、不挤占 top-K；"挤占"是结果现象、根因是 episodic/semantic 召不到（详见 design §2.2）
+- [x] `docs/issues/003-memory-eval-baseline-2026-06-12/README.md`：补 footnote 修正"pinned 挤占召回额度"措辞——pinned 是平行通道、不挤占 top-K；"挤占"是结果现象、根因是 episodic/semantic 召不到（详见 design §2.2）
 - [ ] `docs/requirements/013-memory-quality-pass-1/design.md` §10：4 个 ⏳ 项全部 commit 实测值
 - [ ] `docs/requirements/013-memory-quality-pass-1/progress.md`：实施日志逐里程碑追加
 - [ ] git commit 串：每个里程碑独立 commit（用 `gen-commit-message` skill）
@@ -135,3 +135,4 @@ IN_PROGRESS
 | 2026-06-12 | M13.3 任务全部完成 + design.md ⏳ 回填 | `pinned_gate.py` 新建（`lenient` / `strict` 两档；短 query < 6 字 lenient 放行）；facade `Memory` 加 `pinned_relevance_gate` / `pinned_gate_mode` 开关；retrieval `__init__` 导出；test_pinned_gate 9 个测试 + test_facade 旧 "pinned 永远附带" 改写为 "无关 query 砍 pinned"（反映新默认行为）；design.md §10 "pinned gate 阈值档位"项回填（实施合并"宽松/动态"为 `lenient`）；`./scripts/check`：281 全过（272 → 281）|
 | 2026-06-12 | **M13.4 design 二次变更**：`recall_wide` 切片在 jieba 不可逆迁移下污染归因 → 调研 LlamaIndex / Martin Fowler 后改"两开关 + 文件对比" | WebFetch 三条权威：Strangler Fig（生产迁移并行路径）/ LlamaIndex Component-wise Evaluation（**主流是跑独立评测、比较 baseline 文件**，不在同管线切片）/ Martin Fowler Feature Toggles（劝阻永久 ablation flag）；选 LlamaIndex 路线。design.md §6 改两开关；§11 二次变更登记；切片总数仍为 4 份（`pass-1-full` / `pass-1-only-extraction` / `pass-1-only-pinned` / `pass-1-baseline`），新 `pass-1-baseline` 切片度量 jieba 单独贡献 |
 | 2026-06-12 | M13.4 任务全部完成 | `build_memory` 加 `extraction_keep_specifics` / `pinned_relevance_gate` 两个 kw-only 开关；`extract_legacy.md` 路径常量；runner 新增 `MemoryConfig` dataclass + 透传；harness `__init__` 导出；CLI 加 `--no-extraction-keep-specifics` / `--no-pinned-relevance-gate` flag；新增 `test_factory_switches.py` 5 个 smoke 测试（默认 = pass-1 终态 / 关 extraction 用旧 prompt / 关 gate / 两开关都关 = pass-1-baseline 切片 / 显式 prompt 覆盖开关）；`./scripts/check`：286 全过（281 → 286）|
+| 2026-06-12 | M13.5 smoke（3 samples × 10 q × 4 切片）跑通管道 | 4 份 baseline 都正常落盘；初步结果（30 题样本，方差大、仅供管道验证）：full 0.365/13零、only-extraction 0.405/12零、only-pinned 0.137/21零、baseline 0.156/18零；**主因 1 抽取是核心杠杆**（开 extraction 两片 macro 0.365/0.405 >> 关的两片 0.137/0.156）；smoke 上 full < only-extraction (差 0.04) 跟 sample 间方差同量级，**判为噪声不调阈值，等全量验证**；issue 003 §主因 2 已补 footnote 修正"挤占"措辞 |
