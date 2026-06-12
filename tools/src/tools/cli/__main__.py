@@ -543,8 +543,9 @@ def _make_memory_debug_callback() -> Callable[[ExtractionResult], None]:
             parts.append("记住 " + "；".join(result.added_semantic))
         if result.superseded_semantic:
             parts.append("更新（旧：" + "；".join(result.superseded_semantic) + "）")
-        if result.episodic_id:
-            parts.append("记下这段经历")
+        if result.episodic_ids:
+            n = len(result.episodic_ids)
+            parts.append(f"记下 {n} 条经历" if n > 1 else "记下这段经历")
         if parts:
             stderr.print(f"[dim][记忆] {' · '.join(parts)}[/dim]")
 

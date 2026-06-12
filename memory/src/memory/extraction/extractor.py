@@ -60,7 +60,7 @@ class Extractor:
             raw = self._llm.complete(messages)
         except Exception:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
-            return ExtractionOutput(episodic_summary=None)
+            return ExtractionOutput()
 
         return _parse_output(raw)
 
@@ -83,23 +83,25 @@ class Extractor:
 
 
 def _parse_output(raw: str) -> ExtractionOutput:
-    """把 LLM 文本解析成 :class:`ExtractionOutput`，尽量鲁棒。"""
+    """把 LLM 文本解析成 :class:`ExtractionOutput`，尽量鲁棒。
+
+    兼容新旧 prompt 输出（pass-1）：
+
+    - 新字段 ``episodic_entries: list[str]``（推荐）
+    - 旧字段 ``episodic_summary: str | None``——单元素 list 处理（向下兼容）
+    """
     text = _strip_code_fence(raw).strip()
     if not text:
-        return ExtractionOutput(episodic_summary=None)
+        return ExtractionOutput()
     try:
         obj = json.loads(text)
     except json.JSONDecodeError:
         logger.warning("记忆抽取返回非法 JSON，跳过：%s", text[:200])
-        return ExtractionOutput(episodic_summary=None)
+        return ExtractionOutput()
     if not isinstance(obj, dict):
-        return ExtractionOutput(episodic_summary=None)
+        return ExtractionOutput()
 
-    summary = obj.get("episodic_summary")
-    if summary is not None and not isinstance(summary, str):
-        summary = None
-    if isinstance(summary, str) and not summary.strip():
-        summary = None
+    entries = _parse_entries(obj)
 
     ops: list[SemanticOp] = []
     raw_ops = obj.get("semantic_ops")
@@ -108,7 +110,26 @@ def _parse_output(raw: str) -> ExtractionOutput:
             op = _parse_op(item)
             if op is not None:
                 ops.append(op)
-    return ExtractionOutput(episodic_summary=summary, semantic_ops=ops)
+    return ExtractionOutput(episodic_entries=entries, semantic_ops=ops)
+
+
+def _parse_entries(obj: dict[str, object]) -> list[str]:
+    """从 LLM JSON 抽取 episodic 条目，兼容新旧字段。
+
+    新字段优先：``episodic_entries: list[str]``。旧字段 fallback：
+    ``episodic_summary: str | null``——非空字符串当单元素 list；其他都视为空。
+    """
+    entries_raw = obj.get("episodic_entries")
+    if isinstance(entries_raw, list):
+        cleaned = [e.strip() for e in entries_raw if isinstance(e, str) and e.strip()]
+        if cleaned:
+            return cleaned
+
+    summary = obj.get("episodic_summary")
+    if isinstance(summary, str) and summary.strip():
+        return [summary.strip()]
+
+    return []
 
 
 def _parse_op(item: object) -> SemanticOp | None:
