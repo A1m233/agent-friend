@@ -130,10 +130,10 @@ IN_PROGRESS
 
 > 端到端验收：bedtime / idle reflection / 既有 chat 对话 / 跨 Space / 全屏浮动五件事全跑通。
 
-- [ ] `scripts/dev-pet-bubble-demo/run.sh`：双端 wrapper（参考 014 `scripts/dev-fire-source/run.sh` 模板）
-- [ ] `scripts/dev-pet-bubble-demo/run.ps1`：Windows 等价
-- [ ] `scripts/README.md`：登记新脚本（"015 端到端 demo / 触发 bedtime + idle_reflection / 需 bridge dev_mode=true"）
-- [ ] **自动门禁**：`./scripts/check` 全绿（lint + typecheck + cargo test + vitest）—— **AC-8**
+- [x] `scripts/dev-pet-bubble-demo/run.sh`：双端 wrapper（参考 014 `scripts/dev-fire-source/run.sh` 模板）
+- [x] `scripts/dev-pet-bubble-demo/run.ps1`：Windows 等价
+- [x] `scripts/README.md`：登记新脚本（"015 端到端 demo / 触发 bedtime + idle_reflection / 需 bridge dev_mode=true"）
+- [x] **自动门禁**：`./scripts/check` 全绿（backend 361 passed + frontend 28 passed = **389 passed**；含 ruff lint + ruff format + mypy + pytest + eslint + color-guard + tsc + vitest）—— **AC-8**
 - [ ] **手工真跑端到端**（按用户授权 `llm-api-confirm` 走真 LLM）：
   - [ ] 启 bridge（`scripts/bridge/run.sh`，dev_mode=true）
   - [ ] 启 frontend（`pnpm tauri dev` 或对应脚本）
