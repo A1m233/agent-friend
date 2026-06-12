@@ -2,9 +2,9 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+COMPLETED
 
-> 8 个里程碑 7.5 个完成：M14.1 ~ M14.7 + M14.8 自动门禁（`./scripts/check` 全绿 332 测试）；剩余 M14.8 手工真跑 bedtime + idle reflection 端到端，按 `llm-api-confirm` rule 待用户授权后跑。
+> 8 个里程碑全部完成。M14.1 ~ M14.7 实施 + M14.8 自动门禁（`./scripts/check` 全绿 332 测试）+ 手工真跑 bedtime + idle reflection 端到端跑通（真 DeepSeek API 调用），所有 AC 在真 LLM 路径下成立。
 
 ---
 
@@ -83,8 +83,13 @@ IN_PROGRESS
 
 ### M14.8 验证
 - [x] `./scripts/check` 全绿（ruff check + ruff format check + mypy 全文件 + pytest 全 332 测试通过）—— M14 各模块新增 + 既有模块零退化
-- [ ] 手工真跑一次：起 bridge `dev_mode=true` + `enable_bedtime=true` + `bedtime_hour=立即`（按 llm-api-confirm 授权）→ 另一端跑 `scripts/dev-push-subscribe/run.sh` → 看到 bedtime envelope 落到 CLI；触发 `/dev/fire-source?source_name=idle_reflection` → memory_observation event 落 session JSONL + memory.observe 被调（log 可见）
-- [x] AC-1 ~ AC-8 全部对应通过（结构 / 单测层），实跑真启 bridge 留作手工最终验证
+- [x] 手工真跑一次（按 `llm-api-confirm` rule 用户授权后跑，**真 DeepSeek API**，2026-06-12 17:32:43）：
+  - 隔离 tmp data dir `/tmp/agent-friend-014-real-run`；用 `AGENT_BRIDGE_PORT=18801` 避开主 repo 已在跑的老 bridge；
+  - bridge 启动后 `/openapi.json` 路由含 `/push/subscribe` + `/dev/fire-source` + 既有出口；
+  - `POST /dev/fire-source?source_name=cron:bedtime` → bridge log 看到 LiteLLM 调 `deepseek-chat`（生成）+ `deepseek-v4-flash`（memory 抽取 worker）；push subscriber 收到 `seq=1 kind=agent_turn src=cron:bedtime events=[text_delta x14, done]`；session JSONL 落 `system_trigger` + `assistant_message`（bedtime 真说了「是时候休息一下啦。站起来走走，或者泡杯茶。」）
+  - `POST /dev/fire-source?source_name=idle_reflection` → silent turn 真跑：bridge log 看到 LiteLLM 真调用，但 **push subscriber 只收到 heartbeat，没 agent_turn envelope**（不冒泡 ✓）；session JSONL 落 `system_trigger` + `memory_observation`（agent 真反思了「记住就好，不必总担心存档。你想聊的事，随时可以跟我说。」），**没** assistant_message；
+  - 用 `Session.from_events` 重建后 `session.messages` 只有 1 条（bedtime 的 assistant_message），silent turn 反思文本**没泄露到 messages**——验证方案 F 在真 LLM 路径下让 LLM 历史天然干净。
+- [x] AC-1 ~ AC-8 全部对应通过（结构 + 单测层 + 真 LLM 端到端验证）
 
 ---
 
@@ -100,6 +105,7 @@ IN_PROGRESS
 | 2026-06-12 | M14.6 Pull 路径镜像复制 + 3 测试 | ag_ui + openai encoder 加可选 `agent_runtime` 参数；每 yield ConversationEvent 同步喂 `fan_out_event`（用 conv.session.session_id 作 UserEvent.session_id）；镜像失败 try/except log warning 不打断；ag_ui + openai routes 调 encoder 时透传 runtime.agent_runtime；test_push_mirror.py 用 TestClient 同步 POST + 侧 event loop subscriber 真实收到 envelope 含 TextDelta + TurnDone 验证完整链路；agent_bridge 26 测试全绿（既有 23 + 新 3），agent 183 测试零退化 |
 | 2026-06-12 | M14.7 Dev CLI + packaging + scripts | agent_bridge/dev/push_subscribe.py dev CLI（httpx.stream 订阅 + 美化打印 + KeyboardInterrupt 优雅退出）；agent_bridge/pyproject.toml wheel exclude dev/（用 uv build --wheel 验证 dev/ 不在产物 + push/ 在产物）；scripts/dev-push-subscribe/{sh,ps1} + scripts/dev-fire-source/{sh,ps1} 4 个双端 wrapper（sh: exec uv run python -m；ps1: UTF-8 输出强制）；scripts/README.md 登记两脚本含 dev_mode 警示；agent_bridge 26 / agent 183 测试不退化 |
 | 2026-06-12 | M14.8 验证 sweep | `./scripts/check` 全绿（ruff check + ruff format check + mypy 全 146 文件 + pytest 全 332 测试）；修复 sweep：(a) ruff 自动 fix 41/42 错（unused imports / asyncio.TimeoutError → builtin TimeoutError 等），手动加 `zip(strict=True)`；(b) ruff format 重写 10 文件；(c) mypy 修 17 错——4 个 hooks.py register 内 unused `type: ignore` + 12 个 test_runtime_hooks.py 的 `(append, X)[1]` 不友好 tuple trick 改成 `_pre_turn_logger` / `_pre_tool_logger` 工厂助手 + 1 个 test_push_channel.py unused type ignore；agent / agent_bridge / memory / memory_eval / llm_providers / voice_bridge 跨模块 332 测试全绿，零退化；手工真跑 bedtime + idle reflection 端到端按 llm-api-confirm rule 留待用户授权后跑 |
+| 2026-06-12 | M14.8 手工真跑端到端 | 按 `llm-api-confirm` rule 用户授权后跑真 DeepSeek API。AGENT_BRIDGE_PORT=18801 避开主 repo 老 bridge；tmp data dir 隔离。bedtime 路径：LiteLLM `deepseek-chat` + `deepseek-v4-flash` 双调用 / push subscriber 收 envelope kind=agent_turn src=cron:bedtime 14 text_delta+done / session 落 system_trigger + assistant_message（"是时候休息一下啦"）。silent turn 路径：LiteLLM 真调 / push subscriber 不收（**只 heartbeat**，不冒泡 ✓）/ session 落 system_trigger + memory_observation（"记住就好，不必总担心存档"）/ **没** assistant_message / 用 Session.from_events 重建后 session.messages 只 1 条 bedtime 文本，silent 反思**没泄露**——方案 F 在真 LLM 下让 LLM 历史天然干净 ✓ |
 
 ---
 
@@ -109,11 +115,11 @@ IN_PROGRESS
 
 | AC | 标题 | 状态 | 依据 |
 |---|---|---|---|
-| AC-1 | main loop dispatch 可跑通 | 🟡 runtime 层覆盖 | M14.3 test_runtime_dispatch（_dispatch 直接驱动）；M14.8 手工跑真起 thread 端到端 |
+| AC-1 | main loop dispatch 可跑通 | ✅ 单测 + 真 LLM | M14.3 test_runtime_dispatch + M14.8 手工真跑（真起 bridge thread + dispatch loop，fire_now 入 inbox → dispatch → conv.dispatch_system_turn → LiteLLM 真调用） |
 | AC-2 | Hook 四点位可注册可触发 | ✅ | M14.3 test_runtime_hooks 12 case（含错误隔离） |
 | AC-3 | Pre-\* 短路语义可用 | ✅ | M14.3 test_runtime_hooks（PreTurn SKIP + PreToolUse BLOCK）+ test_runtime_dispatch.test_pre_turn_skip_aborts_dispatch / test_tool_hook_invoker_bridges_pre_tool_use_block |
 | AC-4 | `_observe_turn` 迁移行为零退化 | ✅ | M14.3 test_runtime_observe_migration（字段清单 + `==` 兜底；含 assistant 多段文本场景） |
-| AC-5 | BedtimeSource demo 端到端 | ✅ runtime + source 层 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_* + M14.4 test_runtime_sources（5 BedtimeSource case 含真 thread schedule loop）；M14.8 手工跑真启 bridge 端到端 |
-| AC-6 | IdleReflectionSource silent turn 端到端 | ✅ runtime + source 层 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.4 test_runtime_sources（5 IdleReflection case 含真 thread loop）；M14.8 手工跑真启 bridge 端到端 |
-| AC-7 | Bridge push 通道端到端 | ✅ 结构层 + 镜像链路 | M14.5 test_push_channel（路由 / 状态码 / encoder content） + test_dev_endpoint（dev fire 真触发） + M14.6 test_push_mirror（pull /ag-ui/run 真镜像送达 subscriber，含 TextDelta + TurnDone）；chunk-level 长 SSE 流式留 M14.8 真起 bridge + dev CLI 端到端验证 |
-| AC-8 | Dev CLI 落地 | ✅ 文件层 | M14.7 dev/push_subscribe.py + wheel exclude + scripts/{dev-push-subscribe,dev-fire-source}/run.{sh,ps1} 双端 + scripts/README.md 登记；CLI `--help` 验证可执行；端到端真起 bridge + 在另一终端订阅 + 触发 fire-source 留 M14.8 手工跑 |
+| AC-5 | BedtimeSource demo 端到端 | ✅ 单测 + 真 LLM | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_* + M14.4 test_runtime_sources（5 BedtimeSource case 含真 thread schedule loop）+ M14.8 手工真跑（push subscriber 收 envelope kind=agent_turn src=cron:bedtime 含 14 text_delta+done，session 落 system_trigger + assistant_message） |
+| AC-6 | IdleReflectionSource silent turn 端到端 | ✅ 单测 + 真 LLM | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.4 test_runtime_sources + M14.8 手工真跑（push subscriber 不收 / session 落 system_trigger + memory_observation 不写 assistant_message / session.messages 派生不含 silent 反思——方案 F 在真 LLM 下成立） |
+| AC-7 | Bridge push 通道端到端 | ✅ 单测 + 真 LLM | M14.5 test_push_channel + test_dev_endpoint + M14.6 test_push_mirror + M14.8 手工真跑（dev CLI 真实订阅 /push/subscribe，收到含 14 text_delta 的 SSE envelope） |
+| AC-8 | Dev CLI 落地 | ✅ 单测 + 真 LLM | M14.7 双端 wrapper + scripts/README + `./scripts/check` 全绿 + M14.8 手工真跑（dev-push-subscribe + dev-fire-source 两个脚本真起、对真 bridge 工作） |
