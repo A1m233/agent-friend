@@ -81,22 +81,23 @@ IN_PROGRESS
 
 > 完成后能用 `usePetBubbleStore.ingest(envelope)` 驱动状态机走完完整生命周期。
 
-- [ ] `frontend/src/stores/petBubble.ts`：新文件
-  - [ ] `BubblePhase` type
-  - [ ] `usePetBubbleStore` zustand store（`phase` / `current` / `ingest` / `expand` / `dismiss`）
-  - [ ] 内部 `dismissTimer` + `AUTO_DISMISS_MS = 10_000`
-  - [ ] `setPolicy(p)` / `resetPolicy()` 测试钩子
-  - [ ] `startPetBubbleSubscriber()` async（listen `agent://push` → `ingest`）
-- [ ] `frontend/src/stores/petBubble.test.ts`：新文件（用 `vi.useFakeTimers()` 控时）
-  - [ ] `ingest → showing`（phase / current 字段断言）
-  - [ ] `ingest → showing → +10s → idle`（fakeTimers advance）
-  - [ ] `setPolicy(替换 policy) → ingest user_turn 也能进 bubble`（AC-3 policy 可替换扩展点证明）—— **AC-3**
-  - [ ] `ingest 新 envelope（seq+1）替换 current`（同时清旧 timer）
-  - [ ] `ingest 同 id 不替换`（兜底）
-  - [ ] `expand → expanded`（清 timer，自动 dismiss 不触发）
-  - [ ] `dismiss → idle`
-  - [ ] `expanded 状态 +10s 不会自动 idle`
-- [ ] `pnpm test petBubble` 全绿
+- [x] `frontend/src/stores/petBubble.ts`：新文件
+  - [x] `BubblePhase` type（`"idle" | "showing" | "expanded"`）
+  - [x] `usePetBubbleStore` zustand store（`phase` / `current` / `ingest` / `expand` / `dismiss`）
+  - [x] 内部 `dismissTimer` + 公开 `AUTO_DISMISS_MS = 10_000`（test 引用）
+  - [x] `setPolicy(p)` / `resetPolicy()` 测试钩子
+  - [x] `startPetBubbleSubscriber()` async（listen `agent://push` → `ingest`；非 Tauri 环境 no-op）
+- [x] `frontend/src/stores/petBubble.test.ts`：新文件（用 `vi.useFakeTimers()` 控时）
+  - [x] `ingest → showing`（phase / current 字段断言）
+  - [x] `ingest → showing → +AUTO_DISMISS_MS → idle`（fakeTimers advance）
+  - [x] `setPolicy(替换 policy) → ingest user_turn 也能进 bubble`（**AC-3** policy 可替换扩展点）
+  - [x] `ingest 新 envelope（seq+1）替换 current + 重置 timer`（多 case 时间窗断言）
+  - [x] `ingest 同 id 不替换 + 不重置 timer`（兜底）
+  - [x] `expand → expanded`（清 timer，自动 dismiss 不触发）
+  - [x] `expand` 仅 showing 生效；idle / expanded 状态下 no-op
+  - [x] `dismiss → idle`（清 current 与 timer）
+- [x] `pnpm test petBubble` 全绿（14 passed 含 policy 6 + store 8）
+- [x] `pnpm run typecheck` + `pnpm run lint` 全绿
 
 ### M15.6 PetBubble UI 组件 + 集成到 pet/App.tsx
 
@@ -159,6 +160,7 @@ IN_PROGRESS
 | 2026-06-13 | M15.2 完成 | push_subscriber.rs 落（SSE 分帧 / envelope 解码 / reqwest bytes_stream / emit_to 广播）+ lib.rs 接入 setup spawn；12 个单测全绿；spot-check 端到端 dry-run 移交 M15.8 |
 | 2026-06-13 | M15.3 完成 | tauri.conf.json 加 visibleOnAllWorkspaces；macOS NSWindow setLevel:1000 通过 objc2 msg_send 落地、错误隔离不阻断 app 启动；cargo build 全绿；切 Space + 全屏 app 真跑验证移交 M15.8 |
 | 2026-06-13 | M15.4 完成 | petBubblePolicy.ts defaultPolicy（"无 user-visible assistant 文本"判 silent，比 source_kind 黑名单更可演进）；6 个 case 全绿（AC-4 + AC-5 锚点）；typecheck + lint 干净 |
+| 2026-06-13 | M15.5 完成 | petBubble.ts zustand store（showing/expanded 状态机 + AUTO_DISMISS_MS=10s timer）+ setPolicy/resetPolicy 测试钩子 + startPetBubbleSubscriber 桥接 tauri event；8 个 case 全绿覆盖 AC-3 policy 可替换；累计 14 passed |
 
 ---
 
