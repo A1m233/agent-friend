@@ -71,11 +71,13 @@ IN_PROGRESS
 - [x] 全 agent_bridge 套件 26 测试全绿（M14.5 23 + 新 3）；agent 183 测试零退化（encoder 加性参数）
 
 ### M14.7 Dev CLI + packaging + scripts
-- [ ] `agent_bridge/src/agent_bridge/dev/push_subscribe.py`：dev CLI（订阅 /push/subscribe 美化打印）
-- [ ] `agent_bridge/pyproject.toml`：`[tool.hatch.build.targets.wheel].exclude` 加 `src/agent_bridge/dev`
-- [ ] `scripts/dev-push-subscribe/run.sh` + `run.ps1`：双端 wrapper
-- [ ] `scripts/dev-fire-source/run.sh` + `run.ps1`：双端 wrapper
-- [ ] `scripts/README.md`：登记两个新脚本
+- [x] `agent_bridge/src/agent_bridge/dev/push_subscribe.py`：dev CLI 用 `httpx.stream` 订阅 `/push/subscribe`，按一行 JSON 美化打印每条 envelope（heartbeat 默认静默，`--verbose` 全显）；KeyboardInterrupt 优雅退出；HTTP 错误 / 连接错误打 stderr 后非零退出
+- [x] `agent_bridge/pyproject.toml`：`[tool.hatch.build.targets.wheel]` 加 `exclude = ["src/agent_bridge/dev"]`；wheel build 验证 dev/ 不在 wheel 里 + push/ 正常打包
+- [x] `scripts/dev-push-subscribe/run.sh` + `run.ps1`：双端 wrapper（sh: `set -euo pipefail` + `cd .../..` + `exec uv run python -m`；ps1: `$ErrorActionPreference="Stop"` + UTF-8 输出强制 + `Set-Location` + `uv run python -m`，沿用 `scripts/bridge/` 同模板）
+- [x] `scripts/dev-fire-source/run.sh` + `run.ps1`：双端 wrapper（参数校验 + URL-encode source_name + `curl -fsS POST` / `Invoke-RestMethod` 命中 `/dev/fire-source?source_name=...`）
+- [x] `scripts/README.md`：登记两个新脚本（用途 / dev_mode 警示 / mac+win 命令）
+- [x] 用 `python -m agent_bridge.dev.push_subscribe --help` 验证 dev 模块在 editable install 下可执行（即使 wheel 不含 dev/）
+- [x] 全 agent_bridge 套件 26 测试不退化；agent 183 测试不退化
 
 ### M14.8 验证
 - [ ] `./scripts/check` 全绿（ruff + mypy 全文件 + 全部 pytest 含本期新增）
@@ -94,6 +96,7 @@ IN_PROGRESS
 | 2026-06-12 | M14.4 EventSource 实例 + 单测 | 新增 `agent/src/agent/runtime/sources.py`：UserSource(no thread, submit 入队) + BedtimeSource(独立 thread + schedule loop) + IdleReflectionSource(silent turn, 读 runtime.last_dispatch_finished_at) + `_seconds_until_time_of_day` 纯函数；构造期参数校验 + fire_now 即时触发 + Event.wait 可中断；now_factory 注入便于测试；16 个新测试 case 全绿含 2 个真线程 loop 验证（BedtimeSource 0.1s 内 fire / IdleReflectionSource 超阈值即时 fire / stop 1s 内中断）；全 agent 套件 183 测试全绿（M14.3 167 + 新 16） |
 | 2026-06-12 | M14.5 Bridge 集成 + 12 测试 | settings.py 加 8 个 014 字段（dev_mode/enable_bedtime/idle/...）；agent_runtime_factory.py 新文件含 build_agent_runtime（conversation_factory 闭包注入 post_turn_external=True + tool_hook_invoker）；assembly.py BridgeRuntime 加 agent_runtime 字段；push/ 子包（protocol.py encode_envelope_sse 含 unicode + /push/subscribe GET 长 SSE 端点 含 heartbeat/kind 过滤/disconnect 反注册）；dev/ 子包（fire_source.py POST /dev/fire-source 仅 dev_mode 时挂）；app.py lifespan 启停 agent_runtime + 按 dev_mode 挂 dev router；SessionManager.start_conversation 加 backward-compat 可选参数 tool_hook_invoker + post_turn_external；6 push + 6 dev 测试全绿（结构/边界/encoder 内容；chunk-level SSE 流式投递 ASGITransport 限制下跳过，留 M14.8 真跑验证）；agent_bridge 23 测试全绿（既有 11 + 新 12），agent 183 测试零退化 |
 | 2026-06-12 | M14.6 Pull 路径镜像复制 + 3 测试 | ag_ui + openai encoder 加可选 `agent_runtime` 参数；每 yield ConversationEvent 同步喂 `fan_out_event`（用 conv.session.session_id 作 UserEvent.session_id）；镜像失败 try/except log warning 不打断；ag_ui + openai routes 调 encoder 时透传 runtime.agent_runtime；test_push_mirror.py 用 TestClient 同步 POST + 侧 event loop subscriber 真实收到 envelope 含 TextDelta + TurnDone 验证完整链路；agent_bridge 26 测试全绿（既有 23 + 新 3），agent 183 测试零退化 |
+| 2026-06-12 | M14.7 Dev CLI + packaging + scripts | agent_bridge/dev/push_subscribe.py dev CLI（httpx.stream 订阅 + 美化打印 + KeyboardInterrupt 优雅退出）；agent_bridge/pyproject.toml wheel exclude dev/（用 uv build --wheel 验证 dev/ 不在产物 + push/ 在产物）；scripts/dev-push-subscribe/{sh,ps1} + scripts/dev-fire-source/{sh,ps1} 4 个双端 wrapper（sh: exec uv run python -m；ps1: UTF-8 输出强制）；scripts/README.md 登记两脚本含 dev_mode 警示；agent_bridge 26 / agent 183 测试不退化 |
 
 ---
 
@@ -110,4 +113,4 @@ IN_PROGRESS
 | AC-5 | BedtimeSource demo 端到端 | ✅ runtime + source 层 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_* + M14.4 test_runtime_sources（5 BedtimeSource case 含真 thread schedule loop）；M14.8 手工跑真启 bridge 端到端 |
 | AC-6 | IdleReflectionSource silent turn 端到端 | ✅ runtime + source 层 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.4 test_runtime_sources（5 IdleReflection case 含真 thread loop）；M14.8 手工跑真启 bridge 端到端 |
 | AC-7 | Bridge push 通道端到端 | ✅ 结构层 + 镜像链路 | M14.5 test_push_channel（路由 / 状态码 / encoder content） + test_dev_endpoint（dev fire 真触发） + M14.6 test_push_mirror（pull /ag-ui/run 真镜像送达 subscriber，含 TextDelta + TurnDone）；chunk-level 长 SSE 流式留 M14.8 真起 bridge + dev CLI 端到端验证 |
-| AC-8 | Dev CLI 落地 | ⏳ | M14.7 双端 wrapper + scripts/README + `./scripts/check` 全绿 |
+| AC-8 | Dev CLI 落地 | ✅ 文件层 | M14.7 dev/push_subscribe.py + wheel exclude + scripts/{dev-push-subscribe,dev-fire-source}/run.{sh,ps1} 双端 + scripts/README.md 登记；CLI `--help` 验证可执行；端到端真起 bridge + 在另一终端订阅 + 触发 fire-source 留 M14.8 手工跑 |
