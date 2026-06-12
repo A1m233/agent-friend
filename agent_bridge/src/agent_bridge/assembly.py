@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
 
 from agent import (
@@ -33,6 +34,7 @@ from agent import (
 from llm_providers import LLMClient, ProviderSpec
 from memory import Memory, build_memory
 
+from .agent_runtime_factory import build_agent_runtime
 from .settings import BridgeSettings
 
 
@@ -109,6 +111,13 @@ class BridgeRuntime:
     default_persona: str
     default_model: str
     memory: Memory | None = None
+    agent_runtime: AgentRuntime | None = None
+    """014 起新增：进程级 :class:`AgentRuntime`，main loop 调度内核。
+
+    在 :func:`build_runtime` 中装配；由 FastAPI lifespan 调用
+    :meth:`AgentRuntime.start` / :meth:`stop`。``None`` 仅在过渡期 /
+    测试 fixture 不需要 main loop 时出现。
+    """
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -173,6 +182,12 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         persistent_store, tool_registry, memory, prompt_builder_factory
     )
 
+    agent_runtime = build_agent_runtime(
+        settings=settings,
+        session_manager=persistent_session_manager,
+        memory=memory,
+    )
+
     return BridgeRuntime(
         settings=settings,
         persistent_store=persistent_store,
@@ -184,4 +199,5 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         default_persona=default_persona,
         default_model=default_model,
         memory=memory,
+        agent_runtime=agent_runtime,
     )

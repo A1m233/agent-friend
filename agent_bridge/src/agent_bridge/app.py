@@ -3,11 +3,14 @@
 :func:`create_app` 是 ``uvicorn --factory`` 模式的入口：
 
 - 进程启动时调用一次，构造 :class:`BridgeRuntime` 与 :class:`FastAPI` 实例
-- 把各协议层的路由（M6.1：OpenAI；M6.2 起：+ AG-UI + meta REST）挂到
-  同一个 :class:`FastAPI` 实例
+- 把各协议层的路由（M6.1：OpenAI；M6.2 起：+ AG-UI + meta REST；
+  M14.5 起：+ push channel + 可选 dev fire-source）挂到同一个 :class:`FastAPI` 实例
 - 注册健康检查 ``GET /healthz``
+- 014 起：FastAPI lifespan 在启动时调 :meth:`AgentRuntime.start`、关闭时调
+  :meth:`AgentRuntime.stop`，确保 main loop 与 bridge 进程同生共死
 
-详见 docs/requirements/006-agent-bridge/design.md §4.2 + §4.10。
+详见 docs/requirements/006-agent-bridge/design.md §4.2 + §4.10、
+docs/requirements/014-engine-main-loop-and-bridge-push/design.md §8.6。
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from fastapi import FastAPI
 from .assembly import BridgeRuntime, build_runtime
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.openai import register_routes as register_openai_routes
+from .push import register_routes as register_push_routes
 from .routes.meta import register_routes as register_meta_routes
 from .settings import BridgeSettings
 
@@ -46,7 +50,8 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
         title="agent-bridge",
         version="0.1.0",
         description=(
-            "agent-friend 的 HTTP SSE 出口；M6.2 启用 OpenAI + AG-UI 双协议 + meta REST。"
+            "agent-friend 的 HTTP SSE 出口；M6.2 启用 OpenAI + AG-UI 双协议 + meta REST；"
+            "M14.5 起加 push channel + 可选 dev fire-source。"
         ),
         lifespan=_make_lifespan(runtime),
     )
@@ -58,17 +63,29 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
     register_openai_routes(app, runtime)
     register_ag_ui_routes(app, runtime)
     register_meta_routes(app, runtime)
+    register_push_routes(app, runtime)
+
+    if runtime.settings.dev_mode:
+        from .dev.fire_source import register_routes as register_dev_fire_routes
+
+        register_dev_fire_routes(app, runtime)
 
     return app
 
 
 def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
-    """构造 FastAPI lifespan：进程退出时 drain 记忆抽取队列并关库（008）。"""
+    """构造 FastAPI lifespan：启动期拉起 AgentRuntime；退出期 stop + drain。"""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        runtime.close()
+        if runtime.agent_runtime is not None:
+            runtime.agent_runtime.start()
+        try:
+            yield
+        finally:
+            if runtime.agent_runtime is not None:
+                runtime.agent_runtime.stop(timeout=5.0)
+            runtime.close()
 
     return lifespan
 

@@ -56,3 +56,32 @@ class BridgeSettings(BaseSettings):
     memory_db: Path = Field(default_factory=memory_db_path)
     personas_dir: Path = Field(default_factory=personas_dir)
     memory_enabled: bool = True
+
+    # 014：main loop / push 通道相关
+    dev_mode: bool = False
+    """是否挂载 ``/dev/*`` 端点（如 ``/dev/fire-source``）。**生产环境永不开**——
+    端点能跨进程立即触发任意 EventSource，仅供 dev / 测试使用。
+    通过 ``AGENT_BRIDGE_DEV_MODE`` 显式开启；默认 ``False``。"""
+
+    enable_bedtime: bool = False
+    """是否启用 :class:`BedtimeSource`。默认 ``False``——主动陪伴属于产品决策，
+    没显式开启不应该自己冒出来。开启时同时设置 ``bedtime_target_session_id``。"""
+
+    bedtime_target_session_id: str = ""
+    """``enable_bedtime=True`` 时 bedtime 提醒发给哪个 session 的 id；
+    必须是 ``sessions_dir`` 下已存在的 session id（v1 单 session 假设）。"""
+
+    bedtime_hour: int = 23
+    """bedtime 触发时（local time），0-23。默认 23（晚上 11 点）。"""
+
+    bedtime_minute: int = 0
+    """bedtime 触发分（local time），0-59。默认 0。"""
+
+    enable_idle_reflection: bool = False
+    """是否启用 :class:`IdleReflectionSource`。默认 ``False``。"""
+
+    idle_target_session_id: str = ""
+    """``enable_idle_reflection=True`` 时 silent turn 落入哪个 session 的 id。"""
+
+    idle_minutes: int = 30
+    """idle reflection 触发的空闲阈值（分钟）。默认 30。"""

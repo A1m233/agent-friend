@@ -84,7 +84,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
         if decoded.stream:
             return StreamingResponse(
-                encode_streaming(conv, decoded.latest_user_input, model=model),
+                encode_streaming(
+                    conv,
+                    decoded.latest_user_input,
+                    model=model,
+                    agent_runtime=runtime.agent_runtime,
+                ),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -93,7 +98,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
 
         try:
-            payload = encode_nonstreaming(conv, decoded.latest_user_input, model=model)
+            payload = encode_nonstreaming(
+                conv,
+                decoded.latest_user_input,
+                model=model,
+                agent_runtime=runtime.agent_runtime,
+            )
         except Exception as exc:
             logger.exception("OpenAI 非流式编码失败")
             return _error_response(map_exception(exc))

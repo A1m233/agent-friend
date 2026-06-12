@@ -45,6 +45,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
+from agent.runtime import AgentRuntime, UserEvent
 
 from agent import (
     Conversation,
@@ -66,6 +67,7 @@ def encode_stream(
     thread_id: str,
     run_id: str,
     accept: str | None = None,
+    agent_runtime: AgentRuntime | None = None,
 ) -> Iterator[bytes]:
     """流式编码 AG-UI SSE bytes。
 
@@ -80,6 +82,10 @@ def encode_stream(
         run_id: 同上。
         accept: HTTP ``Accept`` header；交给 :class:`EventEncoder` 决定具体
             wire 格式（SSE / NDJSON 等）。
+        agent_runtime: 014 起新增。非 ``None`` 时每条 ``ConversationEvent``
+            被同步镜像复制给 ``agent_runtime.listeners.fan_out_event``——push
+            通道订阅者（按 ``kinds=user_turn`` 过滤）能看到这条 user 触发轮。
+            ``None`` 时保持 006~013 行为，不镜像。
     """
     encoder = EventEncoder(accept=accept or "")
 
@@ -98,7 +104,19 @@ def encode_stream(
 
     try:
         conv = conv_factory()
+        mirror_user_event = (
+            UserEvent(session_id=conv.session.session_id, user_input=user_input)
+            if agent_runtime is not None
+            else None
+        )
         for ev in conv.stream(user_input):
+            # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
+            if agent_runtime is not None and mirror_user_event is not None:
+                try:
+                    agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
+                except Exception:
+                    # 镜像失败绝不影响 pull 路径——log warning 后继续
+                    logger.warning("listener fan_out 失败", exc_info=True)
             if isinstance(ev, TextDelta):
                 if open_message_id is None:
                     open_message_id = _new_message_id()

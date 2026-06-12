@@ -25,6 +25,8 @@ EventType = Literal[
     "tool_call_request",
     "tool_call_result",
     "compaction",
+    "system_trigger",
+    "memory_observation",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -38,6 +40,8 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "tool_call_request",
         "tool_call_result",
         "compaction",
+        "system_trigger",
+        "memory_observation",
     }
 )
 
@@ -56,6 +60,11 @@ SCHEMA_VERSION: Final[int] = 1
 009 起新增 ``compaction`` 事件（上下文摘要折叠点 marker），同样是纯加性——原始
 消息事件一条不删不改，老文件无该事件时自然退化为全量。故 ``SCHEMA_VERSION``
 **不递增**（详见 009 design §6.4）。
+
+014 起新增 ``system_trigger`` / ``memory_observation`` 两类事件（main loop 系统
+触发轮 marker / silent turn 产物），同样是纯加性——老文件不出现新 type；
+``Session.messages`` 派生不识别新 type 自然忽略；故 ``SCHEMA_VERSION`` **不递增**
+（详见 014 design §6.1）。
 """
 
 

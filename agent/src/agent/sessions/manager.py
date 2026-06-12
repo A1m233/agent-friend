@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from memory import Memory
 
     from ..context import ContextManager
-    from ..conversation import Conversation
+    from ..conversation import Conversation, ToolHookInvoker
     from ..prompts import PromptBuilder
     from ..tools import ToolRegistry
 
@@ -182,11 +182,24 @@ class SessionManager:
 
     # ----- 装配 Conversation -----
 
-    def start_conversation(self, session: Session) -> Conversation:
+    def start_conversation(
+        self,
+        session: Session,
+        *,
+        tool_hook_invoker: ToolHookInvoker | None = None,
+        post_turn_external: bool = False,
+    ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
 
         Args:
             session: 目标 session（用 :meth:`create` 或 :meth:`open` 拿到）。
+            tool_hook_invoker: 014 起新增；非 ``None`` 时 :meth:`Conversation._invoke_tool_safely`
+                会把 tool 调用路由到 invoker（让 PreToolUse / PostToolUse hook 介入）。
+                默认 ``None`` 保留 002~013 行为。
+            post_turn_external: 014 起新增；``True`` 时 :meth:`Conversation.stream`
+                finally 块不再调硬编码的 ``_observe_turn``——由外部（``AgentRuntime``
+                的默认 PostTurn hook）接管 ``memory.observe``。默认 ``False`` 保留
+                002~013 行为。
 
         Returns:
             完全装配好的 Conversation 实例，可直接调用 ``send`` / ``stream`` /
@@ -265,4 +278,6 @@ class SessionManager:
             catalog=catalog,
             memory=self._memory,
             tool_registry=self._tool_registry,
+            tool_hook_invoker=tool_hook_invoker,
+            post_turn_external=post_turn_external,
         )
