@@ -61,14 +61,14 @@ IN_PROGRESS
 
 **目标**：给 pinned 注入加 query relevance gate；身份题 smoke 单测全过；闲聊负样本不误注入。
 
-- [ ] `memory/src/memory/retrieval/pinned_gate.py`：新建——实现 `pinned_gate(query, pinned, *, store, threshold_mode) -> list[SemanticRow]`，复用 `store.fts_match_pinned`
-- [ ] `memory/src/memory/facade.py`：`retrieve` 在拿到 pinned 后过 gate；构造期接受 `pinned_relevance_gate: bool` 开关与档位（严格 / 宽松 / 动态）
-- [ ] `memory/src/memory/retrieval/__init__.py`：导出 `pinned_gate`（如需）
-- [ ] `memory/tests/test_pinned_gate.py`：新建——按 design §5.4 的 5–8 道身份题 fixture（极短 query / 长 query / 近义词 / 同身份多种问法 / 闲聊负样本），断言 gate 输出符合预期。**所有 PR 必跑**
-- [ ] **阈值档位实测选定**：先用宽松档跑 fixture + smoke
-  - [ ] 宽松档过：选定宽松，进 M13.4
-  - [ ] 宽松档误伤极短 query：切动态档（≤ 6 字直接通过；> 6 字走 FTS5 命中判定）
-- [ ] **回填**：`design.md §10` ⏳ "pinned gate 阈值档位"项填入选定档位
+- [x] `memory/src/memory/retrieval/pinned_gate.py`：新建——实现 `pinned_gate(query, pinned, *, store, owner_user_id, mode) -> list[SemanticRow]`，复用 M13.2 的 `store.fts_match_pinned`；`GateMode` Literal 类型
+- [x] `memory/src/memory/facade.py`：`retrieve` 拿到 pinned 后过 gate；`Memory.__init__` 加 `pinned_relevance_gate: bool = True` 与 `pinned_gate_mode: GateMode = "lenient"` 两个 kw-only 开关
+- [x] `memory/src/memory/retrieval/__init__.py`：导出 `pinned_gate` / `GateMode`
+- [x] `memory/tests/test_pinned_gate.py`：新建——4 道身份级 pinned fixture + 9 个测试（lenient 5 个 / strict 2 个 / facade 集成 2 个：默认开 gate 砍闲聊 / 关 gate 走 pre-pass-1）；**所有 PR 必跑**
+- [x] `memory/tests/test_facade.py`：旧测试 `test_pinned_always_injected_even_without_query_match` 改写为 `test_pinned_dropped_when_query_unrelated_with_default_gate`（反映 pass-1 新默认行为）
+- [x] **阈值档位实测选定**：design §5.3 描述的"宽松"与"动态"档算法等价（短 query 全通过 + 长 query FTS5 判定），合并为 **`lenient`** 一档（默认）；保留 `strict` 档供切片 baseline / future tuning
+- [x] **回填**：`design.md §10` "pinned gate 阈值档位"项已 commit 实测结果
+- [x] `./scripts/check`：ruff + format + mypy + pytest **281 全过**
 
 ### M13.4 切片 baseline 配置
 
@@ -130,3 +130,4 @@ IN_PROGRESS
 | 2026-06-12 | **分支整理**：两 commit 误落 main，迁到 `feature/013-memory-quality-pass-1` | 项目惯例所有 013 改动走 feature 分支；origin/main 未受影响，操作完全本地 |
 | 2026-06-12 | **M13.2 design 变更**：trigram + bigram 兜底实测不可行 → 改 jieba 中文分词 | SQLite FTS5 trigram 索引 token 是 3-字滑窗、bigram phrase 不能 substring 命中；中文短 query 与 pinned 条目无共享 trigram。design.md §4 / §5 / §10 / §11 已同步；M13.2 任务清单重写。requirement.md 未变（jieba 在 Q-4 候选） |
 | 2026-06-12 | M13.2 任务全部完成 | pyproject 加 jieba 依赖；schema 升 v2（`*_tokens` 列 + FTS5 unicode61）；sqlite_store `_tokenize` / `_fts_query` 改 jieba；新增 `fts_match_pinned`；`__init__` 加 v1→v2 lazy migration；test_store 改写既有"过短 query"测试 + 新增 8 个 jieba/migration 测试；`./scripts/check`：ruff + format + mypy + pytest **272 全过**（pre-M13.2 261 + M13.1 3 + M13.2 8） |
+| 2026-06-12 | M13.3 任务全部完成 + design.md ⏳ 回填 | `pinned_gate.py` 新建（`lenient` / `strict` 两档；短 query < 6 字 lenient 放行）；facade `Memory` 加 `pinned_relevance_gate` / `pinned_gate_mode` 开关；retrieval `__init__` 导出；test_pinned_gate 9 个测试 + test_facade 旧 "pinned 永远附带" 改写为 "无关 query 砍 pinned"（反映新默认行为）；design.md §10 "pinned gate 阈值档位"项回填（实施合并"宽松/动态"为 `lenient`）；`./scripts/check`：281 全过（272 → 281）|
