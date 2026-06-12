@@ -23,3 +23,11 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
+# 015 · push channel SSE subscriber
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+futures-util = "0.3"
+
+# 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }

@@ -9,3 +9,4 @@ export type {
   ChatMessage,
 } from "./chat";
 export type { SessionSummary, SessionEvent, SessionDetail } from "./meta";
+export type { PushEnvelope } from "./push";

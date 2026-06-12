@@ -2,7 +2,7 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-NOT_STARTED
+IN_PROGRESS
 
 > 8 个里程碑，依赖链：M15.1 → M15.2 → M15.4 → M15.5 → M15.6 → M15.8（M15.3 / M15.7 独立可插入）。M15.8 含 dev demo orchestrator + 自动门禁 + 手工真跑端到端验收。
 
@@ -16,10 +16,11 @@ NOT_STARTED
 
 > 前置基础：让 Rust / TS 双端拿到协议契约，并把新增 native 依赖先 link 通过。
 
-- [ ] `frontend/src/types/push.ts`：新文件，定义 `PushEnvelope` TS interface（与 `agent_bridge/push/protocol.py` schema 对齐：`kind` / `session_id` / `seq` / `source_kind` / `events`）；events 字段用既有 `SessionEvent` 类型（`types/meta.ts`）
-- [ ] `frontend/src-tauri/Cargo.toml`：加 `reqwest = { version = "0.12", features = ["stream", "json"] }` + `futures-util`；加 `objc2` 仅在 `[target.'cfg(target_os = "macos")'.dependencies]` 段下（避免污染 Win/Linux 构建）
-- [ ] `pnpm tsc --noEmit` 通过（types/push.ts 类型合法）
-- [ ] `cargo build` 通过（Cargo.toml 依赖能拉下来且 link 成功；macOS / 其他平台分别 spot-check）
+- [x] `frontend/src/types/push.ts`：新文件，定义 `PushEnvelope` TS interface（与 `agent_bridge/push/protocol.py` schema 对齐：`kind` / `session_id` / `seq` / `source_kind` / `events`）；events 字段用既有 `SessionEvent` 类型（`types/meta.ts`）
+- [x] `frontend/src/types/index.ts`：导出 `PushEnvelope`
+- [x] `frontend/src-tauri/Cargo.toml`：加 `reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }` + `futures-util`；macOS-only target 段加 `objc2` + `objc2-app-kit`（避免污染 Win/Linux 构建；用 rustls-tls 避免 native OpenSSL）
+- [x] `pnpm run typecheck`（即 `tsc -b --noEmit`）通过
+- [x] `cargo build` 通过（首次拉 reqwest / objc2 / hyper-rustls，1m35s 全绿）
 
 ### M15.2 Rust push_subscriber 实现 + 解析单测
 
@@ -151,6 +152,7 @@ NOT_STARTED
 
 | 日期 | 完成 | 备注 |
 |------|------|------|
+| 2026-06-13 | M15.1 完成 | types/push.ts + Cargo.toml 依赖；rustls-tls 避免 OpenSSL；macOS-only objc2 + objc2-app-kit；typecheck + cargo build 全绿 |
 
 ---
 
