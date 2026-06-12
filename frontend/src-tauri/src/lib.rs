@@ -7,6 +7,49 @@ use tauri::{
 
 mod push_subscriber;
 
+/// 015 · 让 pet 窗悬浮在全屏 app 之上。
+///
+/// Tauri 2 的 `alwaysOnTop`（对应 NSFloatingWindowLevel = 3）压不过 fullscreen layer；
+/// 这里直接调 NSWindow `setLevel:` 提到 NSScreenSaverWindowLevel = 1000。
+/// 失败仅 log warn——pet 窗在全屏 app 下会被遮，但 app 仍可启动（不阻断主流程）。
+///
+/// Windows / Linux 本期不动（requirement R-4.7.3），退化为单纯 alwaysOnTop。
+fn apply_pet_window_level(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = mac_apply_pet_window_level(app) {
+            log::warn!("apply_pet_window_level failed: {e}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_apply_pet_window_level(
+    app: &tauri::AppHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use objc2::{msg_send, runtime::AnyObject};
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or("pet window not found")?;
+    let ns_window_ptr = pet.ns_window()?;
+    if ns_window_ptr.is_null() {
+        return Err("ns_window() returned null".into());
+    }
+    // SAFETY: ns_window_ptr 由 Tauri 提供、生命周期与 pet 窗一致；
+    // 这里只读取 NSWindow 实例发送 setLevel: 消息，不持有 ownership。
+    let ns_window: &AnyObject = unsafe { &*(ns_window_ptr as *const AnyObject) };
+    unsafe {
+        // NSScreenSaverWindowLevel = 1000（kCGScreenSaverWindowLevelKey）
+        let _: () = msg_send![ns_window, setLevel: 1000_isize];
+    }
+    log::info!("pet window level set to NSScreenSaverWindowLevel (1000)");
+    Ok(())
+}
+
 /// bridge HTTP base URL。
 ///
 /// 默认 `http://127.0.0.1:18800`（与 `frontend/vite.config.ts` proxy target、
@@ -123,6 +166,8 @@ pub fn run() {
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
+            // 015 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
+            apply_pet_window_level(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

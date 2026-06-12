@@ -47,13 +47,14 @@ IN_PROGRESS
 
 > 独立可插入。让 pet 窗"用户看得见"语义成立——切 Space、全屏 app 之上都能浮动。
 
-- [ ] `frontend/src-tauri/tauri.conf.json`：pet 窗加 `"visibleOnAllWorkspaces": true`
-- [ ] `frontend/src-tauri/src/lib.rs`：
-  - [ ] 新增 `apply_pet_window_level(app: &AppHandle) -> tauri::Result<()>`
-  - [ ] `#[cfg(target_os = "macos")]` 分支：`objc2::msg_send![ns_window, setLevel: 1000_i64]`（NSScreenSaverWindowLevel，压过全屏 layer）
-  - [ ] `#[cfg(not(target_os = "macos"))]` 分支：空实现
-  - [ ] `setup` 闭包内调 `apply_pet_window_level(app.handle())?;`
-- [ ] 手工真跑 spot-check（macOS）：
+- [x] `frontend/src-tauri/tauri.conf.json`：pet 窗加 `"visibleOnAllWorkspaces": true`
+- [x] `frontend/src-tauri/src/lib.rs`：
+  - [x] 新增 `apply_pet_window_level(app: &AppHandle)`（封装 + 错误隔离）
+  - [x] `#[cfg(target_os = "macos")]` `mac_apply_pet_window_level`：`msg_send![ns_window, setLevel: 1000_isize]`（NSScreenSaverWindowLevel，压过全屏 layer）
+  - [x] `#[cfg(not(target_os = "macos"))]` 分支：空实现（退化为单纯 alwaysOnTop）
+  - [x] `setup` 闭包内调 `apply_pet_window_level(app.handle());`
+- [x] `cargo build` 通过（含 macOS objc2 msg_send）
+- [ ] 手工真跑 spot-check（macOS）留给 M15.8：
   - [ ] 切 Space 桌宠跟随
   - [ ] 启动全屏视频播放器（如 QuickTime）桌宠仍浮在视频之上 → 对应 **AC-7**
 
@@ -154,6 +155,7 @@ IN_PROGRESS
 |------|------|------|
 | 2026-06-13 | M15.1 完成 | types/push.ts + Cargo.toml 依赖；rustls-tls 避免 OpenSSL；macOS-only objc2 + objc2-app-kit；typecheck + cargo build 全绿 |
 | 2026-06-13 | M15.2 完成 | push_subscriber.rs 落（SSE 分帧 / envelope 解码 / reqwest bytes_stream / emit_to 广播）+ lib.rs 接入 setup spawn；12 个单测全绿；spot-check 端到端 dry-run 移交 M15.8 |
+| 2026-06-13 | M15.3 完成 | tauri.conf.json 加 visibleOnAllWorkspaces；macOS NSWindow setLevel:1000 通过 objc2 msg_send 落地、错误隔离不阻断 app 启动；cargo build 全绿；切 Space + 全屏 app 真跑验证移交 M15.8 |
 
 ---
 
