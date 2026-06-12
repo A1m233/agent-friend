@@ -48,16 +48,19 @@ IN_PROGRESS
 - [x] 全 agent 套件 183 测试全绿（M14.3 167 + 新 16）
 
 ### M14.5 Bridge 集成
-- [ ] `agent_bridge/src/agent_bridge/settings.py`：加 `dev_mode` / `enable_bedtime` / `bedtime_target_session_id` / `bedtime_hour` / `bedtime_minute` / `enable_idle_reflection` / `idle_target_session_id` / `idle_minutes`
-- [ ] `agent_bridge/src/agent_bridge/agent_runtime_factory.py`：新文件，`build_agent_runtime(settings, session_manager, memory)`
-- [ ] `agent_bridge/src/agent_bridge/assembly.py`：`BridgeRuntime` 加 `agent_runtime: AgentRuntime`；`build_runtime` 装配
-- [ ] `agent_bridge/src/agent_bridge/push/protocol.py`：`PushEnvelope` dataclass + `encode_envelope_sse`
-- [ ] `agent_bridge/src/agent_bridge/push/__init__.py`：`push_router` + `/push/subscribe` endpoint
-- [ ] `agent_bridge/src/agent_bridge/dev/__init__.py`：占位
-- [ ] `agent_bridge/src/agent_bridge/dev/fire_source.py`：`dev_fire_router` + `/dev/fire-source`
-- [ ] `agent_bridge/src/agent_bridge/app.py`：lifespan 启停 agent_runtime；挂 push_router；按 `settings.dev_mode` 挂 dev_fire_router
-- [ ] `agent_bridge/tests/test_push_channel.py`：起 app with fixture → httpx async GET /push/subscribe → 触发 BedtimeSource.fire_now → 校验 envelope kind="agent_turn" + events 含 TextDelta + TurnDone（AC-7）
-- [ ] `agent_bridge/tests/test_dev_endpoint.py`：dev_mode=False 时 /dev/fire-source 返 404；dev_mode=True 时 POST 触发对应 source.fire_now
+- [x] `agent_bridge/src/agent_bridge/settings.py`：加 `dev_mode` / `enable_bedtime` / `bedtime_target_session_id` / `bedtime_hour` / `bedtime_minute` / `enable_idle_reflection` / `idle_target_session_id` / `idle_minutes`（全部 backward-compat 默认值，老 .env 不需要改）
+- [x] `agent_bridge/src/agent_bridge/agent_runtime_factory.py`：新文件 `build_agent_runtime(settings, session_manager, memory)`；conversation_factory 闭包：每次 dispatch 通过 SessionManager 装配 Conversation，注入 `post_turn_external=True` + `tool_hook_invoker=runtime.tool_hook_invoker`
+- [x] `agent_bridge/src/agent_bridge/assembly.py`：`BridgeRuntime` 加 `agent_runtime: AgentRuntime | None = None` 字段；`build_runtime` 装配
+- [x] `agent_bridge/src/agent_bridge/push/protocol.py`：`encode_envelope_sse`（复用 `agent.runtime.PushEnvelope` 作为 wire schema，避免重复定义）
+- [x] `agent_bridge/src/agent_bridge/push/__init__.py`：`/push/subscribe` GET 端点（长 SSE，订阅者注册到 `ListenerRegistry`，按 `kinds` query 过滤，15s heartbeat，disconnect 时 unregister）
+- [x] `agent_bridge/src/agent_bridge/dev/__init__.py`：占位 + 子包 docstring
+- [x] `agent_bridge/src/agent_bridge/dev/fire_source.py`：`/dev/fire-source` POST 端点（按 source_name 找 EventSource → fire_now()；404 / 400 / 503 兜底）
+- [x] `agent_bridge/src/agent_bridge/app.py`：lifespan 启停 `agent_runtime`（startup `start()` / shutdown `stop()`）；挂 `push_router`；按 `settings.dev_mode` 挂 `dev_fire_router`
+- [x] **side-effect**：`agent/src/agent/sessions/manager.py` `SessionManager.start_conversation` 加 backward-compat 可选参数 `tool_hook_invoker` + `post_turn_external`（默认 None / False 保持 002~013 行为）
+- [x] `agent_bridge/tests/test_push_channel.py`：6 测试（503 / 400 / encoder format / unicode / 路由挂载 / health 不退化）—— AC-7 结构 + 边界层
+- [x] `agent_bridge/tests/test_dev_endpoint.py`：6 测试（dev_mode=False 404 / 422 missing param / 404 unknown / 400 no fire_now / 200 fire_now 触发 / 503 no runtime）—— AC-3 边端 + 安全
+- [x] **务实妥协**：SSE chunk-level 内容流测试（"fan_out → SSE 内容到达 client"）**跳过**——httpx AsyncClient + ASGITransport 对长 SSE generator 的 chunk 流式投递不可靠（buffer 到 disconnect 才 flush）；同步 TestClient.stream + iter_lines 同样问题。核心机制（fan_out_event + thread→asyncio bridge + envelope 编码）已由 M14.3 `test_runtime_dispatch` 用 side event loop 真实验证；M14.8 用真起 bridge + dev CLI 端到端验证补足。
+- [x] 全 agent_bridge 套件 23 测试全绿（既有 11 + 新 12）；全 agent 套件 183 测试不退化（SessionManager 参数加性扩展零退化）
 
 ### M14.6 Pull 路径镜像复制
 - [ ] `agent_bridge/src/agent_bridge/protocols/ag_ui/encoders.py`：每 yield ConversationEvent 同步喂一份给 `runtime.listeners.fan_out_event(UserEvent(...), cev)`
@@ -86,6 +89,7 @@ IN_PROGRESS
 | 2026-06-12 | M14.2 Conversation 内部新增 + 单测 | `Conversation.__init__` 加 2 个 backward-compat 可选参数；`dispatch_system_turn` 公共入口含 user / memory_only 两路径；silent turn 自构 fragment 走 §6 方案 F（speaker=agent 1 utterance + source_ref 关联 memory_observation event uuid）；`_invoke_tool_safely` 接受 ToolHookInvoker 注入；`stream` finally 按 `post_turn_external` 切换；2 个新单测文件 10 个 case 全绿；全 agent 套件 133 个测试全绿（既有 123 + 新增 10），既有路径零退化 |
 | 2026-06-12 | M14.3 AgentRuntime 核心 + 5 测试 | 新建 `agent/src/agent/runtime/` 子包 4 个模块（`inbox.py` AgentEvent / `hooks.py` HookRegistry 含四点位+短路+错误隔离 / `listeners.py` ListenerRegistry 含 turn 边界打包+thread→asyncio bridge / `__init__.py` AgentRuntime 含 dispatch loop+默认 PostTurn observe hook+tool_hook_invoker 桥接）；5 个新测试文件 34 个 case 全绿；全 agent 套件 167 测试全绿（既有 133 + 新 34）；AC-1/AC-2/AC-3/AC-4/AC-5 runtime 层/AC-6 runtime 层 全部覆盖；唯一工程妥协是用 `_dispatch` 直接驱动而非 start()/stop() 真线程做 unit 测试，避免线程计时 flakiness（线程语义由 stop 哨兵 + Event.wait 设计保证） |
 | 2026-06-12 | M14.4 EventSource 实例 + 单测 | 新增 `agent/src/agent/runtime/sources.py`：UserSource(no thread, submit 入队) + BedtimeSource(独立 thread + schedule loop) + IdleReflectionSource(silent turn, 读 runtime.last_dispatch_finished_at) + `_seconds_until_time_of_day` 纯函数；构造期参数校验 + fire_now 即时触发 + Event.wait 可中断；now_factory 注入便于测试；16 个新测试 case 全绿含 2 个真线程 loop 验证（BedtimeSource 0.1s 内 fire / IdleReflectionSource 超阈值即时 fire / stop 1s 内中断）；全 agent 套件 183 测试全绿（M14.3 167 + 新 16） |
+| 2026-06-12 | M14.5 Bridge 集成 + 12 测试 | settings.py 加 8 个 014 字段（dev_mode/enable_bedtime/idle/...）；agent_runtime_factory.py 新文件含 build_agent_runtime（conversation_factory 闭包注入 post_turn_external=True + tool_hook_invoker）；assembly.py BridgeRuntime 加 agent_runtime 字段；push/ 子包（protocol.py encode_envelope_sse 含 unicode + /push/subscribe GET 长 SSE 端点 含 heartbeat/kind 过滤/disconnect 反注册）；dev/ 子包（fire_source.py POST /dev/fire-source 仅 dev_mode 时挂）；app.py lifespan 启停 agent_runtime + 按 dev_mode 挂 dev router；SessionManager.start_conversation 加 backward-compat 可选参数 tool_hook_invoker + post_turn_external；6 push + 6 dev 测试全绿（结构/边界/encoder 内容；chunk-level SSE 流式投递 ASGITransport 限制下跳过，留 M14.8 真跑验证）；agent_bridge 23 测试全绿（既有 11 + 新 12），agent 183 测试零退化 |
 
 ---
 
@@ -101,5 +105,5 @@ IN_PROGRESS
 | AC-4 | `_observe_turn` 迁移行为零退化 | ✅ | M14.3 test_runtime_observe_migration（字段清单 + `==` 兜底；含 assistant 多段文本场景） |
 | AC-5 | BedtimeSource demo 端到端 | ✅ runtime + source 层 | M14.3 test_runtime_dispatch.test_dispatch_system_trigger_* + M14.4 test_runtime_sources（5 BedtimeSource case 含真 thread schedule loop）；M14.8 手工跑真启 bridge 端到端 |
 | AC-6 | IdleReflectionSource silent turn 端到端 | ✅ runtime + source 层 | M14.2 test_conversation_dispatch_system_turn + M14.3 test_runtime_silent_turn + M14.4 test_runtime_sources（5 IdleReflection case 含真 thread loop）；M14.8 手工跑真启 bridge 端到端 |
-| AC-7 | Bridge push 通道端到端 | ⏳ | M14.5 test_push_channel + M14.6 test_push_mirror + M14.8 手工跑 |
+| AC-7 | Bridge push 通道端到端 | 🟡 结构层 | M14.5 test_push_channel（路由 / 状态码 / encoder content） + test_dev_endpoint（dev fire 真触发）；M14.3 test_runtime_dispatch 用 side event loop 真实验证 fan_out → asyncio.Queue.put（核心机制）；chunk-level SSE 流式投递留 M14.8 真起 bridge + dev CLI 端到端验证 |
 | AC-8 | Dev CLI 落地 | ⏳ | M14.7 双端 wrapper + scripts/README + `./scripts/check` 全绿 |
