@@ -69,9 +69,7 @@ def pq_by_id(b: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def ac_1a(pre: dict[str, Any], full: dict[str, Any]) -> dict[str, Any]:
     """665 道"有 episodic 但 0 分"题集，pass-1-full 后零分率必须可观测下降。"""
     pre_qs = pre["per_question"]
-    target_ids = {
-        q["question_id"] for q in pre_qs if q["score"] == 0.0 and has_episodic(q)
-    }
+    target_ids = {q["question_id"] for q in pre_qs if q["score"] == 0.0 and has_episodic(q)}
     full_by_id = pq_by_id(full)
     full_targeted = [full_by_id[qid] for qid in target_ids if qid in full_by_id]
     pre_zero_rate = 1.0  # 集合定义就是 100% 零分
@@ -138,9 +136,7 @@ def ac_3_extraction(pre: dict[str, Any], only_extraction: dict[str, Any]) -> dic
     主因 1 的代理指标：抽取产物对 anchor 字面词的保留率↑ 对应"有 episodic 但 0 分"集合的零分率↓。
     """
     pre_qs = pre["per_question"]
-    target_ids = {
-        q["question_id"] for q in pre_qs if q["score"] == 0.0 and has_episodic(q)
-    }
+    target_ids = {q["question_id"] for q in pre_qs if q["score"] == 0.0 and has_episodic(q)}
     by_id = pq_by_id(only_extraction)
     targeted = [by_id[qid] for qid in target_ids if qid in by_id]
     zr = zero_rate(targeted)
@@ -152,7 +148,7 @@ def ac_3_extraction(pre: dict[str, Any], only_extraction: dict[str, Any]) -> dic
         "delta_from_pre_100pct": zr - 1.0,
         "passed": passed,
         "verdict": (
-            f"665 题在 only-extraction 下零分率 {zr*100:.1f}% (pre 100%)"
+            f"665 题在 only-extraction 下零分率 {zr * 100:.1f}% (pre 100%)"
             + (" —— PASS" if passed else " —— FAIL")
         ),
     }
@@ -182,7 +178,7 @@ def ac_3_pinned(pre: dict[str, Any], only_pinned: dict[str, Any]) -> dict[str, A
         "delta_ratio": op_ratio - pre_ratio,
         "passed": passed,
         "verdict": (
-            f'"仅 pinned" 占零分比 {op_ratio*100:.1f}% (pre {pre_ratio*100:.1f}%)'
+            f'"仅 pinned" 占零分比 {op_ratio * 100:.1f}% (pre {pre_ratio * 100:.1f}%)'
             + (" —— PASS" if passed else " —— FAIL")
         ),
     }
