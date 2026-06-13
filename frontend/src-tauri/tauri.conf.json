@@ -16,8 +16,8 @@
         "label": "pet",
         "url": "pet.html",
         "title": "agent-friend",
-        "width": 480,
-        "height": 460,
+        "width": 240,
+        "height": 320,
         "resizable": false,
         "transparent": true,
         "decorations": false,
@@ -25,6 +25,22 @@
         "skipTaskbar": true,
         "shadow": false,
         "fullscreen": false
+      },
+      {
+        "label": "bubble",
+        "url": "bubble.html",
+        "title": "agent-friend-bubble",
+        "width": 280,
+        "height": 96,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "fullscreen": false,
+        "visible": false,
+        "focus": false
       },
       {
         "label": "chat",

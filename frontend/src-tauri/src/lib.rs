@@ -2,50 +2,57 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    Emitter, Manager, WebviewWindow,
 };
 
+mod bubble_window;
 mod push_subscriber;
 
-/// 015 · 让 pet 窗悬浮在全屏 app 之上。
+/// 015 → 016 · 让指定 webview window 悬浮在全屏 app 之上 + 跟随用户跨 Space。
+///
+/// 015 原本只对 pet 窗调用（函数名 `apply_pet_window_level`）；016 M16.5 重命名为
+/// `apply_floating_window_level` 并接收任意 `&WebviewWindow`，让 bubble window 也
+/// 复用同一段加料 —— 这是 design.md §3.6 锁定的"唯一 macOS 加料、Rust 端全权设
+/// collectionBehavior（conf.json 不写 visibleOnAllWorkspaces）"决策的实现承载。
 ///
 /// Tauri 2 的 `alwaysOnTop`（对应 NSFloatingWindowLevel = 3）压不过 fullscreen layer；
-/// 这里直接调 NSWindow `setLevel:` 提到 NSScreenSaverWindowLevel = 1000。
-/// 失败仅 log warn——pet 窗在全屏 app 下会被遮，但 app 仍可启动（不阻断主流程）。
+/// 这里直接调 NSWindow `setLevel:` 提到 NSScreenSaverWindowLevel = 1000 + 设
+/// `collectionBehavior = CanJoinAllSpaces | FullScreenAuxiliary`。
+/// 失败仅 log warn —— window 在全屏 app 下会被遮，但 app 仍可启动（不阻断主流程）。
 ///
-/// Windows / Linux 本期不动（requirement R-4.7.3），退化为单纯 alwaysOnTop。
-fn apply_pet_window_level(app: &tauri::AppHandle) {
+/// Windows / Linux 本期不动（016 requirement R-4.7.2），退化为单纯 alwaysOnTop。
+pub(crate) fn apply_floating_window_level(window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     {
-        if let Err(e) = mac_apply_pet_window_level(app) {
-            log::warn!("apply_pet_window_level failed: {e}");
+        if let Err(e) = mac_apply_floating_window_level(window) {
+            log::warn!(
+                "apply_floating_window_level failed for window {:?}: {e}",
+                window.label()
+            );
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
+        let _ = window;
     }
 }
 
 #[cfg(target_os = "macos")]
-fn mac_apply_pet_window_level(
-    app: &tauri::AppHandle,
+fn mac_apply_floating_window_level(
+    window: &WebviewWindow,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use objc2::{msg_send, runtime::AnyObject};
-    let pet = app
-        .get_webview_window("pet")
-        .ok_or("pet window not found")?;
-    let ns_window_ptr = pet.ns_window()?;
+    let ns_window_ptr = window.ns_window()?;
     if ns_window_ptr.is_null() {
         return Err("ns_window() returned null".into());
     }
-    // SAFETY: ns_window_ptr 由 Tauri 提供、生命周期与 pet 窗一致；
+    // SAFETY: ns_window_ptr 由 Tauri 提供、生命周期与 webview window 一致；
     // 这里只读取 NSWindow 实例发送 setLevel: / setCollectionBehavior: 消息，不持有 ownership。
     let ns_window: &AnyObject = unsafe { &*(ns_window_ptr as *const AnyObject) };
     // NSWindowCollectionBehavior bit flags（AppKit）：
     //   CanJoinAllSpaces       = 1 << 0 = 1     —— 跨虚拟桌面跟随（M15.8 验证生效）
     //   FullScreenAuxiliary    = 1 << 8 = 256   —— 同一 app 内 panel 跟随 fullscreen
-    // tauri.conf.json 的 visibleOnAllWorkspaces 已取消（避免 Tauri 自己设 collectionBehavior
+    // tauri.conf.json 的 visibleOnAllWorkspaces 不写（避免 Tauri 自己设 collectionBehavior
     // 冲突）；Rust 端全权设 level + collectionBehavior。
     //
     // 实测限制（详见 docs/issues/007-macos-fullscreen-overlay-limit）：跨 user Space ✅
@@ -68,7 +75,8 @@ fn mac_apply_pet_window_level(
         )
     };
     log::info!(
-        "pet window: target level=1000 cb=0x{:x}, verified level={} cb=0x{:x}",
+        "window {:?}: target level=1000 cb=0x{:x}, verified level={} cb=0x{:x}",
+        window.label(),
         target_behavior,
         verified_level,
         verified_behavior,
@@ -177,7 +185,13 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![open_chat])
+        .manage(bubble_window::BubbleState::default())
+        .invoke_handler(tauri::generate_handler![
+            open_chat,
+            bubble_window::show_bubble,
+            bubble_window::hide_bubble,
+            bubble_window::set_bubble_size,
+        ])
         .on_window_event(|window, event| {
             // 对话窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             if window.label() == "chat" {
@@ -199,8 +213,12 @@ pub fn run() {
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
-            // 015 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
-            apply_pet_window_level(app.handle());
+            // 015 → 016 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
+            if let Some(pet) = app.get_webview_window("pet") {
+                apply_floating_window_level(&pet);
+            }
+            // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
+            bubble_window::init(app.handle())?;
             Ok(())
         })
         .run(tauri::generate_context!())
