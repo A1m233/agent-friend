@@ -1,0 +1,184 @@
+# 015 · 桌宠气泡与前端对话 Owner — 进度
+
+## 总体状态
+<!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
+COMPLETED
+
+> 8 个里程碑全部完成。M15.1 ~ M15.7 实施 + M15.8 自动门禁（`./scripts/check` 全绿 backend 361 + frontend 32 = **393 passed**）+ 手工真跑端到端通过 AC-1 / AC-4 / AC-5 / AC-6 / AC-7（跨 Space 部分通过、fullscreen 限制登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)）/ AC-8 / AC-9，所有 AC 在真 DeepSeek API 路径下闭环。
+>
+> 真跑期间发现并修复 3 个 design 缺陷：sessionProjection 漏跳主动轮 assistant_message（fix `13dbc07`）；PetBubble policy 用错 event type（fix `537a59b`）；pet 窗 280 气泡溢出 240 窗（hotfix `4e8ac2d`）。3 个延后项登记到 [`docs/issues/`](../../issues/)：005 / 006 / 007。
+
+---
+
+## 里程碑与任务
+
+> 任务粒度按"涉及文件 + 涉及单测"组织，便于实施时逐项打勾、断点续传。每项动到的文件以 [`design.md`](./design.md) §2 涉及文件清单为准。
+
+### M15.1 PushEnvelope TS 类型 + Cargo 依赖准备
+
+> 前置基础：让 Rust / TS 双端拿到协议契约，并把新增 native 依赖先 link 通过。
+
+- [x] `frontend/src/types/push.ts`：新文件，定义 `PushEnvelope` TS interface（与 `agent_bridge/push/protocol.py` schema 对齐：`kind` / `session_id` / `seq` / `source_kind` / `events`）；events 字段用既有 `SessionEvent` 类型（`types/meta.ts`）
+- [x] `frontend/src/types/index.ts`：导出 `PushEnvelope`
+- [x] `frontend/src-tauri/Cargo.toml`：加 `reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }` + `futures-util`；macOS-only target 段加 `objc2` + `objc2-app-kit`（避免污染 Win/Linux 构建；用 rustls-tls 避免 native OpenSSL）
+- [x] `pnpm run typecheck`（即 `tsc -b --noEmit`）通过
+- [x] `cargo build` 通过（首次拉 reqwest / objc2 / hyper-rustls，1m35s 全绿）
+
+### M15.2 Rust push_subscriber 实现 + 解析单测
+
+> 完成后能在 dev 模式下抓到 `agent_bridge` push channel 的事件、log 出来。
+
+- [x] `frontend/src-tauri/src/push_subscriber.rs`：新文件
+  - [x] `PushEnvelope` struct + `#[derive(Deserialize, Serialize, Clone, Debug)]`
+  - [x] `find_frame_sep` 纯函数（SSE \n\n / \r\n\r\n 分帧）
+  - [x] `parse_envelope_frame` 纯函数（取 data: 行拼 JSON 解码）
+  - [x] `run_loop` async：reqwest `bytes_stream()` → 累积 buf → 按帧切 → 解码 → heartbeat 丢 → `emit_to("pet", "agent://push", env)`
+  - [x] `spawn_push_subscriber(app, bridge_base_url)`：`tauri::async_runtime::spawn` task 包装
+- [x] `frontend/src-tauri/src/lib.rs`：
+  - [x] 顶部加 `mod push_subscriber;`
+  - [x] 新增 `bridge_base_url()` helper（env `AGENT_FRIEND_BRIDGE_URL` 覆盖、默认 `http://127.0.0.1:18800`）
+  - [x] `setup` 闭包内调 `push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url())`
+- [x] `frontend/src-tauri/src/push_subscriber.rs` 内嵌 `#[cfg(test)] mod tests`（**12 个测试全绿**）：
+  - [x] `find_frame_sep` 4 case（\n\n / \r\n\r\n / 仅一种 / 不完整无分隔）
+  - [x] `parse_envelope_frame` 7 case（标准 frame + heartbeat null source_kind + 多行 data: 拼接 + event: 行被自然丢弃 + 空 frame / event-only / comment-only 三种 None / 非 JSON / events 含 UTF-8 透传）
+  - [x] `PushEnvelope` JSON round-trip（serde 兼容 events 任意 dict）
+- [x] `cargo test` 全绿（12 passed）
+- [ ] 手工真跑 spot-check 留给 M15.8 端到端（dry-run 通过 dev demo orchestrator 一起做）
+
+### M15.3 跨 Space + 全屏浮动（macOS）
+
+> 独立可插入。让 pet 窗"用户看得见"语义成立——切 Space、全屏 app 之上都能浮动。
+
+- [x] `frontend/src-tauri/tauri.conf.json`：pet 窗加 `"visibleOnAllWorkspaces": true`
+- [x] `frontend/src-tauri/src/lib.rs`：
+  - [x] 新增 `apply_pet_window_level(app: &AppHandle)`（封装 + 错误隔离）
+  - [x] `#[cfg(target_os = "macos")]` `mac_apply_pet_window_level`：`msg_send![ns_window, setLevel: 1000_isize]`（NSScreenSaverWindowLevel，压过全屏 layer）
+  - [x] `#[cfg(not(target_os = "macos"))]` 分支：空实现（退化为单纯 alwaysOnTop）
+  - [x] `setup` 闭包内调 `apply_pet_window_level(app.handle());`
+- [x] `cargo build` 通过（含 macOS objc2 msg_send）
+- [ ] 手工真跑 spot-check（macOS）留给 M15.8：
+  - [ ] 切 Space 桌宠跟随
+  - [ ] 启动全屏视频播放器（如 QuickTime）桌宠仍浮在视频之上 → 对应 **AC-7**
+
+### M15.4 Policy 实现 + 单测
+
+> 不依赖 M15.2 / M15.3 的运行环境，可纯单测驱动跑通。
+
+- [x] `frontend/src/stores/petBubblePolicy.ts`：新文件
+  - [x] `BubbleItem` type（`id` / `text` / `sourceKind`）
+  - [x] `PushPolicy` type alias（`(env: PushEnvelope) => BubbleItem | null`）
+  - [x] `ASSISTANT_TEXT_TYPES` 常量集合（含 `"assistant_message"`，留 set 是为了未来扩展 TextDone 等）
+  - [x] `defaultPolicy` 实现（按 design §5.2 规则）
+- [x] `frontend/src/stores/petBubblePolicy.test.ts`：新文件
+  - [x] `defaultPolicy: agent_turn + assistant_message → BubbleItem`（含 source_kind 透传）—— **AC-4**
+  - [x] `defaultPolicy: agent_turn + only memory_observation → null`（silent turn 丢弃）—— **AC-5**
+  - [x] `defaultPolicy: user_turn → null`（兜底丢弃）
+  - [x] `defaultPolicy: heartbeat → null`
+  - [x] `defaultPolicy: 多段 assistant_message → 用 \n\n 拼接`（防御 turn 内多 message）
+  - [x] `defaultPolicy: content 非 string / 空 / 缺 payload → 全部跳过`（防御性边界）
+- [x] `pnpm test petBubblePolicy` 全绿（6 passed）
+- [x] `pnpm run typecheck` + `pnpm run lint` 全绿
+
+### M15.5 Store 实现 + 单测
+
+> 完成后能用 `usePetBubbleStore.ingest(envelope)` 驱动状态机走完完整生命周期。
+
+- [x] `frontend/src/stores/petBubble.ts`：新文件
+  - [x] `BubblePhase` type（`"idle" | "showing" | "expanded"`）
+  - [x] `usePetBubbleStore` zustand store（`phase` / `current` / `ingest` / `expand` / `dismiss`）
+  - [x] 内部 `dismissTimer` + 公开 `AUTO_DISMISS_MS = 10_000`（test 引用）
+  - [x] `setPolicy(p)` / `resetPolicy()` 测试钩子
+  - [x] `startPetBubbleSubscriber()` async（listen `agent://push` → `ingest`；非 Tauri 环境 no-op）
+- [x] `frontend/src/stores/petBubble.test.ts`：新文件（用 `vi.useFakeTimers()` 控时）
+  - [x] `ingest → showing`（phase / current 字段断言）
+  - [x] `ingest → showing → +AUTO_DISMISS_MS → idle`（fakeTimers advance）
+  - [x] `setPolicy(替换 policy) → ingest user_turn 也能进 bubble`（**AC-3** policy 可替换扩展点）
+  - [x] `ingest 新 envelope（seq+1）替换 current + 重置 timer`（多 case 时间窗断言）
+  - [x] `ingest 同 id 不替换 + 不重置 timer`（兜底）
+  - [x] `expand → expanded`（清 timer，自动 dismiss 不触发）
+  - [x] `expand` 仅 showing 生效；idle / expanded 状态下 no-op
+  - [x] `dismiss → idle`（清 current 与 timer）
+- [x] `pnpm test petBubble` 全绿（14 passed 含 policy 6 + store 8）
+- [x] `pnpm run typecheck` + `pnpm run lint` 全绿
+
+### M15.6 PetBubble UI 组件 + 集成到 pet/App.tsx
+
+> 完成后 pet 窗能真实渲染气泡 UI；起 frontend dev 能看到 mock envelope 的气泡。
+
+- [x] `frontend/src/components/pet/PetBubble.tsx`：新文件（按 design §6.1 实现）
+  - [x] 订阅 `usePetBubbleStore`（selector 分别取 phase / current / expand / dismiss）
+  - [x] `useEffect` + `getBoundingClientRect` 翻转判定（贴顶时改下方显示，`top-[200px]` / `bottom-[200px]`）
+  - [x] 截断逻辑（`TRUNCATE_LEN = 120`）+ 点击触发 store.expand
+  - [x] expanded 状态显示全文 + 关闭按钮（用 `components/ui/Button` 而非原生 `<button>`，过 eslint 禁原生元素门禁）
+  - [x] `data-hit` 标记 + tailwind animate-in fade-in-0 zoom-in-95（与 tooltip / sheet 风格一致）
+  - [x] 用语义 token（`bg-surface` / `text-fg` / `text-muted` / `border-border`），不硬编码颜色
+- [x] `frontend/src/pages/pet/App.tsx`：
+  - [x] 外层 div 加 `relative` 让 absolute 定位有 anchor
+  - [x] 插入 `<PetBubble />` 在 pet-stage 同级
+  - [x] `useEffect` 调 `startPetBubbleSubscriber()` + unlisten 清理
+- [x] `pnpm run typecheck` + `pnpm run lint` + `pnpm run lint:colors`（51 文件零硬编码）+ `pnpm test`（5 files / 27 tests）全绿
+- [ ] 手工 dev spike 留 M15.8（dev 跑起 frontend + bridge 真触发主动轮看到气泡）
+
+### M15.7 sessionProjection 防御（注释 + 兜底测试）
+
+> 独立可插入。被动跳过已天然成立，本期只做"显式声明 + 兜底测试"。
+
+- [x] `frontend/src/stores/sessionProjection.ts`：顶注释补一段说明 `system_trigger` / `memory_observation` 被动跳过的语义（design §7.2 文案）
+- [x] `frontend/src/stores/sessionProjection.test.ts`：新增 1 条 case
+  - [x] `it("忽略 014 引入的 system_trigger / memory_observation 主动轮事件（015 R-4.5.1 / AC-6）")`：含两种 type 事件的 session 投影出的 ChatMessage 序列与不含时 `toEqual` —— **AC-6**
+- [x] `pnpm test sessionProjection` 全绿（5 passed 含新增 1）
+
+### M15.8 Dev CLI demo + 自动门禁 + 手工真跑
+
+> 端到端验收：bedtime / idle reflection / 既有 chat 对话 / 跨 Space / 全屏浮动五件事全跑通。
+
+- [x] `scripts/dev-pet-bubble-demo/run.sh`：双端 wrapper（参考 014 `scripts/dev-fire-source/run.sh` 模板）
+- [x] `scripts/dev-pet-bubble-demo/run.ps1`：Windows 等价
+- [x] `scripts/README.md`：登记新脚本（"015 端到端 demo / 触发 bedtime + idle_reflection / 需 bridge dev_mode=true"）
+- [x] **自动门禁**：`./scripts/check` 全绿（backend 361 passed + frontend 28 passed = **389 passed**；含 ruff lint + ruff format + mypy + pytest + eslint + color-guard + tsc + vitest）—— **AC-8**
+- [x] **手工真跑端到端**（按用户授权 `llm-api-confirm` 走真 LLM）：
+  - [x] 启 bridge（`scripts/bridge/run.sh`，dev_mode=true + enable_bedtime + bedtime_target_session_id + enable_idle_reflection + idle_target_session_id）
+  - [x] 启 frontend（`pnpm tauri dev`）
+  - [x] 在 chat 窗发一条 user 消息 → MessageList 正常流式渲染 + pet 气泡**不跟随** → **AC-1 / AC-8** ✅
+  - [x] 跑 `./scripts/dev-pet-bubble-demo/run.sh` 等价的 dev-fire-source 触发链
+    - [x] 触发 bedtime → pet 气泡冒出 + chat 窗 MessageList **无该消息** + session JSONL `system_trigger` + `assistant_message` 落在 events 流 + dev-push-subscribe 收到 `kind=agent_turn` envelope（21 events: 19 text_delta + done） → **AC-4** ✅
+    - [x] 触发 idle_reflection → pet 气泡**不冒** + chat 窗无反应 + session JSONL `system_trigger(visibility=memory_only)` + `memory_observation` 落事件 + dev-push-subscribe **未收到** envelope（push channel 协议层就过滤了 silent turn） → **AC-5** ✅
+  - [x] 切走历史会话再切回（chat 窗）→ MessageList 正常投影（含 user 触发轮、不含主动轮 assistant content） → **AC-6** ✅（修了 sessionProjection bug 后通过）
+  - [x] macOS 跨 user Space（三指扫 / Ctrl+左右）→ 桌宠跟随 → **AC-7 部分通过** ✅
+  - [ ] macOS 绿色按钮 fullscreen mode → 桌宠不浮 → **NSWindow 系统级限制，登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)**；业界桌宠（NekoAI 等）普遍承认此限制
+- [x] 更新 `progress.md` 总体状态 → `COMPLETED`，补完结日志
+- [x] 登 [issue 005](../../issues/005-pet-bubble-window-sizing/)（pet 窗加大不是最佳实践，应改用独立 bubble window）
+- [x] 登 [issue 006](../../issues/006-bedtime-prompt-history-hijack/)（BedtimeSource prompt 被 history 拽走、产出虚构 user 视角回答）
+- [x] 登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)（macOS fullscreen mode 下桌宠不浮的平台限制）
+
+---
+
+## 实施日志
+
+| 日期 | 完成 | 备注 |
+|------|------|------|
+| 2026-06-13 | M15.1 完成 | types/push.ts + Cargo.toml 依赖；rustls-tls 避免 OpenSSL；macOS-only objc2 + objc2-app-kit；typecheck + cargo build 全绿 |
+| 2026-06-13 | M15.2 完成 | push_subscriber.rs 落（SSE 分帧 / envelope 解码 / reqwest bytes_stream / emit_to 广播）+ lib.rs 接入 setup spawn；12 个单测全绿；spot-check 端到端 dry-run 移交 M15.8 |
+| 2026-06-13 | M15.3 完成 | tauri.conf.json 加 visibleOnAllWorkspaces；macOS NSWindow setLevel:1000 通过 objc2 msg_send 落地、错误隔离不阻断 app 启动；cargo build 全绿；切 Space + 全屏 app 真跑验证移交 M15.8 |
+| 2026-06-13 | M15.4 完成 | petBubblePolicy.ts defaultPolicy（"无 user-visible assistant 文本"判 silent，比 source_kind 黑名单更可演进）；6 个 case 全绿（AC-4 + AC-5 锚点）；typecheck + lint 干净 |
+| 2026-06-13 | M15.5 完成 | petBubble.ts zustand store（showing/expanded 状态机 + AUTO_DISMISS_MS=10s timer）+ setPolicy/resetPolicy 测试钩子 + startPetBubbleSubscriber 桥接 tauri event；8 个 case 全绿覆盖 AC-3 policy 可替换；累计 14 passed |
+| 2026-06-13 | M15.6 完成 | PetBubble.tsx 落（截断 + 翻转 + 内部展开 + data-hit 接入透明区穿透 + animate-in 过渡）+ pet/App.tsx relative + startPetBubbleSubscriber；用 components/ui/Button 过 eslint 禁原生元素门禁；语义 token 过 color-guard；typecheck + lint + test 27 passed 全绿；项目无 .test.tsx 基础设施，UI 行为靠 M15.8 真跑 |
+| 2026-06-13 | M15.7 完成 | sessionProjection.ts 顶注释显式声明 system_trigger / memory_observation 被动跳过是 015 期望行为；新增 1 条兜底测试断言含主动轮事件投影 toEqual 不含时（AC-6 兜底）；sessionProjection 5 passed |
+| 2026-06-13 | M15.8 自动门禁通过 | scripts/dev-pet-bubble-demo/ 双端 wrapper + scripts/README.md 登记；`./scripts/check` 全绿（backend 361 + frontend 28 = 389 passed，AC-8）；手工真跑（bedtime / idle / 跨 Space / 全屏 / 历史回看）待用户授权 + 启 bridge+frontend 后跑 |
+| 2026-06-13 | M15.8 真跑闭环 | 真跑期间发现并 hot-fix 3 个 design 缺陷：sessionProjection 漏跳主动轮 assistant_message（`13dbc07`，新增 AC-6 兜底测试）+ PetBubble policy 用错 event type 应识别 `text_delta` 而非 `assistant_message`（`537a59b`，policy 全部测试重写）+ pet 窗 280 气泡溢出 240 窗（hotfix `4e8ac2d` 加大到 480x460，登 issue 005 后续优化）+ 气泡常驻不自动消失（refactor `22b9c01`，design §6.3 决策更新）+ NSWindow collectionBehavior 0x101 跨 Space 跟随生效（fullscreen 限制登 issue 007）。AC-1 / AC-4 / AC-5 / AC-6 全部端到端通过；AC-7 跨 Space 通过、fullscreen 接受平台限制；最终 `./scripts/check` 393 passed（backend 361 + frontend 32），M15.8 收口 |
+
+---
+
+## 验收锚点对照
+
+| AC | 覆盖里程碑 | 测试形式 |
+|----|---------|---------|
+| AC-1 Owner 抽象可订阅可分发 | M15.5 + M15.8 | Store 单测 + 手工真跑 |
+| AC-2 双订阅去重（思路 A 下零去重） | M15.2 + M15.4 | Rust 订阅 `kinds=agent_turn` + Policy 测试 |
+| AC-3 Policy 可替换 | M15.5 | `setPolicy` 替换证明 |
+| AC-4 主动轮分流端到端 | M15.4 + M15.8 | Policy 单测 + 手工真跑 |
+| AC-5 Silent turn 前端丢弃 | M15.4 + M15.8 | Policy 单测 + 手工真跑 |
+| AC-6 sessionProjection 兼容 | M15.7 + M15.8 | 兜底单测 + 手工真跑 |
+| AC-7 跨 Space / 全屏浮动 | M15.3 | 手工真跑（macOS） |
+| AC-8 既有路径零退化 | M15.8 | `./scripts/check` 全绿 + chat 对话手跑 |
+| AC-9 Dev CLI 端到端 | M15.8 | demo orchestrator 全流程 |

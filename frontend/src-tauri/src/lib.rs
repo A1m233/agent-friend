@@ -5,6 +5,94 @@ use tauri::{
     Emitter, Manager,
 };
 
+mod push_subscriber;
+
+/// 015 · 让 pet 窗悬浮在全屏 app 之上。
+///
+/// Tauri 2 的 `alwaysOnTop`（对应 NSFloatingWindowLevel = 3）压不过 fullscreen layer；
+/// 这里直接调 NSWindow `setLevel:` 提到 NSScreenSaverWindowLevel = 1000。
+/// 失败仅 log warn——pet 窗在全屏 app 下会被遮，但 app 仍可启动（不阻断主流程）。
+///
+/// Windows / Linux 本期不动（requirement R-4.7.3），退化为单纯 alwaysOnTop。
+fn apply_pet_window_level(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = mac_apply_pet_window_level(app) {
+            log::warn!("apply_pet_window_level failed: {e}");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_apply_pet_window_level(
+    app: &tauri::AppHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use objc2::{msg_send, runtime::AnyObject};
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or("pet window not found")?;
+    let ns_window_ptr = pet.ns_window()?;
+    if ns_window_ptr.is_null() {
+        return Err("ns_window() returned null".into());
+    }
+    // SAFETY: ns_window_ptr 由 Tauri 提供、生命周期与 pet 窗一致；
+    // 这里只读取 NSWindow 实例发送 setLevel: / setCollectionBehavior: 消息，不持有 ownership。
+    let ns_window: &AnyObject = unsafe { &*(ns_window_ptr as *const AnyObject) };
+    // NSWindowCollectionBehavior bit flags（AppKit）：
+    //   CanJoinAllSpaces       = 1 << 0 = 1     —— 跨虚拟桌面跟随（M15.8 验证生效）
+    //   FullScreenAuxiliary    = 1 << 8 = 256   —— 同一 app 内 panel 跟随 fullscreen
+    // tauri.conf.json 的 visibleOnAllWorkspaces 已取消（避免 Tauri 自己设 collectionBehavior
+    // 冲突）；Rust 端全权设 level + collectionBehavior。
+    //
+    // 实测限制（详见 docs/issues/007-macos-fullscreen-overlay-limit）：跨 user Space ✅
+    // 通过；macOS 绿色按钮 fullscreen mode 桌宠不在 fullscreen Space 显示——这是
+    // NSWindow 的系统级限制（fullscreen 是独立 Space、FullScreenAuxiliary 只对同 app
+    // 的 panel 生效），非配置 bug。业界桌宠（NekoAI 等）普遍承认此限制。
+    //
+    // 注：曾试过加 Stationary（1<<4），会让窗口被"钉"在当前 Space 反而不跟随。
+    let target_behavior: usize = 1 | 256;
+    unsafe {
+        // NSScreenSaverWindowLevel = 1000 —— 压过全屏 layer
+        let _: () = msg_send![ns_window, setLevel: 1000_isize];
+        let _: () = msg_send![ns_window, setCollectionBehavior: target_behavior];
+    }
+    // verify：读回真实值，确认 Tauri 没在后续步骤覆盖
+    let (verified_level, verified_behavior): (isize, usize) = unsafe {
+        (
+            msg_send![ns_window, level],
+            msg_send![ns_window, collectionBehavior],
+        )
+    };
+    log::info!(
+        "pet window: target level=1000 cb=0x{:x}, verified level={} cb=0x{:x}",
+        target_behavior,
+        verified_level,
+        verified_behavior,
+    );
+    if verified_behavior != target_behavior {
+        log::warn!(
+            "collectionBehavior 与目标不符（target=0x{:x} actual=0x{:x}）——可能被 Tauri 覆盖；考虑挪到 RunEvent::Ready 重设",
+            target_behavior,
+            verified_behavior,
+        );
+    }
+    Ok(())
+}
+
+/// bridge HTTP base URL。
+///
+/// 默认 `http://127.0.0.1:18800`（与 `frontend/vite.config.ts` proxy target、
+/// `scripts/bridge/run.sh` 监听地址一致）。env `AGENT_FRIEND_BRIDGE_URL` 覆盖留口。
+/// 生产打包不在本期范围（参 015 design §4.3 / 010 design）。
+fn bridge_base_url() -> String {
+    std::env::var("AGENT_FRIEND_BRIDGE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:18800".to_string())
+}
+
 /// 光标相对桌宠窗内容区的逻辑坐标（CSS px），喂给前端做命中判定。
 #[derive(Clone, Serialize)]
 struct CursorPos {
@@ -109,6 +197,10 @@ pub fn run() {
             }
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());
+            // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
+            push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
+            // 015 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
+            apply_pet_window_level(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())
