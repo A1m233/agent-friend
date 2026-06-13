@@ -9,13 +9,18 @@
  * 在 dev 启动期就生效（无需调用方显式注入），又让测试 / 未来产品策略迭代能通过
  * `setPolicy(p)` 替换（AC-3 "policy 可替换"扩展点）。
  *
+ * 消失策略（M15.8 真跑后调整）：气泡**常驻**直到 (a) 用户点关闭按钮 / (b) 新主动轮
+ * envelope 替换。**没有自动消失 timer**——auto-dismiss 在真跑里发现容易错过主动轮，
+ * 跟"在场感"产品诉求冲突。design §6.3 留过"未来可移到 user setting"的口子，本期
+ * 直接走"常驻 + 手动关闭"。
+ *
  * 详见 015 design §5.3。
  */
 
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
-import type { PushEnvelope } from "@/types";
+import type { PushEnvelope } from "@/types/push";
 import type { BubbleItem, PushPolicy } from "./petBubblePolicy";
 import { defaultPolicy } from "./petBubblePolicy";
 
@@ -29,12 +34,9 @@ interface PetBubbleState {
   ingest: (env: PushEnvelope) => void;
   /** 用户点击截断态气泡：展开看全文（R-4.6.1 不导向 chat 窗）。 */
   expand: () => void;
-  /** 关闭气泡：手动 / 自动 timeout / 被新 item 替换。 */
+  /** 关闭气泡：手动 / 被新 item 替换。**唯一让气泡消失的入口**（除了被新 envelope 替换）。 */
   dismiss: () => void;
 }
-
-/** showing → idle 自动消失时长（ms）；expanded 不自动消失。第一版固定值，未来可移到 user setting。 */
-export const AUTO_DISMISS_MS = 10_000;
 
 let currentPolicy: PushPolicy = defaultPolicy;
 /** 测试钩子：替换 policy（AC-3 可替换证明）。 */
@@ -46,14 +48,6 @@ export function resetPolicy(): void {
   currentPolicy = defaultPolicy;
 }
 
-let dismissTimer: ReturnType<typeof setTimeout> | null = null;
-function clearTimer(): void {
-  if (dismissTimer !== null) {
-    clearTimeout(dismissTimer);
-    dismissTimer = null;
-  }
-}
-
 export const usePetBubbleStore = create<PetBubbleState>((set, get) => ({
   phase: "idle",
   current: null,
@@ -63,26 +57,16 @@ export const usePetBubbleStore = create<PetBubbleState>((set, get) => ({
     if (item === null) return;
     // 同 id 重复丢弃（兜底；envelope.seq 单调递增、Rust 侧已 dedup，这里防御性）
     if (get().current?.id === item.id) return;
-    clearTimer();
     set({ phase: "showing", current: item });
-    dismissTimer = setTimeout(() => {
-      // expanded 状态下不自动消失，留给用户手动 dismiss
-      if (get().phase === "showing") {
-        set({ phase: "idle", current: null });
-      }
-      dismissTimer = null;
-    }, AUTO_DISMISS_MS);
   },
 
   expand() {
     if (get().phase === "showing") {
-      clearTimer();
       set({ phase: "expanded" });
     }
   },
 
   dismiss() {
-    clearTimer();
     set({ phase: "idle", current: null });
   },
 }));

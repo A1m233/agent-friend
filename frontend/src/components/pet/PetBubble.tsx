@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { usePetBubbleStore } from "@/stores/petBubble";
@@ -12,9 +13,10 @@ import { usePetBubbleStore } from "@/stores/petBubble";
  *
  * 关键设计点（详见 015 design §6）：
  * - 位置：贴 pet-stage 上方；屏顶贴墙自动翻转到下方
- * - 长文本：超 120 字截断 + "点击展开"；展开后渲染全文 + 关闭按钮（**不**导向 chat 窗，R-4.6.1）
+ * - 长文本：超 120 字截断 + "点击展开"；展开后渲染全文（**不**导向 chat 窗，R-4.6.1）
  * - 透明区穿透：DOM 标 `data-hit`，`usePetPassthrough` 据此判定非穿透实心区
  * - 不阻挡形象拖拽：本组件与 pet-stage 是相邻 sibling、不嵌套，pet-stage 的 mousedown 独立触发
+ * - **常驻直到关闭**（M15.8 决策）：右上角 X 按钮手动关；也会被新主动轮 envelope 替换
  */
 const TRUNCATE_LEN = 120;
 
@@ -47,21 +49,28 @@ export function PetBubble() {
       data-hit
       onClick={truncated ? expand : undefined}
       className={cn(
-        "absolute left-1/2 z-10 max-w-[280px] -translate-x-1/2 rounded-2xl border border-border bg-surface px-3 py-2 text-fg shadow-lg",
+        "absolute left-1/2 z-10 w-[280px] -translate-x-1/2 rounded-2xl border border-border bg-surface px-3 py-2 pr-8 text-fg shadow-lg",
         "animate-in fade-in-0 zoom-in-95 duration-200",
         truncated && "cursor-pointer hover:bg-accent/10",
         flipBelow ? "top-[200px]" : "bottom-[200px]",
       )}
     >
-      <div className="text-sm whitespace-pre-wrap">{displayText}</div>
+      <div className="text-sm whitespace-pre-wrap break-words">{displayText}</div>
       {truncated && <div className="mt-1 text-xs text-muted">点击展开</div>}
-      {isExpanded && (
-        <div className="mt-2 flex justify-end">
-          <Button variant="ghost" size="xs" onClick={dismiss}>
-            关闭
-          </Button>
-        </div>
-      )}
+      {/* 右上角关闭按钮：常驻直到用户主动关（M15.8 决策） */}
+      <Button
+        data-hit
+        variant="ghost"
+        size="icon-sm"
+        className="absolute right-1 top-1 size-6 text-muted hover:text-fg"
+        onClick={(e) => {
+          e.stopPropagation();
+          dismiss();
+        }}
+        aria-label="关闭气泡"
+      >
+        <X className="size-3" />
+      </Button>
     </div>
   );
 }
