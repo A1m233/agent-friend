@@ -3,7 +3,8 @@
 > 探索记录（过程笔记），非决策、非需求。
 >
 > 本篇承载**事实与技术**部分：同类项目调研、Codex Pets 机制拆解、桌宠动画协议的能力边界与扩展方向。
-> 偏**战略判断**的部分（"我们做实体陪伴的定位对不对"）拆在同目录 `positioning.md`。
+> 偏**战略判断**的部分（"我们做实体陪伴的定位对不对"）拆在同目录 [`positioning.md`](./positioning.md)。
+> **桌宠承载形态的路线选择**（整屏 overlay vs 固定窗口、OLV 重点对标 + Live2D aspect 适配）拆在同目录 [`overlay-vs-windowed.md`](./overlay-vs-windowed.md)。
 
 - **创建时间**：2026-06-09
 - **关联**：`docs/decisions/0001-product-vision-and-roadmap`（M4 桌宠形态 / M8 IM 通道 / 形态层）
