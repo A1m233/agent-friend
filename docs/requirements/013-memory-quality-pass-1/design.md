@@ -388,7 +388,7 @@ CLI / batch runner 入口加同名 flag（`--no-extraction-keep-specifics` 等�
 - ✅ **pinned gate 阈值档位**（§5.3）：实施合并为 **`lenient`（默认）** + **`strict`** 两档。**lenient = 短 query (< 6 字) 放行全部 pinned + 长 query 走 FTS5 命中判定**；strict 完全走 FTS5。实施期发现 design §5.3 描述的"宽松"与"动态"档算法等价（都是"短 query 全通过 + 长 query FTS5 判定"），合并为 `lenient`。`_SHORT_QUERY_THRESHOLD = 6` 字符常量在 `memory/retrieval/pinned_gate.py`。`Memory(..., pinned_gate_mode='strict')` 切到 strict 档。
 - ✅ ~~FTS5 `_MAX_TRIGRAMS` 值~~ → **原方案废弃**，§4 改用 jieba 分词（trigram 索引被替换，参数已无意义）
 - ✅ **prompt 迭代轮次**（§3.4）：**1 轮一次过**——2026-06-12 用 DeepSeek 对张小红 dialogue block `4_0_1#1` 跑新 prompt，14 个 anchor 字面词命中 12 个（85.7%），远超 7/14 hard floor。无需触发颗粒度回退。
-- ✅ **pass-1 收尾报告位置**（§7.4）：M13.5 全量评测延后至 [issue 004](../../issues/004-pass-1-full-eval-pending/README.md)（feature/013 已合 main，全量评测作为独立 backlog 跑完落 `docs/issues/004-pass-1-full-eval-pending/report.md` 或新 issue）
+- ✅ **pass-1 收尾报告位置**（§7.4）：M13.5 全量评测延后至 [issue 004](../../issues/004-pass-1-full-eval-pending/README.md)，2026-06-13 跑完落 **[`docs/issues/004-pass-1-full-eval-pending/report.md`](../../issues/004-pass-1-full-eval-pending/report.md)**（6/6 AC 全过：pass-1-full macro 0.2189 → 0.3783 / +72.8%；issue 004 状态已置 resolved）。
 
 ---
 

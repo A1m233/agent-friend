@@ -1,8 +1,9 @@
 # 004 · pass-1 全量评测延后 backlog
 
-- **状态**：open
+- **状态**：resolved（2026-06-13 跑完，6/6 AC 全过；详见 [report.md](./report.md)）
 - **严重度**：medium
 - **发现日期**：2026-06-12
+- **完成日期**：2026-06-13
 - **关联需求**：[013 memory-quality-pass-1](../../requirements/013-memory-quality-pass-1/)（本期完成代码改动 + smoke 管道验证，全量评测延后）
 - **关联 issue**：[003 memory-eval-baseline-2026-06-12](../003-memory-eval-baseline-2026-06-12/README.md)（pass-1 的输入根因分析；本 issue 是它的对照位）
 - **关联 baseline**：
