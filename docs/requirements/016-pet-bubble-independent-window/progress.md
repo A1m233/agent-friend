@@ -99,57 +99,55 @@ IN_PROGRESS
 
 > 完成后 bubble entry 真正消费 015 push channel，气泡内容在 bubble window 内渲染；pet 主窗内无气泡。
 
-- [ ] `frontend/src/components/pet/PetBubble.tsx`：
-  - [ ] 去掉 `absolute` / `flipBelow` state / `useEffect getBoundingClientRect 翻转` / `top-[200px]` / `bottom-[200px]` / `left-1/2 -translate-x-1/2` / 固定 `w-[280px]`
-  - [ ] 新增：`useRef<HTMLDivElement>` + `useEffect` 挂 `ResizeObserver` → `requestAnimationFrame` debounce → `invoke('set_bubble_size', { width: ceil(rect.width), height: ceil(rect.height) })`；非 Tauri 环境 no-op
-  - [ ] 改 `w-fit max-w-[360px]` 内容驱动宽度
-  - [ ] 保留：内容渲染 / 截断 / expand / dismiss / 关闭按钮 / `data-hit` / 语义 token 配色 / animate-in
-- [ ] `frontend/src/pages/pet/App.tsx`：
-  - [ ] 去掉 `import { PetBubble }` + 渲染 `<PetBubble />`
-  - [ ] 去掉 `import { startPetBubbleSubscriber }` + useEffect 启动 subscriber（**这段移到 bubble/App.tsx**）
-  - [ ] 去掉外层 div 的 `relative`
-  - [ ] 保留：`usePetPassthrough` + 形象拖拽 + hover 操作栏 + `openChat` invoke
-- [ ] `frontend/src/stores/petBubble.ts`：
-  - [ ] 新增 `attachBubbleWindowSync(): () => void`：`usePetBubbleStore.subscribe` 监听 phase 变化 → idle→非idle invoke `show_bubble` / 非idle→idle invoke `hide_bubble`；非 Tauri 环境 no-op；返回 unsubscribe
-  - [ ] `usePetBubbleStore` 状态机本身 / `startPetBubbleSubscriber` / 既有 selectors 不动
-- [ ] `frontend/src/pages/bubble/App.tsx`：
-  - [ ] `useEffect` 启动 `startPetBubbleSubscriber` + `attachBubbleWindowSync`；清理时 unlisten + unsub
-  - [ ] 渲染 `<PetBubble />` + 透明 root div
-- [ ] `pnpm run typecheck` + `pnpm run lint` + `pnpm run lint:colors` 全绿
+- [x] `frontend/src/components/pet/PetBubble.tsx`：
+  - [x] 去掉 `absolute` / `flipBelow` state / `useEffect getBoundingClientRect 翻转` / `top-[200px]` / `bottom-[200px]` / `left-1/2 -translate-x-1/2` / 固定 `w-[280px]`
+  - [x] 新增：`useRef<HTMLDivElement>` + `useEffect` 挂 `ResizeObserver` → `requestAnimationFrame` debounce → `invoke('set_bubble_size', { width: ceil(rect.width), height: ceil(rect.height) })`；非 Tauri 环境 no-op
+  - [x] 改 `w-fit max-w-[360px]` 内容驱动宽度
+  - [x] 保留：内容渲染 / 截断 / expand / dismiss / 关闭按钮 / `data-hit` / 语义 token 配色 / animate-in
+- [x] `frontend/src/pages/pet/App.tsx`：
+  - [x] 去掉 `import { PetBubble }` + 渲染 `<PetBubble />`
+  - [x] 去掉 `import { startPetBubbleSubscriber }` + useEffect 启动 subscriber（**这段移到 bubble/App.tsx**）
+  - [x] 去掉外层 div 的 `relative`
+  - [x] 保留：`usePetPassthrough` + 形象拖拽 + hover 操作栏 + `openChat` invoke
+- [x] `frontend/src/stores/petBubble.ts`：
+  - [x] 新增 `attachBubbleWindowSync(): () => void`：`usePetBubbleStore.subscribe` 监听 phase 变化 → idle→非idle invoke `show_bubble` / 非idle→idle invoke `hide_bubble`；非 Tauri 环境 no-op；返回 unsubscribe
+  - [x] `usePetBubbleStore` 状态机本身 / `startPetBubbleSubscriber` / 既有 selectors 不动
+- [x] `frontend/src/pages/bubble/App.tsx`：
+  - [x] `useEffect` 启动 `startPetBubbleSubscriber` + `attachBubbleWindowSync`；清理时 unlisten + unsub
+  - [x] 渲染 `<PetBubble />` + 透明 root div
+- [x] `pnpm run typecheck` + `pnpm run lint` + `pnpm run lint:colors` 全绿
 
 ### M16.7 单测改造 + 015 既有单测回归
 
 > 完成后所有单测全绿；015 既有断言一行不改、全部通过。
 
-- [ ] `frontend/src/components/pet/PetBubble.test.tsx`：
-  - [ ] 删除 flipBelow / 位置相关断言（如果有）
-  - [ ] 保留：phase=idle 不渲染 / showing 渲染 current.text / 截断 + 点击展开 / expanded 显示全文 / dismiss 按钮 / `data-hit` / 关闭按钮 aria-label
-- [ ] `frontend/src/stores/petBubbleSync.test.ts`：新文件
-  - [ ] mock `@tauri-apps/api/core` 的 `invoke`
-  - [ ] case 1 · 初始 idle，调 ingest → 期望 invoke('show_bubble') 调一次
-  - [ ] case 2 · ingest 后再 ingest（seq+1）→ phase 仍 showing，**不**重复调 show_bubble（lastPhase 已为非 idle）
-  - [ ] case 3 · ingest → 等 AUTO_DISMISS → idle，期望 invoke('hide_bubble') 调一次
-  - [ ] case 4 · ingest → expand → 仍非 idle，不调 hide_bubble
-  - [ ] case 5 · ingest → dismiss → idle，调 hide_bubble
-  - [ ] case 6 · 非 Tauri 环境 attachBubbleWindowSync 返回 no-op，不调 invoke
-- [ ] 015 既有单测**不改、全绿**（回归硬指标）：
-  - [ ] `petBubble.test.ts`（store 状态机 8 个 case）
-  - [ ] `petBubblePolicy.test.ts`（policy 6 个 case）
-  - [ ] `sessionProjection.test.ts`（projection N 个 case）
-  - [ ] 015 已有的其他 frontend 单测
-- [ ] `pnpm test` 全绿
-- [ ] `cargo test` 全绿（含 M16.2 的 compute_bubble_position 5 case + 015 既有 push_subscriber 12 case）
+- [x] ~~`frontend/src/components/pet/PetBubble.test.tsx` 改造~~ —— 015 没建过这个文件（progress 原稿写错，无需改造），skip
+- [x] `frontend/src/stores/petBubbleSync.test.ts`：新文件
+  - [x] mock `@tauri-apps/api/core` 的 `invoke`（用 `vi.hoisted` 解决 mock 工厂提升顺序）+ mock `@/utils/tauri` 的 `isTauri`
+  - [x] case 1 · idle → showing 触发一次 `show_bubble`
+  - [x] case 2 · showing → showing（新 envelope 替换 current）不重复触发 show_bubble
+  - [x] case 3 · showing → expanded 仍非 idle，不触发 hide_bubble / show_bubble
+  - [x] case 4 · expanded → idle 触发一次 hide_bubble
+  - [x] case 5 · idle → idle 不重复触发 hide_bubble
+  - [x] case 6 · 非 Tauri 环境 attachBubbleWindowSync 返回 no-op，不调 invoke
+- [x] 015 既有单测**不改、全绿**（回归硬指标）：
+  - [x] `petBubble.test.ts`（store 状态机 8 个 case）
+  - [x] `petBubblePolicy.test.ts`（policy 6 个 case）
+  - [x] `sessionProjection.test.ts`（projection N 个 case）
+  - [x] 015 已有的其他 frontend 单测
+- [x] `pnpm test` 全绿
+- [x] `cargo test` 全绿（含 M16.2 的 compute_bubble_position 5 case + 015 既有 push_subscriber 12 case）
 
 ### M16.8 dev spot-check 脚本
 
 > 完成后 dev 期不依赖 bridge 也能调 bubble window size / 位置 / 翻转。
 
-- [ ] `scripts/dev-bubble-spotcheck/run.sh`：新文件
-  - [ ] 起 `pnpm tauri dev`
-  - [ ] 给出操作提示：从 devtools console 调 `__TAURI__.core.invoke('show_bubble')` / `set_bubble_size` 等；或注入 mock envelope 触发 store
-- [ ] `scripts/dev-bubble-spotcheck/run.ps1`：新文件，Windows 对应
-- [ ] `scripts/README.md`：登记新脚本
-- [ ] 手工执行 spot-check 一次确认脚本能跑
+- [x] `scripts/dev-bubble-spotcheck/run.sh`：新文件
+  - [x] 起 `pnpm tauri dev`
+  - [x] 给出操作提示：从 devtools console 调 `__TAURI__.core.invoke('show_bubble')` / `set_bubble_size` 等；或注入 mock envelope 触发 store
+- [x] `scripts/dev-bubble-spotcheck/run.ps1`：新文件，Windows 对应
+- [x] `scripts/README.md`：登记新脚本
+- [ ] 手工执行 spot-check 一次确认脚本能跑 —— **留给用户 M16.9 真跑时一并验证**（涉及 GUI + Tauri 编译，AI 跑不了）
 
 ### M16.9 端到端真跑 + AC 验收 + issue 005 关闭
 
@@ -199,6 +197,9 @@ IN_PROGRESS
 | 2026-06-13 | M16.3 完成：BubbleState（Arc<AtomicBool> + Arc<Notify>）+ 3 个 invoke 命令（show/hide/set_size）+ init 透明窗 workaround；lib.rs 注册 manage / setup / invoke_handler；Cargo.toml 加 tokio sync feature | design §2 涉及文件原说"不动 Cargo.toml"，实际需加 tokio sync —— design 同步补一行变更记录 |
 | 2026-06-13 | M16.4 完成：spawn_follow_loop + run_follow_loop + current_screen_rect；hidden 时 Notify park；50ms tick；init 末尾 spawn | `Screen.h` 仍是 dead code（compute_bubble_position 不读、follow loop 也不读）— 保留作"屏幕矩形语义完整"，下次清 warning 时统一处理 |
 | 2026-06-13 | M16.5 完成：015 helper `apply_pet_window_level` 重命名为 `apply_floating_window_level` + 签名改为接收 `&WebviewWindow`；pet 窗调用点同步；bubble_window::init 末尾对 bubble 窗也调一次；`cargo test` 20 passed | 后端 + 配置打底全完成；M16.6 起进前端 |
+| 2026-06-13 | M16.6 完成：PetBubble.tsx 改造（去 absolute/flipBelow，加 ResizeObserver → invoke set_bubble_size）；pet/App.tsx 减项（去 PetBubble + subscriber 启动）；petBubble.ts 加 attachBubbleWindowSync；bubble/App.tsx 接入；typecheck + lint + lint:colors 全绿 | bubble entry 接 store + push subscriber + show/hide sync |
+| 2026-06-13 | M16.7 完成：新增 petBubbleSync.test.ts（6 case，含 vi.hoisted mock）；015 既有单测一行不改全过；frontend `pnpm test` 38 passed（32 015 既有 + 6 016 新增）；cargo test 20 passed | 015 progress 写的 PetBubble.test.tsx 实际没建过，skip 那条 |
+| 2026-06-13 | M16.8 完成：scripts/dev-bubble-spotcheck/{run.sh, run.ps1} 新建（起 tauri dev + 在 devtools console 直接调 invoke 命令调 size/位置/翻转）；scripts/README.md 登记一行 | "手工执行验证"留给用户 M16.9 真跑时一并做（涉及 GUI + Tauri 编译） |
 
 ---
 
