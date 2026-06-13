@@ -1,7 +1,7 @@
 // 015 · push channel SSE subscriber（Rust 侧）。
 //
 // 持有 `agent_bridge` `/push/subscribe?kinds=agent_turn` 的长 SSE 连接，把解码后的
-// envelope 通过 `tauri::Emitter::emit_to("pet", "agent://push", env)` 透传到 pet
+// envelope 通过 `tauri::Emitter::emit_to("bubble", "agent://push", env)` 透传到 bubble
 // webview；user_turn 在服务端按 `kinds` 参数已过滤掉，本期 pet 窗只接 agent_turn。
 //
 // 详见 015 design §3 / §4。
@@ -80,8 +80,8 @@ async fn run_loop(
                         env.source_kind,
                         env.events.len(),
                     );
-                    if let Err(e) = app.emit_to("pet", "agent://push", env) {
-                        log::warn!("emit_to(pet) failed: {e}");
+                    if let Err(e) = app.emit_to("bubble", "agent://push", env) {
+                        log::warn!("emit_to(bubble) failed: {e}");
                     }
                 }
                 None => {

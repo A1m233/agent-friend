@@ -1,9 +1,10 @@
 # 005 · PetBubble 应改用独立 window，而非加大 pet 主窗
 
-- **状态**：open
+- **状态**：resolved（2026-06-14 由 [需求 016](../../requirements/016-pet-bubble-independent-window/) 落地修复；M16.9 真跑通过 AC-1 / AC-2 / AC-3 / AC-7 / AC-8 / AC-9 / AC-10）
 - **严重度**：medium
 - **发现日期**：2026-06-13
-- **关联需求**：[015-desktop-pet-bubble-and-conversation-owner](../../requirements/015-desktop-pet-bubble-and-conversation-owner/)
+- **完成日期**：2026-06-14
+- **关联需求**：[015-desktop-pet-bubble-and-conversation-owner](../../requirements/015-desktop-pet-bubble-and-conversation-owner/)（产生本 issue 的真跑场景）/ [016-pet-bubble-independent-window](../../requirements/016-pet-bubble-independent-window/)（修复落地）
 
 ## 现象
 
@@ -57,3 +58,24 @@
 - `docs/requirements/015-desktop-pet-bubble-and-conversation-owner/design.md` §6.1（更新位置 / 尺寸语义）
 - `tauri.conf.json` pet 窗尺寸回归 240×320
 - M15.5 store + M15.6 PetBubble 组件接入新 window 控制
+
+---
+
+## 修复指向（2026-06-14 resolved）
+
+由 [需求 016](../../requirements/016-pet-bubble-independent-window/) 按方案 A（独立 bubble window）落地：
+
+- **代码改动**（feature 分支 `feature/016-pet-bubble-independent-window`，commits `111a18e` + `9d5c12b` + M16.9 final）：
+  - `frontend/src-tauri/tauri.conf.json` pet 窗回归 240×320 + 新增 bubble window（transparent / alwaysOnTop / decorations:false / skipTaskbar:true）
+  - `frontend/src-tauri/capabilities/default.json` bubble 加入 `windows` 列表
+  - `frontend/src-tauri/src/bubble_window.rs` 新模块：50ms 轮询 → 16ms tick + `outer_position` 跟随 pet 主窗、`compute_bubble_position` 翻转/clamp 纯函数 + 8 case 单测、show/hide/set_bubble_size invoke 命令、透明窗 workaround（Tauri #1564）
+  - `frontend/src-tauri/src/lib.rs` 015 helper `apply_pet_window_level` 重命名/泛化为 `apply_floating_window_level` 供 bubble 复用
+  - `frontend/src-tauri/src/push_subscriber.rs` emit_to 目标从 `"pet"` 改为 `"bubble"`（M16.6 漏修，M16.9 真跑发现并补）
+  - `frontend/src/pages/bubble/{main,App}.tsx` + `bubble.html` 新增独立 webview entry
+  - `frontend/src/components/pet/PetBubble.tsx` 去掉窗内 absolute / `flipBelow`、加 `ResizeObserver` → `invoke('set_bubble_size')`、`max-h-[440px] overflow-y-auto` 内部滚动
+  - `frontend/src/pages/pet/App.tsx` 移除 `<PetBubble/>` 与 push subscriber 启动
+  - `frontend/src/stores/petBubble.ts` 加 `attachBubbleWindowSync()`（phase → invoke show/hide）
+
+- **AC 通过**：AC-1 / 2 / 3 / 7 / 8 / 9 / 10 真跑 + 单测 70 个全过；AC-4（拖拽 16ms tick 仍可感卡顿）/ AC-5（show_bubble 抢 chat 焦点，即使 macOS `orderFrontRegardless`）为已知行为接受、未阻塞合入。
+
+- **延后**：hover 操作栏常驻问题（与 005 不直接相关，015/010 既有 UX 漂移）登 [issue 008](../008-pet-action-bar-hover-gate/)。

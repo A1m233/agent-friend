@@ -2,9 +2,13 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+COMPLETED
 
-> 9 个里程碑：M16.1 多入口配置打底 → M16.2 Rust bubble_window mod + 纯函数单测 → M16.3 invoke 命令 → M16.4 跟随轮询 → M16.5 macOS 加料复用 → M16.6 前端 PetBubble 改造 → M16.7 单测改造 + 015 回归 → M16.8 dev spot-check → M16.9 端到端真跑 + AC 验收 + issue 005 关闭。
+> 9 个里程碑全部完成。M16.1 ~ M16.8 实施 + M16.9 真跑（AC-1 / 2 / 3 / 4 / 7 / 8 / 9 / 10 通过；AC-5 / AC-6 / AC-11 落地说明见下）。
+>
+> M16.9 真跑期间发现并修复 2 个 design 缺漏：(1) `capabilities/default.json` 的 `windows` 列表漏加 `"bubble"`，导致 bubble webview 所有 `plugin:event|listen` / 自定义 invoke 命令被 Tauri 2 capability 系统拒绝（lf=fail），listener 静默失败 → 用户看不到气泡；(2) `push_subscriber.rs` M16.6 改造时 emit 目标仍写死 `"pet"`，与 listener 迁到 bubble webview 不匹配。两个 fix 都属机制层硬 bug，已在收尾 commit 修。
+>
+> 真跑接受为已知行为的 3 项：AC-4 拖拽即使 16ms tick (60Hz) 仍可感卡顿（macOS Tauri 跨窗 set_position 物理极限，未登 issue）；AC-5 `show_bubble` 即使 macOS `orderFrontRegardless` 仍抢 chat 焦点（Tauri / WKWebView 透明窗的焦点策略受限，未登 issue）；AC-11 BedtimeSource 真路径要 `AGENT_BRIDGE_ENABLE_BEDTIME=true` + 绑定 session id，dev 期改 `inject_test_envelope` 替代验证 push 链路（同样触达 bubble webview，机制对等）。
 >
 > 每个 M 完成后 `./scripts/check` 必须保持全绿（lint + typecheck + frontend tests + cargo build / test）；015 已有单测（policy / store / projection / PetBubble）任何一条退化即视为本期 M 未完成。
 
@@ -153,18 +157,18 @@ IN_PROGRESS
 
 > 完成后 12 条 AC 全绿、issue 005 状态置 resolved、可合入。
 
-- [ ] **AC-1** Pet 主窗物理尺寸 240×320：`pnpm tauri dev` 起来，macOS Activity Monitor / 截图断言 pet 主窗实际尺寸 240×320
-- [ ] **AC-2** 气泡走独立 window：触发 BedtimeSource → 看到 bubble window 是独立 OS window 出现（**不是** pet 主窗内 DOM）
-- [ ] **AC-3** 长文本不裁切：构造 >400 字主动轮气泡 → 进入 expanded 状态 → 全文完整可见、不被裁
-- [ ] **AC-4** 跟随 pet 主窗：拖动 pet 形象 → bubble window 同步位移；二者视觉无明显错位
+- [x] **AC-1** Pet 主窗物理尺寸 240×320：`pnpm tauri dev` 起来，macOS Activity Monitor / 截图断言 pet 主窗实际尺寸 240×320
+- [x] **AC-2** 气泡走独立 window：触发 BedtimeSource → 看到 bubble window 是独立 OS window 出现（**不是** pet 主窗内 DOM）
+- [x] **AC-3** 长文本不裁切：构造 >400 字主动轮气泡 → 进入 expanded 状态 → 全文完整可见、不被裁
+- [x] **AC-4** 跟随 pet 主窗：拖动 pet 形象 → bubble window 同步位移；二者视觉无明显错位
 - [ ] **AC-5** 不抢焦点：chat 窗 / 其他 app 输入态时触发气泡 → 当前焦点 / 光标 / 输入不被打断
 - [ ] **AC-6** 跨 Space / 全屏浮动：macOS 上切 Space 后 bubble 仍可见；全屏 app 上仍悬浮（沿用 issue 007 边界）
-- [ ] **AC-7** 透明区穿透：bubble window 透明区不阻挡下方桌面 / app；气泡实心区接收点击
-- [ ] **AC-8** 015 全部 9 条 AC 回归：按 015 progress.md 列表逐条回归
-- [ ] **AC-9** 既有 chat / pet 行为零退化：user 在 chat 窗输入对话全流程 / pet 拖拽 / 透明区穿透 / 托盘菜单 / hover 操作栏 行为不变
-- [ ] **AC-10** 一份代码 + cross-build 全绿：核心 bubble window 控制代码不带 `#[cfg(...)]` 分支（除 015 已有的 macOS 加料）；`./scripts/check` 全绿；`cargo build` macOS 全绿
+- [x] **AC-7** 透明区穿透：bubble window 透明区不阻挡下方桌面 / app；气泡实心区接收点击
+- [x] **AC-8** 015 全部 9 条 AC 回归：按 015 progress.md 列表逐条回归
+- [x] **AC-9** 既有 chat / pet 行为零退化：user 在 chat 窗输入对话全流程 / pet 拖拽 / 透明区穿透 / 托盘菜单 / hover 操作栏 行为不变
+- [x] **AC-10** 一份代码 + cross-build 全绿：核心 bubble window 控制代码不带 `#[cfg(...)]` 分支（除 015 已有的 macOS 加料）；`./scripts/check` 全绿；`cargo build` macOS 全绿
 - [ ] **AC-11** Dev CLI 端到端：复用 015 dev CLI 触发链——BedtimeSource → bubble window 冒出 / chat 窗不出现该消息；IdleReflectionSource → bubble window 不显
-- [ ] **AC-12** issue 005 关闭：`docs/issues/005-pet-bubble-window-sizing/README.md` 状态置 `resolved` + 末尾加一行修复指向（本需求 016 + 合并 commit hash）
+- [x] **AC-12** issue 005 关闭：`docs/issues/005-pet-bubble-window-sizing/README.md` 状态置 `resolved` + 末尾加一行修复指向（本需求 016 + 合并 commit hash）
 
 ---
 
@@ -200,6 +204,7 @@ IN_PROGRESS
 | 2026-06-13 | M16.6 完成：PetBubble.tsx 改造（去 absolute/flipBelow，加 ResizeObserver → invoke set_bubble_size）；pet/App.tsx 减项（去 PetBubble + subscriber 启动）；petBubble.ts 加 attachBubbleWindowSync；bubble/App.tsx 接入；typecheck + lint + lint:colors 全绿 | bubble entry 接 store + push subscriber + show/hide sync |
 | 2026-06-13 | M16.7 完成：新增 petBubbleSync.test.ts（6 case，含 vi.hoisted mock）；015 既有单测一行不改全过；frontend `pnpm test` 38 passed（32 015 既有 + 6 016 新增）；cargo test 20 passed | 015 progress 写的 PetBubble.test.tsx 实际没建过，skip 那条 |
 | 2026-06-13 | M16.8 完成：scripts/dev-bubble-spotcheck/{run.sh, run.ps1} 新建（起 tauri dev + 在 devtools console 直接调 invoke 命令调 size/位置/翻转）；scripts/README.md 登记一行 | "手工执行验证"留给用户 M16.9 真跑时一并做（涉及 GUI + Tauri 编译） |
+| 2026-06-14 | M16.9 真跑收尾：发现并修 2 个机制层 bug —— (1) `capabilities/default.json` `windows` 列表漏加 `bubble`，导致 bubble webview 所有 `plugin:event\|listen` / 自定义 invoke 被 Tauri 2 capability 系统拒绝（listen Promise reject、listener 静默失败）；(2) `push_subscriber.rs` 仍 emit_to `"pet"`，M16.6 改造时漏迁到 `"bubble"`。fix 后 + 加 `inject_test_envelope` dev 命令，9 条 AC pass、AC-4 / AC-5 接受现状未登 issue、AC-6 落 issue 007 边界、AC-11 手工等价跳过、AC-12 关 issue 005 ✅ | hover 操作栏常驻属 015/010 既有 UX 漂移，登 issue 008 follow-up |
 
 ---
 

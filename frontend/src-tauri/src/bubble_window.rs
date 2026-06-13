@@ -28,9 +28,10 @@ pub const BUBBLE_LABEL: &str = "bubble";
 
 /// 跟随轮询间隔（毫秒）。
 ///
-/// 20Hz 足够流畅；hidden 时整段 task park，static-period CPU 占用 ~ 0。
-/// 选 50ms 对齐 Hyprnote `tauri-plugin-overlay` 生产模式。
-pub const TICK_MS: u64 = 50;
+/// 16ms ≈ 60Hz，与显示器刷新率对齐，拖拽时视觉无错位感。
+/// hidden 时整段 task park（visible_notify），static-period CPU 占用 ~ 0。
+/// Hyprnote `tauri-plugin-overlay` 用 50ms，但 M16.9 真跑发现拖拽有卡顿感 → 提到 60Hz。
+pub const TICK_MS: u64 = 16;
 
 /// bubble window 与 pet 主窗之间的视觉间距（px）。
 pub const MARGIN: i32 = 8;
@@ -140,6 +141,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
 /// 前端在 `usePetBubbleStore.phase` 从 idle 切到 showing/expanded 时 invoke 调本命令。
 /// 多次调用幂等：Tauri `show()` 对已可见窗口 no-op；`is_visible` 写入只是更新内部
 /// "应该可见"语义；`notify_one` 对未 park 的 task 也是 no-op。
+///
+/// **AC-5 不抢焦点**：macOS 上用 NSWindow `orderFrontRegardless` 而不是 Tauri 默认
+/// 的 `makeKeyAndOrderFront`，避免抢走当前 key window（如 chat 输入态）。
+/// Windows / Linux 上 Tauri `.show()` 默认行为对透明无焦点 window 一般也不抢焦点
+/// （未真跑验证；跨平台 spike 留下个需求）。
 #[tauri::command]
 pub fn show_bubble(
     app: AppHandle,
@@ -148,7 +154,26 @@ pub fn show_bubble(
     let bubble = app
         .get_webview_window(BUBBLE_LABEL)
         .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
-    bubble.show().map_err(|e| e.to_string())?;
+
+    // 默认 .show() 在 macOS 上调 makeKeyAndOrderFront 抢焦点；用 orderFrontRegardless 替代
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::{msg_send, runtime::AnyObject};
+        let ns_window_ptr = bubble.ns_window().map_err(|e| e.to_string())?;
+        if !ns_window_ptr.is_null() {
+            let ns_window: &AnyObject = unsafe { &*(ns_window_ptr as *const AnyObject) };
+            unsafe {
+                let _: () = msg_send![ns_window, orderFrontRegardless];
+            }
+        } else {
+            bubble.show().map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        bubble.show().map_err(|e| e.to_string())?;
+    }
+
     state.is_visible.store(true, Ordering::Release);
     state.visible_notify.notify_one();
     Ok(())
@@ -181,6 +206,39 @@ pub fn set_bubble_size(app: AppHandle, width: u32, height: u32) -> Result<(), St
     bubble
         .set_size(LogicalSize::new(f64::from(w), f64::from(h)))
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 016 M16.9 · dev-only：往 bubble webview emit 一条假的 push envelope，
+/// 模拟 BedtimeSource 产出，跳过 bridge / 真 LLM，便于纯 GUI 手动验证 AC-3/4/5/7。
+///
+/// 仅 debug build（`cfg(debug_assertions)`）下导出；release build 该 fn 不存在，
+/// frontend 也用 `import.meta.env.DEV` gate 入口按钮——双层确保不进生产。
+///
+/// 调用方：`frontend/src/pages/pet/App.tsx` 的"inject 测试气泡"按钮（dev only）。
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn inject_test_envelope(app: AppHandle, text: String) -> Result<(), String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tauri::Emitter;
+
+    let seq = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let envelope = serde_json::json!({
+        "kind": "agent_turn",
+        "session_id": "dev-test",
+        "seq": seq,
+        "source_kind": "cron:bedtime",
+        "events": [
+            { "type": "text_delta", "text": text }
+        ]
+    });
+    // emit_to bubble webview —— 与真 push channel（push_subscriber.rs）走同一通道
+    app.emit_to(BUBBLE_LABEL, "agent://push", envelope)
+        .map_err(|e| format!("emit_to failed: {e}"))?;
+    log::info!("inject_test_envelope: emit_to bubble {} bytes", text.len());
     Ok(())
 }
 

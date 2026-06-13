@@ -82,7 +82,7 @@ export function PetBubble() {
       data-hit
       onClick={truncated ? expand : undefined}
       className={cn(
-        "relative w-fit max-w-[360px] rounded-2xl border border-border bg-surface px-3 py-2 pr-8 text-fg shadow-lg",
+        "relative w-fit max-w-[360px] max-h-[440px] overflow-y-auto rounded-2xl border border-border bg-surface px-3 py-2 pr-8 text-fg shadow-lg",
         "animate-in fade-in-0 zoom-in-95 duration-200",
         truncated && "cursor-pointer hover:bg-accent/10",
       )}

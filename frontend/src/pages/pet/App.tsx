@@ -33,6 +33,23 @@ export function PetApp() {
     void invoke("open_chat");
   };
 
+  // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证
+  // AC-3/4/5/7。release build 时 import.meta.env.DEV=false，整段 tree-shake 掉。
+  const injectShort = () => {
+    if (!isTauri()) return;
+    void invoke("inject_test_envelope", {
+      text: "晚安啦，今天辛苦了，早点休息哦 🐾",
+    });
+  };
+  const injectLong = () => {
+    if (!isTauri()) return;
+    const long =
+      "这是一段超长测试文本，用来验证 bubble window 的尺寸自适应是否生效、长文本是否会被裁切、内部滚动条是否正确工作。" +
+      "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(8) +
+      "结尾标记 ✅";
+    void invoke("inject_test_envelope", { text: long });
+  };
+
   return (
     <div className="flex h-full w-full items-center justify-center bg-transparent">
       <div className="group flex flex-col items-center gap-3">
@@ -52,6 +69,16 @@ export function PetApp() {
         >
           打开对话界面
         </Button>
+        {import.meta.env.DEV && (
+          <div className="flex flex-col gap-1 text-xs opacity-70 transition-opacity group-hover:opacity-100">
+            <Button data-hit variant="ghost" size="pill" onClick={injectShort}>
+              💬 短气泡
+            </Button>
+            <Button data-hit variant="ghost" size="pill" onClick={injectLong}>
+              📜 长气泡
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

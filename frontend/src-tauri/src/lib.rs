@@ -184,14 +184,28 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .manage(bubble_window::BubbleState::default())
-        .invoke_handler(tauri::generate_handler![
-            open_chat,
-            bubble_window::show_bubble,
-            bubble_window::hide_bubble,
-            bubble_window::set_bubble_size,
-        ])
+    let builder = tauri::Builder::default()
+        .manage(bubble_window::BubbleState::default());
+
+    // 016 M16.9 · dev build 多注册一个 `inject_test_envelope` 命令，
+    // 让 pet 操作栏的"inject 测试气泡"按钮跑通——release build 整个 fn 不存在。
+    #[cfg(debug_assertions)]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        open_chat,
+        bubble_window::show_bubble,
+        bubble_window::hide_bubble,
+        bubble_window::set_bubble_size,
+        bubble_window::inject_test_envelope,
+    ]);
+    #[cfg(not(debug_assertions))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        open_chat,
+        bubble_window::show_bubble,
+        bubble_window::hide_bubble,
+        bubble_window::set_bubble_size,
+    ]);
+
+    builder
         .on_window_event(|window, event| {
             // 对话窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             if window.label() == "chat" {

@@ -7,7 +7,7 @@ import { startPetBubbleSubscriber, attachBubbleWindowSync } from "@/stores/petBu
  *
  * 承载层：015 的 PetBubble 组件 + petBubble store + push subscriber 全部搬到这个
  * 独立 webview。pet 主窗回 240×320 只承载形象（见 pet/App.tsx）；bubble window 由
- * Rust 侧 `bubble_window.rs` 控制显隐 / size / 位置（50ms tick + outer_position 跟随）。
+ * Rust 侧 `bubble_window.rs` 控制显隐 / size / 位置（16ms tick + outer_position 跟随）。
  *
  * 本组件职责（M16.6）：
  * - `startPetBubbleSubscriber()` —— tauri event `agent://push` → `store.ingest`
