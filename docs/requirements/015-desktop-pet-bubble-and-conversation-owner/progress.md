@@ -2,9 +2,11 @@
 
 ## 总体状态
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+COMPLETED
 
-> 8 个里程碑，依赖链：M15.1 → M15.2 → M15.4 → M15.5 → M15.6 → M15.8（M15.3 / M15.7 独立可插入）。M15.8 含 dev demo orchestrator + 自动门禁 + 手工真跑端到端验收。
+> 8 个里程碑全部完成。M15.1 ~ M15.7 实施 + M15.8 自动门禁（`./scripts/check` 全绿 backend 361 + frontend 32 = **393 passed**）+ 手工真跑端到端通过 AC-1 / AC-4 / AC-5 / AC-6 / AC-7（跨 Space 部分通过、fullscreen 限制登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)）/ AC-8 / AC-9，所有 AC 在真 DeepSeek API 路径下闭环。
+>
+> 真跑期间发现并修复 3 个 design 缺陷：sessionProjection 漏跳主动轮 assistant_message（fix `13dbc07`）；PetBubble policy 用错 event type（fix `537a59b`）；pet 窗 280 气泡溢出 240 窗（hotfix `4e8ac2d`）。3 个延后项登记到 [`docs/issues/`](../../issues/)：005 / 006 / 007。
 
 ---
 
@@ -134,16 +136,20 @@ IN_PROGRESS
 - [x] `scripts/dev-pet-bubble-demo/run.ps1`：Windows 等价
 - [x] `scripts/README.md`：登记新脚本（"015 端到端 demo / 触发 bedtime + idle_reflection / 需 bridge dev_mode=true"）
 - [x] **自动门禁**：`./scripts/check` 全绿（backend 361 passed + frontend 28 passed = **389 passed**；含 ruff lint + ruff format + mypy + pytest + eslint + color-guard + tsc + vitest）—— **AC-8**
-- [ ] **手工真跑端到端**（按用户授权 `llm-api-confirm` 走真 LLM）：
-  - [ ] 启 bridge（`scripts/bridge/run.sh`，dev_mode=true）
-  - [ ] 启 frontend（`pnpm tauri dev` 或对应脚本）
-  - [ ] 在 chat 窗发一条 user 消息 → MessageList 正常流式渲染 + pet 气泡**不跟随** → 对应 **AC-1 / AC-8**
-  - [ ] 跑 `./scripts/dev-pet-bubble-demo/run.sh`
-    - [ ] 触发 bedtime → pet 气泡冒出 + chat 窗 MessageList **无该消息** + 翻 session JSONL 能找到 `system_trigger` 事件 → 对应 **AC-4**
-    - [ ] 触发 idle_reflection → pet 气泡**不冒** + chat 窗无反应 + bridge log 能看到 `memory.observe` 被调用 → 对应 **AC-5**
-  - [ ] 切 Space 桌宠跟随 + 启动全屏视频桌宠仍可见 → 对应 **AC-7**
-  - [ ] 切到一个历史会话再切回（chat 窗）→ MessageList 正常投影（含 user 触发轮、不含主动轮）→ 兜底 **AC-6**
-- [ ] 更新 `progress.md` 总体状态 → `COMPLETED`，补完结日志
+- [x] **手工真跑端到端**（按用户授权 `llm-api-confirm` 走真 LLM）：
+  - [x] 启 bridge（`scripts/bridge/run.sh`，dev_mode=true + enable_bedtime + bedtime_target_session_id + enable_idle_reflection + idle_target_session_id）
+  - [x] 启 frontend（`pnpm tauri dev`）
+  - [x] 在 chat 窗发一条 user 消息 → MessageList 正常流式渲染 + pet 气泡**不跟随** → **AC-1 / AC-8** ✅
+  - [x] 跑 `./scripts/dev-pet-bubble-demo/run.sh` 等价的 dev-fire-source 触发链
+    - [x] 触发 bedtime → pet 气泡冒出 + chat 窗 MessageList **无该消息** + session JSONL `system_trigger` + `assistant_message` 落在 events 流 + dev-push-subscribe 收到 `kind=agent_turn` envelope（21 events: 19 text_delta + done） → **AC-4** ✅
+    - [x] 触发 idle_reflection → pet 气泡**不冒** + chat 窗无反应 + session JSONL `system_trigger(visibility=memory_only)` + `memory_observation` 落事件 + dev-push-subscribe **未收到** envelope（push channel 协议层就过滤了 silent turn） → **AC-5** ✅
+  - [x] 切走历史会话再切回（chat 窗）→ MessageList 正常投影（含 user 触发轮、不含主动轮 assistant content） → **AC-6** ✅（修了 sessionProjection bug 后通过）
+  - [x] macOS 跨 user Space（三指扫 / Ctrl+左右）→ 桌宠跟随 → **AC-7 部分通过** ✅
+  - [ ] macOS 绿色按钮 fullscreen mode → 桌宠不浮 → **NSWindow 系统级限制，登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)**；业界桌宠（NekoAI 等）普遍承认此限制
+- [x] 更新 `progress.md` 总体状态 → `COMPLETED`，补完结日志
+- [x] 登 [issue 005](../../issues/005-pet-bubble-window-sizing/)（pet 窗加大不是最佳实践，应改用独立 bubble window）
+- [x] 登 [issue 006](../../issues/006-bedtime-prompt-history-hijack/)（BedtimeSource prompt 被 history 拽走、产出虚构 user 视角回答）
+- [x] 登 [issue 007](../../issues/007-macos-fullscreen-overlay-limit/)（macOS fullscreen mode 下桌宠不浮的平台限制）
 
 ---
 
@@ -159,6 +165,7 @@ IN_PROGRESS
 | 2026-06-13 | M15.6 完成 | PetBubble.tsx 落（截断 + 翻转 + 内部展开 + data-hit 接入透明区穿透 + animate-in 过渡）+ pet/App.tsx relative + startPetBubbleSubscriber；用 components/ui/Button 过 eslint 禁原生元素门禁；语义 token 过 color-guard；typecheck + lint + test 27 passed 全绿；项目无 .test.tsx 基础设施，UI 行为靠 M15.8 真跑 |
 | 2026-06-13 | M15.7 完成 | sessionProjection.ts 顶注释显式声明 system_trigger / memory_observation 被动跳过是 015 期望行为；新增 1 条兜底测试断言含主动轮事件投影 toEqual 不含时（AC-6 兜底）；sessionProjection 5 passed |
 | 2026-06-13 | M15.8 自动门禁通过 | scripts/dev-pet-bubble-demo/ 双端 wrapper + scripts/README.md 登记；`./scripts/check` 全绿（backend 361 + frontend 28 = 389 passed，AC-8）；手工真跑（bedtime / idle / 跨 Space / 全屏 / 历史回看）待用户授权 + 启 bridge+frontend 后跑 |
+| 2026-06-13 | M15.8 真跑闭环 | 真跑期间发现并 hot-fix 3 个 design 缺陷：sessionProjection 漏跳主动轮 assistant_message（`13dbc07`，新增 AC-6 兜底测试）+ PetBubble policy 用错 event type 应识别 `text_delta` 而非 `assistant_message`（`537a59b`，policy 全部测试重写）+ pet 窗 280 气泡溢出 240 窗（hotfix `4e8ac2d` 加大到 480x460，登 issue 005 后续优化）+ 气泡常驻不自动消失（refactor `22b9c01`，design §6.3 决策更新）+ NSWindow collectionBehavior 0x101 跨 Space 跟随生效（fullscreen 限制登 issue 007）。AC-1 / AC-4 / AC-5 / AC-6 全部端到端通过；AC-7 跨 Space 通过、fullscreen 接受平台限制；最终 `./scripts/check` 393 passed（backend 361 + frontend 32），M15.8 收口 |
 
 ---
 
