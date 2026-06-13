@@ -6,10 +6,14 @@
  * chat 窗" / "勿扰模式直接丢弃" / "加新出口"等）能改 policy 不动 store / UI 框架——
  * 呼应 .cursor/rules/coding-design.mdc "易变维度留扩展点"。
  *
+ * 关键事实（M15.8 真跑暴露）：envelope.events 是 ConversationEvent asdict 后的平铺
+ * dict（**不是** session.events JSONL 的 SessionEvent），assistant 文本走的是
+ * `text_delta` 流式增量、字段是 `.text`（见 types/push.ts 顶部注释）。
+ *
  * 详见 015 design §5.2。
  */
 
-import type { PushEnvelope, SessionEvent } from "@/types";
+import type { PushEnvelope, PushEvent } from "@/types/push";
 
 /** 气泡条目；id 用 `${session_id}:${seq}` 单调可比，便于 store 做替换判定 / 防重。 */
 export interface BubbleItem {
@@ -22,29 +26,27 @@ export interface BubbleItem {
 export type PushPolicy = (env: PushEnvelope) => BubbleItem | null;
 
 /**
- * 用户可见的 assistant 输出 event type 集合。
+ * 用户可见的 assistant 输出 event type 集合（envelope.events 内 ConversationEvent type）。
  *
- * 014 design §3 把主动轮"用户可见"输出落为 `assistant_message`；silent turn
- * （IdleReflectionSource）只落 `memory_observation` 而无 `assistant_message`，
- * 因此 envelope.events 里有无该 type 是"是否要冒气泡"的最干净判据——比硬编码
- * source_kind 黑名单（"idle_reflection" 等）更可演进。
+ * 014 主动轮"用户可见"的输出经 `conv.stream()` yield 出 `TextDelta` 事件、通过 push
+ * channel 透传到这里；silent turn（IdleReflectionSource）不 yield 任何 `text_delta`、
+ * 整轮 envelope 里仅 `done` 事件。所以"有无 text_delta"就是"是否要冒气泡"的判据。
  */
 const ASSISTANT_TEXT_TYPES: ReadonlySet<string> = new Set([
-  "assistant_message",
+  "text_delta",
 ]);
 
-function extractText(ev: SessionEvent): string | null {
+function extractText(ev: PushEvent): string | null {
   if (!ASSISTANT_TEXT_TYPES.has(ev.type)) return null;
-  const content = ev.payload?.content;
-  return typeof content === "string" && content.length > 0 ? content : null;
+  const text = ev.text;
+  return typeof text === "string" && text.length > 0 ? text : null;
 }
 
 /**
  * 第一版默认策略：
  * 1. 只看 agent_turn（user_turn / heartbeat 直接丢；Rust 订阅已过滤，TS 侧再兜底）
- * 2. envelope.events 中无 user-visible assistant 文本 → silent turn，丢弃（R-4.4.4）
- * 3. 拼接所有 assistant_message 的 content（按 turn 边界打包，通常 1 段；
- *    防御性兼容多段时用 `\n\n` 连）
+ * 2. envelope.events 中无 user-visible text_delta → silent turn，丢弃（R-4.4.4）
+ * 3. 拼接所有 text_delta.text（顺序即 envelope 顺序、即 turn 内时序）
  */
 export const defaultPolicy: PushPolicy = (env) => {
   if (env.kind !== "agent_turn") return null;
@@ -54,7 +56,7 @@ export const defaultPolicy: PushPolicy = (env) => {
   if (texts.length === 0) return null;
   return {
     id: `${env.session_id}:${env.seq}`,
-    text: texts.join("\n\n"),
+    text: texts.join(""),
     sourceKind: env.source_kind,
   };
 };

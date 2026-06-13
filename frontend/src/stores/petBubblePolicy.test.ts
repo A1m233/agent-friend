@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { defaultPolicy } from "./petBubblePolicy";
-import type { PushEnvelope, SessionEvent } from "@/types";
+import type { PushEnvelope, PushEvent } from "@/types/push";
 
 function envelope(overrides: Partial<PushEnvelope>): PushEnvelope {
   return {
@@ -13,16 +13,20 @@ function envelope(overrides: Partial<PushEnvelope>): PushEnvelope {
   };
 }
 
-function ev(type: string, payload?: Record<string, unknown>): SessionEvent {
-  return { type, uuid: "u", ts: "2026-06-13T00:00:00Z", payload };
+function delta(text: string): PushEvent {
+  return { type: "text_delta", text };
+}
+
+function doneEv(): PushEvent {
+  return { type: "done", stop_reason: "end_turn", total_tool_calls: 0 };
 }
 
 describe("defaultPolicy", () => {
-  it("agent_turn 含 assistant_message 时返 BubbleItem（AC-4）", () => {
+  it("agent_turn 含 text_delta 流式增量时返 BubbleItem（AC-4）", () => {
     const env = envelope({
       seq: 7,
       source_kind: "cron:bedtime",
-      events: [ev("assistant_message", { content: "很晚了，该睡了。" })],
+      events: [delta("很晚了，"), delta("该睡了。"), doneEv()],
     });
     const item = defaultPolicy(env);
     expect(item).toEqual({
@@ -32,14 +36,11 @@ describe("defaultPolicy", () => {
     });
   });
 
-  it("silent turn（只有 memory_observation、无 assistant_message）返 null（AC-5）", () => {
+  it("silent turn（无 text_delta、仅 done）返 null（AC-5）", () => {
     const env = envelope({
       seq: 8,
       source_kind: "idle_reflection",
-      events: [
-        ev("memory_observation", { extracted: "..." }),
-        ev("system_trigger", { source_kind: "idle_reflection" }),
-      ],
+      events: [doneEv()],
     });
     expect(defaultPolicy(env)).toBeNull();
   });
@@ -47,7 +48,7 @@ describe("defaultPolicy", () => {
   it("user_turn 一律丢弃（兜底，正常情况下 Rust 订阅已过滤）", () => {
     const env = envelope({
       kind: "user_turn",
-      events: [ev("assistant_message", { content: "用户触发轮回复" })],
+      events: [delta("用户触发轮回复")],
     });
     expect(defaultPolicy(env)).toBeNull();
   });
@@ -57,26 +58,41 @@ describe("defaultPolicy", () => {
     expect(defaultPolicy(env)).toBeNull();
   });
 
-  it("多个 assistant_message 按 \\n\\n 拼接", () => {
+  it("多段 text_delta 按 envelope 顺序拼接（不加分隔符，turn 内时序就是文本顺序）", () => {
     const env = envelope({
       events: [
-        ev("assistant_message", { content: "第一段" }),
-        ev("memory_observation", {}),
-        ev("assistant_message", { content: "第二段" }),
+        delta("第一"),
+        delta("段。"),
+        delta("第二"),
+        delta("段。"),
+        doneEv(),
       ],
     });
-    const item = defaultPolicy(env);
-    expect(item?.text).toBe("第一段\n\n第二段");
+    expect(defaultPolicy(env)?.text).toBe("第一段。第二段。");
   });
 
-  it("assistant_message 的 content 不是 string 或为空时跳过", () => {
+  it("text_delta 的 text 不是 string 或为空时跳过", () => {
     const env = envelope({
       events: [
-        ev("assistant_message", { content: "" }),
-        ev("assistant_message", { content: 42 }),
-        ev("assistant_message"),  // 无 payload
+        { type: "text_delta", text: "" },
+        { type: "text_delta", text: 42 },
+        { type: "text_delta" },  // 无 text 字段
+        doneEv(),
+      ],
+    });
+    expect(defaultPolicy(env)).toBeNull();
+  });
+
+  it("envelope 含 tool_call_* 事件但无 text_delta（纯工具轮）返 null", () => {
+    // 边界：主动轮内部走工具但没文本输出（仅工具结果）—— 第一版不冒气泡
+    const env = envelope({
+      events: [
+        { type: "tool_call_request", tool_call_id: "c", tool_name: "x", args: {} },
+        { type: "tool_call_result", tool_call_id: "c", tool_name: "x", text: "ok", is_error: false, duration_seconds: 0 },
+        doneEv(),
       ],
     });
     expect(defaultPolicy(env)).toBeNull();
   });
 });
+

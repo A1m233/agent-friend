@@ -13,7 +13,10 @@ function agentEnv(seq: number, content = "晚安"): PushEnvelope {
     session_id: "s1",
     seq,
     source_kind: "cron:bedtime",
-    events: [{ type: "assistant_message", uuid: "u", ts: "t", payload: { content } }],
+    events: [
+      { type: "text_delta", text: content },
+      { type: "done", stop_reason: "end_turn", total_tool_calls: 0 },
+    ],
   };
 }
 
@@ -23,7 +26,10 @@ function userEnv(seq: number): PushEnvelope {
     session_id: "s1",
     seq,
     source_kind: null,
-    events: [{ type: "assistant_message", uuid: "u", ts: "t", payload: { content: "user-triggered" } }],
+    events: [
+      { type: "text_delta", text: "user-triggered" },
+      { type: "done", stop_reason: "end_turn", total_tool_calls: 0 },
+    ],
   };
 }
 
