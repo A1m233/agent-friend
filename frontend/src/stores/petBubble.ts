@@ -19,6 +19,7 @@
 
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 import type { BubbleItem, PushPolicy } from "./petBubblePolicy";
@@ -83,4 +84,44 @@ export async function startPetBubbleSubscriber(): Promise<() => void> {
     usePetBubbleStore.getState().ingest(e.payload);
   });
   return unlisten;
+}
+
+/**
+ * 016 R-4.2.3 · 把 store phase 状态同步到 Rust 侧 bubble window 显隐。
+ *
+ * 监听 `usePetBubbleStore` 的 `phase`：
+ * - idle → 非 idle（首次 ingest）→ invoke `show_bubble`，Rust 侧 `bubble.show()`
+ *   并唤醒跟随轮询 task。
+ * - 非 idle → idle（dismiss / 替换为 null）→ invoke `hide_bubble`，Rust 侧
+ *   `bubble.hide()` 并标记 `is_visible=false`（task 在下次 tick 进入 park）。
+ *
+ * 不在 store 内闭包绑死、单独抽 `attachBubbleWindowSync` 函数的原因：
+ * - 只在 bubble entry（`bubble/App.tsx`）启动一次订阅；pet entry 同 store 但
+ *   不参与显隐控制（store 的 phase 是 single source of truth，两边读但只 bubble 写控）。
+ * - 测试时可不挂订阅（默认 jsdom 环境 `isTauri()` 返 false，invoke 也走 stub）。
+ *
+ * 返回 unsubscribe；非 Tauri 环境直接返回 no-op。
+ */
+export function attachBubbleWindowSync(): () => void {
+  if (!isTauri()) return () => {};
+  // 初值用 store 当前 phase，避免错过启动那一刻已经非 idle 的边界情况
+  // （实际上 bubble entry 启动时 store 必定是 idle 初始态，但守一下不亏）
+  let lastPhase: BubblePhase = usePetBubbleStore.getState().phase;
+  const unsubscribe = usePetBubbleStore.subscribe((state) => {
+    const next = state.phase;
+    if (next === lastPhase) return;
+    const becameVisible = lastPhase === "idle" && next !== "idle";
+    const becameHidden = lastPhase !== "idle" && next === "idle";
+    lastPhase = next;
+    if (becameVisible) {
+      void invoke("show_bubble").catch((e: unknown) => {
+        console.warn("show_bubble invoke failed:", e);
+      });
+    } else if (becameHidden) {
+      void invoke("hide_bubble").catch((e: unknown) => {
+        console.warn("hide_bubble invoke failed:", e);
+      });
+    }
+  });
+  return unsubscribe;
 }

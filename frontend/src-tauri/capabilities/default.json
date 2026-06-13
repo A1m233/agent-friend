@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "pet",
-    "chat"
+    "chat",
+    "bubble"
   ],
   "permissions": [
     "core:default",
