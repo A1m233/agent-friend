@@ -182,6 +182,19 @@ model.scale.set(Math.min(app.screen.width / model.width, app.screen.height / mod
 
 ## 7. 后续真做需求时的前置 spike 清单
 
+**Spike 状态**（详情见同目录 `spike-*.md`，按执行依赖顺序排）：
+
+| Spike | 文件 | 状态 |
+|---|---|---|
+| §7.5 OLV 源码深读 | [`spike-olv-source-reading.md`](./spike-olv-source-reading.md) | **done(pass)** · 2026-06-14 |
+| §7.1 Tauri overlay 跨平台 | [`spike-tauri-overlay-cross-platform.md`](./spike-tauri-overlay-cross-platform.md) | **done(pass-with-caveats)** · 2026-06-14（macOS 4 场景过 + 文档调研覆盖三端；Fullscreen 屏蔽 = 已知 macOS 限制 / 多屏单屏开发机未真验） |
+| §7.4 alpha hitTest 性能 | [`spike-alpha-hittest-perf.md`](./spike-alpha-hittest-perf.md) | **done(pass-with-caveats)** · 2026-06-14（readPixels < 1μs pass；副产品发现 PixiJS 不渲染 blocker 留 spike 4 接班） |
+| §7.6 NSPanel 路径解 render blocker | [`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md) | **done(pass-with-caveats)** · 2026-06-14（段 A 解 spike 3 PixiJS render blocker + 浮 fullscreen 解 issue 007；段 B 整屏 NSPanel + PixiJS 30fps 稳态 + GPU 409 mW 在 #15471 业界 baseline 范围内；caveat = fps 30fps cap，OS 行为业界共识；业界标准方案对照见 [`industry-standard-tauri-nspanel.md`](./industry-standard-tauri-nspanel.md)） |
+| §7.2 sprite 拖拽 + Rust 同步 | [`spike-pixijs-sprite-drag-rust-sync.md`](./spike-pixijs-sprite-drag-rust-sync.md) | planned · 依赖 §7.6 pass |
+| §7.3 bubble 跟 sprite | [`spike-bubble-follow-sprite.md`](./spike-bubble-follow-sprite.md) | planned · 依赖 §7.2 pass |
+
+每项 spike 已落地为独立计划文件（§1 验证目标 / §2 方法 / §3 通过条件 / §4 不在范围 已填，§5 实际结果 / §6 下一步 待真跑后追加）。spike 全跑完后回流 `docs/decisions/` 立 ADR（见 §8 触发条件）。
+
 这条路线**真做需求前**应当先 spike 几个不确定性点，避免在 design 阶段才暴露：
 
 1. **Tauri 整屏 transparent overlay 跨平台行为**
@@ -206,11 +219,13 @@ model.scale.set(Math.min(app.screen.width / model.width, app.screen.height / mod
 
 ## 8. 回流 `docs/decisions/` 的触发条件
 
+> **状态**：**已回流** · 2026-06-14 · 本文件 §6 方向倾向 + §7 前置 spike 清单已落地为 ADR [`0004-pet-overlay-route`](../../decisions/0004-pet-overlay-route/README.md)（路线 A 锁定 + macOS NSPanel 实现路径锁定 + Win 整屏 overlay 方向锁定）。后续真做 Live2D 接入需求时 requirement.md 应直接引用 ADR 0004，**本篇降级为 ADR 立项前的事实记录**。
+
 本篇是 exploration，**不抢决策权威**。下列条件任一满足时，应回流到 `docs/decisions/` 立一份新 ADR（按 docs-discipline 三铁律：决策不就地推翻，新 ADR 覆盖原决策）：
 
-- §7 前置 spike 清单全部跑完，路线 A 没有 spike-级阻塞（特别是 macOS / Windows / Linux 任一平台不可用）
-- 真正立 Live2D 接入需求前，需要把"桌宠承载形态选择"在项目级锁定（影响 010 / 015 / 016 之上的整条形态层 plumbing，不应该在某个具体需求的 design.md 里偷定）
-- 如果 spike 暴露 OLV 路线在 Tauri 下不可工程化（极小概率），回流时方向可能反转——这时也应当立 ADR 说明"探索过 overlay 路线但 Tauri 下不可行，回退到 Copiwaifu 路线"，避免后续再 revisit
+- §7 前置 spike 清单全部跑完，路线 A 没有 spike-级阻塞（特别是 macOS / Windows / Linux 任一平台不可用） · ✅ 已满足（spike 1/2/3/§7.6 全 pass，触发本次 ADR 立项）
+- 真正立 Live2D 接入需求前，需要把"桌宠承载形态选择"在项目级锁定（影响 010 / 015 / 016 之上的整条形态层 plumbing，不应该在某个具体需求的 design.md 里偷定） · ✅ ADR 0004 已锁
+- 如果 spike 暴露 OLV 路线在 Tauri 下不可工程化（极小概率），回流时方向可能反转——这时也应当立 ADR 说明"探索过 overlay 路线但 Tauri 下不可行，回退到 Copiwaifu 路线"，避免后续再 revisit · 未触发（spike 全 pass-with-caveats）
 
 回流前，本篇是 explorations 里的**最高权威**——立 Live2D 需求时 requirement.md 应直接引用本篇 §6 的方向倾向。
 
