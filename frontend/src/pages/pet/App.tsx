@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import { Button } from "@/components/ui";
 import { usePetPassthrough } from "./usePetPassthrough";
+import { PetSpikeWinOverlayApp } from "./PetSpikeWinOverlayApp";
 
 /**
  * 桌宠窗（透明悬浮、置顶、无边框）。M10.2 + 015 + 016 R-4.1：
@@ -19,8 +20,25 @@ import { usePetPassthrough } from "./usePetPassthrough";
  * - 去掉外层 `relative` —— 不再需要 absolute 定位 anchor，pet 主窗回归"只承载形象"语义。
  *
  * `data-hit` 标记"实心可交互区"：穿透 hit-test 据此判定（见 usePetPassthrough）。
+ *
+ * **Win spike (ADR 0004 §5.2 / spike-tauri-win-overlay-research §6.4)**:URL `?spike=win-overlay`
+ * → render `PetSpikeWinOverlayApp`(整屏 PixiJS demo + fps HUD + 1Hz invoke Rust log)。
+ * 否则保持现 016 形态。dispatch 在顶部一次性判断,spike 模式不混挂 usePetPassthrough(整屏
+ * cursor 穿透改由 Rust 60Hz cursor polling + setIgnoreCursorEvents toggle 承接,而非 DOM hit-test)。
  */
+function isWinOverlaySpike(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("spike") === "win-overlay";
+}
+
 export function PetApp() {
+  if (isWinOverlaySpike()) {
+    return <PetSpikeWinOverlayApp />;
+  }
+  return <PetAppDefault />;
+}
+
+function PetAppDefault() {
   usePetPassthrough();
 
   const startDrag = (e: MouseEvent) => {

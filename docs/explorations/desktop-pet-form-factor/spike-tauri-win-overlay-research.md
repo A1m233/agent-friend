@@ -456,28 +456,68 @@ setup 脚本做 4 件事:`uv sync` 装后端 Python 依赖 / `.env` 不存在则
 - **工具版本本身**(Rust / node / pnpm / uv):**setup 不升级**。需要时手动:`rustup update` / `corepack prepare pnpm@latest --activate` / nvm `install <ver>` / `uv self update`
 - **`.env` 新增字段**:setup 已存在则跳过。手动对照 `frontend/.env.example` / 根 `.env.example` 看是否有新 key 要补
 
-#### 6.4.1 实施 baseline
+#### 6.4.1 实施 baseline · 骨架已落 `spike/tauri-win-overlay` 分支
 
-- **实施载体**:throwaway worktree(如 `.claude/worktrees/spike-tauri-win-overlay`),基于 main,不进主仓主分支;dev port 1422 或更高避主仓 1420
-- **必须真机的 6 个子问题**:参 §5.7 表格,**§1.3 PixiJS rAF 60fps 是核心**,§1.5 GDI 泄漏 24h 长跑是 critical caveat
-- **设备覆盖建议**:Win 11(对照 #1691 复现环境 + 走整屏 + Win 11 Composition 行为)+ Win 10(对照 #9373 + 老 WebView2 不复现 #1691 的环境)+ 至少 1 个 Intel iGPU + 1 个 NVIDIA / AMD dGPU(防 GPU driver 特定问题)
-- **复现 Configuration 精准对照表**(后续 spike 真机 cfg):
+**实施载体**:**长期分支** `spike/tauri-win-overlay`(基于 main,push 到 origin),**不 merge 回 main**(沿 ADR 0004 §6 反转条件 3 "Win spike pass 才走产品")。Win 跑出 done(pass / pass-with-caveats / fail)结论后,分支可 archive(留作未来真做 Live2D 需求时引用,跟 macOS spike §5.5 可借鉴代码清单同等地位)。
 
-  | 维度 | 本项目建议 |
-  |---|---|
-  | 窗口类型 | 普通 Window(Win 无 NSPanel 等价) |
-  | ex-style | tao 自动给 `WS_EX_TRANSPARENT \| WS_EX_LAYERED`(`set_ignore_cursor_events`) |
-  | 透明 | `tauri.conf.json` `transparent: true`(Win 走 DWM blur-behind region,**不需要 macOSPrivateApi**) |
-  | level | `alwaysOnTop: true`(Win 用 `HWND_TOPMOST`) |
-  | 窗尺寸 | Rust 侧 `available_monitors()` union → `set_position` + `set_size`(对照 OLV Electron 路径 + macOS spike §5.1 已验代码) |
-  | cursor passthrough | Rust 60Hz polling cursor + setIgnoreCursorEvents toggle(沿 macOS spike + manasight 实战) |
-  | 渲染 | PixiJS v8 + WebGL(同 macOS) |
+**骨架已在 mac 端落好,Win 工程师直接拉跑**(无需自己组装代码):
 
-- **通过条件**(沿 macOS spike §3 同样规范):
-  - **段 A · 固定窗 transparent + alwaysOnTop**:对照 Copiwaifu / BongoCat 实证可工程化路径,PixiJS rAF 稳态 ≥ 55fps 持续 30 秒
-  - **段 B · 整屏 transparent setBounds monitors union + PixiJS**:本项目首个 Tauri 业界公开 data point;rAF 稳态 ≥ 55fps + GDI 漏速 < 10/秒(对照 #1691 报告 75/秒红线)
-  - **段 C · 24h 长跑稳定性**:GDI 上限不耗尽 + 无系统级 cursor 卡顿(对照 #1691 reporter "1-2 小时光标卡顿"红线)
-- **调试退路**:如段 B fail,**段 A pass = Win 端走小固定窗 fallback**(产品一致性受损但工程稳),触发 ADR 0004 §6 反转条件 3 选项 b "接受 Win 端走小固定窗 fallback"
+```powershell
+git fetch origin
+git checkout spike/tauri-win-overlay
+git pull
+.\scripts\setup\run.ps1
+cd frontend
+pnpm tauri dev
+# pet 窗自动加载 pet.html;手动改 URL 加 ?spike=win-overlay 触发 spike 模式
+# 例如 devtools 改 location.search='?spike=win-overlay' + reload,
+# 或者 vite dev URL 直接访问 http://localhost:1420/pet.html?spike=win-overlay
+```
+
+**骨架改了哪些文件**(mac 端 cargo check + pnpm install 已验通过 cross-platform 部分):
+
+| 文件 | 改动 | mac 端验证状态 |
+|---|---|---|
+| `frontend/src-tauri/src/lib.rs` | 加 `apply_pet_overlay_fullscreen(window)` cross-platform 函数(monitors union → set_position + set_size,沿 macOS spike §5.5.5 同款算法) + `spike_win_log_perf(msg)` Rust command(让前端 1Hz fps HUD 数据回 invoke 打 Rust log) + setup hook `#[cfg(target_os = "windows")]` gate 调用(mac dev 保持现 240×320 形态,Win 才整屏) | ✅ `cargo check` mac 端通过(cross-platform 部分);Win cfg gate 段只一行调用 cross-platform fn,语法极简 |
+| `frontend/src/pages/pet/PetSpikeWinOverlayApp.tsx` | 新文件 · PIXI v8 整屏 demo(蓝色 80×80 旋转方块 + fps HUD + 1Hz invoke `spike_win_log_perf`),沿 macOS spike §5.5.7 同款 StrictMode 双 mount cleanup pattern + PIXI destroy 顺序 | ✅ 跨平台 |
+| `frontend/src/pages/pet/App.tsx` | 顶部加 `isWinOverlaySpike()` URL param dispatch:`?spike=win-overlay` → `PetSpikeWinOverlayApp`,否则 `PetAppDefault`(原 016 形态 wrap 进新函数,语义零变化) | ✅ 跨平台 |
+| `frontend/package.json` + `pnpm-lock.yaml` | 加 `pixi.js ^8.6.0`(实装 8.19.0) | ✅ `pnpm install` mac 端通过 |
+| `frontend/src-tauri/tauri.conf.json` | **不动**(016 已配 pet 窗 transparent + alwaysOnTop + skipTaskbar + decorations:false + shadow:false,直接被 setup hook setBounds 覆盖整屏) | ✅ |
+
+**Win 工程师需要做的**(只有 Win 才能干的):
+
+1. **跑 + 看 Rust 终端 fps log**:启动后看 Tauri 终端的 `spike-win-perf: fps=XX min=XX p50=XXms p95=XXms n=XXX` 行,**30+ 秒稳态 ≥ 55fps** 判 §3.1 段 B(整屏)通过
+2. **24h 长跑测 GDI**:Win 11 + WebView2 146 环境精准对照 wry#1691 → 用 `GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS)`(PowerShell 调 Win32 或 Tauri 内插桩)1Hz 采样,记录漏速;cursor idle vs 持续 movement 两种场景对照
+3. **#9373 复现**:本 demo = 整屏 + canvas 拉满 + rAF,正是 #9373 触发模式;Win 10 + 较老 WebView2 / 不同 GPU driver A/B 验证
+4. **实测数据回填 spike doc §5**:把 Win 段实测 fps / GDI 漏速 / OS+WebView2 版本组合表 push 回 `spike/tauri-win-overlay` 分支,本 spike 状态从 `done(pass-with-caveats · 文档调研)` 进化为 `done(pass / pass-with-caveats / fail · 真机端到端)`
+
+**骨架代码的"mac 上无法验证"硬 gap**(留 Win 工程师撞):
+
+- `#[cfg(target_os = "windows")]` gate 段在 mac 上不编(死代码),语法错 cargo check 不报。本骨架 cfg gate 段只一行 `apply_pet_overlay_fullscreen(&pet);`(调 cross-platform fn),撞错概率极低
+- `WS_EX_TRANSPARENT | WS_EX_LAYERED` 是否如预期由 tao 在 `set_ignore_cursor_events(true)` 时自动加(本 spike doc §5.2 已读穿源码确认),但**整屏 layered window + DWM blur-behind region + WebView2 渲染**完整组合是否如预期,只有 Win 真跑能验
+- WebView2 runtime 版本检测(对照 wry#1691 复现 / 不复现环境):需要 Win 工程师在 spike doc §5 实测段补"测试环境精准信息"
+
+**复现 Configuration 精准对照表**(已落代码,对照 spike doc §5.7 表):
+
+| 维度 | 本项目落地 | 在骨架哪里 |
+|---|---|---|
+| 窗口类型 | 普通 Window(Win 无 NSPanel 等价) | `tauri.conf.json` `label: "pet"` 普通窗 |
+| ex-style | tao 自动给 `WS_EX_TRANSPARENT \| WS_EX_LAYERED`(`set_ignore_cursor_events`) | 现有 `usePetPassthrough.ts` cursor passthrough 路径自动触发(spike 模式不挂 `usePetPassthrough`,需 Win 工程师单独验证或确认是否本 spike 阶段需要 cursor passthrough) |
+| 透明 | `tauri.conf.json` `transparent: true`(Win 走 DWM blur-behind region) | 016 已有 |
+| level | `alwaysOnTop: true`(Win 用 `HWND_TOPMOST`) | 016 已有 |
+| 窗尺寸 | Rust 侧 `available_monitors()` union → `set_position` + `set_size` | `lib.rs::apply_pet_overlay_fullscreen()`(spike 骨架新加) |
+| cursor passthrough | Rust 60Hz polling cursor + setIgnoreCursorEvents toggle | 现有 `spawn_cursor_feed`(spike 模式下整屏 = cursor 全部经过 webview surface,**建议 Win 工程师先确认 cursor 不穿透是否影响 fps 验测**,如影响,DOM `data-hit` 标 fps HUD 区即可) |
+| 渲染 | PixiJS v8 + WebGL(同 macOS spike §5.5.7) | `PetSpikeWinOverlayApp.tsx`(spike 骨架新加) |
+
+**通过条件**(沿 macOS spike §3 同样规范):
+
+- **段 A · 固定窗 transparent + alwaysOnTop**:**直接跳过**(本骨架 setup hook Win cfg-gate 直接走整屏,不验固定窗 fallback;如需验证,Win 工程师临时 comment 掉 `apply_pet_overlay_fullscreen` 调用即可)
+- **段 B · 整屏 transparent setBounds monitors union + PixiJS**:**本骨架直接验**;rAF 稳态 ≥ 55fps + GDI 漏速 < 10/秒(对照 #1691 报告 75/秒红线)
+- **段 C · 24h 长跑稳定性**:GDI 上限不耗尽 + 无系统级 cursor 卡顿(对照 #1691 reporter "1-2 小时光标卡顿"红线)
+
+**调试退路**:如段 B fail,**Win 工程师 push 回 fail 结论到 spike doc § 5 + spike 状态升级**;触发 ADR 0004 §6 反转条件 3,本分支 archive,新立 ADR 处理 Win fallback 方案(选项 a/b/c)。骨架代码 mac 端无影响(setup hook `#[cfg(target_os = "windows")]` gate 让 mac dev 保持现 240×320 形态)。
+
+**设备覆盖建议**:Win 11(对照 #1691 复现环境 + 走整屏 + Win 11 Composition 行为)+ Win 10(对照 #9373 + 老 WebView2 不复现 #1691 的环境)+ 至少 1 个 Intel iGPU + 1 个 NVIDIA / AMD dGPU(防 GPU driver 特定问题)。
 
 ### 6.5 反转触发阈值(给真机 spike 用)
 

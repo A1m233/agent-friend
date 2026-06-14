@@ -118,6 +118,72 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Win spike (ADR 0004 §5.2 / spike-tauri-win-overlay-research §6.4) ·
+/// 把 pet 窗撑成整屏 transparent overlay：算 `available_monitors()` 并集 →
+/// `set_position` + `set_size`。沿 macOS spike §5.5.5 同款 monitors union 算法。
+///
+/// **跨平台**实现（无 cfg gate）—— tauri 的 `available_monitors` / `set_position` /
+/// `set_size` 三端原生支持。本 spike 仅在 setup hook 中以 `#[cfg(target_os = "windows")]`
+/// gate 调用本函数（让 mac dev 保持现 240×320 形态、不撞 macOS spike 已 done 的
+/// NSPanel 路径）。Win 走整屏 → pet 窗自动叠加 tauri.conf.json 已配的
+/// `transparent: true / alwaysOnTop: true / decorations: false / skipTaskbar: true /
+/// shadow: false` 形成 OLV 路线 Win 端 baseline。
+///
+/// 失败仅 log warn，不阻断 app 启动。
+pub(crate) fn apply_pet_overlay_fullscreen(window: &WebviewWindow) {
+    let monitors = match window.available_monitors() {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("apply_pet_overlay_fullscreen: available_monitors failed: {e}");
+            return;
+        }
+    };
+    if monitors.is_empty() {
+        log::warn!("apply_pet_overlay_fullscreen: no monitors found");
+        return;
+    }
+    let min_x = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
+    let min_y = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
+    let max_x = monitors
+        .iter()
+        .map(|m| m.position().x + m.size().width as i32)
+        .max()
+        .unwrap_or(0);
+    let max_y = monitors
+        .iter()
+        .map(|m| m.position().y + m.size().height as i32)
+        .max()
+        .unwrap_or(0);
+    let union_w = (max_x - min_x).max(1) as u32;
+    let union_h = (max_y - min_y).max(1) as u32;
+    log::info!(
+        "spike-win-overlay: monitors={} union=({},{}) {}x{}",
+        monitors.len(),
+        min_x,
+        min_y,
+        union_w,
+        union_h
+    );
+    if let Err(e) = window.set_position(tauri::Position::Physical(
+        tauri::PhysicalPosition::new(min_x, min_y),
+    )) {
+        log::warn!("apply_pet_overlay_fullscreen: set_position failed: {e}");
+    }
+    if let Err(e) = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+        union_w, union_h,
+    ))) {
+        log::warn!("apply_pet_overlay_fullscreen: set_size failed: {e}");
+    }
+}
+
+/// Win spike · 前端 1Hz 把 fps HUD 数据回 invoke 进来，Rust 端打 log 让 Win 工程师在
+/// 终端直接看到稳态数据（不用打开 devtools）。沿 macOS spike §5.5.2 `spike_log_perf`
+/// 同款模式。跨平台 command（mac 上 spike 模式触发时也照打 log）。
+#[tauri::command]
+fn spike_win_log_perf(msg: String) {
+    log::info!("spike-win-perf: {msg}");
+}
+
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
 /// "光标相对桌宠窗内容区的逻辑坐标" 喂给桌宠窗。
 ///
@@ -189,9 +255,11 @@ pub fn run() {
 
     // 016 M16.9 · dev build 多注册一个 `inject_test_envelope` 命令，
     // 让 pet 操作栏的"inject 测试气泡"按钮跑通——release build 整个 fn 不存在。
+    // spike-win-overlay 分支额外注册 `spike_win_log_perf` 让前端 fps HUD 把数据回 invoke 打 Rust log。
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        spike_win_log_perf,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -200,6 +268,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        spike_win_log_perf,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -230,6 +299,14 @@ pub fn run() {
             // 015 → 016 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
             if let Some(pet) = app.get_webview_window("pet") {
                 apply_floating_window_level(&pet);
+                // Win spike (ADR 0004 §5.2 / spike-tauri-win-overlay-research §6.4) ·
+                // 仅 Win 启用：把 pet 窗撑成整屏 transparent overlay，触发本 spike 验证组合
+                //   transparent + alwaysOnTop + skipTaskbar + setBounds monitors union
+                //   + (前端访问 ?spike=win-overlay) PixiJS WebGL rAF。
+                // macOS / Linux 不动现 240×320 形态 —— mac NSPanel 路径由 macOS spike §7.6
+                // 已 done(pass-with-caveats)，留给真做 Live2D 接入需求时再上 main。
+                #[cfg(target_os = "windows")]
+                apply_pet_overlay_fullscreen(&pet);
             }
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
             bubble_window::init(app.handle())?;
