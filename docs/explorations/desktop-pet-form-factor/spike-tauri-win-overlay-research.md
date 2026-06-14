@@ -469,9 +469,9 @@ git pull
 .\scripts\setup\run.ps1
 cd frontend
 pnpm tauri dev
-# pet 窗自动加载 pet.html;手动改 URL 加 ?spike=win-overlay 触发 spike 模式
-# 例如 devtools 改 location.search='?spike=win-overlay' + reload,
-# 或者 vite dev URL 直接访问 http://localhost:1420/pet.html?spike=win-overlay
+# Win 上自动触发 spike 模式（pet/App.tsx 的 isWinOverlaySpike 检测 navigator.userAgent
+# 含 Windows 时直接走 PetSpikeWinOverlayApp，不需要改 URL）。
+# mac 上拉这个分支跑默认走 016 形态，要手动加 ?spike=win-overlay 触发 spike。
 ```
 
 **骨架改了哪些文件**(mac 端 cargo check + pnpm install 已验通过 cross-platform 部分):

@@ -26,9 +26,19 @@ import { PetSpikeWinOverlayApp } from "./PetSpikeWinOverlayApp";
  * 否则保持现 016 形态。dispatch 在顶部一次性判断,spike 模式不混挂 usePetPassthrough(整屏
  * cursor 穿透改由 Rust 60Hz cursor polling + setIgnoreCursorEvents toggle 承接,而非 DOM hit-test)。
  */
+/**
+ * Win spike 触发判定:
+ * - URL `?spike=win-overlay` 显式开启(mac 验 spike 时手动加)
+ * - **Win 平台自动开启**(spike 分支专用 — 不会合 main,所以 Win 上拉这个分支跑即走 spike;
+ *   mac 上拉这个分支跑默认走 016 形态,加 URL param 才走 spike)。
+ *   spike doc §6.4.1 之前要求改 URL,实操对 Tauri webview 不友好(无 URL bar),改为自动检测。
+ */
 function isWinOverlaySpike(): boolean {
   if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("spike") === "win-overlay";
+  const explicit =
+    new URLSearchParams(window.location.search).get("spike") === "win-overlay";
+  if (explicit) return true;
+  return /Windows/i.test(navigator.userAgent);
 }
 
 export function PetApp() {
