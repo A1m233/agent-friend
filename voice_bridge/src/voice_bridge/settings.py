@@ -40,7 +40,7 @@ class VoiceBridgeSettings(BaseSettings):
     public_url: str = ""
     """voice_bridge 对火山 RTC 云端可见的公网 URL 前缀（如 cloudflared URL）。
 
-    生产前必须设置，否则火山 RTC 在 ``LLMConfig.URL`` 里拿到的就是 127.0.0.1，
+    生产前必须设置，否则火山 RTC 在 ``LLMConfig.Url`` 里拿到的就是 127.0.0.1，
     云端无法回调。开发期仅跑 mock 测试时可空。
 
     通过 ``VOICE_BRIDGE_PUBLIC_URL`` 环境变量覆盖。

@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..assembly import VoiceBridgeRuntime
@@ -37,6 +38,10 @@ class StartCallBody(BaseModel):
     model: str | None = Field(None, description="新建 session 时使用，不传走 agent_bridge 默认")
     welcome_message: str | None = Field(
         None, description="覆盖默认欢迎语；不传走 settings.welcome_message"
+    )
+    defer_start: bool = Field(
+        False,
+        description="仅 smoke 调试用：先返回 RTC 凭证，等浏览器入房开麦后再启动 AIGC",
     )
 
 
@@ -68,9 +73,33 @@ class StopCallResponse(BaseModel):
     state: str
 
 
+class StartAgentResponse(BaseModel):
+    """``POST /voice/calls/{call_id}/start-agent`` 响应。"""
+
+    call_id: str
+    state: str
+
+
 def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
     """把控制平面路由挂到 FastAPI 实例。"""
     router = APIRouter(prefix="/voice", tags=["voice-control"])
+
+    async def start_voice_chat_for_binding(
+        binding: CallBinding,
+        *,
+        welcome_message: str | None,
+    ) -> None:
+        """按已登记的 call binding 拉起火山 RTC AIGC 任务。"""
+        scenes = build_scenes(
+            settings=runtime.settings,
+            call_id=binding.call_id,
+            room_id=binding.room_id,
+            bot_user_id=binding.bot_user_id,
+            target_user_id=binding.target_user_id,
+            welcome_message=welcome_message,
+        )
+        await runtime.rtc_client.start_voice_chat(scenes)
+        runtime.call_registry.update_state(binding.call_id, "active")
 
     @router.post("/calls", response_model=StartCallResponse)
     async def start_call(body: StartCallBody) -> StartCallResponse:
@@ -93,16 +122,6 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             bot_user_id = f"bot-{uuid4().hex[:8]}"
             target_user_id = f"user-{uuid4().hex[:8]}"
 
-            scenes = build_scenes(
-                settings=settings,
-                call_id=call_id,
-                room_id=room_id,
-                bot_user_id=bot_user_id,
-                target_user_id=target_user_id,
-                welcome_message=body.welcome_message,
-            )
-            await runtime.rtc_client.start_voice_chat(scenes)
-
             now_ts = int(time.time())
             signer = RoomTokenSigner(
                 app_id=settings.volc_rtc_app_id,
@@ -120,18 +139,21 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             binding = CallBinding(
                 call_id=call_id,
                 session_id=session_id,
-                state="active",
+                state="pending",
                 started_at=runtime.call_registry.now(),
                 room_id=room_id,
                 bot_user_id=bot_user_id,
                 target_user_id=target_user_id,
             )
             runtime.call_registry.bind(binding)
+            if not body.defer_start:
+                await start_voice_chat_for_binding(binding, welcome_message=body.welcome_message)
+                binding = runtime.call_registry.lookup(call_id) or binding
 
             return StartCallResponse(
                 call_id=call_id,
                 session_id=session_id,
-                state="active",
+                state=binding.state,
                 rtc_app_id=settings.volc_rtc_app_id,
                 room_id=room_id,
                 user_id=target_user_id,
@@ -143,6 +165,53 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
                 status_code=e.info.http_status,
                 detail={"error": e.info.error_code, "message": e.info.user_message},
             ) from e
+
+    @router.post("/calls/{call_id}/start-agent", response_model=StartAgentResponse)
+    async def start_agent(call_id: str) -> StartAgentResponse:
+        """延迟拉起 AIGC：用于 smoke 验证“用户入房开麦后再 StartVoiceChat”的时序。"""
+        binding = runtime.call_registry.lookup(call_id)
+        if binding is None:
+            err = UnknownCallError()
+            raise HTTPException(
+                status_code=err.info.http_status,
+                detail={"error": err.info.error_code, "message": err.info.user_message},
+            )
+        if binding.state in ("active", "stopped"):
+            return StartAgentResponse(call_id=call_id, state=binding.state)
+
+        try:
+            await start_voice_chat_for_binding(binding, welcome_message=None)
+        except VoiceBridgeError as e:
+            runtime.call_registry.update_state(call_id, "error")
+            logger.warning("延迟启动 AIGC 失败: %s", e)
+            raise HTTPException(
+                status_code=e.info.http_status,
+                detail={"error": e.info.error_code, "message": e.info.user_message},
+            ) from e
+
+        return StartAgentResponse(call_id=call_id, state="active")
+
+    @router.post("/callbacks/state/{call_id}")
+    async def receive_state_callback(call_id: str, request: Request) -> dict[str, bool]:
+        """火山 RTC 会话状态回调诊断入口。"""
+        payload: Any
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = (await request.body()).decode("utf-8", errors="replace")
+        logger.info("voice state callback call_id=%s payload=%s", call_id, payload)
+        return {"ok": True}
+
+    @router.post("/callbacks/subtitle/{call_id}")
+    async def receive_subtitle_callback(call_id: str, request: Request) -> dict[str, bool]:
+        """火山 RTC 字幕/ASR 回调诊断入口。"""
+        payload: Any
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = (await request.body()).decode("utf-8", errors="replace")
+        logger.info("voice subtitle callback call_id=%s payload=%s", call_id, payload)
+        return {"ok": True}
 
     @router.get("/calls/{call_id}", response_model=CallStateResponse)
     async def get_call(call_id: str) -> CallStateResponse:
@@ -170,14 +239,15 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         if binding.state == "stopped":
             return StopCallResponse(call_id=call_id, state="stopped")
 
-        try:
-            await runtime.rtc_client.stop_voice_chat(
-                app_id=runtime.settings.volc_rtc_app_id,
-                room_id=binding.room_id,
-                task_id=binding.call_id,
-            )
-        except VoiceBridgeError as e:
-            logger.warning("StopVoiceChat 失败（吞掉以保证幂等）: %s", e)
+        if binding.state == "active":
+            try:
+                await runtime.rtc_client.stop_voice_chat(
+                    app_id=runtime.settings.volc_rtc_app_id,
+                    room_id=binding.room_id,
+                    task_id=binding.call_id,
+                )
+            except VoiceBridgeError as e:
+                logger.warning("StopVoiceChat 失败（吞掉以保证幂等）: %s", e)
 
         try:
             await runtime.agent_bridge.switch_channel(binding.session_id, "text")

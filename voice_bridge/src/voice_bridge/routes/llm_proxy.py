@@ -32,7 +32,7 @@ def register_llm_proxy_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None
 
     @router.post("/{call_id}/v1/chat/completions")
     async def proxy_chat_completions(call_id: str, request: Request) -> StreamingResponse:
-        """OpenAI ChatCompletion 协议入口（火山 RTC ``LLMConfig.URL`` 指向这里）。"""
+        """OpenAI ChatCompletion 协议入口（火山 RTC ``LLMConfig.Url`` 指向这里）。"""
         binding = runtime.call_registry.lookup(call_id)
         if binding is None:
             err = UnknownCallError()

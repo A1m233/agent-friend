@@ -41,7 +41,7 @@ class TestBuildScenes:
             target_user_id="user-1",
         )
         assert (
-            body["Config"]["LLMConfig"]["URL"]
+            body["Config"]["LLMConfig"]["Url"]
             == "https://test.example.com/voice/llm/call-1/v1/chat/completions"
         )
         assert body["Config"]["LLMConfig"]["Mode"] == "CustomLLM"
@@ -57,7 +57,7 @@ class TestBuildScenes:
         )
         assert body["Config"]["LLMConfig"]["SystemMessages"] == []
 
-    def test_state_callback_disabled(self, settings: VoiceBridgeSettings) -> None:
+    def test_callbacks_point_to_voice_bridge(self, settings: VoiceBridgeSettings) -> None:
         body = build_scenes(
             settings=settings,
             call_id="call-1",
@@ -65,7 +65,15 @@ class TestBuildScenes:
             bot_user_id="bot-1",
             target_user_id="user-1",
         )
-        assert body["AgentConfig"]["EnableConversationStateCallback"] is False
+        assert body["AgentConfig"]["EnableConversationStateCallback"] is True
+        assert (
+            body["AgentConfig"]["ServerMessageURLForRTS"]
+            == "https://test.example.com/voice/callbacks/state/call-1"
+        )
+        assert (
+            body["Config"]["SubtitleConfig"]["ServerMessageUrl"]
+            == "https://test.example.com/voice/callbacks/subtitle/call-1"
+        )
 
     def test_welcome_message_default(self, settings: VoiceBridgeSettings) -> None:
         body = build_scenes(
@@ -153,6 +161,6 @@ class TestBuildScenes:
             target_user_id="user-1",
         )
         assert (
-            body["Config"]["LLMConfig"]["URL"]
+            body["Config"]["LLMConfig"]["Url"]
             == "https://test.example.com/voice/llm/call-1/v1/chat/completions"
         )

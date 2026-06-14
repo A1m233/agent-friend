@@ -7,7 +7,7 @@
     <!-- 火山 RTC Web SDK；版本与 spike 期一致 -->
     <script
       crossorigin
-      src="https://lf-unpkg.volccdn.com/obj/vcloudfe/sdk/@volcengine/rtc/4.66.13/index.min.js"
+      src="https://unpkg.com/@volcengine/rtc@4.66.20/index.min.js"
     ></script>
     <style>
       :root {
@@ -77,6 +77,24 @@
         font-size: 13px;
         margin-bottom: 16px;
       }
+      .meter {
+        width: 100%;
+        height: 12px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #eee;
+        margin: 8px 0;
+      }
+      .meter-fill {
+        width: 0%;
+        height: 100%;
+        background: #2f9e44;
+        transition: width 80ms linear;
+      }
+      .hint {
+        color: #666;
+        font-size: 13px;
+      }
     </style>
   </head>
   <body>
@@ -102,6 +120,13 @@
     </div>
 
     <div class="row">
+      <label>本地麦克风诊断（不经过 RTC / 后端）</label>
+      <button id="btn-mic-test">测试麦克风</button>
+      <div class="meter"><div class="meter-fill" id="mic-meter"></div></div>
+      <div class="hint" id="mic-status">未开始。点击测试后说话，音量应明显跳动。</div>
+    </div>
+
+    <div class="row">
       <label>调用日志</label>
       <pre id="log"></pre>
     </div>
@@ -117,6 +142,16 @@
 
       let engine = null;
       let currentCallId = null;
+      let micMeter = null;
+
+      function onRtc(eventName, handler) {
+        const event = window.VERTC?.events?.[eventName];
+        if (event) {
+          engine.on(event, handler);
+        } else {
+          log("[rtc] 当前 SDK 未暴露事件:", eventName);
+        }
+      }
 
       function setState(s) {
         const pill = $("state");
@@ -135,34 +170,129 @@
         return data;
       }
 
+      function stopMicMeter() {
+        if (!micMeter) return;
+        cancelAnimationFrame(micMeter.frame);
+        micMeter.stream.getTracks().forEach((track) => track.stop());
+        micMeter.audioContext.close().catch(() => {});
+        micMeter = null;
+        $("mic-meter").style.width = "0%";
+        $("mic-status").textContent = "麦克风诊断已停止。";
+      }
+
+      async function startMicMeter() {
+        if (micMeter) return;
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+
+        const samples = new Uint8Array(analyser.fftSize);
+        micMeter = { stream, audioContext, analyser, samples, frame: 0, peak: 0 };
+
+        const tick = () => {
+          analyser.getByteTimeDomainData(samples);
+          let sum = 0;
+          for (const sample of samples) {
+            const centered = (sample - 128) / 128;
+            sum += centered * centered;
+          }
+          const rms = Math.sqrt(sum / samples.length);
+          micMeter.peak = Math.max(micMeter.peak, rms);
+          const level = Math.min(100, Math.round(rms * 260));
+          const peak = Math.round(micMeter.peak * 260);
+          $("mic-meter").style.width = `${level}%`;
+          $("mic-status").textContent = `当前音量 ${level}% · 峰值 ${peak}%（说话时应跳动，安静时接近 0）`;
+          micMeter.frame = requestAnimationFrame(tick);
+        };
+        tick();
+        log("[mic] 本地麦克风诊断已启动");
+      }
+
       async function startCall() {
         const vb = $("vb").value.trim();
         const sessionId = $("sess").value.trim() || undefined;
         $("btn-start").disabled = true;
         try {
+          await startMicMeter();
           log("[start] POST /voice/calls ...");
           const data = await postJson(`${vb}/voice/calls`, {
             session_id: sessionId,
+            defer_start: true,
           });
           log("[start] 拿到凭证:", data);
           currentCallId = data.call_id;
           setState(data.state);
 
-          engine = window.VERTC.createEngine(data.rtc_app_id);
-          engine.on(window.VERTC.events.onUserPublishStream, (e) => {
+          const VERTC = window.VERTC;
+          if (!VERTC) throw new Error("火山 RTC SDK 未加载：window.VERTC 为空");
+          log("[rtc] SDK version:", VERTC.getSdkVersion?.() || "unknown");
+
+          const permission = await VERTC.enableDevices?.({ video: false, audio: true });
+          log("[rtc] 设备授权:", permission || "skip");
+          const audioInputs = (await VERTC.enumerateAudioCaptureDevices?.()) || [];
+          log(
+            "[rtc] 麦克风设备:",
+            audioInputs.map((d) => ({ label: d.label, deviceId: d.deviceId, kind: d.kind })),
+          );
+
+          engine = VERTC.createEngine(data.rtc_app_id);
+          onRtc("onError", (e) => {
+            log("[rtc] error:", e);
+          });
+          onRtc("onUserJoined", (e) => {
+            log("[rtc] 用户进房:", e);
+          });
+          onRtc("onUserLeave", (e) => {
+            log("[rtc] 用户离房:", e);
+          });
+          onRtc("onUserPublishStream", (e) => {
             log("[rtc] 用户发布流:", e);
           });
-          engine.on(window.VERTC.events.onUserUnpublishStream, (e) => {
+          onRtc("onUserUnpublishStream", (e) => {
             log("[rtc] 用户取消发布:", e);
           });
-          await engine.startAudioCapture();
+          onRtc("onAudioDeviceStateChanged", (e) => {
+            log("[rtc] 音频设备状态:", e);
+          });
+          onRtc("onLocalAudioPropertiesReport", (e) => {
+            log("[rtc] 本地音量:", e);
+          });
           await engine.joinRoom(
             data.token,
             data.room_id,
-            { userId: data.user_id },
-            { isAutoPublish: true, isAutoSubscribeAudio: true },
+            {
+              userId: data.user_id,
+              extraInfo: JSON.stringify({
+                call_scene: "RTC-AIGC",
+                user_name: data.user_id,
+                user_id: data.user_id,
+              }),
+            },
+            {
+              isAutoPublish: true,
+              isAutoSubscribeAudio: true,
+              roomProfileType: VERTC.RoomProfileType?.chat ?? 5,
+            },
           );
+          await engine.startAudioCapture();
+          await engine.publishStream(VERTC.MediaType?.AUDIO ?? 1);
+          log("[rtc] 已开始采集并发布麦克风音频");
           log("[rtc] 已加入房间", data.room_id, "as", data.user_id);
+          log("[start-agent] POST /voice/calls/{id}/start-agent ...");
+          const started = await postJson(`${vb}/voice/calls/${currentCallId}/start-agent`);
+          log("[start-agent] AIGC 已启动:", started);
+          setState(started.state);
           $("btn-stop").disabled = false;
         } catch (e) {
           log("[start] 失败:", String(e));
@@ -189,6 +319,7 @@
             }
             engine = null;
           }
+          stopMicMeter();
         } catch (e) {
           log("[stop] 失败:", String(e));
         } finally {
@@ -197,6 +328,18 @@
         }
       }
 
+      $("btn-mic-test").addEventListener("click", async () => {
+        try {
+          if (micMeter) {
+            stopMicMeter();
+          } else {
+            await startMicMeter();
+          }
+        } catch (e) {
+          log("[mic] 诊断失败:", String(e));
+          $("mic-status").textContent = `麦克风诊断失败：${String(e)}`;
+        }
+      });
       $("btn-start").addEventListener("click", startCall);
       $("btn-stop").addEventListener("click", stopCall);
     </script>

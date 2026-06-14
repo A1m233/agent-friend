@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .assembly import VoiceBridgeRuntime, build_runtime
 from .routes import register_control_routes, register_llm_proxy_routes
@@ -43,6 +44,16 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
         description="agent-friend · 语音通话控制平面 + LLM 入站代理",
     )
     app.state.runtime = runtime
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

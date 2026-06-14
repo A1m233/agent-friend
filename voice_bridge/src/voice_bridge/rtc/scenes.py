@@ -30,7 +30,7 @@ def build_scenes(
 
     - ``LLMConfig.Mode = "CustomLLM"``：让火山把 LLM 请求打到 voice_bridge，
       而不是火山方舟（spike 用的 ``ArkV3``）
-    - ``LLMConfig.URL``：voice_bridge 自身的公网 URL + ``/voice/llm/{call_id}/v1/chat/completions``
+    - ``LLMConfig.Url``：voice_bridge 自身的公网 URL + ``/voice/llm/{call_id}/v1/chat/completions``
     - ``LLMConfig.SystemMessages = []``：空 system messages，让 agent 自己的
       :class:`agent.system_prompt.SystemPromptComposer` 完整接管 system prompt
       （含 voice 通道的 ChannelSection）
@@ -57,6 +57,8 @@ def build_scenes(
 
     welcome = welcome_message if welcome_message is not None else settings.welcome_message
     llm_url = settings.public_url.rstrip("/") + f"/voice/llm/{call_id}/v1/chat/completions"
+    state_callback_url = settings.public_url.rstrip("/") + f"/voice/callbacks/state/{call_id}"
+    subtitle_callback_url = settings.public_url.rstrip("/") + f"/voice/callbacks/subtitle/{call_id}"
 
     return {
         "AppId": settings.volc_rtc_app_id,
@@ -66,7 +68,9 @@ def build_scenes(
             "TargetUserId": [target_user_id],
             "WelcomeMessage": welcome,
             "UserId": bot_user_id,
-            "EnableConversationStateCallback": False,
+            "EnableConversationStateCallback": True,
+            "ServerMessageURLForRTS": state_callback_url,
+            "ServerMessageSignatureForRTS": "agent-friend-smoke",
         },
         "Config": {
             "ASRConfig": {
@@ -96,8 +100,14 @@ def build_scenes(
             },
             "LLMConfig": {
                 "Mode": "CustomLLM",
-                "URL": llm_url,
+                "Url": llm_url,
                 "SystemMessages": [],
+            },
+            "SubtitleConfig": {
+                "DisableRTSSubtitle": False,
+                "ServerMessageUrl": subtitle_callback_url,
+                "ServerMessageSignature": "agent-friend-smoke",
+                "SubtitleMode": 0,
             },
             "InterruptMode": 0,
         },

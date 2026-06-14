@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal
 
-CallState = Literal["active", "stopped", "error"]
+CallState = Literal["pending", "active", "stopped", "error"]
 """通话状态机本期 3 态。``pending`` / ``ai_joined`` 等细分留给未来订阅
 ``EnableConversationStateCallback`` 再做（design §4.3.3）。"""
 
