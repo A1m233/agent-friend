@@ -428,7 +428,35 @@ declare 阶段我假设"业界 Tauri Win 桌宠都是固定窗",用户 pushback 
 
 ### 6.4 Win 端到端真机 spike 接力清单(**本 spike 的最大产出**)
 
-给后续(待真做 Live2D 接入需求 / 拿到 Win 开发机)Win 端到端真机 spike 一份接力 baseline。沿 macOS spike [`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md) §2 / §3 同样规范展开。**关键点**:
+给后续(待真做 Live2D 接入需求 / 拿到 Win 开发机)Win 端到端真机 spike 一份接力 baseline。沿 macOS spike [`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md) §2 / §3 同样规范展开。
+
+#### 6.4.0 Win 机 prerequisites(开跑前一次性装)
+
+| 项 | 安装 | 说明 |
+|---|---|---|
+| Rust toolchain | [`rustup-init.exe`](https://rustup.rs) | 选 MSVC 工具链(Tauri Win 默认走 MSVC ABI,不要选 GNU) |
+| Visual Studio Build Tools | [VS Installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 选 "Desktop development with C++" workload | Rust MSVC ABI 必须;Tauri 2 Win prerequisite |
+| Microsoft Edge WebView2 Runtime | Win 11 默认自带;Win 10 较老版本到 [Microsoft 官方](https://developer.microsoft.com/microsoft-edge/webview2/) 装 Evergreen Bootstrapper | Tauri Win 渲染层依赖;**spike 需要锚定 runtime 版本**(对照 [wry#1691](https://github.com/tauri-apps/wry/issues/1691) 复现环境 Win 11 build 26200 + WebView2 146.0.3856.59 vs Win 10 + WebView2 145 不复现) |
+| Node 22+ + pnpm | [nvm-windows](https://github.com/coreybutler/nvm-windows) 或 [fnm](https://github.com/Schniz/fnm) 装 node ≥ 22;`corepack enable pnpm` 启用 pnpm | 沿仓库 `scripts/frontend/_ensure-node.ps1` 同样约束 |
+| uv | `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` | 仓库 setup 脚本前置 |
+| Git LFS(可选) | [git-lfs.com](https://git-lfs.com) | 真做 Live2D 接入需求时需要;本 spike 不用 |
+
+工具齐后跑仓库一键初始化:
+
+```powershell
+.\scripts\setup\run.ps1
+```
+
+setup 脚本做 4 件事:`uv sync` 装后端 Python 依赖 / `.env` 不存在则从 `.env.example` 复制 / `pnpm install` 装前端依赖(best-effort,工具齐才跑) / 检查 cargo 存在(不装,只提示)。
+
+**首次跑完后,后续 git pull 拿到新依赖怎么办**:
+
+- **锁文件变化**(`uv.lock` / `pnpm-lock.yaml`):再跑 `.\scripts\setup\run.ps1` 即可(uv sync + pnpm install 都幂等,按新 lock 升降级)
+- **Cargo dep 新增**(本 spike 大概率 `Cargo.toml` 加 Win cfg dep 如 `windows` crate):setup 脚本不显式 `cargo fetch`,但首次 `pnpm tauri dev` 时 cargo 会按 `Cargo.toml` + `Cargo.lock` 自动拉,等同解决
+- **工具版本本身**(Rust / node / pnpm / uv):**setup 不升级**。需要时手动:`rustup update` / `corepack prepare pnpm@latest --activate` / nvm `install <ver>` / `uv self update`
+- **`.env` 新增字段**:setup 已存在则跳过。手动对照 `frontend/.env.example` / 根 `.env.example` 看是否有新 key 要补
+
+#### 6.4.1 实施 baseline
 
 - **实施载体**:throwaway worktree(如 `.claude/worktrees/spike-tauri-win-overlay`),基于 main,不进主仓主分支;dev port 1422 或更高避主仓 1420
 - **必须真机的 6 个子问题**:参 §5.7 表格,**§1.3 PixiJS rAF 60fps 是核心**,§1.5 GDI 泄漏 24h 长跑是 critical caveat
