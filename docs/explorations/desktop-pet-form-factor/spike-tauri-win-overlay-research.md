@@ -519,6 +519,78 @@ pnpm tauri dev
 
 **设备覆盖建议**:Win 11(对照 #1691 复现环境 + 走整屏 + Win 11 Composition 行为)+ Win 10(对照 #9373 + 老 WebView2 不复现 #1691 的环境)+ 至少 1 个 Intel iGPU + 1 个 NVIDIA / AMD dGPU(防 GPU driver 特定问题)。
 
+#### 6.4.2 真机实测步骤(Win 工程师按顺序跑,实测数据回填 §6.4.3)
+
+骨架已能跑出 spike 形态(整屏 transparent overlay + PixiJS 旋转方块 + fps HUD + 鼠标穿透),下一步是把 spike doc §1 6 子问题用真机数据闭合。三套实测按顺序执行 + 数据回填 §6.4.3。
+
+##### A. GDI 监测(§1.5 wry#1691 + WebView2Feedback#5536 核心验证)
+
+PowerShell 新开一窗(让 `pnpm tauri dev` 在另一窗一直跑着),粘贴整段:
+
+```powershell
+# 1. 记环境(回填 §6.4.3 精准对照表)
+Write-Host "=== Win version ===" -ForegroundColor Cyan
+[System.Environment]::OSVersion.Version
+Get-ComputerInfo | Select-Object OsName, OsVersion, OsHardwareAbstractionLayer | Format-List
+Write-Host "=== WebView2 Runtime ===" -ForegroundColor Cyan
+(Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue).pv
+
+# 2. 准备 GDI 采样(P/Invoke GetGuiResources)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Gdi {
+    [DllImport("user32.dll")] public static extern uint GetGuiResources(IntPtr hProcess, uint uiFlags);
+}
+"@
+
+# 3. 1Hz 采样所有 msedgewebview2 进程 GDI 总和;Ctrl+C 停止
+Write-Host "`n=== GDI 1Hz 采样开始,Ctrl+C 停止 ===" -ForegroundColor Yellow
+while ($true) {
+    $procs = Get-Process msedgewebview2 -ErrorAction SilentlyContinue
+    $total = 0
+    foreach ($p in $procs) { try { $total += [Gdi]::GetGuiResources($p.Handle, 0) } catch {} }
+    Write-Host "$(Get-Date -Format HH:mm:ss)  procs=$($procs.Count)  GDI_total=$total"
+    Start-Sleep 1
+}
+```
+
+跑两轮采样(各 5 分钟,记起止 GDI 值 + 时间):
+
+- **轮 1 · cursor 静止**:鼠标放桌面 icon 上别动 5 分钟 → 记 GDI 起始值 + 5min 后值
+- **轮 2 · cursor 持续在 spike webview surface 上移动**:鼠标在屏幕中央 spike 旋转方块附近持续画圈 5 分钟 → 记 GDI 起始值 + 5min 后值
+
+算每秒 GDI 增长率(`(end - start) / 300`),对照 #1691 reporter 报的 **75/秒** 红线 + §6.5 反转阈值 **50/秒**。
+
+##### B. fps 在各场景表现(§1.1 / §1.3 整屏 setBounds + Win Composition 边界)
+
+让 spike 跑着,看 `pnpm tauri dev` 的 Rust 终端 `spike-win-perf` log 行,**依次**做下列动作,每个动作时记录终端 fps log 行(或者描述现象 = 卡顿瞬时 / 完全 0 / 完全无变化):
+
+```
+1. 拖 PowerShell / 其他窗 5 秒
+2. Alt+Tab 来回切 3-5 次
+3. Win+D 显示桌面(观察 pet 窗是否被 minimize 还是仍可见)
+4. Win+Ctrl+→ 切到新桌面 → Win+Ctrl+← 切回(观察 spike 是否跟随 / 消失)
+5. 开浏览器 → F11 全屏 → 观察 spike 是否被遮 → F11 退全屏
+6. cursor 静止 5 分钟(确认稳态 fps 不衰)
+```
+
+##### C. 双屏整屏覆盖确认(§1.1 整屏 setBounds + 多屏 DPR 行为)
+
+回答这 4 个问题(描述 + 截图皆可):
+
+1. 两屏分辨率 + 缩放(右键桌面 → 显示设置)= ?(格式:屏1 = XXXX×XXXX @ XXX%,屏2 = XXXX×XXXX @ XXX%)
+2. 旋转方块出现在哪块屏上?屏幕中心还是两屏交界?
+3. 把鼠标移到没有方块的那块屏,fps HUD 还在不在?如果在,在哪块屏的左上角?
+4. 拖一个普通窗(记事本 / 资源管理器)到另一块屏,是否被 spike 透明 overlay 遮挡?
+
+##### 数据回填
+
+A/B/C 跑完,数据贴回我(或自己往 §6.4.3 填),我整理后形成 spike doc §5 真机实测段 + 决定 spike 整体状态 done(pass / pass-with-caveats / fail)。
+
+如果某步撞错(脚本报错 / 操作出现异常 / 看不懂),贴报错给我即可。
+
 ### 6.5 反转触发阈值(给真机 spike 用)
 
 如真机 spike 撞下列任一不可绕证据 → 触发 [ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §6 反转条件 3,需立新 ADR 覆盖:
