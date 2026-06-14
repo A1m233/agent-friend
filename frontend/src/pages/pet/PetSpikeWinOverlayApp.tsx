@@ -6,6 +6,7 @@ import {
 } from "react";
 import * as PIXI from "pixi.js";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
 
 /**
@@ -132,6 +133,20 @@ function usePixiSprite(stageRef: RefObject<HTMLDivElement | null>) {
 export function PetSpikeWinOverlayApp() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const hud = usePixiSprite(stageRef);
+
+  // spike 模式整屏 cursor 穿透:启动时 set true(让整屏 webview 不拦截鼠标,
+  // 鼠标全穿透到下层桌面);unmount 时 set false 兜底。
+  //
+  // 注:这是 spike 阶段最简化处理 —— 不接入 60Hz Rust cursor polling + hit-test toggle
+  // (那是真做 Live2D 接入需求时的 plumbing,本 spike 不验)。整屏 cursor 穿透 = 用户看
+  // 不到 fps HUD 之外的任何交互;HUD 本身 pointer-events:none,显示但不响应,符合预期。
+  useEffect(() => {
+    if (!isTauri()) return;
+    void getCurrentWindow().setIgnoreCursorEvents(true);
+    return () => {
+      void getCurrentWindow().setIgnoreCursorEvents(false);
+    };
+  }, []);
 
   return (
     <div
