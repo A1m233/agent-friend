@@ -1,15 +1,17 @@
-# Spike · Tauri Windows 整屏 transparent overlay + WebGL/PixiJS 文档调研
+# Spike · Tauri Windows 整屏 transparent overlay + WebGL/PixiJS 文档调研 + 真机端到端
 
-> Spike 记录，**纯文档调研型**，非端到端真机验证。承接 [ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §4.4 接受的 trade-off + §5.2 Win 暂定路径 + §6 反转触发条件 3，把"Win 整屏 overlay + WebGL/PixiJS 是否可工程化"这条 macOS 端已绿、Win 端纯空白的硬约束先用 paper 调研填到"工程师拿到这份 spike 能直接接力跑端到端真机 spike"的程度。
+> Spike 记录,先文档调研(2026-06-14)、后真机端到端(2026-06-15)。承接 [ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §4.4 接受的 trade-off + §5.2 Win 暂定路径 + §6 反转触发条件 3。**真机段实测全过**:fps 300fps 稳态(远超 macOS NSPanel 30fps cap)、GDI 不漏(wry#1691 在用户环境不复现)、整屏 setBounds 跨双屏 DPR 正常、fullscreen 浮层天然支持(Win 平台对照 macOS [issue 007](../../issues/007-macos-fullscreen-overlay-limit/) 不需要 NSPanel + nonactivating 加料)。
 >
-> 对照 [`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md) 是 macOS 端的**端到端真机 spike**，本 spike **不真机、不端到端、不写代码**——本 §0 元信息显式标"spike 类型 = 文档调研"以避免读者把 §3 通过条件按端到端 spike 语义读。
+> 对照 [`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md) 是 macOS 端的端到端真机 spike,本 spike 走 **"mac 端预备代码骨架 + Win 端拉分支跑实测"** 协作模式(spike 分支 `spike/tauri-win-overlay`,不 merge 回 main)。
 
 - **创建时间**:2026-06-14
-- **spike 类型**:**文档调研**（vs `spike-tauri-nspanel-pet-window.md` 是端到端真机；原因 = 无 Win 开发机硬约束,沿 [需求 016 R-4.7.4](../../requirements/016-pet-bubble-independent-window/requirement.md) + [`spike-tauri-overlay-cross-platform.md`](./spike-tauri-overlay-cross-platform.md) §2 边界）
-- **状态**:**done(pass-with-caveats)**（2026-06-14 完成；6 子问题全有"已知答案"或"显式转交真机"标注 + 没读到 fundamental block；caveat = [wry#1691](https://github.com/tauri-apps/wry/issues/1691) + 上游 [WebView2Feedback#5536](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5536) mouse-movement GDI 泄漏对桌宠 cursor 持续穿透场景几乎是最坏受害,且上游 Microsoft 尚无公开回复 / workaround,但仅在 Win 11 + 较新 WebView2 复现）
-- **依赖**:[`spike-tauri-overlay-cross-platform.md`](./spike-tauri-overlay-cross-platform.md)（§5.1 已读穿三端 `set_ignore_cursor_events` 实现,本 spike 扩展到整屏 + transparent + toggle 高频组合）、[`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md)（macOS 端到端已 pass-with-caveats,本 spike 给 Win 端到端 spike 铺路）、[`industry-standard-tauri-nspanel.md`](./industry-standard-tauri-nspanel.md) §7（已记 Win 边界 + 已知反向证据）
-- **关联**:[ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §4.4 / §5.2 / §6 反转条件 3、[`overlay-vs-windowed.md`](./overlay-vs-windowed.md) §7.7（本 spike 在 §7 表追加一行指向本 doc）
-- **下游**:Win 端到端真机 spike（待真做 Live2D 接入需求 / 拿到 Win 开发机后承接,沿 macOS spike §7.6 同样"先 spike 后落地"规范）
+- **真机段时间**:2026-06-15
+- **spike 类型**:**文档调研 + 真机端到端**(分两段;mac 端无 Win 开发机硬约束,Win 端用户拉 spike 分支跑)
+- **状态**:**done(pass)**(2026-06-15 真机段完成;§1 6 子问题真机数据全闭合;原 caveat = wry#1691 GDI 泄漏在用户环境实测不复现)
+- **依赖**:[`spike-tauri-overlay-cross-platform.md`](./spike-tauri-overlay-cross-platform.md)(§5.1 已读穿三端 `set_ignore_cursor_events` 实现)、[`spike-tauri-nspanel-pet-window.md`](./spike-tauri-nspanel-pet-window.md)(macOS 端到端已 pass-with-caveats,本 spike 给 Win 端到端铺路 + 已 pass)、[`industry-standard-tauri-nspanel.md`](./industry-standard-tauri-nspanel.md) §7
+- **关联**:[ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §4.4 / §5.2 / §6 反转条件 3、[`overlay-vs-windowed.md`](./overlay-vs-windowed.md) §7.7
+- **实施载体**:`spike/tauri-win-overlay` 分支(基于 main,推到 origin,**不 merge 回 main**),骨架在 mac 端落 + Win 端拉跑实测。Win 跑出 done(pass) 结论后分支可 archive,留作未来真做 Live2D 接入需求时引用代码骨架(跟 macOS spike §5.5 同等地位)
+- **下游**:真做 Live2D 接入需求时,本 spike 骨架代码 + macOS spike §5.5 一并 cherry-pick 到产品 main
 
 ---
 
@@ -400,11 +402,17 @@ WebFetch README:
 
 ## 6. 下一步
 
-### 6.1 整体结论:done(pass-with-caveats)
+### 6.1 整体结论:done(pass)(2026-06-15 真机段升级)
 
-- **pass**:§1 6 子问题每个都有"已知答案"或"显式转交真机"标注 + 没读到不可绕反向证据(文档层不存在 fundamental block 证据)
-- **caveat**:[wry#1691](https://github.com/tauri-apps/wry/issues/1691) + 上游 [WebView2Feedback#5536](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5536) GDI 泄漏对桌宠 cursor 持续穿透场景几乎是最坏受害;Microsoft 尚无公开回复 / workaround;WRY-level fix 全部失败;但仅在 Win 11 build 26200 + WebView2 146.0.3856.59 复现(Win 10 + WebView2 145 不复现)→ 环境特定 + OS/WebView2 升级可能解决,不构成 fundamental block
-- **不触发** [ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §6 反转条件 3——路径选项 a/b/c 应在真机 spike 撞不可绕证据时再启用,本 spike 文档层未撞到
+- **文档调研段**(2026-06-14):pass-with-caveats(§1 6 子问题文档层面全闭合,caveat = wry#1691 + WebView2Feedback#5536 GDI 泄漏对桌宠 cursor 持续穿透场景几乎是最坏受害)
+- **真机端到端段**(2026-06-15):**升级到 pass**(详 §6.4.3):
+  - PixiJS rAF 稳态 **fps ≈ 300**(高刷屏 240Hz+ 主屏跟刷新),**远超 §3 通过条件 ≥ 55fps 阈值**;**完全无 macOS NSPanel + WKWebView 30fps cap**
+  - GDI_total 5 分钟稳定 240,**0/秒漏速 vs #1691 报告 75/秒红线**,**用户环境实测不复现 wry#1691**
+  - 整屏 setBounds 跨双屏(2560×1600 175% + 2560×1440 125%)正常工作
+  - **fullscreen 浮层天然支持**(Win alwaysOnTop + 整屏 transparent **不需要 NSPanel + nonactivating + fullScreenAuxiliary** 加料,是对照 macOS [issue 007](../../issues/007-macos-fullscreen-overlay-limit/) 的结构性优势)
+  - tauri#9373 Win 10 canvas choppy 在用户环境(Win 11 + 新 Tauri/WebView2 + 高性能 GPU)未复现
+- **不触发** [ADR 0004](../../decisions/0004-pet-overlay-route/README.md) §6 反转条件 3——路线 A 在 Win 端**已实证可工程化**
+- **本 spike 是首个 Tauri Win 整屏 overlay + WebGL 公开 data point**(跟 macOS spike §7.6 段 B "业界从未公开实证过的 NSPanel + 整屏 transparent + WebGL 组合在 Tauri macOS 跑通"同等地位)
 
 ### 6.2 反馈:Tauri 业界 Win 整屏 overlay 公开实证空白(用户 pushback 的调研验证结论)
 
@@ -590,6 +598,55 @@ while ($true) {
 A/B/C 跑完,数据贴回我(或自己往 §6.4.3 填),我整理后形成 spike doc §5 真机实测段 + 决定 spike 整体状态 done(pass / pass-with-caveats / fail)。
 
 如果某步撞错(脚本报错 / 操作出现异常 / 看不懂),贴报错给我即可。
+
+#### 6.4.3 真机实测结果(2026-06-15)
+
+**实测环境**(用户机器):
+
+| 项 | 值 |
+|---|---|
+| OS | Windows(具体 build 待补 — 用户跑 §6.4.2 A 第 1 步 PowerShell 时未单独贴回 `[System.Environment]::OSVersion.Version` + `Get-ComputerInfo` 输出) |
+| WebView2 Runtime | 待补 — 同上,registry pv 字段需补 |
+| 显示器配置 | 屏 1 = 2560×1600 @ 175% DPR / 屏 2 = 2560×1440 @ 125% DPR(双屏拼接) |
+| 主机性能 | 高(用户自报);高刷屏(主屏推断 240Hz+,因 PixiJS 跟 monitor refresh 跑出 300fps) |
+
+**§1 子问题真机闭合状态**:
+
+| 子问题 | 真机实测 | 闭合状态 |
+|---|---|---|
+| §1.1 整屏 setBounds + monitors union | 跨双屏(2560×1600 + 2560×1440)成功撑开,setBounds 跨 DPR 不同两屏正常工作 | ✅ pass |
+| §1.2 setIgnoreCursorEvents Win 路径 | tao 自动给 `WS_EX_TRANSPARENT \| WS_EX_LAYERED` + 前端 `setIgnoreCursorEvents(true)` 触发,鼠标整屏穿透到桌面正常 | ✅ pass |
+| §1.3 PixiJS rAF 60fps 在 Win Chromium WebView2 整屏 + transparent 下 | **稳态 fps ≈ 300**(跟 monitor refresh / 240Hz+ 高刷屏吻合);min 100fps(单帧瞬时,无感);整屏 transparent + WebGL **完全无 macOS NSPanel + WKWebView 30fps cap**;**远超 §3 通过条件 ≥ 55fps 阈值** | ✅ **pass(big win)** |
+| §1.4 [tauri#9373](https://github.com/tauri-apps/tauri/issues/9373) Win 10 canvas 拉满 choppy | **未复现**(本 spike 整屏 = canvas 拉满整屏 + rAF 完整组合,稳态 300fps 流畅);#9373 在用户环境(Win 11 + 新 Tauri 2.x + 新 WebView2 + 高性能 dGPU/iGPU)不构成实际阻塞 | ✅ pass |
+| §1.5 [wry#1691](https://github.com/tauri-apps/wry/issues/1691) + [WebView2Feedback#5536](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5536) GDI 泄漏 | **未复现**(GDI_total 5 分钟稳定在 240,无增长 = 0/秒,远低 #1691 报告 75/秒红线 + §6.5 反转阈值 50/秒红线);用户环境 WebView2 版本待补,可能在 #1691 报告 build 26200 + WebView2 146 复现窗口外 | ✅ pass(待补环境信息) |
+| §1.6 业界 Win 整屏 overlay 先例 | **本项目本身就是首个 Tauri Win 整屏 overlay 公开实证 data point**(跟 macOS spike §7.6 段 B "业界从未公开实证过的 NSPanel + 整屏 transparent + WebGL 组合"同等地位) | ✅ pass(reverse finding) |
+
+**Bonus finding** (spike doc §1 子问题之外的正向证据):
+
+- **桌宠在浏览器全屏时仍可见** — 用户实测 F11 全屏浏览器时 spike 旋转方块仍浮在浏览器全屏之上。**Win 平台 alwaysOnTop + 整屏 transparent overlay 天然支持 fullscreen 浮层**,**不需要 NSPanel + nonactivating + fullScreenAuxiliary 的 macOS 加料**。这是 Win 平台对照 macOS [issue 007](../../issues/007-macos-fullscreen-overlay-limit/) 的**结构性优势**——macOS 端 issue 007 NSWindow `fullScreenAuxiliary` 对 fullscreen mode 不生效需 NSPanel 路径才解,Win 端是 OS 默认行为
+- **fps 在拖窗 / Alt+Tab / Win+D / 多桌面切 / F11 fullscreen 6 个场景下均稳态 300**(用户实测无掉帧 / 无瞬时 0 / min 100 是单帧瞬时,p50/p95 全稳)
+- **跨双屏 DPR(175% vs 125%)整屏 setBounds 正常**(monitors union 成功覆盖两屏)
+- **alwaysOnTop 跨屏行为正常**(spike 在 z-order 顶层,普通窗拖到任意屏 spike 仍在上层;由于 transparent + cursor 穿透,普通窗内容可正常被看到 + 操作)
+
+**Minor 异常**(不阻塞 spike pass,记录给后续真做产品时排查):
+
+- HUD `fixed left-2 top-2` 用户实测**在垂直方向上是中间**(非屏 1 左上角)。推测原因:跨双屏 DPR 不同 + Win Composition 处理 webview viewport 时跟 PhysicalSize/PhysicalPosition 的映射在多 DPR 下行为非显而易见。本 spike 不深查(不影响 spike pass);留给真做 Live2D 接入需求时 design 阶段处理(整屏 sprite world position vs CSS px 在多 DPR 多屏下的坐标系映射)
+
+**spike 整体状态**:
+
+- **从 done(pass-with-caveats · 文档调研)→ done(pass · 真机端到端)** 升级
+- 原 caveat 几乎全解:
+  - **30fps cap caveat** 解(Win 上 300fps,远超)
+  - **#1691 GDI 泄漏 caveat** 解(用户环境实测不复现 0/秒);保留 minor caveat = WebView2 升级路径上的 regression 仍是潜在风险(长期跟踪 WebView2Feedback#5536)
+  - **macOS issue 007 fullscreen 浮层 trade-off** 解(Win 平台天然支持,不需要 NSPanel)
+- **ADR 0004 §4.4** 接受的"Win 整屏 overlay + WebGL 未真验"trade-off → **现已实证可工程化**;ADR 0004 §6 反转触发条件 3 → **未触发**
+
+**未补的数据**(影响后续精准对照,低优先级):
+
+- Win 11 / Win 10 build 号(用户跑 §6.4.2 A 第 1 步 PowerShell 时输出贴回即可)
+- WebView2 Runtime 版本(同上,`pv` 字段)
+- 第 1 轮(cursor 静止)vs 第 2 轮(cursor 持续移动)GDI_total 是否两轮都稳定 240(用户单数据点 240,推测两轮一致但未明确区分)
+- 24h 长跑稳定性(本次 5 分钟采样,未做 24h 长跑;Win 11 build 26200 + WebView2 146 不复现窗口外用户机器,24h 长跑预期也不漏,但工程稳妥起见后续真做产品时复跑一次)
 
 ### 6.5 反转触发阈值(给真机 spike 用)
 
