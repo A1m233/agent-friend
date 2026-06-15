@@ -80,8 +80,12 @@ async fn run_loop(
                         env.source_kind,
                         env.events.len(),
                     );
-                    if let Err(e) = app.emit_to("bubble", "agent://push", env) {
+                    if let Err(e) = app.emit_to("bubble", "agent://push", env.clone()) {
                         log::warn!("emit_to(bubble) failed: {e}");
+                    }
+                    // 17b · 桌宠状态机 + lip-sync 也消费 envelope（18 design §3.1 / §4.1）
+                    if let Err(e) = app.emit_to("pet", "agent://push", env) {
+                        log::warn!("emit_to(pet) failed: {e}");
                     }
                 }
                 None => {

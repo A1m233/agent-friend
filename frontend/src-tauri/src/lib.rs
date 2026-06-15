@@ -217,13 +217,44 @@ struct CursorPos {
 }
 
 /// 显示并聚焦对话窗（桌宠操作栏 / 托盘菜单调用）。
+///
+/// **18 修 macOS Accessory policy 副作用**：17a `set_activation_policy(Accessory)`
+/// 让 pet 不进 Dock，但副作用是 `set_focus()` 不让 app 升级为前台 active app —— 新弹
+/// 的 / show 后的 chat 窗拿不到 macOS key window status → 用户点输入框时系统层面键盘
+/// 事件不路由给 chat webview → 可聚焦但打字无反应。
+///
+/// 直接调 `NSApplication.activateIgnoringOtherApps:true` 让 app 在 Accessory policy 下也
+/// 能临时 activate → chat 窗成 key window 收键盘事件。**不切 policy**：临时切 Regular
+/// 会触发 macOS window reorder，让 chat 窗短暂上来后被其他 app 窗口盖住（user
+/// 反馈实测撞到）；用 NSApp.activate 直接 activate 保持 17a "pet 不进 Dock" 不变。
+fn show_and_focus_chat(app: &tauri::AppHandle) -> Result<(), String> {
+    let app_clone = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(w) = app_clone.get_webview_window("chat") {
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::{class, msg_send, runtime::AnyObject};
+                // NSApplication.sharedApplication 是 class method；用 raw msg_send 避免引入
+                // objc2-app-kit 的 NSApplication binding（feature 开销 + 17a 既有 plumbing 风格一致）。
+                let nsapp_class = class!(NSApplication);
+                let nsapp: *mut AnyObject = unsafe { msg_send![nsapp_class, sharedApplication] };
+                if !nsapp.is_null() {
+                    unsafe {
+                        let _: () = msg_send![nsapp, activateIgnoringOtherApps: true];
+                    }
+                }
+            }
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("chat") {
-        w.show().map_err(|e| e.to_string())?;
-        w.set_focus().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    show_and_focus_chat(&app)
 }
 
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
@@ -268,10 +299,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_chat" => {
-                if let Some(w) = app.get_webview_window("chat") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                let _ = show_and_focus_chat(app);
             }
             "toggle_pet" => {
                 if let Some(w) = app.get_webview_window("pet") {

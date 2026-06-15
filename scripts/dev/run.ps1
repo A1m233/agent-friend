@@ -30,6 +30,9 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Ensure-NodePnpm
 
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
+# AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
+# 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
+$env:AGENT_BRIDGE_DEV_MODE = "true"
 $bridge = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "agent_bridge") -PassThru -NoNewWindow
 
 try {

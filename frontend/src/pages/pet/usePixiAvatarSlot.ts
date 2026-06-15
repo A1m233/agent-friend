@@ -1,7 +1,8 @@
-import { useEffect, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
+import { findVisibleBounds } from "@/pet/petAlphaHitTest";
 
 /**
  * 17a · PIXI canvas + avatar-slot Container 生命周期 hook（design §5.1 ~ §5.3）。
@@ -17,7 +18,8 @@ import { isTauri } from "@/utils/tauri";
  *   配合 Rust update_sprite_pos 同步即时 bubble.set_position，消除 016 16ms tick 视觉滞后）
  *
  * 17b 接缝（design §7）：5 个接缝点中 #2 / #3 / #4 / #5 全部挂在外层 slot Container
- * 上；17b 替 slot 内 children 为 Live2DModel 时不重接。
+ * 上；17b 替 slot 内 children 为 Live2DSprite 时不重接。hook 返回 `{ slotRef, appRef }`
+ * 暴露给 18 `usePetLive2D` 接力（18 design §6.1 / §6.2）。
  *
  * **AC-6 hover 不在本 hook 内承载**：PIXI pointerover/out 在 setIgnoreCursorEvents 切回
  * true（cursor 离开 sprite 之后）后不再触发，会导致 hover state stuck；改由
@@ -45,17 +47,48 @@ function readAccentColors(): { accent: number; accentFg: number } {
   };
 }
 
+export interface UsePixiAvatarSlotHandles {
+  /** avatar-slot Container ref；mount 完成后 .current = slot，cleanup 时回 null。 */
+  slotRef: RefObject<PIXI.Container | null>;
+  /**
+   * PIXI Application 实例。**用 useState 而不是 ref**：PIXI 异步 init 完成时下游 hook
+   * （`usePetLive2D`）才能收到信号重新跑 useEffect 加载 Live2DSprite——ref.current 赋值不
+   * 触发 React render，下游 useEffect 永远错过 ready 窗口。
+   */
+  app: PIXI.Application | null;
+  /**
+   * 让下游 hook（如 `usePetLive2D` 在 Live2DSprite ready 后）触发重新 alpha-scan 锁定 visible bounds。
+   *
+   * 为什么需要：alpha-scan 是 one-shot 锁定（防抖动），首次锁定时 slot 内是占位 Graphics + Text
+   * （bounds = 占位 ~160×30），Hiyori 加载替换 children 后 anchor 矩形仍停留在占位 bounds →
+   * ActionBar 锚错位（贴占位顶 = Hiyori 头部偏中位置导致重叠）。`usePetLive2D` `await sprite.ready`
+   * 后调此方法，清掉 cachedOffset 让 ticker 下一帧重新扫定到真 Hiyori visible bounds。
+   */
+  invalidateAnchor: () => void;
+}
+
 export function usePixiAvatarSlot(
   stageRef: RefObject<HTMLDivElement | null>,
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void,
   setIsDragging: (v: boolean) => void,
-) {
+): UsePixiAvatarSlotHandles {
+  const slotRef = useRef<PIXI.Container | null>(null);
+  const [app, setApp] = useState<PIXI.Application | null>(null);
+  // ref 而非 useEffect 局部变量：让 invalidateAnchor 能从 hook 顶部清掉
+  const cachedOffsetRef = useRef<
+    { dx: number; dy: number; w: number; h: number } | null
+  >(null);
+
+  const invalidateAnchor = useCallback(() => {
+    cachedOffsetRef.current = null;
+  }, []);
+
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
 
-    let app: PIXI.Application | null = null;
     let cancelled = false;
+    let appInstance: PIXI.Application | null = null;
 
     void (async () => {
       const pixi = new PIXI.Application();
@@ -65,6 +98,9 @@ export function usePixiAvatarSlot(
         antialias: true,
         autoDensity: true,
         resolution: window.devicePixelRatio || 1,
+        // 18 · 让 alpha hit-test 能 readPixels 取上一帧 framebuffer alpha
+        // （Live2D 形象不透明像素轮廓判定，让 cursor 在透明区精确穿透）
+        preserveDrawingBuffer: true,
       });
 
       // StrictMode 双 mount 防泄漏：cancelled flag 在 cleanup 设 true，
@@ -73,7 +109,7 @@ export function usePixiAvatarSlot(
         pixi.destroy(true, { children: true, texture: true });
         return;
       }
-      app = pixi;
+      appInstance = pixi;
       stage.appendChild(pixi.canvas);
 
       // —— avatar slot Container：占位 children 等价重现 016 div ——
@@ -82,6 +118,9 @@ export function usePixiAvatarSlot(
       slot.label = "avatar-slot";
       slot.eventMode = "static";
       slot.cursor = "grab";
+      // hitArea 由 ticker 内每帧从 slot.getBounds() 推出（跟随 17b Live2DSprite 加载 / 改尺寸时
+      // 自动同步），让 PIXI 事件系统总是用与视觉一致的命中区。初始给一个最小占位避免事件丢
+      slot.hitArea = new PIXI.Rectangle(-1, -1, 2, 2);
 
       const circle = new PIXI.Graphics();
       circle.circle(0, 0, SLOT_RADIUS).fill({ color: accent });
@@ -104,23 +143,104 @@ export function usePixiAvatarSlot(
       slot.x = pixi.screen.width / 2;
       slot.y = pixi.screen.height / 2;
       pixi.stage.addChild(slot);
+      slotRef.current = slot;
+      // PIXI app + slot 都已就绪 → 触发 React render，让 usePetLive2D 收到 app 非 null 信号
+      setApp(pixi);
 
       // —— sprite world position 上报 ——
+      //
+      // 18 · alpha-scan 一次锁定 visible bounds 在 cachedOffsetRef 内（hook 顶部 useRef，
+      // 让 invalidateAnchor 从外部清掉触发重扫）。drag 时只更新 slot.x/y，spriteScreen 跟随。
       const dpr = window.devicePixelRatio || 1;
-      const emitSpritePos = () => {
+
+      const computeBounds = () => {
+        const cached = cachedOffsetRef.current;
+        if (cached) {
+          return {
+            x: slot.x + cached.dx,
+            y: slot.y + cached.dy,
+            w: cached.w,
+            h: cached.h,
+          };
+        }
+        // alpha-scan 还没成功锁定 → 用 slot.getBounds() fallback
         const b = slot.getBounds();
+        return { x: b.minX, y: b.minY, w: b.width, h: b.height };
+      };
+
+      const emitSpritePos = () => {
+        const { x, y, w, h } = computeBounds();
         // React state 用 CSS px（驱动 ActionBar 定位）
-        setSpriteScreen({ x: b.minX, y: b.minY, w: b.width, h: b.height });
+        setSpriteScreen({ x, y, w, h });
         // Rust invoke 用物理像素（Rust 端拼 monitors union 起点）
         if (isTauri()) {
           void invoke("update_sprite_pos", {
-            x: Math.round(b.minX * dpr),
-            y: Math.round(b.minY * dpr),
-            w: Math.round(b.width * dpr),
-            h: Math.round(b.height * dpr),
+            x: Math.round(x * dpr),
+            y: Math.round(y * dpr),
+            w: Math.round(w * dpr),
+            h: Math.round(h * dpr),
           });
         }
       };
+
+      // —— ticker 持续同步 + alpha-scan 推 visible bounds 一次锁定 ——
+      //
+      // alpha-scan 仅在 `cachedOffsetRef.current` 还未锁定时尝试（每帧 ticker 调用 → 一旦
+      // 扫到有效 visible bounds 就锁住，之后永不重扫）。这样：
+      // - 第一次扫成功后锁定 visible 区域相对 slot.position 的 offset，spriteScreen 紧贴
+      //   Hiyori 像素轮廓，gap 自动适配
+      // - 之后 drag 时只更新 slot.x/y，spriteScreen 跟随
+      // - **不重扫** → 没有 motion 引起的 visible bounds 抖动 → ActionBar / bubble 不抖
+      // - **占位 → Hiyori 切换**：`usePetLive2D` await sprite.ready 后调 `invalidateAnchor()`
+      //   清掉锁，下一帧 ticker 重扫到真 Hiyori visible bounds
+      //
+      // 启动早期 sprite 还没渲染 / 全透明时 scanned 返 null，下一帧 ticker 再试，直到锁定。
+      let lastBounds = { x: NaN, y: NaN, w: NaN, h: NaN };
+
+      const syncBoundsIfChanged = () => {
+        if (!cachedOffsetRef.current) {
+          const slotBounds = slot.getBounds();
+          if (slotBounds.width > 0 && slotBounds.height > 0) {
+            const scanned = findVisibleBounds(pixi, {
+              x: slotBounds.minX,
+              y: slotBounds.minY,
+              w: slotBounds.width,
+              h: slotBounds.height,
+            });
+            if (scanned) {
+              cachedOffsetRef.current = {
+                dx: scanned.x - slot.x,
+                dy: scanned.y - slot.y,
+                w: scanned.w,
+                h: scanned.h,
+              };
+            }
+          }
+        }
+
+        const { x, y, w, h } = computeBounds();
+        if (
+          Math.abs(x - lastBounds.x) < 0.5 &&
+          Math.abs(y - lastBounds.y) < 0.5 &&
+          Math.abs(w - lastBounds.w) < 0.5 &&
+          Math.abs(h - lastBounds.h) < 0.5
+        ) {
+          return;
+        }
+        lastBounds = { x, y, w, h };
+        setSpriteScreen({ x, y, w, h });
+        if (isTauri()) {
+          void invoke("update_sprite_pos", {
+            x: Math.round(x * dpr),
+            y: Math.round(y * dpr),
+            w: Math.round(w * dpr),
+            h: Math.round(h * dpr),
+          });
+        }
+        // 同步更新 PIXI hitArea（slot 局部坐标 = 世界 - slot.position；slot 没缩放）
+        slot.hitArea = new PIXI.Rectangle(x - slot.x, y - slot.y, w, h);
+      };
+      pixi.ticker.add(syncBoundsIfChanged);
 
       // —— drag handler ——
       let pointerStart: { x: number; y: number } | null = null;
@@ -165,18 +285,22 @@ export function usePixiAvatarSlot(
 
     return () => {
       cancelled = true;
-      if (app) {
+      if (appInstance) {
         try {
-          if (stage.contains(app.canvas)) stage.removeChild(app.canvas);
+          if (stage.contains(appInstance.canvas)) stage.removeChild(appInstance.canvas);
         } catch {
           // ignore: dom 可能已 detached
         }
-        app.destroy(true, { children: true, texture: true });
-        app = null;
+        appInstance.destroy(true, { children: true, texture: true });
+        appInstance = null;
       }
+      slotRef.current = null;
+      setApp(null);
       // cleanup 时清空 React state（避免残留旧 sprite 位置驱动 ActionBar）
       setSpriteScreen(null);
       setIsDragging(false);
     };
   }, [stageRef, setSpriteScreen, setIsDragging]);
+
+  return { slotRef, app, invalidateAnchor };
 }

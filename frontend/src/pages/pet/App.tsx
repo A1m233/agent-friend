@@ -1,20 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { Priority } from "easy-live2d";
 import { isTauri } from "@/utils/tauri";
+import type { PushEnvelope } from "@/types/push";
+
 import { ActionBar } from "./ActionBar";
+import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
+import { usePetLive2D } from "@/pet/usePetLive2D";
+import { PET_LIVE2D_CONFIG } from "@/pet/live2dConfig";
+import { TextCadenceMouthDriver } from "@/pet/MouthDriver";
+import {
+  startPetStateSubscriber,
+  usePetStateStore,
+  type PetPhase,
+} from "@/stores/petState";
 
 /**
- * 桌宠窗（17a · 整屏 transparent overlay）。
+ * Tauri listener stale-cleanup race 兜底：StrictMode 双 mount / hot reload 期间 Tauri 内部
+ * listeners table 已被新进程清空，旧 unlisten 调用会抛 `listeners[eventId].handlerId undefined`。
+ * 功能不影响（监听本就断了），但 console 噪音多。统一吞掉。
+ */
+function safeUnlisten(fn: (() => void) | null | undefined): void {
+  if (!fn) return;
+  try {
+    fn();
+  } catch {
+    /* stale-cleanup race ignored */
+  }
+}
+
+/**
+ * 桌宠窗（18 · Live2D 形象 + 状态机 + Codex 兼容 + lip-sync）。
  *
- * 相对 016 (240×320 固定窗 + DOM 占位形象) 的形态升级：
- * - pet 主窗 setup hook 撑成 monitors union 整屏（macOS NSPanel + Win 普通窗 + alwaysOnTop）
- * - 形象由 DOM div 切到 PIXI Container avatar-slot（17b 替 children 为 Live2DModel）
- * - 操作栏从 pet 窗内 flex 居中改为 sprite-relative DOM 浮动 + hover gate（顺手解 issue 008）
- * - bubble 跟随源由 016 的 pet.outer_position() 切到 sprite world position（016 R-4.4 等价）
+ * 形态承接 17a 整屏 transparent overlay 底座 + PIXI canvas + avatar-slot Container；
+ * 17b 在 slot 内填 Hiyori Live2DSprite + 挂 4 态状态机（idle/thinking/speaking/error）
+ * + 文本 cadence lip-sync + Codex push event 驱动。
  *
- * 详见 [docs/requirements/017-pet-overlay-form-switch/](../../../../docs/requirements/017-pet-overlay-form-switch/)。
+ * 17a 接缝点 #2 sprite world position 数据流 / #3 cursor alpha hit-test / #5 操作栏
+ * hover bridge 全部保持不动（design §3.6）。
+ *
+ * 详见 [docs/requirements/018-pet-live2d-state-and-lipsync/](../../../../docs/requirements/018-pet-live2d-state-and-lipsync/)。
  */
 export function PetApp() {
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -31,26 +59,144 @@ export function PetApp() {
   const [cursorOnSprite, setCursorOnSprite] = useState(false);
   const [hoverActionBarDom, setHoverActionBarDom] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
+  const [passthroughDisabled, setPassthroughDisabled] = useState(false);
 
-  // PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
-  usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
+  // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
+  // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
+  // invalidateAnchor 由 usePetLive2D 在 Live2DSprite ready 后调用，让 anchor 重新扫到真 Hiyori bounds
+  const { slotRef, app, invalidateAnchor } = usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
 
-  // cursor passthrough（DOM data-hit 优先 + sprite bounds 兜底 + isDragging 互锁）
-  // + AC-6 cursorOnSprite 驱动
-  usePetPassthrough({ isDragging, spriteScreen, setCursorOnSprite });
+  // 17a · cursor passthrough（DOM data-hit 优先 + 18 alpha hit-test 主路径 + spriteScreen 矩形兜底 + isDragging 互锁）
+  // + AC-6 cursorOnSprite 驱动 + 18 dev-only disabled 切换
+  usePetPassthrough({
+    isDragging,
+    spriteScreen,
+    app,
+    setCursorOnSprite,
+    disabled: passthroughDisabled,
+  });
 
-  // AC-6 真 bug 修复 · sticky 防抖：
-  // visible 从 cursorOnSprite || hoverActionBarDom || isDragging 改为 sticky 状态。
+  // 18 · 加载 Hiyori Live2DSprite 到 avatar-slot 内（slot 外层 plumbing 不动）
+  const { spriteRef } = usePetLive2D(slotRef, app, invalidateAnchor);
+
+  // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
   //
-  // 为什么需要：cursor 离开 sprite → cursorOnSprite 立即 false → 若 visible 也立即
-  // false → ActionBar `pointer-events-none` → `elementFromPoint` 跳过 ActionBar →
-  // cursor 跨 sprite→bar 8px gap 时无任何状态能让 ActionBar 重新可命中 → 永久隐藏 →
-  // 用户点不到"打开对话界面"按钮。
+  // **safe-listen pattern**：tauri `listen()` 返 Promise<unlisten>，但 useEffect cleanup
+  // 可能早于 promise resolve（StrictMode 双 mount / 快速 hot reload）。如果不处理 cancelled
+  // flag，第一次的 listener 就泄漏在 Tauri listeners table 里，第二次再注册重叠 → Tauri 内部
+  // 报 `listeners[eventId].handlerId undefined` + dispatch 错乱 → envelope 来了收不到。
   //
-  // 解法：状态从 truthy → falsy 转换延迟 400ms，给 cursor 跨 gap + 进 bar 的时间；
-  // 在这 400ms 内 cursor 一旦真的进入 bar 区域，bar 仍是 pointer-events-auto，DOM
-  // onMouseEnter 触发 → hoverActionBarDom=true → sticky 重新 true。
-  // truthy → truthy 转换立即生效（不延迟显示）。
+  // **safeUnlisten**：hot reload 时 Tauri listeners table 已被新进程清空，旧 unlisten
+  // 调用会抛 `listeners[eventId].handlerId undefined`。功能不影响（监听本就断），但
+  // console 噪音。统一 try/catch 吞掉。
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void startPetStateSubscriber().then((u) => {
+      if (cancelled) safeUnlisten(u);
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      safeUnlisten(unlisten);
+    };
+  }, []);
+
+  // 18 · dev-only · AC-3 / AC-4 真跑可观测信号
+  // production 静默；dev 时把 phase 切换 + envelope event 类型打到 console，方便手动验证状态机
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.info(
+      "%c[pet][dev] observability armed",
+      "color:#4f46e5;font-weight:bold",
+      "· phase 切换 + push envelope 会打到这里。看到这行 = pet 窗 console + 最新代码。",
+    );
+    let prev: PetPhase = usePetStateStore.getState().phase;
+    console.info(`[petState] initial phase = ${prev}`);
+    const unsubPhase = usePetStateStore.subscribe((state) => {
+      if (state.phase !== prev) {
+        console.info(`[petState] phase ${prev} → ${state.phase}`);
+        prev = state.phase;
+      }
+    });
+    let cancelled = false;
+    let unlistenEnv: (() => void) | null = null;
+    if (isTauri()) {
+      void listen<PushEnvelope>("agent://push", (e) => {
+        const types = e.payload.events.map((ev) => ev.type).join(",") || "(empty)";
+        console.info(
+          `[push] envelope kind=${e.payload.kind} source=${e.payload.source_kind ?? "(none)"} events=[${types}]`,
+        );
+      }).then((u) => {
+        if (cancelled) safeUnlisten(u);
+        else unlistenEnv = u;
+      });
+    }
+    return () => {
+      cancelled = true;
+      unsubPhase();
+      safeUnlisten(unlistenEnv);
+    };
+  }, []);
+
+  // 18 · lip-sync MouthDriver 与状态机联动
+  const driver = useMemo(() => new TextCadenceMouthDriver(), []);
+  useEffect(() => {
+    let prevPhase: PetPhase = usePetStateStore.getState().phase;
+    const unsub = usePetStateStore.subscribe((state) => {
+      const nextPhase = state.phase;
+      if (nextPhase === prevPhase) return;
+      const sprite = spriteRef.current;
+      if (prevPhase !== "speaking" && nextPhase === "speaking" && sprite) {
+        driver.attach(sprite);
+      } else if (prevPhase === "speaking" && nextPhase !== "speaking") {
+        driver.detach();
+      }
+      prevPhase = nextPhase;
+    });
+    return () => {
+      unsub();
+      driver.detach();
+    };
+  }, [driver, spriteRef]);
+
+  // 18 · speaking 态下 text_delta 副流转发给 driver（独立 listen 副流，不污染 petState ingest）
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    void listen<PushEnvelope>("agent://push", (e) => {
+      if (usePetStateStore.getState().phase !== "speaking") return;
+      for (const ev of e.payload.events) {
+        if (ev.type === "text_delta" && typeof ev.text === "string") {
+          driver.onTextDelta?.(ev.text);
+        }
+      }
+    }).then((u) => {
+      if (cancelled) safeUnlisten(u);
+      else unlisten = u;
+    });
+    return () => {
+      cancelled = true;
+      safeUnlisten(unlisten);
+    };
+  }, [driver]);
+
+  // 18 · 状态机 → Live2DSprite motion 派发（thinking / speaking / error 切动作）
+  useEffect(() => {
+    return usePetStateStore.subscribe((state) => {
+      const sprite = spriteRef.current;
+      if (!sprite) return;
+      const group = PET_LIVE2D_CONFIG.motionGroups[state.phase];
+      if (!group) return; // null → 不切动作，让默认 idle 继续跑
+      sprite
+        .startMotion({ group, no: 0, priority: Priority.Normal })
+        .catch((err) => console.warn("[PetApp] motion failed:", err));
+    });
+  }, [spriteRef]);
+
+  // AC-6 sticky 防抖（17a 原样保留）
   const [stickyVisible, setStickyVisible] = useState(false);
   useEffect(() => {
     if (cursorOnSprite || hoverActionBarDom || isDragging) {
@@ -88,6 +234,10 @@ export function PetApp() {
       <div
         ref={stageRef}
         className="fixed inset-0 overflow-hidden bg-transparent"
+      />
+      <DevPassthroughToggle
+        disabled={passthroughDisabled}
+        onToggle={() => setPassthroughDisabled((v) => !v)}
       />
       {spriteScreen && (
         <ActionBar

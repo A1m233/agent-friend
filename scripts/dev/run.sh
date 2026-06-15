@@ -44,6 +44,11 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "===> 启动 bridge（127.0.0.1:18800）…"
+# AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
+# 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
+# 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式
+# 偶发不把 env 传到 child process；export 让 env 在脚本全局生效、subshell 自动继承。
+export AGENT_BRIDGE_DEV_MODE=true
 (cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | prefix "[bridge] " &
 
 if [ "$MODE" = "web" ]; then
