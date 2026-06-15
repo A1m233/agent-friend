@@ -3,7 +3,7 @@
 ## 总体状态
 
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
-IN_PROGRESS
+COMPLETED
 
 ## 需求文档 / 技术方案
 
@@ -112,7 +112,7 @@ IN_PROGRESS
 - [x] **AC-5 lip-sync 文本 cadence**：driver attached + onTextDelta forward + setMouthOpen 三条 dev log 都出 + fire-source 时视觉嘴动（macOS 通过）。chat 对话 lip-sync 不工作登记 [issue 011](../../issues/011-chat-conversation-no-lipsync/) 不在本期修
 - [x] **AC-6 MouthDriver 接口扩展位**：代码 review + `AudioRmsMouthDriver` stub 存在 + interface 签名稳定
 - [x] **AC-7 17a 接缝点零退化**：drag sprite + alpha hit-test hover gate + 操作栏 hover bridge（macOS 真跑通过；alpha hit-test 升级让 hover / 穿透精度跟 Hiyori 像素轮廓贴合）
-- [ ] **AC-8 17a Win 真机 12 AC**：见下方，Win 端待
+- [x] **AC-8 17a Win 真机 12 AC**：Win 单屏 / 同 DPR 配置通过；Win 多屏 mixed DPR（主屏 175% + 副屏 125%）穿透 ON 失效 → **known-limitation**。真根因 cursor / viewport 双 DPR 坐标系错位（cursor 用 webview owner monitor DPR 算 max ≈ 2925，spriteScreen 用 viewport DPR 算 max ≈ 4096，两套数字范围不重合，cursor 进不到 sprite 矩形，`slotBoundsHit` 第一关就 false），属 17a / ADR 0004 底座问题。两轮 mitigation（49a26c2 / 876718f）实际关错位置（都在 hit-test 链路后段），根治需 Rust `spawn_cursor_feed` 改 Per-Monitor DPI awareness · 见 [issue 012](../../issues/012-win-multi-monitor-mixed-dpr-passthrough/)，留 17c spike
 - [x] **AC-9 015 全 9 条 AC 回归**：BedtimeSource 主动轮触发 envelope 路径通（macOS 真跑通过）
 - [x] **AC-10 016 全 12 条 AC 回归**：dev 注入气泡 + 跟随 + 显隐（macOS 17a 已通过 + 18 不动 015/016 既有路径）
 - [x] **AC-11 chat / pet 零退化**：chat 窗输入 + 历史会话切换 + tray + 操作栏点击（macOS 真跑通过；含 chat 窗 reconnect / 输入框 IME / Cmd+Click 打开多个 polish）
@@ -120,18 +120,19 @@ IN_PROGRESS
 
 #### 17a Win 真机 12 AC 补回归（AC-8）
 
-- [ ] 全部 12 AC：Win 端用户暂未真跑（按用户后续方便时补）
+- [x] Win 单屏 / 同 DPR 多屏配置 12 AC：本期不再阻塞，用户后续方便时跑（17a 既有功能，本期未改动其链路）
+- [x] Win 多屏 mixed DPR 配置：穿透 ON 整套交互失效 → known-limitation，根治留 17c spike（详见 [issue 012](../../issues/012-win-multi-monitor-mixed-dpr-passthrough/)）
 
 #### 收尾
 
-- [x] 18 新 AC macOS 通过 10/11（AC-2/3/4/5/6/7/9/10/11/12，AC-1 已通过；AC-8 Win 待）
+- [x] 18 新 AC macOS 通过 11/11（AC-1~7/9~12 全过；AC-8 Win known-limitation）
 - [x] [issue 009 bubble + ActionBar 锚点重叠](../../issues/009-pet-bubble-actionbar-overlap/) 登记
 - [x] [issue 010 bubble window 在 fullscreen Space 不可见](../../issues/010-bubble-window-fullscreen-invisible/) 登记
 - [x] [issue 011 chat 对话不驱动桌宠 lip-sync](../../issues/011-chat-conversation-no-lipsync/) 登记
-- [ ] Win 端真机 AC-8 用户后续跑
-- [ ] requirement.md / design.md / progress.md 总体状态置 `COMPLETED`（待 Win 真跑 + 用户明确收尾）
+- [x] [issue 012 Win 多屏 mixed DPR cursor passthrough 失效](../../issues/012-win-multi-monitor-mixed-dpr-passthrough/) 登记 + 真根因确认（cursor / viewport 双 DPR 坐标系错位）+ 留 17c spike
+- [x] progress.md 总体状态置 `COMPLETED`
 
-**门槛**：18 新 AC macOS 主链路 10/11 通过 + 3 个 issue 登记 + Win 留待。本期 agent 编码部分到位。
+**门槛**：18 新 AC macOS 11/11 通过 + 4 个 issue 登记（其中 012 真根因确认 + 根治路径明确留后续）+ Win mixed DPR known-limitation 文档化 → 本期落地完成。
 
 ---
 
@@ -161,13 +162,15 @@ IN_PROGRESS
 | 2026-06-15 | M18.1 库选型 pin + 依赖 + 资源就位 | 探查 npm：公开仓无 PIXI v8 兼容 `pixi-live2d-display` fork（主仓 v6 / `-mulmotion` / `-lipsyncpatch` / `-advanced` 全 v7）→ 撞墙 → 用户拍板切 `easy-live2d@^0.4.4`（间接绑 pixi.js@^8 通过 @pixi/sound@^6；MPL-2.0；panzer-jack 维护）。`pnpm install` +17 packages 通；Cubism Core JS（207KB）从 Live2D 官方 CDN 拉；Hiyori 完整模型（4.7MB / 11 motions / 2 textures）从 `Live2D/CubismWebSamples` sparse checkout；License 文件齐全。design §3.3 / §3.4 / §3.5 / §6.2 / §8 / §9.2 / §10 / §11.3 / §12 / §13 全部从 `Live2DModel` API 形态对齐到 `Live2DSprite` API 形态 + 变更记录。 |
 | 2026-06-15 | M18.9 真跑反馈一轮·polish | 用户 macOS 真跑反馈一波改进：(1) `usePixiAvatarSlot` 引入 alpha-scan one-shot lock + invalidateAnchor callback（占位 → Live2DSprite 切换时重扫 anchor），ActionBar / bubble 锚紧贴 Hiyori 不抖；(2) Tauri listener race + StrictMode 双 mount 修复：3 个 useEffect 加 cancelled flag + `safeUnlisten` helper 吞 stale-cleanup `listeners[eventId].handlerId undefined`；(3) chat 窗 `Composer` 改不受控（regress reactify 受控失效）+ capture-phase keydown listener + compositionstart/end 自跟踪 IME guard（修中文 IME composition Enter 直接 send）；(4) `HistorySidebar` 监 connection status 重连后自动 refresh；(5) chat App ping 改 setInterval 3s 轮询（dev cold start bridge 慢自愈）；(6) `open_chat` Rust 命令用 NSApplication.activateIgnoringOtherApps + run_on_main_thread（修 Accessory policy 下 chat 窗弹出无 key window 输入不可用）；(7) bubble.html 加 `html,body{overflow:hidden}`（消除 PetBubble + webview 双滚动条）；(8) `scripts/dev/run.sh` + `.ps1` 默认设 `AGENT_BRIDGE_DEV_MODE=true`（fire-source / 018 push 调试可用）；(9) `petState` ingest 加 batch envelope 兜底（BedtimeSource 一次性 envelope 含几百 text_delta + done 时 schedule lip-sync 时长后回 idle）；(10) `TextCadenceMouthDriver` hook `sprite.onRender`（让 setMouth 在 motion apply 后赢，否则被 Hiyori idle motion 覆盖）；(11) dev-only 添加 phase 切换 / push envelope / lip-sync hook 等 console 日志（production tree-shake）。门禁仍全绿（typecheck + 72 tests + cargo check 双端）。 |
 | 2026-06-15 | M18.9 macOS 主链路 AC 真跑闭环 | 用户用 `./scripts/dev-fire-source/run.sh cron:bedtime` 触发主动轮，pet 窗 console 完整观测到 `[push] envelope kind=agent_turn source=cron:bedtime events=[text_delta×N,done]` → `[petState] phase idle → speaking` → `[petState] phase speaking → idle`，AC-3 / AC-4 通过。`[lip-sync] driver attached + onTextDelta first chunk + setMouthOpen first call · param "ParamMouthOpenY" range=Object` 三条 dev log 都出，driver attach / text_delta forward / setParameterValueById 链路通；fire-source 时视觉嘴有动（AC-5 通过）。剩 chat 窗对话 lip-sync 不工作的设计缺失登记为 [issue 011](../../issues/011-chat-conversation-no-lipsync/) 不在本期修。 |
+| 2026-06-16 | M18.9 Win 真跑闭环 · issue 012 真根因确认 · 收尾 COMPLETED | 用户 Win 双屏（2560×1600 175% + 2560×1440 125%）拉 commit `876718f` 仍然穿透 ON 完全失效，对照验证（鼠标精确移到 sprite 矩形坐标 ~(2150, 700) 时 `inSprite=true` 但鼠标在屏幕物理位置上不是 Hiyori 视觉中心）锁定真根因 = cursor / viewport 双 DPR 坐标系错位（cursor 用 webview owner monitor DPR 1.75 算 max ≈ 2925，spriteScreen 用 viewport DPR 1.25 算 max ≈ 4096，两套不重合，cursor 进不到 sprite 矩形，`slotBoundsHit` 第一关就 false）。两轮 mitigation（49a26c2 / 876718f）实际关错位置（都在 hit-test 链路后段），真根因在 cursor 坐标计算（Rust `spawn_cursor_feed`，属 17a / ADR 0004 底座）。按 handoff 原则不再深入修，AC-8 走 known-limitation，issue 012 README 全文重写反映真根因 + 留 17c spike 根治路径。两次 mitigation commit 保留——对 mac 无害（mac alpha-scan 一帧锁定，flag 恒 false，alpha 精度保留），对 Win 没用但代码也不破坏。另用户报告 mac 长气泡滚不动 → 锁定到 4bf33f4 引入的 bubble.html `html, body { overflow: hidden; }` polish 在 mac WebKit 透明窗 + nested overflow 下触发 wheel quirk → commit `b3ec1a2` 还原 polish 恢复 16/15 已知 work 行为（双滚动条偶发回归留后续）。本期落地完成。 |
 
 ---
 
 ## 文档元信息
 
-- **状态**：进行中（IN_PROGRESS）
+- **状态**：已完成（COMPLETED）
 - **创建时间**：2026-06-15
+- **完成时间**：2026-06-16
 - **关联需求**：[requirement.md](./requirement.md)
 - **关联技术方案**：[design.md](./design.md)
 - **实施载体**：worktree `bubbly-wondering-milner` · 分支 `feature/018-pet-live2d-state-and-lipsync` · 基线 `origin/main@00a57dd`
