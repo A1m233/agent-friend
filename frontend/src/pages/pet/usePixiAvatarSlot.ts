@@ -195,10 +195,17 @@ export function usePixiAvatarSlot(
       //   清掉锁，下一帧 ticker 重扫到真 Hiyori visible bounds
       //
       // 启动早期 sprite 还没渲染 / 全透明时 scanned 返 null，下一帧 ticker 再试，直到锁定。
+      //
+      // **Win mixed DPR 兜底**（issue 012）：Win 多屏不同 DPR 配置下 `gl.readPixels` 读到的
+      // 像素位置跟 cursor logical px 坐标系不对齐，alpha-scan 推的 bounds width 会异常
+      // 小（实测 91 vs slot 320 = ratio 0.28）。检测 ratio < 0.5 或 > 1.5 → 放弃 alpha-scan，
+      // computeBounds() 自动 fallback 到 slot.getBounds()，回到 17a 同款 spriteScreen 路径
+      // （anchor 矩形含 model canvas padding，ActionBar 离头部稍远但 cursor 命中区跟视觉对齐）。
       let lastBounds = { x: NaN, y: NaN, w: NaN, h: NaN };
+      let alphaScanGivenUp = false;
 
       const syncBoundsIfChanged = () => {
-        if (!cachedOffsetRef.current) {
+        if (!cachedOffsetRef.current && !alphaScanGivenUp) {
           const slotBounds = slot.getBounds();
           if (slotBounds.width > 0 && slotBounds.height > 0) {
             const scanned = findVisibleBounds(pixi, {
@@ -208,12 +215,23 @@ export function usePixiAvatarSlot(
               h: slotBounds.height,
             });
             if (scanned) {
-              cachedOffsetRef.current = {
-                dx: scanned.x - slot.x,
-                dy: scanned.y - slot.y,
-                w: scanned.w,
-                h: scanned.h,
-              };
+              const ratio = scanned.w / slotBounds.width;
+              if (ratio < 0.5 || ratio > 1.5) {
+                alphaScanGivenUp = true;
+                if (import.meta.env.DEV) {
+                  console.warn(
+                    `[anchor] alpha-scan ratio ${ratio.toFixed(2)} 异常（Win 多屏 mixed DPR 特征），` +
+                      `放弃 alpha-scan，spriteScreen 回 slot.getBounds() · 见 issue 012`,
+                  );
+                }
+              } else {
+                cachedOffsetRef.current = {
+                  dx: scanned.x - slot.x,
+                  dy: scanned.y - slot.y,
+                  w: scanned.w,
+                  h: scanned.h,
+                };
+              }
             }
           }
         }
