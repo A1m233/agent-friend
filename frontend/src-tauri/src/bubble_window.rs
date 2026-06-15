@@ -17,7 +17,7 @@
 //! - M16.5：build_bubble_window + macOS 加料调用
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
@@ -75,6 +75,21 @@ pub struct Screen {
     pub h: u32,
 }
 
+/// 17a · 前端 PIXI sprite 在屏幕物理坐标系中的位置 + 尺寸。
+///
+/// 由前端 `update_sprite_pos` invoke 写入；`run_follow_loop` 16ms tick 读它代替
+/// 016 的 `pet.outer_position()`（pet 窗 17a 后撑整屏，outer_position = monitors
+/// union 起点，对 sprite 跟随无意义）。
+///
+/// 坐标系 = 屏幕物理坐标系（与 016 `Anchor.x/y` 一致），`compute_bubble_position` 直接消费。
+#[derive(Debug, Clone, Copy)]
+pub struct SpritePos {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
 /// bubble window 跨 invoke 共享的运行时状态。
 ///
 /// 由 `lib.rs` 在 `Builder::manage` 阶段注册；invoke 命令通过 `tauri::State` 取；
@@ -82,10 +97,14 @@ pub struct Screen {
 ///
 /// - `is_visible` —— show / hide 命令更新；跟随轮询 task 读它决定 park / run。
 /// - `visible_notify` —— hidden→show 时 `notify_one`，唤醒 park 中的轮询 task。
+/// - `sprite_pos`（17a）—— 前端 `update_sprite_pos` invoke 写入；`run_follow_loop`
+///   16ms tick 读它代替 016 的 `pet.outer_position()`。None 时 skip 本 tick（race 兜底：
+///   PIXI app mount 慢于 setup hook 时，bubble follow loop 早起 tick 读到 None）。
 #[derive(Clone)]
 pub struct BubbleState {
     pub is_visible: Arc<AtomicBool>,
     pub visible_notify: Arc<Notify>,
+    pub sprite_pos: Arc<Mutex<Option<SpritePos>>>,
 }
 
 impl Default for BubbleState {
@@ -93,6 +112,7 @@ impl Default for BubbleState {
         Self {
             is_visible: Arc::new(AtomicBool::new(false)),
             visible_notify: Arc::new(Notify::new()),
+            sprite_pos: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -209,6 +229,81 @@ pub fn set_bubble_size(app: AppHandle, width: u32, height: u32) -> Result<(), St
     Ok(())
 }
 
+/// 17a · 前端 PIXI sprite world position 上报。
+///
+/// 触发时机：(1) PIXI app mount 完成首次同步；(2) drag pointermove（无前端节流）；
+/// (3) drag pointerup commit。idle 期不发。
+///
+/// **坐标系约定**：前端发的 `(x, y)` 是 sprite 在 pet content 区（= 整屏 webview viewport）
+/// 内的**物理像素偏移**（已乘 devicePixelRatio）。Rust 端补上 `pet.outer_position()`
+/// （= monitors union 起点 `(min_x, min_y)`，多屏场景可能 < 0）→ 写入 `sprite_pos` cache，
+/// 屏幕物理坐标系语义与 016 `Anchor.x/y` 一致，`compute_bubble_position` 直接消费。
+///
+/// `(w, h)` 是 sprite bounding box 物理像素（avatar-slot Container `getBounds()` 转 DPR 后）。
+///
+/// **AC-5 修复 · 即时 apply**：写完 cache 后，如 bubble 当前可见，**同步**算 bubble
+/// position + `set_position` 一次，**消除 follow loop 16ms tick 等待**。follow loop
+/// 保留兜底（show/hide 状态切换 + 多屏起点变化的偶发漂移）。
+///
+/// **AC-4 trace**：首次 cache 写入（None → Some）log::info 一次，证明 sprite world position
+/// 数据流通；drag 期间后续上报保持静默不刷屏。
+#[tauri::command]
+pub fn update_sprite_pos(
+    app: AppHandle,
+    state: tauri::State<'_, BubbleState>,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+) -> Result<(), String> {
+    // 拿 pet 窗 outer_position（17a 后 = monitors union 起点）；
+    // 拿不到时退化为 (0, 0)（边缘场景：app 启动早期 / pet 窗暂时不可达）
+    let origin = app
+        .get_webview_window("pet")
+        .and_then(|w| w.outer_position().ok())
+        .unwrap_or(PhysicalPosition { x: 0, y: 0 });
+    let sp = SpritePos {
+        x: origin.x + x,
+        y: origin.y + y,
+        w,
+        h,
+    };
+    let was_none = {
+        let mut guard = state.sprite_pos.lock().map_err(|e| e.to_string())?;
+        let was_none = guard.is_none();
+        *guard = Some(sp);
+        was_none
+    };
+    if was_none {
+        log::info!(
+            "update_sprite_pos: first sprite pos cached x={} y={} w={} h={} (后续 drag 上报静默不刷屏)",
+            sp.x,
+            sp.y,
+            sp.w,
+            sp.h
+        );
+    }
+
+    // AC-5 即时 apply：跳过 follow loop 16ms tick 等待
+    if state.is_visible.load(Ordering::Acquire) {
+        if let (Some(pet), Some(bubble)) = (
+            app.get_webview_window("pet"),
+            app.get_webview_window(BUBBLE_LABEL),
+        ) {
+            if let (Ok(bubble_size), Some(screen)) =
+                (bubble.outer_size(), current_screen_rect(&pet))
+            {
+                let anchor = Anchor { x: sp.x, y: sp.y, w: sp.w, h: sp.h };
+                let bub = BubbleSize { w: bubble_size.width, h: bubble_size.height };
+                let (bx, by) = compute_bubble_position(anchor, bub, screen);
+                let _ = bubble.set_position(PhysicalPosition { x: bx, y: by });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// 016 M16.9 · dev-only：往 bubble webview emit 一条假的 push envelope，
 /// 模拟 BedtimeSource 产出，跳过 bridge / 真 LLM，便于纯 GUI 手动验证 AC-3/4/5/7。
 ///
@@ -305,21 +400,27 @@ async fn run_follow_loop(app: AppHandle, state: BubbleState) {
             continue;
         }
 
+        // 17a · 跟随源切换：从 sprite_pos cache 读 anchor 替代 016 的 pet.outer_position()。
+        // None 时 skip 本 tick（race 兜底：PIXI app mount 慢于 setup hook 时早起 tick）。
+        let sprite = state.sprite_pos.lock().ok().and_then(|g| *g);
+        let Some(sp) = sprite else {
+            tokio::time::sleep(Duration::from_millis(TICK_MS)).await;
+            continue;
+        };
+
         if let (Some(pet), Some(bubble)) = (
             app.get_webview_window("pet"),
             app.get_webview_window(BUBBLE_LABEL),
         ) {
-            if let (Ok(pet_pos), Ok(pet_size), Ok(bubble_size), Some(screen)) = (
-                pet.outer_position(),
-                pet.outer_size(),
+            if let (Ok(bubble_size), Some(screen)) = (
                 bubble.outer_size(),
                 current_screen_rect(&pet),
             ) {
                 let anchor = Anchor {
-                    x: pet_pos.x,
-                    y: pet_pos.y,
-                    w: pet_size.width,
-                    h: pet_size.height,
+                    x: sp.x,
+                    y: sp.y,
+                    w: sp.w,
+                    h: sp.h,
                 };
                 let bub = BubbleSize {
                     w: bubble_size.width,
@@ -414,5 +515,46 @@ mod tests {
     #[test]
     fn clamp_size_above_max_pulled_down() {
         assert_eq!(clamp_bubble_size(800, 999), (MAX_W, MAX_H));
+    }
+
+    // —— 17a · BubbleState.sprite_pos cache ——
+    #[test]
+    fn sprite_pos_default_none() {
+        let state = BubbleState::default();
+        let g = state.sprite_pos.lock().expect("lock");
+        assert!(g.is_none());
+    }
+
+    #[test]
+    fn sprite_pos_write_then_read() {
+        let state = BubbleState::default();
+        {
+            let mut g = state.sprite_pos.lock().expect("lock");
+            *g = Some(SpritePos { x: 100, y: 200, w: 160, h: 160 });
+        }
+        let g = state.sprite_pos.lock().expect("lock");
+        let sp = g.expect("Some");
+        assert_eq!(sp.x, 100);
+        assert_eq!(sp.y, 200);
+        assert_eq!(sp.w, 160);
+        assert_eq!(sp.h, 160);
+    }
+
+    #[test]
+    fn sprite_pos_overwrite() {
+        let state = BubbleState::default();
+        {
+            let mut g = state.sprite_pos.lock().expect("lock");
+            *g = Some(SpritePos { x: 1, y: 2, w: 10, h: 10 });
+        }
+        {
+            let mut g = state.sprite_pos.lock().expect("lock");
+            *g = Some(SpritePos { x: 999, y: -50, w: 20, h: 20 });
+        }
+        let g = state.sprite_pos.lock().expect("lock");
+        let sp = g.expect("Some");
+        assert_eq!(sp.x, 999);
+        assert_eq!(sp.y, -50); // 多屏左屏 x 可能 < 0：sprite_pos 也允许负值
+        assert_eq!(sp.w, 20);
     }
 }

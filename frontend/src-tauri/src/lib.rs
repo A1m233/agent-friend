@@ -8,6 +8,24 @@ use tauri::{
 mod bubble_window;
 mod push_subscriber;
 
+// 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
+//
+// 配置：
+// - can_become_key_window=true：startDragging / 输入仍可正常 focus
+// - is_floating_panel=true：标记 floating panel 语义（AppKit 内部判定）
+//
+// 之所以 cfg gate：tauri_nspanel crate 本身就 cfg(target_os="macos")，宏依赖它的类型；
+// non-macOS 平台 pet 窗退化走 alwaysOnTop（tauri.conf.json 已配）+ 整屏 setBounds。
+#[cfg(target_os = "macos")]
+tauri_nspanel::tauri_panel! {
+    panel!(PetPanel {
+        config: {
+            can_become_key_window: true,
+            is_floating_panel: true
+        }
+    })
+}
+
 /// 015 → 016 · 让指定 webview window 悬浮在全屏 app 之上 + 跟随用户跨 Space。
 ///
 /// 015 原本只对 pet 窗调用（函数名 `apply_pet_window_level`）；016 M16.5 重命名为
@@ -89,6 +107,96 @@ fn mac_apply_floating_window_level(
         );
     }
     Ok(())
+}
+
+/// 0004 / 017 · 把 pet 窗用 tauri-nspanel 转成 NSPanel + nonactivating panel +
+/// PanelLevel::Floating + collectionBehavior(fullScreenAuxiliary | canJoinAllSpaces)。
+///
+/// 这是业界 macOS Tauri overlay 标准方案（详见
+/// `docs/explorations/desktop-pet-form-factor/industry-standard-tauri-nspanel.md`）。
+/// 失败仅 log warn，不阻断 app 启动。
+///
+/// **关键 API 注意**（spike-tauri-nspanel-pet-window §5.3 / §5.5.3 已实证）：
+/// - `set_level` 接 raw `i64` —— 必须 `.value()` 把 enum 转过去
+/// - `set_style_mask` / `set_collection_behavior` 接 `objc2_app_kit::NSWindow*` 类型 —— 必须 `.into()`
+/// - `set_hides_on_deactivate` 不存在（nonactivating panel + ActivationPolicy::Accessory 已等价覆盖）
+#[cfg(target_os = "macos")]
+fn apply_pet_nspanel(window: &WebviewWindow) {
+    use tauri_nspanel::{CollectionBehavior, PanelLevel, StyleMask, WebviewWindowExt};
+    match window.to_panel::<PetPanel>() {
+        Ok(panel) => {
+            panel.set_level(PanelLevel::Floating.value());
+            panel.set_style_mask(StyleMask::empty().nonactivating_panel().into());
+            panel.set_collection_behavior(
+                CollectionBehavior::new()
+                    .full_screen_auxiliary()
+                    .can_join_all_spaces()
+                    .into(),
+            );
+            log::info!(
+                "pet window {:?} converted to NSPanel + Floating + nonactivating + (fullScreenAuxiliary | canJoinAllSpaces)",
+                window.label()
+            );
+        }
+        Err(e) => {
+            log::warn!("to_panel failed for {:?}: {e}", window.label());
+        }
+    }
+}
+
+/// 017 · 把 pet 窗撑成整屏 transparent overlay：算 `available_monitors()` 并集 →
+/// `set_position` + `set_size`。沿 macOS spike §5.5.5 + Win spike §6.4.4.2 同款 monitors union 算法。
+///
+/// **跨平台**实现（无 cfg gate）—— Tauri 的 `available_monitors` / `set_position` /
+/// `set_size` 三端原生支持。setup hook 在 macOS 上调本 fn → 再 `apply_pet_nspanel`
+/// （setBounds 顺序：必须先 setBounds → 再 to_panel，避免 to_panel 后 size 行为不确定）；
+/// Win / Linux 上调本 fn 后无加料（tauri.conf.json 已配 alwaysOnTop + transparent + skipTaskbar）。
+///
+/// 失败仅 log warn，不阻断 app 启动。
+fn apply_pet_overlay_fullscreen(window: &WebviewWindow) {
+    let monitors = match window.available_monitors() {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("apply_pet_overlay_fullscreen: available_monitors failed: {e}");
+            return;
+        }
+    };
+    if monitors.is_empty() {
+        log::warn!("apply_pet_overlay_fullscreen: no monitors found");
+        return;
+    }
+    let min_x = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
+    let min_y = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
+    let max_x = monitors
+        .iter()
+        .map(|m| m.position().x + m.size().width as i32)
+        .max()
+        .unwrap_or(0);
+    let max_y = monitors
+        .iter()
+        .map(|m| m.position().y + m.size().height as i32)
+        .max()
+        .unwrap_or(0);
+    let union_w = (max_x - min_x).max(1) as u32;
+    let union_h = (max_y - min_y).max(1) as u32;
+    log::info!(
+        "apply_pet_overlay_fullscreen: monitors={} union=({},{}) {}x{}",
+        monitors.len(),
+        min_x,
+        min_y,
+        union_w,
+        union_h
+    );
+    if let Err(e) = window.set_position(tauri::Position::Physical(
+        tauri::PhysicalPosition::new(min_x, min_y),
+    )) {
+        log::warn!("apply_pet_overlay_fullscreen: set_position failed: {e}");
+    }
+    if let Err(e) = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+        union_w, union_h,
+    ))) {
+        log::warn!("apply_pet_overlay_fullscreen: set_size failed: {e}");
+    }
 }
 
 /// bridge HTTP base URL。
@@ -187,6 +295,11 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default());
 
+    // 017 · 装 tauri-nspanel plugin（macOS only）；non-macOS 退化为
+    // tauri.conf.json 已配的 alwaysOnTop + transparent + skipTaskbar
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
     // 016 M16.9 · dev build 多注册一个 `inject_test_envelope` 命令，
     // 让 pet 操作栏的"inject 测试气泡"按钮跑通——release build 整个 fn 不存在。
     #[cfg(debug_assertions)]
@@ -195,6 +308,7 @@ pub fn run() {
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
+        bubble_window::update_sprite_pos,
         bubble_window::inject_test_envelope,
     ]);
     #[cfg(not(debug_assertions))]
@@ -203,6 +317,7 @@ pub fn run() {
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
+        bubble_window::update_sprite_pos,
     ]);
 
     builder
@@ -227,9 +342,21 @@ pub fn run() {
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
-            // 015 → 016 · 让 pet 窗悬浮在全屏 app 之上（macOS only；其他平台退化为 alwaysOnTop）
+            // 017 · pet 窗形态切换为整屏 transparent overlay
+            //   - cross-platform · monitors union setBounds（先于 to_panel）
+            //   - macOS only · ActivationPolicy::Accessory + NSPanel 转换（沿
+            //     macOS spike §5.5.5 关键顺序：setBounds → policy → to_panel）
+            //   - Win / Linux · tauri.conf.json 已配 alwaysOnTop + skipTaskbar +
+            //     transparent；Win spike §6.4.3 实证 alwaysOnTop 天然支持 fullscreen 浮层
+            //   - 015 → 016 的 apply_floating_window_level 在 pet 上不再调用（NSPanel 路径
+            //     已等价覆盖 setLevel + collectionBehavior）；helper 本身保留供 bubble_window::init 用
             if let Some(pet) = app.get_webview_window("pet") {
-                apply_floating_window_level(&pet);
+                apply_pet_overlay_fullscreen(&pet);
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    apply_pet_nspanel(&pet);
+                }
             }
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
             bubble_window::init(app.handle())?;

@@ -1,9 +1,14 @@
 # 007 · 桌宠在 macOS fullscreen Space 下不浮起（NSWindow 系统级限制）
 
-- **状态**：open
+- **状态**：resolved · 2026-06-15 · 17a 落地解此
 - **严重度**：low
 - **发现日期**：2026-06-13
 - **关联需求**：[015-desktop-pet-bubble-and-conversation-owner](../../requirements/015-desktop-pet-bubble-and-conversation-owner/) AC-7
+- **解决方案**：[017-pet-overlay-form-switch](../../requirements/017-pet-overlay-form-switch/) · 把 pet 主窗从 NSWindow 切到 NSPanel + nonactivating + collectionBehavior(fullScreenAuxiliary \| canJoinAllSpaces)；macOS spike §5.5 / 0004 §5.1 / 17a AC-7 已实证 fullscreen Space 浮层正常
+
+> 修复指向：见 [017a tech-design](../../requirements/017-pet-overlay-form-switch/design.md) §3.6 + §4.3 setup hook 改造 + Rust 落地 `apply_pet_nspanel`（macOS only · 沿 macOS spike §5.5.3）。原 NSWindow 路径（`apply_floating_window_level` for pet）已不再触发；helper 本身保留供 bubble window 用。
+>
+> 17a 真跑（macOS · 2026-06-15）AC-7 通过：切 Space + QuickTime 全屏 + F11 浏览器 fullscreen 桌宠均可见。
 
 ## 现象
 

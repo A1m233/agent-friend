@@ -1,40 +1,73 @@
-import { type MouseEvent } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
-import { Button } from "@/components/ui";
+import { ActionBar } from "./ActionBar";
+import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
 
 /**
- * 桌宠窗（透明悬浮、置顶、无边框）。M10.2 + 015 + 016 R-4.1：
- * - 占位形象容器（#pet-stage）同时是未来 Live2D PixiJS canvas 的挂载点。
- * - 透明区穿透由 usePetPassthrough 处理（见其注释）。
- * - 形象可拖拽移动窗口；hover 显示操作栏（单按钮：打开对话界面）。
+ * 桌宠窗（17a · 整屏 transparent overlay）。
  *
- * 016 改造（M16.6）相对 015 的变化：
- * - 去掉 `<PetBubble />` 渲染 —— 气泡承载层从 pet 主窗内 absolute DOM 升级为独立
- *   bubble webview（label="bubble"），由 `bubble/App.tsx` 承接组件 + push subscriber + size sync。
- * - 去掉 `startPetBubbleSubscriber` 调用 —— subscriber 启动移到 bubble entry，
- *   保证只有 bubble webview 真消费 push channel；避免 pet / bubble 双订阅产生 store 漂移。
- * - 去掉外层 `relative` —— 不再需要 absolute 定位 anchor，pet 主窗回归"只承载形象"语义。
+ * 相对 016 (240×320 固定窗 + DOM 占位形象) 的形态升级：
+ * - pet 主窗 setup hook 撑成 monitors union 整屏（macOS NSPanel + Win 普通窗 + alwaysOnTop）
+ * - 形象由 DOM div 切到 PIXI Container avatar-slot（17b 替 children 为 Live2DModel）
+ * - 操作栏从 pet 窗内 flex 居中改为 sprite-relative DOM 浮动 + hover gate（顺手解 issue 008）
+ * - bubble 跟随源由 016 的 pet.outer_position() 切到 sprite world position（016 R-4.4 等价）
  *
- * `data-hit` 标记"实心可交互区"：穿透 hit-test 据此判定（见 usePetPassthrough）。
+ * 详见 [docs/requirements/017-pet-overlay-form-switch/](../../../../docs/requirements/017-pet-overlay-form-switch/)。
  */
 export function PetApp() {
-  usePetPassthrough();
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [spriteScreen, setSpriteScreen] = useState<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
+  //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
+  // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
+  // PIXI 不再收事件、pointerout 不触发；改由 usePetPassthrough 拿 Rust cursor 数据每帧判断。
+  const [cursorOnSprite, setCursorOnSprite] = useState(false);
+  const [hoverActionBarDom, setHoverActionBarDom] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const startDrag = (e: MouseEvent) => {
-    if (e.button !== 0 || !isTauri()) return;
-    void getCurrentWindow().startDragging();
-  };
+  // PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
+  usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
+
+  // cursor passthrough（DOM data-hit 优先 + sprite bounds 兜底 + isDragging 互锁）
+  // + AC-6 cursorOnSprite 驱动
+  usePetPassthrough({ isDragging, spriteScreen, setCursorOnSprite });
+
+  // AC-6 真 bug 修复 · sticky 防抖：
+  // visible 从 cursorOnSprite || hoverActionBarDom || isDragging 改为 sticky 状态。
+  //
+  // 为什么需要：cursor 离开 sprite → cursorOnSprite 立即 false → 若 visible 也立即
+  // false → ActionBar `pointer-events-none` → `elementFromPoint` 跳过 ActionBar →
+  // cursor 跨 sprite→bar 8px gap 时无任何状态能让 ActionBar 重新可命中 → 永久隐藏 →
+  // 用户点不到"打开对话界面"按钮。
+  //
+  // 解法：状态从 truthy → falsy 转换延迟 400ms，给 cursor 跨 gap + 进 bar 的时间；
+  // 在这 400ms 内 cursor 一旦真的进入 bar 区域，bar 仍是 pointer-events-auto，DOM
+  // onMouseEnter 触发 → hoverActionBarDom=true → sticky 重新 true。
+  // truthy → truthy 转换立即生效（不延迟显示）。
+  const [stickyVisible, setStickyVisible] = useState(false);
+  useEffect(() => {
+    if (cursorOnSprite || hoverActionBarDom || isDragging) {
+      setStickyVisible(true);
+    } else {
+      const t = setTimeout(() => setStickyVisible(false), 400);
+      return () => clearTimeout(t);
+    }
+  }, [cursorOnSprite, hoverActionBarDom, isDragging]);
 
   const openChat = () => {
     if (!isTauri()) return;
     void invoke("open_chat");
   };
 
-  // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证
-  // AC-3/4/5/7。release build 时 import.meta.env.DEV=false，整段 tree-shake 掉。
+  // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证。
+  // release build 时 import.meta.env.DEV=false，整段被 ActionBar 内部 tree-shake 掉。
   const injectShort = () => {
     if (!isTauri()) return;
     void invoke("inject_test_envelope", {
@@ -51,35 +84,22 @@ export function PetApp() {
   };
 
   return (
-    <div className="flex h-full w-full items-center justify-center bg-transparent">
-      <div className="group flex flex-col items-center gap-3">
-        <div
-          id="pet-stage"
-          data-hit
-          onMouseDown={startDrag}
-          className="grid h-40 w-40 cursor-grab select-none place-items-center rounded-full bg-accent text-accent-fg shadow-lg active:cursor-grabbing"
-        >
-          占位形象
-        </div>
-        <Button
-          data-hit
-          variant="outline"
-          size="pill"
-          onClick={openChat}
-        >
-          打开对话界面
-        </Button>
-        {import.meta.env.DEV && (
-          <div className="flex flex-col gap-1 text-xs opacity-70 transition-opacity group-hover:opacity-100">
-            <Button data-hit variant="ghost" size="pill" onClick={injectShort}>
-              💬 短气泡
-            </Button>
-            <Button data-hit variant="ghost" size="pill" onClick={injectLong}>
-              📜 长气泡
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
+    <>
+      <div
+        ref={stageRef}
+        className="fixed inset-0 overflow-hidden bg-transparent"
+      />
+      {spriteScreen && (
+        <ActionBar
+          spriteScreen={spriteScreen}
+          visible={stickyVisible}
+          onMouseEnter={() => setHoverActionBarDom(true)}
+          onMouseLeave={() => setHoverActionBarDom(false)}
+          onOpenChat={openChat}
+          onInjectShort={injectShort}
+          onInjectLong={injectLong}
+        />
+      )}
+    </>
   );
 }
