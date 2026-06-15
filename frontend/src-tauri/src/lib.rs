@@ -262,13 +262,42 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
 ///
 /// 前端据此做命中判定并切 setIgnoreCursorEvents，实现透明区穿透。
 /// 这是穿透 plumbing；命中判定（几何 → 未来 Live2D 的 alpha 采样）在前端的"缝"里替换。
+///
+/// **18b · Per-Monitor DPI awareness**（issue 012 真根因修复）：
+/// 17a baseline 用 `pet.scale_factor()` 算 cursor logical px——pet 窗 owner monitor 的
+/// DPR 固定值。但 pet 整屏 overlay 跨多 monitor mixed DPR 时（实测 Win 主屏 175% + 副屏
+/// 125%），cursor 在副屏区域的实际 physical/logical 比例是 1.25，用 1.75 算的 cursor
+/// 数字小一截 → 跟 webview viewport CSS px 坐标系（4096 宽）不一致 → cursor 进不到
+/// sprite 矩形 → `slotBoundsHit` 第一关 false → 穿透永远 ON。
+///
+/// 修法：按 cursor 当前 physical 位置命中的 monitor 取其 scale_factor。
+/// `available_monitors()` 跨平台 OK（17a `apply_pet_overlay_fullscreen` 已用过）；
+/// 找不到时兜底 `pet.scale_factor()`（单屏 / 同 DPR / cursor 在所有 monitor 之外的
+/// 边界场景都不退化为原行为）。
 fn spawn_cursor_feed(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || loop {
         if let Some(pet) = handle.get_webview_window("pet") {
-            if let (Ok(cursor), Ok(pos), Ok(scale)) =
-                (handle.cursor_position(), pet.outer_position(), pet.scale_factor())
-            {
+            if let (Ok(cursor), Ok(pos), Ok(pet_scale)) = (
+                handle.cursor_position(),
+                pet.outer_position(),
+                pet.scale_factor(),
+            ) {
+                let scale = pet
+                    .available_monitors()
+                    .ok()
+                    .and_then(|monitors| {
+                        monitors.into_iter().find(|m| {
+                            let mp = m.position();
+                            let ms = m.size();
+                            cursor.x >= mp.x as f64
+                                && cursor.x < mp.x as f64 + ms.width as f64
+                                && cursor.y >= mp.y as f64
+                                && cursor.y < mp.y as f64 + ms.height as f64
+                        })
+                    })
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(pet_scale);
                 let x = (cursor.x - pos.x as f64) / scale;
                 let y = (cursor.y - pos.y as f64) / scale;
                 let _ = handle.emit_to("pet", "pet://cursor", CursorPos { x, y });
