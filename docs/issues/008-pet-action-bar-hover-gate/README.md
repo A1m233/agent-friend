@@ -1,9 +1,14 @@
 # 008 · pet 操作栏按钮不响应 hover、常驻可见
 
-- **状态**：open
+- **状态**：resolved · 2026-06-15 · 17a 落地解此
 - **严重度**：low
 - **发现日期**：2026-06-14
 - **关联需求**：[010-desktop-shell-and-chat-ui](../../requirements/010-desktop-shell-and-chat-ui/)、[016-pet-bubble-independent-window](../../requirements/016-pet-bubble-independent-window/)
+- **解决方案**：[017-pet-overlay-form-switch](../../requirements/017-pet-overlay-form-switch/) · 操作栏从 pet 窗内 flex 居中改为 sprite-relative DOM 浮动 + hover gate；hover state 由 Rust 60Hz `pet://cursor` channel 驱动 `cursorOnSprite` + DOM `onMouseEnter/Leave` 驱动 `hoverActionBarDom`，通过 `stickyVisible` 状态做 400ms 防抖（消除 cursor 跨 sprite→bar 8px gap 时 ActionBar 失联）
+
+> 修复指向：见 [017a tech-design](../../requirements/017-pet-overlay-form-switch/design.md) §3.3 + §3.4 + §5.4，落地代码 `frontend/src/pages/pet/App.tsx` 的 `stickyVisible` + `frontend/src/pages/pet/ActionBar.tsx` + `frontend/src/pages/pet/usePetPassthrough.ts` 的 `setCursorOnSprite` 驱动。
+>
+> 17a 真跑（macOS · 2026-06-15）AC-6 通过：默认 hidden + hover sprite 圆形浮现 + cursor 移开 400ms 后消失 + cursor 跨 gap 进 bar 正常可点。
 
 ## 现象
 

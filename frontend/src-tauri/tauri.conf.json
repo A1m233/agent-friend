@@ -46,7 +46,7 @@
         "label": "chat",
         "url": "chat.html",
         "title": "agent-friend · 对话",
-        "width": 420,
+        "width": 720,
         "height": 640,
         "resizable": true,
         "visible": false,

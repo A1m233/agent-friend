@@ -33,3 +33,5 @@ tokio = { version = "1", features = ["sync"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }
+# 0004 / 017 · pet 窗切 NSPanel 路径（业界 macOS Tauri overlay 标准方案）
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
