@@ -16,6 +16,13 @@ export function ChatApp() {
 
   useEffect(() => {
     void ping();
+    // 18 顺手修：dev cold start 时 bridge Python 启动慢于 chat 窗 mount，原 mount-only ping
+    // 失败后永远不重试 → "未连接"卡死。改为每 3s 轮询：dev 启动 bridge 慢 / 偶发断连都
+    // 自愈；bridge healthz 成本极小，online 时也跑作为健康检查（bridge 中途挂自动转 offline）。
+    const id = setInterval(() => {
+      void ping();
+    }, 3000);
+    return () => clearInterval(id);
   }, [ping]);
 
   return (

@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -217,13 +218,44 @@ struct CursorPos {
 }
 
 /// 显示并聚焦对话窗（桌宠操作栏 / 托盘菜单调用）。
+///
+/// **18 修 macOS Accessory policy 副作用**：17a `set_activation_policy(Accessory)`
+/// 让 pet 不进 Dock，但副作用是 `set_focus()` 不让 app 升级为前台 active app —— 新弹
+/// 的 / show 后的 chat 窗拿不到 macOS key window status → 用户点输入框时系统层面键盘
+/// 事件不路由给 chat webview → 可聚焦但打字无反应。
+///
+/// 直接调 `NSApplication.activateIgnoringOtherApps:true` 让 app 在 Accessory policy 下也
+/// 能临时 activate → chat 窗成 key window 收键盘事件。**不切 policy**：临时切 Regular
+/// 会触发 macOS window reorder，让 chat 窗短暂上来后被其他 app 窗口盖住（user
+/// 反馈实测撞到）；用 NSApp.activate 直接 activate 保持 17a "pet 不进 Dock" 不变。
+fn show_and_focus_chat(app: &tauri::AppHandle) -> Result<(), String> {
+    let app_clone = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(w) = app_clone.get_webview_window("chat") {
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::{class, msg_send, runtime::AnyObject};
+                // NSApplication.sharedApplication 是 class method；用 raw msg_send 避免引入
+                // objc2-app-kit 的 NSApplication binding（feature 开销 + 17a 既有 plumbing 风格一致）。
+                let nsapp_class = class!(NSApplication);
+                let nsapp: *mut AnyObject = unsafe { msg_send![nsapp_class, sharedApplication] };
+                if !nsapp.is_null() {
+                    unsafe {
+                        let _: () = msg_send![nsapp, activateIgnoringOtherApps: true];
+                    }
+                }
+            }
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("chat") {
-        w.show().map_err(|e| e.to_string())?;
-        w.set_focus().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    show_and_focus_chat(&app)
 }
 
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
@@ -231,13 +263,39 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
 ///
 /// 前端据此做命中判定并切 setIgnoreCursorEvents，实现透明区穿透。
 /// 这是穿透 plumbing；命中判定（几何 → 未来 Live2D 的 alpha 采样）在前端的"缝"里替换。
+///
+/// **18b · webview viewport DPR awareness**（issue 012 真根因修复 v2）：
+///
+/// 17a baseline 用 `pet.scale_factor()` = pet 窗 owner monitor DPR 固定值。pet 整屏
+/// overlay 跨多 monitor mixed DPR 时（实测 Win 主屏 175% + 副屏 125%），cursor 跟
+/// webview viewport CSS px 坐标系不一致 → cursor 进不到 sprite 矩形 → 穿透永远 ON。
+///
+/// commit 78dcd26 v1 改按 cursor 当前所在 monitor 的 scale_factor 算，同屏 work，但
+/// 跨屏 drag 时 cursor 数字范围突跳（×1.4）→ spriteScreen 矩形（PIXI viewport CSS px
+/// 固定坐标系）跟新 cursor 数字不重合 → drag 中断 + 完全穿透。
+///
+/// v2 真根因：cursor scale 必须用 **webview viewport 实际 DPR**（固定值，整个 webview
+/// 一套）。Tauri Rust 拿不到这个值（`pet.scale_factor()` 返 owner monitor DPR，跟
+/// viewport DPR 不一定相等；实测 Win 多屏 overlay 时 viewport DPR ≠ owner DPR）。
+/// 让前端 mount 时 `invoke('set_pet_webview_dpr')` 上报 `window.devicePixelRatio`，
+/// Rust 用这个固定值算。
+///
+/// dpr 默认 0（未上报）时兜底 `pet.scale_factor()` —— 启动早期（前端上报前几十毫秒）
+/// 跨屏 drag 不可能在这个窗口里发生。
 fn spawn_cursor_feed(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || loop {
         if let Some(pet) = handle.get_webview_window("pet") {
-            if let (Ok(cursor), Ok(pos), Ok(scale)) =
-                (handle.cursor_position(), pet.outer_position(), pet.scale_factor())
-            {
+            if let (Ok(cursor), Ok(pos), Ok(pet_scale)) = (
+                handle.cursor_position(),
+                pet.outer_position(),
+                pet.scale_factor(),
+            ) {
+                let scale = handle
+                    .try_state::<PetWebviewState>()
+                    .and_then(|s| s.dpr.lock().ok().map(|g| *g))
+                    .filter(|&v| v > 0.0)
+                    .unwrap_or(pet_scale);
                 let x = (cursor.x - pos.x as f64) / scale;
                 let y = (cursor.y - pos.y as f64) / scale;
                 let _ = handle.emit_to("pet", "pet://cursor", CursorPos { x, y });
@@ -245,6 +303,25 @@ fn spawn_cursor_feed(app: &tauri::AppHandle) {
         }
         std::thread::sleep(std::time::Duration::from_millis(16));
     });
+}
+
+/// 18b · webview viewport 实际 DPR state（issue 012 跨屏 drag 修复 v2）。
+///
+/// 前端 mount 时 `invoke('set_pet_webview_dpr', { dpr: window.devicePixelRatio })` 写入，
+/// `spawn_cursor_feed` 60Hz 读用作 cursor scale。0.0 表示前端还没上报（默认 / 启动早期）→
+/// fallback `pet.scale_factor()`。
+#[derive(Default)]
+struct PetWebviewState {
+    dpr: Mutex<f64>,
+}
+
+/// 前端 mount 时调一次（matchMedia listener 在 DPR 变化时再调）。
+#[tauri::command]
+fn set_pet_webview_dpr(state: tauri::State<PetWebviewState>, dpr: f64) {
+    if let Ok(mut g) = state.dpr.lock() {
+        *g = dpr;
+        log::info!("set_pet_webview_dpr: {dpr}");
+    }
 }
 
 /// 注册托盘图标与菜单：打开对话 / 显示隐藏桌宠 / 退出。
@@ -268,10 +345,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_chat" => {
-                if let Some(w) = app.get_webview_window("chat") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                let _ = show_and_focus_chat(app);
             }
             "toggle_pet" => {
                 if let Some(w) = app.get_webview_window("pet") {
@@ -293,7 +367,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        .manage(bubble_window::BubbleState::default());
+        .manage(bubble_window::BubbleState::default())
+        .manage(PetWebviewState::default());
 
     // 017 · 装 tauri-nspanel plugin（macOS only）；non-macOS 退化为
     // tauri.conf.json 已配的 alwaysOnTop + transparent + skipTaskbar
@@ -305,6 +380,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -314,6 +390,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,

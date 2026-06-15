@@ -9,23 +9,30 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui";
-import { useConversationStore, useSessionsStore } from "@/stores";
+import { useConnectionStore, useConversationStore, useSessionsStore } from "@/stores";
 
 /**
  * 历史会话侧栏：列表展示 + 切换（R-M3.4）。bridge 为真相源，列表来自 sessions store。
  * 用 shadcn Sidebar（collapsible="none" 固定面板）；会话项 = SidebarMenuButton（isActive 高亮）。
  * 外层需由 ChatApp 套 SidebarProvider。
+ *
+ * **18 改连接状态驱动 refresh**：原 mount-only refresh 在 dev cold start 时 bridge 还没
+ * ready → fetch 失败 list 留空；之后 bridge 起来也不会重拉。改为 status === "online" 时
+ * refresh，让连接 unknown→online / offline→online 转换都自动重拉历史列表。
  */
 export function HistorySidebar() {
   const list = useSessionsStore((s) => s.list);
   const refresh = useSessionsStore((s) => s.refresh);
+  const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (status === "online") {
+      void refresh();
+    }
+  }, [status, refresh]);
 
   return (
     <Sidebar collapsible="none" className="border-r border-border">

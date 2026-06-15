@@ -15,7 +15,7 @@ const forbiddenNativeElements = ["button", "input", "select", "textarea"].map((e
 }));
 
 export default tseslint.config(
-  { ignores: ["dist/**", "src-tauri/**", "node_modules/**", "scripts/**", "*.config.{js,ts}"] },
+  { ignores: ["dist/**", "src-tauri/**", "node_modules/**", "scripts/**", "public/**", "*.config.{js,ts}"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -25,6 +25,11 @@ export default tseslint.config(
     settings: { react: { version: "detect" } },
     rules: {
       "react/forbid-elements": ["error", { forbid: forbiddenNativeElements }],
+      // 18 · stub 实现 / 占位接口里允许下划线前缀 + caughtErrors 显式 _ 略过
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
     },
   },
   {
