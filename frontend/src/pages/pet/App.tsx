@@ -82,6 +82,28 @@ export function PetApp() {
   // 18 · 加载 Hiyori Live2DSprite 到 avatar-slot 内（slot 外层 plumbing 不动）
   const { spriteRef } = usePetLive2D(slotRef, app, invalidateAnchor);
 
+  // 18b · 上报 webview viewport 实际 DPR 给 Rust（issue 012 跨屏 drag 修复 v2）。
+  //
+  // 让 spawn_cursor_feed 用 window.devicePixelRatio 这个固定值算 cursor logical px，
+  // 跟 PIXI canvas / spriteScreen 同坐标系。否则跨屏 drag 时 cursor scale 切换 →
+  // cursor 数字范围跳跃 → 跟 spriteScreen 矩形错位 → drag 中断 + 完全穿透。
+  //
+  // matchMedia 监 DPR 变化（罕见，但 mac 跨外接 Retina / Win 改 display scale 偶发）：
+  // 写入当前 dpr 的 `(resolution: Xdppx)` query，DPR 变化时 query 不再 match → change。
+  useEffect(() => {
+    if (!isTauri()) return;
+    const report = () => {
+      void invoke("set_pet_webview_dpr", { dpr: window.devicePixelRatio }).catch(
+        (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
+      );
+    };
+    report();
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    const onChange = () => report();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
   //
   // **safe-listen pattern**：tauri `listen()` 返 Promise<unlisten>，但 useEffect cleanup

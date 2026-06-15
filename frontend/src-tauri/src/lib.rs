@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -263,17 +264,24 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
 /// 前端据此做命中判定并切 setIgnoreCursorEvents，实现透明区穿透。
 /// 这是穿透 plumbing；命中判定（几何 → 未来 Live2D 的 alpha 采样）在前端的"缝"里替换。
 ///
-/// **18b · Per-Monitor DPI awareness**（issue 012 真根因修复）：
-/// 17a baseline 用 `pet.scale_factor()` 算 cursor logical px——pet 窗 owner monitor 的
-/// DPR 固定值。但 pet 整屏 overlay 跨多 monitor mixed DPR 时（实测 Win 主屏 175% + 副屏
-/// 125%），cursor 在副屏区域的实际 physical/logical 比例是 1.25，用 1.75 算的 cursor
-/// 数字小一截 → 跟 webview viewport CSS px 坐标系（4096 宽）不一致 → cursor 进不到
-/// sprite 矩形 → `slotBoundsHit` 第一关 false → 穿透永远 ON。
+/// **18b · webview viewport DPR awareness**（issue 012 真根因修复 v2）：
 ///
-/// 修法：按 cursor 当前 physical 位置命中的 monitor 取其 scale_factor。
-/// `available_monitors()` 跨平台 OK（17a `apply_pet_overlay_fullscreen` 已用过）；
-/// 找不到时兜底 `pet.scale_factor()`（单屏 / 同 DPR / cursor 在所有 monitor 之外的
-/// 边界场景都不退化为原行为）。
+/// 17a baseline 用 `pet.scale_factor()` = pet 窗 owner monitor DPR 固定值。pet 整屏
+/// overlay 跨多 monitor mixed DPR 时（实测 Win 主屏 175% + 副屏 125%），cursor 跟
+/// webview viewport CSS px 坐标系不一致 → cursor 进不到 sprite 矩形 → 穿透永远 ON。
+///
+/// commit 78dcd26 v1 改按 cursor 当前所在 monitor 的 scale_factor 算，同屏 work，但
+/// 跨屏 drag 时 cursor 数字范围突跳（×1.4）→ spriteScreen 矩形（PIXI viewport CSS px
+/// 固定坐标系）跟新 cursor 数字不重合 → drag 中断 + 完全穿透。
+///
+/// v2 真根因：cursor scale 必须用 **webview viewport 实际 DPR**（固定值，整个 webview
+/// 一套）。Tauri Rust 拿不到这个值（`pet.scale_factor()` 返 owner monitor DPR，跟
+/// viewport DPR 不一定相等；实测 Win 多屏 overlay 时 viewport DPR ≠ owner DPR）。
+/// 让前端 mount 时 `invoke('set_pet_webview_dpr')` 上报 `window.devicePixelRatio`，
+/// Rust 用这个固定值算。
+///
+/// dpr 默认 0（未上报）时兜底 `pet.scale_factor()` —— 启动早期（前端上报前几十毫秒）
+/// 跨屏 drag 不可能在这个窗口里发生。
 fn spawn_cursor_feed(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || loop {
@@ -283,20 +291,10 @@ fn spawn_cursor_feed(app: &tauri::AppHandle) {
                 pet.outer_position(),
                 pet.scale_factor(),
             ) {
-                let scale = pet
-                    .available_monitors()
-                    .ok()
-                    .and_then(|monitors| {
-                        monitors.into_iter().find(|m| {
-                            let mp = m.position();
-                            let ms = m.size();
-                            cursor.x >= mp.x as f64
-                                && cursor.x < mp.x as f64 + ms.width as f64
-                                && cursor.y >= mp.y as f64
-                                && cursor.y < mp.y as f64 + ms.height as f64
-                        })
-                    })
-                    .map(|m| m.scale_factor())
+                let scale = handle
+                    .try_state::<PetWebviewState>()
+                    .and_then(|s| s.dpr.lock().ok().map(|g| *g))
+                    .filter(|&v| v > 0.0)
                     .unwrap_or(pet_scale);
                 let x = (cursor.x - pos.x as f64) / scale;
                 let y = (cursor.y - pos.y as f64) / scale;
@@ -305,6 +303,25 @@ fn spawn_cursor_feed(app: &tauri::AppHandle) {
         }
         std::thread::sleep(std::time::Duration::from_millis(16));
     });
+}
+
+/// 18b · webview viewport 实际 DPR state（issue 012 跨屏 drag 修复 v2）。
+///
+/// 前端 mount 时 `invoke('set_pet_webview_dpr', { dpr: window.devicePixelRatio })` 写入，
+/// `spawn_cursor_feed` 60Hz 读用作 cursor scale。0.0 表示前端还没上报（默认 / 启动早期）→
+/// fallback `pet.scale_factor()`。
+#[derive(Default)]
+struct PetWebviewState {
+    dpr: Mutex<f64>,
+}
+
+/// 前端 mount 时调一次（matchMedia listener 在 DPR 变化时再调）。
+#[tauri::command]
+fn set_pet_webview_dpr(state: tauri::State<PetWebviewState>, dpr: f64) {
+    if let Ok(mut g) = state.dpr.lock() {
+        *g = dpr;
+        log::info!("set_pet_webview_dpr: {dpr}");
+    }
 }
 
 /// 注册托盘图标与菜单：打开对话 / 显示隐藏桌宠 / 退出。
@@ -350,7 +367,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
-        .manage(bubble_window::BubbleState::default());
+        .manage(bubble_window::BubbleState::default())
+        .manage(PetWebviewState::default());
 
     // 017 · 装 tauri-nspanel plugin（macOS only）；non-macOS 退化为
     // tauri.conf.json 已配的 alwaysOnTop + transparent + skipTaskbar
@@ -362,6 +380,7 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -371,6 +390,7 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
