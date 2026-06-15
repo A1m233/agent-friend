@@ -7,22 +7,24 @@ alwaysApply: true
 
 每个需求（`docs/requirements/<NNN>-xxx`）作为一次独立交付，必须走"独立分支 → 验收 → 合入 main"的流程，不在 main 上直接累积需求实现。
 
-## 分支策略
+> 详细的切分支检测、验收四门核对流程：见 `feature-delivery` skill（Step 0.5 分支策略、Phase 3 验收）。本 rule 只承载**底线约束**与**例外 / 反模式**。
 
-- 开始落地某个需求前，从最新 `main` 切出独立分支。
-- 分支命名：`feature/<3 位需求编号>-<kebab-case slug>`，编号与 `docs/requirements/` 下目录一致。
-  - 例：需求 `004-xxx-yyy` → `feature/004-xxx-yyy`。
-- 同一需求内的多个里程碑（M0.1 / M0.2 等）共用同一条 feature 分支，按需多次提交。
-- 一个需求只对应一条分支；如需拆分，先在 `docs/requirements/` 拆需求目录，再各自开分支。
+## 分支策略（底线）
 
-## 合入 main 的前置条件
+- 每个需求一条独立 feature 分支，命名 `feature/<3 位需求编号>-<kebab-case slug>`，编号与 `docs/requirements/` 目录一致。
+- 从最新 `main` 切。
+- 同一需求多里程碑（M0.1 / M0.2 等）共用同一条分支，按需多次提交。
+- 一个需求只对应一条分支；需求拆分先拆 `docs/requirements/` 目录，再各开分支。
+- 不允许在 `main` 上做需求级开发。
 
-以下条件全部满足才能合入 main：
+## 合入 main（底线）
 
-- 需求文档 `requirement.md` 中列出的全部验收标准（AC）已跑通。
-- 用户明确确认本次需求已经验收完成。
-- **`./scripts/check`（lint + typecheck + test）全绿**——任意一项不通过不得合入。
-- 分支已合并或 rebase 最新 main，无遗留冲突。
+需求验收完成才能合入 main，必须满足：
+
+- 全部 AC 跑通；
+- `./scripts/check` 全绿（lint + typecheck + test）——任一未过不得合入；
+- 用户明确确认验收完成；
+- 已 rebase / merge 最新 main，无遗留冲突。
 
 合入时保留 merge commit，便于后续从历史看到"哪些 commit 属于哪个需求"。
 
@@ -34,8 +36,6 @@ alwaysApply: true
 - **可豁免单测**：纯机械改动、重命名、纯文档、纯格式 / lint 修复、配置项调整等无行为变化的改动。
 - **概率性 / 真 LLM 行为**（如召回质量、摘要效果）：用 fake / mock 覆盖机制，真实 LLM 观察型 AC 按 `llm-api-confirm` 单独授权验收，并在对应 `progress.md` 标注。
 - 判断标准：**这部分改动是否有"可能回归、且能用断言固定下来"的行为**——是则补测，否则可豁免。拿不准时倾向补测。
-
-合入前一律以 `./scripts/check` 全绿为客观门槛。
 
 ## 允许直接提交 main 的例外
 
