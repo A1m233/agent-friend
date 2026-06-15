@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type RefObject } from "react";
 import type * as PIXI from "pixi.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -43,6 +43,15 @@ interface Options {
   /** 18 · PIXI Application，让 `alphaHitTest` 能 readPixels framebuffer alpha；null 时退化到矩形兜底。 */
   app: PIXI.Application | null;
   /**
+   * 18b Win mixed DPR mitigation（issue 012）：true 时跳过 `alphaHitTest`，矩形命中即生效
+   * （= 17a 行为）。由 `usePixiAvatarSlot` 在 alpha-scan readPixels 异常时设。
+   *
+   * 为什么需要：`alphaHitTest` 跟 `findVisibleBounds` 同款 `gl.readPixels`，Win 多屏 mixed
+   * DPR 下读到的永远是 alpha=0 → 永远返 false → 穿透永远 ON → 用户无法交互。alpha-scan
+   * 给出后这条路也必须跳过，整套体系才完整降级到 17a 矩形行为。
+   */
+  alphaScanGivenUpRef: RefObject<boolean>;
+  /**
    * AC-6 修复 · 驱动 ActionBar hover 显隐。
    *
    * 原方案是 PIXI slot.on("pointerover/out") → setHoverActionBar，但 cursor 离开
@@ -66,6 +75,7 @@ export function usePetPassthrough({
   isDragging,
   spriteScreen,
   app,
+  alphaScanGivenUpRef,
   setCursorOnSprite,
   disabled = false,
 }: Options) {
@@ -129,10 +139,14 @@ export function usePetPassthrough({
         return apply(false);
       }
       // (3) sprite alpha hit-test 主路径（18 升级；spriteScreen 矩形作 fast reject）
+      //     18b · alphaScanGivenUpRef 标记 Win mixed DPR 下 readPixels 不可用 → 跳过 alpha 关，
+      //     矩形命中即生效（= 17a 行为，cursor 进 slot.getBounds 矩形就视为命中 Hiyori）。
       if (spriteScreen && slotBoundsHit(e.payload, spriteScreen)) {
-        const hit = app
-          ? alphaHitTest(app, e.payload)
-          : true; // app 未就绪时退化到矩形（17a 兜底，加载早期）
+        const hit = alphaScanGivenUpRef.current
+          ? true // Win mixed DPR mitigation：跳过 alpha 关
+          : app
+            ? alphaHitTest(app, e.payload)
+            : true; // app 未就绪时退化到矩形（17a 兜底，加载早期）
         if (hit) {
           setCursorOnSprite(true);
           return apply(false);

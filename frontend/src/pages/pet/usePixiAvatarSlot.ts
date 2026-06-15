@@ -65,6 +65,16 @@ export interface UsePixiAvatarSlotHandles {
    * 后调此方法，清掉 cachedOffset 让 ticker 下一帧重新扫定到真 Hiyori visible bounds。
    */
   invalidateAnchor: () => void;
+  /**
+   * 18b Win mixed DPR mitigation（issue 012）：alpha-scan readPixels 在 Win 多屏不同 DPR
+   * 配置下取错位像素 / 全空白时整体降级到 17a 矩形行为。
+   *
+   * `usePetPassthrough` 读此 ref，true 时跳过 `alphaHitTest` 改用矩形命中（= 17a）。
+   * `invalidateAnchor` 时此 ref 一并重置（占位 → Hiyori 切换可能扫到真像素，重试一次）。
+   *
+   * mac / Win 单屏 / Win 多屏同 DPR：alpha-scan 正常工作，此 ref 恒 false。
+   */
+  alphaScanGivenUpRef: RefObject<boolean>;
 }
 
 export function usePixiAvatarSlot(
@@ -78,9 +88,15 @@ export function usePixiAvatarSlot(
   const cachedOffsetRef = useRef<
     { dx: number; dy: number; w: number; h: number } | null
   >(null);
+  // 18b Win mixed DPR mitigation（issue 012）：alpha-scan 在 readPixels 不可用时整体降级
+  // 到 17a 矩形行为。useRef 暴露给 usePetPassthrough 同步读，避免再起一条 React state 链路。
+  const alphaScanGivenUpRef = useRef(false);
 
   const invalidateAnchor = useCallback(() => {
     cachedOffsetRef.current = null;
+    // 占位 → Hiyori 切换：Hiyori 像素更多，可能扫到（mac 第一次切换就是这场景）
+    // Win mixed DPR 下重试还是会再次触发降级，无副作用
+    alphaScanGivenUpRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -197,15 +213,23 @@ export function usePixiAvatarSlot(
       // 启动早期 sprite 还没渲染 / 全透明时 scanned 返 null，下一帧 ticker 再试，直到锁定。
       //
       // **Win mixed DPR 兜底**（issue 012）：Win 多屏不同 DPR 配置下 `gl.readPixels` 读到的
-      // 像素位置跟 cursor logical px 坐标系不对齐，alpha-scan 推的 bounds width 会异常
-      // 小（实测 91 vs slot 320 = ratio 0.28）。检测 ratio < 0.5 或 > 1.5 → 放弃 alpha-scan，
-      // computeBounds() 自动 fallback 到 slot.getBounds()，回到 17a 同款 spriteScreen 路径
-      // （anchor 矩形含 model canvas padding，ActionBar 离头部稍远但 cursor 命中区跟视觉对齐）。
+      // 像素位置跟 cursor logical px 坐标系不对齐。用户实测分支：`findVisibleBounds` 返
+      // **null**（区域内一个 alpha > threshold 像素都没扫到，DPR 错位读到的全是空白）。
+      //
+      // 连续 ALPHA_SCAN_NULL_FRAMES 帧都返 null → 视为 readPixels 在 Win mixed DPR 下完全
+      // 不可用，设 `alphaScanGivenUpRef.current = true`。下游 `usePetPassthrough` 跳过
+      // `alphaHitTest` 改用矩形命中（= 17a 行为）。`computeBounds()` 也自然 fallback 到
+      // `slot.getBounds()`（cachedOffset 没设）。整套等价 17a。
+      //
+      // **不能用 width ratio 判别**：mac 上 Hiyori 头+身体像素轮廓 width 占 slot 矩形
+      // ~0.29（跟 issue 012 README 实测 Win 错位 width 91/320=0.28 几乎一样），用 ratio
+      // 判别会误伤 mac 正常 alpha-scan。所以只用"持续返 null"这一信号。
       let lastBounds = { x: NaN, y: NaN, w: NaN, h: NaN };
-      let alphaScanGivenUp = false;
+      let nullScanCount = 0;
+      const ALPHA_SCAN_NULL_FRAMES = 30; // 0.5s @ 60Hz
 
       const syncBoundsIfChanged = () => {
-        if (!cachedOffsetRef.current && !alphaScanGivenUp) {
+        if (!cachedOffsetRef.current && !alphaScanGivenUpRef.current) {
           const slotBounds = slot.getBounds();
           if (slotBounds.width > 0 && slotBounds.height > 0) {
             const scanned = findVisibleBounds(pixi, {
@@ -215,22 +239,25 @@ export function usePixiAvatarSlot(
               h: slotBounds.height,
             });
             if (scanned) {
-              const ratio = scanned.w / slotBounds.width;
-              if (ratio < 0.5 || ratio > 1.5) {
-                alphaScanGivenUp = true;
+              nullScanCount = 0;
+              cachedOffsetRef.current = {
+                dx: scanned.x - slot.x,
+                dy: scanned.y - slot.y,
+                w: scanned.w,
+                h: scanned.h,
+              };
+            } else {
+              // 区域内无 alpha > threshold 像素 —— 启动早期 sprite 没渲染好正常会出，
+              // 但持续出说明 readPixels 在 Win mixed DPR 下取错位读全空白（issue 012 用户实测分支）
+              nullScanCount += 1;
+              if (nullScanCount >= ALPHA_SCAN_NULL_FRAMES) {
+                alphaScanGivenUpRef.current = true;
                 if (import.meta.env.DEV) {
                   console.warn(
-                    `[anchor] alpha-scan ratio ${ratio.toFixed(2)} 异常（Win 多屏 mixed DPR 特征），` +
-                      `放弃 alpha-scan，spriteScreen 回 slot.getBounds() · 见 issue 012`,
+                    `[anchor] alpha-scan 连续 ${ALPHA_SCAN_NULL_FRAMES} 帧 readPixels 全空白` +
+                      `（Win 多屏 mixed DPR 特征），体系降级到 17a 矩形行为 · 见 issue 012`,
                   );
                 }
-              } else {
-                cachedOffsetRef.current = {
-                  dx: scanned.x - slot.x,
-                  dy: scanned.y - slot.y,
-                  w: scanned.w,
-                  h: scanned.h,
-                };
               }
             }
           }
@@ -320,5 +347,5 @@ export function usePixiAvatarSlot(
     };
   }, [stageRef, setSpriteScreen, setIsDragging]);
 
-  return { slotRef, app, invalidateAnchor };
+  return { slotRef, app, invalidateAnchor, alphaScanGivenUpRef };
 }

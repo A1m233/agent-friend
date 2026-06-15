@@ -65,14 +65,16 @@ export function PetApp() {
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
   // invalidateAnchor 由 usePetLive2D 在 Live2DSprite ready 后调用，让 anchor 重新扫到真 Hiyori bounds
-  const { slotRef, app, invalidateAnchor } = usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
+  const { slotRef, app, invalidateAnchor, alphaScanGivenUpRef } = usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
 
   // 17a · cursor passthrough（DOM data-hit 优先 + 18 alpha hit-test 主路径 + spriteScreen 矩形兜底 + isDragging 互锁）
   // + AC-6 cursorOnSprite 驱动 + 18 dev-only disabled 切换
+  // + 18b alphaScanGivenUpRef：Win mixed DPR 下 readPixels 失效时 alpha hit-test 跳过（issue 012）
   usePetPassthrough({
     isDragging,
     spriteScreen,
     app,
+    alphaScanGivenUpRef,
     setCursorOnSprite,
     disabled: passthroughDisabled,
   });
