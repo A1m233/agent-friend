@@ -1,0 +1,12 @@
+[project]
+name = "qq-bot-poc"
+version = "0.1.0"
+description = "QQ Bot OpenAPI 链路验证 spike — 验证 local-first agent 直连可行性"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "qq-botpy>=1.2.1",
+    "python-dotenv>=1.0.0",
+    # 仅用于额外验证 qqbot-agent-sdk 的 start_onboard 流程是否真能跑通
+    # （月下载量 96，单人署名，先实测再决定是否纳入正式集成）
+    "qqbot-agent-sdk[qrcode]>=1.2.2",
+]
