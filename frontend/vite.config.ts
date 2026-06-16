@@ -19,6 +19,7 @@ export default defineConfig({
         pet: resolve(__dirname, "pet.html"),
         chat: resolve(__dirname, "chat.html"),
         bubble: resolve(__dirname, "bubble.html"),
+        settings: resolve(__dirname, "settings.html"),
       },
     },
   },

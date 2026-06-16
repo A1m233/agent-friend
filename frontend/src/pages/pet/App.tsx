@@ -236,6 +236,20 @@ export function PetApp() {
     void invoke("open_chat");
   };
 
+  // 019 · ActionBar 隐藏桌宠按钮 → 调 hide_pet invoke（pet 窗整体 hide）。
+  // 唤回路径：仅系统托盘菜单 "显示/隐藏桌宠"（toggle_pet）；从桌面直接唤回是
+  // [issue 013](../../../../docs/issues/013-pet-recall-from-desktop/) 跟踪的独立缺口。
+  const hidePet = () => {
+    if (!isTauri()) return;
+    void invoke("hide_pet");
+  };
+
+  // 019 · ActionBar 打开设置按钮 → 调 open_settings invoke（参 open_chat 同款 show + focus 逻辑）
+  const openSettings = () => {
+    if (!isTauri()) return;
+    void invoke("open_settings");
+  };
+
   // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证。
   // release build 时 import.meta.env.DEV=false，整段被 ActionBar 内部 tree-shake 掉。
   const injectShort = () => {
@@ -270,6 +284,8 @@ export function PetApp() {
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}
           onOpenChat={openChat}
+          onHidePet={hidePet}
+          onOpenSettings={openSettings}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />

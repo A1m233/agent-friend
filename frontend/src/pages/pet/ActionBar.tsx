@@ -1,17 +1,42 @@
-import type { CSSProperties, MouseEventHandler } from "react";
-import { Button } from "@/components/ui";
+import { useEffect, useState, type CSSProperties, type MouseEventHandler, type ReactNode } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  EyeOff,
+  MessageSquare,
+  MessageSquareDashed,
+  ScrollText,
+  Settings,
+} from "lucide-react";
+
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  TooltipButton,
+  TooltipProvider,
+  type CarouselApi,
+} from "@/components/ui";
+
 import { computeActionBarPosition } from "./computeActionBarPosition";
+import { derivePageState } from "./actionBarPaging";
 
 /**
- * 17a · 操作栏 sprite-relative DOM 浮动（design §5.4 / R-4.5）。
+ * 019 · 桌宠操作栏 sprite-relative DOM 浮动（design §2.4 / R-4.x）。
  *
- * - 位置：以 sprite bounding box 为锚算 left/top（默认上方 + 居中；屏顶贴墙翻下方）
- * - 显隐：visible 由 PIXI sprite hover bridge + DOM 自身 onMouseEnter/Leave 双触发
- * - data-hit：DOM 在 PIXI canvas 之上，命中由 usePetPassthrough DOM hit-test 优先承担
- * - dev 按钮（💬 / 📜）保留 import.meta.env.DEV gate，与正式按钮共用 hover 显隐
+ * 17a 接缝点（design §3.6）100% 不动：
+ * - 浮动定位：复用 `computeActionBarPosition`（sprite 锚 + 上方居中 + 屏顶贴墙翻下方）
+ * - 显隐机制：`visible` prop（PIXI sprite hover bridge + DOM 自身 onMouseEnter/Leave 双触发）
+ * - 命中机制：容器 + 每颗按钮标 `data-hit`（usePetPassthrough DOM hit-test 优先承担）
  *
- * 17a/17b 接缝（design §7 #5）：本组件不动；17b 接 Live2D 时只换 PIXI sprite 内容、
- * hover bridge 仍挂外层 avatar-slot，本组件透明。
+ * 019 重做点：
+ * - 容器：垂直 flex → 横向 chip（背景 + 圆角 + 边框 + shadow，颜色全 token）
+ * - 按钮：文字 button → icon-only TooltipButton（lucide icon + tooltip）
+ * - 分页：按钮总数 > PAGE_SIZE 时启用 shadcn carousel + 自定义圆形箭头；
+ *   首末页对应箭头**不渲染**（沿 R-4.2.3，不是 disabled）
+ * - dev 注入按钮：位于 carousel 末尾，仍 `import.meta.env.DEV` gate
+ *
+ * 分页判定逻辑抽到 [`actionBarPaging.ts`](./actionBarPaging.ts) 纯函数 `derivePageState`（独立单测）。
  */
 
 interface Props {
@@ -20,13 +45,27 @@ interface Props {
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onOpenChat: () => void;
+  /** 019 新：调 hide_pet invoke 隐藏 pet 窗；唤回走系统托盘（issue 013 跟踪桌面唤回缺口） */
+  onHidePet: () => void;
+  /** 019 新：调 open_settings invoke 弹设置窗口 */
+  onOpenSettings: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
 }
 
-const BAR_W = 160;
-const BAR_H_BASE = 40; // 单按钮估高
-const BAR_H_DEV = 124; // dev mode 主按钮 + 2 个 inject 按钮估高
+// 容器尺寸常量（design §2.4.3）—— 改这里就能调每页容量与视觉密度
+const PAGE_SIZE = 6;
+const ICON_BTN = 32; // size-8 = 32px（Button icon-sm 变体）
+const GAP = 4; // gap-1 = 4px
+const PAD_X = 8; // px-2 = 8px each side
+const PAD_Y = 6; // py-1.5 ≈ 6px each side
+const ARROW_AREA = ICON_BTN + GAP; // 圆箭头 32 + 间距 4
+
+interface BtnDef {
+  icon: ReactNode;
+  tooltip: string;
+  onClick: () => void;
+}
 
 export function ActionBar({
   spriteScreen,
@@ -34,43 +73,125 @@ export function ActionBar({
   onMouseEnter,
   onMouseLeave,
   onOpenChat,
+  onHidePet,
+  onOpenSettings,
   onInjectShort,
   onInjectLong,
 }: Props) {
-  const isDev = import.meta.env.DEV;
-  const barH = isDev ? BAR_H_DEV : BAR_H_BASE;
-  const { left, top } = computeActionBarPosition(spriteScreen, { w: BAR_W, h: barH }, 8);
-  const style: CSSProperties = {
-    position: "fixed",
-    left,
-    top,
-    width: BAR_W,
-  };
-  const cls = visible
+  // dev gate：dev inject 按钮位于 carousel 末尾（design §2.4.2）
+  const buttons: BtnDef[] = [
+    { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
+    { icon: <EyeOff />, tooltip: "隐藏桌宠", onClick: onHidePet },
+    { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
+  ];
+  if (import.meta.env.DEV) {
+    buttons.push(
+      { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
+      { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },
+    );
+  }
+
+  // 当前页索引（embla 在 slidesToScroll: PAGE_SIZE 时 selectedScrollSnap 已是页索引）
+  const [api, setApi] = useState<CarouselApi>();
+  const [currentPage, setCurrentPage] = useState(0);
+
+  useEffect(() => {
+    if (!api) return;
+    const update = () => setCurrentPage(api.selectedScrollSnap());
+    update();
+    api.on("select", update);
+    api.on("reInit", update);
+    return () => {
+      api.off("select", update);
+      api.off("reInit", update);
+    };
+  }, [api]);
+
+  const { needsCarousel, showPrev, showNext } = derivePageState({
+    buttonCount: buttons.length,
+    pageSize: PAGE_SIZE,
+    currentPage,
+  });
+
+  // 容器宽度（design §2.4.3 两段宽语义）：
+  // - needsCarousel=true：永远按"PAGE_SIZE 个按钮 + 两个箭头位"算（首末页箭头 unmount 时
+  //   左/右槽位会留白，但 chip 宽度在分页切换中保持稳定，不抖）
+  // - needsCarousel=false：按实际按钮数收缩
+  const chipW = needsCarousel
+    ? PAD_X * 2 + ARROW_AREA * 2 + PAGE_SIZE * ICON_BTN + (PAGE_SIZE - 1) * GAP
+    : PAD_X * 2 + buttons.length * ICON_BTN + Math.max(0, buttons.length - 1) * GAP;
+  const chipH = PAD_Y * 2 + ICON_BTN; // = 44px
+
+  const { left, top } = computeActionBarPosition(spriteScreen, { w: chipW, h: chipH }, 8);
+  const style: CSSProperties = { position: "fixed", left, top, width: chipW, height: chipH };
+  const visibleCls = visible
     ? "opacity-100 pointer-events-auto"
     : "opacity-0 pointer-events-none";
 
   return (
-    <div
-      data-hit
-      style={style}
-      className={`flex flex-col items-center gap-1 transition-opacity ${cls}`}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-    >
-      <Button data-hit variant="outline" size="pill" onClick={onOpenChat}>
-        打开对话界面
-      </Button>
-      {isDev && (
-        <>
-          <Button data-hit variant="ghost" size="pill" onClick={onInjectShort}>
-            💬 短气泡
-          </Button>
-          <Button data-hit variant="ghost" size="pill" onClick={onInjectLong}>
-            📜 长气泡
-          </Button>
-        </>
-      )}
-    </div>
+    <TooltipProvider delayDuration={0}>
+      <div
+        data-hit
+        style={style}
+        className={`flex items-center gap-1 rounded-2xl bg-bg/95 border border-border shadow-lg px-2 py-1.5 transition-opacity ${visibleCls}`}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
+        {needsCarousel && showPrev && (
+          <TooltipButton
+            icon={<ChevronLeft />}
+            tooltip="上一页"
+            tooltipDelayMs={500}
+            className="rounded-full"
+            onClick={() => api?.scrollPrev()}
+            data-hit
+          />
+        )}
+
+        {needsCarousel ? (
+          <Carousel
+            opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
+            setApi={setApi}
+            className="flex-1 overflow-hidden"
+          >
+            <CarouselContent className="-ml-1">
+              {buttons.map((b, i) => (
+                <CarouselItem key={i} className={`pl-1 basis-1/${PAGE_SIZE}`}>
+                  <TooltipButton
+                    icon={b.icon}
+                    tooltip={b.tooltip}
+                    onClick={b.onClick}
+                    data-hit
+                  />
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+          </Carousel>
+        ) : (
+          <div className="flex items-center gap-1">
+            {buttons.map((b, i) => (
+              <TooltipButton
+                key={i}
+                icon={b.icon}
+                tooltip={b.tooltip}
+                onClick={b.onClick}
+                data-hit
+              />
+            ))}
+          </div>
+        )}
+
+        {needsCarousel && showNext && (
+          <TooltipButton
+            icon={<ChevronRight />}
+            tooltip="下一页"
+            tooltipDelayMs={500}
+            className="rounded-full"
+            onClick={() => api?.scrollNext()}
+            data-hit
+          />
+        )}
+      </div>
+    </TooltipProvider>
   );
 }
