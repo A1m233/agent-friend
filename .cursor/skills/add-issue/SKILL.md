@@ -1,7 +1,6 @@
 ---
 name: add-issue
 description: 在 agent-friend 仓库的 docs/issues/ 下登记一个"已知但暂不修复"的问题（bug、体感瑕疵、技术债、设计弱点）。当用户说"记一个 issue"、"登记问题"、"先记下来不修"、"加个待办问题"、"add issue"，或在排查/落地需求时发现一个决定延后处理的问题时使用。
-disable-model-invocation: true
 ---
 
 # 登记 issue（docs/issues/）
