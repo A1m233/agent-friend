@@ -133,7 +133,7 @@ export function PetApp() {
     if (!import.meta.env.DEV) return;
     console.info(
       "%c[pet][dev] observability armed",
-      "color:#4f46e5;font-weight:bold",
+      "font-weight:bold",
       "· phase 切换 + push envelope 会打到这里。看到这行 = pet 窗 console + 最新代码。",
     );
     let prev: PetPhase = usePetStateStore.getState().phase;
