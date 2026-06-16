@@ -217,21 +217,23 @@ struct CursorPos {
     y: f64,
 }
 
-/// 显示并聚焦对话窗（桌宠操作栏 / 托盘菜单调用）。
+/// 显示并聚焦指定 label 的 webview window（chat / settings 复用）。
 ///
 /// **18 修 macOS Accessory policy 副作用**：17a `set_activation_policy(Accessory)`
 /// 让 pet 不进 Dock，但副作用是 `set_focus()` 不让 app 升级为前台 active app —— 新弹
-/// 的 / show 后的 chat 窗拿不到 macOS key window status → 用户点输入框时系统层面键盘
-/// 事件不路由给 chat webview → 可聚焦但打字无反应。
+/// 的 / show 后的窗口拿不到 macOS key window status → 用户点输入框时系统层面键盘
+/// 事件不路由给 webview → 可聚焦但打字无反应。
 ///
 /// 直接调 `NSApplication.activateIgnoringOtherApps:true` 让 app 在 Accessory policy 下也
-/// 能临时 activate → chat 窗成 key window 收键盘事件。**不切 policy**：临时切 Regular
-/// 会触发 macOS window reorder，让 chat 窗短暂上来后被其他 app 窗口盖住（user
+/// 能临时 activate → 目标窗成 key window 收键盘事件。**不切 policy**：临时切 Regular
+/// 会触发 macOS window reorder，让目标窗短暂上来后被其他 app 窗口盖住（user
 /// 反馈实测撞到）；用 NSApp.activate 直接 activate 保持 17a "pet 不进 Dock" 不变。
-fn show_and_focus_chat(app: &tauri::AppHandle) -> Result<(), String> {
+///
+/// 019 · 由 `show_and_focus_chat` 抽象为通用版（chat / settings 复用同款加料）。
+fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), String> {
     let app_clone = app.clone();
     app.run_on_main_thread(move || {
-        if let Some(w) = app_clone.get_webview_window("chat") {
+        if let Some(w) = app_clone.get_webview_window(label) {
             #[cfg(target_os = "macos")]
             {
                 use objc2::{class, msg_send, runtime::AnyObject};
@@ -255,7 +257,26 @@ fn show_and_focus_chat(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
-    show_and_focus_chat(&app)
+    show_and_focus(&app, "chat")
+}
+
+/// 019 · 桌宠 ActionBar "打开设置" 按钮调用（参 `open_chat` 同款 show + focus 加料）。
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "settings")
+}
+
+/// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
+///
+/// **唤回路径**：本期唯一 = 系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
+/// menu event handler）。从桌面直接唤回是 `docs/issues/013-pet-recall-from-desktop/`
+/// 跟踪的独立缺口，独立立项。
+#[tauri::command]
+fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("pet") {
+        let _ = w.hide();
+    }
+    Ok(())
 }
 
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
@@ -345,7 +366,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_chat" => {
-                let _ = show_and_focus_chat(app);
+                let _ = show_and_focus(app, "chat");
             }
             "toggle_pet" => {
                 if let Some(w) = app.get_webview_window("pet") {
@@ -380,6 +401,8 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_settings,
+        hide_pet,
         set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
@@ -390,6 +413,8 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_settings,
+        hide_pet,
         set_pet_webview_dpr,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
@@ -399,8 +424,9 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            // 对话窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
-            if window.label() == "chat" {
+            // 对话窗 / 设置窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
+            // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
+            if matches!(window.label(), "chat" | "settings") {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
