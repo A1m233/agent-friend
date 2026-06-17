@@ -5,6 +5,7 @@ import {
   EyeOff,
   MessageSquare,
   MessageSquareDashed,
+  Plug,
   ScrollText,
   Settings,
 } from "lucide-react";
@@ -49,6 +50,8 @@ interface Props {
   onHidePet: () => void;
   /** 019 新：调 open_settings invoke 弹设置窗口 */
   onOpenSettings: () => void;
+  /** 022 新：打开 IM 接入面板 dialog（同窗，不另开 webview） */
+  onOpenIMConnect: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
 }
@@ -75,6 +78,7 @@ export function ActionBar({
   onOpenChat,
   onHidePet,
   onOpenSettings,
+  onOpenIMConnect,
   onInjectShort,
   onInjectLong,
 }: Props) {
@@ -83,6 +87,7 @@ export function ActionBar({
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
     { icon: <EyeOff />, tooltip: "隐藏桌宠", onClick: onHidePet },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
+    { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
   ];
   if (import.meta.env.DEV) {
     buttons.push(

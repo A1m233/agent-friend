@@ -187,15 +187,15 @@ IN_PROGRESS
 
 > 完成后 actionbar 点击"接入 IM"能弹出 dialog,完整 UX 走通(后端可能未绑定,dialog 空状态 OK)。
 
-- [ ] `frontend/src/pages/pet/ActionBar.tsx`:
-  - [ ] `Props` 加 `onOpenIMConnect: () => void`
-  - [ ] `buttons` 数组加一项 `{ icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect }`(`Plug` from lucide-react)
-- [ ] `frontend/src/pages/pet/App.tsx`:
-  - [ ] state `const [imDialogOpen, setImDialogOpen] = useState(false)`
-  - [ ] `<ActionBar ... onOpenIMConnect={() => setImDialogOpen(true)} />`
-  - [ ] 在 ActionBar 之外条件渲染 `<IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />`
-- [ ] `pnpm typecheck` + `pnpm lint` 全绿
-- [ ] 浏览器 dev mode pet.html 跑起来:鼠标移到形象 → 操作栏浮出 → 点"接入 IM"按钮 → dialog 弹出(后端服务可能没起,dialog 空列表 OK,主要验"弹出 + 关闭"无报错)
+- [x] `frontend/src/pages/pet/ActionBar.tsx`:
+  - [x] `Props` 加 `onOpenIMConnect: () => void`
+  - [x] `buttons` 数组加一项 `{ icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect }`(`Plug` from lucide-react)
+- [x] `frontend/src/pages/pet/App.tsx`:
+  - [x] state `const [imDialogOpen, setImDialogOpen] = useState(false)`
+  - [x] `<ActionBar ... onOpenIMConnect={() => setImDialogOpen(true)} />`
+  - [x] 在 ActionBar 之外条件渲染 `<IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />`
+- [x] `pnpm typecheck` + `pnpm lint` 全绿
+- [ ] 浏览器 dev mode pet.html 跑起来:鼠标移到形象 → 操作栏浮出 → 点"接入 IM"按钮 → dialog 弹出(后端服务可能没起,dialog 空列表 OK,主要验"弹出 + 关闭"无报错)— **留 M22.11 真跑验收时一并验**
 
 **门槛**:dev server 内点击 actionbar 按钮能开关 dialog;dialog 内交互不被 cursor passthrough 吃掉(`data-hit` 生效)。
 
@@ -251,3 +251,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.6 HTTP routes + register_routes | routes.py(4 个 endpoints: GET /v1/im/providers · POST /v1/im/onboard/start · GET /v1/im/onboard/{task_id} · DELETE /v1/im/providers/{type}/{bind_id})· 错误码 503/400/404/422 · pydantic OnboardStartBody Literal["qq"];__init__.py export 完整 surface;BridgeRuntime 加 im_runtime + im_onboard_registry 占位字段(M22.7 装配实际实例);test_im_routes.py 14 个测试全过;./scripts/check 全绿(516 passed) |
 | 2026-06-17 | M22.7 BridgeRuntime 装配 + app.py lifespan | settings.py 加 im_enabled/im_credentials_dir/im_resume_dir;assembly.build_runtime 装配 CredentialStore + IMRouter + IMRuntime + OnboardSessionRegistry,用 dataclasses.replace 塞 final BridgeRuntime;IMRouter 接口重构成接收 default_persona/default_model 两个 str(去除 BridgeRuntime 循环依赖);app.py lifespan 加 im_runtime.start/stop + 条件 register_im_routes;装配真跑验证 list_status==[] OK;./scripts/check 全绿(516 passed) |
 | 2026-06-18 | M22.8 前端 dialog + IMConnectDialog | shadcn dialog v4.10.0 通过 CLI 拉(v5+ 路径解析有 bug)+ 挪文件夹版完全原样保留;services/api/im.ts 4 个 endpoint client;qrcode + @types/qrcode 装齐;IMConnectDialog 透明 backdrop(手动 compose Portal + Overlay)+ 自动轮询节奏 + QRCode.toDataURL 渲染 + 已绑定/接入新 IM 两段 UI;后端 ProviderInfo 加 raw bind_id 字段配合前端 unbind;./scripts/check 全绿(后端 516 + 前端 lint/color-guard/typecheck/vitest 84 passed) |
+| 2026-06-18 | M22.9 ActionBar 按钮 + PetApp dialog 接入 | ActionBar Props 加 onOpenIMConnect,buttons 数组加 Plug icon"接入 IM"按钮;PetApp 加 imDialogOpen state + IMConnectDialog 条件渲染;dev server 真跑留 M22.11 一并;./scripts/check 全绿(后端 516 + 前端 84 passed) |
