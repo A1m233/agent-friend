@@ -1,9 +1,9 @@
 # 006 · BedtimeSource 提示词被 conversation history 拽走，产出虚构 user 视角回答
 
-- **状态**：open
+- **状态**：resolved（2026-06-17，由 [`需求 021`](../../requirements/021-system-trigger-user-injection/) 闭环）
 - **严重度**：medium
 - **发现日期**：2026-06-13
-- **关联需求**：[014-engine-main-loop-and-bridge-push](../../requirements/014-engine-main-loop-and-bridge-push/)
+- **关联需求**：[014-engine-main-loop-and-bridge-push](../../requirements/014-engine-main-loop-and-bridge-push/)（架构来源）；[021-system-trigger-user-injection](../../requirements/021-system-trigger-user-injection/)（修复方案）
 
 ## 现象
 
@@ -117,3 +117,16 @@ DEFAULT_BEDTIME_ADDENDUM = (
 > 基于最近的对话内容，沉默地为自己整理 1-3 条值得长存的事实——用户偏好、生活节奏、情绪倾向等都可以；不必回应任何人，只是写给未来的自己。
 
 silent turn 本来就不冒泡到用户，这条可能没问题；但同样可能被 history 拽到错误方向，验证下输出是否合预期。
+
+---
+
+## 方向 B 落地记录（2026-06-17，本 issue 闭环）
+
+- **修复需求**：[`021-system-trigger-user-injection`](../../requirements/021-system-trigger-user-injection/)（feature/021 分支）
+- **修复 commit**：`<待实施 commit 后回填>`
+- **落地内容**：把 `Conversation.dispatch_system_turn` 注入路径从 `trailing_system` 切到 `trailing_user`——LLM 看到的 messages 末尾从 `role="system"` 变成 `role="user"`，user role 才是 chat-completions 协议的真正"新一轮 turn 开始"信号。配套 Claude Code 同款三层加固：
+  - **协议层**：`assemble_messages` / `ContextManager.build_messages` 加 `trailing_user` 槽位，三个 context manager 透传
+  - **文案层**：`DEFAULT_BEDTIME_ADDENDUM` / `DEFAULT_IDLE_ADDENDUM` 用 `<system_trigger>...</system_trigger>` tag 包裹；bedtime 文案改为 user 视角"该睡了"提示语气
+  - **system prompt 层**：`project_identity.md` 加元规则训练 LLM 识别 `<system_trigger>` tag，避免归因漂移（claude-code [#23537](https://github.com/anthropics/claude-code/issues/23537) / [#27128](https://github.com/anthropics/claude-code/issues/27128) 同类问题）
+- **真跑验证**：[`replay.py`](./replay.py)（bedtime 路径）+ [`replay_silent.py`](./replay_silent.py)（silent 路径），v4-flash + v4-pro 各 2-3 次，多数行为成立
+- **方向 A 尝试记录保留**：上方"方向 A 尝试记录"小节作为 archaeology 保留——让未来读者看到方向 A 在 DeepSeek 真跑下天花板已打到、必须从架构层切才能根治。

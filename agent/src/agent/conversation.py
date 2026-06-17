@@ -450,8 +450,8 @@ class Conversation:
             output_visibility=output_visibility,
         )
 
-        # 2. 跑 LLM stream（注入引导话作 trailing system）
-        openai_messages = self._assemble(trailing_system=system_prompt_addendum)
+        # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
+        openai_messages = self._assemble(trailing_user=system_prompt_addendum)
         text_buf: list[str] = []
         for ev in self._llm_client.stream(openai_messages, tools=None):
             if isinstance(ev, LLMTextDelta):
@@ -687,14 +687,20 @@ class Conversation:
         *,
         new_user_input: str | None = None,
         extra_context: list[Message] | None = None,
+        trailing_user: str | None = None,
         trailing_system: str | None = None,
     ) -> list[dict[str, Any]]:
         """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
 
         首轮 / 工具续轮 / 触上限兜底收尾都经此处，确保上下文管理（度量 /
         兜底截断 / 摘要压缩）覆盖每一次组装，差异只在 ``new_user_input`` /
-        ``extra_context`` / ``trailing_system``。``history`` 一律传**原始全量**
-        :attr:`Session.messages`（折叠在 context manager 内部发生，见 009 design §6.3）。
+        ``extra_context`` / ``trailing_user`` / ``trailing_system``。``history``
+        一律传**原始全量** :attr:`Session.messages`（折叠在 context manager 内部
+        发生，见 009 design §6.3）。
+
+        ``trailing_user``（021 新增）：主动 source 注入 ``role="user"`` 触发信号
+        用，与 ``trailing_system`` 互不替代——前者是 turn 切换信号、后者是兜底
+        收尾指令。详见 021 design §5。
 
         Returns:
             可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
@@ -705,6 +711,7 @@ class Conversation:
             system_prompt=self._system_prompt,
             new_user_input=new_user_input,
             extra_context=extra_context,
+            trailing_user=trailing_user,
             trailing_system=trailing_system,
             runtime=runtime,
         )

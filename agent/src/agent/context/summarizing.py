@@ -61,6 +61,7 @@ class _AssembleParts:
     system_prompt: str
     new_user_input: str | None
     extra_context: list[Message] | None
+    trailing_user: str | None
     trailing_system: str | None
 
     def assemble(self, history: list[Message]) -> list[Message]:
@@ -69,6 +70,7 @@ class _AssembleParts:
             system_prompt=self.system_prompt,
             new_user_input=self.new_user_input,
             extra_context=self.extra_context,
+            trailing_user=self.trailing_user,
             trailing_system=self.trailing_system,
         )
 
@@ -103,6 +105,7 @@ class SummarizingContextManager:
         system_prompt: str,
         new_user_input: str | None = None,
         extra_context: list[Message] | None = None,
+        trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
     ) -> BuildResult:
@@ -110,6 +113,7 @@ class SummarizingContextManager:
             system_prompt=system_prompt,
             new_user_input=new_user_input,
             extra_context=extra_context,
+            trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
 
@@ -219,6 +223,7 @@ class SummarizingContextManager:
             system_prompt=parts.system_prompt,
             new_user_input=parts.new_user_input,
             extra_context=parts.extra_context,
+            trailing_user=parts.trailing_user,
             trailing_system=parts.trailing_system,
             runtime=runtime,
         )
