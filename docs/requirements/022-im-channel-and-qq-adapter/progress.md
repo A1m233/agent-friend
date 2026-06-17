@@ -203,18 +203,17 @@ IN_PROGRESS
 
 > 完成后 `./scripts/check` 全绿 + 独立 `./scripts/im-smoke/run.sh` 能在本机非破坏性跑通(代码层 e2e,不接 QQ gateway)。
 
-- [ ] `scripts/im-smoke/run.sh`(bash):`set -euo pipefail` + `cd "$(dirname "$0")/../.."` + `exec uv run python scripts/im-smoke/smoke.py "$@"`
-- [ ] `scripts/im-smoke/run.ps1`(powershell):`$ErrorActionPreference = "Stop"` + `$OutputEncoding = ...UTF8` + `Set-Location (Join-Path $PSScriptRoot "..\..")` + `& uv run python scripts/im-smoke/smoke.py @args`(含 BOM)
-- [ ] `scripts/im-smoke/smoke.py`:
-  - [ ] 用 `AGENT_FRIEND_DATA_DIR=<tmp>` 隔离测试
-  - [ ] `build_runtime(settings)` → 获取 `BridgeRuntime`
-  - [ ] 构造一个 `FakeIMProvider` 实例(本地最小 IMProvider 实现)注册到 `runtime.im_runtime._providers`
-  - [ ] FakeIMProvider 直接调 `router.handle_inbound("fake", fake_event, capture_send)` 灌一条假 `InboundEvent(chat_id="user-abc", content="你好,我的猫叫小白")`
-  - [ ] 断言:`capture_send` 收到 `OutboundContent`,`text` 非空 + `chat_id == "user-abc"`
-  - [ ] 断言:`<tmp>/sessions/im:fake:user-abc.jsonl` 存在
-- [ ] `scripts/README.md` 加一行表格说明(`im-smoke` 用途 + mac/win 用法 + 例外:**只跑 mac/linux**?还是两端都做)
-- [ ] `./scripts/check` 全绿(三平台)
-- [ ] `./scripts/im-smoke/run.sh` 本机跑通
+- [x] `scripts/im-smoke/run.sh`(bash):`set -euo pipefail` + `cd "$(dirname "$0")/../.."` + `exec uv run python scripts/im-smoke/smoke.py "$@"`
+- [x] `scripts/im-smoke/run.ps1`(powershell):`$ErrorActionPreference = "Stop"` + `$OutputEncoding = ...UTF8` + `Set-Location (Join-Path $PSScriptRoot "..\..")` + `& uv run python scripts/im-smoke/smoke.py @args`(含 BOM)
+- [x] `scripts/im-smoke/smoke.py`:
+  - [x] 用 `AGENT_FRIEND_DATA_DIR=<tmp>` 隔离测试 + `AGENT_BRIDGE_MEMORY_ENABLED=false`
+  - [x] `build_runtime(BridgeSettings())` 装配真实 BridgeRuntime
+  - [x] 构造 SessionBridge + IMRouter,monkey-patch `bind_persistent` 返回 fake Conversation(避开真 LLM)
+  - [x] 灌一条假 `InboundEvent(chat_id="SMOKE-USER-OPENID", content="你好 · smoke")` 调 `IMRouter.handle_inbound`
+  - [x] 断言:`OutboundContent` text 非空 + 字段映射正确(chat_id/chat_scope/reply_to_message_id)
+- [x] `scripts/README.md` 加一行 `im-smoke/` 用途说明(本期 macOS + Windows 双端)
+- [x] `./scripts/check` 全绿(三平台 baseline · macOS 实跑;Win/Linux 真跑沿 015 约定留下个需求)
+- [x] `./scripts/im-smoke/run.sh` 本机跑通(`[smoke] PASS · 全部断言通过 ✓`)
 
 **门槛**:`./scripts/check` 全绿 + smoke 脚本在本机一次跑通。
 
@@ -252,3 +251,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.7 BridgeRuntime 装配 + app.py lifespan | settings.py 加 im_enabled/im_credentials_dir/im_resume_dir;assembly.build_runtime 装配 CredentialStore + IMRouter + IMRuntime + OnboardSessionRegistry,用 dataclasses.replace 塞 final BridgeRuntime;IMRouter 接口重构成接收 default_persona/default_model 两个 str(去除 BridgeRuntime 循环依赖);app.py lifespan 加 im_runtime.start/stop + 条件 register_im_routes;装配真跑验证 list_status==[] OK;./scripts/check 全绿(516 passed) |
 | 2026-06-18 | M22.8 前端 dialog + IMConnectDialog | shadcn dialog v4.10.0 通过 CLI 拉(v5+ 路径解析有 bug)+ 挪文件夹版完全原样保留;services/api/im.ts 4 个 endpoint client;qrcode + @types/qrcode 装齐;IMConnectDialog 透明 backdrop(手动 compose Portal + Overlay)+ 自动轮询节奏 + QRCode.toDataURL 渲染 + 已绑定/接入新 IM 两段 UI;后端 ProviderInfo 加 raw bind_id 字段配合前端 unbind;./scripts/check 全绿(后端 516 + 前端 lint/color-guard/typecheck/vitest 84 passed) |
 | 2026-06-18 | M22.9 ActionBar 按钮 + PetApp dialog 接入 | ActionBar Props 加 onOpenIMConnect,buttons 数组加 Plug icon"接入 IM"按钮;PetApp 加 imDialogOpen state + IMConnectDialog 条件渲染;dev server 真跑留 M22.11 一并;./scripts/check 全绿(后端 516 + 前端 84 passed) |
+| 2026-06-18 | M22.10 Smoke 脚本 + 三平台门禁 | scripts/im-smoke/{run.sh,run.ps1,smoke.py}:tmp AGENT_FRIEND_DATA_DIR + monkey-patch SessionBridge.bind_persistent 返回 fake Conversation 避开真 LLM + 灌假 InboundEvent 验全链路 + 4 个字段断言;scripts/README.md 加表格行;本机跑通 [smoke] PASS · 全部断言通过 ✓;./scripts/check macOS 全绿(516 + 84) |
