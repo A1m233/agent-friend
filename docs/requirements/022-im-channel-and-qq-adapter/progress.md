@@ -152,17 +152,13 @@ IN_PROGRESS
 
 > 完成后 bridge 进程能正确装配 IMRuntime,启动/退出生命周期工作,没有绑定凭据时空跑不崩。
 
-- [ ] `agent_bridge/settings.py`:加 IM 相关 settings(如 `im_credentials_dir: Path | None`,默认 `None` = 使用 `agent.user_data_dir() / "im_credentials"`;`im_resume_dir` 类似)
-- [ ] `agent_bridge/assembly.py`:
-  - [ ] `BridgeRuntime` 加 `im_runtime: IMRuntime | None = None` 字段
-  - [ ] `build_runtime`:构造 `CredentialStore(base_dir=im_credentials_dir)` → 构造 `IMRouter(runtime, session_bridge)` → 构造 `IMRuntime(runtime, router, credentials)` → 构造 `OnboardSessionRegistry(im_runtime)` 挂在 IMRuntime 内部成员;塞到 `BridgeRuntime.im_runtime`
-- [ ] `agent_bridge/app.py`:
-  - [ ] `create_app_with_runtime`:加 `from .protocols.im import register_routes as register_im_routes` + 调用 `register_im_routes(app, runtime)`
-  - [ ] `_make_lifespan`:`agent_runtime.start()` 之后 `if runtime.im_runtime is not None: runtime.im_runtime.start()`;退出反序 `await runtime.im_runtime.stop(timeout=5.0)`
-- [ ] 验证:空绑定状态下启动 bridge,`./scripts/check` 全绿,`uv run python -m agent_bridge` 启动不崩,`GET /v1/im/providers` 返回 `[]`
-- [ ] `./scripts/check` 全绿
+- [x] `agent_bridge/settings.py`:加 IM 相关 settings(`im_enabled` 默认 True / `im_credentials_dir` 默认 `<user_data_dir>/im_credentials` / `im_resume_dir` 默认 `<user_data_dir>/im_resume`)
+- [x] `agent_bridge/assembly.py`:`BridgeRuntime` 加 `im_runtime` + `im_onboard_registry` 字段(M22.6 已加);`build_runtime` 装配 `CredentialStore` + `IMRouter`(接 `default_persona/default_model` 两个 str,不再依赖 BridgeRuntime 形态)+ `IMRuntime` + `OnboardSessionRegistry`;用 `dataclasses.replace` 把 IM 字段塞进 final BridgeRuntime
+- [x] `agent_bridge/app.py`:`create_app_with_runtime` 加 `register_im_routes(app, runtime, runtime.im_onboard_registry)`(条件:`im_onboard_registry is not None`);`_make_lifespan` 加 `im_runtime.start()`(agent_runtime 之后)/`stop(timeout=5.0)`(agent_runtime 之前)
+- [x] 验证:`AGENT_FRIEND_DATA_DIR=/tmp/xxx uv run python -c "build_runtime(BridgeSettings()) ..."` 装配成功;空绑定状态 `im_runtime.list_status() == []`
+- [x] `./scripts/check` 全绿(516 passed)
 
-**门槛**:bridge 进程在零绑定凭据下能正常启动 + lifespan 正常关闭 + REST 端点返回正确空状态。
+**门槛**:bridge 进程在零绑定凭据下能正常装配 + lifespan 正常启停 + REST 端点返回正确空状态。
 
 ### M22.8 前端 services + IMConnectDialog
 
@@ -251,3 +247,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.4 QQ Adapter + 单测 | adapters/qq.py(QQAdapter wrap qqbot-agent-sdk 4 件套 QQApiClient/QQWebSocket/EventParser/WSCallbacks · 11 个 SDK callbacks 接线 · 43xxx/11xxx 错误码 log warning · 网络异常 catch · stop 幂等 · resume token AES-GCM 同款 sha256[:16] 文件路径)+ 20 个 adapter 测试全过(全部 mock SDK,不接真 QQ gateway);./scripts/check 全绿(486 passed) |
 | 2026-06-17 | M22.5 Onboard 注册表 + IMRuntime + 单测 | onboard.py(OnboardStatus StrEnum + OnboardTaskState + OnboardSessionRegistry · async task 注册表 · 仅支持 qq);runtime.py(IMRuntime · start/stop lifespan · register_after_onboard 落盘+spawn · unbind · list_status 脱敏 · _background_stops set 持有 fire-and-forget task 防 GC);test_im_runtime_onboard.py 16 个测试全过;./scripts/check 全绿(502 passed) |
 | 2026-06-17 | M22.6 HTTP routes + register_routes | routes.py(4 个 endpoints: GET /v1/im/providers · POST /v1/im/onboard/start · GET /v1/im/onboard/{task_id} · DELETE /v1/im/providers/{type}/{bind_id})· 错误码 503/400/404/422 · pydantic OnboardStartBody Literal["qq"];__init__.py export 完整 surface;BridgeRuntime 加 im_runtime + im_onboard_registry 占位字段(M22.7 装配实际实例);test_im_routes.py 14 个测试全过;./scripts/check 全绿(516 passed) |
+| 2026-06-17 | M22.7 BridgeRuntime 装配 + app.py lifespan | settings.py 加 im_enabled/im_credentials_dir/im_resume_dir;assembly.build_runtime 装配 CredentialStore + IMRouter + IMRuntime + OnboardSessionRegistry,用 dataclasses.replace 塞 final BridgeRuntime;IMRouter 接口重构成接收 default_persona/default_model 两个 str(去除 BridgeRuntime 循环依赖);app.py lifespan 加 im_runtime.start/stop + 条件 register_im_routes;装配真跑验证 list_status==[] OK;./scripts/check 全绿(516 passed) |

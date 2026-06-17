@@ -36,17 +36,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
 
 from agent import TextDelta, TurnDone
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent
 from .event import InboundEvent
-
-if TYPE_CHECKING:
-    from ...assembly import BridgeRuntime
-
 
 __all__ = ["FALLBACK_TEXT", "IMRouter"]
 
@@ -69,14 +64,23 @@ class IMRouter:
     """IM inbound → agent 主链路 → IM outbound 的转发层。
 
     Args:
-        runtime: 进程级 :class:`BridgeRuntime`,用来读默认 persona / model。
         session_bridge: 复用现成的 :class:`SessionBridge`,走它的 persistent
             模式,session_id 由 :meth:`session_id_for` 决定。
+        default_persona: ``PersistentBootstrap.default_persona`` 用的默认人格 slug
+            (从 :class:`BridgeRuntime` 拿)。
+        default_model: ``PersistentBootstrap.default_model`` 用的默认 LLM model
+            (从 :class:`BridgeRuntime` 拿)。
     """
 
-    def __init__(self, runtime: BridgeRuntime, session_bridge: SessionBridge) -> None:
-        self._runtime = runtime
+    def __init__(
+        self,
+        session_bridge: SessionBridge,
+        default_persona: str,
+        default_model: str,
+    ) -> None:
         self._bridge = session_bridge
+        self._default_persona = default_persona
+        self._default_model = default_model
 
     def session_id_for(self, im_type: str, event: InboundEvent) -> str:
         """计算 IM inbound 应该挂在哪个 session 上。**策略扩展点**。
@@ -125,8 +129,8 @@ class IMRouter:
         boot = PersistentBootstrap(
             thread_id=session_id,
             new_user_input=event.content,
-            default_persona=self._runtime.default_persona,
-            default_model=self._runtime.default_model,
+            default_persona=self._default_persona,
+            default_model=self._default_model,
         )
 
         try:

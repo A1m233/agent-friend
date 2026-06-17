@@ -204,6 +204,61 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         memory=memory,
     )
 
+    # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
+    im_runtime: IMRuntime | None = None
+    im_onboard_registry: OnboardSessionRegistry | None = None
+    if settings.im_enabled:
+        from .protocols.im import (
+            CredentialStore,
+            IMRouter,
+        )
+        from .protocols.im import IMRuntime as _IMRuntime
+        from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
+        from .session_bridge import SessionBridge as _SessionBridge
+
+        credentials = CredentialStore(base_dir=settings.im_credentials_dir)
+        # SessionBridge 用 partial BridgeRuntime 在下一步装配后立即引用;此处先
+        # 构造 router/runtime,session_bridge 后续在装配 final BridgeRuntime 后注入。
+        # 但 IMRouter 只读 (default_persona, default_model, session_bridge);
+        # session_bridge 也只读 .persistent_session_manager + .catalog —— 都已就位。
+        # 所以我们可以**预先**构造 session_bridge,把它的 _runtime 指向后面 final 的 BridgeRuntime。
+        # 实现:用临时占位 BridgeRuntime 调 SessionBridge 构造,等 final 装配后,
+        # 由于 session_bridge 内部 self._runtime 永远引用最初传入的对象,我们需要让那个
+        # 对象就是 final BridgeRuntime。
+        # 简化:直接 first 构造 final BridgeRuntime(不含 IM),再装 IM,最后用
+        # dataclasses.replace 给 BridgeRuntime 加 IM 字段。
+        pre_runtime = BridgeRuntime(
+            settings=settings,
+            persistent_store=persistent_store,
+            transient_store=transient_store,
+            persistent_session_manager=persistent_session_manager,
+            catalog=catalog,
+            tool_registry=tool_registry,
+            prompt_builder_factory=prompt_builder_factory,
+            default_persona=default_persona,
+            default_model=default_model,
+            memory=memory,
+            agent_runtime=agent_runtime,
+        )
+        session_bridge = _SessionBridge(pre_runtime)
+        im_router = IMRouter(
+            session_bridge=session_bridge,
+            default_persona=default_persona,
+            default_model=default_model,
+        )
+        im_runtime = _IMRuntime(
+            router=im_router,
+            credentials=credentials,
+            resume_base_dir=settings.im_resume_dir,
+        )
+        im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
+        # final BridgeRuntime = pre_runtime + IM 字段
+        return dataclasses.replace(
+            pre_runtime,
+            im_runtime=im_runtime,
+            im_onboard_registry=im_onboard_registry,
+        )
+
     return BridgeRuntime(
         settings=settings,
         persistent_store=persistent_store,

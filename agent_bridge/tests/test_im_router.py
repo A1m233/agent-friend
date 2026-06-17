@@ -30,23 +30,18 @@ from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
 
 
 @pytest.fixture
-def runtime() -> MagicMock:
-    """mock BridgeRuntime,只承载 default_persona / default_model 两个 attr。"""
-    r = MagicMock()
-    r.default_persona = "default-persona"
-    r.default_model = "default-model"
-    return r
-
-
-@pytest.fixture
 def session_bridge() -> MagicMock:
     """mock SessionBridge;`bind_persistent` 返回 mock Conversation。"""
     return MagicMock()
 
 
 @pytest.fixture
-def router(runtime: MagicMock, session_bridge: MagicMock) -> IMRouter:
-    return IMRouter(runtime=runtime, session_bridge=session_bridge)
+def router(session_bridge: MagicMock) -> IMRouter:
+    return IMRouter(
+        session_bridge=session_bridge,
+        default_persona="default-persona",
+        default_model="default-model",
+    )
 
 
 def _make_event(
