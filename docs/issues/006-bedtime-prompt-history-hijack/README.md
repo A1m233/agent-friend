@@ -123,7 +123,7 @@ silent turn 本来就不冒泡到用户，这条可能没问题；但同样可�
 ## 方向 B 落地记录（2026-06-17，本 issue 闭环）
 
 - **修复需求**：[`021-system-trigger-user-injection`](../../requirements/021-system-trigger-user-injection/)（feature/021 分支）
-- **修复 commit**：`<待实施 commit 后回填>`
+- **修复 commit**：`0a90a0b`
 - **落地内容**：把 `Conversation.dispatch_system_turn` 注入路径从 `trailing_system` 切到 `trailing_user`——LLM 看到的 messages 末尾从 `role="system"` 变成 `role="user"`，user role 才是 chat-completions 协议的真正"新一轮 turn 开始"信号。配套 Claude Code 同款三层加固：
   - **协议层**：`assemble_messages` / `ContextManager.build_messages` 加 `trailing_user` 槽位，三个 context manager 透传
   - **文案层**：`DEFAULT_BEDTIME_ADDENDUM` / `DEFAULT_IDLE_ADDENDUM` 用 `<system_trigger>...</system_trigger>` tag 包裹；bedtime 文案改为 user 视角"该睡了"提示语气
