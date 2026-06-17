@@ -23,6 +23,7 @@ from fastapi import FastAPI
 
 from .assembly import BridgeRuntime, build_runtime
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
+from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
 from .routes.meta import register_routes as register_meta_routes
@@ -64,6 +65,8 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
     register_ag_ui_routes(app, runtime)
     register_meta_routes(app, runtime)
     register_push_routes(app, runtime)
+    if runtime.im_onboard_registry is not None:
+        register_im_routes(app, runtime, runtime.im_onboard_registry)
 
     if runtime.settings.dev_mode:
         from .dev.fire_source import register_routes as register_dev_fire_routes
@@ -80,9 +83,13 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if runtime.agent_runtime is not None:
             runtime.agent_runtime.start()
+        if runtime.im_runtime is not None:
+            runtime.im_runtime.start()
         try:
             yield
         finally:
+            if runtime.im_runtime is not None:
+                await runtime.im_runtime.stop(timeout=5.0)
             if runtime.agent_runtime is not None:
                 runtime.agent_runtime.stop(timeout=5.0)
             runtime.close()

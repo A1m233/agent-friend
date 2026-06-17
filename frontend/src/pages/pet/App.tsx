@@ -7,6 +7,7 @@ import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
+import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
 import { usePetLive2D } from "@/pet/usePetLive2D";
@@ -61,6 +62,8 @@ export function PetApp() {
   const [isDragging, setIsDragging] = useState(false);
   // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
+  // 022 · IM 接入面板 dialog 开关(同窗 dialog,不另开 webview)
+  const [imDialogOpen, setImDialogOpen] = useState(false);
 
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
@@ -286,10 +289,12 @@ export function PetApp() {
           onOpenChat={openChat}
           onHidePet={hidePet}
           onOpenSettings={openSettings}
+          onOpenIMConnect={() => setImDialogOpen(true)}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />
       )}
+      <IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />
     </>
   );
 }

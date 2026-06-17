@@ -19,6 +19,24 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agent import memory_db_path, personas_dir, sessions_dir
+from agent import user_data_dir as _user_data_dir
+
+
+def _im_credentials_dir() -> Path:
+    """默认 IM 凭据存储目录:``<user_data_dir>/im_credentials/``。
+
+    AES-GCM 加密落盘,跟 sessions/ memory/ personas/ 同级。
+    """
+    return _user_data_dir() / "im_credentials"
+
+
+def _im_resume_dir() -> Path:
+    """默认 IM resume token 目录:``<user_data_dir>/im_resume/``。
+
+    SDK 自管的 WebSocket session_id + last_seq 用于断线 Resume;
+    不是凭据(无需加密),纯 json 落盘。
+    """
+    return _user_data_dir() / "im_resume"
 
 
 class BridgeSettings(BaseSettings):
@@ -56,6 +74,22 @@ class BridgeSettings(BaseSettings):
     memory_db: Path = Field(default_factory=memory_db_path)
     personas_dir: Path = Field(default_factory=personas_dir)
     memory_enabled: bool = True
+
+    # 022:IM 通道相关
+    im_enabled: bool = True
+    """是否启用 IM 通道(``protocols/im/``)。默认 ``True``——本进程启动时
+    :class:`IMRuntime` 装配 + 加载已绑定凭据 + lifespan start/stop。
+
+    置 ``False`` 时 ``BridgeRuntime.im_runtime`` 保持 ``None``,``/v1/im/*``
+    路由全部 503;便于纯 OpenAI / AG-UI 出口测试或排查时禁用 IM。"""
+
+    im_credentials_dir: Path = Field(default_factory=_im_credentials_dir)
+    """IM 凭据 AES-GCM 加密落盘目录;默认 ``<user_data_dir>/im_credentials/``,
+    可用 ``AGENT_BRIDGE_IM_CREDENTIALS_DIR`` 覆盖(测试 / sandbox 用)。"""
+
+    im_resume_dir: Path = Field(default_factory=_im_resume_dir)
+    """IM SDK Resume token(WebSocket session_id + last_seq)落盘目录;
+    默认 ``<user_data_dir>/im_resume/``,不加密。"""
 
     # 014：main loop / push 通道相关
     dev_mode: bool = False

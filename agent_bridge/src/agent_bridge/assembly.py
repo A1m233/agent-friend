@@ -17,6 +17,7 @@ import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
@@ -36,6 +37,9 @@ from memory import Memory, build_memory
 
 from .agent_runtime_factory import build_agent_runtime
 from .settings import BridgeSettings
+
+if TYPE_CHECKING:
+    from .protocols.im import IMRuntime, OnboardSessionRegistry
 
 
 def _make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSpec:
@@ -118,6 +122,18 @@ class BridgeRuntime:
     :meth:`AgentRuntime.start` / :meth:`stop`。``None`` 仅在过渡期 /
     测试 fixture 不需要 main loop 时出现。
     """
+    im_runtime: IMRuntime | None = None
+    """022 起新增:进程级 :class:`agent_bridge.protocols.im.IMRuntime`,
+    管理 IM 长连(QQ / 未来飞书 / TG)。``None`` 表示本进程未启用 IM 通道
+    (例如 OpenAI 无状态分支或测试 fixture)。
+
+    在 :func:`build_runtime` 装配,由 FastAPI lifespan 调用 :meth:`IMRuntime.start`
+    /:meth:`stop`,与 :attr:`agent_runtime` 生命周期对齐。
+    """
+    im_onboard_registry: OnboardSessionRegistry | None = None
+    """022 起新增:进程级 IM 扫码 onboard 异步 task 注册表。
+    跟 :attr:`im_runtime` 一起装配,供 ``/v1/im/onboard/*`` 路由用。
+    """
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -170,13 +186,24 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
-    tool_registry = make_default_registry()
+    # 020:传 persistent_store → 注册 recall_past_chats 工具,让 LLM 能跨 session
+    # 翻历史对话(否则 IM session 这种新 session 撞到"recall_past_chats 未注册"错误)。
+    tool_registry = make_default_registry(session_store=persistent_store)
     default_persona = catalog.find_by_name("default").name
     default_model = _make_spec_with_thinking_off().model
 
     memory: Memory | None = None
     if settings.memory_enabled:
-        memory = build_memory(settings.memory_db, _llm_factory(default_model))
+        # 022 hot-fix(issue 016):pinned_relevance_gate=False 让身份核心 pinned 始终注入。
+        # 默认 lenient gate 在"你还记得我吗" / "我们之前聊过什么"这类只表达记忆查询意图、
+        # 不含身份关键词的 query 上,会把"用户叫 Alex"误判为不相关过滤掉,导致 agent
+        # 体感"失忆"(违反决策 0001 §1.3 "记忆是第一护城河"原则)。完整 root cause +
+        # 长期方案见 docs/issues/016-memory-pinned-gate-misses-identity/。
+        memory = build_memory(
+            settings.memory_db,
+            _llm_factory(default_model),
+            pinned_relevance_gate=False,
+        )
 
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store, tool_registry, memory, prompt_builder_factory
@@ -187,6 +214,61 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         session_manager=persistent_session_manager,
         memory=memory,
     )
+
+    # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
+    im_runtime: IMRuntime | None = None
+    im_onboard_registry: OnboardSessionRegistry | None = None
+    if settings.im_enabled:
+        from .protocols.im import (
+            CredentialStore,
+            IMRouter,
+        )
+        from .protocols.im import IMRuntime as _IMRuntime
+        from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
+        from .session_bridge import SessionBridge as _SessionBridge
+
+        credentials = CredentialStore(base_dir=settings.im_credentials_dir)
+        # SessionBridge 用 partial BridgeRuntime 在下一步装配后立即引用;此处先
+        # 构造 router/runtime,session_bridge 后续在装配 final BridgeRuntime 后注入。
+        # 但 IMRouter 只读 (default_persona, default_model, session_bridge);
+        # session_bridge 也只读 .persistent_session_manager + .catalog —— 都已就位。
+        # 所以我们可以**预先**构造 session_bridge,把它的 _runtime 指向后面 final 的 BridgeRuntime。
+        # 实现:用临时占位 BridgeRuntime 调 SessionBridge 构造,等 final 装配后,
+        # 由于 session_bridge 内部 self._runtime 永远引用最初传入的对象,我们需要让那个
+        # 对象就是 final BridgeRuntime。
+        # 简化:直接 first 构造 final BridgeRuntime(不含 IM),再装 IM,最后用
+        # dataclasses.replace 给 BridgeRuntime 加 IM 字段。
+        pre_runtime = BridgeRuntime(
+            settings=settings,
+            persistent_store=persistent_store,
+            transient_store=transient_store,
+            persistent_session_manager=persistent_session_manager,
+            catalog=catalog,
+            tool_registry=tool_registry,
+            prompt_builder_factory=prompt_builder_factory,
+            default_persona=default_persona,
+            default_model=default_model,
+            memory=memory,
+            agent_runtime=agent_runtime,
+        )
+        session_bridge = _SessionBridge(pre_runtime)
+        im_router = IMRouter(
+            session_bridge=session_bridge,
+            default_persona=default_persona,
+            default_model=default_model,
+        )
+        im_runtime = _IMRuntime(
+            router=im_router,
+            credentials=credentials,
+            resume_base_dir=settings.im_resume_dir,
+        )
+        im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
+        # final BridgeRuntime = pre_runtime + IM 字段
+        return dataclasses.replace(
+            pre_runtime,
+            im_runtime=im_runtime,
+            im_onboard_registry=im_onboard_registry,
+        )
 
     return BridgeRuntime(
         settings=settings,
