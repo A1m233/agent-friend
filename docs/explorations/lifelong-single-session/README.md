@@ -3,7 +3,8 @@
 > 沉淀"终身单会话 + agent 自管 GC（睡眠隐喻）"方向的多轮讨论。
 > 本文件是当前快照，会随讨论推进追加 / 修订。
 >
-> 当前快照：2026-06-16 · 首轮讨论沉淀
+> 当前快照：2026-06-17 · 增补 §9 业界参考方案对照（外部方案备查，不更新前文取舍）
+> 历史：2026-06-16 · 首轮讨论沉淀
 
 ---
 
@@ -230,3 +231,74 @@ flowchart LR
 - **当某条 Still Open 收敛到能拍板时**：评估是否进 `docs/decisions/`（涉及产品哲学层）或者直接立项 `docs/requirements/<id>/`（具体功能落地）
 - **真要立项时**：新建 `docs/requirements/0XX-lifelong-session-mode/`（或类似命名），其 `requirement.md` 引用本 exploration 作为思考过程，但结论 single source of truth 必须在 requirement / design 里。**且必须在 requirement §1 明确写"这是一种 mode，不是替换多 session"**
 - **本文件本身**：随讨论推进追加 / 修订；不强制"出栏台账"格式（参见 [`../README.md`](../README.md)）
+
+---
+
+## 9. 业界参考方案对照（2026-06-17 增补）
+
+> 本节是**外部方案备查**，不构成决策，也不更新前文取舍。每条记录"业界做法 / 与本探索的关系 / 可借鉴点"，便于后续 Still Open 收敛时回查。来源汇总见 §9.6。
+
+### 9.1 主流方案速览
+
+| 方案 | 核心做法 | 与本探索的关系 |
+| --- | --- | --- |
+| **cc（Claude Code）** | 9 段式 structured summary、user 消息逐字保留、`<analysis>` 草稿纸 trick、`maxTurns=1` 摘要、循环熔断 | §3.2 选择反向取舍（不保留 user 逐字）；§3.1.2 投机草稿与 `<analysis>` 同构；摘要工程细节可直接借鉴 |
+| **MemGPT / Letta** | OS 分页式：main context vs external context，LLM 自管页面进出 | §3.3 `memory_recall` 工具 ≈ MemGPT 的 archival 翻页；本探索更倾向 prompt 引导而非工具自管"何时翻" |
+| **Mem0** | 抽取 → 压缩 → 多信号检索（语义 + 关键词 + 实体融合）；自测比 25k token full-context 便宜 3-4 倍 | 与 [memory §3.2-3.3](../memory/) extraction + interface 召回同向；多信号检索策略可借鉴 |
+| **Zep / Graphiti** | 时序知识图谱：实体 + 关系，每条事实带 `valid_at` / `invalid_at`；事实冲突时**关闭旧事实而非覆盖** | [memory §5](../memory/) schema 已预留 `valid_from` / `valid_until`；冲突更新策略尚未敲定，Zep 模式可参考 |
+| **Character.AI** | 2026-04/05 *Smarter Memory*：Story Memory + Facts + Memory Usage 三件套；用户可见、可主动告知 | 印证 §1 "百万 token 模型时代也需主动整理"；告知策略与本探索 §6.4 倾向相反，参见 §9.3 |
+| **Generative Agents（Stanford 2023）** | 记忆流 + 重要性打分 + reflection 循环 | 与 [memory §3.4](../memory/) reflection 留位同源 |
+| **Replika / 国内星野 / Talkie / Glow** | 公开技术细节少；UI 多接近"一条线"，但工程上不会真把原始消息塞 prompt | 间接印证 §1 "用户视角一条线 ≠ 实现层真单 session"；具体记忆架构无可参考材料 |
+
+### 9.2 共识 vs 本探索的关键差异
+
+**production 方案的共识**：
+
+- **保留"最近 K 轮 user 消息原文"** —— cc / Character.AI / Mem0 / MemGPT 一致选择，理由是"转述会让用户意图漂移"
+- **不裸长上下文** —— 即使百万 token 模型，没人靠纯堆叠（Character.AI 自己印证）
+- **lost-in-the-middle** —— Liu et al. 2023 已成共识：中段信息利用率 U 形下降
+
+**本探索与共识不同的取舍**：
+
+- **§3.2 完全清空 history、不保留最近 K 轮 user 原文** —— 网上未见同样取向的 production 方案。本探索的兜底是 §3.3 `memory_recall` 工具 + 摘要的"远近梯度"权重。这条**有内在自洽性**，但缺先例，落地时需 eval 重点验证；§6.5 Still Open 即对应该问题
+- **"睡眠"作为 GC 隐喻** —— Replika 有"梦"概念但只作 engagement gimmick，不是 GC 语义。本探索把"记忆有损"从技术缺陷重述为人与 agent 共享的自然语义，**对内（工程纪律）和对外（产品 narrative）都有差异化价值**
+
+### 9.3 可借鉴的工程细节
+
+按"落地时直接抄"维度记录：
+
+- **`<analysis>` 草稿纸 trick**（cc）：摘要前先在 `<analysis>` 标签里梳理时间线，最终 prompt strip 掉只留 `<summary>`；与 §3.1.2 投机草稿模式天然契合
+- **摘要调用 `maxTurns=1` + 禁用所有 tool**（cc）：避免摘要 LLM 误进工具循环
+- **熔断**（cc）：连续失败 3 次放弃；与 §4 工程红线"失败 → 推迟睡眠 / 重试 / 告警"对应
+- **多信号检索**（Mem0）：语义 + 关键词 + 实体三路融合，比单路向量召回稳；可用于 §3.3 `memory_recall` 工具的查询面设计（与 [memory §6.6](../memory/) Embedding 策略 Still Open 配套）
+- **事实冲突的"关闭"策略**（Zep）：用 `valid_until` 关闭旧事实而非覆盖，比 hard update 更可追溯；与 [memory §5](../memory/) 已预留的 `valid_from` / `valid_until` 字段配套使用
+
+### 9.4 eval 路径参考
+
+§5.6 担忧"造合成长对话 + 多次睡眠 probe"无现成数据集——实际公开 benchmark 已经存在：
+
+- **LongMemEval**（2024）：长对话场景下的 QA 评测，覆盖 information extraction、multi-session reasoning、knowledge update 等维度
+- **LoCoMo**（Snap, 2024）：multi-session conversation benchmark，含跨多轮对话的 long-term memory 推理题
+
+可作为 `memory_eval/` 扩展的现成起点，无需从零造合成长对话场景。
+
+### 9.5 启示一览（不构成决策）
+
+仅作 Still Open 回查时的备查：
+
+1. **§6.5 摘要 prompt 设计**：业界共识"最近 K 条 user 消息逐字"是个折中点；§3.2 激进路线没有先例，落地前建议做小规模双盲对照
+2. **§6.6 `memory_recall` 工具查询接口**：Mem0 多信号检索（语义 + 关键词 + 实体）比单一向量检索稳；episodic 指针之外可补语义入口
+3. **memory 事实冲突更新策略**：Zep 的"关闭旧事实而非覆盖" 提供一种比直接 update 更可追溯的模式（适合落地时再细化，schema 字段已就位）
+4. **eval 起点**：先跑 LongMemEval / LoCoMo 现成数据集，再决定要不要自建合成长对话场景
+5. **"睡眠"作为产品 surface 的告知策略**：本探索 §6.4 倾向"自然不告知"；Character.AI 选择主动告知。两种都有合理性，长期看是 persona / UX A/B 问题，不在 sleep 机制层解决
+
+### 9.6 来源
+
+- [MemGPT paper (arXiv:2310.08560)](https://arxiv.org/abs/2310.08560)
+- [Letta / MemGPT GitHub](https://github.com/cpacker/MemGPT)
+- [Letta blog: MemGPT and Letta](https://www.letta.com/blog/memgpt-and-letta)
+- [Mem0](https://mem0.ai) · [Mem0 Research / Benchmarks](https://mem0.ai/research)
+- [Zep / Graphiti GitHub](https://github.com/getzep/zep)
+- [Character.AI Blog](https://blog.character.ai/)
+- [Lost in the Middle (Liu et al. 2023, arXiv:2307.03172)](https://arxiv.org/abs/2307.03172)
+- [Generative Agents (Park et al. 2023, arXiv:2304.03442)](https://arxiv.org/abs/2304.03442)
