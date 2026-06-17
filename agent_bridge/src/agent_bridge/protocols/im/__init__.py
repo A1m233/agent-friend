@@ -18,3 +18,28 @@
 
 详见 docs/requirements/022-im-channel-and-qq-adapter/design.md。
 """
+
+from .content import OutboundContent
+from .credentials import CredentialStore, ImCredential
+from .event import InboundEvent
+from .onboard import OnboardSessionRegistry, OnboardStatus, OnboardTaskState
+from .provider import IMProvider, ProviderStatus
+from .router import IMRouter
+from .routes import register_routes
+from .runtime import IMRuntime, ProviderInfo
+
+__all__ = [
+    "CredentialStore",
+    "IMProvider",
+    "IMRouter",
+    "IMRuntime",
+    "ImCredential",
+    "InboundEvent",
+    "OnboardSessionRegistry",
+    "OnboardStatus",
+    "OnboardTaskState",
+    "OutboundContent",
+    "ProviderInfo",
+    "ProviderStatus",
+    "register_routes",
+]

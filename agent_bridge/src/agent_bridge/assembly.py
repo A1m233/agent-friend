@@ -17,6 +17,7 @@ import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
@@ -36,6 +37,9 @@ from memory import Memory, build_memory
 
 from .agent_runtime_factory import build_agent_runtime
 from .settings import BridgeSettings
+
+if TYPE_CHECKING:
+    from .protocols.im import IMRuntime, OnboardSessionRegistry
 
 
 def _make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSpec:
@@ -117,6 +121,18 @@ class BridgeRuntime:
     在 :func:`build_runtime` 中装配；由 FastAPI lifespan 调用
     :meth:`AgentRuntime.start` / :meth:`stop`。``None`` 仅在过渡期 /
     测试 fixture 不需要 main loop 时出现。
+    """
+    im_runtime: IMRuntime | None = None
+    """022 起新增:进程级 :class:`agent_bridge.protocols.im.IMRuntime`,
+    管理 IM 长连(QQ / 未来飞书 / TG)。``None`` 表示本进程未启用 IM 通道
+    (例如 OpenAI 无状态分支或测试 fixture)。
+
+    在 :func:`build_runtime` 装配,由 FastAPI lifespan 调用 :meth:`IMRuntime.start`
+    /:meth:`stop`,与 :attr:`agent_runtime` 生命周期对齐。
+    """
+    im_onboard_registry: OnboardSessionRegistry | None = None
+    """022 起新增:进程级 IM 扫码 onboard 异步 task 注册表。
+    跟 :attr:`im_runtime` 一起装配,供 ``/v1/im/onboard/*`` 路由用。
     """
 
     def make_transient_session_manager(self) -> SessionManager:

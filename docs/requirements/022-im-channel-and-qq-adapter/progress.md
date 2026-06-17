@@ -135,16 +135,16 @@ IN_PROGRESS
 
 > 完成后 `/v1/im/*` 四个端点可通过 FastAPI TestClient 调通(还没接到 app.py)。
 
-- [ ] `protocols/im/routes.py`:
-  - [ ] pydantic `OnboardStartBody`(`im_type: Literal["qq"]`)
-  - [ ] `register_routes(app: FastAPI, runtime: BridgeRuntime)`:`APIRouter(prefix="/v1/im", tags=["im"])`
-  - [ ] `GET /providers` → `runtime.im_runtime.list_status()` 序列化;`im_runtime is None` 时 `503`
-  - [ ] `POST /onboard/start` → `runtime.im_runtime._onboard.start(body.im_type)` 返回 `{task_id}`;`im_type` 不支持时 400
-  - [ ] `GET /onboard/{task_id}` → `OnboardTaskState` 序列化;不存在时 404
-  - [ ] `DELETE /providers/{im_type}/{bind_id}` → `runtime.im_runtime.unbind(im_type, bind_id)` 返回 `{ok: True}`
-- [ ] `protocols/im/__init__.py`:export `register_routes` / `IMRuntime` / `IMRouter` / `IMProvider` / `InboundEvent` / `OutboundContent` / `ImCredential` / `CredentialStore`
-- [ ] 选做:`agent_bridge/tests/test_im_routes.py` 用 FastAPI TestClient 验证四个端点的 status code + response shape(mock im_runtime;可省略,但留个 happy path 防回归更稳)
-- [ ] `./scripts/check` 全绿
+- [x] `protocols/im/routes.py`:
+  - [x] pydantic `OnboardStartBody`(`im_type: Literal["qq"]`)
+  - [x] `register_routes(app: FastAPI, runtime: BridgeRuntime, onboard_registry)`:`APIRouter(prefix="/v1/im", tags=["im"])`
+  - [x] `GET /providers` → `runtime.im_runtime.list_status()` 序列化;`im_runtime is None` 时 `503`
+  - [x] `POST /onboard/start` → `runtime.im_runtime._onboard.start(body.im_type)` 返回 `{task_id}`;`im_type` 不支持时 400
+  - [x] `GET /onboard/{task_id}` → `OnboardTaskState` 序列化;不存在时 404
+  - [x] `DELETE /providers/{im_type}/{bind_id}` → `runtime.im_runtime.unbind(im_type, bind_id)` 返回 `{ok: True, found: True/False}`
+- [x] `protocols/im/__init__.py`:export `register_routes` / `IMRuntime` / `IMRouter` / `IMProvider` / `InboundEvent` / `OutboundContent` / `ImCredential` / `CredentialStore`
+- [x] `agent_bridge/tests/test_im_routes.py` 14 个测试用 FastAPI TestClient 验证四个端点 + 错误码
+- [x] `./scripts/check` 全绿
 
 **门槛**:routes 文件落地 + register_routes 形态对齐其他 protocol。
 
@@ -250,3 +250,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.3 IMRouter + 单测 | router.py(IMRouter + session_id_for f"im:{type}:{chat_id}" 策略点 + handle_inbound asyncio.to_thread 跑同步 stream + TextDelta 聚合 + Conv.stream 异常走 FALLBACK_TEXT)+ 12 个 router 测试全过;./scripts/check 全绿(466 passed) |
 | 2026-06-17 | M22.4 QQ Adapter + 单测 | adapters/qq.py(QQAdapter wrap qqbot-agent-sdk 4 件套 QQApiClient/QQWebSocket/EventParser/WSCallbacks · 11 个 SDK callbacks 接线 · 43xxx/11xxx 错误码 log warning · 网络异常 catch · stop 幂等 · resume token AES-GCM 同款 sha256[:16] 文件路径)+ 20 个 adapter 测试全过(全部 mock SDK,不接真 QQ gateway);./scripts/check 全绿(486 passed) |
 | 2026-06-17 | M22.5 Onboard 注册表 + IMRuntime + 单测 | onboard.py(OnboardStatus StrEnum + OnboardTaskState + OnboardSessionRegistry · async task 注册表 · 仅支持 qq);runtime.py(IMRuntime · start/stop lifespan · register_after_onboard 落盘+spawn · unbind · list_status 脱敏 · _background_stops set 持有 fire-and-forget task 防 GC);test_im_runtime_onboard.py 16 个测试全过;./scripts/check 全绿(502 passed) |
+| 2026-06-17 | M22.6 HTTP routes + register_routes | routes.py(4 个 endpoints: GET /v1/im/providers · POST /v1/im/onboard/start · GET /v1/im/onboard/{task_id} · DELETE /v1/im/providers/{type}/{bind_id})· 错误码 503/400/404/422 · pydantic OnboardStartBody Literal["qq"];__init__.py export 完整 surface;BridgeRuntime 加 im_runtime + im_onboard_registry 占位字段(M22.7 装配实际实例);test_im_routes.py 14 个测试全过;./scripts/check 全绿(516 passed) |
