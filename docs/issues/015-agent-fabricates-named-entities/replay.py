@@ -172,7 +172,9 @@ for ev in conv.stream(USER_INPUT):
         sys.stdout.write(f"[TOOL_RESULT] {snippet}\n\n")
         sys.stdout.flush()
     elif isinstance(ev, TurnDone):
-        sys.stdout.write(f"\n\n[TURN_DONE] stop={ev.stop_reason} · tool_calls={ev.total_tool_calls}\n")
+        sys.stdout.write(
+            f"\n\n[TURN_DONE] stop={ev.stop_reason} · tool_calls={ev.total_tool_calls}\n"
+        )
         sys.stdout.flush()
 
 print()
