@@ -10,8 +10,8 @@
 2. **跑一轮 Conversation**(:meth:`_run_turn_sync`):
    走现成的 :meth:`SessionBridge.bind_persistent` 拿 :class:`Conversation`,
    消费 ``conv.stream`` 同步 generator,聚合 :class:`TextDelta` 文本到 buffer,
-   :class:`TurnDone` 中断。``ToolCallRequest`` / ``ToolCallResult`` 在 agent
-   主链路自处理,IM 通道**不感知**(本期范围)。
+   等 stream 自然结束。``ToolCallRequest`` / ``ToolCallResult`` 在 agent 主链路
+   自处理,IM 通道**不感知**(本期范围)。
 
 3. **同步 generator 跑在线程池**(:meth:`handle_inbound`):
    ``Conversation.stream`` 是同步 generator(详见 ``agent.Conversation`` 设计),
@@ -37,7 +37,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
-from agent import TextDelta, TurnDone
+from agent import TextDelta
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent
@@ -173,7 +173,9 @@ class IMRouter:
         for ev in conv.stream(boot.new_user_input):
             if isinstance(ev, TextDelta):
                 buf.append(ev.text)
-            elif isinstance(ev, TurnDone):
-                break
+            # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
+            # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
+            # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
+            # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
             # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
         return "".join(buf)

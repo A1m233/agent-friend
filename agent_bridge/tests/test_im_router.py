@@ -149,15 +149,34 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
 
 
 @pytest.mark.asyncio
-async def test_turn_done_stops_aggregation(router: IMRouter, session_bridge: MagicMock) -> None:
-    """``TurnDone`` 之后的事件不进入 buffer。"""
-    session_bridge.bind_persistent.return_value = _make_conv(
-        [
-            TextDelta(text="early"),
-            TurnDone(),
-            TextDelta(text="should-not-appear"),
-        ]
-    )
+async def test_text_aggregated_until_generator_exhausts(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    """不在 TurnDone 处 break,让 generator 自然耗尽。
+
+    设计约定:跟 ag_ui/openai encoder 同款,for ev in stream 不 break — 否则
+    Conversation.stream 的 finally 会把 GeneratorExit 误判为业务中断,落一份
+    partial=True 的 assistant_event,LLM 下一轮自洽地把回复说两遍(issue 由
+    022 真跑发现并已修)。
+    """
+    exhausted = False
+    closed_early = False
+
+    def stream(_user_input: str) -> Any:
+        nonlocal exhausted, closed_early
+        try:
+            yield TextDelta(text="part1 ")
+            yield TextDelta(text="part2")
+            yield TurnDone()
+        except GeneratorExit:
+            closed_early = True
+            raise
+        else:
+            exhausted = True
+
+    conv = MagicMock()
+    conv.stream.side_effect = stream
+    session_bridge.bind_persistent.return_value = conv
 
     captured: list[OutboundContent] = []
 
@@ -165,7 +184,9 @@ async def test_turn_done_stops_aggregation(router: IMRouter, session_bridge: Mag
         captured.append(c)
 
     await router.handle_inbound("qq", _make_event(), send)
-    assert captured[0].text == "early"
+    assert captured[0].text == "part1 part2"
+    assert exhausted is True
+    assert closed_early is False
 
 
 # ---------- 异常兜底 ----------
