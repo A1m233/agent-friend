@@ -33,17 +33,17 @@ IN_PROGRESS
 
 > 落地后`event.py` / `content.py` / `provider.py` / `credentials.py` 四个文件可独立 import 跑测,不依赖其他后续模块。
 
-- [ ] `protocols/im/event.py`:`from qqbot_agent_sdk import InboundEvent as _SDKInboundEvent; InboundEvent = _SDKInboundEvent`(直接借用 SDK 的 platform-agnostic shape);加 docstring 说明"未来若第二条 adapter 不基于 qqbot-agent-sdk,这里改成 protocol-internal dataclass"
-- [ ] `protocols/im/content.py`:`OutboundContent` frozen dataclass(`chat_id` / `chat_scope` / `text` / `reply_to_message_id`)
-- [ ] `protocols/im/provider.py`:`IMProvider` Protocol(`type` / `bind_id` / `start` / `send` / `stop` / `status`)+ `Status = Literal["active", "degraded", "error", "stopped"]`
-- [ ] `protocols/im/credentials.py`:`ImCredential` dataclass + `CredentialStore`(`_derive_key` / `save` / `list_all` / `delete` / `_path_for` / `_load`);base_dir 由调用方注入(测试时注 tmp 目录,生产用 `agent.user_data_dir() / "im_credentials"`)
-- [ ] `agent_bridge/tests/test_im_credentials.py`:
-  - [ ] `save → list_all` round-trip:保存 1 个 cred,list 出来字段完全一致
-  - [ ] `save` 2 个 → `list_all` 2 个,删 1 个 → `list_all` 1 个
-  - [ ] `_derive_key` 同输入 same machine 同输出
-  - [ ] wrong key 解密失败时 `list_all` 跳过(不抛)
-  - [ ] 文件名 hash 路径稳定(`qq_<bind_id_hash[:16]>.json.enc`)
-- [ ] `./scripts/check` 全绿
+- [x] `protocols/im/event.py`:`from qqbot_agent_sdk.event_parser import InboundEvent`(直接借用 SDK 的 platform-agnostic shape);加 docstring 说明"未来若第二条 adapter 不基于 qqbot-agent-sdk,这里改成 protocol-internal dataclass"
+- [x] `protocols/im/content.py`:`OutboundContent` frozen dataclass(`chat_id` / `chat_scope` / `text` / `reply_to_message_id`)
+- [x] `protocols/im/provider.py`:`IMProvider` Protocol(`type` / `bind_id` / `start` / `send` / `stop` / `status`)+ `ProviderStatus = Literal["active", "degraded", "error", "stopped"]`
+- [x] `protocols/im/credentials.py`:`ImCredential` dataclass + `CredentialStore`(`_derive_key` / `save` / `list_all` / `delete` / `_path_for` / `_load`);base_dir 由调用方注入(测试时注 tmp 目录,生产用 `agent.user_data_dir() / "im_credentials"`)
+- [x] `agent_bridge/tests/test_im_credentials.py`:
+  - [x] `save → list_all` round-trip:保存 1 个 cred,list 出来字段完全一致
+  - [x] `save` 2 个 → `list_all` 2 个,删 1 个 → `list_all` 1 个
+  - [x] `_derive_key` 同输入 same machine 同输出
+  - [x] wrong key 解密失败时 `list_all` 跳过(不抛)
+  - [x] 文件名 hash 路径稳定(`qq_<bind_id_hash[:16]>.json.enc`)
+- [x] `./scripts/check` 全绿
 
 **门槛**:四个模块文件创建 + credentials 单测全过 + lint/typecheck 不退化。
 
@@ -241,3 +241,4 @@ IN_PROGRESS
 | 日期 | 完成内容 | 备注 |
 |------|---------|------|
 | 2026-06-17 | M22.1 依赖装配 + 模块脚手架 | qqbot-agent-sdk 1.2.2 + cryptography>=42 装齐;protocols/im/ 与 adapters/ 子目录 `__init__.py` 落地;rebase 上 origin/main 把 pre-existing lint fix 纳入 baseline |
+| 2026-06-17 | M22.2 数据类型 + 凭据加密 + 单测 | event.py(re-export SDK InboundEvent)/ content.py(OutboundContent)/ provider.py(IMProvider Protocol)/ credentials.py(AES-GCM + 用户名+主机名 derive key + 原子写)+ 16 个 credentials 测试全过;./scripts/check 全绿(454 passed) |
