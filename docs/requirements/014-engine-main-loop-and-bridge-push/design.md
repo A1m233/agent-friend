@@ -595,6 +595,14 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset({
 
 老 session 文件无新 type，回放完全兼容。
 
+### 6.2 后续架构调整：trailing_system → trailing_user（021）
+
+014 当年（2026-06-12）`dispatch_system_turn` 第 2 步选用 `trailing_system` 注入路径（即把 `system_prompt_addendum` 包成 `role="system"` 接在 history 末尾发给 LLM），在 M14.8 真跑下表现正常。但 015 端到端真跑 + [`issue 006`](../../issues/006-bedtime-prompt-history-hijack/) 复现暴露：当 session history 末尾是上一轮 assistant（尤其含问号），DeepSeek 把 trailing_system 当"现有对话的额外提示"消化、续写 assistant 上文，**不**触发新一轮 turn 切换。
+
+详见 [`issue 006`](../../issues/006-bedtime-prompt-history-hijack/) 与 [`021 需求`](../021-system-trigger-user-injection/)。021 把注入路径切到 `trailing_user`（user role 是 chat-completions 协议的真正 turn 切换信号），配套 `<system_trigger>` tag 包裹 + `project_identity.md` 加 tag 识别元规则，三层加固缓解归因漂移。
+
+本节 §6 第 2 步的 `self._assemble(trailing_system=system_prompt_addendum)` **已被 021 替换为** `self._assemble(trailing_user=system_prompt_addendum)`；其余步骤（marker 落盘、两条 visibility 分支、自构 fragment 喂 memory）形态完全不变——本节其它描述仍然有效。
+
 ---
 
 ## 7. _observe_turn 迁移（去硬编码 → PostTurn 默认 hook）

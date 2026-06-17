@@ -225,6 +225,49 @@ def test_under_threshold_no_compaction() -> None:
     assert result.notes.get("compacted") in (None, False)
 
 
+def test_summarizing_passes_trailing_user() -> None:
+    """021：SummarizingContextManager 在折叠 / 摘要 / 兜底三条路径下均透传 trailing_user 到末尾。"""
+    # 路径 1：未触发摘要（折叠 / 直接返回）
+    llm = _FakeLLM()
+    cm = SummarizingContextManager()
+    history = _turns(2, 20)
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        trailing_user="ADDENDUM",
+        runtime=_runtime(llm, window=100_000),
+    )
+    assert result.messages[-1].role == "user"
+    assert result.messages[-1].content == "ADDENDUM"
+
+    # 路径 2：触发摘要（仍要保留 trailing_user 在末尾）
+    llm = _FakeLLM()
+    cm = SummarizingContextManager()
+    history = _turns(6, 60)
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        trailing_user="ADDENDUM",
+        runtime=_runtime(llm, window=100),
+    )
+    assert result.new_compaction is not None
+    assert result.messages[-1].role == "user"
+    assert result.messages[-1].content == "ADDENDUM"
+
+    # 路径 3：跳闸退化到 FIFO 兜底（仍要保留 trailing_user 在末尾）
+    cm = SummarizingContextManager(max_failures=1)
+    cm._tripped = True  # 直接强制跳闸，触发 _fallback_result 路径
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        trailing_user="ADDENDUM",
+        runtime=_runtime(_FakeLLM(), window=100_000),
+    )
+    assert result.notes.get("fell_back") is True
+    assert result.messages[-1].role == "user"
+    assert result.messages[-1].content == "ADDENDUM"
+
+
 def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()

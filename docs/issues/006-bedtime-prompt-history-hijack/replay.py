@@ -83,6 +83,8 @@ print()
 
 import dataclasses  # noqa: E402
 
+from agent.runtime.sources import DEFAULT_BEDTIME_ADDENDUM  # noqa: E402
+
 from agent import (  # noqa: E402
     JsonlSessionStore,
     MarkdownPromptBuilder,
@@ -93,7 +95,6 @@ from agent import (  # noqa: E402
     make_default_registry,
     sessions_dir,
 )
-from agent.runtime.sources import DEFAULT_BEDTIME_ADDENDUM  # noqa: E402
 from llm_providers import LLMClient, ProviderSpec  # noqa: E402
 
 
@@ -154,7 +155,9 @@ for ev in conv.dispatch_system_turn(
         sys.stdout.flush()
         text_buf.append(ev.text)
     elif isinstance(ev, TurnDone):
-        sys.stdout.write(f"\n\n[TURN_DONE] stop={ev.stop_reason} · tool_calls={ev.total_tool_calls}\n")
+        sys.stdout.write(
+            f"\n\n[TURN_DONE] stop={ev.stop_reason} · tool_calls={ev.total_tool_calls}\n"
+        )
         sys.stdout.flush()
 
 full_text = "".join(text_buf).strip()
@@ -162,7 +165,7 @@ print()
 print("=" * 70)
 print("[summary]")
 print(f"  output 字符数:   {len(full_text)}")
-print(f"  output 全文:")
+print("  output 全文:")
 print(f"    {full_text!r}")
 print()
 

@@ -51,7 +51,7 @@ print("=" * 78)
 print("AI 在剧本里复述「你说过 X」时，X 就是下面这些 fake 内容——**不是编造**，")
 print("是工具按预期从 fake 历史里捞出来的。验收时把 AI 引用的内容对照下方 fake 数据。")
 print(f"  · 隔离目录（本次写入）: {TMP_DATA}")
-print(f"  · 真实数据目录（未动）: ~/Library/Application Support/agent-friend/sessions")
+print("  · 真实数据目录（未动）: ~/Library/Application Support/agent-friend/sessions")
 print("=" * 78)
 print()
 
@@ -135,7 +135,11 @@ _write_session(
     "小狗",
     [
         ("user", "小狗最近不太爱吃饭，已经两天了。", 10),
-        ("assistant", "可能是肠胃不舒服，最近天气热也容易这样。先把饭温热一下试试，不行就带医院看看。", 30),
+        (
+            "assistant",
+            "可能是肠胃不舒服，最近天气热也容易这样。先把饭温热一下试试，不行就带医院看看。",
+            30,
+        ),
     ],
 )
 
@@ -271,19 +275,13 @@ for title, user_input, acs in SCRIPTS:
                 text_buf.append(ev.text)
             elif isinstance(ev, ToolCallRequest):
                 tool_calls.append({"name": ev.tool_name, "args": ev.args})
-                print(
-                    f"\n[TOOL_CALL] {ev.tool_name}("
-                    f"{json.dumps(ev.args, ensure_ascii=False)})"
-                )
+                print(f"\n[TOOL_CALL] {ev.tool_name}({json.dumps(ev.args, ensure_ascii=False)})")
             elif isinstance(ev, ToolCallResult):
                 snippet = ev.text[:300].replace("\n", " ")
                 more = "..." if len(ev.text) > 300 else ""
                 print(f"[TOOL_RESULT] is_error={ev.is_error} | {snippet}{more}")
             elif isinstance(ev, TurnDone):
-                print(
-                    f"\n[TURN_DONE] stop={ev.stop_reason} "
-                    f"total_tool_calls={ev.total_tool_calls}"
-                )
+                print(f"\n[TURN_DONE] stop={ev.stop_reason} total_tool_calls={ev.total_tool_calls}")
     except Exception as e:
         print(f"\n[ERROR] {type(e).__name__}: {e}")
 

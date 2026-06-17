@@ -24,11 +24,33 @@ from unittest.mock import MagicMock
 import pytest
 from agent.runtime import SystemTriggerEvent, UserEvent
 from agent.runtime.sources import (
+    DEFAULT_BEDTIME_ADDENDUM,
+    DEFAULT_IDLE_ADDENDUM,
     BedtimeSource,
     IdleReflectionSource,
     UserSource,
     _seconds_until_time_of_day,
 )
+
+# ===== 021：default addendum 文案含 <system_trigger> tag 包裹 =====
+
+
+def test_default_bedtime_addendum_has_system_trigger_tag() -> None:
+    """021：DEFAULT_BEDTIME_ADDENDUM 用 <system_trigger>...</system_trigger> 包裹。"""
+    assert DEFAULT_BEDTIME_ADDENDUM.startswith("<system_trigger>")
+    assert DEFAULT_BEDTIME_ADDENDUM.endswith("</system_trigger>")
+    # 文案保留 user 视角"该睡了"语义
+    assert "该睡了" in DEFAULT_BEDTIME_ADDENDUM
+
+
+def test_default_idle_addendum_has_system_trigger_tag() -> None:
+    """021：DEFAULT_IDLE_ADDENDUM 用 <system_trigger>...</system_trigger> 包裹。
+    silent turn 不暴露给用户，但 tag 仍必要——让 LLM 识别是系统触发的反思请求。"""
+    assert DEFAULT_IDLE_ADDENDUM.startswith("<system_trigger>")
+    assert DEFAULT_IDLE_ADDENDUM.endswith("</system_trigger>")
+    # 保留反思语义
+    assert "整理" in DEFAULT_IDLE_ADDENDUM or "事实" in DEFAULT_IDLE_ADDENDUM
+
 
 # ===== _seconds_until_time_of_day（基础数学） =====
 

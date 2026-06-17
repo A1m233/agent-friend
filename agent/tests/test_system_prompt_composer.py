@@ -349,6 +349,19 @@ class TestLoadDefaultStaticSection:
         assert "项目元规则" in section.text
         assert "暴露 AI" in section.text
 
+    def test_project_identity_has_system_trigger_rule(self) -> None:
+        """021：project_identity.md 含 <system_trigger> tag 识别元规则。
+
+        让 LLM 看到 user role 但被 tag 包裹的消息时识别为系统定时器触发，
+        不当作真用户提问回应、不在后续轮次复述（避免"既然你说"等归因漂移）。
+        """
+        section = load_default_static_section("project_identity")
+        # tag 字面值出现
+        assert "<system_trigger>" in section.text
+        assert "</system_trigger>" in section.text
+        # 关键约束词出现（不要复述 / 不要当用户发问）
+        assert "复述" in section.text or "归因" in section.text or "回应" in section.text
+
     def test_loads_persona_switch_strategy(self) -> None:
         section = load_default_static_section("persona_switch_strategy")
         assert section.key == "persona_switch_strategy"

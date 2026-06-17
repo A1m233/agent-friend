@@ -128,6 +128,34 @@ def test_under_threshold_keeps_all() -> None:
     assert result.notes.get("fifo_truncated") in (None, False)
 
 
+def test_fifo_passes_trailing_user() -> None:
+    """021：FifoContextManager 在首拼 + 截断两条路径下都透传 trailing_user 到末尾。"""
+    cm = FifoContextManager()
+
+    # 未超阈值：trailing_user 应在末尾
+    history = _history(2, 50)
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        trailing_user="ADDENDUM",
+        runtime=_runtime(window=100_000),
+    )
+    assert result.messages[-1].role == "user"
+    assert result.messages[-1].content == "ADDENDUM"
+
+    # 超阈值（强制裁剪路径）：trailing_user 仍在末尾
+    history = _history(6, 100)
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        trailing_user="ADDENDUM",
+        runtime=_runtime(window=700),
+    )
+    assert result.dropped_count > 0
+    assert result.messages[-1].role == "user"
+    assert result.messages[-1].content == "ADDENDUM"
+
+
 def test_over_threshold_drops_oldest_until_within_budget() -> None:
     """超阈值：丢最老轮直到落回预算内（预算驱动，保留多于地板）。"""
     # 每条 100 字符 → est 75/条；每轮 150；6 轮共 900。

@@ -23,6 +23,7 @@ class NaiveContextManager:
         system_prompt: str,
         new_user_input: str | None = None,
         extra_context: list[Message] | None = None,
+        trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
     ) -> BuildResult:
@@ -31,6 +32,7 @@ class NaiveContextManager:
             system_prompt=system_prompt,
             new_user_input=new_user_input,
             extra_context=extra_context,
+            trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
         return BuildResult(messages=messages)

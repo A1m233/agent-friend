@@ -300,3 +300,64 @@ def test_dispatch_system_turn_writes_system_trigger_marker(tmp_path: Path) -> No
     assert p["source_kind"] == "cron:bedtime"
     assert p["system_prompt_addendum"] == "该睡了"
     assert p["output_visibility"] == "user"
+
+
+# ===== 021：trailing_user 注入路径 =====
+
+
+def test_dispatch_system_turn_injects_trailing_user(tmp_path: Path) -> None:
+    """021：dispatch_system_turn 把 addendum 注入为 role="user" trailing 消息，
+    而不是 role="system"——LLM 看到的 messages 最后一条 role=user + content=addendum。
+    两条 visibility 路径共用这一行 _assemble 调用，两路径都验证。"""
+    addendum = "<system_trigger>该睡了</system_trigger>"
+
+    # 路径 1: user visibility
+    fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    list(
+        conv.dispatch_system_turn(
+            source_kind="cron:bedtime",
+            system_prompt_addendum=addendum,
+            output_visibility="user",
+        )
+    )
+    assert len(fake.received) == 1
+    last_msg = fake.received[0][-1]
+    assert last_msg["role"] == "user", (
+        f"user visibility 路径末尾 role 应是 user，实际 {last_msg['role']}"
+    )
+    assert last_msg["content"] == addendum
+
+    # 路径 2: silent turn (memory_only)
+    fake_silent = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    fake_mem = _FakeMemory()
+    conv_silent = _make_conversation(tmp_path / "silent", fake_llm=fake_silent, memory=fake_mem)
+    list(
+        conv_silent.dispatch_system_turn(
+            source_kind="idle_reflection",
+            system_prompt_addendum=addendum,
+            output_visibility="memory_only",
+        )
+    )
+    assert len(fake_silent.received) == 1
+    last_msg = fake_silent.received[0][-1]
+    assert last_msg["role"] == "user", f"silent 路径末尾 role 应是 user，实际 {last_msg['role']}"
+    assert last_msg["content"] == addendum
+
+
+def test_dispatch_system_turn_does_not_persist_trailing_user(tmp_path: Path) -> None:
+    """021：trailing_user 注入只活在 LLM 视图，session.events 仍只落 system_trigger
+    marker（payload 含 addendum 文本），不出现"trailing_user 消息被落盘"为 user_message。"""
+    addendum = "<system_trigger>该睡了</system_trigger>"
+    fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    list(
+        conv.dispatch_system_turn(
+            source_kind="cron:bedtime",
+            system_prompt_addendum=addendum,
+            output_visibility="user",
+        )
+    )
+    types = [ev.type for ev in conv.session.events]
+    # 没有任何 user_message —— 即使 trailing_user 是 role=user 注入，也不会被持久化
+    assert "user_message" not in types
