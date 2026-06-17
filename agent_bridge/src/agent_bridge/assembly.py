@@ -186,13 +186,24 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
-    tool_registry = make_default_registry()
+    # 020:传 persistent_store → 注册 recall_past_chats 工具,让 LLM 能跨 session
+    # 翻历史对话(否则 IM session 这种新 session 撞到"recall_past_chats 未注册"错误)。
+    tool_registry = make_default_registry(session_store=persistent_store)
     default_persona = catalog.find_by_name("default").name
     default_model = _make_spec_with_thinking_off().model
 
     memory: Memory | None = None
     if settings.memory_enabled:
-        memory = build_memory(settings.memory_db, _llm_factory(default_model))
+        # 022 hot-fix(issue 016):pinned_relevance_gate=False 让身份核心 pinned 始终注入。
+        # 默认 lenient gate 在"你还记得我吗" / "我们之前聊过什么"这类只表达记忆查询意图、
+        # 不含身份关键词的 query 上,会把"用户叫 Alex"误判为不相关过滤掉,导致 agent
+        # 体感"失忆"(违反决策 0001 §1.3 "记忆是第一护城河"原则)。完整 root cause +
+        # 长期方案见 docs/issues/016-memory-pinned-gate-misses-identity/。
+        memory = build_memory(
+            settings.memory_db,
+            _llm_factory(default_model),
+            pinned_relevance_gate=False,
+        )
 
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store, tool_registry, memory, prompt_builder_factory
