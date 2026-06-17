@@ -164,20 +164,22 @@ IN_PROGRESS
 
 > 完成后前端 IMConnectDialog 可单独渲染(mock 后端响应),不依赖 ActionBar 触发。
 
-- [ ] `frontend` 跑 `npx shadcn@latest add dialog`,生成 `frontend/src/components/ui/dialog.tsx`
-- [ ] `frontend/src/services/api/im.ts`:`listProviders` / `startOnboard(imType)` / `pollOnboard(taskId)` / `unbindProvider(imType, bindId)`(对齐 `sessions.ts` 风格)
-- [ ] 安装 QR 渲染库(`react-qr-code` 轻量,或者直接显示 `qr_url` text fallback):`pnpm add react-qr-code` 或同款,加到 `frontend/package.json`
-- [ ] `frontend/src/components/im/IMConnectDialog.tsx`:
-  - [ ] `interface Props { open: boolean; onOpenChange: (open: boolean) => void; }`
-  - [ ] dialog 主体:已绑定列表 + 接入新 IM 入口
-  - [ ] dialog 内所有交互元素标 `data-hit`
-  - [ ] backdrop = transparent / 不渲染(用 shadcn dialog 的 `DialogOverlay` 覆盖样式 `bg-transparent`)
-  - [ ] dialog mount/open 变化时 `useEffect` 调 `listProviders`
-  - [ ] 点 QQ 按钮 → 调 `startOnboard("qq")` → 拿 `task_id` → 启动轮询(250ms 周期,`qr_ready` 之后切 1s,`success/failed` 停止)
-  - [ ] `qr_ready` 状态 render `<QRCode value={qr_url} />`
-  - [ ] `success` → 重新 `listProviders` 刷已绑定列表
-  - [ ] 已绑定条目"解绑"按钮 → `unbindProvider` + 刷列表
-- [ ] `pnpm typecheck` + `pnpm lint` 全绿;dialog 在 dev server 能独立渲染
+- [x] `frontend` 跑 `pnpm dlx shadcn@4.10.0 add dialog`(v5+ 有路径 bug,降到 4.10.0),生成 `frontend/src/components/ui/dialog.tsx` → 挪到 `dialog/index.tsx` 文件夹版,完全原样保留(跟 sheet 一致,token 不动)+ `ui/index.ts` barrel 补 export
+- [x] `frontend/src/services/api/im.ts`:`listProviders` / `startOnboard(imType)` / `getOnboardState(taskId)` / `unbindProvider(imType, bindId)`(对齐 `sessions.ts` 风格);`services/index.ts` 加 export
+- [x] 安装 QR 渲染库:`qrcode` + `@types/qrcode` 走 npm
+- [x] `frontend/src/components/im/IMConnectDialog.tsx`:
+  - [x] `interface Props { open: boolean; onOpenChange: (open: boolean) => void; }`
+  - [x] dialog 主体:已绑定列表 + 接入新 IM 入口
+  - [x] dialog 内所有交互元素标 `data-hit`
+  - [x] backdrop = transparent(手动 compose `Dialog + DialogPortal + DialogOverlay className="bg-transparent" + DialogPrimitive.Content`,避开 DialogContent 自带 bg-black/50 overlay)
+  - [x] dialog mount/open 变化时 `useEffect` 调 `listProviders`
+  - [x] 点 QQ 按钮 → 调 `startOnboard("qq")` → 拿 `task_id` → 启动轮询(250ms 周期,`qr_ready` 之后切 1s,`success/failed` 停止)
+  - [x] `qr_ready` 状态 `QRCode.toDataURL` 渲染 `<img>`
+  - [x] `success` → 重新 `listProviders` 刷已绑定列表
+  - [x] 已绑定条目"解绑"按钮 → `unbindProvider(imType, bind_id)` + 刷列表(raw bind_id 走 wire,UI 用 bind_id_masked 展示)
+- [x] 后端 `ProviderInfo` 加 raw `bind_id` 字段(原本只有 masked,前端无法用 masked 调 DELETE);test_im_routes / test_im_runtime_onboard 跟着调整
+- [x] 前端 lint(react/forbid-elements 强制 Button 替代 `<button>`)+ color-guard + typecheck + vitest 全过
+- [x] `pnpm typecheck` + `pnpm lint` 全绿;dialog 在 dev server 能独立渲染
 
 **门槛**:`pnpm typecheck` 通;mock 后端 `listProviders` 返回 `[]` 时 dialog 能正常打开 / 关闭。
 
@@ -248,3 +250,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.5 Onboard 注册表 + IMRuntime + 单测 | onboard.py(OnboardStatus StrEnum + OnboardTaskState + OnboardSessionRegistry · async task 注册表 · 仅支持 qq);runtime.py(IMRuntime · start/stop lifespan · register_after_onboard 落盘+spawn · unbind · list_status 脱敏 · _background_stops set 持有 fire-and-forget task 防 GC);test_im_runtime_onboard.py 16 个测试全过;./scripts/check 全绿(502 passed) |
 | 2026-06-17 | M22.6 HTTP routes + register_routes | routes.py(4 个 endpoints: GET /v1/im/providers · POST /v1/im/onboard/start · GET /v1/im/onboard/{task_id} · DELETE /v1/im/providers/{type}/{bind_id})· 错误码 503/400/404/422 · pydantic OnboardStartBody Literal["qq"];__init__.py export 完整 surface;BridgeRuntime 加 im_runtime + im_onboard_registry 占位字段(M22.7 装配实际实例);test_im_routes.py 14 个测试全过;./scripts/check 全绿(516 passed) |
 | 2026-06-17 | M22.7 BridgeRuntime 装配 + app.py lifespan | settings.py 加 im_enabled/im_credentials_dir/im_resume_dir;assembly.build_runtime 装配 CredentialStore + IMRouter + IMRuntime + OnboardSessionRegistry,用 dataclasses.replace 塞 final BridgeRuntime;IMRouter 接口重构成接收 default_persona/default_model 两个 str(去除 BridgeRuntime 循环依赖);app.py lifespan 加 im_runtime.start/stop + 条件 register_im_routes;装配真跑验证 list_status==[] OK;./scripts/check 全绿(516 passed) |
+| 2026-06-18 | M22.8 前端 dialog + IMConnectDialog | shadcn dialog v4.10.0 通过 CLI 拉(v5+ 路径解析有 bug)+ 挪文件夹版完全原样保留;services/api/im.ts 4 个 endpoint client;qrcode + @types/qrcode 装齐;IMConnectDialog 透明 backdrop(手动 compose Portal + Overlay)+ 自动轮询节奏 + QRCode.toDataURL 渲染 + 已绑定/接入新 IM 两段 UI;后端 ProviderInfo 加 raw bind_id 字段配合前端 unbind;./scripts/check 全绿(后端 516 + 前端 lint/color-guard/typecheck/vitest 84 passed) |

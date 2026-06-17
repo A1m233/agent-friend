@@ -41,9 +41,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ProviderInfo:
-    """:meth:`IMRuntime.list_status` 返回的脱敏 provider 状态(给 GET /v1/im/providers)。"""
+    """:meth:`IMRuntime.list_status` 返回的 provider 状态(给 GET /v1/im/providers)。
+
+    Attributes:
+        im_type: 平台标识
+        bind_id: 原始绑定 id(QQ = user_openid);前端 DELETE /v1/im/providers/...
+            需要用 raw id 调用,所以 wire 上暴露 raw,UI 自己脱敏展示。openid 本身
+            不算敏感(QQ 内部 id,不是 phone/email)。
+        bind_id_masked: 脱敏(头 4 字符 + ... + 尾 4 字符)便利字段,前端可直接渲染。
+        status: 当前通道状态。
+    """
 
     im_type: str
+    bind_id: str
     bind_id_masked: str
     status: ProviderStatus
 
@@ -154,10 +164,14 @@ class IMRuntime:
         return provider is not None
 
     def list_status(self) -> list[ProviderInfo]:
-        """脱敏后的 provider 列表,给 ``GET /v1/im/providers`` 序列化。"""
+        """provider 列表,给 ``GET /v1/im/providers`` 序列化。
+
+        wire 暴露 raw ``bind_id``(给前端 unbind 用)+ ``bind_id_masked``(展示用)。
+        """
         return [
             ProviderInfo(
                 im_type=p.type,
+                bind_id=p.bind_id,
                 bind_id_masked=_mask(p.bind_id),
                 status=p.status(),
             )

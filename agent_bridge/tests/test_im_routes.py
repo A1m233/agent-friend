@@ -61,7 +61,12 @@ def test_list_providers_returns_empty_when_no_bindings() -> None:
 def test_list_providers_returns_bindings() -> None:
     im_runtime = MagicMock()
     im_runtime.list_status.return_value = [
-        ProviderInfo(im_type="qq", bind_id_masked="OPEN...EE26", status="active"),
+        ProviderInfo(
+            im_type="qq",
+            bind_id="OPENID-USER-FULL-EE26",
+            bind_id_masked="OPEN...EE26",
+            status="active",
+        ),
     ]
     onboard = MagicMock()
     client = TestClient(_make_app(im_runtime, onboard))
@@ -72,6 +77,7 @@ def test_list_providers_returns_bindings() -> None:
     assert len(body) == 1
     assert body[0] == {
         "im_type": "qq",
+        "bind_id": "OPENID-USER-FULL-EE26",
         "bind_id_masked": "OPEN...EE26",
         "status": "active",
     }

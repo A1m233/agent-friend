@@ -5,6 +5,7 @@
 export * from "./button";
 export * from "./carousel";
 export * from "./collapsible";
+export * from "./dialog";
 export * from "./status-dot";
 export * from "./input";
 export * from "./separator";
