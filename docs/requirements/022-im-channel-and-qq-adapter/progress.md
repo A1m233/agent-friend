@@ -72,24 +72,24 @@ IN_PROGRESS
 
 > 完成后 `QQAdapter` 可独立 import 跑测,通过 mock `QQWebSocket` / `QQApiClient` 验证 callbacks 接线 + 错误码兜底 + resume token 文件 round-trip。
 
-- [ ] `protocols/im/adapters/qq.py`:
-  - [ ] `QQAdapter.__init__(cred: ImCredential, resume_base_dir: Path)`(后者注入便于测试)
-  - [ ] `QQAdapter.type = "qq"` class attribute
-  - [ ] `QQAdapter.start(on_inbound)`:构造 `QQApiClient` + `get_gateway_url_sync()` + 构造 `WSCallbacks` + `QQWebSocket(callbacks, log_tag).start(gateway_url, main_loop)`;`main_loop = asyncio.get_event_loop()`
-  - [ ] `QQAdapter._on_message(event_type, raw)`(async):`EventParser.parse` → 仅 c2c 转发到 `self._on_inbound(event)`
-  - [ ] `QQAdapter.send(content)`(async):构造 `MessageToCreate` → `await api.post_c2c_message` → check `resp["code"]` 非零仅 log warning
-  - [ ] `QQAdapter.stop()`(async):`ws.async_stop()` + `api.close()` + `_set_status("stopped")`
-  - [ ] `QQAdapter.status()`:返回当前 `_status`
-  - [ ] `_load_resume_token` / `_save_resume_token`:简单 json 文件 round-trip,路径 `resume_base_dir / f"qq_{bind_id_hash}.json"`
-- [ ] `agent_bridge/tests/test_im_qq_adapter.py`:
-  - [ ] mock `QQWebSocket` + `QQApiClient`,验证 `start` 调用顺序:先 `get_gateway_url_sync` → 后 `ws.start(gateway_url, main_loop)`
-  - [ ] `WSCallbacks.on_connected` → `status` 变 `active`;`on_disconnected` → `degraded`;`on_fatal_error` → `error`
-  - [ ] `_on_message` 调用 `EventParser.parse` → 仅 `chat_scope=="c2c"` 转发(group/guild 不转发)
-  - [ ] `send` 错误码非零(43xxx / 11xxx)仅 log warning 不抛
-  - [ ] `send` 网络异常 catch + log exception 不抛
-  - [ ] `_load_resume_token` 空文件 → `(None, None)`;有效文件 → `(session_id, last_seq)` tuple
-  - [ ] `_save_resume_token` 写出后 `_load_resume_token` 能读回
-- [ ] `./scripts/check` 全绿
+- [x] `protocols/im/adapters/qq.py`:
+  - [x] `QQAdapter.__init__(cred: ImCredential, resume_base_dir: Path)`(后者注入便于测试)
+  - [x] `QQAdapter.type = "qq"` class attribute
+  - [x] `QQAdapter.start(on_inbound)`:构造 `QQApiClient` + `get_gateway_url_sync()` + 构造 `WSCallbacks` + `QQWebSocket(callbacks, log_tag).start(gateway_url, main_loop)`;`main_loop = asyncio.get_event_loop()`
+  - [x] `QQAdapter._on_message(event_type, raw)`(async):`EventParser.parse` → 仅 c2c 转发到 `self._on_inbound(event)`
+  - [x] `QQAdapter.send(content)`(async):构造 `MessageToCreate` → `await api.post_c2c_message` → check `resp["code"]` 非零仅 log warning
+  - [x] `QQAdapter.stop()`(async):`ws.async_stop()` + `api.close()` + `_set_status("stopped")`
+  - [x] `QQAdapter.status()`:返回当前 `_status`
+  - [x] `_load_resume_token` / `_save_resume_token`:简单 json 文件 round-trip,路径 `resume_base_dir / f"qq_{bind_id_hash}.json"`
+- [x] `agent_bridge/tests/test_im_qq_adapter.py`:
+  - [x] mock `QQWebSocket` + `QQApiClient`,验证 `start` 调用顺序:先 `get_gateway_url_sync` → 后 `ws.start(gateway_url, main_loop)`
+  - [x] `WSCallbacks.on_connected` → `status` 变 `active`;`on_disconnected` → `degraded`;`on_fatal_error` → `error`
+  - [x] `_on_message` 调用 `EventParser.parse` → 仅 `chat_scope=="c2c"` 转发(group/guild 不转发)
+  - [x] `send` 错误码非零(43xxx / 11xxx)仅 log warning 不抛
+  - [x] `send` 网络异常 catch + log exception 不抛
+  - [x] `_load_resume_token` 空文件 → `(None, None)`;有效文件 → `(session_id, last_seq)` tuple
+  - [x] `_save_resume_token` 写出后 `_load_resume_token` 能读回
+- [x] `./scripts/check` 全绿
 
 **门槛**:QQ adapter 单测全过 + lint/typecheck 不退化。**不真接 QQ gateway**——所有 SDK 调用 mock 掉。
 
@@ -243,3 +243,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.1 依赖装配 + 模块脚手架 | qqbot-agent-sdk 1.2.2 + cryptography>=42 装齐;protocols/im/ 与 adapters/ 子目录 `__init__.py` 落地;rebase 上 origin/main 把 pre-existing lint fix 纳入 baseline |
 | 2026-06-17 | M22.2 数据类型 + 凭据加密 + 单测 | event.py(re-export SDK InboundEvent)/ content.py(OutboundContent)/ provider.py(IMProvider Protocol)/ credentials.py(AES-GCM + 用户名+主机名 derive key + 原子写)+ 16 个 credentials 测试全过;./scripts/check 全绿(454 passed) |
 | 2026-06-17 | M22.3 IMRouter + 单测 | router.py(IMRouter + session_id_for f"im:{type}:{chat_id}" 策略点 + handle_inbound asyncio.to_thread 跑同步 stream + TextDelta 聚合 + Conv.stream 异常走 FALLBACK_TEXT)+ 12 个 router 测试全过;./scripts/check 全绿(466 passed) |
+| 2026-06-17 | M22.4 QQ Adapter + 单测 | adapters/qq.py(QQAdapter wrap qqbot-agent-sdk 4 件套 QQApiClient/QQWebSocket/EventParser/WSCallbacks · 11 个 SDK callbacks 接线 · 43xxx/11xxx 错误码 log warning · 网络异常 catch · stop 幂等 · resume token AES-GCM 同款 sha256[:16] 文件路径)+ 20 个 adapter 测试全过(全部 mock SDK,不接真 QQ gateway);./scripts/check 全绿(486 passed) |
