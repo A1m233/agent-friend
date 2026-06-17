@@ -870,7 +870,7 @@ def main() -> int:
         stderr.print(rf"[red]\[初始化失败] 无法创建会话目录: {e}[/red]")
         return 1
 
-    tool_registry = make_default_registry()
+    tool_registry = make_default_registry(session_store=store)
 
     memory_debug = bool(os.environ.get(MEMORY_DEBUG_ENV))
     memory_obj: Memory | None = None

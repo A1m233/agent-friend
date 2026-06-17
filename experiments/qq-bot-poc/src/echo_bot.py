@@ -39,10 +39,7 @@ class EchoBot(botpy.Client):
 
     async def on_c2c_message_create(self, message: C2CMessage):
         # 触发 = 验证清单 #2 通过
-        print(
-            f"[c2c] from openid={message.author.user_openid} "
-            f"content={message.content!r}"
-        )
+        print(f"[c2c] from openid={message.author.user_openid} content={message.content!r}")
         await message._api.post_c2c_message(
             openid=message.author.user_openid,
             msg_type=0,
