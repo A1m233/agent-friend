@@ -97,32 +97,37 @@ IN_PROGRESS
 
 > 完成后 `OnboardSessionRegistry` + `IMRuntime` 可独立 import 跑测,验证 onboard 状态机 + provider 生命周期。
 
-- [ ] `protocols/im/onboard.py`:
-  - [ ] `OnboardStatus` str Enum(`PENDING` / `QR_READY` / `SUCCESS` / `FAILED`)
-  - [ ] `OnboardTaskState` dataclass(`task_id` / `im_type` / `status` / `qr_url` / `bind_id` / `error`)
-  - [ ] `OnboardSessionRegistry.__init__(im_runtime: IMRuntime)`
-  - [ ] `OnboardSessionRegistry.start(im_type) -> str`:仅支持 `qq`(其他 raise ValueError);异步 task `_run_qq_onboard`
-  - [ ] `_run_qq_onboard(state)`(async):调 `qqbot_agent_sdk.start_onboard(on_qr_ready=...)` → 成功时构造 `ImCredential` → 调 `im_runtime.register_after_onboard(cred)` → status `SUCCESS`;异常 → `FAILED`
-  - [ ] `OnboardSessionRegistry.get(task_id) -> OnboardTaskState | None`
-- [ ] `protocols/im/runtime.py`:
-  - [ ] `ProviderStatus` dataclass(`type` / `bind_id_masked` / `status`)
-  - [ ] `IMRuntime.__init__(runtime, router, credentials)`
-  - [ ] `IMRuntime.start()`:`credentials.list_all()` → 逐个 `_spawn_provider`
-  - [ ] `IMRuntime.stop(timeout)`(async):并发 stop 所有 providers,timeout 守护
-  - [ ] `IMRuntime.register_after_onboard(cred)`:`credentials.save(cred)` + `_spawn_provider(cred)`
-  - [ ] `IMRuntime.unbind(im_type, bind_id)`(async):stop 对应 provider + `credentials.delete`
-  - [ ] `IMRuntime.list_status() -> list[ProviderStatus]`
-  - [ ] `IMRuntime._spawn_provider(cred)` + `_build_provider(cred)` + `_make_inbound_cb(provider)`
-  - [ ] `IMRuntime._mask(bind_id) -> str`(辅助函数,头 4 字符 + ... + 尾 4 字符)
-- [ ] `agent_bridge/tests/test_im_onboard.py`:
-  - [ ] `OnboardSessionRegistry.start("qq")` 返回 `task_id`,初始 state 是 `PENDING`
-  - [ ] mock `start_onboard`:`on_qr_ready` 被调时 state 变 `QR_READY` + `qr_url` 填上
-  - [ ] mock `start_onboard` 成功返回 → state `SUCCESS`,`im_runtime.register_after_onboard` 被调一次,`bind_id` 是 masked 形式
-  - [ ] mock `start_onboard` 抛错 → state `FAILED`,`error` 填上
-  - [ ] `start("feishu")` raise ValueError
-- [ ] `agent_bridge/tests/test_im_runtime.py`(可选简单测,如果觉得 onboard 测试覆盖了大部分 runtime 行为可以省;但 `unbind` + `stop` 行为单独覆盖更稳)
-  - [ ] mock provider,验证 `start` 调用顺序、`stop` 并发、`unbind` 删除文件
-- [ ] `./scripts/check` 全绿
+- [x] `protocols/im/onboard.py`:
+  - [x] `OnboardStatus` str Enum(`PENDING` / `QR_READY` / `SUCCESS` / `FAILED`)
+  - [x] `OnboardTaskState` dataclass(`task_id` / `im_type` / `status` / `qr_url` / `bind_id` / `error`)
+  - [x] `OnboardSessionRegistry.__init__(im_runtime: IMRuntime)`
+  - [x] `OnboardSessionRegistry.start(im_type) -> str`:仅支持 `qq`(其他 raise ValueError);异步 task `_run_qq_onboard`
+  - [x] `_run_qq_onboard(state)`(async):调 `qqbot_agent_sdk.start_onboard(on_qr_ready=...)` → 成功时构造 `ImCredential` → 调 `im_runtime.register_after_onboard(cred)` → status `SUCCESS`;异常 → `FAILED`
+  - [x] `OnboardSessionRegistry.get(task_id) -> OnboardTaskState | None`
+- [x] `protocols/im/runtime.py`:
+  - [x] `ProviderInfo` dataclass(`im_type` / `bind_id_masked` / `status`)
+  - [x] `IMRuntime.__init__(router, credentials, resume_base_dir)`
+  - [x] `IMRuntime.start()`:`credentials.list_all()` → 逐个 `_spawn_provider`
+  - [x] `IMRuntime.stop(timeout)`(async):并发 stop 所有 providers,timeout 守护
+  - [x] `IMRuntime.register_after_onboard(cred)`:`credentials.save(cred)` + `_spawn_provider(cred)`(同 key 旧 provider fire-and-forget stop)
+  - [x] `IMRuntime.unbind(im_type, bind_id)`(async):stop 对应 provider + `credentials.delete`
+  - [x] `IMRuntime.list_status() -> list[ProviderInfo]`
+  - [x] `IMRuntime._spawn_provider(cred)` + `_build_provider(cred)` + `_make_inbound_cb(provider)`
+  - [x] `IMRuntime._mask(bind_id) -> str`(辅助函数,头 4 字符 + ... + 尾 4 字符)
+- [x] `agent_bridge/tests/test_im_runtime_onboard.py`(合并测试):
+  - [x] `OnboardSessionRegistry.start("qq")` 返回 `task_id`,初始 state 是 `PENDING`
+  - [x] mock `start_onboard`:`on_qr_ready` 被调时 state 变 `QR_READY` + `qr_url` 填上
+  - [x] mock `start_onboard` 成功返回 → state `SUCCESS`,`im_runtime.register_after_onboard` 被调一次,`bind_id` 是 masked 形式
+  - [x] mock `start_onboard` 抛错 → state `FAILED`,`error` 填上
+  - [x] `start("feishu")` raise ValueError
+  - [x] IMRuntime.start 加载 + spawn 多个 provider 行为
+  - [x] 单个 provider build 抛错不阻塞其他
+  - [x] IMRuntime.stop 并发停止 + timeout 守护 + 空状态静默
+  - [x] register_after_onboard 落盘 + spawn + 同 key 替换
+  - [x] unbind 行为(找到/未找到)
+  - [x] list_status 脱敏 bind_id
+  - [x] `_build_provider` 不支持 im_type → ValueError
+- [x] `./scripts/check` 全绿
 
 **门槛**:onboard + runtime 单测全过。
 
@@ -244,3 +249,4 @@ IN_PROGRESS
 | 2026-06-17 | M22.2 数据类型 + 凭据加密 + 单测 | event.py(re-export SDK InboundEvent)/ content.py(OutboundContent)/ provider.py(IMProvider Protocol)/ credentials.py(AES-GCM + 用户名+主机名 derive key + 原子写)+ 16 个 credentials 测试全过;./scripts/check 全绿(454 passed) |
 | 2026-06-17 | M22.3 IMRouter + 单测 | router.py(IMRouter + session_id_for f"im:{type}:{chat_id}" 策略点 + handle_inbound asyncio.to_thread 跑同步 stream + TextDelta 聚合 + Conv.stream 异常走 FALLBACK_TEXT)+ 12 个 router 测试全过;./scripts/check 全绿(466 passed) |
 | 2026-06-17 | M22.4 QQ Adapter + 单测 | adapters/qq.py(QQAdapter wrap qqbot-agent-sdk 4 件套 QQApiClient/QQWebSocket/EventParser/WSCallbacks · 11 个 SDK callbacks 接线 · 43xxx/11xxx 错误码 log warning · 网络异常 catch · stop 幂等 · resume token AES-GCM 同款 sha256[:16] 文件路径)+ 20 个 adapter 测试全过(全部 mock SDK,不接真 QQ gateway);./scripts/check 全绿(486 passed) |
+| 2026-06-17 | M22.5 Onboard 注册表 + IMRuntime + 单测 | onboard.py(OnboardStatus StrEnum + OnboardTaskState + OnboardSessionRegistry · async task 注册表 · 仅支持 qq);runtime.py(IMRuntime · start/stop lifespan · register_after_onboard 落盘+spawn · unbind · list_status 脱敏 · _background_stops set 持有 fire-and-forget task 防 GC);test_im_runtime_onboard.py 16 个测试全过;./scripts/check 全绿(502 passed) |
