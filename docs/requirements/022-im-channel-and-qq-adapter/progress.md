@@ -51,20 +51,20 @@ IN_PROGRESS
 
 > 完成后 `IMRouter` 可独立 import 跑测,通过 mock `SessionBridge` 验证 inbound→bind_persistent→TextDelta 聚合→outbound 全链路。
 
-- [ ] `protocols/im/router.py`:
-  - [ ] `FALLBACK_TEXT` 模块常量(`"我现在有点问题,稍后再试 🤖"` 或类似;不带 emoji 也行,跟用户拍最终文案)
-  - [ ] `IMRouter.__init__(runtime: BridgeRuntime, session_bridge: SessionBridge)`
-  - [ ] `IMRouter.session_id_for(im_type, event) -> str`:本期实装 `f"im:{im_type}:{event.chat_id}"`,docstring 标注扩展点
-  - [ ] `IMRouter.handle_inbound(im_type, event, send_fn) -> None`(async):装 `PersistentBootstrap` + `asyncio.to_thread(_run_turn_sync, boot)` + 异常 catch → `FALLBACK_TEXT` + 调 `send_fn(OutboundContent(...))`
-  - [ ] `IMRouter._run_turn_sync(boot) -> str`:`session_bridge.bind_persistent(boot)` → 同步 iterate `conv.stream` → 聚合 `TextDelta.text` → `TurnDone` 中断 → return 聚合文本
-- [ ] `agent_bridge/tests/test_im_router.py`:
-  - [ ] `session_id_for` 稳定输出 + 同 `chat_id` 同结果
-  - [ ] `handle_inbound` 调用 `session_bridge.bind_persistent` 时 `thread_id == session_id_for(...)`
-  - [ ] mock `Conversation.stream` 返回 `[TextDelta("hello"), TextDelta(" world"), TurnDone()]` → `send_fn` 收到 `OutboundContent.text == "hello world"`
-  - [ ] mock `Conversation.stream` 抛错 → `send_fn` 收到 `OutboundContent.text == FALLBACK_TEXT`
-  - [ ] `ToolCallRequest` / `ToolCallResult` 不污染 outbound(只 TextDelta 进 buffer)
-  - [ ] `send_fn` 收到的 `chat_id` / `chat_scope` / `reply_to_message_id` 跟 inbound event 一致
-- [ ] `./scripts/check` 全绿
+- [x] `protocols/im/router.py`:
+  - [x] `FALLBACK_TEXT` 模块常量(`"我现在有点问题,稍后再试 🤖"` 或类似;不带 emoji 也行,跟用户拍最终文案)
+  - [x] `IMRouter.__init__(runtime: BridgeRuntime, session_bridge: SessionBridge)`
+  - [x] `IMRouter.session_id_for(im_type, event) -> str`:本期实装 `f"im:{im_type}:{event.chat_id}"`,docstring 标注扩展点
+  - [x] `IMRouter.handle_inbound(im_type, event, send_fn) -> None`(async):装 `PersistentBootstrap` + `asyncio.to_thread(_run_turn_sync, boot)` + 异常 catch → `FALLBACK_TEXT` + 调 `send_fn(OutboundContent(...))`
+  - [x] `IMRouter._run_turn_sync(boot) -> str`:`session_bridge.bind_persistent(boot)` → 同步 iterate `conv.stream` → 聚合 `TextDelta.text` → `TurnDone` 中断 → return 聚合文本
+- [x] `agent_bridge/tests/test_im_router.py`:
+  - [x] `session_id_for` 稳定输出 + 同 `chat_id` 同结果
+  - [x] `handle_inbound` 调用 `session_bridge.bind_persistent` 时 `thread_id == session_id_for(...)`
+  - [x] mock `Conversation.stream` 返回 `[TextDelta("hello"), TextDelta(" world"), TurnDone()]` → `send_fn` 收到 `OutboundContent.text == "hello world"`
+  - [x] mock `Conversation.stream` 抛错 → `send_fn` 收到 `OutboundContent.text == FALLBACK_TEXT`
+  - [x] `ToolCallRequest` / `ToolCallResult` 不污染 outbound(只 TextDelta 进 buffer)
+  - [x] `send_fn` 收到的 `chat_id` / `chat_scope` / `reply_to_message_id` 跟 inbound event 一致
+- [x] `./scripts/check` 全绿
 
 **门槛**:Router 单测全过 + lint/typecheck 不退化。
 
@@ -242,3 +242,4 @@ IN_PROGRESS
 |------|---------|------|
 | 2026-06-17 | M22.1 依赖装配 + 模块脚手架 | qqbot-agent-sdk 1.2.2 + cryptography>=42 装齐;protocols/im/ 与 adapters/ 子目录 `__init__.py` 落地;rebase 上 origin/main 把 pre-existing lint fix 纳入 baseline |
 | 2026-06-17 | M22.2 数据类型 + 凭据加密 + 单测 | event.py(re-export SDK InboundEvent)/ content.py(OutboundContent)/ provider.py(IMProvider Protocol)/ credentials.py(AES-GCM + 用户名+主机名 derive key + 原子写)+ 16 个 credentials 测试全过;./scripts/check 全绿(454 passed) |
+| 2026-06-17 | M22.3 IMRouter + 单测 | router.py(IMRouter + session_id_for f"im:{type}:{chat_id}" 策略点 + handle_inbound asyncio.to_thread 跑同步 stream + TextDelta 聚合 + Conv.stream 异常走 FALLBACK_TEXT)+ 12 个 router 测试全过;./scripts/check 全绿(466 passed) |
