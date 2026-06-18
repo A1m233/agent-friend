@@ -1,15 +1,22 @@
 ---
-description: agent-friend 项目需求开发流程：每个需求走独立分支，验收 OK 再合入 main
+description: agent-friend 项目需求与 issue 交付流程：需求走 feature 分支，issue 修复按影响范围选择 main 或 fix 分支
 alwaysApply: true
 ---
 
-# 需求开发流程
+# 需求与 Issue 交付流程
 
-每个需求（`docs/requirements/<NNN>-xxx`）作为一次独立交付，必须走"独立分支 → 验收 → 合入 main"的流程，不在 main 上直接累积需求实现。
+本规则约束两类交付：
 
-> 详细的切分支检测、验收四门核对流程：见 `feature-delivery` skill（Step 0.5 分支策略、Phase 3 验收）。本 rule 只承载**底线约束**与**例外 / 反模式**。
+- 需求（`docs/requirements/<NNN>-xxx`）：新增 / 改动产品能力的一次独立交付。
+- issue（`docs/issues/<NNN>-slug`）：已登记问题的调查、复现、回归测试或修复闭环。
 
-## 分支策略（底线）
+> 详细需求交付流程见 `feature-delivery` skill；详细 issue 修复流程见 `fix-issue` skill。本 rule 只承载项目级**底线约束**、分支策略、关 issue 标准与例外。
+
+## 需求开发流程
+
+每个需求作为一次独立交付，必须走"独立分支 → 验收 → 合入 main"的流程，不在 main 上直接累积需求实现。
+
+### 分支策略（需求）
 
 - 每个需求一条独立 feature 分支，命名 `feature/<3 位需求编号>-<kebab-case slug>`，编号与 `docs/requirements/` 目录一致。
 - 从最新 `main` 切。
@@ -17,7 +24,7 @@ alwaysApply: true
 - 一个需求只对应一条分支；需求拆分先拆 `docs/requirements/` 目录，再各开分支。
 - 不允许在 `main` 上做需求级开发。
 
-## 合入 main（底线）
+### 合入 main（需求）
 
 需求验收完成才能合入 main，必须满足：
 
@@ -28,7 +35,7 @@ alwaysApply: true
 
 合入时保留 merge commit，便于后续从历史看到"哪些 commit 属于哪个需求"。
 
-## 测试约束（落地需求时）
+### 测试约束（需求）
 
 实现需求时**测试不是可选项**，但要带判断力、不一刀切：
 
@@ -37,21 +44,52 @@ alwaysApply: true
 - **概率性 / 真 LLM 行为**（如召回质量、摘要效果）：用 fake / mock 覆盖机制，真实 LLM 观察型 AC 按 `llm-api-confirm` 单独授权验收，并在对应 `progress.md` 标注。
 - 判断标准：**这部分改动是否有"可能回归、且能用断言固定下来"的行为**——是则补测，否则可豁免。拿不准时倾向补测。
 
+## Issue 修复流程
+
+issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只说明"问题存在"；只有满足本节关闭标准，才能把状态改为 `resolved`。
+
+### 分支策略（issue）
+
+- **只补充 issue 文档 / 附带复现资料**：可直接在 `main` 上提交。例如补 README、放 issue-local replay / smoke 脚本、记录调查结论。
+- **只新增小型回归测试、不改生产代码**：可作为 test/hotfix 直接在 `main` 上提交；若测试覆盖核心运行链路、改动范围较大、或会显著影响 CI，推荐开 `fix/<NNN>-<slug>` 分支。
+- **修复生产代码**：必须从最新 `main` 开 `fix/<NNN>-<slug>` 分支，编号与 `docs/issues/` 目录一致。
+- **同一分支只修一个 issue**：除非用户明确要求合并处理；调查时发现的新问题应登记新 issue，不顺手混修。
+
+### 关闭标准（issue）
+
+关闭 issue 前必须满足：
+
+- 已核对 issue 现象仍成立，或确认现状已自然消失并得到用户同意关闭。
+- 已实施选定修复方向；如果只是调查 / 证明当前代码没问题，不能默认关闭原 issue，除非用户确认"本 issue 只需调查结论"。
+- 可断言行为已有自动化测试覆盖；无法稳定断言的体验 / LLM 行为，需跑对应 smoke / replay / 人工验证，并在 issue README 记录结果。
+- 若改动代码或测试，`./scripts/check` 必须全绿；纯 issue 文档补充可不跑全量，但应做必要的局部检查。
+- 用户可见行为或产品体验类 issue，需要用户明确确认验收完成后再标 `resolved`。
+- issue README 状态改为 `resolved`，并在文末写明修复指向（commit / PR / 需求 / 验证记录）。
+
+### 测试约束（issue）
+
+- 修核心逻辑、数据读写、工具调用、协议编解码、跨模块契约时，必须补自动化测试。
+- 只修文案、纯文档、纯调查记录、issue-local 复现脚本时，可不补正式测试。
+- 真 LLM 行为只作为观察型 smoke / AC，执行前遵守 `llm-api-confirm`；可用 fake / mock 固定机制性回归时，优先补自动化测试。
+
 ## 允许直接提交 main 的例外
 
 以下小型改动可不开分支，直接在 main 上提交：
 
 - 纯 `docs/` 文档微调（不涉及需求级新增）。
+- `docs/issues/<NNN>-slug/` 下的调查记录、复现资料、issue-local smoke / replay 脚本。
 - `.cursor/rules/` 规则增删改。
 - `scripts/` 脚本小幅修复（非需求新增能力）。
-- 明确的 hotfix（线上 / 当前主线问题修复，需在 commit message 注明）。
+- 明确的小型 hotfix / test-only 回归补充（需在 commit message 说明范围）。
 
 需求级的新增 / 修改不属于例外，必须走分支。
 
 ## 反模式
 
 - 多个需求的实现在同一条分支上累积。
+- 多个 issue 的修复在同一条分支上累积。
 - 在 main 上直接开发，事后再"补一条分支"圈历史。
 - 需求 AC 未跑通就合入 main，留待"以后再补"。
+- issue 未跑对应测试 / smoke / 人工验收就标 `resolved`。
 - 核心逻辑改动不配任何单测，只靠手动点一遍就合入。
 - `./scripts/check` 没跑 / 没全绿就合入，留待"以后再补测试 / 修 lint"。
