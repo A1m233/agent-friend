@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as PIXI from "pixi.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Priority } from "easy-live2d";
@@ -10,6 +11,7 @@ import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
+import { usePetInteractions } from "./usePetInteractions";
 import { usePetLive2D } from "@/pet/usePetLive2D";
 import { PET_LIVE2D_CONFIG } from "@/pet/live2dConfig";
 import { TextCadenceMouthDriver } from "@/pet/MouthDriver";
@@ -68,7 +70,54 @@ export function PetApp() {
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
   // invalidateAnchor 由 usePetLive2D 在 Live2DSprite ready 后调用，让 anchor 重新扫到真 Hiyori bounds
-  const { slotRef, app, invalidateAnchor, alphaScanGivenUpRef } = usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging);
+  // 024 · interactionsRef 延迟绑定：usePixiAvatarSlot 比 usePetLive2D/usePetInteractions 早调用，
+  // 但 callbacks 又依赖 spriteRef/driver。用 ref 在 hooks 顺序合法的前提下做延迟绑定。
+  const interactionsRef = useRef<{ onSlotClick: (e: PIXI.FederatedPointerEvent) => void; onSlotDragMove: (vx: number, vy: number) => void } | null>(null);
+
+  const { slotRef, app, invalidateAnchor, alphaScanGivenUpRef } = usePixiAvatarSlot(
+    stageRef,
+    setSpriteScreen,
+    setIsDragging,
+    { interactionsRef },
+  );
+
+  // 18 · 加载 Hiyori Live2DSprite 到 avatar-slot 内（slot 外层 plumbing 不动）
+  const { spriteRef, spriteReady } = usePetLive2D(slotRef, app, invalidateAnchor);
+
+  // 18 · lip-sync MouthDriver 与状态机联动
+  const driver = useMemo(() => new TextCadenceMouthDriver(), []);
+  useEffect(() => {
+    let prevPhase: PetPhase = usePetStateStore.getState().phase;
+    const unsub = usePetStateStore.subscribe((state) => {
+      const nextPhase = state.phase;
+      if (nextPhase === prevPhase) return;
+      const sprite = spriteRef.current;
+      if (prevPhase !== "speaking" && nextPhase === "speaking" && sprite) {
+        driver.attach(sprite);
+      } else if (prevPhase === "speaking" && nextPhase !== "speaking") {
+        driver.detach();
+      }
+      prevPhase = nextPhase;
+    });
+    return () => {
+      unsub();
+      driver.detach();
+    };
+  }, [driver, spriteRef]);
+
+  // 024 · 鼠标输入反馈（gaze / tap / drag）集中调度
+  const { onSlotClick, onSlotDragMove } = usePetInteractions(
+    spriteRef,
+    spriteReady,
+    spriteScreen,
+    isDragging,
+    driver,
+  );
+
+  // 把 callbacks 回填给 slot handler
+  useEffect(() => {
+    interactionsRef.current = { onSlotClick, onSlotDragMove };
+  }, [onSlotClick, onSlotDragMove]);
 
   // 17a · cursor passthrough（DOM data-hit 优先 + 18 alpha hit-test 主路径 + spriteScreen 矩形兜底 + isDragging 互锁）
   // + AC-6 cursorOnSprite 驱动 + 18 dev-only disabled 切换
@@ -81,9 +130,6 @@ export function PetApp() {
     setCursorOnSprite,
     disabled: passthroughDisabled,
   });
-
-  // 18 · 加载 Hiyori Live2DSprite 到 avatar-slot 内（slot 外层 plumbing 不动）
-  const { spriteRef } = usePetLive2D(slotRef, app, invalidateAnchor);
 
   // 18b · 上报 webview viewport 实际 DPR 给 Rust（issue 012 跨屏 drag 修复 v2）。
   //
@@ -166,27 +212,6 @@ export function PetApp() {
       safeUnlisten(unlistenEnv);
     };
   }, []);
-
-  // 18 · lip-sync MouthDriver 与状态机联动
-  const driver = useMemo(() => new TextCadenceMouthDriver(), []);
-  useEffect(() => {
-    let prevPhase: PetPhase = usePetStateStore.getState().phase;
-    const unsub = usePetStateStore.subscribe((state) => {
-      const nextPhase = state.phase;
-      if (nextPhase === prevPhase) return;
-      const sprite = spriteRef.current;
-      if (prevPhase !== "speaking" && nextPhase === "speaking" && sprite) {
-        driver.attach(sprite);
-      } else if (prevPhase === "speaking" && nextPhase !== "speaking") {
-        driver.detach();
-      }
-      prevPhase = nextPhase;
-    });
-    return () => {
-      unsub();
-      driver.detach();
-    };
-  }, [driver, spriteRef]);
 
   // 18 · speaking 态下 text_delta 副流转发给 driver（独立 listen 副流，不污染 petState ingest）
   useEffect(() => {

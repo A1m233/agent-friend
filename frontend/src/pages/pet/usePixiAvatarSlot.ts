@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
+import type { PetInteractions } from "./usePetInteractions";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import { findVisibleBounds } from "@/pet/petAlphaHitTest";
@@ -77,10 +78,20 @@ export interface UsePixiAvatarSlotHandles {
   alphaScanGivenUpRef: RefObject<boolean>;
 }
 
+const DRAG_MOVE_THRESHOLD_PX = 5;
+const CLICK_MAX_DURATION_MS = 300;
+const DRAG_VELOCITY_NORM_PX = 25;
+
+export interface UsePixiAvatarSlotOptions {
+  /** 024 · 用 ref 延迟绑定 callbacks，避免 App.tsx hooks 调用顺序循环。 */
+  interactionsRef?: RefObject<PetInteractions | null>;
+}
+
 export function usePixiAvatarSlot(
   stageRef: RefObject<HTMLDivElement | null>,
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void,
   setIsDragging: (v: boolean) => void,
+  options: UsePixiAvatarSlotOptions = {},
 ): UsePixiAvatarSlotHandles {
   const slotRef = useRef<PIXI.Container | null>(null);
   const [app, setApp] = useState<PIXI.Application | null>(null);
@@ -91,6 +102,7 @@ export function usePixiAvatarSlot(
   // 18b Win mixed DPR mitigation（issue 012）：alpha-scan 在 readPixels 不可用时整体降级
   // 到 17a 矩形行为。useRef 暴露给 usePetPassthrough 同步读，避免再起一条 React state 链路。
   const alphaScanGivenUpRef = useRef(false);
+  const interactionsRef = options.interactionsRef;
 
   const invalidateAnchor = useCallback(() => {
     cachedOffsetRef.current = null;
@@ -287,37 +299,83 @@ export function usePixiAvatarSlot(
       };
       pixi.ticker.add(syncBoundsIfChanged);
 
-      // —— drag handler ——
+      // —— pointer handler：click vs drag 区分（024） ——
       let pointerStart: { x: number; y: number } | null = null;
       let slotStart: { x: number; y: number } | null = null;
+      let lastPointer: { x: number; y: number } | null = null;
+      let downTimestamp = 0;
+      let dragArmed = false;
+
+      function clampDragNorm(v: number): number {
+        return Math.max(-1, Math.min(1, v));
+      }
 
       slot.on("pointerdown", (e) => {
         pointerStart = { x: e.global.x, y: e.global.y };
+        lastPointer = { x: e.global.x, y: e.global.y };
         slotStart = { x: slot.x, y: slot.y };
-        setIsDragging(true);
-        slot.cursor = "grabbing";
+        downTimestamp = performance.now();
+        dragArmed = false;
+        // 不立即 setIsDragging；等 globalpointermove 超阈值再进 drag
       });
 
       slot.on("globalpointermove", (e) => {
-        if (!pointerStart || !slotStart) return;
-        slot.x = slotStart.x + (e.global.x - pointerStart.x);
-        slot.y = slotStart.y + (e.global.y - pointerStart.y);
+        if (!pointerStart || !slotStart || !lastPointer) return;
+        const dx = e.global.x - pointerStart.x;
+        const dy = e.global.y - pointerStart.y;
+
+        if (!dragArmed) {
+          if (Math.hypot(dx, dy) > DRAG_MOVE_THRESHOLD_PX) {
+            dragArmed = true;
+            setIsDragging(true);
+            slot.cursor = "grabbing";
+          } else {
+            return;
+          }
+        }
+
+        slot.x = slotStart.x + dx;
+        slot.y = slotStart.y + dy;
+
+        const onSlotDragMove = interactionsRef?.current?.onSlotDragMove;
+        if (onSlotDragMove) {
+          // 024 修正：传瞬时速度（每帧位移），而非从 pointerdown 开始的累积位移。
+          const dvx = e.global.x - lastPointer.x;
+          const dvy = e.global.y - lastPointer.y;
+          onSlotDragMove(clampDragNorm(dvx / DRAG_VELOCITY_NORM_PX), clampDragNorm(dvy / DRAG_VELOCITY_NORM_PX));
+        }
+        lastPointer = { x: e.global.x, y: e.global.y };
+
         // AC-5 修复：前端不节流，每帧 emit；Rust update_sprite_pos 内同步即时
         // 算 bubble position 并 set_position（不等 016 follow loop 16ms tick），
         // 消除"前端节流 16ms + Rust tick 16ms 串联"的视觉卡顿
         emitSpritePos();
       });
 
-      const endDrag = () => {
-        if (!pointerStart) return;
+      const endPointer = (e: PIXI.FederatedPointerEvent) => {
+        if (!pointerStart || !slotStart) return;
+        const duration = performance.now() - downTimestamp;
+        const dx = e.global.x - pointerStart.x;
+        const dy = e.global.y - pointerStart.y;
+        const dist = Math.hypot(dx, dy);
+        const wasClick = !dragArmed && duration < CLICK_MAX_DURATION_MS && dist < DRAG_MOVE_THRESHOLD_PX;
+
         pointerStart = null;
         slotStart = null;
-        setIsDragging(false);
-        slot.cursor = "grab";
-        emitSpritePos(); // commit 最终位置
+
+        if (dragArmed) {
+          setIsDragging(false);
+          slot.cursor = "grab";
+          emitSpritePos(); // commit 最终位置
+        }
+        dragArmed = false;
+
+        if (wasClick) {
+          interactionsRef?.current?.onSlotClick?.(e);
+        }
       };
-      slot.on("pointerup", endDrag);
-      slot.on("pointerupoutside", endDrag);
+      slot.on("pointerup", endPointer);
+      slot.on("pointerupoutside", endPointer);
 
       // AC-6 修复：原 PIXI slot.on("pointerover/out") → setHoverActionBar
       //   在 cursor 离开 sprite 后 setIgnoreCursorEvents 切回 true，webview 不再

@@ -21,7 +21,12 @@ export interface PetLive2DConfig {
    * 状态机进入态时优先派发的 motion group 名（按各模型的 model3.json `Motions` 字段实际给）。
    * - `null` 表示不切动作（让默认 idle 继续跑）；模型缺失该 group 时 `usePetLive2D` try/catch + log warn。
    */
-  motionGroups: Record<PetPhase, string | null>;
+  motionGroups: Record<PetPhase, string | null> & { tap?: string | null };
+  /**
+   * 各 phase / tap 触发的 motion 在 group 内的编号。
+   * 模型 motion group 里有多个 motion 时，通过改这里换动作（不需要重启 dev，保存后 hot reload）。
+   */
+  motionNo: Record<PetPhase, number> & { tap?: number };
   /**
    * sprite 在 PIXI 中的渲染宽度（CSS px）。**height 自动按模型比例算**：
    * `getModelCanvasSize()` 取 model canvas aspect ratio → `height = width × (modelHeight/modelWidth)`。
@@ -39,6 +44,14 @@ export const PET_LIVE2D_CONFIG: PetLive2DConfig = {
     thinking: null, // 暂不切，沿用 idle
     speaking: null, // 暂不切，由 lip-sync 驱嘴
     error: null,    // 暂不切（缺失模型表情不强求）
+    tap: "Idle",    // 024 · tap 反应复用 Idle group，具体动作由 motionNo.tap 指定
+  },
+  motionNo: {
+    idle: 0,
+    thinking: 0,
+    speaking: 0,
+    error: 0,
+    tap: 4,         // 024 · 默认用 Idle group 第 4 个 motion；改这里可试其他动作
   },
   spriteWidth: 320,
 };

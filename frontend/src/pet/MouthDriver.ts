@@ -8,12 +8,17 @@
  * 状态机在 enter speaking 时 `driver.attach(sprite)` + 把 push event 中 text_delta 转发到
  * `onTextDelta`；exit speaking 时 `driver.detach()`，driver 内部把 mouth 参数回零 + 清 timer。
  *
- * 详见 18 design §3.5 / §7。
+ * 024 改造：driver 不再自己 hook `sprite.onRender`，而是实现 `ParamSource` 接口，由
+ * `composePetRender` 统一在 onRender 中按顺序调用 `apply(sprite)`。这样 gaze / tap / drag
+ * 等 source 不会互相覆盖 onRender。
+ *
+ * 详见 18 design §3.5 / §7、024 design §4.5。
  */
 
 import type { Live2DSprite } from "easy-live2d";
+import type { ParamSource } from "./sources/types";
 
-export interface MouthDriver {
+export interface MouthDriver extends ParamSource {
   /** 由状态机在 enter speaking 态时调；driver 拿到 sprite handle 准备驱动 mouth 参数。 */
   attach(sprite: Live2DSprite): void;
 
@@ -51,10 +56,8 @@ export class TextCadenceMouthDriver implements MouthDriver {
   private sprite: Live2DSprite | null = null;
   private rafId: number | null = null;
   private queue: string[] = [];
-  /** raf step 计算出的当前 mouth open 目标值（0..1），由 hook 的 onRender 真正 set 到 sprite。 */
+  /** raf step 计算出的当前 mouth open 目标值（0..1），由 composer 的 apply 真正 set 到 sprite。 */
   private currentMouthValue = 0;
-  /** 保存原 sprite.onRender（含 Live2D model.update + motion apply）。detach 时恢复。 */
-  private origOnRender: ((renderer: unknown) => void) | null = null;
   /** dev only · 首次 setMouthOpen 时打日志（验证参数 ID + sprite API 真生效） */
   private setMouthOpenLogged = false;
 
@@ -63,28 +66,7 @@ export class TextCadenceMouthDriver implements MouthDriver {
     if (import.meta.env.DEV) {
       console.info("[lip-sync] driver attached, sprite=", !!sprite);
     }
-    // **关键 fix**：Live2D model.update / motion apply 在 sprite.onRender 内跑，会覆盖
-    // 我用 raf 设的 mouth 值。hook onRender：原 callback 先跑（motion apply 完）→ 然后
-    // 强制 setParameterValueById 把我的 currentMouthValue 设回去，确保渲染时是我的值。
-    // detach 时恢复原 onRender。
-    const orig = sprite.onRender as ((renderer: unknown) => void) | null;
-    this.origOnRender = orig;
-    // dev only · 验证 hook 真被 PIXI 调（不调说明 onRender hook 路径错，需要换方案）
-    let hookFiredOnce = false;
-    (sprite as unknown as { onRender: (renderer: unknown) => void }).onRender = (
-      renderer: unknown,
-    ) => {
-      orig?.(renderer);
-      // motion apply 之后我赢
-      sprite.setParameterValueById(PARAM_MOUTH_OPEN_Y, this.currentMouthValue);
-      if (import.meta.env.DEV && !hookFiredOnce) {
-        hookFiredOnce = true;
-        console.info(
-          "[lip-sync] onRender hook fired (motion 之后我覆盖)，currentMouthValue=",
-          this.currentMouthValue,
-        );
-      }
-    };
+    // 024：onRender hook 移除，改由 composePetRender 统一调度 apply
   }
 
   onTextDelta(text: string): void {
@@ -128,12 +110,10 @@ export class TextCadenceMouthDriver implements MouthDriver {
 
   private setMouthOpen(v: number): void {
     this.currentMouthValue = v;
-    if (!this.sprite) return;
-    // **首次 dev 日志**：验证参数 ID + sprite API 真生效
     if (import.meta.env.DEV && !this.setMouthOpenLogged) {
       this.setMouthOpenLogged = true;
       try {
-        const range = this.sprite.getParameterValueRangeById?.(PARAM_MOUTH_OPEN_Y);
+        const range = this.sprite?.getParameterValueRangeById?.(PARAM_MOUTH_OPEN_Y);
         console.info(
           `[lip-sync] setMouthOpen(${v.toFixed(2)}) first call · param "${PARAM_MOUTH_OPEN_Y}" range=`,
           range,
@@ -142,9 +122,17 @@ export class TextCadenceMouthDriver implements MouthDriver {
         console.warn("[lip-sync] getParameterValueRangeById threw:", e);
       }
     }
-    // 直接 set（语义清晰 + 测试可断言）。onRender hook 内会再 set 一次（motion 之后覆盖），
-    // 两次 set 同一值不冲突，关键是最终在 motion apply 之后那次赢。
-    this.sprite.setParameterValueById(PARAM_MOUTH_OPEN_Y, v);
+    // 024：不再直接 setParameterValueById；由 composer 在 onRender 后调 apply 写入，
+    // 确保 motion apply 之后我赢。
+  }
+
+  get active(): boolean {
+    return this.sprite !== null;
+  }
+
+  apply(sprite: Live2DSprite): void {
+    if (this.sprite !== sprite) return;
+    sprite.setParameterValueById(PARAM_MOUTH_OPEN_Y, this.currentMouthValue);
   }
 
   detach(): void {
@@ -155,15 +143,9 @@ export class TextCadenceMouthDriver implements MouthDriver {
     this.queue = [];
     this.currentMouthValue = 0;
     if (this.sprite) {
-      // 恢复 onRender，让 Live2D 自己的 motion / breath 继续控制 mouth
-      if (this.origOnRender !== null) {
-        (this.sprite as unknown as { onRender: ((renderer: unknown) => void) | null }).onRender =
-          this.origOnRender;
-      }
-      // 显式 set 0 让嘴回零（在 onRender 恢复之前最后一次）
+      // 显式 set 0 让嘴回零
       this.sprite.setParameterValueById(PARAM_MOUTH_OPEN_Y, 0);
     }
-    this.origOnRender = null;
     this.sprite = null;
     if (import.meta.env.DEV) {
       console.info("[lip-sync] driver detached");
@@ -178,8 +160,18 @@ export class TextCadenceMouthDriver implements MouthDriver {
  * → mouth 参数），不改动 MouthDriver 接口 / 状态机 / 调用方代码。
  */
 export class AudioRmsMouthDriver implements MouthDriver {
+  private sprite: Live2DSprite | null = null;
+
+  get active(): boolean {
+    return this.sprite !== null;
+  }
+
+  apply(): void {
+    // TODO 17c · audio 驱动真正写 mouth 参数
+  }
+
   attach(_sprite: Live2DSprite): void {
-    /* TODO 17c · 接 voice_bridge audio 流 */
+    this.sprite = _sprite;
   }
 
   onAudioFrame(_pcm: Float32Array, _sampleRate: number): void {
@@ -187,6 +179,6 @@ export class AudioRmsMouthDriver implements MouthDriver {
   }
 
   detach(): void {
-    /* TODO 17c */
+    this.sprite = null;
   }
 }

@@ -14,7 +14,7 @@
  * 详见 18 design §3.4 / §6.2。
  */
 
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
 import { Live2DSprite, Config, Priority, LogLevel } from "easy-live2d";
 import { PET_LIVE2D_CONFIG } from "./live2dConfig";
@@ -28,6 +28,8 @@ Config.CubismLoggingLevel = LogLevel.LogLevel_Warning;
 export interface UsePetLive2DHandle {
   /** Live2DSprite ref；加载完成后 .current = sprite，cleanup / 失败时为 null。 */
   spriteRef: RefObject<Live2DSprite | null>;
+  /** 024 · sprite 已完成 ready + setSize + 定位，可安全挂 composer 和调 startMotion。 */
+  spriteReady: boolean;
 }
 
 export function usePetLive2D(
@@ -41,6 +43,7 @@ export function usePetLive2D(
   invalidateAnchor: () => void,
 ): UsePetLive2DHandle {
   const spriteRef = useRef<Live2DSprite | null>(null);
+  const [spriteReady, setSpriteReady] = useState(false);
 
   useEffect(() => {
     const slot = slotRef.current;
@@ -92,6 +95,7 @@ export function usePetLive2D(
         sprite.y = -finalHeight / 2;
 
         spriteRef.current = sprite;
+        setSpriteReady(true);
 
         // 通知 usePixiAvatarSlot 重新 alpha-scan：占位 children 替成 Live2DSprite 后，
         // visible bounds 从 ~160×30 占位变到 Hiyori 实际渲染范围；不 invalidate 的话 anchor
@@ -100,11 +104,12 @@ export function usePetLive2D(
 
         // 默认播 idle motion；模型 motion group 不存在时 try/catch 吃掉
         const idleGroup = PET_LIVE2D_CONFIG.motionGroups.idle;
+        const idleNo = PET_LIVE2D_CONFIG.motionNo.idle ?? 0;
         if (idleGroup) {
           try {
             await sprite.startMotion({
               group: idleGroup,
-              no: 0,
+              no: idleNo,
               priority: Priority.Idle,
             });
           } catch (e) {
@@ -128,6 +133,7 @@ export function usePetLive2D(
 
     return () => {
       cancelled = true;
+      setSpriteReady(false);
       if (sprite) {
         try {
           slot.removeChild(sprite);
@@ -140,5 +146,5 @@ export function usePetLive2D(
     };
   }, [slotRef, app, invalidateAnchor]);
 
-  return { spriteRef };
+  return { spriteRef, spriteReady };
 }

@@ -103,29 +103,8 @@ export function usePetPassthrough({
 
     apply(true); // 初始默认穿透：空白处不挡桌面
 
-    // dev only · cursor passthrough debug log（throttled 每秒一次），用于排查 Win 端
-    // cursor 坐标系跟 macOS 差异导致穿透 ON 时 hover/click/drag 全失效的问题
-    let lastCursorLog = 0;
-
     const unlisten = listen<{ x: number; y: number }>("pet://cursor", (e) => {
       if (disposed) return;
-      if (import.meta.env.DEV && performance.now() - lastCursorLog > 1000) {
-        lastCursorLog = performance.now();
-        const el = document.elementFromPoint(e.payload.x, e.payload.y);
-        const hit = el?.closest("[data-hit]") ? "data-hit" : "no-data-hit";
-        const inSprite =
-          spriteScreen &&
-          e.payload.x >= spriteScreen.x &&
-          e.payload.x <= spriteScreen.x + spriteScreen.w &&
-          e.payload.y >= spriteScreen.y &&
-          e.payload.y <= spriteScreen.y + spriteScreen.h;
-        console.info(
-          `[passthrough] cursor=(${e.payload.x.toFixed(0)},${e.payload.y.toFixed(0)})` +
-            ` viewport=${window.innerWidth}x${window.innerHeight}` +
-            ` sprite=${spriteScreen ? `(${spriteScreen.x.toFixed(0)},${spriteScreen.y.toFixed(0)})${spriteScreen.w.toFixed(0)}x${spriteScreen.h.toFixed(0)}` : "null"}` +
-            ` inSprite=${inSprite} dom=${hit}`,
-        );
-      }
       // (1) drag 期间锁定 false；hover 状态从 cursorOnSprite 维度看是 "不算 hover"
       //     （但 ActionBar 显隐由 App.tsx 综合 isDragging || cursorOnSprite || hoverActionBarDom 决定）
       if (isDragging) {
