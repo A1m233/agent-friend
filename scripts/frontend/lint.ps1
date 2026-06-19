@@ -8,11 +8,20 @@ $here = $PSScriptRoot
 Ensure-NodePnpm
 Set-Location (Join-Path $here "..\..\frontend")
 Write-Host "===> eslint"
-pnpm run lint
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+pnpm run lint 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $oldEAP
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "===> color-guard"
-pnpm run lint:colors
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+pnpm run lint:colors 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $oldEAP
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "===> typecheck"
-pnpm run typecheck
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+pnpm run typecheck 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $oldEAP
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

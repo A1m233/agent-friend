@@ -25,6 +25,7 @@
 | `dev/` | **一键起 bridge + 前端**（默认 Tauri 桌面双窗口；`--web` 切浏览器、不编译 Rust）。两路日志加 `[bridge]`/`[app\|web]` 前缀，Ctrl+C 一起退 | `./scripts/dev/run.sh [--web] [前端参数]` | `.\scripts\dev\run.ps1 [--web] [前端参数]` |
 | `voice/run` | 启动 voice-bridge 控制平面 + LLM 入站代理（默认 `127.0.0.1:18900`；007 voice-call） | `./scripts/voice/run.sh` | `.\scripts\voice\run.ps1` |
 | `voice/tunnel` | 启动 cloudflared 公网穿透样例（仅 mac/linux；详见脚本头部注释；windows 自行起隧道） | `./scripts/voice/tunnel.sh` | （单端例外） |
+| `voice-smoke/run` | **Windows 真机语音 smoke 一键启动**：拉起 agent_bridge、cloudflared、voice_bridge、本地 HTTP server，自动回填 `VOICE_BRIDGE_PUBLIC_URL`，然后访问 `voice_bridge/smoke/`。⚠️ 触发真实火山 RTC + DeepSeek 调用 | （单端例外：仅 Windows） | `.\scripts\voice-smoke\run.ps1` |
 | `test/` | 跑 pytest（参数透传） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `memory-eval/` | 跑 memory 召回评测 PoC（默认 PerLTQA 中文，`--dataset locomo` 切英文；⚠️ 触发**真实 LLM** 抽取，需授权 + `.env` 配 `DEEPSEEK_API_KEY`；数据放 `memory_eval/data/`，详见 `memory_eval/README.md`） | `./scripts/memory-eval/run.sh [--dataset perltqa\|locomo] [--limit-samples N] [--limit-questions N]` | `.\scripts\memory-eval\run.ps1 [...]` |
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |

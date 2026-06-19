@@ -2,6 +2,8 @@
 
 > ⚠️ **非产品代码**。本目录提供一个最小 HTML+JS 客户端，**仅供开发者在合规允许公网穿透的环境跑端到端 smoke 验证**。
 >
+> Windows 上一键启动：`.\scripts\voice-smoke\run.ps1`（会拉起 agent_bridge、cloudflared、voice_bridge 和本地 HTTP server）。
+>
 > 不是产品级前端、不在 AC 列表内、不做错误处理 UI 美化、未来桌宠 / IM / Web 客户端的 voice 接入有各自的产品级实现。
 
 ## 完整跑通流程在哪里
