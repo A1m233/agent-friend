@@ -8,5 +8,8 @@ $here = $PSScriptRoot
 Ensure-NodePnpm
 Set-Location (Join-Path $here "..\..\frontend")
 Write-Host "===> vitest"
-pnpm run test @args
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+pnpm run test @args 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $oldEAP
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

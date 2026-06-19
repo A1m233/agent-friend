@@ -73,6 +73,14 @@ class SessionBridge:
     def __init__(self, runtime: BridgeRuntime) -> None:
         self._runtime = runtime
 
+    def session_exists(self, session_id: str) -> bool:
+        """检查 ``session_id`` 是否已在持久化 store 中存在。"""
+        try:
+            self._runtime.persistent_session_manager.open(session_id)
+        except SessionNotFoundError:
+            return False
+        return True
+
     def start_transient(self, boot: TransientBootstrap) -> Conversation:
         """OpenAI 默认无状态分支：用 ``boot.history`` 在内存里造 :class:`Session`，
         再用 transient :class:`SessionManager`（注入 :class:`NullSessionStore`）
