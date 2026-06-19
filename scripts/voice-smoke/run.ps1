@@ -60,6 +60,7 @@ Confirm-Continue "确认继续"
 
 $processes = @()
 $cloudflaredLog = Join-Path $env:TEMP "agent-friend-cloudflared-smoke.log"
+$cloudflaredErrLog = Join-Path $env:TEMP "agent-friend-cloudflared-smoke.err.log"
 
 try {
     # ----- 1. agent_bridge -----
@@ -73,23 +74,28 @@ try {
     # ----- 2. cloudflared -----
     Write-Step "启动 cloudflared quick tunnel（等待公网 URL）"
     if (Test-Path $cloudflaredLog) { Remove-Item $cloudflaredLog -Force }
-    $cloudflaredProc = Start-Process cloudflared -ArgumentList "tunnel", "--url", "http://127.0.0.1:18900" -RedirectStandardOutput $cloudflaredLog -RedirectStandardError $cloudflaredLog -PassThru
+    if (Test-Path $cloudflaredErrLog) { Remove-Item $cloudflaredErrLog -Force }
+    $cloudflaredProc = Start-Process cloudflared -ArgumentList "tunnel", "--url", "http://127.0.0.1:18900" -RedirectStandardOutput $cloudflaredLog -RedirectStandardError $cloudflaredErrLog -PassThru
     $processes += $cloudflaredProc
 
     $publicUrl = $null
     for ($i = 0; $i -lt 60; $i++) {
         Start-Sleep -Seconds 1
-        if (Test-Path $cloudflaredLog) {
-            $match = Select-String -Path $cloudflaredLog -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -First 1
-            if ($match) {
-                $publicUrl = $match.Matches[0].Value
-                break
+        $logPaths = @($cloudflaredLog, $cloudflaredErrLog)
+        foreach ($logPath in $logPaths) {
+            if (Test-Path $logPath) {
+                $match = Select-String -Path $logPath -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -First 1
+                if ($match) {
+                    $publicUrl = $match.Matches[0].Value
+                    break
+                }
             }
         }
+        if ($publicUrl) { break }
     }
 
     if (-not $publicUrl) {
-        throw "cloudflared 公网 URL 获取失败，请检查 $cloudflaredLog"
+        throw "cloudflared 公网 URL 获取失败，请检查 $cloudflaredLog 或 $cloudflaredErrLog"
     }
     Write-Host "cloudflared URL: $publicUrl" -ForegroundColor Green
 
@@ -149,6 +155,9 @@ finally {
     }
     if (Test-Path $cloudflaredLog) {
         Remove-Item $cloudflaredLog -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $cloudflaredErrLog) {
+        Remove-Item $cloudflaredErrLog -Force -ErrorAction SilentlyContinue
     }
     Write-Host "清理完成"
 }
