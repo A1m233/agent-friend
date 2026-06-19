@@ -14,6 +14,7 @@ docs/requirements/013-memory-quality-pass-1/design.md §4。
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from datetime import datetime
@@ -31,6 +32,8 @@ from .schema import (
 )
 
 __all__ = ["SqliteMemoryStore"]
+
+logger = logging.getLogger(__name__)
 
 _RELATED_DEFAULT_LIMIT = 200
 """``related_semantic`` 兜底返回的活跃事实上限。
@@ -55,64 +58,76 @@ class SqliteMemoryStore:
             check_same_thread=False,
         )
         self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            # v1 → v2 迁移：在 DDL 跑之前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；
-            # 后续 DDL 的 CREATE IF NOT EXISTS 会用新 unicode61 配置建表，旧表
-            # IF NOT EXISTS 不会改、必须先 DROP。
-            need_backfill = _premigrate_v1_to_v2(self._conn)
-            for ddl in DDL_STATEMENTS:
-                self._conn.execute(ddl)
-            if need_backfill:
-                _backfill_tokens_and_rebuild_fts(self._conn)
-            self._conn.execute(
-                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
-            self._conn.execute(
-                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
-                (str(SCHEMA_VERSION),),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA foreign_keys=ON")
+                # v1 → v2 迁移：在 DDL 跑之前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；
+                # 后续 DDL 的 CREATE IF NOT EXISTS 会用新 unicode61 配置建表，旧表
+                # IF NOT EXISTS 不会改、必须先 DROP。
+                need_backfill = _premigrate_v1_to_v2(self._conn)
+                logger.info(
+                    "schema premigrate need_backfill=%s version=%d", need_backfill, SCHEMA_VERSION
+                )
+                for ddl in DDL_STATEMENTS:
+                    self._conn.execute(ddl)
+                if need_backfill:
+                    _backfill_tokens_and_rebuild_fts(self._conn)
+                    logger.info("schema backfill completed")
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._conn.execute(
+                    "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            logger.exception("sqlite store initialization failed for %s", db_path)
+            raise
 
     # ----- 写 -----
 
     def add_semantic(self, row: SemanticRow) -> None:
         """插入一条语义记忆，同步写 FTS。"""
         tokens = _tokenize(row.statement)
-        with self._lock:
-            cur = self._conn.execute(
-                """
-                INSERT INTO semantic
-                    (id, statement, statement_tokens, importance, pinned, source, speaker_origin,
-                     valid_from, valid_until, provenance, deleted_at,
-                     owner_user_id, persona_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row.id,
-                    row.statement,
-                    tokens,
-                    row.importance,
-                    1 if row.pinned else 0,
-                    row.source,
-                    row.speaker_origin,
-                    serialize_ts(row.valid_from),
-                    serialize_ts(row.valid_until),
-                    json.dumps(row.provenance, ensure_ascii=False),
-                    serialize_ts(row.deleted_at),
-                    row.owner_user_id,
-                    row.persona_id,
-                    serialize_ts(row.created_at),
-                    serialize_ts(row.updated_at),
-                ),
-            )
-            self._conn.execute(
-                "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
-                (cur.lastrowid, tokens),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO semantic
+                        (id, statement, statement_tokens, importance, pinned, source, speaker_origin,
+                         valid_from, valid_until, provenance, deleted_at,
+                         owner_user_id, persona_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row.id,
+                        row.statement,
+                        tokens,
+                        row.importance,
+                        1 if row.pinned else 0,
+                        row.source,
+                        row.speaker_origin,
+                        serialize_ts(row.valid_from),
+                        serialize_ts(row.valid_until),
+                        json.dumps(row.provenance, ensure_ascii=False),
+                        serialize_ts(row.deleted_at),
+                        row.owner_user_id,
+                        row.persona_id,
+                        serialize_ts(row.created_at),
+                        serialize_ts(row.updated_at),
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
+                    (cur.lastrowid, tokens),
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            logger.exception("add_semantic failed id=%s owner=%s", row.id, row.owner_user_id)
+            raise
 
     def supersede_semantic(self, old_id: str, valid_until: datetime) -> bool:
         """把某条语义记忆标记为失效（被取代）。
@@ -120,47 +135,55 @@ class SqliteMemoryStore:
         Returns:
             是否命中了一条活跃记录（命中并更新 → True）。
         """
-        with self._lock:
-            cur = self._conn.execute(
-                """
-                UPDATE semantic SET valid_until = ?, updated_at = ?
-                WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL
-                """,
-                (serialize_ts(valid_until), serialize_ts(valid_until), old_id),
-            )
-            self._conn.commit()
-            return cur.rowcount > 0
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """
+                    UPDATE semantic SET valid_until = ?, updated_at = ?
+                    WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL
+                    """,
+                    (serialize_ts(valid_until), serialize_ts(valid_until), old_id),
+                )
+                self._conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error:
+            logger.exception("supersede_semantic failed old_id=%s", old_id)
+            raise
 
     def add_episodic(self, row: EpisodicRow) -> None:
         """插入一条情节记忆，同步写 FTS。"""
         tokens = _tokenize(row.summary)
-        with self._lock:
-            cur = self._conn.execute(
-                """
-                INSERT INTO episodic
-                    (id, summary, summary_tokens, source_ref, importance, participants,
-                     occurred_at, deleted_at, owner_user_id, persona_id, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row.id,
-                    row.summary,
-                    tokens,
-                    row.source_ref,
-                    row.importance,
-                    json.dumps(row.participants, ensure_ascii=False),
-                    serialize_ts(row.occurred_at),
-                    serialize_ts(row.deleted_at),
-                    row.owner_user_id,
-                    row.persona_id,
-                    serialize_ts(row.created_at),
-                ),
-            )
-            self._conn.execute(
-                "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
-                (cur.lastrowid, tokens),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO episodic
+                        (id, summary, summary_tokens, source_ref, importance, participants,
+                         occurred_at, deleted_at, owner_user_id, persona_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row.id,
+                        row.summary,
+                        tokens,
+                        row.source_ref,
+                        row.importance,
+                        json.dumps(row.participants, ensure_ascii=False),
+                        serialize_ts(row.occurred_at),
+                        serialize_ts(row.deleted_at),
+                        row.owner_user_id,
+                        row.persona_id,
+                        serialize_ts(row.created_at),
+                    ),
+                )
+                self._conn.execute(
+                    "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
+                    (cur.lastrowid, tokens),
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            logger.exception("add_episodic failed id=%s owner=%s", row.id, row.owner_user_id)
+            raise
 
     # ----- 读 -----
 

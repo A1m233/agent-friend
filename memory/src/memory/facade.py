@@ -13,12 +13,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from .contracts import DEFAULT_OWNER_USER_ID, MemoryContext
 from .extraction import AsyncExtractionWorker
 from .retrieval import Renderer, ScoreWeights, pinned_gate, rank
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,6 +90,12 @@ class Memory:
 
     def observe(self, fragment: ConversationFragment) -> None:
         """提交一段对话素材做异步抽取（非阻塞）。"""
+        logger.info(
+            "observe owner=%s persona=%s utterances=%d",
+            fragment.owner_user_id,
+            fragment.persona_id,
+            len(fragment.utterances),
+        )
         self._worker.submit(fragment)
 
     # ----- 读路径 -----
@@ -107,6 +116,14 @@ class Memory:
         owner = owner_user_id or self._owner
         now = datetime.now(UTC)
 
+        logger.info(
+            "retrieve owner=%s persona=%s query_len=%d top_k=%d",
+            owner,
+            persona_id,
+            len(query),
+            self._top_k,
+        )
+
         pinned = self._store.pinned(owner_user_id=owner, persona_id=persona_id)
         if self._pinned_gate_enabled:
             pinned = pinned_gate(
@@ -123,6 +140,14 @@ class Memory:
                 query, owner_user_id=owner, persona_id=persona_id, limit=self._top_k
             )
             recalled = rank(cands, now=now, top_k=self._top_k, weights=self._weights)
+            logger.info(
+                "retrieve recalled pinned=%d candidates=%d ranked=%d",
+                len(pinned),
+                len(cands),
+                len(recalled),
+            )
+        else:
+            logger.info("retrieve skipped ranking (no strategy or empty query)")
 
         return self._renderer.render(pinned=pinned, recalled=recalled, now=now)
 

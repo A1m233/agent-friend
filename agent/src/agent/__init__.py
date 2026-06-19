@@ -35,6 +35,7 @@ from .fallbacks import random_fallback
 from .messages import Message, Role
 from .paths import (
     cli_history_path,
+    log_dir,
     memory_db_path,
     personas_dir,
     sessions_dir,
@@ -139,6 +140,7 @@ __all__ = [
     "TurnDone",
     "cli_history_path",
     "default_context_manager",
+    "log_dir",
     "make_default_registry",
     "memory_db_path",
     "personas_dir",

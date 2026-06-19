@@ -7,6 +7,7 @@ use tauri::{
 };
 
 mod bubble_window;
+mod log_paths;
 mod push_subscriber;
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
@@ -434,13 +435,48 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            let log_dir = log_paths::log_dir();
+            std::fs::create_dir_all(&log_dir).ok();
+            app.handle().plugin(
+                tauri_plugin_log::Builder::new()
+                    .targets([
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                            path: log_dir,
+                            file_name: Some("tauri".into()),
+                        }),
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    ])
+                    .level(log::LevelFilter::Info)
+                    .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                    .max_file_size(10_000_000)
+                    .format(
+                        |out: tauri_plugin_log::fern::FormatCallback,
+                         message: &std::fmt::Arguments,
+                         record: &log::Record| {
+                            let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+                            let component = record
+                                .file()
+                                .and_then(|f| {
+                                    std::path::Path::new(f)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .filter(|n| {
+                                            n.ends_with(".tsx")
+                                                || n.ends_with(".ts")
+                                                || n.ends_with(".jsx")
+                                                || n.ends_with(".js")
+                                        })
+                                })
+                                .unwrap_or_else(|| record.target());
+                            out.finish(format_args!(
+                                "{} [{:<5}] [{}] {}",
+                                ts, record.level(), component, message
+                            ))
+                        },
+                    )
+                    .build(),
+            )?;
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview

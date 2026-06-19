@@ -34,6 +34,9 @@ APP_NAME = "agent-friend"
 DATA_DIR_ENV = "AGENT_FRIEND_DATA_DIR"
 """覆盖整个用户数据根目录的环境变量名。"""
 
+LOG_DIR_ENV = "AGENT_FRIEND_LOG_DIR"
+"""覆盖日志根目录的环境变量名。"""
+
 
 def user_data_dir() -> Path:
     """返回用户数据根目录。
@@ -68,10 +71,25 @@ def cli_history_path() -> Path:
     return user_data_dir() / ".cli_history"
 
 
+def log_dir() -> Path:
+    """日志根目录。
+
+    优先级：``AGENT_FRIEND_LOG_DIR`` 环境变量 > 系统标准用户日志目录。
+    macOS 返回 ``~/Library/Logs/agent-friend``；Windows / Linux 委托
+    ``platformdirs.user_log_dir`` 按系统约定解析。
+    """
+    override = os.environ.get(LOG_DIR_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path(platformdirs.user_log_dir(APP_NAME, appauthor=False))
+
+
 __all__ = [
     "APP_NAME",
     "DATA_DIR_ENV",
+    "LOG_DIR_ENV",
     "cli_history_path",
+    "log_dir",
     "memory_db_path",
     "personas_dir",
     "sessions_dir",
