@@ -38,6 +38,33 @@ function Confirm-Continue([string]$prompt) {
     }
 }
 
+function Wait-HttpOk([string]$url, [int]$timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+                return
+            }
+        }
+        catch {
+            Start-Sleep -Seconds 1
+        }
+    }
+    throw "等待服务健康检查超时：$url"
+}
+
+function Assert-PortFree([int]$port) {
+    $lines = netstat -ano | Select-String ":$port"
+    $listening = @($lines | Where-Object { $_.Line -match "\sLISTENING\s+(\d+)$" })
+    if ($listening.Count -gt 0) {
+        $pids = $listening | ForEach-Object {
+            if ($_.Line -match "\sLISTENING\s+(\d+)$") { $Matches[1] }
+        } | Sort-Object -Unique
+        throw "端口 $port 已被占用，PID: $($pids -join ', ')。请先停止旧的 smoke/bridge/voice/http server 后重试。"
+    }
+}
+
 # ----- 前置检查 -----
 
 if (-not (Test-Path $envFile)) {
@@ -54,6 +81,10 @@ foreach ($cmd in $required) {
     }
 }
 
+foreach ($port in @(18800, 18900, 8765)) {
+    Assert-PortFree $port
+}
+
 # 提醒用户这是真机调用
 Write-Host "本脚本会启动 agent_bridge + voice_bridge + cloudflared，并触发真实火山 RTC 与 DeepSeek LLM 调用。" -ForegroundColor Yellow
 Confirm-Continue "确认继续"
@@ -68,8 +99,8 @@ try {
     $agentProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd `"$repo`"; .\scripts\bridge\run.ps1" -PassThru
     $processes += $agentProc
     Write-Host "agent_bridge PID: $($agentProc.Id)"
-    Write-Host "等待 3 秒让 agent_bridge 初始化..."
-    Start-Sleep -Seconds 3
+    Write-Host "等待 agent_bridge /healthz ..."
+    Wait-HttpOk "http://127.0.0.1:18800/healthz" 30
 
     # ----- 2. cloudflared -----
     Write-Step "启动 cloudflared quick tunnel（等待公网 URL）"
@@ -99,30 +130,26 @@ try {
     }
     Write-Host "cloudflared URL: $publicUrl" -ForegroundColor Green
 
-    # ----- 更新 .env -----
-    Write-Step "更新 .env 的 VOICE_BRIDGE_PUBLIC_URL"
-    $raw = Get-Content $envFile -Raw
-    $raw = $raw -replace "(?m)^VOICE_BRIDGE_PUBLIC_URL=.*$", "VOICE_BRIDGE_PUBLIC_URL=$publicUrl"
-    if ($raw -notmatch "(?m)^VOICE_BRIDGE_PUBLIC_URL=") {
-        $raw += "`nVOICE_BRIDGE_PUBLIC_URL=$publicUrl`n"
-    }
-    # 必须用 UTF-8 without BOM 写，PowerShell 5.1 默认 ANSI/GBK 会写坏中文注释
-    [System.IO.File]::WriteAllText($envFile, $raw, [System.Text.UTF8Encoding]::new($false))
-    Write-Host "VOICE_BRIDGE_PUBLIC_URL 已设置为 $publicUrl"
+    # ----- 给 voice_bridge 子进程注入公网 URL -----
+    Write-Step "设置 VOICE_BRIDGE_PUBLIC_URL（仅当前脚本进程，不写 .env）"
+    $env:VOICE_BRIDGE_PUBLIC_URL = $publicUrl
+    Write-Host "VOICE_BRIDGE_PUBLIC_URL=$publicUrl"
 
     # ----- 3. voice_bridge -----
     Write-Step "启动 voice_bridge（新窗口）"
     $voiceProc = Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd `"$repo`"; .\scripts\voice\run.ps1" -PassThru
     $processes += $voiceProc
     Write-Host "voice_bridge PID: $($voiceProc.Id)"
-    Write-Host "等待 3 秒让 voice_bridge 初始化..."
-    Start-Sleep -Seconds 3
+    Write-Host "等待 voice_bridge /healthz ..."
+    Wait-HttpOk "http://127.0.0.1:18900/healthz" 30
 
     # ----- 4. HTTP server -----
     Write-Step "启动本地 HTTP server（127.0.0.1:8765）"
-    $httpProc = Start-Process python -ArgumentList "-m", "http.server", "8765", "--bind", "127.0.0.1" -WorkingDirectory $repo -PassThru -WindowStyle Hidden
+    $httpProc = Start-Process uv -ArgumentList "run", "python", "-m", "http.server", "8765", "--bind", "127.0.0.1" -WorkingDirectory $repo -PassThru -WindowStyle Hidden
     $processes += $httpProc
     Write-Host "HTTP server PID: $($httpProc.Id)"
+    Write-Host "等待 smoke 页面 HTTP server ..."
+    Wait-HttpOk "http://127.0.0.1:8765/voice_bridge/smoke/" 30
 
     # ----- 用户指引 -----
     Write-Host ""
