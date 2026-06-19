@@ -1,5 +1,6 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { TextCadenceMouthDriver, AudioRmsMouthDriver } from "./MouthDriver";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import type { TextCadenceMouthDriver } from "./MouthDriver";
+import { AudioRmsMouthDriver } from "./MouthDriver";
 
 interface MockSprite {
   setParameterValueById: ReturnType<typeof vi.fn>;
@@ -17,8 +18,14 @@ function makeMockSprite(): MockSprite {
  *   caf(id) → clearTimeout(id)
  *
  * performance.now 也用 fake timer 时间驱动，让 sin 波时序可断言。
+ *
+ * 024 改造：driver 不再自己 hook onRender，而是实现 ParamSource.apply；测试用
+ * applyRef.current 让 raf 每帧计算完 currentMouthValue 后触发一次 apply，
+ * 模拟 composer 的 onRender 调用。
  */
-function setupRafMock(): { now: () => number } {
+function setupRafMock(
+  applyRef: { current: () => void },
+): { now: () => number } {
   let virtualNow = 0;
   vi.spyOn(performance, "now").mockImplementation(() => virtualNow);
   vi.useFakeTimers({ now: 0 });
@@ -26,6 +33,7 @@ function setupRafMock(): { now: () => number } {
     return setTimeout(() => {
       virtualNow += 16;
       cb(virtualNow);
+      applyRef.current();
     }, 16) as unknown as number;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
@@ -42,125 +50,125 @@ function teardownRafMock(): void {
   vi.restoreAllMocks();
 }
 
-describe("TextCadenceMouthDriver", () => {
-  beforeEach(() => {
-    setupRafMock();
-  });
+async function makeTextCadenceMouthDriver(): Promise<TextCadenceMouthDriver> {
+  const { TextCadenceMouthDriver: Ctor } = await import("./MouthDriver");
+  return new Ctor();
+}
 
+describe("TextCadenceMouthDriver", () => {
   afterEach(() => {
     teardownRafMock();
   });
 
-  it("attach 之前 onTextDelta 是 no-op", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("attach 之前 onTextDelta 是 no-op", async () => {
+    const driver = await makeTextCadenceMouthDriver();
+    const applyRef = { current: () => driver.apply({} as never) };
+    setupRafMock(applyRef);
     driver.onTextDelta?.("hello");
-    // 推时间 100ms，确保没有 raf 回调被排队
     vi.advanceTimersByTime(100);
-    // 没 sprite 也没 timer 在跑，advanceTimers 不会触发 setParameterValueById
-    // —— 通过"没 throw"+"用上 sprite 也是 0 调用"验证
     const sprite = makeMockSprite();
+    applyRef.current = () => driver.apply(sprite as never);
     driver.attach(sprite as never);
     vi.advanceTimersByTime(100);
     expect(sprite.setParameterValueById).not.toHaveBeenCalled();
   });
 
-  it("空 text_delta 不入队（不开启 raf 循环）", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("空 text_delta 不入队（不开启 raf 循环）", async () => {
+    const driver = await makeTextCadenceMouthDriver();
     const sprite = makeMockSprite();
+    const applyRef = { current: () => driver.apply(sprite as never) };
+    setupRafMock(applyRef);
     driver.attach(sprite as never);
     driver.onTextDelta?.("");
     vi.advanceTimersByTime(200);
     expect(sprite.setParameterValueById).not.toHaveBeenCalled();
   });
 
-  it("attach + onTextDelta 1 段 → 走完 sin 波后回 0", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("attach + onTextDelta 1 段 → 走完 sin 波后回 0", async () => {
+    const driver = await makeTextCadenceMouthDriver();
     const sprite = makeMockSprite();
+    const applyRef = { current: () => driver.apply(sprite as never) };
+    setupRafMock(applyRef);
     driver.attach(sprite as never);
 
     // 5 字 × 80ms = 400ms 驱嘴
     driver.onTextDelta?.("你好啊吗");
 
-    // 推 200ms（一半时长，应该在峰值附近 ≈ MOUTH_OPEN_PEAK * sin(π/2) ≈ 0.8）
-    // 4 字（不是 5）—— 改成 5 字 "你好啊吗?"，让计算更直观
-    // 实际上 raf step 是 16ms 一帧，200ms 内约 12 帧
+    // 推 200ms（一半时长，应该在峰值附近 ≈ 0.8）
     vi.advanceTimersByTime(200);
     expect(sprite.setParameterValueById).toHaveBeenCalled();
     const calls = sprite.setParameterValueById.mock.calls;
-    // 至少一次调用的值在峰值区间（[0.5, 0.8]，对应 t in [0.25, 0.75]）
     const peakish = calls.find(([id, v]) => id === "ParamMouthOpenY" && v >= 0.5);
     expect(peakish).toBeDefined();
 
-    // 推到时长结束（5 字 × 80ms = 400ms，加余量 200ms 总共 400ms），最终落 0
+    // 推到时长结束，最终落 0
     vi.advanceTimersByTime(300);
     const lastCall = calls[calls.length - 1];
     expect(lastCall[0]).toBe("ParamMouthOpenY");
     expect(lastCall[1]).toBe(0);
   });
 
-  it("多段 text_delta 串行（不并发驱嘴）", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("多段 text_delta 串行（不并发驱嘴）", async () => {
+    const driver = await makeTextCadenceMouthDriver();
     const sprite = makeMockSprite();
+    const applyRef = { current: () => driver.apply(sprite as never) };
+    setupRafMock(applyRef);
     driver.attach(sprite as never);
 
-    driver.onTextDelta?.("hi");   // 2×80=160ms → 抬到 min 100ms? 不,是 max(100, 2*80) = 160ms
+    driver.onTextDelta?.("hi");   // 2×80=160ms
     driver.onTextDelta?.("there"); // 5×80=400ms
 
-    // 推 50ms：第一段在跑（中点附近）
     vi.advanceTimersByTime(50);
     const callsAfterMid1 = sprite.setParameterValueById.mock.calls.length;
     expect(callsAfterMid1).toBeGreaterThan(0);
 
-    // 推到 160ms：第一段刚结束（落 0），第二段还没开始
-    // raf 步进可能让落 0 + 启动下一段在同一帧附近
     vi.advanceTimersByTime(120);
-    // 此时第二段已开始（或刚开始），检查后续帧值不全为 0（驱嘴在动）
-    vi.advanceTimersByTime(100);  // 第二段中段
+    vi.advanceTimersByTime(100);
     const allCalls = sprite.setParameterValueById.mock.calls;
     const nonZeroAfterFirstSegment = allCalls.slice(15).filter(([, v]) => v > 0);
     expect(nonZeroAfterFirstSegment.length).toBeGreaterThan(0);
   });
 
-  it("detach 立即归零 + 清 queue + 后续 onTextDelta no-op", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("detach 立即归零 + 清 queue + 后续 onTextDelta no-op", async () => {
+    const driver = await makeTextCadenceMouthDriver();
     const sprite = makeMockSprite();
+    const applyRef = { current: () => driver.apply(sprite as never) };
+    setupRafMock(applyRef);
     driver.attach(sprite as never);
     driver.onTextDelta?.("running");
 
-    // 推 100ms，驱嘴中
     vi.advanceTimersByTime(100);
     const callsBeforeDetach = sprite.setParameterValueById.mock.calls.length;
     expect(callsBeforeDetach).toBeGreaterThan(0);
 
     driver.detach();
 
-    // detach 立即调一次 setParameterValueById("ParamMouthOpenY", 0)
     const lastCallAtDetach = sprite.setParameterValueById.mock.calls[
       sprite.setParameterValueById.mock.calls.length - 1
     ];
     expect(lastCallAtDetach).toEqual(["ParamMouthOpenY", 0]);
 
-    // 推时间，不再有新调用
     const callsAfterDetach = sprite.setParameterValueById.mock.calls.length;
     vi.advanceTimersByTime(500);
     expect(sprite.setParameterValueById.mock.calls.length).toBe(callsAfterDetach);
 
-    // 后续 onTextDelta 也是 no-op（sprite 已 null）
     driver.onTextDelta?.("after");
     vi.advanceTimersByTime(200);
     expect(sprite.setParameterValueById.mock.calls.length).toBe(callsAfterDetach);
   });
 
-  it("re-attach 后能继续工作", () => {
-    const driver = new TextCadenceMouthDriver();
+  it("re-attach 后能继续工作", async () => {
+    const driver = await makeTextCadenceMouthDriver();
     const sprite1 = makeMockSprite();
+    const applyRef = { current: () => driver.apply(sprite1 as never) };
+    setupRafMock(applyRef);
     driver.attach(sprite1 as never);
     driver.onTextDelta?.("first");
     vi.advanceTimersByTime(50);
     driver.detach();
 
-    // re-attach 到新 sprite
     const sprite2 = makeMockSprite();
+    applyRef.current = () => driver.apply(sprite2 as never);
     driver.attach(sprite2 as never);
     driver.onTextDelta?.("second");
     vi.advanceTimersByTime(100);
@@ -172,11 +180,9 @@ describe("AudioRmsMouthDriver (stub)", () => {
   it("stub 实现可实例化 + 接口三个方法可调（17c 占位）", () => {
     const driver = new AudioRmsMouthDriver();
     const sprite = makeMockSprite();
-    // 不应 throw
     driver.attach(sprite as never);
     driver.onAudioFrame?.(new Float32Array([0, 0.1, 0.2]), 16000);
     driver.detach();
-    // 本期 stub 不调 setParameterValueById
     expect(sprite.setParameterValueById).not.toHaveBeenCalled();
   });
 });
