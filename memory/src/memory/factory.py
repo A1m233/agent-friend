@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from llm_providers import LLMClient
 
+    from .contracts import RecallTrace
     from .extraction import ExtractionResult
 
 __all__ = ["build_memory"]
@@ -36,6 +37,7 @@ def build_memory(
     llm_client: LLMClient,
     *,
     on_extracted: Callable[[ExtractionResult], None] | None = None,
+    on_retrieved: Callable[[RecallTrace], None] | None = None,
     extractor_prompt: str | None = None,
     weights: ScoreWeights | None = None,
     owner_user_id: str = "local",
@@ -48,6 +50,7 @@ def build_memory(
         db_path: 记忆库路径（父目录会自动建）。
         llm_client: 抽取用的 LLM 客户端（v1 与主对话同 provider 即可）。
         on_extracted: 抽取落库回调（observability / CLI 调试展示）。
+        on_retrieved: 召回完成回调（observability / inspector）。
         extractor_prompt: 覆盖默认抽取 prompt（测试 / 调参）。若同时给了
             ``extractor_prompt`` 和 ``extraction_keep_specifics=False``，
             ``extractor_prompt`` 优先（显式参数覆盖切片开关）。
@@ -79,6 +82,7 @@ def build_memory(
         retrieval=retrieval,
         weights=weights,
         on_extracted=on_extracted,
+        on_retrieved=on_retrieved,
         owner_user_id=owner_user_id,
         pinned_relevance_gate=pinned_relevance_gate,
     )

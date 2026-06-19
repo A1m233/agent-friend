@@ -195,6 +195,95 @@ def test_fts_match_pinned_empty_query_returns_empty() -> None:
     assert store.fts_match_pinned("。，！", owner_user_id="local") == set()
 
 
+def test_list_semantic_order_and_owner_filter() -> None:
+    """026: list_semantic 按 created_at DESC 返回，且按 owner 过滤。"""
+    store = _store()
+    old = _semantic("旧事实", id="old", created_at=_now() - timedelta(days=2))
+    new = _semantic("新事实", id="new", created_at=_now() - timedelta(days=1))
+    other_owner = _semantic("他人事实", id="other", owner_user_id="other")
+    store.add_semantic(old)
+    store.add_semantic(new)
+    store.add_semantic(other_owner)
+
+    rows = store.list_semantic(owner_user_id="local", limit=10)
+    assert [r.id for r in rows] == ["new", "old"]
+
+
+def test_list_semantic_pagination() -> None:
+    """026: list_semantic LIMIT/OFFSET 分页行为。"""
+    store = _store()
+    for i in range(3):
+        store.add_semantic(
+            _semantic(f"事实{i}", id=f"s{i}", created_at=_now() - timedelta(hours=i))
+        )
+
+    first = store.list_semantic(owner_user_id="local", limit=2, offset=0)
+    assert [r.id for r in first] == ["s0", "s1"]
+    second = store.list_semantic(owner_user_id="local", limit=2, offset=2)
+    assert [r.id for r in second] == ["s2"]
+
+
+def test_list_episodic_persona_filter() -> None:
+    """026: list_episodic 按 persona 过滤；persona_id=None 时返回全部。"""
+    store = _store()
+    now = _now()
+    store.add_episodic(
+        EpisodicRow(
+            id="e1",
+            summary="p1 的事",
+            source_ref="s1#a..b",
+            persona_id="p1",
+            occurred_at=now,
+            created_at=now,
+        )
+    )
+    store.add_episodic(
+        EpisodicRow(
+            id="e2",
+            summary="p2 的事",
+            source_ref="s1#c..d",
+            persona_id="p2",
+            occurred_at=now - timedelta(hours=1),
+            created_at=now - timedelta(hours=1),
+        )
+    )
+
+    p1_rows = store.list_episodic(owner_user_id="local", persona_id="p1")
+    assert [r.id for r in p1_rows] == ["e1"]
+
+    all_rows = store.list_episodic(owner_user_id="local", persona_id=None)
+    assert [r.id for r in all_rows] == ["e1", "e2"]
+
+
+def test_list_episodic_excludes_deleted() -> None:
+    """026: list_episodic 排除 deleted_at 非空的行。"""
+    store = _store()
+    now = _now()
+    store.add_episodic(
+        EpisodicRow(
+            id="e1",
+            summary="活跃",
+            source_ref="s1#a..b",
+            persona_id="p1",
+            occurred_at=now,
+            created_at=now,
+        )
+    )
+    store.add_episodic(
+        EpisodicRow(
+            id="e2",
+            summary="已删",
+            source_ref="s1#c..d",
+            persona_id="p1",
+            occurred_at=now,
+            created_at=now,
+            deleted_at=now,
+        )
+    )
+    rows = store.list_episodic(owner_user_id="local", persona_id="p1")
+    assert [r.id for r in rows] == ["e1"]
+
+
 def test_v1_to_v2_lazy_migration() -> None:
     """旧库（v1 trigram FTS5 / 无 *_tokens 列）启动时自动升 v2 并回填。"""
     import sqlite3

@@ -278,6 +278,11 @@ export function PetApp() {
     void invoke("open_settings");
   };
 
+  const openMemoryInspector = () => {
+    if (!isTauri()) return;
+    void invoke("open_memory_inspector");
+  };
+
   // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证。
   // release build 时 import.meta.env.DEV=false，整段被 ActionBar 内部 tree-shake 掉。
   const injectShort = () => {
@@ -315,6 +320,7 @@ export function PetApp() {
           onHidePet={hidePet}
           onOpenSettings={openSettings}
           onOpenIMConnect={() => setImDialogOpen(true)}
+          onOpenMemoryInspector={openMemoryInspector}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />
