@@ -1,4 +1,4 @@
-# voice_bridge/smoke/run.ps1 — Windows 端到端语音 smoke 一键启动
+﻿# voice_bridge/smoke/run.ps1 — Windows 端到端语音 smoke 一键启动
 #
 # 本脚本会按顺序拉起：
 #   1. agent_bridge
