@@ -20,7 +20,8 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $here = $PSScriptRoot
-$repo = Resolve-Path (Join-Path $here "..")
+$repo = Resolve-Path (Join-Path $here "..\..")
+Set-Location $repo
 $envFile = Join-Path $repo ".env"
 
 function Write-Step([string]$msg) {
