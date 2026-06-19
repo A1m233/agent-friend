@@ -25,6 +25,22 @@ def _configure_logging(level: str) -> None:
     )
 
 
+def _add_local_smoke_cors(app: FastAPI) -> None:
+    """允许本机 smoke HTML 从任意 localhost 端口调用 voice_bridge。"""
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:8765",
+            "http://localhost:8765",
+        ],
+        allow_origin_regex=r"http://(127\.0\.0\.1|localhost):\d+",
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
+
 def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
     """构造 FastAPI 实例。
 
@@ -45,15 +61,7 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
     )
     app.state.runtime = runtime
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:8000",
-            "http://localhost:8000",
-        ],
-        allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],
-    )
+    _add_local_smoke_cors(app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -72,6 +80,8 @@ def create_app_with_runtime(runtime: VoiceBridgeRuntime) -> FastAPI:
         version="0.1.0",
     )
     app.state.runtime = runtime
+
+    _add_local_smoke_cors(app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
