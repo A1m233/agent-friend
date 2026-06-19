@@ -81,14 +81,6 @@ export class GazeSource implements ParamSource {
     sprite.setParameterValueById("ParamAngleZ", this.current.angleZ);
     sprite.setParameterValueById("ParamEyeBallX", this.current.eyeBallX);
     sprite.setParameterValueById("ParamEyeBallY", this.current.eyeBallY);
-
-    if (import.meta.env.DEV && Math.random() < 0.02) {
-      console.info("[gaze]", {
-        angleX: this.current.angleX.toFixed(1),
-        angleY: this.current.angleY.toFixed(1),
-        eyeBallX: this.current.eyeBallX.toFixed(2),
-      });
-    }
   }
 }
 
