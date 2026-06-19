@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@ag-ui/core": "^0.0.39",
+    "@tanstack/react-virtual": "^3.14.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-log": "^2",
     "@tdesign-react/chat": "^1.0.2",

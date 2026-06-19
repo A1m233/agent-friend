@@ -267,6 +267,13 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "settings")
 }
 
+/// 026 · dev 模式入口：打开记忆面板窗口。
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn open_memory_inspector(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "memory-inspector")
+}
+
 /// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
 ///
 /// **唤回路径**：本期唯一 = 系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
@@ -403,6 +410,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_memory_inspector,
         hide_pet,
         set_pet_webview_dpr,
         bubble_window::show_bubble,
@@ -425,9 +433,10 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            // 对话窗 / 设置窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
+            // 对话窗 / 设置窗 / 记忆面板按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
-            if matches!(window.label(), "chat" | "settings") {
+            // 026 · memory-inspector 窗同语义。
+            if matches!(window.label(), "chat" | "settings" | "memory-inspector") {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();

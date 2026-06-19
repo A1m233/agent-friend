@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from memory.contracts import RecallTrace
+
 from memory import (
     ConversationFragment,
     Extractor,
@@ -90,4 +92,57 @@ def test_retrieve_empty_when_nothing_relevant() -> None:
 def test_close_is_idempotent() -> None:
     mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
     mem.close()
+    mem.close()
+
+
+def test_on_retrieved_callback_receives_trace() -> None:
+    """026: retrieve 完成后 on_retrieved 收到完整 RecallTrace，source 默认 natural。"""
+    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    mem = _memory(reply)
+    mem.observe(_fragment("我养了一只猫叫Tom"))
+    mem.flush()
+
+    traces: list[RecallTrace] = []
+    mem._on_retrieved = traces.append
+
+    ctx = mem.retrieve("还记得Tom吗", persona_id="p1")
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace.query == "还记得Tom吗"
+    assert trace.persona_id == "p1"
+    assert trace.owner_user_id == "local"
+    assert trace.source == "natural"
+    assert trace.gate_enabled is True
+    assert trace.gate_mode == "lenient"
+    assert trace.items == [
+        type(trace.items[0])(text=i.text, layer=i.layer, source_ref=i.source_ref, score=i.score)
+        for i in ctx.items
+    ]
+    mem.close()
+
+
+def test_retrieve_source_kwarg_passed_to_trace() -> None:
+    """026: retrieve 的 source kwarg 透传到 trace.source。"""
+    mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
+    traces: list[RecallTrace] = []
+    mem._on_retrieved = traces.append
+
+    mem.retrieve("query", persona_id="p1", source="probe")
+    assert traces[0].source == "probe"
+    mem.close()
+
+
+def test_on_retrieved_exception_does_not_break_retrieve() -> None:
+    """026: on_retrieved 抛异常不应让 retrieve 失败。"""
+    reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+    mem = _memory(reply)
+    mem.observe(_fragment("我养了一只猫叫Tom"))
+    mem.flush()
+
+    def _boom(_t: RecallTrace) -> None:
+        raise RuntimeError("boom")
+
+    mem._on_retrieved = _boom
+    ctx = mem.retrieve("还记得Tom吗", persona_id="p1")
+    assert not ctx.is_empty()
     mem.close()

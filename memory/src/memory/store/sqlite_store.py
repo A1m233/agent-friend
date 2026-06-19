@@ -19,6 +19,7 @@ import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import jieba
 
@@ -235,26 +236,44 @@ class SqliteMemoryStore:
         return [(_to_semantic(r), float(r["_bm25"])) for r in rows]
 
     def search_episodic(
-        self, query: str, *, owner_user_id: str, persona_id: str, limit: int
+        self, query: str, *, owner_user_id: str, persona_id: str | None, limit: int
     ) -> list[tuple[EpisodicRow, float]]:
-        """按关键词检索活跃情节记忆。episodic 按 ``persona_id`` 隔离。"""
+        """按关键词检索活跃情节记忆。episodic 按 ``persona_id`` 隔离；
+
+        ``persona_id=None`` 表示不过滤 persona，跨 persona 搜索。
+        """
         match = _fts_query(query)
         if match is None:
             return []
         with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT e.*, bm25(episodic_fts) AS _bm25
-                FROM episodic_fts
-                JOIN episodic e ON e.rowid = episodic_fts.rowid
-                WHERE episodic_fts MATCH ?
-                  AND e.deleted_at IS NULL
-                  AND e.owner_user_id = ? AND e.persona_id = ?
-                ORDER BY _bm25
-                LIMIT ?
-                """,
-                (match, owner_user_id, persona_id, limit),
-            ).fetchall()
+            if persona_id is None:
+                rows = self._conn.execute(
+                    """
+                    SELECT e.*, bm25(episodic_fts) AS _bm25
+                    FROM episodic_fts
+                    JOIN episodic e ON e.rowid = episodic_fts.rowid
+                    WHERE episodic_fts MATCH ?
+                      AND e.deleted_at IS NULL
+                      AND e.owner_user_id = ?
+                    ORDER BY _bm25
+                    LIMIT ?
+                    """,
+                    (match, owner_user_id, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """
+                    SELECT e.*, bm25(episodic_fts) AS _bm25
+                    FROM episodic_fts
+                    JOIN episodic e ON e.rowid = episodic_fts.rowid
+                    WHERE episodic_fts MATCH ?
+                      AND e.deleted_at IS NULL
+                      AND e.owner_user_id = ? AND e.persona_id = ?
+                    ORDER BY _bm25
+                    LIMIT ?
+                    """,
+                    (match, owner_user_id, persona_id, limit),
+                ).fetchall()
         return [(_to_episodic(r), float(r["_bm25"])) for r in rows]
 
     def fts_match_pinned(self, query: str, *, owner_user_id: str) -> set[str]:
@@ -305,6 +324,46 @@ class SqliteMemoryStore:
                 (owner_user_id, limit),
             ).fetchall()
         return [_to_semantic(r) for r in rows]
+
+    def list_semantic(
+        self, *, owner_user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[SemanticRow]:
+        """按 created_at DESC 列活跃语义记忆（跨 persona，按 owner 过滤）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM semantic
+                WHERE deleted_at IS NULL AND valid_until IS NULL
+                  AND owner_user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (owner_user_id, limit, offset),
+            ).fetchall()
+        return [_to_semantic(r) for r in rows]
+
+    def list_episodic(
+        self,
+        *,
+        owner_user_id: str,
+        persona_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[EpisodicRow]:
+        """按 occurred_at DESC 列活跃情节记忆。``persona_id=None`` 时不加 persona 过滤。"""
+        base = """
+            SELECT * FROM episodic
+            WHERE deleted_at IS NULL AND owner_user_id = ?
+        """
+        params: list[Any] = [owner_user_id]
+        if persona_id is not None:
+            base += " AND persona_id = ?"
+            params.append(persona_id)
+        base += " ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        with self._lock:
+            rows = self._conn.execute(base, params).fetchall()
+        return [_to_episodic(r) for r in rows]
 
     def close(self) -> None:
         """关闭连接。"""

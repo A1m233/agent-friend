@@ -36,6 +36,7 @@ from llm_providers import LLMClient, ProviderSpec
 from memory import Memory, build_memory
 
 from .agent_runtime_factory import build_agent_runtime
+from .dev.recall_buffer import RecallBuffer
 from .settings import BridgeSettings
 
 if TYPE_CHECKING:
@@ -103,6 +104,8 @@ class BridgeRuntime:
         memory: 进程级长期记忆门面（008）；``None`` 表示本进程未启用记忆
             （``settings.memory_enabled=False``）。**只挂在持久化分支**——
             OpenAI 无状态分支跑完即丢，不接记忆。退出时由 :meth:`close` drain。
+        recall_buffer: 026 起 dev 期 inspector 的召回 trace ring buffer；
+            ``memory_enabled=False`` 时为 ``None``。
     """
 
     settings: BridgeSettings
@@ -115,6 +118,7 @@ class BridgeRuntime:
     default_persona: str
     default_model: str
     memory: Memory | None = None
+    recall_buffer: RecallBuffer | None = None
     agent_runtime: AgentRuntime | None = None
     """014 起新增：进程级 :class:`AgentRuntime`，main loop 调度内核。
 
@@ -193,15 +197,20 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
     default_model = _make_spec_with_thinking_off().model
 
     memory: Memory | None = None
+    recall_buffer: RecallBuffer | None = None
     if settings.memory_enabled:
         # 022 hot-fix(issue 016):pinned_relevance_gate=False 让身份核心 pinned 始终注入。
         # 默认 lenient gate 在"你还记得我吗" / "我们之前聊过什么"这类只表达记忆查询意图、
         # 不含身份关键词的 query 上,会把"用户叫 Alex"误判为不相关过滤掉,导致 agent
         # 体感"失忆"(违反决策 0001 §1.3 "记忆是第一护城河"原则)。完整 root cause +
         # 长期方案见 docs/issues/016-memory-pinned-gate-misses-identity/。
+        # 026: 保持 pinned_relevance_gate=False；inspector 的价值之一就是让 dev 能看到
+        # 这一 hot-fix 状态。不要顺手改回 True，那是 issue 016 长期方案的范畴。
+        recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
             _llm_factory(default_model),
+            on_retrieved=recall_buffer.record,
             pinned_relevance_gate=False,
         )
 
@@ -249,6 +258,7 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
             default_persona=default_persona,
             default_model=default_model,
             memory=memory,
+            recall_buffer=recall_buffer,
             agent_runtime=agent_runtime,
         )
         session_bridge = _SessionBridge(pre_runtime)
@@ -281,5 +291,6 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         default_persona=default_persona,
         default_model=default_model,
         memory=memory,
+        recall_buffer=recall_buffer,
         agent_runtime=agent_runtime,
     )

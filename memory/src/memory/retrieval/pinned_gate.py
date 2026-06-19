@@ -11,28 +11,19 @@ docs/requirements/013-memory-quality-pass-1/design.md §5。
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from ..contracts import GateMode
     from ..store import SemanticRow, SqliteMemoryStore
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["GateMode", "pinned_gate"]
+__all__ = ["pinned_gate"]
 
 _SHORT_QUERY_THRESHOLD = 6
 """短 query 阈值（字符数）：低于此长度的 query 在 ``lenient`` 档下直接通过 gate，
 不走 FTS5 命中判定。兜底"我叫什么"/"我是谁"这类极短身份提问（design §5.3）。"""
-
-GateMode = Literal["strict", "lenient"]
-"""gate 阈值档位。
-
-- ``strict``：完全走 FTS5 命中；query 与 pinned 无 jieba 词共享则 pinned 全部
-  不注入。最严，可能让 R-4.2.3"我叫什么"这类极短 query 因 jieba 切词差异挂。
-- ``lenient``（默认）：短 query（< 6 字）直接全部通过；长 query 走 FTS5 命中判定。
-  design §5.3 描述的"宽松"与"动态"档算法等价（短 query 全通过 + 长 query
-  FTS5 判定），本期合并为 ``lenient`` 一档。
-"""
 
 
 def pinned_gate(

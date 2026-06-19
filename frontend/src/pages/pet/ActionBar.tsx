@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties, type MouseEventHandler, type ReactNode } from "react";
 import {
+  Brain,
   ChevronLeft,
   ChevronRight,
   EyeOff,
@@ -52,6 +53,7 @@ interface Props {
   onOpenSettings: () => void;
   /** 022 新：打开 IM 接入面板 dialog（同窗，不另开 webview） */
   onOpenIMConnect: () => void;
+  onOpenMemoryInspector: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
 }
@@ -79,10 +81,10 @@ export function ActionBar({
   onHidePet,
   onOpenSettings,
   onOpenIMConnect,
+  onOpenMemoryInspector,
   onInjectShort,
   onInjectLong,
 }: Props) {
-  // dev gate：dev inject 按钮位于 carousel 末尾（design §2.4.2）
   const buttons: BtnDef[] = [
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
     { icon: <EyeOff />, tooltip: "隐藏桌宠", onClick: onHidePet },
@@ -91,6 +93,7 @@ export function ActionBar({
   ];
   if (import.meta.env.DEV) {
     buttons.push(
+      { icon: <Brain />, tooltip: "记忆面板", onClick: onOpenMemoryInspector },
       { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
       { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },
     );
