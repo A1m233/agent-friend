@@ -106,7 +106,8 @@ try {
     if ($raw -notmatch "(?m)^VOICE_BRIDGE_PUBLIC_URL=") {
         $raw += "`nVOICE_BRIDGE_PUBLIC_URL=$publicUrl`n"
     }
-    Set-Content -Path $envFile -Value $raw -NoNewline
+    # 必须用 UTF-8 without BOM 写，PowerShell 5.1 默认 ANSI/GBK 会写坏中文注释
+    [System.IO.File]::WriteAllText($envFile, $raw, [System.Text.UTF8Encoding]::new($false))
     Write-Host "VOICE_BRIDGE_PUBLIC_URL 已设置为 $publicUrl"
 
     # ----- 3. voice_bridge -----
