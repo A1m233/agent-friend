@@ -14,11 +14,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agent.paths import DATA_DIR_ENV
+from agent.paths import DATA_DIR_ENV, LOG_DIR_ENV
 
 from agent import (
     PersonaCatalog,
     cli_history_path,
+    log_dir,
     memory_db_path,
     personas_dir,
     sessions_dir,
@@ -81,3 +82,29 @@ def test_persona_catalog_explicit_dir_overrides_default(
     catalog.create(name="tester", content="显式目录人设。")
     assert (explicit / "tester.md").exists()
     assert not (tmp_path / "ignored").exists()
+
+
+def test_log_dir_env_override_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(LOG_DIR_ENV, str(tmp_path / "logs"))
+    monkeypatch.delenv(DATA_DIR_ENV, raising=False)
+    assert log_dir() == tmp_path / "logs"
+
+
+def test_log_dir_env_override_expands_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(LOG_DIR_ENV, "~/agent-friend-logs")
+    monkeypatch.delenv(DATA_DIR_ENV, raising=False)
+    assert log_dir() == Path.home() / "agent-friend-logs"
+
+
+def test_log_dir_default_uses_app_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(LOG_DIR_ENV, raising=False)
+    monkeypatch.delenv(DATA_DIR_ENV, raising=False)
+    root = log_dir()
+    assert root.is_absolute()
+    assert root.name == "agent-friend"

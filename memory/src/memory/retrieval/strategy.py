@@ -7,11 +7,14 @@ v1 提供 :class:`KeywordRetrieval`（SQLite FTS5 trigram）；future 的
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from ..contracts import Layer
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..store import SqliteMemoryStore
@@ -65,6 +68,14 @@ class KeywordRetrieval:
     def search(
         self, query: str, *, owner_user_id: str, persona_id: str, limit: int
     ) -> list[Candidate]:
+        logger.info(
+            "search query_len=%d owner=%s persona=%s limit=%d per_layer=%d",
+            len(query),
+            owner_user_id,
+            persona_id,
+            limit,
+            self._per_layer_limit,
+        )
         cands: list[Candidate] = []
         for row, bm25 in self._store.search_semantic(
             query, owner_user_id=owner_user_id, persona_id=persona_id, limit=self._per_layer_limit
@@ -92,4 +103,9 @@ class KeywordRetrieval:
                     relevance_raw=bm25,
                 )
             )
+        if cands:
+            scores = sorted(c.relevance_raw for c in cands)[:5]
+            logger.info("search returned %d candidates (top5 bm25=%s)", len(cands), scores)
+        else:
+            logger.info("search returned 0 candidates")
         return cands

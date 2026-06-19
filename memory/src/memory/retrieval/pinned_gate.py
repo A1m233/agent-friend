@@ -10,10 +10,13 @@ docs/requirements/013-memory-quality-pass-1/design.md §5。
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from ..store import SemanticRow, SqliteMemoryStore
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["GateMode", "pinned_gate"]
 
@@ -54,10 +57,22 @@ def pinned_gate(
         保持调用方对"无 query 时只查 pinned"行为的依赖。
     """
     if not pinned or not query.strip():
+        logger.info(
+            "pinned_gate pass-through pinned=%d query_empty=%s", len(pinned), not query.strip()
+        )
         return pinned
     if mode == "lenient" and len(query.strip()) < _SHORT_QUERY_THRESHOLD:
+        logger.info("pinned_gate lenient short-query pass-through pinned=%d", len(pinned))
         return pinned
     hit_ids = store.fts_match_pinned(query, owner_user_id=owner_user_id)
+    filtered = [p for p in pinned if p.id in hit_ids]
+    logger.info(
+        "pinned_gate matched=%d of %d pinned (mode=%s hit_ids=%d)",
+        len(filtered),
+        len(pinned),
+        mode,
+        len(hit_ids),
+    )
     if not hit_ids:
         return []
-    return [p for p in pinned if p.id in hit_ids]
+    return filtered

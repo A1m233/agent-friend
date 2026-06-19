@@ -18,7 +18,10 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
+from agent.paths import log_dir
 from fastapi import FastAPI
 
 from .assembly import BridgeRuntime, build_runtime
@@ -97,8 +100,64 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
     return lifespan
 
 
+class IsoLocalFormatter(logging.Formatter):
+    """ISO8601 + milliseconds + local tz, matching ``{ts} [{level:5}] [{name}] {message}``."""
+
+    LEVEL_WIDTH = 5
+
+    def __init__(self) -> None:
+        super().__init__(fmt="%(asctime)s [%(levelname)s] [%(name)s] %(message)s")
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return (
+            datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds")
+        )
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.levelname = f"{record.levelname:<{self.LEVEL_WIDTH}}"
+        return super().format(record)
+
+
 def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level.upper(),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    """配置 root + memory 双 handler 树，统一格式写到 ``log_dir()`` 下。
+
+    - root logger 挂 stream + ``agent_bridge.log``，覆盖 ``agent.*`` / ``agent_bridge.*``
+      / ``llm_providers.*`` / ``tools.*`` / ``shared.*`` 等子树。
+    - ``memory`` logger ``propagate=False`` 单独挂 ``memory.log``，避免重复。
+    - 调用前先清已有 handler，保证 idempotent（测试反复调用 / 生产二次初始化安全）。
+    """
+    level_int = logging.getLevelName(level.upper())
+    formatter = IsoLocalFormatter()
+    target_dir = log_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    root = logging.getLogger()
+    for h in list(root.handlers):
+        root.removeHandler(h)
+    root.setLevel(level_int)
+
+    stream = logging.StreamHandler()
+    stream.setFormatter(formatter)
+    root.addHandler(stream)
+
+    bridge_file = RotatingFileHandler(
+        target_dir / "agent_bridge.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
     )
+    bridge_file.setFormatter(formatter)
+    root.addHandler(bridge_file)
+
+    memory_logger = logging.getLogger("memory")
+    memory_logger.propagate = False
+    for h in list(memory_logger.handlers):
+        memory_logger.removeHandler(h)
+    memory_file = RotatingFileHandler(
+        target_dir / "memory.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    memory_file.setFormatter(formatter)
+    memory_logger.addHandler(memory_file)

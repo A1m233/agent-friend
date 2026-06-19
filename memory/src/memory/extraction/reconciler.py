@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -22,6 +23,8 @@ from .result import ExtractionOutput, ExtractionResult
 
 if TYPE_CHECKING:
     from ..contracts import ConversationFragment
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Reconciler"]
 
@@ -78,8 +81,20 @@ class Reconciler:
         for op in output.semantic_ops:
             if op.op == "supersede" and op.target_hint:
                 match = _find_match(op.target_hint, existing_facts)
-                if match is not None and self._store.supersede_semantic(match.id, now):  # type: ignore[attr-defined]
-                    superseded.append(match.statement)
+                if match is not None:
+                    if self._store.supersede_semantic(match.id, now):  # type: ignore[attr-defined]
+                        superseded.append(match.statement)
+                        logger.warning("superseded fact=%s new=%s", match.statement, op.statement)
+                    else:
+                        logger.warning(
+                            "supersede race missed fact=%s new=%s", match.statement, op.statement
+                        )
+                else:
+                    logger.warning(
+                        "supersede hint unmatched hint=%s new=%s; downgrade to add",
+                        op.target_hint,
+                        op.statement,
+                    )
 
             importance = op.importance
             if op.speaker_origin == "user":
