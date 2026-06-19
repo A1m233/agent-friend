@@ -20,6 +20,7 @@ export default defineConfig({
         chat: resolve(__dirname, "chat.html"),
         bubble: resolve(__dirname, "bubble.html"),
         settings: resolve(__dirname, "settings.html"),
+        "memory-inspector": resolve(__dirname, "memory-inspector.html"),
       },
     },
   },
@@ -28,9 +29,11 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: host || false,
+    // overlay: false —— 桌宠是全屏 layer，编译报错弹窗会盖住一切且关不掉；
+    // 关了之后错误仍在 terminal / 浏览器 console 输出，不影响排错
     hmr: host
-      ? { protocol: "ws", host, port: 1421 }
-      : undefined,
+      ? { protocol: "ws", host, port: 1421, overlay: false }
+      : { overlay: false },
     watch: { ignored: ["**/src-tauri/**"] },
     // bridge 无 CORS 头（本期零侵入不给它加），故前端走同源相对路径，由这里代理到
     // bridge（127.0.0.1:18800）。web 调试与 tauri dev 都经 vite，故都免 CORS。

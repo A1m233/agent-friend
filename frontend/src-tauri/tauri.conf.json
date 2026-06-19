@@ -61,6 +61,18 @@
         "resizable": true,
         "visible": false,
         "fullscreen": false
+      },
+      {
+        "label": "memory-inspector",
+        "url": "memory-inspector.html",
+        "title": "agent-friend · 记忆面板",
+        "width": 1024,
+        "height": 720,
+        "minWidth": 800,
+        "minHeight": 560,
+        "resizable": true,
+        "visible": false,
+        "fullscreen": false
       }
     ],
     "security": {

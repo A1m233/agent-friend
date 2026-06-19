@@ -29,6 +29,7 @@ from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
+from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
 from .settings import BridgeSettings
 
@@ -67,6 +68,7 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
     register_openai_routes(app, runtime)
     register_ag_ui_routes(app, runtime)
     register_meta_routes(app, runtime)
+    register_memory_routes(app, runtime)
     register_push_routes(app, runtime)
     if runtime.im_onboard_registry is not None:
         register_im_routes(app, runtime, runtime.im_onboard_registry)
