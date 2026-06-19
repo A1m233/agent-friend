@@ -57,4 +57,4 @@ AI 在语音回复中读出了 `\(` `\)`、`\[` `\]`、`****` 等标记。该问
 
 ## 修复记录
 
-- **问题 4（session 不落盘）**：已在 commit `f120142` 修复。`agent_bridge` 的 `/v1/chat/completions` 现在会读取 `X-Agent-Friend-Session-Id` header；存在则绑定持久化 session，不存在则保持原有 transient 行为；session_id 不存在时返回 404。
+- **问题 4（session 不落盘）**：已在 commit `ad8984e` 修复。`agent_bridge` 的 `/v1/chat/completions` 现在会读取 `X-Agent-Friend-Session-Id` header；存在则绑定持久化 session，不存在则保持原有 transient 行为；session_id 不存在时返回 404。
