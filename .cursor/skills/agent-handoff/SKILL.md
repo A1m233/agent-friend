@@ -26,7 +26,7 @@ skill 触发后立刻检测，**全部通过**才进入步骤；**任一未过**
 硬条件全过后继续检测：
 
 - **Phase 2 → Phase 3 交接**：`design.md` 已 Confirmed 但 `progress.md` 不存在 → 提示"建议先落 progress.md 再切——否则新 agent 接 Phase 3 没任务入口，得重新拆解，价值损失大"
-- **Phase 3 中途交接**：`progress.md` 存在，但实现日志最近一条登记时间 > 1 小时（或从未登记）→ 提示"建议先把进度同步到 progress.md 实现日志、让新 agent 知道接力点"
+- **Phase 3 中途交接**：`progress.md` 存在，但实现日志最近一条登记时间 > 1 小时（或从未登记）→ 提示"建议先把进度同步到 progress.md 实现日志、让新 agent 知道接力点"。**Phase 3 起步交接排除此条**——判定标志：progress.md 总体状态 = `NOT_STARTED` 且任务列表全未勾选；起步本就没东西可登记，提示无意义
 
 软条件未过时输出：
 
