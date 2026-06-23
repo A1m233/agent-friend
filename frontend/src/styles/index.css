@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./theme/tokens.css";
 @import "./theme/light.css";
 @import "./theme/dark.css";
 
@@ -35,6 +36,42 @@
   --color-sidebar-accent-foreground: var(--fg);
   --color-sidebar-border: var(--border);
   --color-sidebar-ring: var(--accent);
+
+  /* === 新增映射：字体 / 字号 / 字重 / 行高 / 字间距 / 圆角 / 阴影 === */
+
+  /* 字体 */
+  --font-sans: var(--font-sans);
+
+  /* 字号 */
+  --text-xs: var(--font-size-xs);
+  --text-sm: var(--font-size-sm);
+  --text-base: var(--font-size-base);
+  --text-lg: var(--font-size-lg);
+  --text-xl: var(--font-size-xl);
+
+  /* 字重 */
+  --font-weight-medium: var(--font-weight-medium);
+  --font-weight-semibold: var(--font-weight-semibold);
+
+  /* 行高（Tailwind token 命名是 --leading-{档}） */
+  --leading-snug: var(--line-height-snug);
+
+  /* 字间距（Tailwind token 命名是 --tracking-{档}） */
+  --tracking-wide: var(--letter-spacing-wide);
+
+  /* 圆角 */
+  --radius-sm: var(--radius-sm);
+  --radius: var(--radius-default);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+
+  /* 阴影 */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-2xl: var(--shadow-2xl);
 }
 
 html,
@@ -48,5 +85,5 @@ body {
   /* 默认透明：桌宠窗需要透明背景；不透明的页面（如对话窗）自行在根容器设 bg。 */
   background: transparent;
   color: var(--fg);
-  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+  font-family: var(--font-sans);
 }

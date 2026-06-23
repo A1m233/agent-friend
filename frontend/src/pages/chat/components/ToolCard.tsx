@@ -53,12 +53,12 @@ export function ToolCard({ block }: { block: ToolBlock }) {
           </CollapsibleTrigger>
           <CollapsibleContent>
             {args && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-[11px] text-fg">
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
                 {args}
               </pre>
             )}
             {block.result && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-[11px] text-fg">
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
                 {block.result}
               </pre>
             )}

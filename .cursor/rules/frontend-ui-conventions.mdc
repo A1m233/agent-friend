@@ -50,4 +50,9 @@ alwaysApply: false
 
 ### 机械门禁
 
-颜色已由 `frontend/scripts/check-colors.mjs`（接入 `scripts/check`）覆盖：扫 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错。其他维度（字号 / 间距 / 圆角 / 阴影）的 guard **暂未上线**——目前靠本规则与 review 约束；待某维度真正进入稳定使用后，按 `color-guard` 同样的模式补 `spacing-guard` / `font-guard` 等。`src/styles/theme/` 作为 token 定义源头，对所有此类 guard 永久豁免。规则只讲"该怎么写"，"写错了拦下来"交给门禁。
+颜色已由 `frontend/scripts/check-colors.mjs`（接入 `scripts/check`）覆盖：扫 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错。其他维度（字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影）由 `frontend/scripts/check-design-tokens.mjs`（接入 `scripts/check`）覆盖。`src/styles/theme/` 作为 token 定义源头、`src/components/ui/` 作为 shadcn vendored 区域，对本节约束与所有 token 维度门禁永久豁免：
+
+- `src/styles/theme/` —— token 定义源头，硬编码是必然。
+- `src/components/ui/` —— shadcn 官方源码，通过 `pnpm dlx shadcn@latest add` 拉取后原样保留；其内部 arbitrary value 多为几何 calc 与组件专属 magic，不是项目级设计常量，改动会与上游 CLI 更新冲突。新增 shadcn 组件后无需为其内部 token 做适配，仅外层使用方按本规则约束。
+
+规则只讲"该怎么写"，"写错了拦下来"交给门禁。

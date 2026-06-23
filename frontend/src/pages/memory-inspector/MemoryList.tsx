@@ -306,7 +306,6 @@ function SemanticCard({ row, highlighted }: { row: SemanticRow; highlighted: boo
         highlighted ? "border-accent bg-accent/10" : "border-border bg-surface/50"
       }`}
     >
-      {highlighted && 12123123123123123123123121231}
       <div className="flex items-start justify-between gap-2">
         <p className="font-medium leading-snug">{row.statement}</p>
         {row.pinned && (

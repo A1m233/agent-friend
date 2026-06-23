@@ -19,6 +19,12 @@ $ErrorActionPreference = "Continue"
 pnpm run lint:colors 2>&1 | ForEach-Object { Write-Host $_ }
 $ErrorActionPreference = $oldEAP
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host "===> design-token-guard"
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+pnpm run lint:tokens 2>&1 | ForEach-Object { Write-Host $_ }
+$ErrorActionPreference = $oldEAP
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host "===> typecheck"
 $oldEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
