@@ -58,6 +58,14 @@ main 上 commit `76edc7e chore(frontend): 扩前端 UI 规则到设计 token 维
 
 - 在 `.cursor/rules/frontend-ui-conventions.mdc` 的"设计 token：禁止硬编码"段补一段 **shadcn 豁免说明**：`src/components/ui/` 作为 shadcn vendored 区域，整体豁免本节约束与未来所有 token guard（与 `src/styles/theme/` 一并作为豁免源）。理由：vendored CLI 源码改动会与上游冲突；shadcn arbitrary value 多为几何 calc 与组件专属 magic，不是项目级设计常量。
 
+**设置面板主题切换（027 范围扩展）**：
+
+- 在 `settings.html` 内提供 light / dark 主题切换入口，验证 027 新建的主题 token（颜色 + 阴影）可被实际换肤使用。
+- 使用 shadcn `Tabs` 组件，tab trigger 内仅放图标（`Sun` / `Moon`，来自 `lucide-react`）。
+- 主题状态持久化到 `localStorage`，key = `agent-friend-theme`，默认 `light`；首屏在 React 挂载前应用，避免闪屏。
+- 状态逻辑抽成 `useTheme` hook，放在 `src/hooks/`，方便后续其他入口复用。
+- 本次不做系统 `prefers-color-scheme` 跟随，留作后续独立需求。
+
 ### 不包含
 
 - **不动 shadcn 区**：`src/components/ui/` 整体豁免。组件内部 arbitrary value（`rounded-[2px]` / `min-w-[8rem]` / `top-[50%]` / `w-[calc(...)]` 等）一律不抽。
@@ -86,6 +94,7 @@ main 上 commit `76edc7e chore(frontend): 扩前端 UI 规则到设计 token 维
 - [ ] `.cursor/rules/frontend-ui-conventions.mdc` 补 shadcn 豁免说明
 - [ ] colors guard 仍通过
 - [ ] 四个关键页面 dev server 跑起来人眼对比改前改后，仅"就近映射"造成的 1-2px 级偏移，无结构 / 比例 / 颜色变化
+- [ ] `settings.html` 里能用 Tabs 图标切换 light / dark 主题，切换后页面整体换肤且刷新后保持
 - [ ] `scripts/check` 全过
 
 ## 变更记录
@@ -93,3 +102,4 @@ main 上 commit `76edc7e chore(frontend): 扩前端 UI 规则到设计 token 维
 | 日期 | 变更内容 | 影响范围 |
 |------|---------|---------|
 | 2026-06-23 | 创建需求文档（CONFIRMED） | - |
+|| 2026-06-23 | 扩展范围：settings.html 增加 light/dark 主题切换（Tabs 图标 + useTheme hook） | AC、范围、关键信息 |

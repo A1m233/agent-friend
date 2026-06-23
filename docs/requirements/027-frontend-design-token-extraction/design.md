@@ -307,6 +307,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 | `src/pages/chat/components/ToolCard.tsx` | 56 | `text-[11px]` → `text-xs` |
 | `src/pages/chat/components/ToolCard.tsx` | 61 | `text-[11px]` → `text-xs` |
 | `src/styles/index.css` | 51 | `font-family: system-ui, …;` → `font-family: var(--font-sans);` |
+| `src/hooks/useTheme.ts` | - | 新增：主题状态管理 hook |
+| `src/pages/settings/App.tsx` | - | 新增 Tabs 图标主题切换 UI |
+| `src/pages/settings/main.tsx` | - | 初始化 `html[theme]` 属性，避免首屏闪屏 |
 
 ## 影响分析
 
@@ -332,6 +335,55 @@ frontend 有 5 个 HTML 入口（`bubble.html` / `chat.html` / `pet.html` / `set
 3. **guard 上线即 hard gate，未抽净的硬编码会让 CI 立刻爆红** —— **缓解**：Phase 3 实施顺序严格保证「先抽完 token + 替换业务代码 → 跑 dev server 验视觉 → 再启 guard → 跑 `scripts/check` 全过」。如果 guard 启动后扫出预期外违例，立即修
 4. **`text-[11px]` → `text-xs` 1px 偏移在 ToolCard pre 块的可读性影响** —— **风险等级**：低（pre 块是工具调用 args/result 调试展示，12px 比 11px 更易读）；**缓解**：dev server 验视觉时关注 ToolCard
 5. **shadcn 重拉时被 guard 误伤** —— 已通过目录豁免规避，无新风险
+6. **设置面板主题切换增加首屏闪屏风险** —— 在 `main.tsx` 里、React 挂载前读取 `localStorage` 并设置 `html[theme]`，可消除闪屏。**风险等级**：低；**缓解**：dev server 验证 settings.html 首屏无闪白/闪黑
+
+### 设置面板主题切换设计
+
+**状态持久化**
+
+- key：`agent-friend-theme`
+- value：`"light" | "dark"`
+- 默认值：`"light"`
+- 读写：纯 `localStorage`，本次不引入后端 / Tauri 配置同步
+
+**Hook：`useTheme`**
+
+```ts
+const { theme, setTheme } = useTheme();
+```
+
+- 内部读取 `localStorage`，监听 `storage` 事件实现多标签同步
+- `setTheme` 更新 state、写 `localStorage`、同步 `document.documentElement.setAttribute("theme", theme)`
+- 返回当前 theme 和 setter
+
+**初始化防闪屏**
+
+在 `settings/main.tsx` 中，React `createRoot` 之前执行：
+
+```ts
+const saved = localStorage.getItem("agent-friend-theme") ?? "light";
+document.documentElement.setAttribute("theme", saved);
+```
+
+这样 CSS 的 `html[theme="dark"]` 在首帧即生效。
+
+**UI：shadcn Tabs + 图标**
+
+```tsx
+<Tabs value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+  <TabsList>
+    <TabsTrigger value="light" aria-label="浅色主题">
+      <Sun />
+    </TabsTrigger>
+    <TabsTrigger value="dark" aria-label="深色主题">
+      <Moon />
+    </TabsTrigger>
+  </TabsList>
+</Tabs>
+```
+
+- Trigger 内只放图标，符合"其中是图标"要求
+- `aria-label` 保证可访问性
 
 ## 验收方案
 
@@ -347,6 +399,7 @@ frontend 有 5 个 HTML 入口（`bubble.html` / `chat.html` / `pet.html` / `set
 | `frontend-ui-conventions.mdc` 补 shadcn 豁免 | 规则文件含豁免段 |
 | colors guard 仍通过 | `pnpm run lint:colors` 通过 |
 | 关键页面 dev server 视觉一致 | `pnpm dev` 跑起来，逐页（pet / chat / settings / memory-inspector）人眼对比改前改后，light + dark 各一遍。允许 ToolCard text-xs 1px 偏移、dark 阴影加深；不允许其他变化 |
+| settings.html 主题切换可用 | 打开 settings.html，点击太阳/月亮图标切换 light/dark；刷新后保持所选主题；切换时无闪屏 |
 | `scripts/check` 全过 | 等价 ESLint + colors guard + design-token guard + typecheck 全过 |
 
 ## 变更记录
@@ -354,3 +407,4 @@ frontend 有 5 个 HTML 入口（`bubble.html` / `chat.html` / `pet.html` / `set
 | 日期 | 变更内容 | 是否需要重新实现 |
 |------|---------|----------------|
 | 2026-06-23 | 创建技术方案文档（CONFIRMED） | - |
+|| 2026-06-23 | 扩展范围：settings.html 增加 light/dark 主题切换设计（useTheme hook + Tabs 图标） | 涉及文件、业务代码改动清单、验收方案、风险点 |
