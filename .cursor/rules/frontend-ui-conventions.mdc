@@ -1,5 +1,5 @@
 ---
-description: agent-friend 前端 UI 编写规范：纯 UI 组件复用与颜色 CSS 变量
+description: agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化
 globs: frontend/**
 alwaysApply: false
 ---
@@ -20,10 +20,34 @@ alwaysApply: false
   - 规则只讲"该怎么写"，"写错了拦下来"交给门禁。
 - 页面私有、带业务的组件不在"通用件"约束内，按既有目录约定放 `pages/<页>/components/`。
 
-## 颜色：禁止硬编码，统一走 CSS 变量
+## 设计 token：禁止硬编码，统一走 CSS 变量
 
-- **禁止任何硬编码颜色值**：包括 hex（如 `#1677ff`）、`rgb()/rgba()`、`hsl()`、CSS 具名色（如 `red`），以及 Tailwind 内置色板类（如 `bg-red-500`）和任意值色（如 `text-[#333]`）。
-- 颜色一律使用 `src/styles/theme/` 下定义的 CSS 变量（通过 `var(--xxx)`，或映射到这些变量的 Tailwind token 使用）。
-- 新增一种颜色时，**必须先在所有主题文件**（`src/styles/theme/light.css`、`dark.css` 等）中补上**同名、值不同**的变量，再使用——保证每个主题下换肤都完整、不漏色。
-- 主题通过 `html[theme='xxx']` 选择器切换，变量同名不同值；不要绕过该机制单独写一套颜色。
-- 这条同样**不靠自觉**，而是由机械门禁判定：`scripts/frontend/lint`（已并入 `scripts/check`）中的 `color-guard`（`frontend/scripts/check-colors.mjs`）扫描 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错；`src/styles/theme/` 作为颜色定义源头豁免。规则只讲"该怎么写"，"写错了拦下来"交给门禁。
+设计 token = 颜色 / 字体栈 / 字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影 / 动效时长 / 缓动 等所有视觉常量。一律走 CSS 变量，禁止硬编码，目的是 UI 一致性 + 可换肤 + 后续调整时一处改全局动。
+
+### 禁止形式（适用于所有 token 维度，不只颜色）
+
+- **CSS / 内联 style 里的裸字面值**：`color: #1677ff` / `font-family: "Inter"` / `font-size: 16px` / `padding: 12px` / `border-radius: 8px` / `box-shadow: 0 2px 4px ...` 等。
+- **Tailwind arbitrary value（带 `[...]` 的工具类）**：`text-[#333]` / `text-[16px]` / `font-[600]` / `leading-[1.5]` / `p-[12px]` / `rounded-[8px]` / `shadow-[...]` 等一律不写。
+- **Tailwind 内置色板类**：`bg-red-500` / `text-blue-600` 这类跟随 Tailwind 默认色板而非项目主题。
+- **例外（合法用法）**：**已映射到项目 token** 的 Tailwind 工具类（如 `bg-accent` / `text-fg` / `border-border`），以及走 `--spacing` 单位 token 的 `p-4` / `gap-6` 这类。即"工具类背后是项目变量"就行，"工具类背后是 Tailwind 默认值"就不行。
+
+### token 放哪：随主题 vs 不随主题
+
+`src/styles/theme/` 下分两类，新增 token 前先判断属于哪类：
+
+- **随主题变** = 颜色、阴影（阴影颜色随主题）、选中态背景等带色样式
+  → `theme/light.css` / `theme/dark.css`（以及未来新增的主题文件），**同名、值不同**。
+  新增此类 token 时**必须所有主题文件都补**，否则换肤会有漏。
+- **不随主题变** = 字体栈、字号、字重、行高、字间距、间距、圆角、动效时长、缓动等纯尺度量
+  → `theme/tokens.css`（**首次需要时建立此文件**，挂在 `:root` 上）。仅一份，所有主题共用。
+
+新增 token 同步在 `src/styles/index.css` 的 `@theme inline` 块里映射成 Tailwind token（如 `--text-base: var(--font-size-base)` / `--radius-md: var(--radius-md)`），让 `text-base` / `rounded-md` 这类工具类直接走变量，否则 utility class 只能用 arbitrary value 写——又会触发禁止形式。
+
+### 命名
+
+- 语义优先：`--accent` / `--surface` / `--space-md` 而不是 `--blue-500` / `--12px`。
+- 成尺度的用 `-xs / -sm / -md / -lg / -xl` 层级，不跳号、不混用 `-1 / -2 / -3` 数字风。
+
+### 机械门禁
+
+颜色已由 `frontend/scripts/check-colors.mjs`（接入 `scripts/check`）覆盖：扫 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错。其他维度（字号 / 间距 / 圆角 / 阴影）的 guard **暂未上线**——目前靠本规则与 review 约束；待某维度真正进入稳定使用后，按 `color-guard` 同样的模式补 `spacing-guard` / `font-guard` 等。`src/styles/theme/` 作为 token 定义源头，对所有此类 guard 永久豁免。规则只讲"该怎么写"，"写错了拦下来"交给门禁。
