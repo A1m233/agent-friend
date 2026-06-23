@@ -35,6 +35,62 @@ prefix() {
     while IFS= read -r line; do printf '%s%s\n' "$p" "$line"; done
 }
 
+# 028 · dev 脚本启动前端前，若 1420 被上次残留进程占用，尝试自动清理。
+# 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
+DEV_PORT=1420
+
+cleanup_port() {
+    local port="$1"
+    if ! command -v lsof >/dev/null 2>&1; then
+        return 1
+    fi
+    local pids
+    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+    echo "  [WARN] 端口 $port 被占用，尝试清理上次残留的 vite/tauri 进程…"
+    local killed=()
+    for pid in $pids; do
+        local comm
+        comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+        # 只杀疑似前端 dev 相关的进程，避免误伤用户其他服务。
+        case "$comm" in
+            node|pnpm|tauri|cargo|"app"*)
+                if kill -TERM "$pid" 2>/dev/null; then
+                    killed+=("$pid")
+                fi
+                ;;
+        esac
+    done
+    # 等最多 2 秒让进程退出
+    for _ in {1..20}; do
+        if ! lsof -ti tcp:"$port" >/dev/null 2>&1; then
+            echo "  [OK] 端口 $port 已释放"
+            return 0
+        fi
+        sleep 0.1
+    done
+    # 还有残留则强制杀
+    local remaining
+    remaining=$(lsof -ti tcp:"$port" 2>/dev/null || true)
+    for pid in $remaining; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    sleep 0.2
+    if ! lsof -ti tcp:"$port" >/dev/null 2>&1; then
+        echo "  [OK] 端口 $port 已释放"
+        return 0
+    fi
+    return 1
+}
+
+if ! cleanup_port "$DEV_PORT"; then
+    echo "  [ERROR] 端口 $DEV_PORT 仍被占用，无法启动前端 dev server。" >&2
+    echo "          请检查是否有其他程序占用该端口，或手动终止相关进程后再试。" >&2
+    exit 1
+fi
+
 cleanup() {
     trap - INT TERM EXIT
     echo ""

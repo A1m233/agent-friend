@@ -1,41 +1,79 @@
+import type { CSSProperties } from "react";
 import { Moon, Sun } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui";
-import { useTheme, type Theme } from "@/hooks/useTheme";
+import {
+  ScrollArea,
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui";
+import { useSetting, type ThemeMode } from "@/lib/settings";
 
 /**
- * 019 · 设置窗口。
+ * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
  *
- * 027 扩展：加入 light/dark 主题切换，用 shadcn Tabs 组件 + 太阳/月亮图标。
- * 状态持久化到 localStorage，由 useTheme hook 管理。
+ * 目前只承载"通用 → 外观 → 主题"一项，后续新增设置项按 design.md 扩展点接入。
  */
 export function SettingsApp() {
-  const { theme, setTheme } = useTheme();
+  const [theme, setTheme] = useSetting("theme");
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-bg p-6 text-fg">
-      <h1 className="text-xl font-semibold">设置</h1>
+    <SidebarProvider
+      className="h-screen bg-bg text-fg"
+      style={{ "--sidebar-width": "200px" } as CSSProperties}
+    >
+      <Sidebar collapsible="none" className="border-r border-border">
+        <SidebarHeader>
+          <h1 className="px-2 pt-2 text-lg font-semibold text-fg">设置</h1>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton isActive>通用</SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
 
-      <div className="flex w-full max-w-xs flex-col gap-3 rounded-lg border border-border bg-surface/50 p-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">主题</span>
-          <Tabs
-            value={theme}
-            onValueChange={(value) => setTheme(value as Theme)}
-          >
-            <TabsList>
-              <TabsTrigger value="light" aria-label="浅色主题">
-                <Sun className="size-4" />
-              </TabsTrigger>
-              <TabsTrigger value="dark" aria-label="深色主题">
-                <Moon className="size-4" />
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-        <p className="text-xs text-muted">
-          切换后会保存到本地，刷新页面仍然生效。
-        </p>
-      </div>
-    </div>
+      <main className="flex min-w-0 flex-1 flex-col bg-bg">
+        <ScrollArea className="h-screen">
+          <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
+            <h2 className="text-xl font-semibold">通用</h2>
+
+            <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface/50 p-5">
+              <h3 className="text-sm font-medium text-muted">外观</h3>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm">主题</span>
+                <Tabs
+                  value={theme}
+                  onValueChange={(value) =>
+                    void setTheme(value as ThemeMode)
+                  }
+                >
+                  <TabsList>
+                    <TabsTrigger value="light" aria-label="浅色主题">
+                      <Sun className="size-4" />
+                    </TabsTrigger>
+                    <TabsTrigger value="dark" aria-label="深色主题">
+                      <Moon className="size-4" />
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            </section>
+          </div>
+        </ScrollArea>
+      </main>
+    </SidebarProvider>
   );
 }

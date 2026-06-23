@@ -29,6 +29,59 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 . (Join-Path $PSScriptRoot "..\frontend\_ensure-node.ps1")
 Ensure-NodePnpm
 
+# 028 · dev 脚本启动前端前，若 1420 被上次残留进程占用，尝试自动清理。
+# 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
+$DevPort = 1420
+
+function Test-PortInUse($port) {
+    try {
+        $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction Stop
+        return $conn.Count -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Stop-DevPortProcess($port) {
+    $killed = @()
+    $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
+    foreach ($conn in $conns) {
+        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+        if (-not $proc) { continue }
+        # 只杀疑似前端 dev 相关的进程，避免误伤用户其他服务。
+        $name = $proc.ProcessName
+        if ($name -in @("node", "pnpm", "tauri", "cargo", "app")) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                $killed += $proc.Id
+            }
+            catch {
+                # ignore
+            }
+        }
+    }
+    # 等最多 2 秒让进程退出
+    for ($i = 0; $i -lt 20; $i++) {
+        if (-not (Test-PortInUse $port)) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return -not (Test-PortInUse $port)
+}
+
+if (Test-PortInUse $DevPort) {
+    Write-Host "  [WARN] 端口 $DevPort 被占用，尝试清理上次残留的 vite/tauri 进程…"
+    if (Stop-DevPortProcess $DevPort) {
+        Write-Host "  [OK] 端口 $DevPort 已释放"
+    }
+    else {
+        Write-Error "端口 $DevPort 仍被占用，无法启动前端 dev server。请检查是否有其他程序占用该端口，或手动终止相关进程后再试。"
+        exit 1
+    }
+}
+
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
