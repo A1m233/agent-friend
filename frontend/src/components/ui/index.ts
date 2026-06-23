@@ -19,3 +19,4 @@ export * from "./text-ellipsis";
 export * from "./tooltip";
 export * from "./tooltip-button";
 export * from "./sidebar";
+export * from "./sonner";

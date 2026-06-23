@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-NOT_STARTED
+IN_PROGRESS
 
 ## 实施顺序
 
@@ -20,7 +20,7 @@ NOT_STARTED
 - [ ] B1：新增 `frontend/src-tauri/src/settings.rs`：
   - `Settings` struct + `Default` impl（仅 `theme: ThemeMode`）
   - `ThemeMode` enum（`Light` / `Dark`）
-  - `load_from_disk_or_default()`：用 `dirs::config_dir()` + bundle id（`com.agentfriend.desktop`）算路径，同步读 `settings.json` 内 `"settings"` key；所有错误路径返回 `Settings::default()`
+  - `load_from_disk_or_default()`：用 `dirs::data_local_dir()` + bundle id（`com.agentfriend.desktop`）算路径，与 `tauri-plugin-store` 默认写盘路径保持一致；同步读 `settings.json` 内 `"settings"` key；所有错误路径返回 `Settings::default()`
   - `build_init_script(&Settings) -> String`：拼 `window.__AGENT_FRIEND_SETTINGS__ = {...}; document.documentElement.setAttribute('theme', '...');`
   - `get_setting` command（读 state）
   - `set_setting` command（按 key dispatch 写 state → 写 store → `app.emit("settings://changed", { key, value })`）
@@ -98,3 +98,5 @@ NOT_STARTED
 
 | 日期 | 完成内容 | 备注 |
 |------|---------|------|
+| 2026-06-23 | Rust facade plugin + settings.rs / lib.rs / capabilities；前端 settings 模块、sonner 组件、6 入口接线、settings UI 重做、useTheme 下线、023 issue 标 fix-in-028 | Phase 3 实现中 |
+| 2026-06-23 | 修复 bootstrap 读路径：由 `dirs::config_dir()` 改为 `dirs::data_local_dir()`，与 `tauri-plugin-store` 默认路径一致；lib.rs setup 中补打 bootstrap theme log | R3 路径不一致修复 |

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -9,6 +9,7 @@ use tauri::{
 mod bubble_window;
 mod log_paths;
 mod push_subscriber;
+mod settings;
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
@@ -395,9 +396,17 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
+    let bootstrap_settings = settings::load_from_disk_or_default();
+    let init_script = settings::build_init_script(&bootstrap_settings);
+    let settings_state = Arc::new(Mutex::new(bootstrap_settings));
+
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default())
-        .manage(PetWebviewState::default());
+        .manage(PetWebviewState::default())
+        .manage(settings_state.clone())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(settings::init::<tauri::Wry>(init_script));
 
     // 017 · 装 tauri-nspanel plugin（macOS only）；non-macOS 退化为
     // tauri.conf.json 已配的 alwaysOnTop + transparent + skipTaskbar
@@ -406,6 +415,7 @@ pub fn run() {
 
     // 016 M16.9 · dev build 多注册一个 `inject_test_envelope` 命令，
     // 让 pet 操作栏的"inject 测试气泡"按钮跑通——release build 整个 fn 不存在。
+    // 028 · settings command 注册到 app 级 invoke_handler，不走路径 plugin 权限文件。
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
@@ -413,6 +423,8 @@ pub fn run() {
         open_memory_inspector,
         hide_pet,
         set_pet_webview_dpr,
+        settings::get_setting,
+        settings::set_setting,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -425,6 +437,8 @@ pub fn run() {
         open_settings,
         hide_pet,
         set_pet_webview_dpr,
+        settings::get_setting,
+        settings::set_setting,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -443,7 +457,7 @@ pub fn run() {
                 }
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
             let log_dir = log_paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
             app.handle().plugin(
@@ -486,6 +500,17 @@ pub fn run() {
                     )
                     .build(),
             )?;
+
+            // 028 · logger attach 后再补一次 bootstrap 结果，方便 R3 路径/主题排查。
+            let bootstrap_theme = settings_state
+                .lock()
+                .map(|s| s.theme_attr().to_string())
+                .unwrap_or_else(|_| "<poisoned>".to_string());
+            log::info!(
+                "settings: bootstrap state loaded; theme={}",
+                bootstrap_theme
+            );
+
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview

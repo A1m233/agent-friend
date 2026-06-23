@@ -5,7 +5,9 @@
   "windows": [
     "pet",
     "chat",
-    "bubble"
+    "bubble",
+    "settings",
+    "memory-inspector"
   ],
   "permissions": [
     "core:default",
