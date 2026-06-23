@@ -1,9 +1,9 @@
 # 023 · settings 主题切换后续两点优化
 
-- **状态**：open
+- **状态**：open · fix-in-028
 - **严重度**：medium
 - **发现日期**：2026-06-23
-- **关联需求**：027-frontend-design-token-extraction
+- **关联需求**：027-frontend-design-token-extraction、028-settings-center-and-cross-window-sync
 
 ## 现象
 
@@ -30,3 +30,12 @@
    - Tauri 侧提供配置读写 + 事件广播（`emit`/`listen`），把主题存在后端配置或文件中。
    - 各入口启动时读取同一配置，并在收到变更事件时更新 `html[theme]`。
    - 纯前端临时方案：监听 `storage` 事件 + 各入口启动时读 `localStorage`，但 Tauri 多窗口的 localStorage 是否共享需验证，且桌面端通常应走后端配置。
+
+## 修复指向
+
+本 issue 由 [028-settings-center-and-cross-window-sync](../../requirements/028-settings-center-and-cross-window-sync/) 修复：
+
+- 设置存储下沉到 Tauri 客户端 `tauri-plugin-store`，持久化到 OS 标准配置目录。
+- 主题切换通过 `settings://changed` 事件向所有 webview 广播，6 个 HTML 入口实时同步。
+- 设置 UI 重做为左侧分类导航 + 右侧滚动内容的两栏 shell。
+- 028 merge 后再 close 本 issue。
