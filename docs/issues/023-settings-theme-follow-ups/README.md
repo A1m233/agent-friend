@@ -1,6 +1,6 @@
 # 023 · settings 主题切换后续两点优化
 
-- **状态**：open · fix-in-028
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-06-23
 - **关联需求**：027-frontend-design-token-extraction、028-settings-center-and-cross-window-sync
@@ -39,3 +39,5 @@
 - 主题切换通过 `settings://changed` 事件向所有 webview 广播，6 个 HTML 入口实时同步。
 - 设置 UI 重做为左侧分类导航 + 右侧滚动内容的两栏 shell。
 - 028 merge 后再 close 本 issue。
+
+已在 commit `295d030`（docs(issues): 更新 023 状态并登记 024 tdesign-chat 主题适配）中关闭。
