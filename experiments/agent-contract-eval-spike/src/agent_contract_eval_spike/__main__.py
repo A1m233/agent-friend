@@ -59,6 +59,12 @@ def _parse_args() -> argparse.Namespace:
         help="只跑指定契约(默认 all)",
     )
     p.add_argument(
+        "--case",
+        default=None,
+        metavar="ID",
+        help="只跑指定 case id(如 C1-11)。指定后 --contract / --dry-run 被忽略",
+    )
+    p.add_argument(
         "--model",
         default=None,
         help="覆盖被测 agent 用的 model(默认走 .env 的 DEEPSEEK_MODEL)",
@@ -75,8 +81,27 @@ def main() -> int:
         return 1
 
     contracts = load_contracts(_CASES_DIR)
-    if args.contract != "all":
-        contracts = [c for c in contracts if c.id == args.contract]
+    if args.case:
+        # 单 case 模式:contract + dry-run filter 都忽略
+        matched_contract = None
+        matched_case = None
+        for c in contracts:
+            for cs in c.cases:
+                if cs.id == args.case:
+                    matched_contract = c
+                    matched_case = cs
+                    break
+            if matched_case:
+                break
+        if not matched_case:
+            print(f"[err] 没找到 case: {args.case}", file=sys.stderr)
+            return 1
+        # 用一个只含目标 case 的 Contract 副本替换
+        from dataclasses import replace
+        contracts = [replace(matched_contract, cases=[matched_case])]
+    else:
+        if args.contract != "all":
+            contracts = [c for c in contracts if c.id == args.contract]
     if not contracts:
         print(f"[err] 没找到契约: {args.contract}", file=sys.stderr)
         return 1

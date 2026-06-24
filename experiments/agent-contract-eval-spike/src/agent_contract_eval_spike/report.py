@@ -49,7 +49,8 @@ def render_failure_details(
     for case, trace, verdict in fails:
         console.print(f"[bold]{case.id}[/bold] · {case.query}")
         console.print(f"  reason: {verdict.reason}")
-        console.print(f"  tool_calls: {trace.tool_calls or '(none)'}")
+        names = [tc.name for tc in trace.tool_calls] or "(none)"
+        console.print(f"  tool_calls: {names}")
         if trace.final_text:
             head = trace.final_text[:200].replace("\n", " ")
             tail = "…" if len(trace.final_text) > 200 else ""
@@ -90,7 +91,15 @@ def write_json_report(
                     "source": case.source,
                     "passed": verdict.passed,
                     "reason": verdict.reason,
-                    "tool_calls": trace.tool_calls,
+                    "tool_calls": [
+                        {
+                            "name": tc.name,
+                            "args": tc.args,
+                            "result_text": tc.result_text,
+                            "is_error": tc.is_error,
+                        }
+                        for tc in trace.tool_calls
+                    ],
                     "final_text": trace.final_text,
                     "stop_reason": trace.stop_reason,
                     "error": trace.error,

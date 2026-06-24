@@ -15,13 +15,14 @@ from agent import (
     SessionManager,
     TextDelta,
     ToolCallRequest,
+    ToolCallResult,
     TurnDone,
     default_context_manager,
     make_default_registry,
 )
 from llm_providers import LLMClient, ProviderSpec
 
-from .schema import Case, Trace
+from .schema import Case, ToolCallTrace, Trace
 
 
 def build_session_manager(model: str | None = None) -> SessionManager:
@@ -56,17 +57,34 @@ def run_case(case: Case, mgr: SessionManager, model: str) -> Trace:
         )
         conv = mgr.start_conversation(session)
 
-        tool_calls: list[str] = []
+        tool_requests: dict[str, ToolCallRequest] = {}  # 按 tool_call_id 暂存,等 Result 配对
+        tool_calls: list[ToolCallTrace] = []
         text_buf: list[str] = []
         stop_reason = "unknown"
 
         for ev in conv.stream(case.query):
             if isinstance(ev, ToolCallRequest):
-                tool_calls.append(ev.tool_name)
+                tool_requests[ev.tool_call_id] = ev
+            elif isinstance(ev, ToolCallResult):
+                req = tool_requests.pop(ev.tool_call_id, None)
+                tool_calls.append(
+                    ToolCallTrace(
+                        name=ev.tool_name,
+                        args=dict(req.args) if req else {},
+                        result_text=ev.text,
+                        is_error=ev.is_error,
+                    )
+                )
             elif isinstance(ev, TextDelta):
                 text_buf.append(ev.text)
             elif isinstance(ev, TurnDone):
                 stop_reason = ev.stop_reason
+
+        # 未配对的 ToolCallRequest(发了但没回 Result,极少出现)兜底落入 trace
+        for req in tool_requests.values():
+            tool_calls.append(
+                ToolCallTrace(name=req.tool_name, args=dict(req.args), result_text="", is_error=False)
+            )
 
         return Trace(
             case_id=case.id,

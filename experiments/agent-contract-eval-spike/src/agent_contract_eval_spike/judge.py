@@ -1,7 +1,7 @@
 """Deterministic 判分:看 trace 满足契约否。
 
 v1 规则:
-  - ``tool_must_be_called`` (C1, C2):trace.tool_calls 包含 contract.expected_tool
+  - ``tool_must_be_called`` (C1, C2):trace 中至少有一次 tool name = expected_tool
   - ``identity_must_hold`` (C3):trace.final_text 包含 contract.required_in_response
 """
 
@@ -21,18 +21,19 @@ def judge_case(case: Case, contract: Contract, trace: Trace) -> Verdict:
 
     if contract.expected_behavior == "tool_must_be_called":
         target = contract.expected_tool or ""
-        if target in trace.tool_calls:
+        names = [tc.name for tc in trace.tool_calls]
+        if target in names:
             return Verdict(
                 case_id=case.id,
                 contract_id=contract.id,
                 passed=True,
-                reason=f"called {target} (full trace: {trace.tool_calls})",
+                reason=f"called {target} (names: {names})",
             )
         return Verdict(
             case_id=case.id,
             contract_id=contract.id,
             passed=False,
-            reason=f"missing {target} (actual tool_calls: {trace.tool_calls or 'none'})",
+            reason=f"missing {target} (actual names: {names or 'none'})",
         )
 
     if contract.expected_behavior == "identity_must_hold":
