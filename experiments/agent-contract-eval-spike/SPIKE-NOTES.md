@@ -207,7 +207,7 @@ spike 实施过程已三次抓到 method/被测对象的真问题:
 
 C4-07 / C4-10 agent **都说了**"具体细节我有点记不太清了",**然后立刻用外部通识填充**。issue 015 修复在 web_search 路径写了"已验证 vs 推测",但 `recall_past_chats` 路径下"翻不到时不可通识替补"的规则**未成文**。
 
-这是从 spike 衍生的 prompt 改进方向,值得在 explorations / runtime_context.md 起一条 follow-up issue。
+这是从 spike 衍生的 prompt 改进方向,已起 [issue 025](../../docs/issues/025-agent-fabricates-after-empty-recall/) 跟进。
 
 ## 回流到 explorations
 
@@ -235,4 +235,4 @@ C4-07 / C4-10 agent **都说了**"具体细节我有点记不太清了",**然后
 - judge 扩展点抽象(对标 `memory_eval.harness.judge`),为未来加 forbidden_terms / fixture-Tavily-mock / multi-turn 判分形态留扩展面
 - baseline 落盘机制 + git 归档姿势(对标 `memory_eval.harness.baseline`)
 - CLI 集成进 `scripts/` 目录(对标 `scripts/memory-eval/run.sh`)
-- prompt follow-up issue:把 L7 "翻不到时不可通识替补"落码到 `runtime_context.md`
+- prompt follow-up issue [025](../../docs/issues/025-agent-fabricates-after-empty-recall/):把 L7 "翻不到时不可通识替补"落码到 `runtime_context.md`

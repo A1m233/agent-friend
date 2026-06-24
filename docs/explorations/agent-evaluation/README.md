@@ -121,7 +121,7 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 - **persona 维度暂缺**：陪伴口吻 / 不暴露查询动作 / 不复述时间戳——这些在 `recall_past_chats` 工具描述里写明的 persona 要求，本方法**不评**。等契约层稳定后再看要不要补 LLM judge 走这一路。
 - **session-replay 升级路径**：产品稳定到 agent 编排层版本稳定后，可回 §3 重审 session-replay 的可行性。
 - (spike 回流)**fixture 文本必须含 agent 自然 query 词**：否则被 `recall_past_chats` 整串 substring filter 灭光,case 跑出来像 agent 失忆。详见 SPIKE-NOTES §"v2 实施过程第二条信号"。
-- (spike 回流)**agent 承认 recall 失败后仍可能用通识 fabricate**：C4-07 / C4-10 实测,agent 说"具体细节记不清"之后立刻用外部通识扩充虚假细节。issue 015 在 web_search 路径修了"已验证 vs 推测",但 `recall_past_chats` 路径下"翻不到时不可通识替补"的规则**未成文**,留 follow-up。
+- (spike 回流)**agent 承认 recall 失败后仍可能用通识 fabricate**：C4-07 / C4-10 实测,agent 说"具体细节记不清"之后立刻用外部通识扩充虚假细节。issue 015 在 web_search 路径修了"已验证 vs 推测",但 `recall_past_chats` 路径下"翻不到时不可通识替补"的规则**未成文**,见 [issue 025](../../issues/025-agent-fabricates-after-empty-recall/)。
 - (spike 回流 · 未决)**prod recall_past_chats 是整串 substring filter**(`tool.py:184`):agent 倾向拼多词 query → 0 命中。是否需要工具层 UX 升级(分词 / OR 匹配)是未决产品决策,SPIKE-NOTES L6 提出。
 
 ---
