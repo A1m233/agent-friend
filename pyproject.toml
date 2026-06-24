@@ -33,6 +33,7 @@ members = [
     "llm_providers",
     "tools",
     "voice_bridge",
+    "experiments/agent-contract-eval-spike",
 ]
 
 [tool.uv.sources]

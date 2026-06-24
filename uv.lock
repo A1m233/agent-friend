@@ -6,6 +6,7 @@ requires-python = "==3.12.*"
 members = [
     "agent",
     "agent-bridge",
+    "agent-contract-eval-spike",
     "agent-friend",
     "llm-providers",
     "memory",
@@ -82,6 +83,25 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "qqbot-agent-sdk", extras = ["qrcode"], specifier = ">=1.2.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
+]
+
+[[package]]
+name = "agent-contract-eval-spike"
+version = "0.1.0"
+source = { editable = "experiments/agent-contract-eval-spike" }
+dependencies = [
+    { name = "agent" },
+    { name = "llm-providers" },
+    { name = "python-dotenv" },
+    { name = "rich" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent", editable = "agent" },
+    { name = "llm-providers", editable = "llm_providers" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "rich", specifier = ">=13.0.0" },
 ]
 
 [[package]]
