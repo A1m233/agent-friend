@@ -97,6 +97,8 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 - 工具调用类：跑完后看 `tool_calls` 列表里是否出现指定工具名 / 参数模式 → **binary**
 - 编造类：跑完后看 assistant 回复里是否声称了**给定上下文之外**的具体事实（按预先标注的"context 之内的允许声称集合"做反向匹配）→ **可规则化**
 
+> **spike 已落地**：v1 走"工具调用类",v2 在 C1 引入"fixture-grounded anchor"(`must_mention_any` 检 agent 是否如实引用 fixture 实词),C4 引入"fabrication 抓手"(`must_not_mention_any` 反向命中 = fail)。三层判分都是 case-insensitive substring,deterministic 无 LLM judge。详见 [`SPIKE-NOTES.md`](../../../experiments/agent-contract-eval-spike/SPIKE-NOTES.md)。
+
 主观维度（口吻、persona 一致性、是否暴露查询动作等）**先不评**，留给人工抽检。
 
 ### 4.4 PoC 期先做的三条契约
@@ -118,9 +120,28 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 - **契约本身写得太严 vs 太松**：单条契约的"通不过"是 agent 真有问题，还是契约定义不准？PoC 阶段重点验证这个判断（spike §1 的核心问题之一）。
 - **persona 维度暂缺**：陪伴口吻 / 不暴露查询动作 / 不复述时间戳——这些在 `recall_past_chats` 工具描述里写明的 persona 要求，本方法**不评**。等契约层稳定后再看要不要补 LLM judge 走这一路。
 - **session-replay 升级路径**：产品稳定到 agent 编排层版本稳定后，可回 §3 重审 session-replay 的可行性。
+- (spike 回流)**fixture 文本必须含 agent 自然 query 词**：否则被 `recall_past_chats` 整串 substring filter 灭光,case 跑出来像 agent 失忆。详见 SPIKE-NOTES §"v2 实施过程第二条信号"。
+- (spike 回流)**agent 承认 recall 失败后仍可能用通识 fabricate**：C4-07 / C4-10 实测,agent 说"具体细节记不清"之后立刻用外部通识扩充虚假细节。issue 015 在 web_search 路径修了"已验证 vs 推测",但 `recall_past_chats` 路径下"翻不到时不可通识替补"的规则**未成文**,留 follow-up。
+- (spike 回流 · 未决)**prod recall_past_chats 是整串 substring filter**(`tool.py:184`):agent 倾向拼多词 query → 0 命中。是否需要工具层 UX 升级(分词 / OR 匹配)是未决产品决策,SPIKE-NOTES L6 提出。
 
 ---
 
-## 6. 当前进行中的 spike
+## 6. spike 沉淀(已完成)
 
-`experiments/agent-contract-eval-spike/` —— 用上述方法在我们当前 agent 上跑一次最小验证。spike 的目标 / 验证清单 / 跑通方法见该目录的 `README.md`，最终结论将沉淀到 `SPIKE-NOTES.md` 并回流到本文件的"已知风险"/"未决问题"两节。
+`experiments/agent-contract-eval-spike/` —— 用上述方法在我们当前 agent 上跑了一次最小验证。spike 状态:**已完成**,详见该目录的 [`SPIKE-NOTES.md`](../../../experiments/agent-contract-eval-spike/SPIKE-NOTES.md)。
+
+核心收获(2026-06-24):
+- v1 / v2 / C4 三层判分机制都跑通,deterministic 无 LLM judge
+- spike 出门前已抓到 3 条 method/prod/prompt 级真问题(C1-22 prod 工具脆弱性 · C4-07/10 fabrication catch · L7 prompt 留白)
+- 4 个契约 83 case wall-clock ~10 分钟,日常迭代成本可控
+- 升级 feature 的 minimum viable schema 已敲定
+
+## 7. feature 化时该补的基础设施(spike 暂未做)
+
+- **自动 markdown 报告**:`run.sh` 跑完自动生成 `out/<ts>.md`,跟 `out/<ts>.json` 1:1 配对,含 pass-rate / 失败 case trace 摘要 / 跟上次 baseline 的 diff。对标 `memory_eval` baseline + report 机制。
+- **agent-eval skill**(显式调用):`/agent-eval [--contract C1|...|all]` 最小版本 — 调 runner / 读最新 out / 把失败 case 摘要带回当前对话。**不要**写在 spike 阶段(schema 还会动);**等 feature 化时再做**。
+- **judge 扩展点抽象**(对标 `memory_eval.harness.judge`),为未来加 forbidden_terms / fixture-Tavily-mock / multi-turn 判分形态留扩展面。
+- **baseline 落盘机制 + git 归档姿势**(对标 `memory_eval.harness.baseline`)。
+- **CLI 集成进 `scripts/`** 目录(对标 `scripts/memory-eval/run.sh`)。
+- **C5「工具召回鲁棒性」契约**(基于 spike L6):专门测多词 query 在 prod 工具下能否召回,driving prod 工具层改进。
+- **N=3 抖动测试**:同 case 跑 3 次看 verdict 一致性,LLM 输出本身的抖动会让单跑判分不稳。
