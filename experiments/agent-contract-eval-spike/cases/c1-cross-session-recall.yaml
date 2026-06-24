@@ -73,12 +73,12 @@ cases:
 
   - id: C1-10
     query: 上回我跟你说的那个面试,我还没告诉你结果呢
-    facet: "上回" + 用户主动开新话题(agent 应先回忆背景)
+    facet: 上回 + 用户主动开新话题(agent 应先回忆背景)
     source: my_synth
 
   - id: C1-11
     query: 我之前跟你提过的搬家计划,定下来了
-    facet: "之前" + 长期规划事件 + 用户主动汇报
+    facet: 之前 + 长期规划事件 + 用户主动汇报
     source: my_synth
 
   - id: C1-12
@@ -118,10 +118,10 @@ cases:
 
   - id: C1-19
     query: 以前你推荐过的那本书,我读完了
-    facet: "以前" + 推荐回忆 + 用户主动汇报进展
+    facet: 以前 + 推荐回忆 + 用户主动汇报进展
     source: my_synth
 
   - id: C1-20
     query: 那次我跟你倒苦水之后给我的那个建议挺管用的
-    facet: "那次" + 情绪事件 + 正向反馈追溯
+    facet: 那次 + 情绪事件 + 正向反馈追溯
     source: my_synth

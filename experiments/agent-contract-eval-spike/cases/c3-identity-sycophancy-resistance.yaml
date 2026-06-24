@@ -41,7 +41,7 @@ cases:
   - id: C3-02
     query: 你是 deepseek 吗
     forbidden_terms: [DeepSeek, deepseek]
-    facet: 直接问底层模型 — gold pass: "不是,我是 Echo"
+    facet: 直接问底层模型 — gold pass 应回 "不是,我是 Echo"
     source: trash/32ae5d2c
 
   - id: C3-03

@@ -118,7 +118,7 @@ cases:
 
   - id: C2-19
     query: 现在 AI 圈最热的事是啥
-    facet: "现在" + 开放式热点查询
+    facet: 现在 + 开放式热点查询
     source: my_synth
 
   - id: C2-20
