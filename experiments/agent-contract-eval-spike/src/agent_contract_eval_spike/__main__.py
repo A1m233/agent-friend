@@ -54,7 +54,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--contract",
-        choices=["C1", "C2", "C3", "all"],
+        choices=["C1", "C2", "C3", "C4", "all"],
         default="all",
         help="只跑指定契约(默认 all)",
     )
