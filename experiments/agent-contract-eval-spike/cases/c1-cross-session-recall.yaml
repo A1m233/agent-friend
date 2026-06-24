@@ -125,3 +125,75 @@ cases:
     query: 那次我跟你倒苦水之后给我的那个建议挺管用的
     facet: 那次 + 情绪事件 + 正向反馈追溯
     source: my_synth
+
+  # =========================================================================
+  # v2 cases (C1-21..23) - fixture-grounded
+  # ---------------------------------------------------------------------
+  # 跟 v1 case 共存。每条带:
+  #   - fixture_session: 跑前注入到 tmp SessionStore,recall_past_chats 能真召回到
+  #   - judge: case 级判分,覆盖 contract 级 v1 规则
+  #     - must_call: 必须调用的工具(留空则沿用 contract.expected_tool)
+  #     - must_mention_any: final_text 至少出现其中一个(锚到 fixture 真实出现的实词)
+  #     - must_not_mention_any: final_text 不得出现(fabrication 抓手 — 这些词在 fixture
+  #       里没有,agent 若提到 = 凭印象编故事)
+  # query 中刻意**不**含 must_mention_any 里的词,避免本轮 user_message 自带关键词导致
+  # judge 短路通过。
+  # =========================================================================
+
+  - id: C1-21
+    query: 我之前跟你说的那个搬家的事,有进展了
+    facet: fixture-grounded · 长期规划 · 用户回头汇报
+    source: my_synth
+    fixture_session:
+      days_ago: 7
+      messages:
+        - role: user
+          text: 我最近在认真考虑搬家了,北京干得也累,杭州那边给了个 offer 涨 30%
+        - role: assistant
+          text: 杭州的 offer 是哪家?为啥这时候想搬?
+        - role: user
+          text: 新公司产品岗,待遇好不少。但我妈一直在北京,她身体也不太好,我有点犹豫
+        - role: assistant
+          text: 妈那边的考虑确实重,有跟她聊过你想搬过去的想法吗?
+    judge:
+      must_mention_any: ["杭州", "offer", "妈"]
+      must_not_mention_any: ["上海", "深圳", "广州", "出国", "美国", "国外"]
+
+  - id: C1-22
+    query: 你还记得我跟你说我准备那个考试吗,最近又卡住了
+    facet: fixture-grounded · 学习场景 · 具体卡点
+    source: my_synth
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我最近在准备 GMAT 考试,数学那块 data sufficiency 老分不清 C 和 D
+        - role: assistant
+          text: data sufficiency 的 C/D 确实是高频陷阱。是分不清"两个条件单独够不够",还是判断逻辑容易飘?
+        - role: user
+          text: 主要是看选项 1 觉得够了,看选项 2 又觉得也行,然后就选 D,但其实只用一个就行
+        - role: assistant
+          text: 这种就是被"两个都看着合理"的烟雾弹晃晕了。每个条件**单独**带回原题验一遍是最稳的
+    judge:
+      must_mention_any: ["GMAT", "data sufficiency", "C/D", "C 和 D"]
+      must_not_mention_any: ["托福", "雅思", "考研", "GRE", "SAT", "高考"]
+
+  - id: C1-23
+    query: 上次跟你说过的那个工作上的事,有点新进展
+    facet: fixture-grounded · 工作苦水 · 用户回头汇报
+    source: my_synth
+    fixture_session:
+      days_ago: 5
+      messages:
+        - role: user
+          text: 工作上最近挺烦的,我们组新来个领导,这周已经第三次因为汇报方式被点名了,加班到 11 点还不让走
+        - role: assistant
+          text: 听着像他在立威阶段,跟你个人能力不一定挂钩。你之前跟他对接过没?
+        - role: user
+          text: 没,他刚来两周。我已经在偷偷看 boss 了,真想直接跑路
+        - role: assistant
+          text: 想跑路的念头先放心里,行动可以等下个月看看他是过渡期还是常态
+    judge:
+      must_mention_any: ["领导", "加班", "跑路"]
+      must_not_mention_any: ["年终", "裁员", "涨薪", "同事抢", "客户投诉"]
+

@@ -30,7 +30,7 @@ from llm_providers import LLMAuthError, ProviderSpec
 from .judge import judge_case
 from .loader import load_contracts
 from .report import render_console, render_failure_details, write_json_report
-from .runner import build_session_manager, run_case
+from .runner import run_case
 from .schema import Case, Trace, Verdict
 
 # __file__ → experiments/agent-contract-eval-spike/src/agent_contract_eval_spike/__main__.py
@@ -122,8 +122,6 @@ def main() -> int:
         f"dry_run={args.dry_run}  contracts={[c.id for c in contracts]}[/dim]\n"
     )
 
-    mgr = build_session_manager(model=model)
-
     results: dict[str, list[tuple[Case, Trace, Verdict]]] = {}
     total_cases = 0
     for contract in contracts:
@@ -137,7 +135,7 @@ def main() -> int:
         pairs: list[tuple[Case, Trace, Verdict]] = []
         for i, case in enumerate(cases_to_run, 1):
             console.print(f"  [{i}/{len(cases_to_run)}] {case.id} … ", end="")
-            trace = run_case(case, mgr, model)
+            trace = run_case(case, model)
             verdict = judge_case(case, contract, trace)
             mark = "[green]✓[/green]" if verdict.passed else "[red]✗[/red]"
             console.print(mark)

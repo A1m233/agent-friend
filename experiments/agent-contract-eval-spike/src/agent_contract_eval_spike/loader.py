@@ -7,7 +7,29 @@ from typing import Any
 
 import yaml
 
-from .schema import Case, Contract
+from .schema import Case, CaseJudge, Contract, FixtureMessage, FixtureSession
+
+
+def _parse_fixture_session(raw: Any) -> FixtureSession | None:
+    if not raw:
+        return None
+    return FixtureSession(
+        days_ago=int(raw.get("days_ago", 0)),
+        messages=[
+            FixtureMessage(role=str(m["role"]), text=str(m["text"]))
+            for m in raw.get("messages", []) or []
+        ],
+    )
+
+
+def _parse_judge(raw: Any) -> CaseJudge | None:
+    if not raw:
+        return None
+    return CaseJudge(
+        must_call=raw.get("must_call"),
+        must_mention_any=[str(x) for x in (raw.get("must_mention_any") or [])],
+        must_not_mention_any=[str(x) for x in (raw.get("must_not_mention_any") or [])],
+    )
 
 
 def load_contracts(cases_dir: Path) -> list[Contract]:
@@ -25,6 +47,8 @@ def load_contracts(cases_dir: Path) -> list[Contract]:
                 facet=c.get("facet", ""),
                 source=c.get("source", ""),
                 forbidden_terms=list(c.get("forbidden_terms", []) or []),
+                fixture_session=_parse_fixture_session(c.get("fixture_session")),
+                judge=_parse_judge(c.get("judge")),
             )
             for c in cases_raw
         ]
