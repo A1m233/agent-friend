@@ -98,6 +98,7 @@ def main() -> int:
             return 1
         # 用一个只含目标 case 的 Contract 副本替换
         from dataclasses import replace
+
         contracts = [replace(matched_contract, cases=[matched_case])]
     else:
         if args.contract != "all":
