@@ -1,0 +1,127 @@
+# C2 · 时效信息触发 (time-sensitive-info)
+#
+# 契约:user query 涉及**需要 web 上最新数据**的信息查询时,
+# agent **必须**调用 `web_search` 工具(至少一次)。
+#
+# 判分:跑完看 trace.tool_calls,只要其中包含 name=web_search 的调用,即通过。
+#
+# Case 构造原则:
+#   - 每条 case 作为单轮 query 喂给 agent.Conversation,无 in-session 铺垫
+#   - 优先采纳真实 session 中已出现过的 query(source: prod_session/<id>)
+#   - 触发边界明确化:**信息查询性质 + 需要 web 上最新数据**
+#     - time-of-day("现在几点")**不算** — web_search 不是好工具
+#     - 天气陈述("今天下了好大雨")**不算** — 用户在共情而非查询
+#     - rapport 语境的"最近"("最近在写一个 agent")**不算** — 闲聊不是 query
+#
+# 已知 gap(不在本 case 集覆盖,留给后续):
+#   - **时效边界**:time-of-day / weather 等问法是否该用 web_search,本契约 v1 不表态
+#   - **多步时效**:"对比 A 跟 B 谁最近表现好" 这种复合时效查询不在本契约范围
+
+contract:
+  id: C2
+  name: time-sensitive-info
+  expected_behavior: tool_must_be_called
+  expected_tool: web_search
+
+cases:
+  # --- 真实 session anchor ---
+  - id: C2-01
+    query: 今天发生了什么大事
+    facet: 时效新闻 — 最高频开局 pattern
+    source: prod_session/ae5a2e3f + trash/03d0f374
+
+  - id: C2-02
+    query: 搜一下今天有什么新闻
+    facet: 用户显式 "搜一下" 提示 — agent 不调工具属严重失误
+    source: prod_session/23fe5835
+
+  - id: C2-03
+    query: 国内有没有发生什么大事
+    facet: 地域限定 + 时效新闻
+    source: prod_session/23fe5835
+
+  - id: C2-04
+    query: 那今天呢
+    facet: 极短承接式 — 依赖隐含的 "今天的新闻" 语境
+    source: prod_session/23fe5835
+
+  - id: C2-05
+    query: 除了中美之外,还有啥新闻
+    facet: 增量式追问 — 排除已知后再查
+    source: prod_session/ae5a2e3f
+
+  - id: C2-06
+    query: 5月30号发生了什么大事
+    facet: 具体日期 + 时效查询
+    source: trash/26533953
+
+  - id: C2-07
+    query: 最近七天发生了什么大事
+    facet: 时间窗口("最近七天")+ 时效查询
+    source: trash/eab53723
+
+  - id: C2-08
+    query: 现在的日期是多少
+    facet: 日期查询 — agent 曾 fabricate "2025年7月14日"(canonical 编造 case)
+    source: trash/03d0f374
+
+  - id: C2-09
+    query: 今天几号
+    facet: 极简日期查询 — agent 曾碰运气答对(未调工具)
+    source: trash/eab53723
+
+  - id: C2-10
+    query: 特朗普什么时候访华
+    facet: 人物 + 时事动态
+    source: trash/eab53723
+
+  # --- 多样性补充 ---
+  - id: C2-11
+    query: 最近 OpenAI 出什么新闻没
+    facet: 友商动态(AI 圈本应是高触发场景)
+    source: my_synth
+
+  - id: C2-12
+    query: 今天股市怎么样
+    facet: 实时金融数据
+    source: my_synth
+
+  - id: C2-13
+    query: 比特币现在多少钱了
+    facet: 实时价格查询
+    source: my_synth
+
+  - id: C2-14
+    query: 美元对人民币现在多少
+    facet: 实时汇率查询
+    source: my_synth
+
+  - id: C2-15
+    query: 这周大模型圈有什么大事
+    facet: 时间窗口("这周")+ 行业动态
+    source: my_synth
+
+  - id: C2-16
+    query: 最新的 GPT 出了吗
+    facet: 产品发布查询
+    source: my_synth
+
+  - id: C2-17
+    query: 苹果今年发布了啥新产品
+    facet: 时间窗口("今年")+ 厂商产品线
+    source: my_synth
+
+  - id: C2-18
+    query: 今年诺贝尔奖有谁
+    facet: 年度时效奖项
+    source: my_synth
+
+  - id: C2-19
+    query: 现在 AI 圈最热的事是啥
+    facet: "现在" + 开放式热点查询
+    source: my_synth
+
+  - id: C2-20
+    query: 上周咱们 A 股有啥变动
+    facet: 时间窗口("上周")+ 实时金融
+    source: my_synth

@@ -1,0 +1,127 @@
+# C1 · 跨会话回忆 (cross-session-recall)
+#
+# 契约:user query 明显暗示"当前 session 之外"的历史对话内容时,
+# agent **必须**调用 `recall_past_chats` 工具(至少一次)。
+#
+# 判分:跑完看 trace.tool_calls,只要其中包含 name=recall_past_chats 的调用,即通过。
+# 不关心调用参数是否最优(query 是否精准等),只看是否触发 — 触发率是 PoC 的第一道门。
+#
+# Case 构造原则:
+#   - 每条 case 作为 first-turn 单轮 query 喂给 agent.Conversation,无 in-session 铺垫
+#   - 跨 session 暗示是 query 中唯一的信号
+#   - 优先采纳真实 session 中已出现过的 query(source: prod_session/<id>)作为 anchor
+#   - 其余补足(my_synth)覆盖真实样本未达到的多样性维度
+#
+# 已知 gap(不在本 case 集覆盖,留给后续):
+#   - **multi-turn push-back failure**: agent 第一次拒绝后用户反复 push 仍不调工具
+#     的失败模式(im:qq:27 + im:qq:28 都呈现过)需要多轮 schema,本契约 v1 不覆盖。
+#     单轮的 push-back 语气 query 已含在下面 C1-03 / C1-04。
+
+contract:
+  id: C1
+  name: cross-session-recall
+  expected_behavior: tool_must_be_called
+  expected_tool: recall_past_chats
+
+cases:
+  # --- 真实 session anchor(直接采自生产 jsonl) ---
+  - id: C1-01
+    query: 你还记得我吗
+    facet: 极简首轮 — 最高频开局 pattern
+    source: prod_session/91c6dd02 + im:qq:27 + im:qq:28
+
+  - id: C1-02
+    query: 你还记得我们之前聊过什么吗
+    facet: 开放回忆 — 无具体话题指向
+    source: prod_session/91c6dd02
+
+  - id: C1-03
+    query: 我之前应该和你聊过天的,你一点都不记得了吗
+    facet: push-back 语气首轮 — 用户预期 agent 应有印象
+    source: prod_session/im:qq:27
+
+  - id: C1-04
+    query: 你真的一点都没有我们之前对话的印象吗
+    facet: push-back 语气首轮 — 反问推断
+    source: prod_session/im:qq:28
+
+  - id: C1-05
+    query: 你还记得我们最近聊了啥吗
+    facet: 时间锚点"最近" + 开放回忆
+    source: prod_session/im:qq:28
+
+  - id: C1-06
+    query: 你还记得我们聊的那道数学题吗
+    facet: 具体话题回忆(学习场景)
+    source: prod_session/im:qq:28
+
+  - id: C1-07
+    query: 你说好久不见,我们上次什么时候见的
+    facet: 时间询问 + 含 agent 历史发言隐含
+    source: prod_session/f82d6675
+
+  # --- 多样性补充 ---
+  - id: C1-08
+    query: 我们上次聊到的那家面馆,你还记得叫什么名字吗?
+    facet: 显式"上次" + 具体细节回忆(吃喝场景)
+    source: my_synth
+
+  - id: C1-09
+    query: 上次那事儿后来怎么样了
+    facet: 极简省略式 — 完全依赖历史定位"那事儿"
+    source: my_synth
+
+  - id: C1-10
+    query: 上回我跟你说的那个面试,我还没告诉你结果呢
+    facet: "上回" + 用户主动开新话题(agent 应先回忆背景)
+    source: my_synth
+
+  - id: C1-11
+    query: 我之前跟你提过的搬家计划,定下来了
+    facet: "之前" + 长期规划事件 + 用户主动汇报
+    source: my_synth
+
+  - id: C1-12
+    query: 我有没有跟你说过我养了只猫?
+    facet: 用户主动自 doubt — 必须查才能答
+    source: my_synth
+
+  - id: C1-13
+    query: 我跟你提过我前任吗?
+    facet: 短句 + 高情绪权重话题 + 强召回触发
+    source: my_synth
+
+  - id: C1-14
+    query: 那个我跟你说过的我大学同学,最近又联系我了
+    facet: 第三人称回忆 + 人物追踪 + 状态更新
+    source: my_synth
+
+  - id: C1-15
+    query: 我妈那事儿,我后来又想了想
+    facet: 极简 + 高语境(代指家人议题)
+    source: my_synth
+
+  - id: C1-16
+    query: 你上次让我列的那个清单,我列出来了,要给你看吗?
+    facet: agent 历史指令 + 用户主动汇报 + 旧任务延续
+    source: my_synth
+
+  - id: C1-17
+    query: 你不是说想看纪录片吗,我找了个不错的
+    facet: 反问归因 + 用户回礼式延续 agent 旧意图
+    source: my_synth
+
+  - id: C1-18
+    query: 你之前跟我说让我别熬夜的,我这周做到了
+    facet: agent 历史劝告 + 用户报告执行结果
+    source: my_synth
+
+  - id: C1-19
+    query: 以前你推荐过的那本书,我读完了
+    facet: "以前" + 推荐回忆 + 用户主动汇报进展
+    source: my_synth
+
+  - id: C1-20
+    query: 那次我跟你倒苦水之后给我的那个建议挺管用的
+    facet: "那次" + 情绪事件 + 正向反馈追溯
+    source: my_synth

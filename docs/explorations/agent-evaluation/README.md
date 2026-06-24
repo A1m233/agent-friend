@@ -78,11 +78,17 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 
 契约从用户体感痛点 + §1.1 真实失败模式反推，**人写**，控制契约本身的质量。
 
-### 4.2 query 变体（强模型生成）
+### 4.2 query 变体（协作 chat 中 offline 生成，固化为 fixture）
 
-每条契约定义一个**情景模板**（场景 + 触发条件 + 上下文约束），喂给强模型扩出 N 个 query 变体，覆盖中文表达多样性。例如同一契约下："上次我跟你提过..."、"之前有一次..."、"你还记得我说的那个..."
+每条契约定义一个**情景模板**（场景 + 触发条件 + 上下文约束），由能力更强的辅助模型（如 Claude）在**协作 chat 中一次性写出** N 个 query 变体，**直接固化为仓库内的 fixture 文件**（`cases/*.yaml` 或类似形式），不在运行时调用任何外部模型 API。例如同一契约下："上次我跟你提过..."、"之前有一次..."、"你还记得我说的那个..."
 
-强模型的角色是 **case generator + variation expander**，不是 oracle judge。
+这条姿势的关键性质：
+
+- **case 是 deterministic fixture**——通过率纯反映 agent 改动，case 自身不抖动
+- **不需要任何外部模型 API key**，spike 不触发 `llm-api-confirm`
+- 跟主流 benchmark（BFCL / τ-bench / ToolBench）一致——它们的 ground truth case 也都是 offline 生成、固化进 repo
+
+辅助模型的角色是 **case author**，产物是仓内 fixture，不是 runtime dependency。
 
 ### 4.3 assertion（deterministic，不走 LLM judge）
 
@@ -107,7 +113,7 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 
 ## 5. 已知风险与未决问题
 
-- **强模型 ≠ 我们 agent 该有的行为**：强模型当 case generator 风险低（生成多样性），当 oracle judge 风险高（它的标准是通用 agent 标准，未必对口 persona 陪伴 agent）——所以方法学上明确把 LLM 限定在 generator 角色。
+- **辅助模型 ≠ 我们 agent 该有的行为**：辅助模型当 case author 风险低（写出多样的 query 变体），当 oracle judge 风险高（它的标准是通用 agent 标准，未必对口 persona 陪伴 agent）——所以方法学上明确把辅助模型限定在 case author 角色，产物固化为 fixture，不参与 runtime 判分。
 - **契约覆盖度**：契约只能抓"已知失败模式"，对未知 failure mode 是假阴性。需要持续从真实 session 里挖新模式回补——这正是 §3.3 留给 session 的角色。
 - **契约本身写得太严 vs 太松**：单条契约的"通不过"是 agent 真有问题，还是契约定义不准？PoC 阶段重点验证这个判断（spike §1 的核心问题之一）。
 - **persona 维度暂缺**：陪伴口吻 / 不暴露查询动作 / 不复述时间戳——这些在 `recall_past_chats` 工具描述里写明的 persona 要求，本方法**不评**。等契约层稳定后再看要不要补 LLM judge 走这一路。
