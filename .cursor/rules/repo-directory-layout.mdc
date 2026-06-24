@@ -21,6 +21,16 @@ alwaysApply: true
 - 同一文件内避免堆叠多层无关职责（例如适配层、纯领域逻辑、UI/常量全混在一个巨型文件里）；边界清晰时倾向**多文件**而不是单文件巨石。
 - 目录深度以表达边界为准，**不为嵌套而嵌套**。
 
+## 用户数据 / 日志落盘位置
+
+运行期所有持久化（sessions / memory db / personas / im credentials / 日志等）走 **`agent/paths.py`**（基于 `platformdirs`），单一权威。新增持久化时复用其 helper（`sessions_dir()` / `memory_db_path()` / `personas_dir()` / `log_dir()` / `user_data_dir()` …），不要自己拼路径。
+
+- 默认位置：macOS `~/Library/Application Support/agent-friend/`、Windows `%APPDATA%/agent-friend/`、Linux `$XDG_DATA_HOME` 或 `~/.local/share/agent-friend/`。
+- env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/replay 脚本做隔离**用，不是日常开发约定。
+- **仓库根 `data/` 不应出现**——它在 `.gitignore` 里被忽略，但如果你在仓库根看到它，那是某次手敲 `AGENT_FRIEND_DATA_DIR=. ...` 之类的 ad-hoc 命令残留，不是任何代码路径的默认行为，可直接删除。
+
+历史 requirement / design 文档里仍可能写 `data/sessions/` `data/personas/` 等过时字面量（002 / 003 / 008 等），那是当时的决策快照，**现行约定以 `agent/paths.py` 为准**。
+
 ## 适用范围与优先级
 
 - 适用于仓库内**凡无强制路径要求**的编排（代码、文档子树、`scripts/` 下的脚本族等）。

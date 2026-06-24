@@ -7,7 +7,7 @@
    跑完即丢——磁盘不留任何痕迹。
 2. **persistent + auto-create（AG-UI 默认）**：客户端在 body 里发 ``thread_id``；
    bridge 把 ``thread_id`` 直接当 ``session_id``，存在则 ``open``、不存在则
-   ``create(session_id=thread_id)``，落盘 ``data/sessions/{thread_id}.jsonl``。
+   ``create(session_id=thread_id)``，落盘到 ``agent.paths.sessions_dir()``。
 3. **persistent（OpenAI 扩展位，本期不暴露 CLI 入口）**：客户端通过
    ``X-Agent-Friend-Session-Id`` header 显式指定已存在的 session id；
    M6.2 仅暴露 AG-UI 通道，OpenAI 扩展位的接入由后续里程碑决定是否启用。
@@ -126,7 +126,7 @@ class SessionBridge:
 
         - ``thread_id`` 已存在（jsonl 落盘）→ ``open(thread_id)``，事件流自动 replay
         - ``thread_id`` 不存在 → ``create(persona=default, model=default, session_id=thread_id)``
-          落盘 ``data/sessions/{thread_id}.jsonl`` 首行 ``session_meta``
+          落盘到 ``agent.paths.sessions_dir()``，首行 ``session_meta``
 
         本期不暴露"客户端能控制 auto-create 时用哪个 persona / model"——
         AG-UI 协议本身没有这个槽位。需要切 persona / model 时，客户端走
