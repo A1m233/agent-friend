@@ -146,7 +146,7 @@ def run_case(case: Case, model: str) -> Trace:
                 final_text="".join(text_buf),
                 stop_reason=stop_reason,
             )
-    except Exception as exc:  # noqa: BLE001 — PoC 故意宽 catch:跑挂了不阻断后续 case
+    except Exception as exc:  # PoC 故意宽 catch:跑挂了不阻断后续 case
         return Trace(
             case_id=case.id,
             tool_calls=[],

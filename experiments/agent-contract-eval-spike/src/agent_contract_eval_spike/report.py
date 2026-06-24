@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,9 +31,7 @@ def render_console(
     passed = sum(1 for _, _, v in pairs if v.passed)
     total = len(pairs)
     rate = (passed / total * 100) if total else 0
-    console.print(
-        f"  → {contract.id} pass rate: [bold]{passed}/{total}[/bold] ({rate:.0f}%)\n"
-    )
+    console.print(f"  → {contract.id} pass rate: [bold]{passed}/{total}[/bold] ({rate:.0f}%)\n")
 
 
 def render_failure_details(

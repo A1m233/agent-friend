@@ -60,6 +60,7 @@ interface Props {
 
 // 容器尺寸常量（design §2.4.3）—— 改这里就能调每页容量与视觉密度
 const PAGE_SIZE = 6;
+const ITEM_BASIS_CLASS = "basis-1/6";
 const ICON_BTN = 32; // size-8 = 32px（Button icon-sm 变体）
 const GAP = 4; // gap-1 = 4px
 const PAD_X = 8; // px-2 = 8px each side
@@ -102,24 +103,34 @@ export function ActionBar({
   // 当前页索引（embla 在 slidesToScroll: PAGE_SIZE 时 selectedScrollSnap 已是页索引）
   const [api, setApi] = useState<CarouselApi>();
   const [currentPage, setCurrentPage] = useState(0);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(false);
 
   useEffect(() => {
     if (!api) return;
-    const update = () => setCurrentPage(api.selectedScrollSnap());
+    const update = () => {
+      setCurrentPage(api.selectedScrollSnap());
+      setCanScrollPrev(api.canScrollPrev());
+      setCanScrollNext(api.canScrollNext());
+    };
     update();
     api.on("select", update);
     api.on("reInit", update);
+    api.on("resize", update);
     return () => {
       api.off("select", update);
       api.off("reInit", update);
+      api.off("resize", update);
     };
   }, [api]);
 
-  const { needsCarousel, showPrev, showNext } = derivePageState({
+  const { needsCarousel } = derivePageState({
     buttonCount: buttons.length,
     pageSize: PAGE_SIZE,
     currentPage,
   });
+  const showPrev = needsCarousel && canScrollPrev;
+  const showNext = needsCarousel && canScrollNext;
 
   // 容器宽度（design §2.4.3 两段宽语义）：
   // - needsCarousel=true：永远按"PAGE_SIZE 个按钮 + 两个箭头位"算（首末页箭头 unmount 时
@@ -160,11 +171,11 @@ export function ActionBar({
           <Carousel
             opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
             setApi={setApi}
-            className="flex-1 overflow-hidden"
+            className="min-w-0 flex-1 overflow-hidden"
           >
             <CarouselContent className="-ml-1">
               {buttons.map((b, i) => (
-                <CarouselItem key={i} className={`pl-1 basis-1/${PAGE_SIZE}`}>
+                <CarouselItem key={i} className={`pl-1 ${ITEM_BASIS_CLASS}`}>
                   <TooltipButton
                     icon={b.icon}
                     tooltip={b.tooltip}

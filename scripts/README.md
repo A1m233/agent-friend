@@ -43,6 +43,7 @@
 | `im-smoke/` | 022 IM 通道 smoke 测试：**非破坏性本机 e2e**，启动 `BridgeRuntime`(走 tmp `AGENT_FRIEND_DATA_DIR`,不动用户数据)+ monkey-patch `SessionBridge.bind_persistent` 返回 fake Conversation(避开真 LLM)+ 灌假 `InboundEvent` 验 IMRouter 全链路。**不接真 QQ gateway**;不入 `./scripts/check`(独立 spot-check) | `./scripts/im-smoke/run.sh` | `.\scripts\im-smoke\run.ps1` |
 | `frontend/lint` | 前端 lint（ESLint，含 `forbid-elements` 原生交互件门禁）+ 颜色门禁（`color-guard`：禁硬编码色板类/#hex/rgb()）+ 类型检查（tsc）；已并入 `check/` | `./scripts/frontend/lint.sh` | `.\scripts\frontend\lint.ps1` |
 | `frontend/test` | 前端单测（vitest，跑核心逻辑：AG-UI 事件投影 / 历史投影）；已并入 `check/` | `./scripts/frontend/test.sh` | `.\scripts\frontend\test.ps1` |
+| `codex-adapters/` | 校验 / 同步项目级 Codex adapter：`.Codex/skills/*` 软链与 `AGENTS.md` rules/skills lookup 表，防止 `.cursor/rules` / `.cursor/skills` 漂移 | `./scripts/codex-adapters/run.sh [doctor\|sync]` | `.\scripts\codex-adapters\run.ps1 [doctor\|sync]` |
 
 ## ⚠️ Windows PowerShell 第一次运行
 
