@@ -9,6 +9,7 @@ import type { PushEnvelope } from "@/types/push";
 import { ActionBar } from "./ActionBar";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
+import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
 import { usePetInteractions } from "./usePetInteractions";
@@ -20,6 +21,12 @@ import {
   usePetStateStore,
   type PetPhase,
 } from "@/stores/petState";
+import {
+  focusVoiceCallWindow,
+  startVoiceOwnerCommandListener,
+  useVoiceStore,
+} from "@/stores/voice";
+import { isVoiceCallLive } from "@/stores/voiceStateMachine";
 
 /**
  * Tauri listener stale-cleanup race 兜底：StrictMode 双 mount / hot reload 期间 Tauri 内部
@@ -66,6 +73,10 @@ export function PetApp() {
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
   // 022 · IM 接入面板 dialog 开关(同窗 dialog,不另开 webview)
   const [imDialogOpen, setImDialogOpen] = useState(false);
+  const voicePhase = useVoiceStore((s) => s.phase);
+  const requestStartVoice = useVoiceStore((s) => s.requestStart);
+  const confirmVoiceTunnel = useVoiceStore((s) => s.confirmTunnelConsent);
+  const cancelVoiceTunnel = useVoiceStore((s) => s.cancelTunnelConsent);
 
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
@@ -151,6 +162,17 @@ export function PetApp() {
     const onChange = () => report();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    startVoiceOwnerCommandListener();
+    const onBeforeUnload = () => {
+      if (useVoiceStore.getState().isOwner) {
+        void useVoiceStore.getState().hangUp();
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
@@ -283,6 +305,14 @@ export function PetApp() {
     void invoke("open_memory_inspector");
   };
 
+  const startVoiceCall = () => {
+    if (isVoiceCallLive(voicePhase)) {
+      void focusVoiceCallWindow();
+      return;
+    }
+    void requestStartVoice();
+  };
+
   // 016 M16.9 · dev-only：手动注入测试气泡，跳过 bridge / 真 LLM，方便纯 GUI 验证。
   // release build 时 import.meta.env.DEV=false，整段被 ActionBar 内部 tree-shake 掉。
   const injectShort = () => {
@@ -320,12 +350,19 @@ export function PetApp() {
           onHidePet={hidePet}
           onOpenSettings={openSettings}
           onOpenIMConnect={() => setImDialogOpen(true)}
+          onStartVoiceCall={startVoiceCall}
+          voiceCallActive={isVoiceCallLive(voicePhase)}
           onOpenMemoryInspector={openMemoryInspector}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />
       )}
       <IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />
+      <VoiceTunnelConsentDialog
+        open={voicePhase === "confirming_tunnel"}
+        onConfirm={() => void confirmVoiceTunnel()}
+        onCancel={cancelVoiceTunnel}
+      />
     </>
   );
 }

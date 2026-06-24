@@ -1,0 +1,48 @@
+import type { VoiceCallPhase } from "@/services/voice/types";
+
+export function canStartVoiceCall(phase: VoiceCallPhase): boolean {
+  return phase === "idle" || phase === "ended" || phase === "error";
+}
+
+export function isVoiceCallBlockingText(phase: VoiceCallPhase): boolean {
+  return (
+    phase === "dialing" ||
+    phase === "joining_room" ||
+    phase === "starting_agent" ||
+    phase === "active" ||
+    phase === "stopping"
+  );
+}
+
+export function isVoiceCallLive(phase: VoiceCallPhase): boolean {
+  return (
+    phase === "dialing" ||
+    phase === "joining_room" ||
+    phase === "starting_agent" ||
+    phase === "active"
+  );
+}
+
+export function voicePhaseLabel(phase: VoiceCallPhase): string {
+  switch (phase) {
+    case "confirming_tunnel":
+      return "等待确认";
+    case "dialing":
+      return "正在拨号...";
+    case "joining_room":
+      return "正在接通...";
+    case "starting_agent":
+      return "正在叫醒她...";
+    case "active":
+      return "正在听...";
+    case "stopping":
+      return "正在挂断...";
+    case "error":
+      return "没有接通";
+    case "ended":
+      return "已挂断";
+    case "idle":
+    default:
+      return "准备拨号";
+  }
+}

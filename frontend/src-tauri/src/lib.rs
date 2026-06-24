@@ -268,6 +268,12 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "settings")
 }
 
+/// 029 · 打开独立语音通话小窗。
+#[tauri::command]
+fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "voice-call")
+}
+
 /// 026 · dev 模式入口：打开记忆面板窗口。
 #[cfg(debug_assertions)]
 #[tauri::command]
@@ -420,6 +426,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_voice_call,
         open_memory_inspector,
         hide_pet,
         set_pet_webview_dpr,
@@ -435,6 +442,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_voice_call,
         hide_pet,
         set_pet_webview_dpr,
         settings::get_setting,
@@ -450,7 +458,10 @@ pub fn run() {
             // 对话窗 / 设置窗 / 记忆面板按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
-            if matches!(window.label(), "chat" | "settings" | "memory-inspector") {
+            if matches!(
+                window.label(),
+                "chat" | "settings" | "voice-call" | "memory-inspector"
+            ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();

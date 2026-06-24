@@ -63,6 +63,16 @@
         "fullscreen": false
       },
       {
+        "label": "voice-call",
+        "url": "voice-call.html",
+        "title": "agent-friend · 语音通话",
+        "width": 360,
+        "height": 520,
+        "resizable": false,
+        "visible": false,
+        "fullscreen": false
+      },
+      {
         "label": "memory-inspector",
         "url": "memory-inspector.html",
         "title": "agent-friend · 记忆面板",

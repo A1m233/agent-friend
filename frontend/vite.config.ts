@@ -20,6 +20,7 @@ export default defineConfig({
         chat: resolve(__dirname, "chat.html"),
         bubble: resolve(__dirname, "bubble.html"),
         settings: resolve(__dirname, "settings.html"),
+        "voice-call": resolve(__dirname, "voice-call.html"),
         "memory-inspector": resolve(__dirname, "memory-inspector.html"),
       },
     },
@@ -40,6 +41,7 @@ export default defineConfig({
     proxy: {
       "/v1": { target: "http://127.0.0.1:18800", changeOrigin: true },
       "/healthz": { target: "http://127.0.0.1:18800", changeOrigin: true },
+      "^/voice(/|$)": { target: "http://127.0.0.1:18900", changeOrigin: true },
       "/ag-ui": {
         target: "http://127.0.0.1:18800",
         changeOrigin: true,

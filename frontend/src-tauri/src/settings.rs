@@ -10,6 +10,8 @@ use tauri_plugin_store::StoreExt;
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub theme: ThemeMode,
+    #[serde(default)]
+    pub voice_tunnel_consent_accepted: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -23,6 +25,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Light,
+            voice_tunnel_consent_accepted: false,
         }
     }
 }
@@ -129,6 +132,11 @@ pub fn set_setting<R: Runtime>(
                 serde_json::from_value(payload.value.clone())
                     .map_err(|e| format!("invalid theme: {e}"))?;
             s.theme = theme;
+        }
+        "voiceTunnelConsentAccepted" => {
+            let accepted: bool = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
+            s.voice_tunnel_consent_accepted = accepted;
         }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }

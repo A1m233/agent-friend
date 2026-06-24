@@ -7,6 +7,7 @@
     "chat",
     "bubble",
     "settings",
+    "voice-call",
     "memory-inspector"
   ],
   "permissions": [

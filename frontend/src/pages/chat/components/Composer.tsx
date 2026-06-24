@@ -19,7 +19,12 @@ import { useConversationStore, useSessionsStore } from "@/stores";
  *
  * 发送走 conversation store 的自写 fetch-SSE；发完刷新会话列表（新会话首发后会出现在历史）。
  */
-export function Composer() {
+interface ComposerProps {
+  disabled?: boolean;
+  disabledReason?: string;
+}
+
+export function Composer({ disabled = false, disabledReason }: ComposerProps) {
   const streaming = useConversationStore((s) => s.streaming);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
@@ -67,6 +72,7 @@ export function Composer() {
   }, []);
 
   const submit = (text: string) => {
+    if (disabled) return;
     const trimmed = text.trim();
     if (!trimmed) return;
     void (async () => {
@@ -79,8 +85,9 @@ export function Composer() {
     <div className="border-t border-border px-4 py-3">
       <ChatSender
         ref={senderRef}
+        disabled={disabled}
         loading={streaming}
-        placeholder="说点什么…（Enter 发送）"
+        placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
         onSend={(e) => submit(e.detail.value)}
         onStop={() => stop()}
       />

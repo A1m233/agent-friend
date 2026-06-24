@@ -7,9 +7,13 @@ export type ThemeMode = "light" | "dark";
 
 export interface Settings {
   theme: ThemeMode;
+  voiceTunnelConsentAccepted: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { theme: "light" };
+export const DEFAULT_SETTINGS: Settings = {
+  theme: "light",
+  voiceTunnelConsentAccepted: false,
+};
 
 const EVENT_CHANGED = "settings://changed";
 

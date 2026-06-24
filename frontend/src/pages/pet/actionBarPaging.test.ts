@@ -31,6 +31,13 @@ describe("derivePageState", () => {
       expect(r.showPrev).toBe(false);
       expect(r.showNext).toBe(false);
     });
+
+    it("029 后生产默认（5/6）：无箭头", () => {
+      const r = derivePageState({ buttonCount: 5, pageSize: 6, currentPage: 0 });
+      expect(r.needsCarousel).toBe(false);
+      expect(r.showPrev).toBe(false);
+      expect(r.showNext).toBe(false);
+    });
   });
 
   describe("buttonCount > pageSize → 启用 carousel", () => {
@@ -54,6 +61,14 @@ describe("derivePageState", () => {
         showNext: false,
         totalPages: 2,
       });
+    });
+
+    it("029 后 dev 默认（8/6）：启用分页", () => {
+      const r = derivePageState({ buttonCount: 8, pageSize: 6, currentPage: 0 });
+      expect(r.needsCarousel).toBe(true);
+      expect(r.showPrev).toBe(false);
+      expect(r.showNext).toBe(true);
+      expect(r.totalPages).toBe(2);
     });
 
     it("13/6 中间页（page=1）：两侧箭头都渲染", () => {
