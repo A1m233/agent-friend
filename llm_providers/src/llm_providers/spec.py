@@ -19,6 +19,8 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         # 2026/07/24 弃用，已改为指向 V4 系列的高性价比款 ``v4-flash``。
         # 切换到旗舰款用 ``deepseek/deepseek-v4-pro``，详见 .env.example。
         "model": "deepseek/deepseek-v4-flash",
+        # 记忆抽取是旁路质量任务，默认用更稳的旗舰款；主对话仍保持 v4-flash。
+        "memory_model": "deepseek/deepseek-v4-pro",
         "api_base": None,
     },
 }
@@ -49,7 +51,13 @@ class ProviderSpec:
     context_window: int | None = None
 
     @classmethod
-    def from_env(cls, prefix: str) -> ProviderSpec:
+    def from_env(
+        cls,
+        prefix: str,
+        *,
+        model_env_var: str | None = None,
+        default_model_key: str = "model",
+    ) -> ProviderSpec:
         """从环境变量构造 ``ProviderSpec``。
 
         约定的环境变量名（以 ``prefix="DEEPSEEK"`` 为例）：
@@ -61,6 +69,10 @@ class ProviderSpec:
 
         Args:
             prefix: 环境变量前缀，按惯例使用 Provider 名称大写。
+            model_env_var: 可选的 model 环境变量名。默认读 ``{prefix}_MODEL``；
+                记忆抽取等旁路可传 ``DEEPSEEK_MEMORY_MODEL`` 做独立选择。
+            default_model_key: 环境变量未设置时读取 :data:`PROVIDER_DEFAULTS`
+                里的哪个默认模型键。默认 ``"model"``。
 
         Raises:
             LLMAuthError: ``{prefix}_API_KEY`` 未设置或为空。
@@ -70,11 +82,12 @@ class ProviderSpec:
             raise LLMAuthError(f"环境变量 {prefix}_API_KEY 未设置。请在项目根 .env 中配置。")
 
         provider_defaults = PROVIDER_DEFAULTS.get(prefix, {})
-        model = os.environ.get(f"{prefix}_MODEL") or provider_defaults.get("model")
+        model_env_name = model_env_var or f"{prefix}_MODEL"
+        model = os.environ.get(model_env_name) or provider_defaults.get(default_model_key)
         if not model:
             raise ValueError(
-                f"无法确定 model：请设置环境变量 {prefix}_MODEL，"
-                f"或在 PROVIDER_DEFAULTS 中为 {prefix} 添加默认值。"
+                f"无法确定 model：请设置环境变量 {model_env_name}，"
+                f"或在 PROVIDER_DEFAULTS 中为 {prefix} 添加 {default_model_key} 默认值。"
             )
 
         api_base = os.environ.get(f"{prefix}_API_BASE") or provider_defaults.get("api_base")

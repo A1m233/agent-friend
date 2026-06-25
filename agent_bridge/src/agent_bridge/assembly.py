@@ -52,8 +52,23 @@ def _make_spec_with_thinking_off(model_override: str | None = None) -> ProviderS
     spec = ProviderSpec.from_env(prefix="DEEPSEEK")
     if model_override:
         spec = dataclasses.replace(spec, model=model_override)
+    return _disable_deepseek_thinking(spec)
+
+
+def _make_memory_spec_with_thinking_off() -> ProviderSpec:
+    """构造记忆抽取专用 spec，默认走 DeepSeek V4 Pro。"""
+    spec = ProviderSpec.from_env(
+        prefix="DEEPSEEK",
+        model_env_var="DEEPSEEK_MEMORY_MODEL",
+        default_model_key="memory_model",
+    )
+    return _disable_deepseek_thinking(spec)
+
+
+def _disable_deepseek_thinking(spec: ProviderSpec) -> ProviderSpec:
+    """DeepSeek V4 默认关闭 thinking，保持主对话与记忆抽取延迟可控。"""
     if "deepseek" in spec.model.lower():
-        spec = dataclasses.replace(
+        return dataclasses.replace(
             spec,
             defaults={
                 **spec.defaults,
@@ -65,6 +80,10 @@ def _make_spec_with_thinking_off(model_override: str | None = None) -> ProviderS
 
 def _llm_factory(model: str) -> LLMClient:
     return LLMClient(_make_spec_with_thinking_off(model))
+
+
+def _memory_llm_client() -> LLMClient:
+    return LLMClient(_make_memory_spec_with_thinking_off())
 
 
 def _make_prompt_factory(personas_dir: Path) -> Callable[[str], MarkdownPromptBuilder]:
@@ -209,7 +228,7 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
         recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
-            _llm_factory(default_model),
+            _memory_llm_client(),
             on_retrieved=recall_buffer.record,
             pinned_relevance_gate=False,
         )

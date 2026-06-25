@@ -305,6 +305,11 @@ class TestSystemPromptComposerDefault:
         # 关键内容存在
         assert "当前时间" in rendered
         assert "web_search" in rendered
+        assert "recall_past_chats" in rendered
+        assert "禁止用通识" in rendered
+        assert "错引对象的代表作" in rendered
+        assert "本轮不能切换成通用知识回答" in rendered
+        assert "不要同轮调用 `web_search`" in rendered
 
     def test_default_compose_contains_all_four_segments(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

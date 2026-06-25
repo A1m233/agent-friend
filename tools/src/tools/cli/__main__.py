@@ -154,8 +154,23 @@ def make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSp
     spec = ProviderSpec.from_env(prefix="DEEPSEEK")
     if model_override:
         spec = dataclasses.replace(spec, model=model_override)
+    return _disable_deepseek_thinking(spec)
+
+
+def make_memory_spec_with_thinking_off() -> ProviderSpec:
+    """构造记忆抽取专用 spec，默认走 DeepSeek V4 Pro。"""
+    spec = ProviderSpec.from_env(
+        prefix="DEEPSEEK",
+        model_env_var="DEEPSEEK_MEMORY_MODEL",
+        default_model_key="memory_model",
+    )
+    return _disable_deepseek_thinking(spec)
+
+
+def _disable_deepseek_thinking(spec: ProviderSpec) -> ProviderSpec:
+    """DeepSeek V4 默认关闭 thinking，保持主对话与记忆抽取延迟可控。"""
     if "deepseek" in spec.model.lower():
-        spec = dataclasses.replace(
+        return dataclasses.replace(
             spec,
             defaults={
                 **spec.defaults,
@@ -167,6 +182,10 @@ def make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSp
 
 def _llm_factory(model: str) -> LLMClient:
     return LLMClient(make_spec_with_thinking_off(model))
+
+
+def _memory_llm_client() -> LLMClient:
+    return LLMClient(make_memory_spec_with_thinking_off())
 
 
 def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
@@ -877,7 +896,7 @@ def main() -> int:
     try:
         memory_obj = build_memory(
             MEMORY_DB,
-            _llm_factory(make_spec_with_thinking_off().model),
+            _memory_llm_client(),
             on_extracted=_make_memory_debug_callback() if memory_debug else None,
         )
     except Exception as e:
