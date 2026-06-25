@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "agent",
     "agent-bridge",
+    "agent-eval",
     "memory",
     "memory-eval",
     "llm-providers",
@@ -28,16 +29,17 @@ dev = [
 members = [
     "agent",
     "agent_bridge",
+    "agent_eval",
     "memory",
     "memory_eval",
     "llm_providers",
     "tools",
     "voice_bridge",
-    "experiments/agent-contract-eval-spike",
 ]
 
 [tool.uv.sources]
 agent = { workspace = true }
+agent-eval = { workspace = true }
 agent-bridge = { workspace = true }
 memory = { workspace = true }
 memory-eval = { workspace = true }
@@ -104,4 +106,4 @@ exclude = [
 # ============================================================
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["agent", "agent_bridge", "memory", "memory_eval", "llm_providers", "tools", "voice_bridge"]
+testpaths = ["agent", "agent_bridge", "agent_eval", "memory", "memory_eval", "llm_providers", "tools", "voice_bridge"]

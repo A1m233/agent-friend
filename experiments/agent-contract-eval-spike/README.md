@@ -1,8 +1,10 @@
 # agent-contract-eval-spike · agent 行为契约评测方法 spike
 
+> **状态：已归档。** 本目录保留为 2026-06 的方法验证证据；正式项目级工具已迁移到 [`agent_eval/`](../../agent_eval/)。新的运行入口使用 `./scripts/agent-eval/run.sh` / `run.ps1`。本目录的 `out/` 报告只作为 spike 历史，不混入正式 reports / baselines。
+>
 > **这是 spike，不是正式实现。** 唯一目标：用最低代价验证「**handcraft 行为契约 + 强模型扩 query variation + deterministic assertion**」这套方法，在我们当前 agent 上信号是否清晰、扩展是否便宜。
 >
-> **状态：未开跑。** 验证完即写入 `SPIKE-NOTES.md` 并决策下一步。
+> **原始状态记录：已完成。** 验证结论见 `SPIKE-NOTES.md`。
 >
 > **完整方法论与上下文**：见 [`docs/explorations/agent-evaluation/`](../../docs/explorations/agent-evaluation/README.md)。本 README 只讲本次 spike 的目标 / 清单 / 怎么跑。
 

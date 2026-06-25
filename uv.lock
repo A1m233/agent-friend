@@ -6,7 +6,7 @@ requires-python = "==3.12.*"
 members = [
     "agent",
     "agent-bridge",
-    "agent-contract-eval-spike",
+    "agent-eval",
     "agent-friend",
     "llm-providers",
     "memory",
@@ -86,9 +86,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-contract-eval-spike"
+name = "agent-eval"
 version = "0.1.0"
-source = { editable = "experiments/agent-contract-eval-spike" }
+source = { editable = "agent_eval" }
 dependencies = [
     { name = "agent" },
     { name = "llm-providers" },
@@ -113,6 +113,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "agent" },
     { name = "agent-bridge" },
+    { name = "agent-eval" },
     { name = "llm-providers" },
     { name = "memory" },
     { name = "memory-eval" },
@@ -134,6 +135,7 @@ dev = [
 requires-dist = [
     { name = "agent", editable = "agent" },
     { name = "agent-bridge", editable = "agent_bridge" },
+    { name = "agent-eval", editable = "agent_eval" },
     { name = "llm-providers", editable = "llm_providers" },
     { name = "memory", editable = "memory" },
     { name = "memory-eval", editable = "memory_eval" },

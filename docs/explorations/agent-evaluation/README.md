@@ -4,7 +4,7 @@
 >
 > 与项目愿景的关系：补充 [`docs/decisions/0001`](../../decisions/0001-product-vision-and-roadmap/README.md) 各 milestone 都默认依赖、但当前缺位的「行为质量度量」环节。目前已有 [`memory_eval`](../../../memory_eval/) 覆盖记忆召回这一支，本探索关注 **agent 编排层**（工具调用、grounding、persona 一致性）。
 >
-> 当前快照：2026-06-24 · 首轮讨论沉淀
+> 当前快照：2026-06-25 · spike 已正式化为项目级工具
 
 ---
 
@@ -126,9 +126,9 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 
 ---
 
-## 6. spike 沉淀(已完成)
+## 6. spike 沉淀(已归档)
 
-`experiments/agent-contract-eval-spike/` —— 用上述方法在我们当前 agent 上跑了一次最小验证。spike 状态:**已完成**,详见该目录的 [`SPIKE-NOTES.md`](../../../experiments/agent-contract-eval-spike/SPIKE-NOTES.md)。
+`experiments/agent-contract-eval-spike/` —— 用上述方法在我们当前 agent 上跑了一次最小验证。spike 状态:**已完成并归档**,详见该目录的 [`SPIKE-NOTES.md`](../../../experiments/agent-contract-eval-spike/SPIKE-NOTES.md)。
 
 核心收获(2026-06-24):
 - v1 / v2 / C4 三层判分机制都跑通,deterministic 无 LLM judge
@@ -136,12 +136,21 @@ session-replay 路线要等产品定型、agent 编排层稳定后再考虑回�
 - 4 个契约 83 case wall-clock ~10 分钟,日常迭代成本可控
 - 升级 feature 的 minimum viable schema 已敲定
 
-## 7. feature 化时该补的基础设施(spike 暂未做)
+## 7. 正式工具现状
 
-- **自动 markdown 报告**:`run.sh` 跑完自动生成 `out/<ts>.md`,跟 `out/<ts>.json` 1:1 配对,含 pass-rate / 失败 case trace 摘要 / 跟上次 baseline 的 diff。对标 `memory_eval` baseline + report 机制。
-- **agent-eval skill**(显式调用):`/agent-eval [--contract C1|...|all]` 最小版本 — 调 runner / 读最新 out / 把失败 case 摘要带回当前对话。**不要**写在 spike 阶段(schema 还会动);**等 feature 化时再做**。
-- **judge 扩展点抽象**(对标 `memory_eval.harness.judge`),为未来加 forbidden_terms / fixture-Tavily-mock / multi-turn 判分形态留扩展面。
-- **baseline 落盘机制 + git 归档姿势**(对标 `memory_eval.harness.baseline`)。
-- **CLI 集成进 `scripts/`** 目录(对标 `scripts/memory-eval/run.sh`)。
+正式项目级工具位于 [`agent_eval/`](../../../agent_eval/)，对应需求 [`030-agent-eval-formalization`](../../requirements/030-agent-eval-formalization/requirement.md)。
+
+已正式化的基础设施:
+
+- C1-C4 fixture case 迁入 `agent_eval/cases/`。
+- schema / loader / runner / deterministic judge / CLI 进入正式包。
+- `./scripts/agent-eval/run.sh` / `run.ps1` 作为统一入口。
+- 运行结果默认写入 `agent_eval/reports/`，加 `--baseline` 写入 `agent_eval/baselines/`；两类产物都可入 git。
+- 非 LLM 部分进入常规 pytest / typecheck；真实 eval 不进入 `./scripts/check`，仍按 `llm-api-confirm` 单独授权。
+
+仍留作未来演进:
+
+- **agent-eval skill**(显式调用):`/agent-eval [--contract C1|...|all]` 最小版本 — 调 runner / 读最新 report / 把失败 case 摘要带回当前对话。
 - **C5「工具召回鲁棒性」契约**(基于 spike L6):专门测多词 query 在 prod 工具下能否召回,driving prod 工具层改进。
 - **N=3 抖动测试**:同 case 跑 3 次看 verdict 一致性,LLM 输出本身的抖动会让单跑判分不稳。
+- **Tavily / web_search 快照 mock**:让 C2 不受实时搜索结果漂移影响。

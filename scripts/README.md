@@ -28,6 +28,7 @@
 | `voice-smoke/run` | **Windows 真机语音 smoke 一键启动**：拉起 agent_bridge、cloudflared、voice_bridge、本地 HTTP server，自动回填 `VOICE_BRIDGE_PUBLIC_URL`，然后访问 `voice_bridge/smoke/`。⚠️ 触发真实火山 RTC + DeepSeek 调用 | （单端例外：仅 Windows） | `.\scripts\voice-smoke\run.ps1` |
 | `test/` | 跑 pytest（参数透传） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `memory-eval/` | 跑 memory 召回评测 PoC（默认 PerLTQA 中文，`--dataset locomo` 切英文；⚠️ 触发**真实 LLM** 抽取，需授权 + `.env` 配 `DEEPSEEK_API_KEY`；数据放 `memory_eval/data/`，详见 `memory_eval/README.md`） | `./scripts/memory-eval/run.sh [--dataset perltqa\|locomo] [--limit-samples N] [--limit-questions N]` | `.\scripts\memory-eval\run.ps1 [...]` |
+| `agent-eval/` | 跑 agent 行为契约评测（C1-C4 fixture + deterministic judge；⚠️ 触发**真实 LLM**，C2 可能触发 Tavily；需授权 + `.env` 配 `DEEPSEEK_API_KEY`；默认写 `agent_eval/reports/`，加 `--baseline` 写 `agent_eval/baselines/`，不入 `check` 真实门禁） | `./scripts/agent-eval/run.sh [--contract C1\|C2\|C3\|C4\|all] [--case C4-07] [--limit-cases N] [--baseline]` | `.\scripts\agent-eval\run.ps1 [...]` |
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |

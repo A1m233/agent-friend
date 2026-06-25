@@ -41,7 +41,9 @@ def _case() -> EvalCase:
                 session_index=1,
             ),
         ],
-        questions=[EvalQuestion(question="Tom", answer="猫", category=4, evidence=["D1:1"])],
+        questions=[
+            EvalQuestion(question="Tom", answer="猫", category="dialogues", evidence=["D1:1"])
+        ],
     )
 
 
