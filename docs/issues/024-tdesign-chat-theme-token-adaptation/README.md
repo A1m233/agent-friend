@@ -1,6 +1,6 @@
 # 024 · TDesign Chat 组件主题 Token 适配
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-06-23
 - **关联需求**：028-settings-center-and-cross-window-sync
@@ -33,3 +33,7 @@
 2. **CSS 变量覆盖**：若官方不支持，评估通过全局 CSS 或 Tailwind 规则覆盖 `tdesign-chat` 内部颜色变量。
 3. **组件二次封装**：对 `tdesign-chat` 做项目级薄封装，在封装层统一注入主题 token。
 4. **替换组件**：若适配成本过高，评估是否有更贴合项目主题体系的替代方案。
+
+---
+
+已在分支 `fix/024-tdesign-chat-theme-token-adaptation` 修复，并于 2026-06-26 通过桌面端 dark 主题验收。
