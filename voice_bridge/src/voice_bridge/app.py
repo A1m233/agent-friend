@@ -9,7 +9,10 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
+import platformdirs
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,11 +21,43 @@ from .routes import register_control_routes, register_llm_proxy_routes
 from .settings import VoiceBridgeSettings
 
 
-def _configure_logging(level: str) -> None:
+def _voice_log_path() -> Path:
+    override = os.environ.get("AGENT_FRIEND_LOG_DIR")
+    log_dir = (
+        Path(override).expanduser()
+        if override
+        else Path(platformdirs.user_log_dir("agent-friend", appauthor=False))
+    )
+    return log_dir / "voice_bridge.log"
+
+
+def _configure_logging(level: str, *, file_log: bool = False) -> None:
     logging.basicConfig(
         level=level.upper(),
         format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
     )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level.upper())
+
+    if not file_log:
+        return
+
+    if any(
+        getattr(handler, "_agent_friend_voice_bridge_file", False)
+        for handler in root_logger.handlers
+    ):
+        return
+
+    try:
+        log_path = _voice_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
+        handler.setLevel(level.upper())
+        handler._agent_friend_voice_bridge_file = True  # type: ignore[attr-defined]
+        root_logger.addHandler(handler)
+    except OSError as e:
+        logging.getLogger(__name__).warning("voice_bridge file log disabled: %s", e)
 
 
 def _add_local_smoke_cors(app: FastAPI) -> None:
@@ -34,6 +69,10 @@ def _add_local_smoke_cors(app: FastAPI) -> None:
             "http://localhost:8000",
             "http://127.0.0.1:8765",
             "http://localhost:8765",
+            # Tauri production windows load bundled assets from tauri.localhost,
+            # while dev still goes through Vite localhost.
+            "http://tauri.localhost",
+            "https://tauri.localhost",
         ],
         allow_origin_regex=r"http://(127\.0\.0\.1|localhost):\d+",
         allow_methods=["GET", "POST", "OPTIONS"],
@@ -50,8 +89,9 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
     Returns:
         :class:`FastAPI` 实例，已挂控制平面 + LLM 代理路由。
     """
+    load_from_env = settings is None
     settings = settings or VoiceBridgeSettings()
-    _configure_logging(settings.log_level)
+    _configure_logging(settings.log_level, file_log=load_from_env)
     runtime = build_runtime(settings)
 
     app = FastAPI(

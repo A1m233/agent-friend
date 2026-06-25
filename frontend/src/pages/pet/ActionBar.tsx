@@ -6,6 +6,7 @@ import {
   EyeOff,
   MessageSquare,
   MessageSquareDashed,
+  Phone,
   Plug,
   ScrollText,
   Settings,
@@ -53,6 +54,8 @@ interface Props {
   onOpenSettings: () => void;
   /** 022 新：打开 IM 接入面板 dialog（同窗，不另开 webview） */
   onOpenIMConnect: () => void;
+  onStartVoiceCall: () => void;
+  voiceCallActive: boolean;
   onOpenMemoryInspector: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
@@ -82,12 +85,19 @@ export function ActionBar({
   onHidePet,
   onOpenSettings,
   onOpenIMConnect,
+  onStartVoiceCall,
+  voiceCallActive,
   onOpenMemoryInspector,
   onInjectShort,
   onInjectLong,
 }: Props) {
   const buttons: BtnDef[] = [
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
+    {
+      icon: <Phone />,
+      tooltip: voiceCallActive ? "查看通话" : "语音通话",
+      onClick: onStartVoiceCall,
+    },
     { icon: <EyeOff />, tooltip: "隐藏桌宠", onClick: onHidePet },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },

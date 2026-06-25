@@ -18,6 +18,7 @@ from agent import (
     NaiveContextManager,
     PersonaCatalog,
     SessionManager,
+    SessionNotFoundError,
     make_default_registry,
 )
 
@@ -102,6 +103,24 @@ class TestCreateSessionEndpoint:
     def test_unknown_persona_returns_400(self, client: TestClient) -> None:
         resp = client.post("/v1/sessions", json={"persona": "totally_made_up"})
         assert resp.status_code == 400
+
+
+# ===== DELETE /v1/sessions/{id} =====
+
+
+class TestDeleteSessionEndpoint:
+    def test_delete_session_removes_file(self, client: TestClient, runtime: BridgeRuntime) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        resp = client.delete(f"/v1/sessions/{sid}")
+        assert resp.status_code == 200
+        assert resp.json() == {"session_id": sid, "deleted": True}
+
+        with pytest.raises(SessionNotFoundError, match="会话不存在"):
+            runtime.persistent_session_manager.open(sid)
+
+    def test_delete_unknown_session_returns_404(self, client: TestClient) -> None:
+        resp = client.delete("/v1/sessions/nonexistent-uuid")
+        assert resp.status_code == 404
 
 
 # ===== POST /v1/sessions/{id}/channel =====

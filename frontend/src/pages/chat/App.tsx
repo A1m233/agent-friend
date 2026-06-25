@@ -1,6 +1,12 @@
 import { useEffect, type CSSProperties } from "react";
-import { SidebarProvider, StatusDot, type StatusDotProps } from "@/components/ui";
-import { useConnectionStore, type ConnectionStatus } from "@/stores";
+import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
+import { useConnectionStore, useConversationStore, type ConnectionStatus } from "@/stores";
+import {
+  focusVoiceCallWindow,
+  publishActiveChatSession,
+  useVoiceStore,
+} from "@/stores/voice";
+import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
@@ -13,6 +19,12 @@ import { Composer } from "./components/Composer";
 export function ChatApp() {
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);
+  const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const voiceSessionId = useVoiceStore((s) => s.sessionId);
+  const voicePhase = useVoiceStore((s) => s.phase);
+  const voiceBlocksText =
+    Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
+    isVoiceCallBlockingText(voicePhase);
 
   useEffect(() => {
     void ping();
@@ -25,6 +37,10 @@ export function ChatApp() {
     return () => clearInterval(id);
   }, [ping]);
 
+  useEffect(() => {
+    void publishActiveChatSession(currentSessionId);
+  }, [currentSessionId]);
+
   return (
     <SidebarProvider
       className="h-screen bg-bg text-fg"
@@ -35,8 +51,19 @@ export function ChatApp() {
         <header className="flex items-center justify-end border-b border-border px-4 py-2.5">
           <ConnectionDot status={status} />
         </header>
+        {voiceBlocksText && (
+          <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-2 text-sm">
+            <span className="text-muted">这段对话正在语音通话中</span>
+            <Button size="xs" variant="outline" onClick={() => void focusVoiceCallWindow()}>
+              查看通话
+            </Button>
+          </div>
+        )}
         <MessageList />
-        <Composer />
+        <Composer
+          disabled={voiceBlocksText}
+          disabledReason="语音通话中，文字输入已暂时停用"
+        />
       </div>
     </SidebarProvider>
   );

@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { DEFAULT_SETTINGS, applySettingCache, type Settings } from "@/lib/settings";
 
 /**
  * 各 HTML 入口在 createRoot() 之前调用一次。
@@ -9,6 +10,11 @@ import { listen } from "@tauri-apps/api/event";
  */
 export function registerSettingsListener(): void {
   void listen<{ key: string; value: unknown }>("settings://changed", (event) => {
+    const key = event.payload.key as keyof Settings;
+    if (key in DEFAULT_SETTINGS) {
+      applySettingCache(key, event.payload.value as Settings[typeof key]);
+    }
+
     if (event.payload.key === "theme") {
       const theme = event.payload.value === "dark" ? "dark" : "light";
       document.documentElement.setAttribute("theme", theme);

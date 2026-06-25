@@ -14,6 +14,7 @@
     "tauri": "tauri",
     "lint": "eslint .",
     "lint:colors": "node scripts/check-colors.mjs",
+    "lint:ui-provenance": "node scripts/check-ui-provenance.mjs",
     "lint:tokens": "node scripts/check-design-tokens.mjs",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run"
@@ -24,6 +25,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-log": "^2",
     "@tdesign-react/chat": "^1.0.2",
+    "@volcengine/rtc": "4.66.20",
     "axios": "^1.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",

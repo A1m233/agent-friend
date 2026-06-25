@@ -7,9 +7,11 @@ use tauri::{
 };
 
 mod bubble_window;
-mod log_paths;
+mod paths;
 mod push_subscriber;
 mod settings;
+
+const EVENT_WINDOW_SHOWN: &str = "window://shown";
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
@@ -251,6 +253,7 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
             }
             let _ = w.show();
             let _ = w.set_focus();
+            let _ = app_clone.emit_to(label, EVENT_WINDOW_SHOWN, ());
         }
     })
     .map_err(|e| e.to_string())?;
@@ -266,6 +269,12 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "settings")
+}
+
+/// 029 · 打开独立语音通话小窗。
+#[tauri::command]
+fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "voice-call")
 }
 
 /// 026 · dev 模式入口：打开记忆面板窗口。
@@ -420,6 +429,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_voice_call,
         open_memory_inspector,
         hide_pet,
         set_pet_webview_dpr,
@@ -435,6 +445,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_voice_call,
         hide_pet,
         set_pet_webview_dpr,
         settings::get_setting,
@@ -450,7 +461,10 @@ pub fn run() {
             // 对话窗 / 设置窗 / 记忆面板按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
-            if matches!(window.label(), "chat" | "settings" | "memory-inspector") {
+            if matches!(
+                window.label(),
+                "chat" | "settings" | "voice-call" | "memory-inspector"
+            ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();
@@ -458,7 +472,7 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            let log_dir = log_paths::log_dir();
+            let log_dir = paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
             app.handle().plugin(
                 tauri_plugin_log::Builder::new()

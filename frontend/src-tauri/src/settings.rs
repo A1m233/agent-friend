@@ -1,18 +1,26 @@
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 use tauri::{
     plugin::{Builder as PluginBuilder, TauriPlugin},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Emitter, Runtime,
 };
 use tauri_plugin_store::StoreExt;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+use crate::paths;
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub theme: ThemeMode,
+    #[serde(default)]
+    pub voice_tunnel_consent_accepted: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     Light,
@@ -23,6 +31,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Light,
+            voice_tunnel_consent_accepted: false,
         }
     }
 }
@@ -36,47 +45,124 @@ impl Settings {
     }
 }
 
-const BUNDLE_ID: &str = "com.agentfriend.desktop";
-const STORE_PATH: &str = "settings.json";
 const EVENT_CHANGED: &str = "settings://changed";
 
-/// 028 · 用 OS 本地数据目录 + bundle id 拼出 tauri-plugin-store 默认文件路径。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsLoadSource {
+    Canonical,
+    LegacyLocal,
+    Default,
+}
+
+struct LoadedSettings {
+    settings: Settings,
+    source: SettingsLoadSource,
+    path: Option<PathBuf>,
+}
+
+fn parse_settings(raw: &str, path: &Path) -> Result<Settings, String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .and_then(|v| match v.get("settings") {
+            Some(inner) => serde_json::from_value::<Settings>(inner.clone()),
+            None => serde_json::from_value::<Settings>(v),
+        })
+        .map_err(|e| format!("settings: parse {path:?} failed: {e}"))
+}
+
+fn read_settings_file(path: &Path) -> Result<Settings, String> {
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("settings: read {path:?} failed: {e}"))?;
+    parse_settings(&raw, path)
+}
+
+fn write_settings_file(path: &Path, settings: &Settings) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("settings: create parent {parent:?} failed: {e}"))?;
+    }
+    let payload = serde_json::json!({ "settings": settings });
+    let raw = serde_json::to_string_pretty(&payload)
+        .map_err(|e| format!("settings: serialize {path:?} failed: {e}"))?;
+    fs::write(path, raw).map_err(|e| format!("settings: write {path:?} failed: {e}"))
+}
+
+fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) -> LoadedSettings {
+    if let Some(path) = canonical.as_ref() {
+        match read_settings_file(path) {
+            Ok(settings) => {
+                return LoadedSettings {
+                    settings,
+                    source: SettingsLoadSource::Canonical,
+                    path: Some(path.clone()),
+                };
+            }
+            Err(e) => log::info!("{e}"),
+        }
+    } else {
+        log::warn!("settings: cannot resolve canonical settings store path");
+    }
+
+    if let Some(path) = legacy_local.as_ref() {
+        if canonical.as_ref() == Some(path) {
+            return LoadedSettings {
+                settings: Settings::default(),
+                source: SettingsLoadSource::Default,
+                path: None,
+            };
+        }
+
+        match read_settings_file(path) {
+            Ok(settings) => {
+                if let Some(canonical_path) = canonical.as_ref() {
+                    match write_settings_file(canonical_path, &settings) {
+                        Ok(()) => log::info!(
+                            "settings: migrated legacy settings from {:?} to {:?}",
+                            path,
+                            canonical_path
+                        ),
+                        Err(e) => log::warn!("{e}"),
+                    }
+                }
+                return LoadedSettings {
+                    settings,
+                    source: SettingsLoadSource::LegacyLocal,
+                    path: Some(path.clone()),
+                };
+            }
+            Err(e) => log::info!("{e}"),
+        }
+    }
+
+    LoadedSettings {
+        settings: Settings::default(),
+        source: SettingsLoadSource::Default,
+        path: None,
+    }
+}
+
+/// 028 · 用统一 paths 模块拼出 tauri-plugin-store settings 文件路径。
 ///
-/// `tauri-plugin-store` 默认把 store 文件放在 `app_local_data_dir()` 下，即
-/// `dirs::data_local_dir() / bundle_id / STORE_PATH`（macOS 上对应
-/// `~/Library/Application Support/com.agentfriend.desktop/settings.json`）。
+/// 当前项目沿用 `dirs::config_dir() / bundle_id / settings.json`（Windows 上对应
+/// `%APPDATA%/com.agentfriend.desktop/settings.json`）。
 /// 启动期（plugin builder 阶段）同步读盘，所有错误路径返回默认值，不阻断启动。
 pub fn load_from_disk_or_default() -> Settings {
-    let Some(data_dir) = dirs::data_local_dir() else {
-        log::warn!("settings: cannot resolve data_local_dir");
-        return Settings::default();
-    };
-    let path = data_dir.join(BUNDLE_ID).join(STORE_PATH);
-    log::info!("settings: bootstrap loading from {:?}", path);
-    let settings = match std::fs::read_to_string(&path) {
-        Ok(raw) => {
-            // `tauri-plugin-store` 把值存在顶层 key "settings" 下，因此启动期读盘时
-            // 要先取这个 wrapper，再反序列化为 `Settings`。
-            serde_json::from_str::<serde_json::Value>(&raw)
-                .and_then(|v| match v.get("settings") {
-                    Some(inner) => serde_json::from_value::<Settings>(inner.clone()),
-                    None => serde_json::from_value::<Settings>(v),
-                })
-                .unwrap_or_else(|e| {
-                    log::warn!(
-                        "settings: parse {:?} failed: {e}, using default",
-                        path
-                    );
-                    Settings::default()
-                })
-        }
-        Err(e) => {
-            log::info!("settings: read {:?} failed: {e}, using default", path);
-            Settings::default()
-        }
-    };
-    log::info!("settings: bootstrap resolved theme={}", settings.theme_attr());
-    settings
+    let canonical = paths::settings_store_path();
+    let legacy_local = paths::legacy_local_settings_store_path();
+    log::info!(
+        "settings: bootstrap loading canonical={:?} legacy_local={:?}",
+        canonical,
+        legacy_local
+    );
+
+    let loaded = load_from_paths(canonical, legacy_local);
+    log::info!(
+        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={}",
+        loaded.source,
+        loaded.path,
+        loaded.settings.theme_attr(),
+        loaded.settings.voice_tunnel_consent_accepted
+    );
+    loaded.settings
 }
 
 /// 把当前 settings 拼成 webview 初始化脚本。会在每个 webview 加载 HTML 之前同步执行，
@@ -125,29 +211,31 @@ pub fn set_setting<R: Runtime>(
 
     match payload.key.as_str() {
         "theme" => {
-            let theme: ThemeMode =
-                serde_json::from_value(payload.value.clone())
-                    .map_err(|e| format!("invalid theme: {e}"))?;
+            let theme: ThemeMode = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid theme: {e}"))?;
             s.theme = theme;
+        }
+        "voiceTunnelConsentAccepted" => {
+            let accepted: bool = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
+            s.voice_tunnel_consent_accepted = accepted;
         }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
 
-    let store = app.store(STORE_PATH).map_err(|e| e.to_string())?;
+    let store = app
+        .store(paths::SETTINGS_STORE_PATH)
+        .map_err(|e| e.to_string())?;
     store.set(
         "settings",
         serde_json::to_value(&*s).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| e.to_string())?;
 
-    // 028 · R3：把 plugin-store 实际用的 app_config_dir 打到日志，与 bootstrap 读路径对比。
-    if let Ok(config_dir) = app.path().app_config_dir() {
-        let store_path: std::path::PathBuf = config_dir.join(STORE_PATH);
-        log::info!(
-            "settings: store saved to {:?} (bootstrap read from dirs::config_dir + bundle id)",
-            store_path
-        );
-    }
+    log::info!(
+        "settings: store saved to {:?}",
+        paths::settings_store_path()
+    );
 
     log::info!(
         "settings: emitting {} key={} value={}",
@@ -163,6 +251,105 @@ pub fn set_setting<R: Runtime>(
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_settings_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "agent-friend-settings-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create temp settings dir");
+        dir
+    }
+
+    fn write_raw(path: &Path, raw: &str) {
+        fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+        fs::write(path, raw).expect("write raw settings");
+    }
+
+    #[test]
+    fn load_from_paths_reads_legacy_local_and_migrates_to_canonical() {
+        let dir = temp_settings_dir("legacy-migration");
+        let canonical = dir.join("roaming").join("settings.json");
+        let legacy = dir.join("local").join("settings.json");
+        write_raw(
+            &legacy,
+            r#"{
+  "settings": {
+    "theme": "dark",
+    "voiceTunnelConsentAccepted": true
+  }
+}"#,
+        );
+
+        let loaded = load_from_paths(Some(canonical.clone()), Some(legacy.clone()));
+
+        assert_eq!(loaded.source, SettingsLoadSource::LegacyLocal);
+        assert_eq!(loaded.path, Some(legacy));
+        assert_eq!(loaded.settings.theme, ThemeMode::Dark);
+        assert!(loaded.settings.voice_tunnel_consent_accepted);
+        let migrated = read_settings_file(&canonical).expect("read migrated canonical");
+        assert_eq!(migrated, loaded.settings);
+
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn load_from_paths_prefers_canonical_over_legacy() {
+        let dir = temp_settings_dir("canonical-first");
+        let canonical = dir.join("roaming").join("settings.json");
+        let legacy = dir.join("local").join("settings.json");
+        write_raw(
+            &canonical,
+            r#"{
+  "settings": {
+    "theme": "light",
+    "voiceTunnelConsentAccepted": true
+  }
+}"#,
+        );
+        write_raw(
+            &legacy,
+            r#"{
+  "settings": {
+    "theme": "dark",
+    "voiceTunnelConsentAccepted": false
+  }
+}"#,
+        );
+
+        let loaded = load_from_paths(Some(canonical.clone()), Some(legacy));
+
+        assert_eq!(loaded.source, SettingsLoadSource::Canonical);
+        assert_eq!(loaded.path, Some(canonical));
+        assert_eq!(loaded.settings.theme, ThemeMode::Light);
+        assert!(loaded.settings.voice_tunnel_consent_accepted);
+
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn load_from_paths_returns_default_when_no_store_exists() {
+        let dir = temp_settings_dir("missing");
+        let loaded = load_from_paths(
+            Some(dir.join("roaming").join("settings.json")),
+            Some(dir.join("local").join("settings.json")),
+        );
+
+        assert_eq!(loaded.source, SettingsLoadSource::Default);
+        assert_eq!(loaded.settings, Settings::default());
+
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
 }
 
 /// 028 · settings facade plugin。

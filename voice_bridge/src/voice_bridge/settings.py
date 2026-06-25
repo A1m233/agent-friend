@@ -83,8 +83,8 @@ class VoiceBridgeSettings(BaseSettings):
     voice_type: str = "zh_female_linjianvhai_moon_bigtts"
     """火山 TTS 音色 id；spike 实测自然，沿用。"""
 
-    welcome_message: str = "嗨，我们终于打上电话了，你最近怎么样？"
-    """通话拨通后 AI 主动说的第一句话。"""
+    welcome_message: str = ""
+    """通话拨通后 AI 主动说的第一句话；空字符串表示不开场白。"""
 
     default_persona: str = "default"
     """新建 session 时的默认 persona。"""

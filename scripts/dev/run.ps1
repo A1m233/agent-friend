@@ -1,30 +1,36 @@
 ﻿# scripts/dev/run.ps1 — 一键起 bridge + 前端开发（windows）
 #
-# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢）。
+# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），并启动 voice_bridge。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
+# --no-voice：不启动 voice_bridge（轻量前端 / 桌宠开发）。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
-# bridge 默认听 127.0.0.1:18800；前端经 vite proxy 连它（见 frontend/vite.config.ts）。
-# bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理 bridge 进程树。
+# bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
+# bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理子进程树。
 # 详见 scripts/README.md
 $ErrorActionPreference = "Stop"
 # 强制 UTF-8 输出，避免中文在终端乱码（Windows PowerShell 5.1 默认按系统 ANSI/GBK 输出）
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$previousLocation = (Get-Location).Path
+
+try {
 Set-Location $root
 
 $mode = "tauri"
+$startVoice = $true
 $rest = @()
 foreach ($a in $args) {
     switch ($a) {
         "--web" { $mode = "web" }
         "--tauri" { $mode = "tauri" }
+        "--voice" { $startVoice = $true }
+        "--no-voice" { $startVoice = $false }
         default { $rest += $a }
     }
 }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
-    exit 1
 }
 . (Join-Path $PSScriptRoot "..\frontend\_ensure-node.ps1")
 Ensure-NodePnpm
@@ -33,28 +39,122 @@ Ensure-NodePnpm
 # 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
 $DevPort = 1420
 
-function Test-PortInUse($port) {
+function Get-DevPortListeners($port) {
     try {
-        $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction Stop
-        return $conn.Count -gt 0
+        return @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Test-PortInUse($port) {
+    return (Get-DevPortListeners $port).Count -gt 0
+}
+
+function Test-HttpOk([string]$url) {
+    try {
+        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+        return $resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300
     }
     catch {
         return $false
     }
 }
 
+function Wait-HttpOk([string]$url, [int]$timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-HttpOk $url) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    return $false
+}
+
+function Wait-CloudflaredUrl([string[]]$logPaths, [int]$timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    $pattern = "https://[a-z0-9-]+\.trycloudflare\.com"
+    while ((Get-Date) -lt $deadline) {
+        foreach ($path in $logPaths) {
+            if (-not (Test-Path $path)) { continue }
+            $content = Get-Content -Raw -ErrorAction SilentlyContinue $path
+            if ($content -match $pattern) {
+                return $Matches[0]
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return ""
+}
+
+function Start-VoiceTunnel {
+    if (-not [string]::IsNullOrWhiteSpace($env:VOICE_BRIDGE_PUBLIC_URL)) {
+        Write-Host "===> 使用当前进程 VOICE_BRIDGE_PUBLIC_URL（不读取 .env）"
+        return @{ Process = $null; PublicUrl = $env:VOICE_BRIDGE_PUBLIC_URL }
+    }
+
+    if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
+        Write-Error "未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后重试。"
+    }
+
+    $outLog = Join-Path $env:TEMP "agent-friend-cloudflared-dev.log"
+    $errLog = Join-Path $env:TEMP "agent-friend-cloudflared-dev.err.log"
+    Remove-Item -LiteralPath $outLog, $errLog -Force -ErrorAction SilentlyContinue
+
+    Write-Host "===> 启动 cloudflared tunnel（127.0.0.1:18900）…"
+    $proc = Start-Process `
+        -FilePath "cloudflared" `
+        -ArgumentList @("tunnel", "--url", "http://127.0.0.1:18900") `
+        -RedirectStandardOutput $outLog `
+        -RedirectStandardError $errLog `
+        -PassThru `
+        -WindowStyle Hidden
+
+    $publicUrl = Wait-CloudflaredUrl -logPaths @($outLog, $errLog) -timeoutSeconds 60
+    if ([string]::IsNullOrWhiteSpace($publicUrl)) {
+        if ($proc -and -not $proc.HasExited) {
+            taskkill /PID $proc.Id /T /F 2>$null | Out-Null
+        }
+        Write-Error "cloudflared 60 秒内没有输出 trycloudflare URL。日志：$outLog / $errLog"
+    }
+
+    $env:VOICE_BRIDGE_PUBLIC_URL = $publicUrl
+    Write-Host "  [OK] VOICE_BRIDGE_PUBLIC_URL=$publicUrl"
+    return @{ Process = $proc; PublicUrl = $publicUrl }
+}
+
+function Test-DevPortProcess($proc, $commandLine) {
+    $name = $proc.ProcessName.ToLowerInvariant()
+    if ($name -in @("node", "pnpm", "npm", "tauri", "cargo", "app")) {
+        return $true
+    }
+    if ($commandLine -match "(^|\s)(pnpm|vite|tauri|cargo)(\s|$)" -or
+        $commandLine -match "frontend") {
+        return $true
+    }
+    return $false
+}
+
 function Stop-DevPortProcess($port) {
-    $killed = @()
-    $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-    foreach ($conn in $conns) {
-        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+    $conns = Get-DevPortListeners $port
+    $owners = @($conns | ForEach-Object { $_.OwningProcess } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    foreach ($ownerPid in $owners) {
+        $proc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
         if (-not $proc) { continue }
-        # 只杀疑似前端 dev 相关的进程，避免误伤用户其他服务。
-        $name = $proc.ProcessName
-        if ($name -in @("node", "pnpm", "tauri", "cargo", "app")) {
+        $commandLine = ""
+        try {
+            $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction Stop).CommandLine
+        }
+        catch {
+            # ignore
+        }
+        if (Test-DevPortProcess $proc $commandLine) {
             try {
-                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-                $killed += $proc.Id
+                # Windows 上 pnpm/tauri/vite 常有父子进程树；只 Stop-Process
+                # OwningProcess 容易留下子进程继续监听 1420。
+                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
             }
             catch {
                 # ignore
@@ -78,17 +178,45 @@ if (Test-PortInUse $DevPort) {
     }
     else {
         Write-Error "端口 $DevPort 仍被占用，无法启动前端 dev server。请检查是否有其他程序占用该端口，或手动终止相关进程后再试。"
-        exit 1
     }
 }
 
+$bridge = $null
+$voice = $null
+$cloudflared = $null
+
+try {
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 $env:AGENT_BRIDGE_DEV_MODE = "true"
 $bridge = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "agent_bridge") -PassThru -NoNewWindow
 
-try {
+if ($startVoice) {
+    $hasExplicitVoicePublicUrl = -not [string]::IsNullOrWhiteSpace($env:VOICE_BRIDGE_PUBLIC_URL)
+    if (Test-HttpOk "http://127.0.0.1:18900/healthz") {
+        if (-not $hasExplicitVoicePublicUrl) {
+            Write-Error "voice_bridge 已在 127.0.0.1:18900 运行，但 dev/run 无法给既有进程注入本次 tunnel URL。请先停止旧 voice_bridge，再重新运行 dev/run；或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后复用。"
+        }
+        Write-Host "===> voice_bridge 已在 127.0.0.1:18900 运行，复用现有进程（VOICE_BRIDGE_PUBLIC_URL 来自当前环境；不读取 .env）"
+    }
+    elseif (Test-PortInUse 18900) {
+        Write-Error "端口 18900 已被占用，但 http://127.0.0.1:18900/healthz 不可用。请先停止占用该端口的进程后再试。"
+    }
+    else {
+        $tunnel = Start-VoiceTunnel
+        $cloudflared = $tunnel.Process
+        Write-Host "===> 启动 voice_bridge（127.0.0.1:18900）…"
+        $voice = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "voice_bridge") -PassThru -NoNewWindow
+        if (-not (Wait-HttpOk "http://127.0.0.1:18900/healthz" 10)) {
+            Write-Error "voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 voice_bridge 日志。"
+        }
+    }
+}
+else {
+    Write-Host "===> 跳过 voice_bridge（--no-voice）"
+}
+
     Set-Location (Join-Path $root "frontend")
     if ($mode -eq "web") {
         Write-Host "===> 前端模式：web（浏览器调试，不编译 Rust）"
@@ -100,9 +228,19 @@ try {
     }
 }
 finally {
-    Write-Host "`n===> 收尾：停止 bridge…"
+    Write-Host "`n===> 收尾：停止 bridge / voice_bridge / cloudflared…"
     if ($bridge -and -not $bridge.HasExited) {
         # /T 连同 uv 派生的 python 进程树一起结束
         taskkill /PID $bridge.Id /T /F 2>$null | Out-Null
     }
+    if ($voice -and -not $voice.HasExited) {
+        taskkill /PID $voice.Id /T /F 2>$null | Out-Null
+    }
+    if ($cloudflared -and -not $cloudflared.HasExited) {
+        taskkill /PID $cloudflared.Id /T /F 2>$null | Out-Null
+    }
+}
+}
+finally {
+    Set-Location $previousLocation
 }

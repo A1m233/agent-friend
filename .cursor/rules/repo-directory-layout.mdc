@@ -21,15 +21,24 @@ alwaysApply: true
 - 同一文件内避免堆叠多层无关职责（例如适配层、纯领域逻辑、UI/常量全混在一个巨型文件里）；边界清晰时倾向**多文件**而不是单文件巨石。
 - 目录深度以表达边界为准，**不为嵌套而嵌套**。
 
-## 用户数据 / 日志落盘位置
+## 用户数据 / 设置 / 日志落盘位置
 
-运行期所有持久化（sessions / memory db / personas / im credentials / 日志等）走 **`agent/paths.py`**（基于 `platformdirs`），单一权威。新增持久化时复用其 helper（`sessions_dir()` / `memory_db_path()` / `personas_dir()` / `log_dir()` / `user_data_dir()` …），不要自己拼路径。
+运行期落盘分三类，不要混用：
 
-- 默认位置：macOS `~/Library/Application Support/agent-friend/`、Windows `%APPDATA%/agent-friend/`、Linux `$XDG_DATA_HOME` 或 `~/.local/share/agent-friend/`。
-- env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/replay 脚本做隔离**用，不是日常开发约定。
+1. **用户数据**：sessions / memory db / personas / im credentials / CLI history 等“用户资产”走 Python 侧 **`agent.paths`**（源码在 `agent/src/agent/paths.py`），新增用户数据时复用 `sessions_dir()` / `memory_db_path()` / `personas_dir()` / `user_data_dir()` 等 helper，不要自己拼路径。
+2. **桌面端设置**：Tauri plugin-store 的 `settings.json` 走 `frontend/src-tauri/src/paths.rs` 的 `paths::settings_store_path()`，读写语义走 `frontend/src-tauri/src/settings.rs` + `tauri-plugin-store`，前端统一经 `frontend/src/lib/settings/`（`getSettingsSnapshot` / `setSetting` / `useSetting`）。业务 store 不应自己 `invoke("set_setting")`、不应写 `localStorage`、也不应把持久设置混进运行态 snapshot。
+3. **日志**：运行日志不是用户资产，走日志专用入口：Python 侧 `agent.paths.log_dir()`，Tauri 侧 `frontend/src-tauri/src/paths.rs` 的 `paths::log_dir()`。不要按用户数据目录去猜日志位置。
+
+平台默认位置必须按类别区分：
+
+- **用户数据**：macOS `~/Library/Application Support/agent-friend/`；Windows `%APPDATA%/agent-friend/`（Roaming）；Linux `$XDG_DATA_HOME/agent-friend/` 或 `~/.local/share/agent-friend/`。
+- **桌面端设置**：macOS `~/Library/Application Support/com.agentfriend.desktop/settings.json`；Windows `%APPDATA%/com.agentfriend.desktop/settings.json`（Roaming）。历史版本曾误写 Local，`legacy_local_settings_store_path()` 只可作为迁移/兼容 fallback，不是当前默认。
+- **日志**：macOS `~/Library/Logs/agent-friend/`；Windows `%LOCALAPPDATA%/agent-friend/Logs/`（Local）；Linux `$XDG_STATE_HOME/agent-friend/log/` 或 `~/.local/state/agent-friend/log/`。不要再查旧的 `~/Library/Logs/com.agentfriend.desktop/`，也不要把 Windows 日志误认为在 `%APPDATA%`。
+
+env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/replay 脚本做隔离**用，不是日常开发约定。Tauri / frontend 壳的路径入口统一走 `frontend/src-tauri/src/paths.rs`，不要在 `settings.rs` / `lib.rs` / 新模块里散写 bundle id、`settings.json`、`~/Library/Logs/...`、`%APPDATA%`、`%LOCALAPPDATA%` 等字面量。
 - **仓库根 `data/` 不应出现**——它在 `.gitignore` 里被忽略，但如果你在仓库根看到它，那是某次手敲 `AGENT_FRIEND_DATA_DIR=. ...` 之类的 ad-hoc 命令残留，不是任何代码路径的默认行为，可直接删除。
 
-历史 requirement / design 文档里仍可能写 `data/sessions/` `data/personas/` 等过时字面量（002 / 003 / 008 等），那是当时的决策快照，**现行约定以 `agent/paths.py` 为准**。
+历史 requirement / design 文档里仍可能写 `data/sessions/` `data/personas/` 等过时字面量（002 / 003 / 008 等），那是当时的决策快照，**现行约定以 `agent.paths` / `frontend/src-tauri/src/paths.rs` 为准**。
 
 ## 适用范围与优先级
 

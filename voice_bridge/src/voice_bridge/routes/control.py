@@ -28,6 +28,7 @@ from ..rtc import build_scenes
 from ..rtc.token import RoomTokenSigner
 
 logger = logging.getLogger(__name__)
+_DIALOG_EVENT_TYPES = {"user_message", "assistant_message"}
 
 
 class StartCallBody(BaseModel):
@@ -90,6 +91,12 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         welcome_message: str | None,
     ) -> None:
         """按已登记的 call binding 拉起火山 RTC AIGC 任务。"""
+        logger.info(
+            "voice start_agent call_id=%s session_id=%s room_id=%s",
+            binding.call_id,
+            binding.session_id,
+            binding.room_id,
+        )
         scenes = build_scenes(
             settings=runtime.settings,
             call_id=binding.call_id,
@@ -101,11 +108,47 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         await runtime.rtc_client.start_voice_chat(scenes)
         runtime.call_registry.update_state(binding.call_id, "active")
 
+    async def cleanup_empty_created_session(binding: CallBinding) -> None:
+        """删除 voice_bridge 自建且没有实际对话消息的空 session。"""
+        if not binding.created_session:
+            return
+
+        try:
+            events = await runtime.agent_bridge.get_session_events(binding.session_id)
+        except VoiceBridgeError as e:
+            logger.warning(
+                "读取语音临时 session 失败，跳过空会话清理: call_id=%s session_id=%s error=%s",
+                binding.call_id,
+                binding.session_id,
+                e,
+            )
+            return
+
+        has_dialog = any(event.get("type") in _DIALOG_EVENT_TYPES for event in events)
+        if has_dialog:
+            return
+
+        try:
+            await runtime.agent_bridge.delete_session(binding.session_id)
+            logger.info(
+                "已清理空语音 session: call_id=%s session_id=%s",
+                binding.call_id,
+                binding.session_id,
+            )
+        except VoiceBridgeError as e:
+            logger.warning(
+                "清理空语音 session 失败: call_id=%s session_id=%s error=%s",
+                binding.call_id,
+                binding.session_id,
+                e,
+            )
+
     @router.post("/calls", response_model=StartCallResponse)
     async def start_call(body: StartCallBody) -> StartCallResponse:
         """拨打通话：创建/绑 session → 调火山 ``StartVoiceChat`` → 返回 RTC 凭证。"""
         settings = runtime.settings
         try:
+            created_session = body.session_id is None
             if body.session_id is None:
                 created = await runtime.agent_bridge.create_session(
                     channel="voice",
@@ -144,8 +187,16 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
                 room_id=room_id,
                 bot_user_id=bot_user_id,
                 target_user_id=target_user_id,
+                created_session=created_session,
             )
             runtime.call_registry.bind(binding)
+            logger.info(
+                "voice call created call_id=%s session_id=%s created_session=%s defer_start=%s",
+                call_id,
+                session_id,
+                created_session,
+                body.defer_start,
+            )
             if not body.defer_start:
                 await start_voice_chat_for_binding(binding, welcome_message=body.welcome_message)
                 binding = runtime.call_registry.lookup(call_id) or binding
@@ -254,6 +305,7 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         except VoiceBridgeError as e:
             logger.warning("挂断时切回 text 通道失败（不阻断）: %s", e)
 
+        await cleanup_empty_created_session(binding)
         runtime.call_registry.update_state(call_id, "stopped")
         return StopCallResponse(call_id=call_id, state="stopped")
 
