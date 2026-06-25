@@ -1,6 +1,6 @@
 # 021 · recall recent summary quality is unstable
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-06-19
 - **关联需求**：020-engine-tool-conversation-history、022-im-channel-and-qq-adapter
@@ -46,3 +46,16 @@
 - 在 `recall_past_chats` 扫描时过滤 `partial=true` assistant 和空 assistant message，避免既有历史噪声继续挤占 `limit`。
 - 对无 query 的时间范围泛查询增加“按 turn 聚合 + 去重 + 摘要友好排序”，避免简单按单条 message 截断。
 - 增加真实或 fake LLM smoke case：用户问“你还记得我们最近聊了啥吗”时，断言工具参数可用、结果不包含当前轮、且能覆盖最近多个历史话题。
+
+## 验证
+
+2026-06-25 已真跑 LLM smoke 验证开放式近期表达不会再被作为非法 `since` 传入：
+
+- “我们最近聊了啥？” → `recall_past_chats args={'limit': 15}`，无工具错误。
+- “我们近期聊了啥？” → `recall_past_chats args={}`，无工具错误。
+- “这阵子我们都聊过什么？” → `recall_past_chats args={'limit': 20}`，无工具错误。
+
+以上 smoke 均调用 `recall_past_chats`，没有出现 `since="最近"` / `since="近期"` / `since="这阵子"`。
+
+---
+已在 commit `8ff83e3` 修复。
