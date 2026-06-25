@@ -4,14 +4,23 @@ import { create } from "zustand";
 
 import { voiceApi, voiceErrorMessage } from "@/services/api/voice";
 import type { RtcClient } from "@/services/voice/rtcClient";
-import type { StartVoiceCallRequest, VoiceCallSnapshot, VoiceCallPhase } from "@/services/voice/types";
-import { getInitialSettings } from "@/lib/settings";
+import type {
+  StartVoiceCallRequest,
+  VoiceCallDiagnostic,
+  VoiceCallFailureStage,
+  VoiceCallSnapshot,
+  VoiceCallPhase,
+} from "@/services/voice/types";
+import { getSettingsSnapshot, setSetting } from "@/lib/settings";
 import { isTauri } from "@/utils/tauri";
 import { canStartVoiceCall, isVoiceCallLive } from "./voiceStateMachine";
 
 const EVENT_STATE = "voice://state";
 const EVENT_START_REQUEST = "voice://start-request";
 const EVENT_HANGUP_REQUEST = "voice://hangup-request";
+const EVENT_CONFIRM_TUNNEL_CONSENT = "voice://confirm-tunnel-consent";
+const EVENT_CANCEL_TUNNEL_CONSENT = "voice://cancel-tunnel-consent";
+const EVENT_SNAPSHOT_REQUEST = "voice://snapshot-request";
 const EVENT_ACTIVE_CHAT_SESSION = "voice://active-chat-session";
 
 interface VoiceState extends VoiceCallSnapshot {
@@ -21,8 +30,9 @@ interface VoiceState extends VoiceCallSnapshot {
   requestStart: (req?: StartVoiceCallRequest) => Promise<void>;
   requestStartFromAnyWindow: (req?: StartVoiceCallRequest) => Promise<void>;
   confirmTunnelConsent: () => Promise<void>;
+  requestConfirmTunnelConsent: () => Promise<void>;
   cancelTunnelConsent: () => void;
-  setTunnelConsentAccepted: (next: boolean) => Promise<void>;
+  requestCancelTunnelConsent: () => Promise<void>;
   requestHangUp: () => Promise<void>;
   hangUp: () => Promise<void>;
   resetError: () => void;
@@ -44,7 +54,7 @@ function initialSnapshot(): VoiceCallSnapshot {
     durationMs: 0,
     volumeLevel: 0,
     error: null,
-    consentAccepted: getInitialSettings().voiceTunnelConsentAccepted,
+    diagnostic: null,
   };
 }
 
@@ -57,7 +67,7 @@ function toSnapshot(state: VoiceState): VoiceCallSnapshot {
     durationMs: state.durationMs,
     volumeLevel: state.volumeLevel,
     error: state.error,
-    consentAccepted: state.consentAccepted,
+    diagnostic: state.diagnostic,
   };
 }
 
@@ -77,19 +87,20 @@ function clearDurationTimer(): void {
   durationTimer = null;
 }
 
-async function persistConsentAccepted(next: boolean): Promise<void> {
-  window.__AGENT_FRIEND_SETTINGS__ = {
-    ...getInitialSettings(),
-    voiceTunnelConsentAccepted: next,
-  };
-  if (!isTauri()) return;
-  await invoke("set_setting", {
-    payload: { key: "voiceTunnelConsentAccepted", value: next },
-  });
-}
-
 function phaseIsFinished(phase: VoiceCallPhase): boolean {
   return phase === "idle" || phase === "ended" || phase === "error";
+}
+
+function diagnosticMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  const friendly = error as { code?: unknown; friendly?: unknown };
+  const code = typeof friendly.code === "string" ? friendly.code : null;
+  const message = typeof friendly.friendly === "string" ? friendly.friendly : null;
+  return [code, message].filter(Boolean).join(": ") || "unknown";
+}
+
+function toDiagnostic(stage: VoiceCallFailureStage, error: unknown): VoiceCallDiagnostic {
+  return { stage, message: diagnosticMessage(error) };
 }
 
 export const useVoiceStore = create<VoiceState>((set, get) => {
@@ -129,10 +140,12 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       durationMs: 0,
       volumeLevel: 0,
       error: null,
+      diagnostic: null,
     });
 
     await focusVoiceCallWindow();
     let callId: string | null = null;
+    let stage: VoiceCallFailureStage = "start_call";
 
     try {
       const call = await voiceApi.startCall({ ...req, deferStart: true });
@@ -143,10 +156,15 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         sessionId: call.sessionId,
       });
 
+      stage = "rtc_join_publish";
       const { createVolcRtcClient } = await import("@/services/voice/rtcClient");
       rtcClient = createVolcRtcClient({
         onVolume: (volumeLevel) => setAndPublish({ volumeLevel }),
-        onError: (message) => setAndPublish({ error: message }),
+        onError: (message) =>
+          setAndPublish({
+            error: message,
+            diagnostic: { stage: "rtc_join_publish", message },
+          }),
       });
       await rtcClient.joinAndPublish({
         rtcAppId: call.rtcAppId,
@@ -156,12 +174,14 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       });
 
       setAndPublish({ phase: "starting_agent" });
+      stage = "start_agent";
       await voiceApi.startAgent(call.callId);
 
       setAndPublish({
         phase: "active",
         startedAt: Date.now(),
         durationMs: 0,
+        diagnostic: null,
       });
       startDurationTimer();
     } catch (error) {
@@ -171,6 +191,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       setAndPublish({
         phase: "error",
         error: error instanceof Error ? error.message : voiceErrorMessage(error),
+        diagnostic: toDiagnostic(stage, error),
       });
     }
   };
@@ -193,12 +214,20 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         sessionId: req.sessionId ?? state.activeChatSessionId ?? undefined,
       };
 
-      if (!state.consentAccepted) {
+      const consentAccepted = getSettingsSnapshot().voiceTunnelConsentAccepted;
+      console.info(
+        `[voice] requestStart phase=${state.phase} consentAccepted=${consentAccepted}`,
+      );
+
+      if (!consentAccepted) {
         setAndPublish({
+          isOwner: true,
           phase: "confirming_tunnel",
           pendingStart: withSession,
           error: null,
+          diagnostic: null,
         });
+        await focusVoiceCallWindow();
         return;
       }
 
@@ -214,26 +243,41 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     },
 
     async confirmTunnelConsent() {
-      await persistConsentAccepted(true);
+      if (get().phase !== "confirming_tunnel") return;
+      await setSetting("voiceTunnelConsentAccepted", true);
       const pendingStart = get().pendingStart ?? {};
       setAndPublish({
-        consentAccepted: true,
         pendingStart: null,
         phase: "idle",
+        diagnostic: null,
       });
       await startInternal(pendingStart);
     },
 
+    async requestConfirmTunnelConsent() {
+      if (get().isOwner || !isTauri()) {
+        await get().confirmTunnelConsent();
+        return;
+      }
+      await emitEverywhere(EVENT_CONFIRM_TUNNEL_CONSENT, {});
+    },
+
     cancelTunnelConsent() {
+      if (get().phase !== "confirming_tunnel") return;
       setAndPublish({
+        isOwner: false,
         phase: "idle",
         pendingStart: null,
+        diagnostic: null,
       });
     },
 
-    async setTunnelConsentAccepted(next) {
-      await persistConsentAccepted(next);
-      setAndPublish({ consentAccepted: next });
+    async requestCancelTunnelConsent() {
+      if (get().isOwner || !isTauri()) {
+        get().cancelTunnelConsent();
+        return;
+      }
+      await emitEverywhere(EVENT_CANCEL_TUNNEL_CONSENT, {});
     },
 
     async requestHangUp() {
@@ -250,10 +294,15 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
       clearDurationTimer();
       setAndPublish({ phase: "stopping" });
+      let diagnostic: VoiceCallDiagnostic | null = null;
       if (state.callId) {
-        await voiceApi.stopCall(state.callId).catch(() => {});
+        await voiceApi.stopCall(state.callId).catch((error) => {
+          diagnostic = toDiagnostic("stop_call", error);
+        });
       }
-      await cleanupRtc();
+      await cleanupRtc().catch((error) => {
+        diagnostic = diagnostic ?? toDiagnostic("rtc_cleanup", error);
+      });
       setAndPublish({
         phase: "ended",
         isOwner: false,
@@ -261,12 +310,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         startedAt: null,
         durationMs: 0,
         volumeLevel: 0,
+        diagnostic,
       });
     },
 
     resetError() {
       if (get().phase !== "error") return;
-      setAndPublish({ phase: "idle", error: null });
+      setAndPublish({ phase: "idle", error: null, diagnostic: null });
     },
 
     applyRemoteSnapshot(snapshot) {
@@ -298,6 +348,7 @@ export function startVoiceStateSubscriber(): void {
     const payload = (event as CustomEvent<VoiceCallSnapshot>).detail;
     if (payload) useVoiceStore.getState().applyRemoteSnapshot(payload);
   });
+  void emitEverywhere(EVENT_SNAPSHOT_REQUEST, {});
 }
 
 export function startVoiceOwnerCommandListener(): void {
@@ -312,6 +363,15 @@ export function startVoiceOwnerCommandListener(): void {
       void useVoiceStore.getState().hangUp();
     }
   };
+  const onConfirmTunnelConsent = () => {
+    void useVoiceStore.getState().confirmTunnelConsent();
+  };
+  const onCancelTunnelConsent = () => {
+    useVoiceStore.getState().cancelTunnelConsent();
+  };
+  const onSnapshotRequest = () => {
+    void emitEverywhere(EVENT_STATE, toSnapshot(useVoiceStore.getState()));
+  };
   const onActiveSession = (sessionId: string | null) => {
     useVoiceStore.getState().noteActiveChatSession(sessionId);
   };
@@ -319,6 +379,9 @@ export function startVoiceOwnerCommandListener(): void {
   if (isTauri()) {
     void listen<StartVoiceCallRequest>(EVENT_START_REQUEST, (event) => onStart(event.payload));
     void listen(EVENT_HANGUP_REQUEST, onHangUp);
+    void listen(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
+    void listen(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
+    void listen(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);
     void listen<{ sessionId: string | null }>(EVENT_ACTIVE_CHAT_SESSION, (event) =>
       onActiveSession(event.payload.sessionId),
     );
@@ -328,6 +391,9 @@ export function startVoiceOwnerCommandListener(): void {
     onStart((event as CustomEvent<StartVoiceCallRequest>).detail ?? {});
   });
   window.addEventListener(EVENT_HANGUP_REQUEST, onHangUp);
+  window.addEventListener(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
+  window.addEventListener(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
+  window.addEventListener(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);
   window.addEventListener(EVENT_ACTIVE_CHAT_SESSION, (event) => {
     onActiveSession((event as CustomEvent<{ sessionId: string | null }>).detail?.sessionId ?? null);
   });

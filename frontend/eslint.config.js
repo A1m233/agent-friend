@@ -25,6 +25,18 @@ export default tseslint.config(
     settings: { react: { version: "detect" } },
     rules: {
       "react/forbid-elements": ["error", { forbid: forbiddenNativeElements }],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "radix-ui",
+              message:
+                "业务代码禁止直接 import radix-ui；请通过 components/ui 封装件使用，或先抽一个项目 UI 封装。",
+            },
+          ],
+        },
+      ],
       // 18 · stub 实现 / 占位接口里允许下划线前缀 + caughtErrors 显式 _ 略过
       "@typescript-eslint/no-unused-vars": [
         "error",
@@ -35,6 +47,9 @@ export default tseslint.config(
   {
     // 封装层豁免：ui/ 组件本就要包原生件
     files: ["src/components/ui/**/*.{ts,tsx}"],
-    rules: { "react/forbid-elements": "off" },
+    rules: {
+      "react/forbid-elements": "off",
+      "no-restricted-imports": "off",
+    },
   },
 );

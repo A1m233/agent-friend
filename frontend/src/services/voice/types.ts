@@ -9,6 +9,18 @@ export type VoiceCallPhase =
   | "ended"
   | "error";
 
+export type VoiceCallFailureStage =
+  | "start_call"
+  | "rtc_join_publish"
+  | "start_agent"
+  | "stop_call"
+  | "rtc_cleanup";
+
+export interface VoiceCallDiagnostic {
+  stage: VoiceCallFailureStage;
+  message: string;
+}
+
 export interface StartVoiceCallRequest {
   sessionId?: string;
   persona?: string;
@@ -34,7 +46,7 @@ export interface VoiceCallSnapshot {
   durationMs: number;
   volumeLevel: number;
   error: string | null;
-  consentAccepted: boolean;
+  diagnostic: VoiceCallDiagnostic | null;
 }
 
 export interface RtcJoinCredentials {

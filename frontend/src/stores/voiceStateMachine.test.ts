@@ -4,6 +4,7 @@ import {
   canStartVoiceCall,
   isVoiceCallBlockingText,
   isVoiceCallLive,
+  voiceFailureStageLabel,
   voicePhaseLabel,
 } from "./voiceStateMachine";
 
@@ -35,5 +36,11 @@ describe("voiceStateMachine", () => {
   it("提供用户可见状态文案", () => {
     expect(voicePhaseLabel("active")).toBe("正在听...");
     expect(voicePhaseLabel("error")).toBe("没有接通");
+  });
+
+  it("提供失败阶段诊断文案", () => {
+    expect(voiceFailureStageLabel("start_call")).toBe("创建通话");
+    expect(voiceFailureStageLabel("rtc_join_publish")).toBe("RTC 入房/发布");
+    expect(voiceFailureStageLabel("start_agent")).toBe("启动语音 agent");
   });
 });

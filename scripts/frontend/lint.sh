@@ -10,6 +10,8 @@ echo "===> eslint"
 pnpm run lint
 echo "===> color-guard"
 pnpm run lint:colors
+echo "===> ui-provenance-guard"
+pnpm run lint:ui-provenance
 echo "===> design-token-guard"
 pnpm run lint:tokens
 echo "===> typecheck"

@@ -9,7 +9,6 @@ import type { PushEnvelope } from "@/types/push";
 import { ActionBar } from "./ActionBar";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
-import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
 import { usePetInteractions } from "./usePetInteractions";
@@ -75,8 +74,6 @@ export function PetApp() {
   const [imDialogOpen, setImDialogOpen] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStart);
-  const confirmVoiceTunnel = useVoiceStore((s) => s.confirmTunnelConsent);
-  const cancelVoiceTunnel = useVoiceStore((s) => s.cancelTunnelConsent);
 
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
@@ -358,11 +355,6 @@ export function PetApp() {
         />
       )}
       <IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />
-      <VoiceTunnelConsentDialog
-        open={voicePhase === "confirming_tunnel"}
-        onConfirm={() => void confirmVoiceTunnel()}
-        onCancel={cancelVoiceTunnel}
-      />
     </>
   );
 }

@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { MessageSquare, Mic, Phone, PhoneOff, ShieldCheck, ShieldX } from "lucide-react";
+import { MessageSquare, Mic, Phone, PhoneOff } from "lucide-react";
 
+import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
-import { voicePhaseLabel } from "@/stores/voiceStateMachine";
+import { voiceFailureStageLabel, voicePhaseLabel } from "@/stores/voiceStateMachine";
 import { isTauri } from "@/utils/tauri";
 
 function formatDuration(ms: number): string {
@@ -24,11 +25,13 @@ export function VoiceCallApp() {
   const durationMs = useVoiceStore((s) => s.durationMs);
   const volumeLevel = useVoiceStore((s) => s.volumeLevel);
   const error = useVoiceStore((s) => s.error);
-  const consentAccepted = useVoiceStore((s) => s.consentAccepted);
+  const diagnostic = useVoiceStore((s) => s.diagnostic);
   const requestStart = useVoiceStore((s) => s.requestStartFromAnyWindow);
+  const requestConfirmTunnel = useVoiceStore((s) => s.requestConfirmTunnelConsent);
+  const requestCancelTunnel = useVoiceStore((s) => s.requestCancelTunnelConsent);
   const requestHangUp = useVoiceStore((s) => s.requestHangUp);
-  const setTunnelConsentAccepted = useVoiceStore((s) => s.setTunnelConsentAccepted);
 
+  const awaitingConsent = phase === "confirming_tunnel";
   const canDial = phase === "idle" || phase === "ended" || phase === "error";
   const inCall = phase === "active";
   const busy = phase === "dialing" || phase === "joining_room" || phase === "starting_agent";
@@ -41,16 +44,8 @@ export function VoiceCallApp() {
   return (
     <TooltipProvider delayDuration={0}>
       <main className="flex h-screen flex-col bg-bg text-fg">
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
+        <header className="flex items-center border-b border-border px-4 py-3">
           <span className="text-sm font-medium text-muted">语音通话</span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => void setTunnelConsentAccepted(!consentAccepted)}
-          >
-            {consentAccepted ? <ShieldCheck /> : <ShieldX />}
-            {consentAccepted ? "已确认穿透" : "需确认穿透"}
-          </Button>
         </header>
 
         <section className="flex flex-1 flex-col items-center justify-center gap-8 px-8 py-8">
@@ -83,11 +78,16 @@ export function VoiceCallApp() {
                 {error}
               </p>
             )}
+            {diagnostic && phase === "error" && (
+              <p className="max-w-sm text-xs text-muted">
+                诊断：{voiceFailureStageLabel(diagnostic.stage)} · {diagnostic.message}
+              </p>
+            )}
           </div>
         </section>
 
         <footer className="flex items-center justify-center gap-8 border-t border-border px-6 py-5">
-          {!canDial && (
+          {!canDial && !awaitingConsent && (
             <>
               <TooltipButton
                 icon={<MessageSquare />}
@@ -103,7 +103,11 @@ export function VoiceCallApp() {
               />
             </>
           )}
-          {canDial ? (
+          {awaitingConsent ? (
+            <Button size="icon-lg" className="rounded-full" disabled aria-label="等待确认">
+              <Phone />
+            </Button>
+          ) : canDial ? (
             <Button
               size="icon-lg"
               className="rounded-full"
@@ -124,6 +128,11 @@ export function VoiceCallApp() {
             </Button>
           )}
         </footer>
+        <VoiceTunnelConsentDialog
+          open={awaitingConsent}
+          onConfirm={() => void requestConfirmTunnel()}
+          onCancel={() => void requestCancelTunnel()}
+        />
       </main>
     </TooltipProvider>
   );

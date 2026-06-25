@@ -1,4 +1,4 @@
-import type { VoiceCallPhase } from "@/services/voice/types";
+import type { VoiceCallFailureStage, VoiceCallPhase } from "@/services/voice/types";
 
 export function canStartVoiceCall(phase: VoiceCallPhase): boolean {
   return phase === "idle" || phase === "ended" || phase === "error";
@@ -44,5 +44,20 @@ export function voicePhaseLabel(phase: VoiceCallPhase): string {
     case "idle":
     default:
       return "准备拨号";
+  }
+}
+
+export function voiceFailureStageLabel(stage: VoiceCallFailureStage): string {
+  switch (stage) {
+    case "start_call":
+      return "创建通话";
+    case "rtc_join_publish":
+      return "RTC 入房/发布";
+    case "start_agent":
+      return "启动语音 agent";
+    case "stop_call":
+      return "通知挂断";
+    case "rtc_cleanup":
+      return "释放 RTC";
   }
 }

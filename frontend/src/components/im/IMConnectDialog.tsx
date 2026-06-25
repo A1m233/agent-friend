@@ -3,8 +3,7 @@
  *
  * UX 设计:
  * - shadcn dialog,但 backdrop **透明**(不遮黑 pet 整屏 overlay 视觉环境)
- *   → 不复用 DialogContent(它内嵌 bg-black/50 overlay),手动组合 Dialog + Portal +
- *   透明 Overlay + Primitive.Content
+ *   → 通过 DialogContent 的 overlayClassName 扩展点覆盖默认 backdrop
  * - 所有交互元素带 `data-hit`,让 pet 的 cursor passthrough 不吃掉点击
  * - dialog 主体 = 浮卡,bg-bg/95 + border + shadow,跟 ActionBar 同款
  *
@@ -20,14 +19,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plug, RefreshCcw, Trash2 } from "lucide-react";
 import QRCode from "qrcode";
-import { Dialog as DialogPrimitive } from "radix-ui";
 
 import {
   Button,
+  Dialog,
   DialogClose,
+  DialogContent,
   DialogDescription,
-  DialogOverlay,
-  DialogPortal,
   DialogTitle,
 } from "@/components/ui";
 import {
@@ -154,132 +152,123 @@ export function IMConnectDialog({ open, onOpenChange }: Props) {
   );
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPortal>
-        {/* backdrop 透明:不遮黑 pet 整屏 overlay */}
-        <DialogOverlay className="bg-transparent" />
-        <DialogPrimitive.Content
-          data-hit
-          className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-2rem))]",
-            "-translate-x-1/2 -translate-y-1/2",
-            "rounded-2xl border border-border bg-bg/95 shadow-2xl",
-            "p-6 outline-none",
-            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
-            "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
-          )}
-        >
-          <DialogTitle className="text-lg font-semibold text-fg">
-            接入 IM
-          </DialogTitle>
-          <DialogDescription className="mt-1 text-sm text-fg/70">
-            在 IM 里也能跟我聊。同人格,共享记忆。
-          </DialogDescription>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        data-hit
+        showCloseButton={false}
+        overlayClassName="bg-transparent"
+        className="w-[min(420px,calc(100vw-2rem))] max-w-none rounded-2xl bg-bg/95 shadow-2xl"
+      >
+        <DialogTitle className="text-lg font-semibold text-fg">
+          接入 IM
+        </DialogTitle>
+        <DialogDescription className="mt-1 text-sm text-fg/70">
+          在 IM 里也能跟我聊。同人格,共享记忆。
+        </DialogDescription>
 
-          {/* === 已绑定 === */}
-          <section className="mt-5">
-            <header className="mb-2 flex items-center justify-between">
-              <span className="text-xs uppercase tracking-wide text-fg/60">
-                已绑定
-              </span>
+        {/* === 已绑定 === */}
+        <section className="mt-5">
+          <header className="mb-2 flex items-center justify-between">
+            <span className="text-xs uppercase tracking-wide text-fg/60">
+              已绑定
+            </span>
+            <Button
+              data-hit
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void refreshProviders()}
+              disabled={loadingProviders}
+              aria-label="刷新"
+            >
+              <RefreshCcw className="size-4" />
+            </Button>
+          </header>
+          {providers.length === 0 ? (
+            <p className="text-sm text-fg/50">
+              {loadingProviders ? "加载中…" : "暂无已绑定的 IM。"}
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {providers.map((p) => (
+                <li
+                  key={`${p.im_type}-${p.bind_id}`}
+                  className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2"
+                >
+                  <span className="text-sm text-fg">
+                    {labelOfIMType(p.im_type)} · {p.bind_id_masked}
+                    <span
+                      className={cn(
+                        "ml-2 text-xs",
+                        p.status === "active" && "text-success",
+                        p.status === "degraded" && "text-warning",
+                        p.status === "error" && "text-danger",
+                        p.status === "stopped" && "text-fg/50",
+                      )}
+                    >
+                      {labelOfStatus(p.status)}
+                    </span>
+                  </span>
+                  <Button
+                    data-hit
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => void unbind(p.im_type, p.bind_id)}
+                    aria-label="解绑"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* === 接入新 IM === */}
+        <section className="mt-5">
+          <header className="mb-2 text-xs uppercase tracking-wide text-fg/60">
+            接入新 IM
+          </header>
+          {onboardTask ? (
+            <OnboardProgress
+              task={onboardTask}
+              qrDataUrl={qrDataUrl}
+              onCancel={() => setOnboardTask(null)}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
               <Button
                 data-hit
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => void refreshProviders()}
-                disabled={loadingProviders}
-                aria-label="刷新"
+                size="sm"
+                onClick={() => void startQQOnboard()}
               >
-                <RefreshCcw className="size-4" />
+                <Plug className="size-4" />
+                QQ
               </Button>
-            </header>
-            {providers.length === 0 ? (
-              <p className="text-sm text-fg/50">
-                {loadingProviders ? "加载中…" : "暂无已绑定的 IM。"}
-              </p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {providers.map((p) => (
-                  <li
-                    key={`${p.im_type}-${p.bind_id}`}
-                    className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2"
-                  >
-                    <span className="text-sm text-fg">
-                      {labelOfIMType(p.im_type)} · {p.bind_id_masked}
-                      <span
-                        className={cn(
-                          "ml-2 text-xs",
-                          p.status === "active" && "text-success",
-                          p.status === "degraded" && "text-warning",
-                          p.status === "error" && "text-danger",
-                          p.status === "stopped" && "text-fg/50",
-                        )}
-                      >
-                        {labelOfStatus(p.status)}
-                      </span>
-                    </span>
-                    <Button
-                      data-hit
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => void unbind(p.im_type, p.bind_id)}
-                      aria-label="解绑"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {/* === 接入新 IM === */}
-          <section className="mt-5">
-            <header className="mb-2 text-xs uppercase tracking-wide text-fg/60">
-              接入新 IM
-            </header>
-            {onboardTask ? (
-              <OnboardProgress
-                task={onboardTask}
-                qrDataUrl={qrDataUrl}
-                onCancel={() => setOnboardTask(null)}
-              />
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  data-hit
-                  size="sm"
-                  onClick={() => void startQQOnboard()}
-                >
-                  <Plug className="size-4" />
-                  QQ
-                </Button>
-                <Button data-hit size="sm" variant="ghost" disabled>
-                  飞书 (敬请期待)
-                </Button>
-                <Button data-hit size="sm" variant="ghost" disabled>
-                  Telegram (敬请期待)
-                </Button>
-              </div>
-            )}
-          </section>
-
-          {errorMsg && (
-            <p className="mt-4 text-sm text-danger" role="alert">
-              {errorMsg}
-            </p>
+              <Button data-hit size="sm" variant="ghost" disabled>
+                飞书 (敬请期待)
+              </Button>
+              <Button data-hit size="sm" variant="ghost" disabled>
+                Telegram (敬请期待)
+              </Button>
+            </div>
           )}
+        </section>
 
-          <DialogClose
-            data-hit
-            className="absolute right-4 top-4 rounded-md p-1 text-fg/60 hover:bg-surface hover:text-fg focus:outline-none"
-            aria-label="关闭"
-          >
-            ✕
-          </DialogClose>
-        </DialogPrimitive.Content>
-      </DialogPortal>
-    </DialogPrimitive.Root>
+        {errorMsg && (
+          <p className="mt-4 text-sm text-danger" role="alert">
+            {errorMsg}
+          </p>
+        )}
+
+        <DialogClose
+          data-hit
+          className="absolute right-4 top-4 rounded-md p-1 text-fg/60 hover:bg-surface hover:text-fg focus:outline-none"
+          aria-label="关闭"
+        >
+          ✕
+        </DialogClose>
+      </DialogContent>
+    </Dialog>
   );
 }
 
