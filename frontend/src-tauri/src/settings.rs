@@ -34,6 +34,13 @@ impl Settings {
             ThemeMode::Dark => "dark",
         }
     }
+
+    fn tdesign_theme_mode_script(&self) -> &'static str {
+        match self.theme {
+            ThemeMode::Light => "document.documentElement.removeAttribute('theme-mode');",
+            ThemeMode::Dark => "document.documentElement.setAttribute('theme-mode', 'dark');",
+        }
+    }
 }
 
 const BUNDLE_ID: &str = "com.agentfriend.desktop";
@@ -87,9 +94,11 @@ pub fn build_init_script(s: &Settings) -> String {
         r#"
         window.__AGENT_FRIEND_SETTINGS__ = {json};
         document.documentElement.setAttribute('theme', '{theme}');
+        {tdesign_theme_mode_script}
         "#,
         json = json,
         theme = s.theme_attr(),
+        tdesign_theme_mode_script = s.tdesign_theme_mode_script(),
     )
 }
 
@@ -172,4 +181,29 @@ pub fn init<R: Runtime>(js_init_script: String) -> TauriPlugin<R> {
     PluginBuilder::new("agent-friend-settings")
         .js_init_script(js_init_script)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_init_script, Settings, ThemeMode};
+
+    #[test]
+    fn build_init_script_sets_tdesign_dark_theme_mode() {
+        let script = build_init_script(&Settings {
+            theme: ThemeMode::Dark,
+        });
+
+        assert!(script.contains("document.documentElement.setAttribute('theme', 'dark');"));
+        assert!(script.contains("document.documentElement.setAttribute('theme-mode', 'dark');"));
+    }
+
+    #[test]
+    fn build_init_script_clears_tdesign_theme_mode_for_light() {
+        let script = build_init_script(&Settings {
+            theme: ThemeMode::Light,
+        });
+
+        assert!(script.contains("document.documentElement.setAttribute('theme', 'light');"));
+        assert!(script.contains("document.documentElement.removeAttribute('theme-mode');"));
+    }
 }
