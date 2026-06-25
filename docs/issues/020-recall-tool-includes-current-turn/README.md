@@ -1,6 +1,6 @@
 # 020 · recall_past_chats includes the current turn in results
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-06-19
 - **关联需求**：020-engine-tool-conversation-history
@@ -39,3 +39,6 @@ uv run python docs/issues/019-im-recall-tool-not-triggered/llm_recall_smoke.py -
 - 或在 `Conversation` 调工具前，把 current turn 边界作为隐藏参数传给工具执行层，由工具 registry / invoker 统一提供。
 - 对时间范围型泛查询增加专门测试：断言结果不包含当前用户问题和 tool-call 前的 assistant 过渡话。
 - 短期可在工具 description / runtime prompt 中提示 LLM 不要把当前问题当作历史；但这只能缓解最终表达，不能解决工具结果污染。
+
+---
+已在 commit `TBD` 修复。

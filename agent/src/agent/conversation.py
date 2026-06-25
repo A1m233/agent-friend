@@ -84,6 +84,10 @@ MAX_TOOL_TURNS_DEFAULT = 5
 详见 docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.6.3。
 """
 
+_RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
+_CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
+_CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+
 
 def _resolve_max_tool_turns() -> int:
     """读 ``AGENT_MAX_TOOL_TURNS`` 环境变量，无效或缺失时回落到默认值。"""
@@ -366,7 +370,11 @@ class Conversation:
                     )
 
                     start = time.monotonic()
-                    result = self._invoke_tool_safely(tc["name"], tc["args"])
+                    result = self._invoke_tool_safely(
+                        tc["name"],
+                        tc["args"],
+                        current_turn_start_idx=turn_start_idx,
+                    )
                     duration = time.monotonic() - start
 
                     self._append_tool_call_result_event(tc, result, duration)
@@ -863,7 +871,13 @@ class Conversation:
             result.append({"id": slot["id"], "name": slot["name"], "args": args})
         return result
 
-    def _invoke_tool_safely(self, name: str, args: dict[str, Any]) -> ToolResult:
+    def _invoke_tool_safely(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        current_turn_start_idx: int | None = None,
+    ) -> ToolResult:
         """调一次工具，把所有异常转为 :class:`ToolResult` ``is_error=True``。
 
         014 起：如果构造时注入了 ``tool_hook_invoker``（AgentRuntime 装配时传入），
@@ -884,7 +898,12 @@ class Conversation:
 
         def _default_invoke() -> ToolResult:
             try:
-                return registry.invoke(name, args)
+                invocation_args = self._tool_args_with_invocation_context(
+                    name,
+                    args,
+                    current_turn_start_idx=current_turn_start_idx,
+                )
+                return registry.invoke(name, invocation_args)
             except Exception as exc:
                 return ToolResult(
                     text=f"工具 {name!r} 执行出错: {exc}",
@@ -894,6 +913,23 @@ class Conversation:
         if self._tool_hook_invoker is not None:
             return self._tool_hook_invoker(name, args, _default_invoke)
         return _default_invoke()
+
+    def _tool_args_with_invocation_context(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        current_turn_start_idx: int | None,
+    ) -> dict[str, Any]:
+        """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
+        if name != _RECALL_PAST_CHATS_TOOL_NAME or current_turn_start_idx is None:
+            return args
+
+        return {
+            **args,
+            _CURRENT_SESSION_ID_ARG: self._session.session_id,
+            _CURRENT_TURN_START_INDEX_ARG: current_turn_start_idx,
+        }
 
     def _finalize_on_tool_loop_limit(
         self,

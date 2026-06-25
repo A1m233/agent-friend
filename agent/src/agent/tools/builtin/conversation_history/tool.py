@@ -26,6 +26,8 @@ from .time_parser import parse_time_expression
 _DEFAULT_LIMIT = 10
 _MAX_LIMIT = 50
 _MIN_LIMIT = 1
+_CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
+_CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 
 
 def _default_now() -> datetime:
@@ -125,7 +127,8 @@ class ConversationHistoryTool:
             )
 
         try:
-            hits = self._scan(query, since, until, said_by, limit)
+            current_turn_boundary = _current_turn_boundary(args)
+            hits = self._scan(query, since, until, said_by, limit, current_turn_boundary)
         except SessionPersistError:
             return ToolResult(
                 text="一时翻不到记录了，等下再说吧。",
@@ -146,6 +149,7 @@ class ConversationHistoryTool:
         until: datetime | None,
         said_by: str | None,
         limit: int,
+        current_turn_boundary: tuple[str, int] | None = None,
     ) -> list[Hit]:
         """扫描所有 session 的 events，按过滤条件收集 Hit。"""
         summaries = self._store.list()
@@ -162,8 +166,17 @@ class ConversationHistoryTool:
 
         for summary in relevant:
             session = self._store.load(summary.session_id)
+            cutoff_idx = (
+                current_turn_boundary[1]
+                if current_turn_boundary is not None
+                and summary.session_id == current_turn_boundary[0]
+                else None
+            )
             prev: Event | None = None
-            for ev in session.events:
+            for idx, ev in enumerate(session.events):
+                if cutoff_idx is not None and idx >= cutoff_idx:
+                    break
+
                 if ev.type not in ("user_message", "assistant_message"):
                     continue
 
@@ -206,6 +219,15 @@ def _opt_str(args: dict[str, Any], key: str) -> str | None:
         return None
     stripped = v.strip()
     return stripped if stripped else None
+
+
+def _current_turn_boundary(args: dict[str, Any]) -> tuple[str, int] | None:
+    """读取工具执行层注入的当前 turn 边界；LLM 不可见、无效则忽略。"""
+    session_id = _opt_str(args, _CURRENT_SESSION_ID_ARG)
+    raw_idx = args.get(_CURRENT_TURN_START_INDEX_ARG)
+    if session_id is None or not isinstance(raw_idx, int) or raw_idx < 0:
+        return None
+    return session_id, raw_idx
 
 
 def _clamp_limit(raw: Any) -> int:
