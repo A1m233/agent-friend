@@ -72,8 +72,10 @@ class ConversationHistoryTool:
             "since": {
                 "type": "string",
                 "description": (
-                    "回忆的时间下界。支持 ISO 8601 日期（如「2026-06-15」）或自然语言"
-                    "（「3 天前」/「上周」/「上月」/「去年」等）。可选。"
+                    "回忆的明确时间下界。支持 ISO 8601 日期（如「2026-06-15」）或"
+                    "明确自然语言时间（「3 天前」/「上周」/「上月」/「去年」等）。可选。"
+                    "如果用户只是泛泛问「最近」/「近期」/「这阵子」聊了什么，不要传 since；"
+                    "省略 since 并用 limit 按时间倒序取最近片段。"
                 ),
             },
             "until": {
@@ -179,6 +181,9 @@ class ConversationHistoryTool:
 
                 if ev.type not in ("user_message", "assistant_message"):
                     continue
+                content = _recall_content(ev)
+                if content is None:
+                    continue
 
                 if since is not None and ev.ts < since:
                     prev = ev
@@ -194,11 +199,9 @@ class ConversationHistoryTool:
                     prev = ev
                     continue
 
-                if needle is not None:
-                    content = ev.payload.get("content", "")
-                    if not isinstance(content, str) or needle not in content.lower():
-                        prev = ev
-                        continue
+                if needle is not None and needle not in content.lower():
+                    prev = ev
+                    continue
 
                 pair = (
                     prev
@@ -218,6 +221,17 @@ def _opt_str(args: dict[str, Any], key: str) -> str | None:
     if not isinstance(v, str):
         return None
     stripped = v.strip()
+    return stripped if stripped else None
+
+
+def _recall_content(ev: Event) -> str | None:
+    """返回可作为 recall 内容的文本；partial / 空 assistant 不算历史发言。"""
+    if ev.type == "assistant_message" and ev.payload.get("partial"):
+        return None
+    content = ev.payload.get("content", "")
+    if not isinstance(content, str):
+        return None
+    stripped = content.strip()
     return stripped if stripped else None
 
 

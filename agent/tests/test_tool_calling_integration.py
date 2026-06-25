@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -281,6 +281,32 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
 
     request_event = next(ev for ev in conv.session.events if ev.type == "tool_call_request")
     assert request_event.payload["args"] == {"limit": 10}
+
+
+def test_closing_stream_after_turndone_does_not_write_partial_duplicate(tmp_path: Path) -> None:
+    """消费方拿到 TurnDone 后关闭 generator，不应误落一条 partial=True 重复回复。"""
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMTextDelta(text="完整回复"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([]))
+
+    stream = cast(Generator[Any, None, None], conv.stream("hi"))
+    first = next(stream)
+    done = next(stream)
+    assert isinstance(first, TextDelta)
+    assert isinstance(done, TurnDone)
+
+    stream.close()
+
+    assistant_events = [ev for ev in conv.session.events if ev.type == "assistant_message"]
+    assert len(assistant_events) == 1
+    assert assistant_events[0].payload["content"] == "完整回复"
+    assert assistant_events[0].payload["partial"] is False
 
 
 # ===== 失败兜底 =====

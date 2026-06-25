@@ -22,12 +22,12 @@
 
 ## 根因初判
 
-这是多个问题叠加导致的召回质量缺陷，不是工具未注册问题：
+这是多个问题叠加导致的召回质量缺陷，不是工具未注册问题。当前拆解如下：
 
-- 时间解析器不支持“最近”这类泛时间表达，LLM 又自然倾向传入该表达。
-- `recall_past_chats` 不知道当前 turn 边界，会扫描到本轮已经写入的 user / assistant 事件；这与 issue 020 同源。
+- 工具契约没有把“明确时间下界”和“开放式近期意图”说清楚。`since` 的 schema 只举了「3 天前 / 上周 / 上月 / 去年」等例子，但没有明确「最近 / 近期 / 这阵子」这类泛近期表达不应作为硬边界传入；LLM 把用户原词 `最近` 塞进 `since` 是自然失败模式，不应简单归因于模型没读工具定义。
+- `recall_past_chats` 不知道当前 turn 边界，会扫描到本轮已经写入的 user / assistant 事件；这与 issue 020 同源，已由 issue 020 的 current-turn boundary 过滤修复。
 - 工具目前以“消息事件”为单位按时间倒序截断，而不是以“话题 / turn / session 摘要”为单位组织结果。
-- session 落盘里存在 assistant partial 重复事件，增加噪声并挤占 `limit`。
+- session 落盘里存在 assistant partial 重复事件，增加噪声并挤占 `limit`。进一步排查后判断：`partial=true` 是被中断的部分回复，不应作为 recall 里的稳定历史发言；空 assistant message 多数是 tool-call 轮的协议承载，也不应作为 recall 命中。
 - 对“最近聊了啥”这类无关键词泛查询，当前工具只返回片段列表，缺少专门的摘要型检索/聚合策略。
 
 ## 影响与判断
@@ -40,8 +40,9 @@
 
 ## 可选修复方向
 
-- 扩展 `parse_time_expression` 支持“最近 / 近期 / 这阵子”等泛时间表达，映射到保守默认窗口（如 3 天或 7 天），并补测试。
-- 修 issue 020：给工具调用注入当前 session / turn 边界，过滤当前轮 user 问句、assistant 过渡话和空消息。
-- 检查 assistant `partial=true` 事件为何会与最终消息重复落盘；若只是推送/流式展示用途，应避免进入长期会话历史，或在 recall 工具扫描时过滤。
+- 明确工具定义和 runtime prompt：`since` / `until` 只用于明确时间边界；“最近 / 近期 / 这阵子”这类开放式近期泛查询应省略 `since`，只用 `limit` 按时间倒序取最近片段。
+- 修 issue 020：给工具调用注入当前 session / turn 边界，过滤当前轮 user 问句、assistant 过渡话和空消息。（已处理）
+- 修复 `Conversation.stream()` 在消费方拿到 `TurnDone` 后关闭 generator 时误落 `partial=true` assistant 的问题，避免未来继续产生已完成回复的 partial 重复。
+- 在 `recall_past_chats` 扫描时过滤 `partial=true` assistant 和空 assistant message，避免既有历史噪声继续挤占 `limit`。
 - 对无 query 的时间范围泛查询增加“按 turn 聚合 + 去重 + 摘要友好排序”，避免简单按单条 message 截断。
 - 增加真实或 fake LLM smoke case：用户问“你还记得我们最近聊了啥吗”时，断言工具参数可用、结果不包含当前轮、且能覆盖最近多个历史话题。
