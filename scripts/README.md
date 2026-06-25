@@ -22,7 +22,7 @@
 | `setup/` | 一键环境初始化（检查 uv → `uv sync` → 创建 `.env` → 尽力装前端依赖 → 检查 Rust；缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
 | `cli/` | 启动 CLI 调试 UI（默认 in-process；加 `--bridge URL` 连远端 bridge） | `./scripts/cli/run.sh [--bridge URL]` | `.\scripts\cli\run.ps1 [--bridge URL]` |
 | `bridge/` | 启动 agent-bridge HTTP SSE 服务（默认 `127.0.0.1:18800`；OpenAI + AG-UI 双协议） | `./scripts/bridge/run.sh` | `.\scripts\bridge\run.ps1` |
-| `dev/` | **一键起 bridge + 前端**（默认 Tauri 桌面双窗口；`--web` 切浏览器、不编译 Rust）。两路日志加 `[bridge]`/`[app\|web]` 前缀，Ctrl+C 一起退 | `./scripts/dev/run.sh [--web] [前端参数]` | `.\scripts\dev\run.ps1 [--web] [前端参数]` |
+| `dev/` | **一键起 bridge + 前端**（默认 Tauri 桌面双窗口；`--web` 切浏览器、不编译 Rust）。两路日志加 `[bridge]`/`[app\|web]` 前缀，Ctrl+C 一起退；退出后恢复调用前工作目录 | `./scripts/dev/run.sh [--web] [前端参数]` | `.\scripts\dev\run.ps1 [--web] [前端参数]` |
 | `voice/run` | 启动 voice-bridge 控制平面 + LLM 入站代理（默认 `127.0.0.1:18900`；007 voice-call） | `./scripts/voice/run.sh` | `.\scripts\voice\run.ps1` |
 | `voice/tunnel` | 启动 cloudflared 公网穿透样例（仅 mac/linux；详见脚本头部注释；windows 自行起隧道） | `./scripts/voice/tunnel.sh` | （单端例外） |
 | `voice-smoke/run` | **Windows 真机语音 smoke 一键启动**：拉起 agent_bridge、cloudflared、voice_bridge、本地 HTTP server，自动回填 `VOICE_BRIDGE_PUBLIC_URL`，然后访问 `voice_bridge/smoke/`。⚠️ 触发真实火山 RTC + DeepSeek 调用 | （单端例外：仅 Windows） | `.\scripts\voice-smoke\run.ps1` |

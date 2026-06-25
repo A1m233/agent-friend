@@ -10,6 +10,9 @@ $ErrorActionPreference = "Stop"
 # 强制 UTF-8 输出，避免中文在终端乱码（Windows PowerShell 5.1 默认按系统 ANSI/GBK 输出）
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$previousLocation = (Get-Location).Path
+
+try {
 Set-Location $root
 
 $mode = "tauri"
@@ -24,7 +27,6 @@ foreach ($a in $args) {
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
-    exit 1
 }
 . (Join-Path $PSScriptRoot "..\frontend\_ensure-node.ps1")
 Ensure-NodePnpm
@@ -33,28 +35,49 @@ Ensure-NodePnpm
 # 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
 $DevPort = 1420
 
-function Test-PortInUse($port) {
+function Get-DevPortListeners($port) {
     try {
-        $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction Stop
-        return $conn.Count -gt 0
+        return @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)
     }
     catch {
-        return $false
+        return @()
     }
 }
 
+function Test-PortInUse($port) {
+    return (Get-DevPortListeners $port).Count -gt 0
+}
+
+function Test-DevPortProcess($proc, $commandLine) {
+    $name = $proc.ProcessName.ToLowerInvariant()
+    if ($name -in @("node", "pnpm", "npm", "tauri", "cargo", "app")) {
+        return $true
+    }
+    if ($commandLine -match "(^|\s)(pnpm|vite|tauri|cargo)(\s|$)" -or
+        $commandLine -match "frontend") {
+        return $true
+    }
+    return $false
+}
+
 function Stop-DevPortProcess($port) {
-    $killed = @()
-    $conns = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
-    foreach ($conn in $conns) {
-        $proc = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
+    $conns = Get-DevPortListeners $port
+    $owners = @($conns | ForEach-Object { $_.OwningProcess } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    foreach ($ownerPid in $owners) {
+        $proc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
         if (-not $proc) { continue }
-        # 只杀疑似前端 dev 相关的进程，避免误伤用户其他服务。
-        $name = $proc.ProcessName
-        if ($name -in @("node", "pnpm", "tauri", "cargo", "app")) {
+        $commandLine = ""
+        try {
+            $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction Stop).CommandLine
+        }
+        catch {
+            # ignore
+        }
+        if (Test-DevPortProcess $proc $commandLine) {
             try {
-                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
-                $killed += $proc.Id
+                # Windows 上 pnpm/tauri/vite 常有父子进程树；只 Stop-Process
+                # OwningProcess 容易留下子进程继续监听 1420。
+                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
             }
             catch {
                 # ignore
@@ -78,7 +101,6 @@ if (Test-PortInUse $DevPort) {
     }
     else {
         Write-Error "端口 $DevPort 仍被占用，无法启动前端 dev server。请检查是否有其他程序占用该端口，或手动终止相关进程后再试。"
-        exit 1
     }
 }
 
@@ -105,4 +127,8 @@ finally {
         # /T 连同 uv 派生的 python 进程树一起结束
         taskkill /PID $bridge.Id /T /F 2>$null | Out-Null
     }
+}
+}
+finally {
+    Set-Location $previousLocation
 }
