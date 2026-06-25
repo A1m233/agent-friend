@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import agent_bridge.assembly as assembly
 import pytest
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
@@ -23,6 +24,8 @@ from agent import (
     make_default_registry,
 )
 from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+
+LLMClientFactory = Callable[[str], LLMClient]
 
 
 @dataclass
@@ -55,7 +58,7 @@ def _build_runtime(
     tmp_path: Path,
     *,
     llm_script: list[list[LLMStreamEvent]],
-) -> BridgeRuntime:
+) -> tuple[BridgeRuntime, LLMClientFactory]:
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     catalog = PersonaCatalog()
@@ -77,26 +80,31 @@ def _build_runtime(
         tool_registry=tool_registry,
     )
 
-    return BridgeRuntime(
-        settings=settings,
-        persistent_store=persistent_store,
-        transient_store=NullSessionStore(),
-        persistent_session_manager=persistent_session_manager,
-        catalog=catalog,
-        tool_registry=tool_registry,
-        prompt_builder_factory=_prompt_factory,
-        default_persona=catalog.find_by_name("default").name,
-        default_model="deepseek/deepseek-chat",
+    return (
+        BridgeRuntime(
+            settings=settings,
+            persistent_store=persistent_store,
+            transient_store=NullSessionStore(),
+            persistent_session_manager=persistent_session_manager,
+            catalog=catalog,
+            tool_registry=tool_registry,
+            prompt_builder_factory=_prompt_factory,
+            default_persona=catalog.find_by_name("default").name,
+            default_model="deepseek/deepseek-chat",
+        ),
+        _llm_factory,
     )
 
 
 @pytest.fixture
-def runtime(tmp_path: Path) -> BridgeRuntime:
+def runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BridgeRuntime:
     """构造一个全新 BridgeRuntime，LLM 按脚本返回固定文本。"""
-    return _build_runtime(
+    runtime, fake_llm_factory = _build_runtime(
         tmp_path,
         llm_script=[[LLMTextDelta(text="hello from test"), LLMTurnDone(stop_reason="end_turn")]],
     )
+    monkeypatch.setattr(assembly, "_llm_factory", fake_llm_factory)
+    return runtime
 
 
 @pytest.fixture
