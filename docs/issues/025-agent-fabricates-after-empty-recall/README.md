@@ -1,6 +1,6 @@
 # 025 · agent 承认 `recall_past_chats` 翻不到后,仍用通识替补 fabrication
 
-- **状态**:open
+- **状态**:resolved
 - **严重度**:medium
 - **发现日期**:2026-06-24
 - **关联需求**:[020-engine-tool-conversation-history](../../requirements/020-engine-tool-conversation-history/)
@@ -85,3 +85,7 @@ issue 020(`recall-tool-includes-current-turn`)是**工具自身**问题:工具�
 
 - 跟 issue 015 一样,**不在工程层加 fabrication 检测**(CC 的 `looksFabricated` 防的是 prompt-injection 风格的伪 turn 边界,不防事实幻觉)
 - 修复方向 1 落码后,可参考 issue 015 `solution.md` §2.5-2.8 的 v1-v5 replay 验证模式,跑 N round 看 v4-flash compliance 表现
+
+---
+
+已在 commit `TBD` 修复。

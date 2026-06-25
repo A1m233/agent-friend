@@ -83,6 +83,39 @@ def test_spec_from_env_reads_context_window(monkeypatch: pytest.MonkeyPatch) -> 
     assert spec2.context_window is None
 
 
+def test_spec_from_env_can_read_dedicated_model_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """旁路任务可用专门的 model env，不影响主 ``{prefix}_MODEL``。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek/deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MEMORY_MODEL", "deepseek/deepseek-v4-pro")
+
+    spec = ProviderSpec.from_env(
+        "DEEPSEEK",
+        model_env_var="DEEPSEEK_MEMORY_MODEL",
+        default_model_key="memory_model",
+    )
+
+    assert spec.model == "deepseek/deepseek-v4-pro"
+
+
+def test_spec_from_env_memory_model_defaults_to_v4_pro(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEEPSEEK_MEMORY_MODEL 未设置时，记忆抽取默认走 V4 Pro。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.delenv("DEEPSEEK_MEMORY_MODEL", raising=False)
+
+    spec = ProviderSpec.from_env(
+        "DEEPSEEK",
+        model_env_var="DEEPSEEK_MEMORY_MODEL",
+        default_model_key="memory_model",
+    )
+
+    assert spec.model == "deepseek/deepseek-v4-pro"
+
+
 # ===== _extract_usage =====
 
 

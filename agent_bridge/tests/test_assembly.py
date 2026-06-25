@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from agent_bridge.assembly import build_runtime
+from agent_bridge.assembly import _make_memory_spec_with_thinking_off, build_runtime
 from agent_bridge.settings import BridgeSettings
 
 
@@ -41,3 +41,24 @@ def test_persistent_runtime_registers_recall_past_chats(
         assert manager_registry is runtime.tool_registry
     finally:
         runtime.close()
+
+
+def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.delenv("DEEPSEEK_MEMORY_MODEL", raising=False)
+
+    spec = _make_memory_spec_with_thinking_off()
+
+    assert spec.model == "deepseek/deepseek-v4-pro"
+    assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_memory_spec_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.setenv("DEEPSEEK_MEMORY_MODEL", "deepseek/custom-memory")
+
+    spec = _make_memory_spec_with_thinking_off()
+
+    assert spec.model == "deepseek/custom-memory"
