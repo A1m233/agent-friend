@@ -5,6 +5,7 @@
 | ``GET /v1/sessions``              | 列出 sessions                          | ``/sessions``      |
 | ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
+| ``DELETE /v1/sessions/{id}``      | 删除 session（内部清理用）            | （内部）           |
 | ``POST /v1/sessions/{id}/persona`` | 切换 persona                          | ``/persona <name>``|
 | ``POST /v1/sessions/{id}/model``  | 切换 model                             | ``/model <name>``  |
 | ``POST /v1/sessions/{id}/channel`` | 切换 channel（007 起）                | （内部）           |
@@ -113,6 +114,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": session.current_model,
             "events": [_dataclass_to_dict(ev) for ev in session.events],
         }
+
+    @router.delete("/sessions/{session_id}")
+    def delete_session(session_id: str) -> dict[str, Any]:
+        """删除 session（内部清理用）。
+
+        当前唯一调用方是 voice_bridge：如果它为一次语音通话临时创建了 session，
+        但挂断时发现没有产生任何 user / assistant 消息，就删除这条空记录，避免
+        历史列表被无内容通话污染。
+        """
+        try:
+            mgr.delete(session_id)
+        except SessionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"session_id": session_id, "deleted": True}
 
     @router.post("/sessions/{session_id}/persona")
     def switch_persona(session_id: str, body: PersonaSwitchBody) -> dict[str, Any]:

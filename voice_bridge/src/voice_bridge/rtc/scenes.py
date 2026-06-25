@@ -60,18 +60,21 @@ def build_scenes(
     state_callback_url = settings.public_url.rstrip("/") + f"/voice/callbacks/state/{call_id}"
     subtitle_callback_url = settings.public_url.rstrip("/") + f"/voice/callbacks/subtitle/{call_id}"
 
+    agent_config: dict[str, Any] = {
+        "TargetUserId": [target_user_id],
+        "UserId": bot_user_id,
+        "EnableConversationStateCallback": True,
+        "ServerMessageURLForRTS": state_callback_url,
+        "ServerMessageSignatureForRTS": "agent-friend-smoke",
+    }
+    if welcome:
+        agent_config["WelcomeMessage"] = welcome
+
     return {
         "AppId": settings.volc_rtc_app_id,
         "RoomId": room_id,
         "TaskId": call_id,
-        "AgentConfig": {
-            "TargetUserId": [target_user_id],
-            "WelcomeMessage": welcome,
-            "UserId": bot_user_id,
-            "EnableConversationStateCallback": True,
-            "ServerMessageURLForRTS": state_callback_url,
-            "ServerMessageSignatureForRTS": "agent-friend-smoke",
-        },
+        "AgentConfig": agent_config,
         "Config": {
             "ASRConfig": {
                 "Provider": "volcano",

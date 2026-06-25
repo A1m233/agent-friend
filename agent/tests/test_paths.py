@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import platformdirs
 import pytest
-from agent.paths import DATA_DIR_ENV, LOG_DIR_ENV
+from agent.paths import APP_NAME, DATA_DIR_ENV, LOG_DIR_ENV
 
 from agent import (
     PersonaCatalog,
@@ -100,11 +101,12 @@ def test_log_dir_env_override_expands_user(
     assert log_dir() == Path.home() / "agent-friend-logs"
 
 
-def test_log_dir_default_uses_app_name(
+def test_log_dir_default_uses_platform_log_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(LOG_DIR_ENV, raising=False)
     monkeypatch.delenv(DATA_DIR_ENV, raising=False)
     root = log_dir()
     assert root.is_absolute()
-    assert root.name == "agent-friend"
+    assert root == Path(platformdirs.user_log_dir(APP_NAME, appauthor=False))
+    assert APP_NAME in root.parts

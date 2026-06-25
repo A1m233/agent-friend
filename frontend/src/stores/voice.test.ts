@@ -56,6 +56,7 @@ function resetVoiceStore(): void {
     startedAt: null,
     durationMs: 0,
     volumeLevel: 0,
+    muted: false,
     error: null,
     diagnostic: null,
     isOwner: false,
@@ -83,5 +84,35 @@ describe("voice store", () => {
       sessionId: "session-1",
     });
     expect(voiceApi.startCall).not.toHaveBeenCalled();
+  });
+
+  it("挂断时立即进入结束态，不等待后端断连完成", async () => {
+    let resolveStop!: () => void;
+    vi.mocked(voiceApi.stopCall).mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveStop = () => resolve("ended");
+      }),
+    );
+    useVoiceStore.setState({
+      phase: "active",
+      callId: "call-1",
+      sessionId: "session-1",
+      startedAt: Date.now(),
+      durationMs: 1200,
+      volumeLevel: 42,
+      muted: true,
+      isOwner: true,
+    });
+
+    const hangUp = useVoiceStore.getState().hangUp();
+
+    expect(useVoiceStore.getState().phase).toBe("ended");
+    expect(useVoiceStore.getState().callId).toBeNull();
+    expect(useVoiceStore.getState().volumeLevel).toBe(0);
+    expect(useVoiceStore.getState().muted).toBe(false);
+
+    resolveStop();
+    await hangUp;
+    expect(voiceApi.stopCall).toHaveBeenCalledWith("call-1");
   });
 });

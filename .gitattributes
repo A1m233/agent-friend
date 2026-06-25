@@ -1,0 +1,5 @@
+# Keep the Tauri manifest stable across Windows/macOS dev runs.
+frontend/src-tauri/Cargo.toml text eol=lf
+
+# Shell scripts must stay LF even when Windows core.autocrlf is enabled.
+scripts/dev/run.sh text eol=lf

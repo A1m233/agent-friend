@@ -18,10 +18,12 @@ import { canStartVoiceCall, isVoiceCallLive } from "./voiceStateMachine";
 const EVENT_STATE = "voice://state";
 const EVENT_START_REQUEST = "voice://start-request";
 const EVENT_HANGUP_REQUEST = "voice://hangup-request";
+const EVENT_TOGGLE_MUTE_REQUEST = "voice://toggle-mute-request";
 const EVENT_CONFIRM_TUNNEL_CONSENT = "voice://confirm-tunnel-consent";
 const EVENT_CANCEL_TUNNEL_CONSENT = "voice://cancel-tunnel-consent";
 const EVENT_SNAPSHOT_REQUEST = "voice://snapshot-request";
 const EVENT_ACTIVE_CHAT_SESSION = "voice://active-chat-session";
+const EVENT_SESSIONS_CHANGED = "sessions://changed";
 
 interface VoiceState extends VoiceCallSnapshot {
   isOwner: boolean;
@@ -35,6 +37,8 @@ interface VoiceState extends VoiceCallSnapshot {
   requestCancelTunnelConsent: () => Promise<void>;
   requestHangUp: () => Promise<void>;
   hangUp: () => Promise<void>;
+  requestToggleMute: () => Promise<void>;
+  toggleMute: () => Promise<void>;
   resetError: () => void;
   applyRemoteSnapshot: (snapshot: VoiceCallSnapshot) => void;
   noteActiveChatSession: (sessionId: string | null) => void;
@@ -44,6 +48,14 @@ let rtcClient: RtcClient | null = null;
 let durationTimer: ReturnType<typeof setInterval> | null = null;
 let stateSubscriberStarted = false;
 let ownerCommandSubscriberStarted = false;
+let activeStartToken = 0;
+let cancelledStartToken: number | null = null;
+
+class VoiceStartCancelled extends Error {
+  constructor() {
+    super("voice start cancelled");
+  }
+}
 
 function initialSnapshot(): VoiceCallSnapshot {
   return {
@@ -53,6 +65,7 @@ function initialSnapshot(): VoiceCallSnapshot {
     startedAt: null,
     durationMs: 0,
     volumeLevel: 0,
+    muted: false,
     error: null,
     diagnostic: null,
   };
@@ -66,6 +79,7 @@ function toSnapshot(state: VoiceState): VoiceCallSnapshot {
     startedAt: state.startedAt,
     durationMs: state.durationMs,
     volumeLevel: state.volumeLevel,
+    muted: state.muted,
     error: state.error,
     diagnostic: state.diagnostic,
   };
@@ -103,6 +117,14 @@ function toDiagnostic(stage: VoiceCallFailureStage, error: unknown): VoiceCallDi
   return { stage, message: diagnosticMessage(error) };
 }
 
+function isStartCancelled(token: number): boolean {
+  return token !== activeStartToken || cancelledStartToken === token;
+}
+
+function throwIfStartCancelled(token: number): void {
+  if (isStartCancelled(token)) throw new VoiceStartCancelled();
+}
+
 export const useVoiceStore = create<VoiceState>((set, get) => {
   const publish = () => {
     void emitEverywhere(EVENT_STATE, toSnapshot(get()));
@@ -123,13 +145,20 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     }, 1000);
   };
 
-  const cleanupRtc = async () => {
-    const current = rtcClient;
-    rtcClient = null;
-    await current?.cleanup().catch(() => {});
+  const cleanupRtc = async (target: RtcClient | null = rtcClient) => {
+    if (!target) return;
+    if (rtcClient === target) rtcClient = null;
+    await target.cleanup().catch(() => {});
   };
 
   const startInternal = async (req: StartVoiceCallRequest) => {
+    const startToken = activeStartToken + 1;
+    activeStartToken = startToken;
+    cancelledStartToken = null;
+    console.info("[voice] startInternal", {
+      sessionId: req.sessionId ?? "(new)",
+      deferStart: req.deferStart ?? true,
+    });
     setAndPublish({
       isOwner: true,
       pendingStart: null,
@@ -139,17 +168,26 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       startedAt: null,
       durationMs: 0,
       volumeLevel: 0,
+      muted: false,
       error: null,
       diagnostic: null,
     });
 
-    await focusVoiceCallWindow();
     let callId: string | null = null;
+    let localRtcClient: RtcClient | null = null;
     let stage: VoiceCallFailureStage = "start_call";
 
     try {
+      await focusVoiceCallWindow();
+      throwIfStartCancelled(startToken);
       const call = await voiceApi.startCall({ ...req, deferStart: true });
+      throwIfStartCancelled(startToken);
       callId = call.callId;
+      console.info("[voice] startCall ok", {
+        callId: call.callId,
+        sessionId: call.sessionId,
+        state: call.state,
+      });
       setAndPublish({
         phase: "joining_room",
         callId: call.callId,
@@ -158,24 +196,39 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
       stage = "rtc_join_publish";
       const { createVolcRtcClient } = await import("@/services/voice/rtcClient");
-      rtcClient = createVolcRtcClient({
-        onVolume: (volumeLevel) => setAndPublish({ volumeLevel }),
-        onError: (message) =>
+      throwIfStartCancelled(startToken);
+      localRtcClient = createVolcRtcClient({
+        onVolume: (volumeLevel) => {
+          if (isStartCancelled(startToken) || get().muted) return;
+          setAndPublish({ volumeLevel });
+        },
+        onError: (message) => {
+          if (isStartCancelled(startToken)) return;
           setAndPublish({
             error: message,
             diagnostic: { stage: "rtc_join_publish", message },
-          }),
+          });
+        },
       });
-      await rtcClient.joinAndPublish({
+      rtcClient = localRtcClient;
+      await localRtcClient.joinAndPublish({
         rtcAppId: call.rtcAppId,
         roomId: call.roomId,
         userId: call.userId,
         token: call.token,
       });
+      throwIfStartCancelled(startToken);
+      console.info("[voice] rtc join/publish ok", {
+        callId: call.callId,
+        roomId: call.roomId,
+        userId: call.userId,
+      });
 
       setAndPublish({ phase: "starting_agent" });
       stage = "start_agent";
       await voiceApi.startAgent(call.callId);
+      throwIfStartCancelled(startToken);
+      console.info("[voice] startAgent ok", { callId: call.callId });
 
       setAndPublish({
         phase: "active",
@@ -185,9 +238,23 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       });
       startDurationTimer();
     } catch (error) {
+      if (error instanceof VoiceStartCancelled) {
+        console.info("[voice] start cancelled", { stage, callId });
+        clearDurationTimer();
+        if (callId) await voiceApi.stopCall(callId).catch(() => {});
+        await cleanupRtc(localRtcClient);
+        if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, {});
+        return;
+      }
+      console.warn("[voice] failed", {
+        stage,
+        message: diagnosticMessage(error),
+      });
       clearDurationTimer();
       if (callId) await voiceApi.stopCall(callId).catch(() => {});
-      await cleanupRtc();
+      await cleanupRtc(localRtcClient);
+      if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, {});
+      if (isStartCancelled(startToken)) return;
       setAndPublish({
         phase: "error",
         error: error instanceof Error ? error.message : voiceErrorMessage(error),
@@ -215,9 +282,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       };
 
       const consentAccepted = getSettingsSnapshot().voiceTunnelConsentAccepted;
-      console.info(
-        `[voice] requestStart phase=${state.phase} consentAccepted=${consentAccepted}`,
-      );
+      console.info("[voice] requestStart", {
+        phase: state.phase,
+        consentAccepted,
+        reqSessionId: req.sessionId ?? null,
+        activeChatSessionId: state.activeChatSessionId,
+        resolvedSessionId: withSession.sessionId ?? null,
+      });
 
       if (!consentAccepted) {
         setAndPublish({
@@ -281,28 +352,44 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     },
 
     async requestHangUp() {
-      if (get().isOwner) {
+      const state = get();
+      console.info("[voice][request] hangup", {
+        isOwner: state.isOwner,
+        phase: state.phase,
+        callId: state.callId,
+      });
+      if (state.isOwner) {
         await get().hangUp();
         return;
       }
+      console.info("[voice][request] hangup emit-owner", {
+        phase: state.phase,
+        callId: state.callId,
+      });
       await emitEverywhere(EVENT_HANGUP_REQUEST, {});
     },
 
     async hangUp() {
       const state = get();
-      if (phaseIsFinished(state.phase) || state.phase === "stopping") return;
-
-      clearDurationTimer();
-      setAndPublish({ phase: "stopping" });
-      let diagnostic: VoiceCallDiagnostic | null = null;
-      if (state.callId) {
-        await voiceApi.stopCall(state.callId).catch((error) => {
-          diagnostic = toDiagnostic("stop_call", error);
-        });
-      }
-      await cleanupRtc().catch((error) => {
-        diagnostic = diagnostic ?? toDiagnostic("rtc_cleanup", error);
+      console.info("[voice][owner] hangUp invoked", {
+        phase: state.phase,
+        callId: state.callId,
+        muted: state.muted,
+        hasRtc: Boolean(rtcClient),
       });
+      if (phaseIsFinished(state.phase) || state.phase === "stopping") {
+        console.info("[voice][owner] hangUp ignored", {
+          phase: state.phase,
+          callId: state.callId,
+        });
+        return;
+      }
+
+      const startToken = activeStartToken;
+      cancelledStartToken = startToken;
+      const callId = state.callId;
+      const sessionId = state.sessionId;
+      clearDurationTimer();
       setAndPublish({
         phase: "ended",
         isOwner: false,
@@ -310,8 +397,103 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         startedAt: null,
         durationMs: 0,
         volumeLevel: 0,
+        muted: false,
+        diagnostic: null,
+      });
+      console.info("[voice][owner] hangUp optimistic-ended", {
+        callId,
+        previousPhase: state.phase,
+      });
+
+      let diagnostic: VoiceCallDiagnostic | null = null;
+      if (callId) {
+        await voiceApi.stopCall(callId).catch((error) => {
+          diagnostic = toDiagnostic("stop_call", error);
+        });
+      }
+      await cleanupRtc().catch((error) => {
+        diagnostic = diagnostic ?? toDiagnostic("rtc_cleanup", error);
+      });
+      if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, { sessionId });
+      if (diagnostic && activeStartToken === startToken && get().phase === "ended") {
+        setAndPublish({ diagnostic });
+      }
+      console.info("[voice][owner] hangUp cleanup done", {
+        callId,
         diagnostic,
       });
+    },
+
+    async requestToggleMute() {
+      const state = get();
+      console.info("[voice][request] toggle-mute", {
+        isOwner: state.isOwner,
+        phase: state.phase,
+        callId: state.callId,
+        muted: state.muted,
+        hasRtc: Boolean(rtcClient),
+      });
+      if (state.isOwner || !isTauri()) {
+        await get().toggleMute();
+        return;
+      }
+      console.info("[voice][request] toggle-mute emit-owner", {
+        phase: state.phase,
+        callId: state.callId,
+        muted: state.muted,
+      });
+      await emitEverywhere(EVENT_TOGGLE_MUTE_REQUEST, {});
+    },
+
+    async toggleMute() {
+      const state = get();
+      console.info("[voice][owner] toggleMute invoked", {
+        phase: state.phase,
+        callId: state.callId,
+        muted: state.muted,
+        hasRtc: Boolean(rtcClient),
+      });
+      if (!isVoiceCallLive(state.phase) || !rtcClient) {
+        console.info("[voice][owner] toggleMute ignored", {
+          phase: state.phase,
+          callId: state.callId,
+          hasRtc: Boolean(rtcClient),
+        });
+        return;
+      }
+
+      const nextMuted = !state.muted;
+      setAndPublish({
+        muted: nextMuted,
+        volumeLevel: nextMuted ? 0 : state.volumeLevel,
+        diagnostic: null,
+      });
+      console.info("[voice][owner] toggleMute optimistic", {
+        callId: state.callId,
+        nextMuted,
+      });
+
+      let failed = false;
+      await rtcClient.setMuted(nextMuted).catch((error) => {
+        failed = true;
+        const diagnostic = toDiagnostic("rtc_mute", error);
+        console.warn("[voice][owner] toggleMute rtc-set failed", {
+          callId: state.callId,
+          nextMuted,
+          diagnostic,
+        });
+        setAndPublish({
+          muted: state.muted,
+          volumeLevel: state.muted ? 0 : get().volumeLevel,
+          diagnostic,
+        });
+      });
+      if (!failed) {
+        console.info("[voice][owner] toggleMute rtc-set done", {
+          callId: state.callId,
+          muted: nextMuted,
+        });
+      }
     },
 
     resetError() {
@@ -359,8 +541,36 @@ export function startVoiceOwnerCommandListener(): void {
     void useVoiceStore.getState().requestStart(payload);
   };
   const onHangUp = () => {
-    if (useVoiceStore.getState().isOwner) {
+    const state = useVoiceStore.getState();
+    console.info("[voice][owner-listener] hangup event", {
+      isOwner: state.isOwner,
+      phase: state.phase,
+      callId: state.callId,
+    });
+    if (state.isOwner) {
       void useVoiceStore.getState().hangUp();
+    } else {
+      console.info("[voice][owner-listener] hangup ignored", {
+        phase: state.phase,
+        callId: state.callId,
+      });
+    }
+  };
+  const onToggleMute = () => {
+    const state = useVoiceStore.getState();
+    console.info("[voice][owner-listener] toggle-mute event", {
+      isOwner: state.isOwner,
+      phase: state.phase,
+      callId: state.callId,
+      muted: state.muted,
+    });
+    if (state.isOwner) {
+      void useVoiceStore.getState().toggleMute();
+    } else {
+      console.info("[voice][owner-listener] toggle-mute ignored", {
+        phase: state.phase,
+        callId: state.callId,
+      });
     }
   };
   const onConfirmTunnelConsent = () => {
@@ -379,6 +589,7 @@ export function startVoiceOwnerCommandListener(): void {
   if (isTauri()) {
     void listen<StartVoiceCallRequest>(EVENT_START_REQUEST, (event) => onStart(event.payload));
     void listen(EVENT_HANGUP_REQUEST, onHangUp);
+    void listen(EVENT_TOGGLE_MUTE_REQUEST, onToggleMute);
     void listen(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
     void listen(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
     void listen(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);
@@ -391,6 +602,7 @@ export function startVoiceOwnerCommandListener(): void {
     onStart((event as CustomEvent<StartVoiceCallRequest>).detail ?? {});
   });
   window.addEventListener(EVENT_HANGUP_REQUEST, onHangUp);
+  window.addEventListener(EVENT_TOGGLE_MUTE_REQUEST, onToggleMute);
   window.addEventListener(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
   window.addEventListener(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
   window.addEventListener(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);

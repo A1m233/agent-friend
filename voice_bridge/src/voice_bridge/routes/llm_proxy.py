@@ -47,6 +47,12 @@ def register_llm_proxy_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None
             k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP_HEADERS
         }
         upstream_headers["X-Agent-Friend-Session-Id"] = binding.session_id
+        logger.info(
+            "voice llm proxy inbound call_id=%s session_id=%s bytes=%d",
+            call_id,
+            binding.session_id,
+            len(body),
+        )
 
         async def stream() -> AsyncIterator[bytes]:
             # 嵌套 with 是有意为之：合并到单个 with 在某些 mypy 版本下会把

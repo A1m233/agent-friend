@@ -12,6 +12,7 @@ export type VoiceCallPhase =
 export type VoiceCallFailureStage =
   | "start_call"
   | "rtc_join_publish"
+  | "rtc_mute"
   | "start_agent"
   | "stop_call"
   | "rtc_cleanup";
@@ -45,6 +46,7 @@ export interface VoiceCallSnapshot {
   startedAt: number | null;
   durationMs: number;
   volumeLevel: number;
+  muted: boolean;
   error: string | null;
   diagnostic: VoiceCallDiagnostic | null;
 }

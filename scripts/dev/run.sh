@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # scripts/dev/run.sh — 一键起 bridge + 前端开发（mac/linux）
 #
-# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢）。
+# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），并启动 voice_bridge。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
+# --no-voice：不启动 voice_bridge（轻量前端 / 桌宠开发）。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
-# bridge 默认听 127.0.0.1:18800；前端经 vite proxy 连它（见 frontend/vite.config.ts）。
-# 两路输出分别加 [bridge] / [app|web] 前缀；Ctrl+C 一起退（清理整个进程组）。
+# bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
+# 输出分别加 [bridge] / [voice] / [app|web] 前缀；Ctrl+C 一起退（清理整个进程组）。
 # 详见 scripts/README.md
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 
 MODE="tauri"
+START_VOICE=1
 ARGS=()
 for a in "$@"; do
     case "$a" in
         --web) MODE="web" ;;
         --tauri) MODE="tauri" ;;
+        --voice) START_VOICE=1 ;;
+        --no-voice) START_VOICE=0 ;;
         *) ARGS+=("$a") ;;
     esac
 done
@@ -33,6 +37,78 @@ ensure_node_pnpm
 prefix() {
     local p="$1"
     while IFS= read -r line; do printf '%s%s\n' "$p" "$line"; done
+}
+
+http_ok() {
+    local url="$1"
+    command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 "$url" >/dev/null 2>&1
+}
+
+wait_http_ok() {
+    local url="$1"
+    local attempts="$2"
+    local i=0
+    while [ "$i" -lt "$attempts" ]; do
+        if http_ok "$url"; then
+            return 0
+        fi
+        sleep 0.2
+        i=$((i + 1))
+    done
+    return 1
+}
+
+port_in_use() {
+    local port="$1"
+    command -v lsof >/dev/null 2>&1 && lsof -ti tcp:"$port" >/dev/null 2>&1
+}
+
+wait_cloudflared_url() {
+    local out_log="$1"
+    local err_log="$2"
+    local timeout_seconds="$3"
+    local deadline=$((SECONDS + timeout_seconds))
+    local public_url=""
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        public_url=$(grep -Eho 'https://[a-z0-9-]+\.trycloudflare\.com' "$out_log" "$err_log" 2>/dev/null | head -n 1 || true)
+        if [ -n "$public_url" ]; then
+            printf '%s\n' "$public_url"
+            return 0
+        fi
+        sleep 0.5
+    done
+    return 1
+}
+
+start_voice_tunnel() {
+    if [ -n "${VOICE_BRIDGE_PUBLIC_URL:-}" ]; then
+        echo "===> 使用当前进程 VOICE_BRIDGE_PUBLIC_URL（不读取 .env）"
+        return 0
+    fi
+
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        echo "  [ERROR] 未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后重试。" >&2
+        exit 1
+    fi
+
+    local out_log="${TMPDIR:-/tmp}/agent-friend-cloudflared-dev.log"
+    local err_log="${TMPDIR:-/tmp}/agent-friend-cloudflared-dev.err.log"
+    : > "$out_log"
+    : > "$err_log"
+
+    echo "===> 启动 cloudflared tunnel（127.0.0.1:18900）…"
+    cloudflared tunnel --url "http://127.0.0.1:18900" >"$out_log" 2>"$err_log" &
+    local tunnel_pid=$!
+
+    local public_url
+    if ! public_url=$(wait_cloudflared_url "$out_log" "$err_log" 60); then
+        kill "$tunnel_pid" 2>/dev/null || true
+        echo "  [ERROR] cloudflared 60 秒内没有输出 trycloudflare URL。日志：$out_log / $err_log" >&2
+        exit 1
+    fi
+
+    export VOICE_BRIDGE_PUBLIC_URL="$public_url"
+    echo "  [OK] VOICE_BRIDGE_PUBLIC_URL=$public_url"
 }
 
 # 028 · dev 脚本启动前端前，若 1420 被上次残留进程占用，尝试自动清理。
@@ -94,7 +170,7 @@ fi
 cleanup() {
     trap - INT TERM EXIT
     echo ""
-    echo "===> 收尾：停止 bridge + 前端…"
+    echo "===> 收尾：停止 bridge / voice_bridge / 前端…"
     kill 0 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -107,6 +183,29 @@ echo "===> 启动 bridge（127.0.0.1:18800）…"
 export AGENT_BRIDGE_DEV_MODE=true
 (cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | prefix "[bridge] " &
 
+if [ "$START_VOICE" = "1" ]; then
+    if http_ok "http://127.0.0.1:18900/healthz"; then
+        if [ -z "${VOICE_BRIDGE_PUBLIC_URL:-}" ]; then
+            echo "  [ERROR] voice_bridge 已在 127.0.0.1:18900 运行，但 dev/run 无法给既有进程注入本次 tunnel URL。请先停止旧 voice_bridge，再重新运行 dev/run；或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后复用。" >&2
+            exit 1
+        fi
+        echo "===> voice_bridge 已在 127.0.0.1:18900 运行，复用现有进程（VOICE_BRIDGE_PUBLIC_URL 来自当前环境；不读取 .env）"
+    elif port_in_use 18900; then
+        echo "  [ERROR] 端口 18900 已被占用，但 http://127.0.0.1:18900/healthz 不可用。请先停止占用该端口的进程后再试。" >&2
+        exit 1
+    else
+        start_voice_tunnel
+        echo "===> 启动 voice_bridge（127.0.0.1:18900）…"
+        (cd "$ROOT" && uv run python -m voice_bridge) 2>&1 | prefix "[voice] " &
+        if ! wait_http_ok "http://127.0.0.1:18900/healthz" 50; then
+            echo "  [ERROR] voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 [voice] 日志。" >&2
+            exit 1
+        fi
+    fi
+else
+    echo "===> 跳过 voice_bridge（--no-voice）"
+fi
+
 if [ "$MODE" = "web" ]; then
     echo "===> 前端模式：web（浏览器调试，不编译 Rust）"
     (cd "$ROOT/frontend" && pnpm dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[web] " &
@@ -115,5 +214,9 @@ else
     (cd "$ROOT/frontend" && pnpm tauri dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
 fi
 
-echo "===> 已拉起 bridge + 前端，Ctrl+C 一起退"
+if [ "$START_VOICE" = "1" ]; then
+    echo "===> 已拉起 bridge + voice_bridge + 前端，Ctrl+C 一起退"
+else
+    echo "===> 已拉起 bridge + 前端，Ctrl+C 一起退"
+fi
 wait

@@ -53,6 +53,8 @@ export function voiceFailureStageLabel(stage: VoiceCallFailureStage): string {
       return "创建通话";
     case "rtc_join_publish":
       return "RTC 入房/发布";
+    case "rtc_mute":
+      return "切换静音";
     case "start_agent":
       return "启动语音 agent";
     case "stop_call":

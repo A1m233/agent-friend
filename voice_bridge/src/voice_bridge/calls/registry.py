@@ -45,6 +45,8 @@ class CallBinding:
     room_id: str
     bot_user_id: str
     target_user_id: str
+    created_session: bool = False
+    """本次通话是否由 voice_bridge 临时创建了新的 agent session。"""
 
 
 class CallRegistry:

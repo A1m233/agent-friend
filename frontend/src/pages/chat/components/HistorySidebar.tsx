@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Button,
   Sidebar,
@@ -10,6 +11,10 @@ import {
   SidebarMenuItem,
 } from "@/components/ui";
 import { useConnectionStore, useConversationStore, useSessionsStore } from "@/stores";
+import { isTauri } from "@/utils/tauri";
+
+const WINDOW_SHOWN_EVENT = "window://shown";
+const SESSIONS_CHANGED_EVENT = "sessions://changed";
 
 /**
  * 历史会话侧栏：列表展示 + 切换（R-M3.4）。bridge 为真相源，列表来自 sessions store。
@@ -32,6 +37,26 @@ export function HistorySidebar() {
     if (status === "online") {
       void refresh();
     }
+  }, [status, refresh]);
+
+  useEffect(() => {
+    if (status !== "online") return;
+
+    const refreshList = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", refreshList);
+
+    const unlistenShown = isTauri() ? listen(WINDOW_SHOWN_EVENT, refreshList) : null;
+    const unlistenSessionsChanged = isTauri()
+      ? listen(SESSIONS_CHANGED_EVENT, refreshList)
+      : null;
+
+    return () => {
+      window.removeEventListener("focus", refreshList);
+      void unlistenShown?.then((unlisten) => unlisten());
+      void unlistenSessionsChanged?.then((unlisten) => unlisten());
+    };
   }, [status, refresh]);
 
   return (

@@ -1,11 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
-import { MessageSquare, Mic, Phone, PhoneOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 
 import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
 import { voiceFailureStageLabel, voicePhaseLabel } from "@/stores/voiceStateMachine";
-import { isTauri } from "@/utils/tauri";
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -22,23 +20,47 @@ function volumeLabel(level: number): string {
 
 export function VoiceCallApp() {
   const phase = useVoiceStore((s) => s.phase);
+  const callId = useVoiceStore((s) => s.callId);
+  const isOwner = useVoiceStore((s) => s.isOwner);
   const durationMs = useVoiceStore((s) => s.durationMs);
   const volumeLevel = useVoiceStore((s) => s.volumeLevel);
+  const muted = useVoiceStore((s) => s.muted);
   const error = useVoiceStore((s) => s.error);
   const diagnostic = useVoiceStore((s) => s.diagnostic);
-  const requestStart = useVoiceStore((s) => s.requestStartFromAnyWindow);
+  const requestStart = useVoiceStore((s) => s.requestStart);
   const requestConfirmTunnel = useVoiceStore((s) => s.requestConfirmTunnelConsent);
   const requestCancelTunnel = useVoiceStore((s) => s.requestCancelTunnelConsent);
   const requestHangUp = useVoiceStore((s) => s.requestHangUp);
+  const requestToggleMute = useVoiceStore((s) => s.requestToggleMute);
 
   const awaitingConsent = phase === "confirming_tunnel";
   const canDial = phase === "idle" || phase === "ended" || phase === "error";
   const inCall = phase === "active";
   const busy = phase === "dialing" || phase === "joining_room" || phase === "starting_agent";
+  const canToggleMute = phase === "starting_agent" || phase === "active";
+  const micWaveActive = canToggleMute && !muted && volumeLevel > 0;
 
-  const openChat = () => {
-    if (!isTauri()) return;
-    void invoke("open_chat");
+  const handleToggleMute = () => {
+    console.info("[voice-call][button] toggle-mute click", {
+      phase,
+      callId,
+      isOwner,
+      muted,
+      canToggleMute,
+      volumeLevel,
+    });
+    void requestToggleMute();
+  };
+
+  const handleHangUp = () => {
+    console.info("[voice-call][button] hangup click", {
+      phase,
+      callId,
+      isOwner,
+      muted,
+      volumeLevel,
+    });
+    void requestHangUp();
   };
 
   return (
@@ -56,7 +78,7 @@ export function VoiceCallApp() {
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="flex items-end gap-1">
               {[0, 1, 2].map((i) => {
-                const active = volumeLevel > i * 28 || busy || inCall;
+                const active = !muted && (volumeLevel > i * 28 || busy || inCall);
                 return (
                   <span
                     key={i}
@@ -70,7 +92,7 @@ export function VoiceCallApp() {
             <div className="space-y-1">
               <p className="text-lg font-medium">{voicePhaseLabel(phase)}</p>
               <p className="text-sm text-muted">
-                {inCall ? formatDuration(durationMs) : volumeLabel(volumeLevel)}
+                {inCall ? formatDuration(durationMs) : muted ? "已静音" : volumeLabel(volumeLevel)}
               </p>
             </div>
             {error && (
@@ -88,20 +110,21 @@ export function VoiceCallApp() {
 
         <footer className="flex items-center justify-center gap-8 border-t border-border px-6 py-5">
           {!canDial && !awaitingConsent && (
-            <>
+            <div className="relative flex size-10 items-center justify-center">
+              {micWaveActive && (
+                <span className="absolute inset-0 rounded-full bg-success/20 animate-ping" />
+              )}
               <TooltipButton
-                icon={<MessageSquare />}
-                tooltip="打开对话"
+                icon={muted ? <MicOff /> : <Mic />}
+                tooltip={muted ? "取消静音" : canToggleMute ? volumeLabel(volumeLevel) : "接通后可静音"}
                 tooltipSide="top"
-                onClick={openChat}
+                size="icon-lg"
+                variant={muted ? "outline" : "secondary"}
+                className={`relative rounded-full ${micWaveActive ? "text-success" : ""}`}
+                disabled={!canToggleMute}
+                onClick={handleToggleMute}
               />
-              <TooltipButton
-                icon={<Mic />}
-                tooltip={volumeLabel(volumeLevel)}
-                tooltipSide="top"
-                disabled
-              />
-            </>
+            </div>
           )}
           {awaitingConsent ? (
             <Button size="icon-lg" className="rounded-full" disabled aria-label="等待确认">
@@ -121,7 +144,7 @@ export function VoiceCallApp() {
               variant="destructive"
               size="icon-lg"
               className="rounded-full"
-              onClick={() => void requestHangUp()}
+              onClick={handleHangUp}
               aria-label="挂断"
             >
               <PhoneOff />

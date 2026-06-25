@@ -11,6 +11,8 @@ mod paths;
 mod push_subscriber;
 mod settings;
 
+const EVENT_WINDOW_SHOWN: &str = "window://shown";
+
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
 // 配置：
@@ -251,6 +253,7 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
             }
             let _ = w.show();
             let _ = w.set_focus();
+            let _ = app_clone.emit_to(label, EVENT_WINDOW_SHOWN, ());
         }
     })
     .map_err(|e| e.to_string())?;

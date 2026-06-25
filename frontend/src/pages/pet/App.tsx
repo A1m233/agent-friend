@@ -22,7 +22,6 @@ import {
 } from "@/stores/petState";
 import {
   focusVoiceCallWindow,
-  startVoiceOwnerCommandListener,
   useVoiceStore,
 } from "@/stores/voice";
 import { isVoiceCallLive } from "@/stores/voiceStateMachine";
@@ -73,7 +72,7 @@ export function PetApp() {
   // 022 · IM 接入面板 dialog 开关(同窗 dialog,不另开 webview)
   const [imDialogOpen, setImDialogOpen] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
-  const requestStartVoice = useVoiceStore((s) => s.requestStart);
+  const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
 
   // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
   // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
@@ -159,17 +158,6 @@ export function PetApp() {
     const onChange = () => report();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    startVoiceOwnerCommandListener();
-    const onBeforeUnload = () => {
-      if (useVoiceStore.getState().isOwner) {
-        void useVoiceStore.getState().hangUp();
-      }
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）

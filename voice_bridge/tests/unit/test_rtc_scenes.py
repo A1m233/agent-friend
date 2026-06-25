@@ -85,6 +85,17 @@ class TestBuildScenes:
         )
         assert body["AgentConfig"]["WelcomeMessage"] == "嗨呀"
 
+    def test_empty_welcome_message_omits_field(self, settings: VoiceBridgeSettings) -> None:
+        settings = settings.model_copy(update={"welcome_message": ""})
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert "WelcomeMessage" not in body["AgentConfig"]
+
     def test_welcome_message_override(self, settings: VoiceBridgeSettings) -> None:
         body = build_scenes(
             settings=settings,

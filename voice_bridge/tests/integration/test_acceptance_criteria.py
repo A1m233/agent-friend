@@ -118,6 +118,30 @@ def _mock_agent_bridge_switch_channel(respx_mock: respx.MockRouter, session_id: 
     )
 
 
+def _mock_agent_bridge_get_session(
+    respx_mock: respx.MockRouter,
+    session_id: str,
+    *,
+    event_types: list[str] | None = None,
+) -> Any:
+    events = [{"type": event_type} for event_type in (event_types or [])]
+    return respx_mock.get(f"http://test-agent-bridge/v1/sessions/{session_id}").mock(
+        return_value=httpx.Response(
+            200,
+            json={"session_id": session_id, "events": events},
+        )
+    )
+
+
+def _mock_agent_bridge_delete_session(respx_mock: respx.MockRouter, session_id: str) -> Any:
+    return respx_mock.delete(f"http://test-agent-bridge/v1/sessions/{session_id}").mock(
+        return_value=httpx.Response(
+            200,
+            json={"session_id": session_id, "deleted": True},
+        )
+    )
+
+
 # ----------------------------------------------------------------------------
 # AC-1: 控制平面拨打通话
 # ----------------------------------------------------------------------------
@@ -190,6 +214,8 @@ class TestAC2CallStop:
         respx_mock.post("http://test-agent-bridge/v1/sessions/sess-test-1/channel").mock(
             return_value=httpx.Response(200, json={})
         )
+        _mock_agent_bridge_get_session(respx_mock, "sess-test-1")
+        _mock_agent_bridge_delete_session(respx_mock, "sess-test-1")
 
         start_resp = client.post("/voice/calls", json={}).json()
         call_id = start_resp["call_id"]
@@ -211,6 +237,8 @@ class TestAC2CallStop:
         respx_mock.post("http://test-agent-bridge/v1/sessions/sess-test-1/channel").mock(
             return_value=httpx.Response(200, json={})
         )
+        _mock_agent_bridge_get_session(respx_mock, "sess-test-1")
+        _mock_agent_bridge_delete_session(respx_mock, "sess-test-1")
 
         call_id = client.post("/voice/calls", json={}).json()["call_id"]
         a = client.post(f"/voice/calls/{call_id}/stop").json()
@@ -246,6 +274,8 @@ class TestAC3StateMachine:
         respx_mock.post("http://test-agent-bridge/v1/sessions/sess-test-1/channel").mock(
             return_value=httpx.Response(200, json={})
         )
+        _mock_agent_bridge_get_session(respx_mock, "sess-test-1")
+        _mock_agent_bridge_delete_session(respx_mock, "sess-test-1")
 
         call_id = client.post("/voice/calls", json={}).json()["call_id"]
         client.post(f"/voice/calls/{call_id}/stop")
@@ -392,12 +422,72 @@ class TestAC6ChannelSwitch:
         downgrade_route = respx_mock.post(
             "http://test-agent-bridge/v1/sessions/sess-stop-1/channel"
         ).mock(return_value=httpx.Response(200, json={}))
+        _mock_agent_bridge_get_session(respx_mock, "sess-stop-1")
+        _mock_agent_bridge_delete_session(respx_mock, "sess-stop-1")
 
         call_id = client.post("/voice/calls", json={}).json()["call_id"]
         client.post(f"/voice/calls/{call_id}/stop")
         assert downgrade_route.called
         body = json.loads(downgrade_route.calls[0].request.content)
         assert body["channel"] == "text"
+
+    @respx.mock
+    def test_stop_deletes_empty_session_created_by_voice_bridge(
+        self, client: TestClient, respx_mock: respx.MockRouter
+    ) -> None:
+        _mock_agent_bridge_create_session(respx_mock, session_id="sess-empty-1")
+        _mock_volc_start_voice_chat_success(respx_mock)
+        _mock_volc_stop_voice_chat_success(respx_mock)
+        respx_mock.post("http://test-agent-bridge/v1/sessions/sess-empty-1/channel").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        _mock_agent_bridge_get_session(respx_mock, "sess-empty-1")
+        delete_route = _mock_agent_bridge_delete_session(respx_mock, "sess-empty-1")
+
+        call_id = client.post("/voice/calls", json={}).json()["call_id"]
+        resp = client.post(f"/voice/calls/{call_id}/stop")
+
+        assert resp.status_code == 200
+        assert delete_route.called
+
+    @respx.mock
+    def test_stop_keeps_created_session_after_dialog_messages(
+        self, client: TestClient, respx_mock: respx.MockRouter
+    ) -> None:
+        _mock_agent_bridge_create_session(respx_mock, session_id="sess-dialog-1")
+        _mock_volc_start_voice_chat_success(respx_mock)
+        _mock_volc_stop_voice_chat_success(respx_mock)
+        respx_mock.post("http://test-agent-bridge/v1/sessions/sess-dialog-1/channel").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        _mock_agent_bridge_get_session(
+            respx_mock,
+            "sess-dialog-1",
+            event_types=["session_meta", "user_message"],
+        )
+
+        call_id = client.post("/voice/calls", json={}).json()["call_id"]
+        resp = client.post(f"/voice/calls/{call_id}/stop")
+
+        assert resp.status_code == 200
+
+    @respx.mock
+    def test_stop_does_not_delete_existing_session(
+        self, client: TestClient, respx_mock: respx.MockRouter
+    ) -> None:
+        switch_route = respx_mock.post(
+            "http://test-agent-bridge/v1/sessions/existing-sess-2/channel"
+        ).mock(return_value=httpx.Response(200, json={}))
+        _mock_volc_start_voice_chat_success(respx_mock)
+        _mock_volc_stop_voice_chat_success(respx_mock)
+
+        call_id = client.post("/voice/calls", json={"session_id": "existing-sess-2"}).json()[
+            "call_id"
+        ]
+        resp = client.post(f"/voice/calls/{call_id}/stop")
+
+        assert resp.status_code == 200
+        assert switch_route.call_count == 2
 
 
 # ----------------------------------------------------------------------------
