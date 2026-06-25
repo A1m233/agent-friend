@@ -7,7 +7,7 @@ use tauri::{
 };
 
 mod bubble_window;
-mod log_paths;
+mod paths;
 mod push_subscriber;
 mod settings;
 
@@ -469,7 +469,7 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            let log_dir = log_paths::log_dir();
+            let log_dir = paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
             app.handle().plugin(
                 tauri_plugin_log::Builder::new()

@@ -27,6 +27,10 @@ alwaysApply: true
 
 - 默认位置：macOS `~/Library/Application Support/agent-friend/`、Windows `%APPDATA%/agent-friend/`、Linux `$XDG_DATA_HOME` 或 `~/.local/share/agent-friend/`。
 - env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/replay 脚本做隔离**用，不是日常开发约定。
+- Tauri / frontend 壳的落盘路径也有项目级 owner，不要靠记忆或临时 `find` 猜路径：
+  - **Tauri 路径入口**：走 `frontend/src-tauri/src/paths.rs`，不要在 `settings.rs` / `lib.rs` / 新模块里散写 bundle id、`settings.json`、`~/Library/Logs/...` 等字面量。
+  - **日志**：走 `paths::log_dir()`，与 Python `agent.paths.log_dir()` 对齐；当前 macOS 实际日志在 `~/Library/Logs/agent-friend/`（如 `tauri.log` / `agent_bridge.log` / `memory.log`），不要再查旧的 `~/Library/Logs/com.agentfriend.desktop/` 当作当前日志源。若需隔离，仍用 `AGENT_FRIEND_LOG_DIR`。
+  - **桌面端设置**：路径走 `paths::settings_store_path()`，读写语义走 `frontend/src-tauri/src/settings.rs` + `tauri-plugin-store`；当前 macOS 路径为 `~/Library/Application Support/com.agentfriend.desktop/settings.json`。前端读写统一经 `frontend/src/lib/settings/`（`getSettingsSnapshot` / `setSetting` / `useSetting`），业务 store 不应自己 `invoke("set_setting")`、不应写 `localStorage`、也不应把持久设置混进运行态 snapshot。
 - **仓库根 `data/` 不应出现**——它在 `.gitignore` 里被忽略，但如果你在仓库根看到它，那是某次手敲 `AGENT_FRIEND_DATA_DIR=. ...` 之类的 ad-hoc 命令残留，不是任何代码路径的默认行为，可直接删除。
 
 历史 requirement / design 文档里仍可能写 `data/sessions/` `data/personas/` 等过时字面量（002 / 003 / 008 等），那是当时的决策快照，**现行约定以 `agent/paths.py` 为准**。

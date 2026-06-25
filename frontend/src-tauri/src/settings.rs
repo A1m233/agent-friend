@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
     plugin::{Builder as PluginBuilder, TauriPlugin},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Emitter, Runtime,
 };
 use tauri_plugin_store::StoreExt;
+
+use crate::paths;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -39,22 +41,18 @@ impl Settings {
     }
 }
 
-const BUNDLE_ID: &str = "com.agentfriend.desktop";
-const STORE_PATH: &str = "settings.json";
 const EVENT_CHANGED: &str = "settings://changed";
 
-/// 028 · 用 OS 本地数据目录 + bundle id 拼出 tauri-plugin-store 默认文件路径。
+/// 028 · 用统一 paths 模块拼出 tauri-plugin-store settings 文件路径。
 ///
-/// `tauri-plugin-store` 默认把 store 文件放在 `app_local_data_dir()` 下，即
-/// `dirs::data_local_dir() / bundle_id / STORE_PATH`（macOS 上对应
+/// 当前项目沿用 `dirs::data_local_dir() / bundle_id / settings.json`（macOS 上对应
 /// `~/Library/Application Support/com.agentfriend.desktop/settings.json`）。
 /// 启动期（plugin builder 阶段）同步读盘，所有错误路径返回默认值，不阻断启动。
 pub fn load_from_disk_or_default() -> Settings {
-    let Some(data_dir) = dirs::data_local_dir() else {
-        log::warn!("settings: cannot resolve data_local_dir");
+    let Some(path) = paths::settings_store_path() else {
+        log::warn!("settings: cannot resolve settings store path");
         return Settings::default();
     };
-    let path = data_dir.join(BUNDLE_ID).join(STORE_PATH);
     log::info!("settings: bootstrap loading from {:?}", path);
     let settings = match std::fs::read_to_string(&path) {
         Ok(raw) => {
@@ -141,21 +139,19 @@ pub fn set_setting<R: Runtime>(
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
 
-    let store = app.store(STORE_PATH).map_err(|e| e.to_string())?;
+    let store = app
+        .store(paths::SETTINGS_STORE_PATH)
+        .map_err(|e| e.to_string())?;
     store.set(
         "settings",
         serde_json::to_value(&*s).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| e.to_string())?;
 
-    // 028 · R3：把 plugin-store 实际用的 app_config_dir 打到日志，与 bootstrap 读路径对比。
-    if let Ok(config_dir) = app.path().app_config_dir() {
-        let store_path: std::path::PathBuf = config_dir.join(STORE_PATH);
-        log::info!(
-            "settings: store saved to {:?} (bootstrap read from dirs::config_dir + bundle id)",
-            store_path
-        );
-    }
+    log::info!(
+        "settings: store saved to {:?}",
+        paths::settings_store_path()
+    );
 
     log::info!(
         "settings: emitting {} key={} value={}",
