@@ -310,6 +310,7 @@ class Conversation:
 
         user_event_appended = False
         current_text_buf: list[str] = []
+        current_text_persisted = False
         current_tc_acc: dict[int, dict[str, Any]] = {}
         total_tool_calls = 0
         turn_start_idx = len(self._session.events)
@@ -317,6 +318,7 @@ class Conversation:
         try:
             for turn_idx in range(self._max_tool_turns + 1):
                 current_text_buf = []
+                current_text_persisted = False
                 current_tc_acc = {}
 
                 if turn_idx == 0:
@@ -351,6 +353,7 @@ class Conversation:
                     persona_id=persona_id,
                     model=model_snapshot,
                 )
+                current_text_persisted = True
 
                 if not tool_calls or stop_reason != "tool_use":
                     yield TurnDone(stop_reason="end_turn", total_tool_calls=total_tool_calls)
@@ -402,6 +405,7 @@ class Conversation:
                     user_input=user_input,
                     user_event_appended=user_event_appended,
                     current_text_buf=current_text_buf,
+                    current_text_persisted=current_text_persisted,
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
@@ -984,6 +988,7 @@ class Conversation:
         user_input: str,
         user_event_appended: bool,
         current_text_buf: list[str],
+        current_text_persisted: bool,
         persona_name: str,
         persona_id: str | None,
         model_snapshot: str,
@@ -995,6 +1000,9 @@ class Conversation:
         - 否则把当前轮已经累积的部分文本落为 ``partial=True`` 的 assistant_event；
           已成功完成的前几轮 tool 调用事件不受影响
         """
+        if current_text_persisted:
+            return
+
         if not user_event_appended:
             if not current_text_buf:
                 return  # 完全没启动，不落盘
