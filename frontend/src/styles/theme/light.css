@@ -1,4 +1,5 @@
 /* light 主题：与其它主题文件保持变量同名、值不同（见 frontend-ui-conventions 规则）。 */
+:root,
 html[theme="light"] {
   --bg: #ffffff;
   --surface: #f5f6f8;
