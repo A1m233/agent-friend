@@ -41,4 +41,4 @@ uv run python docs/issues/019-im-recall-tool-not-triggered/llm_recall_smoke.py -
 - 短期可在工具 description / runtime prompt 中提示 LLM 不要把当前问题当作历史；但这只能缓解最终表达，不能解决工具结果污染。
 
 ---
-已在 commit `TBD` 修复。
+已在 commit `abbcd31` 修复。
