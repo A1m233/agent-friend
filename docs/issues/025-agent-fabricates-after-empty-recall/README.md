@@ -88,4 +88,4 @@ issue 020(`recall-tool-includes-current-turn`)是**工具自身**问题:工具�
 
 ---
 
-已在 commit `TBD` 修复。
+已在 commit `08410a1` 修复。
