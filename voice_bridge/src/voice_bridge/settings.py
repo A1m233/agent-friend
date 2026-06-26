@@ -8,13 +8,55 @@
 - ``VOLC_*``：复用 spike 已有的火山引擎凭证（不加 ``VOICE_BRIDGE_`` 前缀，
   通过 pydantic ``validation_alias`` 显式绑定）
 
+其中 ``VOICE_BRIDGE_PUBLIC_URL`` 是 cloudflared / ngrok 等 tunnel 生成的临时
+运行态值，只允许来自当前进程环境变量，不从 ``.env`` 读取，避免旧 URL 污染实机验证。
+
 详见 docs/requirements/007-voice-call/design.md §4.2.1。
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+_DOTENV_RUNTIME_ONLY_KEYS = frozenset(
+    {
+        "public_url",
+        "VOICE_BRIDGE_PUBLIC_URL",
+        "voice_bridge_public_url",
+    }
+)
+
+
+class _FilteredDotenvSource(PydanticBaseSettingsSource):
+    """Wrap pydantic's dotenv source while dropping runtime-only keys."""
+
+    def __init__(
+        self,
+        source: PydanticBaseSettingsSource,
+        ignored_keys: frozenset[str],
+    ) -> None:
+        super().__init__(source.settings_cls)
+        self._source = source
+        self._ignored_keys = ignored_keys
+
+    def _set_current_state(self, state: dict[str, Any]) -> None:
+        super()._set_current_state(state)
+        self._source._set_current_state(state)
+
+    def _set_settings_sources_data(self, states: dict[str, dict[str, Any]]) -> None:
+        super()._set_settings_sources_data(states)
+        self._source._set_settings_sources_data(states)
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        data = self._source()
+        return {key: value for key, value in data.items() if key not in self._ignored_keys}
 
 
 class VoiceBridgeSettings(BaseSettings):
@@ -33,6 +75,22 @@ class VoiceBridgeSettings(BaseSettings):
         populate_by_name=True,
     )
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            _FilteredDotenvSource(dotenv_settings, _DOTENV_RUNTIME_ONLY_KEYS),
+            file_secret_settings,
+        )
+
     host: str = "127.0.0.1"
     port: int = 18900
     log_level: str = "INFO"
@@ -43,7 +101,7 @@ class VoiceBridgeSettings(BaseSettings):
     生产前必须设置，否则火山 RTC 在 ``LLMConfig.Url`` 里拿到的就是 127.0.0.1，
     云端无法回调。开发期仅跑 mock 测试时可空。
 
-    通过 ``VOICE_BRIDGE_PUBLIC_URL`` 环境变量覆盖。
+    通过 ``VOICE_BRIDGE_PUBLIC_URL`` 环境变量覆盖；不会从 ``.env`` 读取。
     """
 
     agent_bridge_url: str = "http://127.0.0.1:18800"
