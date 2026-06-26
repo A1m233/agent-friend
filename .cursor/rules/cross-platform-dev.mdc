@@ -10,8 +10,8 @@ alwaysApply: true
 ## 强制约定（必读）
 
 1. 启动服务、依赖安装、运行测试、lint、构建、清理等操作 → 加到 `scripts/{name}/` 下
-2. 每个脚本必须**同时**提供 `run.sh`（mac/linux）和 `run.ps1`（windows）两个版本
-3. 两端脚本**语义一致、输出格式尽量一致**，避免一边能跑一边跑不通
+2. 每个对外脚本入口必须**同时**提供 `run.sh`（mac/linux）和 `run.ps1`（windows）两个版本
+3. 两端入口**语义一致、输出格式尽量一致**，避免一边能跑一边跑不通；双端入口是接口约束，不代表复杂实现逻辑必须在 `sh` / `ps1` 里双写
 4. 新增脚本后必须在 `scripts/README.md` 加一行表格说明（名字 / 用途 / mac 用法 / win 用法）
 5. 现有脚本若改了行为，同步更新 `scripts/README.md` 和两个 `run.*` 文件
 6. **不要让开发者直接记忆** `uv run python -m ...` / `pytest` / `mypy ...` 等命令——这些必须被 `scripts/{name}/` 包装
@@ -29,6 +29,42 @@ alwaysApply: true
 2. 脚本首部注释写清楚用途与"另一端没做"的原因
 3. 一旦另一端撞到同类问题，必须补齐双端，本例外失效
 
+## 实现分层与 Python 落位
+
+`run.sh` / `run.ps1` 是开发者入口；真正的实现可以按复杂度选择放在入口脚本内，或下沉到 Python。
+
+### 适合直接写在 `run.sh` / `run.ps1` 的情况
+
+- 只是薄包装一个已有命令，如 `uv run python -m xxx "$@"` / `uv run python -m xxx @args`
+- 只做少量环境检查、切目录、参数透传，逻辑短且两端不容易漂移
+- 脚本主体能保持在约 50 行以内，且没有复杂控制流
+
+### 应优先下沉到 Python 的情况
+
+出现以下任一情况时，不要在 `run.sh` / `run.ps1` 中复制大段业务逻辑，优先把主体实现放进 Python：
+
+- 脚本超过约 50-80 行，或已经出现多段函数 / 复杂分支
+- 涉及端口检测、HTTP wait、进程编排、日志 tail、临时目录、环境变量批量拼装
+- `run.sh` 与 `run.ps1` 已经在维护同一套判断逻辑，存在双端漂移风险
+- 行为需要单测、复用或更稳定的错误处理
+
+### Python 实现放哪里
+
+按责任边界选择落位，优先就近，不要为了"统一"塞进无关 package：
+
+1. **已有业务模块自己的 CLI**：继续放模块内，由 `scripts/{name}/run.*` 调用。例如 `agent_eval` / `memory_eval` 这类已有 `python -m <module>` 入口的能力。
+2. **某个 scripts 操作自己的复杂逻辑**：默认放在 `scripts/{name}/run.py`（或同目录下更具体的 `<name>.py`），由 `run.sh` / `run.ps1` 调用。例如 `scripts/showcase-snapshot/snapshot.py`、`scripts/im-smoke/smoke.py` 这种就近实现。
+3. **多个 scripts 共享的基础 helper**：只有出现真实重复时，才在 `scripts/_lib/`（或 `scripts/_shared/`）下提取小型 helper。不要预先搭通用脚本框架。
+
+`tools/` 只承载调试 UI、eval 辅助、数据 dump / benchmark 等开发工具；`setup`、`check`、`dev` 等 repo operation harness 不应放进 `tools`，避免把项目基础操作和调试工具包耦合。
+
+Python 脚本实现跨平台逻辑时：
+
+- 路径处理优先用 `pathlib`
+- 调子进程优先用参数列表形式（如 `subprocess.run([...], shell=False)`），不要拼 shell 字符串
+- 显式传递 `cwd` / `env`，避免依赖调用者当前目录
+- 平台差异集中在少量 helper 函数里，不要在主流程里到处散落 `if windows`
+
 ## 脚本编写规范
 
 ### bash (`run.sh`)
@@ -37,7 +73,8 @@ alwaysApply: true
 - 必须 `set -euo pipefail`
 - 必须 `cd "$(dirname "$0")/../.."` 切换到项目根
 - 文件需要 `chmod +x` 可执行权限
-- 透传参数用 `"$@"`，最终执行用 `exec uv run ...`（让 shell 替换为 uv 进程）
+- 透传参数用 `"$@"`
+- 若只是启动单个最终命令，优先用 `exec uv run ...`（让 shell 替换为 uv 进程）
 
 ### PowerShell (`run.ps1`)
 
