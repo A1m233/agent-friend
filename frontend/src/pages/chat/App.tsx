@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
 import { useConnectionStore, useConversationStore, type ConnectionStatus } from "@/stores";
 import {
@@ -10,6 +10,7 @@ import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
+import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX } from "./layout";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -23,6 +24,7 @@ export function ChatApp() {
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
+  const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
@@ -60,12 +62,13 @@ export function ChatApp() {
             </Button>
           </div>
         )}
-        <MessageList />
+        <MessageList composerHeight={composerHeight} />
         <Composer
           disabled={voiceBlocksText || historyLoading}
           disabledReason={
             historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
           }
+          onHeightChange={setComposerHeight}
         />
       </div>
     </SidebarProvider>

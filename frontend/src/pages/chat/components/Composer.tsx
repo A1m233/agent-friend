@@ -4,6 +4,8 @@ import { useConversationStore, useSessionsStore } from "@/stores";
 import { cn } from "@/utils/cn";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 
+const COMPOSER_AUTOSIZE = { minRows: 2, maxRows: 6 } as const;
+
 /**
  * 输入条：tdesign-chat 的 `<ChatSender>`。
  *
@@ -24,14 +26,17 @@ import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 interface ComposerProps {
   disabled?: boolean;
   disabledReason?: string;
+  onHeightChange?: (height: number) => void;
 }
 
-export function Composer({ disabled = false, disabledReason }: ComposerProps) {
+export function Composer({ disabled = false, disabledReason, onHeightChange }: ComposerProps) {
   const streaming = useConversationStore((s) => s.streaming);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
   const refreshSessions = useSessionsStore((s) => s.refresh);
+  const rootRef = useRef<HTMLDivElement>(null);
   const senderRef = useRef<HTMLElement>(null);
+  const lastHeightRef = useRef(0);
 
   useEffect(() => {
     const el = senderRef.current;
@@ -73,6 +78,32 @@ export function Composer({ disabled = false, disabledReason }: ComposerProps) {
     };
   }, []);
 
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onHeightChange) return;
+
+    let raf = 0;
+    const reportHeight = () => {
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      if (height === lastHeightRef.current) return;
+      lastHeightRef.current = height;
+      onHeightChange(height);
+    };
+    const queueReport = () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(reportHeight);
+    };
+
+    const observer = new ResizeObserver(queueReport);
+    observer.observe(el);
+    reportHeight();
+
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, [onHeightChange]);
+
   const submit = (text: string) => {
     if (disabled) return;
     const trimmed = text.trim();
@@ -84,11 +115,12 @@ export function Composer({ disabled = false, disabledReason }: ComposerProps) {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8">
+    <div ref={rootRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8">
       <div className={cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-auto relative")}>
         <div className="rounded-2xl shadow-lg">
           <ChatSender
             ref={senderRef}
+            autosize={COMPOSER_AUTOSIZE}
             disabled={disabled}
             loading={streaming}
             placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}

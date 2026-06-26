@@ -9,6 +9,8 @@ import type { SessionSummary } from "@/types/meta";
 interface SessionsState {
   list: SessionSummary[];
   loading: boolean;
+  /** 至少成功拉取过一次列表；用于区分“空列表”和“还没拿到真相源”。 */
+  loaded: boolean;
   /** 从 bridge 重新拉取会话列表（新建/切换后调用刷新）。 */
   refresh: () => Promise<void>;
 }
@@ -16,11 +18,12 @@ interface SessionsState {
 export const useSessionsStore = create<SessionsState>((set) => ({
   list: [],
   loading: false,
+  loaded: false,
   async refresh() {
     set({ loading: true });
     try {
       const list = await sessionsApi.list();
-      set({ list, loading: false });
+      set({ list, loading: false, loaded: true });
     } catch {
       // 列表拉取失败不弹技术错误，保留旧列表即可。
       set({ loading: false });

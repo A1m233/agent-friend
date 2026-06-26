@@ -21,3 +21,7 @@
   --td-chat-item-content-padding: 0;
   --td-chat-item-text-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
 }
+
+t-chat-sender::part(t-textarea) {
+  overflow: hidden;
+}

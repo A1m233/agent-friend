@@ -10,6 +10,7 @@ mod bubble_window;
 mod paths;
 mod push_subscriber;
 mod settings;
+mod ui_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 
@@ -435,6 +436,8 @@ pub fn run() {
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
+        ui_state::get_chat_ui_persistence,
+        ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -450,6 +453,8 @@ pub fn run() {
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
+        ui_state::get_chat_ui_persistence,
+        ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,

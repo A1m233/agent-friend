@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Button,
@@ -10,6 +10,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui";
+import {
+  getChatUiPersistence,
+  resolveRestorableChatSessionId,
+  setLastChatSessionId,
+} from "@/lib/persistence/chatUi";
 import { useConnectionStore, useConversationStore, useSessionsStore } from "@/stores";
 import { isTauri } from "@/utils/tauri";
 
@@ -28,10 +33,47 @@ const SESSIONS_CHANGED_EVENT = "sessions://changed";
 export function HistorySidebar() {
   const list = useSessionsStore((s) => s.list);
   const refresh = useSessionsStore((s) => s.refresh);
+  const sessionsLoaded = useSessionsStore((s) => s.loaded);
   const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
+  const [persistedSessionId, setPersistedSessionId] = useState<string | null | undefined>();
+  const restoreAttemptedRef = useRef(false);
+  const restoreBlockedRef = useRef(false);
+
+  const blockAutoRestore = useCallback(() => {
+    restoreBlockedRef.current = true;
+  }, []);
+
+  const handleNewSession = useCallback(() => {
+    blockAutoRestore();
+    newSession();
+  }, [blockAutoRestore, newSession]);
+
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      blockAutoRestore();
+      void openSession(sessionId);
+    },
+    [blockAutoRestore, openSession],
+  );
+
+  useEffect(() => {
+    let alive = true;
+
+    getChatUiPersistence()
+      .then((state) => {
+        if (alive) setPersistedSessionId(state.lastChatSessionId);
+      })
+      .catch(() => {
+        if (alive) setPersistedSessionId(null);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (status === "online") {
@@ -59,10 +101,37 @@ export function HistorySidebar() {
     };
   }, [status, refresh]);
 
+  useEffect(() => {
+    if (
+      restoreAttemptedRef.current ||
+      restoreBlockedRef.current ||
+      persistedSessionId === undefined ||
+      !sessionsLoaded ||
+      currentSessionId
+    ) {
+      return;
+    }
+
+    restoreAttemptedRef.current = true;
+    const restorableSessionId = resolveRestorableChatSessionId(persistedSessionId, list);
+    if (!restorableSessionId) {
+      if (persistedSessionId) void setLastChatSessionId(null);
+      return;
+    }
+
+    void openSession(restorableSessionId, { failureMode: "home", remember: false }).then(
+      (opened) => {
+        if (!opened && !restoreBlockedRef.current) {
+          void setLastChatSessionId(null);
+        }
+      },
+    );
+  }, [currentSessionId, list, openSession, persistedSessionId, sessionsLoaded]);
+
   return (
     <Sidebar collapsible="none" className="border-r border-border">
       <SidebarHeader>
-        <Button className="w-full" onClick={() => newSession()}>
+        <Button className="w-full" onClick={handleNewSession}>
           + 新对话
         </Button>
       </SidebarHeader>
@@ -76,7 +145,7 @@ export function HistorySidebar() {
                 <SidebarMenuItem key={s.session_id}>
                   <SidebarMenuButton
                     isActive={s.session_id === currentSessionId}
-                    onClick={() => void openSession(s.session_id)}
+                    onClick={() => handleOpenSession(s.session_id)}
                   >
                     <span>{s.title || "新对话"}</span>
                   </SidebarMenuButton>

@@ -49,12 +49,12 @@ export function CopyMessageButton({ copyText }: CopyMessageButtonProps) {
   return (
     <TooltipButton
       type="button"
-      icon={copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+      icon={copied ? <Check className="size-[var(--text-xs)]" /> : <Copy className="size-[var(--text-xs)]" />}
       tooltip={copied ? "已复制" : "复制消息"}
       aria-label={copied ? "已复制" : "复制消息"}
       disabled={!copyText}
       className={cn(
-        "h-6 w-6 rounded-[var(--radius-md)] text-muted hover:text-fg",
+        "h-5 w-5 rounded-[var(--radius-md)] text-muted hover:text-fg",
         copied && "text-success hover:text-success",
       )}
       onClick={() => void handleCopy()}

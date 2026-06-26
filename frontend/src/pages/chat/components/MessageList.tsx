@@ -13,7 +13,11 @@ import { ArrowDown } from "lucide-react";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
 import type { ChatMessage } from "@/types/chat";
-import { CHAT_CONTENT_CONTAINER_CLASS, CHAT_SCROLL_VIEWPORT_CLASS } from "../layout";
+import {
+  CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
+  CHAT_CONTENT_CONTAINER_CLASS,
+  CHAT_SCROLL_VIEWPORT_CLASS,
+} from "../layout";
 import { toMarkdownContent } from "../projection";
 import { MessageActionBar } from "./MessageActionBar";
 import { ToolCard } from "./ToolCard";
@@ -21,6 +25,7 @@ import { ToolCard } from "./ToolCard";
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
 const HISTORY_SCROLL_SETTLE_MS = 1200;
+const SCROLL_BUTTON_GAP_PX = 12;
 
 function isNearBottom(el: HTMLDivElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
@@ -139,13 +144,14 @@ function MessageContent({
 }
 
 function MessageItem({ message }: { message: ChatMessage }) {
-  const actionBar = (
-    <MessageActionBar
-      role={message.role}
-      createdAt={message.createdAt}
-      copyText={messageCopyText(message)}
-    />
-  );
+  const actionBar =
+    message.status === "streaming" ? null : (
+      <MessageActionBar
+        role={message.role}
+        createdAt={message.createdAt}
+        copyText={messageCopyText(message)}
+      />
+    );
 
   return (
     <div>
@@ -188,7 +194,13 @@ function HistoryLoadingState() {
  * 消息列表：领域消息（自写 fetch-SSE 累积）→ 受控渲染。文本交 tdesign 散件，
  * 工具卡片自渲染（tdesign alpha 不出 toolcall 块，见 projection / ToolCard 注释）。
  */
-export function MessageList() {
+interface MessageListProps {
+  composerHeight?: number;
+}
+
+export function MessageList({
+  composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
+}: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
@@ -201,6 +213,8 @@ export function MessageList() {
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const [isSticky, setIsSticky] = useState(true);
+  const composerInset = Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
+  const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
 
   const setSticky = useCallback((next: boolean) => {
     stickyRef.current = next;
@@ -290,6 +304,12 @@ export function MessageList() {
   }, [messages, scrollToBottom]);
 
   useLayoutEffect(() => {
+    if (stickyRef.current) {
+      scrollToBottom();
+    }
+  }, [composerInset, scrollToBottom]);
+
+  useLayoutEffect(() => {
     if (historyLoadSeq === 0 || historyLoadSeq === handledHistoryLoadSeqRef.current) return;
     handledHistoryLoadSeqRef.current = historyLoadSeq;
     if (historyLoading || messages.length === 0) return;
@@ -320,7 +340,11 @@ export function MessageList() {
         className="h-full"
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
-        <div ref={contentRef} className={`${CHAT_CONTENT_CONTAINER_CLASS} space-y-4 pb-36 pt-4`}>
+        <div
+          ref={contentRef}
+          className={`${CHAT_CONTENT_CONTAINER_CLASS} space-y-4 pt-4`}
+          style={{ paddingBottom: composerInset }}
+        >
           {messages.map((m, index) => {
             const renderKey = `${m.id}:${index}`;
             return <MessageItem key={renderKey} message={m} />;
@@ -332,7 +356,8 @@ export function MessageList() {
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="absolute bottom-44 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-bg/80 text-muted shadow-md hover:bg-surface hover:text-fg"
+          className="absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-bg/80 text-muted shadow-md hover:bg-surface hover:text-fg"
+          style={{ bottom: scrollButtonBottom }}
           aria-label="滚到底部"
           onClick={() => scrollToBottom("smooth")}
         >

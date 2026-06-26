@@ -7,6 +7,7 @@
  */
 
 import { create } from "zustand";
+import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import { runAgentStream, sessionsApi } from "@/services";
 import type { ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
@@ -19,6 +20,15 @@ const FRIENDLY_FALLBACK = "我这边好像走神了一下，待会儿再聊好�
 let activeController: AbortController | null = null;
 let openSessionToken = 0;
 
+type OpenSessionFailureMode = "message" | "home";
+
+interface OpenSessionOptions {
+  /** 自动恢复失败时用 home，手动打开失败时沿用 message。 */
+  failureMode?: OpenSessionFailureMode;
+  /** 自动恢复读取的是已有持久化指针，不需要重复写入。 */
+  remember?: boolean;
+}
+
 interface ConversationState {
   currentSessionId: string | null;
   messages: ChatMessage[];
@@ -29,7 +39,7 @@ interface ConversationState {
   /** 开一个新会话（清空当前视图；session 在首次 send 时由 bridge 自动创建）。 */
   newSession: () => void;
   /** 切换到历史会话并加载其上下文。 */
-  openSession: (sessionId: string) => Promise<void>;
+  openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   /** 发送一条消息并消费流式回复。 */
   send: (text: string) => Promise<void>;
   /** 打断当前流（保留已生成的部分）。 */
@@ -46,6 +56,12 @@ function userMessage(text: string, createdAt = new Date().toISOString()): ChatMe
   return { id, role: "user", createdAt, blocks: [block], status: "complete" };
 }
 
+function rememberLastChatSession(sessionId: string | null): void {
+  void setLastChatSessionId(sessionId).catch(() => {
+    // UI 恢复状态写入失败不影响当前对话；后续有统一 telemetry 再上报。
+  });
+}
+
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   messages: [],
@@ -56,24 +72,38 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   newSession() {
     openSessionToken += 1;
     if (get().streaming) get().stop();
+    rememberLastChatSession(null);
     set({ currentSessionId: null, messages: [], historyLoading: false });
   },
 
-  async openSession(sessionId) {
+  async openSession(sessionId, options) {
+    const failureMode = options?.failureMode ?? "message";
+    const remember = options?.remember ?? true;
     const token = openSessionToken + 1;
     openSessionToken = token;
     if (get().streaming) get().stop();
+    if (remember) rememberLastChatSession(sessionId);
     set({ currentSessionId: sessionId, messages: [], historyLoading: true });
     try {
       const detail = await sessionsApi.get(sessionId);
-      if (token !== openSessionToken || get().currentSessionId !== sessionId) return;
+      if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
       set((s) => ({
         messages: projectSessionEvents(detail.events),
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq + 1,
       }));
+      return true;
     } catch {
-      if (token !== openSessionToken || get().currentSessionId !== sessionId) return;
+      if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
+      if (failureMode === "home") {
+        set((s) => ({
+          currentSessionId: null,
+          messages: [],
+          historyLoading: false,
+          historyLoadSeq: s.historyLoadSeq + 1,
+        }));
+        return false;
+      }
       set((s) => ({
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq + 1,
@@ -88,6 +118,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           },
         ],
       }));
+      return false;
     }
   },
 
@@ -110,6 +141,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: true,
       messages: [...s.messages, userMessage(trimmed, sentAt), placeholder],
     }));
+    rememberLastChatSession(sessionId);
 
     const controller = new AbortController();
     activeController = controller;
