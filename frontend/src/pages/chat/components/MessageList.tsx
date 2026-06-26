@@ -57,13 +57,6 @@ function messageCopyText(message: ChatMessage): string {
   return message.blocks
     .flatMap((block) => {
       if (block.kind === "text" || block.kind === "thinking") return [block.text];
-      if (block.kind === "tool") {
-        return [
-          `[${block.name}]`,
-          block.args ? `参数：${block.args}` : "",
-          block.result ? `结果：${block.result}` : "",
-        ];
-      }
       return [];
     })
     .concat(message.status === "error" && message.error ? [message.error] : [])
