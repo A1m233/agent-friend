@@ -28,6 +28,8 @@
 
 前端表现上，这些消息是 `conversation.ts` 的乐观插入态：发送时先插入 user message 和空 assistant placeholder。由于后端流没有结束也没有抛错，placeholder 一直保持 streaming。
 
+补充触发线索：发现该问题的上一轮交互里，用户曾在 agent 正在流式回答时直接 stop / 掐掉会话。该行为不一定是唯一根因，但很可能触发或放大了前端 abort、后端流式生成、provider 连接收尾之间的取消语义问题。
+
 ## 根因初判
 
 卡点在 memory 之后、DeepSeek / LiteLLM 流式调用这一层。
@@ -41,6 +43,8 @@ litellm.completion(..., stream=True, **kwargs)
 ```
 
 但当前没有设置 `timeout`。本地 LiteLLM `completion()` 签名支持 `timeout` 参数。若 provider 网络、DeepSeek 服务或 LiteLLM stream wrapper 卡在初始化 / 迭代 / 收尾阶段，异常不会按预期映射成 `LLMNetworkError`，AG-UI encoder 也就无法发出 `RUN_ERROR`，前端会一直等待。
+
+另一个关键怀疑点是 stop / disconnect 语义。前端 `stop()` 当前主要是 `AbortController.abort()`，只能保证本地 fetch / SSE 结束；后端 `StreamingResponse` 正在消费同步 generator 时，如果已经阻塞在 provider stream 迭代里，客户端断开不一定能立即打断或关闭 provider response。此时如果再缺少 LLM timeout，就可能出现后端或 SDK 层等待 provider 自行返回的状态。
 
 尚未完全确认的是：本次卡住到底是 DeepSeek provider 临时不可用、网络链路问题，还是 LiteLLM stream wrapper 对已关闭连接的处理问题。但就产品行为而言，缺少 LLM 调用超时与流式兜底已经足以解释“无穷等待”。
 
@@ -60,6 +64,6 @@ litellm.completion(..., stream=True, **kwargs)
 1. 在 `ProviderSpec` 或 bridge settings 中新增 LLM timeout 配置，例如 `DEEPSEEK_TIMEOUT_SECONDS` / `AGENT_LLM_TIMEOUT_SECONDS`，并在 `LLMClient.complete()` 与 `LLMClient.stream()` 调用 `litellm.completion()` 时传入 `timeout`。
 2. 超时统一映射成 `LLMNetworkError`，让 `agent_bridge.protocols.ag_ui.encoders.encode_stream()` 能发出 `RUN_ERROR`，前端退出 waiting 态并展示拟人化兜底文案。
 3. 为流式调用补更细日志：run id、thread id、model、LLM call start、first chunk、finish reason、exception / timeout、elapsed_ms。避免以后只能从 LiteLLM 的开始/完成日志反推。
-4. 明确 stop/cancel 语义：前端 abort fetch 后，后端如果已经进入阻塞式 provider generator，可能无法立即取消；至少应依赖 provider timeout 收敛，必要时再评估 run registry / cancellation token。
+4. 明确 stop/cancel 语义：前端 abort fetch 后，后端如果已经进入阻塞式 provider generator，可能无法立即取消；至少应依赖 provider timeout 收敛，并尽量在 client disconnect / `GeneratorExit` 时关闭 provider response，必要时再评估 run registry / cancellation token。
 5. 前端增加“长时间等待”兜底：例如超过阈值后提示“这次回复有点卡住了，可以停止后重试”，但这只能改善体感，不能替代后端 timeout。
 6. 可选增加 provider 健康 / 熔断：连续 LLM timeout 后在连接状态或 debug 面板里暴露“LLM 上游异常”，不要只显示 bridge 已连接。
