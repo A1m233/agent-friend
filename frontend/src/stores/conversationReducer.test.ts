@@ -3,7 +3,13 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 import { applyAguiEvent } from "./conversationReducer";
 import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
 
-const base: ChatMessage = { id: "a", role: "assistant", blocks: [], status: "streaming" };
+const base: ChatMessage = {
+  id: "a",
+  role: "assistant",
+  createdAt: "2026-06-10T00:00:00Z",
+  blocks: [],
+  status: "streaming",
+};
 
 /** 构造一个 AG-UI 事件（测试里只关心 reducer 用到的字段）。 */
 function emit(e: Record<string, unknown>): BaseEvent {

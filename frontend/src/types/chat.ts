@@ -50,6 +50,8 @@ export type MessageBlock = TextBlock | ToolBlock | ThinkingBlock;
 export interface ChatMessage {
   id: string;
   role: ChatRole;
+  /** 消息创建时间，ISO 字符串；历史消息来自后端事件 ts，实时消息由前端生成。 */
+  createdAt: string;
   blocks: MessageBlock[];
   status: MessageStatus;
   /** status==='error' 时的拟人化兜底文案（不含技术细节，见 R-M3.6）。 */

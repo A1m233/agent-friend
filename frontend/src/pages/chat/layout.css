@@ -1,0 +1,32 @@
+.chat-message-viewport {
+  /*
+   * 调整消息区底部渐隐：
+   * - 改 --chat-scroll-fade-height 控制渐隐高度。
+   * - 改 --chat-scroll-fade-mid-opacity 控制渐隐中段保留的可见度：
+   *   75% 更淡，55% 居中，35% 更强。
+   */
+  --chat-scroll-fade-height: calc(var(--spacing) * 48);
+  --chat-scroll-fade-start: calc(100% - var(--chat-scroll-fade-height));
+  --chat-scroll-fade-mid: calc(100% - var(--chat-scroll-fade-height) / 2);
+  --chat-scroll-fade-mid-opacity: 0%;
+  --chat-scroll-fade-mid-mask: color-mix(
+    in srgb,
+    black var(--chat-scroll-fade-mid-opacity),
+    transparent
+  );
+
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black var(--chat-scroll-fade-start),
+    var(--chat-scroll-fade-mid-mask) var(--chat-scroll-fade-mid),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    black 0,
+    black var(--chat-scroll-fade-start),
+    var(--chat-scroll-fade-mid-mask) var(--chat-scroll-fade-mid),
+    transparent 100%
+  );
+}

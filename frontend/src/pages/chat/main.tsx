@@ -7,6 +7,7 @@ import "@tdesign-react/chat/es/style/index.js";
 import { registerSettingsListener } from "@/lib/settings/listen";
 import { startVoiceStateSubscriber } from "@/stores/voice";
 import { ChatApp } from "./App";
+import "./layout.css";
 
 registerSettingsListener();
 startVoiceStateSubscriber();

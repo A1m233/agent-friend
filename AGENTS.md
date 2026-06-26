@@ -35,3 +35,4 @@
 | `add-shadcn-component` | 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当需要新增通用纯 UI 件、引入/添加… |
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
+| `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |

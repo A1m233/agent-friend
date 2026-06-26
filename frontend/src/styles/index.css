@@ -2,6 +2,7 @@
 @import "./theme/tokens.css";
 @import "./theme/light.css";
 @import "./theme/dark.css";
+@import "./vendor/tdesign-chat.css";
 
 /*
  * 本项目换肤走 html[theme]（见 theme/*.css），不使用 Tailwind 的 .dark 策略。

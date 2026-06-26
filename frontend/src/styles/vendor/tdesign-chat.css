@@ -1,0 +1,18 @@
+/*
+ * TDesign Chat 组件样式覆盖。
+ *
+ * 本文件由 styles/index.css 统一引入，避免第三方组件样式散落在页面代码里。
+ * 变量挂在 #root 而不是 :root：即使 @tdesign-react/chat/es/style/index.js
+ * 在 styles/index.css 之后加载，TDesign 自己的 :root 默认值也不会盖掉这里。
+ */
+#root {
+  --td-chat-font-size: var(--font-size-sm);
+  --td-chat-input-font-size: var(--font-size-sm);
+  --td-chat-item-content-base-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
+  /*
+   * assistant 的 text variant 是无气泡正文，内容容器不再额外垫上下边距；
+   * 否则 actionbar 放进 actionbar slot 后，会比 user 气泡离正文更远。
+   */
+  --td-chat-item-content-padding: 0;
+  --td-chat-item-text-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
+}

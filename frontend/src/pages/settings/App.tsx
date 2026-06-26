@@ -1,8 +1,6 @@
 import { useState, type CSSProperties } from "react";
-import { Info, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import {
-  Button,
-  ScrollArea,
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -15,17 +13,16 @@ import {
   Tabs,
   TabsList,
   TabsTrigger,
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
+import { SettingsGroup } from "./components/SettingsGroup";
+import { SettingsRow } from "./components/SettingsRow";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
  *
- * 目前只承载"通用 → 外观 → 主题"一项，后续新增设置项按 design.md 扩展点接入。
+ * 后续新增设置项按 design.md 扩展点接入。
  */
 type SettingsSection = "general" | "voice";
 
@@ -71,17 +68,14 @@ export function SettingsApp() {
         </Sidebar>
 
         <main className="flex min-w-0 flex-1 flex-col bg-bg">
-          <ScrollArea className="h-screen">
+          <div className="h-screen overflow-y-auto">
             <div className="mx-auto flex max-w-2xl flex-col gap-4 p-4">
               {section === "general" ? (
                 <>
                   <h2 className="text-xl font-semibold">通用</h2>
 
-                  <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface/50 p-5">
-                    <h3 className="text-sm font-medium text-muted">外观</h3>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">主题</span>
+                  <SettingsGroup title="外观">
+                    <SettingsRow label="主题">
                       <Tabs
                         value={theme}
                         onValueChange={(value) =>
@@ -97,36 +91,19 @@ export function SettingsApp() {
                           </TabsTrigger>
                         </TabsList>
                       </Tabs>
-                    </div>
-                  </section>
+                    </SettingsRow>
+                  </SettingsGroup>
                 </>
               ) : (
                 <>
                   <h2 className="text-xl font-semibold">语音</h2>
 
-                  <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface/50 p-5">
-                    <h3 className="text-sm font-medium text-muted">语音通话</h3>
-
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="text-sm">同意进行公网穿透</span>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="size-6 text-muted"
-                              aria-label="公网穿透说明"
-                            >
-                              <Info className="size-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs" side="top">
-                            未同意公网穿透前无法进行语音通话。agent-friend 不会保存火山凭证或公网 URL。
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
+                  <SettingsGroup title="语音通话">
+                    <SettingsRow
+                      label="同意进行公网穿透"
+                      tooltip="未同意公网穿透前无法进行语音通话。agent-friend 不会保存火山凭证或公网 URL。"
+                      tooltipAriaLabel="公网穿透说明"
+                    >
                       <Switch
                         checked={voiceTunnelConsentAccepted}
                         onCheckedChange={(checked) =>
@@ -134,12 +111,12 @@ export function SettingsApp() {
                         }
                         aria-label="同意进行公网穿透"
                       />
-                    </div>
-                  </section>
+                    </SettingsRow>
+                  </SettingsGroup>
                 </>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </main>
       </SidebarProvider>
     </TooltipProvider>

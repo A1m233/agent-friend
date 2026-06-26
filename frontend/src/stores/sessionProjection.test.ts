@@ -16,6 +16,7 @@ describe("projectSessionEvents", () => {
     expect(out).toHaveLength(2);
     expect(out[0].role).toBe("user");
     expect(out[1].role).toBe("assistant");
+    expect(out[0].createdAt).toBe("2026-06-10T00:00:00Z");
     expect(out[0].status).toBe("complete");
   });
 

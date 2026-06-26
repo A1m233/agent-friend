@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { ChatSender } from "@tdesign-react/chat";
 import { useConversationStore, useSessionsStore } from "@/stores";
+import { cn } from "@/utils/cn";
+import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
 
 /**
  * 输入条：tdesign-chat 的 `<ChatSender>`。
@@ -82,15 +84,19 @@ export function Composer({ disabled = false, disabledReason }: ComposerProps) {
   };
 
   return (
-    <div className="border-t border-border px-4 py-3">
-      <ChatSender
-        ref={senderRef}
-        disabled={disabled}
-        loading={streaming}
-        placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
-        onSend={(e) => submit(e.detail.value)}
-        onStop={() => stop()}
-      />
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8">
+      <div className={cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-auto relative")}>
+        <div className="rounded-2xl shadow-lg">
+          <ChatSender
+            ref={senderRef}
+            disabled={disabled}
+            loading={streaming}
+            placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
+            onSend={(e) => submit(e.detail.value)}
+            onStop={() => stop()}
+          />
+        </div>
+      </div>
     </div>
   );
 }

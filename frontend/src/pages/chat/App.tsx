@@ -20,6 +20,7 @@ export function ChatApp() {
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const historyLoading = useConversationStore((s) => s.historyLoading);
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
   const voiceBlocksText =
@@ -47,7 +48,7 @@ export function ChatApp() {
       style={{ "--sidebar-width": "15rem" } as CSSProperties}
     >
       <HistorySidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center justify-end border-b border-border px-4 py-2.5">
           <ConnectionDot status={status} />
         </header>
@@ -61,8 +62,10 @@ export function ChatApp() {
         )}
         <MessageList />
         <Composer
-          disabled={voiceBlocksText}
-          disabledReason="语音通话中，文字输入已暂时停用"
+          disabled={voiceBlocksText || historyLoading}
+          disabledReason={
+            historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
+          }
         />
       </div>
     </SidebarProvider>

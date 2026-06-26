@@ -26,9 +26,14 @@ import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 
-function textMessage(id: string, role: ChatMessage["role"], content: string): ChatMessage {
+function textMessage(
+  id: string,
+  role: ChatMessage["role"],
+  content: string,
+  createdAt: string,
+): ChatMessage {
   const block: TextBlock = { kind: "text", mid: id, text: content };
-  return { id, role, blocks: [block], status: "complete" };
+  return { id, role, createdAt, blocks: [block], status: "complete" };
 }
 
 function asString(v: unknown): string {
@@ -54,7 +59,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "user_message") {
-      messages.push(textMessage(ev.uuid, "user", asString(p.content)));
+      messages.push(textMessage(ev.uuid, "user", asString(p.content), ev.ts));
       continue;
     }
 
@@ -64,7 +69,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         continue;
       }
       const content = asString(p.content);
-      if (content) messages.push(textMessage(ev.uuid, "assistant", content));
+      if (content) messages.push(textMessage(ev.uuid, "assistant", content, ev.ts));
       continue;
     }
 
@@ -79,7 +84,13 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         status: "running",
       };
       toolBlocks.set(id, block);
-      messages.push({ id: ev.uuid, role: "assistant", blocks: [block], status: "complete" });
+      messages.push({
+        id: ev.uuid,
+        role: "assistant",
+        createdAt: ev.ts,
+        blocks: [block],
+        status: "complete",
+      });
       continue;
     }
 

@@ -17,11 +17,15 @@ const FRIENDLY_FALLBACK = "我这边好像走神了一下，待会儿再聊好�
 
 /** 本窗口同一时刻只允许一条进行中的流。 */
 let activeController: AbortController | null = null;
+let openSessionToken = 0;
 
 interface ConversationState {
   currentSessionId: string | null;
   messages: ChatMessage[];
   streaming: boolean;
+  historyLoading: boolean;
+  /** 历史会话加载完成事件序号；UI 用它触发一次 post-layout 滚动校正。 */
+  historyLoadSeq: number;
   /** 开一个新会话（清空当前视图；session 在首次 send 时由 bridge 自动创建）。 */
   newSession: () => void;
   /** 切换到历史会话并加载其上下文。 */
@@ -36,59 +40,75 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
-function userMessage(text: string): ChatMessage {
+function userMessage(text: string, createdAt = new Date().toISOString()): ChatMessage {
   const id = newId();
   const block: TextBlock = { kind: "text", mid: id, text };
-  return { id, role: "user", blocks: [block], status: "complete" };
+  return { id, role: "user", createdAt, blocks: [block], status: "complete" };
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   messages: [],
   streaming: false,
+  historyLoading: false,
+  historyLoadSeq: 0,
 
   newSession() {
+    openSessionToken += 1;
     if (get().streaming) get().stop();
-    set({ currentSessionId: null, messages: [] });
+    set({ currentSessionId: null, messages: [], historyLoading: false });
   },
 
   async openSession(sessionId) {
+    const token = openSessionToken + 1;
+    openSessionToken = token;
     if (get().streaming) get().stop();
-    set({ currentSessionId: sessionId, messages: [] });
+    set({ currentSessionId: sessionId, messages: [], historyLoading: true });
     try {
       const detail = await sessionsApi.get(sessionId);
-      set({ messages: projectSessionEvents(detail.events) });
+      if (token !== openSessionToken || get().currentSessionId !== sessionId) return;
+      set((s) => ({
+        messages: projectSessionEvents(detail.events),
+        historyLoading: false,
+        historyLoadSeq: s.historyLoadSeq + 1,
+      }));
     } catch {
-      set({
+      if (token !== openSessionToken || get().currentSessionId !== sessionId) return;
+      set((s) => ({
+        historyLoading: false,
+        historyLoadSeq: s.historyLoadSeq + 1,
         messages: [
           {
             id: newId(),
             role: "assistant",
+            createdAt: new Date().toISOString(),
             blocks: [],
             status: "error",
             error: "这段对话我一时没翻出来，待会儿再试试？",
           },
         ],
-      });
+      }));
     }
   },
 
   async send(text) {
     const trimmed = text.trim();
-    if (!trimmed || get().streaming) return;
+    if (!trimmed || get().streaming || get().historyLoading) return;
 
     const sessionId = get().currentSessionId ?? newId();
     const assistantId = newId();
+    const sentAt = new Date().toISOString();
     const placeholder: ChatMessage = {
       id: assistantId,
       role: "assistant",
+      createdAt: sentAt,
       blocks: [],
       status: "streaming",
     };
     set((s) => ({
       currentSessionId: sessionId,
       streaming: true,
-      messages: [...s.messages, userMessage(trimmed), placeholder],
+      messages: [...s.messages, userMessage(trimmed, sentAt), placeholder],
     }));
 
     const controller = new AbortController();
