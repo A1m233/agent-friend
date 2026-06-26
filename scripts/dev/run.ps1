@@ -1,8 +1,9 @@
 ﻿# scripts/dev/run.ps1 — 一键起 bridge + 前端开发（windows）
 #
-# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），并启动 voice_bridge。
+# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），不启动 voice_bridge。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --no-voice：不启动 voice_bridge（轻量前端 / 桌宠开发）。
+# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL）。
+# --no-voice：不启动 voice_bridge（默认；保留给显式声明 / 兼容旧命令）。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
 # bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理子进程树。
@@ -17,7 +18,7 @@ try {
 Set-Location $root
 
 $mode = "tauri"
-$startVoice = $true
+$startVoice = $false
 $rest = @()
 foreach ($a in $args) {
     switch ($a) {
@@ -214,7 +215,7 @@ if ($startVoice) {
     }
 }
 else {
-    Write-Host "===> 跳过 voice_bridge（--no-voice）"
+    Write-Host "===> 跳过 voice_bridge（默认；传 --voice 启用语音链路）"
 }
 
     Set-Location (Join-Path $root "frontend")

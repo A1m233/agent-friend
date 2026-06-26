@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # scripts/dev/run.sh — 一键起 bridge + 前端开发（mac/linux）
 #
-# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），并启动 voice_bridge。
+# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），不启动 voice_bridge。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --no-voice：不启动 voice_bridge（轻量前端 / 桌宠开发）。
+# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL）。
+# --no-voice：不启动 voice_bridge（默认；保留给显式声明 / 兼容旧命令）。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
 # 输出分别加 [bridge] / [voice] / [app|web] 前缀；Ctrl+C 一起退（清理整个进程组）。
@@ -13,7 +14,7 @@ cd "$(dirname "$0")/../.."
 ROOT="$(pwd)"
 
 MODE="tauri"
-START_VOICE=1
+START_VOICE=0
 ARGS=()
 for a in "$@"; do
     case "$a" in
@@ -203,7 +204,7 @@ if [ "$START_VOICE" = "1" ]; then
         fi
     fi
 else
-    echo "===> 跳过 voice_bridge（--no-voice）"
+    echo "===> 跳过 voice_bridge（默认；传 --voice 启用语音链路）"
 fi
 
 if [ "$MODE" = "web" ]; then
