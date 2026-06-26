@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import platformdirs
@@ -51,7 +52,12 @@ def _configure_logging(level: str, *, file_log: bool = False) -> None:
     try:
         log_path = _voice_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler = RotatingFileHandler(
+            log_path,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
         handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
         handler.setLevel(level.upper())
         handler._agent_friend_voice_bridge_file = True  # type: ignore[attr-defined]
