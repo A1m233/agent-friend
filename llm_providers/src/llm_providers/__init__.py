@@ -12,7 +12,7 @@ from .errors import (
     LLMProviderError,
     LLMRateLimitError,
 )
-from .spec import ProviderSpec
+from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
     LLMStreamEvent,
     LLMTextDelta,
@@ -36,5 +36,6 @@ __all__ = [
     "LLMToolCallDelta",
     "LLMTurnDone",
     "LLMUsage",
+    "ProviderConfig",
     "ProviderSpec",
 ]

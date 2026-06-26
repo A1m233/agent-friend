@@ -7,11 +7,12 @@
 #   4. 本地 HTTP server（在 127.0.0.1:8765  serve index.html）
 #
 # 使用步骤：
-#   1. 确认 .env 已填好 DEEPSEEK_API_KEY、VOLC_* 等凭证
-#   2. 在 PowerShell 里跑：.\scripts\voice-smoke\run.ps1
-#   3. 等待日志出现 "打开 http://127.0.0.1:8765/voice_bridge/smoke/"
-#   4. 在浏览器里点 "拨打通话"
-#   5. 挂断后回到本窗口按 Enter，脚本会清理所有进程
+#   1. 运行 .\scripts\credentials\run.ps1 set-bundle deepseek
+#   2. 运行 .\scripts\credentials\run.ps1 set-bundle volc-voice
+#   3. 在 PowerShell 里跑：.\scripts\voice-smoke\run.ps1
+#   4. 等待日志出现 "打开 http://127.0.0.1:8765/voice_bridge/smoke/"
+#   5. 在浏览器里点 "拨打通话"
+#   6. 挂断后回到本窗口按 Enter，脚本会清理所有进程
 #
 # ⚠️ 会触发真实火山 RTC + DeepSeek LLM 调用，产生 token 消耗。
 
@@ -22,7 +23,6 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 $here = $PSScriptRoot
 $repo = Resolve-Path (Join-Path $here "..\..")
 Set-Location $repo
-$envFile = Join-Path $repo ".env"
 
 function Write-Step([string]$msg) {
     Write-Host ""
@@ -67,12 +67,6 @@ function Assert-PortFree([int]$port) {
 
 # ----- 前置检查 -----
 
-if (-not (Test-Path $envFile)) {
-    Write-Host "错误：找不到 $envFile" -ForegroundColor Red
-    Write-Host "请先运行 .\scripts\setup\run.ps1 生成 .env 并填入凭证"
-    exit 1
-}
-
 $required = @("uv", "cloudflared")
 foreach ($cmd in $required) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -84,6 +78,9 @@ foreach ($cmd in $required) {
 foreach ($port in @(18800, 18900, 8765)) {
     Assert-PortFree $port
 }
+
+Write-Step "当前凭据状态（不显示明文）"
+uv run python -m runtime_config status
 
 # 提醒用户这是真机调用
 Write-Host "本脚本会启动 agent_bridge + voice_bridge + cloudflared，并触发真实火山 RTC 与 DeepSeek LLM 调用。" -ForegroundColor Yellow

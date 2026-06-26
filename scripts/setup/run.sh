@@ -22,7 +22,7 @@ Usage: scripts/setup/run.sh [--clean]
   1. 检查 uv 是否已安装（未安装则提示安装命令并退出）
   2. （可选）--clean 时清理缓存
   3. 跑 uv sync 安装后端依赖
-  4. 检查 .env，没有则从 .env.example 复制
+  4. 提示使用 scripts/credentials 配置本机系统凭据
   5. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
   6. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
 EOF
@@ -68,13 +68,11 @@ echo "==> 安装依赖（uv sync）"
 uv sync
 
 echo
-echo "==> 检查 .env"
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "  已从 .env.example 创建 .env"
-    echo "  [TODO] 请编辑 .env 填入 DEEPSEEK_API_KEY"
-else
-    echo "  .env 已存在，跳过"
+echo "==> 凭据配置"
+echo "  默认开发 / 桌面主路径使用系统凭据存储，不创建仓库 .env。"
+echo "  [TODO] 首次运行：./scripts/credentials/run.sh set-bundle deepseek"
+if [ -f .env ]; then
+    echo "  [INFO] 检测到已有 .env；仅在显式 --legacy-dotenv 时作为存量 fallback 使用。"
 fi
 
 # 前端依赖 best-effort：工具齐就装，缺工具只提示、不让整个 setup 失败（后端已就绪）。
@@ -102,7 +100,7 @@ fi
 
 echo
 echo "==> 完成！接下来："
-echo "  1. （首次）编辑 .env 填入 DEEPSEEK_API_KEY"
+echo "  1. （首次）配置凭据：./scripts/credentials/run.sh set-bundle deepseek"
 echo "  2. 启动 CLI：      ./scripts/cli/run.sh"
 echo "  3. 试用桌面端：    ./scripts/dev/run.sh        （一键起 bridge + 桌面双窗口；--web 走浏览器）"
 echo "  4. 跑测试：        ./scripts/test/run.sh"

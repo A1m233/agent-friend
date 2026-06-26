@@ -14,6 +14,7 @@ ROOT="$(pwd)"
 
 MODE="tauri"
 START_VOICE=1
+CONFIG_MODE="${AGENT_FRIEND_CONFIG_MODE:-desktop}"
 ARGS=()
 for a in "$@"; do
     case "$a" in
@@ -21,9 +22,12 @@ for a in "$@"; do
         --tauri) MODE="tauri" ;;
         --voice) START_VOICE=1 ;;
         --no-voice) START_VOICE=0 ;;
+        --legacy-dotenv) CONFIG_MODE="legacy-dotenv" ;;
+        --config-mode=*) CONFIG_MODE="${a#--config-mode=}" ;;
         *) ARGS+=("$a") ;;
     esac
 done
+export AGENT_FRIEND_CONFIG_MODE="$CONFIG_MODE"
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "  [ERROR] 未检测到 uv。先跑 ./scripts/setup/run.sh 初始化环境。" >&2
@@ -176,6 +180,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "===> 启动 bridge（127.0.0.1:18800）…"
+echo "===> 配置模式：$AGENT_FRIEND_CONFIG_MODE（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 # 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式

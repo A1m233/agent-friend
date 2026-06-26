@@ -24,6 +24,12 @@ from logging.handlers import RotatingFileHandler
 from agent.paths import log_dir
 from fastapi import FastAPI
 
+from runtime_config import (
+    config_mode_from_env,
+    credential_source_for_mode,
+    settings_kwargs_for_mode,
+)
+
 from .assembly import BridgeRuntime, build_runtime
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
@@ -31,18 +37,23 @@ from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
 from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
+from .runtime_config import resolve_bridge_runtime_config
 from .settings import BridgeSettings
 
 
 def create_app() -> FastAPI:
     """``uvicorn --factory`` 入口；进程启动时被调用一次。
 
-    本函数**不**显式接受参数；设置全部从 :class:`BridgeSettings`（环境变量 /
-    ``.env``）读取。需要不同配置时通过环境变量覆盖，便于命令行与测试一致。
+    本函数**不**显式接受参数；配置 mode 通过 ``AGENT_FRIEND_CONFIG_MODE`` 设置。
+    默认桌面主路径只读 process env + system keyring；存量 ``.env`` 需显式
+    ``legacy-dotenv`` mode。
     """
-    settings = BridgeSettings()
+    mode = config_mode_from_env()
+    settings = BridgeSettings(**settings_kwargs_for_mode(mode))
     _configure_logging(settings.log_level)
-    runtime = build_runtime(settings)
+    credentials = credential_source_for_mode(mode)
+    runtime_config = resolve_bridge_runtime_config(credentials)
+    runtime = build_runtime(settings, runtime_config=runtime_config)
     return create_app_with_runtime(runtime)
 
 

@@ -39,3 +39,29 @@ def test_bridge_specific_env_overrides_data_dir(
     assert settings.sessions_dir == tmp_path / "custom-sessions"
     # 未单独覆盖的项仍跟随全局数据目录
     assert settings.memory_db == tmp_path / "global" / "memory" / "memory.db"
+
+
+def test_bridge_settings_ignore_dotenv_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("AGENT_BRIDGE_PORT=19999\n", encoding="utf-8")
+    monkeypatch.delenv("AGENT_BRIDGE_PORT", raising=False)
+
+    settings = BridgeSettings()
+
+    assert settings.port == 18800
+
+
+def test_bridge_settings_legacy_dotenv_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("AGENT_BRIDGE_PORT=19999\n", encoding="utf-8")
+    monkeypatch.delenv("AGENT_BRIDGE_PORT", raising=False)
+
+    settings = BridgeSettings(_env_file=".env")  # type: ignore[call-arg]
+
+    assert settings.port == 19999

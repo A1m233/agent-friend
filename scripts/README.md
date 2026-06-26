@@ -9,9 +9,11 @@
 | 1. 安装 uv（一次性） | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `powershell -c "irm https://astral.sh/uv/install.ps1 \| iex"` |
 | 2. 拉代码 | `git clone <repo>` | 同左 |
 | 3. **一键初始化环境**（后端 + 前端依赖一起装；缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh` | `.\scripts\setup\run.ps1` |
-| 4. 编辑 `.env`，填入 `DEEPSEEK_API_KEY` | （编辑器打开 `.env`） | 同左 |
+| 4. 配置系统凭据 `DEEPSEEK_API_KEY` | `./scripts/credentials/run.sh set-bundle deepseek` | `.\scripts\credentials\run.ps1 set-bundle deepseek` |
 | 5. 启动 CLI | `./scripts/cli/run.sh` | `.\scripts\cli\run.ps1` |
 | 6.（试用桌面端）一键起 bridge + 桌面双窗口 | `./scripts/dev/run.sh` | `.\scripts\dev\run.ps1` |
+
+`.env` 只保留给存量 CLI / eval / CI / 临时调试；bridge / voice / dev 默认不读取仓库 `.env`。需要历史行为时显式传 `--legacy-dotenv`。
 
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。
 
@@ -19,11 +21,12 @@
 
 | 脚本 | 用途 | mac/linux | windows |
 |---|---|---|---|
-| `setup/` | 一键环境初始化（检查 uv → `uv sync` → 创建 `.env` → 尽力装前端依赖 → 检查 Rust；缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
+| `setup/` | 一键环境初始化（检查 uv → `uv sync` → 提示配置系统凭据 → 尽力装前端依赖 → 检查 Rust；缺 node/pnpm/Rust 只提示不报错） | `./scripts/setup/run.sh [--clean]` | `.\scripts\setup\run.ps1 [--clean]` |
+| `credentials/` | 管理本机系统凭据（status / set / delete / set-bundle；不打印明文 secret） | `./scripts/credentials/run.sh status` | `.\scripts\credentials\run.ps1 status` |
 | `cli/` | 启动 CLI 调试 UI（默认 in-process；加 `--bridge URL` 连远端 bridge） | `./scripts/cli/run.sh [--bridge URL]` | `.\scripts\cli\run.ps1 [--bridge URL]` |
-| `bridge/` | 启动 agent-bridge HTTP SSE 服务（默认 `127.0.0.1:18800`；OpenAI + AG-UI 双协议） | `./scripts/bridge/run.sh` | `.\scripts\bridge\run.ps1` |
-| `dev/` | **一键起 bridge + voice_bridge + 前端**（默认 Tauri 桌面双窗口；`--web` 切浏览器、不编译 Rust；语音默认自动启动 cloudflared tunnel 并把临时 URL 注入本次 voice_bridge，不写 `.env`；`--no-voice` 跳过 voice_bridge）。日志加 `[bridge]`/`[voice]`/`[app\|web]` 前缀（Windows 端共用控制台输出），Ctrl+C 一起退；退出后恢复调用前工作目录 | `./scripts/dev/run.sh [--web] [--no-voice] [前端参数]` | `.\scripts\dev\run.ps1 [--web] [--no-voice] [前端参数]` |
-| `voice/run` | 启动 voice-bridge 控制平面 + LLM 入站代理（默认 `127.0.0.1:18900`；007 voice-call） | `./scripts/voice/run.sh` | `.\scripts\voice\run.ps1` |
+| `bridge/` | 启动 agent-bridge HTTP SSE 服务（默认 `127.0.0.1:18800`；默认系统凭据，不读 `.env`；存量 fallback 传 `--legacy-dotenv`） | `./scripts/bridge/run.sh [--legacy-dotenv]` | `.\scripts\bridge\run.ps1 [--legacy-dotenv]` |
+| `dev/` | **一键起 bridge + voice_bridge + 前端**（默认 Tauri 桌面双窗口；`--web` 切浏览器、不编译 Rust；语音默认自动启动 cloudflared tunnel 并把临时 URL 注入本次 voice_bridge，不写 `.env`；`--no-voice` 跳过 voice_bridge；存量 fallback 传 `--legacy-dotenv`）。日志加 `[bridge]`/`[voice]`/`[app\|web]` 前缀（Windows 端共用控制台输出），Ctrl+C 一起退；退出后恢复调用前工作目录 | `./scripts/dev/run.sh [--web] [--no-voice] [--legacy-dotenv] [前端参数]` | `.\scripts\dev\run.ps1 [--web] [--no-voice] [--legacy-dotenv] [前端参数]` |
+| `voice/run` | 启动 voice-bridge 控制平面 + LLM 入站代理（默认 `127.0.0.1:18900`；默认系统凭据，不读 `.env`；存量 fallback 传 `--legacy-dotenv`） | `./scripts/voice/run.sh [--legacy-dotenv]` | `.\scripts\voice\run.ps1 [--legacy-dotenv]` |
 | `voice/tunnel` | 启动 cloudflared 公网穿透样例（仅 mac/linux；详见脚本头部注释；windows 自行起隧道） | `./scripts/voice/tunnel.sh` | （单端例外） |
 | `voice-smoke/run` | **Windows 真机语音 smoke 一键启动**：拉起 agent_bridge、cloudflared、voice_bridge、本地 HTTP server，自动回填 `VOICE_BRIDGE_PUBLIC_URL`，然后访问 `voice_bridge/smoke/`。⚠️ 触发真实火山 RTC + DeepSeek 调用 | （单端例外：仅 Windows） | `.\scripts\voice-smoke\run.ps1` |
 | `test/` | 跑 pytest（参数透传） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |

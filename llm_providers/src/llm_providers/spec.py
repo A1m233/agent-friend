@@ -27,6 +27,16 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
 
 
 @dataclass(frozen=True)
+class ProviderConfig:
+    """Provider credentials and optional non-secret overrides from runtime config."""
+
+    api_key: str
+    model: str | None = None
+    api_base: str | None = None
+    context_window: int | None = None
+
+
+@dataclass(frozen=True)
 class ProviderSpec:
     """单个 LLM Provider 的完整调用配置。
 
@@ -49,6 +59,40 @@ class ProviderSpec:
     api_base: str | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
     context_window: int | None = None
+
+    @classmethod
+    def from_config(
+        cls,
+        prefix: str,
+        config: ProviderConfig,
+        *,
+        default_model_key: str = "model",
+    ) -> ProviderSpec:
+        """从显式 runtime config 构造 ``ProviderSpec``。
+
+        ``prefix`` 仅用于读取 :data:`PROVIDER_DEFAULTS` 和错误文案；配置来源
+        （env / keyring / legacy dotenv / future managed source）由调用方负责。
+        """
+        api_key = config.api_key.strip()
+        if not api_key:
+            raise LLMAuthError(f"{prefix}_API_KEY 未配置。请先配置 provider credential。")
+
+        provider_defaults = PROVIDER_DEFAULTS.get(prefix, {})
+        model = config.model or provider_defaults.get(default_model_key)
+        if not model:
+            raise ValueError(
+                f"无法确定 model：请在 runtime config 中设置 {prefix}_MODEL，"
+                f"或在 PROVIDER_DEFAULTS 中为 {prefix} 添加 {default_model_key} 默认值。"
+            )
+
+        api_base = config.api_base or provider_defaults.get("api_base")
+
+        return cls(
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
+            context_window=config.context_window,
+        )
 
     @classmethod
     def from_env(
@@ -77,20 +121,8 @@ class ProviderSpec:
         Raises:
             LLMAuthError: ``{prefix}_API_KEY`` 未设置或为空。
         """
-        api_key = os.environ.get(f"{prefix}_API_KEY", "").strip()
-        if not api_key:
-            raise LLMAuthError(f"环境变量 {prefix}_API_KEY 未设置。请在项目根 .env 中配置。")
-
         provider_defaults = PROVIDER_DEFAULTS.get(prefix, {})
         model_env_name = model_env_var or f"{prefix}_MODEL"
-        model = os.environ.get(model_env_name) or provider_defaults.get(default_model_key)
-        if not model:
-            raise ValueError(
-                f"无法确定 model：请设置环境变量 {model_env_name}，"
-                f"或在 PROVIDER_DEFAULTS 中为 {prefix} 添加 {default_model_key} 默认值。"
-            )
-
-        api_base = os.environ.get(f"{prefix}_API_BASE") or provider_defaults.get("api_base")
 
         context_window: int | None = None
         raw_window = os.environ.get(f"{prefix}_CONTEXT_WINDOW", "").strip()
@@ -102,9 +134,13 @@ class ProviderSpec:
             except ValueError:
                 pass  # 非法值忽略，回落到 litellm 查询
 
-        return cls(
-            model=model,
-            api_key=api_key,
-            api_base=api_base,
-            context_window=context_window,
+        return cls.from_config(
+            prefix,
+            ProviderConfig(
+                api_key=os.environ.get(f"{prefix}_API_KEY", ""),
+                model=os.environ.get(model_env_name) or provider_defaults.get(default_model_key),
+                api_base=os.environ.get(f"{prefix}_API_BASE") or provider_defaults.get("api_base"),
+                context_window=context_window,
+            ),
+            default_model_key=default_model_key,
         )

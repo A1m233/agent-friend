@@ -62,6 +62,18 @@ def test_returns_registry_with_web_search_when_api_key_set(
     assert isinstance(tool._provider, TavilyProvider)
 
 
+def test_explicit_tavily_key_registers_web_search_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    registry = make_default_registry(tavily_api_key="tvly-explicit")
+
+    tools = registry.all_tools()
+    assert len(tools) == 1
+    assert isinstance(tools[0], WebSearchTool)
+
+
 # ===== 020 新增：session_store 注入 =====
 
 

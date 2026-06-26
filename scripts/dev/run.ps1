@@ -18,16 +18,23 @@ Set-Location $root
 
 $mode = "tauri"
 $startVoice = $true
+$configMode = if ([string]::IsNullOrWhiteSpace($env:AGENT_FRIEND_CONFIG_MODE)) { "desktop" } else { $env:AGENT_FRIEND_CONFIG_MODE }
 $rest = @()
 foreach ($a in $args) {
+    if ($a -like "--config-mode=*") {
+        $configMode = $a.Substring("--config-mode=".Length)
+        continue
+    }
     switch ($a) {
         "--web" { $mode = "web" }
         "--tauri" { $mode = "tauri" }
         "--voice" { $startVoice = $true }
         "--no-voice" { $startVoice = $false }
+        "--legacy-dotenv" { $configMode = "legacy-dotenv" }
         default { $rest += $a }
     }
 }
+$env:AGENT_FRIEND_CONFIG_MODE = $configMode
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
@@ -187,6 +194,7 @@ $cloudflared = $null
 
 try {
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
+Write-Host "===> 配置模式：$env:AGENT_FRIEND_CONFIG_MODE（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 $env:AGENT_BRIDGE_DEV_MODE = "true"

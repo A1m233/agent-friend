@@ -1,0 +1,117 @@
+"""Credential names and typed runtime credential bundles."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
+TAVILY_API_KEY = "TAVILY_API_KEY"
+VOLC_ACCESS_KEY = "VOLC_ACCESS_KEY"
+VOLC_SECRET_KEY = "VOLC_SECRET_KEY"
+VOLC_RTC_APP_ID = "VOLC_RTC_APP_ID"
+VOLC_RTC_APP_KEY = "VOLC_RTC_APP_KEY"
+VOLC_SPEECH_APP_ID = "VOLC_SPEECH_APP_ID"
+VOLC_SPEECH_ACCESS_TOKEN = "VOLC_SPEECH_ACCESS_TOKEN"
+
+VOICE_BRIDGE_PUBLIC_URL = "VOICE_BRIDGE_PUBLIC_URL"
+
+ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
+    DEEPSEEK_API_KEY,
+    TAVILY_API_KEY,
+    VOLC_ACCESS_KEY,
+    VOLC_SECRET_KEY,
+    VOLC_RTC_APP_ID,
+    VOLC_RTC_APP_KEY,
+    VOLC_SPEECH_APP_ID,
+    VOLC_SPEECH_ACCESS_TOKEN,
+)
+
+RUNTIME_ONLY_NAMES = frozenset({VOICE_BRIDGE_PUBLIC_URL})
+
+CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {
+    "deepseek": (DEEPSEEK_API_KEY,),
+    "tavily": (TAVILY_API_KEY,),
+    "volc-voice": (
+        VOLC_ACCESS_KEY,
+        VOLC_SECRET_KEY,
+        VOLC_RTC_APP_ID,
+        VOLC_RTC_APP_KEY,
+        VOLC_SPEECH_APP_ID,
+        VOLC_SPEECH_ACCESS_TOKEN,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CredentialValue:
+    """Resolved credential value plus its source label."""
+
+    name: str
+    value: str
+    source: str
+
+
+@dataclass(frozen=True)
+class CredentialStatus:
+    """Credential status safe to show in logs or UI."""
+
+    name: str
+    configured: bool
+    source: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolCredentials:
+    """Optional tool credentials for agent runtime assembly."""
+
+    tavily_api_key: str | None = None
+
+
+@dataclass(frozen=True)
+class VoiceCredentialConfig:
+    """Volc credentials required by real voice calls."""
+
+    volc_access_key: str = ""
+    volc_secret_key: str = ""
+    volc_rtc_app_id: str = ""
+    volc_rtc_app_key: str = ""
+    volc_speech_app_id: str = ""
+    volc_speech_access_token: str = ""
+
+    @classmethod
+    def from_mapping(cls, values: dict[str, str | None]) -> VoiceCredentialConfig:
+        return cls(
+            volc_access_key=values.get(VOLC_ACCESS_KEY) or "",
+            volc_secret_key=values.get(VOLC_SECRET_KEY) or "",
+            volc_rtc_app_id=values.get(VOLC_RTC_APP_ID) or "",
+            volc_rtc_app_key=values.get(VOLC_RTC_APP_KEY) or "",
+            volc_speech_app_id=values.get(VOLC_SPEECH_APP_ID) or "",
+            volc_speech_access_token=values.get(VOLC_SPEECH_ACCESS_TOKEN) or "",
+        )
+
+    def as_settings_update(self) -> dict[str, str]:
+        return {
+            "volc_access_key": self.volc_access_key,
+            "volc_secret_key": self.volc_secret_key,
+            "volc_rtc_app_id": self.volc_rtc_app_id,
+            "volc_rtc_app_key": self.volc_rtc_app_key,
+            "volc_speech_app_id": self.volc_speech_app_id,
+            "volc_speech_access_token": self.volc_speech_access_token,
+        }
+
+    def missing_names(self) -> tuple[str, ...]:
+        missing: list[str] = []
+        if not self.volc_access_key:
+            missing.append(VOLC_ACCESS_KEY)
+        if not self.volc_secret_key:
+            missing.append(VOLC_SECRET_KEY)
+        if not self.volc_rtc_app_id:
+            missing.append(VOLC_RTC_APP_ID)
+        if not self.volc_rtc_app_key:
+            missing.append(VOLC_RTC_APP_KEY)
+        if not self.volc_speech_app_id:
+            missing.append(VOLC_SPEECH_APP_ID)
+        if not self.volc_speech_access_token:
+            missing.append(VOLC_SPEECH_ACCESS_TOKEN)
+        return tuple(missing)

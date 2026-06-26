@@ -23,9 +23,10 @@ from pydantic import BaseModel, Field
 
 from ..assembly import VoiceBridgeRuntime
 from ..calls import CallBinding
-from ..errors import UnknownCallError, VoiceBridgeError
+from ..errors import UnknownCallError, VoiceBridgeError, VoiceCredentialMissingError
 from ..rtc import build_scenes
 from ..rtc.token import RoomTokenSigner
+from ..runtime_config import credentials_from_settings
 
 logger = logging.getLogger(__name__)
 _DIALOG_EVENT_TYPES = {"user_message", "assistant_message"}
@@ -84,6 +85,11 @@ class StartAgentResponse(BaseModel):
 def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
     """把控制平面路由挂到 FastAPI 实例。"""
     router = APIRouter(prefix="/voice", tags=["voice-control"])
+
+    def ensure_voice_credentials_configured() -> None:
+        missing = credentials_from_settings(runtime.settings).missing_names()
+        if missing:
+            raise VoiceCredentialMissingError(detail="missing: " + ", ".join(missing))
 
     async def start_voice_chat_for_binding(
         binding: CallBinding,
@@ -148,6 +154,7 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         """拨打通话：创建/绑 session → 调火山 ``StartVoiceChat`` → 返回 RTC 凭证。"""
         settings = runtime.settings
         try:
+            ensure_voice_credentials_configured()
             created_session = body.session_id is None
             if body.session_id is None:
                 created = await runtime.agent_bridge.create_session(

@@ -1,6 +1,7 @@
 """voice_bridge 进程配置项。
 
-使用 :mod:`pydantic_settings` 从环境变量 / ``.env`` 加载。
+默认只从当前进程环境变量加载。存量 ``.env`` 兼容由入口层显式传入
+``_env_file=".env"`` 开启。
 
 字段分两类：
 
@@ -69,7 +70,6 @@ class VoiceBridgeSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="VOICE_BRIDGE_",
-        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
