@@ -1,6 +1,6 @@
 # 027 · 运行时配置仍依赖 .env，开发与真实使用分叉
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：high
 - **发现日期**：2026-06-25
 - **关联需求**：007-voice-call、028-settings-center-and-cross-window-sync、029-desktop-voice-call-frontend
@@ -45,3 +45,7 @@
 5. `.env` 降级为兼容 fallback / CI / 临时测试入口，并在文档中明确不再是默认开发路径。
 
 短期可先从语音链路切入：去掉 `VOICE_BRIDGE_PUBLIC_URL` 对 `.env` 的默认依赖，让 dev 脚本生成的 tunnel URL 只存在于本次 `voice_bridge` 子进程环境中。
+
+---
+
+已在 commit `b046cd5` 修复。
