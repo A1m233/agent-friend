@@ -40,18 +40,18 @@ export const PET_LIVE2D_CONFIG: PetLive2DConfig = {
   modelName: "hiyori",
   modelPath: "/live2d-models/hiyori/Hiyori.model3.json",
   motionGroups: {
-    idle: "Idle",
+    idle: "IdleLoop",
     thinking: null, // 暂不切，沿用 idle
     speaking: null, // 暂不切，由 lip-sync 驱嘴
     error: null,    // 暂不切（缺失模型表情不强求）
-    tap: "Idle",    // 024 · tap 反应复用 Idle group，具体动作由 motionNo.tap 指定
+    tap: "Idle",    // 024 · tap 反应复用 Idle[4] 的明显动作；idle 轮播改走 IdleLoop 避免重复
   },
   motionNo: {
     idle: 0,
     thinking: 0,
     speaking: 0,
     error: 0,
-    tap: 4,         // 024 · 默认用 Idle group 第 4 个 motion；改这里可试其他动作
+    tap: 4,         // 024 · Idle group 第 4 个 motion：Hiyori_m06
   },
   spriteWidth: 320,
 };
