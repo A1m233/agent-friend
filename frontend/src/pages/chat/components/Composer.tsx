@@ -26,10 +26,16 @@ const COMPOSER_AUTOSIZE = { minRows: 2, maxRows: 6 } as const;
 interface ComposerProps {
   disabled?: boolean;
   disabledReason?: string;
+  placement?: "bottom" | "inline";
   onHeightChange?: (height: number) => void;
 }
 
-export function Composer({ disabled = false, disabledReason, onHeightChange }: ComposerProps) {
+export function Composer({
+  disabled = false,
+  disabledReason,
+  placement = "bottom",
+  onHeightChange,
+}: ComposerProps) {
   const streaming = useConversationStore((s) => s.streaming);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
@@ -114,9 +120,24 @@ export function Composer({ disabled = false, disabledReason, onHeightChange }: C
     })();
   };
 
+  const isBottomPlacement = placement === "bottom";
+
   return (
-    <div ref={rootRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8">
-      <div className={cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-auto relative")}>
+    <div
+      ref={rootRef}
+      className={
+        isBottomPlacement
+          ? "pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8"
+          : "w-full"
+      }
+    >
+      <div
+        className={
+          isBottomPlacement
+            ? cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-auto relative")
+            : "pointer-events-auto relative w-full"
+        }
+      >
         <div className="rounded-2xl shadow-lg">
           <ChatSender
             ref={senderRef}

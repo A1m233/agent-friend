@@ -10,7 +10,7 @@ import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
-import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX } from "./layout";
+import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -21,6 +21,7 @@ export function ChatApp() {
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const messageCount = useConversationStore((s) => s.messages.length);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
@@ -28,6 +29,7 @@ export function ChatApp() {
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
+  const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
 
   useEffect(() => {
     void ping();
@@ -62,16 +64,44 @@ export function ChatApp() {
             </Button>
           </div>
         )}
-        <MessageList composerHeight={composerHeight} />
-        <Composer
-          disabled={voiceBlocksText || historyLoading}
-          disabledReason={
-            historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
-          }
-          onHeightChange={setComposerHeight}
-        />
+        {isHome ? (
+          <HomeStart
+            disabled={voiceBlocksText || historyLoading}
+            disabledReason={
+              historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
+            }
+          />
+        ) : (
+          <>
+            <MessageList composerHeight={composerHeight} />
+            <Composer
+              disabled={voiceBlocksText || historyLoading}
+              disabledReason={
+                historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
+              }
+              onHeightChange={setComposerHeight}
+            />
+          </>
+        )}
       </div>
     </SidebarProvider>
+  );
+}
+
+function HomeStart({
+  disabled,
+  disabledReason,
+}: {
+  disabled: boolean;
+  disabledReason: string;
+}) {
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center">
+      <div className={`${CHAT_CONTENT_CONTAINER_CLASS} -translate-y-10`}>
+        <h1 className="mb-8 text-center text-xl font-medium text-fg">今天想聊点什么？</h1>
+        <Composer placement="inline" disabled={disabled} disabledReason={disabledReason} />
+      </div>
+    </div>
   );
 }
 

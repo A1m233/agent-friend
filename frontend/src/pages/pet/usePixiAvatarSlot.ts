@@ -80,7 +80,8 @@ export interface UsePixiAvatarSlotHandles {
 
 const DRAG_MOVE_THRESHOLD_PX = 5;
 const CLICK_MAX_DURATION_MS = 300;
-const DRAG_VELOCITY_NORM_PX = 25;
+const DRAG_VELOCITY_NORM_PX_PER_SECOND = 1200;
+const DRAG_MIN_DT_SECONDS = 1 / 120;
 
 export interface UsePixiAvatarSlotOptions {
   /** 024 · 用 ref 延迟绑定 callbacks，避免 App.tsx hooks 调用顺序循环。 */
@@ -303,6 +304,7 @@ export function usePixiAvatarSlot(
       let pointerStart: { x: number; y: number } | null = null;
       let slotStart: { x: number; y: number } | null = null;
       let lastPointer: { x: number; y: number } | null = null;
+      let lastPointerTs = 0;
       let downTimestamp = 0;
       let dragArmed = false;
 
@@ -313,6 +315,7 @@ export function usePixiAvatarSlot(
       slot.on("pointerdown", (e) => {
         pointerStart = { x: e.global.x, y: e.global.y };
         lastPointer = { x: e.global.x, y: e.global.y };
+        lastPointerTs = performance.now();
         slotStart = { x: slot.x, y: slot.y };
         downTimestamp = performance.now();
         dragArmed = false;
@@ -321,6 +324,7 @@ export function usePixiAvatarSlot(
 
       slot.on("globalpointermove", (e) => {
         if (!pointerStart || !slotStart || !lastPointer) return;
+        const now = performance.now();
         const dx = e.global.x - pointerStart.x;
         const dy = e.global.y - pointerStart.y;
 
@@ -330,6 +334,8 @@ export function usePixiAvatarSlot(
             setIsDragging(true);
             slot.cursor = "grabbing";
           } else {
+            lastPointer = { x: e.global.x, y: e.global.y };
+            lastPointerTs = now;
             return;
           }
         }
@@ -339,12 +345,17 @@ export function usePixiAvatarSlot(
 
         const onSlotDragMove = interactionsRef?.current?.onSlotDragMove;
         if (onSlotDragMove) {
-          // 024 修正：传瞬时速度（每帧位移），而非从 pointerdown 开始的累积位移。
-          const dvx = e.global.x - lastPointer.x;
-          const dvy = e.global.y - lastPointer.y;
-          onSlotDragMove(clampDragNorm(dvx / DRAG_VELOCITY_NORM_PX), clampDragNorm(dvy / DRAG_VELOCITY_NORM_PX));
+          // 024b：传按时间归一化的瞬时速度，避免 pointermove 频率变化导致晃动强弱漂移。
+          const dt = Math.max((now - lastPointerTs) / 1000, DRAG_MIN_DT_SECONDS);
+          const vx = (e.global.x - lastPointer.x) / dt;
+          const vy = (e.global.y - lastPointer.y) / dt;
+          onSlotDragMove(
+            clampDragNorm(vx / DRAG_VELOCITY_NORM_PX_PER_SECOND),
+            clampDragNorm(vy / DRAG_VELOCITY_NORM_PX_PER_SECOND),
+          );
         }
         lastPointer = { x: e.global.x, y: e.global.y };
+        lastPointerTs = now;
 
         // AC-5 修复：前端不节流，每帧 emit；Rust update_sprite_pos 内同步即时
         // 算 bubble position 并 set_position（不等 016 follow loop 16ms tick），

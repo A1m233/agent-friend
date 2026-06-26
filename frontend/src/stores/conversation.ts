@@ -12,6 +12,7 @@ import { runAgentStream, sessionsApi } from "@/services";
 import type { ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
+import { useSessionsStore } from "./sessions";
 
 /** 流式失败（网络/HTTP）时的拟人兜底；RUN_ERROR 用 bridge 下发的文案。 */
 const FRIENDLY_FALLBACK = "我这边好像走神了一下，待会儿再聊好吗？";
@@ -168,6 +169,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } finally {
       if (activeController === controller) activeController = null;
       set({ streaming: false });
+      void useSessionsStore.getState().refresh();
     }
   },
 
