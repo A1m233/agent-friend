@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 pub const BUNDLE_ID: &str = "com.agentfriend.desktop";
 pub const SETTINGS_STORE_PATH: &str = "settings.json";
+pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
 
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
 

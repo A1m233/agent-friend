@@ -1,0 +1,4 @@
+interface:
+  display_name: "TDesign Chat 样式"
+  short_description: "调整 agent-friend 的 TDesign Chat Web Components 样式。"
+  default_prompt: "按项目约定调整 TDesign Chat 组件样式。"

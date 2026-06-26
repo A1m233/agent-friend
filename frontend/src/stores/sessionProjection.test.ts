@@ -16,6 +16,7 @@ describe("projectSessionEvents", () => {
     expect(out).toHaveLength(2);
     expect(out[0].role).toBe("user");
     expect(out[1].role).toBe("assistant");
+    expect(out[0].createdAt).toBe("2026-06-10T00:00:00Z");
     expect(out[0].status).toBe("complete");
   });
 
@@ -45,17 +46,25 @@ describe("projectSessionEvents", () => {
       }),
       ev("assistant_message", { content: "结果如下", partial: false }),
     ]);
-    expect(out).toHaveLength(4);
-    const toolMsg = out[2];
-    expect(toolMsg.role).toBe("assistant");
-    expect(toolMsg.blocks).toHaveLength(1);
-    const block = toolMsg.blocks[0];
+    expect(out).toHaveLength(2);
+    expect(out[0].role).toBe("user");
+    const answer = out[1];
+    expect(answer.role).toBe("assistant");
+    expect(answer.blocks).toHaveLength(3);
+    expect(answer.blocks.map((block) => block.kind)).toEqual(["text", "tool", "text"]);
+    if (answer.blocks[0].kind === "text") {
+      expect(answer.blocks[0].text).toBe("我看看");
+    }
+    const block = answer.blocks[1];
     expect(block.kind).toBe("tool");
     if (block.kind === "tool") {
       expect(block.name).toBe("web_search");
       expect(block.status).toBe("done");
       expect(block.result).toBe("搜索结果……");
       expect(JSON.parse(block.args)).toEqual({ query: "今日新闻" });
+    }
+    if (answer.blocks[2].kind === "text") {
+      expect(answer.blocks[2].text).toBe("结果如下");
     }
   });
 
@@ -69,6 +78,31 @@ describe("projectSessionEvents", () => {
     if (block.kind === "tool") {
       expect(block.status).toBe("error");
       expect(block.result).toBe("超时了");
+    }
+  });
+
+  it("新 user_message 会切开下一轮 assistant answer", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "第一问" }),
+      ev("assistant_message", { content: "第一答", partial: false }),
+      ev("user_message", { content: "第二问" }),
+      ev("assistant_message", { content: "第二答", partial: false }),
+    ]);
+
+    expect(out).toHaveLength(4);
+    expect(out.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
+    expect(out[1].blocks).toHaveLength(1);
+    expect(out[3].blocks).toHaveLength(1);
+    if (out[1].blocks[0].kind === "text") {
+      expect(out[1].blocks[0].text).toBe("第一答");
+    }
+    if (out[3].blocks[0].kind === "text") {
+      expect(out[3].blocks[0].text).toBe("第二答");
     }
   });
 
@@ -122,5 +156,21 @@ describe("projectSessionEvents", () => {
     expect((out[0].blocks[0] as { text: string }).text).toBe("好我去睡");
     expect(out[1].role).toBe("assistant");
     expect((out[1].blocks[0] as { text: string }).text).toBe("晚安");
+  });
+
+  it("user-visible system_trigger 后如果没有主动轮 assistant，不影响下一轮正常回答", () => {
+    const events: SessionEvent[] = [
+      ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),
+      ev("user_message", { content: "我还醒着" }),
+      ev("assistant_message", { content: "那继续聊", partial: false }),
+    ];
+
+    const out = projectSessionEvents(events);
+
+    expect(out).toHaveLength(2);
+    expect(out[0].role).toBe("user");
+    expect((out[0].blocks[0] as { text: string }).text).toBe("我还醒着");
+    expect(out[1].role).toBe("assistant");
+    expect((out[1].blocks[0] as { text: string }).text).toBe("那继续聊");
   });
 });

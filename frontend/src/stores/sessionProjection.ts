@@ -4,9 +4,9 @@
  * 切换到某历史会话时（GET /v1/sessions/{id} → events），把后端事件流投影成可渲染的
  * 消息列表，供继续对话（AC-M3.3：与 agent-cli 看到的是同一份会话视图）。
  *
- * 本期投影：user / assistant 文本消息（保证上下文连续）+ 工具调用卡片（与实时一致，
- * 切走再切回不丢卡片）。session_meta / persona_change 等元事件忽略；历史里的工具结果
- * 与实时同样兜底 [error] 前缀语义。
+ * 本期投影：user query 独立成消息；一轮 assistant answer 聚合成单条消息，blocks 内保持
+ * text → tool → text 顺序（与实时 reducer 一致）。session_meta / persona_change 等元事件忽略；
+ * 历史里的工具结果与实时同样兜底 [error] 前缀语义。
  *
  * 015 R-4.5.1 · 主动轮事件（014 引入）的两段处理：
  *   1. `system_trigger` event 本身 → 不投影（自然走 unknown type 兜底，但显式识别后用
@@ -26,9 +26,18 @@ import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 
-function textMessage(id: string, role: ChatMessage["role"], content: string): ChatMessage {
+function textMessage(
+  id: string,
+  role: ChatMessage["role"],
+  content: string,
+  createdAt: string,
+): ChatMessage {
   const block: TextBlock = { kind: "text", mid: id, text: content };
-  return { id, role, blocks: [block], status: "complete" };
+  return { id, role, createdAt, blocks: [block], status: "complete" };
+}
+
+function assistantMessage(id: string, createdAt: string): ChatMessage {
+  return { id, role: "assistant", createdAt, blocks: [], status: "complete" };
 }
 
 function asString(v: unknown): string {
@@ -39,9 +48,17 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   // tool_call_id → 已落入某条消息的工具块引用，待 result 事件回填（同一对象，回填即生效）。
   const toolBlocks = new Map<string, ToolBlock>();
+  let currentAssistant: ChatMessage | null = null;
   // 015 R-4.5.1 · 见模块顶部注释：紧跟 user-visible system_trigger 的 assistant_message 是
   // 主动轮的"用户可见"输出，应被 chat 窗 MessageList 跳过（出口是 pet 气泡，不在 chat 窗）。
   let pendingSkipAssistant = false;
+
+  const ensureAssistant = (id: string, createdAt: string): ChatMessage => {
+    if (currentAssistant) return currentAssistant;
+    currentAssistant = assistantMessage(id, createdAt);
+    messages.push(currentAssistant);
+    return currentAssistant;
+  };
 
   for (const ev of events) {
     const p = ev.payload ?? {};
@@ -54,17 +71,23 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "user_message") {
-      messages.push(textMessage(ev.uuid, "user", asString(p.content)));
+      messages.push(textMessage(ev.uuid, "user", asString(p.content), ev.ts));
+      currentAssistant = null;
+      pendingSkipAssistant = false;
       continue;
     }
 
     if (ev.type === "assistant_message" && p.partial !== true) {
       if (pendingSkipAssistant) {
         pendingSkipAssistant = false;  // 消费 flag、丢弃这条
+        currentAssistant = null;
         continue;
       }
       const content = asString(p.content);
-      if (content) messages.push(textMessage(ev.uuid, "assistant", content));
+      if (content) {
+        const message = ensureAssistant(ev.uuid, ev.ts);
+        message.blocks.push({ kind: "text", mid: ev.uuid, text: content });
+      }
       continue;
     }
 
@@ -79,7 +102,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         status: "running",
       };
       toolBlocks.set(id, block);
-      messages.push({ id: ev.uuid, role: "assistant", blocks: [block], status: "complete" });
+      ensureAssistant(ev.uuid, ev.ts).blocks.push(block);
       continue;
     }
 

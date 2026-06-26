@@ -36,7 +36,7 @@ import { derivePageState } from "./actionBarPaging";
  * - 容器：垂直 flex → 横向 chip（背景 + 圆角 + 边框 + shadow，颜色全 token）
  * - 按钮：文字 button → icon-only TooltipButton（lucide icon + tooltip）
  * - 分页：按钮总数 > PAGE_SIZE 时启用 shadcn carousel + 自定义圆形箭头；
- *   首末页对应箭头**不渲染**（沿 R-4.2.3，不是 disabled）
+ *   左右箭头按钮常驻，首末页只切 disabled，避免翻页时 carousel viewport 横向跳动。
  * - dev 注入按钮：位于 carousel 末尾，仍 `import.meta.env.DEV` gate
  *
  * 分页判定逻辑抽到 [`actionBarPaging.ts`](./actionBarPaging.ts) 纯函数 `derivePageState`（独立单测）。
@@ -143,8 +143,8 @@ export function ActionBar({
   const showNext = needsCarousel && canScrollNext;
 
   // 容器宽度（design §2.4.3 两段宽语义）：
-  // - needsCarousel=true：永远按"PAGE_SIZE 个按钮 + 两个箭头位"算（首末页箭头 unmount 时
-  //   左/右槽位会留白，但 chip 宽度在分页切换中保持稳定，不抖）
+  // - needsCarousel=true：永远按"PAGE_SIZE 个按钮 + 两个箭头位"算；左右箭头按钮常驻，
+  //   首末页只切 disabled，chip 与 carousel viewport 在分页切换中都保持稳定。
   // - needsCarousel=false：按实际按钮数收缩
   const chipW = needsCarousel
     ? PAD_X * 2 + ARROW_AREA * 2 + PAGE_SIZE * ICON_BTN + (PAGE_SIZE - 1) * GAP
@@ -166,15 +166,18 @@ export function ActionBar({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        {needsCarousel && showPrev && (
-          <TooltipButton
-            icon={<ChevronLeft />}
-            tooltip="上一页"
-            tooltipDelayMs={500}
-            className="rounded-full"
-            onClick={() => api?.scrollPrev()}
-            data-hit
-          />
+        {needsCarousel && (
+          <div className="flex size-8 shrink-0 items-center justify-center">
+            <TooltipButton
+              icon={<ChevronLeft />}
+              tooltip="上一页"
+              tooltipDelayMs={500}
+              className="rounded-full"
+              disabled={!showPrev}
+              onClick={() => api?.scrollPrev()}
+              data-hit
+            />
+          </div>
         )}
 
         {needsCarousel ? (
@@ -210,15 +213,18 @@ export function ActionBar({
           </div>
         )}
 
-        {needsCarousel && showNext && (
-          <TooltipButton
-            icon={<ChevronRight />}
-            tooltip="下一页"
-            tooltipDelayMs={500}
-            className="rounded-full"
-            onClick={() => api?.scrollNext()}
-            data-hit
-          />
+        {needsCarousel && (
+          <div className="flex size-8 shrink-0 items-center justify-center">
+            <TooltipButton
+              icon={<ChevronRight />}
+              tooltip="下一页"
+              tooltipDelayMs={500}
+              className="rounded-full"
+              disabled={!showNext}
+              onClick={() => api?.scrollNext()}
+              data-hit
+            />
+          </div>
         )}
       </div>
     </TooltipProvider>

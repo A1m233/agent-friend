@@ -24,39 +24,53 @@ describe("DragReactionSource", () => {
     nowSpy.mockRestore();
   });
 
-  it("setDragging(true, 0.5, 0) → active + ParamAngleZ 按 dragVelX 算", () => {
-    const src = new DragReactionSource();
-    const sp = makeMockSprite();
-    src.setDragging(true, 0.5, 0);
-
-    expect(src.active).toBe(true);
-    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
-
-    const angleZ = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
-    expect(angleZ).toBeCloseTo(12.5, 1); // 25 * 0.5
-  });
-
-  it("setDragging(false) → release 阶段 envelope 线性衰减", () => {
+  it("setDragging(true) 后通过 spring 追随目标，不再瞬时线性跳到角度", () => {
     const src = new DragReactionSource();
     const sp = makeMockSprite();
     src.setDragging(true, 1, 0);
-    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
-    const peak = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
 
-    src.setDragging(false);
-    nowMs = 150;
+    expect(src.active).toBe(true);
     src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
-    const mid = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
+    const immediate = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
 
-    expect(peak).toBeCloseTo(25, 1);
-    expect(mid).toBeCloseTo(12.5, 1);
+    nowMs = 16;
+    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
+    const angleZ = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
+
+    expect(immediate).toBeCloseTo(0, 3);
+    expect(angleZ).toBeGreaterThan(0);
+    expect(angleZ).toBeLessThan(14);
   });
 
-  it("RELEASE_DURATION_MS 后 → active 为 false", () => {
+  it("setDragging(false) 后用 spring 回弹并最终收敛到中立", () => {
+    const src = new DragReactionSource();
+    const sp = makeMockSprite();
+    src.setDragging(true, 1, 0);
+    runFrames(src, sp, 45, () => {
+      nowMs += 16;
+    });
+    const peak = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
+    expect(peak).toBeGreaterThan(8);
+
+    src.setDragging(false);
+    nowMs += 16;
+    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
+    const afterRelease = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
+
+    runFrames(src, sp, 120, () => {
+      nowMs += 16;
+    });
+    const settled = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
+
+    expect(Math.abs(afterRelease)).toBeGreaterThan(0);
+    expect(Math.abs(settled)).toBeLessThan(0.05);
+    expect(src.active).toBe(false);
+  });
+
+  it("没有进入实际摇晃时结束拖动，active 立即回到 false", () => {
     const src = new DragReactionSource();
     src.setDragging(true);
     src.setDragging(false);
-    nowMs = 300;
     expect(src.active).toBe(false);
   });
 
@@ -69,20 +83,37 @@ describe("DragReactionSource", () => {
     src.setDragging(true, 1, 0);
     src.updateDragDirection(-1, 0);
     const sp = makeMockSprite();
-    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
+    runFrames(src, sp, 45, () => {
+      nowMs += 16;
+    });
     const angleZ = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
-    expect(angleZ).toBeCloseTo(-25, 1);
+    expect(angleZ).toBeLessThan(-8);
   });
 
   it("参数 clamp 在 [-1, 1]", () => {
     const src = new DragReactionSource();
     const sp = makeMockSprite();
     src.setDragging(true, 5, -5);
-    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
+    runFrames(src, sp, 60, () => {
+      nowMs += 16;
+    });
     const angleZ = getLastParamValue(sp.setParameterValueById, "ParamAngleZ");
-    expect(angleZ).toBeCloseTo(25, 1);
+    expect(angleZ).toBeGreaterThan(8);
+    expect(angleZ).toBeLessThanOrEqual(16.1);
   });
 });
+
+function runFrames(
+  src: DragReactionSource,
+  sp: { setParameterValueById: ReturnType<typeof vi.fn> },
+  count: number,
+  advance: () => void,
+): void {
+  for (let i = 0; i < count; i += 1) {
+    advance();
+    src.apply(sp as unknown as import("easy-live2d").Live2DSprite);
+  }
+}
 
 function getLastParamValue(
   mockFn: ReturnType<typeof vi.fn>,

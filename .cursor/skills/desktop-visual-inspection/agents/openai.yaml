@@ -1,0 +1,4 @@
+interface:
+  display_name: "Desktop Visual Inspection"
+  short_description: "Inspect real desktop UI state"
+  default_prompt: "Use $desktop-visual-inspection to inspect the real Tauri desktop UI before judging frontend visuals."

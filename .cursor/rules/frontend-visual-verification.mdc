@@ -1,0 +1,36 @@
+---
+description: agent-friend 桌面前端视觉验收规范：改 Tauri 窗口 UI 时优先观察真实桌面端，而不是只看浏览器页面。
+globs: frontend/**
+alwaysApply: false
+---
+
+# 桌面前端视觉验收
+
+改动 `frontend/` 中会影响 Tauri 桌面窗口的 UI 时，优先使用项目 skill `desktop-visual-inspection` 和脚本 `scripts/desktop-visual/` 观察真实桌面端效果。
+
+## 什么时候触发
+
+- 修改对话页、设置页、桌宠窗、语音窗、窗口级布局、标题栏附近布局、滚动条、输入框浮层、阴影、透明窗、跨窗口状态等桌面端可见 UI。
+- 用户要求“看一下实际效果”“截图确认”“看看 DOM”“用 Playwright/视觉能力验收”。
+- 视觉问题可能受 Tauri WebView、窗口尺寸、系统标题栏、透明窗口、bridge/voice 运行态影响。
+
+## 验收优先级
+
+1. 真实 Tauri 桌面窗口截图/观察优先。
+2. Windows/WebView2 且已暴露 CDP endpoint 时，可用 Playwright `connectOverCDP` 获取实际 DOM 和截图。
+3. Vite web 页面只可作为快速布局草稿，不得单独作为桌面端视觉结论。
+
+## 运行态选择
+
+- 不要固定加 `--no-voice`。普通聊天/设置/历史列表 UI 使用 `scripts/dev/run.*` 默认运行态即可。
+- 改语音入口、通话阻塞态、voice call 窗口、voice bridge 回调相关 UI 时，按场景启用 `--voice` 或复用当前环境中的 voice 配置。
+- 如果使用 mock / dev-only 探针，回报时必须标注它不是完整真实运行态。
+
+## 回报要求
+
+完成视觉相关改动时，说明本次使用了哪种观察路径：
+
+- `desktop screenshot`：真实桌面窗口截图。
+- `desktop DOM via CDP`：真实 WebView DOM。
+- `web-only draft`：仅浏览器草稿，并说明为什么没做桌面端验收。
+- `not verified`：无法验证时说明缺失的权限、平台能力或外部服务。
