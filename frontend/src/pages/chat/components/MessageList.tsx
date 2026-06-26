@@ -1,6 +1,5 @@
 import {
   type UIEvent,
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -121,7 +120,7 @@ function MessageContent({
   const hasContent = rendered.length > 0;
 
   return (
-    <Fragment>
+    <div className="flex flex-col gap-2">
       {rendered}
       {message.status === "error" && message.error && (
         <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
@@ -135,7 +134,7 @@ function MessageContent({
       )}
       {((message.status === "streaming" && !hasContent) || shouldRenderExternalActionBar) &&
         actionBar}
-    </Fragment>
+    </div>
   );
 }
 
@@ -149,7 +148,7 @@ function MessageItem({ message }: { message: ChatMessage }) {
   );
 
   return (
-    <div className="group/message">
+    <div>
       <MessageContent message={message} actionBar={actionBar} />
     </div>
   );
@@ -322,9 +321,10 @@ export function MessageList() {
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
         <div ref={contentRef} className={`${CHAT_CONTENT_CONTAINER_CLASS} space-y-4 pb-36 pt-4`}>
-          {messages.map((m) => (
-            <MessageItem key={m.id} message={m} />
-          ))}
+          {messages.map((m, index) => {
+            const renderKey = `${m.id}:${index}`;
+            return <MessageItem key={renderKey} message={m} />;
+          })}
         </div>
       </ScrollArea>
       {!isSticky && (

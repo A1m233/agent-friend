@@ -7,16 +7,16 @@
  *
  * 行为：
  * - buttonCount ≤ pageSize：不启用 carousel，纯 flex 平铺，左右箭头都不渲染
- * - buttonCount > pageSize：启用 carousel，首页不渲染"上一页"，末页不渲染"下一页"
- *   （首末页箭头**不渲染**而非 disabled，沿 requirement.md R-4.2.3）
+ * - buttonCount > pageSize：启用 carousel，首页禁用"上一页"按钮，末页禁用"下一页"按钮
+ *   （组件层保留固定箭头按钮，靠 disabled 表达不可用）
  */
 
 export interface PageState {
   /** 按钮总数 > pageSize 时为 true，需启用 carousel；否则纯 flex 平铺 */
   needsCarousel: boolean;
-  /** 是否渲染"上一页"箭头（首页或不需要 carousel 时为 false） */
+  /** "上一页"按钮是否可用（首页或不需要 carousel 时为 false） */
   showPrev: boolean;
-  /** 是否渲染"下一页"箭头（末页或不需要 carousel 时为 false） */
+  /** "下一页"按钮是否可用（末页或不需要 carousel 时为 false） */
   showNext: boolean;
   /** 总页数（≤ pageSize 时为 1） */
   totalPages: number;

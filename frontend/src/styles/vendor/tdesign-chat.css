@@ -8,6 +8,11 @@
 #root {
   --td-chat-font-size: var(--font-size-sm);
   --td-chat-input-font-size: var(--font-size-sm);
+  /*
+   * 本项目不用 TDesign ChatList 管消息列表，而是由 MessageList 外层统一排布；
+   * 清掉 t-chat-item 默认的 38px gap，避免与外层消息间距、回答内 block 间距叠加。
+   */
+  --td-chat-item-gap: 0;
   --td-chat-item-content-base-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
   /*
    * assistant 的 text variant 是无气泡正文，内容容器不再额外垫上下边距；
