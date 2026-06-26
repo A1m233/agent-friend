@@ -52,6 +52,15 @@ class TestCallRegistry:
         with pytest.raises(KeyError):
             reg.update_state("missing", "stopped")
 
+    def test_next_round_increments_round_seq(self) -> None:
+        reg = CallRegistry()
+        reg.bind(_make_binding())
+        first = reg.next_round("c1")
+        second = reg.next_round("c1")
+        assert first.round_seq == 1
+        assert second.round_seq == 2
+        assert reg.lookup("c1") == second
+
     def test_unbind_returns_removed(self) -> None:
         reg = CallRegistry()
         binding = _make_binding()

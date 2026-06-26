@@ -62,6 +62,7 @@ function initialSnapshot(): VoiceCallSnapshot {
     phase: "idle",
     callId: null,
     sessionId: null,
+    traceId: null,
     startedAt: null,
     durationMs: 0,
     volumeLevel: 0,
@@ -76,6 +77,7 @@ function toSnapshot(state: VoiceState): VoiceCallSnapshot {
     phase: state.phase,
     callId: state.callId,
     sessionId: state.sessionId,
+    traceId: state.traceId,
     startedAt: state.startedAt,
     durationMs: state.durationMs,
     volumeLevel: state.volumeLevel,
@@ -117,6 +119,26 @@ function toDiagnostic(stage: VoiceCallFailureStage, error: unknown): VoiceCallDi
   return { stage, message: diagnosticMessage(error) };
 }
 
+function makeTraceId(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  if (randomUuid) return randomUuid;
+  return `voice-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function nowMs(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function logVoiceLatency(
+  event: string,
+  fields: Record<string, string | number | boolean | null | undefined>,
+): void {
+  const parts = Object.entries(fields)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `${key}=${String(value)}`);
+  console.info(`[voice][latency] event=${event}${parts.length ? ` ${parts.join(" ")}` : ""}`);
+}
+
 function isStartCancelled(token: number): boolean {
   return token !== activeStartToken || cancelledStartToken === token;
 }
@@ -153,18 +175,26 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
   const startInternal = async (req: StartVoiceCallRequest) => {
     const startToken = activeStartToken + 1;
+    const traceId = req.traceId ?? makeTraceId();
+    const startMs = nowMs();
     activeStartToken = startToken;
     cancelledStartToken = null;
     console.info("[voice] startInternal", {
       sessionId: req.sessionId ?? "(new)",
       deferStart: req.deferStart ?? true,
+      traceId,
+    });
+    logVoiceLatency("frontend_request_start", {
+      traceId,
+      sessionId: req.sessionId ?? null,
     });
     setAndPublish({
       isOwner: true,
       pendingStart: null,
-      phase: "dialing",
+      phase: "preflighting",
       callId: null,
       sessionId: null,
+      traceId,
       startedAt: null,
       durationMs: 0,
       volumeLevel: 0,
@@ -175,61 +205,141 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
     let callId: string | null = null;
     let localRtcClient: RtcClient | null = null;
-    let stage: VoiceCallFailureStage = "start_call";
+    let stage: VoiceCallFailureStage = "preflight";
 
     try {
       await focusVoiceCallWindow();
       throwIfStartCancelled(startToken);
-      const call = await voiceApi.startCall({ ...req, deferStart: true });
-      throwIfStartCancelled(startToken);
-      callId = call.callId;
-      console.info("[voice] startCall ok", {
-        callId: call.callId,
-        sessionId: call.sessionId,
-        state: call.state,
-      });
-      setAndPublish({
-        phase: "joining_room",
-        callId: call.callId,
-        sessionId: call.sessionId,
-      });
-
-      stage = "rtc_join_publish";
       const { createVolcRtcClient } = await import("@/services/voice/rtcClient");
       throwIfStartCancelled(startToken);
       localRtcClient = createVolcRtcClient({
         onVolume: (volumeLevel) => {
           if (isStartCancelled(startToken) || get().muted) return;
+          if (volumeLevel > 0 && get().volumeLevel <= 0) {
+            logVoiceLatency("frontend_first_local_volume", {
+              traceId,
+              callId,
+              elapsedMs: Math.round(nowMs() - startMs),
+              volumeLevel,
+            });
+          }
           setAndPublish({ volumeLevel });
         },
         onError: (message) => {
           if (isStartCancelled(startToken)) return;
           setAndPublish({
             error: message,
-            diagnostic: { stage: "rtc_join_publish", message },
+            diagnostic: { stage, message },
           });
         },
       });
       rtcClient = localRtcClient;
-      await localRtcClient.joinAndPublish({
+      await localRtcClient.preflight();
+      logVoiceLatency("frontend_preflight_ok", {
+        traceId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
+
+      setAndPublish({ phase: "dialing" });
+      stage = "start_call";
+      const call = await voiceApi.startCall({ ...req, deferStart: true, traceId });
+      throwIfStartCancelled(startToken);
+      callId = call.callId;
+      console.info("[voice] startCall ok", {
+        callId: call.callId,
+        sessionId: call.sessionId,
+        state: call.state,
+        traceId: call.traceId,
+      });
+      logVoiceLatency("frontend_start_call_ok", {
+        traceId: call.traceId,
+        callId: call.callId,
+        sessionId: call.sessionId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
+      setAndPublish({
+        phase: "joining_room",
+        callId: call.callId,
+        sessionId: call.sessionId,
+        traceId: call.traceId,
+      });
+
+      stage = "rtc_join";
+      throwIfStartCancelled(startToken);
+      await localRtcClient.prepare({
         rtcAppId: call.rtcAppId,
         roomId: call.roomId,
         userId: call.userId,
         token: call.token,
       });
+      await localRtcClient.joinRoom();
       throwIfStartCancelled(startToken);
-      console.info("[voice] rtc join/publish ok", {
+      logVoiceLatency("frontend_rtc_join_ok", {
+        traceId: call.traceId,
+        callId: call.callId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
+
+      let startAgentDone = false;
+      let startAgentError: unknown = null;
+      const startAgentStartedMs = nowMs();
+      const startAgentPromise = (async () => {
+        try {
+          logVoiceLatency("frontend_start_agent_request", {
+            traceId: call.traceId,
+            callId: call.callId,
+            elapsedMs: Math.round(nowMs() - startMs),
+          });
+          await voiceApi.startAgent(call.callId);
+          startAgentDone = true;
+          logVoiceLatency("frontend_start_agent_ok", {
+            traceId: call.traceId,
+            callId: call.callId,
+            elapsedMs: Math.round(nowMs() - startMs),
+            durationMs: Math.round(nowMs() - startAgentStartedMs),
+          });
+        } catch (error) {
+          startAgentError = error;
+        }
+      })();
+
+      setAndPublish({ phase: "preparing_microphone" });
+      stage = "rtc_capture";
+      await localRtcClient.startAudioCapture();
+      throwIfStartCancelled(startToken);
+      logVoiceLatency("frontend_audio_capture_ok", {
+        traceId: call.traceId,
+        callId: call.callId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
+
+      stage = "rtc_publish";
+      await localRtcClient.publishAudio();
+      throwIfStartCancelled(startToken);
+      console.info("[voice] rtc join/capture/publish ok", {
         callId: call.callId,
         roomId: call.roomId,
         userId: call.userId,
       });
+      logVoiceLatency("frontend_rtc_publish_ok", {
+        traceId: call.traceId,
+        callId: call.callId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
 
-      setAndPublish({ phase: "starting_agent" });
+      if (!startAgentDone) setAndPublish({ phase: "connecting_agent" });
       stage = "start_agent";
-      await voiceApi.startAgent(call.callId);
+      await startAgentPromise;
+      if (startAgentError) throw startAgentError;
       throwIfStartCancelled(startToken);
       console.info("[voice] startAgent ok", { callId: call.callId });
 
+      logVoiceLatency("frontend_ready_to_talk", {
+        traceId: call.traceId,
+        callId: call.callId,
+        sessionId: call.sessionId,
+        elapsedMs: Math.round(nowMs() - startMs),
+      });
       setAndPublish({
         phase: "active",
         startedAt: Date.now(),
@@ -394,6 +504,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         phase: "ended",
         isOwner: false,
         callId: null,
+        traceId: null,
         startedAt: null,
         durationMs: 0,
         volumeLevel: 0,
@@ -498,7 +609,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
     resetError() {
       if (get().phase !== "error") return;
-      setAndPublish({ phase: "idle", error: null, diagnostic: null });
+      setAndPublish({ phase: "idle", traceId: null, error: null, diagnostic: null });
     },
 
     applyRemoteSnapshot(snapshot) {

@@ -9,6 +9,7 @@ interface RawStartVoiceCallResponse {
   room_id: string;
   user_id: string;
   token: string;
+  trace_id?: string;
 }
 
 interface RawStopVoiceCallResponse {
@@ -31,6 +32,7 @@ function toStartResponse(raw: RawStartVoiceCallResponse): StartVoiceCallResponse
     roomId: raw.room_id,
     userId: raw.user_id,
     token: raw.token,
+    traceId: raw.trace_id ?? raw.call_id,
   };
 }
 
@@ -40,6 +42,7 @@ function bodyOf(req: StartVoiceCallRequest): Record<string, unknown> {
     persona: req.persona,
     model: req.model,
     defer_start: req.deferStart ?? true,
+    trace_id: req.traceId,
   };
 }
 

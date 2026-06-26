@@ -1,8 +1,11 @@
 export type VoiceCallPhase =
   | "idle"
   | "confirming_tunnel"
+  | "preflighting"
   | "dialing"
   | "joining_room"
+  | "preparing_microphone"
+  | "connecting_agent"
   | "starting_agent"
   | "active"
   | "stopping"
@@ -10,7 +13,11 @@ export type VoiceCallPhase =
   | "error";
 
 export type VoiceCallFailureStage =
+  | "preflight"
   | "start_call"
+  | "rtc_join"
+  | "rtc_capture"
+  | "rtc_publish"
   | "rtc_join_publish"
   | "rtc_mute"
   | "start_agent"
@@ -27,6 +34,7 @@ export interface StartVoiceCallRequest {
   persona?: string;
   model?: string;
   deferStart?: boolean;
+  traceId?: string;
 }
 
 export interface StartVoiceCallResponse {
@@ -37,6 +45,7 @@ export interface StartVoiceCallResponse {
   roomId: string;
   userId: string;
   token: string;
+  traceId: string;
 }
 
 export interface VoiceCallSnapshot {
@@ -49,6 +58,7 @@ export interface VoiceCallSnapshot {
   muted: boolean;
   error: string | null;
   diagnostic: VoiceCallDiagnostic | null;
+  traceId: string | null;
 }
 
 export interface RtcJoinCredentials {

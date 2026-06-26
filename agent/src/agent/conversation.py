@@ -27,6 +27,7 @@ Note:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -59,6 +60,7 @@ from .conversation_events import (
     TurnDone,
 )
 from .errors import AgentError
+from .latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from .messages import Message
 from .personas import PersonaCatalog
 from .prompts import PromptBuilder
@@ -87,6 +89,7 @@ MAX_TOOL_TURNS_DEFAULT = 5
 _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+logger = logging.getLogger(__name__)
 
 
 def _resolve_max_tool_turns() -> int:
@@ -160,11 +163,33 @@ class Conversation:
         # 有效窗口 / 触发阈值），供调试入口读取（AC-1.3）。
         self._last_input_tokens: int | None = None
         self._last_context_notes: dict[str, Any] = {}
+        self._voice_latency_context: VoiceLatencyContext | None = None
+        self._voice_latency_short_reply_hint = ""
+        self._voice_latency_llm_overrides: dict[str, Any] = {}
+        self._voice_latency_disable_tools = False
         # 007 起 ``_system_prompt`` 不再缓存——每次调用 :attr:`_current_system_prompt`
         # 让 :class:`agent.system_prompt.ChannelSection` 等动态 section 在 channel
         # 切换后立刻生效。``__init__`` 时仍 build 一次做客户端预检（persona 不存在
         # 等错误尽早暴露）。
         prompt_builder.build()
+
+    def set_voice_latency_context(
+        self,
+        context: VoiceLatencyContext | None,
+        *,
+        short_reply_hint: str = "",
+        llm_overrides: dict[str, Any] | None = None,
+        disable_tools: bool = False,
+    ) -> None:
+        """Attach optional per-round voice latency context.
+
+        Non-voice callers never set this, so the existing text / AG-UI paths do
+        not emit voice latency logs.
+        """
+        self._voice_latency_context = context
+        self._voice_latency_short_reply_hint = short_reply_hint if context is not None else ""
+        self._voice_latency_llm_overrides = dict(llm_overrides or {}) if context is not None else {}
+        self._voice_latency_disable_tools = disable_tools if context is not None else False
 
     # ----- 只读视图 -----
 
@@ -326,11 +351,42 @@ class Conversation:
                 else:
                     openai_messages = self._build_openai_messages_continuation()
 
-                tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
+                tool_specs = (
+                    None
+                    if self._voice_latency_disable_tools
+                    else self._tool_registry.to_openai_tools()
+                    if self._tool_registry
+                    else None
+                )
 
                 stop_reason = ""
-                for ev in self._llm_client.stream(openai_messages, tools=tool_specs):
+                llm_start_ms = monotonic_ms()
+                log_voice_latency(
+                    logger,
+                    self._voice_latency_context,
+                    "agent_llm_stream_start",
+                    session_id=self._session.session_id,
+                    turn_idx=turn_idx,
+                    tools=bool(tool_specs),
+                )
+                first_text_seen = False
+                for ev in self._llm_client.stream(
+                    openai_messages,
+                    tools=tool_specs,
+                    **self._voice_latency_llm_overrides,
+                ):
                     if isinstance(ev, LLMTextDelta):
+                        if not first_text_seen:
+                            first_text_seen = True
+                            log_voice_latency(
+                                logger,
+                                self._voice_latency_context,
+                                "agent_first_llm_text_delta",
+                                session_id=self._session.session_id,
+                                turn_idx=turn_idx,
+                                elapsed_ms=monotonic_ms() - llm_start_ms,
+                                chars=len(ev.text),
+                            )
                         current_text_buf.append(ev.text)
                         yield TextDelta(text=ev.text)
                     elif isinstance(ev, LLMToolCallDelta):
@@ -684,15 +740,45 @@ class Conversation:
         """
         extra: list[Message] | None = None
         if self._memory is not None:
+            memory_start_ms = monotonic_ms()
+            log_voice_latency(
+                logger,
+                self._voice_latency_context,
+                "agent_memory_retrieve_start",
+                session_id=self._session.session_id,
+            )
             ctx = self._memory.retrieve(
                 user_input,
                 persona_id=self._session.current_persona_id or "",
                 session_id=self._session.session_id,
             )
+            log_voice_latency(
+                logger,
+                self._voice_latency_context,
+                "agent_memory_retrieve_done",
+                session_id=self._session.session_id,
+                elapsed_ms=monotonic_ms() - memory_start_ms,
+                empty=ctx.is_empty(),
+            )
             self._last_memory_context = ctx
             if not ctx.is_empty():
                 extra = [Message(role="system", content=ctx.rendered)]
-        return self._assemble(new_user_input=user_input, extra_context=extra)
+        if self._voice_latency_short_reply_hint:
+            extra = [
+                *(extra or []),
+                Message(role="system", content=self._voice_latency_short_reply_hint),
+            ]
+        assemble_start_ms = monotonic_ms()
+        result = self._assemble(new_user_input=user_input, extra_context=extra)
+        log_voice_latency(
+            logger,
+            self._voice_latency_context,
+            "agent_context_assemble_done",
+            session_id=self._session.session_id,
+            elapsed_ms=monotonic_ms() - assemble_start_ms,
+            messages=len(result),
+        )
+        return result
 
     def _assemble(
         self,

@@ -3,7 +3,11 @@ import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
-import { voiceFailureStageLabel, voicePhaseLabel } from "@/stores/voiceStateMachine";
+import {
+  isVoiceCallLive,
+  voiceFailureStageLabel,
+  voicePhaseLabel,
+} from "@/stores/voiceStateMachine";
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -36,8 +40,8 @@ export function VoiceCallApp() {
   const awaitingConsent = phase === "confirming_tunnel";
   const canDial = phase === "idle" || phase === "ended" || phase === "error";
   const inCall = phase === "active";
-  const busy = phase === "dialing" || phase === "joining_room" || phase === "starting_agent";
-  const canToggleMute = phase === "starting_agent" || phase === "active";
+  const busy = isVoiceCallLive(phase) && phase !== "active";
+  const canToggleMute = phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
   const micWaveActive = canToggleMute && !muted && volumeLevel > 0;
 
   const handleToggleMute = () => {

@@ -22,6 +22,23 @@ const browserGlobals = vi.hoisted(() => {
   return { testWindow };
 });
 
+const rtcMocks = vi.hoisted(() => {
+  const client = {
+    preflight: vi.fn(),
+    prepare: vi.fn(),
+    joinRoom: vi.fn(),
+    startAudioCapture: vi.fn(),
+    publishAudio: vi.fn(),
+    joinAndPublish: vi.fn(),
+    setMuted: vi.fn(),
+    cleanup: vi.fn(),
+  };
+  return {
+    client,
+    createVolcRtcClient: vi.fn(() => client),
+  };
+});
+
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { voiceApi } from "@/services/api/voice";
 import { useVoiceStore } from "./voice";
@@ -48,11 +65,16 @@ vi.mock("@/services/api/voice", () => ({
   voiceErrorMessage: (error: unknown) => String(error),
 }));
 
+vi.mock("@/services/voice/rtcClient", () => ({
+  createVolcRtcClient: rtcMocks.createVolcRtcClient,
+}));
+
 function resetVoiceStore(): void {
   useVoiceStore.setState({
     phase: "idle",
     callId: null,
     sessionId: null,
+    traceId: null,
     startedAt: null,
     durationMs: 0,
     volumeLevel: 0,
@@ -68,6 +90,13 @@ function resetVoiceStore(): void {
 describe("voice store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    rtcMocks.client.preflight.mockResolvedValue(undefined);
+    rtcMocks.client.prepare.mockResolvedValue(undefined);
+    rtcMocks.client.joinRoom.mockResolvedValue(undefined);
+    rtcMocks.client.startAudioCapture.mockResolvedValue(undefined);
+    rtcMocks.client.publishAudio.mockResolvedValue(undefined);
+    rtcMocks.client.cleanup.mockResolvedValue(undefined);
+    rtcMocks.client.setMuted.mockResolvedValue(undefined);
     browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
       ...DEFAULT_SETTINGS,
       voiceTunnelConsentAccepted: false,
@@ -97,6 +126,7 @@ describe("voice store", () => {
       phase: "active",
       callId: "call-1",
       sessionId: "session-1",
+      traceId: "trace-1",
       startedAt: Date.now(),
       durationMs: 1200,
       volumeLevel: 42,
@@ -108,11 +138,68 @@ describe("voice store", () => {
 
     expect(useVoiceStore.getState().phase).toBe("ended");
     expect(useVoiceStore.getState().callId).toBeNull();
+    expect(useVoiceStore.getState().traceId).toBeNull();
     expect(useVoiceStore.getState().volumeLevel).toBe(0);
     expect(useVoiceStore.getState().muted).toBe(false);
 
     resolveStop();
     await hangUp;
     expect(voiceApi.stopCall).toHaveBeenCalledWith("call-1");
+  });
+
+  it("joinRoom 后并行触发 startAgent，不等待 publishAudio 完成", async () => {
+    browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
+      ...DEFAULT_SETTINGS,
+      voiceTunnelConsentAccepted: true,
+    };
+    const order: string[] = [];
+    vi.mocked(voiceApi.startCall).mockImplementation(async () => {
+      order.push("startCall");
+      return {
+        callId: "call-1",
+        sessionId: "session-1",
+        state: "pending",
+        rtcAppId: "app",
+        roomId: "room",
+        userId: "user",
+        token: "token",
+        traceId: "trace-1",
+      };
+    });
+    vi.mocked(voiceApi.startAgent).mockImplementation(async () => {
+      order.push("startAgent");
+    });
+    rtcMocks.client.preflight.mockImplementation(async () => {
+      order.push("preflight");
+    });
+    rtcMocks.client.prepare.mockImplementation(async () => {
+      order.push("prepare");
+    });
+    rtcMocks.client.joinRoom.mockImplementation(async () => {
+      order.push("joinRoom");
+    });
+    rtcMocks.client.startAudioCapture.mockImplementation(async () => {
+      order.push("startAudioCapture");
+    });
+    rtcMocks.client.publishAudio.mockImplementation(async () => {
+      order.push("publishAudio");
+    });
+
+    await useVoiceStore.getState().requestStart({ sessionId: "session-1" });
+
+    expect(order).toEqual([
+      "preflight",
+      "startCall",
+      "prepare",
+      "joinRoom",
+      "startAgent",
+      "startAudioCapture",
+      "publishAudio",
+    ]);
+    expect(useVoiceStore.getState().phase).toBe("active");
+    expect(useVoiceStore.getState().traceId).toBe("trace-1");
+    expect(voiceApi.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({ traceId: expect.any(String), deferStart: true }),
+    );
   });
 });

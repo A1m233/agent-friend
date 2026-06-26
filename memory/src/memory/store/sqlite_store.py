@@ -88,6 +88,12 @@ class SqliteMemoryStore:
             logger.exception("sqlite store initialization failed for %s", db_path)
             raise
 
+    def warmup(self) -> None:
+        """Warm tokenizer and SQLite read path without writing user data."""
+        _tokenize("语音通话 warmup")
+        with self._lock:
+            self._conn.execute("SELECT 1").fetchone()
+
     # ----- 写 -----
 
     def add_semantic(self, row: SemanticRow) -> None:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -46,6 +47,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
     @router.post("/v1/chat/completions", response_model=None)
     async def chat_completions(request: Request) -> JSONResponse | StreamingResponse:
+        voice_latency = _voice_latency_context_from_headers(request)
+        request_ms = monotonic_ms()
+        log_voice_latency(logger, voice_latency, "agent_bridge_openai_inbound")
         try:
             body = await request.json()
         except ValueError as e:
@@ -69,6 +73,13 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     recoverable=False,
                 )
             )
+        log_voice_latency(
+            logger,
+            voice_latency,
+            "agent_bridge_openai_decoded",
+            elapsed_ms=monotonic_ms() - request_ms,
+            stream=decoded.stream,
+        )
 
         model = decoded.model or runtime.default_model
         session_id_hint = request.headers.get("X-Agent-Friend-Session-Id")
@@ -106,6 +117,21 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     model=model,
                 )
                 conv = bridge.start_transient(boot)
+            conv.set_voice_latency_context(
+                voice_latency,
+                short_reply_hint=_voice_short_reply_hint(runtime) if voice_latency else "",
+                llm_overrides=_voice_llm_overrides(runtime) if voice_latency else None,
+                disable_tools=runtime.settings.voice_latency_experiment_disable_tools,
+            )
+            _log_voice_experiments(runtime, voice_latency)
+            log_voice_latency(
+                logger,
+                voice_latency,
+                "agent_bridge_conversation_bound",
+                session_id=conv.session.session_id,
+                persistent=bool(session_id_hint),
+                elapsed_ms=monotonic_ms() - request_ms,
+            )
         except Exception as exc:
             logger.exception("OpenAI 装配 Conversation 失败")
             return _error_response(map_exception(exc))
@@ -117,6 +143,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     decoded.latest_user_input,
                     model=model,
                     agent_runtime=runtime.agent_runtime,
+                    voice_latency_context=voice_latency,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -145,4 +172,45 @@ def _error_response(err: ProtocolError) -> JSONResponse:
     return JSONResponse(
         status_code=err.http_status,
         content=build_openai_error_envelope(err),
+    )
+
+
+def _voice_latency_context_from_headers(request: Request) -> VoiceLatencyContext | None:
+    trace_id = request.headers.get("X-Agent-Friend-Voice-Trace-Id")
+    call_id = request.headers.get("X-Agent-Friend-Voice-Call-Id")
+    round_seq_raw = request.headers.get("X-Agent-Friend-Voice-Round-Seq")
+    if not trace_id or not call_id or not round_seq_raw:
+        return None
+    try:
+        round_seq = int(round_seq_raw)
+    except ValueError:
+        return None
+    return VoiceLatencyContext(trace_id=trace_id, call_id=call_id, round_seq=round_seq)
+
+
+def _voice_short_reply_hint(runtime: BridgeRuntime) -> str:
+    if not runtime.settings.voice_latency_experiment_short_reply:
+        return ""
+    return "语音通话低延迟实验：先用一句自然短句回应，再按需要补充重点；不要牺牲准确性。"
+
+
+def _voice_llm_overrides(runtime: BridgeRuntime) -> dict[str, int]:
+    max_tokens = runtime.settings.voice_latency_experiment_max_tokens
+    if max_tokens is None:
+        return {}
+    return {"max_tokens": max_tokens}
+
+
+def _log_voice_experiments(
+    runtime: BridgeRuntime, voice_latency: VoiceLatencyContext | None
+) -> None:
+    if voice_latency is None:
+        return
+    log_voice_latency(
+        logger,
+        voice_latency,
+        "agent_bridge_voice_experiments",
+        short_reply=runtime.settings.voice_latency_experiment_short_reply,
+        max_tokens=runtime.settings.voice_latency_experiment_max_tokens,
+        disable_tools=runtime.settings.voice_latency_experiment_disable_tools,
     )

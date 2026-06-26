@@ -47,6 +47,10 @@ class CallBinding:
     target_user_id: str
     created_session: bool = False
     """本次通话是否由 voice_bridge 临时创建了新的 agent session。"""
+    trace_id: str = ""
+    """端到端 latency trace id；为空时调用方可回退到 call_id。"""
+    round_seq: int = 0
+    """同一通话内 LLM proxy inbound 的轮次计数。"""
 
 
 class CallRegistry:
@@ -88,6 +92,16 @@ class CallRegistry:
             if current is None:
                 raise KeyError(f"call_id 不存在: {call_id!r}")
             updated = replace(current, state=state)
+            self._bindings[call_id] = updated
+            return updated
+
+    def next_round(self, call_id: str) -> CallBinding:
+        """Increment and return the binding for the next voice LLM round."""
+        with self._lock:
+            current = self._bindings.get(call_id)
+            if current is None:
+                raise KeyError(f"call_id 不存在: {call_id!r}")
+            updated = replace(current, round_seq=current.round_seq + 1)
             self._bindings[call_id] = updated
             return updated
 

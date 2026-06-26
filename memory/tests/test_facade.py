@@ -95,6 +95,15 @@ def test_close_is_idempotent() -> None:
     mem.close()
 
 
+def test_warmup_does_not_write_memory_items() -> None:
+    mem = _memory('{"episodic_summary": null, "semantic_ops": []}')
+    mem.warmup()
+
+    ctx = mem.retrieve("语音通话", persona_id="p1")
+    assert ctx.is_empty()
+    mem.close()
+
+
 def test_on_retrieved_callback_receives_trace() -> None:
     """026: retrieve 完成后 on_retrieved 收到完整 RecallTrace，source 默认 natural。"""
     reply = '{"episodic_summary": null, "semantic_ops": [{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'

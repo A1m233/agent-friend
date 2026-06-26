@@ -10,6 +10,11 @@ import type { RtcJoinCredentials } from "./types";
 type RtcEventHandler = (event: unknown) => void;
 
 export interface RtcClient {
+  preflight(): Promise<void>;
+  prepare(credentials: RtcJoinCredentials): Promise<void>;
+  joinRoom(): Promise<void>;
+  startAudioCapture(): Promise<void>;
+  publishAudio(): Promise<void>;
   joinAndPublish(credentials: RtcJoinCredentials): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
   cleanup(): Promise<void>;
@@ -38,13 +43,11 @@ function onEngine(engine: IRTCEngine, eventName: string | undefined, handler: Rt
 
 export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
   let engine: IRTCEngine | null = null;
+  let credentials: RtcJoinCredentials | null = null;
   let reportedNonZeroVolume = false;
 
   return {
-    async joinAndPublish(credentials) {
-      if (engine) await this.cleanup();
-      reportedNonZeroVolume = false;
-
+    async preflight() {
       console.info("[voice][rtc] support check");
       const supported = await VERTC.isSupported().catch(() => true);
       if (!supported) {
@@ -53,7 +56,13 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
 
       console.info("[voice][rtc] enable devices");
       await VERTC.enableDevices?.({ video: false, audio: true });
-      engine = VERTC.createEngine(credentials.rtcAppId);
+    },
+
+    async prepare(nextCredentials) {
+      if (engine) await this.cleanup();
+      reportedNonZeroVolume = false;
+      credentials = nextCredentials;
+      engine = VERTC.createEngine(nextCredentials.rtcAppId);
 
       onEngine(engine, VERTC.events?.onError, (event) => {
         const message = `RTC 运行时错误：${JSON.stringify(event)}`;
@@ -72,11 +81,16 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
       });
 
       engine.enableAudioPropertiesReport?.({ interval: 300 });
+    },
+
+    async joinRoom() {
+      const current = engine;
+      if (!current || !credentials) throw new Error("RTC 尚未准备好");
       console.info("[voice][rtc] joinRoom start", {
         roomId: credentials.roomId,
         userId: credentials.userId,
       });
-      await engine.joinRoom(
+      await current.joinRoom(
         credentials.token,
         credentials.roomId,
         {
@@ -94,10 +108,28 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
         },
       );
       console.info("[voice][rtc] joinRoom ok");
-      await engine.startAudioCapture();
+    },
+
+    async startAudioCapture() {
+      const current = engine;
+      if (!current) throw new Error("RTC 尚未准备好");
+      await current.startAudioCapture();
       console.info("[voice][rtc] startAudioCapture ok");
-      await engine.publishStream(MediaType.AUDIO);
+    },
+
+    async publishAudio() {
+      const current = engine;
+      if (!current) throw new Error("RTC 尚未准备好");
+      await current.publishStream(MediaType.AUDIO);
       console.info("[voice][rtc] publishStream audio ok");
+    },
+
+    async joinAndPublish(nextCredentials) {
+      await this.preflight();
+      await this.prepare(nextCredentials);
+      await this.joinRoom();
+      await this.startAudioCapture();
+      await this.publishAudio();
     },
 
     async setMuted(muted) {
@@ -118,6 +150,7 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
     async cleanup() {
       const current = engine;
       engine = null;
+      credentials = null;
       if (!current) return;
 
       console.info("[voice][rtc] cleanup");

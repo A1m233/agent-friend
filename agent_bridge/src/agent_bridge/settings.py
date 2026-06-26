@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agent import memory_db_path, personas_dir, sessions_dir
@@ -74,6 +74,33 @@ class BridgeSettings(BaseSettings):
     memory_db: Path = Field(default_factory=memory_db_path)
     personas_dir: Path = Field(default_factory=personas_dir)
     memory_enabled: bool = True
+
+    voice_latency_experiment_short_reply: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "VOICE_LATENCY_EXPERIMENT_SHORT_REPLY",
+            "AGENT_BRIDGE_VOICE_LATENCY_EXPERIMENT_SHORT_REPLY",
+        ),
+    )
+    """实验开关：voice 请求追加低延迟首句提示。默认关闭。"""
+
+    voice_latency_experiment_max_tokens: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "VOICE_LATENCY_EXPERIMENT_MAX_TOKENS",
+            "AGENT_BRIDGE_VOICE_LATENCY_EXPERIMENT_MAX_TOKENS",
+        ),
+    )
+    """实验开关：voice 请求覆盖 max_tokens。默认不覆盖。"""
+
+    voice_latency_experiment_disable_tools: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "VOICE_LATENCY_EXPERIMENT_DISABLE_TOOLS",
+            "AGENT_BRIDGE_VOICE_LATENCY_EXPERIMENT_DISABLE_TOOLS",
+        ),
+    )
+    """实验开关：voice 请求禁用工具。默认关闭。"""
 
     # 022:IM 通道相关
     im_enabled: bool = True

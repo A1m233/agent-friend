@@ -14,6 +14,7 @@ bridge 进程是**单实例多请求**模型——这些组件在进程启动时
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,9 @@ from .settings import BridgeSettings
 
 if TYPE_CHECKING:
     from .protocols.im import IMRuntime, OnboardSessionRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 def _make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSpec:
@@ -232,6 +236,10 @@ def build_runtime(settings: BridgeSettings) -> BridgeRuntime:
             on_retrieved=recall_buffer.record,
             pinned_relevance_gate=False,
         )
+        try:
+            memory.warmup()
+        except Exception:
+            logger.warning("memory warmup failed; continuing startup", exc_info=True)
 
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store, tool_registry, memory, prompt_builder_factory

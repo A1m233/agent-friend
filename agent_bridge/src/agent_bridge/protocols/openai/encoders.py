@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
 
+from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from agent.runtime import AgentRuntime, UserEvent
 
 from agent import Conversation, TextDelta, TurnDone
@@ -44,6 +45,7 @@ def encode_streaming(
     *,
     model: str,
     agent_runtime: AgentRuntime | None = None,
+    voice_latency_context: VoiceLatencyContext | None = None,
 ) -> Iterator[bytes]:
     """流式编码：生成 SSE bytes 流。
 
@@ -74,6 +76,7 @@ def encode_streaming(
     response_id = _chunk_id()
     created = int(time.time())
     finish_reason = "stop"
+    stream_start_ms = monotonic_ms()
 
     yield _sse_data(
         _build_chunk(
@@ -84,8 +87,16 @@ def encode_streaming(
             finish_reason=None,
         )
     )
+    log_voice_latency(
+        logger,
+        voice_latency_context,
+        "agent_bridge_first_role_chunk_sent",
+        session_id=conv.session.session_id,
+        elapsed_ms=monotonic_ms() - stream_start_ms,
+    )
 
     errored = False
+    first_text_seen = False
     mirror_user_event = (
         UserEvent(session_id=conv.session.session_id, user_input=user_input)
         if agent_runtime is not None
@@ -100,6 +111,16 @@ def encode_streaming(
                 except Exception:
                     logger.warning("listener fan_out 失败", exc_info=True)
             if isinstance(ev, TextDelta):
+                if not first_text_seen:
+                    first_text_seen = True
+                    log_voice_latency(
+                        logger,
+                        voice_latency_context,
+                        "agent_bridge_first_real_text_delta",
+                        session_id=conv.session.session_id,
+                        elapsed_ms=monotonic_ms() - stream_start_ms,
+                        chars=len(ev.text),
+                    )
                 yield _sse_data(
                     _build_chunk(
                         response_id=response_id,
@@ -131,6 +152,14 @@ def encode_streaming(
                 )
             )
         yield b"data: [DONE]\n\n"
+        log_voice_latency(
+            logger,
+            voice_latency_context,
+            "agent_bridge_stream_done",
+            session_id=conv.session.session_id,
+            elapsed_ms=monotonic_ms() - stream_start_ms,
+            errored=errored,
+        )
 
 
 def encode_nonstreaming(

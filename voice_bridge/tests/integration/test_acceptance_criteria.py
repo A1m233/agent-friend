@@ -160,6 +160,7 @@ class TestAC1CallStart:
         data = resp.json()
         assert data["state"] == "active"
         assert data["call_id"]
+        assert data["trace_id"] == data["call_id"]
         assert data["session_id"] == "sess-test-1"
         assert data["rtc_app_id"] == "rtc-app-id"
         assert data["room_id"]
@@ -262,7 +263,7 @@ class TestAC3StateMachine:
         _mock_agent_bridge_create_session(respx_mock)
         _mock_volc_start_voice_chat_success(respx_mock)
 
-        call_id = client.post("/voice/calls", json={}).json()["call_id"]
+        call_id = client.post("/voice/calls", json={"trace_id": "trace-llm-1"}).json()["call_id"]
         get_resp = client.get(f"/voice/calls/{call_id}").json()
         assert get_resp["state"] == "active"
 
@@ -277,7 +278,7 @@ class TestAC3StateMachine:
         _mock_agent_bridge_get_session(respx_mock, "sess-test-1")
         _mock_agent_bridge_delete_session(respx_mock, "sess-test-1")
 
-        call_id = client.post("/voice/calls", json={}).json()["call_id"]
+        call_id = client.post("/voice/calls", json={"trace_id": "trace-llm-1"}).json()["call_id"]
         client.post(f"/voice/calls/{call_id}/stop")
         get_resp = client.get(f"/voice/calls/{call_id}").json()
         assert get_resp["state"] == "stopped"
@@ -303,7 +304,7 @@ class TestAC4LLMProxySessionInject:
         _mock_agent_bridge_create_session(respx_mock, session_id="sess-llm-1")
         _mock_volc_start_voice_chat_success(respx_mock)
 
-        call_id = client.post("/voice/calls", json={}).json()["call_id"]
+        call_id = client.post("/voice/calls", json={"trace_id": "trace-llm-1"}).json()["call_id"]
 
         # mock agent_bridge 的 OpenAI 端点
         sse_chunks = [
@@ -336,6 +337,9 @@ class TestAC4LLMProxySessionInject:
         assert agent_route.called
         upstream_req = agent_route.calls[0].request
         assert upstream_req.headers["x-agent-friend-session-id"] == "sess-llm-1"
+        assert upstream_req.headers["x-agent-friend-voice-trace-id"] == "trace-llm-1"
+        assert upstream_req.headers["x-agent-friend-voice-call-id"] == call_id
+        assert upstream_req.headers["x-agent-friend-voice-round-seq"] == "1"
 
         # 校验 (b) body 完整透传
         forwarded_body = json.loads(upstream_req.content)

@@ -106,6 +106,11 @@ class Memory:
         )
         self._worker.submit(fragment)
 
+    def warmup(self) -> None:
+        """Warm read-path dependencies without changing memory semantics."""
+        logger.info("warmup owner=%s", self._owner)
+        self._store.warmup()
+
     # ----- 读路径 -----
 
     def retrieve(
