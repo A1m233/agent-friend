@@ -4,7 +4,7 @@ import { act as reactAct } from "react";
 import { type ReactNode, type RefObject } from "react";
 import * as PIXI from "pixi.js";
 import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
-import type { PetInteractions } from "./usePetInteractions";
+import type { PetInteractionCallbacks } from "./usePetInteractions";
 
 // 轻量 PIXI mock：只保留 usePixiAvatarSlot 用到的 event / ticker / stage 行为
 class MockTicker {
@@ -145,6 +145,18 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     return { global: { x, y } } as unknown as PIXI.FederatedPointerEvent;
   }
 
+  function makeInteractionsRef(
+    onSlotClick: (e: PIXI.FederatedPointerEvent) => void,
+    onSlotDragMove: (vx: number, vy: number) => void = () => {},
+  ): RefObject<PetInteractionCallbacks | null> {
+    return {
+      current: {
+        onSlotClick,
+        onSlotDragMove,
+      },
+    };
+  }
+
   async function waitForApp<T>(result: { current: T }) {
     const typed = result.current as unknown as { app: { ticker: MockTicker } | null };
     while (!typed.app) {
@@ -159,7 +171,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     const setIsDragging = vi.fn();
     const onSlotClick = vi.fn();
 
-    const interactionsRef: RefObject<PetInteractions | null> = { current: { onSlotClick, onSlotDragMove: () => {} } };
+    const interactionsRef = makeInteractionsRef(onSlotClick);
     const { result, unmount } = renderHook(
       () => usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging, { interactionsRef }),
       undefined,
@@ -187,7 +199,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     const onSlotClick = vi.fn();
     const onSlotDragMove = vi.fn();
 
-    const interactionsRef: RefObject<PetInteractions | null> = { current: { onSlotClick, onSlotDragMove } };
+    const interactionsRef = makeInteractionsRef(onSlotClick, onSlotDragMove);
     const { result, unmount } = renderHook(
       () => usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging, { interactionsRef }),
       undefined,
@@ -219,7 +231,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     const setIsDragging = vi.fn();
     const onSlotClick = vi.fn();
 
-    const interactionsRef: RefObject<PetInteractions | null> = { current: { onSlotClick, onSlotDragMove: () => {} } };
+    const interactionsRef = makeInteractionsRef(onSlotClick);
     const { result, unmount } = renderHook(
       () => usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging, { interactionsRef }),
       undefined,

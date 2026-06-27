@@ -22,6 +22,7 @@ export default defineConfig({
         settings: resolve(__dirname, "settings.html"),
         "voice-call": resolve(__dirname, "voice-call.html"),
         "memory-inspector": resolve(__dirname, "memory-inspector.html"),
+        "live2d-debugger": resolve(__dirname, "live2d-debugger.html"),
       },
     },
   },

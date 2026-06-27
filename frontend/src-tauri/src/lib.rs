@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, WebviewWindow,
+    Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 mod bubble_window;
@@ -285,6 +285,29 @@ fn open_memory_inspector(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "memory-inspector")
 }
 
+/// 033 · dev-only Live2D 调试器窗口。
+///
+/// 只在 debug build 注册；release build 没有 command，也没有静态 window 配置。
+#[cfg(debug_assertions)]
+#[tauri::command]
+fn open_live2d_debugger(app: tauri::AppHandle) -> Result<(), String> {
+    if app.get_webview_window("live2d-debugger").is_none() {
+        WebviewWindowBuilder::new(
+            &app,
+            "live2d-debugger",
+            WebviewUrl::App("live2d-debugger.html".into()),
+        )
+        .title("agent-friend · Live2D 调试器")
+        .inner_size(460.0, 680.0)
+        .min_inner_size(380.0, 520.0)
+        .resizable(true)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    }
+    show_and_focus(&app, "live2d-debugger")
+}
+
 /// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
 ///
 /// **唤回路径**：本期唯一 = 系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
@@ -432,6 +455,7 @@ pub fn run() {
         open_settings,
         open_voice_call,
         open_memory_inspector,
+        open_live2d_debugger,
         hide_pet,
         set_pet_webview_dpr,
         settings::get_setting,

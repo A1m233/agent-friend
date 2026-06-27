@@ -8,7 +8,8 @@
     "bubble",
     "settings",
     "voice-call",
-    "memory-inspector"
+    "memory-inspector",
+    "live2d-debugger"
   ],
   "permissions": [
     "core:default",
