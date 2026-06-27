@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .asr import AsrProvider
+from .asr.volc import VolcAsrProvider
 from .calls import CallRegistry
 from .clients import AgentBridgeClient
 from .rtc import VolcRtcClient
@@ -24,6 +26,7 @@ class VoiceBridgeRuntime:
     rtc_client: VolcRtcClient
     call_registry: CallRegistry
     agent_bridge: AgentBridgeClient
+    asr_provider: AsrProvider | None = None
 
 
 def build_runtime(settings: VoiceBridgeSettings) -> VoiceBridgeRuntime:
@@ -34,9 +37,11 @@ def build_runtime(settings: VoiceBridgeSettings) -> VoiceBridgeRuntime:
     )
     call_registry = CallRegistry()
     agent_bridge = AgentBridgeClient(settings.agent_bridge_url)
+    asr_provider = VolcAsrProvider(settings)
     return VoiceBridgeRuntime(
         settings=settings,
         rtc_client=rtc_client,
         call_registry=call_registry,
         agent_bridge=agent_bridge,
+        asr_provider=asr_provider,
     )

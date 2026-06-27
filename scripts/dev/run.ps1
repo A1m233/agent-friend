@@ -1,9 +1,9 @@
 ﻿# scripts/dev/run.ps1 — 一键起 bridge + 前端开发（windows）
 #
-# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），不启动 voice_bridge。
+# 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），启动本地 voice_bridge（不启动 cloudflared），用于 Chat Composer 语音输入 ASR。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL）。
-# --no-voice：不启动 voice_bridge（默认；保留给显式声明 / 兼容旧命令）。
+# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL），用于完整语音通话链路。
+# --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
 # bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理子进程树。
@@ -18,14 +18,14 @@ try {
 Set-Location $root
 
 $mode = "tauri"
-$startVoice = $false
+$voiceMode = "local"
 $rest = @()
 foreach ($a in $args) {
     switch ($a) {
         "--web" { $mode = "web" }
         "--tauri" { $mode = "tauri" }
-        "--voice" { $startVoice = $true }
-        "--no-voice" { $startVoice = $false }
+        "--voice" { $voiceMode = "tunnel" }
+        "--no-voice" { $voiceMode = "off" }
         default { $rest += $a }
     }
 }
@@ -172,6 +172,58 @@ function Stop-DevPortProcess($port) {
     return -not (Test-PortInUse $port)
 }
 
+function Get-PortListeners($port) {
+    try {
+        return @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop)
+    }
+    catch {
+        return @()
+    }
+}
+
+function Get-ProcessCommandLine($processId) {
+    try {
+        return (Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop).CommandLine
+    }
+    catch {
+        return ""
+    }
+}
+
+function Test-VoiceBridgeProcess($processId) {
+    $commandLine = Get-ProcessCommandLine $processId
+    return $commandLine -match "(^|\s)-m\s+voice_bridge(\s|$)" -or
+        $commandLine -match "voice_bridge"
+}
+
+function Stop-VoiceBridgePortProcess($port, $reason) {
+    $owners = @(Get-PortListeners $port | ForEach-Object { $_.OwningProcess } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+    if ($owners.Count -eq 0) {
+        return $true
+    }
+
+    foreach ($ownerPid in $owners) {
+        if (-not (Test-VoiceBridgeProcess $ownerPid)) {
+            $commandLine = Get-ProcessCommandLine $ownerPid
+            Write-Error "端口 $port 已被占用，但占用进程无法确认为 voice_bridge，脚本不会自动结束它。PID=$ownerPid CommandLine=$commandLine"
+        }
+    }
+
+    Write-Host "  [WARN] 端口 $port 上已有 voice_bridge，$reason；自动停止旧进程后重启…"
+    foreach ($ownerPid in $owners) {
+        taskkill /PID $ownerPid /T /F 2>$null | Out-Null
+    }
+    for ($i = 0; $i -lt 30; $i++) {
+        if (-not (Test-PortInUse $port)) {
+            Write-Host "  [OK] 端口 $port 已释放"
+            return $true
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Error "端口 $port 上的旧 voice_bridge 未能停止，请手动检查后重试。"
+    return $false
+}
+
 if (Test-PortInUse $DevPort) {
     Write-Host "  [WARN] 端口 $DevPort 被占用，尝试清理上次残留的 vite/tauri 进程…"
     if (Stop-DevPortProcess $DevPort) {
@@ -193,21 +245,43 @@ Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
 $env:AGENT_BRIDGE_DEV_MODE = "true"
 $bridge = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "agent_bridge") -PassThru -NoNewWindow
 
-if ($startVoice) {
-    $hasExplicitVoicePublicUrl = -not [string]::IsNullOrWhiteSpace($env:VOICE_BRIDGE_PUBLIC_URL)
+if ($voiceMode -ne "off") {
+    $needsVoiceTunnel = $voiceMode -eq "tunnel"
+    $reuseExistingVoiceBridge = $false
+    $restartVoiceBridgeReason = $null
     if (Test-HttpOk "http://127.0.0.1:18900/healthz") {
-        if (-not $hasExplicitVoicePublicUrl) {
-            Write-Error "voice_bridge 已在 127.0.0.1:18900 运行，但 dev/run 无法给既有进程注入本次 tunnel URL。请先停止旧 voice_bridge，再重新运行 dev/run；或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后复用。"
+        if ($needsVoiceTunnel) {
+            $restartVoiceBridgeReason = "完整语音通话需要注入本次 tunnel URL"
         }
-        Write-Host "===> voice_bridge 已在 127.0.0.1:18900 运行，复用现有进程（VOICE_BRIDGE_PUBLIC_URL 来自当前环境；不读取 .env）"
+        elseif (-not (Test-HttpOk "http://127.0.0.1:18900/voice/transcriptions/healthz")) {
+            $restartVoiceBridgeReason = "现有 voice_bridge 缺少语音输入转写健康端点，可能是旧进程"
+        }
+        else {
+            Write-Host "===> voice_bridge 已在 127.0.0.1:18900 运行，复用现有进程（本地 ASR 不需要 cloudflared）"
+            $reuseExistingVoiceBridge = $true
+        }
     }
     elseif (Test-PortInUse 18900) {
-        Write-Error "端口 18900 已被占用，但 http://127.0.0.1:18900/healthz 不可用。请先停止占用该端口的进程后再试。"
+        $restartVoiceBridgeReason = "健康检查不可用"
     }
-    else {
-        $tunnel = Start-VoiceTunnel
-        $cloudflared = $tunnel.Process
-        Write-Host "===> 启动 voice_bridge（127.0.0.1:18900）…"
+
+    if (-not $reuseExistingVoiceBridge) {
+        if ($needsVoiceTunnel) {
+            $tunnel = Start-VoiceTunnel
+            $cloudflared = $tunnel.Process
+        }
+        if ($restartVoiceBridgeReason) {
+            Stop-VoiceBridgePortProcess 18900 $restartVoiceBridgeReason
+        }
+        elseif (Test-PortInUse 18900) {
+            Stop-VoiceBridgePortProcess 18900 "准备启动新的 voice_bridge"
+        }
+        if ($needsVoiceTunnel) {
+            Write-Host "===> 启动 voice_bridge（127.0.0.1:18900，完整语音通话 tunnel 模式）…"
+        }
+        else {
+            Write-Host "===> 启动 voice_bridge（127.0.0.1:18900，本地 ASR 模式，不启动 cloudflared）…"
+        }
         $voice = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "voice_bridge") -PassThru -NoNewWindow
         if (-not (Wait-HttpOk "http://127.0.0.1:18900/healthz" 10)) {
             Write-Error "voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 voice_bridge 日志。"
@@ -215,7 +289,7 @@ if ($startVoice) {
     }
 }
 else {
-    Write-Host "===> 跳过 voice_bridge（默认；传 --voice 启用语音链路）"
+    Write-Host "===> 跳过 voice_bridge（传 --no-voice 后显式关闭语音链路）"
 }
 
     Set-Location (Join-Path $root "frontend")

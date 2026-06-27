@@ -2,6 +2,11 @@ import { error, info, warn } from "@tauri-apps/plugin-log";
 
 const FRAME_RE =
   /\(?(?:[^()]*?\/)?([^/()\s]+\.(?:tsx?|jsx?|mjs|cjs))(?::\d+)?:\d+\)?/;
+const TAURI_STALE_CALLBACK_RE =
+  /^\[TAURI\] Couldn't find callback id \d+\. This might happen when the app is reloaded while Rust is running an asynchronous operation\.$/;
+const TAURI_STALE_CALLBACK_THROTTLE_MS = 5_000;
+
+let lastTauriStaleCallbackForwardedAt = 0;
 
 function pickCaller(): string {
   const stack = new Error().stack ?? "";
@@ -21,10 +26,23 @@ function safeStringify(v: unknown): string {
   }
 }
 
+function shouldForward(level: "info" | "warn" | "error", message: string): boolean {
+  if (level !== "warn" || !TAURI_STALE_CALLBACK_RE.test(message)) return true;
+
+  const now = Date.now();
+  if (now - lastTauriStaleCallbackForwardedAt < TAURI_STALE_CALLBACK_THROTTLE_MS) {
+    return false;
+  }
+  lastTauriStaleCallbackForwardedAt = now;
+  return true;
+}
+
 function forward(level: "info" | "warn" | "error", args: unknown[]) {
   const message = args
     .map((a) => (typeof a === "string" ? a : safeStringify(a)))
     .join(" ");
+  if (!shouldForward(level, message)) return;
+
   const file = pickCaller();
   const opts = { file };
   const fn = level === "info" ? info : level === "warn" ? warn : error;

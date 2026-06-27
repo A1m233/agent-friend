@@ -1,6 +1,9 @@
 import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 
+import { MicActivityFrame } from "@/components/voice/MicActivityFrame";
 import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
+import { MicLevelBars, voiceVolumeLabel } from "@/components/voice/MicLevelBars";
+import { hasMicActivity } from "@/components/voice/micActivity";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
 import {
@@ -14,12 +17,6 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
   const seconds = (totalSeconds % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
-}
-
-function volumeLabel(level: number): string {
-  if (level > 66) return "音量清晰";
-  if (level > 20) return "正在收音";
-  return "等待声音";
 }
 
 export function VoiceCallApp() {
@@ -42,7 +39,7 @@ export function VoiceCallApp() {
   const inCall = phase === "active";
   const busy = isVoiceCallLive(phase) && phase !== "active";
   const canToggleMute = phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
-  const micWaveActive = canToggleMute && !muted && volumeLevel > 0;
+  const micWaveActive = canToggleMute && hasMicActivity(volumeLevel, muted);
 
   const handleToggleMute = () => {
     console.info("[voice-call][button] toggle-mute click", {
@@ -80,23 +77,11 @@ export function VoiceCallApp() {
           </div>
 
           <div className="flex flex-col items-center gap-3 text-center">
-            <div className="flex items-end gap-1">
-              {[0, 1, 2].map((i) => {
-                const active = !muted && (volumeLevel > i * 28 || busy || inCall);
-                return (
-                  <span
-                    key={i}
-                    className={`block w-3 rounded-full transition-all ${
-                      active ? "h-8 bg-fg" : "h-5 bg-border"
-                    }`}
-                  />
-                );
-              })}
-            </div>
+            <MicLevelBars level={volumeLevel} active={busy || inCall} muted={muted} />
             <div className="space-y-1">
               <p className="text-lg font-medium">{voicePhaseLabel(phase)}</p>
               <p className="text-sm text-muted">
-                {inCall ? formatDuration(durationMs) : muted ? "已静音" : volumeLabel(volumeLevel)}
+                {inCall ? formatDuration(durationMs) : muted ? "已静音" : voiceVolumeLabel(volumeLevel)}
               </p>
             </div>
             {error && (
@@ -114,13 +99,10 @@ export function VoiceCallApp() {
 
         <footer className="flex items-center justify-center gap-8 border-t border-border px-6 py-5">
           {!canDial && !awaitingConsent && (
-            <div className="relative flex size-10 items-center justify-center">
-              {micWaveActive && (
-                <span className="absolute inset-0 rounded-full bg-success/20 animate-ping" />
-              )}
+            <MicActivityFrame active={canToggleMute} level={volumeLevel} muted={muted}>
               <TooltipButton
                 icon={muted ? <MicOff /> : <Mic />}
-                tooltip={muted ? "取消静音" : canToggleMute ? volumeLabel(volumeLevel) : "接通后可静音"}
+                tooltip={muted ? "取消静音" : canToggleMute ? voiceVolumeLabel(volumeLevel) : "接通后可静音"}
                 tooltipSide="top"
                 size="icon-lg"
                 variant={muted ? "outline" : "secondary"}
@@ -128,7 +110,7 @@ export function VoiceCallApp() {
                 disabled={!canToggleMute}
                 onClick={handleToggleMute}
               />
-            </div>
+            </MicActivityFrame>
           )}
           {awaitingConsent ? (
             <Button size="icon-lg" className="rounded-full" disabled aria-label="等待确认">
