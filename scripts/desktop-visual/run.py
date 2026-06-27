@@ -105,13 +105,21 @@ def cmd_list_windows(_args: argparse.Namespace) -> int:
 
     script = """
 tell application "System Events"
-  set rows to {}
+  set windowRows to {}
   repeat with proc in application processes
-    repeat with w in windows of proc
-      set end of rows to ((name of proc as text) & "\t" & (name of w as text) & "\t" & (id of w as text))
-    end repeat
+    set procName to name of proc as text
+    try
+      repeat with w in windows of proc
+        set windowTitle to name of w as text
+        set windowId to ""
+        try
+          set windowId to id of w as text
+        end try
+        set end of windowRows to (procName & "\t" & windowTitle & "\t" & windowId)
+      end repeat
+    end try
   end repeat
-  return rows
+  return windowRows
 end tell
 """
     result = mac_osascript(script)
@@ -128,12 +136,16 @@ def find_mac_window_id(query: str) -> str | None:
     script = f"""
 tell application "System Events"
   repeat with proc in application processes
-    repeat with w in windows of proc
-      set windowTitle to name of w as text
-      if windowTitle contains "{q}" then
-        return id of w as text
-      end if
-    end repeat
+    try
+      repeat with w in windows of proc
+        set windowTitle to name of w as text
+        if windowTitle contains "{q}" then
+          try
+            return id of w as text
+          end try
+        end if
+      end repeat
+    end try
   end repeat
 end tell
 """

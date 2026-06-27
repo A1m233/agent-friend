@@ -19,11 +19,18 @@ import { usePetStateStore } from "@/stores/petState";
  * - 接收 slot 派发的 click / drag-move 事件驱动 TapReactionSource / DragReactionSource
  * - 把 18 TextCadenceMouthDriver 作为 ParamSource 之一交给 composePetRender 调度
  */
-export interface PetInteractions {
+export interface PetInteractionCallbacks {
   /** PIXI slot 派发的 click（已经 click vs drag 区分）。接收 event 只为与 slot handler 签名对齐。 */
   onSlotClick: (e: PIXI.FederatedPointerEvent) => void;
   /** PIXI slot 派发的 drag 方向（归一化到 [-1, 1]）。 */
   onSlotDragMove: (vx: number, vy: number) => void;
+}
+
+export interface PetInteractions extends PetInteractionCallbacks {
+  debugControls: {
+    triggerTapFeedback: () => "played" | "skipped_by_phase";
+    triggerTapParamsOnly: () => "played" | "skipped_by_phase";
+  };
 }
 
 function safeUnlisten(fn: (() => void) | null | undefined): void {
@@ -85,18 +92,32 @@ export function usePetInteractions(
     };
   }, [spriteScreen, gaze]);
 
-  const onSlotClick = useCallback(
-    (_e: PIXI.FederatedPointerEvent) => {
+  const triggerTapFeedback = useCallback((): "played" | "skipped_by_phase" => {
       const phase = usePetStateStore.getState().phase;
-      if (phase === "speaking") return; // speaking 抢镜
+      if (phase === "speaking") return "skipped_by_phase"; // speaking 抢镜
       tap.fire();
       void spriteRef.current?.startMotion({
         group: PET_LIVE2D_CONFIG.motionGroups.tap ?? "Idle",
         no: PET_LIVE2D_CONFIG.motionNo.tap ?? 0,
         priority: Priority.Normal,
       });
+      return "played";
     },
     [spriteRef, tap],
+  );
+
+  const triggerTapParamsOnly = useCallback((): "played" | "skipped_by_phase" => {
+    const phase = usePetStateStore.getState().phase;
+    if (phase === "speaking") return "skipped_by_phase";
+    tap.fire();
+    return "played";
+  }, [tap]);
+
+  const onSlotClick = useCallback(
+    (_e: PIXI.FederatedPointerEvent) => {
+      triggerTapFeedback();
+    },
+    [triggerTapFeedback],
   );
 
   const onSlotDragMove = useCallback(
@@ -106,5 +127,17 @@ export function usePetInteractions(
     [drag],
   );
 
-  return { onSlotClick, onSlotDragMove };
+  const debugControls = useMemo(
+    () => ({
+      triggerTapFeedback,
+      triggerTapParamsOnly,
+    }),
+    [triggerTapFeedback, triggerTapParamsOnly],
+  );
+
+  return {
+    onSlotClick,
+    onSlotDragMove,
+    debugControls,
+  };
 }

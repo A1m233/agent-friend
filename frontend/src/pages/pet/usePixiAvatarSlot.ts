@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
-import type { PetInteractions } from "./usePetInteractions";
+import type { PetInteractionCallbacks } from "./usePetInteractions";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import { findVisibleBounds } from "@/pet/petAlphaHitTest";
@@ -85,7 +85,7 @@ const DRAG_MIN_DT_SECONDS = 1 / 120;
 
 export interface UsePixiAvatarSlotOptions {
   /** 024 · 用 ref 延迟绑定 callbacks，避免 App.tsx hooks 调用顺序循环。 */
-  interactionsRef?: RefObject<PetInteractions | null>;
+  interactionsRef?: RefObject<PetInteractionCallbacks | null>;
 }
 
 export function usePixiAvatarSlot(

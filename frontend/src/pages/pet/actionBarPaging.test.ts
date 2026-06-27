@@ -63,8 +63,8 @@ describe("derivePageState", () => {
       });
     });
 
-    it("029 后 dev 默认（8/6）：启用分页", () => {
-      const r = derivePageState({ buttonCount: 8, pageSize: 6, currentPage: 0 });
+    it("033 后 dev 默认（9/6）：启用分页", () => {
+      const r = derivePageState({ buttonCount: 9, pageSize: 6, currentPage: 0 });
       expect(r.needsCarousel).toBe(true);
       expect(r.showPrev).toBe(false);
       expect(r.showNext).toBe(true);

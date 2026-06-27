@@ -10,6 +10,7 @@ import {
   Plug,
   ScrollText,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import {
@@ -57,6 +58,7 @@ interface Props {
   onStartVoiceCall: () => void;
   voiceCallActive: boolean;
   onOpenMemoryInspector: () => void;
+  onOpenLive2DDebugger: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
 }
@@ -88,6 +90,7 @@ export function ActionBar({
   onStartVoiceCall,
   voiceCallActive,
   onOpenMemoryInspector,
+  onOpenLive2DDebugger,
   onInjectShort,
   onInjectLong,
 }: Props) {
@@ -105,6 +108,7 @@ export function ActionBar({
   if (import.meta.env.DEV) {
     buttons.push(
       { icon: <Brain />, tooltip: "记忆面板", onClick: onOpenMemoryInspector },
+      { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
       { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
       { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },
     );
