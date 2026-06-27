@@ -25,3 +25,13 @@
 t-chat-sender::part(t-textarea) {
   overflow: hidden;
 }
+
+t-chat-sender::part(t-chat__input__footer__left) {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: visible;
+}
+
+t-chat-sender::part(t-chat__input__footer__right) {
+  flex: 0 0 auto;
+}

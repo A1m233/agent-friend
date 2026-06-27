@@ -135,6 +135,31 @@ class VoiceBridgeSettings(BaseSettings):
             "VOLC_SPEECH_ACCESS_TOKEN", "VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN"
         ),
     )
+    volc_speech_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("VOLC_SPEECH_API_KEY", "VOICE_BRIDGE_VOLC_SPEECH_API_KEY"),
+    )
+    """火山语音新版控制台的 APP Key。为空时使用旧控制台 App ID + Access Token。"""
+
+    volc_speech_resource_id: str = Field(
+        default="volc.bigasr.sauc.duration",
+        validation_alias=AliasChoices(
+            "VOLC_SPEECH_RESOURCE_ID", "VOICE_BRIDGE_VOLC_SPEECH_RESOURCE_ID"
+        ),
+    )
+    """火山流式 ASR 资源 ID；默认使用官方文档示例中的 1.0 小时版。"""
+
+    volc_speech_ws_url: str = Field(
+        default="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+        validation_alias=AliasChoices("VOLC_SPEECH_WS_URL", "VOICE_BRIDGE_VOLC_SPEECH_WS_URL"),
+    )
+    """火山流式 ASR WebSocket 入口；默认使用双向流式优化版。"""
+
+    voice_input_prewarm_enabled: bool = True
+    """Whether chat composer voice input may open a connect-only ASR warm socket."""
+
+    voice_input_prewarm_ttl_ms: int = Field(default=30_000, ge=5_000, le=300_000)
+    """Maximum age for a connect-only ASR warm socket before it is closed."""
 
     # ----- 通话默认参数 -----
 

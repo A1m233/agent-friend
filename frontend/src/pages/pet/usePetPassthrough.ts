@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type * as PIXI from "pixi.js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +15,8 @@ type PassthroughReason =
   | "sprite-transparent"
   | "outside";
 
+const PET_PASSTHROUGH_DEBUG_STORAGE_KEY = "agent-friend.debug.pet-passthrough";
+
 function describeHitTarget(el: Element | null): string | null {
   if (!el) return null;
 
@@ -23,6 +25,15 @@ function describeHitTarget(el: Element | null): string | null {
   const dataHit = el.getAttribute("data-hit");
   const dataHitPart = dataHit ? `[data-hit=${dataHit}]` : "[data-hit]";
   return `${tag}${id}${dataHitPart}`;
+}
+
+function shouldLogPassthroughDiagnostic(): boolean {
+  if (!import.meta.env.DEV) return false;
+  try {
+    return window.localStorage.getItem(PET_PASSTHROUGH_DEBUG_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -98,6 +109,21 @@ export function usePetPassthrough({
   setCursorOnSprite,
   disabled = false,
 }: Options) {
+  const latestRef = useRef({
+    isDragging,
+    spriteScreen,
+    app,
+    alphaScanGivenUpRef,
+    setCursorOnSprite,
+  });
+  latestRef.current = {
+    isDragging,
+    spriteScreen,
+    app,
+    alphaScanGivenUpRef,
+    setCursorOnSprite,
+  };
+
   useEffect(() => {
     if (!isTauri()) return; // 浏览器 web 调试下无桌面能力，跳过
 
@@ -111,11 +137,11 @@ export function usePetPassthrough({
       reason: PassthroughReason,
       details: Record<string, unknown> = {},
     ) => {
-      if (import.meta.env.DEV) {
+      if (shouldLogPassthroughDiagnostic()) {
         const diagnosticKey = `${shouldIgnore}:${reason}`;
         if (diagnosticKey !== lastDiagnosticKey) {
           lastDiagnosticKey = diagnosticKey;
-          console.info("[pet][passthrough]", {
+          console.debug("[pet][passthrough]", {
             ignored: shouldIgnore,
             reason,
             ...details,
@@ -124,13 +150,13 @@ export function usePetPassthrough({
       }
       if (shouldIgnore === ignored) return;
       ignored = shouldIgnore;
-      void win.setIgnoreCursorEvents(shouldIgnore);
+      void win.setIgnoreCursorEvents(shouldIgnore).catch(() => {});
     };
 
     // dev-only · 禁穿透分支：让 inspector / dev tools 鼠标事件正常
     if (disabled) {
       apply(false, "disabled");
-      setCursorOnSprite(false);
+      latestRef.current.setCursorOnSprite(false);
       return () => {
         disposed = true;
       };
@@ -140,10 +166,11 @@ export function usePetPassthrough({
 
     const unlisten = listen<{ x: number; y: number }>("pet://cursor", (e) => {
       if (disposed) return;
+      const latest = latestRef.current;
       // (1) drag 期间锁定 false；hover 状态从 cursorOnSprite 维度看是 "不算 hover"
       //     （但 ActionBar 显隐由 App.tsx 综合 isDragging || cursorOnSprite || hoverActionBarDom 决定）
-      if (isDragging) {
-        setCursorOnSprite(false);
+      if (latest.isDragging) {
+        latest.setCursorOnSprite(false);
         return apply(false, "dragging", { cursor: e.payload });
       }
       // (2) DOM data-hit 优先（操作栏 DOM 在 canvas 之上）
@@ -159,17 +186,17 @@ export function usePetPassthrough({
       // (3) sprite alpha hit-test 主路径（18 升级；spriteScreen 矩形作 fast reject）
       //     18b · alphaScanGivenUpRef 标记 Win mixed DPR 下 readPixels 不可用 → 跳过 alpha 关，
       //     矩形命中即生效（= 17a 行为，cursor 进 slot.getBounds 矩形就视为命中 Hiyori）。
-      if (spriteScreen && slotBoundsHit(e.payload, spriteScreen)) {
+      if (latest.spriteScreen && slotBoundsHit(e.payload, latest.spriteScreen)) {
         const spriteDetails = {
           cursor: e.payload,
-          spriteScreen,
-          alphaScanGivenUp: alphaScanGivenUpRef.current,
-          hasPixiApp: Boolean(app),
+          spriteScreen: latest.spriteScreen,
+          alphaScanGivenUp: latest.alphaScanGivenUpRef.current,
+          hasPixiApp: Boolean(latest.app),
         };
-        const hit = alphaScanGivenUpRef.current
+        const hit = latest.alphaScanGivenUpRef.current
           ? true // Win mixed DPR mitigation：跳过 alpha 关
-          : app
-            ? alphaHitTest(app, e.payload)
+          : latest.app
+            ? alphaHitTest(latest.app, e.payload)
             : true; // app 未就绪时退化到矩形（17a 兜底，加载早期）
         if (hit) {
           setCursorOnSprite(true);
@@ -185,8 +212,8 @@ export function usePetPassthrough({
     return () => {
       disposed = true;
       void unlisten.then((f) => f());
-      void win.setIgnoreCursorEvents(false);
+      void win.setIgnoreCursorEvents(false).catch(() => {});
       setCursorOnSprite(false);
     };
-  }, [isDragging, spriteScreen, app, setCursorOnSprite, disabled]);
+  }, [disabled, setCursorOnSprite]);
 }

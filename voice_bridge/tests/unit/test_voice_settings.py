@@ -81,3 +81,14 @@ def test_main_does_not_load_dotenv_into_process_env(
     assert voice_main.main() == 0
     assert "VOICE_BRIDGE_PUBLIC_URL" not in os.environ
     assert captured["kwargs"]["port"] == 19999
+
+
+def test_streaming_asr_defaults() -> None:
+    settings = VoiceBridgeSettings()
+
+    assert settings.volc_speech_resource_id == "volc.bigasr.sauc.duration"
+    assert (
+        settings.volc_speech_ws_url == "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+    )
+    assert settings.voice_input_prewarm_enabled is True
+    assert settings.voice_input_prewarm_ttl_ms == 30_000

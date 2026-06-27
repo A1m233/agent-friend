@@ -41,7 +41,7 @@ export default defineConfig({
     proxy: {
       "/v1": { target: "http://127.0.0.1:18800", changeOrigin: true },
       "/healthz": { target: "http://127.0.0.1:18800", changeOrigin: true },
-      "^/voice(/|$)": { target: "http://127.0.0.1:18900", changeOrigin: true },
+      "^/voice(/|$)": { target: "http://127.0.0.1:18900", changeOrigin: true, ws: true },
       "/ag-ui": {
         target: "http://127.0.0.1:18800",
         changeOrigin: true,

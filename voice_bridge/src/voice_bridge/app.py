@@ -18,7 +18,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .assembly import VoiceBridgeRuntime, build_runtime
-from .routes import register_control_routes, register_llm_proxy_routes
+from .routes import (
+    register_control_routes,
+    register_llm_proxy_routes,
+    register_transcription_routes,
+)
 from .settings import VoiceBridgeSettings
 
 
@@ -115,6 +119,7 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
 
     register_control_routes(app, runtime)
     register_llm_proxy_routes(app, runtime)
+    register_transcription_routes(app, runtime)
     return app
 
 
@@ -135,4 +140,5 @@ def create_app_with_runtime(runtime: VoiceBridgeRuntime) -> FastAPI:
 
     register_control_routes(app, runtime)
     register_llm_proxy_routes(app, runtime)
+    register_transcription_routes(app, runtime)
     return app

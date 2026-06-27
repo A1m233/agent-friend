@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>agent-friend 需要麦克风权限用于你主动发起的语音通话。</string>
+  <string>agent-friend 需要麦克风权限用于你主动发起的语音通话和语音输入。</string>
 </dict>
 </plist>
