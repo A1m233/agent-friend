@@ -5,6 +5,7 @@
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
 # --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL），用于完整语音通话链路。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
+# --cdp-port / --no-cdp：与 Windows 入口保持接口一致；当前 mac/linux 端不启用 WebView2 CDP。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
 # 输出分别加 [bridge] / [voice] / [app|web] 前缀；Ctrl+C 一起退（清理整个进程组）。
@@ -15,15 +16,33 @@ ROOT="$(pwd)"
 
 MODE="tauri"
 VOICE_MODE="local"
+CDP_ENABLED=0
+CDP_PORT=""
 ARGS=()
-for a in "$@"; do
+while [ "$#" -gt 0 ]; do
+    a="$1"
     case "$a" in
         --web) MODE="web" ;;
         --tauri) MODE="tauri" ;;
         --voice) VOICE_MODE="tunnel" ;;
         --no-voice) VOICE_MODE="off" ;;
+        --no-cdp) CDP_ENABLED=0 ;;
+        --cdp-port)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "  [ERROR] --cdp-port 需要一个端口号，例如：--cdp-port 9222" >&2
+                exit 1
+            fi
+            CDP_PORT="$1"
+            if ! [[ "$CDP_PORT" =~ ^[0-9]+$ ]]; then
+                echo "  [ERROR] --cdp-port 只接受数字端口，收到：$CDP_PORT" >&2
+                exit 1
+            fi
+            CDP_ENABLED=1
+            ;;
         *) ARGS+=("$a") ;;
     esac
+    shift
 done
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -221,6 +240,10 @@ if ! cleanup_port "$DEV_PORT"; then
     echo "  [ERROR] 端口 $DEV_PORT 仍被占用，无法启动前端 dev server。" >&2
     echo "          请检查是否有其他程序占用该端口，或手动终止相关进程后再试。" >&2
     exit 1
+fi
+
+if [ "$MODE" = "tauri" ] && [ "$CDP_ENABLED" = "1" ]; then
+    echo "===> WebView2 CDP 仅 Windows dev 脚本启用；mac/linux 本次忽略 --cdp-port $CDP_PORT"
 fi
 
 cleanup() {

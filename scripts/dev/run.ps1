@@ -4,6 +4,7 @@
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
 # --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL），用于完整语音通话链路。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
+# Windows Tauri 默认暴露 WebView2 CDP 到 127.0.0.1:9222，供 desktop-visual DOM / 截图验证；可用 --no-cdp 关闭，或 --cdp-port <port> 改端口。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
 # bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理子进程树。
@@ -19,13 +20,30 @@ Set-Location $root
 
 $mode = "tauri"
 $voiceMode = "local"
+$cdpEnabled = $true
+$cdpPort = 9222
 $rest = @()
-foreach ($a in $args) {
+for ($i = 0; $i -lt $args.Count; $i++) {
+    $a = $args[$i]
     switch ($a) {
         "--web" { $mode = "web" }
         "--tauri" { $mode = "tauri" }
         "--voice" { $voiceMode = "tunnel" }
         "--no-voice" { $voiceMode = "off" }
+        "--no-cdp" { $cdpEnabled = $false }
+        "--cdp-port" {
+            $i += 1
+            if ($i -ge $args.Count) {
+                Write-Error "--cdp-port 需要一个端口号，例如：--cdp-port 9222"
+            }
+            try {
+                $cdpPort = [int]$args[$i]
+            }
+            catch {
+                Write-Error "--cdp-port 只接受数字端口，收到：$($args[$i])"
+            }
+            $cdpEnabled = $true
+        }
         default { $rest += $a }
     }
 }
@@ -232,6 +250,23 @@ if (Test-PortInUse $DevPort) {
     else {
         Write-Error "端口 $DevPort 仍被占用，无法启动前端 dev server。请检查是否有其他程序占用该端口，或手动终止相关进程后再试。"
     }
+}
+
+if ($mode -eq "tauri" -and $cdpEnabled) {
+    if (Test-PortInUse $cdpPort) {
+        Write-Error "WebView2 CDP 端口 $cdpPort 已被占用。请关闭占用进程，或改用 --cdp-port <port>，或传 --no-cdp。"
+    }
+    $flag = "--remote-debugging-port=$cdpPort"
+    $currentWebViewArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    if ($null -eq $currentWebViewArgs) {
+        $currentWebViewArgs = ""
+    }
+    $cleanWebViewArgs = ($currentWebViewArgs -replace "(^|\s)--remote-debugging-port=\S+", "").Trim()
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "$cleanWebViewArgs $flag".Trim()
+    Write-Host "===> WebView2 CDP: http://127.0.0.1:$cdpPort（desktop-visual 可直接抓真实 WebView DOM / 截图）"
+}
+elseif ($mode -eq "tauri") {
+    Write-Host "===> WebView2 CDP 已关闭（--no-cdp）"
 }
 
 $bridge = $null

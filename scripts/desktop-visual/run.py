@@ -8,14 +8,21 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WINDOW_QUERY = "agent-friend"
+DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222"
 
 
 def has_command(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def command_path(name: str) -> str:
+    return shutil.which(name) or name
 
 
 def print_check(label: str, ok: bool, detail: str = "") -> None:
@@ -30,6 +37,15 @@ def run_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
 
 def run_passthrough(cmd: list[str], env: dict[str, str] | None = None) -> int:
     return subprocess.run(cmd, cwd=ROOT, env=env).returncode
+
+
+def cdp_endpoint_ok(endpoint: str) -> bool:
+    url = endpoint.rstrip("/") + "/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=1.0) as response:
+            return 200 <= response.status < 300
+    except (OSError, urllib.error.URLError):
+        return False
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
@@ -49,8 +65,10 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             "[INFO] DOM via Playwright is not assumed on macOS WKWebView. Use screenshots unless a dev-only DOM probe exists."
         )
     elif system == "Windows":
-        print("[INFO] For DOM, start with: desktop-visual start --cdp-port 9222")
-        print("[INFO] Then run: desktop-visual dom --cdp http://127.0.0.1:9222")
+        cdp_ok = cdp_endpoint_ok(DEFAULT_CDP_ENDPOINT)
+        print_check("WebView2 CDP endpoint", cdp_ok, DEFAULT_CDP_ENDPOINT)
+        print("[INFO] Windows Tauri dev enables CDP by default via scripts/dev/run.ps1.")
+        print("[INFO] Use DOM with: desktop-visual dom")
     else:
         print("[INFO] Linux desktop screenshot capture is not implemented in this harness yet.")
         print("[INFO] Tauri WebDriver/tauri-driver is the preferred Linux DOM automation path.")
@@ -73,16 +91,18 @@ def dev_script_command() -> list[str]:
 
 def cmd_start(args: argparse.Namespace, forwarded: list[str]) -> int:
     env = os.environ.copy()
+    dev_args = [*forwarded]
     if args.cdp_port:
         flag = f"--remote-debugging-port={args.cdp_port}"
         current = env.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
         env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
             current if flag in current else f"{current} {flag}".strip()
         )
+        dev_args = ["--cdp-port", str(args.cdp_port), *dev_args]
         print(f"===> CDP requested on http://127.0.0.1:{args.cdp_port}")
         print("     This is intended for Windows WebView2. Other platforms may ignore it.")
 
-    cmd = [*dev_script_command(), "--tauri", *forwarded]
+    cmd = [*dev_script_command(), "--tauri", *dev_args]
     print("===> launching:", " ".join(cmd))
     if platform.system() == "Windows":
         return run_passthrough(cmd, env)
@@ -190,7 +210,7 @@ def cmd_screenshot(args: argparse.Namespace) -> int:
 def cmd_dom(args: argparse.Namespace) -> int:
     node_script = ROOT / "scripts/desktop-visual/dom-probe.mjs"
     cmd = [
-        "pnpm",
+        command_path("pnpm"),
         "--dir",
         "frontend",
         "exec",
@@ -223,7 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     start = sub.add_parser("start", help="Start the real Tauri desktop app via scripts/dev.")
     start.add_argument(
-        "--cdp-port", type=int, help="Expose WebView2 CDP on this port when supported."
+        "--cdp-port",
+        type=int,
+        help="Expose WebView2 CDP on this port when supported. Windows dev defaults to 9222.",
     )
 
     screenshot = sub.add_parser("screenshot", help="Capture a real desktop window screenshot.")
@@ -236,7 +258,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     dom = sub.add_parser("dom", help="Dump DOM via a CDP endpoint with Playwright.")
-    dom.add_argument("--cdp", required=True, help="CDP endpoint, for example http://127.0.0.1:9222")
+    dom.add_argument(
+        "--cdp",
+        default=DEFAULT_CDP_ENDPOINT,
+        help=f"CDP endpoint. Defaults to {DEFAULT_CDP_ENDPOINT}",
+    )
     dom.add_argument(
         "--title-contains", help="Select the first page whose title contains this text."
     )

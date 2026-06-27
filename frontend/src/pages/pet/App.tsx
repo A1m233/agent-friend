@@ -298,7 +298,10 @@ export function PetApp() {
 
   const openLive2DDebugger = () => {
     if (!isTauri()) return;
-    void invoke("open_live2d_debugger");
+    console.info("[pet] open_live2d_debugger requested");
+    void invoke("open_live2d_debugger")
+      .then(() => console.info("[pet] open_live2d_debugger completed"))
+      .catch((error) => console.warn("[pet] open_live2d_debugger failed:", error));
   };
 
   const startVoiceCall = () => {

@@ -239,6 +239,7 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
     let app_clone = app.clone();
     app.run_on_main_thread(move || {
         if let Some(w) = app_clone.get_webview_window(label) {
+            log::info!("show_and_focus: window={label} requested");
             #[cfg(target_os = "macos")]
             {
                 use objc2::{class, msg_send, runtime::AnyObject};
@@ -252,9 +253,19 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
                     }
                 }
             }
-            let _ = w.show();
-            let _ = w.set_focus();
-            let _ = app_clone.emit_to(label, EVENT_WINDOW_SHOWN, ());
+            match w.show() {
+                Ok(()) => log::info!("show_and_focus: window={label} show ok"),
+                Err(e) => log::warn!("show_and_focus: window={label} show failed: {e}"),
+            }
+            match w.set_focus() {
+                Ok(()) => log::info!("show_and_focus: window={label} focus ok"),
+                Err(e) => log::warn!("show_and_focus: window={label} focus failed: {e}"),
+            }
+            if let Err(e) = app_clone.emit_to(label, EVENT_WINDOW_SHOWN, ()) {
+                log::warn!("show_and_focus: window={label} emit shown failed: {e}");
+            }
+        } else {
+            log::warn!("show_and_focus: window={label} not found");
         }
     })
     .map_err(|e| e.to_string())?;
@@ -287,25 +298,33 @@ fn open_memory_inspector(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 033 · dev-only Live2D 调试器窗口。
 ///
-/// 只在 debug build 注册；release build 没有 command，也没有静态 window 配置。
+/// 只在 debug build 注册 command；窗口在 setup 主线程预建为隐藏窗口，避免 Windows
+/// WebView2 从 command 动态创建时卡在 about:blank。
 #[cfg(debug_assertions)]
 #[tauri::command]
 fn open_live2d_debugger(app: tauri::AppHandle) -> Result<(), String> {
-    if app.get_webview_window("live2d-debugger").is_none() {
-        WebviewWindowBuilder::new(
-            &app,
-            "live2d-debugger",
-            WebviewUrl::App("live2d-debugger.html".into()),
-        )
-        .title("agent-friend · Live2D 调试器")
-        .inner_size(460.0, 680.0)
-        .min_inner_size(380.0, 520.0)
-        .resizable(true)
-        .visible(false)
-        .build()
-        .map_err(|e| e.to_string())?;
-    }
+    log::info!("open_live2d_debugger: showing live2d-debugger window");
     show_and_focus(&app, "live2d-debugger")
+}
+
+#[cfg(debug_assertions)]
+fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("live2d-debugger").is_some() {
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        app,
+        "live2d-debugger",
+        WebviewUrl::App("live2d-debugger.html".into()),
+    )
+    .title("agent-friend · Live2D 调试器")
+    .inner_size(460.0, 680.0)
+    .min_inner_size(380.0, 520.0)
+    .resizable(true)
+    .visible(false)
+    .build()?;
+    log::info!("live2d-debugger window initialized");
+    Ok(())
 }
 
 /// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
@@ -487,12 +506,12 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            // 对话窗 / 设置窗 / 记忆面板按需显隐：点关闭只隐藏不销毁，便于再次打开。
+            // 对话窗 / 设置窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
             if matches!(
                 window.label(),
-                "chat" | "settings" | "voice-call" | "memory-inspector"
+                "chat" | "settings" | "voice-call" | "memory-inspector" | "live2d-debugger"
             ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -574,6 +593,8 @@ pub fn run() {
                     apply_pet_nspanel(&pet);
                 }
             }
+            #[cfg(debug_assertions)]
+            setup_live2d_debugger_window(app.handle())?;
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
             bubble_window::init(app.handle())?;
             Ok(())

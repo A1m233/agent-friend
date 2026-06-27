@@ -17,7 +17,7 @@ description: 在 agent-friend 真实桌面端观察和验证前端视觉/DOM 的
 ./scripts/desktop-visual/run.sh doctor
 ./scripts/desktop-visual/run.sh start
 ./scripts/desktop-visual/run.sh screenshot --window "agent-friend · 对话" --output /tmp/agent-friend-chat.png
-./scripts/desktop-visual/run.sh dom --cdp http://127.0.0.1:9222 --title-contains "对话" --output /tmp/agent-friend-chat-dom.json
+./scripts/desktop-visual/run.sh dom --title-contains "对话" --output /tmp/agent-friend-chat-dom.json
 ```
 
 Windows 用：
@@ -25,9 +25,12 @@ Windows 用：
 ```powershell
 .\scripts\desktop-visual\run.ps1 doctor
 .\scripts\desktop-visual\run.ps1 start
+.\scripts\desktop-visual\run.ps1 dom --title-contains "对话" --output $env:TEMP\agent-friend-chat-dom.json
 ```
 
 `start` 透传 `scripts/dev/run.*` 的参数，默认沿用 dev 脚本运行态，不固定 `--no-voice`。只有在改语音相关 UI 时才按场景传 `--voice`。
+
+Windows Tauri dev 默认通过 `scripts/dev/run.ps1` 暴露 WebView2 CDP 到 `http://127.0.0.1:9222`，`dom` 默认连接这个端点。端口冲突时用 `start --cdp-port <port>` 和 `dom --cdp http://127.0.0.1:<port>`；确实不需要 DOM 时才传 `--no-cdp`。
 
 ## 选择路径
 
@@ -35,7 +38,7 @@ Windows 用：
 2. 需要真实桌面窗口：跑 `start` 启动 Tauri。
 3. 只需要视觉判断：优先 `screenshot` 抓真实窗口图。
 4. 需要 DOM：
-   - Windows/WebView2：用 `start --cdp-port 9222` 暴露 CDP，再用 `dom --cdp http://127.0.0.1:9222`。
+   - Windows/WebView2：`start` 默认暴露 CDP 到 `127.0.0.1:9222`，直接用 `dom`；若改了端口，再显式传 `--cdp`。
    - macOS/WKWebView：不要默认声称 Playwright 能直接拿实际 DOM。Tauri 官方 WebDriver 路线在 macOS 桌面端受限；macOS 上优先真实窗口截图。若确需 DOM，应新增或使用项目 dev-only DOM probe，并在回报中标注。
 
 ## 常用命令
@@ -46,10 +49,13 @@ Windows 用：
 ./scripts/desktop-visual/run.sh start
 ```
 
-启动并为 Windows/WebView2 暴露 CDP：
+Windows/WebView2 DOM dump（默认 CDP 端点）：
 
 ```bash
-./scripts/desktop-visual/run.sh start --cdp-port 9222
+./scripts/desktop-visual/run.sh dom \
+  --title-contains "对话" \
+  --output /tmp/chat-dom.json \
+  --screenshot /tmp/chat-cdp.png
 ```
 
 语音相关 UI：
@@ -70,11 +76,12 @@ macOS 列出可截图窗口：
 ./scripts/desktop-visual/run.sh screenshot --window "agent-friend · 对话" --output /tmp/chat.png
 ```
 
-CDP DOM dump：
+自定义 CDP 端口：
 
 ```bash
+./scripts/desktop-visual/run.sh start --cdp-port 9333
 ./scripts/desktop-visual/run.sh dom \
-  --cdp http://127.0.0.1:9222 \
+  --cdp http://127.0.0.1:9333 \
   --title-contains "对话" \
   --output /tmp/chat-dom.json \
   --screenshot /tmp/chat-cdp.png

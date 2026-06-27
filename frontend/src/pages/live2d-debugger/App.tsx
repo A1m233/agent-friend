@@ -37,6 +37,8 @@ import {
 
 import { debugLogReducer, describeCommand } from "./debugLog";
 
+const WINDOW_SHOWN_EVENT = "window://shown";
+
 function safeUnlisten(fn: (() => void) | null | undefined): void {
   if (!fn) return;
   try {
@@ -169,6 +171,29 @@ export function Live2DDebuggerApp() {
       });
       console.warn("[live2d-debugger] listen response failed:", error);
     });
+
+    return () => {
+      cancelled = true;
+      safeUnlisten(unlisten);
+    };
+  }, [queryCatalog]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void listen(WINDOW_SHOWN_EVENT, queryCatalog)
+      .then((u) => {
+        if (cancelled) safeUnlisten(u);
+        else unlisten = u;
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.warn("[live2d-debugger] listen shown failed:", error);
+        }
+      });
 
     return () => {
       cancelled = true;

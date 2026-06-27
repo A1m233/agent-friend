@@ -159,6 +159,12 @@ export function usePetPassthrough({
       latestRef.current.setCursorOnSprite(false);
       return () => {
         disposed = true;
+        // Fail open: pet 是整屏透明 overlay，异常卸载/HMR 后必须恢复点击穿透，
+        // 否则透明窗口会变成吃掉全桌面点击的实窗。
+        void win
+          .setIgnoreCursorEvents(true)
+          .catch((error) => console.warn("[pet][passthrough] cleanup fail-open failed:", error));
+        latestRef.current.setCursorOnSprite(false);
       };
     }
 
@@ -212,8 +218,12 @@ export function usePetPassthrough({
     return () => {
       disposed = true;
       void unlisten.then((f) => f());
-      void win.setIgnoreCursorEvents(false).catch(() => {});
-      setCursorOnSprite(false);
+      // Fail open: cleanup 可能来自 React error boundary / HMR，而 pet 窗是整屏透明 overlay。
+      // `true` = 忽略鼠标事件，让点击穿透到桌面，避免异常退出后锁住其它应用窗口。
+      void win
+        .setIgnoreCursorEvents(true)
+        .catch((error) => console.warn("[pet][passthrough] cleanup fail-open failed:", error));
+      latestRef.current.setCursorOnSprite(false);
     };
   }, [disabled, setCursorOnSprite]);
 }
