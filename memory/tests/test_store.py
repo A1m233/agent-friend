@@ -90,6 +90,46 @@ def test_pinned_cross_persona_shared() -> None:
     assert [r.id for r in pinned] == ["name"]
 
 
+def test_soft_delete_by_source_events_deletes_episodic_and_semantic_provenance() -> None:
+    store = _store()
+    now = _now()
+    store.add_episodic(
+        EpisodicRow(
+            id="ep-hit",
+            summary="旧分支摘要",
+            source_ref="s1#u1..a1",
+            persona_id="p1",
+            occurred_at=now,
+            created_at=now,
+        )
+    )
+    store.add_episodic(
+        EpisodicRow(
+            id="ep-keep",
+            summary="保留摘要",
+            source_ref="s1#u2..a2",
+            persona_id="p1",
+            occurred_at=now,
+            created_at=now,
+        )
+    )
+    store.add_semantic(_semantic("旧分支事实", id="sem-hit", pinned=True, provenance=["ep-hit"]))
+    store.add_semantic(_semantic("保留事实", id="sem-keep", provenance=["ep-keep"]))
+
+    counts = store.soft_delete_by_source_events(
+        session_id="s1",
+        event_uuids={"u1"},
+        deleted_at=now,
+    )
+
+    assert counts == {"episodic": 1, "semantic": 1}
+    assert [r.id for r in store.list_episodic(owner_user_id="local", persona_id=None)] == [
+        "ep-keep"
+    ]
+    assert [r.id for r in store.list_semantic(owner_user_id="local")] == ["sem-keep"]
+    assert store.pinned(owner_user_id="local", persona_id="p1") == []
+
+
 def test_episodic_persona_isolated() -> None:
     store = _store()
     now = _now()

@@ -32,4 +32,5 @@ export interface SessionDetail {
   persona: string;
   model: string;
   events: SessionEvent[];
+  active_events?: SessionEvent[];
 }

@@ -19,6 +19,7 @@ import {
   CHAT_SCROLL_VIEWPORT_CLASS,
 } from "../layout";
 import { toMarkdownContent } from "../projection";
+import { EditMessageSender } from "./EditMessageSender";
 import { MessageActionBar } from "./MessageActionBar";
 import { ToolCard } from "./ToolCard";
 
@@ -87,15 +88,35 @@ function lastRenderableBlockIndex(message: ChatMessage): number {
 function MessageContent({
   message,
   actionBar,
+  editing,
+  editDisabled,
+  onCancelEdit,
+  onSubmitEdit,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
+  editing?: boolean;
+  editDisabled?: boolean;
+  onCancelEdit?: () => void;
+  onSubmitEdit?: (text: string) => void;
 }) {
   if (message.role === "user") {
     const text = message.blocks
       .filter((b) => b.kind === "text")
       .map((b) => (b.kind === "text" ? b.text : ""))
       .join("\n\n");
+    if (editing) {
+      return (
+        <div className="ml-auto w-full">
+          <EditMessageSender
+            initialText={text}
+            disabled={editDisabled}
+            onCancel={onCancelEdit ?? (() => undefined)}
+            onSubmit={onSubmitEdit ?? (() => undefined)}
+          />
+        </div>
+      );
+    }
     return <TextBubble role="user" text={text} actionBar={actionBar} />;
   }
 
@@ -143,19 +164,44 @@ function MessageContent({
   );
 }
 
-function MessageItem({ message }: { message: ChatMessage }) {
+function MessageItem({
+  message,
+  canEdit,
+  editing,
+  editDisabled,
+  onEdit,
+  onCancelEdit,
+  onSubmitEdit,
+}: {
+  message: ChatMessage;
+  canEdit: boolean;
+  editing: boolean;
+  editDisabled: boolean;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: (text: string) => void;
+}) {
   const actionBar =
-    message.status === "streaming" ? null : (
+    message.status === "streaming" || editing ? null : (
       <MessageActionBar
         role={message.role}
         createdAt={message.createdAt}
         copyText={messageCopyText(message)}
+        canEdit={canEdit}
+        onEdit={onEdit}
       />
     );
 
   return (
     <div>
-      <MessageContent message={message} actionBar={actionBar} />
+      <MessageContent
+        message={message}
+        actionBar={actionBar}
+        editing={editing}
+        editDisabled={editDisabled}
+        onCancelEdit={onCancelEdit}
+        onSubmitEdit={onSubmitEdit}
+      />
     </div>
   );
 }
@@ -202,8 +248,10 @@ export function MessageList({
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
 }: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
+  const streaming = useConversationStore((s) => s.streaming);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
+  const editResendLatest = useConversationStore((s) => s.editResendLatest);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef(true);
@@ -213,8 +261,10 @@ export function MessageList({
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const [isSticky, setIsSticky] = useState(true);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const composerInset = Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
+  const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
 
   const setSticky = useCallback((next: boolean) => {
     stickyRef.current = next;
@@ -318,6 +368,13 @@ export function MessageList({
 
   useEffect(() => stopHistoryScrollSettle, [stopHistoryScrollSettle]);
 
+  useEffect(() => {
+    if (!editingMessageId) return;
+    if (!messages.some((m) => m.id === editingMessageId) || streaming || historyLoading) {
+      setEditingMessageId(null);
+    }
+  }, [editingMessageId, historyLoading, messages, streaming]);
+
   if (historyLoading) {
     return <HistoryLoadingState />;
   }
@@ -347,7 +404,28 @@ export function MessageList({
         >
           {messages.map((m, index) => {
             const renderKey = `${m.id}:${index}`;
-            return <MessageItem key={renderKey} message={m} />;
+            const editing = editingMessageId === m.id;
+            const editDisabled = streaming || historyLoading;
+            const canEdit =
+              m.role === "user" &&
+              m.id === lastUserMessageId &&
+              !editDisabled &&
+              !editingMessageId;
+            return (
+              <MessageItem
+                key={renderKey}
+                message={m}
+                canEdit={canEdit}
+                editing={editing}
+                editDisabled={editDisabled}
+                onEdit={() => setEditingMessageId(m.id)}
+                onCancelEdit={() => setEditingMessageId(null)}
+                onSubmitEdit={(text) => {
+                  setEditingMessageId(null);
+                  void editResendLatest(m.id, text);
+                }}
+              />
+            );
           })}
         </div>
       </ScrollArea>

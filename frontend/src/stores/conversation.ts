@@ -8,7 +8,7 @@
 
 import { create } from "zustand";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { runAgentStream, sessionsApi } from "@/services";
+import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
 import type { ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
@@ -43,6 +43,8 @@ interface ConversationState {
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   /** 发送一条消息并消费流式回复。 */
   send: (text: string) => Promise<void>;
+  /** 编辑并重发最后一条用户消息。 */
+  editResendLatest: (messageId: string, text: string) => Promise<void>;
   /** 打断当前流（保留已生成的部分）。 */
   stop: () => void;
 }
@@ -55,6 +57,28 @@ function userMessage(text: string, createdAt = new Date().toISOString()): ChatMe
   const id = newId();
   const block: TextBlock = { kind: "text", mid: id, text };
   return { id, role: "user", createdAt, blocks: [block], status: "complete" };
+}
+
+function assistantErrorMessage(error: string): ChatMessage {
+  return {
+    id: newId(),
+    role: "assistant",
+    createdAt: new Date().toISOString(),
+    blocks: [],
+    status: "error",
+    error,
+  };
+}
+
+function messageText(message: ChatMessage): string {
+  return message.blocks
+    .filter((block) => block.kind === "text")
+    .map((block) => (block.kind === "text" ? block.text : ""))
+    .join("\n\n");
+}
+
+function projectSessionDetail(detail: { events: Parameters<typeof projectSessionEvents>[0]; active_events?: Parameters<typeof projectSessionEvents>[0] }) {
+  return projectSessionEvents(detail.active_events ?? detail.events);
 }
 
 function rememberLastChatSession(sessionId: string | null): void {
@@ -89,7 +113,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const detail = await sessionsApi.get(sessionId);
       if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
       set((s) => ({
-        messages: projectSessionEvents(detail.events),
+        messages: projectSessionDetail(detail),
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq + 1,
       }));
@@ -169,6 +193,91 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } finally {
       if (activeController === controller) activeController = null;
       set({ streaming: false });
+      void useSessionsStore.getState().refresh();
+    }
+  },
+
+  async editResendLatest(messageId, text) {
+    const trimmed = text.trim();
+    const state = get();
+    if (!trimmed || state.streaming || state.historyLoading || !state.currentSessionId) return;
+
+    const latestUserIndex = [...state.messages]
+      .reverse()
+      .findIndex((m) => m.role === "user");
+    if (latestUserIndex === -1) return;
+    const targetIndex = state.messages.length - 1 - latestUserIndex;
+    const target = state.messages[targetIndex];
+    if (!target || target.id !== messageId || target.role !== "user") return;
+
+    const sessionId = state.currentSessionId;
+    const expectedUserContent = messageText(target);
+    const assistantId = newId();
+    const sentAt = new Date().toISOString();
+    const placeholder: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      createdAt: sentAt,
+      blocks: [],
+      status: "streaming",
+    };
+
+    set({
+      streaming: true,
+      messages: [
+        ...state.messages.slice(0, targetIndex),
+        userMessage(trimmed, sentAt),
+        placeholder,
+      ],
+    });
+
+    const controller = new AbortController();
+    activeController = controller;
+
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      set((s) => ({
+        messages: s.messages.map((m) => (m.id === assistantId ? fn(m) : m)),
+      }));
+
+    let failedError: string | null = null;
+    try {
+      for await (const evt of editResendLatestStream(
+        { sessionId, text: trimmed, expectedUserContent },
+        { signal: controller.signal },
+      )) {
+        patch((m) => applyAguiEvent(m, evt));
+      }
+      const assistant = get().messages.find((m) => m.id === assistantId);
+      if (assistant?.status === "error") {
+        failedError = assistant.error ?? FRIENDLY_FALLBACK;
+      } else {
+        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+      }
+    } catch {
+      if (controller.signal.aborted) {
+        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+      } else {
+        failedError = FRIENDLY_FALLBACK;
+        patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+      }
+    } finally {
+      if (activeController === controller) activeController = null;
+      set({ streaming: false });
+      if (get().currentSessionId === sessionId) {
+        try {
+          const detail = await sessionsApi.get(sessionId);
+          if (get().currentSessionId === sessionId) {
+            set((s) => ({
+              messages: failedError
+                ? [...projectSessionDetail(detail), assistantErrorMessage(failedError)]
+                : projectSessionDetail(detail),
+              historyLoadSeq: s.historyLoadSeq + 1,
+            }));
+          }
+        } catch {
+          // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
+        }
+      }
       void useSessionsStore.getState().refresh();
     }
   },

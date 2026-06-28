@@ -49,6 +49,7 @@ from agent.runtime import AgentRuntime, UserEvent
 
 from agent import (
     Conversation,
+    ConversationEvent,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -68,6 +69,7 @@ def encode_stream(
     run_id: str,
     accept: str | None = None,
     agent_runtime: AgentRuntime | None = None,
+    run_conversation: Callable[[Conversation, str], Iterator[ConversationEvent]] | None = None,
 ) -> Iterator[bytes]:
     """流式编码 AG-UI SSE bytes。
 
@@ -86,6 +88,8 @@ def encode_stream(
             被同步镜像复制给 ``agent_runtime.listeners.fan_out_event``——push
             通道订阅者（按 ``kinds=user_turn`` 过滤）能看到这条 user 触发轮。
             ``None`` 时保持 006~013 行为，不镜像。
+        run_conversation: 可选运行器；不传时调用 ``Conversation.stream``。编辑重发
+            endpoint 通过这里切换到 ``Conversation.edit_resend_latest``，保持编码逻辑复用。
     """
     encoder = EventEncoder(accept=accept or "")
 
@@ -109,7 +113,12 @@ def encode_stream(
             if agent_runtime is not None
             else None
         )
-        for ev in conv.stream(user_input):
+        event_stream = (
+            run_conversation(conv, user_input)
+            if run_conversation is not None
+            else conv.stream(user_input)
+        )
+        for ev in event_stream:
             # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
             if agent_runtime is not None and mirror_user_event is not None:
                 try:

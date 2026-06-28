@@ -106,6 +106,34 @@ class Memory:
         )
         self._worker.submit(fragment)
 
+    def invalidate_sources(
+        self,
+        *,
+        session_id: str,
+        event_uuids: set[str],
+        reason: str,
+    ) -> dict[str, int]:
+        """让指定会话事件来源的记忆失活。
+
+        先 drain 异步抽取队列，保证已入队的旧分支 fragment 不会在软删除之后再落
+        新记忆；随后按 source_ref / provenance 软删除 episodic 与 semantic。
+        """
+        if not event_uuids:
+            return {"episodic": 0, "semantic": 0}
+
+        logger.info(
+            "invalidate_sources session=%s events=%d reason=%s",
+            session_id,
+            len(event_uuids),
+            reason,
+        )
+        self.flush()
+        return self._store.soft_delete_by_source_events(
+            session_id=session_id,
+            event_uuids=set(event_uuids),
+            deleted_at=datetime.now(UTC),
+        )
+
     def warmup(self) -> None:
         """Warm read-path dependencies without changing memory semantics."""
         logger.info("warmup owner=%s", self._owner)

@@ -5,6 +5,7 @@
 | ``GET /v1/sessions``              | 列出 sessions                          | ``/sessions``      |
 | ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
+| ``POST /v1/sessions/{id}/edit-resend-latest`` | 编辑并重发最后一条 user 输入 | （内部） |
 | ``DELETE /v1/sessions/{id}``      | 删除 session（内部清理用）            | （内部）           |
 | ``POST /v1/sessions/{id}/persona`` | 切换 persona                          | ``/persona <name>``|
 | ``POST /v1/sessions/{id}/model``  | 切换 model                             | ``/model <name>``  |
@@ -21,13 +22,17 @@ from __future__ import annotations
 import dataclasses
 import logging
 from typing import Any, Literal
+from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from ag_ui.encoder import EventEncoder
+from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent import PersonaAmbiguousError, PersonaNotFoundError, SessionNotFoundError
 
 from ..assembly import BridgeRuntime
+from ..protocols.ag_ui.encoders import encode_stream
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,19 @@ class ChannelSwitchBody(BaseModel):
     """``POST /v1/sessions/{id}/channel`` 请求体（007 起新增）。"""
 
     channel: Literal["voice", "text"] = Field(..., description="目标 channel")
+
+
+class EditResendLatestBody(BaseModel):
+    """``POST /v1/sessions/{id}/edit-resend-latest`` 请求体。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    text: str = Field(..., min_length=1, description="替换后的用户输入")
+    expected_user_content: str | None = Field(
+        None,
+        alias="expectedUserContent",
+        description="客户端看到的旧最后一条 user 内容，用于并发变化保护",
+    )
 
 
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
@@ -113,7 +131,44 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "persona": session.current_persona,
             "model": session.current_model,
             "events": [_dataclass_to_dict(ev) for ev in session.events],
+            "active_events": [_dataclass_to_dict(ev) for ev in session.active_events],
         }
+
+    @router.post("/sessions/{session_id}/edit-resend-latest")
+    async def edit_resend_latest(
+        session_id: str,
+        body: EditResendLatestBody,
+        request: Request,
+    ) -> StreamingResponse:
+        """编辑并重发最后一条 active user 消息，返回 AG-UI SSE。"""
+        text = body.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="text 不能为空")
+        try:
+            mgr.open(session_id)
+        except SessionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        accept = request.headers.get("accept") or ""
+        return StreamingResponse(
+            encode_stream(
+                lambda: mgr.start_conversation(mgr.open(session_id)),
+                text,
+                thread_id=session_id,
+                run_id=uuid4().hex,
+                accept=accept,
+                agent_runtime=runtime.agent_runtime,
+                run_conversation=lambda conv, value: conv.edit_resend_latest(
+                    value,
+                    expected_user_content=body.expected_user_content,
+                ),
+            ),
+            media_type=EventEncoder(accept=accept).get_content_type(),
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @router.delete("/sessions/{session_id}")
     def delete_session(session_id: str) -> dict[str, Any]:
