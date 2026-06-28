@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChatSender } from "@tdesign-react/chat";
 import { TooltipProvider } from "@/components/ui";
 import { useConversationStore, useSessionsStore } from "@/stores";
 import { useVoiceInputStore } from "@/stores/voiceInput";
@@ -8,6 +7,7 @@ import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceIn
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
+import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
 
 const COMPOSER_AUTOSIZE = { minRows: 2, maxRows: 6 } as const;
@@ -111,56 +111,6 @@ export function Composer({
     if (!applyingVoiceDraftRef.current) return;
     applyingVoiceDraftRef.current = false;
   }, [draftText]);
-
-  useEffect(() => {
-    const el = senderRef.current;
-    if (!el) return;
-    // **IME guard**：tdesign chat-sender 的 `handleKeyDown` (chat-sender.js:1114) 只看 shift
-    // 修饰键，没检 composition 状态 → 中文 / 日文 IME confirm Enter 直接 send。
-    //
-    // 不能只依赖 `e.isComposing`——WebKit / Tauri WKWebView 中 IME confirm Enter 的 keydown
-    // 事件 `isComposing` 可能已是 false（compositionend 先触发了）、`key` 可能是 'Process'
-    // 而非 'Enter'、或仅靠 `keyCode === 229` 标记。多重信号兜底（业界通用 IME guard 模式）：
-    //   - 自跟踪 `composing` state：compositionstart=true → compositionend=false
-    //     compositionend 一般在 confirm Enter 的 keydown 之后触发，最可靠
-    //   - `e.isComposing` 标准信号（Chromium 准）
-    //   - `e.keyCode === 229` IME pending key marker
-    //   - `e.key === 'Process'` 部分浏览器对 IME 中按键的 key 值
-    let composing = false;
-    const onCompStart = () => {
-      composing = true;
-    };
-    const onCompEnd = () => {
-      composing = false;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      const inIme = composing || e.isComposing || e.keyCode === 229 || e.key === "Process";
-      if ((e.key === "Enter" || e.key === "Process") && inIme) {
-        // capture phase + stopPropagation 切断后续到 textarea target phase，
-        // chat-sender handleKeyDown 不触发 → IME 自己处理 Enter（confirm 候选词）
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-      }
-    };
-    el.addEventListener("compositionstart", onCompStart, true);
-    el.addEventListener("compositionend", onCompEnd, true);
-    el.addEventListener("keydown", onKey, true);
-    const onNativeChange = (e: Event) => {
-      const value = readStringEventValue(e);
-      if (value === null) return;
-      if (applyingVoiceDraftRef.current) return;
-      applyDraftText(value, "user");
-    };
-    el.addEventListener("change", onNativeChange);
-    el.addEventListener("input", onNativeChange);
-    return () => {
-      el.removeEventListener("compositionstart", onCompStart, true);
-      el.removeEventListener("compositionend", onCompEnd, true);
-      el.removeEventListener("keydown", onKey, true);
-      el.removeEventListener("change", onNativeChange);
-      el.removeEventListener("input", onNativeChange);
-    };
-  }, [applyDraftText]);
 
   useEffect(() => {
     if (voiceInputDisabled || voiceInputLive) return;
@@ -289,14 +239,16 @@ export function Composer({
             : "pointer-events-auto relative w-full"
         }
       >
-        <div className="rounded-2xl shadow-lg">
-          <ChatSender
+        <ChatSenderBox
+            placement="bottom"
             ref={senderRef}
             value={draftText}
             autosize={COMPOSER_AUTOSIZE}
             disabled={disabled}
             loading={streaming}
             placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
+            shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
+            onNativeValueChange={(value) => applyDraftText(value, "user")}
             onChange={(e) => {
               const value = readStringEventValue(e);
               if (value === null || applyingVoiceDraftRef.current) return;
@@ -316,8 +268,7 @@ export function Composer({
                 />
               </TooltipProvider>
             </div>
-          </ChatSender>
-        </div>
+        </ChatSenderBox>
       </div>
     </div>
   );

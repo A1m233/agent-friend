@@ -18,6 +18,15 @@ export interface RunStreamInput {
   text: string;
 }
 
+export interface EditResendLatestInput {
+  /** 已存在的 session_id。 */
+  sessionId: string;
+  /** 替换后的 user 输入。 */
+  text: string;
+  /** 前端当前看到的旧最后一条 user 内容，用于后端并发保护。 */
+  expectedUserContent?: string;
+}
+
 export interface RunStreamOptions {
   baseUrl?: string;
   signal?: AbortSignal;
@@ -68,7 +77,40 @@ export async function* runAgentStream(
     throw new Error(`ag-ui run failed: http ${res.status}`);
   }
 
-  const reader = res.body.getReader();
+  yield* readEventStream(res.body);
+}
+
+/** 编辑并重发最后一条 user 输入，返回与普通 send 相同的 AG-UI 事件流。 */
+export async function* editResendLatestStream(
+  input: EditResendLatestInput,
+  opts: RunStreamOptions = {},
+): AsyncGenerator<BaseEvent> {
+  const base = opts.baseUrl ?? BRIDGE_BASE_URL;
+  const res = await fetch(
+    `${base}/v1/sessions/${encodeURIComponent(input.sessionId)}/edit-resend-latest`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        text: input.text,
+        expectedUserContent: input.expectedUserContent,
+      }),
+      signal: opts.signal,
+    },
+  );
+
+  if (!res.ok || !res.body) {
+    throw new Error(`edit-resend latest failed: http ${res.status}`);
+  }
+
+  yield* readEventStream(res.body);
+}
+
+async function* readEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<BaseEvent> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 

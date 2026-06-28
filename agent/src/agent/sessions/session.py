@@ -47,8 +47,9 @@ class Session:
 
     Note:
         ``current_persona`` / ``current_model`` / ``messages`` 都是 property，
-        从 :attr:`events` **派生**（单一真相源）。事件流是 append-only，
-        所以这些派生属性永远与文件状态一致。
+        从 :attr:`active_events` **派生**（单一真相源 + active projection）。
+        事件流是 append-only，所以这些派生属性永远与文件状态一致；编辑重发仅
+        通过 ``turn_rewrite`` marker 让旧分支在投影视图里失活。
     """
 
     session_id: str
@@ -153,6 +154,26 @@ class Session:
         )
 
     @property
+    def active_events(self) -> list[Event]:
+        """当前有效事件流。
+
+        ``turn_rewrite`` 本身是 append-only marker，不进入业务投影；其
+        ``payload.inactive_event_uuids`` 指向的旧分支事件也从投影视图中剔除。
+        原始 :attr:`events` 保持完整，供审计 / 回放 / 调试使用。
+        """
+        inactive: set[str] = set()
+        for ev in self.events:
+            if ev.type != "turn_rewrite":
+                continue
+            raw = ev.payload.get("inactive_event_uuids", [])
+            if isinstance(raw, list):
+                inactive.update(item for item in raw if isinstance(item, str))
+
+        if not inactive:
+            return [ev for ev in self.events if ev.type != "turn_rewrite"]
+        return [ev for ev in self.events if ev.type != "turn_rewrite" and ev.uuid not in inactive]
+
+    @property
     def current_persona(self) -> str:
         """当前激活 persona 的 **name**（向后兼容名；003 起等同 :attr:`current_persona_name`）。
 
@@ -167,7 +188,7 @@ class Session:
         反向扫 ``persona_change`` 事件：优先 ``payload.to``（新 schema 与旧 schema 都
         把 name 存在 ``to``），没有 persona_change 时用 ``initial_persona``。
         """
-        for ev in reversed(self.events):
+        for ev in reversed(self.active_events):
             if ev.type == "persona_change":
                 to = ev.payload.get("to")
                 if isinstance(to, str):
@@ -186,7 +207,7 @@ class Session:
         调用方拿到 ``None`` 时应自行用 :class:`PersonaCatalog.find_by_name(current_persona_name)`
         反查。
         """
-        for ev in reversed(self.events):
+        for ev in reversed(self.active_events):
             if ev.type == "persona_change":
                 to_id = ev.payload.get("to_id")
                 if isinstance(to_id, str):
@@ -202,7 +223,7 @@ class Session:
     @property
     def current_model(self) -> str:
         """当前激活 model：同 :attr:`current_persona`，model 维度。"""
-        for ev in reversed(self.events):
+        for ev in reversed(self.active_events):
             if ev.type == "model_change":
                 to = ev.payload.get("to")
                 if isinstance(to, str):
@@ -217,7 +238,7 @@ class Session:
         时 fallback 到 ``session_meta.payload.initial_channel``；老文件无该字段时
         默认 ``"text"``。
         """
-        for ev in reversed(self.events):
+        for ev in reversed(self.active_events):
             if ev.type == "channel_change":
                 to = ev.payload.get("to")
                 if isinstance(to, str) and to in ("voice", "text"):
@@ -260,7 +281,7 @@ class Session:
         """
         result: list[Message] = []
         last_assistant: Message | None = None
-        for ev in self.events:
+        for ev in self.active_events:
             if ev.type == "user_message":
                 result.append(
                     Message(
@@ -327,7 +348,7 @@ class Session:
         Returns:
             最近一条 ``compaction`` 事件，或 ``None``。
         """
-        for ev in reversed(self.events):
+        for ev in reversed(self.active_events):
             if ev.type == "compaction":
                 return ev
         return None

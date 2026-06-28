@@ -3,6 +3,7 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 
 // mock services 层：只控制 runAgentStream / sessionsApi.get 的行为，验证 store 的错误兜底。
 vi.mock("@/services", () => ({
+  editResendLatestStream: vi.fn(),
   runAgentStream: vi.fn(),
   sessionsApi: { get: vi.fn() },
 }));
@@ -12,11 +13,12 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 }));
 
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { runAgentStream, sessionsApi } from "@/services";
+import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
 import type { SessionDetail } from "@/types/meta";
 import { useConversationStore } from "./conversation";
 
 const mockStream = vi.mocked(runAgentStream);
+const mockEditStream = vi.mocked(editResendLatestStream);
 const mockGet = vi.mocked(sessionsApi.get);
 const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
@@ -62,6 +64,17 @@ function sessionDetail(sessionId: string, content: string): SessionDetail {
 function firstText() {
   const block = useConversationStore.getState().messages[0]?.blocks[0];
   return block?.kind === "text" ? block.text : "";
+}
+
+function messageTexts() {
+  return useConversationStore
+    .getState()
+    .messages.map((message) =>
+      message.blocks
+        .filter((block) => block.kind === "text")
+        .map((block) => (block.kind === "text" ? block.text : ""))
+        .join("\n\n"),
+    );
 }
 
 beforeEach(() => {
@@ -198,5 +211,93 @@ describe("conversation store · 拟人化错误兜底 (AC-M3.4)", () => {
     expect(mockSetLastChatSessionId).toHaveBeenCalledWith(
       useConversationStore.getState().currentSessionId,
     );
+  });
+
+  it("打开历史会话时优先投影 active_events", async () => {
+    mockGet.mockResolvedValue({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "test",
+      events: [
+        {
+          type: "user_message",
+          uuid: "old-user",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "旧问题" },
+        },
+      ],
+      active_events: [
+        {
+          type: "user_message",
+          uuid: "new-user",
+          ts: "2026-06-10T00:00:01Z",
+          payload: { content: "新问题" },
+        },
+      ],
+    });
+
+    await useConversationStore.getState().openSession("sid-1");
+
+    expect(firstText()).toBe("新问题");
+  });
+
+  it("编辑重发最后一条 user 后按 active projection rehydrate", async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        session_id: "sid-1",
+        title: "sid-1",
+        persona: "default",
+        model: "test",
+        events: [
+          {
+            type: "user_message",
+            uuid: "old-user",
+            ts: "2026-06-10T00:00:00Z",
+            payload: { content: "旧问题" },
+          },
+          {
+            type: "assistant_message",
+            uuid: "old-assistant",
+            ts: "2026-06-10T00:00:01Z",
+            payload: { content: "旧回答", partial: false },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        session_id: "sid-1",
+        title: "sid-1",
+        persona: "default",
+        model: "test",
+        events: [],
+        active_events: [
+          {
+            type: "user_message",
+            uuid: "new-user",
+            ts: "2026-06-10T00:00:02Z",
+            payload: { content: "新问题" },
+          },
+          {
+            type: "assistant_message",
+            uuid: "new-assistant",
+            ts: "2026-06-10T00:00:03Z",
+            payload: { content: "新回答", partial: false },
+          },
+        ],
+      });
+    mockEditStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "sid-1", runId: "r" });
+    });
+
+    await useConversationStore.getState().openSession("sid-1");
+    const oldUserId = useConversationStore.getState().messages[0]?.id;
+    expect(oldUserId).toBeTruthy();
+    await useConversationStore.getState().editResendLatest(oldUserId!, "新问题");
+
+    expect(mockEditStream).toHaveBeenCalledWith(
+      { sessionId: "sid-1", text: "新问题", expectedUserContent: "旧问题" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(messageTexts()).toEqual(["新问题", "新回答"]);
   });
 });

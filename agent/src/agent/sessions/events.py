@@ -27,6 +27,7 @@ EventType = Literal[
     "compaction",
     "system_trigger",
     "memory_observation",
+    "turn_rewrite",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -42,6 +43,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "compaction",
         "system_trigger",
         "memory_observation",
+        "turn_rewrite",
     }
 )
 
@@ -65,6 +67,10 @@ SCHEMA_VERSION: Final[int] = 1
 触发轮 marker / silent turn 产物），同样是纯加性——老文件不出现新 type；
 ``Session.messages`` 派生不识别新 type 自然忽略；故 ``SCHEMA_VERSION`` **不递增**
 （详见 014 design §6.1）。
+
+035 起新增 ``turn_rewrite`` 事件，用 append-only marker 标记一次"编辑并重发"
+产生的失活事件集合；原始事件不删除不改，active projection 在 ``Session`` 内派生，
+仍属于纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
 """
 
 

@@ -8,6 +8,7 @@
 #root {
   --td-chat-font-size: var(--font-size-sm);
   --td-chat-input-font-size: var(--font-size-sm);
+  --td-chat-input-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
   /*
    * 本项目不用 TDesign ChatList 管消息列表，而是由 MessageList 外层统一排布；
    * 清掉 t-chat-item 默认的 38px gap，避免与外层消息间距、回答内 block 间距叠加。
@@ -20,6 +21,12 @@
    */
   --td-chat-item-content-padding: 0;
   --td-chat-item-text-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
+}
+
+t-chat-item::part(t-chat__text--user) {
+  word-break: normal;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 t-chat-sender::part(t-textarea) {

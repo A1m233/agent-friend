@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from agent_bridge.app import create_app_with_runtime
@@ -13,6 +15,7 @@ from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
 
 from agent import (
+    Event,
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
@@ -25,6 +28,25 @@ from agent import (
 if TYPE_CHECKING:
     from llm_providers import LLMClient
 
+from llm_providers import LLMStreamEvent, LLMTextDelta, LLMTurnDone
+
+
+class _RouteLLM:
+    context_window = 128000
+
+    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
+        return ""
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
+        yield LLMTextDelta(text="new answer")
+        yield LLMTurnDone(stop_reason="end_turn")
+
 
 @pytest.fixture
 def runtime(tmp_path: Path) -> BridgeRuntime:
@@ -35,10 +57,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     tool_registry = make_default_registry()
 
     def _llm_factory(model: str) -> LLMClient:
-        # 测试不发消息，所以这里不需要真实 LLMClient——但保险起见用最小 spec
-        from llm_providers import LLMClient, ProviderSpec
-
-        return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
+        return cast("LLMClient", _RouteLLM())
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)
@@ -121,6 +140,53 @@ class TestDeleteSessionEndpoint:
     def test_delete_unknown_session_returns_404(self, client: TestClient) -> None:
         resp = client.delete("/v1/sessions/nonexistent-uuid")
         assert resp.status_code == 404
+
+
+# ===== POST /v1/sessions/{id}/edit-resend-latest =====
+
+
+class TestEditResendLatestEndpoint:
+    def test_edit_resend_latest_streams_and_exposes_active_events(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        old_user = Event(
+            type="user_message",
+            uuid="old-user",
+            ts=datetime.now(UTC),
+            payload={"content": "old question"},
+        )
+        old_assistant = Event(
+            type="assistant_message",
+            uuid="old-assistant",
+            ts=datetime.now(UTC),
+            payload={"content": "old answer", "partial": False},
+        )
+        runtime.persistent_store.append_event(sid, old_user)
+        runtime.persistent_store.append_event(sid, old_assistant)
+
+        with client.stream(
+            "POST",
+            f"/v1/sessions/{sid}/edit-resend-latest",
+            json={"text": "new question", "expectedUserContent": "old question"},
+            headers={"accept": "text/event-stream"},
+        ) as resp:
+            body = "".join(resp.iter_text())
+
+        assert resp.status_code == 200
+        assert "new answer" in body
+
+        detail = client.get(f"/v1/sessions/{sid}").json()
+        assert [ev["type"] for ev in detail["events"]].count("turn_rewrite") == 1
+        active_message_contents = [
+            ev["payload"].get("content")
+            for ev in detail["active_events"]
+            if ev["type"] in {"user_message", "assistant_message"}
+        ]
+        assert active_message_contents == [
+            "new question",
+            "new answer",
+        ]
 
 
 # ===== POST /v1/sessions/{id}/channel =====
