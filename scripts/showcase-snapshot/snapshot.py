@@ -608,6 +608,8 @@ def scan_text_file(path: Path, rel_path: str) -> list[Finding]:
 def scan_snapshot(output: Path) -> list[Finding]:
     findings: list[Finding] = []
     for path in sorted(output.rglob("*")):
+        if path.is_symlink():
+            continue
         if path.is_dir():
             continue
         rel_path = path.relative_to(output).as_posix()
