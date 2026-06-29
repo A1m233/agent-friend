@@ -1,7 +1,7 @@
 """bridge 进程配置项。
 
-使用 :mod:`pydantic_settings` 从环境变量 / ``.env`` 加载，优先级：
-环境变量 > ``.env`` > 默认值（详见 docs/decisions/0002-incubation-tech-stack §3.17）。
+默认只从当前进程环境变量加载。存量 ``.env`` 兼容由入口层显式传入
+``_env_file=".env"`` 开启，避免桌面主路径隐式依赖仓库根 ``.env``。
 
 本期只暴露最少几个字段：监听地址 / 端口 / 日志级别 / 会话目录。
 
@@ -62,7 +62,6 @@ class BridgeSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AGENT_BRIDGE_",
-        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )

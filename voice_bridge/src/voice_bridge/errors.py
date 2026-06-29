@@ -55,6 +55,16 @@ class InvalidRequestError(VoiceBridgeError):
     )
 
 
+class VoiceCredentialMissingError(VoiceBridgeError):
+    """Voice credentials are incomplete before starting a real call."""
+
+    info: ClassVar[_ErrorInfo] = _ErrorInfo(
+        http_status=400,
+        user_message="语音通话凭据未配置完整，请先运行凭据配置脚本",
+        error_code="voice_credentials_missing",
+    )
+
+
 class VolcAuthError(VoiceBridgeError):
     """火山引擎 AK/SK 错误或权限不足。**不可恢复**。"""
 

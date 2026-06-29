@@ -21,7 +21,7 @@ Usage: scripts/setup/run.ps1 [--clean]
   1. 检查 uv 是否已安装（未安装则提示安装命令并退出）
   2. （可选）--clean 时清理缓存
   3. 跑 uv sync 安装后端依赖
-  4. 检查 .env，没有则从 .env.example 复制
+  4. 提示使用 scripts/credentials 配置本机系统凭据
   5. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
   6. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
 "@ | Write-Host
@@ -68,13 +68,11 @@ Write-Host "==> 安装依赖（uv sync）"
 uv sync
 
 Write-Host ""
-Write-Host "==> 检查 .env"
-if (-not (Test-Path .env)) {
-    Copy-Item .env.example .env
-    Write-Host "  已从 .env.example 创建 .env"
-    Write-Host "  [TODO] 请编辑 .env 填入 DEEPSEEK_API_KEY"
-} else {
-    Write-Host "  .env 已存在，跳过"
+Write-Host "==> 凭据配置"
+Write-Host "  默认开发 / 桌面主路径使用系统凭据存储，不创建仓库 .env。"
+Write-Host "  [TODO] 首次运行：.\scripts\credentials\run.ps1 set-bundle deepseek"
+if (Test-Path .env) {
+    Write-Host "  [INFO] 检测到已有 .env；仅在显式 --legacy-dotenv 时作为存量 fallback 使用。"
 }
 
 # 前端依赖 best-effort：工具齐就装，缺工具只提示、不让整个 setup 失败（后端已就绪）。
@@ -107,7 +105,7 @@ if (Get-Command cargo -ErrorAction SilentlyContinue) {
 
 Write-Host ""
 Write-Host "==> 完成！接下来："
-Write-Host "  1. （首次）编辑 .env 填入 DEEPSEEK_API_KEY"
+Write-Host "  1. （首次）配置凭据：.\scripts\credentials\run.ps1 set-bundle deepseek"
 Write-Host "  2. 启动 CLI：      .\scripts\cli\run.ps1"
 Write-Host "  3. 试用桌面端：    .\scripts\dev\run.ps1        （一键起 bridge + 桌面双窗口；--web 走浏览器）"
 Write-Host "  4. 跑测试：        .\scripts\test\run.ps1"

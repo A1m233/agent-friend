@@ -7,6 +7,7 @@ dependencies = [
     "agent",
     "llm-providers",
     "memory",
+    "runtime-config",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
@@ -24,6 +25,7 @@ dependencies = [
 agent = { workspace = true }
 llm-providers = { workspace = true }
 memory = { workspace = true }
+runtime-config = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

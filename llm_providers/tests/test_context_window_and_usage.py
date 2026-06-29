@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage
 
-from llm_providers import LLMClient, LLMUsage, ProviderSpec
+from llm_providers import LLMClient, LLMUsage, ProviderConfig, ProviderSpec
 
 _GET_MODEL_INFO = "llm_providers.client.litellm.get_model_info"
 
@@ -110,6 +110,27 @@ def test_spec_from_env_memory_model_defaults_to_v4_pro(
     spec = ProviderSpec.from_env(
         "DEEPSEEK",
         model_env_var="DEEPSEEK_MEMORY_MODEL",
+        default_model_key="memory_model",
+    )
+
+    assert spec.model == "deepseek/deepseek-v4-pro"
+
+
+def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
+    spec = ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(api_key="k", context_window=1000000),
+    )
+
+    assert spec.api_key == "k"
+    assert spec.model == "deepseek/deepseek-v4-flash"
+    assert spec.context_window == 1000000
+
+
+def test_spec_from_config_memory_model_defaults_to_v4_pro() -> None:
+    spec = ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(api_key="k"),
         default_model_key="memory_model",
     )
 

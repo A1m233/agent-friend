@@ -11,11 +11,12 @@ import voice_bridge.__main__ as voice_main
 from voice_bridge.settings import VoiceBridgeSettings
 
 
-def test_public_url_ignores_dotenv_but_keeps_other_dotenv_values(
+def test_default_settings_ignore_dotenv_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENT_FRIEND_CONFIG_MODE", raising=False)
     (tmp_path / ".env").write_text(
         "\n".join(
             [
@@ -31,6 +32,33 @@ def test_public_url_ignores_dotenv_but_keeps_other_dotenv_values(
     monkeypatch.delenv("VOLC_RTC_APP_ID", raising=False)
 
     settings = VoiceBridgeSettings()
+
+    assert settings.public_url == ""
+    assert settings.port == 18900
+    assert settings.volc_rtc_app_id == ""
+
+
+def test_legacy_dotenv_keeps_other_dotenv_values_but_ignores_public_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENT_FRIEND_CONFIG_MODE", raising=False)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "VOICE_BRIDGE_PUBLIC_URL=https://stale-tunnel.example.com",
+                "VOICE_BRIDGE_PORT=19999",
+                "VOLC_RTC_APP_ID=rtc-from-dotenv",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("VOICE_BRIDGE_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("VOICE_BRIDGE_PORT", raising=False)
+    monkeypatch.delenv("VOLC_RTC_APP_ID", raising=False)
+
+    settings = VoiceBridgeSettings(_env_file=".env")  # type: ignore[call-arg]
 
     assert settings.public_url == ""
     assert settings.port == 19999
@@ -58,6 +86,7 @@ def test_main_does_not_load_dotenv_into_process_env(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENT_FRIEND_CONFIG_MODE", raising=False)
     (tmp_path / ".env").write_text(
         "\n".join(
             [
@@ -78,7 +107,38 @@ def test_main_does_not_load_dotenv_into_process_env(
 
     monkeypatch.setattr("voice_bridge.__main__.uvicorn.run", fake_run)
 
-    assert voice_main.main() == 0
+    assert voice_main.main([]) == 0
+    assert "VOICE_BRIDGE_PUBLIC_URL" not in os.environ
+    assert captured["kwargs"]["port"] == 18900
+
+
+def test_main_legacy_dotenv_reads_non_runtime_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENT_FRIEND_CONFIG_MODE", raising=False)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "VOICE_BRIDGE_PUBLIC_URL=https://stale-tunnel.example.com",
+                "VOICE_BRIDGE_PORT=19999",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("VOICE_BRIDGE_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("VOICE_BRIDGE_PORT", raising=False)
+
+    captured: dict[str, Any] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> None:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("voice_bridge.__main__.uvicorn.run", fake_run)
+
+    assert voice_main.main(["--legacy-dotenv"]) == 0
     assert "VOICE_BRIDGE_PUBLIC_URL" not in os.environ
     assert captured["kwargs"]["port"] == 19999
 

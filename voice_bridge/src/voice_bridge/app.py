@@ -17,12 +17,19 @@ import platformdirs
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from runtime_config import (
+    config_mode_from_env,
+    credential_source_for_mode,
+    settings_kwargs_for_mode,
+)
+
 from .assembly import VoiceBridgeRuntime, build_runtime
 from .routes import (
     register_control_routes,
     register_llm_proxy_routes,
     register_transcription_routes,
 )
+from .runtime_config import apply_voice_credentials, resolve_voice_credentials
 from .settings import VoiceBridgeSettings
 
 
@@ -100,7 +107,11 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
         :class:`FastAPI` 实例，已挂控制平面 + LLM 代理路由。
     """
     load_from_env = settings is None
-    settings = settings or VoiceBridgeSettings()
+    if settings is None:
+        mode = config_mode_from_env()
+        base_settings = VoiceBridgeSettings(**settings_kwargs_for_mode(mode))
+        credentials = resolve_voice_credentials(credential_source_for_mode(mode))
+        settings = apply_voice_credentials(base_settings, credentials)
     _configure_logging(settings.log_level, file_log=load_from_env)
     runtime = build_runtime(settings)
 
