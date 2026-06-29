@@ -27,6 +27,6 @@ describe("model config", () => {
       resolveDefaultConversationModel({
         deepseekModel: "not-a-model" as never,
       }),
-    ).toBe("deepseek/deepseek-v4-pro");
+    ).toBe("deepseek/deepseek-v4-flash");
   });
 });

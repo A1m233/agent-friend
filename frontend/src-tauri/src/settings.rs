@@ -18,9 +18,9 @@ pub struct Settings {
     pub theme: ThemeMode,
     #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
-    #[serde(default)]
+    #[serde(default = "default_deepseek_model")]
     pub deepseek_model: DeepseekModel,
-    #[serde(default)]
+    #[serde(default = "default_deepseek_memory_model")]
     pub deepseek_memory_model: DeepseekModel,
 }
 
@@ -41,8 +41,16 @@ pub enum DeepseekModel {
 
 impl Default for DeepseekModel {
     fn default() -> Self {
-        Self::Pro
+        default_deepseek_model()
     }
+}
+
+fn default_deepseek_model() -> DeepseekModel {
+    DeepseekModel::Flash
+}
+
+fn default_deepseek_memory_model() -> DeepseekModel {
+    DeepseekModel::Pro
 }
 
 impl Default for Settings {
@@ -50,8 +58,8 @@ impl Default for Settings {
         Self {
             theme: ThemeMode::Light,
             voice_tunnel_consent_accepted: false,
-            deepseek_model: DeepseekModel::default(),
-            deepseek_memory_model: DeepseekModel::default(),
+            deepseek_model: default_deepseek_model(),
+            deepseek_memory_model: default_deepseek_memory_model(),
         }
     }
 }
@@ -516,6 +524,14 @@ mod tests {
         assert_eq!(loaded.settings, Settings::default());
 
         fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn default_models_use_flash_for_chat_and_pro_for_memory() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.deepseek_model, DeepseekModel::Flash);
+        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Pro);
     }
 
     #[test]
