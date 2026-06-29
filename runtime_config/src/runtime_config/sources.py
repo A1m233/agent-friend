@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
 from dotenv import dotenv_values
 
-from .credentials import RUNTIME_ONLY_NAMES, CredentialStatus, CredentialValue
+from .credentials import (
+    DEEPSEEK_MEMORY_MODEL,
+    DEEPSEEK_MODEL,
+    RUNTIME_ONLY_NAMES,
+    CredentialStatus,
+    CredentialValue,
+    credential_lookup_names,
+)
 
 DEFAULT_KEYRING_SERVICE = "agent-friend"
+SETTINGS_BUNDLE_ID = "com.agentfriend.desktop"
+SETTINGS_STORE_FILE = "settings.json"
+
+SETTINGS_NAME_MAP: dict[str, str] = {
+    DEEPSEEK_MODEL: "deepseekModel",
+    DEEPSEEK_MEMORY_MODEL: "deepseekMemoryModel",
+}
 
 
 class CredentialMissingError(RuntimeError):
@@ -45,10 +61,11 @@ class EnvSource:
         self._env = env if env is not None else os.environ
 
     def get(self, name: str) -> CredentialValue | None:
-        value = self._env.get(name, "").strip()
-        if not value:
-            return None
-        return CredentialValue(name=name, value=value, source=self.source_name)
+        for lookup_name in credential_lookup_names(name):
+            value = self._env.get(lookup_name, "").strip()
+            if value:
+                return CredentialValue(name=name, value=value, source=self.source_name)
+        return None
 
     def status(self, name: str) -> CredentialStatus:
         value = self.get(name)
@@ -115,6 +132,53 @@ class KeyringSource:
             raise
 
 
+def default_settings_path() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    elif sys.platform == "darwin":
+        base = str(Path.home() / "Library" / "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / SETTINGS_BUNDLE_ID / SETTINGS_STORE_FILE
+
+
+class SettingsFileSource:
+    """Non-secret runtime settings backed by the desktop settings store."""
+
+    source_name = "settings"
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self._path = Path(path) if path is not None else default_settings_path()
+
+    def _settings(self) -> dict[str, Any]:
+        if not self._path.exists():
+            return {}
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        data = raw.get("settings", raw) if isinstance(raw, dict) else {}
+        return data if isinstance(data, dict) else {}
+
+    def get(self, name: str) -> CredentialValue | None:
+        settings_key = SETTINGS_NAME_MAP.get(name)
+        if settings_key is None:
+            return None
+        value = self._settings().get(settings_key)
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        return CredentialValue(name=name, value=value, source=self.source_name)
+
+    def status(self, name: str) -> CredentialStatus:
+        value = self.get(name)
+        return CredentialStatus(
+            name=name, configured=value is not None, source=value.source if value else None
+        )
+
+
 class LegacyDotenvSource:
     """Explicit legacy ``.env`` source.
 
@@ -147,10 +211,12 @@ class LegacyDotenvSource:
         return values
 
     def get(self, name: str) -> CredentialValue | None:
-        value = self._values().get(name, "")
-        if not value:
-            return None
-        return CredentialValue(name=name, value=value, source=self.source_name)
+        values = self._values()
+        for lookup_name in credential_lookup_names(name):
+            value = values.get(lookup_name, "")
+            if value:
+                return CredentialValue(name=name, value=value, source=self.source_name)
+        return None
 
     def status(self, name: str) -> CredentialStatus:
         value = self.get(name)

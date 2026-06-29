@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui";
 import { useConversationStore, useSessionsStore } from "@/stores";
 import { useVoiceInputStore } from "@/stores/voiceInput";
@@ -55,6 +56,8 @@ export function Composer({
   const voiceInputPhase = useVoiceInputStore((s) => s.phase);
   const voiceInputVolume = useVoiceInputStore((s) => s.volumeLevel);
   const voiceInputError = useVoiceInputStore((s) => s.error);
+  const voiceInputErrorCode = useVoiceInputStore((s) => s.errorCode);
+  const voiceInputLastEventAt = useVoiceInputStore((s) => s.lastEventAt);
   const latestVoiceTranscript = useVoiceInputStore((s) => s.latestTranscript);
   const prewarmVoiceInput = useVoiceInputStore((s) => s.prewarm);
   const startVoiceInput = useVoiceInputStore((s) => s.start);
@@ -68,6 +71,8 @@ export function Composer({
   const voiceSegmentRef = useRef<VoiceDraftSegment | null>(null);
   const applyingVoiceDraftRef = useRef(false);
   const sentVoiceTraceIdsRef = useRef(new Set<string>());
+  const lastVoiceErrorToastKeyRef = useRef<string | null>(null);
+  const voiceErrorToastReadyRef = useRef(false);
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
   const voiceInputDisabled = disabled || streaming;
 
@@ -184,6 +189,21 @@ export function Composer({
       };
     }
   }, [applyDraftText, latestVoiceTranscript]);
+
+  useEffect(() => {
+    if (!voiceErrorToastReadyRef.current) {
+      voiceErrorToastReadyRef.current = true;
+      return;
+    }
+    if (!voiceInputError || !voiceInputErrorCode || !voiceInputLastEventAt) return;
+    const toastKey = `${voiceInputLastEventAt}:${voiceInputErrorCode}:${voiceInputError}`;
+    if (lastVoiceErrorToastKeyRef.current === toastKey) return;
+    lastVoiceErrorToastKeyRef.current = toastKey;
+    toast.error("语音输入失败", {
+      id: "voice-input-error",
+      description: voiceInputError,
+    });
+  }, [voiceInputError, voiceInputErrorCode, voiceInputLastEventAt]);
 
   const submit = (text: string) => {
     if (disabled) return;

@@ -80,7 +80,7 @@ AG-UI 对话入口当前行为：
 | 层 | 文件 | 责任 |
 |----|------|------|
 | Tauri Core secret facade | `frontend/src-tauri/src/runtime_config.rs` | 配置项 registry、secret status、set/delete secret、变更生效策略 |
-| Tauri Core settings | `frontend/src-tauri/src/settings.rs` | 扩展非敏感 setting：DeepSeek 主模型 |
+| Tauri Core settings | `frontend/src-tauri/src/settings.rs` | 扩展非敏感 setting：DeepSeek 主模型、DeepSeek 记忆模型 |
 | 前端 typed client | `frontend/src/lib/runtime-config/index.ts` | 封装 Tauri command、类型、hook |
 | 对话默认模型解析 | `frontend/src/lib/model-config/index.ts` 或 `frontend/src/services/stream.ts` 内独立方法 | 从 settings snapshot 得到允许的默认对话模型 |
 | 设置页 UI 雏形 | `frontend/src/pages/settings/App.tsx` 及小组件 | 展示状态、写入 / 覆盖 / 删除 secret、修改模型 |
@@ -192,7 +192,7 @@ Tauri command 不允许：
 - configured / source / effect / error。
 - 用户正在输入的新值只停留在当前 input state；保存成功后立即清空。
 
-### DeepSeek 主模型设置
+### DeepSeek 模型设置
 
 `Settings` 扩展：
 
@@ -201,6 +201,7 @@ pub struct Settings {
     pub theme: ThemeMode,
     pub voice_tunnel_consent_accepted: bool,
     pub deepseek_model: DeepseekModel,
+    pub deepseek_memory_model: DeepseekModel,
 }
 
 pub enum DeepseekModel {
@@ -211,10 +212,12 @@ pub enum DeepseekModel {
 }
 ```
 
-默认值采用 `deepseek/deepseek-v4-pro`，与现有记忆模型默认更接近，风险更小。前端只展示：
+默认值采用 `deepseek/deepseek-v4-pro`，与现有记忆模型默认更接近，风险更小。前端对主对话模型和记忆模型都只展示：
 
 - `deepseek/deepseek-v4-flash`
 - `deepseek/deepseek-v4-pro`
+
+主对话模型和记忆模型在 UI 上拆成两个独立分组，不强制共用同一个模型。主对话模型影响新建 / 自动创建 session；记忆模型写入 settings 后由 Python `SettingsFileSource` 读取到 `DEEPSEEK_MEMORY_MODEL`，并在 agent bridge 重启后进入 memory LLM client 构建链路。
 
 前端抽方法：
 
@@ -273,6 +276,7 @@ fn runtime_config_effect_for(names: &[&str]) -> RuntimeConfigEffect;
 - `DEEPSEEK_API_KEY`、`TAVILY_API_KEY`：需要 bridge 重启后才保证运行时装配刷新。
 - Volc voice secrets：需要 voice_bridge 重启后才保证刷新。
 - DeepSeek model setting：前端新建会话立即使用；已存在会话不自动变更。
+- DeepSeek memory model setting：写入后保存在 settings store；当前 agent bridge 已构建的 memory LLM client 不热切换，重启 bridge 后生效。
 
 前端展示操作成功时根据 effect 给提示：
 
@@ -282,6 +286,8 @@ fn runtime_config_effect_for(names: &[&str]) -> RuntimeConfigEffect;
 
 不在本期实现自动重启。原因是当前 dev script 启动的 Python bridge / voice_bridge 不由 Tauri 管理，强行重启容易出现“UI 以为成功但实际没管到进程”的假象。后续如果引入 Tauri sidecar manager，同一个 effect 方法可以升级为实际 restart。
 
+实现期确认：自动重启属于单独的服务生命周期体验问题，已登记为 issue 031，本需求只保留保存 / 状态 / 生效提示能力。
+
 ### 前端 UI 雏形
 
 设置中心新增 `模型与凭据` 分组。第一版按用户实际配置的能力组织，而不是按 env/keyring 条目平铺：
@@ -289,6 +295,10 @@ fn runtime_config_effect_for(names: &[&str]) -> RuntimeConfigEffect;
 - 对话模型：
   - 供应商固定为 DeepSeek。
   - 主对话模型 select，限定 `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro`。
+- 记忆模型：
+  - 供应商固定为 DeepSeek。
+  - 记忆模型 select，限定 `deepseek/deepseek-v4-flash` / `deepseek/deepseek-v4-pro`。
+- DeepSeek 凭据：
   - DeepSeek API key 状态、输入新 key / 覆盖、删除 keyring 中的值。
 - Web Search：
   - 供应商固定为 Tavily。
@@ -328,7 +338,7 @@ Python：
 
 - `resolveDefaultConversationModel(...)` 单测。
 - runtime-config typed client/hook 的基本状态转换测试。
-- 设置页涉及真实 UI 后，按桌面视觉验收规则做真实桌面端观察；若环境无法启动，需要在交付说明中写明。
+- 设置页本期是非最终视觉雏形，正式截图不是默认硬门槛；若要对桌面视觉下结论，按项目视觉验收规则做真实桌面端观察，无法启动时在交付说明中写明。
 
 跨语言兼容 smoke：
 
@@ -378,7 +388,7 @@ Python：
 5. 新增模型解析方法，并把 AG-UI request 带上 requested model。
 6. 扩展 bridge decoder / route 处理 requested model。
 7. 设置页接入基础查看 / 修改 UI。
-8. 补测试与桌面视觉检查。
+8. 补测试；若本轮需要断言桌面视觉正确，再按项目视觉验收规则做真实桌面检查。
 
 ## 参考链接
 

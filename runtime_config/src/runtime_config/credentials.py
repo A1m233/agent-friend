@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
+DEEPSEEK_MODEL = "DEEPSEEK_MODEL"
+DEEPSEEK_MEMORY_MODEL = "DEEPSEEK_MEMORY_MODEL"
 TAVILY_API_KEY = "TAVILY_API_KEY"
 VOLC_ACCESS_KEY = "VOLC_ACCESS_KEY"
 VOLC_SECRET_KEY = "VOLC_SECRET_KEY"
@@ -15,6 +17,16 @@ VOLC_SPEECH_ACCESS_TOKEN = "VOLC_SPEECH_ACCESS_TOKEN"
 VOLC_SPEECH_API_KEY = "VOLC_SPEECH_API_KEY"
 
 VOICE_BRIDGE_PUBLIC_URL = "VOICE_BRIDGE_PUBLIC_URL"
+
+CREDENTIAL_ALIASES: dict[str, tuple[str, ...]] = {
+    VOLC_ACCESS_KEY: ("VOICE_BRIDGE_VOLC_ACCESS_KEY",),
+    VOLC_SECRET_KEY: ("VOICE_BRIDGE_VOLC_SECRET_KEY",),
+    VOLC_RTC_APP_ID: ("VOICE_BRIDGE_VOLC_RTC_APP_ID",),
+    VOLC_RTC_APP_KEY: ("VOICE_BRIDGE_VOLC_RTC_APP_KEY",),
+    VOLC_SPEECH_APP_ID: ("VOICE_BRIDGE_VOLC_SPEECH_APP_ID",),
+    VOLC_SPEECH_ACCESS_TOKEN: ("VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN",),
+    VOLC_SPEECH_API_KEY: ("VOICE_BRIDGE_VOLC_SPEECH_API_KEY",),
+}
 
 ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
     DEEPSEEK_API_KEY,
@@ -52,6 +64,12 @@ class CredentialValue:
     name: str
     value: str
     source: str
+
+
+def credential_lookup_names(name: str) -> tuple[str, ...]:
+    """Return canonical name plus process-env/dotenv aliases for one credential."""
+
+    return (name, *CREDENTIAL_ALIASES.get(name, ()))
 
 
 @dataclass(frozen=True)

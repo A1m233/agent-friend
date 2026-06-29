@@ -10,12 +10,14 @@ export interface Settings {
   theme: ThemeMode;
   voiceTunnelConsentAccepted: boolean;
   deepseekModel: DeepseekModel;
+  deepseekMemoryModel: DeepseekModel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   voiceTunnelConsentAccepted: false,
   deepseekModel: "deepseek/deepseek-v4-pro",
+  deepseekMemoryModel: "deepseek/deepseek-v4-pro",
 };
 
 const EVENT_CHANGED = "settings://changed";

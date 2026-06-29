@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from ag_ui.core import RunAgentInput
-
 from agent_bridge.protocols.ag_ui.decoders import DecodeError, decode_run_agent_input
 
 

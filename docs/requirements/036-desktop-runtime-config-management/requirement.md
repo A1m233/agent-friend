@@ -96,7 +96,7 @@ CONFIRMED
 |------|------|----------|
 | `DEEPSEEK_API_KEY` | secret | 管理 |
 | `DEEPSEEK_MODEL` | setting | 管理，限定两个 DeepSeek 模型 |
-| `DEEPSEEK_MEMORY_MODEL` | setting / follow-up | 本期不单独暴露；默认沿用现有 memory model 规则 |
+| `DEEPSEEK_MEMORY_MODEL` | setting | 管理，独立于主对话模型，限定两个 DeepSeek 模型 |
 | `DEEPSEEK_API_BASE` | setting / advanced | 本期不暴露，后续高级配置再评估 |
 | `DEEPSEEK_CONTEXT_WINDOW` | setting / advanced | 本期不暴露，后续高级配置再评估 |
 | `TAVILY_API_KEY` | secret | 管理 |
@@ -118,6 +118,7 @@ CONFIRMED
 - [ ] 设置中心或其前端基础模块能查询 DeepSeek / Tavily / Volc 相关配置状态，且状态不包含 secret 明文。
 - [ ] 用户可以在桌面端填入、覆盖、删除 `DEEPSEEK_API_KEY`；保存后只能看到状态变化，不能查看旧 key 明文。
 - [ ] 用户可以在桌面端把 DeepSeek 主模型切换为 `deepseek/deepseek-v4-flash` 或 `deepseek/deepseek-v4-pro`，重启后仍生效。
+- [ ] 用户可以在桌面端单独切换 DeepSeek 记忆模型为 `deepseek/deepseek-v4-flash` 或 `deepseek/deepseek-v4-pro`，不与主对话模型强绑定。
 - [ ] 新建对话 / 自动创建 session 使用桌面端选择的 DeepSeek 主模型；已有会话的当前模型切换语义不被破坏。
 - [ ] 用户可以在桌面端管理 `TAVILY_API_KEY`；缺失时 web search 继续按现有语义关闭但不阻塞基础对话。
 - [ ] 用户可以在桌面端管理当前语音通话 / 语音输入所需的 Volc 凭据，至少覆盖 `VOLC_SPEECH_API_KEY` 与既有 `volc-voice` bundle。
@@ -125,7 +126,7 @@ CONFIRMED
 - [ ] `VOLC_ARK_*`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 不出现在本期主 UI 的可管理项中，除非 design 阶段明确改变范围并回溯需求。
 - [ ] secret 不进入 `settings.json`、React 持久 store、`window.__AGENT_FRIEND_SETTINGS__`、localStorage、事件广播 payload 或日志。
 - [ ] 前端提供清晰的 typed client / hook / 组件边界，后续视觉设计调整时无需重写 Tauri command 与配置状态协议。
-- [ ] 相关核心逻辑有自动化测试覆盖；涉及桌面 UI 的改动按项目视觉验收规则进行真实桌面端观察或说明未验证原因。
+- [ ] 相关核心逻辑有自动化测试覆盖；本期 UI 是非最终视觉雏形时，按项目视觉验收边界说明是否做正式桌面截图验收。
 
 ## 关键信息
 
@@ -140,13 +141,12 @@ CONFIRMED
 
 ## 开放问题
 
-- Tauri secret facade 最终直接接系统凭据存储，还是复用 / 调用 Python `runtime_config` 作为同一套写入后端，需要在设计阶段确定。
 - `VOLC_SPEECH_RESOURCE_ID`、`VOLC_SPEECH_WS_URL` 是否在第一版 UI 中展示为高级项，还是只在 registry 中建模，等待后续设计确认。
-- `DEEPSEEK_MEMORY_MODEL` 是否跟随主模型、保持现有默认 `deepseek/deepseek-v4-pro`，还是未来单独暴露，需要后续设计阶段确认；本期默认不单独暴露。
-- 用户修改配置后是否需要提示重启 bridge / voice_bridge，或由桌面壳自动重启 sidecar，需要在设计阶段确认。
+- 用户修改配置后当前只提示影响范围，不自动重启 bridge / voice_bridge；自动重启已登记为 issue 031，后续单独闭环。
 
 ## 变更记录
 
 | 日期 | 变更内容 | 影响范围 |
 |------|---------|---------|
 | 2026-06-29 | 初版确认：桌面端运行时配置管理，DeepSeek 模型限定两项，secret 管理覆盖 Tavily 与当前语音所需 Volc 凭据，UI 不锁死最终视觉 | Phase 1 |
+| 2026-06-30 | 实现期补充分离“对话模型”和“记忆模型”，并把保存后自动重启收敛为后续 issue 031 | Phase 3 |

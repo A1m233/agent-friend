@@ -20,6 +20,8 @@ pub struct Settings {
     pub voice_tunnel_consent_accepted: bool,
     #[serde(default)]
     pub deepseek_model: DeepseekModel,
+    #[serde(default)]
+    pub deepseek_memory_model: DeepseekModel,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -49,6 +51,7 @@ impl Default for Settings {
             theme: ThemeMode::Light,
             voice_tunnel_consent_accepted: false,
             deepseek_model: DeepseekModel::default(),
+            deepseek_memory_model: DeepseekModel::default(),
         }
     }
 }
@@ -82,18 +85,34 @@ struct LoadedSettings {
     settings: Settings,
     source: SettingsLoadSource,
     path: Option<PathBuf>,
+    presence: SettingsPresence,
 }
 
-fn parse_settings(raw: &str, path: &Path) -> Result<Settings, String> {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .and_then(|v| match v.get("settings") {
-            Some(inner) => serde_json::from_value::<Settings>(inner.clone()),
-            None => serde_json::from_value::<Settings>(v),
-        })
-        .map_err(|e| format!("settings: parse {path:?} failed: {e}"))
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SettingsPresence {
+    deepseek_memory_model: bool,
 }
 
+fn parse_settings(raw: &str, path: &Path) -> Result<(Settings, SettingsPresence), String> {
+    let value = serde_json::from_str::<serde_json::Value>(raw)
+        .map_err(|e| format!("settings: parse {path:?} failed: {e}"))?;
+    let inner = value.get("settings").unwrap_or(&value);
+    let presence = SettingsPresence {
+        deepseek_memory_model: inner.get("deepseekMemoryModel").is_some(),
+    };
+    let settings = serde_json::from_value::<Settings>(inner.clone())
+        .map_err(|e| format!("settings: parse {path:?} failed: {e}"))?;
+    Ok((settings, presence))
+}
+
+#[cfg(test)]
 fn read_settings_file(path: &Path) -> Result<Settings, String> {
+    let raw =
+        fs::read_to_string(path).map_err(|e| format!("settings: read {path:?} failed: {e}"))?;
+    parse_settings(&raw, path).map(|(settings, _)| settings)
+}
+
+fn read_settings_file_with_presence(path: &Path) -> Result<(Settings, SettingsPresence), String> {
     let raw =
         fs::read_to_string(path).map_err(|e| format!("settings: read {path:?} failed: {e}"))?;
     parse_settings(&raw, path)
@@ -110,58 +129,170 @@ fn write_settings_file(path: &Path, settings: &Settings) -> Result<(), String> {
     fs::write(path, raw).map_err(|e| format!("settings: write {path:?} failed: {e}"))
 }
 
+fn parse_deepseek_model(raw: &str) -> Option<DeepseekModel> {
+    match raw.trim() {
+        "deepseek/deepseek-v4-flash" => Some(DeepseekModel::Flash),
+        "deepseek/deepseek-v4-pro" => Some(DeepseekModel::Pro),
+        _ => None,
+    }
+}
+
+fn dotenv_value(path: &Path, name: &str) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    raw.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        let (key, value) = trimmed.split_once('=')?;
+        let key = key.trim().strip_prefix("export ").unwrap_or(key.trim());
+        if key != name {
+            return None;
+        }
+        let value = value.trim().trim_matches(&['"', '\''][..]).trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn looks_like_agent_friend_root(path: &Path) -> bool {
+    path.join(".env.example").is_file()
+        && path.join("pyproject.toml").is_file()
+        && path.join("frontend").is_dir()
+}
+
+fn find_repo_dotenv_from(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|candidate| looks_like_agent_friend_root(candidate))
+        .map(|root| root.join(".env"))
+}
+
+fn legacy_deepseek_memory_model() -> Option<DeepseekModel> {
+    const NAME: &str = "DEEPSEEK_MEMORY_MODEL";
+    if let Ok(value) = std::env::var(NAME) {
+        if let Some(model) = parse_deepseek_model(&value) {
+            return Some(model);
+        }
+    }
+
+    let mut paths = Vec::new();
+    if let Ok(root) = std::env::var("AGENT_FRIEND_REPO_ROOT") {
+        paths.push(PathBuf::from(root).join(".env"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(path) = find_repo_dotenv_from(&cwd) {
+            paths.push(path);
+        }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(path) = find_repo_dotenv_from(&manifest_dir) {
+            paths.push(path);
+        }
+    }
+
+    paths.dedup();
+    paths
+        .iter()
+        .filter_map(|path| dotenv_value(path, NAME))
+        .find_map(|value| parse_deepseek_model(&value))
+}
+
+fn migrate_deepseek_memory_model(
+    settings: &mut Settings,
+    presence: SettingsPresence,
+    legacy_model: Option<DeepseekModel>,
+) -> bool {
+    if presence.deepseek_memory_model {
+        return false;
+    }
+    let Some(model) = legacy_model else {
+        return false;
+    };
+    settings.deepseek_memory_model = model;
+    true
+}
+
 fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) -> LoadedSettings {
-    if let Some(path) = canonical.as_ref() {
-        match read_settings_file(path) {
-            Ok(settings) => {
-                return LoadedSettings {
-                    settings,
-                    source: SettingsLoadSource::Canonical,
-                    path: Some(path.clone()),
-                };
+    let mut loaded = if let Some(path) = canonical.as_ref() {
+        match read_settings_file_with_presence(path) {
+            Ok((settings, presence)) => LoadedSettings {
+                settings,
+                source: SettingsLoadSource::Canonical,
+                path: Some(path.clone()),
+                presence,
+            },
+            Err(e) => {
+                log::info!("{e}");
+                LoadedSettings {
+                    settings: Settings::default(),
+                    source: SettingsLoadSource::Default,
+                    path: None,
+                    presence: SettingsPresence::default(),
+                }
             }
-            Err(e) => log::info!("{e}"),
         }
     } else {
         log::warn!("settings: cannot resolve canonical settings store path");
-    }
-
-    if let Some(path) = legacy_local.as_ref() {
-        if canonical.as_ref() == Some(path) {
-            return LoadedSettings {
-                settings: Settings::default(),
-                source: SettingsLoadSource::Default,
-                path: None,
-            };
+        LoadedSettings {
+            settings: Settings::default(),
+            source: SettingsLoadSource::Default,
+            path: None,
+            presence: SettingsPresence::default(),
         }
+    };
 
-        match read_settings_file(path) {
-            Ok(settings) => {
-                if let Some(canonical_path) = canonical.as_ref() {
-                    match write_settings_file(canonical_path, &settings) {
-                        Ok(()) => log::info!(
-                            "settings: migrated legacy settings from {:?} to {:?}",
-                            path,
-                            canonical_path
-                        ),
-                        Err(e) => log::warn!("{e}"),
+    if loaded.path.is_none() {
+        if let Some(path) = legacy_local.as_ref() {
+            if canonical.as_ref() != Some(path) {
+                match read_settings_file_with_presence(path) {
+                    Ok((settings, presence)) => {
+                        loaded = LoadedSettings {
+                            settings,
+                            source: SettingsLoadSource::LegacyLocal,
+                            path: Some(path.clone()),
+                            presence,
+                        };
                     }
+                    Err(e) => log::info!("{e}"),
                 }
-                return LoadedSettings {
-                    settings,
-                    source: SettingsLoadSource::LegacyLocal,
-                    path: Some(path.clone()),
-                };
             }
-            Err(e) => log::info!("{e}"),
         }
     }
 
-    LoadedSettings {
-        settings: Settings::default(),
-        source: SettingsLoadSource::Default,
-        path: None,
+    let migrated_memory_model = migrate_deepseek_memory_model(
+        &mut loaded.settings,
+        loaded.presence,
+        legacy_deepseek_memory_model(),
+    );
+
+    if (loaded.source == SettingsLoadSource::LegacyLocal || migrated_memory_model)
+        && canonical.is_some()
+    {
+        let canonical_path = canonical.as_ref().expect("checked");
+        match write_settings_file(canonical_path, &loaded.settings) {
+            Ok(()) => {
+                if loaded.source == SettingsLoadSource::LegacyLocal {
+                    log::info!(
+                        "settings: migrated legacy settings from {:?} to {:?}",
+                        loaded.path,
+                        canonical_path
+                    );
+                }
+                if migrated_memory_model {
+                    log::info!("settings: migrated legacy DEEPSEEK_MEMORY_MODEL into settings");
+                }
+            }
+            Err(e) => log::warn!("{e}"),
+        }
     }
+
+    loaded
 }
 
 /// 028 · 用统一 paths 模块拼出 tauri-plugin-store settings 文件路径。
@@ -250,6 +381,11 @@ pub fn set_setting<R: Runtime>(
             let model: DeepseekModel = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid deepseekModel: {e}"))?;
             s.deepseek_model = model;
+        }
+        "deepseekMemoryModel" => {
+            let model: DeepseekModel = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid deepseekMemoryModel: {e}"))?;
+            s.deepseek_memory_model = model;
         }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
@@ -380,6 +516,41 @@ mod tests {
         assert_eq!(loaded.settings, Settings::default());
 
         fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn migrate_deepseek_memory_model_fills_missing_legacy_value() {
+        let mut settings = Settings::default();
+
+        let changed = migrate_deepseek_memory_model(
+            &mut settings,
+            SettingsPresence {
+                deepseek_memory_model: false,
+            },
+            Some(DeepseekModel::Flash),
+        );
+
+        assert!(changed);
+        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Flash);
+    }
+
+    #[test]
+    fn migrate_deepseek_memory_model_does_not_override_existing_setting() {
+        let mut settings = Settings {
+            deepseek_memory_model: DeepseekModel::Pro,
+            ..Settings::default()
+        };
+
+        let changed = migrate_deepseek_memory_model(
+            &mut settings,
+            SettingsPresence {
+                deepseek_memory_model: true,
+            },
+            Some(DeepseekModel::Flash),
+        );
+
+        assert!(!changed);
+        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Pro);
     }
 }
 

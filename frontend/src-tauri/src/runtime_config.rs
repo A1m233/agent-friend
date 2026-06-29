@@ -78,6 +78,7 @@ pub struct DeleteRuntimeSecretPayload {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SecretSpec {
     name: &'static str,
+    aliases: &'static [&'static str],
     group: RuntimeConfigGroup,
     effect: RuntimeConfigEffect,
 }
@@ -85,46 +86,55 @@ struct SecretSpec {
 const SECRET_REGISTRY: &[SecretSpec] = &[
     SecretSpec {
         name: "DEEPSEEK_API_KEY",
+        aliases: &[],
         group: RuntimeConfigGroup::Deepseek,
         effect: RuntimeConfigEffect::RestartBridge,
     },
     SecretSpec {
         name: "TAVILY_API_KEY",
+        aliases: &[],
         group: RuntimeConfigGroup::Tavily,
         effect: RuntimeConfigEffect::RestartBridge,
     },
     SecretSpec {
         name: "VOLC_ACCESS_KEY",
+        aliases: &["VOICE_BRIDGE_VOLC_ACCESS_KEY"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_SECRET_KEY",
+        aliases: &["VOICE_BRIDGE_VOLC_SECRET_KEY"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_RTC_APP_ID",
+        aliases: &["VOICE_BRIDGE_VOLC_RTC_APP_ID"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_RTC_APP_KEY",
+        aliases: &["VOICE_BRIDGE_VOLC_RTC_APP_KEY"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_SPEECH_APP_ID",
+        aliases: &["VOICE_BRIDGE_VOLC_SPEECH_APP_ID"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_SPEECH_ACCESS_TOKEN",
+        aliases: &["VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
     SecretSpec {
         name: "VOLC_SPEECH_API_KEY",
+        aliases: &["VOICE_BRIDGE_VOLC_SPEECH_API_KEY"],
         group: RuntimeConfigGroup::VolcVoice,
         effect: RuntimeConfigEffect::RestartVoice,
     },
@@ -179,10 +189,12 @@ fn keyring_configured(name: &str) -> Result<bool, String> {
     }
 }
 
-fn legacy_dotenv_configured(name: &str) -> bool {
-    legacy_dotenv_paths()
-        .iter()
-        .any(|path| dotenv_value_configured(path, name))
+fn legacy_dotenv_configured_for(spec: &SecretSpec) -> bool {
+    legacy_dotenv_paths().iter().any(|path| {
+        std::iter::once(spec.name)
+            .chain(spec.aliases.iter().copied())
+            .any(|name| dotenv_value_configured(path, name))
+    })
 }
 
 fn legacy_dotenv_paths() -> Vec<PathBuf> {
@@ -249,10 +261,14 @@ fn dotenv_value_configured(path: &Path, name: &str) -> bool {
 fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
     let mut error = None;
 
-    let env_configured = std::env::var(spec.name)
-        .ok()
-        .map(|v| !v.trim().is_empty())
-        .unwrap_or(false);
+    let env_configured = std::iter::once(spec.name)
+        .chain(spec.aliases.iter().copied())
+        .any(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+        });
 
     let source = if env_configured {
         Some(RuntimeConfigSource::Env)
@@ -260,7 +276,7 @@ fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
         match keyring_configured(spec.name) {
             Ok(true) => Some(RuntimeConfigSource::Keyring),
             Ok(false) => {
-                if legacy_dotenv_configured(spec.name) {
+                if legacy_dotenv_configured_for(spec) {
                     Some(RuntimeConfigSource::LegacyDotenv)
                 } else {
                     None
@@ -268,7 +284,7 @@ fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
             }
             Err(e) => {
                 error = Some(e);
-                if legacy_dotenv_configured(spec.name) {
+                if legacy_dotenv_configured_for(spec) {
                     Some(RuntimeConfigSource::LegacyDotenv)
                 } else {
                     None
@@ -365,6 +381,27 @@ mod tests {
     }
 
     #[test]
+    fn registry_tracks_voice_bridge_env_aliases_for_volc_secrets() {
+        let expected = [
+            ("VOLC_ACCESS_KEY", "VOICE_BRIDGE_VOLC_ACCESS_KEY"),
+            ("VOLC_SECRET_KEY", "VOICE_BRIDGE_VOLC_SECRET_KEY"),
+            ("VOLC_RTC_APP_ID", "VOICE_BRIDGE_VOLC_RTC_APP_ID"),
+            ("VOLC_RTC_APP_KEY", "VOICE_BRIDGE_VOLC_RTC_APP_KEY"),
+            ("VOLC_SPEECH_APP_ID", "VOICE_BRIDGE_VOLC_SPEECH_APP_ID"),
+            (
+                "VOLC_SPEECH_ACCESS_TOKEN",
+                "VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN",
+            ),
+            ("VOLC_SPEECH_API_KEY", "VOICE_BRIDGE_VOLC_SPEECH_API_KEY"),
+        ];
+
+        for (canonical, alias) in expected {
+            let spec = require_secret(canonical).expect("volc secret");
+            assert!(spec.aliases.contains(&alias));
+        }
+    }
+
+    #[test]
     fn dotenv_status_parser_detects_non_empty_value_without_exposing_it() {
         let path = std::env::temp_dir().join(format!(
             "agent-friend-runtime-config-test-{}.env",
@@ -379,6 +416,27 @@ mod tests {
         assert!(dotenv_value_configured(&path, "DEEPSEEK_API_KEY"));
         assert!(!dotenv_value_configured(&path, "TAVILY_API_KEY"));
         assert!(!dotenv_value_configured(&path, "VOLC_ACCESS_KEY"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn dotenv_status_parser_detects_voice_bridge_alias_values() {
+        let path = std::env::temp_dir().join(format!(
+            "agent-friend-runtime-config-alias-test-{}.env",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "VOICE_BRIDGE_VOLC_SPEECH_API_KEY=\"secret-value\"\nVOLC_SPEECH_API_KEY=\n",
+        )
+        .expect("write dotenv fixture");
+
+        assert!(dotenv_value_configured(
+            &path,
+            "VOICE_BRIDGE_VOLC_SPEECH_API_KEY"
+        ));
+        assert!(!dotenv_value_configured(&path, "VOLC_SPEECH_API_KEY"));
 
         let _ = fs::remove_file(path);
     }
