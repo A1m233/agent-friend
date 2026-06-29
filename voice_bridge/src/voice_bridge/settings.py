@@ -161,6 +161,9 @@ class VoiceBridgeSettings(BaseSettings):
     voice_input_prewarm_ttl_ms: int = Field(default=30_000, ge=5_000, le=300_000)
     """Maximum age for a connect-only ASR warm socket before it is closed."""
 
+    transcription_audio_max_bytes: int = Field(default=15 * 1024 * 1024, ge=1)
+    """Maximum one-shot transcription request body size in bytes."""
+
     # ----- 通话默认参数 -----
 
     voice_type: str = "zh_female_linjianvhai_moon_bigtts"

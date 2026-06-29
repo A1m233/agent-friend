@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+import wave
 from contextlib import suppress
 from typing import Any, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.websockets import WebSocketState
 
@@ -20,6 +23,8 @@ from ..asr import (
     AsrProviderUnavailableError,
     AsrSession,
     AsrStartOptions,
+    OneShotTranscriptionOptions,
+    transcribe_pcm16_once,
 )
 from ..assembly import VoiceBridgeRuntime
 from ..latency import log_latency, monotonic_ms
@@ -32,6 +37,10 @@ _PRE_READY_AUDIO_QUEUE_MAX_BYTES = 8 * 1024 * 1024
 
 class InvalidTranscriptionRequest(Exception):
     """Client sent an invalid transcription WebSocket frame."""
+
+
+class InvalidOneShotAudio(Exception):
+    """Client sent an invalid one-shot audio request."""
 
 
 class TranscriptionAudioOptions(BaseModel):
@@ -135,6 +144,128 @@ def register_transcription_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> 
             elapsed_ms=monotonic_ms() - started_ms,
         )
         return _prewarm_result_payload(result)
+
+    @router.post("/transcriptions/audio", response_model=None)
+    async def transcription_audio(
+        request: Request,
+        audio_format: Literal["wav", "pcm16"] = Query(default="wav", alias="format"),
+        trace_id: str | None = Query(default=None),
+        sample_rate: int | None = Query(default=None, ge=8000, le=48000),
+        channels: int | None = Query(default=None, ge=1, le=2),
+        locale: str | None = Query(default=None),
+    ) -> Any:
+        started_ms = monotonic_ms()
+        effective_trace_id = trace_id or f"voice-audio-{uuid4()}"
+        body = await request.body()
+
+        if len(body) > runtime.settings.transcription_audio_max_bytes:
+            return _audio_error_payload(
+                status_code=413,
+                trace_id=effective_trace_id,
+                code="invalid_audio",
+                message="音频文件过大，暂时无法识别",
+            )
+
+        try:
+            if audio_format == "wav":
+                pcm16, detected_sample_rate, detected_channels = _decode_wav_pcm16(body)
+            else:
+                if sample_rate is None or channels is None:
+                    raise InvalidOneShotAudio("sample_rate and channels are required for pcm16")
+                pcm16 = body
+                detected_sample_rate = sample_rate
+                detected_channels = channels
+            _validate_audio_shape(
+                sample_rate=detected_sample_rate,
+                channels=detected_channels,
+                audio=pcm16,
+            )
+        except InvalidOneShotAudio as e:
+            log_latency(
+                logger,
+                "voice_audio_invalid",
+                trace_id=effective_trace_id,
+                format=audio_format,
+                elapsed_ms=monotonic_ms() - started_ms,
+            )
+            logger.warning("one-shot transcription invalid audio trace_id=%s: %s", trace_id, e)
+            return _audio_error_payload(
+                status_code=400,
+                trace_id=effective_trace_id,
+                code="invalid_audio",
+                message="音频格式暂时不支持",
+            )
+
+        provider = runtime.asr_provider
+        if provider is None:
+            return _audio_error_payload(
+                status_code=503,
+                trace_id=effective_trace_id,
+                code="asr_unavailable",
+                message="语音识别服务暂时不可用",
+            )
+
+        try:
+            log_latency(
+                logger,
+                "voice_audio_start",
+                trace_id=effective_trace_id,
+                format=audio_format,
+                sample_rate=detected_sample_rate,
+                channels=detected_channels,
+                bytes_len=len(pcm16),
+            )
+            result = await transcribe_pcm16_once(
+                provider,
+                pcm16,
+                OneShotTranscriptionOptions(
+                    trace_id=effective_trace_id,
+                    sample_rate=detected_sample_rate,
+                    channels=detected_channels,
+                    locale=locale,
+                ),
+            )
+        except AsrProviderUnavailableError as e:
+            logger.warning(
+                "one-shot transcription unavailable trace_id=%s detail=%s",
+                effective_trace_id,
+                e.detail,
+            )
+            return _audio_error_payload(
+                status_code=503,
+                trace_id=effective_trace_id,
+                code="asr_unavailable",
+                message=e.message,
+            )
+        except AsrProviderError as e:
+            logger.warning(
+                "one-shot transcription failed trace_id=%s code=%s detail=%s",
+                effective_trace_id,
+                e.code,
+                e.detail,
+            )
+            return _audio_error_payload(
+                status_code=502,
+                trace_id=effective_trace_id,
+                code="transcription_failed" if e.code == "asr_provider_error" else e.code,
+                message=e.message,
+            )
+
+        elapsed_ms = monotonic_ms() - started_ms
+        log_latency(
+            logger,
+            "voice_audio_final",
+            trace_id=effective_trace_id,
+            elapsed_ms=elapsed_ms,
+            text_len=len(result.text),
+            partial_fallback=result.used_partial_fallback,
+        )
+        return {
+            "traceId": result.trace_id,
+            "text": result.text,
+            "source": "voice_bridge",
+            "elapsedMs": elapsed_ms,
+        }
 
     @router.websocket("/transcriptions/stream")
     async def transcription_stream(websocket: WebSocket) -> None:
@@ -526,3 +657,44 @@ def _prewarm_result_payload(result: AsrPrewarmResult) -> dict[str, Any]:
     if result.message:
         payload["message"] = result.message
     return payload
+
+
+def _decode_wav_pcm16(audio: bytes) -> tuple[bytes, int, int]:
+    if not audio:
+        raise InvalidOneShotAudio("empty wav body")
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as wav:
+            if wav.getsampwidth() != 2:
+                raise InvalidOneShotAudio("wav must be 16-bit PCM")
+            if wav.getcomptype() != "NONE":
+                raise InvalidOneShotAudio("compressed wav is not supported")
+            channels = wav.getnchannels()
+            sample_rate = wav.getframerate()
+            frames = wav.readframes(wav.getnframes())
+    except (EOFError, wave.Error) as e:
+        raise InvalidOneShotAudio(str(e)) from e
+    return frames, sample_rate, channels
+
+
+def _validate_audio_shape(*, sample_rate: int, channels: int, audio: bytes) -> None:
+    if sample_rate < 8000 or sample_rate > 48000:
+        raise InvalidOneShotAudio(f"unsupported sample_rate={sample_rate}")
+    if channels < 1 or channels > 2:
+        raise InvalidOneShotAudio(f"unsupported channels={channels}")
+    if not audio:
+        raise InvalidOneShotAudio("empty audio body")
+    if len(audio) % 2:
+        raise InvalidOneShotAudio("pcm16 byte length must be even")
+
+
+def _audio_error_payload(
+    *,
+    status_code: int,
+    trace_id: str,
+    code: str,
+    message: str,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"traceId": trace_id, "code": code, "message": message},
+    )

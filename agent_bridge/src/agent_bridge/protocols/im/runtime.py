@@ -27,8 +27,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .adapters.qq import QQAdapter
+from .content import OutboundContent
 from .credentials import CredentialStore, ImCredential
+from .dedupe import RecentMessageDeduper
 from .event import InboundEvent
+from .inbound_resolver import InboundResolver, InboundResolveResult, NoopInboundResolver
 from .provider import IMProvider, ProviderStatus
 
 if TYPE_CHECKING:
@@ -72,10 +75,14 @@ class IMRuntime:
         router: IMRouter,
         credentials: CredentialStore,
         resume_base_dir: Path,
+        inbound_resolver: InboundResolver | None = None,
+        deduper: RecentMessageDeduper | None = None,
     ) -> None:
         self._router = router
         self._credentials = credentials
         self._resume_base_dir = resume_base_dir
+        self._inbound_resolver = inbound_resolver or NoopInboundResolver()
+        self._deduper = deduper
         self._providers: dict[tuple[str, str], IMProvider] = {}
         # 持有 fire-and-forget stop tasks 引用,防 GC 提前回收(RUF006)
         self._background_stops: set[asyncio.Task[None]] = set()
@@ -211,13 +218,67 @@ class IMRuntime:
         """
 
         async def cb(event: InboundEvent) -> None:
+            if self._deduper is not None:
+                key = self._deduper.key_for(provider.type, event)
+                if self._deduper.seen_or_mark(key):
+                    logger.info(
+                        "IM inbound duplicate ignored (im_type=%s, chat_scope=%s, "
+                        "chat_id=%s, message_id=%s)",
+                        provider.type,
+                        event.chat_scope,
+                        event.chat_id,
+                        event.message_id,
+                    )
+                    return
+
+            result = await self._resolve_inbound(provider, event)
+            if result.action == "ignore":
+                logger.info(
+                    "IM inbound ignored (im_type=%s, reason=%s, message_id=%s)",
+                    provider.type,
+                    result.reason,
+                    event.message_id,
+                )
+                return
+            if result.action == "reply":
+                if result.reply is not None:
+                    await provider.send(result.reply)
+                return
+
+            resolved_event = result.event or event
             await self._router.handle_inbound(
                 provider.type,
-                event,
+                resolved_event,
                 send_fn=provider.send,
             )
 
         return cb
+
+    async def _resolve_inbound(
+        self,
+        provider: IMProvider,
+        event: InboundEvent,
+    ) -> InboundResolveResult:
+        try:
+            return await self._inbound_resolver.resolve(provider.type, event)
+        except Exception:
+            logger.exception(
+                "IM inbound resolver failed (im_type=%s, chat_scope=%s, message_id=%s)",
+                provider.type,
+                event.chat_scope,
+                event.message_id,
+            )
+            if (event.content or "").strip():
+                return InboundResolveResult.route(event)
+            return InboundResolveResult.direct_reply(
+                OutboundContent(
+                    chat_id=event.chat_id,
+                    chat_scope=event.chat_scope,
+                    text="这条消息我暂时没处理好，可以再发一次或改发文字。",
+                    reply_to_message_id=event.message_id,
+                ),
+                reason="resolver_error",
+            )
 
     @staticmethod
     async def _stop_one_silent(p: IMProvider) -> None:

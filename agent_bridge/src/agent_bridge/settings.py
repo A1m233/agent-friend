@@ -117,6 +117,18 @@ class BridgeSettings(BaseSettings):
     """IM SDK Resume token(WebSocket session_id + last_seq)落盘目录;
     默认 ``<user_data_dir>/im_resume/``,不加密。"""
 
+    voice_bridge_base_url: str = "http://127.0.0.1:18900"
+    """本机 voice_bridge 地址；QQ 语音消息 fallback ASR 通过此地址调用 one-shot 转写。"""
+
+    im_voice_max_audio_bytes: int = Field(default=15 * 1024 * 1024, ge=1)
+    """QQ 语音 fallback 下载 / 转写的最大音频字节数。"""
+
+    im_voice_dedupe_ttl_seconds: int = Field(default=600, ge=1)
+    """IM 入站 message id 进程内去重 TTL。"""
+
+    im_voice_dedupe_max_items: int = Field(default=4096, ge=1)
+    """IM 入站 message id 进程内去重容量。"""
+
     # 014：main loop / push 通道相关
     dev_mode: bool = False
     """是否挂载 ``/dev/*`` 端点（如 ``/dev/fire-source``）。**生产环境永不开**——

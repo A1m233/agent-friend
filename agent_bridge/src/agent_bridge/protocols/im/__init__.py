@@ -9,6 +9,8 @@
 - :mod:`.provider`        — :class:`IMProvider` Protocol(扩展点 · 加新平台 implements 它)
 - :mod:`.event`           — :class:`InboundEvent`(借用 ``qqbot-agent-sdk`` 的 platform-agnostic shape)
 - :mod:`.content`         — :class:`OutboundContent`(IM 回写的消息;本期文本)
+- :mod:`.inbound_resolver` — 入站消息归一化(如 QQ 语音 → 文本)
+- :mod:`.dedupe`          — 入站 message id 短期去重
 - :mod:`.router`          — :class:`IMRouter`(inbound → ``session_id_for()`` → ``SessionBridge.bind_persistent`` → outbound)
 - :mod:`.runtime`         — :class:`IMRuntime`(持有 providers + 生命周期,同 :class:`agent.runtime.AgentRuntime` 模式)
 - :mod:`.onboard`         — :class:`OnboardSessionRegistry`(异步扫码 task 注册表)
@@ -21,7 +23,9 @@
 
 from .content import OutboundContent
 from .credentials import CredentialStore, ImCredential
+from .dedupe import RecentMessageDeduper
 from .event import InboundEvent
+from .inbound_resolver import InboundResolver, InboundResolveResult
 from .onboard import OnboardSessionRegistry, OnboardStatus, OnboardTaskState
 from .provider import IMProvider, ProviderStatus
 from .router import IMRouter
@@ -35,11 +39,14 @@ __all__ = [
     "IMRuntime",
     "ImCredential",
     "InboundEvent",
+    "InboundResolveResult",
+    "InboundResolver",
     "OnboardSessionRegistry",
     "OnboardStatus",
     "OnboardTaskState",
     "OutboundContent",
     "ProviderInfo",
     "ProviderStatus",
+    "RecentMessageDeduper",
     "register_routes",
 ]
