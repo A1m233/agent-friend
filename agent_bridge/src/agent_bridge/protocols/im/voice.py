@@ -163,7 +163,7 @@ class QQVoiceMessageResolver:
         if im_type != "qq" or event.chat_scope != "c2c":
             return InboundResolveResult.route(event)
 
-        voice_attachments = [att for att in event.attachments if _is_voice_attachment(att)]
+        voice_attachments = _voice_attachments_for(event)
         if not voice_attachments:
             return InboundResolveResult.route(event)
 
@@ -248,6 +248,13 @@ def _is_voice_attachment(attachment: object) -> bool:
     if _sdk_is_voice_content_type is not None:
         return bool(_sdk_is_voice_content_type(content_type, filename))
     return content_type.strip().lower().startswith("audio/")
+
+
+def _voice_attachments_for(event: InboundEvent) -> list[object]:
+    attachments: list[object] = list(event.attachments)
+    for element in event.msg_elements:
+        attachments.extend(getattr(element, "attachments", []) or [])
+    return [att for att in attachments if _is_voice_attachment(att)]
 
 
 def _audio_url_for(attachment: object) -> str:

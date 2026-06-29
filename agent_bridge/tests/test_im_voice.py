@@ -17,7 +17,7 @@ from agent_bridge.protocols.im.voice_bridge_client import (
     VoiceBridgeTranscription,
     VoiceBridgeTranscriptionError,
 )
-from qqbot_agent_sdk.dto import MessageAttachment
+from qqbot_agent_sdk.dto import MessageAttachment, MsgElement
 
 
 class FakeDownloader:
@@ -53,6 +53,7 @@ def make_event(
     *,
     content: str = "",
     attachments: list[MessageAttachment] | None = None,
+    msg_elements: list[MsgElement] | None = None,
     message_id: str = "MSG-VOICE-1",
 ) -> InboundEvent:
     return InboundEvent(
@@ -65,6 +66,7 @@ def make_event(
         timestamp="2026-06-29T10:00:00Z",
         message_type=0,
         attachments=attachments or [],
+        msg_elements=msg_elements or [],
     )
 
 
@@ -96,6 +98,29 @@ async def test_resolver_uses_qq_asr_refer_text_first() -> None:
     assert result.event.content == "今天去吃饭吗"
     assert downloader.calls == []
     assert transcriber.calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolver_uses_msg_element_voice_attachments() -> None:
+    resolver = make_resolver()
+    event = make_event(
+        msg_elements=[
+            MsgElement(
+                attachments=[
+                    MessageAttachment(
+                        content_type="voice",
+                        asr_refer_text="我现在正在用语音跟你说话，你能听得到吗",
+                    )
+                ]
+            )
+        ],
+    )
+
+    result = await resolver.resolve("qq", event)
+
+    assert result.action == "route"
+    assert result.event is not None
+    assert result.event.content == "我现在正在用语音跟你说话，你能听得到吗"
 
 
 @pytest.mark.asyncio
