@@ -23,6 +23,7 @@ export default defineConfig({
         "voice-call": resolve(__dirname, "voice-call.html"),
         "memory-inspector": resolve(__dirname, "memory-inspector.html"),
         "live2d-debugger": resolve(__dirname, "live2d-debugger.html"),
+        "spine-spike": resolve(__dirname, "spine-spike.html"),
       },
     },
   },

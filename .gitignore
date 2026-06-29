@@ -97,6 +97,8 @@ chroma_db/
 # 本地下载的模型缓存（如 sentence-transformers / huggingface）
 models/
 .cache/huggingface/
+# Spine runtime spike: user-provided local assets only, never commit game resources.
+frontend/public/spine-spike-local/
 
 # ===== Tauri build output =====
 src-tauri/target/
