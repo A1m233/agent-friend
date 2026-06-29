@@ -8,7 +8,7 @@
 
 - **明日方舟宿舍 / 基建小人主要不是 Live2D，而是 Spine 骨骼动画。**
 - 现有前人项目最值得参考的是 [ArkPets](https://github.com/isHarryh/Ark-Pets) / [Ark-Models](https://github.com/isHarryh/Ark-Models)，不是普通 Live2D 模型库。
-- 官方可直接分发的 Arknights 小人资源没有找到；社区模型通常明确标注素材版权归鹰角，适合个人本地研究，不适合打包进产品或仓库。
+- 官方可直接分发的 Arknights 小人资源包没有找到；但 Ark-Models 持续维护、来源和版权声明清楚，当前项目又暂不商用，因此可以接受把一个最小阿米娅模型作为 **非商用 spike fixture** 放进仓库，便于真实效果验证。
 - 对当前 Live2D 路线不是推翻，而是新增一个未来可能的 **Spine avatar backend**。
 - 正在做的 033 Live2D 调试窗口应继续按 **Live2D 专用调试器** 收口，不要现在改成通用 Avatar / Spine 调试器。
 
@@ -64,7 +64,24 @@
 重要授权点：
 
 - README 明确提示素材版权属于鹰角网络及关联方。
-- 不应商用，也不应直接打包分发到我们的应用或仓库。
+- README 明确限制不得商用、不得损害版权方利益。
+- 当前 agent-friend 暂无商用计划，因此本探索接受把一个最小阿米娅基建小人样例作为真实 spike fixture 提交到仓库，用于验证 Spine 3.8 runtime、动作映射和桌宠交互效果。
+- 这不等价于取得商业授权；若未来进入商业发布、公开素材包分发、或把 Arknights 资产作为正式产品卖点，需要重新评估授权边界。
+
+### 2.2.1 当前 spike fixture 策略
+
+当前 spike 分支已放入一个最小真实样例：
+
+| 路径 | 内容 |
+| --- | --- |
+| `frontend/public/spine-spike-fixtures/ark-amiya/` | 阿米娅基建小人 `.skel` / `.atlas` / `.png` + `NOTICE.md` |
+
+这个目录和 `frontend/public/spine-spike-local/` 的职责不同：
+
+- `spine-spike-fixtures/ark-amiya/`：仓库内置 fixture，开箱用于验证真实效果。
+- `spine-spike-local/`：开发者本地临时放其他模型的目录，继续 gitignore，避免把后续试验素材一股脑提交。
+
+因为 fixture 位于 `frontend/public/`，它会进入 Vite build 的 `dist/`。这对当前非商用 spike 是可接受的，也让默认 `spine-spike.html` 可以直接显示真实阿米娅模型。后续若发布策略发生变化，再按发布范围重新评估是否需要拆分 dev-only fixture。
 
 ### 2.3 ArkPets-Web / ArkPets-Chrome
 
@@ -145,20 +162,27 @@
 - `GazeSource` / `TapReactionSource` / `DragReactionSource` 写 Live2D 参数。
 - 交互调度的类型是 `Live2DSprite`。
 
-如果要正式支持 Spine，比较稳的方向是抽一层 avatar runtime，而不是把 Spine 分支硬塞进 Live2D 代码：
+如果要正式支持 Spine，比较稳的方向是抽一层 avatar runtime，而不是把 Spine 分支硬塞进 Live2D 代码。当前 spike 已在 `frontend/src/pages/spine-spike/petAvatarRuntime.ts` 里先落了一个很薄的合约草图：
 
 ```ts
 interface PetAvatarRuntime {
   kind: "live2d" | "spine";
-  ready: boolean;
-  play(action: "idle" | "thinking" | "speaking" | "error" | "tap"): void;
+  capabilities: {
+    motions: boolean;
+    alphaHitTest: boolean;
+    mouthParams: boolean;
+    gazeParams: boolean;
+    expressionParams: boolean;
+  };
+  mount(): Promise<void>;
   destroy(): void;
-  setMouthOpen?(value: number): void;
-  setGaze?(x: number, y: number): void;
+  setPhase(phase: "idle" | "thinking" | "speaking" | "error" | "sleep"): void;
+  playAction(action: "tap" | "dragStart" | "dragEnd"): void;
+  getBounds(): PixelRegion | null;
 }
 ```
 
-Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atlas / animation state。状态机和 UI 层只面对 `PetAvatarRuntime`。
+Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atlas / animation state。状态机和 UI 层只面对 `PetAvatarRuntime`。capabilities 用来承认两类 runtime 的能力不对齐：Live2D 有 mouth / gaze 参数，Arknights Spine 这条线目前主要有 motion 与 alpha hit-test。
 
 ### 4.3 风险点
 
@@ -168,7 +192,7 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 - 我们当前前端是 `pixi.js` v8。
 - 官方现代 Pixi Spine runtime 未必直接兼容 Spine 3.8 的 `.skel`。
 
-因此第一步不能直接立完整需求，应该先做最小 spike：在 pet 窗或独立 playground 里加载一个本地用户自备的 Arknights Spine 模型，确认能否显示、播放 idle、切动画，并观察 bounds / alpha hit-test 是否还能稳定工作。
+因此第一步不能直接立完整需求，应该先做最小 spike：在 pet 窗或独立 playground 里加载一个最小 Arknights Spine fixture，确认能否显示、播放 idle、切动画，并观察 bounds / alpha hit-test 是否还能稳定工作。额外模型仍走本地用户自备路径。
 
 ## 5. 对 033 Live2D 调试窗口的影响
 
@@ -202,8 +226,8 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 
 建议另开轻量 spike，目标非常窄：
 
-- 不提交 Arknights 素材。
-- 使用用户本地自备模型路径，或临时放在 gitignored 目录。
+- 提交一个最小 Arknights fixture 作为默认真实样例，便于开箱观察效果。
+- 其他模型仍使用用户本地自备路径，或临时放在 gitignored 目录。
 - 尝试加载 `.skel` / `.atlas` / `.png`。
 - 播放 idle / walk / tap 之类的基础 animation。
 - 把 Spine display object 放进现有 `avatar-slot` 或一个等价 playground。
@@ -224,7 +248,7 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 - `SpineAvatarRuntime`
 - 统一 action：idle / thinking / speaking / error / tap / drag。
 - 能力探测：mouth / gaze / parameter feedback 可选。
-- 资源导入策略：内置安全样例 + 用户本地导入，不内置 Arknights 资产。
+- 资源导入策略：内置一个最小 Arknights spike fixture + 用户本地导入其他模型。
 
 ### 6.4 产品化资源路线
 
@@ -232,8 +256,9 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 
 | 路线 | 适合阶段 | 风险 |
 | --- | --- | --- |
-| 用户本地导入 Ark-Models 等社区资源 | 个人研究 / 本地 demo | 授权灰区，不打包不分发 |
-| 支持 Spine backend，但不提供 Arknights 资源 | 开源工具 / 技术能力 | 用户导入行为仍需免责声明 |
+| 仓库内置一个最小 Ark-Models fixture | 非商用 spike / 内部验证 | 可接受但需保留版权声明，不等同商业授权 |
+| 用户本地导入 Ark-Models 等社区资源 | 更多角色 / 皮肤试验 | 不提交额外素材，避免仓库膨胀 |
+| 支持 Spine backend，但仅把 Arknights 资源作为可替换样例 | 开源工具 / 技术能力 | 需要清楚说明版权归属和非商用边界 |
 | 约稿原创 Q 版 Spine / Live2D 角色 | 产品化 | 成本更高，但合规最稳 |
 
 ## 7. 开放问题
@@ -242,8 +267,8 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 - 如果使用旧版 spine-ts，是否会和现有 Pixi v8 renderer 冲突？
 - Spine display object 的 bounds 是否足够稳定，能不能承接当前 ActionBar / bubble anchor？
 - alpha hit-test 读 framebuffer 时，Spine 渲染结果是否能被现有路径采样？
-- Arknights 资源只允许“用户本地导入”是否足够符合项目未来的发布边界？
-- 是否需要为用户导入模型做显式版权提示和 gitignore 目录约定？
+- 当前内置一个阿米娅 fixture 的策略是否足够支撑后续主干开发？
+- 是否需要为额外用户导入模型继续保留显式版权提示和 gitignore 目录约定？
 - 如果最终约稿原创形象，应选择 Spine 还是 Live2D？这取决于目标表现：Q 版动作密集更偏 Spine，半身情绪表达和口型更偏 Live2D。
 
 ## 8. 当前推荐判断
@@ -252,7 +277,7 @@ Live2D adapter 包住 `Live2DSprite`；Spine adapter 负责 Spine skeleton / atl
 
 1. **Live2D 继续作为当前主线。** Hiyori / 033 调试器 / 018 / 024 都不需要因为这次探索返工。
 2. **Arknights 小人单独作为 Spine backend 探索。** 不把它塞进 Live2D 调试窗口。
-3. **资源上走本地导入，不内置。** 官方授权不明确，社区资源版权归鹰角，不适合分发。
+3. **资源上内置一个最小阿米娅 spike fixture，其他素材继续本地导入。** 当前非商用探索可以接受仓库内置真实样例，但必须保留版权归属和非商用边界说明。
 4. **先 spike runtime，再谈产品化。** 兼容性跑通之前，不要提前设计完整导入 UX 或模型市场。
 
 这条线如果跑通，价值会很高：它能把桌宠形象从“Live2D 半身角色”扩到“游戏级 Q 版小人”，但工程边界要保持清楚。
