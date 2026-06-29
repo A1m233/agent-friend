@@ -16,6 +16,7 @@ import {
   TooltipProvider,
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
+import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsRow } from "./components/SettingsRow";
 
@@ -24,7 +25,7 @@ import { SettingsRow } from "./components/SettingsRow";
  *
  * 后续新增设置项按 design.md 扩展点接入。
  */
-type SettingsSection = "general" | "voice";
+type SettingsSection = "general" | "runtime" | "voice";
 
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
@@ -62,6 +63,14 @@ export function SettingsApp() {
                     语音
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={section === "runtime"}
+                    onClick={() => setSection("runtime")}
+                  >
+                    模型与凭据
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroup>
           </SidebarContent>
@@ -94,6 +103,8 @@ export function SettingsApp() {
                     </SettingsRow>
                   </SettingsGroup>
                 </>
+              ) : section === "runtime" ? (
+                <RuntimeConfigPanel />
               ) : (
                 <>
                   <h2 className="text-xl font-semibold">语音</h2>

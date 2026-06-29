@@ -48,6 +48,7 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 export AGENT_FRIEND_CONFIG_MODE="$CONFIG_MODE"
+export AGENT_FRIEND_REPO_ROOT="$ROOT"
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "  [ERROR] 未检测到 uv。先跑 ./scripts/setup/run.sh 初始化环境。" >&2

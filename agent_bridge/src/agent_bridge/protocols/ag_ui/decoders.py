@@ -16,12 +16,21 @@ AG-UI 的 :class:`ag_ui.core.RunAgentInput` 已经是 pydantic 模型——FastA
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ag_ui.core import RunAgentInput, UserMessage
 
 
 class DecodeError(ValueError):
     """AG-UI ``RunAgentInput`` 不符合 bridge 接受的最小约束。"""
+
+
+ALLOWED_DESKTOP_MODELS = frozenset(
+    {
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-pro",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -33,11 +42,37 @@ class DecodedRequest:
         run_id: AG-UI 协议 ``run_id``；本轮 ``RUN_STARTED`` / ``RUN_FINISHED``
             事件回填。
         new_user_input: 最后一条 ``UserMessage.content`` 的文本。
+        requested_model: 桌面设置中心传入的新会话默认模型。只允许本期两个
+            DeepSeek 模型；已有 session 不会被该值覆盖。
     """
 
     thread_id: str
     run_id: str
     new_user_input: str
+    requested_model: str | None = None
+
+
+def resolve_requested_model(payload: RunAgentInput) -> str | None:
+    """Resolve optional desktop-requested model from ``forwarded_props``.
+
+    This keeps the temporary DeepSeek-only policy in one place. Future provider
+    registry work can replace this function without touching route plumbing.
+    """
+
+    forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
+    if not isinstance(forwarded_props, dict):
+        return None
+
+    raw = forwarded_props.get("model")
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, str):
+        raise DecodeError("forwarded_props.model 必须是字符串")
+
+    model = raw.strip()
+    if model not in ALLOWED_DESKTOP_MODELS:
+        raise DecodeError(f"不支持的桌面模型：{model}")
+    return model
 
 
 def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
@@ -63,4 +98,5 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         thread_id=payload.thread_id,
         run_id=payload.run_id,
         new_user_input=content,
+        requested_model=resolve_requested_model(payload),
     )

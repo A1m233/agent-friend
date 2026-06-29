@@ -54,6 +54,7 @@ for ($i = 0; $i -lt $args.Count; $i++) {
     }
 }
 $env:AGENT_FRIEND_CONFIG_MODE = $configMode
+$env:AGENT_FRIEND_REPO_ROOT = $root
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"

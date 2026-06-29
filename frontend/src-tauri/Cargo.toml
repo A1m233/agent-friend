@@ -24,6 +24,7 @@ log = "0.4"
 tauri = { version = "2.11.2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-store = "2"
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 # 025 · 统一文件日志：跨平台 base dir helper + 自定义时间戳
 chrono = "0.4"
 # 028 · bootstrap 同步读 store 文件路径（tauri-plugin-store 默认路径）
@@ -38,5 +39,6 @@ tokio = { version = "1", features = ["sync"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }
+security-framework = "3"
 # 0004 / 017 · pet 窗切 NSPanel 路径（业界 macOS Tauri overlay 标准方案）
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

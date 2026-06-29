@@ -69,7 +69,12 @@ def test_desktop_mode_does_not_read_dotenv(tmp_path: Path) -> None:
     dotenv = tmp_path / ".env"
     dotenv.write_text(f"{DEEPSEEK_API_KEY}=from-dotenv\n", encoding="utf-8")
 
-    source = credential_source_for_mode("desktop", dotenv_path=dotenv, env={})
+    source = credential_source_for_mode(
+        "desktop",
+        dotenv_path=dotenv,
+        keyring_backend=FakeKeyring(),
+        env={},
+    )
 
     assert source.get(DEEPSEEK_API_KEY) is None
 

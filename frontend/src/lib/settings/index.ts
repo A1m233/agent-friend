@@ -4,15 +4,18 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 
 export type ThemeMode = "light" | "dark";
+export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 
 export interface Settings {
   theme: ThemeMode;
   voiceTunnelConsentAccepted: boolean;
+  deepseekModel: DeepseekModel;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   voiceTunnelConsentAccepted: false,
+  deepseekModel: "deepseek/deepseek-v4-pro",
 };
 
 const EVENT_CHANGED = "settings://changed";

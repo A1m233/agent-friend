@@ -18,6 +18,8 @@ pub struct Settings {
     pub theme: ThemeMode,
     #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
+    #[serde(default)]
+    pub deepseek_model: DeepseekModel,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -27,11 +29,26 @@ pub enum ThemeMode {
     Dark,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum DeepseekModel {
+    #[serde(rename = "deepseek/deepseek-v4-flash")]
+    Flash,
+    #[serde(rename = "deepseek/deepseek-v4-pro")]
+    Pro,
+}
+
+impl Default for DeepseekModel {
+    fn default() -> Self {
+        Self::Pro
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Light,
             voice_tunnel_consent_accepted: false,
+            deepseek_model: DeepseekModel::default(),
         }
     }
 }
@@ -229,6 +246,11 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
             s.voice_tunnel_consent_accepted = accepted;
         }
+        "deepseekModel" => {
+            let model: DeepseekModel = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid deepseekModel: {e}"))?;
+            s.deepseek_model = model;
+        }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
 
@@ -371,13 +393,14 @@ pub fn init<R: Runtime>(js_init_script: String) -> TauriPlugin<R> {
 }
 
 #[cfg(test)]
-mod tests {
+mod init_script_tests {
     use super::{build_init_script, Settings, ThemeMode};
 
     #[test]
     fn build_init_script_sets_tdesign_dark_theme_mode() {
         let script = build_init_script(&Settings {
             theme: ThemeMode::Dark,
+            ..Settings::default()
         });
 
         assert!(script.contains("document.documentElement.setAttribute('theme', 'dark');"));
@@ -388,6 +411,7 @@ mod tests {
     fn build_init_script_clears_tdesign_theme_mode_for_light() {
         let script = build_init_script(&Settings {
             theme: ThemeMode::Light,
+            ..Settings::default()
         });
 
         assert!(script.contains("document.documentElement.setAttribute('theme', 'light');"));
