@@ -16,7 +16,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   voiceTunnelConsentAccepted: false,
-  deepseekModel: "deepseek/deepseek-v4-pro",
+  deepseekModel: "deepseek/deepseek-v4-flash",
   deepseekMemoryModel: "deepseek/deepseek-v4-pro",
 };
 

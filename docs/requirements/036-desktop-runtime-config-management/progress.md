@@ -36,3 +36,4 @@ COMPLETED
 | 2026-06-30 | 最终验证通过：`./scripts/check/run.sh` 全绿（ruff、format、mypy、657 个 Python tests、frontend eslint / typecheck / vitest 34 files 187 tests）；`cargo test --manifest-path frontend/src-tauri/Cargo.toml settings` 通过；`cargo test --manifest-path frontend/src-tauri/Cargo.toml runtime_config` 通过；`git diff --check` 通过。 |
 | 2026-06-30 | 视觉验收边界确认：本需求设置页 UI 是基础能力雏形，最终视觉不锁死；迭代中用户已基于实际设置页截图反馈布局问题并完成调整，因此本期不把正式桌面截图作为收尾硬门槛。`desktop-visual doctor` 通过，当前未启动 agent-friend 设置窗，未做最终截图。 |
 | 2026-06-30 | 用户确认需求收尾；本文档总体状态切为 `COMPLETED`。 |
+| 2026-06-30 | 收尾后修正默认模型：主对话模型默认改回 `deepseek/deepseek-v4-flash`，记忆模型继续默认 `deepseek/deepseek-v4-pro`。 |

@@ -212,7 +212,7 @@ pub enum DeepseekModel {
 }
 ```
 
-默认值采用 `deepseek/deepseek-v4-pro`，与现有记忆模型默认更接近，风险更小。前端对主对话模型和记忆模型都只展示：
+默认值拆开处理：主对话模型采用 `deepseek/deepseek-v4-flash`，记忆模型采用 `deepseek/deepseek-v4-pro`。前端对主对话模型和记忆模型都只展示：
 
 - `deepseek/deepseek-v4-flash`
 - `deepseek/deepseek-v4-pro`

@@ -5,7 +5,7 @@ export const DEEPSEEK_MODELS = [
   "deepseek/deepseek-v4-pro",
 ] as const satisfies readonly DeepseekModel[];
 
-const DEFAULT_DEEPSEEK_MODEL: DeepseekModel = "deepseek/deepseek-v4-pro";
+const DEFAULT_DEEPSEEK_MODEL: DeepseekModel = "deepseek/deepseek-v4-flash";
 
 export function isDeepseekModel(value: unknown): value is DeepseekModel {
   return typeof value === "string" && DEEPSEEK_MODELS.includes(value as DeepseekModel);
