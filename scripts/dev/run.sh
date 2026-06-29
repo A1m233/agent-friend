@@ -118,7 +118,7 @@ stop_voice_bridge_on_port() {
         fi
     done
 
-    echo "  [WARN] 端口 $port 上已有 voice_bridge，$reason；自动停止旧进程后重启…"
+    echo "  [WARN] 端口 $port 上已有 voice_bridge，${reason}；自动停止旧进程后重启…"
     for pid in $pids; do
         kill -TERM "$pid" 2>/dev/null || true
     done
@@ -259,7 +259,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "===> 启动 bridge（127.0.0.1:18800）…"
-echo "===> 配置模式：$AGENT_FRIEND_CONFIG_MODE（默认 desktop 不读取仓库 .env）"
+echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 # 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式

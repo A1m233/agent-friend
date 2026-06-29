@@ -234,7 +234,7 @@ function Stop-VoiceBridgePortProcess($port, $reason) {
         }
     }
 
-    Write-Host "  [WARN] 端口 $port 上已有 voice_bridge，$reason；自动停止旧进程后重启…"
+    Write-Host "  [WARN] 端口 $port 上已有 voice_bridge，${reason}；自动停止旧进程后重启…"
     foreach ($ownerPid in $owners) {
         taskkill /PID $ownerPid /T /F 2>$null | Out-Null
     }
@@ -270,7 +270,7 @@ if ($mode -eq "tauri" -and $cdpEnabled) {
     }
     $cleanWebViewArgs = ($currentWebViewArgs -replace "(^|\s)--remote-debugging-port=\S+", "").Trim()
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "$cleanWebViewArgs $flag".Trim()
-    Write-Host "===> WebView2 CDP: http://127.0.0.1:$cdpPort（desktop-visual 可直接抓真实 WebView DOM / 截图）"
+    Write-Host "===> WebView2 CDP: http://127.0.0.1:${cdpPort}（desktop-visual 可直接抓真实 WebView DOM / 截图）"
 }
 elseif ($mode -eq "tauri") {
     Write-Host "===> WebView2 CDP 已关闭（--no-cdp）"
@@ -282,7 +282,7 @@ $cloudflared = $null
 
 try {
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
-Write-Host "===> 配置模式：$env:AGENT_FRIEND_CONFIG_MODE（默认 desktop 不读取仓库 .env）"
+Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 $env:AGENT_BRIDGE_DEV_MODE = "true"
