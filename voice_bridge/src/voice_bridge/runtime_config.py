@@ -8,6 +8,7 @@ from runtime_config import (
     VOLC_RTC_APP_KEY,
     VOLC_SECRET_KEY,
     VOLC_SPEECH_ACCESS_TOKEN,
+    VOLC_SPEECH_API_KEY,
     VOLC_SPEECH_APP_ID,
     CredentialSource,
     VoiceCredentialConfig,
@@ -28,6 +29,7 @@ def resolve_voice_credentials(source: CredentialSource) -> VoiceCredentialConfig
             VOLC_RTC_APP_KEY: optional_secret(source, VOLC_RTC_APP_KEY),
             VOLC_SPEECH_APP_ID: optional_secret(source, VOLC_SPEECH_APP_ID),
             VOLC_SPEECH_ACCESS_TOKEN: optional_secret(source, VOLC_SPEECH_ACCESS_TOKEN),
+            VOLC_SPEECH_API_KEY: optional_secret(source, VOLC_SPEECH_API_KEY),
         }
     )
 
@@ -51,4 +53,5 @@ def credentials_from_settings(settings: VoiceBridgeSettings) -> VoiceCredentialC
         volc_rtc_app_key=settings.volc_rtc_app_key,
         volc_speech_app_id=settings.volc_speech_app_id,
         volc_speech_access_token=settings.volc_speech_access_token,
+        volc_speech_api_key=settings.volc_speech_api_key,
     )

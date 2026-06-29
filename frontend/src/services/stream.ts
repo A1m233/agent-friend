@@ -10,6 +10,7 @@
 
 import { type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
+import { resolveDefaultConversationModel } from "@/lib/model-config";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -48,7 +49,9 @@ function toRunAgentInput(input: RunStreamInput): RunAgentInput {
     tools: [],
     context: [],
     state: {},
-    forwardedProps: {},
+    forwardedProps: {
+      model: resolveDefaultConversationModel(),
+    },
   };
 }
 

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from llm_providers import ProviderConfig
 from runtime_config import (
     DEEPSEEK_API_KEY,
+    DEEPSEEK_MEMORY_MODEL,
+    DEEPSEEK_MODEL,
     TAVILY_API_KEY,
     CredentialSource,
     ToolCredentials,
@@ -52,10 +54,10 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
     """Resolve bridge credentials from the configured source policy."""
 
     return BridgeRuntimeConfig(
-        llm_config=_deepseek_provider_config(source, model_name="DEEPSEEK_MODEL"),
+        llm_config=_deepseek_provider_config(source, model_name=DEEPSEEK_MODEL),
         memory_llm_config=_deepseek_provider_config(
             source,
-            model_name="DEEPSEEK_MEMORY_MODEL",
+            model_name=DEEPSEEK_MEMORY_MODEL,
         ),
         tool_credentials=ToolCredentials(tavily_api_key=optional_secret(source, TAVILY_API_KEY)),
     )

@@ -29,6 +29,9 @@ interface VoiceInputState extends VoiceInputSnapshot {
 }
 
 const VOICE_INPUT_PREWARM_MIN_INTERVAL_MS = 5_000;
+const VOICE_INPUT_AVAILABILITY_TIMEOUT_MS = 2_000;
+const VOICE_INPUT_START_TIMEOUT_MS = 8_000;
+const VOICE_INPUT_STOP_FALLBACK_MS = 2_500;
 
 let recorder: VoiceInputRecorder | null = null;
 let connection: VoiceInputConnection | null = null;
@@ -42,6 +45,8 @@ let firstLocalVolumeLogged = false;
 let firstTranscriptLogged = false;
 let prewarmInFlight: Promise<void> | null = null;
 let lastPrewarmRequestAt = 0;
+let stopFallbackTimeout: ReturnType<typeof setTimeout> | null = null;
+let availabilityAbortController: AbortController | null = null;
 
 function makeTraceId(): string {
   const randomUuid = globalThis.crypto?.randomUUID?.();
@@ -70,7 +75,56 @@ function initialSnapshot(): VoiceInputSnapshot {
   };
 }
 
+function idleAfterStopSnapshot(): Partial<VoiceInputSnapshot> {
+  return {
+    phase: "idle",
+    traceId: null,
+    volumeLevel: 0,
+    error: null,
+    errorCode: null,
+    startedAt: null,
+    lastEventAt: nowMs(),
+  };
+}
+
+function idleAfterFailureSnapshot(message: string, code: string): Partial<VoiceInputSnapshot> {
+  return {
+    phase: "idle",
+    traceId: null,
+    volumeLevel: 0,
+    latestTranscript: null,
+    error: message,
+    errorCode: code,
+    startedAt: null,
+    lastEventAt: nowMs(),
+  };
+}
+
+function clearStopFallbackTimeout(): void {
+  if (!stopFallbackTimeout) return;
+  globalThis.clearTimeout(stopFallbackTimeout);
+  stopFallbackTimeout = null;
+}
+
+function abortAvailabilityCheck(): void {
+  availabilityAbortController?.abort();
+  availabilityAbortController = null;
+}
+
+class VoiceInputStartTimeoutError extends Error {
+  constructor() {
+    super("语音输入启动超时，请稍后再试");
+    this.name = "VoiceInputStartTimeoutError";
+  }
+}
+
+function isVoiceInputStartTimeoutError(error: unknown): error is VoiceInputStartTimeoutError {
+  return error instanceof VoiceInputStartTimeoutError;
+}
+
 async function cleanupLocalResources(): Promise<void> {
+  clearStopFallbackTimeout();
+  abortAvailabilityCheck();
   const currentRecorder = recorder;
   recorder = null;
   queuedAudio = [];
@@ -81,6 +135,7 @@ async function cleanupLocalResources(): Promise<void> {
 }
 
 function toErrorMessage(error: unknown): string {
+  if (isVoiceInputStartTimeoutError(error)) return error.message;
   if (error instanceof DOMException && error.name === "NotAllowedError") {
     return "没有拿到麦克风权限";
   }
@@ -88,7 +143,54 @@ function toErrorMessage(error: unknown): string {
   return "语音输入暂时不可用";
 }
 
+function prewarmFailure(
+  status: Awaited<ReturnType<typeof prewarmVoiceInput>>,
+): { message: string; code: string } | null {
+  if (status.status === "unavailable") {
+    return {
+      message: status.message ?? "语音输入识别服务还没有接上，请稍后再试",
+      code: "asr_provider_unavailable",
+    };
+  }
+  if (status.status === "disabled") {
+    return {
+      message: status.message ?? "语音输入还没有启用",
+      code: "voice_input_disabled",
+    };
+  }
+  if (status.status === "error") {
+    return {
+      message: status.message ?? "语音输入服务暂时不可用，请稍后再试",
+      code: "voice_input_prewarm_error",
+    };
+  }
+  return null;
+}
+
 export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
+  const stopRecorderInBackground = (target: VoiceInputRecorder | null) => {
+    void target?.stop().catch((error) => {
+      console.warn("[voice-input] recorder stop failed", error);
+    });
+  };
+
+  const scheduleStopFallback = (token: number) => {
+    clearStopFallbackTimeout();
+    stopFallbackTimeout = globalThis.setTimeout(() => {
+      stopFallbackTimeout = null;
+      if (token !== activeToken || get().phase !== "stopping") return;
+      const state = get();
+      logVoiceInputLatency("frontend_stop_fallback", {
+        traceId: state.traceId,
+        elapsedMs: Math.round(nowVoiceInputLatencyMs() - activeStartMs),
+      });
+      activeToken = token + 1;
+      void cleanupLocalResources().then(() => {
+        set(idleAfterStopSnapshot());
+      });
+    }, VOICE_INPUT_STOP_FALLBACK_MS);
+  };
+
   const fail = async (token: number, message: string, code: string) => {
     if (token !== activeToken) return;
     const state = get();
@@ -98,13 +200,107 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       code,
       elapsedMs: Math.round(nowVoiceInputLatencyMs() - activeStartMs),
     });
+    activeToken = token + 1;
     await cleanupLocalResources();
-    set({
-      phase: "error",
-      volumeLevel: 0,
-      error: message,
-      errorCode: code,
-      lastEventAt: nowMs(),
+    if (activeToken !== token + 1) return;
+    set(idleAfterFailureSnapshot(message, code));
+  };
+
+  const ensureVoiceInputAvailable = async (token: number, traceId: string) => {
+    const controller = new AbortController();
+    availabilityAbortController = controller;
+    const startedMs = nowVoiceInputLatencyMs();
+    const timeoutId = globalThis.setTimeout(() => {
+      controller.abort();
+    }, VOICE_INPUT_AVAILABILITY_TIMEOUT_MS);
+
+    logVoiceInputLatency("frontend_availability_check_start", { traceId });
+    try {
+      const result = await prewarmVoiceInput({
+        traceId,
+        reason: "start",
+        signal: controller.signal,
+      });
+      logVoiceInputLatency("frontend_availability_check_result", {
+        traceId,
+        status: result.status,
+        ttlMs: result.ttlMs,
+        warmAgeMs: result.warmAgeMs,
+        elapsedMs: Math.round(nowVoiceInputLatencyMs() - startedMs),
+      });
+      if (token !== activeToken) return false;
+      const failure = prewarmFailure(result);
+      if (failure) {
+        await fail(token, failure.message, failure.code);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (token !== activeToken) return false;
+      const aborted =
+        error instanceof DOMException && error.name === "AbortError";
+      logVoiceInputLatency("frontend_availability_check_error", {
+        traceId,
+        code: aborted
+          ? "voice_input_availability_timeout"
+          : "voice_input_availability_failed",
+        elapsedMs: Math.round(nowVoiceInputLatencyMs() - startedMs),
+      });
+      await fail(
+        token,
+        aborted
+          ? "语音输入服务响应超时，请稍后再试"
+          : "语音输入服务暂时不可用，请稍后再试",
+        aborted
+          ? "voice_input_availability_timeout"
+          : "voice_input_availability_failed",
+      );
+      return false;
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      if (availabilityAbortController === controller) {
+        availabilityAbortController = null;
+      }
+    }
+  };
+
+  const startRecorderWithTimeout = (
+    token: number,
+    traceId: string,
+    options: Parameters<typeof startVoiceInputRecorder>[0],
+  ): Promise<VoiceInputRecorder> => {
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const deadlineMs = nowVoiceInputLatencyMs() + VOICE_INPUT_START_TIMEOUT_MS;
+    const markTimedOut = () => {
+      if (timedOut) return;
+      timedOut = true;
+      logVoiceInputLatency("frontend_recorder_start_timeout", {
+        traceId,
+        elapsedMs: Math.round(nowVoiceInputLatencyMs() - activeStartMs),
+      });
+    };
+    const recorderPromise = Promise.resolve()
+      .then(() => startVoiceInputRecorder(options))
+      .then((nextRecorder) => {
+        if (!timedOut && nowVoiceInputLatencyMs() >= deadlineMs) {
+          markTimedOut();
+        }
+        if (timedOut || token !== activeToken) {
+          stopRecorderInBackground(nextRecorder);
+          if (timedOut) throw new VoiceInputStartTimeoutError();
+          throw new Error("voice input recorder start was cancelled");
+        }
+        return nextRecorder;
+      });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = globalThis.setTimeout(() => {
+        markTimedOut();
+        reject(new VoiceInputStartTimeoutError());
+      }, VOICE_INPUT_START_TIMEOUT_MS);
+    });
+    return Promise.race([recorderPromise, timeoutPromise]).finally(() => {
+      if (timeoutId) globalThis.clearTimeout(timeoutId);
     });
   };
 
@@ -153,15 +349,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       });
       await cleanupLocalResources();
       if (token !== activeToken) return;
-      set({
-        phase: "idle",
-        traceId: null,
-        volumeLevel: 0,
-        error: null,
-        errorCode: null,
-        startedAt: null,
-        lastEventAt: nowMs(),
-      });
+      set(idleAfterStopSnapshot());
       return;
     }
     if (event.type === "error") {
@@ -222,7 +410,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       queuedAudioBytes = 0;
       logVoiceInputLatency("frontend_request_start", { traceId });
       set({
-        phase: "requesting_microphone",
+        phase: "connecting",
         traceId,
         volumeLevel: 0,
         latestTranscript: null,
@@ -233,8 +421,11 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       });
 
       try {
+        if (!(await ensureVoiceInputAvailable(token, traceId))) return;
+        if (token !== activeToken) return;
+        set({ phase: "requesting_microphone", lastEventAt: nowMs() });
         logVoiceInputLatency("frontend_recorder_start", { traceId });
-        const nextRecorder = await startVoiceInputRecorder({
+        const nextRecorder = await startRecorderWithTimeout(token, traceId, {
           onChunk(chunk) {
             if (token !== activeToken) return;
             if (!firstAudioChunkLogged) {
@@ -265,10 +456,6 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
             if (token === activeToken) set({ volumeLevel });
           },
         });
-        if (token !== activeToken) {
-          await nextRecorder.stop();
-          return;
-        }
         logVoiceInputLatency("frontend_recorder_ready", {
           traceId,
           elapsedMs: Math.round(nowVoiceInputLatencyMs() - activeStartMs),
@@ -296,15 +483,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
             if (phase === "stopping") {
               void cleanupLocalResources().then(() => {
                 if (token === activeToken) {
-                  set({
-                    phase: "idle",
-                    traceId: null,
-                    volumeLevel: 0,
-                    error: null,
-                    errorCode: null,
-                    startedAt: null,
-                    lastEventAt: nowMs(),
-                  });
+                  set(idleAfterStopSnapshot());
                 }
               });
               return;
@@ -342,7 +521,14 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
         queuedAudio = [];
         queuedAudioBytes = 0;
       } catch (error) {
-        await fail(token, toErrorMessage(error), "voice_input_start_failed");
+        if (token !== activeToken) return;
+        await fail(
+          token,
+          toErrorMessage(error),
+          isVoiceInputStartTimeoutError(error)
+            ? "voice_input_start_timeout"
+            : "voice_input_start_failed",
+        );
       }
     },
 
@@ -359,13 +545,14 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       set({ phase: "stopping", volumeLevel: 0, lastEventAt: nowMs() });
       if (!connection) {
         activeToken = token + 1;
-        await cleanupLocalResources();
-        set({ phase: "idle", traceId: null, startedAt: null, lastEventAt: nowMs() });
+        void cleanupLocalResources();
+        set(idleAfterStopSnapshot());
         return;
       }
-      await recorder?.stop().catch(() => {});
-      recorder = null;
+      scheduleStopFallback(token);
       connection.stop();
+      stopRecorderInBackground(recorder);
+      recorder = null;
     },
 
     async cancel() {
@@ -384,8 +571,13 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
     },
 
     resetError() {
-      if (get().phase !== "error") return;
-      set({ ...initialSnapshot() });
+      const state = get();
+      if (state.phase !== "error" && !state.error && !state.errorCode) return;
+      if (state.phase === "error") {
+        set({ ...initialSnapshot() });
+        return;
+      }
+      set({ error: null, errorCode: null, lastEventAt: nowMs() });
     },
   };
 });

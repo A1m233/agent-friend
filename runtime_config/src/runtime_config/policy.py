@@ -13,6 +13,7 @@ from .sources import (
     EnvSource,
     KeyringSource,
     LegacyDotenvSource,
+    SettingsFileSource,
 )
 
 CONFIG_MODE_ENV = "AGENT_FRIEND_CONFIG_MODE"
@@ -45,11 +46,13 @@ def credential_source_for_mode(
     mode: ConfigMode,
     *,
     dotenv_path: str | Path = ".env",
+    settings_path: str | Path | None = None,
     keyring_backend: Any | None = None,
     env: Mapping[str, str] | None = None,
 ) -> CompositeCredentialSource:
     sources: list[CredentialSource] = [EnvSource(env)]
     if mode in ("desktop", "legacy-dotenv"):
+        sources.append(SettingsFileSource(settings_path))
         sources.append(KeyringSource(backend=keyring_backend))
     if mode == "legacy-dotenv":
         sources.append(LegacyDotenvSource(dotenv_path))

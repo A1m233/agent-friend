@@ -46,7 +46,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             thread_id=decoded.thread_id,
             new_user_input=decoded.new_user_input,
             default_persona=runtime.default_persona,
-            default_model=runtime.default_model,
+            default_model=decoded.requested_model or runtime.default_model,
         )
 
         accept = request.headers.get("accept") or ""

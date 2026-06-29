@@ -9,6 +9,7 @@ use tauri::{
 mod bubble_window;
 mod paths;
 mod push_subscriber;
+mod runtime_config;
 mod settings;
 mod ui_state;
 
@@ -479,6 +480,9 @@ pub fn run() {
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
+        runtime_config::get_runtime_config_status,
+        runtime_config::set_runtime_secret,
+        runtime_config::delete_runtime_secret,
         ui_state::get_chat_ui_persistence,
         ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
@@ -496,6 +500,9 @@ pub fn run() {
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
+        runtime_config::get_runtime_config_status,
+        runtime_config::set_runtime_secret,
+        runtime_config::delete_runtime_secret,
         ui_state::get_chat_ui_persistence,
         ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
