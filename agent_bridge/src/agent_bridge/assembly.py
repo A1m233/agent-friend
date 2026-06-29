@@ -335,6 +335,9 @@ def build_runtime(
         )
         from .protocols.im import IMRuntime as _IMRuntime
         from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
+        from .protocols.im.dedupe import RecentMessageDeduper
+        from .protocols.im.voice import QQVoiceMessageResolver, SafeAudioDownloader
+        from .protocols.im.voice_bridge_client import VoiceBridgeTranscriptionClient
         from .session_bridge import SessionBridge as _SessionBridge
 
         credentials = CredentialStore(base_dir=settings.im_credentials_dir)
@@ -369,10 +372,21 @@ def build_runtime(
             default_persona=default_persona,
             default_model=default_model,
         )
+        im_deduper = RecentMessageDeduper(
+            ttl_seconds=settings.im_voice_dedupe_ttl_seconds,
+            max_items=settings.im_voice_dedupe_max_items,
+        )
+        im_inbound_resolver = QQVoiceMessageResolver(
+            downloader=SafeAudioDownloader(),
+            transcriber=VoiceBridgeTranscriptionClient(settings.voice_bridge_base_url),
+            max_audio_bytes=settings.im_voice_max_audio_bytes,
+        )
         im_runtime = _IMRuntime(
             router=im_router,
             credentials=credentials,
             resume_base_dir=settings.im_resume_dir,
+            inbound_resolver=im_inbound_resolver,
+            deduper=im_deduper,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
         # final BridgeRuntime = pre_runtime + IM 字段

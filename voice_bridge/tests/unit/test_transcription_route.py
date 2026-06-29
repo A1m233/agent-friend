@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import wave
 from collections.abc import AsyncIterator
 
 import pytest
@@ -53,6 +55,12 @@ class FakeAsrSession:
             yield event
 
 
+class PartialOnlyAsrSession(FakeAsrSession):
+    async def finish(self) -> None:
+        self.finished = True
+        await self._events.put(None)
+
+
 class FakeAsrProvider:
     def __init__(self) -> None:
         self.session = FakeAsrSession()
@@ -66,6 +74,13 @@ class FakeAsrProvider:
     async def prewarm(self, options: AsrPrewarmOptions) -> AsrPrewarmResult:
         self.prewarm_options = options
         return AsrPrewarmResult(status="started", trace_id=options.trace_id, ttl_ms=30_000)
+
+
+class PartialOnlyAsrProvider(FakeAsrProvider):
+    def __init__(self) -> None:
+        self.session = PartialOnlyAsrSession()
+        self.options: AsrStartOptions | None = None
+        self.prewarm_options: AsrPrewarmOptions | None = None
 
 
 class SlowAsrProvider(FakeAsrProvider):
@@ -105,6 +120,16 @@ def build_client(settings: VoiceBridgeSettings, asr_provider: object) -> TestCli
         asr_provider=asr_provider,  # type: ignore[arg-type]
     )
     return TestClient(create_app_with_runtime(runtime))
+
+
+def make_wav_pcm16(samples: bytes, *, sample_rate: int = 16000, channels: int = 1) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(channels)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(samples)
+    return out.getvalue()
 
 
 def test_transcription_stream_sends_partial_final_and_stopped(
@@ -176,6 +201,89 @@ def test_transcription_health_endpoint(settings: VoiceBridgeSettings) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "stream": True, "prewarm": True}
+
+
+def test_transcription_audio_accepts_wav_pcm16(settings: VoiceBridgeSettings) -> None:
+    provider = FakeAsrProvider()
+    client = build_client(settings, provider)
+
+    response = client.post(
+        "/voice/transcriptions/audio",
+        params={"trace_id": "audio-route", "format": "wav"},
+        content=make_wav_pcm16(b"\x01\x00\x02\x00"),
+        headers={"content-type": "audio/wav"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["traceId"] == "audio-route"
+    assert body["text"] == "你好世界"
+    assert body["source"] == "voice_bridge"
+    assert isinstance(body["elapsedMs"], int)
+    assert provider.options == AsrStartOptions(
+        trace_id="audio-route",
+        audio_format="pcm16",
+        sample_rate=16000,
+        channels=1,
+        locale=None,
+    )
+    assert provider.session.audio_chunks == [b"\x01\x00\x02\x00"]
+
+
+def test_transcription_audio_accepts_partial_fallback(settings: VoiceBridgeSettings) -> None:
+    provider = PartialOnlyAsrProvider()
+    client = build_client(settings, provider)
+
+    response = client.post(
+        "/voice/transcriptions/audio",
+        params={
+            "trace_id": "audio-partial",
+            "format": "pcm16",
+            "sample_rate": 16000,
+            "channels": 1,
+        },
+        content=b"\x01\x00",
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["text"] == "你好"
+
+
+def test_transcription_audio_requires_pcm16_shape(settings: VoiceBridgeSettings) -> None:
+    client = build_client(settings, FakeAsrProvider())
+
+    response = client.post(
+        "/voice/transcriptions/audio",
+        params={"trace_id": "bad-pcm", "format": "pcm16"},
+        content=b"\x01\x00",
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "traceId": "bad-pcm",
+        "code": "invalid_audio",
+        "message": "音频格式暂时不支持",
+    }
+
+
+def test_transcription_audio_maps_disabled_provider(settings: VoiceBridgeSettings) -> None:
+    client = build_client(settings, DisabledAsrProvider())
+
+    response = client.post(
+        "/voice/transcriptions/audio",
+        params={"trace_id": "disabled", "format": "pcm16", "sample_rate": 16000, "channels": 1},
+        content=b"\x01\x00",
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "traceId": "disabled",
+        "code": "asr_unavailable",
+        "message": "语音输入识别服务还没有接上，请稍后再试",
+    }
 
 
 def test_transcription_stream_queues_audio_before_provider_ready(
