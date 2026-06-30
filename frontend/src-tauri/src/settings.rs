@@ -22,6 +22,8 @@ pub struct Settings {
     pub deepseek_model: DeepseekModel,
     #[serde(default = "default_deepseek_memory_model")]
     pub deepseek_memory_model: DeepseekModel,
+    #[serde(default = "default_avatar_model_id")]
+    pub avatar_model_id: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -53,6 +55,10 @@ fn default_deepseek_memory_model() -> DeepseekModel {
     DeepseekModel::Pro
 }
 
+fn default_avatar_model_id() -> String {
+    "builtin:live2d:hiyori".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -60,6 +66,7 @@ impl Default for Settings {
             voice_tunnel_consent_accepted: false,
             deepseek_model: default_deepseek_model(),
             deepseek_memory_model: default_deepseek_memory_model(),
+            avatar_model_id: default_avatar_model_id(),
         }
     }
 }
@@ -395,6 +402,11 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid deepseekMemoryModel: {e}"))?;
             s.deepseek_memory_model = model;
         }
+        "avatarModelId" => {
+            let model_id: String = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid avatarModelId: {e}"))?;
+            s.avatar_model_id = model_id;
+        }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
 
@@ -472,6 +484,7 @@ mod tests {
         assert_eq!(loaded.path, Some(legacy));
         assert_eq!(loaded.settings.theme, ThemeMode::Dark);
         assert!(loaded.settings.voice_tunnel_consent_accepted);
+        assert_eq!(loaded.settings.avatar_model_id, default_avatar_model_id());
         let migrated = read_settings_file(&canonical).expect("read migrated canonical");
         assert_eq!(migrated, loaded.settings);
 
@@ -532,6 +545,13 @@ mod tests {
 
         assert_eq!(settings.deepseek_model, DeepseekModel::Flash);
         assert_eq!(settings.deepseek_memory_model, DeepseekModel::Pro);
+    }
+
+    #[test]
+    fn default_avatar_model_id_uses_builtin_hiyori() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.avatar_model_id, "builtin:live2d:hiyori");
     }
 
     #[test]

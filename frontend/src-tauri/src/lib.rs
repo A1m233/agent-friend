@@ -579,6 +579,11 @@ pub fn run() {
                 "settings: bootstrap state loaded; theme={}",
                 bootstrap_theme
             );
+            log::info!(
+                "avatar models: assets_dir={:?} catalog_path={:?}",
+                paths::avatar_model_assets_dir(),
+                paths::avatar_model_catalog_path()
+            );
 
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());

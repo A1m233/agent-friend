@@ -2,15 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
+import { DEFAULT_AVATAR_MODEL_ID } from "@/avatar-models";
 
 export type ThemeMode = "light" | "dark";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
+export type AvatarModelId = string;
 
 export interface Settings {
   theme: ThemeMode;
   voiceTunnelConsentAccepted: boolean;
   deepseekModel: DeepseekModel;
   deepseekMemoryModel: DeepseekModel;
+  avatarModelId: AvatarModelId;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -18,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceTunnelConsentAccepted: false,
   deepseekModel: "deepseek/deepseek-v4-flash",
   deepseekMemoryModel: "deepseek/deepseek-v4-pro",
+  avatarModelId: DEFAULT_AVATAR_MODEL_ID,
 };
 
 const EVENT_CHANGED = "settings://changed";
