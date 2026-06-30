@@ -1,20 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Priority } from "easy-live2d";
 import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
+import { DevAvatarModelSelector } from "./DevAvatarModelSelector";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
-import { usePixiAvatarSlot } from "./usePixiAvatarSlot";
 import { usePetPassthrough } from "./usePetPassthrough";
-import { usePetInteractions, type PetInteractionCallbacks } from "./usePetInteractions";
-import { useLive2DDebugBridge } from "./useLive2DDebugBridge";
-import { usePetLive2D } from "@/pet/usePetLive2D";
-import { PET_LIVE2D_CONFIG } from "@/pet/live2dConfig";
-import { TextCadenceMouthDriver } from "@/pet/MouthDriver";
+import { Live2DAvatarSurface } from "@/pet/avatarRuntime/live2d/Live2DAvatarSurface";
+import { Spine38AvatarSurface } from "@/pet/avatarRuntime/spine38/Spine38AvatarSurface";
+import type { PetAvatarRuntime } from "@/pet/avatarRuntime/types";
+import { useDevAvatarModelSelection } from "@/pet/avatarRuntime/useDevAvatarModelSelection";
 import {
   startPetStateSubscriber,
   usePetStateStore,
@@ -53,7 +51,6 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
  * 详见 [docs/requirements/018-pet-live2d-state-and-lipsync/](../../../../docs/requirements/018-pet-live2d-state-and-lipsync/)。
  */
 export function PetApp() {
-  const stageRef = useRef<HTMLDivElement | null>(null);
   const [spriteScreen, setSpriteScreen] = useState<{
     x: number;
     y: number;
@@ -73,73 +70,33 @@ export function PetApp() {
   const [imDialogOpen, setImDialogOpen] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
+  const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
+  const {
+    selectedModelId,
+    selectedEntry,
+    selectableEntries,
+    setSelectedModelId,
+  } = useDevAvatarModelSelection();
 
-  // 17a · PIXI lifecycle + avatar slot Container + drag + sprite world position 上报
-  // anchor / hitArea / spriteScreen 自动从 alpha-scan 推（一次锁定 visible bounds，不抖）；
-  // invalidateAnchor 由 usePetLive2D 在 Live2DSprite ready 后调用，让 anchor 重新扫到真 Hiyori bounds
-  // 024 · interactionsRef 延迟绑定：usePixiAvatarSlot 比 usePetLive2D/usePetInteractions 早调用，
-  // 但 callbacks 又依赖 spriteRef/driver。用 ref 在 hooks 顺序合法的前提下做延迟绑定。
-  const interactionsRef = useRef<PetInteractionCallbacks | null>(null);
-
-  const { slotRef, app, invalidateAnchor, alphaScanGivenUpRef } = usePixiAvatarSlot(
-    stageRef,
-    setSpriteScreen,
-    setIsDragging,
-    { interactionsRef },
-  );
-
-  // 18 · 加载 Hiyori Live2DSprite 到 avatar-slot 内（slot 外层 plumbing 不动）
-  const { spriteRef, spriteReady } = usePetLive2D(slotRef, app, invalidateAnchor);
-
-  // 18 · lip-sync MouthDriver 与状态机联动
-  const driver = useMemo(() => new TextCadenceMouthDriver(), []);
   useEffect(() => {
-    let prevPhase: PetPhase = usePetStateStore.getState().phase;
+    setRuntime(null);
+  }, [selectedModelId]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    runtime.setPhase(usePetStateStore.getState().phase);
     const unsub = usePetStateStore.subscribe((state) => {
-      const nextPhase = state.phase;
-      if (nextPhase === prevPhase) return;
-      const sprite = spriteRef.current;
-      if (prevPhase !== "speaking" && nextPhase === "speaking" && sprite) {
-        driver.attach(sprite);
-      } else if (prevPhase === "speaking" && nextPhase !== "speaking") {
-        driver.detach();
-      }
-      prevPhase = nextPhase;
+      runtime.setPhase(state.phase);
     });
-    return () => {
-      unsub();
-      driver.detach();
-    };
-  }, [driver, spriteRef]);
-
-  // 024 · 鼠标输入反馈（gaze / tap / drag）集中调度
-  const { onSlotClick, onSlotDragMove, debugControls } = usePetInteractions(
-    spriteRef,
-    spriteReady,
-    spriteScreen,
-    isDragging,
-    driver,
-  );
-
-  useLive2DDebugBridge({
-    spriteRef,
-    spriteReady,
-    debugControls,
-  });
-
-  // 把 callbacks 回填给 slot handler
-  useEffect(() => {
-    interactionsRef.current = { onSlotClick, onSlotDragMove };
-  }, [onSlotClick, onSlotDragMove]);
+    return unsub;
+  }, [runtime]);
 
   // 17a · cursor passthrough（DOM data-hit 优先 + 18 alpha hit-test 主路径 + spriteScreen 矩形兜底 + isDragging 互锁）
   // + AC-6 cursorOnSprite 驱动 + 18 dev-only disabled 切换
-  // + 18b alphaScanGivenUpRef：Win mixed DPR 下 readPixels 失效时 alpha hit-test 跳过（issue 012）
   usePetPassthrough({
     isDragging,
     spriteScreen,
-    app,
-    alphaScanGivenUpRef,
+    alphaHitTest: runtime?.alphaHitTest ?? null,
     setCursorOnSprite,
     disabled: passthroughDisabled,
   });
@@ -226,41 +183,6 @@ export function PetApp() {
     };
   }, []);
 
-  // 18 · speaking 态下 text_delta 副流转发给 driver（独立 listen 副流，不污染 petState ingest）
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    let unlisten: (() => void) | null = null;
-    void listen<PushEnvelope>("agent://push", (e) => {
-      if (usePetStateStore.getState().phase !== "speaking") return;
-      for (const ev of e.payload.events) {
-        if (ev.type === "text_delta" && typeof ev.text === "string") {
-          driver.onTextDelta?.(ev.text);
-        }
-      }
-    }).then((u) => {
-      if (cancelled) safeUnlisten(u);
-      else unlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      safeUnlisten(unlisten);
-    };
-  }, [driver]);
-
-  // 18 · 状态机 → Live2DSprite motion 派发（thinking / speaking / error 切动作）
-  useEffect(() => {
-    return usePetStateStore.subscribe((state) => {
-      const sprite = spriteRef.current;
-      if (!sprite) return;
-      const group = PET_LIVE2D_CONFIG.motionGroups[state.phase];
-      if (!group) return; // null → 不切动作，让默认 idle 继续跑
-      sprite
-        .startMotion({ group, no: 0, priority: Priority.Normal })
-        .catch((err) => console.warn("[PetApp] motion failed:", err));
-    });
-  }, [spriteRef]);
-
   // AC-6 sticky 防抖（17a 原样保留）
   const [stickyVisible, setStickyVisible] = useState(false);
   useEffect(() => {
@@ -331,13 +253,31 @@ export function PetApp() {
 
   return (
     <>
-      <div
-        ref={stageRef}
-        className="fixed inset-0 overflow-hidden bg-transparent"
-      />
+      {selectedEntry.backend === "live2d" ? (
+        <Live2DAvatarSurface
+          entry={selectedEntry}
+          spriteScreen={spriteScreen}
+          isDragging={isDragging}
+          setSpriteScreen={setSpriteScreen}
+          setIsDragging={setIsDragging}
+          onRuntimeChange={setRuntime}
+        />
+      ) : (
+        <Spine38AvatarSurface
+          entry={selectedEntry}
+          setSpriteScreen={setSpriteScreen}
+          setIsDragging={setIsDragging}
+          onRuntimeChange={setRuntime}
+        />
+      )}
       <DevPassthroughToggle
         disabled={passthroughDisabled}
         onToggle={() => setPassthroughDisabled((v) => !v)}
+      />
+      <DevAvatarModelSelector
+        value={selectedModelId}
+        entries={selectableEntries}
+        onChange={setSelectedModelId}
       />
       {spriteScreen && (
         <ActionBar

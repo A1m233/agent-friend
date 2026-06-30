@@ -9,7 +9,7 @@ import {
 
 describe("petAvatarRuntime", () => {
   it("maps project-level pet actions onto known Arknights chibi animations", () => {
-    expect(ARK_ACTION_MAPPING.idle).toEqual({ animation: "Default", loop: true });
+    expect(ARK_ACTION_MAPPING.idle).toEqual({ animation: "Relax", loop: true });
     expect(ARK_ACTION_MAPPING.tap).toEqual({
       animation: "Interact",
       loop: false,

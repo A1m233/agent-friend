@@ -20,6 +20,12 @@ alwaysApply: false
 2. Windows/WebView2 且已暴露 CDP endpoint 时，可用 Playwright `connectOverCDP` 获取实际 DOM 和截图。
 3. Vite web 页面只可作为快速布局草稿，不得单独作为桌面端视觉结论。
 
+## 硬性限制
+
+- 用户报告或要求验收 Tauri 桌面端视觉问题时，只要真实桌面端可启动，必须用真实桌面窗口截图/观察或真实 WebView DOM 下结论。
+- 不得用 Vite web 截图、浏览器 Playwright 截图、固定小 viewport 截图来证明桌面端“正常”或“通过”。这类结果只能标注为 `web-only draft`。
+- 如果真实桌面端截图/DOM 被权限、窗口枚举、外部服务等阻塞，回报结论必须是 `not verified`，并说明阻塞原因；不能把 web-only 结果补位成桌面验收。
+
 ## 运行态选择
 
 - 不要固定加 `--no-voice`。普通聊天/设置/历史列表 UI 使用 `scripts/dev/run.*` 默认运行态即可。

@@ -20,6 +20,16 @@ export interface AvatarActionMapping {
   returnToPhase?: boolean;
 }
 
+export interface AvatarFitConfig {
+  readerScale?: number;
+  fitWidthPx?: number;
+  fitHeightPx?: number;
+  fitWidthRatio?: number;
+  fitHeightRatio?: number;
+  slotYRatio?: number;
+  topPaddingRatio?: number;
+}
+
 export interface AvatarModelCapabilities {
   motions: boolean;
   alphaHitTest: boolean;
@@ -65,6 +75,7 @@ export interface SpineAvatarModelEntry extends AvatarModelBase {
     runtime: SpineRuntimeMode;
     defaultAnimation?: string;
     actionMapping?: Partial<Record<AvatarModelAction, AvatarActionMapping>>;
+    fit?: AvatarFitConfig;
   };
   capabilities: AvatarModelCapabilities;
 }
@@ -127,7 +138,7 @@ export const ARK_AMIYA_CAPABILITIES = {
 } satisfies AvatarModelCapabilities;
 
 export const ARK_AMIYA_ACTION_MAPPING = {
-  idle: { animation: "Default", loop: true },
+  idle: { animation: "Relax", loop: true },
   thinking: { animation: "Sit", loop: true },
   speaking: { animation: "Relax", loop: true },
   error: { animation: "Sit", loop: true },
@@ -136,6 +147,72 @@ export const ARK_AMIYA_ACTION_MAPPING = {
   dragStart: { animation: "Move", loop: true },
   dragEnd: { animation: "Relax", loop: false, returnToPhase: true },
 } satisfies Record<AvatarModelAction, AvatarActionMapping>;
+
+export const ARK_MODELS_NOTICE_PATH = "/spine-models/ark-models/NOTICE.md";
+
+const DEFAULT_ARK_SPINE_FIT = {
+  readerScale: 1,
+  fitWidthPx: 320,
+  fitHeightPx: 320,
+  fitWidthRatio: 1.35,
+  fitHeightRatio: 0.3,
+  slotYRatio: 0.86,
+  topPaddingRatio: 0.16,
+} satisfies Required<AvatarFitConfig>;
+
+const ARK_SPINE_MODEL_NAMES = {
+  "002_amiya": "阿米娅",
+  "4202_haruka": "遥",
+  "140_whitew": "拉普兰德",
+  "103_angel": "能天使",
+  "358_lisa": "铃兰",
+  "102_texas": "德克萨斯",
+  "263_skadi": "斯卡蒂",
+  "003_kalts": "凯尔希",
+  "1035_wisdel": "维什戴尔",
+  "4133_logos": "逻各斯",
+  "2027_wang": "望",
+  "2025_shu": "黍",
+  "4179_monstr": "Mon3tr",
+  "010_chen": "陈",
+} as const;
+
+export type BuiltinArkSpineModelSlug = keyof typeof ARK_SPINE_MODEL_NAMES;
+
+export const BUILTIN_ARK_SPINE_MODEL_SLUGS = Object.keys(
+  ARK_SPINE_MODEL_NAMES,
+) as BuiltinArkSpineModelSlug[];
+
+function makeBuiltinArkSpineModel(slug: BuiltinArkSpineModelSlug): SpineAvatarModelEntry {
+  const basePath = `/spine-models/ark-models/${slug}/build_char_${slug}`;
+  return {
+    id: `builtin:spine:ark-models:${slug}`,
+    name: `Ark ${ARK_SPINE_MODEL_NAMES[slug]}`,
+    backend: "spine",
+    source: "builtin",
+    distribution: "non-commercial-exploration",
+    enabled: true,
+    licenseName: "Arknights / Ark-Models non-commercial exploration",
+    noticePath: ARK_MODELS_NOTICE_PATH,
+    resources: {
+      skeleton: `${basePath}.skel`,
+      atlas: `${basePath}.atlas`,
+      textures: [`${basePath}.png`],
+    },
+    spine: {
+      format: "skel",
+      runtime: "spine38-pixi7",
+      defaultAnimation: "Relax",
+      actionMapping: ARK_AMIYA_ACTION_MAPPING,
+      fit: DEFAULT_ARK_SPINE_FIT,
+    },
+    capabilities: ARK_AMIYA_CAPABILITIES,
+  };
+}
+
+export const BUILTIN_ARK_SPINE_MODELS = BUILTIN_ARK_SPINE_MODEL_SLUGS.map(
+  makeBuiltinArkSpineModel,
+);
 
 export const ARK_AMIYA_SPINE_FIXTURE_MODEL = {
   id: "dev-fixture:spine:ark-amiya",
@@ -154,7 +231,7 @@ export const ARK_AMIYA_SPINE_FIXTURE_MODEL = {
   spine: {
     format: "skel",
     runtime: "spine38-pixi7",
-    defaultAnimation: "Default",
+    defaultAnimation: "Relax",
     actionMapping: ARK_AMIYA_ACTION_MAPPING,
   },
   capabilities: ARK_AMIYA_CAPABILITIES,
@@ -162,6 +239,7 @@ export const ARK_AMIYA_SPINE_FIXTURE_MODEL = {
 
 export const AVATAR_MODEL_CATALOG: readonly AvatarModelCatalogEntry[] = [
   HIYORI_LIVE2D_MODEL,
+  ...BUILTIN_ARK_SPINE_MODELS,
   ARK_AMIYA_SPINE_FIXTURE_MODEL,
 ];
 

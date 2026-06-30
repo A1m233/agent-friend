@@ -9,6 +9,8 @@ description: 在 agent-friend 真实桌面端观察和验证前端视觉/DOM 的
 
 对桌面窗口 UI 下结论前，优先看真实 Tauri 桌面端。Vite web 页面可以用于快速草稿，但不能单独证明桌面端视觉正确。
 
+当用户报告或要求验收 Tauri 桌面端视觉问题时，只要真实桌面端可启动，就必须用真实桌面截图/观察或真实 WebView DOM 下结论。Vite web 截图、浏览器 Playwright 截图、固定小 viewport 截图只能标注为 `web-only draft`，不得用来证明桌面端“正常”或“通过”；真实桌面端受阻时结论应标注为 `not verified`。
+
 ## 入口脚本
 
 使用项目脚本，不手拼长命令：

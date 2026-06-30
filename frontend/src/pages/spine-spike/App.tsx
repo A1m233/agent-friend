@@ -51,7 +51,7 @@ import {
 
 const DEFAULT_SKELETON_URL = "/spine-spike-fixtures/ark-amiya/build_char_002_amiya.skel";
 const DEFAULT_ATLAS_URL = "/spine-spike-fixtures/ark-amiya/build_char_002_amiya.atlas";
-const DEFAULT_ANIMATION = "Default";
+const DEFAULT_ANIMATION = "Relax";
 const DEFAULT_SCALE = "1";
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "spine38-pixi7";
 const FIT_WIDTH_RATIO = 0.72;
