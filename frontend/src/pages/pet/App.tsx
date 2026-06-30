@@ -5,14 +5,18 @@ import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
-import { DevAvatarModelSelector } from "./DevAvatarModelSelector";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePetPassthrough } from "./usePetPassthrough";
+import {
+  resolveInstalledAvatarModelSelection,
+  useInstalledAvatarModelCatalog,
+} from "@/avatar-models";
+import { useSetting } from "@/lib/settings";
 import { Live2DAvatarSurface } from "@/pet/avatarRuntime/live2d/Live2DAvatarSurface";
 import { Spine38AvatarSurface } from "@/pet/avatarRuntime/spine38/Spine38AvatarSurface";
 import type { PetAvatarRuntime } from "@/pet/avatarRuntime/types";
-import { useDevAvatarModelSelection } from "@/pet/avatarRuntime/useDevAvatarModelSelection";
+import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import {
   startPetStateSubscriber,
   usePetStateStore,
@@ -23,6 +27,18 @@ import {
   useVoiceStore,
 } from "@/stores/voice";
 import { isVoiceCallLive } from "@/stores/voiceStateMachine";
+
+interface PetRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface PetPoint {
+  x: number;
+  y: number;
+}
 
 /**
  * Tauri listener stale-cleanup race 兜底：StrictMode 双 mount / hot reload 期间 Tauri 内部
@@ -51,12 +67,9 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
  * 详见 [docs/requirements/018-pet-live2d-state-and-lipsync/](../../../../docs/requirements/018-pet-live2d-state-and-lipsync/)。
  */
 export function PetApp() {
-  const [spriteScreen, setSpriteScreen] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
+  const [spriteScreen, setSpriteScreen] = useState<PetRect | null>(null);
+  const [actionBarAnchor, setActionBarAnchor] = useState<PetRect | null>(null);
+  const [avatarPlacementPoint, setAvatarPlacementPoint] = useState<PetPoint | null>(null);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
   // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
@@ -71,16 +84,53 @@ export function PetApp() {
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
+  const [avatarModelId] = useSetting("avatarModelId");
   const {
-    selectedModelId,
-    selectedEntry,
-    selectableEntries,
-    setSelectedModelId,
-  } = useDevAvatarModelSelection();
+    entries: installedAvatarModels,
+    error: installedAvatarModelError,
+  } = useInstalledAvatarModelCatalog();
+  const selectedEntry = resolveInstalledAvatarModelSelection(
+    installedAvatarModels,
+    avatarModelId,
+  );
 
   useEffect(() => {
     setRuntime(null);
-  }, [selectedModelId]);
+    setSpriteScreen(null);
+    setActionBarAnchor(null);
+    publishAnchorDiagnostics({
+      modelId: selectedEntry?.id ?? null,
+      backend: selectedEntry?.backend ?? null,
+      spriteScreen: null,
+      visibleBounds: null,
+      actionBarAnchor: null,
+      actionBarComputed: null,
+      actionBarRect: null,
+    });
+  }, [selectedEntry?.backend, selectedEntry?.id]);
+
+  useEffect(() => {
+    if (!installedAvatarModelError) return;
+    console.warn("[pet] installed avatar model catalog failed:", installedAvatarModelError);
+  }, [installedAvatarModelError]);
+
+  useEffect(() => {
+    publishAnchorDiagnostics({
+      modelId: selectedEntry?.id ?? null,
+      backend: selectedEntry?.backend ?? null,
+      spriteScreen,
+      actionBarAnchor: actionBarAnchor ?? spriteScreen,
+    });
+  }, [actionBarAnchor, selectedEntry?.backend, selectedEntry?.id, spriteScreen]);
+
+  useEffect(() => {
+    const placementRect = actionBarAnchor ?? spriteScreen;
+    if (!placementRect) return;
+    setAvatarPlacementPoint({
+      x: placementRect.x + placementRect.w / 2,
+      y: placementRect.y + placementRect.h / 2,
+    });
+  }, [actionBarAnchor, spriteScreen]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -253,35 +303,35 @@ export function PetApp() {
 
   return (
     <>
-      {selectedEntry.backend === "live2d" ? (
+      {selectedEntry?.backend === "live2d" ? (
         <Live2DAvatarSurface
+          key={selectedEntry.id}
           entry={selectedEntry}
+          initialAnchorPoint={avatarPlacementPoint}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreen}
           setIsDragging={setIsDragging}
           onRuntimeChange={setRuntime}
         />
-      ) : (
+      ) : selectedEntry?.backend === "spine" ? (
         <Spine38AvatarSurface
+          key={selectedEntry.id}
           entry={selectedEntry}
+          initialAnchorPoint={avatarPlacementPoint}
           setSpriteScreen={setSpriteScreen}
+          setActionBarAnchor={setActionBarAnchor}
           setIsDragging={setIsDragging}
           onRuntimeChange={setRuntime}
         />
-      )}
+      ) : null}
       <DevPassthroughToggle
         disabled={passthroughDisabled}
         onToggle={() => setPassthroughDisabled((v) => !v)}
       />
-      <DevAvatarModelSelector
-        value={selectedModelId}
-        entries={selectableEntries}
-        onChange={setSelectedModelId}
-      />
       {spriteScreen && (
         <ActionBar
-          spriteScreen={spriteScreen}
+          actionBarAnchor={actionBarAnchor ?? spriteScreen}
           visible={stickyVisible}
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}

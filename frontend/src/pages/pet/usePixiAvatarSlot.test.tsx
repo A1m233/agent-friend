@@ -164,6 +164,15 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     }
   }
 
+  function readSlot<T>(result: { current: T }): MockContainer {
+    const typed = result.current as unknown as {
+      slotRef: RefObject<MockContainer | null>;
+    };
+    const slot = typed.slotRef.current;
+    if (!slot) throw new Error("slot was not initialized");
+    return slot;
+  }
+
   it("短按短移触发 click，不触发 drag", async () => {
     const stage = document.createElement("div");
     const stageRef = { current: stage };
@@ -178,8 +187,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     );
 
     await waitForApp(result);
-    const app = (result.current as unknown as { app: MockApp }).app;
-    const slot = app.stage as unknown as MockContainer;
+    const slot = readSlot(result);
 
     await reactAct(() => {
       slot.emit("pointerdown", makeEvent(400, 300));
@@ -206,8 +214,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     );
 
     await waitForApp(result);
-    const app = (result.current as unknown as { app: MockApp }).app;
-    const slot = app.stage as unknown as MockContainer;
+    const slot = readSlot(result);
 
     await reactAct(() => {
       slot.emit("pointerdown", makeEvent(400, 300));
@@ -238,8 +245,7 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     );
 
     await waitForApp(result);
-    const app = (result.current as unknown as { app: MockApp }).app;
-    const slot = app.stage as unknown as MockContainer;
+    const slot = readSlot(result);
 
     let now = performance.now();
     const nowSpy = vi.spyOn(globalThis.performance, "now").mockImplementation(() => now);
@@ -254,6 +260,35 @@ describe("usePixiAvatarSlot · 024 click/drag 区分", () => {
     expect(setIsDragging).not.toHaveBeenCalled();
 
     nowSpy.mockRestore();
+    unmount();
+  });
+
+  it("uses an initial anchor point to keep model switches in place", async () => {
+    const stage = document.createElement("div");
+    const stageRef = { current: stage };
+    const setSpriteScreen = vi.fn();
+    const setIsDragging = vi.fn();
+
+    const { result, unmount } = renderHook(
+      () =>
+        usePixiAvatarSlot(stageRef, setSpriteScreen, setIsDragging, {
+          initialAnchorPoint: { x: 180, y: 220 },
+        }),
+      undefined,
+    );
+
+    await waitForApp(result);
+    const slot = readSlot(result);
+
+    expect(slot.x).toBe(180);
+    expect(slot.y).toBe(220);
+    expect(setSpriteScreen).toHaveBeenLastCalledWith({
+      x: 100,
+      y: 140,
+      w: 160,
+      h: 160,
+    });
+
     unmount();
   });
 });

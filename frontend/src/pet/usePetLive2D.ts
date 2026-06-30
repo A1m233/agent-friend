@@ -16,14 +16,37 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as PIXI from "pixi.js";
-import { Live2DSprite, Config, Priority, LogLevel } from "easy-live2d";
-import { PET_LIVE2D_CONFIG } from "./live2dConfig";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { CubismSetting, Live2DSprite, Config, Priority, LogLevel } from "easy-live2d";
+import type { Live2DAvatarModelEntry } from "@/avatar-models";
 import { usePetStateStore } from "@/stores/petState";
 
-// easy-live2d 是全局 singleton config，module load 时设置一次
-Config.MotionGroupIdle = PET_LIVE2D_CONFIG.motionGroups.idle ?? "Idle";
+// easy-live2d 是全局 singleton config；模型切换时在 hook effect 内按 entry 同步 idle group。
 Config.MouseFollow = false; // 17b 不用 mouse-follow，跟随由状态机驱动
 Config.CubismLoggingLevel = LogLevel.LogLevel_Warning;
+
+function joinInstalledLive2DAssetPath(model3FilePath: string, file: string): string {
+  const normalizedModelPath = model3FilePath.replaceAll("\\", "/");
+  const basePath = normalizedModelPath.slice(0, normalizedModelPath.lastIndexOf("/"));
+  const normalizedFile = file.replaceAll("\\", "/").replace(/^\/+/, "");
+  return `${basePath}/${normalizedFile}`;
+}
+
+async function createInstalledLive2DSetting(entry: Live2DAvatarModelEntry) {
+  const model3FilePath = entry.resources.model3FilePath;
+  if (!model3FilePath) return null;
+
+  const response = await fetch(entry.resources.model3);
+  if (!response.ok) {
+    throw new Error(`Failed to load Live2D model setting: ${response.status}`);
+  }
+  const modelJSON = await response.json();
+  const setting = new CubismSetting({ modelJSON });
+  setting.redirectPath(({ file }) =>
+    convertFileSrc(joinInstalledLive2DAssetPath(model3FilePath, file)),
+  );
+  return setting;
+}
 
 export interface UsePetLive2DHandle {
   /** Live2DSprite ref；加载完成后 .current = sprite，cleanup / 失败时为 null。 */
@@ -35,6 +58,7 @@ export interface UsePetLive2DHandle {
 export function usePetLive2D(
   slotRef: RefObject<PIXI.Container | null>,
   app: PIXI.Application | null,
+  entry: Live2DAvatarModelEntry,
   /**
    * 由 `usePixiAvatarSlot` 暴露的 anchor invalidate callback。Live2DSprite ready 后调用，
    * 触发 ticker 下一帧重新 alpha-scan visible bounds——避免 anchor 锁在占位 children
@@ -54,10 +78,17 @@ export function usePetLive2D(
 
     void (async () => {
       try {
+        Config.MotionGroupIdle = entry.live2d.motionGroups.idle ?? "Idle";
         sprite = new Live2DSprite();
-        sprite.modelPath = PET_LIVE2D_CONFIG.modelPath;
         sprite.ticker = app.ticker;
         sprite.renderer = app.renderer;
+        const installedSetting = await createInstalledLive2DSetting(entry);
+        if (cancelled) return;
+        if (installedSetting) {
+          sprite.modelSetting = installedSetting;
+        } else {
+          sprite.modelPath = entry.resources.model3;
+        }
         // 关 PIXI 事件参与：Live2DSprite 不抢 PIXI pointer 事件，让 slot.on("pointerdown")
         // 在 slot.hitArea 矩形内被命中触发（17a 拖拽 plumbing 不动）
         sprite.eventMode = "none";
@@ -86,7 +117,7 @@ export function usePetLive2D(
         const canvasSize = sprite.getModelCanvasSize();
         const aspectRatio =
           canvasSize && canvasSize.width > 0 ? canvasSize.height / canvasSize.width : 1;
-        const finalWidth = PET_LIVE2D_CONFIG.spriteWidth;
+        const finalWidth = entry.live2d.spriteWidth;
         const finalHeight = Math.max(1, Math.round(finalWidth * aspectRatio));
         sprite.setSize({ width: finalWidth, height: finalHeight });
         // 让 sprite 中心定位到 slot 局部原点（slot 自身居中在屏幕中点）；
@@ -103,8 +134,8 @@ export function usePetLive2D(
         invalidateAnchor();
 
         // 默认播 idle motion；模型 motion group 不存在时 try/catch 吃掉
-        const idleGroup = PET_LIVE2D_CONFIG.motionGroups.idle;
-        const idleNo = PET_LIVE2D_CONFIG.motionNo.idle ?? 0;
+        const idleGroup = entry.live2d.motionGroups.idle;
+        const idleNo = entry.live2d.motionNo.idle ?? 0;
         if (idleGroup) {
           try {
             await sprite.startMotion({
@@ -144,7 +175,7 @@ export function usePetLive2D(
       }
       spriteRef.current = null;
     };
-  }, [slotRef, app, invalidateAnchor]);
+  }, [slotRef, app, entry, invalidateAnchor]);
 
   return { spriteRef, spriteReady };
 }

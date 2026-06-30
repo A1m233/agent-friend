@@ -16,6 +16,7 @@ import {
   TooltipProvider,
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
+import { AvatarModelPanel } from "./components/AvatarModelPanel";
 import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
@@ -26,7 +27,7 @@ import { SettingsRow } from "./components/SettingsRow";
  *
  * 后续新增设置项按 design.md 扩展点接入。
  */
-type SettingsSection = "general" | "runtime" | "voice";
+type SettingsSection = "general" | "runtime" | "voice" | "pet";
 
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
@@ -66,6 +67,14 @@ export function SettingsApp() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    isActive={section === "pet"}
+                    onClick={() => setSection("pet")}
+                  >
+                    桌宠
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     isActive={section === "runtime"}
                     onClick={() => setSection("runtime")}
                   >
@@ -100,6 +109,8 @@ export function SettingsApp() {
             </SettingsPageLayout>
           ) : section === "runtime" ? (
             <RuntimeConfigPanel />
+          ) : section === "pet" ? (
+            <AvatarModelPanel />
           ) : (
             <SettingsPageLayout title="语音">
               <SettingsGroup title="语音通话">

@@ -1,4 +1,11 @@
-import { useEffect, useState, type CSSProperties, type MouseEventHandler, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEventHandler,
+  type ReactNode,
+} from "react";
 import {
   Brain,
   ChevronLeft,
@@ -24,6 +31,7 @@ import {
 
 import { computeActionBarPosition } from "./computeActionBarPosition";
 import { derivePageState } from "./actionBarPaging";
+import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 
 /**
  * 019 · 桌宠操作栏 sprite-relative DOM 浮动（design §2.4 / R-4.x）。
@@ -44,7 +52,7 @@ import { derivePageState } from "./actionBarPaging";
  */
 
 interface Props {
-  spriteScreen: { x: number; y: number; w: number; h: number };
+  actionBarAnchor: { x: number; y: number; w: number; h: number };
   visible: boolean;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
@@ -79,7 +87,7 @@ interface BtnDef {
 }
 
 export function ActionBar({
-  spriteScreen,
+  actionBarAnchor,
   visible,
   onMouseEnter,
   onMouseLeave,
@@ -94,6 +102,7 @@ export function ActionBar({
   onInjectShort,
   onInjectLong,
 }: Props) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const buttons: BtnDef[] = [
     { icon: <MessageSquare />, tooltip: "打开对话", onClick: onOpenChat },
     {
@@ -155,16 +164,39 @@ export function ActionBar({
     : PAD_X * 2 + buttons.length * ICON_BTN + Math.max(0, buttons.length - 1) * GAP;
   const chipH = PAD_Y * 2 + ICON_BTN; // = 44px
 
-  const { left, top } = computeActionBarPosition(spriteScreen, { w: chipW, h: chipH }, 8);
+  const { left, top } = computeActionBarPosition(actionBarAnchor, { w: chipW, h: chipH }, 8);
   const style: CSSProperties = { position: "fixed", left, top, width: chipW, height: chipH };
   const visibleCls = visible
     ? "opacity-100 pointer-events-auto"
     : "opacity-0 pointer-events-none";
+  const anchorCenterX = actionBarAnchor.x + actionBarAnchor.w / 2;
+  const computedCenterX = left + chipW / 2;
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const rect = rootRef.current?.getBoundingClientRect();
+    publishAnchorDiagnostics({
+      actionBarAnchor,
+      actionBarComputed: { x: left, y: top, w: chipW, h: chipH },
+      actionBarRect: rect
+        ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
+        : null,
+    });
+  }, [actionBarAnchor, chipH, chipW, left, top, visible]);
 
   return (
     <TooltipProvider delayDuration={0}>
       <div
+        ref={rootRef}
         data-hit
+        data-anchor-diagnostics={import.meta.env.DEV ? "actionbar" : undefined}
+        data-anchor-actionbar-anchor-center-x={
+          import.meta.env.DEV ? anchorCenterX : undefined
+        }
+        data-anchor-actionbar-center-x={import.meta.env.DEV ? computedCenterX : undefined}
+        data-anchor-delta-anchor-x={
+          import.meta.env.DEV ? computedCenterX - anchorCenterX : undefined
+        }
         style={style}
         className={`flex items-center gap-1 rounded-2xl bg-bg/95 border border-border shadow-lg px-2 py-1.5 transition-opacity ${visibleCls}`}
         onMouseEnter={onMouseEnter}
