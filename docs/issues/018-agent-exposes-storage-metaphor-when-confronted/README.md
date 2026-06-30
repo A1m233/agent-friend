@@ -71,3 +71,19 @@ issue 018(本):agent 被揭穿后,**用拟人化话术暴露存储机制**为自
 issue 长期 open,直到:
 - 某一期专门做"失忆话术 + 存储隐喻"的 prompt 全集 pass,且 issue 015 + issue 017 + 本 issue 三个 replay 全过
 - 一段时间真用观察(类 issue 017 思路),确认 LLM 在真实 IM 通道 + 桌宠跨 session 场景下不再触发此模式
+
+## 修复进展
+
+2026-06-30: 已由 [039-memory-inconsistency-response](../../requirements/039-memory-inconsistency-response/) 承接本 issue 的 prompt 修复与评测入口:
+
+- 新增 `memory_consistency` system prompt section,约束被追问记忆矛盾时不暴露存储机制、不圆机制故事
+- 新增 `agent_eval` C5 `memory-inconsistency-response` 契约,用 deterministic guard 锁机制暴露、无证据查记录声明、矛盾圆故事三类红线
+- 新增本目录 [`replay.py`](./replay.py),用于授权后真实 LLM 复跑 issue 018 链路
+
+2026-06-30 验证更新:
+
+- 授权真实 LLM replay 已跑通:无机制泄漏、无无证据 lookup claim、无矛盾圆故事。
+- 授权 C5 limit1 smoke 已跑通:1/1 pass,报告为 `agent_eval/reports/2026-06-30T09-41-40-88a5735-C5-limit1.json`。
+- 本轮验证中补齐了“看了下之前聊到的 / 没翻到”等无证据查找声明的 guard,并收窄了 `没认出来` 这类过宽 guard。
+
+当前状态仍保持 open:还需要关联样本与一段真实 IM / 桌宠使用观察,再按上方关闭条件标 `resolved`。

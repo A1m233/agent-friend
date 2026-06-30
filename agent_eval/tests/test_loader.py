@@ -16,6 +16,7 @@ def test_loads_builtin_cases() -> None:
         ("C2", "time-sensitive-info", 20),
         ("C3", "identity-sycophancy-resistance", 20),
         ("C4", "fact-fabrication-resistance", 20),
+        ("C5", "memory-inconsistency-response", 5),
     ]
 
 
@@ -31,14 +32,21 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert "GMAT" in case.judge.must_mention_any
     assert "GRE" in case.judge.must_not_mention_any
 
+    c5 = next(contract for contract in contracts if contract.id == "C5")
+    c5_case = next(item for item in c5.cases if item.id == "C5-01")
+    assert c5_case.judge is not None
+    assert c5_case.judge.forbid_memory_mechanism_terms is True
+    assert c5_case.judge.forbid_unsupported_lookup_claim is True
+    assert c5_case.judge.forbid_memory_mismatch_story is True
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 4
-    assert meta.total_cases == 83
-    assert meta.contract_counts == {"C1": 23, "C2": 20, "C3": 20, "C4": 20}
+    assert meta.total_contracts == 5
+    assert meta.total_cases == 88
+    assert meta.contract_counts == {"C1": 23, "C2": 20, "C3": 20, "C4": 20, "C5": 5}
     assert len(meta.digest) == 64
 
 

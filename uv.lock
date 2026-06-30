@@ -98,6 +98,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "runtime-config" },
 ]
 
 [package.metadata]
@@ -107,6 +108,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0.0" },
+    { name = "runtime-config", editable = "runtime_config" },
 ]
 
 [[package]]

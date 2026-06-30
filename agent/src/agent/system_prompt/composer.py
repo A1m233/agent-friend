@@ -14,6 +14,8 @@ from ..sessions import Session
 _PROJECT_IDENTITY_KEY = "project_identity"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
+_TOOL_USAGE_CONTRACT_KEY = "tool_usage_contract"
+_MEMORY_CONSISTENCY_KEY = "memory_consistency"
 _CHANNEL_KEY = "channel"
 _RUNTIME_CONTEXT_KEY = "runtime_context"
 
@@ -67,6 +69,8 @@ class SystemPromptComposer:
         _PROJECT_IDENTITY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
+        _TOOL_USAGE_CONTRACT_KEY,
+        _MEMORY_CONSISTENCY_KEY,
         _CHANNEL_KEY,
         _RUNTIME_CONTEXT_KEY,
     )
@@ -75,10 +79,15 @@ class SystemPromptComposer:
     005 起追加 ``runtime_context`` 槽位（最末尾）——按 cc 的"前部稳定指令、
     后部运行时变化信息"+ recency bias 原则放置。详见 005 design §4.10。
 
-    007 起在 ``persona_switch_strategy`` 与 ``runtime_context`` 之间追加
-    ``channel`` 槽位——persona 给基调 → 切换策略 → 通道适应（"在这个通道下
-    怎么说"）→ 运行时上下文。文字通道下 ChannelSection.render() 返回 ``None``，
-    与既有装配行为完全字节兼容。详见 007 design §4.9.5。
+    007 起追加 ``channel`` 槽位——persona 给基调 → 切换策略 → 通道适应
+    （"在这个通道下怎么说"）→ 运行时上下文。文字通道下
+    ChannelSection.render() 返回 ``None``。详见 007 design §4.9.5。
+
+    039 起在 ``persona_switch_strategy`` 与 ``channel`` 之间追加
+    ``tool_usage_contract`` 与 ``memory_consistency`` 槽位。前者约束所有工具的
+    调用陈述、证据来源和失败表达；后者约束被追问记忆矛盾时不暴露存储机制、
+    不圆机制故事。两者都是跨 persona 的表达边界，放在 persona / 切换策略之后，
+    通道 / 运行时上下文之前。
     """
 
     def compose(self) -> str:
@@ -145,7 +154,7 @@ class SystemPromptComposer:
         catalog: PersonaCatalog,
         session: Session | None = None,
     ) -> SystemPromptComposer:
-        """构造默认装配：5 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
+        """构造默认装配：7 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
 
         - ``project_identity``：项目定位级硬约束（:class:`StaticSection`，
           文本来自 ``prompt_sections/project_identity.md``）
@@ -153,11 +162,19 @@ class SystemPromptComposer:
           catalog）
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
           文本来自 ``prompt_sections/persona_switch_strategy.md``）
+        - ``tool_usage_contract``：工具调用和工具结果陈述的通用边界
+          （:class:`StaticSection`，文本来自
+          ``prompt_sections/tool_usage_contract.md``）。039 起新增，避免未调用
+          工具却声称查过，或向用户暴露工具名 / provider / schema / 底层机制。
+        - ``memory_consistency``：被追问记忆矛盾时的回应边界
+          （:class:`StaticSection`，文本来自
+          ``prompt_sections/memory_consistency.md``）。039 起新增，禁止暴露
+          存储机制 / 圆机制故事。
         - ``channel``：当前通道指令（:class:`ChannelSection`，007 起新增；
           ``text`` 通道下不输出任何内容，与老 session 行为字节兼容）
         - ``runtime_context``：当前会话运行时上下文（:class:`RuntimeContextSection`，
           模板来自 ``prompt_sections/runtime_context.md``）。005 起新增，含
-          当前时间 / knowledge cutoff 提示 / web_search 工具使用强约束。
+          当前时间、近期事实和历史归因的运行时证据边界。
 
         Args:
             persona_id: 目标 persona 的 UUID。
@@ -167,8 +184,8 @@ class SystemPromptComposer:
                 channel 槽位会被跳过——保持完全向后兼容。**新调用方推荐显式传**。
 
         Returns:
-            含 4~5 个默认槽位的 composer。``session is None`` 时只返回 4 个
-            槽位（与 005 行为完全一致）；传了 ``session`` 时多出 channel 槽位。
+            含 6~7 个默认槽位的 composer。``session is None`` 时返回 6 个
+            槽位；传了 ``session`` 时多出 channel 槽位。
         """
         from .defaults import (
             load_default_channel_section,
@@ -185,6 +202,8 @@ class SystemPromptComposer:
                 catalog=catalog,
             ),
             load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
+            load_default_static_section(_TOOL_USAGE_CONTRACT_KEY),
+            load_default_static_section(_MEMORY_CONSISTENCY_KEY),
         ]
         if session is not None:
             section_list.append(load_default_channel_section(session, _CHANNEL_KEY))

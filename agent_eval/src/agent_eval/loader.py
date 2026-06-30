@@ -53,6 +53,14 @@ def _str_list(raw: Any, *, label: str) -> list[str]:
     return out
 
 
+def _bool(raw: Any, *, label: str) -> bool:
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise ValueError(f"{label} 必须是 bool")
+    return raw
+
+
 def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
     if raw is None:
         return None
@@ -84,6 +92,18 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         must_not_mention_any=_str_list(
             data.get("must_not_mention_any"),
             label=f"{label}.must_not_mention_any",
+        ),
+        forbid_memory_mechanism_terms=_bool(
+            data.get("forbid_memory_mechanism_terms"),
+            label=f"{label}.forbid_memory_mechanism_terms",
+        ),
+        forbid_unsupported_lookup_claim=_bool(
+            data.get("forbid_unsupported_lookup_claim"),
+            label=f"{label}.forbid_unsupported_lookup_claim",
+        ),
+        forbid_memory_mismatch_story=_bool(
+            data.get("forbid_memory_mismatch_story"),
+            label=f"{label}.forbid_memory_mismatch_story",
         ),
     )
 

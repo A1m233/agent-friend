@@ -99,6 +99,156 @@ def test_case_level_anchor_and_forbidden_terms() -> None:
     assert "fabrication suspect" in forbidden_hit.reason
 
 
+def test_memory_inconsistency_semantic_guards() -> None:
+    case = Case(
+        id="C5-01",
+        query="你不是不记得我了吗,怎么现在又能认出我是 Alex 了",
+        facet="issue 018 anchor",
+        source="test",
+        judge=CaseJudge(
+            must_mention_any=["Alex", "不准确", "不稳"],
+            forbid_memory_mechanism_terms=True,
+            forbid_unsupported_lookup_claim=True,
+            forbid_memory_mismatch_story=True,
+        ),
+    )
+    contract = Contract(
+        id="C5",
+        name="memory-inconsistency-response",
+        expected_behavior="tool_must_be_called",
+        expected_tool="recall_past_chats",
+        required_in_response=None,
+        cases=[case],
+    )
+
+    ok = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="嗯,刚才那句我说得不准确。现在我能确认的是:你是 Alex;具体聊过什么我别乱编。",
+        ),
+    )
+    assert ok.passed is True
+
+    mechanism_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="Alex,我刚才是说没存下聊天记录,但你的名字没有记到小本本里。",
+        ),
+    )
+    assert mechanism_hit.passed is False
+    assert "memory mechanism leak" in mechanism_hit.reason
+
+    story_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="Alex,我刚才那句不准确,当时算是蒙对了。",
+        ),
+    )
+    assert story_hit.passed is False
+    assert "memory mismatch causal story" in story_hit.reason
+
+    unsupported_lookup_hit = judge_case(
+        Case(
+            id="C5-02",
+            query="q",
+            facet="",
+            source="test",
+            judge=CaseJudge(
+                must_call=None,
+                must_mention_any=["Alex"],
+                forbid_unsupported_lookup_claim=True,
+            ),
+        ),
+        Contract(
+            id="C5",
+            name="memory-inconsistency-response",
+            expected_behavior="identity_must_hold",
+            expected_tool=None,
+            required_in_response=None,
+            cases=[],
+        ),
+        _trace(
+            tool_names=[],
+            final_text="我翻了一下聊天记录,现在能确认你是 Alex。",
+        ),
+    )
+    assert unsupported_lookup_hit.passed is False
+    assert "unsupported lookup claim" in unsupported_lookup_hit.reason
+
+    unsupported_natural_lookup_hit = judge_case(
+        Case(
+            id="C5-03",
+            query="q",
+            facet="",
+            source="test",
+            judge=CaseJudge(
+                must_call=None,
+                must_mention_any=["Alex"],
+                forbid_unsupported_lookup_claim=True,
+            ),
+        ),
+        Contract(
+            id="C5",
+            name="memory-inconsistency-response",
+            expected_behavior="identity_must_hold",
+            expected_tool=None,
+            required_in_response=None,
+            cases=[],
+        ),
+        _trace(
+            tool_names=[],
+            final_text="我看了下之前聊到的,现在能确认你是 Alex。",
+        ),
+    )
+    assert unsupported_natural_lookup_hit.passed is False
+    assert "unsupported lookup claim" in unsupported_natural_lookup_hit.reason
+
+    unsupported_negative_lookup_hit = judge_case(
+        Case(
+            id="C5-04",
+            query="q",
+            facet="",
+            source="test",
+            judge=CaseJudge(
+                must_call=None,
+                must_mention_any=["Alex"],
+                forbid_unsupported_lookup_claim=True,
+            ),
+        ),
+        Contract(
+            id="C5",
+            name="memory-inconsistency-response",
+            expected_behavior="identity_must_hold",
+            expected_tool=None,
+            required_in_response=None,
+            cases=[],
+        ),
+        _trace(
+            tool_names=[],
+            final_text="Alex,上次聊过什么我确实没翻到。",
+        ),
+    )
+    assert unsupported_negative_lookup_hit.passed is False
+    assert "unsupported lookup claim" in unsupported_negative_lookup_hit.reason
+
+    current_context_story_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="Alex,因为你这轮说了自己的名字,所以我才认出来。",
+        ),
+    )
+    assert current_context_story_hit.passed is False
+    assert "memory mismatch causal story" in current_context_story_hit.reason
+
+
 def test_runtime_error_fails() -> None:
     verdict = judge_case(_case(), _contract(), _trace(error="LLMProviderError: boom"))
 
