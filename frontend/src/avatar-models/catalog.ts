@@ -53,6 +53,7 @@ export interface Live2DAvatarModelEntry extends AvatarModelBase {
   backend: "live2d";
   resources: {
     model3: string;
+    model3FilePath?: string;
   };
   live2d: {
     modelName: string;

@@ -7,6 +7,7 @@ use tauri::{
 };
 
 mod bubble_window;
+mod avatar_models;
 mod paths;
 mod push_subscriber;
 mod runtime_config;
@@ -483,6 +484,7 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
         ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
@@ -503,6 +505,7 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
         ui_state::set_last_chat_session_id,
         bubble_window::show_bubble,
@@ -584,6 +587,9 @@ pub fn run() {
                 paths::avatar_model_assets_dir(),
                 paths::avatar_model_catalog_path()
             );
+            avatar_models::ensure_builtin_avatar_models_installed(app.handle()).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("avatar models: {e}"))
+            })?;
 
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());

@@ -14,6 +14,9 @@ importers:
       '@esotericsoftware/spine-pixi-v8':
         specifier: 4.3.9
         version: 4.3.9(pixi.js@8.19.0)
+      '@pixi-spine/runtime-3.8':
+        specifier: 4.0.6
+        version: 4.0.6(@pixi-spine/base@4.0.6(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/graphics@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))))(@pixi/mesh-extras@7.4.3(@pixi/core@7.4.3)(@pixi/mesh@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))))(@pixi/mesh@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))))(@pixi/core@7.4.3)
       '@pixi/assets':
         specifier: 7.4.3
         version: 7.4.3(@pixi/core@7.4.3)

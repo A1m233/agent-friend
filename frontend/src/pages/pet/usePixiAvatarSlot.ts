@@ -86,6 +86,7 @@ const DRAG_MIN_DT_SECONDS = 1 / 120;
 export interface UsePixiAvatarSlotOptions {
   /** 024 · 用 ref 延迟绑定 callbacks，避免 App.tsx hooks 调用顺序循环。 */
   interactionsRef?: RefObject<PetInteractionCallbacks | null>;
+  initialAnchorPoint?: { x: number; y: number } | null;
 }
 
 export function usePixiAvatarSlot(
@@ -103,6 +104,7 @@ export function usePixiAvatarSlot(
   // 18b Win mixed DPR mitigation（issue 012）：alpha-scan 在 readPixels 不可用时整体降级
   // 到 17a 矩形行为。useRef 暴露给 usePetPassthrough 同步读，避免再起一条 React state 链路。
   const alphaScanGivenUpRef = useRef(false);
+  const resetInitialAnchorAlignmentRef = useRef<(() => void) | null>(null);
   const interactionsRef = options.interactionsRef;
 
   const invalidateAnchor = useCallback(() => {
@@ -110,6 +112,7 @@ export function usePixiAvatarSlot(
     // 占位 → Hiyori 切换：Hiyori 像素更多，可能扫到（mac 第一次切换就是这场景）
     // Win mixed DPR 下重试还是会再次触发降级，无副作用
     alphaScanGivenUpRef.current = false;
+    resetInitialAnchorAlignmentRef.current?.();
   }, []);
 
   useEffect(() => {
@@ -118,6 +121,7 @@ export function usePixiAvatarSlot(
 
     let cancelled = false;
     let appInstance: PIXI.Application | null = null;
+    const initialAnchorPoint = options.initialAnchorPoint ?? null;
 
     void (async () => {
       const pixi = new PIXI.Application();
@@ -181,6 +185,13 @@ export function usePixiAvatarSlot(
       // 18 · alpha-scan 一次锁定 visible bounds 在 cachedOffsetRef 内（hook 顶部 useRef，
       // 让 invalidateAnchor 从外部清掉触发重扫）。drag 时只更新 slot.x/y，spriteScreen 跟随。
       const dpr = window.devicePixelRatio || 1;
+      let initialAnchorAligned = initialAnchorPoint === null;
+
+      resetInitialAnchorAlignmentRef.current = () => {
+        if (initialAnchorPoint) {
+          initialAnchorAligned = false;
+        }
+      };
 
       const computeBounds = () => {
         const cached = cachedOffsetRef.current;
@@ -197,8 +208,34 @@ export function usePixiAvatarSlot(
         return { x: b.minX, y: b.minY, w: b.width, h: b.height };
       };
 
+      const readAlignedBounds = () => {
+        let bounds = computeBounds();
+        if (initialAnchorAligned || !initialAnchorPoint) return bounds;
+
+        const hasStableBounds =
+          cachedOffsetRef.current !== null || alphaScanGivenUpRef.current;
+        const dx = initialAnchorPoint.x - (bounds.x + bounds.w / 2);
+        const dy = initialAnchorPoint.y - (bounds.y + bounds.h / 2);
+        if (hasStableBounds) {
+          initialAnchorAligned = true;
+        }
+
+        if (
+          !Number.isFinite(dx) ||
+          !Number.isFinite(dy) ||
+          (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)
+        ) {
+          return bounds;
+        }
+
+        slot.x += dx;
+        slot.y += dy;
+        bounds = computeBounds();
+        return bounds;
+      };
+
       const emitSpritePos = () => {
-        const { x, y, w, h } = computeBounds();
+        const { x, y, w, h } = readAlignedBounds();
         // React state 用 CSS px（驱动 ActionBar 定位）
         setSpriteScreen({ x, y, w, h });
         // Rust invoke 用物理像素（Rust 端拼 monitors union 起点）
@@ -276,7 +313,7 @@ export function usePixiAvatarSlot(
           }
         }
 
-        const { x, y, w, h } = computeBounds();
+        const { x, y, w, h } = readAlignedBounds();
         if (
           Math.abs(x - lastBounds.x) < 0.5 &&
           Math.abs(y - lastBounds.y) < 0.5 &&
@@ -409,6 +446,7 @@ export function usePixiAvatarSlot(
         appInstance = null;
       }
       slotRef.current = null;
+      resetInitialAnchorAlignmentRef.current = null;
       setApp(null);
       // cleanup 时清空 React state（避免残留旧 sprite 位置驱动 ActionBar）
       setSpriteScreen(null);

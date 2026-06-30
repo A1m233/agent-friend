@@ -1,0 +1,137 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  DEFAULT_AVATAR_MODEL_ID,
+  HIYORI_LIVE2D_MODEL,
+  type AvatarModelCatalogEntry,
+} from "./catalog";
+import {
+  mergeInstalledAvatarModelResources,
+  resolveInstalledAvatarModelSelection,
+  type InstalledAvatarModelResources,
+} from "./installed";
+
+const toAssetUrl = (path: string) => `asset://${path}`;
+
+describe("installed avatar model catalog", () => {
+  it("merges installed Live2D resources into static metadata", () => {
+    const entries = mergeInstalledAvatarModelResources(
+      [
+        {
+          id: DEFAULT_AVATAR_MODEL_ID,
+          backend: "live2d",
+          available: true,
+          resources: {
+            model3Path: "C:/data/avatar-models/builtin/live2d/hiyori/Hiyori.model3.json",
+          },
+        },
+      ],
+      toAssetUrl,
+    );
+
+    const hiyori = entries.find((entry) => entry.id === DEFAULT_AVATAR_MODEL_ID);
+    expect(hiyori).toMatchObject({
+      id: DEFAULT_AVATAR_MODEL_ID,
+      backend: "live2d",
+      name: HIYORI_LIVE2D_MODEL.name,
+    });
+    expect(hiyori?.backend).toBe("live2d");
+    if (hiyori?.backend !== "live2d") return;
+    expect(hiyori.resources.model3).toBe(
+      "asset://C:/data/avatar-models/builtin/live2d/hiyori/Hiyori.model3.json",
+    );
+    expect(hiyori.resources.model3FilePath).toBe(
+      "C:/data/avatar-models/builtin/live2d/hiyori/Hiyori.model3.json",
+    );
+    expect(hiyori.live2d).toEqual(HIYORI_LIVE2D_MODEL.live2d);
+  });
+
+  it("merges installed Spine resources and filters unavailable entries", () => {
+    const installed: InstalledAvatarModelResources[] = [
+      {
+        id: "builtin:spine:ark-models:002_amiya",
+        backend: "spine",
+        available: true,
+        resources: {
+          skeletonPath: "/data/spine/002_amiya/build_char_002_amiya.skel",
+          atlasPath: "/data/spine/002_amiya/build_char_002_amiya.atlas",
+          texturePaths: ["/data/spine/002_amiya/build_char_002_amiya.png"],
+        },
+      },
+      {
+        id: "builtin:spine:ark-models:010_chen",
+        backend: "spine",
+        available: false,
+        resources: {
+          skeletonPath: "/missing.skel",
+          atlasPath: "/missing.atlas",
+          texturePaths: ["/missing.png"],
+        },
+      },
+    ];
+
+    const entries = mergeInstalledAvatarModelResources(installed, toAssetUrl);
+    const amiya = entries.find((entry) => entry.id === "builtin:spine:ark-models:002_amiya");
+    expect(amiya?.backend).toBe("spine");
+    if (amiya?.backend !== "spine") return;
+    expect(amiya.resources).toEqual({
+      skeleton: "asset:///data/spine/002_amiya/build_char_002_amiya.skel",
+      atlas: "asset:///data/spine/002_amiya/build_char_002_amiya.atlas",
+      textures: ["asset:///data/spine/002_amiya/build_char_002_amiya.png"],
+    });
+    expect(entries.some((entry) => entry.id === "builtin:spine:ark-models:010_chen")).toBe(
+      false,
+    );
+  });
+
+  it("ignores backend mismatches and dev fixtures", () => {
+    const entries = mergeInstalledAvatarModelResources(
+      [
+        {
+          id: DEFAULT_AVATAR_MODEL_ID,
+          backend: "spine",
+          available: true,
+          resources: {
+            skeletonPath: "/wrong.skel",
+            atlasPath: "/wrong.atlas",
+          },
+        },
+        {
+          id: "dev-fixture:spine:ark-amiya",
+          backend: "spine",
+          available: true,
+          resources: {
+            skeletonPath: "/dev.skel",
+            atlasPath: "/dev.atlas",
+          },
+        },
+      ],
+      toAssetUrl,
+    );
+
+    expect(entries).toEqual([]);
+  });
+
+  it("resolves selected ids with Hiyori fallback from installed entries", () => {
+    const entries = [
+      {
+        ...HIYORI_LIVE2D_MODEL,
+        resources: { model3: "asset://hiyori.model3.json" },
+      },
+      {
+        ...HIYORI_LIVE2D_MODEL,
+        id: "custom-disabled",
+        enabled: false,
+        resources: { model3: "asset://disabled.model3.json" },
+      },
+    ] satisfies AvatarModelCatalogEntry[];
+
+    expect(resolveInstalledAvatarModelSelection(entries, "missing")?.id).toBe(
+      DEFAULT_AVATAR_MODEL_ID,
+    );
+    expect(resolveInstalledAvatarModelSelection(entries, "custom-disabled")?.id).toBe(
+      DEFAULT_AVATAR_MODEL_ID,
+    );
+    expect(resolveInstalledAvatarModelSelection([], "missing")).toBeNull();
+  });
+});

@@ -26,6 +26,7 @@ import {
 
 interface Props {
   entry: Live2DAvatarModelEntry;
+  initialAnchorPoint: { x: number; y: number } | null;
   spriteScreen: { x: number; y: number; w: number; h: number } | null;
   isDragging: boolean;
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void;
@@ -69,6 +70,7 @@ function startLive2DMotion(
 
 export function Live2DAvatarSurface({
   entry,
+  initialAnchorPoint,
   spriteScreen,
   isDragging,
   setSpriteScreen,
@@ -82,9 +84,9 @@ export function Live2DAvatarSurface({
     stageRef,
     setSpriteScreen,
     setIsDragging,
-    { interactionsRef },
+    { interactionsRef, initialAnchorPoint },
   );
-  const { spriteRef, spriteReady } = usePetLive2D(slotRef, app, invalidateAnchor);
+  const { spriteRef, spriteReady } = usePetLive2D(slotRef, app, entry, invalidateAnchor);
   const driver = useMemo(() => new TextCadenceMouthDriver(), []);
 
   useEffect(() => {

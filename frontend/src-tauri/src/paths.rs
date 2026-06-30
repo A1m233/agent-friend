@@ -51,6 +51,11 @@ pub fn avatar_model_assets_dir() -> PathBuf {
     user_data_dir().join(AVATAR_MODELS_DIR)
 }
 
+/// 应用随包内置模型安装后的管理目录：`<avatar_model_assets_dir>/builtin`。
+pub fn builtin_avatar_models_dir() -> PathBuf {
+    avatar_model_assets_dir().join("builtin")
+}
+
 /// 用户导入模型 catalog 预留位置：`<avatar_model_assets_dir>/catalog.json`。
 pub fn avatar_model_catalog_path() -> PathBuf {
     avatar_model_assets_dir().join(AVATAR_MODEL_CATALOG_FILE)
@@ -126,6 +131,12 @@ mod tests {
             PathBuf::from("agent-friend-data")
                 .join(AVATAR_MODELS_DIR)
                 .join(AVATAR_MODEL_CATALOG_FILE)
+        );
+        assert_eq!(
+            builtin_avatar_models_dir(),
+            PathBuf::from("agent-friend-data")
+                .join(AVATAR_MODELS_DIR)
+                .join("builtin")
         );
 
         if let Some(value) = previous {

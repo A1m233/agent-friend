@@ -86,12 +86,24 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": [
+            "$DATA/agent-friend/avatar-models/**"
+          ]
+        }
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../public/live2d-models/hiyori/": "avatar-seed/live2d/hiyori",
+      "../public/spine-models/ark-models/": "avatar-seed/spine/ark-models"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
