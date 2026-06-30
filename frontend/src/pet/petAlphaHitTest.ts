@@ -15,6 +15,10 @@
  */
 
 import type * as PIXI from "pixi.js";
+import {
+  alphaHitTestFromApp,
+  findVisibleBoundsFromApp,
+} from "./avatarRuntime/framebuffer";
 
 /** alpha > 此阈值（0–255）才视为命中。30 (~12%) 经验值，过滤抗锯齿边缘的极淡像素。 */
 const ALPHA_THRESHOLD = 30;
@@ -42,31 +46,7 @@ export function alphaHitTest(
   app: PIXI.Application | null,
   cursor: CursorPos,
 ): boolean {
-  if (!app) return false;
-  const canvas = app.renderer?.canvas;
-  if (!canvas || !(canvas instanceof HTMLCanvasElement)) return false;
-
-  // 拿 WebGL2 context（PIXI 已 getContext 过；再调返同一 context，WebGL spec 保证）
-  const gl = canvas.getContext("webgl2") as WebGL2RenderingContext | null;
-  if (!gl) return false;
-
-  const dpr = app.renderer.resolution ?? 1;
-  const cx = Math.round(cursor.x * dpr);
-  // WebGL framebuffer Y 翻转（原点在左下；CSS Y 原点在左上）
-  const cy = Math.round(canvas.height - cursor.y * dpr);
-
-  if (cx < 0 || cy < 0 || cx >= canvas.width || cy >= canvas.height) {
-    return false;
-  }
-
-  const buf = new Uint8Array(4);
-  try {
-    gl.readPixels(cx, cy, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-  } catch {
-    // 极少数情况 readPixels 抛（context lost / framebuffer 异常）；fail-safe 视为未命中
-    return false;
-  }
-  return buf[3] > ALPHA_THRESHOLD;
+  return alphaHitTestFromApp(app, cursor, ALPHA_THRESHOLD);
 }
 
 /**
@@ -85,56 +65,5 @@ export function findVisibleBounds(
   app: PIXI.Application | null,
   region: PixelRegion,
 ): PixelRegion | null {
-  if (!app) return null;
-  const canvas = app.renderer?.canvas;
-  if (!canvas || !(canvas instanceof HTMLCanvasElement)) return null;
-  const gl = canvas.getContext("webgl2") as WebGL2RenderingContext | null;
-  if (!gl) return null;
-
-  const dpr = app.renderer.resolution ?? 1;
-  // World CSS px → canvas pixels（top-down 坐标系，Y 还没翻转）
-  const px0 = Math.max(0, Math.floor(region.x * dpr));
-  const py0 = Math.max(0, Math.floor(region.y * dpr));
-  const px1 = Math.min(canvas.width, Math.ceil((region.x + region.w) * dpr));
-  const py1 = Math.min(canvas.height, Math.ceil((region.y + region.h) * dpr));
-  const w = px1 - px0;
-  const h = py1 - py0;
-  if (w <= 0 || h <= 0) return null;
-
-  // WebGL framebuffer Y 翻转：从底向上读，row 0 = 屏幕最底
-  const glY0 = canvas.height - py1;
-
-  const buf = new Uint8Array(w * h * 4);
-  try {
-    gl.readPixels(px0, glY0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-  } catch {
-    return null;
-  }
-
-  // CPU 扫 alpha > threshold 像素的最 min/maxX/Y（canvas top-down 坐标）
-  let minX = w, minY = h, maxX = -1, maxY = -1;
-  for (let row = 0; row < h; row++) {
-    // framebuffer row 0 在底，转 canvas top-down row：canvasRow = h - 1 - row
-    const canvasRow = h - 1 - row;
-    const rowOffset = row * w * 4;
-    for (let col = 0; col < w; col++) {
-      const alpha = buf[rowOffset + col * 4 + 3];
-      if (alpha > ALPHA_THRESHOLD) {
-        if (col < minX) minX = col;
-        if (canvasRow < minY) minY = canvasRow;
-        if (col > maxX) maxX = col;
-        if (canvasRow > maxY) maxY = canvasRow;
-      }
-    }
-  }
-  if (maxX < 0) return null; // 区域内无任何不透明像素
-
-  // 转回 world CSS px
-  return {
-    x: (px0 + minX) / dpr,
-    y: (py0 + minY) / dpr,
-    w: (maxX - minX + 1) / dpr,
-    h: (maxY - minY + 1) / dpr,
-  };
+  return findVisibleBoundsFromApp(app, region, ALPHA_THRESHOLD);
 }
-

@@ -3,6 +3,11 @@ import {
   ARK_AMIYA_ACTION_MAPPING,
   ARK_AMIYA_CAPABILITIES,
 } from "@/avatar-models";
+import {
+  chooseInitialAnimation as chooseRuntimeInitialAnimation,
+  isAvatarPhaseAction,
+  resolveAnimationName as resolveRuntimeAnimationName,
+} from "@/pet/avatarRuntime/actionMapping";
 
 export type RuntimeMode = "spine43-pixi8" | "spine38-pixi7";
 export type PetRuntimePhase = "idle" | "thinking" | "speaking" | "error" | "sleep";
@@ -44,21 +49,15 @@ export const ARK_ACTION_MAPPING: Record<PetAvatarAction, PetActionMapping> =
   ARK_AMIYA_ACTION_MAPPING;
 
 export function chooseInitialAnimation(animations: string[], preferred: string): string {
-  if (animations.includes(preferred)) return preferred;
-  const idle = animations.find((name) => name.toLowerCase().includes("idle"));
-  return idle ?? animations[0] ?? "";
+  return chooseRuntimeInitialAnimation(animations, preferred)?.animation ?? "";
 }
 
 export function resolveAnimationName(animations: string[], preferred: string, fallback: string): string {
-  if (animations.includes(preferred)) return preferred;
-  const exactCaseInsensitive = animations.find((name) => name.toLowerCase() === preferred.toLowerCase());
-  if (exactCaseInsensitive) return exactCaseInsensitive;
-  if (fallback && animations.includes(fallback)) return fallback;
-  return chooseInitialAnimation(animations, fallback);
+  return resolveRuntimeAnimationName(animations, preferred, fallback)?.animation ?? "";
 }
 
 export function isPhaseAction(action: PetAvatarAction): action is PetRuntimePhase {
-  return action === "idle" || action === "thinking" || action === "speaking" || action === "error" || action === "sleep";
+  return isAvatarPhaseAction(action);
 }
 
 export function formatCapabilities(capabilities: PetAvatarCapabilities): string {

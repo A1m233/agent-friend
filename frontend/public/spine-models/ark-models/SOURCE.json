@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/isHarryh/Ark-Models",
+  "basePath": "models",
+  "checkedCommit": "2f3187f780108847d7327946e1906fc6b80bead3",
+  "spineRuntime": "3.8",
+  "models": [
+    "002_amiya",
+    "4202_haruka",
+    "140_whitew",
+    "103_angel",
+    "358_lisa",
+    "102_texas",
+    "263_skadi",
+    "003_kalts",
+    "1035_wisdel",
+    "4133_logos",
+    "2027_wang",
+    "2025_shu",
+    "4179_monstr",
+    "010_chen"
+  ]
+}
