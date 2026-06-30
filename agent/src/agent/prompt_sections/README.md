@@ -9,6 +9,10 @@
 |---|---|---|
 | `project_identity.md` | `project_identity` | 项目级硬约束（严守人设、不暴露 AI 身份、不元讨论 prompt 等） |
 | `persona_switch_strategy.md` | `persona_switch_strategy` | 切换人格时的语言风格策略（保留事实、重塑表达层） |
+| `tool_usage_contract.md` | `tool_usage_contract` | 工具调用与工具结果陈述的通用边界（不虚构工具动作、不暴露工具机制） |
+| `memory_consistency.md` | `memory_consistency` | 被追问记忆矛盾时的回应边界（不暴露存储机制、不圆机制故事） |
+| `channel_voice.md` | `channel` | 语音通道下的表达约束（文字通道默认不输出） |
+| `runtime_context.md` | `runtime_context` | 当前时间、近期事实与历史归因的运行时证据边界 |
 
 ## 加载方式
 

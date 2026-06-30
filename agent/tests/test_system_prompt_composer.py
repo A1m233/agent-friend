@@ -243,8 +243,8 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_without_session_has_four_slots(self, tmp_path: Path) -> None:
-        """``session=None`` 时 channel 槽位被跳过，行为与 005 / 006 字节兼容。"""
+    def test_default_without_session_has_six_slots(self, tmp_path: Path) -> None:
+        """``session=None`` 时 channel 槽位被跳过，其余默认槽位仍输出。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         keys = tuple(s.key for s in composer.sections)
@@ -252,10 +252,12 @@ class TestSystemPromptComposerDefault:
             "project_identity",
             "persona",
             "persona_switch_strategy",
+            "tool_usage_contract",
+            "memory_consistency",
             "runtime_context",
         )
 
-    def test_default_with_session_has_five_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_with_session_has_seven_slots_in_fixed_order(self, tmp_path: Path) -> None:
         """传入 session 时，channel 槽位被插入在 persona_switch_strategy 与
         runtime_context 之间（007 起新增）。"""
         from agent import Session
@@ -271,6 +273,8 @@ class TestSystemPromptComposerDefault:
             "project_identity",
             "persona",
             "persona_switch_strategy",
+            "tool_usage_contract",
+            "memory_consistency",
             "channel",
             "runtime_context",
         )
@@ -284,7 +288,12 @@ class TestSystemPromptComposerDefault:
     def test_default_static_slots_have_non_empty_text(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
-        for key in ("project_identity", "persona_switch_strategy"):
+        for key in (
+            "project_identity",
+            "persona_switch_strategy",
+            "tool_usage_contract",
+            "memory_consistency",
+        ):
             slot = next(s for s in composer.sections if s.key == key)
             assert isinstance(slot, StaticSection)
             assert slot.text.strip() != ""
@@ -304,22 +313,23 @@ class TestSystemPromptComposerDefault:
         assert "{current_time}" not in rendered
         # 关键内容存在
         assert "当前时间" in rendered
-        assert "web_search" in rendered
-        assert "recall_past_chats" in rendered
-        assert "禁止用通识" in rendered
-        assert "错引对象的代表作" in rendered
-        assert "本轮不能切换成通用知识回答" in rendered
-        assert "不要同轮调用 `web_search`" in rendered
+        assert "事实与证据" in rendered
+        assert "近期和实时信息" in rendered
+        assert "过去对话和历史归因" in rendered
+        assert "历史对话工具取得片段" in rendered
+        assert "外部搜索" in rendered
 
-    def test_default_compose_contains_all_four_segments(self, tmp_path: Path) -> None:
+    def test_default_compose_contains_default_segments(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         output = composer.compose()
         assert "项目元规则" in output
         assert "Echo" in output
         assert "关于过往对话的语言风格" in output
+        assert "工具使用边界" in output
+        assert "记忆矛盾回应边界" in output
         assert "当前时间" in output
-        assert "web_search" in output
+        assert "近期和实时信息" in output
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -342,6 +352,7 @@ class TestSystemPromptComposerDefault:
         assert "项目元规则" in output
         assert "Echo" in output
         assert "关于过往对话的语言风格" not in output
+        assert "记忆矛盾回应边界" in output
 
 
 # ===== load_default_static_section =====
@@ -372,6 +383,28 @@ class TestLoadDefaultStaticSection:
         assert section.key == "persona_switch_strategy"
         assert "关于过往对话的语言风格" in section.text
         assert "事实保留" in section.text
+
+    def test_loads_tool_usage_contract(self) -> None:
+        section = load_default_static_section("tool_usage_contract")
+        assert section.key == "tool_usage_contract"
+        assert "工具使用边界" in section.text
+        assert "只有本轮确实准备调用或已经调用" in section.text
+        assert "不要对用户说工具名" in section.text
+        assert "历史证据和外部事实不能互相替代" in section.text
+        assert "先确认" in section.text
+
+    def test_loads_memory_consistency(self) -> None:
+        section = load_default_static_section("memory_consistency")
+        assert section.key == "memory_consistency"
+        assert "记忆矛盾回应边界" in section.text
+        assert "先回到证据" in section.text
+        assert "实际召回到的历史片段" in section.text
+        assert "当前对话上下文和历史记录" in section.text
+        assert "不能确认" in section.text
+        assert "因果故事" in section.text
+        assert "没翻到或没查到" in section.text
+        assert "存储" in section.text
+        assert "不要为了维护上一轮回复" in section.text
 
     def test_unknown_key_raises_keyerror(self) -> None:
         with pytest.raises(KeyError):

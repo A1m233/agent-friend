@@ -27,7 +27,12 @@ from llm_providers import LLMClient, ProviderSpec
 from .schema import Case, FixtureSession, ToolCallTrace, Trace
 
 
-def _build_manager(store: JsonlSessionStore, spec: ProviderSpec) -> SessionManager:
+def _build_manager(
+    store: JsonlSessionStore,
+    spec: ProviderSpec,
+    *,
+    tavily_api_key: str | None = None,
+) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
     def _llm_factory(_model: str) -> LLMClient:
@@ -41,7 +46,11 @@ def _build_manager(store: JsonlSessionStore, spec: ProviderSpec) -> SessionManag
         llm_client_factory=_llm_factory,
         prompt_builder_factory=_prompt_factory,
         context_manager_factory=default_context_manager,
-        tool_registry=make_default_registry(session_store=store, stderr_warn=False),
+        tool_registry=make_default_registry(
+            tavily_api_key=tavily_api_key,
+            session_store=store,
+            stderr_warn=False,
+        ),
     )
 
 
@@ -71,7 +80,7 @@ def _inject_fixture(store: JsonlSessionStore, fixture: FixtureSession, model: st
     store.create(session)
 
 
-def run_case(case: Case, spec: ProviderSpec) -> Trace:
+def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = None) -> Trace:
     """跑一个 case，返回完整 Trace；异常以 ``Trace.error`` 形式返回。"""
     try:
         with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp:
@@ -79,7 +88,7 @@ def run_case(case: Case, spec: ProviderSpec) -> Trace:
             if case.fixture_session is not None:
                 _inject_fixture(store, case.fixture_session, spec.model)
 
-            manager = _build_manager(store, spec)
+            manager = _build_manager(store, spec, tavily_api_key=tavily_api_key)
             session = manager.create(
                 persona="default",
                 model=spec.model,

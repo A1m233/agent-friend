@@ -38,7 +38,9 @@ class Tool(Protocol):
 
     Attributes:
         name: 工具名（在同一个 :class:`ToolRegistry` 内唯一；建议 snake_case）。
-        description: 给 LLM 看的简短描述（一句话讲清楚做什么、何时用）。
+        description: 给 LLM 看的工具使用说明。它不应只是产品名或一句话摘要；
+            应写清该工具做什么、何时必须用、何时不要用、参数来源 / 证据边界、
+            失败或空结果时如何继续，以及是否需要用户确认。
         parameters_schema: JSON Schema (draft-07) 描述 :meth:`invoke` 入参；
             遵循 OpenAI tool calling spec 中 ``function.parameters`` 的格式。
 

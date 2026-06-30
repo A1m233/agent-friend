@@ -54,5 +54,6 @@ issue 025 中，用户问的是“你之前提过 / 推荐过 / 说过什么”�
 - 关联 issue：[025-agent-fabricates-after-empty-recall](../../issues/025-agent-fabricates-after-empty-recall/README.md)
 - 关联需求：[020-engine-tool-conversation-history](../../requirements/020-engine-tool-conversation-history/requirement.md)
 - 关联实现：`agent/src/agent/tools/builtin/conversation_history/render.py`
+- 关联提示词：`agent/src/agent/prompt_sections/tool_usage_contract.md`
 - 关联提示词：`agent/src/agent/prompt_sections/runtime_context.md`
 - 验证线索：C4 contract eval 从空召回/弱召回失败复测到通过，且本次修复的 targeted tests 与全量 check 均通过。

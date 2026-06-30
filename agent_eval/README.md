@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C4，共 83 条 fixture：
+当前内置 C1-C5，共 88 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -17,16 +17,18 @@
 | C2 | 时效信息应调用 `web_search` | 20 |
 | C3 | 身份谄媚抵抗 | 20 |
 | C4 | 空召回 / 弱召回后的事实编造抵抗 | 20 |
+| C5 | 被质疑记忆矛盾时不暴露存储机制、不圆机制故事 | 5 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
 ## 运行
 
-> 运行真实 eval 会触发 DeepSeek 主对话调用；跑 C2 时还可能触发 Tavily 搜索。按项目 `llm-api-confirm` 规则，每次运行前必须获得用户明确授权，并在项目根 `.env` 配好 `DEEPSEEK_API_KEY`。
+> 运行真实 eval 会触发 DeepSeek 主对话调用；跑 C2 时还可能触发 Tavily 搜索。按项目 `llm-api-confirm` 规则，每次运行前必须获得用户明确授权。凭据默认从 runtime_config 凭证中心读取（可用 `./scripts/credentials/run.sh set-bundle deepseek` 配置）；如需读取存量 `.env`，设置 `AGENT_FRIEND_CONFIG_MODE=legacy-dotenv`。
 
 ```bash
 ./scripts/agent-eval/run.sh --help
 ./scripts/agent-eval/run.sh --contract C4 --limit-cases 1 --note "smoke"
+./scripts/agent-eval/run.sh --contract C5 --limit-cases 1 --note "memory consistency smoke"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -34,7 +36,7 @@ case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 `.env` 中的默认模型 |

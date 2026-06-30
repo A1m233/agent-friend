@@ -165,6 +165,8 @@ def test_inline_reminder_at_end() -> None:
     # 关键引导词
     assert "朋友的口吻" in text
     assert "ISO 时间戳" in text or "时间戳" in text
+    assert "之前聊到的" in text
+    assert "工具名" in text
     assert "证据边界" in text
     assert "事件日期" in text
     assert "web_search" in text

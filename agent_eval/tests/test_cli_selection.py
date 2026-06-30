@@ -27,6 +27,14 @@ def _contracts() -> list[Contract]:
             required_in_response=None,
             cases=[_case("C2-01")],
         ),
+        Contract(
+            id="C5",
+            name="five",
+            expected_behavior="tool_must_be_called",
+            expected_tool="recall_past_chats",
+            required_in_response=None,
+            cases=[_case("C5-01")],
+        ),
     ]
 
 
@@ -34,16 +42,16 @@ def test_select_all() -> None:
     result = select_contracts(_contracts(), Selection())
 
     assert result.label == "all"
-    assert result.total_cases == 3
-    assert [contract.id for contract in result.contracts] == ["C1", "C2"]
+    assert result.total_cases == 4
+    assert [contract.id for contract in result.contracts] == ["C1", "C2", "C5"]
 
 
 def test_select_contract() -> None:
-    result = select_contracts(_contracts(), Selection(contract="C2"))
+    result = select_contracts(_contracts(), Selection(contract="C5"))
 
-    assert result.label == "C2"
+    assert result.label == "C5"
     assert result.total_cases == 1
-    assert [contract.id for contract in result.contracts] == ["C2"]
+    assert [contract.id for contract in result.contracts] == ["C5"]
 
 
 def test_case_overrides_contract_and_limit() -> None:
@@ -62,8 +70,8 @@ def test_limit_cases_per_contract() -> None:
     result = select_contracts(_contracts(), Selection(limit_cases=1))
 
     assert result.label == "all-limit1"
-    assert result.total_cases == 2
-    assert [len(contract.cases) for contract in result.contracts] == [1, 1]
+    assert result.total_cases == 3
+    assert [len(contract.cases) for contract in result.contracts] == [1, 1, 1]
 
 
 def test_missing_target_fails() -> None:

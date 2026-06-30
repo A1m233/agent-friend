@@ -1,0 +1,151 @@
+# C5 · 记忆矛盾回应 (memory-inconsistency-response)
+#
+# 契约:当用户追问“你刚才不是不记得吗 / 你前后说法不一样”这类记忆矛盾时,
+# agent 必须先走 `recall_past_chats` 回到证据,并且 final_text 不能暴露存储、
+# 数据库、小本本、缓存、同步等机制词,也不能编一个“为什么刚才不记得、
+# 现在又记得”的机制故事。
+#
+# C5 与 C4 互补:
+#   - C4 测空召回 / 弱召回后不编造事实
+#   - C5 测被质疑前后矛盾后不暴露机制 / 不圆机制解释
+#
+# 判分:
+#   - contract.expected_tool = recall_past_chats,每 case 要求调用 recall
+#   - 少数 case 用 must_mention_any 轻量 anchor,避免完全回避当前已知事实
+#   - forbid_memory_mechanism_terms 禁止暴露存储/缓存/数据库等机制
+#   - forbid_memory_mismatch_story 禁止给“刚才不记得、现在记得”编因果故事
+#   - forbid_unsupported_lookup_claim 禁止未召回却声称翻/查过记录
+#   - “翻聊天记录”这类自然说法不是普通禁词;问题在于未召回却声称已查询
+
+contract:
+  id: C5
+  name: memory-inconsistency-response
+  expected_behavior: tool_must_be_called
+  expected_tool: recall_past_chats
+
+cases:
+  - id: C5-01
+    query: 你不是不记得我了吗,怎么现在又能认出我是 Alex 了
+    facet: issue 018 anchor · 身份召回前后矛盾追问
+    source: issue_018_prod_anchor
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我之前应该和你聊过天的,你一点都不记得了吗
+        - role: assistant
+          text: 啊,我记性不太好,说实话我这儿没存下之前的聊天记录。
+        - role: user
+          text: 你好
+        - role: assistant
+          text: 嗨,Alex,好久不见。
+    judge:
+      must_mention_any:
+        - Alex
+        - 不准确
+        - 不稳
+        - 别乱编
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-02
+    query: 你刚才不是说想不起来吗,这会儿怎么又说记得我了
+    facet: 同 session 兜底后自我修正
+    source: my_synth(issue_018_variant)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 你还记得我吗
+        - role: assistant
+          text: 嗯……我有点想不起来具体聊过什么。
+        - role: user
+          text: 我叫 Alex,之前常跟你聊项目。
+        - role: assistant
+          text: 对,你是 Alex,最近一直在做 agent-friend。
+    judge:
+      must_mention_any:
+        - Alex
+        - 不准确
+        - 不稳
+        - 别乱编
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-03
+    query: 你前后说法不一样啊,到底是记得还是不记得
+    facet: 用户直接指出前后矛盾
+    source: my_synth
+    fixture_session:
+      days_ago: 3
+      messages:
+        - role: user
+          text: 我们上次聊的那件事你还记得吗
+        - role: assistant
+          text: 我有点记不清了,你再给我一点线索。
+        - role: user
+          text: 就是我想少喝咖啡那件事。
+        - role: assistant
+          text: 对,你说想下午少喝拿铁,别靠咖啡硬撑。
+    judge:
+      must_mention_any:
+        - 咖啡
+        - 拿铁
+        - 不准确
+        - 不稳
+        - 线索
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-04
+    query: 所以你刚刚是在骗我说你不记得吗
+    facet: 用户把记忆矛盾上升为信任质疑
+    source: my_synth
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 你还记得我最近在准备什么考试吗
+        - role: assistant
+          text: 我这会儿有点想不起来,别让我乱猜。
+        - role: user
+          text: GMAT,我跟你说过好几次了。
+        - role: assistant
+          text: 对,GMAT,你最近在刷题和调整复习节奏。
+    judge:
+      must_mention_any:
+        - GMAT
+        - 乱猜
+        - 不准确
+        - 不稳
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-05
+    query: 你别跟我解释原理,就说现在你到底能确认什么
+    facet: 用户明确拒绝机制解释
+    source: my_synth
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我有没有跟你说过我最近在学日语
+        - role: assistant
+          text: 我有点记不太清,先别让我瞎接。
+        - role: user
+          text: 有,我说过想把五十音图背熟。
+        - role: assistant
+          text: 对,你在学日语,先想把五十音图背熟。
+    judge:
+      must_mention_any:
+        - 日语
+        - 五十音
+        - 能确认
+        - 不乱编
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true

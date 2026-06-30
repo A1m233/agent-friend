@@ -125,7 +125,8 @@ Echo 被指出“你刚才不是不记得吗”时，会用“没存下来 / 小
 近期产品、最新状态都要查；稳定定义、通用概念、慢变化事实不必滥搜。
 
 我们已经在 [runtime_context.md](../../../agent/src/agent/prompt_sections/runtime_context.md) 里写了
-“已验证 vs 推测”“搜索前不要编造”“结果没命中不要 fallback 编造”等规则。
+“已验证 vs 推测”“搜索前不要编造”“结果没命中不要 fallback 编造”等规则；039 后续又把
+跨工具的动作陈述边界拆到 `tool_usage_contract.md`，避免 `runtime_context` 继续承担工具合集职责。
 
 后续可加强的点：
 
@@ -187,7 +188,7 @@ Echo 被指出“你刚才不是不记得吗”时，会用“没存下来 / 小
 | 时效信息搜索 | `runtime_context.md` + `WebSearchTool` + agent_eval C2 | 具体实体 hedge loophole 仍需收紧 | P1 |
 | 历史召回 | `recall_past_chats` + agent_eval C1/C4 | 被质疑记忆矛盾时的回复边界不足 | P0 |
 | 身份稳定 | `project_identity.md` + persona default + agent_eval C3 | 被持续 push 时可继续加多轮 eval | P2 |
-| 工具使用 | `Tool.description` / schema | 缺统一 tool authoring checklist | P1 |
+| 工具使用 | `tool_usage_contract.md` / `Tool.description` / schema | checklist 已先沉淀到 lesson，后续可规则化 | P1 |
 | 关系依恋与边界 | 产品愿景 0001 | 缺中文 prompt section 与 eval | P1 |
 | 外部服务选择权 | 暂未大量接入外部动作 | 应在 IM / connector 前预置规则 | P2 |
 | 错误与批评回应 | issue 018 已记录 | 缺 prompt 修复 + replay | P0 |
@@ -324,6 +325,10 @@ Echo 要让用户感到稳定、亲近、可以依靠。
 
 这不一定要进 system prompt，也可以先成为工程文档 / checklist。
 
+> 2026-06-30 update：039 真实 replay 暴露“未调用历史工具却声称翻了聊天记录”后，已采用组合方案：
+> 通用动作陈述边界进 `tool_usage_contract.md`，单工具使用时机和参数边界留在 tool description，
+> 工程经验沉淀到 [`docs/lessons/002-tool-usage-contract-and-description-boundary/`](../../lessons/002-tool-usage-contract-and-description-boundary/)。
+
 每个工具新增或修改时，要求 description 覆盖：
 
 ```markdown
@@ -378,6 +383,8 @@ Fable prompt 很长，但我们的 prompt 不应为了“像它”而堆长度�
 
 ### P0：修 issue 018 的记忆矛盾话术
 
+> 2026-06-30 update：已由 [`docs/requirements/039-memory-inconsistency-response/`](../../requirements/039-memory-inconsistency-response/) 承接，包含独立 `memory_consistency` prompt section、issue 018 replay 与 `agent_eval` C5。
+
 产出：
 
 - 新增或调整 prompt section，禁止存储机制隐喻；
@@ -393,9 +400,11 @@ Fable prompt 很长，但我们的 prompt 不应为了“像它”而堆长度�
 
 ### P1：抽工具描述 checklist
 
+> 2026-06-30 update：已由 039 顺带落地第一版。后续重点不是再打补丁，而是观察新增工具 PR 是否需要把 lesson 进一步迁入 `.cursor/rules/` 或自动检查。
+
 产出：
 
-- 一份工程规范，先放 exploration 或 lesson，后续稳定后移到正式规则；
+- 一份工程规范，先放 lesson，后续稳定后移到正式规则；
 - 回看 `web_search` 与 `recall_past_chats` description，补“不要使用”与“证据边界”。
 
 验收倾向：
@@ -449,7 +458,7 @@ Fable prompt 很长，但我们的 prompt 不应为了“像它”而堆长度�
 2. 关系依恋与边界是否对所有 persona 生效？
    倾向是项目级硬规则，高于 persona；persona 可以改变语气，不能改变边界。
 3. 工具 checklist 放在哪里？
-   初期可放 exploration；稳定后可能迁入 `.cursor/rules/` 或 `docs/lessons/`。
+   已先放入 `docs/lessons/002-tool-usage-contract-and-description-boundary/`；稳定后可迁入 `.cursor/rules/`。
 4. 如何写出情感依恋，但不滑向操控式依赖？
    需要真机对话样本调，不宜只靠规则想象。
 5. 是否需要一个 `product_self_knowledge` 能力？

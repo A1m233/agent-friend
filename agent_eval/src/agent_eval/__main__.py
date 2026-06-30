@@ -7,14 +7,11 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
-import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dotenv import load_dotenv
 from rich.console import Console
 
 from .baseline import ProviderRunInfo, ReportRun, ToolRunInfo, write_report
@@ -25,6 +22,8 @@ from .selection import Selection, select_contracts
 
 if TYPE_CHECKING:
     from llm_providers.spec import ProviderSpec
+
+    from runtime_config import CredentialSource
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 _CASES_DIR = _PACKAGE_ROOT / "cases"
@@ -40,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contract",
         default="all",
-        help="只跑指定契约，如 C1 / C2 / C3 / C4；默认 all",
+        help="只跑指定契约，如 C1 / C2 / C3 / C4 / C5；默认 all",
     )
     parser.add_argument(
         "--case",
@@ -59,7 +58,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=None,
-        help="覆盖被测 agent 用的 model；默认取 .env 的 DEEPSEEK_MODEL",
+        help="覆盖被测 agent 用的 model；默认取 runtime_config 中的 DEEPSEEK_MODEL",
     )
     parser.add_argument(
         "--note",
@@ -80,17 +79,49 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _provider_spec(model: str | None) -> ProviderSpec:
-    from llm_providers.spec import ProviderSpec
+def _credential_source() -> CredentialSource:
+    from runtime_config import config_mode_from_env, credential_source_for_mode
 
-    spec = ProviderSpec.from_env(prefix="DEEPSEEK")
-    if model:
-        spec = dataclasses.replace(spec, model=model)
-    return spec
+    mode = config_mode_from_env()
+    return credential_source_for_mode(mode, dotenv_path=Path.cwd() / ".env")
 
 
-def _tool_info() -> ToolRunInfo:
-    tavily_present = bool(os.environ.get("TAVILY_API_KEY"))
+def _optional_int(source: CredentialSource, name: str) -> int | None:
+    from runtime_config import optional_secret
+
+    raw = optional_secret(source, name)
+    if not raw:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _provider_spec(model: str | None, source: CredentialSource) -> ProviderSpec:
+    from llm_providers import ProviderConfig, ProviderSpec
+    from runtime_config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, optional_secret, require_secret
+
+    return ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(
+            api_key=require_secret(source, DEEPSEEK_API_KEY),
+            model=model or optional_secret(source, DEEPSEEK_MODEL),
+            api_base=optional_secret(source, "DEEPSEEK_API_BASE"),
+            context_window=_optional_int(source, "DEEPSEEK_CONTEXT_WINDOW"),
+        ),
+    )
+
+
+def _tavily_api_key(source: CredentialSource) -> str | None:
+    from runtime_config import TAVILY_API_KEY, optional_secret
+
+    return optional_secret(source, TAVILY_API_KEY)
+
+
+def _tool_info(source: CredentialSource) -> ToolRunInfo:
+    tavily_present = _tavily_api_key(source) is not None
     return ToolRunInfo(
         tavily_key_present=tavily_present,
         web_search_available=tavily_present,
@@ -99,7 +130,6 @@ def _tool_info() -> ToolRunInfo:
 
 
 def main() -> int:
-    load_dotenv()
     args = _parse_args()
     console = Console()
 
@@ -118,16 +148,22 @@ def main() -> int:
 
     from llm_providers.errors import LLMAuthError
 
+    from runtime_config import CredentialMissingError
+
     try:
-        spec = _provider_spec(args.model)
-    except LLMAuthError as exc:
+        source = _credential_source()
+        spec = _provider_spec(args.model, source)
+    except (CredentialMissingError, LLMAuthError, ValueError) as exc:
         print(
-            f"[配置错误] {exc}\n请在项目根 .env 配置 DEEPSEEK_API_KEY。",
+            f"[配置错误] {exc}\n"
+            "默认请使用 scripts/credentials/run.* set-bundle deepseek 配置；"
+            "如需读取存量 .env，请设置 AGENT_FRIEND_CONFIG_MODE=legacy-dotenv。",
             file=sys.stderr,
         )
         return 1
 
-    tools = _tool_info()
+    tavily_api_key = _tavily_api_key(source)
+    tools = _tool_info(source)
     if (
         any(contract.id == "C2" for contract in selected.contracts)
         and not tools.web_search_available
@@ -154,7 +190,7 @@ def main() -> int:
         items: list[CaseRunResult] = []
         for index, case in enumerate(contract.cases, 1):
             console.print(f"  [{index}/{len(contract.cases)}] {case.id} … ", end="")
-            trace = run_case(case, spec)
+            trace = run_case(case, spec, tavily_api_key=tavily_api_key)
             verdict = judge_case(case, contract, trace)
             mark = "[green]✓[/green]" if verdict.passed else "[red]✗[/red]"
             console.print(mark)

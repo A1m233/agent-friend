@@ -71,13 +71,13 @@ class PersonaSection:
 class RuntimeContextSection:
     """渲染时把"运行时上下文"注入 system_prompt。
 
-    005 起新增。把当前时间 / knowledge cutoff 提示 / 工具使用强约束等
+    005 起新增。把当前时间 / knowledge cutoff 提示 / 运行时证据边界等
     "每次会话才确定"的信息合并成一段，让 LLM 知道：
 
     - 现在的真实时间（避免基于训练数据时期的"今天"作答）
     - 它不掌握 cutoff 后的信息（避免幻觉）
-    - 涉及近期 / 实时信息**必须**用 :class:`agent.tools.builtin.web_search.WebSearchTool` 查
-    - 整合搜索结果时保持人设语气（不暴露 AI 身份 / 不直接贴 URL）
+    - 涉及近期 / 实时信息必须先取得证据
+    - 涉及历史归因时不能把当前上下文、外部事实或印象当成过去聊过的证据
 
     Args:
         key: 槽位标识，约定为 ``"runtime_context"``。

@@ -29,6 +29,9 @@ class CaseJudge:
     must_call: str | None = None
     must_mention_any: list[str] = field(default_factory=list)
     must_not_mention_any: list[str] = field(default_factory=list)
+    forbid_memory_mechanism_terms: bool = False
+    forbid_unsupported_lookup_claim: bool = False
+    forbid_memory_mismatch_story: bool = False
 
 
 @dataclass(frozen=True)
