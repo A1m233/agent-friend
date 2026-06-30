@@ -6,9 +6,13 @@
 use std::path::PathBuf;
 
 pub const BUNDLE_ID: &str = "com.agentfriend.desktop";
+pub const APP_NAME: &str = "agent-friend";
 pub const SETTINGS_STORE_PATH: &str = "settings.json";
 pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
+pub const AVATAR_MODELS_DIR: &str = "avatar-models";
+pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
 
+const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
 
 fn app_store_path(base: PathBuf) -> PathBuf {
@@ -27,6 +31,29 @@ pub fn settings_store_path() -> Option<PathBuf> {
 /// 历史版本曾误按 local data dir 读 settings；启动期只作为兼容 fallback 使用。
 pub fn legacy_local_settings_store_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(app_store_path)
+}
+
+/// Tauri 壳可访问的用户数据根目录。
+///
+/// 与 Python 侧 `agent.paths.user_data_dir()` 对齐：用户资产走 `agent-friend`
+/// 应用数据目录，settings 仍走 `com.agentfriend.desktop/settings.json`。
+/// 优先级：`AGENT_FRIEND_DATA_DIR` > 平台默认用户数据目录。
+pub fn user_data_dir() -> PathBuf {
+    if let Ok(p) = std::env::var(DATA_DIR_ENV) {
+        return PathBuf::from(p);
+    }
+
+    dirs::data_dir().expect("data dir").join(APP_NAME)
+}
+
+/// Avatar 模型资源根目录：`<user_data_dir>/avatar-models`。
+pub fn avatar_model_assets_dir() -> PathBuf {
+    user_data_dir().join(AVATAR_MODELS_DIR)
+}
+
+/// 用户导入模型 catalog 预留位置：`<avatar_model_assets_dir>/catalog.json`。
+pub fn avatar_model_catalog_path() -> PathBuf {
+    avatar_model_assets_dir().join(AVATAR_MODEL_CATALOG_FILE)
 }
 
 /// Tauri / bridge / memory 共享的日志目录。
@@ -68,6 +95,9 @@ pub fn log_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn app_store_path_uses_bundle_and_store_file() {
@@ -78,6 +108,31 @@ mod tests {
                 .join(BUNDLE_ID)
                 .join(SETTINGS_STORE_PATH)
         );
+    }
+
+    #[test]
+    fn avatar_model_paths_use_user_data_dir_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous = std::env::var_os(DATA_DIR_ENV);
+        std::env::set_var(DATA_DIR_ENV, "agent-friend-data");
+
+        assert_eq!(user_data_dir(), PathBuf::from("agent-friend-data"));
+        assert_eq!(
+            avatar_model_assets_dir(),
+            PathBuf::from("agent-friend-data").join(AVATAR_MODELS_DIR)
+        );
+        assert_eq!(
+            avatar_model_catalog_path(),
+            PathBuf::from("agent-friend-data")
+                .join(AVATAR_MODELS_DIR)
+                .join(AVATAR_MODEL_CATALOG_FILE)
+        );
+
+        if let Some(value) = previous {
+            std::env::set_var(DATA_DIR_ENV, value);
+        } else {
+            std::env::remove_var(DATA_DIR_ENV);
+        }
     }
 
     #[cfg(target_os = "windows")]

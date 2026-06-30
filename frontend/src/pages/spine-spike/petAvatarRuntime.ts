@@ -1,4 +1,8 @@
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
+import {
+  ARK_AMIYA_ACTION_MAPPING,
+  ARK_AMIYA_CAPABILITIES,
+} from "@/avatar-models";
 
 export type RuntimeMode = "spine43-pixi8" | "spine38-pixi7";
 export type PetRuntimePhase = "idle" | "thinking" | "speaking" | "error" | "sleep";
@@ -34,24 +38,10 @@ export const RUNTIME_OPTIONS: Array<{ value: RuntimeMode; label: string }> = [
   { value: "spine38-pixi7", label: "Pixi 7 / Spine 3.8" },
 ];
 
-export const ARK_SPINE_CAPABILITIES = {
-  motions: true,
-  alphaHitTest: true,
-  mouthParams: false,
-  gazeParams: false,
-  expressionParams: false,
-} satisfies PetAvatarCapabilities;
+export const ARK_SPINE_CAPABILITIES: PetAvatarCapabilities = ARK_AMIYA_CAPABILITIES;
 
-export const ARK_ACTION_MAPPING: Record<PetAvatarAction, PetActionMapping> = {
-  idle: { animation: "Default", loop: true },
-  thinking: { animation: "Sit", loop: true },
-  speaking: { animation: "Relax", loop: true },
-  error: { animation: "Sit", loop: true },
-  sleep: { animation: "Sleep", loop: true },
-  tap: { animation: "Interact", loop: false, returnToPhase: true },
-  dragStart: { animation: "Move", loop: true },
-  dragEnd: { animation: "Relax", loop: false, returnToPhase: true },
-};
+export const ARK_ACTION_MAPPING: Record<PetAvatarAction, PetActionMapping> =
+  ARK_AMIYA_ACTION_MAPPING;
 
 export function chooseInitialAnimation(animations: string[], preferred: string): string {
   if (animations.includes(preferred)) return preferred;
