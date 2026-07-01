@@ -277,6 +277,8 @@ elseif ($mode -eq "tauri") {
     Write-Host "===> WebView2 CDP 已关闭（--no-cdp）"
 }
 
+uv run python (Join-Path $root "scripts\dev\check_bridge_processes.py")
+
 $bridge = $null
 $voice = $null
 $cloudflared = $null

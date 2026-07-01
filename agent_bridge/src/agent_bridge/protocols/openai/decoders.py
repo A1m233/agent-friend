@@ -94,6 +94,8 @@ def decode_chat_completion_request(body: dict[str, Any]) -> DecodedRequest:
         raise DecodeError("messages 最后一条必须是 role=user")
 
     latest = kept.pop()
+    if not latest.content.strip():
+        raise DecodeError("messages 最后一条 user content 不能为空")
     return DecodedRequest(
         history=kept,
         latest_user_input=latest.content,

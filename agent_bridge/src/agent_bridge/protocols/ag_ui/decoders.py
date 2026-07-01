@@ -94,6 +94,8 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         raise DecodeError(f"messages 最后一条必须是 role=user，收到 {type(last).__name__}")
 
     content = last.content if isinstance(last.content, str) else ""
+    if not content.strip():
+        raise DecodeError("messages 最后一条 user content 不能为空")
     return DecodedRequest(
         thread_id=payload.thread_id,
         run_id=payload.run_id,
