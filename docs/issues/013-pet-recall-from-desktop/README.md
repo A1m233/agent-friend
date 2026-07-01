@@ -1,9 +1,11 @@
 # 013 · 桌宠隐藏后无法直接从桌面唤回
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-06-16
-- **关联需求**：[019-pet-actionbar-rework-and-settings-shell](../../requirements/019-pet-actionbar-rework-and-settings-shell/)（隐藏入口落地需求）
+- **关联需求**：
+  - [019-pet-actionbar-rework-and-settings-shell](../../requirements/019-pet-actionbar-rework-and-settings-shell/)（隐藏入口落地需求）
+  - [041-pet-edge-recall-interaction](../../requirements/041-pet-edge-recall-interaction/)（修复指向）
 
 ## 现象
 
@@ -38,6 +40,6 @@
 
 ## 备忘
 
-- 立项后此 issue → resolved，补"修复指向"指向新需求 + 关键 commit
+- 041 已将 ActionBar 主路径从 `hide_pet` 完全隐藏改为 `petDisplayMode=edgeRecall` 边缘召回；桌面上保留缩小形象作为可见召回点，托盘菜单继续作为完全隐藏/显示兜底。
 - 019 实施期在 `frontend/src-tauri/src/lib.rs::hide_pet` 函数注释中已指向本 issue（注释中写"issue 013"）
 - 与 [`docs/explorations/desktop-completeness/`](../../explorations/desktop-completeness/) Tier 2 "右键菜单 + 双击反应" 部分相关：右键菜单 / 双击反应中也可能承载唤回交互，立项时一并考虑
