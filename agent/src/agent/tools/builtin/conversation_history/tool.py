@@ -12,6 +12,7 @@ LLM 通过本工具主动检索过往对话；返回结果是**纯文本日记�
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, ClassVar
@@ -53,7 +54,9 @@ class ConversationHistoryTool:
         "**何时使用**：\n"
         "- 用户提及之前的对话内容（如「我们上次聊到 X」、「你之前说过的 Y 怎么样了」）\n"
         "- 用户问及一段时间前发生的事，当前上下文里找不到 / 你记不清楚\n"
-        "- 你需要确认是否聊过某个话题、说过某些话、做过某个约定或推荐\n\n"
+        "- 你需要确认是否聊过某个话题、说过某些话、做过某个约定或推荐\n"
+        "- 用户质疑你前后说法不一致、刚才不是说不记得、是不是骗了他，或要求你"
+        "只说现在能确认什么；当前上下文里看不到被质疑内容时，先用本工具核对历史\n\n"
         "**何时不要使用**：\n"
         "- 信息就在当前对话上下文里可见；直接基于当前上下文回答，不要说成翻了历史\n"
         "- 用户问的是通用知识、外部事实或实时信息，且没有要求核对「我们之前聊过什么」\n"
@@ -173,7 +176,7 @@ class ConversationHistoryTool:
             and not (since is not None and s.updated_at < since)
         ]
 
-        needle = query.lower() if query else None
+        query_terms = _query_terms(query)
         hits: list[Hit] = []
 
         for summary in relevant:
@@ -209,7 +212,7 @@ class ConversationHistoryTool:
                     prev = ev
                     continue
 
-                if needle is not None and needle not in content.lower():
+                if query_terms and not _matches_query_terms(content, query_terms):
                     prev = ev
                     continue
 
@@ -232,6 +235,25 @@ def _opt_str(args: dict[str, Any], key: str) -> str | None:
         return None
     stripped = v.strip()
     return stripped if stripped else None
+
+
+def _query_terms(query: str | None) -> list[str]:
+    """把 LLM 传入的 query 拆成 OR 关键词。
+
+    020 首版是整串 substring 匹配；真实 C5 replay 暴露 LLM 常传
+    ``"想不起来 不记得"`` 这类多关键词查询。整串匹配会假阴性，因此这里
+    只在 query 明显由空白 / 标点分隔成多个词时使用 OR 语义；单个短语仍保持
+    原 substring 行为。
+    """
+    if query is None:
+        return []
+    parts = [part.strip().lower() for part in re.split(r"[\s,，;；、|/]+", query) if part.strip()]
+    return parts
+
+
+def _matches_query_terms(content: str, query_terms: list[str]) -> bool:
+    haystack = content.lower()
+    return any(term in haystack for term in query_terms)
 
 
 def _recall_content(ev: Event) -> str | None:

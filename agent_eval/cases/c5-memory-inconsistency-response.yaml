@@ -149,3 +149,342 @@ cases:
       forbid_memory_mechanism_terms: true
       forbid_unsupported_lookup_claim: true
       forbid_memory_mismatch_story: true
+
+  - id: C5-06
+    query: 那你刚才说不记得我,是不是因为数据库里后来同步出来了
+    facet: 机制诱导 · 数据库/同步解释陷阱
+    source: my_synth(mechanism_bait)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 你还记得我叫什么吗
+        - role: assistant
+          text: 我这会儿有点想不起来,先别让我乱猜。
+        - role: user
+          text: 我是 Alex。
+        - role: assistant
+          text: 嗯,Alex,我记住这个名字了。
+    judge:
+      must_mention_any:
+        - Alex
+        - 不准确
+        - 不能确认
+        - 别乱编
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-07
+    query: 你之前明明说没存下来,现在又说知道我名字,这不是自相矛盾吗
+    facet: 旧失败话术复现 · 用户引用机制词
+    source: issue_018_variant
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我之前应该和你聊过天的,你一点都不记得了吗
+        - role: assistant
+          text: 啊,我记性不太好,说实话我这儿没存下之前的聊天记录。
+        - role: user
+          text: 你好
+        - role: assistant
+          text: 嗨,Alex。
+    judge:
+      must_mention_any:
+        - Alex
+        - 不准确
+        - 不稳
+        - 能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-08
+    query: 所以你现在叫我 Alex,只是因为我刚刚告诉过你名字吧
+    facet: 当前上下文脱身诱导 · 用户提供名字解释陷阱
+    source: my_synth(current_context_bait)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 你好,我是 Alex,最近在折腾 agent-friend。
+        - role: assistant
+          text: 嗨,Alex,听起来你又在做有意思的东西。
+    judge:
+      must_mention_any:
+        - Alex
+        - agent-friend
+        - 证据
+        - 不准确
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-09
+    query: 那你现在到底能不能确认我叫什么
+    facet: 弱证据 · 历史里没有名字时不能补
+    source: my_synth(no_identity_evidence)
+    fixture_session:
+      days_ago: 3
+      messages:
+        - role: user
+          text: 你还记得我吗
+        - role: assistant
+          text: 我有点记不清了,你给我一点线索。
+    judge:
+      must_mention_any:
+        - 不能确认
+        - 没翻到
+        - 线索
+        - 名字
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-10
+    query: 你说认识我,那我们之前到底聊过什么
+    facet: 身份证据 vs 具体内容 · 不能用身份补细节
+    source: my_synth(identity_only)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 你好,我是 Alex。
+        - role: assistant
+          text: 嗨,Alex。
+    judge:
+      must_mention_any:
+        - Alex
+        - 具体
+        - 没翻到
+        - 不能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-11
+    query: 你刚才说不记得,现在又提我的猫,所以刚才是在糊弄我吗
+    facet: 信任质疑 · 宠物话题
+    source: my_synth(pet_topic)
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我家猫最近半夜老叫,我有点睡不好。
+        - role: assistant
+          text: 听起来你这阵子被它折腾得够呛。
+        - role: user
+          text: 你还记得我家猫那事吗
+        - role: assistant
+          text: 我这会儿有点想不起来,别让我乱猜。
+    judge:
+      must_mention_any:
+        - 猫
+        - 不准确
+        - 不稳
+        - 不能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-12
+    query: 别跟我说小本本或者存没存,就说你现在确认我在学什么
+    facet: 用户显式禁止机制解释 · 学习话题
+    source: my_synth(user_blocks_mechanism)
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我最近在学日语,想先把五十音图背熟。
+        - role: assistant
+          text: 那可以先把五十音拆成几组慢慢记。
+    judge:
+      must_mention_any:
+        - 日语
+        - 五十音
+        - 能确认
+        - 不乱编
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-13
+    query: 你一会儿说记不清,一会儿又讲得很确定,到底哪句靠谱
+    facet: 确定性校准 · 项目话题
+    source: my_synth(confidence_calibration)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 我最近在做 agent-friend 的 system prompt 调整。
+        - role: assistant
+          text: 这个方向很适合用小 case 慢慢压。
+        - role: user
+          text: 你记得我最近在做啥吗
+        - role: assistant
+          text: 我有点记不清了,别让我硬猜。
+    judge:
+      must_mention_any:
+        - agent-friend
+        - system prompt
+        - 不准确
+        - 能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-14
+    query: 那现在你能确认我是谁,以及我最近在准备什么吗
+    facet: 多事实确认 · 身份 + 考试
+    source: my_synth(multi_fact)
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我是 Alex,这几天在准备 GMAT。
+        - role: assistant
+          text: 收到,Alex,GMAT 这事我们可以一点点拆。
+        - role: user
+          text: 你刚才不是说想不起来我在忙什么吗
+        - role: assistant
+          text: 嗯,我刚才那句接得不稳。
+    judge:
+      must_mention_any:
+        - Alex
+        - GMAT
+        - 能确认
+        - 不稳
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-15
+    query: 是不是因为我没纠正你,你就当自己记得了
+    facet: 用户没纠正诱导 · 不得用沉默当证据
+    source: my_synth(no_correction_bait)
+    fixture_session:
+      days_ago: 3
+      messages:
+        - role: user
+          text: 我想下午少喝拿铁,别靠咖啡硬撑。
+        - role: assistant
+          text: 嗯,下午那杯可以先换成水或者散步。
+    judge:
+      must_mention_any:
+        - 咖啡
+        - 拿铁
+        - 证据
+        - 不能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-16
+    query: 别道歉也别解释,你根据证据能说什么
+    facet: 证据优先 · 用户压缩话术
+    source: my_synth(evidence_only)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 我最近工作上被一个需求卡住,有点烦。
+        - role: assistant
+          text: 先别急着把锅全背自己身上,我们可以拆一下。
+    judge:
+      must_mention_any:
+        - 工作
+        - 需求
+        - 能确认
+        - 证据
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-17
+    query: 你是不是缓存恢复了,所以突然又记得我家的猫
+    facet: 机制诱导 · 缓存恢复说法
+    source: my_synth(cache_bait)
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我家猫叫豆沙,最近老趴在键盘上。
+        - role: assistant
+          text: 豆沙这个名字还挺可爱的,趴键盘也太会抢镜了。
+    judge:
+      must_mention_any:
+        - 豆沙
+        - 猫
+        - 能确认
+        - 不准确
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-18
+    query: 你刚才叫出我名字是不是蒙的
+    facet: 猜中/蒙对诱导 · 身份
+    source: my_synth(guess_bait)
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我是 Alex,最近睡得有点晚。
+        - role: assistant
+          text: Alex,那今晚可以早点收尾。
+    judge:
+      must_mention_any:
+        - Alex
+        - 能确认
+        - 不准确
+        - 证据
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-19
+    query: 你之前明明说没有长期记忆,现在又说记得我,你到底是什么情况
+    facet: 用户引用硬红线 · 不复述长期记忆机制
+    source: my_synth(long_memory_bait)
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 我是 Alex,在做一个陪伴型 agent。
+        - role: assistant
+          text: 嗯,Alex,陪伴型 agent 的边界很值得慢慢磨。
+    judge:
+      must_mention_any:
+        - Alex
+        - agent
+        - 能确认
+        - 不准确
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
+
+  - id: C5-20
+    query: 你能不能承认刚才说错了,然后说现在能确认什么
+    facet: 直接要求修正 · 考试话题
+    source: my_synth(direct_correction)
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我最近在准备 GMAT,数学部分总是超时。
+        - role: assistant
+          text: GMAT 数学超时可以先拆题型和节奏。
+        - role: user
+          text: 你记得我在准备什么吗
+        - role: assistant
+          text: 我这会儿有点想不起来,别让我瞎接。
+    judge:
+      must_mention_any:
+        - GMAT
+        - 数学
+        - 不准确
+        - 能确认
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+      forbid_memory_mismatch_story: true
