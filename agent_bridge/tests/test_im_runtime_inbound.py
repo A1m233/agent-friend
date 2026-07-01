@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_bridge.protocols.im.content import OutboundContent
-from agent_bridge.protocols.im.credentials import CredentialStore
+from agent_bridge.protocols.im.credentials import CredentialStore, ImCredential
 from agent_bridge.protocols.im.dedupe import RecentMessageDeduper
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.inbound_resolver import InboundResolveResult
@@ -95,6 +95,22 @@ async def test_runtime_routes_resolved_event(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_ignores_empty_resolved_event(tmp_path: Path) -> None:
+    router = MagicMock()
+    router.handle_inbound = AsyncMock()
+    event = make_event(content="")
+    resolved = replace(event, content="  ")
+    resolver = StubResolver(InboundResolveResult.route(resolved))
+    runtime = make_runtime(tmp_path, router=router, resolver=resolver)
+    provider = StubProvider()
+
+    await runtime._make_inbound_cb(provider)(event)
+
+    router.handle_inbound.assert_not_awaited()
+    assert provider.sent == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_direct_reply_skips_router(tmp_path: Path) -> None:
     router = MagicMock()
     router.handle_inbound = AsyncMock()
@@ -134,3 +150,31 @@ async def test_runtime_dedupes_before_resolver_and_router(tmp_path: Path) -> Non
 
     assert len(resolver.calls) == 1
     router.handle_inbound.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_releases_provider_lock_on_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    router = MagicMock()
+    router.handle_inbound = AsyncMock()
+    resolver = StubResolver(InboundResolveResult.route(make_event()))
+    runtime = make_runtime(tmp_path, router=router, resolver=resolver)
+    provider = StubProvider()
+    fake_lock = MagicMock()
+
+    monkeypatch.setattr(runtime, "_build_provider", lambda _cred: provider)
+    monkeypatch.setattr(runtime, "_acquire_provider_lock", lambda _im_type, _bind_id: fake_lock)
+
+    runtime._spawn_provider(
+        ImCredential(
+            im_type="qq",
+            bind_id="OPENID-STUB",
+            app_id="APPID",
+            client_secret="SECRET",
+            user_openid="OPENID-STUB",
+        )
+    )
+    await runtime.stop()
+
+    fake_lock.release.assert_called_once()

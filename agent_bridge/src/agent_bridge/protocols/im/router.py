@@ -126,6 +126,18 @@ class IMRouter:
             因为单轮挂掉而断开)。
         """
         session_id = self.session_id_for(im_type, event)
+        logger.info(
+            "IM inbound router start im_type=%s session_id=%s chat_scope=%s chat_id=%s "
+            "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
+            im_type,
+            session_id,
+            event.chat_scope,
+            event.chat_id,
+            event.message_id,
+            _text_len(event.content),
+            _text_len((event.content or "").strip()),
+            _attachment_count(event),
+        )
         boot = PersistentBootstrap(
             thread_id=session_id,
             new_user_input=event.content,
@@ -136,12 +148,32 @@ class IMRouter:
         try:
             text = await asyncio.to_thread(self._run_turn_sync, boot)
         except Exception:
-            logger.exception("IM turn 跑挂 (im_type=%s, session=%s)", im_type, session_id)
+            logger.exception(
+                "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d)",
+                im_type,
+                session_id,
+                event.message_id,
+                _text_len(event.content),
+            )
             text = FALLBACK_TEXT
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not text:
+            logger.warning(
+                "IM inbound router empty agent output im_type=%s session_id=%s message_id=%s",
+                im_type,
+                session_id,
+                event.message_id,
+            )
             text = FALLBACK_TEXT
+
+        logger.info(
+            "IM inbound router reply im_type=%s session_id=%s message_id=%s reply_len=%d",
+            im_type,
+            session_id,
+            event.message_id,
+            _text_len(text),
+        )
 
         await send_fn(
             OutboundContent(
@@ -179,3 +211,12 @@ class IMRouter:
             # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
             # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
         return "".join(buf)
+
+
+def _text_len(value: object) -> int:
+    return len(value) if isinstance(value, str) else 0
+
+
+def _attachment_count(event: InboundEvent) -> int:
+    attachments = getattr(event, "attachments", None)
+    return len(attachments) if isinstance(attachments, list) else 0

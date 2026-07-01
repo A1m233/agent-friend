@@ -37,3 +37,20 @@ def test_decode_ignores_missing_desktop_requested_model() -> None:
     decoded = decode_run_agent_input(_payload())
 
     assert decoded.requested_model is None
+
+
+def test_decode_rejects_empty_user_content() -> None:
+    payload = RunAgentInput.model_validate(
+        {
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            "messages": [{"id": "u-1", "role": "user", "content": "  "}],
+            "tools": [],
+            "context": [],
+            "forwarded_props": {},
+            "state": {},
+        }
+    )
+
+    with pytest.raises(DecodeError, match="content 不能为空"):
+        decode_run_agent_input(payload)

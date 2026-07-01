@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,7 @@ class QQAdapter:
         self._on_inbound: Callable[[InboundEvent], Awaitable[None]] | None = None
         self._status: ProviderStatus = "stopped"
         self._heartbeat_interval: float = 30.0  # SDK 默认值,set_heartbeat_interval 回调更新
+        self._next_msg_seq_value = int(time.monotonic_ns() % 1_000_000_000) or 1
 
     # ------------------------------------------------------------------
     # IMProvider lifecycle
@@ -126,30 +128,58 @@ class QQAdapter:
             logger.warning("QQAdapter.send called before start (bind=%s)", self.bind_id)
             return
 
+        msg_seq = self._next_msg_seq()
         msg = MessageToCreate(
             content=content.text,
             msg_type=0,  # 0 = 文本
             msg_id=content.reply_to_message_id or "",
+            msg_seq=msg_seq,
+        )
+        logger.info(
+            "QQ outbound send bind=%s chat=%s reply_to_message_id=%s msg_seq=%d text_len=%d",
+            self.bind_id,
+            content.chat_id,
+            content.reply_to_message_id or "",
+            msg_seq,
+            _text_len(content.text),
         )
         try:
             resp: dict[str, Any] = await self._api.post_c2c_message(content.chat_id, msg)
         except Exception:
             logger.exception(
-                "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s)",
+                "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s, "
+                "reply_to_message_id=%s, msg_seq=%d, text_len=%d)",
                 self.bind_id,
                 content.chat_id,
+                content.reply_to_message_id or "",
+                msg_seq,
+                _text_len(content.text),
             )
             return
 
         code = resp.get("code", 0) if isinstance(resp, dict) else 0
         if code:
             logger.warning(
-                "QQ post_c2c_message 非零 code=%s msg=%s (bind=%s, chat=%s)",
+                "QQ post_c2c_message 非零 code=%s msg=%s "
+                "(bind=%s, chat=%s, reply_to_message_id=%s, msg_seq=%d, text_len=%d)",
                 code,
                 resp.get("message") if isinstance(resp, dict) else None,
                 self.bind_id,
                 content.chat_id,
+                content.reply_to_message_id or "",
+                msg_seq,
+                _text_len(content.text),
             )
+            return
+
+        logger.info(
+            "QQ outbound sent bind=%s chat=%s reply_to_message_id=%s msg_seq=%d text_len=%d",
+            self.bind_id,
+            content.chat_id,
+            content.reply_to_message_id or "",
+            msg_seq,
+            _text_len(content.text),
+        )
 
     async def stop(self) -> None:
         """停止长连,释放资源。幂等:重复调用不抛。"""
@@ -181,16 +211,56 @@ class QQAdapter:
 
     async def _on_message(self, event_type: str, raw: dict[str, Any]) -> None:
         """SDK 每收一条 dispatch payload → parse → 仅 c2c 转发到 router。"""
+        logger.info(
+            "QQ inbound raw event_type=%s bind=%s raw_keys=%s raw_message_id=%s "
+            "raw_content_len=%d raw_attachment_count=%d",
+            event_type,
+            self.bind_id,
+            _raw_keys(raw),
+            _raw_message_id(raw),
+            _raw_content_len(raw),
+            _raw_attachment_count(raw),
+        )
         event = self._parser.parse(event_type, raw)
         if event is None:
+            logger.info(
+                "QQ inbound parse ignored event_type=%s bind=%s raw_message_id=%s",
+                event_type,
+                self.bind_id,
+                _raw_message_id(raw),
+            )
             return
         if event.chat_scope != "c2c":  # 本期只 c2c
+            logger.info(
+                "QQ inbound non-c2c ignored event_type=%s bind=%s chat_scope=%s "
+                "chat_id=%s message_id=%s content_len=%d attachment_count=%d",
+                event_type,
+                self.bind_id,
+                event.chat_scope,
+                event.chat_id,
+                event.message_id,
+                _text_len(event.content),
+                _attachment_count(event),
+            )
             return
         if self._on_inbound is None:
             logger.warning(
                 "QQAdapter received message before start binding (bind=%s)", self.bind_id
             )
             return
+        logger.info(
+            "QQ inbound parsed event_type=%s bind=%s chat_scope=%s chat_id=%s user_id=%s "
+            "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
+            event_type,
+            self.bind_id,
+            event.chat_scope,
+            event.chat_id,
+            event.user_id,
+            event.message_id,
+            _text_len(event.content),
+            _text_len((event.content or "").strip()),
+            _attachment_count(event),
+        )
         await self._on_inbound(event)
 
     def _on_connected(self) -> None:
@@ -213,6 +283,13 @@ class QQAdapter:
         """SDK 失败所有 pending response futures 的钩子。v1 我们不用 request/response
         pattern(只用 inbound dispatch),no-op 即可。"""
         logger.debug("QQ ws fail_pending: %s (bind=%s)", reason, self.bind_id)
+
+    def _next_msg_seq(self) -> int:
+        value = self._next_msg_seq_value
+        self._next_msg_seq_value = value + 1
+        if self._next_msg_seq_value > 2_147_483_647:
+            self._next_msg_seq_value = 1
+        return value
 
     # ------------------------------------------------------------------
     # Resume token (SDK get_session/set_session callbacks)
@@ -263,3 +340,41 @@ class QQAdapter:
         """``<base>/qq_<sha256(bind_id)[:16]>.json``,跟 credentials 同款规则。"""
         h = hashlib.sha256(bind_id.encode("utf-8")).hexdigest()[:16]
         return Path(base) / f"{_RESUME_FILE_PREFIX}{h}.json"
+
+
+def _text_len(value: object) -> int:
+    return len(value) if isinstance(value, str) else 0
+
+
+def _attachment_count(event: InboundEvent) -> int:
+    attachments = getattr(event, "attachments", None)
+    return len(attachments) if isinstance(attachments, list) else 0
+
+
+def _raw_keys(raw: dict[str, Any]) -> str:
+    return ",".join(sorted(str(k) for k in raw))
+
+
+def _raw_data(raw: dict[str, Any]) -> dict[str, Any]:
+    data = raw.get("d")
+    return data if isinstance(data, dict) else raw
+
+
+def _raw_message_id(raw: dict[str, Any]) -> str:
+    data = _raw_data(raw)
+    for key in ("id", "msg_id", "message_id"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _raw_content_len(raw: dict[str, Any]) -> int:
+    data = _raw_data(raw)
+    return _text_len(data.get("content"))
+
+
+def _raw_attachment_count(raw: dict[str, Any]) -> int:
+    data = _raw_data(raw)
+    attachments = data.get("attachments")
+    return len(attachments) if isinstance(attachments, list) else 0
