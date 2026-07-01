@@ -16,7 +16,7 @@
 |---|---|
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
-| `dev-workflow.mdc` | agent-friend 项目需求与 issue 交付流程：需求走 feature 分支，issue 修复按影响范围选择 main 或 fix 分支 |
+| `dev-workflow.mdc` | agent-friend 项目需求与修复交付流程：需求走 feature 分支，修复按影响范围选择 main 或 fix 分支 |
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
 | `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化 |
 | `frontend-visual-verification.mdc` | agent-friend 桌面前端视觉验收规范：改 Tauri 窗口 UI 时优先观察真实桌面端，而不是只看浏览器页面。 |
