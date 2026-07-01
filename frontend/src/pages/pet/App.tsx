@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
@@ -8,6 +8,12 @@ import { ActionBar } from "./ActionBar";
 import { DevPassthroughToggle } from "./DevPassthroughToggle";
 import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePetPassthrough } from "./usePetPassthrough";
+import {
+  getPetViewport,
+  resolvePetDisplayProfile,
+  type PetDisplayMode,
+  type PetViewport,
+} from "./petDisplayProfile";
 import {
   resolveInstalledAvatarModelSelection,
   useInstalledAvatarModelCatalog,
@@ -85,6 +91,10 @@ export function PetApp() {
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
   const [avatarModelId] = useSetting("avatarModelId");
+  const [petDisplayMode, setPetDisplayMode] = useSetting("petDisplayMode");
+  const previousPetDisplayModeRef = useRef<PetDisplayMode | null>(null);
+  const initialPlacementPendingRef = useRef(true);
+  const [viewport, setViewport] = useState<PetViewport>(() => getPetViewport());
   const {
     entries: installedAvatarModels,
     error: installedAvatarModelError,
@@ -93,6 +103,41 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    const updateViewport = () => setViewport(getPetViewport());
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  const displayProfile = useMemo(
+    () => {
+      const anchor = actionBarAnchor ?? spriteScreen;
+      return resolvePetDisplayProfile(
+        petDisplayMode,
+        anchor,
+        viewport,
+        {
+          previousMode:
+            initialPlacementPendingRef.current && anchor
+              ? null
+              : previousPetDisplayModeRef.current,
+        },
+      );
+    },
+    [actionBarAnchor, petDisplayMode, spriteScreen, viewport],
+  );
+
+  useEffect(() => {
+    previousPetDisplayModeRef.current = petDisplayMode;
+  }, [petDisplayMode]);
+
+  useEffect(() => {
+    if (actionBarAnchor ?? spriteScreen) {
+      initialPlacementPendingRef.current = false;
+    }
+  }, [actionBarAnchor, spriteScreen]);
 
   useEffect(() => {
     setRuntime(null);
@@ -249,12 +294,12 @@ export function PetApp() {
     void invoke("open_chat");
   };
 
-  // 019 · ActionBar 隐藏桌宠按钮 → 调 hide_pet invoke（pet 窗整体 hide）。
-  // 唤回路径：仅系统托盘菜单 "显示/隐藏桌宠"（toggle_pet）；从桌面直接唤回是
-  // [issue 013](../../../../docs/issues/013-pet-recall-from-desktop/) 跟踪的独立缺口。
-  const hidePet = () => {
-    if (!isTauri()) return;
-    void invoke("hide_pet");
+  const collapseToEdge = () => {
+    void setPetDisplayMode("edgeRecall");
+  };
+
+  const restoreNormal = () => {
+    void setPetDisplayMode("normal");
   };
 
   // 019 · ActionBar 打开设置按钮 → 调 open_settings invoke（参 open_chat 同款 show + focus 逻辑）
@@ -308,6 +353,7 @@ export function PetApp() {
           key={selectedEntry.id}
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
+          displayProfile={displayProfile}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreen}
@@ -319,6 +365,7 @@ export function PetApp() {
           key={selectedEntry.id}
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
+          displayProfile={displayProfile}
           setSpriteScreen={setSpriteScreen}
           setActionBarAnchor={setActionBarAnchor}
           setIsDragging={setIsDragging}
@@ -336,7 +383,9 @@ export function PetApp() {
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}
           onOpenChat={openChat}
-          onHidePet={hidePet}
+          petDisplayMode={petDisplayMode}
+          onCollapseToEdge={collapseToEdge}
+          onRestoreNormal={restoreNormal}
           onOpenSettings={openSettings}
           onOpenIMConnect={() => setImDialogOpen(true)}
           onStartVoiceCall={startVoiceCall}

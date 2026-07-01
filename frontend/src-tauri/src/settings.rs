@@ -24,6 +24,8 @@ pub struct Settings {
     pub deepseek_memory_model: DeepseekModel,
     #[serde(default = "default_avatar_model_id")]
     pub avatar_model_id: String,
+    #[serde(default)]
+    pub pet_display_mode: PetDisplayMode,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -39,6 +41,23 @@ pub enum DeepseekModel {
     Flash,
     #[serde(rename = "deepseek/deepseek-v4-pro")]
     Pro,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PetDisplayMode {
+    #[default]
+    Normal,
+    EdgeRecall,
+}
+
+impl PetDisplayMode {
+    pub fn attr(&self) -> &'static str {
+        match self {
+            PetDisplayMode::Normal => "normal",
+            PetDisplayMode::EdgeRecall => "edgeRecall",
+        }
+    }
 }
 
 impl Default for DeepseekModel {
@@ -67,6 +86,7 @@ impl Default for Settings {
             deepseek_model: default_deepseek_model(),
             deepseek_memory_model: default_deepseek_memory_model(),
             avatar_model_id: default_avatar_model_id(),
+            pet_display_mode: PetDisplayMode::Normal,
         }
     }
 }
@@ -326,11 +346,13 @@ pub fn load_from_disk_or_default() -> Settings {
 
     let loaded = load_from_paths(canonical, legacy_local);
     log::info!(
-        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={}",
+        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={} avatarModelId={} petDisplayMode={}",
         loaded.source,
         loaded.path,
         loaded.settings.theme_attr(),
-        loaded.settings.voice_tunnel_consent_accepted
+        loaded.settings.voice_tunnel_consent_accepted,
+        loaded.settings.avatar_model_id,
+        loaded.settings.pet_display_mode.attr()
     );
     loaded.settings
 }
@@ -406,6 +428,11 @@ pub fn set_setting<R: Runtime>(
             let model_id: String = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid avatarModelId: {e}"))?;
             s.avatar_model_id = model_id;
+        }
+        "petDisplayMode" => {
+            let mode: PetDisplayMode = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid petDisplayMode: {e}"))?;
+            s.pet_display_mode = mode;
         }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
@@ -555,6 +582,33 @@ mod tests {
     }
 
     #[test]
+    fn default_pet_display_mode_is_normal() {
+        let settings = Settings::default();
+
+        assert_eq!(settings.pet_display_mode, PetDisplayMode::Normal);
+    }
+
+    #[test]
+    fn parse_settings_preserves_pet_display_mode() {
+        let dir = temp_settings_dir("pet-display-mode");
+        let path = dir.join("settings.json");
+        write_raw(
+            &path,
+            r#"{
+  "settings": {
+    "theme": "light",
+    "petDisplayMode": "edgeRecall"
+  }
+}"#,
+        );
+
+        let settings = read_settings_file(&path).expect("read settings");
+
+        assert_eq!(settings.pet_display_mode, PetDisplayMode::EdgeRecall);
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn migrate_deepseek_memory_model_fills_missing_legacy_value() {
         let mut settings = Settings::default();
 
@@ -623,5 +677,17 @@ mod init_script_tests {
 
         assert!(script.contains("document.documentElement.setAttribute('theme', 'light');"));
         assert!(script.contains("document.documentElement.removeAttribute('theme-mode');"));
+    }
+
+    #[test]
+    fn build_init_script_injects_avatar_model_and_pet_display_mode() {
+        let script = build_init_script(&Settings {
+            avatar_model_id: "builtin:spine:ark-models:103_angel".to_string(),
+            pet_display_mode: super::PetDisplayMode::EdgeRecall,
+            ..Settings::default()
+        });
+
+        assert!(script.contains("\"avatarModelId\":\"builtin:spine:ark-models:103_angel\""));
+        assert!(script.contains("\"petDisplayMode\":\"edgeRecall\""));
     }
 }

@@ -7,6 +7,7 @@ import { DEFAULT_AVATAR_MODEL_ID } from "@/avatar-models";
 export type ThemeMode = "light" | "dark";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 export type AvatarModelId = string;
+export type PetDisplayMode = "normal" | "edgeRecall";
 
 export interface Settings {
   theme: ThemeMode;
@@ -14,6 +15,7 @@ export interface Settings {
   deepseekModel: DeepseekModel;
   deepseekMemoryModel: DeepseekModel;
   avatarModelId: AvatarModelId;
+  petDisplayMode: PetDisplayMode;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   deepseekModel: "deepseek/deepseek-v4-flash",
   deepseekMemoryModel: "deepseek/deepseek-v4-pro",
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
+  petDisplayMode: "normal",
 };
 
 const EVENT_CHANGED = "settings://changed";

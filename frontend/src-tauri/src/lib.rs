@@ -329,11 +329,11 @@ fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
+/// 完全隐藏桌宠窗口的兜底 command。041 之后 ActionBar 主交互改为前端
+/// `petDisplayMode=edgeRecall`，不再调用此命令。
 ///
-/// **唤回路径**：本期唯一 = 系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
-/// menu event handler）。从桌面直接唤回是 `docs/issues/013-pet-recall-from-desktop/`
-/// 跟踪的独立缺口，独立立项。
+/// **唤回路径**：系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
+/// menu event handler）。tray toggle 只控制窗口 show/hide，不改 `petDisplayMode`。
 #[tauri::command]
 fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("pet") {
@@ -574,14 +574,18 @@ pub fn run() {
             )?;
 
             // 028 · logger attach 后再补一次 bootstrap 结果，方便 R3 路径/主题排查。
-            let bootstrap_theme = settings_state
+            let bootstrap_summary = settings_state
                 .lock()
-                .map(|s| s.theme_attr().to_string())
+                .map(|s| {
+                    format!(
+                        "theme={} avatarModelId={} petDisplayMode={}",
+                        s.theme_attr(),
+                        s.avatar_model_id,
+                        s.pet_display_mode.attr()
+                    )
+                })
                 .unwrap_or_else(|_| "<poisoned>".to_string());
-            log::info!(
-                "settings: bootstrap state loaded; theme={}",
-                bootstrap_theme
-            );
+            log::info!("settings: bootstrap state loaded; {bootstrap_summary}");
             log::info!(
                 "avatar models: assets_dir={:?} catalog_path={:?}",
                 paths::avatar_model_assets_dir(),

@@ -4,6 +4,7 @@ import type { PetInteractionCallbacks } from "./usePetInteractions";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import { findVisibleBounds } from "@/pet/petAlphaHitTest";
+import type { PetDisplayProfile } from "./petDisplayProfile";
 
 /**
  * 17a · PIXI canvas + avatar-slot Container 生命周期 hook（design §5.1 ~ §5.3）。
@@ -87,6 +88,7 @@ export interface UsePixiAvatarSlotOptions {
   /** 024 · 用 ref 延迟绑定 callbacks，避免 App.tsx hooks 调用顺序循环。 */
   interactionsRef?: RefObject<PetInteractionCallbacks | null>;
   initialAnchorPoint?: { x: number; y: number } | null;
+  displayProfile?: PetDisplayProfile;
 }
 
 export function usePixiAvatarSlot(
@@ -106,6 +108,12 @@ export function usePixiAvatarSlot(
   const alphaScanGivenUpRef = useRef(false);
   const resetInitialAnchorAlignmentRef = useRef<(() => void) | null>(null);
   const interactionsRef = options.interactionsRef;
+  const displayProfileRef = useRef<PetDisplayProfile | null>(
+    options.displayProfile ?? null,
+  );
+  const lastAppliedModeRef = useRef<string | null>(null);
+
+  displayProfileRef.current = options.displayProfile ?? null;
 
   const invalidateAnchor = useCallback(() => {
     cachedOffsetRef.current = null;
@@ -196,11 +204,13 @@ export function usePixiAvatarSlot(
       const computeBounds = () => {
         const cached = cachedOffsetRef.current;
         if (cached) {
+          const scaleX = slot.scale.x || 1;
+          const scaleY = slot.scale.y || 1;
           return {
-            x: slot.x + cached.dx,
-            y: slot.y + cached.dy,
-            w: cached.w,
-            h: cached.h,
+            x: slot.x + cached.dx * scaleX,
+            y: slot.y + cached.dy * scaleY,
+            w: cached.w * scaleX,
+            h: cached.h * scaleY,
           };
         }
         // alpha-scan 还没成功锁定 → 用 slot.getBounds() fallback
@@ -249,6 +259,37 @@ export function usePixiAvatarSlot(
         }
       };
 
+      const applyDisplayProfile = () => {
+        const profile = displayProfileRef.current;
+        if (!profile) return;
+        const previousScaleX = slot.scale.x || 1;
+        const previousScaleY = slot.scale.y || 1;
+        const boundsBefore = computeBounds();
+
+        slot.scale.set(profile.scale);
+
+        const boundsAfterScale = computeBounds();
+        const dx =
+          boundsBefore.x + boundsBefore.w / 2 - (boundsAfterScale.x + boundsAfterScale.w / 2);
+        const dy =
+          boundsBefore.y + boundsBefore.h / 2 - (boundsAfterScale.y + boundsAfterScale.h / 2);
+        if (
+          previousScaleX !== slot.scale.x ||
+          previousScaleY !== slot.scale.y
+        ) {
+          slot.x += dx;
+          slot.y += dy;
+        }
+
+        const shouldApplyPlacement = lastAppliedModeRef.current !== profile.mode;
+        if (shouldApplyPlacement && profile.placementPoint) {
+          const boundsAfterCenteringScale = computeBounds();
+          slot.x += profile.placementPoint.x - (boundsAfterCenteringScale.x + boundsAfterCenteringScale.w / 2);
+          slot.y += profile.placementPoint.y - (boundsAfterCenteringScale.y + boundsAfterCenteringScale.h / 2);
+        }
+        lastAppliedModeRef.current = profile.mode;
+      };
+
       // —— ticker 持续同步 + alpha-scan 推 visible bounds 一次锁定 ——
       //
       // alpha-scan 仅在 `cachedOffsetRef.current` 还未锁定时尝试（每帧 ticker 调用 → 一旦
@@ -279,6 +320,8 @@ export function usePixiAvatarSlot(
       const ALPHA_SCAN_NULL_FRAMES = 30; // 0.5s @ 60Hz
 
       const syncBoundsIfChanged = () => {
+        applyDisplayProfile();
+
         if (!cachedOffsetRef.current && !alphaScanGivenUpRef.current) {
           const slotBounds = slot.getBounds();
           if (slotBounds.width > 0 && slotBounds.height > 0) {
@@ -291,10 +334,10 @@ export function usePixiAvatarSlot(
             if (scanned) {
               nullScanCount = 0;
               cachedOffsetRef.current = {
-                dx: scanned.x - slot.x,
-                dy: scanned.y - slot.y,
-                w: scanned.w,
-                h: scanned.h,
+                dx: (scanned.x - slot.x) / (slot.scale.x || 1),
+                dy: (scanned.y - slot.y) / (slot.scale.y || 1),
+                w: scanned.w / (slot.scale.x || 1),
+                h: scanned.h / (slot.scale.y || 1),
               };
             } else {
               // 区域内无 alpha > threshold 像素 —— 启动早期 sprite 没渲染好正常会出，
@@ -332,8 +375,12 @@ export function usePixiAvatarSlot(
             h: Math.round(h * dpr),
           });
         }
-        // 同步更新 PIXI hitArea（slot 局部坐标 = 世界 - slot.position；slot 没缩放）
-        slot.hitArea = new PIXI.Rectangle(x - slot.x, y - slot.y, w, h);
+        slot.hitArea = new PIXI.Rectangle(
+          (x - slot.x) / (slot.scale.x || 1),
+          (y - slot.y) / (slot.scale.y || 1),
+          w / (slot.scale.x || 1),
+          h / (slot.scale.y || 1),
+        );
       };
       pixi.ticker.add(syncBoundsIfChanged);
 
