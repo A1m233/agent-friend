@@ -13,8 +13,8 @@ import type { PetDisplayProfile } from "./petDisplayProfile";
  * - 在 stageRef 内挂 PIXI v8 Application（resizeTo: stageRef + autoDensity + DPR；
  *   StrictMode 双 mount cleanup pattern：cancelled flag + destroy 顺序沿
  *   macOS spike §5.5.7 / Win spike §6.4.4.7 同款）
- * - 建 avatar-slot `PIXI.Container`，内塞占位 Graphics(圆) + Text("占位形象")，
- *   等价重现 016 div 视觉（颜色从 CSS var 读、theme-aware）
+ * - 建 avatar-slot `PIXI.Container`；正常加载阶段保持透明，真模型 ready 后才出现，
+ *   避免启动时先闪一下占位形象
  * - drag handler（pointerdown / globalpointermove / pointerup / pointerupoutside）
  * - sprite world position 上报：mount 完成同步 + drag 期间**每帧都发**（无节流，
  *   配合 Rust update_sprite_pos 同步即时 bubble.set_position，消除 016 16ms tick 视觉滞后）
@@ -28,27 +28,6 @@ import type { PetDisplayProfile } from "./petDisplayProfile";
  * `usePetPassthrough` 用 Rust 60Hz cursor 数据驱动 `setCursorOnSprite`（那个 channel 一直跑）。
  */
 
-const SLOT_RADIUS = 80; // 与 016 `h-40 w-40 rounded-full`（直径 160）等价
-const PLACEHOLDER_TEXT = "占位形象";
-
-/** 从 `:root` CSS var 读 hex 颜色（theme-aware）；无效时返回 fallback。 */
-function readAccentColors(): { accent: number; accentFg: number } {
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return { accent: 0x4f46e5, accentFg: 0xffffff };
-  }
-  const cs = getComputedStyle(document.documentElement);
-  const parse = (name: string, fallback: number): number => {
-    const raw = cs.getPropertyValue(name).trim();
-    if (!raw.startsWith("#")) return fallback;
-    const n = parseInt(raw.slice(1), 16);
-    return Number.isFinite(n) ? n : fallback;
-  };
-  return {
-    accent: parse("--accent", 0x4f46e5),
-    accentFg: parse("--accent-fg", 0xffffff),
-  };
-}
-
 export interface UsePixiAvatarSlotHandles {
   /** avatar-slot Container ref；mount 完成后 .current = slot，cleanup 时回 null。 */
   slotRef: RefObject<PIXI.Container | null>;
@@ -61,10 +40,9 @@ export interface UsePixiAvatarSlotHandles {
   /**
    * 让下游 hook（如 `usePetLive2D` 在 Live2DSprite ready 后）触发重新 alpha-scan 锁定 visible bounds。
    *
-   * 为什么需要：alpha-scan 是 one-shot 锁定（防抖动），首次锁定时 slot 内是占位 Graphics + Text
-   * （bounds = 占位 ~160×30），Hiyori 加载替换 children 后 anchor 矩形仍停留在占位 bounds →
-   * ActionBar 锚错位（贴占位顶 = Hiyori 头部偏中位置导致重叠）。`usePetLive2D` `await sprite.ready`
-   * 后调此方法，清掉 cachedOffset 让 ticker 下一帧重新扫定到真 Hiyori visible bounds。
+   * 为什么需要：alpha-scan 是 one-shot 锁定（防抖动）。Live2DSprite ready / fallback
+   * placeholder 注入后调此方法，清掉 cachedOffset 让 ticker 下一帧重新扫定到当前真实
+   * visible bounds。
    */
   invalidateAnchor: () => void;
   /**
@@ -72,7 +50,7 @@ export interface UsePixiAvatarSlotHandles {
    * 配置下取错位像素 / 全空白时整体降级到 17a 矩形行为。
    *
    * `usePetPassthrough` 读此 ref，true 时跳过 `alphaHitTest` 改用矩形命中（= 17a）。
-   * `invalidateAnchor` 时此 ref 一并重置（占位 → Hiyori 切换可能扫到真像素，重试一次）。
+   * `invalidateAnchor` 时此 ref 一并重置（空 slot / fallback → Hiyori 切换可能扫到真像素，重试一次）。
    *
    * mac / Win 单屏 / Win 多屏同 DPR：alpha-scan 正常工作，此 ref 恒 false。
    */
@@ -111,13 +89,13 @@ export function usePixiAvatarSlot(
   const displayProfileRef = useRef<PetDisplayProfile | null>(
     options.displayProfile ?? null,
   );
-  const lastAppliedModeRef = useRef<string | null>(null);
+  const lastAppliedPlacementKeyRef = useRef<string | null>(null);
 
   displayProfileRef.current = options.displayProfile ?? null;
 
   const invalidateAnchor = useCallback(() => {
     cachedOffsetRef.current = null;
-    // 占位 → Hiyori 切换：Hiyori 像素更多，可能扫到（mac 第一次切换就是这场景）
+    // 空 slot / fallback → Hiyori 切换：Hiyori 像素更多，可能扫到（mac 第一次切换就是这场景）
     // Win mixed DPR 下重试还是会再次触发降级，无副作用
     alphaScanGivenUpRef.current = false;
     resetInitialAnchorAlignmentRef.current?.();
@@ -153,32 +131,15 @@ export function usePixiAvatarSlot(
       appInstance = pixi;
       stage.appendChild(pixi.canvas);
 
-      // —— avatar slot Container：占位 children 等价重现 016 div ——
-      const { accent, accentFg } = readAccentColors();
+      // —— avatar slot Container：启动阶段不绘制可见占位，避免真模型 ready 前闪一下 ——
       const slot = new PIXI.Container();
       slot.label = "avatar-slot";
       slot.eventMode = "static";
       slot.cursor = "grab";
       // hitArea 由 ticker 内每帧从 slot.getBounds() 推出（跟随 17b Live2DSprite 加载 / 改尺寸时
-      // 自动同步），让 PIXI 事件系统总是用与视觉一致的命中区。初始给一个最小占位避免事件丢
+      // 自动同步），让 PIXI 事件系统总是用与视觉一致的命中区。初始空 slot 不接收拖拽，
+      // 等真模型 / 失败 fallback 有 bounds 后再同步。
       slot.hitArea = new PIXI.Rectangle(-1, -1, 2, 2);
-
-      const circle = new PIXI.Graphics();
-      circle.circle(0, 0, SLOT_RADIUS).fill({ color: accent });
-      slot.addChild(circle);
-
-      const text = new PIXI.Text({
-        text: PLACEHOLDER_TEXT,
-        style: {
-          fontSize: 14,
-          fill: accentFg,
-          fontFamily: "system-ui, -apple-system, sans-serif",
-        },
-      });
-      text.anchor.set(0.5);
-      text.x = 0;
-      text.y = 0;
-      slot.addChild(text);
 
       // 初始位置 = 屏幕中心
       slot.x = pixi.screen.width / 2;
@@ -215,11 +176,13 @@ export function usePixiAvatarSlot(
         }
         // alpha-scan 还没成功锁定 → 用 slot.getBounds() fallback
         const b = slot.getBounds();
+        if (b.width <= 0 || b.height <= 0) return null;
         return { x: b.minX, y: b.minY, w: b.width, h: b.height };
       };
 
       const readAlignedBounds = () => {
         let bounds = computeBounds();
+        if (!bounds) return null;
         if (initialAnchorAligned || !initialAnchorPoint) return bounds;
 
         const hasStableBounds =
@@ -245,7 +208,9 @@ export function usePixiAvatarSlot(
       };
 
       const emitSpritePos = () => {
-        const { x, y, w, h } = readAlignedBounds();
+        const bounds = readAlignedBounds();
+        if (!bounds) return;
+        const { x, y, w, h } = bounds;
         // React state 用 CSS px（驱动 ActionBar 定位）
         setSpriteScreen({ x, y, w, h });
         // Rust invoke 用物理像素（Rust 端拼 monitors union 起点）
@@ -265,10 +230,12 @@ export function usePixiAvatarSlot(
         const previousScaleX = slot.scale.x || 1;
         const previousScaleY = slot.scale.y || 1;
         const boundsBefore = computeBounds();
+        if (!boundsBefore) return;
 
         slot.scale.set(profile.scale);
 
         const boundsAfterScale = computeBounds();
+        if (!boundsAfterScale) return;
         const dx =
           boundsBefore.x + boundsBefore.w / 2 - (boundsAfterScale.x + boundsAfterScale.w / 2);
         const dy =
@@ -281,13 +248,15 @@ export function usePixiAvatarSlot(
           slot.y += dy;
         }
 
-        const shouldApplyPlacement = lastAppliedModeRef.current !== profile.mode;
+        const shouldApplyPlacement =
+          lastAppliedPlacementKeyRef.current !== profile.placementKey;
         if (shouldApplyPlacement && profile.placementPoint) {
           const boundsAfterCenteringScale = computeBounds();
+          if (!boundsAfterCenteringScale) return;
           slot.x += profile.placementPoint.x - (boundsAfterCenteringScale.x + boundsAfterCenteringScale.w / 2);
           slot.y += profile.placementPoint.y - (boundsAfterCenteringScale.y + boundsAfterCenteringScale.h / 2);
         }
-        lastAppliedModeRef.current = profile.mode;
+        lastAppliedPlacementKeyRef.current = profile.placementKey;
       };
 
       // —— ticker 持续同步 + alpha-scan 推 visible bounds 一次锁定 ——
@@ -298,7 +267,7 @@ export function usePixiAvatarSlot(
       //   Hiyori 像素轮廓，gap 自动适配
       // - 之后 drag 时只更新 slot.x/y，spriteScreen 跟随
       // - **不重扫** → 没有 motion 引起的 visible bounds 抖动 → ActionBar / bubble 不抖
-      // - **占位 → Hiyori 切换**：`usePetLive2D` await sprite.ready 后调 `invalidateAnchor()`
+      // - **空 slot / fallback → Hiyori 切换**：`usePetLive2D` await sprite.ready 后调 `invalidateAnchor()`
       //   清掉锁，下一帧 ticker 重扫到真 Hiyori visible bounds
       //
       // 启动早期 sprite 还没渲染 / 全透明时 scanned 返 null，下一帧 ticker 再试，直到锁定。
@@ -356,7 +325,9 @@ export function usePixiAvatarSlot(
           }
         }
 
-        const { x, y, w, h } = readAlignedBounds();
+        const bounds = readAlignedBounds();
+        if (!bounds) return;
+        const { x, y, w, h } = bounds;
         if (
           Math.abs(x - lastBounds.x) < 0.5 &&
           Math.abs(y - lastBounds.y) < 0.5 &&

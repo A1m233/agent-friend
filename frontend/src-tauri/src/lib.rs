@@ -15,6 +15,7 @@ mod settings;
 mod ui_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
+const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
@@ -285,6 +286,12 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "settings")
 }
 
+/// 022 · 桌宠 ActionBar "接入 IM" 按钮调用。
+#[tauri::command]
+fn open_im_connect(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "im-connect")
+}
+
 /// 029 · 打开独立语音通话小窗。
 #[tauri::command]
 fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
@@ -330,10 +337,10 @@ fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 /// 完全隐藏桌宠窗口的兜底 command。041 之后 ActionBar 主交互改为前端
-/// `petDisplayMode=edgeRecall`，不再调用此命令。
+/// 前端 dock state，贴边召回不再调用此命令。
 ///
 /// **唤回路径**：系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
-/// menu event handler）。tray toggle 只控制窗口 show/hide，不改 `petDisplayMode`。
+/// menu event handler）。tray toggle 只控制窗口 show/hide，不改桌宠尺寸偏好。
 #[tauri::command]
 fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("pet") {
@@ -474,6 +481,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_im_connect,
         open_voice_call,
         open_memory_inspector,
         open_live2d_debugger,
@@ -497,6 +505,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_im_connect,
         open_voice_call,
         hide_pet,
         set_pet_webview_dpr,
@@ -516,15 +525,25 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            // 对话窗 / 设置窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
+            // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
             if matches!(
                 window.label(),
-                "chat" | "settings" | "voice-call" | "memory-inspector" | "live2d-debugger"
+                "chat"
+                    | "settings"
+                    | "im-connect"
+                    | "voice-call"
+                    | "memory-inspector"
+                    | "live2d-debugger"
             ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    if window.label() == "im-connect" {
+                        if let Err(e) = window.emit(EVENT_WINDOW_HIDDEN, ()) {
+                            log::warn!("im-connect emit hidden failed: {e}");
+                        }
+                    }
                     let _ = window.hide();
                 }
             }
@@ -578,10 +597,10 @@ pub fn run() {
                 .lock()
                 .map(|s| {
                     format!(
-                        "theme={} avatarModelId={} petDisplayMode={}",
+                        "theme={} avatarModelId={} petAvatarSize={}",
                         s.theme_attr(),
                         s.avatar_model_id,
-                        s.pet_display_mode.attr()
+                        s.pet_avatar_size.attr()
                     )
                 })
                 .unwrap_or_else(|_| "<poisoned>".to_string());

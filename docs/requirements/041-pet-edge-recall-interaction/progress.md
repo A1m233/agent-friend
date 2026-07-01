@@ -7,7 +7,7 @@
 
 ## 待办
 
-- [x] 接入 `petDisplayMode` 设置持久化。
+- [x] 接入 `petAvatarSize` 设置持久化；从正常尺寸切到 mini 时触发一次移动到边缘。
 - [x] 新增桌宠显示 profile 与边缘召回 placement 纯逻辑。
 - [x] 新增 ActionBar 横/竖布局纯逻辑。
 - [x] 接入 Live2D / Spine 渲染器。
