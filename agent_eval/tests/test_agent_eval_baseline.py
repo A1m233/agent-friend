@@ -59,8 +59,8 @@ def _run() -> ReportRun:
         case_set=CaseSetMeta(
             digest="a" * 64,
             total_contracts=5,
-            total_cases=88,
-            contract_counts={"C1": 23, "C2": 20, "C3": 20, "C4": 20, "C5": 5},
+            total_cases=103,
+            contract_counts={"C1": 23, "C2": 20, "C3": 20, "C4": 20, "C5": 20},
         ),
         note="schema test",
     )
@@ -90,7 +90,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert run["provider"]["model"] == "deepseek/deepseek-v4-flash"
     assert run["provider"]["defaults"] == {"temperature": 0}
     assert run["tools"]["web_search_available"] is False
-    assert run["case_set"]["total_cases"] == 88
+    assert run["case_set"]["total_cases"] == 103
 
     assert payload["summary"]["total"] == 1
     assert payload["summary"]["passed"] == 1
