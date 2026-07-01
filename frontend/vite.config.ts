@@ -20,6 +20,7 @@ export default defineConfig({
         chat: resolve(__dirname, "chat.html"),
         bubble: resolve(__dirname, "bubble.html"),
         settings: resolve(__dirname, "settings.html"),
+        "im-connect": resolve(__dirname, "im-connect.html"),
         "voice-call": resolve(__dirname, "voice-call.html"),
         "memory-inspector": resolve(__dirname, "memory-inspector.html"),
         "live2d-debugger": resolve(__dirname, "live2d-debugger.html"),

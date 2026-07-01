@@ -11,6 +11,20 @@
 
 ---
 
+## 2026-07-01 语义修订
+
+本方案在后续前端优化中修正了一个耦合：原 `petDisplayMode = normal | edgeRecall` 同时表达“尺寸”和“贴边”，导致持久化 edge-recall 后冷启动自动贴边。
+
+当前实现采用“尺寸状态 + 一次性 placement 行为”：
+
+- `petAvatarSize = normal | mini`：用户尺寸偏好，走 settings 持久化。
+- 从 `normal -> mini` 的尺寸转换：触发一次移动到最近边缘。
+- 从 `mini -> normal` 的尺寸转换：恢复正常尺寸，并以当前小模型位置为参考做屏幕 clamp。
+
+旧 settings 中的 `petDisplayMode=edgeRecall` 仅作为 legacy 输入迁移为 `petAvatarSize=mini`；迁移后会保持 mini 尺寸，但不会让 pet 冷启动自动贴边。后文若仍出现 `petDisplayMode` / `edgeRecall` 持久化，视为原 041 方案背景，不代表当前实现口径。
+
+---
+
 ## 需求文档
 
 → [`requirement.md`](./requirement.md)
@@ -47,7 +61,7 @@
 - 不新增窗口，不重做 transparent overlay / passthrough 底座。
 - 不把 edge-recall 做成独立图标或第二套交互。
 - 不能让 Live2D / Spine 各自发明 display mode；模式和几何策略要有统一来源。
-- 不持久化拖拽后的精确位置；只持久化 normal / edge-recall 展示状态。
+- 不持久化拖拽后的精确位置；只持久化 normal / mini 尺寸偏好，移动到边缘是进入 mini 时的一次性行为。
 - 桌面视觉结论必须用真实 Tauri pet 窗验证。
 
 ---
@@ -56,12 +70,12 @@
 
 本方案把 041 拆成四层：
 
-1. **Settings 层**：持久化用户选择的展示状态 `petDisplayMode`。
-2. **Display Profile 层**：统一从 mode 推导 scale / placement / restore 语义。
+1. **Settings 层**：持久化用户选择的尺寸偏好 `petAvatarSize`。
+2. **Display Profile 层**：从 `petAvatarSize` 推导 scale，并根据 `previousAvatarSize -> petAvatarSize` 的转换推导一次性 placement / restore 语义。
 3. **Renderer Adapter 层**：Live2D / Spine 分别把统一 profile 应用到自己的 Pixi slot 和 fit 逻辑。
 4. **ActionBar Layout 层**：根据当前 anchor 与 viewport 选择横向 / 竖向布局，与 display mode 解耦。
 
-核心原则：**mode 统一管理，渲染差异局部适配；几何策略集中在纯函数中，方便验收后替换。**
+核心原则：**尺寸偏好持久化，贴边只是进入 mini 的行为；渲染差异局部适配；几何策略集中在纯函数中，方便验收后替换。**
 
 ---
 
@@ -70,19 +84,19 @@
 | 文件 | 改动类型 | 说明 |
 | --- | --- | --- |
 | `docs/requirements/041-pet-edge-recall-interaction/design.md` | 新增 | 本技术方案 |
-| `frontend/src/lib/settings/index.ts` | 修改 | 新增 `PetDisplayMode` 类型、`Settings.petDisplayMode` 字段、默认值 |
-| `frontend/src-tauri/src/settings.rs` | 修改 | Rust `Settings` 增加 `pet_display_mode` enum/字段/default/`set_setting` 分支与测试 |
-| `frontend/src/pages/pet/petDisplayProfile.ts` | 新增 | 统一 display mode、profile、edge placement、restore placement、viewport helper 等纯函数 |
-| `frontend/src/pages/pet/petDisplayProfile.test.ts` | 新增 | 覆盖 settings mode → profile、最近边缘、贴边 clamp、restore clamp |
+| `frontend/src/lib/settings/index.ts` | 修改 | 新增 `PetAvatarSize` 类型、`Settings.petAvatarSize` 字段、默认值；兼容旧 `petDisplayMode` 快照 |
+| `frontend/src-tauri/src/settings.rs` | 修改 | Rust `Settings` 增加 `pet_avatar_size` enum/字段/default/`set_setting` 分支与测试；旧 `petDisplayMode` 迁移为尺寸偏好 |
+| `frontend/src/pages/pet/petDisplayProfile.ts` | 新增 | 统一 avatar size、profile、edge placement、restore placement、viewport helper 等纯函数 |
+| `frontend/src/pages/pet/petDisplayProfile.test.ts` | 新增 | 覆盖 size → scale、normal→mini 触发贴边、mini 冷启动不贴边、贴边 clamp、restore clamp |
 | `frontend/src/pages/pet/actionBarLayout.ts` | 新增 | ActionBar 横/竖布局判定与定位纯函数 |
 | `frontend/src/pages/pet/actionBarLayout.test.ts` | 新增 | 覆盖远离边缘横向、左右/上下边缘竖向、屏幕 clamp |
-| `frontend/src/pages/pet/App.tsx` | 修改 | 读取/写入 `petDisplayMode`；生成统一 display profile；替换 `hidePet` 为 collapse/restore handlers；传 profile 给 avatar surface 和 ActionBar |
-| `frontend/src/pages/pet/ActionBar.tsx` | 修改 | 支持 horizontal / vertical 两种布局；按钮语义切为“收起到边缘”/“恢复正常”；继续用 TooltipButton |
+| `frontend/src/pages/pet/App.tsx` | 修改 | 读取/写入 `petAvatarSize`；用尺寸转换生成统一 display profile；替换 `hidePet` 为 shrink-and-move / restore-size handlers；传 profile 给 avatar surface 和 ActionBar |
+| `frontend/src/pages/pet/ActionBar.tsx` | 修改 | 支持 horizontal / vertical 两种布局；按钮 tooltip 按尺寸切为“缩小桌宠并移动到边上”/“恢复桌宠大小”；继续用 TooltipButton |
 | `frontend/src/pages/pet/usePixiAvatarSlot.ts` | 修改 | 接收 display profile 或 slot transform options，应用 Live2D slot scale / placement |
 | `frontend/src/pet/avatarRuntime/live2d/Live2DAvatarSurface.tsx` | 修改 | 透传 display profile 给 `usePixiAvatarSlot` |
 | `frontend/src/pet/avatarRuntime/spine38/Spine38AvatarSurface.tsx` | 修改 | 接收 display profile，应用 Spine slot scale / placement，并保持 actionBar anchor offset |
 | `frontend/src/pet/avatarRuntime/spine38/spine38Fit.ts` | 修改 | 支持 profile scale 或 target viewport 的小尺寸 fit；补单测 |
-| `frontend/src-tauri/src/lib.rs` | 修改 | 更新 `hide_pet` 注释；tray show 不强制改 `petDisplayMode`，只恢复窗口可见 |
+| `frontend/src-tauri/src/lib.rs` | 修改 | 更新 `hide_pet` 注释；tray show 不改尺寸偏好或 dock state，只恢复窗口可见 |
 | `docs/issues/013-pet-recall-from-desktop/README.md` | 实现验收后修改 | 状态改 `resolved`，写修复指向 |
 
 ---

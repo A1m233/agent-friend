@@ -5,15 +5,13 @@ import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
-import { DevPassthroughToggle } from "./DevPassthroughToggle";
-import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePetPassthrough } from "./usePetPassthrough";
 import {
   getPetViewport,
   resolvePetDisplayProfile,
-  type PetDisplayMode,
   type PetViewport,
 } from "./petDisplayProfile";
+import type { PetAvatarSize } from "@/lib/settings";
 import {
   resolveInstalledAvatarModelSelection,
   useInstalledAvatarModelCatalog,
@@ -85,15 +83,12 @@ export function PetApp() {
   const [isDragging, setIsDragging] = useState(false);
   // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
-  // 022 · IM 接入面板 dialog 开关(同窗 dialog,不另开 webview)
-  const [imDialogOpen, setImDialogOpen] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
   const [avatarModelId] = useSetting("avatarModelId");
-  const [petDisplayMode, setPetDisplayMode] = useSetting("petDisplayMode");
-  const previousPetDisplayModeRef = useRef<PetDisplayMode | null>(null);
-  const initialPlacementPendingRef = useRef(true);
+  const [petAvatarSize, setPetAvatarSize] = useSetting("petAvatarSize");
+  const previousPetAvatarSizeRef = useRef<PetAvatarSize | null>(null);
   const [viewport, setViewport] = useState<PetViewport>(() => getPetViewport());
   const {
     entries: installedAvatarModels,
@@ -114,30 +109,19 @@ export function PetApp() {
   const displayProfile = useMemo(
     () => {
       const anchor = actionBarAnchor ?? spriteScreen;
-      return resolvePetDisplayProfile(
-        petDisplayMode,
-        anchor,
+      return resolvePetDisplayProfile({
+        avatarSize: petAvatarSize,
+        rect: anchor,
         viewport,
-        {
-          previousMode:
-            initialPlacementPendingRef.current && anchor
-              ? null
-              : previousPetDisplayModeRef.current,
-        },
-      );
+        previousAvatarSize: previousPetAvatarSizeRef.current,
+      });
     },
-    [actionBarAnchor, petDisplayMode, spriteScreen, viewport],
+    [actionBarAnchor, petAvatarSize, spriteScreen, viewport],
   );
 
   useEffect(() => {
-    previousPetDisplayModeRef.current = petDisplayMode;
-  }, [petDisplayMode]);
-
-  useEffect(() => {
-    if (actionBarAnchor ?? spriteScreen) {
-      initialPlacementPendingRef.current = false;
-    }
-  }, [actionBarAnchor, spriteScreen]);
+    previousPetAvatarSizeRef.current = petAvatarSize;
+  }, [petAvatarSize]);
 
   useEffect(() => {
     setRuntime(null);
@@ -295,17 +279,22 @@ export function PetApp() {
   };
 
   const collapseToEdge = () => {
-    void setPetDisplayMode("edgeRecall");
+    void setPetAvatarSize("mini");
   };
 
   const restoreNormal = () => {
-    void setPetDisplayMode("normal");
+    void setPetAvatarSize("normal");
   };
 
   // 019 · ActionBar 打开设置按钮 → 调 open_settings invoke（参 open_chat 同款 show + focus 逻辑）
   const openSettings = () => {
     if (!isTauri()) return;
     void invoke("open_settings");
+  };
+
+  const openIMConnect = () => {
+    if (!isTauri()) return;
+    void invoke("open_im_connect");
   };
 
   const openMemoryInspector = () => {
@@ -372,10 +361,6 @@ export function PetApp() {
           onRuntimeChange={setRuntime}
         />
       ) : null}
-      <DevPassthroughToggle
-        disabled={passthroughDisabled}
-        onToggle={() => setPassthroughDisabled((v) => !v)}
-      />
       {spriteScreen && (
         <ActionBar
           actionBarAnchor={actionBarAnchor ?? spriteScreen}
@@ -383,20 +368,21 @@ export function PetApp() {
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}
           onOpenChat={openChat}
-          petDisplayMode={petDisplayMode}
+          petAvatarSize={petAvatarSize}
           onCollapseToEdge={collapseToEdge}
           onRestoreNormal={restoreNormal}
           onOpenSettings={openSettings}
-          onOpenIMConnect={() => setImDialogOpen(true)}
+          onOpenIMConnect={openIMConnect}
           onStartVoiceCall={startVoiceCall}
           voiceCallActive={isVoiceCallLive(voicePhase)}
+          passthroughDisabled={passthroughDisabled}
+          onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
           onOpenMemoryInspector={openMemoryInspector}
           onOpenLive2DDebugger={openLive2DDebugger}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />
       )}
-      <IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />
     </>
   );
 }

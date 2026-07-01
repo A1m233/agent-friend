@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
 
 import { cn } from "@/utils/cn";
+import { Spinner } from "../spinner";
 
 /**
  * shadcn/ui Button（`pnpm dlx shadcn@latest add button` 拉取的官方源码，已按项目约定适配）。
@@ -45,10 +46,14 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  loading = false,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    loading?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button";
 
@@ -57,9 +62,14 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      aria-busy={loading || undefined}
+      disabled={disabled || loading}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {!asChild && loading && <Spinner data-icon="inline-start" />}
+      {children}
+    </Comp>
   );
 }
 

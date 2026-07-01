@@ -1,6 +1,6 @@
-import type { PetDisplayMode } from "@/lib/settings";
+import type { PetAvatarSize } from "@/lib/settings";
 
-export type { PetDisplayMode };
+export type { PetAvatarSize };
 
 export interface PetRect {
   x: number;
@@ -24,14 +24,15 @@ export interface PetViewport {
 export type PetEdge = "left" | "right";
 
 export interface PetDisplayProfile {
-  mode: PetDisplayMode;
+  avatarSize: PetAvatarSize;
+  placementKey: string;
   scale: number;
   placementPoint: PetPoint | null;
   edge: PetEdge | null;
 }
 
 export const PET_NORMAL_SCALE = 1;
-export const PET_EDGE_RECALL_SCALE = 0.5;
+export const PET_MINI_SCALE = 0.5;
 export const PET_EDGE_VISIBLE_RATIO = 0.62;
 export const PET_VIEWPORT_MARGIN = 8;
 
@@ -79,7 +80,7 @@ function nearestEdge(rect: PetRect, viewport: PetViewport): PetEdge {
   return entries[0][0];
 }
 
-export function computeEdgeRecallPlacement(
+export function computeEdgeDockPlacement(
   rect: PetRect,
   viewport: PetViewport,
   options: {
@@ -89,7 +90,7 @@ export function computeEdgeRecallPlacement(
     edge?: PetEdge;
   } = {},
 ): { point: PetPoint; edge: PetEdge } {
-  const scale = options.scale ?? PET_EDGE_RECALL_SCALE;
+  const scale = options.scale ?? PET_NORMAL_SCALE;
   const visibleRatio = options.visibleRatio ?? PET_EDGE_VISIBLE_RATIO;
   const margin = options.margin ?? PET_VIEWPORT_MARGIN;
   const edge = options.edge ?? nearestEdge(rect, viewport);
@@ -119,41 +120,46 @@ export function computeEdgeRecallPlacement(
 }
 
 export function resolvePetDisplayProfile(
-  mode: PetDisplayMode,
-  rect: PetRect | null,
-  viewport: PetViewport,
-  options: { previousMode?: PetDisplayMode | null } = {},
+  input: {
+    avatarSize: PetAvatarSize;
+    rect: PetRect | null;
+    viewport: PetViewport;
+    previousAvatarSize?: PetAvatarSize | null;
+  },
 ): PetDisplayProfile {
-  if (mode === "edgeRecall" && rect) {
-    const { point, edge } = computeEdgeRecallPlacement(rect, viewport, {
-      edge: options.previousMode === null ? "right" : undefined,
+  const { avatarSize, rect, viewport, previousAvatarSize } = input;
+  const scale = avatarSize === "mini" ? PET_MINI_SCALE : PET_NORMAL_SCALE;
+  const placementKey = `${previousAvatarSize ?? "init"}->${avatarSize}`;
+
+  if (avatarSize === "mini" && previousAvatarSize === "normal" && rect) {
+    const { point, edge } = computeEdgeDockPlacement(rect, viewport, {
+      scale,
     });
     return {
-      mode,
-      scale: PET_EDGE_RECALL_SCALE,
+      avatarSize,
+      placementKey,
+      scale,
       placementPoint: point,
       edge,
     };
   }
-  if (mode === "normal" && rect && options.previousMode === "edgeRecall") {
+  if (avatarSize === "normal" && previousAvatarSize === "mini" && rect) {
     const center = {
       x: rect.x + rect.w / 2,
       y: rect.y + rect.h / 2,
     };
     return {
-      mode,
-      scale: PET_NORMAL_SCALE,
-      placementPoint: clampAvatarCenter(
-        center,
-        { w: rect.w / PET_EDGE_RECALL_SCALE, h: rect.h / PET_EDGE_RECALL_SCALE },
-        viewport,
-      ),
+      avatarSize,
+      placementKey,
+      scale,
+      placementPoint: clampAvatarCenter(center, { w: rect.w, h: rect.h }, viewport),
       edge: null,
     };
   }
   return {
-    mode: "normal",
-    scale: PET_NORMAL_SCALE,
+    avatarSize,
+    placementKey,
+    scale,
     placementPoint: null,
     edge: null,
   };

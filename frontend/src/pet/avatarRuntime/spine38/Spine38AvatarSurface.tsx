@@ -207,7 +207,7 @@ export function Spine38AvatarSurface({
   const initialAnchorPointRef = useRef(initialAnchorPoint);
   const displayProfileRef = useRef(displayProfile);
   const baseScaleRef = useRef({ x: 1, y: 1 });
-  const lastAppliedModeRef = useRef<string | null>(null);
+  const lastAppliedPlacementKeyRef = useRef<string | null>(null);
   const initialLayoutAnchorAlignedRef = useRef(false);
   const initialVisibleAnchorAlignedRef = useRef(false);
   const alphaScanReadyRef = useRef(false);
@@ -307,12 +307,12 @@ export function Spine38AvatarSurface({
       }
 
       if (
-        lastAppliedModeRef.current !== profile.mode &&
+        lastAppliedPlacementKeyRef.current !== profile.placementKey &&
         profile.placementPoint
       ) {
         currentBounds = centerRegionOnPoint(slot, currentBounds, profile.placementPoint);
       }
-      lastAppliedModeRef.current = profile.mode;
+      lastAppliedPlacementKeyRef.current = profile.placementKey;
       return currentBounds;
     },
     [],
@@ -570,7 +570,7 @@ export function Spine38AvatarSurface({
       lastSpriteScreenRef.current = null;
       actionBarAnchorOffsetRef.current = null;
       baseScaleRef.current = { x: 1, y: 1 };
-      lastAppliedModeRef.current = null;
+      lastAppliedPlacementKeyRef.current = null;
       initialLayoutAnchorAlignedRef.current = false;
       initialVisibleAnchorAlignedRef.current = false;
       alphaScanReadyRef.current = false;

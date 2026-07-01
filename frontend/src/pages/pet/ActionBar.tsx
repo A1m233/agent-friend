@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Lock,
   Maximize2,
   MessageSquare,
   MessageSquareDashed,
@@ -21,6 +22,7 @@ import {
   ScrollText,
   Settings,
   SlidersHorizontal,
+  Unlock,
 } from "lucide-react";
 
 import {
@@ -35,7 +37,7 @@ import {
 import { computeActionBarLayout } from "./actionBarLayout";
 import { derivePageState } from "./actionBarPaging";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
-import type { PetDisplayMode } from "@/lib/settings";
+import type { PetAvatarSize } from "@/lib/settings";
 
 /**
  * 019 · 桌宠操作栏 sprite-relative DOM 浮动（design §2.4 / R-4.x）。
@@ -49,7 +51,7 @@ import type { PetDisplayMode } from "@/lib/settings";
  * - 容器：垂直 flex → 横向 chip（背景 + 圆角 + 边框 + shadow，颜色全 token）
  * - 按钮：文字 button → icon-only TooltipButton（lucide icon + tooltip）
  * - 分页：按钮总数 > PAGE_SIZE 时启用 shadcn carousel + 自定义圆形箭头；
- *   左右箭头按钮常驻，首末页只切 disabled，避免翻页时 carousel viewport 横向跳动。
+ *   箭头按钮常驻，首末页只切 disabled，避免翻页时 carousel viewport 跳动。
  * - dev 注入按钮：位于 carousel 末尾，仍 `import.meta.env.DEV` gate
  *
  * 分页判定逻辑抽到 [`actionBarPaging.ts`](./actionBarPaging.ts) 纯函数 `derivePageState`（独立单测）。
@@ -61,15 +63,17 @@ interface Props {
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onOpenChat: () => void;
-  petDisplayMode: PetDisplayMode;
+  petAvatarSize: PetAvatarSize;
   onCollapseToEdge: () => void;
   onRestoreNormal: () => void;
   /** 019 新：调 open_settings invoke 弹设置窗口 */
   onOpenSettings: () => void;
-  /** 022 新：打开 IM 接入面板 dialog（同窗，不另开 webview） */
+  /** 022 新：打开 IM 接入窗口 */
   onOpenIMConnect: () => void;
   onStartVoiceCall: () => void;
   voiceCallActive: boolean;
+  passthroughDisabled: boolean;
+  onTogglePassthrough: () => void;
   onOpenMemoryInspector: () => void;
   onOpenLive2DDebugger: () => void;
   onInjectShort: () => void;
@@ -99,13 +103,15 @@ export function ActionBar({
   onMouseEnter,
   onMouseLeave,
   onOpenChat,
-  petDisplayMode,
+  petAvatarSize,
   onCollapseToEdge,
   onRestoreNormal,
   onOpenSettings,
   onOpenIMConnect,
   onStartVoiceCall,
   voiceCallActive,
+  passthroughDisabled,
+  onTogglePassthrough,
   onOpenMemoryInspector,
   onOpenLive2DDebugger,
   onInjectShort,
@@ -119,14 +125,19 @@ export function ActionBar({
       tooltip: voiceCallActive ? "查看通话" : "语音通话",
       onClick: onStartVoiceCall,
     },
-    petDisplayMode === "edgeRecall"
-      ? { icon: <Maximize2 />, tooltip: "恢复桌宠正常大小", onClick: onRestoreNormal }
-      : { icon: <Minimize2 />, tooltip: "缩小桌宠并收起到边缘", onClick: onCollapseToEdge },
-    { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
+    petAvatarSize === "mini"
+      ? { icon: <Maximize2 />, tooltip: "恢复桌宠大小", onClick: onRestoreNormal }
+      : { icon: <Minimize2 />, tooltip: "缩小桌宠并移动到边上", onClick: onCollapseToEdge },
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
+    { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
   ];
   if (import.meta.env.DEV) {
     buttons.push(
+      {
+        icon: passthroughDisabled ? <Unlock /> : <Lock />,
+        tooltip: passthroughDisabled ? "穿透 OFF · 点开" : "穿透 ON · 点关",
+        onClick: onTogglePassthrough,
+      },
       { icon: <Brain />, tooltip: "记忆面板", onClick: onOpenMemoryInspector },
       { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
       { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
@@ -222,13 +233,8 @@ export function ActionBar({
     : top + layout.height / 2 <= actionBarAnchor.y + actionBarAnchor.h / 2
       ? "top"
       : "bottom";
-  const showPrev = needsCarousel && (isVertical ? pageState.showPrev : canScrollPrev);
-  const showNext = needsCarousel && (isVertical ? pageState.showNext : canScrollNext);
-  const verticalPageButtons = needsCarousel
-    ? buttons.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE)
-    : buttons;
-  const goPrevPage = () => setCurrentPage((page) => Math.max(0, page - 1));
-  const goNextPage = () => setCurrentPage((page) => Math.min(totalPages - 1, page + 1));
+  const showPrev = needsCarousel && canScrollPrev;
+  const showNext = needsCarousel && canScrollNext;
   const style: CSSProperties = {
     position: "fixed",
     left,
@@ -253,6 +259,111 @@ export function ActionBar({
     });
   }, [actionBarAnchor, layout.height, layout.width, left, top, visible]);
 
+  const renderActionButton = (button: BtnDef, key: string | number) => (
+    <TooltipButton
+      key={key}
+      icon={button.icon}
+      tooltip={button.tooltip}
+      tooltipSide={tooltipSide}
+      onClick={button.onClick}
+      data-hit
+    />
+  );
+
+  const renderPageArrow = (
+    direction: "prev" | "next",
+    onClick: () => void,
+    disabled: boolean,
+  ) => {
+    const isPrev = direction === "prev";
+    const icon = isPrev ? (
+      isVertical ? (
+        <ChevronUp />
+      ) : (
+        <ChevronLeft />
+      )
+    ) : isVertical ? (
+      <ChevronDown />
+    ) : (
+      <ChevronRight />
+    );
+
+    return (
+      <div className="flex size-8 shrink-0 items-center justify-center">
+        <TooltipButton
+          icon={icon}
+          tooltip={isPrev ? "上一页" : "下一页"}
+          tooltipSide={tooltipSide}
+          tooltipDelayMs={500}
+          className="rounded-full"
+          disabled={disabled}
+          onClick={onClick}
+          data-hit
+        />
+      </div>
+    );
+  };
+
+  const renderHorizontalButtons = () => {
+    if (!needsCarousel) {
+      return (
+        <div className="flex items-center gap-1">
+          {buttons.map((button, index) => renderActionButton(button, index))}
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
+        <Carousel
+          opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
+          setApi={setApi}
+          className="min-w-0 flex-1 overflow-hidden"
+        >
+          <CarouselContent className="-ml-1">
+            {buttons.map((button, index) => (
+              <CarouselItem key={index} className={`pl-1 ${ITEM_BASIS_CLASS}`}>
+                {renderActionButton(button, index)}
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+        </Carousel>
+        {renderPageArrow("next", () => api?.scrollNext(), !showNext)}
+      </>
+    );
+  };
+
+  const renderVerticalButtons = () => {
+    if (!needsCarousel) {
+      return buttons.map((button, index) => renderActionButton(button, index));
+    }
+
+    return (
+      <>
+        {renderPageArrow("prev", () => api?.scrollPrev(), !showPrev)}
+        <Carousel
+          orientation="vertical"
+          opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
+          setApi={setApi}
+          className="min-h-0 flex-1 overflow-hidden [&>[data-slot=carousel-content]]:h-full"
+        >
+          <CarouselContent className="-mt-1 h-full">
+            {buttons.map((button, index) => (
+              <CarouselItem key={index} className={`pt-1 ${ITEM_BASIS_CLASS}`}>
+                {renderActionButton(button, index)}
+              </CarouselItem>
+            ))}
+          </CarouselContent>
+        </Carousel>
+        {renderPageArrow("next", () => api?.scrollNext(), !showNext)}
+      </>
+    );
+  };
+
+  const renderActionBarContent = () =>
+    isVertical ? renderVerticalButtons() : renderHorizontalButtons();
+
   return (
     <TooltipProvider delayDuration={0}>
       <div
@@ -273,111 +384,7 @@ export function ActionBar({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-        {!isVertical && needsCarousel && (
-          <div className="flex size-8 shrink-0 items-center justify-center">
-            <TooltipButton
-              icon={<ChevronLeft />}
-              tooltip="上一页"
-              tooltipSide={tooltipSide}
-              tooltipDelayMs={500}
-              className="rounded-full"
-              disabled={!showPrev}
-              onClick={() => api?.scrollPrev()}
-              data-hit
-            />
-          </div>
-        )}
-
-        {isVertical ? (
-          <>
-            {needsCarousel && (
-              <div className="flex size-8 shrink-0 items-center justify-center">
-                <TooltipButton
-                  icon={<ChevronUp />}
-                  tooltip="上一页"
-                  tooltipSide={tooltipSide}
-                  tooltipDelayMs={500}
-                  className="rounded-full"
-                  disabled={!showPrev}
-                  onClick={goPrevPage}
-                  data-hit
-                />
-              </div>
-            )}
-            {verticalPageButtons.map((b, i) => (
-              <TooltipButton
-                key={`${currentPage}-${i}`}
-                icon={b.icon}
-                tooltip={b.tooltip}
-                tooltipSide={tooltipSide}
-                onClick={b.onClick}
-                data-hit
-              />
-            ))}
-            {needsCarousel && (
-              <div className="flex size-8 shrink-0 items-center justify-center">
-                <TooltipButton
-                  icon={<ChevronDown />}
-                  tooltip="下一页"
-                  tooltipSide={tooltipSide}
-                  tooltipDelayMs={500}
-                  className="rounded-full"
-                  disabled={!showNext}
-                  onClick={goNextPage}
-                  data-hit
-                />
-              </div>
-            )}
-          </>
-        ) : needsCarousel ? (
-          <Carousel
-            opts={{ slidesToScroll: PAGE_SIZE, align: "start", loop: false }}
-            setApi={setApi}
-            className="min-w-0 flex-1 overflow-hidden"
-          >
-            <CarouselContent className="-ml-1">
-              {buttons.map((b, i) => (
-                <CarouselItem key={i} className={`pl-1 ${ITEM_BASIS_CLASS}`}>
-                  <TooltipButton
-                    icon={b.icon}
-                    tooltip={b.tooltip}
-                    tooltipSide={tooltipSide}
-                    onClick={b.onClick}
-                    data-hit
-                  />
-                </CarouselItem>
-              ))}
-            </CarouselContent>
-          </Carousel>
-        ) : (
-          <div className="flex items-center gap-1">
-            {buttons.map((b, i) => (
-              <TooltipButton
-                key={i}
-                icon={b.icon}
-                tooltip={b.tooltip}
-                tooltipSide={tooltipSide}
-                onClick={b.onClick}
-                data-hit
-              />
-            ))}
-          </div>
-        )}
-
-        {!isVertical && needsCarousel && (
-          <div className="flex size-8 shrink-0 items-center justify-center">
-            <TooltipButton
-              icon={<ChevronRight />}
-              tooltip="下一页"
-              tooltipSide={tooltipSide}
-              tooltipDelayMs={500}
-              className="rounded-full"
-              disabled={!showNext}
-              onClick={() => api?.scrollNext()}
-              data-hit
-            />
-          </div>
-        )}
+        {renderActionBarContent()}
       </div>
     </TooltipProvider>
   );

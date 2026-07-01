@@ -63,6 +63,16 @@
         "fullscreen": false
       },
       {
+        "label": "im-connect",
+        "url": "im-connect.html",
+        "title": "agent-friend · 接入 IM",
+        "width": 420,
+        "height": 560,
+        "resizable": true,
+        "visible": false,
+        "fullscreen": false
+      },
+      {
         "label": "voice-call",
         "url": "voice-call.html",
         "title": "agent-friend · 语音通话",

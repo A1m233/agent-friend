@@ -25,7 +25,7 @@ pub struct Settings {
     #[serde(default = "default_avatar_model_id")]
     pub avatar_model_id: String,
     #[serde(default)]
-    pub pet_display_mode: PetDisplayMode,
+    pub pet_avatar_size: PetAvatarSize,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -45,19 +45,26 @@ pub enum DeepseekModel {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum PetDisplayMode {
+pub enum PetAvatarSize {
     #[default]
     Normal,
-    EdgeRecall,
+    Mini,
 }
 
-impl PetDisplayMode {
+impl PetAvatarSize {
     pub fn attr(&self) -> &'static str {
         match self {
-            PetDisplayMode::Normal => "normal",
-            PetDisplayMode::EdgeRecall => "edgeRecall",
+            PetAvatarSize::Normal => "normal",
+            PetAvatarSize::Mini => "mini",
         }
     }
+}
+
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum LegacyPetDisplayMode {
+    Normal,
+    EdgeRecall,
 }
 
 impl Default for DeepseekModel {
@@ -86,7 +93,7 @@ impl Default for Settings {
             deepseek_model: default_deepseek_model(),
             deepseek_memory_model: default_deepseek_memory_model(),
             avatar_model_id: default_avatar_model_id(),
-            pet_display_mode: PetDisplayMode::Normal,
+            pet_avatar_size: PetAvatarSize::Normal,
         }
     }
 }
@@ -126,6 +133,8 @@ struct LoadedSettings {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct SettingsPresence {
     deepseek_memory_model: bool,
+    pet_avatar_size: bool,
+    legacy_pet_display_mode: Option<LegacyPetDisplayMode>,
 }
 
 fn parse_settings(raw: &str, path: &Path) -> Result<(Settings, SettingsPresence), String> {
@@ -134,6 +143,10 @@ fn parse_settings(raw: &str, path: &Path) -> Result<(Settings, SettingsPresence)
     let inner = value.get("settings").unwrap_or(&value);
     let presence = SettingsPresence {
         deepseek_memory_model: inner.get("deepseekMemoryModel").is_some(),
+        pet_avatar_size: inner.get("petAvatarSize").is_some(),
+        legacy_pet_display_mode: inner
+            .get("petDisplayMode")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
     };
     let settings = serde_json::from_value::<Settings>(inner.clone())
         .map_err(|e| format!("settings: parse {path:?} failed: {e}"))?;
@@ -253,6 +266,19 @@ fn migrate_deepseek_memory_model(
     true
 }
 
+fn migrate_pet_avatar_size(settings: &mut Settings, presence: SettingsPresence) -> bool {
+    if presence.pet_avatar_size {
+        return false;
+    }
+    let Some(legacy_mode) = presence.legacy_pet_display_mode else {
+        return false;
+    };
+    if legacy_mode == LegacyPetDisplayMode::EdgeRecall {
+        settings.pet_avatar_size = PetAvatarSize::Mini;
+    }
+    true
+}
+
 fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) -> LoadedSettings {
     let mut loaded = if let Some(path) = canonical.as_ref() {
         match read_settings_file_with_presence(path) {
@@ -305,8 +331,11 @@ fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) ->
         loaded.presence,
         legacy_deepseek_memory_model(),
     );
+    let migrated_pet_avatar_size = migrate_pet_avatar_size(&mut loaded.settings, loaded.presence);
 
-    if (loaded.source == SettingsLoadSource::LegacyLocal || migrated_memory_model)
+    if (loaded.source == SettingsLoadSource::LegacyLocal
+        || migrated_memory_model
+        || migrated_pet_avatar_size)
         && canonical.is_some()
     {
         let canonical_path = canonical.as_ref().expect("checked");
@@ -321,6 +350,9 @@ fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) ->
                 }
                 if migrated_memory_model {
                     log::info!("settings: migrated legacy DEEPSEEK_MEMORY_MODEL into settings");
+                }
+                if migrated_pet_avatar_size {
+                    log::info!("settings: migrated legacy petDisplayMode into petAvatarSize");
                 }
             }
             Err(e) => log::warn!("{e}"),
@@ -346,13 +378,13 @@ pub fn load_from_disk_or_default() -> Settings {
 
     let loaded = load_from_paths(canonical, legacy_local);
     log::info!(
-        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={} avatarModelId={} petDisplayMode={}",
+        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={} avatarModelId={} petAvatarSize={}",
         loaded.source,
         loaded.path,
         loaded.settings.theme_attr(),
         loaded.settings.voice_tunnel_consent_accepted,
         loaded.settings.avatar_model_id,
-        loaded.settings.pet_display_mode.attr()
+        loaded.settings.pet_avatar_size.attr()
     );
     loaded.settings
 }
@@ -403,6 +435,9 @@ pub fn set_setting<R: Runtime>(
         .lock()
         .map_err(|e| format!("settings state poisoned: {e}"))?;
 
+    let mut event_key = payload.key.clone();
+    let mut event_value = payload.value.clone();
+
     match payload.key.as_str() {
         "theme" => {
             let theme: ThemeMode = serde_json::from_value(payload.value.clone())
@@ -429,10 +464,20 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid avatarModelId: {e}"))?;
             s.avatar_model_id = model_id;
         }
+        "petAvatarSize" => {
+            let size: PetAvatarSize = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid petAvatarSize: {e}"))?;
+            s.pet_avatar_size = size;
+        }
         "petDisplayMode" => {
-            let mode: PetDisplayMode = serde_json::from_value(payload.value.clone())
-                .map_err(|e| format!("invalid petDisplayMode: {e}"))?;
-            s.pet_display_mode = mode;
+            let mode: LegacyPetDisplayMode = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid legacy petDisplayMode: {e}"))?;
+            s.pet_avatar_size = match mode {
+                LegacyPetDisplayMode::Normal => PetAvatarSize::Normal,
+                LegacyPetDisplayMode::EdgeRecall => PetAvatarSize::Mini,
+            };
+            event_key = "petAvatarSize".to_string();
+            event_value = serde_json::to_value(&s.pet_avatar_size).map_err(|e| e.to_string())?;
         }
         _ => return Err(format!("unknown setting key: {}", payload.key)),
     }
@@ -454,13 +499,13 @@ pub fn set_setting<R: Runtime>(
     log::info!(
         "settings: emitting {} key={} value={}",
         EVENT_CHANGED,
-        payload.key,
-        payload.value
+        event_key,
+        event_value
     );
 
     app.emit(
         EVENT_CHANGED,
-        serde_json::json!({ "key": payload.key, "value": payload.value }),
+        serde_json::json!({ "key": event_key, "value": event_value }),
     )
     .map_err(|e| e.to_string())?;
 
@@ -582,18 +627,38 @@ mod tests {
     }
 
     #[test]
-    fn default_pet_display_mode_is_normal() {
+    fn default_pet_avatar_size_is_normal() {
         let settings = Settings::default();
 
-        assert_eq!(settings.pet_display_mode, PetDisplayMode::Normal);
+        assert_eq!(settings.pet_avatar_size, PetAvatarSize::Normal);
     }
 
     #[test]
-    fn parse_settings_preserves_pet_display_mode() {
-        let dir = temp_settings_dir("pet-display-mode");
+    fn parse_settings_preserves_pet_avatar_size() {
+        let dir = temp_settings_dir("pet-avatar-size");
         let path = dir.join("settings.json");
         write_raw(
             &path,
+            r#"{
+  "settings": {
+    "theme": "light",
+    "petAvatarSize": "mini"
+  }
+}"#,
+        );
+
+        let settings = read_settings_file(&path).expect("read settings");
+
+        assert_eq!(settings.pet_avatar_size, PetAvatarSize::Mini);
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn load_from_paths_migrates_legacy_edge_recall_to_mini_avatar_size() {
+        let dir = temp_settings_dir("pet-avatar-size-legacy-edge");
+        let canonical = dir.join("settings.json");
+        write_raw(
+            &canonical,
             r#"{
   "settings": {
     "theme": "light",
@@ -602,9 +667,12 @@ mod tests {
 }"#,
         );
 
-        let settings = read_settings_file(&path).expect("read settings");
+        let loaded = load_from_paths(Some(canonical.clone()), None);
 
-        assert_eq!(settings.pet_display_mode, PetDisplayMode::EdgeRecall);
+        assert_eq!(loaded.settings.pet_avatar_size, PetAvatarSize::Mini);
+        let migrated = fs::read_to_string(&canonical).expect("read migrated");
+        assert!(migrated.contains("\"petAvatarSize\": \"mini\""));
+        assert!(!migrated.contains("petDisplayMode"));
         fs::remove_dir_all(dir).expect("cleanup");
     }
 
@@ -616,6 +684,7 @@ mod tests {
             &mut settings,
             SettingsPresence {
                 deepseek_memory_model: false,
+                ..SettingsPresence::default()
             },
             Some(DeepseekModel::Flash),
         );
@@ -635,6 +704,7 @@ mod tests {
             &mut settings,
             SettingsPresence {
                 deepseek_memory_model: true,
+                ..SettingsPresence::default()
             },
             Some(DeepseekModel::Flash),
         );
@@ -680,14 +750,15 @@ mod init_script_tests {
     }
 
     #[test]
-    fn build_init_script_injects_avatar_model_and_pet_display_mode() {
+    fn build_init_script_injects_avatar_model_and_pet_avatar_size() {
         let script = build_init_script(&Settings {
             avatar_model_id: "builtin:spine:ark-models:103_angel".to_string(),
-            pet_display_mode: super::PetDisplayMode::EdgeRecall,
+            pet_avatar_size: super::PetAvatarSize::Mini,
             ..Settings::default()
         });
 
         assert!(script.contains("\"avatarModelId\":\"builtin:spine:ark-models:103_angel\""));
-        assert!(script.contains("\"petDisplayMode\":\"edgeRecall\""));
+        assert!(script.contains("\"petAvatarSize\":\"mini\""));
+        assert!(!script.contains("petDisplayMode"));
     }
 }
