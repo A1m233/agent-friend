@@ -28,6 +28,7 @@ const POLL_INTERVAL_QR_READY_MS = 1000;
 export function IMConnectPanel({ active = true }: Props) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const [unbindingKey, setUnbindingKey] = useState<string | null>(null);
   const [startingOnboard, setStartingOnboard] = useState(false);
   const [onboardTask, setOnboardTask] = useState<OnboardTaskState | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -160,15 +161,19 @@ export function IMConnectPanel({ active = true }: Props) {
 
   const unbind = useCallback(
     async (imType: IMType, bindId: string) => {
-      if (!active) return;
+      if (!active || unbindingKey) return;
+      const key = `${imType}:${bindId}`;
+      setUnbindingKey(key);
       try {
         await imApi.unbindProvider(imType, bindId);
         await refreshProviders();
       } catch {
         setErrorMsg("解绑失败，稍后重试。");
+      } finally {
+        setUnbindingKey(null);
       }
     },
-    [active, refreshProviders],
+    [active, refreshProviders, unbindingKey],
   );
 
   return (
@@ -190,10 +195,11 @@ export function IMConnectPanel({ active = true }: Props) {
               variant="ghost"
               size="icon-sm"
               onClick={() => void refreshProviders()}
+              loading={loadingProviders}
               disabled={loadingProviders}
               aria-label="刷新"
             >
-              <RefreshCcw className="size-4" />
+              {!loadingProviders && <RefreshCcw className="size-4" />}
             </Button>
           </header>
           {providers.length === 0 ? (
@@ -225,9 +231,13 @@ export function IMConnectPanel({ active = true }: Props) {
                     variant="ghost"
                     size="icon-sm"
                     onClick={() => void unbind(p.im_type, p.bind_id)}
+                    loading={unbindingKey === `${p.im_type}:${p.bind_id}`}
+                    disabled={Boolean(unbindingKey)}
                     aria-label="解绑"
                   >
-                    <Trash2 className="size-4" />
+                    {unbindingKey !== `${p.im_type}:${p.bind_id}` && (
+                      <Trash2 className="size-4" />
+                    )}
                   </Button>
                 </li>
               ))}

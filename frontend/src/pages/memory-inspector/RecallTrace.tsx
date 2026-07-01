@@ -133,8 +133,12 @@ export function RecallTracePanel({ personaId, onHitClick }: Props) {
           onChange={(e) => setTopK(Number(e.target.value))}
           disabled={!probePersonaId}
         />
-        <Button onClick={runProbe} disabled={!probePersonaId || loading || !query.trim()}>
-          <Search className="size-4" />
+        <Button
+          onClick={runProbe}
+          loading={loading}
+          disabled={!probePersonaId || loading || !query.trim()}
+        >
+          {!loading && <Search className="size-4" />}
           试一下
         </Button>
       </div>

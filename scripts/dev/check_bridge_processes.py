@@ -38,7 +38,10 @@ def main() -> int:
     )
     for proc in matches:
         print(f"          PID={proc.pid} CommandLine={proc.command}", file=sys.stderr)
-    print("          请先停止这些进程后重试。确认要绕过时可设置 AGENT_FRIEND_DEV_ALLOW_EXISTING_BRIDGE=1。", file=sys.stderr)
+    print(
+        "          请先停止这些进程后重试。确认要绕过时可设置 AGENT_FRIEND_DEV_ALLOW_EXISTING_BRIDGE=1。",
+        file=sys.stderr,
+    )
     return 1
 
 

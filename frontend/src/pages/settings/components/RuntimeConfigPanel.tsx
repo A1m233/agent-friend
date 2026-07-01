@@ -122,9 +122,10 @@ export function RuntimeConfigPanel() {
           variant="outline"
           size="xs"
           onClick={() => void refresh()}
+          loading={loading}
           disabled={loading}
         >
-          <RefreshCw className="size-4" />
+          {!loading && <RefreshCw className="size-4" />}
           刷新
         </Button>
       }
