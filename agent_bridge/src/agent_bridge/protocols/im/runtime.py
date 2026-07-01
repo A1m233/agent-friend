@@ -334,8 +334,7 @@ class IMRuntime:
             if result.action == "reply":
                 if result.reply is not None:
                     logger.info(
-                        "IM inbound direct reply im_type=%s reason=%s message_id=%s "
-                        "reply_len=%d",
+                        "IM inbound direct reply im_type=%s reason=%s message_id=%s reply_len=%d",
                         provider.type,
                         result.reason,
                         event.message_id,
