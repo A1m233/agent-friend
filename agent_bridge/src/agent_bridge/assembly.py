@@ -30,6 +30,7 @@ from agent import (
     NullSessionStore,
     PersonaCatalog,
     SessionManager,
+    SessionMetadataStore,
     SessionStore,
     default_context_manager,
     make_default_registry,
@@ -220,6 +221,7 @@ def _make_persistent_session_manager(
     memory: Memory | None,
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder],
     llm_client_factory: Callable[[str], LLMClient],
+    metadata_store: SessionMetadataStore | None = None,
 ) -> SessionManager:
     return SessionManager(
         store=store,
@@ -228,6 +230,7 @@ def _make_persistent_session_manager(
         context_manager_factory=default_context_manager,
         tool_registry=tool_registry,
         memory=memory,
+        metadata_store=metadata_store,
     )
 
 
@@ -272,6 +275,7 @@ def build_runtime(
             真正调 LLM 时仍可能再次抛）。
     """
     persistent_store = JsonlSessionStore(settings.sessions_dir)
+    session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
@@ -317,6 +321,7 @@ def build_runtime(
         memory,
         prompt_builder_factory,
         llm_client_factory,
+        session_metadata_store,
     )
 
     agent_runtime = build_agent_runtime(

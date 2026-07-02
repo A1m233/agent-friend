@@ -22,6 +22,10 @@ const browserGlobals = vi.hoisted(() => {
   return { testWindow };
 });
 
+const tauriMocks = vi.hoisted(() => ({
+  isTauri: vi.fn(() => false),
+}));
+
 const rtcMocks = vi.hoisted(() => {
   const client = {
     preflight: vi.fn(),
@@ -41,7 +45,9 @@ const rtcMocks = vi.hoisted(() => {
 
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { voiceApi } from "@/services/api/voice";
-import { useVoiceStore } from "./voice";
+import { startVoiceOwnerCommandListener, useVoiceStore } from "./voice";
+import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(),
@@ -53,7 +59,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@/utils/tauri", () => ({
-  isTauri: () => false,
+  isTauri: tauriMocks.isTauri,
 }));
 
 vi.mock("@/services/api/voice", () => ({
@@ -90,6 +96,7 @@ function resetVoiceStore(): void {
 describe("voice store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tauriMocks.isTauri.mockReturnValue(false);
     rtcMocks.client.preflight.mockResolvedValue(undefined);
     rtcMocks.client.prepare.mockResolvedValue(undefined);
     rtcMocks.client.joinRoom.mockResolvedValue(undefined);
@@ -112,6 +119,41 @@ describe("voice store", () => {
     expect(useVoiceStore.getState().pendingStart).toEqual({
       sessionId: "session-1",
     });
+    expect(voiceApi.startCall).not.toHaveBeenCalled();
+  });
+
+  it("非 owner 窗口发起通话时通过 command 暂存 start intent 并打开语音窗口", async () => {
+    tauriMocks.isTauri.mockReturnValue(true);
+    vi.mocked(invoke).mockResolvedValue(undefined);
+    vi.mocked(emit).mockResolvedValue(undefined);
+
+    await useVoiceStore.getState().requestStartFromAnyWindow({
+      sessionId: "session-1",
+    });
+
+    expect(invoke).toHaveBeenCalledWith("open_voice_call_with_start", {
+      req: { sessionId: "session-1" },
+    });
+    expect(emit).not.toHaveBeenCalledWith(
+      "voice://start-request",
+      expect.objectContaining({ sessionId: "session-1" }),
+    );
+  });
+
+  it("语音窗口 owner ready 后消费 pending start 并进入公网穿透确认", async () => {
+    tauriMocks.isTauri.mockReturnValue(true);
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "consume_pending_voice_start") return { sessionId: "session-1" };
+      return undefined;
+    });
+
+    startVoiceOwnerCommandListener();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith("consume_pending_voice_start");
+    expect(useVoiceStore.getState().phase).toBe("confirming_tunnel");
+    expect(useVoiceStore.getState().pendingStart).toEqual({ sessionId: "session-1" });
     expect(voiceApi.startCall).not.toHaveBeenCalled();
   });
 

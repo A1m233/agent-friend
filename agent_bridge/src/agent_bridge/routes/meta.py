@@ -25,11 +25,16 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent import PersonaAmbiguousError, PersonaNotFoundError, SessionNotFoundError
+from agent import (
+    PersonaAmbiguousError,
+    PersonaNotFoundError,
+    SessionNotFoundError,
+    SessionPersistError,
+)
 
 from ..assembly import BridgeRuntime
 from ..protocols.ag_ui.encoders import encode_stream
@@ -78,15 +83,28 @@ class EditResendLatestBody(BaseModel):
     )
 
 
+class SessionPatchBody(BaseModel):
+    """``PATCH /v1/sessions/{id}`` 请求体。"""
+
+    title: str | None = Field(None, description="新的会话展示标题")
+    archived: bool | None = Field(None, description="归档状态；true=归档，false=取消归档")
+
+
 def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     """把 meta 路由挂到 :class:`FastAPI` 实例。"""
     router = APIRouter(prefix="/v1", tags=["meta"])
     mgr = runtime.persistent_session_manager
 
     @router.get("/sessions")
-    def list_sessions() -> list[dict[str, Any]]:
-        """返回 ``list[SessionSummary]``（按 :meth:`SessionStore.list` 自然顺序）。"""
-        return [_dataclass_to_dict(s) for s in runtime.persistent_store.list()]
+    def list_sessions(
+        archived: bool = Query(False, description="是否返回已归档会话"),
+        q: str | None = Query(None, description="按展示标题搜索"),
+    ) -> list[dict[str, Any]]:
+        """返回 ``list[SessionSummary]``（按最近活跃时间倒序）。"""
+        try:
+            return [_dataclass_to_dict(s) for s in mgr.list(archived=archived, query=q)]
+        except SessionPersistError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/sessions")
     def create_session(body: CreateSessionBody) -> dict[str, Any]:
@@ -134,6 +152,29 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "active_events": [_dataclass_to_dict(ev) for ev in session.active_events],
         }
 
+    @router.patch("/sessions/{session_id}")
+    def patch_session(session_id: str, body: SessionPatchBody) -> dict[str, Any]:
+        """更新会话管理 metadata：展示标题 / 归档状态。"""
+        if body.title is None and body.archived is None:
+            raise HTTPException(status_code=400, detail="至少需要提供 title 或 archived")
+        try:
+            summary = None
+            if body.title is not None:
+                summary = mgr.rename(session_id, body.title)
+            if body.archived is True:
+                summary = mgr.archive(session_id)
+            elif body.archived is False:
+                summary = mgr.unarchive(session_id)
+        except SessionNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except SessionPersistError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        if summary is None:  # 防御：前面已检查至少一个字段。
+            raise HTTPException(status_code=400, detail="没有可更新字段")
+        return _dataclass_to_dict(summary)
+
     @router.post("/sessions/{session_id}/edit-resend-latest")
     async def edit_resend_latest(
         session_id: str,
@@ -170,6 +211,17 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             },
         )
 
+    @router.delete("/sessions/archived")
+    def delete_archived_sessions(
+        q: str | None = Query(None, description="可选：只删除标题搜索命中的归档会话"),
+    ) -> dict[str, Any]:
+        """删除已归档会话。"""
+        try:
+            deleted = mgr.delete_archived(query=q)
+        except SessionPersistError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        return {"deleted": len(deleted), "session_ids": deleted}
+
     @router.delete("/sessions/{session_id}")
     def delete_session(session_id: str) -> dict[str, Any]:
         """删除 session（内部清理用）。
@@ -182,6 +234,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             mgr.delete(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except SessionPersistError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
         return {"session_id": session_id, "deleted": True}
 
     @router.post("/sessions/{session_id}/persona")

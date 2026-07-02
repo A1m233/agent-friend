@@ -129,7 +129,7 @@ export function VoiceCallApp() {
             <Button
               variant="destructive"
               size="icon-lg"
-              className="rounded-full"
+              className="rounded-full bg-danger text-accent-fg hover:bg-danger/90"
               onClick={handleHangUp}
               aria-label="挂断"
             >

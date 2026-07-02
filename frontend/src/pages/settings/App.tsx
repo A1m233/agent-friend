@@ -17,6 +17,7 @@ import {
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
 import { AvatarModelPanel } from "./components/AvatarModelPanel";
+import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
@@ -27,7 +28,7 @@ import { SettingsRow } from "./components/SettingsRow";
  *
  * 后续新增设置项按 design.md 扩展点接入。
  */
-type SettingsSection = "general" | "runtime" | "voice" | "pet";
+type SettingsSection = "general" | "archived" | "runtime" | "voice" | "pet";
 
 export function SettingsApp() {
   const [section, setSection] = useState<SettingsSection>("general");
@@ -59,14 +60,6 @@ export function SettingsApp() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    isActive={section === "voice"}
-                    onClick={() => setSection("voice")}
-                  >
-                    语音
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
                     isActive={section === "pet"}
                     onClick={() => setSection("pet")}
                   >
@@ -75,10 +68,26 @@ export function SettingsApp() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    isActive={section === "voice"}
+                    onClick={() => setSection("voice")}
+                  >
+                    语音
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     isActive={section === "runtime"}
                     onClick={() => setSection("runtime")}
                   >
                     模型与凭据
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={section === "archived"}
+                    onClick={() => setSection("archived")}
+                  >
+                    已归档对话
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -107,6 +116,8 @@ export function SettingsApp() {
                 </SettingsRow>
               </SettingsGroup>
             </SettingsPageLayout>
+          ) : section === "archived" ? (
+            <ArchivedSessionsPanel />
           ) : section === "runtime" ? (
             <RuntimeConfigPanel />
           ) : section === "pet" ? (

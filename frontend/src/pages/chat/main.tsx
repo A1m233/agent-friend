@@ -6,11 +6,13 @@ import "@/styles/index.css";
 import "@tdesign-react/chat/es/style/index.js";
 import { AppToaster } from "@/components/app/AppToaster";
 import { registerSettingsListener } from "@/lib/settings/listen";
+import { startSessionsChangedSubscriber } from "@/stores";
 import { startVoiceStateSubscriber } from "@/stores/voice";
 import { ChatApp } from "./App";
 import "./layout.css";
 
 registerSettingsListener();
+startSessionsChangedSubscriber();
 startVoiceStateSubscriber();
 
 createRoot(document.getElementById("root")!).render(
