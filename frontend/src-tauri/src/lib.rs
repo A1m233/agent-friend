@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -16,6 +16,40 @@ mod ui_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
+
+#[derive(Default)]
+struct VoiceLaunchState {
+    pending_start: Mutex<Option<VoiceStartRequest>>,
+}
+
+impl VoiceLaunchState {
+    fn set_pending_start(&self, req: VoiceStartRequest) -> Result<(), String> {
+        let mut pending = self
+            .pending_start
+            .lock()
+            .map_err(|e| format!("voice launch state poisoned: {e}"))?;
+        *pending = Some(req);
+        Ok(())
+    }
+
+    fn take_pending_start(&self) -> Result<Option<VoiceStartRequest>, String> {
+        let mut pending = self
+            .pending_start
+            .lock()
+            .map_err(|e| format!("voice launch state poisoned: {e}"))?;
+        Ok(pending.take())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceStartRequest {
+    session_id: Option<String>,
+    persona: Option<String>,
+    model: Option<String>,
+    defer_start: Option<bool>,
+    trace_id: Option<String>,
+}
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
@@ -298,6 +332,25 @@ fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "voice-call")
 }
 
+#[tauri::command]
+fn open_voice_call_with_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VoiceLaunchState>,
+    req: Option<VoiceStartRequest>,
+) -> Result<(), String> {
+    if let Some(req) = req {
+        state.set_pending_start(req)?;
+    }
+    show_and_focus(&app, "voice-call")
+}
+
+#[tauri::command]
+fn consume_pending_voice_start(
+    state: tauri::State<'_, VoiceLaunchState>,
+) -> Result<Option<VoiceStartRequest>, String> {
+    state.take_pending_start()
+}
+
 /// 026 · dev 模式入口：打开记忆面板窗口。
 #[cfg(debug_assertions)]
 #[tauri::command]
@@ -465,6 +518,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default())
         .manage(PetWebviewState::default())
+        .manage(VoiceLaunchState::default())
         .manage(settings_state.clone())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(settings::init::<tauri::Wry>(init_script));
@@ -483,6 +537,8 @@ pub fn run() {
         open_settings,
         open_im_connect,
         open_voice_call,
+        open_voice_call_with_start,
+        consume_pending_voice_start,
         open_memory_inspector,
         open_live2d_debugger,
         hide_pet,
@@ -507,6 +563,8 @@ pub fn run() {
         open_settings,
         open_im_connect,
         open_voice_call,
+        open_voice_call_with_start,
+        consume_pending_voice_start,
         hide_pet,
         set_pet_webview_dpr,
         settings::get_setting,
@@ -642,4 +700,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_launch_state_consumes_pending_start_once() {
+        let state = VoiceLaunchState::default();
+        let req = VoiceStartRequest {
+            session_id: Some("session-1".to_string()),
+            persona: None,
+            model: None,
+            defer_start: Some(true),
+            trace_id: Some("trace-1".to_string()),
+        };
+
+        state
+            .set_pending_start(req.clone())
+            .expect("set pending start");
+
+        assert_eq!(
+            state.take_pending_start().expect("take pending start"),
+            Some(req)
+        );
+        assert_eq!(state.take_pending_start().expect("take again"), None);
+    }
 }

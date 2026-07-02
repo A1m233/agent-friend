@@ -188,7 +188,7 @@ function makeBuiltinArkSpineModel(slug: BuiltinArkSpineModelSlug): SpineAvatarMo
   const basePath = `/spine-models/ark-models/${slug}/build_char_${slug}`;
   return {
     id: `builtin:spine:ark-models:${slug}`,
-    name: `Ark ${ARK_SPINE_MODEL_NAMES[slug]}`,
+    name: `明日方舟 ${ARK_SPINE_MODEL_NAMES[slug]}`,
     backend: "spine",
     source: "builtin",
     distribution: "non-commercial-exploration",

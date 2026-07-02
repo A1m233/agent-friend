@@ -46,7 +46,8 @@ class SessionSummary:
         created_at: 来自首行事件 ``ts``。
         updated_at: 来自文件 mtime，表示"最近一次有事件写入"。
         persona: ``initial_persona``（不展示"当前"，详见 design §1.2）。
-        model: ``initial_model``。
+    model: ``initial_model``。
+        archived_at: 会话管理 metadata 中的归档时间。``None`` 表示未归档。
     """
 
     session_id: str
@@ -55,6 +56,7 @@ class SessionSummary:
     updated_at: datetime
     persona: str
     model: str
+    archived_at: datetime | None = None
 
 
 class SessionStore(Protocol):
