@@ -128,4 +128,42 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
     expect(edge).toBe("right");
     expect(point).toEqual({ x: 980, y: 150 });
   });
+
+  it("uses the selected monitor viewport instead of the full overlay when docking", () => {
+    const leftMonitor: PetViewport = { x: 0, y: 0, w: 1920, h: 1080 };
+    const nearInnerRightEdge: PetRect = { x: 1800, y: 420, w: 100, h: 140 };
+
+    const { edge, point } = computeEdgeDockPlacement(nearInnerRightEdge, leftMonitor, {
+      scale: PET_MINI_SCALE,
+    });
+
+    expect(edge).toBe("right");
+    expect(point.x).toBe(1906);
+  });
+
+  it("does not emit placement when the anchor rect is not finite", () => {
+    const profile = resolvePetDisplayProfile({
+      avatarSize: "mini",
+      rect: { x: NaN, y: 300, w: 200, h: 300 },
+      viewport,
+      previousAvatarSize: "normal",
+    });
+
+    expect(profile.scale).toBe(PET_MINI_SCALE);
+    expect(profile.placementPoint).toBeNull();
+    expect(profile.edge).toBeNull();
+  });
+
+  it("does not emit placement when the viewport is not usable", () => {
+    const profile = resolvePetDisplayProfile({
+      avatarSize: "normal",
+      rect,
+      viewport: { x: 0, y: 0, w: 0, h: 800 },
+      previousAvatarSize: "mini",
+    });
+
+    expect(profile.scale).toBe(1);
+    expect(profile.placementPoint).toBeNull();
+    expect(profile.edge).toBeNull();
+  });
 });

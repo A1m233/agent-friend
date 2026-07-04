@@ -51,4 +51,59 @@ describe("anchorDiagnostics", () => {
     expect(second.centers.actionBarMinusSpriteX).toBe(0);
     expect(second.updatedAt).toBe(2);
   });
+
+  it("records viewport and dock visibility diagnostics", () => {
+    const diagnostics = buildAnchorDiagnostics(
+      undefined,
+      {
+        selectedViewport: { x: 0, y: 0, w: 1000, h: 800 },
+        actionBarAnchor: { x: 940, y: 300, w: 120, h: 200 },
+        monitorViewports: [
+          { x: 0, y: 0, w: 1000, h: 800 },
+          { x: 1000, y: 0, w: 1000, h: 800 },
+        ],
+        displayProfile: {
+          avatarSize: "mini",
+          placementKey: "normal->mini",
+          scale: 0.5,
+          placementPoint: { x: 980, y: 400 },
+          edge: "right",
+        },
+      },
+      3,
+    );
+
+    expect(diagnostics.monitorViewports).toHaveLength(2);
+    expect(diagnostics.dock?.selectedViewportVisibleRatioX).toBe(0.5);
+    expect(diagnostics.dock?.clippedRight).toBe(60);
+    expect(diagnostics.displayProfile?.placementPoint).toEqual({ x: 980, y: 400 });
+  });
+
+  it("records placement anchor deltas", () => {
+    const diagnostics = buildAnchorDiagnostics(
+      undefined,
+      {
+        placement: {
+          layoutBounds: { x: 700, y: 200, w: 200, h: 250 },
+          placementAnchor: { x: 820, y: 240, w: 60, h: 160 },
+          placementAnchorPoint: { x: 850, y: 320 },
+          placementPoint: { x: 980, y: 320 },
+          delta: { dx: 130, dy: 0 },
+        },
+      },
+      4,
+    );
+
+    expect(diagnostics.placement?.placementAnchor).toEqual({
+      x: 820,
+      y: 240,
+      w: 60,
+      h: 160,
+    });
+    expect(diagnostics.placement?.placementAnchorPoint).toEqual({
+      x: 850,
+      y: 320,
+    });
+    expect(diagnostics.placement?.delta).toEqual({ dx: 130, dy: 0 });
+  });
 });

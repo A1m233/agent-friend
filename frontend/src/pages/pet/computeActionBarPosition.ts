@@ -12,6 +12,7 @@ export function computeActionBarPosition(
   sprite: { x: number; y: number; w: number; h: number },
   bar: { w: number; h: number },
   margin = 8,
+  viewport: { y: number } = { y: 0 },
 ): { left: number; top: number } {
   // 水平：bar 中线对齐 sprite bounding box 中线
   const spriteCx = sprite.x + sprite.w / 2;
@@ -20,7 +21,7 @@ export function computeActionBarPosition(
   // 垂直：默认贴上方；above < margin 时翻到下方（防止 bar 挤出屏顶）
   const above = sprite.y - bar.h - margin;
   const below = sprite.y + sprite.h + margin;
-  const top = above >= margin ? above : below;
+  const top = above >= viewport.y + margin ? above : below;
 
   return { left, top };
 }

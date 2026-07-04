@@ -18,6 +18,8 @@ export interface ActionBarRect {
 }
 
 export interface ActionBarViewport {
+  x: number;
+  y: number;
   w: number;
   h: number;
 }
@@ -33,7 +35,10 @@ function isNearVerticalEdge(
   threshold: number,
 ): boolean {
   const centerX = anchor.x + anchor.w / 2;
-  return centerX <= threshold || viewport.w - centerX <= threshold;
+  return (
+    Math.abs(centerX - viewport.x) <= threshold ||
+    Math.abs(viewport.x + viewport.w - centerX) <= threshold
+  );
 }
 
 function horizontalFitsViewport(
@@ -42,7 +47,7 @@ function horizontalFitsViewport(
   viewport: ActionBarViewport,
   margin: number,
 ): boolean {
-  return left >= margin && left + width <= viewport.w - margin;
+  return left >= viewport.x + margin && left + width <= viewport.x + viewport.w - margin;
 }
 
 export function computeActionBarLayout(
@@ -54,7 +59,12 @@ export function computeActionBarLayout(
   viewport: ActionBarViewport,
   margin = 8,
 ): ActionBarLayout {
-  const horizontalPosition = computeActionBarPosition(anchor, sizes.horizontal, margin);
+  const horizontalPosition = computeActionBarPosition(
+    anchor,
+    sizes.horizontal,
+    margin,
+    viewport,
+  );
   const shouldUseVertical =
     isNearVerticalEdge(anchor, viewport, Math.max(96, anchor.w / 2 + sizes.vertical.w)) ||
     !horizontalFitsViewport(horizontalPosition.left, sizes.horizontal.w, viewport, margin);
@@ -71,19 +81,24 @@ export function computeActionBarLayout(
 
   const anchorCenterX = anchor.x + anchor.w / 2;
   const anchorCenterY = anchor.y + anchor.h / 2;
+  const viewportCenterX = viewport.x + viewport.w / 2;
   const left =
-    anchorCenterX <= viewport.w / 2
+    anchorCenterX <= viewportCenterX
       ? anchor.x + anchor.w + margin
       : anchor.x - sizes.vertical.w - margin;
   const top = clamp(
     Math.round(anchorCenterY - sizes.vertical.h / 2),
-    margin,
-    viewport.h - margin - sizes.vertical.h,
+    viewport.y + margin,
+    viewport.y + viewport.h - margin - sizes.vertical.h,
   );
 
   return {
     orientation: "vertical",
-    left: Math.round(clamp(left, margin, viewport.w - margin - sizes.vertical.w)),
+    left: Math.round(clamp(
+      left,
+      viewport.x + margin,
+      viewport.x + viewport.w - margin - sizes.vertical.w,
+    )),
     top,
     width: sizes.vertical.w,
     height: sizes.vertical.h,

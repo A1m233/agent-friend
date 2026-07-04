@@ -142,7 +142,7 @@ function Start-VoiceTunnel {
     $publicUrl = Wait-CloudflaredUrl -logPaths @($outLog, $errLog) -timeoutSeconds 60
     if ([string]::IsNullOrWhiteSpace($publicUrl)) {
         if ($proc -and -not $proc.HasExited) {
-            taskkill /PID $proc.Id /T /F 2>$null | Out-Null
+            Stop-ProcessTreeIfPresent $proc.Id | Out-Null
         }
         Write-Error "cloudflared 60 秒内没有输出 trycloudflare URL。日志：$outLog / $errLog"
     }
@@ -152,50 +152,25 @@ function Start-VoiceTunnel {
     return @{ Process = $proc; PublicUrl = $publicUrl }
 }
 
-function Test-DevPortProcess($proc, $commandLine) {
-    $name = $proc.ProcessName.ToLowerInvariant()
-    if ($name -in @("node", "pnpm", "npm", "tauri", "cargo", "app")) {
+function Stop-ProcessTreeIfPresent($processId) {
+    if (-not $processId -or [int]$processId -le 0) {
         return $true
     }
-    if ($commandLine -match "(^|\s)(pnpm|vite|tauri|cargo)(\s|$)" -or
-        $commandLine -match "frontend") {
+    if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
         return $true
     }
-    return $false
-}
-
-function Stop-DevPortProcess($port) {
-    $conns = Get-DevPortListeners $port
-    $owners = @($conns | ForEach-Object { $_.OwningProcess } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
-    foreach ($ownerPid in $owners) {
-        $proc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
-        if (-not $proc) { continue }
-        $commandLine = ""
-        try {
-            $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction Stop).CommandLine
-        }
-        catch {
-            # ignore
-        }
-        if (Test-DevPortProcess $proc $commandLine) {
-            try {
-                # Windows 上 pnpm/tauri/vite 常有父子进程树；只 Stop-Process
-                # OwningProcess 容易留下子进程继续监听 1420。
-                taskkill /PID $proc.Id /T /F 2>$null | Out-Null
-            }
-            catch {
-                # ignore
-            }
-        }
+    try {
+        taskkill /PID $processId /T /F 2>&1 | Out-Null
+        return $true
     }
-    # 等最多 2 秒让进程退出
-    for ($i = 0; $i -lt 20; $i++) {
-        if (-not (Test-PortInUse $port)) {
+    catch {
+        $message = $_.Exception.Message
+        if ($message -match "not found|找不到|未找到|不存在") {
             return $true
         }
-        Start-Sleep -Milliseconds 100
+        Write-Warning "结束进程树失败：PID=$processId Message=$message"
+        return $false
     }
-    return -not (Test-PortInUse $port)
 }
 
 function Get-PortListeners($port) {
@@ -237,7 +212,7 @@ function Stop-VoiceBridgePortProcess($port, $reason) {
 
     Write-Host "  [WARN] 端口 $port 上已有 voice_bridge，${reason}；自动停止旧进程后重启…"
     foreach ($ownerPid in $owners) {
-        taskkill /PID $ownerPid /T /F 2>$null | Out-Null
+        Stop-ProcessTreeIfPresent $ownerPid | Out-Null
     }
     for ($i = 0; $i -lt 30; $i++) {
         if (-not (Test-PortInUse $port)) {
@@ -250,20 +225,226 @@ function Stop-VoiceBridgePortProcess($port, $reason) {
     return $false
 }
 
-if (Test-PortInUse $DevPort) {
-    Write-Host "  [WARN] 端口 $DevPort 被占用，尝试清理上次残留的 vite/tauri 进程…"
-    if (Stop-DevPortProcess $DevPort) {
-        Write-Host "  [OK] 端口 $DevPort 已释放"
+function Get-PortOwnerPids($port) {
+    return @(
+        Get-PortListeners $port |
+            ForEach-Object { $_.OwningProcess } |
+            Where-Object { $_ -gt 0 } |
+            Sort-Object -Unique
+    )
+}
+
+function Convert-ToComparableText([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return ""
     }
-    else {
-        Write-Error "端口 $DevPort 仍被占用，无法启动前端 dev server。请检查是否有其他程序占用该端口，或手动终止相关进程后再试。"
+    return $value.Replace("/", "\").TrimEnd("\").ToLowerInvariant()
+}
+
+$comparableRoot = Convert-ToComparableText $root
+$devRuntimeProcessNames = @(
+    "node.exe",
+    "cmd.exe",
+    "esbuild.exe",
+    "rustup.exe",
+    "cargo.exe",
+    "app.exe",
+    "msedgewebview2.exe"
+)
+
+function Test-TextMentionsRepo([string]$text) {
+    $normalized = Convert-ToComparableText $text
+    return $normalized -ne "" -and $normalized.Contains($comparableRoot)
+}
+
+function Get-ProcessSnapshot {
+    try {
+        return @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ProcessId -ne $PID })
+    }
+    catch {
+        return @()
     }
 }
+
+function Find-ProcessInfo($processes, $processId) {
+    foreach ($processInfo in $processes) {
+        if ([int]$processInfo.ProcessId -eq [int]$processId) {
+            return $processInfo
+        }
+    }
+    return $null
+}
+
+function Test-DevRuntimeWrapperProcess($processInfo) {
+    if (-not $processInfo) {
+        return $false
+    }
+    $name = ([string]$processInfo.Name).ToLowerInvariant()
+    return $devRuntimeProcessNames -contains $name
+}
+
+function Test-AgentFriendDevRuntimeSeed($processInfo) {
+    if (-not (Test-DevRuntimeWrapperProcess $processInfo)) {
+        return $false
+    }
+    if ((Test-TextMentionsRepo ([string]$processInfo.CommandLine)) -or
+        (Test-TextMentionsRepo ([string]$processInfo.ExecutablePath))) {
+        return $true
+    }
+
+    $name = ([string]$processInfo.Name).ToLowerInvariant()
+    $commandLine = [string]$processInfo.CommandLine
+    if ($name -eq "msedgewebview2.exe" -and
+        $commandLine -match "--webview-exe-name=app\.exe" -and
+        $commandLine -match "--remote-debugging-port=" -and
+        $commandLine -match "com\.agentfriend\.desktop") {
+        return $true
+    }
+    return $false
+}
+
+function Expand-DevRuntimeProcessIds($seedIds, $processes) {
+    $selected = @{}
+    foreach ($seedId in $seedIds) {
+        if ([int]$seedId -gt 0) {
+            $selected["$([int]$seedId)"] = $true
+        }
+    }
+
+    $changed = $true
+    while ($changed) {
+        $changed = $false
+        foreach ($processInfo in $processes) {
+            $processId = [int]$processInfo.ProcessId
+            $parentPid = [int]$processInfo.ParentProcessId
+            $pidKey = "$processId"
+            $parentKey = "$parentPid"
+
+            if ($parentPid -gt 0 -and $selected.ContainsKey($parentKey) -and -not $selected.ContainsKey($pidKey)) {
+                $selected[$pidKey] = $true
+                $changed = $true
+            }
+
+            if ($selected.ContainsKey($pidKey) -and $parentPid -gt 0 -and -not $selected.ContainsKey($parentKey)) {
+                $parent = Find-ProcessInfo $processes $parentPid
+                if (Test-DevRuntimeWrapperProcess $parent) {
+                    $selected[$parentKey] = $true
+                    $changed = $true
+                }
+            }
+        }
+    }
+
+    return @($selected.Keys | ForEach-Object { [int]$_ } | Sort-Object -Unique)
+}
+
+function Get-RootProcessIds($processIds, $processes) {
+    $selected = @{}
+    foreach ($processId in $processIds) {
+        if ([int]$processId -gt 0) {
+            $selected["$([int]$processId)"] = $true
+        }
+    }
+
+    $roots = @()
+    foreach ($processId in $processIds) {
+        $processInfo = Find-ProcessInfo $processes $processId
+        $parentPid = 0
+        if ($processInfo) {
+            $parentPid = [int]$processInfo.ParentProcessId
+        }
+        if ($parentPid -le 0 -or -not $selected.ContainsKey("$parentPid")) {
+            $roots += [int]$processId
+        }
+    }
+    return @($roots | Sort-Object -Unique)
+}
+
+function Format-ProcessSummary($processInfo) {
+    if (-not $processInfo) {
+        return "<unknown process>"
+    }
+    $commandLine = [string]$processInfo.CommandLine
+    if ([string]::IsNullOrWhiteSpace($commandLine)) {
+        $commandLine = [string]$processInfo.ExecutablePath
+    }
+    return "PID=$($processInfo.ProcessId) Name=$($processInfo.Name) CommandLine=$commandLine"
+}
+
+function Stop-AgentFriendDevRuntime($reason, [int[]]$requiredFreePorts, [switch]$failOnBlockedPort) {
+    $processes = Get-ProcessSnapshot
+    $seedIds = @(
+        $processes |
+            Where-Object { Test-AgentFriendDevRuntimeSeed $_ } |
+            ForEach-Object { [int]$_.ProcessId }
+    )
+    $cleanupIds = @(Expand-DevRuntimeProcessIds $seedIds $processes)
+
+    $blockingOwnerIds = @()
+    foreach ($port in $requiredFreePorts) {
+        $blockingOwnerIds += Get-PortOwnerPids $port
+    }
+    $blockingOwnerIds = @($blockingOwnerIds | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+
+    $blockedByOther = @(
+        $blockingOwnerIds |
+            Where-Object { $cleanupIds -notcontains [int]$_ }
+    )
+    if ($failOnBlockedPort -and $blockedByOther.Count -gt 0) {
+        foreach ($ownerPid in $blockedByOther) {
+            $processInfo = Find-ProcessInfo $processes $ownerPid
+            Write-Error "dev 端口被非本仓库进程占用，脚本不会自动结束它。$(Format-ProcessSummary $processInfo)"
+        }
+    }
+
+    if ($cleanupIds.Count -gt 0) {
+        $killRootIds = @(Get-RootProcessIds $cleanupIds $processes)
+        $pidList = ($cleanupIds | Sort-Object -Unique) -join ","
+        $rootPidList = ($killRootIds | Sort-Object -Unique) -join ","
+        Write-Host "  [WARN] $reason；清理本仓库残留 dev 进程（PID=$pidList；root PID=$rootPidList）…"
+        foreach ($cleanupPid in ($killRootIds | Sort-Object -Unique)) {
+            Stop-ProcessTreeIfPresent $cleanupPid | Out-Null
+        }
+
+        for ($i = 0; $i -lt 30; $i++) {
+            $stillBlocked = $false
+            foreach ($port in $requiredFreePorts) {
+                if (Test-PortInUse $port) {
+                    $stillBlocked = $true
+                    break
+                }
+            }
+            if (-not $stillBlocked) {
+                Write-Host "  [OK] dev 端口已释放"
+                return $true
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+
+    if ($failOnBlockedPort) {
+        foreach ($port in $requiredFreePorts) {
+            if (Test-PortInUse $port) {
+                Write-Error "端口 $port 仍被占用，无法启动前端 dev server。请检查占用进程后重试。"
+            }
+        }
+    }
+    return $true
+}
+
+$preflightPorts = @($DevPort)
+if ($mode -eq "tauri" -and $cdpEnabled) {
+    $preflightPorts += $cdpPort
+}
+Stop-AgentFriendDevRuntime "检测到上次残留的 vite/tauri dev runtime" $preflightPorts -failOnBlockedPort
 
 if ($mode -eq "tauri" -and $cdpEnabled) {
     if (Test-PortInUse $cdpPort) {
         Write-Error "WebView2 CDP 端口 $cdpPort 已被占用。请关闭占用进程，或改用 --cdp-port <port>，或传 --no-cdp。"
     }
+}
+
+if ($mode -eq "tauri" -and $cdpEnabled) {
     $flag = "--remote-debugging-port=$cdpPort"
     $currentWebViewArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     if ($null -eq $currentWebViewArgs) {
@@ -342,23 +523,34 @@ else {
     if ($mode -eq "web") {
         Write-Host "===> 前端模式：web（浏览器调试，不编译 Rust）"
         pnpm dev @rest
+        $frontendExitCode = $LASTEXITCODE
     }
     else {
         Write-Host "===> 前端模式：tauri（桌面，含双窗口；首次编译 Rust 较慢）"
         pnpm tauri dev @rest
+        $frontendExitCode = $LASTEXITCODE
+    }
+    if ($frontendExitCode -ne 0) {
+        Write-Error "前端 dev 命令退出，exit code=$frontendExitCode。已进入收尾清理。"
     }
 }
 finally {
     Write-Host "`n===> 收尾：停止 bridge / voice_bridge / cloudflared…"
     if ($bridge -and -not $bridge.HasExited) {
         # /T 连同 uv 派生的 python 进程树一起结束
-        taskkill /PID $bridge.Id /T /F 2>$null | Out-Null
+        Stop-ProcessTreeIfPresent $bridge.Id | Out-Null
     }
     if ($voice -and -not $voice.HasExited) {
-        taskkill /PID $voice.Id /T /F 2>$null | Out-Null
+        Stop-ProcessTreeIfPresent $voice.Id | Out-Null
     }
     if ($cloudflared -and -not $cloudflared.HasExited) {
-        taskkill /PID $cloudflared.Id /T /F 2>$null | Out-Null
+        Stop-ProcessTreeIfPresent $cloudflared.Id | Out-Null
+    }
+    try {
+        Stop-AgentFriendDevRuntime "脚本退出后检查前端/Tauri 残留" @()
+    }
+    catch {
+        Write-Warning "清理前端/Tauri 残留失败：$($_.Exception.Message)"
     }
 }
 }

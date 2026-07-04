@@ -3,7 +3,7 @@ import * as PIXI from "pixi.js";
 import type { PetInteractionCallbacks } from "./usePetInteractions";
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
-import { findVisibleBounds } from "@/pet/petAlphaHitTest";
+import { findVisibleRegion } from "@/pet/petAlphaHitTest";
 import type { PetDisplayProfile } from "./petDisplayProfile";
 
 /**
@@ -79,7 +79,14 @@ export function usePixiAvatarSlot(
   const [app, setApp] = useState<PIXI.Application | null>(null);
   // ref 而非 useEffect 局部变量：让 invalidateAnchor 能从 hook 顶部清掉
   const cachedOffsetRef = useRef<
-    { dx: number; dy: number; w: number; h: number } | null
+    {
+      dx: number;
+      dy: number;
+      w: number;
+      h: number;
+      centroidDx: number;
+      centroidDy: number;
+    } | null
   >(null);
   // 18b Win mixed DPR mitigation（issue 012）：alpha-scan 在 readPixels 不可用时整体降级
   // 到 17a 矩形行为。useRef 暴露给 usePetPassthrough 同步读，避免再起一条 React state 链路。
@@ -180,6 +187,17 @@ export function usePixiAvatarSlot(
         return { x: b.minX, y: b.minY, w: b.width, h: b.height };
       };
 
+      const computePlacementAnchorPoint = () => {
+        const cached = cachedOffsetRef.current;
+        if (!cached) return null;
+        const scaleX = slot.scale.x || 1;
+        const scaleY = slot.scale.y || 1;
+        return {
+          x: slot.x + cached.centroidDx * scaleX,
+          y: slot.y + cached.centroidDy * scaleY,
+        };
+      };
+
       const readAlignedBounds = () => {
         let bounds = computeBounds();
         if (!bounds) return null;
@@ -251,10 +269,21 @@ export function usePixiAvatarSlot(
         const shouldApplyPlacement =
           lastAppliedPlacementKeyRef.current !== profile.placementKey;
         if (shouldApplyPlacement && profile.placementPoint) {
+          if (profile.edge && !cachedOffsetRef.current && !alphaScanGivenUpRef.current) {
+            return;
+          }
           const boundsAfterCenteringScale = computeBounds();
           if (!boundsAfterCenteringScale) return;
-          slot.x += profile.placementPoint.x - (boundsAfterCenteringScale.x + boundsAfterCenteringScale.w / 2);
-          slot.y += profile.placementPoint.y - (boundsAfterCenteringScale.y + boundsAfterCenteringScale.h / 2);
+          const placementAnchor =
+            profile.edge && cachedOffsetRef.current
+              ? computePlacementAnchorPoint()
+              : {
+                  x: boundsAfterCenteringScale.x + boundsAfterCenteringScale.w / 2,
+                  y: boundsAfterCenteringScale.y + boundsAfterCenteringScale.h / 2,
+                };
+          if (!placementAnchor) return;
+          slot.x += profile.placementPoint.x - placementAnchor.x;
+          slot.y += profile.placementPoint.y - placementAnchor.y;
         }
         lastAppliedPlacementKeyRef.current = profile.placementKey;
       };
@@ -294,7 +323,7 @@ export function usePixiAvatarSlot(
         if (!cachedOffsetRef.current && !alphaScanGivenUpRef.current) {
           const slotBounds = slot.getBounds();
           if (slotBounds.width > 0 && slotBounds.height > 0) {
-            const scanned = findVisibleBounds(pixi, {
+            const scanned = findVisibleRegion(pixi, {
               x: slotBounds.minX,
               y: slotBounds.minY,
               w: slotBounds.width,
@@ -302,11 +331,14 @@ export function usePixiAvatarSlot(
             });
             if (scanned) {
               nullScanCount = 0;
+              const { bounds, centroid } = scanned;
               cachedOffsetRef.current = {
-                dx: (scanned.x - slot.x) / (slot.scale.x || 1),
-                dy: (scanned.y - slot.y) / (slot.scale.y || 1),
-                w: scanned.w / (slot.scale.x || 1),
-                h: scanned.h / (slot.scale.y || 1),
+                dx: (bounds.x - slot.x) / (slot.scale.x || 1),
+                dy: (bounds.y - slot.y) / (slot.scale.y || 1),
+                w: bounds.w / (slot.scale.x || 1),
+                h: bounds.h / (slot.scale.y || 1),
+                centroidDx: (centroid.x - slot.x) / (slot.scale.x || 1),
+                centroidDy: (centroid.y - slot.y) / (slot.scale.y || 1),
               };
             } else {
               // 区域内无 alpha > threshold 像素 —— 启动早期 sprite 没渲染好正常会出，
