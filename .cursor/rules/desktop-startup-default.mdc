@@ -1,0 +1,31 @@
+---
+description: agent-friend 项目启动运行态默认值：coding agent 启动前端或项目时默认使用 Tauri 桌面端，除非用户或当前 skill / 流程明确要求 web。
+alwaysApply: true
+---
+
+# 桌面端启动默认值
+
+本规则只约束 coding agent 在本项目中选择"启动哪个运行态"。视觉验收是否足够、截图 / DOM 结论怎么标注，仍由 `frontend-visual-verification` 和 `desktop-visual-inspection` 负责。
+
+## 默认行为
+
+当用户要求启动项目、启动前端、跑 dev、看本地效果、起一下让我看看、验证桌面端功能、预览 showcase，或 coding agent 自己需要启动运行态来验证改动时：
+
+- 默认使用 `scripts/dev/run.*` 的 Tauri 桌面端模式，不主动加 `--web`。
+- Windows 默认入口是 `.\scripts\dev\run.ps1`；mac/linux 默认入口是 `./scripts/dev/run.sh`。
+- 如果需要真实桌面窗口截图或 WebView DOM，优先使用 `scripts/desktop-visual/run.* start`，它会透传到桌面端启动流程。
+
+## 允许使用 web 的情况
+
+只有以下情况才主动使用 `--web`、`scripts/frontend/web.*` 或浏览器/Vite 预览：
+
+- 用户明确要求 web、浏览器、Vite、frontend-only，或明确说不需要桌面端。
+- 当前触发的 skill / workflow 明确要求 web 启动。
+- 本次任务只需要快速布局草稿或纯浏览器能力验证，且不需要对 Tauri 窗口、桌宠透明窗、多窗口、WebView、系统标题栏、拖拽、悬浮层等桌面行为下结论。
+- 当前环境无法启动真实桌面端；此时可以退回 web，但回报必须说明阻塞原因，并标注结果不是桌面端验证。
+
+## 回报要求
+
+如果没有按默认桌面端启动，而是使用了 web 模式，回报中必须说明原因，例如"用户要求 showcase frontend-only"、"skill 要求 web 预览"、"Tauri 启动被环境阻塞"或"仅做 web-only draft"。
+
+不得因为 web 模式更快，就在没有上述理由时把 `--web` 当作 coding agent 的默认启动方式。

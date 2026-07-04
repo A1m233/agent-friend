@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT.parent / "agent-friend-showcase-snapshot"
+DEFAULT_SYNC_BUILD = ROOT / ".tmp" / "showcase-snapshot-build"
 SENTINEL = ".agent-friend-showcase-snapshot"
 
 
@@ -28,17 +29,11 @@ EXACT_ROOT_FILES = {
 
 EXACT_FRONTEND_FILES = {
     "frontend/.nvmrc",
-    "frontend/bubble.html",
-    "frontend/chat.html",
     "frontend/components.json",
     "frontend/eslint.config.js",
-    "frontend/index.html",
-    "frontend/memory-inspector.html",
     "frontend/package.json",
-    "frontend/pet.html",
     "frontend/pnpm-lock.yaml",
     "frontend/pnpm-workspace.yaml",
-    "frontend/settings.html",
     "frontend/tsconfig.app.json",
     "frontend/tsconfig.json",
     "frontend/tsconfig.node.json",
@@ -56,6 +51,7 @@ ALLOW_PREFIXES = (
     "llm_providers/",
     "memory/",
     "tools/",
+    "runtime_config/",
     "voice_bridge/",
     "shared/",
     "frontend/src/",
@@ -68,6 +64,8 @@ MEMORY_EVAL_PREFIXES = (
     "memory_eval/src/",
     "memory_eval/tests/",
 )
+
+AGENT_EVAL_PREFIXES = ("agent_eval/src/",)
 
 DOC_EXACT_FILES = {
     "docs/decisions/README.md",
@@ -154,6 +152,25 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+
+SYNC_PRESERVE_ROOT_ENTRIES = {
+    ".git",
+    ".venv",
+    ".tmp",
+    ".env",
+    ".agent-friend-data",
+    ".showcase-run",
+}
+SYNC_PRESERVE_DIR_NAMES = {
+    "node_modules",
+}
+
+EXTRA_WORKTREE_PREFIXES = (
+    "scripts/showcase-snapshot",
+    ".cursor/skills",
+    ".Codex/skills",
+    ".claude/skills",
+)
 
 PRIVATE_USER = "example" + "-user"
 PRIVATE_DISPLAY_NAME = "Alex"
@@ -257,6 +274,13 @@ SCAN_PATTERNS: list[tuple[str, str, re.Pattern[str]]] = [
 ]
 
 URL_PATTERN = re.compile(r"https?://[^\s)\"'<>`]+")
+SELF_NAMED_CREDENTIAL_CONSTANT = re.compile(
+    r"^\s*"
+    r"([A-Z0-9_]*(?:API_KEY|ACCESS_KEY|SECRET_KEY|CLIENT_SECRET|SECRET|ACCESS_TOKEN|APP_ID|APPID)"
+    r"[A-Z0-9_]*)"
+    r"\s*=\s*[\"']\1[\"']\s*(?:#.*)?$",
+    re.I,
+)
 ALLOWED_URL_HOSTS = (
     "127.0.0.1",
     "localhost",
@@ -291,10 +315,18 @@ def is_denied(path: str) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in DENY_PATTERNS)
 
 
+def is_frontend_root_html(path: str) -> bool:
+    if not path.startswith("frontend/") or not path.endswith(".html"):
+        return False
+    return "/" not in path.removeprefix("frontend/")
+
+
 def is_allowed(path: str) -> bool:
-    if path in EXACT_ROOT_FILES or path in EXACT_FRONTEND_FILES:
+    if path in EXACT_ROOT_FILES or path in EXACT_FRONTEND_FILES or is_frontend_root_html(path):
         return True
     if path in {"pyproject.toml", ".env.example", "scripts/README.md"}:
+        return True
+    if path in {"agent_eval/README.md", "agent_eval/pyproject.toml"}:
         return True
     if path in {"memory_eval/README.md", "memory_eval/pyproject.toml"}:
         return True
@@ -305,6 +337,8 @@ def is_allowed(path: str) -> bool:
     if path.startswith("docs/requirements/") and path.endswith(DOC_SUFFIXES):
         return True
     if path.startswith(MEMORY_EVAL_PREFIXES):
+        return True
+    if path.startswith(AGENT_EVAL_PREFIXES):
         return True
     if path.startswith("scripts/"):
         parts = path.split("/")
@@ -320,11 +354,13 @@ def git_ls_files() -> list[str]:
         stdout=subprocess.PIPE,
     )
     paths = [p for p in result.stdout.decode("utf-8").split("\0") if p]
-    for path in (ROOT / "scripts" / "showcase-snapshot").glob("*"):
-        if path.is_file():
-            rel_path = path.relative_to(ROOT).as_posix()
-            if rel_path not in paths:
-                paths.append(rel_path)
+    extra = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", *EXTRA_WORKTREE_PREFIXES],
+        cwd=ROOT,
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    paths.extend(p for p in extra.stdout.decode("utf-8").split("\0") if p and p not in paths)
     return paths
 
 
@@ -379,8 +415,10 @@ LLM、长期记忆、桌面形态、语音通道和多入口接入组合成一�
 | --- | --- |
 | `agent/` | 对话引擎核心：conversation loop、session、persona、prompt、context、tools |
 | `memory/` | 长期记忆系统：SQLite store、LLM 抽取、reconcile、检索召回 |
+| `agent_eval/` | Agent 行为契约评测工具源码；公开快照不包含私有 case/report 资产 |
 | `memory_eval/` | 记忆召回质量评测：benchmark adapter、LLM judge、baseline report |
 | `llm_providers/` | LLM provider 适配层，当前通过 LiteLLM 收敛不同模型服务 |
+| `runtime_config/` | 运行时配置与凭据解析：系统凭据、环境变量和桌面配置模式 |
 | `agent_bridge/` | HTTP/SSE bridge，提供 OpenAI-compatible、AG-UI、IM 与内部 push 边界 |
 | `voice_bridge/` | 语音通话控制面与 RTC / ASR / TTS 集成边界 |
 | `frontend/` | Tauri 2 + React 桌面端：聊天、桌宠、气泡、设置、记忆查看器 |
@@ -497,7 +535,7 @@ Project operations are wrapped as scripts so contributors do not need to remembe
 | `check/` | Run the combined local quality gate | `./scripts/check/run.sh` | `.\\scripts\\check\\run.ps1` |
 | `frontend/*` | Install, lint, test, build, or run frontend tasks | `./scripts/frontend/*.sh` | `.\\scripts\\frontend\\*.ps1` |
 | `im-smoke/` | Run the fake-LLM IM smoke test | `./scripts/im-smoke/run.sh` | `.\\scripts\\im-smoke\\run.ps1` |
-| `showcase-snapshot/` | Regenerate this sanitized public snapshot from the private source repo | `./scripts/showcase-snapshot/run.sh` | `.\\scripts\\showcase-snapshot\\run.ps1` |
+| `showcase-snapshot/` | Regenerate or sync this sanitized public snapshot from the private source repo | `./scripts/showcase-snapshot/run.sh [--sync-checkout PATH]` | `.\\scripts\\showcase-snapshot\\run.ps1 [--sync-checkout PATH]` |
 
 Scripts that intentionally trigger real LLM or vendor smoke calls are omitted from the public
 snapshot command index.
@@ -650,6 +688,11 @@ def scan_text_file(path: Path, rel_path: str) -> list[Finding]:
     for line_no, line in enumerate(text.splitlines(), start=1):
         for severity, category, pattern in SCAN_PATTERNS:
             if pattern.search(line):
+                if (
+                    category == "credential-looking assignment"
+                    and SELF_NAMED_CREDENTIAL_CONSTANT.match(line)
+                ):
+                    continue
                 findings.append(Finding(severity, category, rel_path, line_no, redacted(line)))
 
         for match in URL_PATTERN.finditer(line):
@@ -726,33 +769,177 @@ def write_report(output: Path, copied: list[str], findings: list[Finding]) -> No
     (output / "SHOWCASE-SCAN-REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def normalized_absolute(path: Path) -> Path:
+    return Path(os.path.abspath(path))
+
+
+def ensure_inside(path: Path, root: Path) -> None:
+    root_abs = normalized_absolute(root)
+    path_abs = normalized_absolute(path)
+    if path_abs != root_abs and root_abs not in path_abs.parents:
+        raise SystemExit(f"refusing to touch path outside sync root: {path_abs}")
+
+
+def sync_rel(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def is_sync_preserved(rel_path: str) -> bool:
+    if not rel_path:
+        return True
+    parts = rel_path.split("/")
+    return parts[0] in SYNC_PRESERVE_ROOT_ENTRIES or any(
+        part in SYNC_PRESERVE_DIR_NAMES for part in parts
+    )
+
+
+def remove_sync_path(path: Path, root: Path) -> int:
+    ensure_inside(path, root)
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return 1
+
+
+def ensure_parent_dir(path: Path, root: Path) -> None:
+    ensure_inside(path, root)
+    parent = path.parent
+    if parent.exists() and not parent.is_dir():
+        remove_sync_path(parent, root)
+    parent.mkdir(parents=True, exist_ok=True)
+
+
+def mirror_symlink(src: Path, dst: Path, root: Path) -> bool:
+    link_target = os.readlink(src)
+    if dst.exists() or dst.is_symlink():
+        remove_sync_path(dst, root)
+    ensure_parent_dir(dst, root)
+    target_is_directory = (src.parent / link_target).is_dir()
+    try:
+        os.symlink(link_target, dst, target_is_directory=target_is_directory)
+        return True
+    except OSError:
+        # Windows checkouts without symlink privilege use git's text placeholder form.
+        dst.write_text(link_target, encoding="utf-8")
+        return False
+
+
+def mirror_file(src: Path, dst: Path, root: Path) -> None:
+    if dst.is_symlink() or (dst.exists() and not dst.is_file()):
+        remove_sync_path(dst, root)
+    ensure_parent_dir(dst, root)
+    shutil.copy2(src, dst)
+
+
+def source_inventory(snapshot: Path) -> tuple[set[str], set[str], dict[str, Path]]:
+    dirs = {""}
+    files: set[str] = set()
+    file_paths: dict[str, Path] = {}
+    for path in sorted(snapshot.rglob("*")):
+        rel_path = sync_rel(path, snapshot)
+        if path.is_symlink():
+            files.add(rel_path)
+            file_paths[rel_path] = path
+        elif path.is_dir():
+            dirs.add(rel_path)
+        else:
+            files.add(rel_path)
+            file_paths[rel_path] = path
+    return dirs, files, file_paths
+
+
+def remove_checkout_extras(checkout: Path, source_dirs: set[str], source_files: set[str]) -> int:
+    removed = 0
+    for path in sorted(checkout.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        rel_path = sync_rel(path, checkout)
+        if is_sync_preserved(rel_path):
+            continue
+        if path.is_dir() and not path.is_symlink():
+            if rel_path not in source_dirs:
+                try:
+                    path.rmdir()
+                    removed += 1
+                except OSError:
+                    pass
+            continue
+        if rel_path not in source_files:
+            removed += remove_sync_path(path, checkout)
+    return removed
+
+
+def sync_snapshot_to_checkout(snapshot: Path, checkout: Path) -> tuple[int, int, int]:
+    checkout = checkout.expanduser().resolve()
+    if not checkout.exists():
+        raise SystemExit(f"sync checkout does not exist: {checkout}")
+    if not (checkout / ".git").exists():
+        raise SystemExit(f"refusing to sync checkout without .git: {checkout}")
+    if not (checkout / SENTINEL).exists():
+        raise SystemExit(f"refusing to sync checkout without {SENTINEL}: {checkout}")
+
+    source_dirs, source_files, file_paths = source_inventory(snapshot)
+    removed = remove_checkout_extras(checkout, source_dirs, source_files)
+
+    for rel_path in sorted(source_dirs):
+        if rel_path and not is_sync_preserved(rel_path):
+            (checkout / rel_path).mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    symlink_fallbacks = 0
+    for rel_path, src in sorted(file_paths.items()):
+        if is_sync_preserved(rel_path):
+            continue
+        dst = checkout / rel_path
+        if src.is_symlink():
+            if not mirror_symlink(src, dst, checkout):
+                symlink_fallbacks += 1
+        else:
+            mirror_file(src, dst, checkout)
+        copied += 1
+
+    if symlink_fallbacks:
+        subprocess.run(["git", "config", "core.symlinks", "false"], cwd=checkout, check=False)
+
+    return copied, removed, symlink_fallbacks
+
+
 def init_git(output: Path) -> None:
     subprocess.run(["git", "init"], cwd=output, check=True)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a sanitized public showcase snapshot.")
-    parser.add_argument(
-        "--output", type=Path, default=DEFAULT_OUTPUT, help="snapshot output directory"
-    )
+    parser.add_argument("--output", type=Path, default=None, help="snapshot output directory")
     parser.add_argument(
         "--replace", action="store_true", help="replace an existing generated snapshot"
     )
     parser.add_argument(
         "--init-git", action="store_true", help="run git init in the generated snapshot"
     )
+    parser.add_argument(
+        "--sync-checkout",
+        type=Path,
+        help=(
+            "after a clean scan, mirror the generated snapshot into an existing showcase "
+            "git checkout while preserving local runtime artifacts"
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    output = args.output.expanduser().resolve()
-    prepare_output(output, args.replace)
+    if args.sync_checkout and args.init_git:
+        raise SystemExit("--sync-checkout cannot be combined with --init-git")
+
+    output_arg = args.output
+    if output_arg is None:
+        output_arg = DEFAULT_SYNC_BUILD if args.sync_checkout else DEFAULT_OUTPUT
+    output = output_arg.expanduser().resolve()
+    prepare_output(output, args.replace or bool(args.sync_checkout))
     copied = build_snapshot(output)
     findings = scan_snapshot(output)
     write_report(output, copied, findings)
-    if args.init_git:
-        init_git(output)
 
     errors = [f for f in findings if f.severity == "error"]
     warnings = [f for f in findings if f.severity == "warning"]
@@ -761,7 +948,19 @@ def main(argv: list[str]) -> int:
     print(f"scan errors: {len(errors)}")
     print(f"scan warnings: {len(warnings)}")
     print(f"report: {output / 'SHOWCASE-SCAN-REPORT.md'}")
-    return 1 if errors else 0
+    if errors:
+        return 1
+
+    if args.init_git:
+        init_git(output)
+
+    if args.sync_checkout:
+        synced, removed, symlink_fallbacks = sync_snapshot_to_checkout(output, args.sync_checkout)
+        print(f"synced checkout: {args.sync_checkout.expanduser().resolve()}")
+        print(f"synced files: {synced}")
+        print(f"removed stale paths: {removed}")
+        print(f"symlink text fallbacks: {symlink_fallbacks}")
+    return 0
 
 
 if __name__ == "__main__":

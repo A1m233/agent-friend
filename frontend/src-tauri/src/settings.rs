@@ -78,13 +78,6 @@ impl Settings {
             ThemeMode::Dark => "dark",
         }
     }
-
-    fn tdesign_theme_mode_script(&self) -> &'static str {
-        match self.theme {
-            ThemeMode::Light => "document.documentElement.removeAttribute('theme-mode');",
-            ThemeMode::Dark => "document.documentElement.setAttribute('theme-mode', 'dark');",
-        }
-    }
 }
 
 const EVENT_CHANGED: &str = "settings://changed";
@@ -342,12 +335,8 @@ pub fn build_init_script(s: &Settings) -> String {
     format!(
         r#"
         window.__AGENT_FRIEND_SETTINGS__ = {json};
-        document.documentElement.setAttribute('theme', '{theme}');
-        {tdesign_theme_mode_script}
         "#,
         json = json,
-        theme = s.theme_attr(),
-        tdesign_theme_mode_script = s.tdesign_theme_mode_script(),
     )
 }
 
@@ -604,24 +593,24 @@ mod init_script_tests {
     use super::{build_init_script, Settings, ThemeMode};
 
     #[test]
-    fn build_init_script_sets_tdesign_dark_theme_mode() {
+    fn build_init_script_injects_settings_snapshot() {
         let script = build_init_script(&Settings {
             theme: ThemeMode::Dark,
             ..Settings::default()
         });
 
-        assert!(script.contains("document.documentElement.setAttribute('theme', 'dark');"));
-        assert!(script.contains("document.documentElement.setAttribute('theme-mode', 'dark');"));
+        assert!(script.contains("window.__AGENT_FRIEND_SETTINGS__"));
+        assert!(script.contains(r#""theme":"dark""#));
     }
 
     #[test]
-    fn build_init_script_clears_tdesign_theme_mode_for_light() {
+    fn build_init_script_does_not_mutate_dom_theme() {
         let script = build_init_script(&Settings {
             theme: ThemeMode::Light,
             ..Settings::default()
         });
 
-        assert!(script.contains("document.documentElement.setAttribute('theme', 'light');"));
-        assert!(script.contains("document.documentElement.removeAttribute('theme-mode');"));
+        assert!(!script.contains("document.documentElement.setAttribute('theme'"));
+        assert!(!script.contains("theme-mode"));
     }
 }

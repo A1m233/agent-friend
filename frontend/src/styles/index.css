@@ -81,6 +81,10 @@ body,
   height: 100%;
 }
 
+html {
+  scrollbar-color: var(--muted) transparent;
+}
+
 body {
   margin: 0;
   /* 普通窗口默认不透明；pet/bubble 这类异形窗口通过 HTML 标记显式 opt-in 透明。 */

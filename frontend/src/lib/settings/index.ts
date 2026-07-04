@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { DEFAULT_AVATAR_MODEL_ID } from "@/avatar-models";
+import { syncDocumentTheme } from "@/lib/settings/theme";
 
 export type ThemeMode = "light" | "dark";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
@@ -58,10 +59,17 @@ export async function setSetting<K extends keyof Settings>(
 ): Promise<void> {
   const previous = getSettingsSnapshot()[key];
   applySettingCache(key, next);
+  if (key === "theme") {
+    syncDocumentTheme(next);
+  }
+
   try {
     await invoke("set_setting", { payload: { key, value: next } });
   } catch (error) {
     applySettingCache(key, previous);
+    if (key === "theme") {
+      syncDocumentTheme(previous);
+    }
     throw error;
   }
 }

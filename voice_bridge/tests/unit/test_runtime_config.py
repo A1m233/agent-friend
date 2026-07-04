@@ -31,9 +31,9 @@ def test_canonical_speech_api_key_still_resolves() -> None:
     source = credential_source_for_mode(
         "desktop",
         keyring_backend=FakeKeyring(),
-        env={VOLC_SPEECH_API_KEY: "canonical-speech-api-key"},
+        env={VOLC_SPEECH_API_KEY: "test-canonical-speech-api-key"},
     )
 
     credentials = resolve_voice_credentials(source)
 
-    assert credentials.volc_speech_api_key == "canonical-speech-api-key"
+    assert credentials.volc_speech_api_key == "test-canonical-speech-api-key"

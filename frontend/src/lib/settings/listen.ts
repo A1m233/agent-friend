@@ -1,17 +1,19 @@
 import { listen } from "@tauri-apps/api/event";
-import { DEFAULT_SETTINGS, applySettingCache, type Settings } from "@/lib/settings";
+import {
+  DEFAULT_SETTINGS,
+  applySettingCache,
+  getSettingsSnapshot,
+  type Settings,
+} from "@/lib/settings";
+import {
+  syncDocumentTheme,
+  type ThemeRoot,
+} from "@/lib/settings/theme";
 
-type ThemeRoot = Pick<HTMLElement, "setAttribute" | "removeAttribute">;
+export { syncDocumentTheme } from "@/lib/settings/theme";
 
-export function syncDocumentTheme(value: unknown, root: ThemeRoot = document.documentElement): void {
-  const theme = value === "dark" ? "dark" : "light";
-  root.setAttribute("theme", theme);
-
-  if (theme === "dark") {
-    root.setAttribute("theme-mode", "dark");
-  } else {
-    root.removeAttribute("theme-mode");
-  }
+export function syncDocumentThemeFromSettingsSnapshot(root?: ThemeRoot): void {
+  syncDocumentTheme(getSettingsSnapshot().theme, root);
 }
 
 /**
@@ -22,6 +24,8 @@ export function syncDocumentTheme(value: unknown, root: ThemeRoot = document.doc
  * 这样即使某个入口没有使用 useSetting，也能跟随全局主题变更。
  */
 export function registerSettingsListener(): void {
+  syncDocumentThemeFromSettingsSnapshot();
+
   void listen<{ key: string; value: unknown }>("settings://changed", (event) => {
     const key = event.payload.key as keyof Settings;
     if (key in DEFAULT_SETTINGS) {

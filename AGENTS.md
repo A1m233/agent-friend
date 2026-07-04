@@ -16,6 +16,7 @@
 |---|---|
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
+| `desktop-startup-default.mdc` | agent-friend 项目启动运行态默认值：coding agent 启动前端或项目时默认使用 Tauri 桌面端，除非用户或当前 skill / 流程明确要求 web。 |
 | `dev-workflow.mdc` | agent-friend 项目需求与 issue 交付流程：需求走 feature 分支，issue 修复按影响范围选择 main 或 fix 分支 |
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
 | `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化 |
@@ -37,4 +38,5 @@
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证前端视觉/DOM 的标准流程。Use when 修改或排查 Tauri 桌面窗口 UI（对话页、设置页、桌宠窗、语音窗、窗口布局、滚动条、输… |
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
+| `showcase-update` | Update the public agent-friend showcase repository from the private source repo. Use when the u… |
 | `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |

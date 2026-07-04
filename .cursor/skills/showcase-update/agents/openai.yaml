@@ -1,0 +1,4 @@
+interface:
+  display_name: "Showcase Update"
+  short_description: "Update the sanitized public showcase checkout."
+  default_prompt: "Use $showcase-update to update the public showcase snapshot, verify the scan, and prepare the checkout for review."

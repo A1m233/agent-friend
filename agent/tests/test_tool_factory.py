@@ -67,7 +67,7 @@ def test_explicit_tavily_key_registers_web_search_without_env(
 ) -> None:
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
-    registry = make_default_registry(tavily_api_key="tvly-explicit")
+    registry = make_default_registry(tavily_api_key="test-tavily-explicit")
 
     tools = registry.all_tools()
     assert len(tools) == 1

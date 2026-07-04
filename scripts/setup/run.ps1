@@ -66,6 +66,7 @@ if ($Clean) {
 Write-Host ""
 Write-Host "==> 安装依赖（uv sync）"
 uv sync
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host ""
 Write-Host "==> 凭据配置"
