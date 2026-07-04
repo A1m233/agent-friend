@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
@@ -7,10 +7,24 @@ import type { PushEnvelope } from "@/types/push";
 import { ActionBar } from "./ActionBar";
 import { usePetPassthrough } from "./usePetPassthrough";
 import {
-  getPetViewport,
   resolvePetDisplayProfile,
+  type PetPoint,
+  type PetRect,
   type PetViewport,
 } from "./petDisplayProfile";
+import {
+  getPetOverlayViewport,
+  loadPetMonitorViewports,
+  resolvePetViewportForRect,
+} from "./petMonitorViewport";
+import {
+  centerPointOfRect,
+  isFiniteRect,
+  isFiniteViewport,
+  samePoint,
+  sameRect,
+  sameViewportList,
+} from "./petGeometry";
 import type { PetAvatarSize } from "@/lib/settings";
 import {
   resolveInstalledAvatarModelSelection,
@@ -31,18 +45,6 @@ import {
   useVoiceStore,
 } from "@/stores/voice";
 import { isVoiceCallLive } from "@/stores/voiceStateMachine";
-
-interface PetRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-interface PetPoint {
-  x: number;
-  y: number;
-}
 
 /**
  * Tauri listener stale-cleanup race 兜底：StrictMode 双 mount / hot reload 期间 Tauri 内部
@@ -89,7 +91,10 @@ export function PetApp() {
   const [avatarModelId] = useSetting("avatarModelId");
   const [petAvatarSize, setPetAvatarSize] = useSetting("petAvatarSize");
   const previousPetAvatarSizeRef = useRef<PetAvatarSize | null>(null);
-  const [viewport, setViewport] = useState<PetViewport>(() => getPetViewport());
+  const [overlayViewport, setOverlayViewport] = useState<PetViewport>(() =>
+    getPetOverlayViewport(),
+  );
+  const [monitorViewports, setMonitorViewports] = useState<PetViewport[]>([]);
   const {
     entries: installedAvatarModels,
     error: installedAvatarModelError,
@@ -99,12 +104,70 @@ export function PetApp() {
     avatarModelId,
   );
 
+  const setSpriteScreenIfChanged = useCallback((next: PetRect | null) => {
+    if (next && !isFiniteRect(next)) return;
+    setSpriteScreen((prev) => (sameRect(prev, next) ? prev : next));
+  }, []);
+
+  const setActionBarAnchorIfChanged = useCallback((next: PetRect | null) => {
+    if (next && !isFiniteRect(next)) return;
+    setActionBarAnchor((prev) => (sameRect(prev, next) ? prev : next));
+  }, []);
+
   useEffect(() => {
-    const updateViewport = () => setViewport(getPetViewport());
+    let cancelled = false;
+    let dprQuery: MediaQueryList | null = null;
+    let viewportRequestId = 0;
+    const updateViewport = () => {
+      const requestId = ++viewportRequestId;
+      const nextOverlayViewport = getPetOverlayViewport();
+      if (!isFiniteViewport(nextOverlayViewport)) return;
+      setOverlayViewport((prev) =>
+        sameRect(prev, nextOverlayViewport) ? prev : nextOverlayViewport,
+      );
+      void loadPetMonitorViewports(nextOverlayViewport)
+        .then((nextMonitorViewports) => {
+          if (cancelled || requestId !== viewportRequestId) return;
+          const finiteMonitorViewports = nextMonitorViewports.filter(isFiniteViewport);
+          setMonitorViewports((prev) =>
+            sameViewportList(prev, finiteMonitorViewports)
+              ? prev
+              : finiteMonitorViewports,
+          );
+        })
+        .catch((error: unknown) => {
+          if (!cancelled && requestId === viewportRequestId) {
+            setMonitorViewports((prev) => (prev.length === 0 ? prev : []));
+          }
+          console.warn("[pet] load monitor viewports failed:", error);
+        });
+      bindDprListener();
+    };
+    const onDprChange = () => updateViewport();
+    const bindDprListener = () => {
+      if (typeof window.matchMedia !== "function") return;
+      dprQuery?.removeEventListener("change", onDprChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      dprQuery.addEventListener("change", onDprChange);
+    };
     updateViewport();
     window.addEventListener("resize", updateViewport);
-    return () => window.removeEventListener("resize", updateViewport);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("resize", updateViewport);
+      dprQuery?.removeEventListener("change", onDprChange);
+    };
   }, []);
+
+  const interactionViewport = useMemo(
+    () =>
+      resolvePetViewportForRect(
+        actionBarAnchor ?? spriteScreen,
+        monitorViewports,
+        overlayViewport,
+      ),
+    [actionBarAnchor, monitorViewports, overlayViewport, spriteScreen],
+  );
 
   const displayProfile = useMemo(
     () => {
@@ -112,11 +175,11 @@ export function PetApp() {
       return resolvePetDisplayProfile({
         avatarSize: petAvatarSize,
         rect: anchor,
-        viewport,
+        viewport: interactionViewport,
         previousAvatarSize: previousPetAvatarSizeRef.current,
       });
     },
-    [actionBarAnchor, petAvatarSize, spriteScreen, viewport],
+    [actionBarAnchor, interactionViewport, petAvatarSize, spriteScreen],
   );
 
   useEffect(() => {
@@ -125,8 +188,8 @@ export function PetApp() {
 
   useEffect(() => {
     setRuntime(null);
-    setSpriteScreen(null);
-    setActionBarAnchor(null);
+    setSpriteScreenIfChanged(null);
+    setActionBarAnchorIfChanged(null);
     publishAnchorDiagnostics({
       modelId: selectedEntry?.id ?? null,
       backend: selectedEntry?.backend ?? null,
@@ -136,7 +199,12 @@ export function PetApp() {
       actionBarComputed: null,
       actionBarRect: null,
     });
-  }, [selectedEntry?.backend, selectedEntry?.id]);
+  }, [
+    selectedEntry?.backend,
+    selectedEntry?.id,
+    setActionBarAnchorIfChanged,
+    setSpriteScreenIfChanged,
+  ]);
 
   useEffect(() => {
     if (!installedAvatarModelError) return;
@@ -149,16 +217,36 @@ export function PetApp() {
       backend: selectedEntry?.backend ?? null,
       spriteScreen,
       actionBarAnchor: actionBarAnchor ?? spriteScreen,
+      dpr: typeof window === "undefined" ? undefined : window.devicePixelRatio,
+      overlayViewport,
+      selectedViewport: interactionViewport,
+      monitorViewports,
+      displayProfile: {
+        avatarSize: displayProfile.avatarSize,
+        placementKey: displayProfile.placementKey,
+        scale: displayProfile.scale,
+        placementPoint: displayProfile.placementPoint,
+        edge: displayProfile.edge,
+      },
     });
-  }, [actionBarAnchor, selectedEntry?.backend, selectedEntry?.id, spriteScreen]);
+  }, [
+    actionBarAnchor,
+    displayProfile,
+    interactionViewport,
+    monitorViewports,
+    overlayViewport,
+    selectedEntry?.backend,
+    selectedEntry?.id,
+    spriteScreen,
+  ]);
 
   useEffect(() => {
     const placementRect = actionBarAnchor ?? spriteScreen;
-    if (!placementRect) return;
-    setAvatarPlacementPoint({
-      x: placementRect.x + placementRect.w / 2,
-      y: placementRect.y + placementRect.h / 2,
-    });
+    if (!isFiniteRect(placementRect)) return;
+    const nextPlacementPoint = centerPointOfRect(placementRect);
+    setAvatarPlacementPoint((prev) =>
+      samePoint(prev, nextPlacementPoint) ? prev : nextPlacementPoint,
+    );
   }, [actionBarAnchor, spriteScreen]);
 
   useEffect(() => {
@@ -345,7 +433,7 @@ export function PetApp() {
           displayProfile={displayProfile}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
-          setSpriteScreen={setSpriteScreen}
+          setSpriteScreen={setSpriteScreenIfChanged}
           setIsDragging={setIsDragging}
           onRuntimeChange={setRuntime}
         />
@@ -355,15 +443,18 @@ export function PetApp() {
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
           displayProfile={displayProfile}
-          setSpriteScreen={setSpriteScreen}
-          setActionBarAnchor={setActionBarAnchor}
+          setSpriteScreen={setSpriteScreenIfChanged}
+          setActionBarAnchor={setActionBarAnchorIfChanged}
           setIsDragging={setIsDragging}
           onRuntimeChange={setRuntime}
         />
       ) : null}
-      {spriteScreen && (
+      {spriteScreen &&
+        isFiniteRect(actionBarAnchor ?? spriteScreen) &&
+        isFiniteViewport(interactionViewport) && (
         <ActionBar
           actionBarAnchor={actionBarAnchor ?? spriteScreen}
+          viewport={interactionViewport}
           visible={stickyVisible}
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}

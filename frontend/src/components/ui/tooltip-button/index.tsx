@@ -40,6 +40,8 @@ export interface TooltipButtonProps extends Omit<ButtonProps, "children"> {
   tooltipSide?: "top" | "right" | "bottom" | "left";
   /** tooltip 触发延迟（ms），不传则沿 TooltipProvider 全局值 */
   tooltipDelayMs?: number;
+  /** 透传到 TooltipContent，供调用方声明 tooltip 内容自身的 hover / hit-test 语义 */
+  tooltipContentProps?: Omit<React.ComponentProps<typeof TooltipContent>, "children" | "side">;
 }
 
 export function TooltipButton({
@@ -47,6 +49,7 @@ export function TooltipButton({
   tooltip,
   tooltipSide = "top",
   tooltipDelayMs,
+  tooltipContentProps,
   size = "icon-sm",
   variant = "ghost",
   ...buttonProps
@@ -58,7 +61,9 @@ export function TooltipButton({
           {icon}
         </Button>
       </TooltipTrigger>
-      <TooltipContent side={tooltipSide}>{tooltip}</TooltipContent>
+      <TooltipContent {...tooltipContentProps} side={tooltipSide}>
+        {tooltip}
+      </TooltipContent>
     </Tooltip>
   );
 }

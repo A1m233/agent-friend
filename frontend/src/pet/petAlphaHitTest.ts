@@ -18,6 +18,8 @@ import type * as PIXI from "pixi.js";
 import {
   alphaHitTestFromApp,
   findVisibleBoundsFromApp,
+  findVisibleRegionFromApp,
+  type VisibleRegionSample,
 } from "./avatarRuntime/framebuffer";
 
 /** alpha > 此阈值（0–255）才视为命中。30 (~12%) 经验值，过滤抗锯齿边缘的极淡像素。 */
@@ -36,6 +38,8 @@ export interface PixelRegion {
   w: number;
   h: number;
 }
+
+export type { VisibleRegionSample };
 
 /**
  * 取 PIXI canvas 上 cursor 位置的 alpha 值，判断是否命中不透明像素。
@@ -66,4 +70,11 @@ export function findVisibleBounds(
   region: PixelRegion,
 ): PixelRegion | null {
   return findVisibleBoundsFromApp(app, region, ALPHA_THRESHOLD);
+}
+
+export function findVisibleRegion(
+  app: PIXI.Application | null,
+  region: PixelRegion,
+): VisibleRegionSample | null {
+  return findVisibleRegionFromApp(app, region, ALPHA_THRESHOLD);
 }

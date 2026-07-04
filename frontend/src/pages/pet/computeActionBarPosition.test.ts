@@ -41,4 +41,11 @@ describe("computeActionBarPosition · 17a 操作栏 sprite-relative 定位（des
     expect(left).toBe(-2400 + 80 - 80); // -2400
     expect(top).toBe(460 - 60 - 8);
   });
+
+  it("uses the selected monitor top edge when the monitor has a vertical offset", () => {
+    const sprite = { x: 2200, y: 330, w: 160, h: 160 };
+    const { top } = computeActionBarPosition(sprite, BAR, 8, { y: 320 });
+
+    expect(top).toBe(330 + 160 + 8);
+  });
 });

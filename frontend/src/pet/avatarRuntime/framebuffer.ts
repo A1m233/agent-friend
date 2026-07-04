@@ -1,5 +1,10 @@
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
 
+export interface VisibleRegionSample {
+  bounds: PixelRegion;
+  centroid: { x: number; y: number };
+}
+
 interface CanvasCarrier {
   canvas?: unknown;
   view?: unknown;
@@ -56,6 +61,14 @@ export function findVisibleBoundsFromApp(
   region: PixelRegion,
   threshold = 30,
 ): PixelRegion | null {
+  return findVisibleRegionFromApp(app, region, threshold)?.bounds ?? null;
+}
+
+export function findVisibleRegionFromApp(
+  app: unknown,
+  region: PixelRegion,
+  threshold = 30,
+): VisibleRegionSample | null {
   const canvas = getPixiCanvas(app);
   if (!canvas) return null;
 
@@ -82,6 +95,9 @@ export function findVisibleBoundsFromApp(
   let minY = h;
   let maxX = -1;
   let maxY = -1;
+  let weightedX = 0;
+  let weightedY = 0;
+  let totalWeight = 0;
   for (let row = 0; row < h; row++) {
     const canvasRow = h - 1 - row;
     const rowOffset = row * w * 4;
@@ -92,15 +108,24 @@ export function findVisibleBoundsFromApp(
         if (canvasRow < minY) minY = canvasRow;
         if (col > maxX) maxX = col;
         if (canvasRow > maxY) maxY = canvasRow;
+        weightedX += (px0 + col + 0.5) * alpha;
+        weightedY += (py0 + canvasRow + 0.5) * alpha;
+        totalWeight += alpha;
       }
     }
   }
   if (maxX < 0) return null;
 
   return {
-    x: (px0 + minX) / dpr,
-    y: (py0 + minY) / dpr,
-    w: (maxX - minX + 1) / dpr,
-    h: (maxY - minY + 1) / dpr,
+    bounds: {
+      x: (px0 + minX) / dpr,
+      y: (py0 + minY) / dpr,
+      w: (maxX - minX + 1) / dpr,
+      h: (maxY - minY + 1) / dpr,
+    },
+    centroid: {
+      x: weightedX / totalWeight / dpr,
+      y: weightedY / totalWeight / dpr,
+    },
   };
 }

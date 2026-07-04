@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { computeActionBarLayout } from "./actionBarLayout";
 
 describe("actionBarLayout · orientation is driven by anchor position", () => {
-  const viewport = { w: 1000, h: 800 };
+  const viewport = { x: 0, y: 0, w: 1000, h: 800 };
   const sizes = {
     horizontal: { w: 260, h: 44 },
     vertical: { w: 44, h: 224 },
@@ -80,5 +80,29 @@ describe("actionBarLayout · orientation is driven by anchor position", () => {
 
     expect(layout.orientation).toBe("vertical");
     expect(layout.top).toBe(568);
+  });
+
+  it("treats the selected monitor viewport as the edge inside a multi-monitor overlay", () => {
+    const leftMonitor = { x: 0, y: 0, w: 1920, h: 1080 };
+    const layout = computeActionBarLayout(
+      { x: 1860, y: 420, w: 80, h: 100 },
+      sizes,
+      leftMonitor,
+    );
+
+    expect(layout.orientation).toBe("vertical");
+    expect(layout.left).toBe(1808);
+  });
+
+  it("uses viewport origin when placing bars on an offset monitor", () => {
+    const lowerMonitor = { x: 1920, y: 320, w: 1920, h: 1080 };
+    const layout = computeActionBarLayout(
+      { x: 2600, y: 330, w: 120, h: 120 },
+      sizes,
+      lowerMonitor,
+    );
+
+    expect(layout.orientation).toBe("horizontal");
+    expect(layout.top).toBe(458);
   });
 });

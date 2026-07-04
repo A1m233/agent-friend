@@ -1,4 +1,5 @@
 import type { PetAvatarSize } from "@/lib/settings";
+import { isFiniteRect, isFiniteViewport } from "./petGeometry";
 
 export type { PetAvatarSize };
 
@@ -128,11 +129,18 @@ export function resolvePetDisplayProfile(
   },
 ): PetDisplayProfile {
   const { avatarSize, rect, viewport, previousAvatarSize } = input;
+  const safeRect = isFiniteRect(rect) ? rect : null;
+  const safeViewport = isFiniteViewport(viewport) ? viewport : null;
   const scale = avatarSize === "mini" ? PET_MINI_SCALE : PET_NORMAL_SCALE;
   const placementKey = `${previousAvatarSize ?? "init"}->${avatarSize}`;
 
-  if (avatarSize === "mini" && previousAvatarSize === "normal" && rect) {
-    const { point, edge } = computeEdgeDockPlacement(rect, viewport, {
+  if (
+    avatarSize === "mini" &&
+    previousAvatarSize === "normal" &&
+    safeRect &&
+    safeViewport
+  ) {
+    const { point, edge } = computeEdgeDockPlacement(safeRect, safeViewport, {
       scale,
     });
     return {
@@ -143,16 +151,25 @@ export function resolvePetDisplayProfile(
       edge,
     };
   }
-  if (avatarSize === "normal" && previousAvatarSize === "mini" && rect) {
+  if (
+    avatarSize === "normal" &&
+    previousAvatarSize === "mini" &&
+    safeRect &&
+    safeViewport
+  ) {
     const center = {
-      x: rect.x + rect.w / 2,
-      y: rect.y + rect.h / 2,
+      x: safeRect.x + safeRect.w / 2,
+      y: safeRect.y + safeRect.h / 2,
     };
     return {
       avatarSize,
       placementKey,
       scale,
-      placementPoint: clampAvatarCenter(center, { w: rect.w, h: rect.h }, viewport),
+      placementPoint: clampAvatarCenter(
+        center,
+        { w: safeRect.w, h: safeRect.h },
+        safeViewport,
+      ),
       edge: null,
     };
   }

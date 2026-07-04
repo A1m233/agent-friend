@@ -13,7 +13,7 @@ import {
 } from "@/pet/avatarRuntime/actionMapping";
 import {
   alphaHitTestFromApp,
-  findVisibleBoundsFromApp,
+  findVisibleRegionFromApp,
 } from "@/pet/avatarRuntime/framebuffer";
 import type {
   AvatarActionResult,
@@ -23,6 +23,7 @@ import type { PixelRegion } from "@/pet/petAlphaHitTest";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import { isTauri } from "@/utils/tauri";
 import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
+import { isFiniteRect } from "@/pages/pet/petGeometry";
 import {
   boundsToRegion,
   fitSpine38ToStage,
@@ -30,6 +31,18 @@ import {
 } from "./spine38Fit";
 import { sampleSpine38CanonicalLayoutBounds } from "./spine38LayoutBounds";
 import { loadSpine38Model } from "./spine38Loader";
+import {
+  applyRegionOffset,
+  computeCenteringDelta,
+  computePointDelta,
+  offsetRegionFromBase,
+  offsetPointFromBase,
+  resolvePlacementAnchorPoint,
+  resolvePlacementAnchorRegion,
+  sameRegion,
+  translateRegion,
+  type PixelPoint,
+} from "./spine38Placement";
 
 interface Props {
   entry: SpineAvatarModelEntry;
@@ -62,66 +75,14 @@ function setSlotHitArea(slot: PIXI7.Container, region: PixelRegion): void {
   slot.hitArea = new PIXI7.Rectangle(region.x, region.y, region.w, region.h);
 }
 
-function sameRegion(a: PixelRegion | null, b: PixelRegion): boolean {
-  return (
-    a !== null &&
-    Math.abs(a.x - b.x) < 0.5 &&
-    Math.abs(a.y - b.y) < 0.5 &&
-    Math.abs(a.w - b.w) < 0.5 &&
-    Math.abs(a.h - b.h) < 0.5
-  );
-}
-
-function offsetRegionFromBase(
-  region: PixelRegion,
-  base: PixelRegion,
-  scale: { x: number; y: number },
-): PixelRegion {
-  return {
-    x: (region.x - base.x) / scale.x,
-    y: (region.y - base.y) / scale.y,
-    w: region.w / scale.x,
-    h: region.h / scale.y,
-  };
-}
-
-function applyRegionOffset(
-  base: PixelRegion,
-  offset: PixelRegion,
-  scale: { x: number; y: number },
-): PixelRegion {
-  return {
-    x: base.x + offset.x * scale.x,
-    y: base.y + offset.y * scale.y,
-    w: offset.w * scale.x,
-    h: offset.h * scale.y,
-  };
-}
-
-function translateRegion(region: PixelRegion, dx: number, dy: number): PixelRegion {
-  return {
-    x: region.x + dx,
-    y: region.y + dy,
-    w: region.w,
-    h: region.h,
-  };
-}
-
 function centerRegionOnPoint(
   slot: PIXI7.Container,
   region: PixelRegion,
   point: { x: number; y: number } | null,
 ): PixelRegion {
-  if (!point) return region;
-  const dx = point.x - (region.x + region.w / 2);
-  const dy = point.y - (region.y + region.h / 2);
-  if (
-    !Number.isFinite(dx) ||
-    !Number.isFinite(dy) ||
-    (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5)
-  ) {
-    return region;
-  }
+  const delta = computeCenteringDelta(region, point);
+  if (!delta) return region;
+  const { dx, dy } = delta;
   slot.x += dx;
   slot.y += dy;
   return translateRegion(region, dx, dy);
@@ -203,7 +164,9 @@ export function Spine38AvatarSurface({
   const currentPhaseRef = useRef<AvatarRuntimePhase>("idle");
   const layoutBoundsRef = useRef<PixelRegion | null>(null);
   const lastSpriteScreenRef = useRef<PixelRegion | null>(null);
+  const lastActionBarAnchorRef = useRef<PixelRegion | null>(null);
   const actionBarAnchorOffsetRef = useRef<PixelRegion | null>(null);
+  const visualAnchorOffsetRef = useRef<PixelPoint | null>(null);
   const initialAnchorPointRef = useRef(initialAnchorPoint);
   const displayProfileRef = useRef(displayProfile);
   const baseScaleRef = useRef({ x: 1, y: 1 });
@@ -213,6 +176,22 @@ export function Spine38AvatarSurface({
   const alphaScanReadyRef = useRef(false);
   const alphaScanGivenUpRef = useRef(false);
   const [ready, setReady] = useState(false);
+
+  const setActionBarAnchorIfChanged = useCallback(
+    (next: PixelRegion | null) => {
+      if (next && !isFiniteRect(next)) return;
+      if (next === null) {
+        if (lastActionBarAnchorRef.current === null) return;
+        lastActionBarAnchorRef.current = null;
+        setActionBarAnchor(null);
+        return;
+      }
+      if (sameRegion(lastActionBarAnchorRef.current, next)) return;
+      lastActionBarAnchorRef.current = next;
+      setActionBarAnchor(next);
+    },
+    [setActionBarAnchor],
+  );
 
   const playMappedAction = useCallback(
     (action: AvatarModelAction): AvatarActionResult => {
@@ -310,7 +289,43 @@ export function Spine38AvatarSurface({
         lastAppliedPlacementKeyRef.current !== profile.placementKey &&
         profile.placementPoint
       ) {
-        currentBounds = centerRegionOnPoint(slot, currentBounds, profile.placementPoint);
+        if (
+          profile.edge &&
+          !visualAnchorOffsetRef.current &&
+          !alphaScanGivenUpRef.current
+        ) {
+          return currentBounds;
+        }
+        const scale = { x: slot.scale.x || 1, y: slot.scale.y || 1 };
+        const anchorBounds = resolvePlacementAnchorRegion(
+          currentBounds,
+          actionBarAnchorOffsetRef.current,
+          scale,
+        );
+        const anchorPoint = profile.edge
+          ? resolvePlacementAnchorPoint(
+              currentBounds,
+              visualAnchorOffsetRef.current,
+              scale,
+            )
+          : null;
+        const delta = anchorPoint
+          ? computePointDelta(anchorPoint, profile.placementPoint)
+          : computeCenteringDelta(anchorBounds, profile.placementPoint);
+        publishAnchorDiagnostics({
+          placement: {
+            layoutBounds: currentBounds,
+            placementAnchor: anchorBounds,
+            placementAnchorPoint: anchorPoint,
+            placementPoint: profile.placementPoint,
+            delta,
+          },
+        });
+        if (delta) {
+          slot.x += delta.dx;
+          slot.y += delta.dy;
+          currentBounds = translateRegion(currentBounds, delta.dx, delta.dy);
+        }
       }
       lastAppliedPlacementKeyRef.current = profile.placementKey;
       return currentBounds;
@@ -337,6 +352,7 @@ export function Spine38AvatarSurface({
       );
     }
     nextBounds = applyDisplayProfile(nextBounds);
+    if (!isFiniteRect(nextBounds)) return;
     setSlotHitArea(
       slot,
       layoutBounds
@@ -360,7 +376,7 @@ export function Spine38AvatarSurface({
         })
       : null;
     if (actionBarAnchor) {
-      setActionBarAnchor(actionBarAnchor);
+      setActionBarAnchorIfChanged(actionBarAnchor);
     }
     publishAnchorDiagnostics({
       modelId: entry.id,
@@ -370,7 +386,13 @@ export function Spine38AvatarSurface({
       actionBarAnchor: actionBarAnchor ?? nextBounds,
     });
     reportSpritePosition(nextBounds);
-  }, [applyDisplayProfile, entry.backend, entry.id, setActionBarAnchor, setSpriteScreen]);
+  }, [
+    applyDisplayProfile,
+    entry.backend,
+    entry.id,
+    setActionBarAnchorIfChanged,
+    setSpriteScreen,
+  ]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -384,10 +406,12 @@ export function Spine38AvatarSurface({
     const setup = async () => {
       setReady(false);
       setSpriteScreen(null);
-      setActionBarAnchor(null);
+      setActionBarAnchorIfChanged(null);
       layoutBoundsRef.current = null;
       lastSpriteScreenRef.current = null;
+      lastActionBarAnchorRef.current = null;
       actionBarAnchorOffsetRef.current = null;
+      visualAnchorOffsetRef.current = null;
       initialLayoutAnchorAlignedRef.current = false;
       initialVisibleAnchorAlignedRef.current = false;
       alphaScanReadyRef.current = false;
@@ -509,9 +533,11 @@ export function Spine38AvatarSurface({
           let screenBounds = layoutBounds
             ? toScreenRegion(slot, spine, layoutBounds)
             : boundsToRegion(slot.getBounds());
-          let scanned = screenBounds
-            ? findVisibleBoundsFromApp(app, screenBounds)
+          const visibleRegion = screenBounds
+            ? findVisibleRegionFromApp(app, screenBounds)
             : null;
+          let scanned = visibleRegion?.bounds ?? null;
+          let visibleCentroid = visibleRegion?.centroid ?? null;
           if (scanned) {
             alphaScanReadyRef.current = true;
             nullScanCount = 0;
@@ -529,6 +555,9 @@ export function Spine38AvatarSurface({
                 screenBounds = screenBounds
                   ? translateRegion(screenBounds, dx, dy)
                   : screenBounds;
+                visibleCentroid = visibleCentroid
+                  ? { x: visibleCentroid.x + dx, y: visibleCentroid.y + dy }
+                  : visibleCentroid;
                 lastSpriteScreenRef.current = null;
               }
             }
@@ -538,7 +567,14 @@ export function Spine38AvatarSurface({
                   y: slot.scale.y || 1,
                 })
               : null;
-            setActionBarAnchor(scanned);
+            visualAnchorOffsetRef.current =
+              screenBounds && visibleCentroid
+                ? offsetPointFromBase(visibleCentroid, screenBounds, {
+                    x: slot.scale.x || 1,
+                    y: slot.scale.y || 1,
+                  })
+                : null;
+            setActionBarAnchorIfChanged(scanned);
             publishAnchorDiagnostics({
               visibleBounds: scanned,
               actionBarAnchor: scanned,
@@ -564,11 +600,13 @@ export function Spine38AvatarSurface({
       setReady(false);
       setIsDragging(false);
       setSpriteScreen(null);
-      setActionBarAnchor(null);
+      setActionBarAnchorIfChanged(null);
       onRuntimeChange(null);
       layoutBoundsRef.current = null;
       lastSpriteScreenRef.current = null;
+      lastActionBarAnchorRef.current = null;
       actionBarAnchorOffsetRef.current = null;
+      visualAnchorOffsetRef.current = null;
       baseScaleRef.current = { x: 1, y: 1 };
       lastAppliedPlacementKeyRef.current = null;
       initialLayoutAnchorAlignedRef.current = false;
@@ -594,7 +632,7 @@ export function Spine38AvatarSurface({
     onRuntimeChange,
     playMappedAction,
     setIsDragging,
-    setActionBarAnchor,
+    setActionBarAnchorIfChanged,
     setSpriteScreen,
     syncBounds,
   ]);

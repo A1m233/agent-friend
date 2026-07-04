@@ -36,8 +36,10 @@ import {
 
 import { computeActionBarLayout } from "./actionBarLayout";
 import { derivePageState } from "./actionBarPaging";
+import { isFiniteRect, isFiniteViewport } from "./petGeometry";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import type { PetAvatarSize } from "@/lib/settings";
+import type { PetViewport } from "./petDisplayProfile";
 
 /**
  * 019 · 桌宠操作栏 sprite-relative DOM 浮动（design §2.4 / R-4.x）。
@@ -59,6 +61,7 @@ import type { PetAvatarSize } from "@/lib/settings";
 
 interface Props {
   actionBarAnchor: { x: number; y: number; w: number; h: number };
+  viewport: PetViewport;
   visible: boolean;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
@@ -99,6 +102,7 @@ type TooltipSide = "top" | "right" | "bottom" | "left";
 
 export function ActionBar({
   actionBarAnchor,
+  viewport,
   visible,
   onMouseEnter,
   onMouseLeave,
@@ -150,20 +154,6 @@ export function ActionBar({
   const [currentPage, setCurrentPage] = useState(0);
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
-  const [viewport, setViewport] = useState(() => ({
-    w: typeof window === "undefined" ? 0 : window.innerWidth,
-    h: typeof window === "undefined" ? 0 : window.innerHeight,
-  }));
-
-  useEffect(() => {
-    const updateViewport = () => {
-      setViewport({ w: window.innerWidth, h: window.innerHeight });
-    };
-    updateViewport();
-    window.addEventListener("resize", updateViewport);
-    return () => window.removeEventListener("resize", updateViewport);
-  }, []);
-
   useEffect(() => {
     if (!api) return;
     const update = () => {
@@ -213,42 +203,60 @@ export function ActionBar({
       verticalButtonSlots * ICON_BTN +
       Math.max(0, verticalButtonSlots - 1) * GAP;
 
-  const layout = computeActionBarLayout(
-    actionBarAnchor,
-    {
-      horizontal: { w: chipW, h: chipH },
-      vertical: { w: verticalW, h: verticalH },
-    },
-    viewport,
-    8,
-  );
-  const { left, top } = layout;
-  const isVertical = layout.orientation === "vertical";
-  const actionBarCenterX = left + layout.width / 2;
-  const anchorCenterX = actionBarAnchor.x + actionBarAnchor.w / 2;
-  const tooltipSide: TooltipSide = isVertical
-    ? actionBarCenterX <= anchorCenterX
-      ? "left"
-      : "right"
-    : top + layout.height / 2 <= actionBarAnchor.y + actionBarAnchor.h / 2
-      ? "top"
-      : "bottom";
+  const hasValidGeometry =
+    isFiniteRect(actionBarAnchor) && isFiniteViewport(viewport);
+  const layout = hasValidGeometry
+    ? computeActionBarLayout(
+        actionBarAnchor,
+        {
+          horizontal: { w: chipW, h: chipH },
+          vertical: { w: verticalW, h: verticalH },
+        },
+        viewport,
+        8,
+      )
+    : null;
+  const left = layout?.left ?? 0;
+  const top = layout?.top ?? 0;
+  const layoutWidth = layout?.width ?? 0;
+  const layoutHeight = layout?.height ?? 0;
+  const isVertical = layout?.orientation === "vertical";
+  const actionBarCenterX = left + layoutWidth / 2;
+  const anchorCenterX = hasValidGeometry
+    ? actionBarAnchor.x + actionBarAnchor.w / 2
+    : 0;
+  const tooltipSide: TooltipSide =
+    hasValidGeometry && layout
+      ? isVertical
+        ? actionBarCenterX <= anchorCenterX
+          ? "left"
+          : "right"
+        : top + layoutHeight / 2 <= actionBarAnchor.y + actionBarAnchor.h / 2
+          ? "top"
+          : "bottom"
+      : "top";
   const showPrev = needsCarousel && canScrollPrev;
   const showNext = needsCarousel && canScrollNext;
   const style: CSSProperties = {
     position: "fixed",
     left,
     top,
-    width: layout.width,
-    height: layout.height,
+    width: layoutWidth,
+    height: layoutHeight,
   };
   const visibleCls = visible
     ? "opacity-100 pointer-events-auto"
     : "opacity-0 pointer-events-none";
   const computedCenterX = actionBarCenterX;
+  const tooltipContentProps = {
+    "data-hit": "actionbar-tooltip",
+    onMouseEnter,
+    onMouseLeave,
+  };
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
+    if (!hasValidGeometry || !layout) return;
     const rect = rootRef.current?.getBoundingClientRect();
     publishAnchorDiagnostics({
       actionBarAnchor,
@@ -257,7 +265,14 @@ export function ActionBar({
         ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
         : null,
     });
-  }, [actionBarAnchor, layout.height, layout.width, left, top, visible]);
+  }, [
+    actionBarAnchor,
+    hasValidGeometry,
+    layout,
+    left,
+    top,
+    visible,
+  ]);
 
   const renderActionButton = (button: BtnDef, key: string | number) => (
     <TooltipButton
@@ -265,6 +280,7 @@ export function ActionBar({
       icon={button.icon}
       tooltip={button.tooltip}
       tooltipSide={tooltipSide}
+      tooltipContentProps={tooltipContentProps}
       onClick={button.onClick}
       data-hit
     />
@@ -295,6 +311,7 @@ export function ActionBar({
           tooltip={isPrev ? "上一页" : "下一页"}
           tooltipSide={tooltipSide}
           tooltipDelayMs={500}
+          tooltipContentProps={tooltipContentProps}
           className="rounded-full"
           disabled={disabled}
           onClick={onClick}
@@ -364,6 +381,8 @@ export function ActionBar({
   const renderActionBarContent = () =>
     isVertical ? renderVerticalButtons() : renderHorizontalButtons();
 
+  if (!hasValidGeometry || !layout) return null;
+
   return (
     <TooltipProvider delayDuration={0}>
       <div
@@ -371,11 +390,15 @@ export function ActionBar({
         data-hit
         data-anchor-diagnostics={import.meta.env.DEV ? "actionbar" : undefined}
         data-anchor-actionbar-anchor-center-x={
-          import.meta.env.DEV ? anchorCenterX : undefined
+          import.meta.env.DEV && hasValidGeometry ? anchorCenterX : undefined
         }
-        data-anchor-actionbar-center-x={import.meta.env.DEV ? computedCenterX : undefined}
+        data-anchor-actionbar-center-x={
+          import.meta.env.DEV && hasValidGeometry ? computedCenterX : undefined
+        }
         data-anchor-delta-anchor-x={
-          import.meta.env.DEV ? computedCenterX - anchorCenterX : undefined
+          import.meta.env.DEV && hasValidGeometry
+            ? computedCenterX - anchorCenterX
+            : undefined
         }
         style={style}
         className={`flex ${
