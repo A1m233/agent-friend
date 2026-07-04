@@ -1,13 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
-import { DevPassthroughToggle } from "./DevPassthroughToggle";
-import { IMConnectDialog } from "@/components/im/IMConnectDialog";
 import { usePetPassthrough } from "./usePetPassthrough";
+import {
+  getPetViewport,
+  resolvePetDisplayProfile,
+  type PetViewport,
+} from "./petDisplayProfile";
+import type { PetAvatarSize } from "@/lib/settings";
 import {
   resolveInstalledAvatarModelSelection,
   useInstalledAvatarModelCatalog,
@@ -79,12 +83,13 @@ export function PetApp() {
   const [isDragging, setIsDragging] = useState(false);
   // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
-  // 022 · IM 接入面板 dialog 开关(同窗 dialog,不另开 webview)
-  const [imDialogOpen, setImDialogOpen] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
   const [avatarModelId] = useSetting("avatarModelId");
+  const [petAvatarSize, setPetAvatarSize] = useSetting("petAvatarSize");
+  const previousPetAvatarSizeRef = useRef<PetAvatarSize | null>(null);
+  const [viewport, setViewport] = useState<PetViewport>(() => getPetViewport());
   const {
     entries: installedAvatarModels,
     error: installedAvatarModelError,
@@ -93,6 +98,30 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    const updateViewport = () => setViewport(getPetViewport());
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
+
+  const displayProfile = useMemo(
+    () => {
+      const anchor = actionBarAnchor ?? spriteScreen;
+      return resolvePetDisplayProfile({
+        avatarSize: petAvatarSize,
+        rect: anchor,
+        viewport,
+        previousAvatarSize: previousPetAvatarSizeRef.current,
+      });
+    },
+    [actionBarAnchor, petAvatarSize, spriteScreen, viewport],
+  );
+
+  useEffect(() => {
+    previousPetAvatarSizeRef.current = petAvatarSize;
+  }, [petAvatarSize]);
 
   useEffect(() => {
     setRuntime(null);
@@ -249,18 +278,23 @@ export function PetApp() {
     void invoke("open_chat");
   };
 
-  // 019 · ActionBar 隐藏桌宠按钮 → 调 hide_pet invoke（pet 窗整体 hide）。
-  // 唤回路径：仅系统托盘菜单 "显示/隐藏桌宠"（toggle_pet）；从桌面直接唤回是
-  // [issue 013](../../../../docs/issues/013-pet-recall-from-desktop/) 跟踪的独立缺口。
-  const hidePet = () => {
-    if (!isTauri()) return;
-    void invoke("hide_pet");
+  const collapseToEdge = () => {
+    void setPetAvatarSize("mini");
+  };
+
+  const restoreNormal = () => {
+    void setPetAvatarSize("normal");
   };
 
   // 019 · ActionBar 打开设置按钮 → 调 open_settings invoke（参 open_chat 同款 show + focus 逻辑）
   const openSettings = () => {
     if (!isTauri()) return;
     void invoke("open_settings");
+  };
+
+  const openIMConnect = () => {
+    if (!isTauri()) return;
+    void invoke("open_im_connect");
   };
 
   const openMemoryInspector = () => {
@@ -308,6 +342,7 @@ export function PetApp() {
           key={selectedEntry.id}
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
+          displayProfile={displayProfile}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreen}
@@ -319,16 +354,13 @@ export function PetApp() {
           key={selectedEntry.id}
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
+          displayProfile={displayProfile}
           setSpriteScreen={setSpriteScreen}
           setActionBarAnchor={setActionBarAnchor}
           setIsDragging={setIsDragging}
           onRuntimeChange={setRuntime}
         />
       ) : null}
-      <DevPassthroughToggle
-        disabled={passthroughDisabled}
-        onToggle={() => setPassthroughDisabled((v) => !v)}
-      />
       {spriteScreen && (
         <ActionBar
           actionBarAnchor={actionBarAnchor ?? spriteScreen}
@@ -336,18 +368,21 @@ export function PetApp() {
           onMouseEnter={() => setHoverActionBarDom(true)}
           onMouseLeave={() => setHoverActionBarDom(false)}
           onOpenChat={openChat}
-          onHidePet={hidePet}
+          petAvatarSize={petAvatarSize}
+          onCollapseToEdge={collapseToEdge}
+          onRestoreNormal={restoreNormal}
           onOpenSettings={openSettings}
-          onOpenIMConnect={() => setImDialogOpen(true)}
+          onOpenIMConnect={openIMConnect}
           onStartVoiceCall={startVoiceCall}
           voiceCallActive={isVoiceCallLive(voicePhase)}
+          passthroughDisabled={passthroughDisabled}
+          onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
           onOpenMemoryInspector={openMemoryInspector}
           onOpenLive2DDebugger={openLive2DDebugger}
           onInjectShort={injectShort}
           onInjectLong={injectLong}
         />
       )}
-      <IMConnectDialog open={imDialogOpen} onOpenChange={setImDialogOpen} />
     </>
   );
 }

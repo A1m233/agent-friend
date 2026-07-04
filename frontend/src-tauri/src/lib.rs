@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -15,6 +15,41 @@ mod settings;
 mod ui_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
+const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
+
+#[derive(Default)]
+struct VoiceLaunchState {
+    pending_start: Mutex<Option<VoiceStartRequest>>,
+}
+
+impl VoiceLaunchState {
+    fn set_pending_start(&self, req: VoiceStartRequest) -> Result<(), String> {
+        let mut pending = self
+            .pending_start
+            .lock()
+            .map_err(|e| format!("voice launch state poisoned: {e}"))?;
+        *pending = Some(req);
+        Ok(())
+    }
+
+    fn take_pending_start(&self) -> Result<Option<VoiceStartRequest>, String> {
+        let mut pending = self
+            .pending_start
+            .lock()
+            .map_err(|e| format!("voice launch state poisoned: {e}"))?;
+        Ok(pending.take())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VoiceStartRequest {
+    session_id: Option<String>,
+    persona: Option<String>,
+    model: Option<String>,
+    defer_start: Option<bool>,
+    trace_id: Option<String>,
+}
 
 // 0004 / 017 · pet 窗 NSPanel 类型声明（macOS only）。
 //
@@ -285,10 +320,35 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "settings")
 }
 
+/// 022 · 桌宠 ActionBar "接入 IM" 按钮调用。
+#[tauri::command]
+fn open_im_connect(app: tauri::AppHandle) -> Result<(), String> {
+    show_and_focus(&app, "im-connect")
+}
+
 /// 029 · 打开独立语音通话小窗。
 #[tauri::command]
 fn open_voice_call(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "voice-call")
+}
+
+#[tauri::command]
+fn open_voice_call_with_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, VoiceLaunchState>,
+    req: Option<VoiceStartRequest>,
+) -> Result<(), String> {
+    if let Some(req) = req {
+        state.set_pending_start(req)?;
+    }
+    show_and_focus(&app, "voice-call")
+}
+
+#[tauri::command]
+fn consume_pending_voice_start(
+    state: tauri::State<'_, VoiceLaunchState>,
+) -> Result<Option<VoiceStartRequest>, String> {
+    state.take_pending_start()
 }
 
 /// 026 · dev 模式入口：打开记忆面板窗口。
@@ -329,11 +389,11 @@ fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 019 · 桌宠 ActionBar "隐藏桌宠" 按钮调用。语义：单向隐藏（不切换）。
+/// 完全隐藏桌宠窗口的兜底 command。041 之后 ActionBar 主交互改为前端
+/// 前端 dock state，贴边召回不再调用此命令。
 ///
-/// **唤回路径**：本期唯一 = 系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
-/// menu event handler）。从桌面直接唤回是 `docs/issues/013-pet-recall-from-desktop/`
-/// 跟踪的独立缺口，独立立项。
+/// **唤回路径**：系统托盘菜单 "显示/隐藏桌宠"（`setup_tray` 内 `toggle_pet`
+/// menu event handler）。tray toggle 只控制窗口 show/hide，不改桌宠尺寸偏好。
 #[tauri::command]
 fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("pet") {
@@ -458,6 +518,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default())
         .manage(PetWebviewState::default())
+        .manage(VoiceLaunchState::default())
         .manage(settings_state.clone())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(settings::init::<tauri::Wry>(init_script));
@@ -474,7 +535,10 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_im_connect,
         open_voice_call,
+        open_voice_call_with_start,
+        consume_pending_voice_start,
         open_memory_inspector,
         open_live2d_debugger,
         hide_pet,
@@ -497,7 +561,10 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        open_im_connect,
         open_voice_call,
+        open_voice_call_with_start,
+        consume_pending_voice_start,
         hide_pet,
         set_pet_webview_dpr,
         settings::get_setting,
@@ -516,15 +583,25 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            // 对话窗 / 设置窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
+            // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
             if matches!(
                 window.label(),
-                "chat" | "settings" | "voice-call" | "memory-inspector" | "live2d-debugger"
+                "chat"
+                    | "settings"
+                    | "im-connect"
+                    | "voice-call"
+                    | "memory-inspector"
+                    | "live2d-debugger"
             ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    if window.label() == "im-connect" {
+                        if let Err(e) = window.emit(EVENT_WINDOW_HIDDEN, ()) {
+                            log::warn!("im-connect emit hidden failed: {e}");
+                        }
+                    }
                     let _ = window.hide();
                 }
             }
@@ -574,14 +651,18 @@ pub fn run() {
             )?;
 
             // 028 · logger attach 后再补一次 bootstrap 结果，方便 R3 路径/主题排查。
-            let bootstrap_theme = settings_state
+            let bootstrap_summary = settings_state
                 .lock()
-                .map(|s| s.theme_attr().to_string())
+                .map(|s| {
+                    format!(
+                        "theme={} avatarModelId={} petAvatarSize={}",
+                        s.theme_attr(),
+                        s.avatar_model_id,
+                        s.pet_avatar_size.attr()
+                    )
+                })
                 .unwrap_or_else(|_| "<poisoned>".to_string());
-            log::info!(
-                "settings: bootstrap state loaded; theme={}",
-                bootstrap_theme
-            );
+            log::info!("settings: bootstrap state loaded; {bootstrap_summary}");
             log::info!(
                 "avatar models: assets_dir={:?} catalog_path={:?}",
                 paths::avatar_model_assets_dir(),
@@ -619,4 +700,31 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn voice_launch_state_consumes_pending_start_once() {
+        let state = VoiceLaunchState::default();
+        let req = VoiceStartRequest {
+            session_id: Some("session-1".to_string()),
+            persona: None,
+            model: None,
+            defer_start: Some(true),
+            trace_id: Some("trace-1".to_string()),
+        };
+
+        state
+            .set_pending_start(req.clone())
+            .expect("set pending start");
+
+        assert_eq!(
+            state.take_pending_start().expect("take pending start"),
+            Some(req)
+        );
+        assert_eq!(state.take_pending_start().expect("take again"), None);
+    }
 }

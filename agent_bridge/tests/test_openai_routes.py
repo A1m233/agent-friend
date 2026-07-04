@@ -170,3 +170,10 @@ class TestSessionIdHeader:
         )
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "session_not_found"
+
+    def test_empty_user_content_returns_400(self, client: TestClient) -> None:
+        resp = client.post("/v1/chat/completions", json=_openai_payload("  "))
+
+        assert resp.status_code == 400
+        assert resp.json()["error"]["code"] == "bad_request"
+        assert "content 不能为空" in resp.json()["error"]["message"]

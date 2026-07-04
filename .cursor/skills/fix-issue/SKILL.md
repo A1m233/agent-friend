@@ -5,7 +5,7 @@ description: 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读
 
 # 修 issue（docs/issues/）
 
-承接 `docs/issues/<NNN>-<slug>/README.md` 已经写好的"现象 / 根因 / 修复方向"，把分析落成代码 + 闭环 issue 状态。**只处理已登记的 issue**——临场发现的小问题直接改、不走本 skill。
+承接 `docs/issues/<NNN>-<slug>/README.md` 已经写好的"现象 / 根因 / 修复方向"，把分析落成代码 + 闭环 issue 状态。**只处理已登记的 issue**——临场发现的小问题不走本 skill，但仍按 `dev-workflow.mdc` 的临场修复分支策略判断是否需要 fix 分支。
 
 ## 前置：先读管理规则
 

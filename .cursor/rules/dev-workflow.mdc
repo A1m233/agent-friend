@@ -1,16 +1,17 @@
 ---
-description: agent-friend 项目需求与 issue 交付流程：需求走 feature 分支，issue 修复按影响范围选择 main 或 fix 分支
+description: agent-friend 项目需求与修复交付流程：需求走 feature 分支，修复按影响范围选择 main 或 fix 分支
 alwaysApply: true
 ---
 
 # 需求与 Issue 交付流程
 
-本规则约束两类交付：
+本规则约束三类交付：
 
 - 需求（`docs/requirements/<NNN>-xxx`）：新增 / 改动产品能力的一次独立交付。
 - issue（`docs/issues/<NNN>-slug`）：已登记问题的调查、复现、回归测试或修复闭环。
+- 临场修复（未登记 issue）：用户直接提出、或开发中发现并决定当场修掉的 bug / 回归 / 体验瑕疵 / 测试缺口。
 
-> 详细需求交付流程见 `feature-delivery` skill；详细 issue 修复流程见 `fix-issue` skill。本 rule 只承载项目级**底线约束**、分支策略、关 issue 标准与例外。
+> 详细需求交付流程见 `feature-delivery` skill；已登记 issue 的闭环流程见 `fix-issue` skill。本 rule 只承载项目级**底线约束**、分支策略、关 issue 标准与例外。
 
 ## 需求开发流程
 
@@ -46,26 +47,30 @@ alwaysApply: true
 
 ### 视觉验收边界（需求）
 
-桌面端截图 / DOM 检查不是所有 frontend 改动的默认合入硬门槛。它只在以下情况升格为验收项：
+桌面端截图 / DOM 检查不是所有 frontend 改动的默认合入硬门槛。它只在以下情况升格为验收项，或需要先询问用户是否纳入验收：
 
-- 需求 AC、技术方案或用户明确要求截图、DOM 检查、真实桌面端视觉验收。
-- 本次改动目标本身以视觉、布局、窗口行为或交互体感为主。
-- 交付说明需要断言"桌面端视觉正确 / 布局已确认 / 真实 WebView 下无问题"。
+- 需求 AC、技术方案或用户明确要求截图、DOM 检查、真实桌面端视觉验收：直接作为验收项。
+- 本次改动目标本身以视觉、布局、窗口行为或交互体感为主：先按 `frontend-visual-verification` 询问用户是否执行真实桌面端验收。
+- 交付说明需要断言"桌面端视觉正确 / 布局已确认 / 真实 WebView 下无问题"：先确认用户需要 agent 代做验收；否则不要写这类断言。
 
 若本次只是能力接入、状态管理、组件边界、非最终视觉雏形，且自动化门禁已覆盖核心逻辑，可以不做正式截图验收；交付说明中写清楚未做视觉验收及原因即可。
 
-一旦需要对桌面视觉下结论，应按 `frontend-visual-verification` / `desktop-visual-inspection` 走真实桌面端观察，不得用 Vite web 预览冒充桌面端验收。
+一旦用户确认需要对桌面视觉下结论，应按 `frontend-visual-verification` / `desktop-visual-inspection` 走真实桌面端观察，不得用 Vite web 预览冒充桌面端验收。若用户选择自行验收，交付说明中标注未做视觉验收并列出建议检查点。
 
-## Issue 修复流程
+## 修复流程（issue 与临场修复）
 
 issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只说明"问题存在"；只有满足本节关闭标准，才能把状态改为 `resolved`。
 
-### 分支策略（issue）
+临场修复没有 issue README 入口，但只要本质是修复既有行为（而不是新增产品能力），仍按本节判断分支策略。不要因为没有 issue 编号就默认在 `main` 上改生产代码。
+
+### 分支策略（修复）
 
 - **只补充 issue 文档 / 附带复现资料**：可直接在 `main` 上提交。例如补 README、放 issue-local replay / smoke 脚本、记录调查结论。
-- **只新增小型回归测试、不改生产代码**：可作为 test/hotfix 直接在 `main` 上提交；若测试覆盖核心运行链路、改动范围较大、或会显著影响 CI，推荐开 `fix/<NNN>-<slug>` 分支。
-- **修复生产代码**：必须从最新 `main` 开 `fix/<NNN>-<slug>` 分支，编号与 `docs/issues/` 目录一致。
-- **同一分支只修一个 issue**：除非用户明确要求合并处理；调查时发现的新问题应登记新 issue，不顺手混修。
+- **只新增小型回归测试、不改生产代码**：可作为 test/hotfix 直接在 `main` 上提交；若测试覆盖核心运行链路、改动范围较大、或会显著影响 CI，推荐开 fix 分支。
+- **修复生产代码**：必须从最新 `main` 开 fix 分支。
+- **已登记 issue 的 fix 分支命名**：`fix/<NNN>-<slug>`，编号与 `docs/issues/` 目录一致。
+- **无 issue 编号的临场修复分支命名**：`fix/<kebab-case slug>`，slug 应描述被修复的问题，例如 `fix/memory-inconsistency-preflight`；如果修复过程中决定登记 issue，再按新 issue 编号重命名为 `fix/<NNN>-<slug>`。
+- **同一 fix 分支只修一个问题**：除非用户明确要求合并处理；调查时发现的新问题应登记新 issue 或另开 fix 分支，不顺手混修。
 
 ### 关闭标准（issue）
 

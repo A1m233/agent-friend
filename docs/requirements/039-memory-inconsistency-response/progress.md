@@ -37,6 +37,7 @@ COMPLETED
 - [x] T10. 跑 `./scripts/check/run.sh`
 - [x] T17. 跑新增工具契约后的非 LLM 单测与全量 check
 - [x] T11. 经用户授权后跑真实 LLM replay / C5 smoke
+- [x] T18. 扩充 C5 到 20 条并完成授权全量复测
 
 ## 实现日志
 
@@ -65,3 +66,6 @@ COMPLETED
 | 2026-06-30 | 完成工具契约重构后的非 LLM 验证 | targeted pytest 通过（50 passed）；`./scripts/test/run.sh agent agent_eval` 通过（290 passed）；`./scripts/check/run.sh` 通过（ruff + format + mypy 244 files + pytest 661 passed；frontend lint/test 因本地依赖未就绪由脚本跳过）；`git diff --check` 通过 |
 | 2026-06-30 | 授权跑工具契约重构后的真实 LLM 验证 | issue 018 replay 最终通过（无机制泄漏、无无证据 lookup claim、无矛盾圆故事）；C5 limit1 smoke 最终通过（1/1，报告 `agent_eval/reports/2026-06-30T09-41-40-88a5735-C5-limit1.json`）；过程中发现 replay guard 漏掉“看了下之前聊到的 / 没翻到”等否定式 lookup claim，已补 guard 与 prompt；另一次 C5 smoke 因 `没认出来` 过宽 guard 误杀，已收窄 |
 | 2026-06-30 | 完成授权验证后的非 LLM 门禁 | `./scripts/test/run.sh agent agent_eval` 通过（290 passed）；`./scripts/check/run.sh` 通过（ruff + format + mypy 244 files + pytest 661 passed；frontend lint/test 因本地依赖未就绪由脚本跳过） |
+| 2026-07-01 | 扩充 C5 并补记忆矛盾 preflight | C5 从 5 条扩到 20 条；补 `recall_past_chats` 多 term OR 查询；在用户质疑记忆前后矛盾、机制诱导、当前轮归因诱导或只问证据时，编排层先做一次窄口历史核对并把结果注入本轮上下文；补 judge / replay guard 与对应单测 |
+| 2026-07-01 | 授权跑扩充后 C5 全量复测并收敛实现 | C5 20 条真实 LLM 评测从 11/20 提升到 13/20；后续将 trigger 整理为语义分组、压缩 prompt 的 case-list 味道，最终复测保持 13/20（报告 `agent_eval/reports/2026-07-01T06-51-46-ca0e9cb-C5.json`）；剩余失败集中在生成阶段复述机制词或编归因故事，本轮不再继续堆 prompt/trigger，若后续处理应另立 evidence-bound response repair 方向 |
+| 2026-07-01 | 完成扩充与 preflight 后的非 LLM 门禁 | targeted pytest 通过（42 passed）；`./scripts/check/run.sh` 通过（ruff + format + mypy 244 files + pytest 664 passed；frontend lint/test 因本地工具链/依赖未就绪由脚本跳过） |

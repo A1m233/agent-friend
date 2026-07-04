@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
 
 import { cn } from "@/utils/cn";
+import { Spinner } from "../spinner";
 
 /**
  * shadcn/ui Button（`pnpm dlx shadcn@latest add button` 拉取的官方源码，已按项目约定适配）。
@@ -16,9 +17,10 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-accent text-accent-fg hover:bg-accent/90",
-        destructive: "bg-danger text-accent-fg hover:bg-danger/90 focus-visible:ring-danger/20",
-        outline: "border border-border bg-surface shadow-xs hover:bg-accent hover:text-accent-fg",
-        secondary: "bg-surface text-fg hover:bg-surface/80",
+        destructive:
+          "bg-danger/10 text-danger hover:bg-danger/20 focus-visible:ring-danger/20",
+        outline: "border border-border bg-bg shadow-xs hover:bg-surface-hover hover:text-fg",
+        secondary: "bg-surface text-fg hover:bg-surface-hover",
         ghost: "hover:bg-surface hover:text-fg",
         link: "text-accent underline-offset-4 hover:underline",
       },
@@ -45,10 +47,14 @@ function Button({
   variant = "default",
   size = "default",
   asChild = false,
+  loading = false,
+  disabled,
+  children,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    loading?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button";
 
@@ -57,9 +63,14 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      aria-busy={loading || undefined}
+      disabled={disabled || loading}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {!asChild && loading && <Spinner data-icon="inline-start" />}
+      {children}
+    </Comp>
   );
 }
 

@@ -8,6 +8,8 @@ import { syncDocumentTheme } from "@/lib/settings/theme";
 export type ThemeMode = "light" | "dark";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 export type AvatarModelId = string;
+export type PetAvatarSize = "normal" | "mini";
+type LegacyPetDisplayMode = "normal" | "edgeRecall";
 
 export interface Settings {
   theme: ThemeMode;
@@ -15,6 +17,7 @@ export interface Settings {
   deepseekModel: DeepseekModel;
   deepseekMemoryModel: DeepseekModel;
   avatarModelId: AvatarModelId;
+  petAvatarSize: PetAvatarSize;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -23,19 +26,33 @@ export const DEFAULT_SETTINGS: Settings = {
   deepseekModel: "deepseek/deepseek-v4-flash",
   deepseekMemoryModel: "deepseek/deepseek-v4-pro",
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
+  petAvatarSize: "normal",
 };
 
 const EVENT_CHANGED = "settings://changed";
 
+type SettingsSnapshotPayload = Partial<Settings> & {
+  petDisplayMode?: LegacyPetDisplayMode;
+};
+
 declare global {
   interface Window {
-    __AGENT_FRIEND_SETTINGS__?: Settings;
+    __AGENT_FRIEND_SETTINGS__?: SettingsSnapshotPayload;
   }
+}
+
+function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings {
+  const { petDisplayMode, ...current } = payload ?? {};
+  const settings = { ...DEFAULT_SETTINGS, ...current };
+  if (!payload?.petAvatarSize && petDisplayMode === "edgeRecall") {
+    settings.petAvatarSize = "mini";
+  }
+  return settings;
 }
 
 /** 启动期由 Rust facade plugin 的 js_init_script 同步注入，首帧即可用。 */
 export function getSettingsSnapshot(): Settings {
-  return { ...DEFAULT_SETTINGS, ...(window.__AGENT_FRIEND_SETTINGS__ ?? {}) };
+  return normalizeSettingsSnapshot(window.__AGENT_FRIEND_SETTINGS__);
 }
 
 /** 兼容旧调用名；新代码优先用 getSettingsSnapshot 表达"当前快照"。 */

@@ -24,7 +24,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import portalocker
+from portalocker.exceptions import LockException
 
 from .adapters.qq import QQAdapter
 from .content import OutboundContent
@@ -77,13 +80,16 @@ class IMRuntime:
         resume_base_dir: Path,
         inbound_resolver: InboundResolver | None = None,
         deduper: RecentMessageDeduper | None = None,
+        lock_base_dir: Path | None = None,
     ) -> None:
         self._router = router
         self._credentials = credentials
         self._resume_base_dir = resume_base_dir
+        self._lock_base_dir = lock_base_dir or resume_base_dir.parent / "im_provider_locks"
         self._inbound_resolver = inbound_resolver or NoopInboundResolver()
         self._deduper = deduper
         self._providers: dict[tuple[str, str], IMProvider] = {}
+        self._provider_locks: dict[tuple[str, str], Any] = {}
         # 持有 fire-and-forget stop tasks 引用,防 GC 提前回收(RUF006)
         self._background_stops: set[asyncio.Task[None]] = set()
 
@@ -114,10 +120,14 @@ class IMRuntime:
 
         幂等:无 provider 时静默 return。
         """
-        providers = list(self._providers.values())
+        records = [
+            (key, provider, self._provider_locks.get(key))
+            for key, provider in self._providers.items()
+        ]
         self._providers.clear()
+        self._provider_locks.clear()
 
-        async def _stop_one(p: IMProvider) -> None:
+        async def _stop_one(p: IMProvider, lock: Any | None) -> None:
             try:
                 await asyncio.wait_for(p.stop(), timeout=timeout)
             except TimeoutError:
@@ -132,9 +142,11 @@ class IMRuntime:
                     p.type,
                     p.bind_id,
                 )
+            finally:
+                self._release_provider_lock(lock, p.type, p.bind_id)
 
-        if providers:
-            await asyncio.gather(*(_stop_one(p) for p in providers))
+        if records:
+            await asyncio.gather(*(_stop_one(p, lock) for _key, p, lock in records))
 
     # ------------------------------------------------------------------
     # External API(给 routes / onboard 用)
@@ -147,7 +159,7 @@ class IMRuntime:
         旧的 stop(异步,不阻塞当前调用),再启新的。
         """
         self._credentials.save(cred)
-        key = (cred.im_type, cred.bind_id)
+        key = (cred.im_type, _provider_bind_id(cred))
         old = self._providers.pop(key, None)
         if old is not None:
             # 旧 provider 异步 stop;不 block onboard 调用方
@@ -165,8 +177,12 @@ class IMRuntime:
         """
         key = (im_type, bind_id)
         provider = self._providers.pop(key, None)
+        lock = self._provider_locks.pop(key, None)
         if provider is not None:
-            await self._stop_one_silent(provider)
+            try:
+                await self._stop_one_silent(provider)
+            finally:
+                self._release_provider_lock(lock, provider.type, provider.bind_id)
         self._credentials.delete(im_type, bind_id)
         return provider is not None
 
@@ -191,14 +207,58 @@ class IMRuntime:
 
     def _spawn_provider(self, cred: ImCredential) -> None:
         provider = self._build_provider(cred)
+        key = (provider.type, provider.bind_id)
+        lock = self._provider_locks.get(key)
+        if lock is None:
+            lock = self._acquire_provider_lock(provider.type, provider.bind_id)
+            self._provider_locks[key] = lock
         on_inbound = self._make_inbound_cb(provider)
-        provider.start(on_inbound=on_inbound)
-        self._providers[(provider.type, provider.bind_id)] = provider
+        try:
+            provider.start(on_inbound=on_inbound)
+        except Exception:
+            self._providers.pop(key, None)
+            self._provider_locks.pop(key, None)
+            self._release_provider_lock(lock, provider.type, provider.bind_id)
+            raise
+        self._providers[key] = provider
         logger.info(
             "IM provider spawned (im_type=%s, bind_id=%s)",
             provider.type,
             _mask(provider.bind_id),
         )
+
+    def _acquire_provider_lock(self, im_type: str, bind_id: str) -> Any:
+        self._lock_base_dir.mkdir(parents=True, exist_ok=True)
+        path = self._lock_base_dir / f"{im_type}_{_stable_hash(bind_id)}.lock"
+        lock = portalocker.Lock(path, "a", timeout=0)
+        try:
+            lock.acquire()
+        except LockException as e:
+            raise RuntimeError(
+                f"IM provider already active in another process: im_type={im_type}, "
+                f"bind_id={_mask(bind_id)}, lock={path}"
+            ) from e
+        logger.info(
+            "IM provider lock acquired (im_type=%s, bind_id=%s, lock=%s)",
+            im_type,
+            _mask(bind_id),
+            path,
+        )
+        return lock
+
+    @staticmethod
+    def _release_provider_lock(lock: Any | None, im_type: str, bind_id: str) -> None:
+        if lock is None:
+            return
+        try:
+            lock.release()
+        except Exception:
+            logger.warning(
+                "IM provider lock release failed (im_type=%s, bind_id=%s)",
+                im_type,
+                _mask(bind_id),
+                exc_info=True,
+            )
 
     def _build_provider(self, cred: ImCredential) -> IMProvider:
         """工厂:按 ``cred.im_type`` 实例化对应 adapter。
@@ -218,34 +278,96 @@ class IMRuntime:
         """
 
         async def cb(event: InboundEvent) -> None:
+            logger.info(
+                "IM inbound received im_type=%s provider_bind=%s chat_scope=%s chat_id=%s "
+                "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d "
+                "dedupe_enabled=%s",
+                provider.type,
+                provider.bind_id,
+                event.chat_scope,
+                event.chat_id,
+                event.message_id,
+                _text_len(event.content),
+                _text_len((event.content or "").strip()),
+                _attachment_count(event),
+                self._deduper is not None,
+            )
             if self._deduper is not None:
                 key = self._deduper.key_for(provider.type, event)
                 if self._deduper.seen_or_mark(key):
                     logger.info(
                         "IM inbound duplicate ignored (im_type=%s, chat_scope=%s, "
-                        "chat_id=%s, message_id=%s)",
+                        "chat_id=%s, message_id=%s, content_len=%d, attachment_count=%d)",
                         provider.type,
                         event.chat_scope,
                         event.chat_id,
                         event.message_id,
+                        _text_len(event.content),
+                        _attachment_count(event),
                     )
                     return
 
             result = await self._resolve_inbound(provider, event)
+            resolved_event = result.event or event
+            logger.info(
+                "IM inbound resolver result im_type=%s action=%s reason=%s "
+                "message_id=%s resolved_message_id=%s content_len=%d resolved_content_len=%d "
+                "resolved_attachment_count=%d",
+                provider.type,
+                result.action,
+                result.reason,
+                event.message_id,
+                resolved_event.message_id,
+                _text_len(event.content),
+                _text_len(resolved_event.content),
+                _attachment_count(resolved_event),
+            )
             if result.action == "ignore":
                 logger.info(
-                    "IM inbound ignored (im_type=%s, reason=%s, message_id=%s)",
+                    "IM inbound ignored (im_type=%s, reason=%s, message_id=%s, content_len=%d)",
                     provider.type,
                     result.reason,
                     event.message_id,
+                    _text_len(event.content),
                 )
                 return
             if result.action == "reply":
                 if result.reply is not None:
+                    logger.info(
+                        "IM inbound direct reply im_type=%s reason=%s message_id=%s reply_len=%d",
+                        provider.type,
+                        result.reason,
+                        event.message_id,
+                        _text_len(result.reply.text),
+                    )
                     await provider.send(result.reply)
                 return
 
-            resolved_event = result.event or event
+            if not (resolved_event.content or "").strip():
+                logger.warning(
+                    "IM inbound empty content ignored after resolver "
+                    "(im_type=%s, chat_scope=%s, chat_id=%s, message_id=%s, "
+                    "original_content_len=%d, attachment_count=%d)",
+                    provider.type,
+                    resolved_event.chat_scope,
+                    resolved_event.chat_id,
+                    resolved_event.message_id,
+                    _text_len(event.content),
+                    _attachment_count(resolved_event),
+                )
+                return
+
+            logger.info(
+                "IM inbound routing to router im_type=%s chat_scope=%s chat_id=%s "
+                "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
+                provider.type,
+                resolved_event.chat_scope,
+                resolved_event.chat_id,
+                resolved_event.message_id,
+                _text_len(resolved_event.content),
+                _text_len((resolved_event.content or "").strip()),
+                _attachment_count(resolved_event),
+            )
             await self._router.handle_inbound(
                 provider.type,
                 resolved_event,
@@ -297,3 +419,24 @@ def _mask(s: str) -> str:
     if len(s) <= 8:
         return s
     return f"{s[:4]}...{s[-4:]}"
+
+
+def _stable_hash(s: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _provider_bind_id(cred: ImCredential) -> str:
+    if cred.im_type == "qq":
+        return cred.user_openid or cred.bind_id
+    return cred.bind_id
+
+
+def _text_len(value: object) -> int:
+    return len(value) if isinstance(value, str) else 0
+
+
+def _attachment_count(event: InboundEvent) -> int:
+    attachments = getattr(event, "attachments", None)
+    return len(attachments) if isinstance(attachments, list) else 0

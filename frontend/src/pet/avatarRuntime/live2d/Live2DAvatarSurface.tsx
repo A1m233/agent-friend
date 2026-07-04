@@ -14,6 +14,7 @@ import { useLive2DDebugBridge } from "@/pages/pet/useLive2DDebugBridge";
 import { usePetLive2D } from "@/pet/usePetLive2D";
 import { TextCadenceMouthDriver } from "@/pet/MouthDriver";
 import { alphaHitTestFromApp } from "@/pet/avatarRuntime/framebuffer";
+import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
 import type {
   AvatarActionResult,
   PetAvatarRuntime,
@@ -27,6 +28,7 @@ import {
 interface Props {
   entry: Live2DAvatarModelEntry;
   initialAnchorPoint: { x: number; y: number } | null;
+  displayProfile: PetDisplayProfile;
   spriteScreen: { x: number; y: number; w: number; h: number } | null;
   isDragging: boolean;
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void;
@@ -71,6 +73,7 @@ function startLive2DMotion(
 export function Live2DAvatarSurface({
   entry,
   initialAnchorPoint,
+  displayProfile,
   spriteScreen,
   isDragging,
   setSpriteScreen,
@@ -84,7 +87,7 @@ export function Live2DAvatarSurface({
     stageRef,
     setSpriteScreen,
     setIsDragging,
-    { interactionsRef, initialAnchorPoint },
+    { interactionsRef, initialAnchorPoint, displayProfile },
   );
   const { spriteRef, spriteReady } = usePetLive2D(slotRef, app, entry, invalidateAnchor);
   const driver = useMemo(() => new TextCadenceMouthDriver(), []);

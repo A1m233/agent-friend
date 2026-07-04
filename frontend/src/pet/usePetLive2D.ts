@@ -6,7 +6,7 @@
  * - 设 modelPath / ticker / renderer / setSize → `slot.removeChildren()` + `slot.addChild(sprite)`
  * - `await sprite.ready`（easy-live2d 内部异步加载 model3.json + textures + motions）
  * - 加载完成后调 `sprite.startMotion({ group: "Idle", ... })` 让模型呼吸 idle
- * - 加载失败时占位 Graphics + Text 仍在（用户体验 fallback）+ `petStateStore.raiseError()`
+ * - 加载失败时才绘制 fallback Graphics + Text + `petStateStore.raiseError()`
  *
  * **不动 17a plumbing**：slot 外层 Container / drag handler / emitSpritePos / cursor passthrough
  * 全部维持；本 hook 仅替换 slot 内 children。
@@ -24,6 +24,42 @@ import { usePetStateStore } from "@/stores/petState";
 // easy-live2d 是全局 singleton config；模型切换时在 hook effect 内按 entry 同步 idle group。
 Config.MouseFollow = false; // 17b 不用 mouse-follow，跟随由状态机驱动
 Config.CubismLoggingLevel = LogLevel.LogLevel_Warning;
+
+const FALLBACK_RADIUS = 80;
+
+function readThemeHexColor(name: string, fallback: number): number {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return fallback;
+  }
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  if (!raw.startsWith("#")) return fallback;
+  const parsed = parseInt(raw.slice(1), 16);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function createFallbackAvatar(): PIXI.Container {
+  const fallback = new PIXI.Container();
+  fallback.label = "avatar-fallback";
+  const bg = readThemeHexColor("--danger", 0xdc2626);
+  const fg = readThemeHexColor("--accent-fg", 0xffffff);
+
+  const circle = new PIXI.Graphics();
+  circle.circle(0, 0, FALLBACK_RADIUS).fill({ color: bg });
+  fallback.addChild(circle);
+
+  const text = new PIXI.Text({
+    text: "加载失败",
+    style: {
+      fontSize: 14,
+      fill: fg,
+      fontFamily: "system-ui, -apple-system, sans-serif",
+    },
+  });
+  text.anchor.set(0.5);
+  fallback.addChild(text);
+
+  return fallback;
+}
 
 function joinInstalledLive2DAssetPath(model3FilePath: string, file: string): string {
   const normalizedModelPath = model3FilePath.replaceAll("\\", "/");
@@ -98,7 +134,7 @@ export function usePetLive2D(
           return;
         }
 
-        // 替换占位 children（17a 占位 Graphics + Text 被清掉，sprite 上场）
+        // 启动阶段 slot 为空；sprite 上场前不绘制可见占位，避免模型 ready 前闪一下。
         slot.removeChildren();
         slot.addChild(sprite);
 
@@ -128,9 +164,8 @@ export function usePetLive2D(
         spriteRef.current = sprite;
         setSpriteReady(true);
 
-        // 通知 usePixiAvatarSlot 重新 alpha-scan：占位 children 替成 Live2DSprite 后，
-        // visible bounds 从 ~160×30 占位变到 Hiyori 实际渲染范围；不 invalidate 的话 anchor
-        // 会停留在占位 bounds 导致 ActionBar/bubble 锚错位。
+        // 通知 usePixiAvatarSlot 重新 alpha-scan：Live2DSprite ready 后 visible bounds
+        // 才可靠，清掉旧 cache 后下一帧重扫当前真实像素范围。
         invalidateAnchor();
 
         // 默认播 idle motion；模型 motion group 不存在时 try/catch 吃掉
@@ -148,7 +183,7 @@ export function usePetLive2D(
           }
         }
       } catch (e) {
-        console.warn("[usePetLive2D] load failed; keeping placeholder:", e);
+        console.warn("[usePetLive2D] load failed; showing fallback avatar:", e);
         usePetStateStore.getState().raiseError();
         if (sprite) {
           try {
@@ -159,6 +194,9 @@ export function usePetLive2D(
           sprite.destroy({ children: true });
           sprite = null;
         }
+        slot.removeChildren();
+        slot.addChild(createFallbackAvatar());
+        invalidateAnchor();
       }
     })();
 

@@ -13,6 +13,7 @@ import type {
 } from "@/services/voice/types";
 import { getSettingsSnapshot, setSetting } from "@/lib/settings";
 import { isTauri } from "@/utils/tauri";
+import { emitSessionsChanged } from "./sessions";
 import { canStartVoiceCall, isVoiceCallLive } from "./voiceStateMachine";
 
 const EVENT_STATE = "voice://state";
@@ -23,7 +24,7 @@ const EVENT_CONFIRM_TUNNEL_CONSENT = "voice://confirm-tunnel-consent";
 const EVENT_CANCEL_TUNNEL_CONSENT = "voice://cancel-tunnel-consent";
 const EVENT_SNAPSHOT_REQUEST = "voice://snapshot-request";
 const EVENT_ACTIVE_CHAT_SESSION = "voice://active-chat-session";
-const EVENT_SESSIONS_CHANGED = "sessions://changed";
+const EVENT_WINDOW_SHOWN = "window://shown";
 
 interface VoiceState extends VoiceCallSnapshot {
   isOwner: boolean;
@@ -353,7 +354,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         clearDurationTimer();
         if (callId) await voiceApi.stopCall(callId).catch(() => {});
         await cleanupRtc(localRtcClient);
-        if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, {});
+        if (callId) await emitSessionsChanged({ action: "voice-call-ended" });
         return;
       }
       console.warn("[voice] failed", {
@@ -363,7 +364,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       clearDurationTimer();
       if (callId) await voiceApi.stopCall(callId).catch(() => {});
       await cleanupRtc(localRtcClient);
-      if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, {});
+      if (callId) await emitSessionsChanged({ action: "voice-call-failed" });
       if (isStartCancelled(startToken)) return;
       setAndPublish({
         phase: "error",
@@ -420,7 +421,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         await get().requestStart(req);
         return;
       }
-      await emitEverywhere(EVENT_START_REQUEST, req);
+      await openVoiceCallWithStart(req);
     },
 
     async confirmTunnelConsent() {
@@ -525,7 +526,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       await cleanupRtc().catch((error) => {
         diagnostic = diagnostic ?? toDiagnostic("rtc_cleanup", error);
       });
-      if (callId) await emitEverywhere(EVENT_SESSIONS_CHANGED, { sessionId });
+      if (callId) await emitSessionsChanged({ sessionId, action: "voice-call-stopped" });
       if (diagnostic && activeStartToken === startToken && get().phase === "ended") {
         setAndPublish({ diagnostic });
       }
@@ -628,6 +629,20 @@ export async function focusVoiceCallWindow(): Promise<void> {
   await invoke("open_voice_call").catch(() => {});
 }
 
+async function openVoiceCallWithStart(req: StartVoiceCallRequest): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("open_voice_call_with_start", { req }).catch(() => {});
+}
+
+async function consumePendingVoiceStart(): Promise<void> {
+  if (!isTauri()) return;
+  const pendingStart = await invoke<StartVoiceCallRequest | null>(
+    "consume_pending_voice_start",
+  ).catch(() => null);
+  if (!pendingStart) return;
+  await useVoiceStore.getState().requestStart(pendingStart);
+}
+
 export function startVoiceStateSubscriber(): void {
   if (stateSubscriberStarted) return;
   stateSubscriberStarted = true;
@@ -699,6 +714,9 @@ export function startVoiceOwnerCommandListener(): void {
 
   if (isTauri()) {
     void listen<StartVoiceCallRequest>(EVENT_START_REQUEST, (event) => onStart(event.payload));
+    void listen(EVENT_WINDOW_SHOWN, () => {
+      void consumePendingVoiceStart();
+    });
     void listen(EVENT_HANGUP_REQUEST, onHangUp);
     void listen(EVENT_TOGGLE_MUTE_REQUEST, onToggleMute);
     void listen(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
@@ -720,6 +738,7 @@ export function startVoiceOwnerCommandListener(): void {
   window.addEventListener(EVENT_ACTIVE_CHAT_SESSION, (event) => {
     onActiveSession((event as CustomEvent<{ sessionId: string | null }>).detail?.sessionId ?? null);
   });
+  void consumePendingVoiceStart();
 }
 
 export async function publishActiveChatSession(sessionId: string | null): Promise<void> {

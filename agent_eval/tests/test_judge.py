@@ -248,6 +248,28 @@ def test_memory_inconsistency_semantic_guards() -> None:
     assert current_context_story_hit.passed is False
     assert "memory mismatch causal story" in current_context_story_hit.reason
 
+    current_context_name_story_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="Alex,是你自己给了我名字,我就顺着叫了。",
+        ),
+    )
+    assert current_context_name_story_hit.passed is False
+    assert "memory mismatch causal story" in current_context_name_story_hit.reason
+
+    current_turn_story_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="Alex,我刚才这轮才知道你叫什么,所以现在才认出来。",
+        ),
+    )
+    assert current_turn_story_hit.passed is False
+    assert "memory mismatch causal story" in current_turn_story_hit.reason
+
 
 def test_runtime_error_fails() -> None:
     verdict = judge_case(_case(), _contract(), _trace(error="LLMProviderError: boom"))

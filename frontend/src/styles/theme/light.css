@@ -5,11 +5,14 @@ html[theme="light"] {
 
   --bg: #ffffff;
   --surface: #f5f6f8;
+  --surface-hover: #e5e7eb;
   --fg: #1a1a1a;
   --muted: #6b7280;
   --accent: #4f46e5;
   --accent-fg: #ffffff;
   --border: #e5e7eb;
+  --sidebar-accent: #e5e7eb;
+  --sidebar-accent-fg: #1a1a1a;
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;

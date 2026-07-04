@@ -251,6 +251,8 @@ if [ "$MODE" = "tauri" ] && [ "$CDP_ENABLED" = "1" ]; then
     echo "===> WebView2 CDP 仅 Windows dev 脚本启用；mac/linux 本次忽略 --cdp-port $CDP_PORT"
 fi
 
+uv run python "$ROOT/scripts/dev/check_bridge_processes.py"
+
 cleanup() {
     trap - INT TERM EXIT
     echo ""

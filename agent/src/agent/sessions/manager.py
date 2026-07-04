@@ -13,11 +13,14 @@
 
 from __future__ import annotations
 
+import builtins
+import dataclasses
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..errors import AgentError
+from .metadata import SessionMetadataStore
 from .session import Session
 from .store import SessionStore, SessionSummary
 
@@ -77,6 +80,7 @@ class SessionManager:
         title_generator: TitleGenerator | None = None,
         tool_registry: ToolRegistry | None = None,
         memory: Memory | None = None,
+        metadata_store: SessionMetadataStore | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -85,6 +89,7 @@ class SessionManager:
         self._title_generator = title_generator
         self._tool_registry = tool_registry
         self._memory = memory
+        self._metadata_store = metadata_store
 
     # ----- 会话 CRUD -----
 
@@ -160,13 +165,69 @@ class SessionManager:
         """
         return self._store.load(session_id)
 
-    def list(self) -> list[SessionSummary]:
-        """列出所有会话摘要（按 ``updated_at`` 倒序）。"""
-        return self._store.list()
+    def list(
+        self,
+        *,
+        archived: bool = False,
+        query: str | None = None,
+    ) -> list[SessionSummary]:
+        """列出会话摘要（按 ``updated_at`` 倒序）。
+
+        Args:
+            archived: ``False`` 返回普通列表，``True`` 返回已归档列表。
+            query: 可选标题搜索。搜索在合成后的展示标题上执行。
+        """
+        summaries = [self._apply_metadata(summary) for summary in self._store.list()]
+        query_text = query.strip().casefold() if query else ""
+        result: list[SessionSummary] = []
+        for summary in summaries:
+            if (summary.archived_at is not None) != archived:
+                continue
+            if query_text and query_text not in summary.title.casefold():
+                continue
+            result.append(summary)
+        return result
+
+    def rename(self, session_id: str, title: str) -> SessionSummary:
+        """更新会话展示标题，不修改 JSONL 首行。"""
+        normalized = title.strip()
+        if not normalized:
+            raise ValueError("title 不能为空")
+        if len(normalized) > 80:
+            raise ValueError("title 不能超过 80 个字符")
+        self._store.load(session_id)
+        if self._metadata_store is not None:
+            self._metadata_store.set_display_title(session_id, normalized)
+        return self._summary(session_id)
+
+    def archive(self, session_id: str) -> SessionSummary:
+        """归档会话。"""
+        self._store.load(session_id)
+        if self._metadata_store is not None:
+            self._metadata_store.set_archived_at(session_id, datetime.now(UTC))
+        return self._summary(session_id)
+
+    def unarchive(self, session_id: str) -> SessionSummary:
+        """取消归档会话。"""
+        self._store.load(session_id)
+        if self._metadata_store is not None:
+            self._metadata_store.set_archived_at(session_id, None)
+        return self._summary(session_id)
 
     def delete(self, session_id: str) -> None:
         """删除指定会话（hard delete）。"""
         self._store.delete(session_id)
+        if self._metadata_store is not None:
+            self._metadata_store.delete(session_id)
+
+    def delete_archived(self, *, query: str | None = None) -> builtins.list[str]:
+        """删除当前已归档会话，返回成功删除的 session ids。"""
+        targets = self.list(archived=True, query=query)
+        deleted: builtins.list[str] = []
+        for summary in targets:
+            self.delete(summary.session_id)
+            deleted.append(summary.session_id)
+        return deleted
 
     def latest(self) -> Session | None:
         """最近活跃会话（完整加载）；无会话则 ``None``。
@@ -179,6 +240,25 @@ class SessionManager:
         if summary is None:
             return None
         return self._store.load(summary.session_id)
+
+    def _summary(self, session_id: str) -> SessionSummary:
+        for summary in self._store.list():
+            if summary.session_id == session_id:
+                return self._apply_metadata(summary)
+        # list() 与 load() 的一致性通常应成立；若中间被其它进程删除，交给 load 抛出。
+        self._store.load(session_id)
+        raise RuntimeError(f"session summary missing after load: {session_id}")
+
+    def _apply_metadata(self, summary: SessionSummary) -> SessionSummary:
+        if self._metadata_store is None:
+            return summary
+        metadata = self._metadata_store.get(summary.session_id)
+        title = metadata.display_title or summary.title
+        return dataclasses.replace(
+            summary,
+            title=title,
+            archived_at=metadata.archived_at,
+        )
 
     # ----- 装配 Conversation -----
 

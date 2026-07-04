@@ -21,6 +21,7 @@ from agent import (
     NaiveContextManager,
     PersonaCatalog,
     SessionManager,
+    SessionMetadataStore,
     SessionNotFoundError,
     make_default_registry,
 )
@@ -68,6 +69,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
         prompt_builder_factory=_prompt_factory,
         context_manager_factory=NaiveContextManager,
         tool_registry=tool_registry,
+        metadata_store=SessionMetadataStore(settings.sessions_dir / "metadata.json"),
     )
 
     return BridgeRuntime(
@@ -140,6 +142,81 @@ class TestDeleteSessionEndpoint:
     def test_delete_unknown_session_returns_404(self, client: TestClient) -> None:
         resp = client.delete("/v1/sessions/nonexistent-uuid")
         assert resp.status_code == 404
+
+
+# ===== PATCH /v1/sessions/{id} + archived listing/deletion =====
+
+
+class TestSessionLifecycleEndpoint:
+    def test_rename_overrides_list_title(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.patch(f"/v1/sessions/{sid}", json={"title": "新的标题"})
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "新的标题"
+        items = client.get("/v1/sessions").json()
+        assert items[0]["session_id"] == sid
+        assert items[0]["title"] == "新的标题"
+        assert items[0]["archived_at"] is None
+
+    def test_rename_empty_title_returns_400(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.patch(f"/v1/sessions/{sid}", json={"title": "   "})
+
+        assert resp.status_code == 400
+
+    def test_archive_moves_session_to_archived_list(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.patch(f"/v1/sessions/{sid}", json={"archived": True})
+
+        assert resp.status_code == 200
+        assert resp.json()["archived_at"]
+        assert client.get("/v1/sessions").json() == []
+        archived = client.get("/v1/sessions?archived=true").json()
+        assert [item["session_id"] for item in archived] == [sid]
+
+    def test_unarchive_returns_session_to_default_list(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        client.patch(f"/v1/sessions/{sid}", json={"archived": True})
+
+        resp = client.patch(f"/v1/sessions/{sid}", json={"archived": False})
+
+        assert resp.status_code == 200
+        assert resp.json()["archived_at"] is None
+        assert client.get("/v1/sessions?archived=true").json() == []
+        assert [item["session_id"] for item in client.get("/v1/sessions").json()] == [sid]
+
+    def test_archived_search_runs_on_backend_title(self, client: TestClient) -> None:
+        first = client.post("/v1/sessions", json={}).json()["session_id"]
+        second = client.post("/v1/sessions", json={}).json()["session_id"]
+        client.patch(f"/v1/sessions/{first}", json={"title": "查 Codex 5.5 缓存时长"})
+        client.patch(f"/v1/sessions/{first}", json={"archived": True})
+        client.patch(f"/v1/sessions/{second}", json={"title": "别的聊天"})
+        client.patch(f"/v1/sessions/{second}", json={"archived": True})
+
+        resp = client.get("/v1/sessions?archived=true&q=codex")
+
+        assert resp.status_code == 200
+        assert [item["session_id"] for item in resp.json()] == [first]
+
+    def test_delete_archived_removes_only_archived_sessions(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        archived_sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        normal_sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        client.patch(f"/v1/sessions/{archived_sid}", json={"archived": True})
+
+        resp = client.delete("/v1/sessions/archived")
+
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 1
+        assert resp.json()["session_ids"] == [archived_sid]
+        with pytest.raises(SessionNotFoundError, match="会话不存在"):
+            runtime.persistent_session_manager.open(archived_sid)
+        assert runtime.persistent_session_manager.open(normal_sid).session_id == normal_sid
 
 
 # ===== POST /v1/sessions/{id}/edit-resend-latest =====

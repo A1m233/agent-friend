@@ -26,18 +26,29 @@ export function RuntimeSecretField({
   onDelete,
 }: RuntimeSecretFieldProps) {
   const [draft, setDraft] = useState("");
+  const [pendingAction, setPendingAction] = useState<"save" | "delete" | null>(null);
 
   async function handleSave() {
     const value = draft.trim();
     if (!value) return;
-    await onSave(value);
-    setDraft("");
+    setPendingAction("save");
+    try {
+      await onSave(value);
+      setDraft("");
+    } finally {
+      setPendingAction(null);
+    }
   }
 
   async function handleDelete() {
     if (!canDelete) return;
     if (!window.confirm(`删除 ${label}？`)) return;
-    await onDelete();
+    setPendingAction("delete");
+    try {
+      await onDelete();
+    } finally {
+      setPendingAction(null);
+    }
   }
 
   return (
@@ -68,9 +79,10 @@ export function RuntimeSecretField({
             type="button"
             size="sm"
             onClick={() => void handleSave()}
+            loading={pendingAction === "save"}
             disabled={saving || !draft.trim()}
           >
-            <Save className="size-4" />
+            {pendingAction !== "save" && <Save className="size-4" />}
             保存
           </Button>
           <Button
@@ -78,9 +90,10 @@ export function RuntimeSecretField({
             size="sm"
             variant="outline"
             onClick={() => void handleDelete()}
+            loading={pendingAction === "delete"}
             disabled={saving || !canDelete}
           >
-            <Trash2 className="size-4" />
+            {pendingAction !== "delete" && <Trash2 className="size-4" />}
             删除
           </Button>
         </div>

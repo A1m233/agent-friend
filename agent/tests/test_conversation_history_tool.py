@@ -160,6 +160,25 @@ def test_query_english_case_insensitive() -> None:
     assert "Practice makes perfect" in result.text
 
 
+def test_query_multiple_terms_match_any_term() -> None:
+    ts = _NOW - timedelta(days=1)
+    session = _make_session(
+        "sess-memory-inconsistency",
+        created_at=ts - timedelta(seconds=10),
+        events_data=[
+            ("user_message", "你还记得我吗", ts),
+            ("assistant_message", "我有点想不起来具体聊过什么。", ts + timedelta(seconds=30)),
+        ],
+    )
+    tool = _tool(_StubStore([session]))
+
+    result = tool.invoke({"query": "想不起来 不记得"})
+
+    assert result.meta is not None
+    assert result.meta["result_count"] == 1
+    assert "想不起来" in result.text
+
+
 def test_said_by_you_only_user_messages() -> None:
     tool = _tool(_two_session_store())
     result = tool.invoke({"said_by": "you"})

@@ -14,6 +14,7 @@ export interface SessionSummary {
   updated_at: string;
   persona: string;
   model: string;
+  archived_at?: string | null;
 }
 
 /** ``GET /v1/sessions/{id}`` 里的单条事件（调试用，结构随后端事件流）。 */

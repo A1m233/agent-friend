@@ -19,6 +19,7 @@ from .manager import (
     SessionManager,
     TitleGenerator,
 )
+from .metadata import SessionMetadata, SessionMetadataStore
 from .session import Session
 from .store import JsonlSessionStore, NullSessionStore, SessionStore, SessionSummary
 
@@ -35,6 +36,8 @@ __all__ = [
     "SessionCorruptError",
     "SessionError",
     "SessionManager",
+    "SessionMetadata",
+    "SessionMetadataStore",
     "SessionNotFoundError",
     "SessionPersistError",
     "SessionStore",

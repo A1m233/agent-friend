@@ -211,6 +211,7 @@ async def test_send_calls_post_c2c_with_message_to_create(
     mock_api = MagicMock()
     mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
     adapter._api = mock_api
+    adapter._next_msg_seq_value = 100
 
     content = OutboundContent(
         chat_id="OPENID-DEST",
@@ -227,6 +228,23 @@ async def test_send_calls_post_c2c_with_message_to_create(
     assert msg_arg.content == "hello"
     assert msg_arg.msg_type == 0  # 文本
     assert msg_arg.msg_id == "MSG-IN-123"
+    assert msg_arg.msg_seq == 100
+
+
+@pytest.mark.asyncio
+async def test_send_msg_seq_increments(adapter: QQAdapter) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+    adapter._next_msg_seq_value = 41
+
+    await adapter.send(OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="one"))
+    await adapter.send(OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="two"))
+
+    first_msg = mock_api.post_c2c_message.await_args_list[0].args[1]
+    second_msg = mock_api.post_c2c_message.await_args_list[1].args[1]
+    assert first_msg.msg_seq == 41
+    assert second_msg.msg_seq == 42
 
 
 @pytest.mark.asyncio
