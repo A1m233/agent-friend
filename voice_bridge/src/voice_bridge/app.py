@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -112,7 +113,18 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
         base_settings = VoiceBridgeSettings(**settings_kwargs_for_mode(mode))
         credentials = resolve_voice_credentials(credential_source_for_mode(mode))
         settings = apply_voice_credentials(base_settings, credentials)
+    else:
+        mode = "injected"
     _configure_logging(settings.log_level, file_log=load_from_env)
+    logging.getLogger(__name__).info(
+        "voice_bridge logging configured log_path=%s pid=%s executable=%s base_executable=%s config_mode=%s public_url_configured=%s",
+        _voice_log_path(),
+        os.getpid(),
+        sys.executable,
+        getattr(sys, "_base_executable", ""),
+        mode,
+        bool(settings.public_url),
+    )
     runtime = build_runtime(settings)
 
     app = FastAPI(

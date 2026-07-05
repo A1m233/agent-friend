@@ -16,6 +16,8 @@ docs/requirements/014-engine-main-loop-and-bridge-push/design.md §8.6。
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -51,6 +53,14 @@ def create_app() -> FastAPI:
     mode = config_mode_from_env()
     settings = BridgeSettings(**settings_kwargs_for_mode(mode))
     _configure_logging(settings.log_level)
+    logging.getLogger(__name__).info(
+        "agent_bridge logging configured log_dir=%s pid=%s executable=%s base_executable=%s config_mode=%s",
+        log_dir(),
+        os.getpid(),
+        sys.executable,
+        getattr(sys, "_base_executable", ""),
+        mode,
+    )
     credentials = credential_source_for_mode(mode)
     runtime_config = resolve_bridge_runtime_config(credentials)
     runtime = build_runtime(settings, runtime_config=runtime_config)

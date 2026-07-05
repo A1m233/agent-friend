@@ -2,12 +2,12 @@
 #
 # 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），启动本地 voice_bridge（不启动 cloudflared），用于 Chat Composer 语音输入 ASR。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL），用于完整语音通话链路。
+# --voice：启动 voice_bridge，并自动拉起新的 cloudflared tunnel；如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
 # Windows Tauri 默认暴露 WebView2 CDP 到 127.0.0.1:9222，供 desktop-visual DOM / 截图验证；可用 --no-cdp 关闭，或 --cdp-port <port> 改端口。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
-# bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异）；Ctrl+C / 退出时 taskkill /T 清理子进程树。
+# bridge / voice_bridge 与前端共用同一控制台输出（不加前缀，与 sh 端的小差异），并额外镜像到日志目录下的 dev-bridge.log / dev-voice.log；Ctrl+C / 退出时 taskkill /T 清理子进程树。
 # 详见 scripts/README.md
 $ErrorActionPreference = "Stop"
 # 强制 UTF-8 输出，避免中文在终端乱码（Windows PowerShell 5.1 默认按系统 ANSI/GBK 输出）
@@ -55,6 +55,13 @@ for ($i = 0; $i -lt $args.Count; $i++) {
 }
 $env:AGENT_FRIEND_CONFIG_MODE = $configMode
 $env:AGENT_FRIEND_REPO_ROOT = $root
+if ([string]::IsNullOrWhiteSpace($env:AGENT_FRIEND_LOG_DIR)) {
+    $env:AGENT_FRIEND_LOG_DIR = Join-Path $env:LOCALAPPDATA "agent-friend\Logs"
+}
+New-Item -ItemType Directory -Force -Path $env:AGENT_FRIEND_LOG_DIR | Out-Null
+$devBridgeLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-bridge.log"
+$devVoiceLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-voice.log"
+Write-Host "===> 日志目录：$env:AGENT_FRIEND_LOG_DIR"
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
@@ -118,12 +125,17 @@ function Wait-CloudflaredUrl([string[]]$logPaths, [int]$timeoutSeconds) {
 
 function Start-VoiceTunnel {
     if (-not [string]::IsNullOrWhiteSpace($env:VOICE_BRIDGE_PUBLIC_URL)) {
-        Write-Host "===> 使用当前进程 VOICE_BRIDGE_PUBLIC_URL（不读取 .env）"
-        return @{ Process = $null; PublicUrl = $env:VOICE_BRIDGE_PUBLIC_URL }
+        if ($env:AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL -eq "1") {
+            Write-Host "===> 复用当前进程 VOICE_BRIDGE_PUBLIC_URL（AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1，不读取 .env）"
+            return @{ Process = $null; PublicUrl = $env:VOICE_BRIDGE_PUBLIC_URL }
+        }
+        Write-Host "===> 忽略当前进程已有 VOICE_BRIDGE_PUBLIC_URL；--voice 将启动新的 cloudflared tunnel"
+        Write-Host "     如确需复用外部公网 URL，请设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1"
+        $env:VOICE_BRIDGE_PUBLIC_URL = ""
     }
 
     if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
-        Write-Error "未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后重试。"
+        Write-Error "未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 和 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1 后重试。"
     }
 
     $outLog = Join-Path $env:TEMP "agent-friend-cloudflared-dev.log"
@@ -171,6 +183,33 @@ function Stop-ProcessTreeIfPresent($processId) {
         Write-Warning "结束进程树失败：PID=$processId Message=$message"
         return $false
     }
+}
+
+function Quote-PowerShellSingle([string]$value) {
+    return "'" + $value.Replace("'", "''") + "'"
+}
+
+function Start-LoggedDevProcess([string]$name, [string[]]$commandArgs, [string]$workingDirectory, [string]$logPath) {
+    $scriptPath = Join-Path $env:TEMP ("agent-friend-dev-" + $name + "-" + [guid]::NewGuid().ToString("N") + ".ps1")
+    $quotedCwd = Quote-PowerShellSingle $workingDirectory
+    $quotedLog = Quote-PowerShellSingle $logPath
+    # This helper is intentionally used only for fixed dev commands such as
+    # `uv run python -m agent_bridge`; cmd.exe does the stderr merge before tee.
+    $cmdLine = "(" + ($commandArgs -join " ") + ") 2>&1"
+    $quotedCmdLine = Quote-PowerShellSingle $cmdLine
+    $timestamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK")
+    $script = @"
+`$ErrorActionPreference = "Continue"
+`$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(`$false)
+Set-Location -LiteralPath $quotedCwd
+"===== $timestamp $name start: $($commandArgs -join ' ') =====" | Tee-Object -FilePath $quotedLog -Append
+& cmd.exe /d /s /c $quotedCmdLine | Tee-Object -FilePath $quotedLog -Append
+`$exitCode = `$LASTEXITCODE
+Remove-Item -LiteralPath `$PSCommandPath -Force -ErrorAction SilentlyContinue
+exit `$exitCode
+"@
+    [System.IO.File]::WriteAllText($scriptPath, $script, [System.Text.UTF8Encoding]::new($true))
+    return Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-File", $scriptPath) -PassThru -NoNewWindow
 }
 
 function Get-PortListeners($port) {
@@ -470,7 +509,7 @@ Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 $env:AGENT_BRIDGE_DEV_MODE = "true"
-$bridge = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "agent_bridge") -PassThru -NoNewWindow
+$bridge = Start-LoggedDevProcess "bridge" @("uv", "run", "python", "-m", "agent_bridge") $root $devBridgeLog
 
 if ($voiceMode -ne "off") {
     $needsVoiceTunnel = $voiceMode -eq "tunnel"
@@ -509,7 +548,7 @@ if ($voiceMode -ne "off") {
         else {
             Write-Host "===> 启动 voice_bridge（127.0.0.1:18900，本地 ASR 模式，不启动 cloudflared）…"
         }
-        $voice = Start-Process -FilePath "uv" -ArgumentList @("run", "python", "-m", "voice_bridge") -PassThru -NoNewWindow
+        $voice = Start-LoggedDevProcess "voice" @("uv", "run", "python", "-m", "voice_bridge") $root $devVoiceLog
         if (-not (Wait-HttpOk "http://127.0.0.1:18900/healthz" 10)) {
             Write-Error "voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 voice_bridge 日志。"
         }

@@ -22,6 +22,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..assembly import VoiceBridgeRuntime
+from ..callbacks import DecodedVolcCallback, decode_volc_callback_payload
 from ..calls import CallBinding
 from ..errors import UnknownCallError, VoiceBridgeError, VoiceCredentialMissingError
 from ..latency import log_latency, monotonic_ms
@@ -318,13 +319,14 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             payload = (await request.body()).decode("utf-8", errors="replace")
         logger.info("voice state callback call_id=%s payload=%s", call_id, payload)
         binding = runtime.call_registry.lookup(call_id)
+        decoded = decode_volc_callback_payload(payload)
         log_latency(
             logger,
             "volc_state_callback",
             call_id=call_id,
             session_id=binding.session_id if binding else None,
             trace_id=(binding.trace_id or binding.call_id) if binding else None,
-            state=_extract_callback_stage(payload),
+            **_callback_latency_fields(decoded, binding),
             t_ms=received_ms,
         )
         return {"ok": True}
@@ -340,13 +342,14 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             payload = (await request.body()).decode("utf-8", errors="replace")
         logger.info("voice subtitle callback call_id=%s payload=%s", call_id, payload)
         binding = runtime.call_registry.lookup(call_id)
+        decoded = decode_volc_callback_payload(payload)
         log_latency(
             logger,
             "volc_subtitle_callback",
             call_id=call_id,
             session_id=binding.session_id if binding else None,
             trace_id=(binding.trace_id or binding.call_id) if binding else None,
-            stage=_extract_callback_stage(payload),
+            **_callback_latency_fields(decoded, binding),
             t_ms=received_ms,
         )
         return {"ok": True}
@@ -399,20 +402,31 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
     app.include_router(router)
 
 
-def _extract_callback_stage(payload: Any) -> str:
-    """Best-effort extraction for volatile Volc callback payloads."""
-    if isinstance(payload, dict):
-        for key in ("stage", "state", "event", "type", "Status", "State", "Event"):
-            value = payload.get(key)
-            if isinstance(value, str) and value:
-                return value
-        for value in payload.values():
-            nested = _extract_callback_stage(value)
-            if nested:
-                return nested
-    if isinstance(payload, list):
-        for item in payload:
-            nested = _extract_callback_stage(item)
-            if nested:
-                return nested
-    return ""
+def _callback_latency_fields(
+    decoded: DecodedVolcCallback,
+    binding: CallBinding | None,
+) -> dict[str, Any]:
+    return {
+        "state": decoded.stage,
+        "payload_type": decoded.payload_type,
+        "round_id": decoded.round_id,
+        "stage_code": decoded.stage_code,
+        "event_time_ms": decoded.event_time_ms,
+        "task_id": decoded.task_id,
+        "callback_user_id": decoded.user_id,
+        "speaker": _callback_speaker(decoded.user_id, binding),
+        "definite": decoded.definite,
+        "sequence": decoded.sequence,
+        "text_len": decoded.text_len,
+        "item_count": decoded.item_count,
+    }
+
+
+def _callback_speaker(user_id: str, binding: CallBinding | None) -> str:
+    if not user_id or binding is None:
+        return ""
+    if user_id == binding.bot_user_id:
+        return "bot"
+    if user_id == binding.target_user_id:
+        return "user"
+    return "unknown"
