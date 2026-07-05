@@ -40,3 +40,4 @@
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
 | `showcase-update` | Update the public agent-friend showcase repository from the private source repo. Use when the u… |
 | `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |
+| `volcengine-docs-fetch` | Fetch and summarize Volcengine documentation pages reliably. Use when the user gives a volcengi… |
