@@ -152,3 +152,29 @@ def test_streaming_asr_defaults() -> None:
     )
     assert settings.voice_input_prewarm_enabled is True
     assert settings.voice_input_prewarm_ttl_ms == 30_000
+
+
+def test_voice_call_latency_defaults() -> None:
+    settings = VoiceBridgeSettings()
+
+    assert settings.asr_vad_silence_time_ms == 600
+    assert settings.asr_vad_ai_vad_enabled is True
+    assert settings.llm_prefill_enabled is False
+    assert settings.tts_cluster == "volcano_tts"
+    assert settings.voice_type == "zh_female_linjianvhai_moon_bigtts"
+
+
+def test_voice_call_latency_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VOICE_BRIDGE_ASR_VAD_SILENCE_TIME_MS", "750")
+    monkeypatch.setenv("VOICE_BRIDGE_ASR_VAD_AI_VAD_ENABLED", "false")
+    monkeypatch.setenv("VOICE_BRIDGE_LLM_PREFILL_ENABLED", "true")
+    monkeypatch.setenv("VOICE_BRIDGE_TTS_CLUSTER", "volcano_tts")
+    monkeypatch.setenv("VOICE_BRIDGE_VOICE_TYPE", "BV002_streaming")
+
+    settings = VoiceBridgeSettings()
+
+    assert settings.asr_vad_silence_time_ms == 750
+    assert settings.asr_vad_ai_vad_enabled is False
+    assert settings.llm_prefill_enabled is True
+    assert settings.tts_cluster == "volcano_tts"
+    assert settings.voice_type == "BV002_streaming"

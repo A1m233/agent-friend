@@ -34,6 +34,7 @@ def build_scenes(
     - ``LLMConfig.SystemMessages = []``：空 system messages，让 agent 自己的
       :class:`agent.system_prompt.SystemPromptComposer` 完整接管 system prompt
       （含 voice 通道的 ChannelSection）
+    - ``LLMConfig.Prefill``：由 settings 控制，可实验性开启 ASR 中间结果预送
     - ``EnableConversationStateCallback = False``：本期不订阅状态回调，简化状态机
 
     Args:
@@ -84,14 +85,17 @@ def build_scenes(
                     "AppId": settings.volc_speech_app_id,
                     "AccessToken": settings.volc_speech_access_token,
                 },
-                "VADConfig": {"SilenceTime": 300, "AIVAD": True},
+                "VADConfig": {
+                    "SilenceTime": settings.asr_vad_silence_time_ms,
+                    "AIVAD": settings.asr_vad_ai_vad_enabled,
+                },
             },
             "TTSConfig": {
                 "Provider": "volcano",
                 "ProviderParams": {
                     "app": {
                         "appid": settings.volc_speech_app_id,
-                        "cluster": "volcano_tts",
+                        "cluster": settings.tts_cluster,
                     },
                     "audio": {
                         "voice_type": settings.voice_type,
@@ -104,6 +108,7 @@ def build_scenes(
             "LLMConfig": {
                 "Mode": "CustomLLM",
                 "Url": llm_url,
+                "Prefill": settings.llm_prefill_enabled,
                 "SystemMessages": [],
             },
             "SubtitleConfig": {

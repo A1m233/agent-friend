@@ -63,7 +63,14 @@ async function main() {
       ignoreHTTPSErrors: true,
     });
     const page = await context.newPage();
-    page.on("console", (msg) => console.log(`[page:${msg.type()}] ${msg.text()}`));
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (text.startsWith("[rtc-lab-latency] ")) {
+        console.log(`${new Date().toISOString()} voice_latency ${text.slice(18)}`);
+        return;
+      }
+      console.log(`[page:${msg.type()}] ${text}`);
+    });
     page.on("pageerror", (error) => console.log(`[page:error] ${error.message}`));
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -71,6 +78,14 @@ async function main() {
     result = await page.evaluate(
       async ({ voiceUrl, traceId, holdMs }) => {
         const log = (...args) => console.log("[rtc-lab]", ...args);
+        const latency = (fields) => {
+          console.log(
+            "[rtc-lab-latency]",
+            Object.entries(fields)
+              .map(([key, value]) => `${key}=${String(value ?? "")}`)
+              .join(" "),
+          );
+        };
         const postJson = async (url, body) => {
           const response = await fetch(url, {
             method: "POST",
@@ -99,15 +114,64 @@ async function main() {
           const event = VERTC.events?.[eventName];
           if (event) engine.on(event, handler);
         };
+        let reportedRemoteAudioFirstFrame = false;
+        let reportedRemoteNonZeroVolume = false;
+        let reportedLocalNonZeroVolume = false;
+        const remoteUserIdFromVolume = (event) => {
+          const streamKey = event?.streamKey || {};
+          return event?.userId || streamKey.userId || event?.uid || "";
+        };
+        const remoteVolumeFromEvent = (event) => {
+          const info = event?.audioPropertiesInfo || event?.audioProperties || {};
+          return Number(info.linearVolume ?? event?.linearVolume ?? info.volume ?? event?.volume ?? 0);
+        };
         on("onError", (event) => log("error", JSON.stringify(event)));
         on("onUserJoined", (event) => log("user-joined", JSON.stringify(event)));
         on("onUserLeave", (event) => log("user-left", JSON.stringify(event)));
         on("onUserPublishStream", (event) => log("user-publish", JSON.stringify(event)));
         on("onUserUnpublishStream", (event) => log("user-unpublish", JSON.stringify(event)));
         on("onAudioDeviceStateChanged", (event) => log("audio-device", JSON.stringify(event)));
-        on("onLocalAudioPropertiesReport", (event) =>
-          log("local-audio", JSON.stringify(event)),
-        );
+        on("onLocalAudioPropertiesReport", (events) => {
+          if (reportedLocalNonZeroVolume) return;
+          const reports = Array.isArray(events) ? events : [events];
+          const firstAudible = reports.find((event) => remoteVolumeFromEvent(event) > 0);
+          if (!firstAudible) return;
+          reportedLocalNonZeroVolume = true;
+          log("local-audio-first-volume", JSON.stringify({ volume: remoteVolumeFromEvent(firstAudible) }));
+        });
+        on("onRemoteAudioFirstFrame", (event) => {
+          log("remote-audio-first-frame", JSON.stringify(event));
+          if (reportedRemoteAudioFirstFrame) return;
+          reportedRemoteAudioFirstFrame = true;
+          latency({
+            event: "frontend_remote_audio_first_frame",
+            trace_id: traceId,
+            call_id: call.call_id,
+            round_id: 1,
+            remote_user_id: event?.userId || "",
+            is_screen: Boolean(event?.isScreen),
+          });
+        });
+        on("onRemoteAudioPropertiesReport", (events) => {
+          if (reportedRemoteNonZeroVolume) return;
+          const reports = Array.isArray(events) ? events : [events];
+          const firstAudible = reports.find((event) => remoteVolumeFromEvent(event) > 0);
+          if (!firstAudible) return;
+          reportedRemoteNonZeroVolume = true;
+          const volume = remoteVolumeFromEvent(firstAudible);
+          log(
+            "remote-audio-volume",
+            JSON.stringify({ userId: remoteUserIdFromVolume(firstAudible), volume }),
+          );
+          latency({
+            event: "frontend_first_remote_audio_volume",
+            trace_id: traceId,
+            call_id: call.call_id,
+            round_id: 1,
+            remote_user_id: remoteUserIdFromVolume(firstAudible),
+            volume_level: volume,
+          });
+        });
 
         try {
           await engine.joinRoom(
@@ -128,6 +192,8 @@ async function main() {
             },
           );
           log("joined");
+          engine.enableAudioPropertiesReport?.({ interval: 200 });
+          log("audio-properties-report-enabled");
           await engine.startAudioCapture();
           log("capturing");
           await engine.publishStream(VERTC.MediaType?.AUDIO ?? 1);

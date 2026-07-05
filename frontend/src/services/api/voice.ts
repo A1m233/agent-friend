@@ -1,5 +1,9 @@
 import { createHttp, type FriendlyError } from "@/services/http";
-import type { StartVoiceCallRequest, StartVoiceCallResponse } from "@/services/voice/types";
+import type {
+  StartVoiceCallRequest,
+  StartVoiceCallResponse,
+  VoiceCallBackendEvent,
+} from "@/services/voice/types";
 
 interface RawStartVoiceCallResponse {
   call_id: string;
@@ -19,6 +23,16 @@ interface RawStopVoiceCallResponse {
 
 function voiceBaseUrl(): string {
   return import.meta.env.DEV ? "" : "http://127.0.0.1:18900";
+}
+
+function voiceEventsBaseUrl(): string {
+  return import.meta.env.DEV ? window.location.origin : "http://127.0.0.1:18900";
+}
+
+function voiceEventsUrl(callId: string): string {
+  const url = new URL(`/voice/calls/${callId}/events`, voiceEventsBaseUrl());
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
 }
 
 const voiceHttp = createHttp(voiceBaseUrl());
@@ -70,5 +84,28 @@ export const voiceApi = {
       `/voice/calls/${callId}/stop`,
     );
     return raw.state;
+  },
+
+  subscribeCallEvents(
+    callId: string,
+    onEvent: (event: VoiceCallBackendEvent) => void,
+    onError?: (error: unknown) => void,
+  ): () => void {
+    const ws = new WebSocket(voiceEventsUrl(callId));
+    ws.onmessage = (event) => {
+      if (typeof event.data !== "string") return;
+      try {
+        const parsed = JSON.parse(event.data) as VoiceCallBackendEvent;
+        if (parsed.type) onEvent(parsed);
+      } catch (error) {
+        onError?.(error);
+      }
+    };
+    ws.onerror = (event) => onError?.(event);
+    return () => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+    };
   },
 };

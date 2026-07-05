@@ -4,6 +4,7 @@ import {
   canStartVoiceCall,
   isVoiceCallBlockingText,
   isVoiceCallLive,
+  voiceActivityLabel,
   voiceFailureStageLabel,
   voicePhaseLabel,
 } from "./voiceStateMachine";
@@ -42,6 +43,9 @@ describe("voiceStateMachine", () => {
   it("提供用户可见状态文案", () => {
     expect(voicePhaseLabel("active")).toBe("正在听...");
     expect(voicePhaseLabel("error")).toBe("没有接通");
+    expect(voiceActivityLabel("thinking")).toBe("正在理解你的话");
+    expect(voiceActivityLabel("speaking")).toBe("正在播放回答");
+    expect(voiceActivityLabel("listening", true)).toBe("麦克风已静音");
   });
 
   it("提供失败阶段诊断文案", () => {

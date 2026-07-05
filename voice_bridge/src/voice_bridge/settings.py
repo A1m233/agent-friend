@@ -166,8 +166,20 @@ class VoiceBridgeSettings(BaseSettings):
 
     # ----- 通话默认参数 -----
 
+    asr_vad_silence_time_ms: int = Field(default=600, ge=0, le=10_000)
+    """火山 RTC VAD 判停静音时长；语音通话延迟实验默认 600ms。"""
+
+    asr_vad_ai_vad_enabled: bool = True
+    """是否开启火山 RTC ASR AIVAD，用于减少长句自然停顿被切断。"""
+
+    llm_prefill_enabled: bool = False
+    """是否让火山 RTC 将 ASR 中间结果提前发送给 CustomLLM；默认关闭以避免多轮抖动。"""
+
+    tts_cluster: str = "volcano_tts"
+    """火山 TTS cluster。"""
+
     voice_type: str = "zh_female_linjianvhai_moon_bigtts"
-    """火山 TTS 音色 id；spike 实测自然，沿用。"""
+    """火山 TTS 音色 id；默认沿用实测首播更稳的 bigtts 音色。"""
 
     welcome_message: str = ""
     """通话拨通后 AI 主动说的第一句话；空字符串表示不开场白。"""

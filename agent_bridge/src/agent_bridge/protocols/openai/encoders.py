@@ -32,6 +32,7 @@ from agent import Conversation, TextDelta, TurnDone
 from ...errors import build_openai_error_envelope, map_exception
 
 logger = logging.getLogger(__name__)
+VOICE_STREAM_ERROR_FALLBACK_TEXT = "刚才网络断了一下，你再说一遍。"
 
 
 def _chunk_id() -> str:
@@ -96,6 +97,7 @@ def encode_streaming(
     )
 
     errored = False
+    voice_error_fallback_sent = False
     first_text_seen = False
     mirror_user_event = (
         UserEvent(session_id=conv.session.session_id, user_input=user_input)
@@ -138,10 +140,31 @@ def encode_streaming(
         # SSE 流中段补一条 error chunk，再 [DONE] 收尾——OpenAI SDK 能识别。
         errored = True
         logger.exception("OpenAI 流式编码失败")
-        err = map_exception(exc)
-        yield _sse_data(build_openai_error_envelope(err))
+        if voice_latency_context is not None:
+            voice_error_fallback_sent = True
+            log_voice_latency(
+                logger,
+                voice_latency_context,
+                "agent_bridge_voice_stream_error_fallback",
+                session_id=conv.session.session_id,
+                elapsed_ms=monotonic_ms() - stream_start_ms,
+                chars=len(VOICE_STREAM_ERROR_FALLBACK_TEXT),
+                first_text_seen=first_text_seen,
+            )
+            yield _sse_data(
+                _build_chunk(
+                    response_id=response_id,
+                    created=created,
+                    model=model,
+                    delta={"content": VOICE_STREAM_ERROR_FALLBACK_TEXT},
+                    finish_reason=None,
+                )
+            )
+        else:
+            err = map_exception(exc)
+            yield _sse_data(build_openai_error_envelope(err))
     finally:
-        if not errored:
+        if not errored or voice_error_fallback_sent:
             yield _sse_data(
                 _build_chunk(
                     response_id=response_id,

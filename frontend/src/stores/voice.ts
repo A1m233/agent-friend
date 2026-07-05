@@ -6,6 +6,8 @@ import { voiceApi, voiceErrorMessage } from "@/services/api/voice";
 import type { RtcClient } from "@/services/voice/rtcClient";
 import type {
   StartVoiceCallRequest,
+  VoiceCallActivity,
+  VoiceCallBackendEvent,
   VoiceCallDiagnostic,
   VoiceCallFailureStage,
   VoiceCallSnapshot,
@@ -51,6 +53,8 @@ let stateSubscriberStarted = false;
 let ownerCommandSubscriberStarted = false;
 let activeStartToken = 0;
 let cancelledStartToken: number | null = null;
+let callEventsUnsubscribe: (() => void) | null = null;
+let speakingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 class VoiceStartCancelled extends Error {
   constructor() {
@@ -61,6 +65,7 @@ class VoiceStartCancelled extends Error {
 function initialSnapshot(): VoiceCallSnapshot {
   return {
     phase: "idle",
+    activity: "idle",
     callId: null,
     sessionId: null,
     traceId: null,
@@ -76,6 +81,7 @@ function initialSnapshot(): VoiceCallSnapshot {
 function toSnapshot(state: VoiceState): VoiceCallSnapshot {
   return {
     phase: state.phase,
+    activity: state.activity,
     callId: state.callId,
     sessionId: state.sessionId,
     traceId: state.traceId,
@@ -148,6 +154,41 @@ function throwIfStartCancelled(token: number): void {
   if (isStartCancelled(token)) throw new VoiceStartCancelled();
 }
 
+function closeCallEventStream(): void {
+  callEventsUnsubscribe?.();
+  callEventsUnsubscribe = null;
+}
+
+function clearSpeakingFallbackTimer(): void {
+  if (speakingFallbackTimer) clearTimeout(speakingFallbackTimer);
+  speakingFallbackTimer = null;
+}
+
+export function activityFromBackendEvent(event: VoiceCallBackendEvent): VoiceCallActivity | null {
+  if (event.type === "ping") return null;
+  const stage = event.stage?.toLowerCase();
+  const speaker = event.speaker;
+  if (stage === "subtitle") {
+    if (speaker === "bot" && (event.textLen ?? 0) > 0) return "speaking";
+    if (speaker === "user" && (event.definite || (event.textLen ?? 0) > 0)) {
+      return "user_detected";
+    }
+    return null;
+  }
+  switch (stage) {
+    case "listening":
+      return "listening";
+    case "thinking":
+      return "thinking";
+    case "answering":
+      return "answering";
+    case "answerfinish":
+      return "listening";
+    default:
+      return null;
+  }
+}
+
 export const useVoiceStore = create<VoiceState>((set, get) => {
   const publish = () => {
     void emitEverywhere(EVENT_STATE, toSnapshot(get()));
@@ -193,6 +234,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       isOwner: true,
       pendingStart: null,
       phase: "preflighting",
+      activity: "idle",
       callId: null,
       sessionId: null,
       traceId,
@@ -225,6 +267,26 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
             });
           }
           setAndPublish({ volumeLevel });
+        },
+        onRemoteAudioFirstFrame: (event) => {
+          if (isStartCancelled(startToken)) return;
+          logVoiceLatency("frontend_remote_audio_first_frame", {
+            traceId,
+            callId,
+            elapsedMs: Math.round(nowMs() - startMs),
+            remoteUserId: event.userId ?? null,
+            isScreen: event.isScreen,
+          });
+        },
+        onRemoteAudioVolume: (event) => {
+          if (isStartCancelled(startToken)) return;
+          logVoiceLatency("frontend_first_remote_audio_volume", {
+            traceId,
+            callId,
+            elapsedMs: Math.round(nowMs() - startMs),
+            remoteUserId: event.userId ?? null,
+            volumeLevel: event.volume,
+          });
         },
         onError: (message) => {
           if (isStartCancelled(startToken)) return;
@@ -260,10 +322,34 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       });
       setAndPublish({
         phase: "joining_room",
+        activity: "idle",
         callId: call.callId,
         sessionId: call.sessionId,
         traceId: call.traceId,
       });
+      closeCallEventStream();
+      callEventsUnsubscribe = voiceApi.subscribeCallEvents(
+        call.callId,
+        (event) => {
+          const activity = activityFromBackendEvent(event);
+          if (!activity) return;
+          const current = get();
+          if (current.callId !== call.callId || phaseIsFinished(current.phase)) return;
+          clearSpeakingFallbackTimer();
+          setAndPublish({ activity });
+          if (activity === "speaking") {
+            speakingFallbackTimer = setTimeout(() => {
+              const latest = get();
+              if (latest.callId === call.callId && latest.phase === "active" && latest.activity === "speaking") {
+                setAndPublish({ activity: "listening" });
+              }
+            }, 2500);
+          }
+        },
+        (error) => {
+          console.warn("[voice] call event stream error", { callId: call.callId, error });
+        },
+      );
 
       stage = "rtc_join";
       throwIfStartCancelled(startToken);
@@ -304,7 +390,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         }
       })();
 
-      setAndPublish({ phase: "preparing_microphone" });
+      setAndPublish({ phase: "preparing_microphone", activity: "idle" });
       stage = "rtc_capture";
       await localRtcClient.startAudioCapture();
       throwIfStartCancelled(startToken);
@@ -328,7 +414,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         elapsedMs: Math.round(nowMs() - startMs),
       });
 
-      if (!startAgentDone) setAndPublish({ phase: "connecting_agent" });
+      if (!startAgentDone) setAndPublish({ phase: "connecting_agent", activity: "idle" });
       stage = "start_agent";
       await startAgentPromise;
       if (startAgentError) throw startAgentError;
@@ -343,6 +429,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       });
       setAndPublish({
         phase: "active",
+        activity: "listening",
         startedAt: Date.now(),
         durationMs: 0,
         diagnostic: null,
@@ -352,6 +439,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       if (error instanceof VoiceStartCancelled) {
         console.info("[voice] start cancelled", { stage, callId });
         clearDurationTimer();
+        closeCallEventStream();
+        clearSpeakingFallbackTimer();
         if (callId) await voiceApi.stopCall(callId).catch(() => {});
         await cleanupRtc(localRtcClient);
         if (callId) await emitSessionsChanged({ action: "voice-call-ended" });
@@ -362,12 +451,15 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         message: diagnosticMessage(error),
       });
       clearDurationTimer();
+      closeCallEventStream();
+      clearSpeakingFallbackTimer();
       if (callId) await voiceApi.stopCall(callId).catch(() => {});
       await cleanupRtc(localRtcClient);
       if (callId) await emitSessionsChanged({ action: "voice-call-failed" });
       if (isStartCancelled(startToken)) return;
       setAndPublish({
         phase: "error",
+        activity: "idle",
         error: error instanceof Error ? error.message : voiceErrorMessage(error),
         diagnostic: toDiagnostic(stage, error),
       });
@@ -405,6 +497,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         setAndPublish({
           isOwner: true,
           phase: "confirming_tunnel",
+          activity: "idle",
           pendingStart: withSession,
           error: null,
           diagnostic: null,
@@ -431,6 +524,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       setAndPublish({
         pendingStart: null,
         phase: "idle",
+        activity: "idle",
         diagnostic: null,
       });
       await startInternal(pendingStart);
@@ -449,6 +543,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       setAndPublish({
         isOwner: false,
         phase: "idle",
+        activity: "idle",
         pendingStart: null,
         diagnostic: null,
       });
@@ -501,8 +596,11 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       const callId = state.callId;
       const sessionId = state.sessionId;
       clearDurationTimer();
+      closeCallEventStream();
+      clearSpeakingFallbackTimer();
       setAndPublish({
         phase: "ended",
+        activity: "idle",
         isOwner: false,
         callId: null,
         traceId: null,
@@ -610,7 +708,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
     resetError() {
       if (get().phase !== "error") return;
-      setAndPublish({ phase: "idle", traceId: null, error: null, diagnostic: null });
+      setAndPublish({
+        phase: "idle",
+        activity: "idle",
+        traceId: null,
+        error: null,
+        diagnostic: null,
+      });
     },
 
     applyRemoteSnapshot(snapshot) {

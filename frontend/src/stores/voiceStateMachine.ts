@@ -1,4 +1,8 @@
-import type { VoiceCallFailureStage, VoiceCallPhase } from "@/services/voice/types";
+import type {
+  VoiceCallActivity,
+  VoiceCallFailureStage,
+  VoiceCallPhase,
+} from "@/services/voice/types";
 
 export function canStartVoiceCall(phase: VoiceCallPhase): boolean {
   return phase === "idle" || phase === "ended" || phase === "error";
@@ -56,6 +60,25 @@ export function voicePhaseLabel(phase: VoiceCallPhase): string {
     case "idle":
     default:
       return "准备拨号";
+  }
+}
+
+export function voiceActivityLabel(activity: VoiceCallActivity, muted = false): string {
+  if (muted) return "麦克风已静音";
+  switch (activity) {
+    case "listening":
+      return "正在听你说";
+    case "user_detected":
+      return "已听到，正在理解";
+    case "thinking":
+      return "正在理解你的话";
+    case "answering":
+      return "正在组织回答";
+    case "speaking":
+      return "正在播放回答";
+    case "idle":
+    default:
+      return "正在听你说";
   }
 }
 
