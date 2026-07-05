@@ -3,12 +3,12 @@
 #
 # 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），启动本地 voice_bridge（不启动 cloudflared），用于 Chat Composer 语音输入 ASR。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --voice：启动 voice_bridge，并自动拉起 cloudflared tunnel（需安装 cloudflared 或设置 VOICE_BRIDGE_PUBLIC_URL），用于完整语音通话链路。
+# --voice：启动 voice_bridge，并自动拉起新的 cloudflared tunnel；如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
 # --cdp-port / --no-cdp：与 Windows 入口保持接口一致；当前 mac/linux 端不启用 WebView2 CDP。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
 # bridge 默认听 127.0.0.1:18800；voice_bridge 默认听 127.0.0.1:18900；前端经 vite proxy 连它们。
-# 输出分别加 [bridge] / [voice] / [app|web] 前缀；Ctrl+C 一起退（清理整个进程组）。
+# 输出分别加 [bridge] / [voice] / [app|web] 前缀，bridge / voice_bridge 额外镜像到日志目录下的 dev-bridge.log / dev-voice.log；Ctrl+C 一起退（清理整个进程组）。
 # 详见 scripts/README.md
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -49,6 +49,27 @@ while [ "$#" -gt 0 ]; do
 done
 export AGENT_FRIEND_CONFIG_MODE="$CONFIG_MODE"
 export AGENT_FRIEND_REPO_ROOT="$ROOT"
+if [ -z "${AGENT_FRIEND_LOG_DIR:-}" ]; then
+    case "$(uname -s)" in
+        Darwin)
+            export AGENT_FRIEND_LOG_DIR="$HOME/Library/Logs/agent-friend"
+            ;;
+        Linux)
+            if [ -n "${XDG_STATE_HOME:-}" ]; then
+                export AGENT_FRIEND_LOG_DIR="$XDG_STATE_HOME/agent-friend/log"
+            else
+                export AGENT_FRIEND_LOG_DIR="$HOME/.local/state/agent-friend/log"
+            fi
+            ;;
+        *)
+            export AGENT_FRIEND_LOG_DIR="${TMPDIR:-/tmp}/agent-friend/log"
+            ;;
+    esac
+fi
+mkdir -p "$AGENT_FRIEND_LOG_DIR"
+DEV_BRIDGE_LOG="$AGENT_FRIEND_LOG_DIR/dev-bridge.log"
+DEV_VOICE_LOG="$AGENT_FRIEND_LOG_DIR/dev-voice.log"
+echo "===> 日志目录：$AGENT_FRIEND_LOG_DIR"
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "  [ERROR] 未检测到 uv。先跑 ./scripts/setup/run.sh 初始化环境。" >&2
@@ -162,12 +183,17 @@ wait_cloudflared_url() {
 
 start_voice_tunnel() {
     if [ -n "${VOICE_BRIDGE_PUBLIC_URL:-}" ]; then
-        echo "===> 使用当前进程 VOICE_BRIDGE_PUBLIC_URL（不读取 .env）"
-        return 0
+        if [ "${AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL:-}" = "1" ]; then
+            echo "===> 复用当前进程 VOICE_BRIDGE_PUBLIC_URL（AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1，不读取 .env）"
+            return 0
+        fi
+        echo "===> 忽略当前进程已有 VOICE_BRIDGE_PUBLIC_URL；--voice 将启动新的 cloudflared tunnel"
+        echo "     如确需复用外部公网 URL，请设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1"
+        unset VOICE_BRIDGE_PUBLIC_URL
     fi
 
     if ! command -v cloudflared >/dev/null 2>&1; then
-        echo "  [ERROR] 未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 后重试。" >&2
+        echo "  [ERROR] 未检测到 cloudflared。语音通话需要公网回调 URL；请安装 cloudflared，或在当前 shell 显式设置 VOICE_BRIDGE_PUBLIC_URL 和 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1 后重试。" >&2
         exit 1
     fi
 
@@ -268,7 +294,8 @@ echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取
 # 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式
 # 偶发不把 env 传到 child process；export 让 env 在脚本全局生效、subshell 自动继承。
 export AGENT_BRIDGE_DEV_MODE=true
-(cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | prefix "[bridge] " &
+printf '\n===== %s bridge start: uv run python -m agent_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_BRIDGE_LOG"
+(cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | tee -a "$DEV_BRIDGE_LOG" | prefix "[bridge] " &
 
 if [ "$VOICE_MODE" != "off" ]; then
     NEEDS_VOICE_TUNNEL=0
@@ -304,7 +331,8 @@ if [ "$VOICE_MODE" != "off" ]; then
         else
             echo "===> 启动 voice_bridge（127.0.0.1:18900，本地 ASR 模式，不启动 cloudflared）…"
         fi
-        (cd "$ROOT" && uv run python -m voice_bridge) 2>&1 | prefix "[voice] " &
+        printf '\n===== %s voice start: uv run python -m voice_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_VOICE_LOG"
+        (cd "$ROOT" && uv run python -m voice_bridge) 2>&1 | tee -a "$DEV_VOICE_LOG" | prefix "[voice] " &
         if ! wait_http_ok "http://127.0.0.1:18900/healthz" 50; then
             echo "  [ERROR] voice_bridge 启动后 10 秒内未通过健康检查。请查看上方 [voice] 日志。" >&2
             exit 1

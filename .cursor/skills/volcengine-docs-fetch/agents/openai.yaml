@@ -1,0 +1,4 @@
+interface:
+  display_name: "Volcengine Docs Fetch"
+  short_description: "Fetch Volcengine docs without dynamic-page traps"
+  default_prompt: "Use $volcengine-docs-fetch to read and summarize a Volcengine documentation URL."
