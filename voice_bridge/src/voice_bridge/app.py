@@ -108,6 +108,7 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
         :class:`FastAPI` 实例，已挂控制平面 + LLM 代理路由。
     """
     load_from_env = settings is None
+    mode: str
     if settings is None:
         mode = config_mode_from_env()
         base_settings = VoiceBridgeSettings(**settings_kwargs_for_mode(mode))

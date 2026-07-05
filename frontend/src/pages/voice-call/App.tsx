@@ -8,6 +8,7 @@ import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
 import {
   isVoiceCallLive,
+  voiceActivityLabel,
   voiceFailureStageLabel,
   voicePhaseLabel,
 } from "@/stores/voiceStateMachine";
@@ -21,6 +22,7 @@ function formatDuration(ms: number): string {
 
 export function VoiceCallApp() {
   const phase = useVoiceStore((s) => s.phase);
+  const activity = useVoiceStore((s) => s.activity);
   const callId = useVoiceStore((s) => s.callId);
   const isOwner = useVoiceStore((s) => s.isOwner);
   const durationMs = useVoiceStore((s) => s.durationMs);
@@ -38,8 +40,16 @@ export function VoiceCallApp() {
   const canDial = phase === "idle" || phase === "ended" || phase === "error";
   const inCall = phase === "active";
   const busy = isVoiceCallLive(phase) && phase !== "active";
-  const canToggleMute = phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
+  const canToggleMute =
+    phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
   const micWaveActive = canToggleMute && hasMicActivity(volumeLevel, muted);
+  const headline = inCall ? voiceActivityLabel(activity, muted) : voicePhaseLabel(phase);
+  const secondaryText = inCall ? formatDuration(durationMs) : muted ? "已静音" : voiceVolumeLabel(volumeLevel);
+  const muteTooltip = muted
+    ? "取消静音"
+    : canToggleMute
+      ? voiceVolumeLabel(volumeLevel)
+      : "接通后可静音";
 
   const handleToggleMute = () => {
     console.info("[voice-call][button] toggle-mute click", {
@@ -79,10 +89,8 @@ export function VoiceCallApp() {
           <div className="flex flex-col items-center gap-3 text-center">
             <MicLevelBars level={volumeLevel} active={busy || inCall} muted={muted} />
             <div className="space-y-1">
-              <p className="text-lg font-medium">{voicePhaseLabel(phase)}</p>
-              <p className="text-sm text-muted">
-                {inCall ? formatDuration(durationMs) : muted ? "已静音" : voiceVolumeLabel(volumeLevel)}
-              </p>
+              <p className="text-lg font-medium">{headline}</p>
+              <p className="text-sm text-muted">{secondaryText}</p>
             </div>
             {error && (
               <p className="max-w-sm text-sm text-danger">
@@ -102,7 +110,7 @@ export function VoiceCallApp() {
             <MicActivityFrame active={canToggleMute} level={volumeLevel} muted={muted}>
               <TooltipButton
                 icon={muted ? <MicOff /> : <Mic />}
-                tooltip={muted ? "取消静音" : canToggleMute ? voiceVolumeLabel(volumeLevel) : "接通后可静音"}
+                tooltip={muteTooltip}
                 tooltipSide="top"
                 size="icon-lg"
                 variant={muted ? "outline" : "secondary"}

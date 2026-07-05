@@ -20,7 +20,7 @@ from voice_bridge.asr import (
     DisabledAsrProvider,
 )
 from voice_bridge.assembly import VoiceBridgeRuntime
-from voice_bridge.calls import CallRegistry
+from voice_bridge.calls import CallRegistry, VoiceCallEventHub
 from voice_bridge.clients import AgentBridgeClient
 from voice_bridge.rtc import VolcRtcClient
 from voice_bridge.settings import VoiceBridgeSettings
@@ -116,6 +116,7 @@ def build_client(settings: VoiceBridgeSettings, asr_provider: object) -> TestCli
             secret_key=settings.volc_secret_key,
         ),
         call_registry=CallRegistry(),
+        call_events=VoiceCallEventHub(),
         agent_bridge=AgentBridgeClient(settings.agent_bridge_url),
         asr_provider=asr_provider,  # type: ignore[arg-type]
     )

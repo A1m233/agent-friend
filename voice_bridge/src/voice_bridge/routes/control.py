@@ -13,17 +13,18 @@ Endpoint 列表：
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from ..assembly import VoiceBridgeRuntime
 from ..callbacks import DecodedVolcCallback, decode_volc_callback_payload
-from ..calls import CallBinding
+from ..calls import CallBinding, VoiceCallEvent
 from ..errors import UnknownCallError, VoiceBridgeError, VoiceCredentialMissingError
 from ..latency import log_latency, monotonic_ms
 from ..rtc import build_scenes
@@ -329,6 +330,7 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             **_callback_latency_fields(decoded, binding),
             t_ms=received_ms,
         )
+        _publish_call_event(runtime, call_id, decoded, binding)
         return {"ok": True}
 
     @router.post("/callbacks/subtitle/{call_id}")
@@ -352,7 +354,29 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
             **_callback_latency_fields(decoded, binding),
             t_ms=received_ms,
         )
+        _publish_call_event(runtime, call_id, decoded, binding)
         return {"ok": True}
+
+    @router.websocket("/calls/{call_id}/events")
+    async def call_events(call_id: str, websocket: WebSocket) -> None:
+        """Frontend subscription for fine-grained voice call status events."""
+        if runtime.call_registry.lookup(call_id) is None:
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        queue = runtime.call_events.subscribe(call_id)
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                except TimeoutError:
+                    await websocket.send_json({"type": "ping", "callId": call_id})
+                    continue
+                await websocket.send_json(event.to_json())
+        except WebSocketDisconnect:
+            return
+        finally:
+            runtime.call_events.unsubscribe(call_id, queue)
 
     @router.get("/calls/{call_id}", response_model=CallStateResponse)
     async def get_call(call_id: str) -> CallStateResponse:
@@ -430,3 +454,25 @@ def _callback_speaker(user_id: str, binding: CallBinding | None) -> str:
     if user_id == binding.target_user_id:
         return "user"
     return "unknown"
+
+
+def _publish_call_event(
+    runtime: VoiceBridgeRuntime,
+    call_id: str,
+    decoded: DecodedVolcCallback,
+    binding: CallBinding | None,
+) -> None:
+    stage = decoded.stage
+    if not stage:
+        return
+    runtime.call_events.publish(
+        VoiceCallEvent(
+            type="callback",
+            call_id=call_id,
+            stage=stage,
+            speaker=_callback_speaker(decoded.user_id, binding),
+            round_id=decoded.round_id,
+            definite=decoded.definite,
+            text_len=decoded.text_len,
+        )
+    )

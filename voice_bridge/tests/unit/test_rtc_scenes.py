@@ -57,6 +57,27 @@ class TestBuildScenes:
         )
         assert body["Config"]["LLMConfig"]["SystemMessages"] == []
 
+    def test_llm_prefill_disabled_by_default(self, settings: VoiceBridgeSettings) -> None:
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert body["Config"]["LLMConfig"]["Prefill"] is False
+
+    def test_llm_prefill_can_be_enabled(self, settings: VoiceBridgeSettings) -> None:
+        settings = settings.model_copy(update={"llm_prefill_enabled": True})
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert body["Config"]["LLMConfig"]["Prefill"] is True
+
     def test_callbacks_point_to_voice_bridge(self, settings: VoiceBridgeSettings) -> None:
         body = build_scenes(
             settings=settings,
@@ -130,6 +151,49 @@ class TestBuildScenes:
             body["Config"]["TTSConfig"]["ProviderParams"]["audio"]["voice_type"]
             == "zh_female_test_bigtts"
         )
+
+    def test_tts_cluster_propagated(self, settings: VoiceBridgeSettings) -> None:
+        settings = settings.model_copy(update={"tts_cluster": "custom_cluster"})
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert body["Config"]["TTSConfig"]["ProviderParams"]["app"]["cluster"] == "custom_cluster"
+
+    def test_default_tts_voice_uses_bigtts_voice(self) -> None:
+        settings = VoiceBridgeSettings(
+            public_url="https://test.example.com",
+            volc_rtc_app_id="rtc-app-id",
+            volc_speech_app_id="speech-app-id",
+            volc_speech_access_token="speech-token",
+        )
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert (
+            body["Config"]["TTSConfig"]["ProviderParams"]["audio"]["voice_type"]
+            == "zh_female_linjianvhai_moon_bigtts"
+        )
+
+    def test_asr_vad_config_uses_latency_settings(self, settings: VoiceBridgeSettings) -> None:
+        settings = settings.model_copy(
+            update={"asr_vad_silence_time_ms": 700, "asr_vad_ai_vad_enabled": False}
+        )
+        body = build_scenes(
+            settings=settings,
+            call_id="call-1",
+            room_id="room-1",
+            bot_user_id="bot-1",
+            target_user_id="user-1",
+        )
+        assert body["Config"]["ASRConfig"]["VADConfig"] == {"SilenceTime": 700, "AIVAD": False}
 
     def test_speech_credentials_used(self, settings: VoiceBridgeSettings) -> None:
         body = build_scenes(

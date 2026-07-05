@@ -26,13 +26,14 @@ from agent import (
 from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
 
 LLMClientFactory = Callable[[str], LLMClient]
+type ScriptedLLMItem = LLMStreamEvent | BaseException
 
 
 @dataclass
 class _ScriptedLLMClient:
     """与 agent 单测同模式的 scripted LLM。"""
 
-    script: list[list[LLMStreamEvent]] = field(default_factory=list)
+    script: list[list[ScriptedLLMItem]] = field(default_factory=list)
     turn_idx: int = 0
     context_window: int = 128000
 
@@ -51,13 +52,16 @@ class _ScriptedLLMClient:
             return
         events = self.script[self.turn_idx]
         self.turn_idx += 1
-        yield from events
+        for event in events:
+            if isinstance(event, BaseException):
+                raise event
+            yield event
 
 
 def _build_runtime(
     tmp_path: Path,
     *,
-    llm_script: list[list[LLMStreamEvent]],
+    llm_script: list[list[ScriptedLLMItem]],
 ) -> tuple[BridgeRuntime, LLMClientFactory]:
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
     persistent_store = JsonlSessionStore(settings.sessions_dir)
@@ -177,3 +181,55 @@ class TestSessionIdHeader:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "bad_request"
         assert "content 不能为空" in resp.json()["error"]["message"]
+
+
+class TestStreamingError:
+    def test_voice_stream_error_returns_spoken_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runtime, fake_llm_factory = _build_runtime(
+            tmp_path,
+            llm_script=[[RuntimeError("deepseek stream failed")]],
+        )
+        monkeypatch.setattr(assembly, "_llm_factory", fake_llm_factory)
+        client = TestClient(create_app_with_runtime(runtime))
+        create_resp = client.post("/v1/sessions", json={})
+        assert create_resp.status_code == 200
+
+        payload = _openai_payload("hi")
+        payload["stream"] = True
+        resp = client.post(
+            "/v1/chat/completions",
+            json=payload,
+            headers={
+                "X-Agent-Friend-Session-Id": create_resp.json()["session_id"],
+                "X-Agent-Friend-Voice-Trace-Id": "trace-1",
+                "X-Agent-Friend-Voice-Call-Id": "call-1",
+                "X-Agent-Friend-Voice-Round-Seq": "1",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert "刚才网络断了一下，你再说一遍。" in resp.text
+        assert '"finish_reason": "stop"' in resp.text
+        assert "data: [DONE]" in resp.text
+        assert '"error"' not in resp.text
+
+    def test_non_voice_stream_error_keeps_openai_error_chunk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runtime, fake_llm_factory = _build_runtime(
+            tmp_path,
+            llm_script=[[RuntimeError("deepseek stream failed")]],
+        )
+        monkeypatch.setattr(assembly, "_llm_factory", fake_llm_factory)
+        client = TestClient(create_app_with_runtime(runtime))
+        payload = _openai_payload("hi")
+        payload["stream"] = True
+
+        resp = client.post("/v1/chat/completions", json=payload)
+
+        assert resp.status_code == 200
+        assert '"error"' in resp.text
+        assert "data: [DONE]" in resp.text
+        assert "刚才网络断了一下" not in resp.text

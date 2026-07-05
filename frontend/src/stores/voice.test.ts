@@ -45,7 +45,7 @@ const rtcMocks = vi.hoisted(() => {
 
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { voiceApi } from "@/services/api/voice";
-import { startVoiceOwnerCommandListener, useVoiceStore } from "./voice";
+import { activityFromBackendEvent, startVoiceOwnerCommandListener, useVoiceStore } from "./voice";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 
@@ -67,6 +67,7 @@ vi.mock("@/services/api/voice", () => ({
     startCall: vi.fn(),
     startAgent: vi.fn(),
     stopCall: vi.fn(),
+    subscribeCallEvents: vi.fn(() => vi.fn()),
   },
   voiceErrorMessage: (error: unknown) => String(error),
 }));
@@ -78,6 +79,7 @@ vi.mock("@/services/voice/rtcClient", () => ({
 function resetVoiceStore(): void {
   useVoiceStore.setState({
     phase: "idle",
+    activity: "idle",
     callId: null,
     sessionId: null,
     traceId: null,
@@ -243,5 +245,44 @@ describe("voice store", () => {
     expect(voiceApi.startCall).toHaveBeenCalledWith(
       expect.objectContaining({ traceId: expect.any(String), deferStart: true }),
     );
+  });
+
+  it("用户侧字幕即使未标记 definite 也会把 UI 从播放态切回理解态", () => {
+    expect(
+      activityFromBackendEvent({
+        type: "callback",
+        callId: "call-1",
+        stage: "subtitle",
+        speaker: "user",
+        definite: false,
+        textLen: 4,
+      }),
+    ).toBe("user_detected");
+  });
+
+  it("空的 bot 字幕不会把 UI 切到播放态", () => {
+    expect(
+      activityFromBackendEvent({
+        type: "callback",
+        callId: "call-1",
+        stage: "subtitle",
+        speaker: "bot",
+        definite: true,
+        textLen: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("有内容的 bot 字幕会把 UI 切到播放态", () => {
+    expect(
+      activityFromBackendEvent({
+        type: "callback",
+        callId: "call-1",
+        stage: "subtitle",
+        speaker: "bot",
+        definite: true,
+        textLen: 4,
+      }),
+    ).toBe("speaking");
   });
 });

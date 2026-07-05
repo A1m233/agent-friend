@@ -12,6 +12,14 @@ export type VoiceCallPhase =
   | "ended"
   | "error";
 
+export type VoiceCallActivity =
+  | "idle"
+  | "listening"
+  | "user_detected"
+  | "thinking"
+  | "answering"
+  | "speaking";
+
 export type VoiceCallFailureStage =
   | "preflight"
   | "start_call"
@@ -50,6 +58,7 @@ export interface StartVoiceCallResponse {
 
 export interface VoiceCallSnapshot {
   phase: VoiceCallPhase;
+  activity: VoiceCallActivity;
   callId: string | null;
   sessionId: string | null;
   startedAt: number | null;
@@ -59,6 +68,16 @@ export interface VoiceCallSnapshot {
   error: string | null;
   diagnostic: VoiceCallDiagnostic | null;
   traceId: string | null;
+}
+
+export interface VoiceCallBackendEvent {
+  type: "callback" | "ping";
+  callId: string;
+  stage?: string;
+  speaker?: "user" | "bot" | "unknown" | "";
+  roundId?: number | null;
+  definite?: boolean | null;
+  textLen?: number | null;
 }
 
 export interface RtcJoinCredentials {

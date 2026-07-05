@@ -73,6 +73,35 @@ class ReplayResult:
 
 MATRIX_SCENARIOS: dict[str, MatrixScenario] = {
     "baseline": MatrixScenario(name="baseline", env={}),
+    "old_rtc_defaults": MatrixScenario(
+        name="old_rtc_defaults",
+        env={
+            "VOICE_BRIDGE_ASR_VAD_SILENCE_TIME_MS": "300",
+            "VOICE_BRIDGE_LLM_PREFILL_ENABLED": "false",
+            "VOICE_BRIDGE_VOICE_TYPE": "zh_female_linjianvhai_moon_bigtts",
+        },
+    ),
+    "prefill_bigtts": MatrixScenario(
+        name="prefill_bigtts",
+        env={
+            "VOICE_BRIDGE_LLM_PREFILL_ENABLED": "true",
+            "VOICE_BRIDGE_VOICE_TYPE": "zh_female_linjianvhai_moon_bigtts",
+        },
+    ),
+    "small_tts_no_prefill": MatrixScenario(
+        name="small_tts_no_prefill",
+        env={
+            "VOICE_BRIDGE_LLM_PREFILL_ENABLED": "false",
+            "VOICE_BRIDGE_VOICE_TYPE": "BV001_streaming",
+        },
+    ),
+    "prefill_small_tts": MatrixScenario(
+        name="prefill_small_tts",
+        env={
+            "VOICE_BRIDGE_LLM_PREFILL_ENABLED": "true",
+            "VOICE_BRIDGE_VOICE_TYPE": "BV001_streaming",
+        },
+    ),
     "short_reply": MatrixScenario(
         name="short_reply",
         env={"VOICE_LATENCY_EXPERIMENT_SHORT_REPLY": "true"},
@@ -1083,6 +1112,7 @@ def load_latency_events(trace_id: str, logs_dir: Path) -> list[LatencyEvent]:
         logs_dir / "agent_bridge.log",
         logs_dir / "tauri.log",
     ]
+    paths.extend(sorted(logs_dir.glob("live-browser-*.log")))
     events: list[LatencyEvent] = []
     for path in paths:
         if not path.exists():
@@ -1170,6 +1200,8 @@ def print_matrix_summary(results: list[ReplayResult]) -> None:
             f"first_text_ms={fields.get('first_text_ms', 'n/a')} "
             f"last_chunk_ms={fields.get('last_chunk_ms', 'n/a')} "
             f"inbound_to_bot_subtitle_ms={fields.get('inbound_to_bot_subtitle_ms', 'n/a')} "
+            f"inbound_to_remote_audio_ms={fields.get('inbound_to_remote_audio_ms', 'n/a')} "
+            f"inbound_to_remote_volume_ms={fields.get('inbound_to_remote_volume_ms', 'n/a')} "
             f"log_dir={result.log_dir}"
         )
 
@@ -1187,13 +1219,27 @@ def compact_round_metrics(events: list[LatencyEvent]) -> dict[str, str]:
         last_chunk = first_event(round_events, "llm_proxy_last_chunk")
         inbound = first_event(round_events, "llm_proxy_inbound")
         bot_subtitle = first_callback_after(round_events, stage="subtitle", after=inbound)
+        remote_audio = first_event_after(
+            round_events,
+            "frontend_remote_audio_first_frame",
+            after=inbound,
+        )
+        remote_volume = first_event_after(
+            round_events,
+            "frontend_first_remote_audio_volume",
+            after=inbound,
+        )
         if first_text:
             metrics["first_text_ms"] = first_text.fields.get("elapsed_ms", "")
         if last_chunk:
             metrics["last_chunk_ms"] = last_chunk.fields.get("elapsed_ms", "")
         if inbound and bot_subtitle:
             metrics["inbound_to_bot_subtitle_ms"] = delta_ms(inbound, bot_subtitle)
-        if first_text or last_chunk or bot_subtitle:
+        if inbound and remote_audio:
+            metrics["inbound_to_remote_audio_ms"] = delta_ms(inbound, remote_audio)
+        if inbound and remote_volume:
+            metrics["inbound_to_remote_volume_ms"] = delta_ms(inbound, remote_volume)
+        if first_text or last_chunk or bot_subtitle or remote_audio or remote_volume:
             return metrics
     return {}
 
@@ -1212,6 +1258,14 @@ def print_round_summary(round_id: int, events: list[LatencyEvent]) -> None:
     answering = first_callback(round_events, stage="answering")
     bot_subtitle = first_callback_after(round_events, stage="subtitle", after=inbound)
     finish = first_callback(round_events, stage="answerFinish")
+    remote_audio = first_event_after(
+        round_events, "frontend_remote_audio_first_frame", after=inbound
+    )
+    remote_volume = first_event_after(
+        round_events,
+        "frontend_first_remote_audio_volume",
+        after=inbound,
+    )
 
     print(f"[round {round_id}]")
     if user_subtitle and inbound:
@@ -1224,6 +1278,15 @@ def print_round_summary(round_id: int, events: list[LatencyEvent]) -> None:
         print(f"  llm_proxy_inbound -> answering: {delta_ms(inbound, answering)}ms")
     if inbound and bot_subtitle:
         print(f"  llm_proxy_inbound -> bot subtitle: {delta_ms(inbound, bot_subtitle)}ms")
+    if inbound and remote_audio:
+        print(
+            f"  llm_proxy_inbound -> remote audio first frame: {delta_ms(inbound, remote_audio)}ms"
+        )
+    if inbound and remote_volume:
+        print(
+            "  llm_proxy_inbound -> first remote nonzero volume: "
+            f"{delta_ms(inbound, remote_volume)}ms"
+        )
     if inbound and finish:
         print(f"  llm_proxy_inbound -> answerFinish: {delta_ms(inbound, finish)}ms")
 
@@ -1240,6 +1303,23 @@ def round_ids(events: list[LatencyEvent]) -> set[int]:
 
 def first_event(events: list[LatencyEvent], name: str) -> LatencyEvent | None:
     return next((event for event in events if event.fields.get("event") == name), None)
+
+
+def first_event_after(
+    events: list[LatencyEvent],
+    name: str,
+    *,
+    after: LatencyEvent | None,
+) -> LatencyEvent | None:
+    if after is None or after.timestamp is None:
+        return first_event(events, name)
+    for event in events:
+        if event.fields.get("event") != name:
+            continue
+        if event.timestamp is None or event.timestamp < after.timestamp:
+            continue
+        return event
+    return None
 
 
 def first_callback(

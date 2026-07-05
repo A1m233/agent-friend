@@ -288,6 +288,37 @@ llm_proxy_inbound -> last chunk                       25.508s
 - 因此后续优化应优先围绕“更快产出可播报首句 / 语义片段、降低 LLM TTFT/TPOT、避免开头追问导致短答”展开；单纯等整段完成再送 TTS 不是当前链路的事实瓶颈。
 - 本轮到 `hold-ms` 截止时仍未收到 `answerFinish`，说明长播报完成时间需要单独用更长 hold 或主动等待 `answerFinish` 的实验方式补测。
 
+### 2026-07-06 本轮收尾记录
+
+本轮在 `fix/028-voice-call-latency-config` 分支继续收敛语音通话延迟问题，主要做了两类工作：
+
+- 体感兜底：语音 UI 状态拆细，避免 10 秒级链路里只显示单一等待状态；同时修复 DeepSeek streaming 异常后前端长期停在"正在播放回答"的问题。
+- 指标校准：`scripts/voice-latency-lab live` 增加前端 RTC 远端音频指标，使用 `first remote nonzero volume` 作为"用户真实听到首音频"的近似指标，不再把 bot subtitle / answerFinish 当作首播口径。
+
+本轮也落地了若干配置实验开关和默认值调整：
+
+- ASR/VAD：将 `SilenceTime` 从 300ms 调整为 600ms，保留 `AIVAD=true`，降低自然停顿被过早截断的概率。
+- LLM：开启火山 `LLMConfig.Prefill`，允许 ASR 中间结果提前送入 LLM 链路。
+- TTS：切换到低延迟语音合成 voice_type 实验配置；但后续真实首音频数据表明，本轮主要瓶颈不在 TTS 首音频。
+
+新增真实首音频指标后，连续 3 次 live baseline 结果如下：
+
+```text
+trace_id                                                     first_text  first_audio  bot_subtitle
+voice-live-baseline-1-70f03cb1-9feb-4fda-9220-1424312a9de4   4.343s      5.282s       15.389s
+voice-live-baseline-2-ad12b303-bc58-47fb-ae25-4ee7810b5dc4   4.207s      5.172s       12.944s
+voice-live-baseline-3-6db12dc1-2ff6-489a-af97-11f5544f84f2   4.470s      5.573s       14.221s
+```
+
+阶段性结论：
+
+- `LLM inbound -> first text` 稳定在约 4.2s 到 4.5s，是当前最明确的大头。
+- `LLM first text -> first remote nonzero volume` 稳定在约 1.0s；从用户真实听到首音频看，TTS/RTC 首播不是本轮最大瓶颈。
+- bot subtitle 比真实首音频晚 7.8s 到 10.1s，不能再作为首播延迟指标；后续实验应优先看 `first_remote_audio_volume_ms`。
+- 真实首音频仍约 5.2s 到 5.6s，体感上还偏慢，但下一轮优化重点应转向语音专用 prompt、上下文裁剪、工具/记忆负担控制、DeepSeek 低延迟配置或更快模型实验。
+
+本 issue 暂不标 `resolved`：本轮已把冷启动、状态反馈、异常兜底和指标口径阶段性收敛，但"语音首响仍约 5 秒级"的问题还需要下一轮围绕 LLM TTFT 继续优化。
+
 ## 根因初判
 
 当前看不是单一问题，而是多个串行延迟叠加：

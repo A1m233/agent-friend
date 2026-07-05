@@ -3,11 +3,14 @@ import VERTC, {
   RoomProfileType,
   type IRTCEngine,
   type LocalAudioPropertiesInfo,
+  type RemoteAudioPropertiesInfo,
 } from "@volcengine/rtc";
 
 import type { RtcJoinCredentials } from "./types";
 
 type RtcEventHandler = (event: unknown) => void;
+type RemoteAudioFirstFrame = { userId?: string; isScreen: boolean };
+type RemoteAudioVolume = { userId?: string; volume: number };
 
 export interface RtcClient {
   preflight(): Promise<void>;
@@ -22,6 +25,8 @@ export interface RtcClient {
 
 export interface RtcClientOptions {
   onVolume?: (level: number) => void;
+  onRemoteAudioFirstFrame?: (event: RemoteAudioFirstFrame) => void;
+  onRemoteAudioVolume?: (event: RemoteAudioVolume) => void;
   onError?: (message: string) => void;
 }
 
@@ -31,6 +36,19 @@ function normalizeVolume(event: LocalAudioPropertiesInfo[]): number {
     return Math.max(acc, next);
   }, 0);
   return Math.max(0, Math.min(100, Math.round((max / 255) * 100)));
+}
+
+function normalizeRemoteVolume(event: RemoteAudioPropertiesInfo[]): RemoteAudioVolume {
+  let userId: string | undefined;
+  const max = event.reduce((acc, item) => {
+    const next = item.audioPropertiesInfo?.linearVolume ?? 0;
+    if (next > acc) userId = item.streamKey?.userId;
+    return Math.max(acc, next);
+  }, 0);
+  return {
+    userId,
+    volume: Math.max(0, Math.min(100, Math.round((max / 255) * 100))),
+  };
 }
 
 function onEngine(engine: IRTCEngine, eventName: string | undefined, handler: RtcEventHandler): void {
@@ -45,6 +63,8 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
   let engine: IRTCEngine | null = null;
   let credentials: RtcJoinCredentials | null = null;
   let reportedNonZeroVolume = false;
+  let reportedRemoteAudioFirstFrame = false;
+  let reportedRemoteNonZeroVolume = false;
 
   return {
     async preflight() {
@@ -61,6 +81,8 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
     async prepare(nextCredentials) {
       if (engine) await this.cleanup();
       reportedNonZeroVolume = false;
+      reportedRemoteAudioFirstFrame = false;
+      reportedRemoteNonZeroVolume = false;
       credentials = nextCredentials;
       engine = VERTC.createEngine(nextCredentials.rtcAppId);
 
@@ -77,6 +99,25 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
             console.info("[voice][rtc] local audio volume detected", { volume });
           }
           options.onVolume?.(volume);
+        }
+      });
+      onEngine(engine, VERTC.events?.onRemoteAudioFirstFrame, (event) => {
+        if (reportedRemoteAudioFirstFrame) return;
+        reportedRemoteAudioFirstFrame = true;
+        const payload = event as RemoteAudioFirstFrame;
+        console.info("[voice][rtc] remote audio first frame", payload);
+        options.onRemoteAudioFirstFrame?.({
+          userId: payload.userId,
+          isScreen: Boolean(payload.isScreen),
+        });
+      });
+      onEngine(engine, VERTC.events?.onRemoteAudioPropertiesReport, (event) => {
+        if (!Array.isArray(event)) return;
+        const remote = normalizeRemoteVolume(event as RemoteAudioPropertiesInfo[]);
+        if (!reportedRemoteNonZeroVolume && remote.volume > 0) {
+          reportedRemoteNonZeroVolume = true;
+          console.info("[voice][rtc] remote audio volume detected", remote);
+          options.onRemoteAudioVolume?.(remote);
         }
       });
 
