@@ -18,10 +18,10 @@ pub struct Settings {
     pub theme: ThemeMode,
     #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
-    #[serde(default = "default_deepseek_model")]
-    pub deepseek_model: DeepseekModel,
-    #[serde(default = "default_deepseek_memory_model")]
-    pub deepseek_memory_model: DeepseekModel,
+    #[serde(default = "default_chat_model")]
+    pub chat_model: ModelSelection,
+    #[serde(default = "default_memory_model")]
+    pub memory_model: ModelSelection,
     #[serde(default = "default_avatar_model_id")]
     pub avatar_model_id: String,
     #[serde(default)]
@@ -35,12 +35,26 @@ pub enum ThemeMode {
     Dark,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeepseekModel {
     #[serde(rename = "deepseek/deepseek-v4-flash")]
     Flash,
     #[serde(rename = "deepseek/deepseek-v4-pro")]
     Pro,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelProvider {
+    Deepseek,
+    Kimi,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSelection {
+    pub provider: ModelProvider,
+    pub model: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -77,8 +91,32 @@ fn default_deepseek_model() -> DeepseekModel {
     DeepseekModel::Flash
 }
 
-fn default_deepseek_memory_model() -> DeepseekModel {
-    DeepseekModel::Pro
+fn deepseek_model_id(model: DeepseekModel) -> String {
+    match model {
+        DeepseekModel::Flash => "deepseek/deepseek-v4-flash".to_string(),
+        DeepseekModel::Pro => "deepseek/deepseek-v4-pro".to_string(),
+    }
+}
+
+fn default_chat_model() -> ModelSelection {
+    ModelSelection {
+        provider: ModelProvider::Deepseek,
+        model: "deepseek/deepseek-v4-flash".to_string(),
+    }
+}
+
+fn default_memory_model() -> ModelSelection {
+    ModelSelection {
+        provider: ModelProvider::Deepseek,
+        model: "deepseek/deepseek-v4-pro".to_string(),
+    }
+}
+
+fn model_selection_from_deepseek(model: DeepseekModel) -> ModelSelection {
+    ModelSelection {
+        provider: ModelProvider::Deepseek,
+        model: deepseek_model_id(model),
+    }
 }
 
 fn default_avatar_model_id() -> String {
@@ -90,8 +128,8 @@ impl Default for Settings {
         Self {
             theme: ThemeMode::Light,
             voice_tunnel_consent_accepted: false,
-            deepseek_model: default_deepseek_model(),
-            deepseek_memory_model: default_deepseek_memory_model(),
+            chat_model: default_chat_model(),
+            memory_model: default_memory_model(),
             avatar_model_id: default_avatar_model_id(),
             pet_avatar_size: PetAvatarSize::Normal,
         }
@@ -125,7 +163,10 @@ struct LoadedSettings {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct SettingsPresence {
-    deepseek_memory_model: bool,
+    chat_model: bool,
+    memory_model: bool,
+    deepseek_model: Option<DeepseekModel>,
+    deepseek_memory_model: Option<DeepseekModel>,
     pet_avatar_size: bool,
     legacy_pet_display_mode: Option<LegacyPetDisplayMode>,
 }
@@ -135,7 +176,14 @@ fn parse_settings(raw: &str, path: &Path) -> Result<(Settings, SettingsPresence)
         .map_err(|e| format!("settings: parse {path:?} failed: {e}"))?;
     let inner = value.get("settings").unwrap_or(&value);
     let presence = SettingsPresence {
-        deepseek_memory_model: inner.get("deepseekMemoryModel").is_some(),
+        chat_model: inner.get("chatModel").is_some(),
+        memory_model: inner.get("memoryModel").is_some(),
+        deepseek_model: inner
+            .get("deepseekModel")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
+        deepseek_memory_model: inner
+            .get("deepseekMemoryModel")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
         pet_avatar_size: inner.get("petAvatarSize").is_some(),
         legacy_pet_display_mode: inner
             .get("petDisplayMode")
@@ -244,18 +292,30 @@ fn legacy_deepseek_memory_model() -> Option<DeepseekModel> {
         .find_map(|value| parse_deepseek_model(&value))
 }
 
+fn migrate_deepseek_model(settings: &mut Settings, presence: SettingsPresence) -> bool {
+    if presence.chat_model {
+        return false;
+    }
+    let Some(model) = presence.deepseek_model else {
+        return false;
+    };
+    settings.chat_model = model_selection_from_deepseek(model);
+    true
+}
+
 fn migrate_deepseek_memory_model(
     settings: &mut Settings,
     presence: SettingsPresence,
     legacy_model: Option<DeepseekModel>,
 ) -> bool {
-    if presence.deepseek_memory_model {
+    if presence.memory_model {
         return false;
     }
-    let Some(model) = legacy_model else {
+    let model = presence.deepseek_memory_model.or(legacy_model);
+    let Some(model) = model else {
         return false;
     };
-    settings.deepseek_memory_model = model;
+    settings.memory_model = model_selection_from_deepseek(model);
     true
 }
 
@@ -319,6 +379,7 @@ fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) ->
         }
     }
 
+    let migrated_chat_model = migrate_deepseek_model(&mut loaded.settings, loaded.presence);
     let migrated_memory_model = migrate_deepseek_memory_model(
         &mut loaded.settings,
         loaded.presence,
@@ -327,6 +388,7 @@ fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) ->
     let migrated_pet_avatar_size = migrate_pet_avatar_size(&mut loaded.settings, loaded.presence);
 
     if (loaded.source == SettingsLoadSource::LegacyLocal
+        || migrated_chat_model
         || migrated_memory_model
         || migrated_pet_avatar_size)
         && canonical.is_some()
@@ -343,6 +405,9 @@ fn load_from_paths(canonical: Option<PathBuf>, legacy_local: Option<PathBuf>) ->
                 }
                 if migrated_memory_model {
                     log::info!("settings: migrated legacy DEEPSEEK_MEMORY_MODEL into settings");
+                }
+                if migrated_chat_model {
+                    log::info!("settings: migrated legacy deepseekModel into chatModel");
                 }
                 if migrated_pet_avatar_size {
                     log::info!("settings: migrated legacy petDisplayMode into petAvatarSize");
@@ -371,11 +436,13 @@ pub fn load_from_disk_or_default() -> Settings {
 
     let loaded = load_from_paths(canonical, legacy_local);
     log::info!(
-        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={} avatarModelId={} petAvatarSize={}",
+        "settings: bootstrap resolved source={:?} path={:?} theme={} voiceTunnelConsentAccepted={} chatModel={:?} memoryModel={:?} avatarModelId={} petAvatarSize={}",
         loaded.source,
         loaded.path,
         loaded.settings.theme_attr(),
         loaded.settings.voice_tunnel_consent_accepted,
+        loaded.settings.chat_model,
+        loaded.settings.memory_model,
         loaded.settings.avatar_model_id,
         loaded.settings.pet_avatar_size.attr()
     );
@@ -438,15 +505,29 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
             s.voice_tunnel_consent_accepted = accepted;
         }
+        "chatModel" => {
+            let model: ModelSelection = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid chatModel: {e}"))?;
+            s.chat_model = model;
+        }
+        "memoryModel" => {
+            let model: ModelSelection = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid memoryModel: {e}"))?;
+            s.memory_model = model;
+        }
         "deepseekModel" => {
             let model: DeepseekModel = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid deepseekModel: {e}"))?;
-            s.deepseek_model = model;
+            s.chat_model = model_selection_from_deepseek(model);
+            event_key = "chatModel".to_string();
+            event_value = serde_json::to_value(&s.chat_model).map_err(|e| e.to_string())?;
         }
         "deepseekMemoryModel" => {
             let model: DeepseekModel = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid deepseekMemoryModel: {e}"))?;
-            s.deepseek_memory_model = model;
+            s.memory_model = model_selection_from_deepseek(model);
+            event_key = "memoryModel".to_string();
+            event_value = serde_json::to_value(&s.memory_model).map_err(|e| e.to_string())?;
         }
         "avatarModelId" => {
             let model_id: String = serde_json::from_value(payload.value.clone())
@@ -604,8 +685,8 @@ mod tests {
     fn default_models_use_flash_for_chat_and_pro_for_memory() {
         let settings = Settings::default();
 
-        assert_eq!(settings.deepseek_model, DeepseekModel::Flash);
-        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Pro);
+        assert_eq!(settings.chat_model, default_chat_model());
+        assert_eq!(settings.memory_model, default_memory_model());
     }
 
     #[test]
@@ -672,34 +753,98 @@ mod tests {
         let changed = migrate_deepseek_memory_model(
             &mut settings,
             SettingsPresence {
-                deepseek_memory_model: false,
+                memory_model: false,
                 ..SettingsPresence::default()
             },
             Some(DeepseekModel::Flash),
         );
 
         assert!(changed);
-        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Flash);
+        assert_eq!(
+            settings.memory_model,
+            model_selection_from_deepseek(DeepseekModel::Flash)
+        );
     }
 
     #[test]
     fn migrate_deepseek_memory_model_does_not_override_existing_setting() {
         let mut settings = Settings {
-            deepseek_memory_model: DeepseekModel::Pro,
+            memory_model: model_selection_from_deepseek(DeepseekModel::Pro),
             ..Settings::default()
         };
 
         let changed = migrate_deepseek_memory_model(
             &mut settings,
             SettingsPresence {
-                deepseek_memory_model: true,
+                memory_model: true,
                 ..SettingsPresence::default()
             },
             Some(DeepseekModel::Flash),
         );
 
         assert!(!changed);
-        assert_eq!(settings.deepseek_memory_model, DeepseekModel::Pro);
+        assert_eq!(
+            settings.memory_model,
+            model_selection_from_deepseek(DeepseekModel::Pro)
+        );
+    }
+
+    #[test]
+    fn parse_settings_migrates_legacy_deepseek_models() {
+        let dir = temp_settings_dir("legacy-deepseek-models");
+        let canonical = dir.join("settings.json");
+        write_raw(
+            &canonical,
+            r#"{
+  "settings": {
+    "theme": "light",
+    "deepseekModel": "deepseek/deepseek-v4-pro",
+    "deepseekMemoryModel": "deepseek/deepseek-v4-flash"
+  }
+}"#,
+        );
+
+        let loaded = load_from_paths(Some(canonical.clone()), None);
+
+        assert_eq!(
+            loaded.settings.chat_model,
+            model_selection_from_deepseek(DeepseekModel::Pro)
+        );
+        assert_eq!(
+            loaded.settings.memory_model,
+            model_selection_from_deepseek(DeepseekModel::Flash)
+        );
+        let migrated = fs::read_to_string(&canonical).expect("read migrated");
+        assert!(migrated.contains("\"chatModel\""));
+        assert!(migrated.contains("\"memoryModel\""));
+        assert!(!migrated.contains("deepseekModel"));
+        assert!(!migrated.contains("deepseekMemoryModel"));
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reads_shared_provider_aware_desktop_settings_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("runtime_config")
+            .join("tests")
+            .join("fixtures")
+            .join("desktop-settings-provider-aware.json");
+
+        let settings = read_settings_file(&fixture).expect("read shared settings fixture");
+
+        assert_eq!(settings.theme, ThemeMode::Dark);
+        assert!(settings.voice_tunnel_consent_accepted);
+        assert_eq!(settings.chat_model.provider, ModelProvider::Kimi);
+        assert_eq!(settings.chat_model.model, "kimi/kimi-k2.7-code-highspeed");
+        assert_eq!(settings.memory_model.provider, ModelProvider::Deepseek);
+        assert_eq!(settings.memory_model.model, "deepseek/deepseek-v4-pro");
+        assert_eq!(
+            settings.avatar_model_id,
+            "builtin:spine:ark-models:2025_shu"
+        );
+        assert_eq!(settings.pet_avatar_size, PetAvatarSize::Mini);
     }
 }
 

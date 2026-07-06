@@ -273,7 +273,9 @@ class VolcRtcClient:
                 if close_after:
                     await client.aclose()
         except httpx.RequestError as e:
-            raise VolcUnreachableError(detail=str(e)) from e
+            message = str(e).strip() or repr(e)
+            detail = f"{action} request failed: {type(e).__name__}: {message}"
+            raise VolcUnreachableError(detail=detail) from e
 
         return self._parse_response(action, resp)
 

@@ -16,6 +16,7 @@ pub enum RuntimeConfigKind {
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeConfigGroup {
     Deepseek,
+    Kimi,
     Tavily,
     VolcVoice,
 }
@@ -91,6 +92,12 @@ const SECRET_REGISTRY: &[SecretSpec] = &[
         effect: RuntimeConfigEffect::RestartBridge,
     },
     SecretSpec {
+        name: "KIMI_API_KEY",
+        aliases: &[],
+        group: RuntimeConfigGroup::Kimi,
+        effect: RuntimeConfigEffect::RestartBridge,
+    },
+    SecretSpec {
         name: "TAVILY_API_KEY",
         aliases: &[],
         group: RuntimeConfigGroup::Tavily,
@@ -148,9 +155,42 @@ fn require_secret(name: &str) -> Result<&'static SecretSpec, String> {
     find_secret(name).ok_or_else(|| format!("unknown runtime secret: {name}"))
 }
 
+fn python_keyring_compound_target(name: &str) -> String {
+    format!("{name}@{KEYRING_SERVICE}")
+}
+
+fn python_keyring_service_target() -> &'static str {
+    KEYRING_SERVICE
+}
+
+#[cfg(test)]
+fn rust_keyring_default_target(name: &str) -> String {
+    format!("{name}.{KEYRING_SERVICE}")
+}
+
+#[cfg(target_os = "windows")]
+fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
+    let target = python_keyring_compound_target(name);
+    keyring::Entry::new_with_target(&target, KEYRING_SERVICE, name)
+        .map_err(|e| format!("runtime config keyring entry failed for {name}: {e}"))
+}
+
+#[cfg(not(target_os = "windows"))]
 fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, name)
         .map_err(|e| format!("runtime config keyring entry failed for {name}: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn legacy_rust_keyring_entry(name: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, name)
+        .map_err(|e| format!("runtime config keyring legacy entry failed for {name}: {e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn python_service_keyring_entry(name: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new_with_target(python_keyring_service_target(), KEYRING_SERVICE, name)
+        .map_err(|e| format!("runtime config keyring service entry failed for {name}: {e}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -177,14 +217,75 @@ fn keyring_configured(name: &str) -> Result<bool, String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 fn keyring_configured(name: &str) -> Result<bool, String> {
     let entry = keyring_entry(name)?;
+    keyring_entry_configured(&entry, name)
+}
+
+#[cfg(target_os = "windows")]
+fn keyring_configured(name: &str) -> Result<bool, String> {
+    let canonical = keyring_entry(name)?;
+    if keyring_entry_configured_for_user(&canonical, name)? {
+        return Ok(true);
+    }
+    let service = python_service_keyring_entry(name)?;
+    if keyring_entry_configured_for_user(&service, name)? {
+        return Ok(true);
+    }
+    let legacy = legacy_rust_keyring_entry(name)?;
+    keyring_entry_configured_for_user(&legacy, name)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keyring_entry_configured(entry: &keyring::Entry, name: &str) -> Result<bool, String> {
     match entry.get_password() {
         Ok(value) => Ok(!value.trim().is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
         Err(e) => Err(format!(
             "runtime config keyring status failed for {name}: {e}"
+        )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn keyring_entry_configured_for_user(entry: &keyring::Entry, name: &str) -> Result<bool, String> {
+    let configured = keyring_entry_configured(entry, name)?;
+    if !configured {
+        return Ok(false);
+    }
+    match entry.get_attributes() {
+        Ok(attrs) => Ok(attrs
+            .get("username")
+            .map(|value| value == name)
+            .unwrap_or(false)),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(e) => Err(format!(
+            "runtime config keyring attribute read failed for {name}: {e}"
+        )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn delete_legacy_rust_keyring_entry(name: &str) -> Result<(), String> {
+    match legacy_rust_keyring_entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!(
+            "runtime config keyring legacy delete failed for {name}: {e}"
+        )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn delete_python_service_keyring_entry(name: &str) -> Result<(), String> {
+    let entry = python_service_keyring_entry(name)?;
+    if !keyring_entry_configured_for_user(&entry, name)? {
+        return Ok(());
+    }
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!(
+            "runtime config keyring service delete failed for {name}: {e}"
         )),
     }
 }
@@ -326,6 +427,15 @@ pub fn set_runtime_secret(
         .set_password(value)
         .map_err(|e| format!("runtime config keyring set failed for {}: {e}", spec.name))?;
 
+    #[cfg(target_os = "windows")]
+    if let Err(e) = delete_legacy_rust_keyring_entry(spec.name) {
+        log::warn!("{e}");
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(e) = delete_python_service_keyring_entry(spec.name) {
+        log::warn!("{e}");
+    }
+
     log::info!(
         "runtime_config: secret saved name={} effect={:?}",
         spec.name,
@@ -344,14 +454,24 @@ pub fn delete_runtime_secret(
 ) -> Result<RuntimeConfigMutation, String> {
     let spec = require_secret(&payload.name)?;
     let entry = keyring_entry(spec.name)?;
+    let mut errors = Vec::new();
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(e) => {
-            return Err(format!(
-                "runtime config keyring delete failed for {}: {e}",
-                spec.name
-            ));
-        }
+        Err(e) => errors.push(format!(
+            "runtime config keyring delete failed for {}: {e}",
+            spec.name
+        )),
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(e) = delete_legacy_rust_keyring_entry(spec.name) {
+        errors.push(e);
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(e) = delete_python_service_keyring_entry(spec.name) {
+        errors.push(e);
+    }
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
     }
 
     log::info!(
@@ -373,6 +493,7 @@ mod tests {
     #[test]
     fn registry_only_contains_current_managed_secrets() {
         assert!(find_secret("DEEPSEEK_API_KEY").is_some());
+        assert!(find_secret("KIMI_API_KEY").is_some());
         assert!(find_secret("TAVILY_API_KEY").is_some());
         assert!(find_secret("VOLC_SPEECH_API_KEY").is_some());
         assert!(find_secret("VOLC_ARK_API_KEY").is_none());
@@ -399,6 +520,19 @@ mod tests {
             let spec = require_secret(canonical).expect("volc secret");
             assert!(spec.aliases.contains(&alias));
         }
+    }
+
+    #[test]
+    fn windows_keyring_targets_document_python_and_legacy_rust_conventions() {
+        assert_eq!(
+            python_keyring_compound_target("KIMI_API_KEY"),
+            "KIMI_API_KEY@agent-friend"
+        );
+        assert_eq!(python_keyring_service_target(), "agent-friend");
+        assert_eq!(
+            rust_keyring_default_target("KIMI_API_KEY"),
+            "KIMI_API_KEY.agent-friend"
+        );
     }
 
     #[test]
@@ -461,6 +595,10 @@ mod tests {
     fn secret_effects_are_scoped_to_owning_runtime() {
         assert_eq!(
             require_secret("DEEPSEEK_API_KEY").expect("deepseek").effect,
+            RuntimeConfigEffect::RestartBridge
+        );
+        assert_eq!(
+            require_secret("KIMI_API_KEY").expect("kimi").effect,
             RuntimeConfigEffect::RestartBridge
         );
         assert_eq!(

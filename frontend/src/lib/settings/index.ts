@@ -7,6 +7,11 @@ import { syncDocumentTheme } from "@/lib/settings/theme";
 
 export type ThemeMode = "light" | "dark";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
+export type ModelProvider = "deepseek" | "kimi";
+export interface ModelSelection {
+  provider: ModelProvider;
+  model: string;
+}
 export type AvatarModelId = string;
 export type PetAvatarSize = "normal" | "mini";
 type LegacyPetDisplayMode = "normal" | "edgeRecall";
@@ -14,8 +19,8 @@ type LegacyPetDisplayMode = "normal" | "edgeRecall";
 export interface Settings {
   theme: ThemeMode;
   voiceTunnelConsentAccepted: boolean;
-  deepseekModel: DeepseekModel;
-  deepseekMemoryModel: DeepseekModel;
+  chatModel: ModelSelection;
+  memoryModel: ModelSelection;
   avatarModelId: AvatarModelId;
   petAvatarSize: PetAvatarSize;
 }
@@ -23,8 +28,8 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   voiceTunnelConsentAccepted: false,
-  deepseekModel: "deepseek/deepseek-v4-flash",
-  deepseekMemoryModel: "deepseek/deepseek-v4-pro",
+  chatModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
+  memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-pro" },
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
   petAvatarSize: "normal",
 };
@@ -32,6 +37,8 @@ export const DEFAULT_SETTINGS: Settings = {
 const EVENT_CHANGED = "settings://changed";
 
 type SettingsSnapshotPayload = Partial<Settings> & {
+  deepseekModel?: DeepseekModel;
+  deepseekMemoryModel?: DeepseekModel;
   petDisplayMode?: LegacyPetDisplayMode;
 };
 
@@ -42,8 +49,18 @@ declare global {
 }
 
 function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings {
-  const { petDisplayMode, ...current } = payload ?? {};
+  const { petDisplayMode, deepseekModel, deepseekMemoryModel, ...current } =
+    payload ?? {};
   const settings = { ...DEFAULT_SETTINGS, ...current };
+  if (!payload?.chatModel && deepseekModel) {
+    settings.chatModel = { provider: "deepseek", model: deepseekModel };
+  }
+  if (!payload?.memoryModel && deepseekMemoryModel) {
+    settings.memoryModel = {
+      provider: "deepseek",
+      model: deepseekMemoryModel,
+    };
+  }
   if (!payload?.petAvatarSize && petDisplayMode === "edgeRecall") {
     settings.petAvatarSize = "mini";
   }

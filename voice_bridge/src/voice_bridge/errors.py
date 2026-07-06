@@ -65,6 +65,16 @@ class VoiceCredentialMissingError(VoiceBridgeError):
     )
 
 
+class ChatCredentialMissingError(VoiceBridgeError):
+    """Current chat model credentials are incomplete before starting voice RTC."""
+
+    info: ClassVar[_ErrorInfo] = _ErrorInfo(
+        http_status=400,
+        user_message="当前对话模型凭据未配置，请先在设置里配置对应 API Key",
+        error_code="chat_credentials_missing",
+    )
+
+
 class VolcAuthError(VoiceBridgeError):
     """火山引擎 AK/SK 错误或权限不足。**不可恢复**。"""
 

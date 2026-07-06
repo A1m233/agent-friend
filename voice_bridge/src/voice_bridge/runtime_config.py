@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from runtime_config import (
+    CREDENTIAL_BUNDLES,
+    LLM_CHAT_PROVIDER,
     VOLC_ACCESS_KEY,
     VOLC_RTC_APP_ID,
     VOLC_RTC_APP_KEY,
@@ -32,6 +34,23 @@ def resolve_voice_credentials(source: CredentialSource) -> VoiceCredentialConfig
             VOLC_SPEECH_API_KEY: optional_secret(source, VOLC_SPEECH_API_KEY),
         }
     )
+
+
+def _normalize_chat_provider_id(provider_id: str | None) -> str:
+    value = (provider_id or "deepseek").strip().lower()
+    if value in ("deepseek", "deep-seek"):
+        return "deepseek"
+    if value in ("kimi", "moonshot"):
+        return "kimi"
+    return value
+
+
+def missing_chat_credential_names(source: CredentialSource) -> tuple[str, ...]:
+    """Return missing secret names required by the configured chat provider."""
+
+    provider_id = _normalize_chat_provider_id(optional_secret(source, LLM_CHAT_PROVIDER))
+    required_names = CREDENTIAL_BUNDLES.get(provider_id, ())
+    return tuple(name for name in required_names if not optional_secret(source, name))
 
 
 def apply_voice_credentials(

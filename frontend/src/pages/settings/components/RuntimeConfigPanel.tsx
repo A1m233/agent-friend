@@ -9,7 +9,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui";
-import { DEEPSEEK_MODELS } from "@/lib/model-config";
+import {
+  MODEL_PROVIDERS,
+  defaultModelSelection,
+  providerModels,
+} from "@/lib/model-config";
 import {
   describeRuntimeConfigEffect,
   type RuntimeConfigItemStatus,
@@ -17,7 +21,7 @@ import {
   type RuntimeSecretName,
   useRuntimeConfig,
 } from "@/lib/runtime-config";
-import { useSetting, type DeepseekModel } from "@/lib/settings";
+import { useSetting, type ModelProvider, type ModelSelection } from "@/lib/settings";
 import {
   RuntimeSecretList,
   type RuntimeSecretListItem,
@@ -28,6 +32,7 @@ import { SettingsRow } from "./SettingsRow";
 
 const SECRET_LABELS: Record<RuntimeSecretName, string> = {
   DEEPSEEK_API_KEY: "DeepSeek API Key",
+  KIMI_API_KEY: "Kimi API Key",
   TAVILY_API_KEY: "Tavily API Key",
   VOLC_ACCESS_KEY: "Volc Access Key",
   VOLC_SECRET_KEY: "Volc Secret Key",
@@ -93,11 +98,66 @@ function secretItems({
   });
 }
 
-export function RuntimeConfigPanel() {
-  const [deepseekModel, setDeepseekModel] = useSetting("deepseekModel");
-  const [deepseekMemoryModel, setDeepseekMemoryModel] = useSetting(
-    "deepseekMemoryModel",
+function ModelSelectionRows({
+  selection,
+  purpose,
+  modelLabel,
+  onChange,
+}: {
+  selection: ModelSelection;
+  purpose: "chat" | "memory";
+  modelLabel: string;
+  onChange: (next: ModelSelection) => Promise<void>;
+}) {
+  const models = providerModels(selection.provider);
+
+  return (
+    <>
+      <SettingsRow label="供应商">
+        <Select
+          value={selection.provider}
+          onValueChange={(value) =>
+            void onChange(defaultModelSelection(value as ModelProvider, purpose))
+          }
+        >
+          <SelectTrigger className="min-w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MODEL_PROVIDERS.map((provider) => (
+              <SelectItem key={provider.id} value={provider.id}>
+                {provider.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+      <SettingsRow label={modelLabel}>
+        <Select
+          value={selection.model}
+          onValueChange={(value) =>
+            void onChange({ provider: selection.provider, model: value })
+          }
+        >
+          <SelectTrigger className="min-w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {models.map((model) => (
+              <SelectItem key={model.id} value={model.id}>
+                {model.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+    </>
   );
+}
+
+export function RuntimeConfigPanel() {
+  const [chatModel, setChatModel] = useSetting("chatModel");
+  const [memoryModel, setMemoryModel] = useSetting("memoryModel");
   const {
     snapshot,
     loading,
@@ -131,70 +191,35 @@ export function RuntimeConfigPanel() {
       }
     >
       <SettingsGroup title="对话模型">
-        <SettingsRow label="供应商">
-          <Select value="deepseek" disabled>
-            <SelectTrigger className="min-w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="deepseek">DeepSeek</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-        <SettingsRow label="主对话模型">
-          <Select
-            value={deepseekModel}
-            onValueChange={(value) => void setDeepseekModel(value as DeepseekModel)}
-          >
-            <SelectTrigger className="min-w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DEEPSEEK_MODELS.map((model) => (
-                <SelectItem key={model} value={model}>
-                  {model}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+        <ModelSelectionRows
+          selection={chatModel}
+          purpose="chat"
+          modelLabel="主对话模型"
+          onChange={setChatModel}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="记忆模型">
-        <SettingsRow label="供应商">
-          <Select value="deepseek" disabled>
-            <SelectTrigger className="min-w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="deepseek">DeepSeek</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingsRow>
-        <SettingsRow label="记忆模型">
-          <Select
-            value={deepseekMemoryModel}
-            onValueChange={(value) =>
-              void setDeepseekMemoryModel(value as DeepseekModel)
-            }
-          >
-            <SelectTrigger className="min-w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DEEPSEEK_MODELS.map((model) => (
-                <SelectItem key={model} value={model}>
-                  {model}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingsRow>
+        <ModelSelectionRows
+          selection={memoryModel}
+          purpose="memory"
+          modelLabel="记忆模型"
+          onChange={setMemoryModel}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="DeepSeek 凭据">
         <RuntimeSecretList
           items={secretItems({ names: ["DEEPSEEK_API_KEY"], statuses })}
+          savingName={savingName}
+          onSave={saveSecret}
+          onDelete={removeSecret}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup title="Kimi 凭据">
+        <RuntimeSecretList
+          items={secretItems({ names: ["KIMI_API_KEY"], statuses })}
           savingName={savingName}
           onSave={saveSecret}
           onDelete={removeSecret}

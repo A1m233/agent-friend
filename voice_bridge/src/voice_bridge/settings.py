@@ -166,8 +166,8 @@ class VoiceBridgeSettings(BaseSettings):
 
     # ----- 通话默认参数 -----
 
-    asr_vad_silence_time_ms: int = Field(default=600, ge=0, le=10_000)
-    """火山 RTC VAD 判停静音时长；语音通话延迟实验默认 600ms。"""
+    asr_vad_silence_time_ms: int = Field(default=1000, ge=0, le=10_000)
+    """火山 RTC VAD 判停静音时长；默认 1000ms，避免口语自然停顿被过早截断。"""
 
     asr_vad_ai_vad_enabled: bool = True
     """是否开启火山 RTC ASR AIVAD，用于减少长句自然停顿被切断。"""

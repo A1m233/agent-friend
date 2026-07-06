@@ -157,7 +157,7 @@ def test_streaming_asr_defaults() -> None:
 def test_voice_call_latency_defaults() -> None:
     settings = VoiceBridgeSettings()
 
-    assert settings.asr_vad_silence_time_ms == 600
+    assert settings.asr_vad_silence_time_ms == 1000
     assert settings.asr_vad_ai_vad_enabled is True
     assert settings.llm_prefill_enabled is False
     assert settings.tts_cluster == "volcano_tts"
