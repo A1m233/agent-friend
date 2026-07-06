@@ -114,11 +114,12 @@ export function createVolcRtcClient(options: RtcClientOptions = {}): RtcClient {
       onEngine(engine, VERTC.events?.onRemoteAudioPropertiesReport, (event) => {
         if (!Array.isArray(event)) return;
         const remote = normalizeRemoteVolume(event as RemoteAudioPropertiesInfo[]);
-        if (!reportedRemoteNonZeroVolume && remote.volume > 0) {
+        if (remote.volume <= 0) return;
+        if (!reportedRemoteNonZeroVolume) {
           reportedRemoteNonZeroVolume = true;
           console.info("[voice][rtc] remote audio volume detected", remote);
-          options.onRemoteAudioVolume?.(remote);
         }
+        options.onRemoteAudioVolume?.(remote);
       });
 
       engine.enableAudioPropertiesReport?.({ interval: 300 });

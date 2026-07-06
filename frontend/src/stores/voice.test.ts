@@ -247,6 +247,63 @@ describe("voice store", () => {
     );
   });
 
+  it("按后端 roundId 记录每轮第一次远端非零音量", async () => {
+    browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
+      ...DEFAULT_SETTINGS,
+      voiceTunnelConsentAccepted: true,
+    };
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+    let callEventHandler: ((event: Parameters<Parameters<typeof voiceApi.subscribeCallEvents>[1]>[0]) => void) | null =
+      null;
+    vi.mocked(voiceApi.subscribeCallEvents).mockImplementation((_callId, onEvent) => {
+      callEventHandler = onEvent;
+      return vi.fn();
+    });
+    vi.mocked(voiceApi.startCall).mockResolvedValue({
+      callId: "call-1",
+      sessionId: "session-1",
+      state: "pending",
+      rtcAppId: "app",
+      roomId: "room",
+      userId: "user",
+      token: "token",
+      traceId: "trace-1",
+    });
+    vi.mocked(voiceApi.startAgent).mockResolvedValue(undefined);
+
+    await useVoiceStore.getState().requestStart({ sessionId: "session-1" });
+
+    const options = rtcMocks.createVolcRtcClient.mock.calls[0][0];
+    callEventHandler?.({
+      type: "callback",
+      callId: "call-1",
+      stage: "answering",
+      roundId: 1,
+    });
+    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 12 });
+    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 15 });
+    callEventHandler?.({
+      type: "callback",
+      callId: "call-1",
+      stage: "answerFinish",
+      roundId: 1,
+    });
+    callEventHandler?.({
+      type: "callback",
+      callId: "call-1",
+      stage: "answering",
+      roundId: 2,
+    });
+    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 18 });
+
+    const remoteVolumeLogs = infoSpy.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes("event=frontend_first_remote_audio_volume"));
+    expect(remoteVolumeLogs).toHaveLength(2);
+    expect(remoteVolumeLogs[0]).toContain("roundId=1");
+    expect(remoteVolumeLogs[1]).toContain("roundId=2");
+  });
+
   it("用户侧字幕即使未标记 definite 也会把 UI 从播放态切回理解态", () => {
     expect(
       activityFromBackendEvent({

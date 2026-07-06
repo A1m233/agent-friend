@@ -2,12 +2,10 @@ import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 
 import { MicActivityFrame } from "@/components/voice/MicActivityFrame";
 import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentDialog";
-import { MicLevelBars, voiceVolumeLabel } from "@/components/voice/MicLevelBars";
-import { hasMicActivity } from "@/components/voice/micActivity";
+import { hasMicActivity, voiceVolumeLabel } from "@/components/voice/micActivity";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
 import {
-  isVoiceCallLive,
   voiceActivityLabel,
   voiceFailureStageLabel,
   voicePhaseLabel,
@@ -39,7 +37,6 @@ export function VoiceCallApp() {
   const awaitingConsent = phase === "confirming_tunnel";
   const canDial = phase === "idle" || phase === "ended" || phase === "error";
   const inCall = phase === "active";
-  const busy = isVoiceCallLive(phase) && phase !== "active";
   const canToggleMute =
     phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
   const micWaveActive = canToggleMute && hasMicActivity(volumeLevel, muted);
@@ -87,7 +84,6 @@ export function VoiceCallApp() {
           </div>
 
           <div className="flex flex-col items-center gap-3 text-center">
-            <MicLevelBars level={volumeLevel} active={busy || inCall} muted={muted} />
             <div className="space-y-1">
               <p className="text-lg font-medium">{headline}</p>
               <p className="text-sm text-muted">{secondaryText}</p>

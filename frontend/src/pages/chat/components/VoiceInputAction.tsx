@@ -2,8 +2,7 @@ import { LoaderCircle, Mic, Square } from "lucide-react";
 
 import { TooltipButton } from "@/components/ui";
 import { MicActivityFrame } from "@/components/voice/MicActivityFrame";
-import { voiceVolumeLabel } from "@/components/voice/MicLevelBars";
-import { hasMicActivity } from "@/components/voice/micActivity";
+import { hasMicActivity, voiceVolumeLabel } from "@/components/voice/micActivity";
 import type { VoiceInputPhase } from "@/services/voiceInput/types";
 import { cn } from "@/utils/cn";
 import {
