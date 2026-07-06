@@ -1125,18 +1125,42 @@ def load_latency_events(trace_id: str, logs_dir: Path) -> list[LatencyEvent]:
 
 
 def parse_latency_line(path: Path, line: str) -> LatencyEvent | None:
+    raw_fields = ""
     marker = "voice_latency "
-    if marker not in line:
-        return None
+    if marker in line:
+        raw_fields = line.split(marker, 1)[1]
+    else:
+        marker = "[voice][latency] "
+        if marker not in line:
+            return None
+        raw_fields = line.split(marker, 1)[1]
+
     fields: dict[str, str] = {}
-    for part in shlex.split(line.split(marker, 1)[1]):
+    for part in shlex.split(raw_fields):
         if "=" not in part:
             continue
         key, value = part.split("=", 1)
         fields[key] = value
+    normalize_latency_fields(fields)
     if "event" not in fields:
         return None
     return LatencyEvent(source=path, timestamp=parse_timestamp(line), fields=fields)
+
+
+def normalize_latency_fields(fields: dict[str, str]) -> None:
+    aliases = {
+        "traceId": "trace_id",
+        "callId": "call_id",
+        "sessionId": "session_id",
+        "roundId": "round_id",
+        "elapsedMs": "elapsed_ms",
+        "roundElapsedMs": "round_elapsed_ms",
+        "remoteUserId": "remote_user_id",
+        "volumeLevel": "volume_level",
+    }
+    for source, target in aliases.items():
+        if source in fields and target not in fields:
+            fields[target] = fields[source]
 
 
 def parse_timestamp(line: str) -> datetime | None:

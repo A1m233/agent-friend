@@ -249,6 +249,9 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     let callId: string | null = null;
     let localRtcClient: RtcClient | null = null;
     let stage: VoiceCallFailureStage = "preflight";
+    let activeAnswerRoundId: number | null = null;
+    let activeAnswerRoundStartedMs: number | null = null;
+    const loggedRemoteVolumeRounds = new Set<number>();
 
     try {
       await focusVoiceCallWindow();
@@ -280,10 +283,18 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         },
         onRemoteAudioVolume: (event) => {
           if (isStartCancelled(startToken)) return;
+          if (activeAnswerRoundId === null) return;
+          if (loggedRemoteVolumeRounds.has(activeAnswerRoundId)) return;
+          loggedRemoteVolumeRounds.add(activeAnswerRoundId);
           logVoiceLatency("frontend_first_remote_audio_volume", {
             traceId,
             callId,
+            roundId: activeAnswerRoundId,
             elapsedMs: Math.round(nowMs() - startMs),
+            roundElapsedMs:
+              activeAnswerRoundStartedMs === null
+                ? null
+                : Math.round(nowMs() - activeAnswerRoundStartedMs),
             remoteUserId: event.userId ?? null,
             volumeLevel: event.volume,
           });
@@ -332,9 +343,30 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         call.callId,
         (event) => {
           const activity = activityFromBackendEvent(event);
-          if (!activity) return;
           const current = get();
           if (current.callId !== call.callId || phaseIsFinished(current.phase)) return;
+
+          const stage = event.stage?.toLowerCase();
+          const roundId = typeof event.roundId === "number" ? event.roundId : null;
+          if (roundId !== null) {
+            if (stage === "answering") {
+              activeAnswerRoundId = roundId;
+              activeAnswerRoundStartedMs = nowMs();
+            } else if (
+              stage === "subtitle" &&
+              event.speaker === "bot" &&
+              (event.textLen ?? 0) > 0 &&
+              activeAnswerRoundId === null
+            ) {
+              activeAnswerRoundId = roundId;
+              activeAnswerRoundStartedMs = nowMs();
+            } else if (stage === "answerfinish" && activeAnswerRoundId === roundId) {
+              activeAnswerRoundId = null;
+              activeAnswerRoundStartedMs = null;
+            }
+          }
+
+          if (!activity) return;
           clearSpeakingFallbackTimer();
           setAndPublish({ activity });
           if (activity === "speaking") {
