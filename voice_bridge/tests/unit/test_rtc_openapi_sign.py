@@ -15,8 +15,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
-from voice_bridge.rtc.openapi import sign_v4
+from voice_bridge.errors import VolcUnreachableError
+from voice_bridge.rtc.openapi import VolcRtcClient, sign_v4
 
 
 @pytest.fixture
@@ -107,3 +109,22 @@ class TestSignV4:
         sig = result["Authorization"].split("Signature=")[1]
         assert len(sig) == 64
         assert all(c in "0123456789abcdef" for c in sig)
+
+
+@pytest.mark.asyncio
+async def test_start_voice_chat_network_error_keeps_exception_type() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = VolcRtcClient(
+            access_key="AKLT-test",
+            secret_key="test-secret",
+            http_client=http_client,
+        )
+
+        with pytest.raises(VolcUnreachableError) as exc_info:
+            await client.start_voice_chat({"AppId": "app", "RoomId": "room", "TaskId": "task"})
+
+    assert "StartVoiceChat request failed" in str(exc_info.value)
+    assert "ReadTimeout" in str(exc_info.value)

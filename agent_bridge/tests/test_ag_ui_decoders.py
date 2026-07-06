@@ -28,6 +28,20 @@ def test_decode_accepts_allowed_desktop_requested_model() -> None:
     assert decoded.requested_model == "deepseek/deepseek-v4-flash"
 
 
+def test_decode_accepts_kimi_desktop_requested_model() -> None:
+    decoded = decode_run_agent_input(_payload("kimi/kimi-k2.6"))
+
+    assert decoded.requested_model == "kimi/kimi-k2.6"
+
+
+def test_decode_accepts_provider_aware_requested_model() -> None:
+    decoded = decode_run_agent_input(
+        _payload({"provider": "kimi", "model": "kimi/kimi-k2.7-code-highspeed"})
+    )
+
+    assert decoded.requested_model == "kimi/kimi-k2.7-code-highspeed"
+
+
 def test_decode_rejects_unsupported_desktop_requested_model() -> None:
     with pytest.raises(DecodeError, match="不支持的桌面模型"):
         decode_run_agent_input(_payload("openai/gpt-4.1"))

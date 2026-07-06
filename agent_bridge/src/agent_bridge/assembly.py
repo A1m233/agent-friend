@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,13 +34,13 @@ from agent import (
     default_context_manager,
     make_default_registry,
 )
-from llm_providers import LLMClient, ProviderConfig, ProviderSpec
+from llm_providers import LLMClient
 from memory import Memory, build_memory
-from runtime_config import ToolCredentials
+from runtime_config import config_mode_from_env, credential_source_for_mode
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
-from .runtime_config import BridgeRuntimeConfig
+from .runtime_config import BridgeRuntimeConfig, resolve_bridge_runtime_config
 from .settings import BridgeSettings
 
 if TYPE_CHECKING:
@@ -51,72 +50,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _make_spec_with_thinking_off(
-    model_override: str | None = None,
-    *,
-    provider_config: ProviderConfig | None = None,
-) -> ProviderSpec:
-    """构造 :class:`ProviderSpec`，并对 DeepSeek V4 系列默认关闭 thinking 模式。
-
-    与 ``tools/cli/__main__.py`` 中同名 helper 行为一致——抽取到 bridge 包内
-    避免 bridge ↘ tools 反向依赖。后续若再有第 3 处需要可统一搬到 agent 核心库。
-    """
-    spec = (
-        ProviderSpec.from_config("DEEPSEEK", provider_config)
-        if provider_config is not None
-        else ProviderSpec.from_env(prefix="DEEPSEEK")
-    )
-    if model_override:
-        spec = dataclasses.replace(spec, model=model_override)
-    return _disable_deepseek_thinking(spec)
-
-
-def _make_memory_spec_with_thinking_off(
-    provider_config: ProviderConfig | None = None,
-) -> ProviderSpec:
-    """构造记忆抽取专用 spec，默认走 DeepSeek V4 Pro。"""
-    spec = (
-        ProviderSpec.from_config(
-            "DEEPSEEK",
-            provider_config,
-            default_model_key="memory_model",
-        )
-        if provider_config is not None
-        else ProviderSpec.from_env(
-            prefix="DEEPSEEK",
-            model_env_var="DEEPSEEK_MEMORY_MODEL",
-            default_model_key="memory_model",
-        )
-    )
-    return _disable_deepseek_thinking(spec)
-
-
-def _disable_deepseek_thinking(spec: ProviderSpec) -> ProviderSpec:
-    """DeepSeek V4 默认关闭 thinking，保持主对话与记忆抽取延迟可控。"""
-    if "deepseek" in spec.model.lower():
-        return dataclasses.replace(
-            spec,
-            defaults={
-                **spec.defaults,
-                "extra_body": {"thinking": {"type": "disabled"}},
-            },
-        )
-    return spec
-
-
-def _llm_factory_from_config(provider_config: ProviderConfig) -> Callable[[str], LLMClient]:
-    def factory(model: str) -> LLMClient:
-        return LLMClient(_make_spec_with_thinking_off(model, provider_config=provider_config))
-
-    return factory
-
-
 def _llm_factory(model: str) -> LLMClient:
-    return LLMClient(_make_spec_with_thinking_off(model))
-
-
-def _memory_llm_client(provider_config: ProviderConfig | None = None) -> LLMClient:
-    return LLMClient(_make_memory_spec_with_thinking_off(provider_config))
+    raise RuntimeError("BridgeRuntime.llm_client_factory is required before creating sessions")
 
 
 def _make_prompt_factory(personas_dir: Path) -> Callable[[str], MarkdownPromptBuilder]:
@@ -234,34 +169,6 @@ def _make_persistent_session_manager(
     )
 
 
-def _runtime_config_from_env() -> BridgeRuntimeConfig:
-    raw_window = os.environ.get("DEEPSEEK_CONTEXT_WINDOW", "").strip()
-    context_window: int | None = None
-    if raw_window:
-        try:
-            parsed = int(raw_window)
-            if parsed > 0:
-                context_window = parsed
-        except ValueError:
-            pass
-
-    return BridgeRuntimeConfig(
-        llm_config=ProviderConfig(
-            api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-            model=os.environ.get("DEEPSEEK_MODEL") or None,
-            api_base=os.environ.get("DEEPSEEK_API_BASE") or None,
-            context_window=context_window,
-        ),
-        memory_llm_config=ProviderConfig(
-            api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-            model=os.environ.get("DEEPSEEK_MEMORY_MODEL") or None,
-            api_base=os.environ.get("DEEPSEEK_API_BASE") or None,
-            context_window=context_window,
-        ),
-        tool_credentials=ToolCredentials(tavily_api_key=os.environ.get("TAVILY_API_KEY") or None),
-    )
-
-
 def build_runtime(
     settings: BridgeSettings,
     *,
@@ -282,15 +189,15 @@ def build_runtime(
     # 020:传 persistent_store → 注册 recall_past_chats 工具,让 LLM 能跨 session
     # 翻历史对话(否则 IM session 这种新 session 撞到"recall_past_chats 未注册"错误)。
     if runtime_config is None:
-        runtime_config = _runtime_config_from_env()
+        runtime_config = resolve_bridge_runtime_config(
+            credential_source_for_mode(config_mode_from_env())
+        )
     tool_registry = make_default_registry(
         session_store=persistent_store,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
     )
     default_persona = catalog.find_by_name("default").name
-    default_model = _make_spec_with_thinking_off(
-        provider_config=runtime_config.llm_config,
-    ).model
+    default_model = runtime_config.default_model
 
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
@@ -305,7 +212,7 @@ def build_runtime(
         recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
-            _memory_llm_client(runtime_config.memory_llm_config),
+            LLMClient(runtime_config.memory_spec),
             on_retrieved=recall_buffer.record,
             pinned_relevance_gate=False,
         )
@@ -314,7 +221,7 @@ def build_runtime(
         except Exception:
             logger.warning("memory warmup failed; continuing startup", exc_info=True)
 
-    llm_client_factory = _llm_factory_from_config(runtime_config.llm_config)
+    llm_client_factory = runtime_config.llm_client_factory
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store,
         tool_registry,

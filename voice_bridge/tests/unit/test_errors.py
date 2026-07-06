@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voice_bridge.errors import (
     AgentBridgeUnreachableError,
+    ChatCredentialMissingError,
     InvalidRequestError,
     SessionBindFailedError,
     UnknownCallError,
@@ -25,6 +26,11 @@ class TestErrorInfo:
 
     def test_invalid_request_400(self) -> None:
         assert InvalidRequestError().info.http_status == 400
+
+    def test_chat_credential_missing_400(self) -> None:
+        err = ChatCredentialMissingError()
+        assert err.info.http_status == 400
+        assert err.info.error_code == "chat_credentials_missing"
 
     def test_volc_auth_502(self) -> None:
         assert VolcAuthError().info.http_status == 502
@@ -50,6 +56,7 @@ class TestErrorInfo:
         for cls in (
             UnknownCallError,
             InvalidRequestError,
+            ChatCredentialMissingError,
             VolcAuthError,
             VolcRateLimitError,
             VolcUnreachableError,

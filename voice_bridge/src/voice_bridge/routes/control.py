@@ -25,7 +25,12 @@ from pydantic import BaseModel, Field
 from ..assembly import VoiceBridgeRuntime
 from ..callbacks import DecodedVolcCallback, decode_volc_callback_payload
 from ..calls import CallBinding, VoiceCallEvent
-from ..errors import UnknownCallError, VoiceBridgeError, VoiceCredentialMissingError
+from ..errors import (
+    ChatCredentialMissingError,
+    UnknownCallError,
+    VoiceBridgeError,
+    VoiceCredentialMissingError,
+)
 from ..latency import log_latency, monotonic_ms
 from ..rtc import build_scenes
 from ..rtc.token import RoomTokenSigner
@@ -95,6 +100,11 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         missing = credentials_from_settings(runtime.settings).missing_names()
         if missing:
             raise VoiceCredentialMissingError(detail="missing: " + ", ".join(missing))
+
+    def ensure_chat_credentials_configured() -> None:
+        missing = runtime.missing_chat_credentials() if runtime.missing_chat_credentials else ()
+        if missing:
+            raise ChatCredentialMissingError(detail="missing: " + ", ".join(missing))
 
     async def start_voice_chat_for_binding(
         binding: CallBinding,
@@ -186,6 +196,7 @@ def register_control_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None:
         )
         try:
             ensure_voice_credentials_configured()
+            ensure_chat_credentials_configured()
             created_session = body.session_id is None
             if body.session_id is None:
                 created = await runtime.agent_bridge.create_session(

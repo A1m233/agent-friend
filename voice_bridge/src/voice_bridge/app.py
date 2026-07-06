@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Callable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -30,7 +31,11 @@ from .routes import (
     register_llm_proxy_routes,
     register_transcription_routes,
 )
-from .runtime_config import apply_voice_credentials, resolve_voice_credentials
+from .runtime_config import (
+    apply_voice_credentials,
+    missing_chat_credential_names,
+    resolve_voice_credentials,
+)
 from .settings import VoiceBridgeSettings
 
 
@@ -109,13 +114,20 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
     """
     load_from_env = settings is None
     mode: str
+    missing_chat_credentials: Callable[[], tuple[str, ...]] | None
     if settings is None:
         mode = config_mode_from_env()
         base_settings = VoiceBridgeSettings(**settings_kwargs_for_mode(mode))
-        credentials = resolve_voice_credentials(credential_source_for_mode(mode))
+        source = credential_source_for_mode(mode)
+        credentials = resolve_voice_credentials(source)
+
+        def missing_chat_credentials() -> tuple[str, ...]:
+            return missing_chat_credential_names(source)
+
         settings = apply_voice_credentials(base_settings, credentials)
     else:
         mode = "injected"
+        missing_chat_credentials = None
     _configure_logging(settings.log_level, file_log=load_from_env)
     logging.getLogger(__name__).info(
         "voice_bridge logging configured log_path=%s pid=%s executable=%s base_executable=%s config_mode=%s public_url_configured=%s",
@@ -126,7 +138,7 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
         mode,
         bool(settings.public_url),
     )
-    runtime = build_runtime(settings)
+    runtime = build_runtime(settings, missing_chat_credentials=missing_chat_credentials)
 
     app = FastAPI(
         title="voice-bridge",

@@ -14,6 +14,10 @@ from dotenv import dotenv_values
 from .credentials import (
     DEEPSEEK_MEMORY_MODEL,
     DEEPSEEK_MODEL,
+    LLM_CHAT_MODEL,
+    LLM_CHAT_PROVIDER,
+    LLM_MEMORY_MODEL,
+    LLM_MEMORY_PROVIDER,
     RUNTIME_ONLY_NAMES,
     CredentialStatus,
     CredentialValue,
@@ -28,6 +32,91 @@ SETTINGS_NAME_MAP: dict[str, str] = {
     DEEPSEEK_MODEL: "deepseekModel",
     DEEPSEEK_MEMORY_MODEL: "deepseekMemoryModel",
 }
+
+DEFAULT_CHAT_MODEL = "deepseek/deepseek-v4-flash"
+DEFAULT_MEMORY_MODEL = "deepseek/deepseek-v4-pro"
+
+
+def _string_setting(data: Mapping[str, Any], key: str) -> str | None:
+    value = data.get(key)
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _legacy_rust_windows_keyring_value(service_name: str, name: str) -> str | None:
+    """Read the pre-fix Rust keyring Windows target, if present.
+
+    Rust keyring 3.x maps ``Entry::new(service, user)`` to ``user.service`` on
+    Windows, while Python keyring maps the same logical pair to
+    ``user@service`` after collision handling. This compatibility read keeps
+    existing desktop-saved secrets usable while Tauri moves writes to the
+    Python-compatible target.
+    """
+
+    modules = _windows_credential_modules()
+    if modules is None:
+        return None
+    pywintypes, win32cred = modules
+
+    target = f"{name}.{service_name}"
+    try:
+        credential = win32cred.CredRead(
+            Type=win32cred.CRED_TYPE_GENERIC,
+            TargetName=target,
+        )
+    except pywintypes.error as e:
+        if getattr(e, "winerror", None) == 1168 and getattr(e, "funcname", "") == "CredRead":
+            return None
+        return None
+
+    blob = credential.get("CredentialBlob")
+    if not isinstance(blob, bytes):
+        return None
+    try:
+        return blob.decode("utf-16")
+    except UnicodeDecodeError:
+        try:
+            return blob.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+
+def _delete_legacy_rust_windows_keyring_value(service_name: str, name: str) -> bool:
+    modules = _windows_credential_modules()
+    if modules is None:
+        return False
+    pywintypes, win32cred = modules
+
+    target = f"{name}.{service_name}"
+    try:
+        win32cred.CredDelete(
+            Type=win32cred.CRED_TYPE_GENERIC,
+            TargetName=target,
+        )
+    except pywintypes.error as e:
+        if getattr(e, "winerror", None) == 1168 and getattr(e, "funcname", "") == "CredDelete":
+            return False
+        return False
+    return True
+
+
+def _windows_credential_modules() -> tuple[Any, Any] | None:
+    if os.name != "nt":
+        return None
+    try:
+        from win32ctypes.pywin32 import pywintypes, win32cred
+
+        return pywintypes, win32cred
+    except ImportError:  # pragma: no cover - depends on local Windows install
+        try:
+            import pywintypes
+            import win32cred
+
+            return pywintypes, win32cred
+        except ImportError:
+            return None
 
 
 class CredentialMissingError(RuntimeError):
@@ -101,7 +190,9 @@ class KeyringSource:
         try:
             raw = self._keyring().get_password(self._service_name, name)
         except Exception:
-            return None
+            raw = _legacy_rust_windows_keyring_value(self._service_name, name)
+        if not (raw or "").strip():
+            raw = _legacy_rust_windows_keyring_value(self._service_name, name)
         value = (raw or "").strip()
         if not value:
             return None
@@ -111,9 +202,13 @@ class KeyringSource:
         try:
             raw = self._keyring().get_password(self._service_name, name)
         except Exception as e:
-            return CredentialStatus(
-                name=name, configured=False, source=self.source_name, error=str(e)
-            )
+            raw = _legacy_rust_windows_keyring_value(self._service_name, name)
+            if not (raw or "").strip():
+                return CredentialStatus(
+                    name=name, configured=False, source=self.source_name, error=str(e)
+                )
+        if not (raw or "").strip():
+            raw = _legacy_rust_windows_keyring_value(self._service_name, name)
         return CredentialStatus(
             name=name,
             configured=bool((raw or "").strip()),
@@ -124,10 +219,13 @@ class KeyringSource:
         self._keyring().set_password(self._service_name, name, value)
 
     def delete(self, name: str) -> None:
+        deleted_legacy = _delete_legacy_rust_windows_keyring_value(self._service_name, name)
         try:
             self._keyring().delete_password(self._service_name, name)
         except Exception as e:
             if "not found" in str(e).lower() or "not exist" in str(e).lower():
+                if deleted_legacy:
+                    return
                 return
             raise
 
@@ -151,23 +249,61 @@ class SettingsFileSource:
         self._path = Path(path) if path is not None else default_settings_path()
 
     def _settings(self) -> dict[str, Any]:
-        if not self._path.exists():
-            return {}
         try:
+            if not self._path.exists():
+                return {}
             raw = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
         data = raw.get("settings", raw) if isinstance(raw, dict) else {}
         return data if isinstance(data, dict) else {}
 
+    def _model_selection(
+        self, key: str, *, legacy_key: str, legacy_default: str
+    ) -> tuple[str, str]:
+        settings = self._settings()
+        value = settings.get(key)
+        if isinstance(value, dict):
+            provider = _string_setting(value, "provider")
+            model = _string_setting(value, "model")
+            if provider and model:
+                return provider, model
+
+        legacy_model = _string_setting(settings, legacy_key) or legacy_default
+        return "deepseek", legacy_model
+
+    def _projected_model_value(self, name: str) -> str | None:
+        chat_provider, chat_model = self._model_selection(
+            "chatModel",
+            legacy_key="deepseekModel",
+            legacy_default=DEFAULT_CHAT_MODEL,
+        )
+        memory_provider, memory_model = self._model_selection(
+            "memoryModel",
+            legacy_key="deepseekMemoryModel",
+            legacy_default=DEFAULT_MEMORY_MODEL,
+        )
+        values = {
+            LLM_CHAT_PROVIDER: chat_provider,
+            LLM_CHAT_MODEL: chat_model,
+            LLM_MEMORY_PROVIDER: memory_provider,
+            LLM_MEMORY_MODEL: memory_model,
+        }
+        return values.get(name)
+
     def get(self, name: str) -> CredentialValue | None:
         settings_key = SETTINGS_NAME_MAP.get(name)
-        if settings_key is None:
-            return None
-        value = self._settings().get(settings_key)
-        if not isinstance(value, str):
-            return None
-        value = value.strip()
+        if settings_key is not None:
+            value = _string_setting(self._settings(), settings_key)
+        elif name in {
+            LLM_CHAT_PROVIDER,
+            LLM_CHAT_MODEL,
+            LLM_MEMORY_PROVIDER,
+            LLM_MEMORY_MODEL,
+        }:
+            value = self._projected_model_value(name)
+        else:
+            value = None
         if not value:
             return None
         return CredentialValue(name=name, value=value, source=self.source_name)

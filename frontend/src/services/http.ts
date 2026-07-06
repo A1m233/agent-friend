@@ -17,10 +17,27 @@ export interface FriendlyError {
   code?: string;
 }
 
-function toFriendlyError(err: unknown): FriendlyError {
+function backendDetailOf(data: unknown): FriendlyError | null {
+  if (!data || typeof data !== "object") return null;
+  const detail = "detail" in data ? (data as { detail?: unknown }).detail : null;
+  if (!detail || typeof detail !== "object") return null;
+
+  const message =
+    "message" in detail && typeof detail.message === "string"
+      ? detail.message
+      : null;
+  const code =
+    "error" in detail && typeof detail.error === "string" ? detail.error : undefined;
+  if (!message) return null;
+  return { friendly: message, code };
+}
+
+export function toFriendlyError(err: unknown): FriendlyError {
   // 这里只做归一化兜底；具体技术细节（status / 异常栈）不外泄，可在此集中上报/日志。
   if (axios.isAxiosError(err)) {
     if (err.response) {
+      const backendDetail = backendDetailOf(err.response.data);
+      if (backendDetail) return backendDetail;
       return { friendly: "出了点小状况，我稍后再帮你试试。", code: "http_error" };
     }
     return { friendly: "网络好像不太顺畅，待会儿再聊？", code: "network" };

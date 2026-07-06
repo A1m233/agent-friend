@@ -20,17 +20,11 @@ from typing import Any
 
 from ag_ui.core import RunAgentInput, UserMessage
 
+from llm_providers import all_model_ids, model_belongs_to_provider, normalize_provider_id
+
 
 class DecodeError(ValueError):
     """AG-UI ``RunAgentInput`` 不符合 bridge 接受的最小约束。"""
-
-
-ALLOWED_DESKTOP_MODELS = frozenset(
-    {
-        "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v4-pro",
-    }
-)
 
 
 @dataclass(frozen=True)
@@ -42,8 +36,7 @@ class DecodedRequest:
         run_id: AG-UI 协议 ``run_id``；本轮 ``RUN_STARTED`` / ``RUN_FINISHED``
             事件回填。
         new_user_input: 最后一条 ``UserMessage.content`` 的文本。
-        requested_model: 桌面设置中心传入的新会话默认模型。只允许本期两个
-            DeepSeek 模型；已有 session 不会被该值覆盖。
+        requested_model: 桌面设置中心传入的新会话默认模型。已有 session 不会被该值覆盖。
     """
 
     thread_id: str
@@ -55,8 +48,9 @@ class DecodedRequest:
 def resolve_requested_model(payload: RunAgentInput) -> str | None:
     """Resolve optional desktop-requested model from ``forwarded_props``.
 
-    This keeps the temporary DeepSeek-only policy in one place. Future provider
-    registry work can replace this function without touching route plumbing.
+    The canonical wire value is a model id string such as
+    ``deepseek/deepseek-v4-flash`` or ``kimi/kimi-k2.6``. A provider-aware object
+    shape is also accepted so newer clients do not need to rely on prefixes.
     """
 
     forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
@@ -66,13 +60,25 @@ def resolve_requested_model(payload: RunAgentInput) -> str | None:
     raw = forwarded_props.get("model")
     if raw in (None, ""):
         return None
-    if not isinstance(raw, str):
-        raise DecodeError("forwarded_props.model 必须是字符串")
 
-    model = raw.strip()
-    if model not in ALLOWED_DESKTOP_MODELS:
-        raise DecodeError(f"不支持的桌面模型：{model}")
-    return model
+    if isinstance(raw, str):
+        model = raw.strip()
+        if model not in all_model_ids():
+            raise DecodeError(f"不支持的桌面模型：{model}")
+        return model
+
+    if isinstance(raw, dict):
+        provider_raw = raw.get("provider")
+        model_raw = raw.get("model")
+        if not isinstance(provider_raw, str) or not isinstance(model_raw, str):
+            raise DecodeError("forwarded_props.model provider/model 必须是字符串")
+        provider_id = normalize_provider_id(provider_raw)
+        model = model_raw.strip()
+        if not model_belongs_to_provider(provider_id, model):
+            raise DecodeError(f"不支持的桌面模型：{model}")
+        return model
+
+    raise DecodeError("forwarded_props.model 必须是字符串或 provider/model 对象")
 
 
 def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:

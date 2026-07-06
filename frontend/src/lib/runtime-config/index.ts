@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 
-export type RuntimeConfigGroup = "deepseek" | "tavily" | "volcVoice";
+export type RuntimeConfigGroup = "deepseek" | "kimi" | "tavily" | "volcVoice";
 export type RuntimeConfigKind = "secret";
 export type RuntimeConfigSource = "env" | "keyring" | "legacy-dotenv";
 export type RuntimeConfigEffect = "restartBridge" | "restartVoice";
 
 export type RuntimeSecretName =
   | "DEEPSEEK_API_KEY"
+  | "KIMI_API_KEY"
   | "TAVILY_API_KEY"
   | "VOLC_ACCESS_KEY"
   | "VOLC_SECRET_KEY"

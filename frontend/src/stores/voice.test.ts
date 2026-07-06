@@ -49,6 +49,17 @@ import { activityFromBackendEvent, startVoiceOwnerCommandListener, useVoiceStore
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 
+interface RtcClientOptionsForTest {
+  onRemoteAudioVolume?: (event: { userId: string; volume: number }) => void;
+}
+
+interface CallEventForTest {
+  type: "callback";
+  callId: string;
+  stage: string;
+  roundId?: number;
+}
+
 vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(),
   listen: vi.fn(),
@@ -273,28 +284,35 @@ describe("voice store", () => {
 
     await useVoiceStore.getState().requestStart({ sessionId: "session-1" });
 
-    const options = rtcMocks.createVolcRtcClient.mock.calls[0][0];
-    callEventHandler?.({
+    const createRtcClientMock = rtcMocks.createVolcRtcClient as unknown as {
+      mock: { calls: Array<[RtcClientOptionsForTest]> };
+    };
+    const options = createRtcClientMock.mock.calls[0]?.[0];
+    expect(options).toBeDefined();
+    const emitCallEvent = (event: CallEventForTest) => {
+      (callEventHandler as ((event: CallEventForTest) => void) | null)?.(event);
+    };
+    emitCallEvent({
       type: "callback",
       callId: "call-1",
       stage: "answering",
       roundId: 1,
     });
-    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 12 });
-    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 15 });
-    callEventHandler?.({
+    options?.onRemoteAudioVolume?.({ userId: "bot-1", volume: 12 });
+    options?.onRemoteAudioVolume?.({ userId: "bot-1", volume: 15 });
+    emitCallEvent({
       type: "callback",
       callId: "call-1",
       stage: "answerFinish",
       roundId: 1,
     });
-    callEventHandler?.({
+    emitCallEvent({
       type: "callback",
       callId: "call-1",
       stage: "answering",
       roundId: 2,
     });
-    options.onRemoteAudioVolume?.({ userId: "bot-1", volume: 18 });
+    options?.onRemoteAudioVolume?.({ userId: "bot-1", volume: 18 });
 
     const remoteVolumeLogs = infoSpy.mock.calls
       .map(([message]) => String(message))

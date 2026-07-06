@@ -126,10 +126,11 @@ function readParams() {
 function getAppCanvas(app: RuntimeApp | null): HTMLCanvasElement | null {
   if (!app) return null;
 
-  const appCanvas = "canvas" in app ? app.canvas : "view" in app ? app.view : null;
+  const appLike = app as { canvas?: unknown; view?: unknown; renderer?: unknown };
+  const appCanvas = appLike.canvas ?? appLike.view ?? null;
   if (appCanvas instanceof HTMLCanvasElement) return appCanvas;
 
-  const renderer = app.renderer as { canvas?: unknown; view?: unknown; resolution?: number };
+  const renderer = appLike.renderer as { canvas?: unknown; view?: unknown; resolution?: number };
   const rendererCanvas = renderer.canvas ?? renderer.view ?? null;
   return rendererCanvas instanceof HTMLCanvasElement ? rendererCanvas : null;
 }
@@ -478,12 +479,16 @@ export function SpineSpikeApp() {
       });
       setStatus({
         kind: "idle",
-        message: `Runtime ready: ${RUNTIME_OPTIONS.find((item) => item.value === runtimeMode)?.label}.`,
+        message: `Runtime ready: ${
+          RUNTIME_OPTIONS.find(
+            (item: { value: RuntimeMode; label: string }) => item.value === runtimeMode,
+          )?.label
+        }.`,
       });
 
       setupSlotDrag(slot);
 
-      pixi.ticker.add((ticker) => {
+      pixi.ticker.add((ticker: unknown) => {
         tickerElapsed += getTickerDeltaMs(ticker);
         if (tickerElapsed < 250) return;
         tickerElapsed = 0;
@@ -580,7 +585,9 @@ export function SpineSpikeApp() {
       addRuntimeChild(slot, spine);
       refs.current.spine = spine;
 
-      const nextAnimations = spine.skeleton.data.animations.map((item) => item.name);
+      const nextAnimations = spine.skeleton.data.animations.map(
+        (item: { name: string }) => item.name,
+      );
       const initialAnimation = chooseInitialAnimation(nextAnimations, animationName.trim());
       setAnimations(nextAnimations);
       if (initialAnimation) {

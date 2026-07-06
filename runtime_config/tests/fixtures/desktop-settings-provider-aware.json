@@ -1,0 +1,16 @@
+{
+  "settings": {
+    "theme": "dark",
+    "voiceTunnelConsentAccepted": true,
+    "chatModel": {
+      "provider": "kimi",
+      "model": "kimi/kimi-k2.7-code-highspeed"
+    },
+    "memoryModel": {
+      "provider": "deepseek",
+      "model": "deepseek/deepseek-v4-pro"
+    },
+    "avatarModelId": "builtin:spine:ark-models:2025_shu",
+    "petAvatarSize": "mini"
+  }
+}

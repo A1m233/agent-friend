@@ -33,6 +33,29 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
+interface MissingCurrentSessionResetInput {
+  sessionsLoaded: boolean;
+  currentSessionId: string | null;
+  sessionIds: string[];
+  streaming: boolean;
+  historyLoading: boolean;
+  messageCount: number;
+}
+
+export function shouldResetMissingCurrentSession({
+  sessionsLoaded,
+  currentSessionId,
+  sessionIds,
+  streaming,
+  historyLoading,
+  messageCount,
+}: MissingCurrentSessionResetInput): boolean {
+  if (!sessionsLoaded || !currentSessionId) return false;
+  if (sessionIds.includes(currentSessionId)) return false;
+  if (streaming || historyLoading) return false;
+  return messageCount === 0;
+}
+
 function formatSessionAge(input: string, now = Date.now()): string {
   const timestamp = new Date(input).getTime();
   if (!Number.isFinite(timestamp)) return "";
@@ -66,6 +89,9 @@ export function HistorySidebar() {
   const sessionsLoaded = useSessionsStore((s) => s.loaded);
   const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const streaming = useConversationStore((s) => s.streaming);
+  const historyLoading = useConversationStore((s) => s.historyLoading);
+  const messageCount = useConversationStore((s) => s.messages.length);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
   const [renamingSession, setRenamingSession] = useState<{
@@ -193,11 +219,27 @@ export function HistorySidebar() {
   }, [refresh, status]);
 
   useEffect(() => {
-    if (!sessionsLoaded || !currentSessionId) return;
-    if (list.some((s) => s.session_id === currentSessionId)) return;
+    const shouldReset = shouldResetMissingCurrentSession({
+      sessionsLoaded,
+      currentSessionId,
+      sessionIds: list.map((s) => s.session_id),
+      streaming,
+      historyLoading,
+      messageCount,
+    });
+    if (!shouldReset) return;
     blockAutoRestore();
     newSession();
-  }, [blockAutoRestore, currentSessionId, list, newSession, sessionsLoaded]);
+  }, [
+    blockAutoRestore,
+    currentSessionId,
+    historyLoading,
+    list,
+    messageCount,
+    newSession,
+    sessionsLoaded,
+    streaming,
+  ]);
 
   useEffect(() => {
     if (list.length === 0) return;

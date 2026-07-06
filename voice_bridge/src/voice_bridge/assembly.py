@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .asr import AsrProvider
@@ -28,9 +29,14 @@ class VoiceBridgeRuntime:
     call_events: VoiceCallEventHub
     agent_bridge: AgentBridgeClient
     asr_provider: AsrProvider | None = None
+    missing_chat_credentials: Callable[[], tuple[str, ...]] | None = None
 
 
-def build_runtime(settings: VoiceBridgeSettings) -> VoiceBridgeRuntime:
+def build_runtime(
+    settings: VoiceBridgeSettings,
+    *,
+    missing_chat_credentials: Callable[[], tuple[str, ...]] | None = None,
+) -> VoiceBridgeRuntime:
     """进程启动期一次性装配 :class:`VoiceBridgeRuntime`。"""
     rtc_client = VolcRtcClient(
         access_key=settings.volc_access_key,
@@ -47,4 +53,5 @@ def build_runtime(settings: VoiceBridgeSettings) -> VoiceBridgeRuntime:
         call_events=call_events,
         agent_bridge=agent_bridge,
         asr_provider=asr_provider,
+        missing_chat_credentials=missing_chat_credentials,
     )

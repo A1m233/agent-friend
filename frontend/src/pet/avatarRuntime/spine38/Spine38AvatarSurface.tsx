@@ -442,7 +442,7 @@ export function Spine38AvatarSurface({
       let downTimestamp = 0;
       let dragArmed = false;
 
-      slot.on("pointerdown", (event) => {
+      slot.on("pointerdown", (event: unknown) => {
         const global = getGlobalPoint(event);
         if (!global) return;
         pointerStart = global;
@@ -451,7 +451,7 @@ export function Spine38AvatarSurface({
         dragArmed = false;
       });
 
-      slot.on("globalpointermove", (event) => {
+      slot.on("globalpointermove", (event: unknown) => {
         const global = getGlobalPoint(event);
         if (!global || !pointerStart || !slotStart) return;
         const dx = global.x - pointerStart.x;
@@ -504,7 +504,9 @@ export function Spine38AvatarSurface({
       spine.eventMode = "none";
       slot.addChild(spine);
       spineRef.current = spine;
-      animationsRef.current = spine.skeleton.data.animations.map((item) => item.name);
+      animationsRef.current = spine.skeleton.data.animations.map(
+        (item: { name: string }) => item.name,
+      );
       const layoutBounds = sampleSpine38CanonicalLayoutBounds(
         spine,
         entry,
@@ -524,7 +526,7 @@ export function Spine38AvatarSurface({
       syncBounds();
       setReady(true);
 
-      app.ticker.add((ticker) => {
+      app.ticker.add((ticker: unknown) => {
         tickerElapsed += getTickerDeltaMs(ticker);
         if (tickerElapsed < 250) return;
         tickerElapsed = 0;

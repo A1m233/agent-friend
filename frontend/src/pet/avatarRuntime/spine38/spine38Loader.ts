@@ -48,7 +48,7 @@ async function loadSpine38TextureAtlas(entry: SpineAvatarModelEntry) {
   const pages = readAtlasTexturePages(atlasText);
   const textures: Record<string, PIXI7.Texture> = {};
   await Promise.all(
-    pages.map(async (page, index) => {
+    pages.map(async (page: string, index: number) => {
       const texturePath = entry.resources.textures?.[index];
       if (!texturePath) return;
       const texture = await PIXI7.Assets.load<PIXI7.Texture>(texturePath);
@@ -61,7 +61,7 @@ async function loadSpine38TextureAtlas(entry: SpineAvatarModelEntry) {
     let atlas: TextureAtlas | null = null;
     atlas = new TextureAtlas(
       atlasText,
-      (page, callback) => {
+      (page: string, callback: (baseTexture: unknown) => void) => {
         const texture = textures[page] ?? Object.values(textures)[0];
         if (!texture) {
           reject(new Error(`Missing Spine atlas texture: ${page}`));
@@ -69,7 +69,7 @@ async function loadSpine38TextureAtlas(entry: SpineAvatarModelEntry) {
         }
         callback(texture.baseTexture);
       },
-      (loadedAtlas) => {
+      (loadedAtlas?: TextureAtlas) => {
         const resolvedAtlas = loadedAtlas ?? atlas;
         if (!resolvedAtlas) {
           reject(new Error("Failed to construct Spine texture atlas"));

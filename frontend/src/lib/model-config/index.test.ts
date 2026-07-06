@@ -1,32 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEEPSEEK_MODELS,
-  isDeepseekModel,
+  MODEL_PROVIDERS,
+  defaultModelSelection,
+  normalizeModelSelection,
   resolveDefaultConversationModel,
 } from "./index";
 
 describe("model config", () => {
-  it("only allows the two desktop DeepSeek models", () => {
-    expect(DEEPSEEK_MODELS).toEqual([
-      "deepseek/deepseek-v4-flash",
-      "deepseek/deepseek-v4-pro",
+  it("exposes DeepSeek and Kimi provider models", () => {
+    expect(MODEL_PROVIDERS.map((provider) => provider.id)).toEqual([
+      "deepseek",
+      "kimi",
     ]);
-    expect(isDeepseekModel("deepseek/deepseek-v4-flash")).toBe(true);
-    expect(isDeepseekModel("deepseek/deepseek-v4-pro")).toBe(true);
-    expect(isDeepseekModel("openai/gpt-4.1")).toBe(false);
+    expect(MODEL_PROVIDERS.find((provider) => provider.id === "kimi")?.models).toEqual(
+      [
+        { id: "kimi/kimi-k2.6", label: "kimi-k2.6" },
+        { id: "kimi/kimi-k2.5", label: "kimi-k2.5" },
+        { id: "kimi/kimi-k2.7-code", label: "kimi-k2.7-code" },
+        {
+          id: "kimi/kimi-k2.7-code-highspeed",
+          label: "kimi-k2.7-code-highspeed",
+        },
+      ],
+    );
   });
 
-  it("resolves the selected model with a stable fallback", () => {
+  it("resolves the selected conversation model", () => {
     expect(
       resolveDefaultConversationModel({
-        deepseekModel: "deepseek/deepseek-v4-flash",
+        chatModel: { provider: "kimi", model: "kimi/kimi-k2.6" },
       }),
-    ).toBe("deepseek/deepseek-v4-flash");
+    ).toBe("kimi/kimi-k2.6");
+  });
 
+  it("uses provider defaults when a model is stale", () => {
+    expect(defaultModelSelection("deepseek", "memory")).toEqual({
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-pro",
+    });
     expect(
-      resolveDefaultConversationModel({
-        deepseekModel: "not-a-model" as never,
-      }),
-    ).toBe("deepseek/deepseek-v4-flash");
+      normalizeModelSelection(
+        { provider: "kimi", model: "deepseek/deepseek-v4-flash" },
+        "chat",
+      ),
+    ).toEqual({ provider: "kimi", model: "kimi/kimi-k2.6" });
   });
 });
