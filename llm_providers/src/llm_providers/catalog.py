@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .errors import LLMAuthError
-from .spec import ProviderSpec
+from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 
 ModelPurpose = Literal["chat", "memory"]
 
@@ -78,7 +78,10 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         ),
         default_model="deepseek/deepseek-v4-flash",
         default_memory_model="deepseek/deepseek-v4-pro",
-        default_call_options={"extra_body": {"thinking": {"type": "disabled"}}},
+        default_call_options={
+            "extra_body": {"thinking": {"type": "disabled"}},
+            "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
+        },
     ),
     KIMI_PROVIDER_ID: ProviderDefinition(
         provider_id=KIMI_PROVIDER_ID,
@@ -109,6 +112,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         default_model="kimi/kimi-k2.6",
         default_memory_model="kimi/kimi-k2.6",
         api_base=KIMI_API_BASE,
+        default_call_options={"timeout": DEFAULT_LLM_TIMEOUT_SECONDS},
     ),
 }
 
@@ -170,6 +174,7 @@ def build_provider_spec(
     model_id: str | None = None,
     purpose: ModelPurpose = "chat",
     context_window: int | None = None,
+    timeout_seconds: float | None = None,
 ) -> ProviderSpec:
     """Build a ``ProviderSpec`` from a provider selection and API key."""
 
@@ -185,11 +190,15 @@ def build_provider_spec(
     )
     model_window = model.context_window if model else None
 
+    defaults = dict(provider.default_call_options)
+    if timeout_seconds is not None:
+        defaults["timeout"] = timeout_seconds
+
     return ProviderSpec(
         model=litellm_model,
         api_key=key,
         api_base=provider.api_base,
-        defaults=dict(provider.default_call_options),
+        defaults=defaults,
         context_window=context_window or model_window,
     )
 
@@ -212,10 +221,14 @@ def replace_spec_model(spec: ProviderSpec, model_id: str) -> ProviderSpec:
 
     provider = provider_definition(infer_provider_id_from_model(model_id))
     model = provider.model(model_id)
+    defaults = dict(provider.default_call_options)
+    if "timeout" in spec.defaults:
+        defaults["timeout"] = spec.defaults["timeout"]
+
     return dataclasses.replace(
         spec,
         model=model.litellm_model if model else _fallback_litellm_model(provider, model_id),
         api_base=provider.api_base,
-        defaults=dict(provider.default_call_options),
+        defaults=defaults,
         context_window=model.context_window if model else spec.context_window,
     )

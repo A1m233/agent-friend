@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from llm_providers import (
     LLMAuthError,
@@ -17,6 +18,7 @@ def test_deepseek_defaults_keep_existing_models_and_thinking_disabled() -> None:
     assert spec.model == "deepseek/deepseek-v4-flash"
     assert spec.context_window == 1_000_000
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
     assert default_model_for_provider("deepseek", "memory") == "deepseek/deepseek-v4-pro"
 
 
@@ -25,7 +27,13 @@ def test_kimi_defaults_use_official_openai_compatible_base_url() -> None:
 
     assert spec.model == "openai/kimi-k2.6"
     assert spec.api_base == "https://api.moonshot.cn/v1"
-    assert spec.defaults == {}
+    assert spec.defaults == {"timeout": DEFAULT_LLM_TIMEOUT_SECONDS}
+
+
+def test_provider_spec_allows_timeout_override() -> None:
+    spec = build_provider_spec(provider_id="deepseek", api_key="k", timeout_seconds=12.5)
+
+    assert spec.defaults["timeout"] == 12.5
 
 
 def test_kimi_model_id_maps_to_litellm_openai_compatible_model() -> None:

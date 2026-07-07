@@ -48,6 +48,17 @@ def _optional_int(source: CredentialSource, name: str) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _optional_float(source: CredentialSource, name: str) -> float | None:
+    raw = optional_secret(source, name)
+    if not raw:
+        return None
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _provider_prefix(provider_id: str) -> str:
     credential_name = provider_definition(provider_id).credential_name
     return credential_name.removesuffix("_API_KEY")
@@ -83,6 +94,7 @@ def _provider_spec(
         model_id=model_id,
         purpose=purpose,
         context_window=_optional_int(source, f"{prefix}_CONTEXT_WINDOW"),
+        timeout_seconds=_optional_float(source, f"{prefix}_TIMEOUT_SECONDS"),
     )
 
 

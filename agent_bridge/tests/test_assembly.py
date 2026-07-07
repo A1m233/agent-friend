@@ -8,6 +8,7 @@ import pytest
 from agent_bridge.assembly import build_runtime
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 from agent_bridge.settings import BridgeSettings
+from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from runtime_config import credential_source_for_mode
 
@@ -57,6 +58,7 @@ def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(
 
     assert spec.model == "deepseek/deepseek-v4-pro"
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
 
 
 def test_memory_spec_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,6 +69,19 @@ def test_memory_spec_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> Non
     spec = runtime_config.memory_spec
 
     assert spec.model == "deepseek/custom-memory"
+
+
+def test_runtime_config_allows_provider_timeout_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
+
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
+    client = runtime_config.llm_client_factory(runtime_config.default_model)
+
+    assert runtime_config.memory_spec.defaults["timeout"] == 12.5
+    assert client.spec.defaults["timeout"] == 12.5
 
 
 def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,5 +97,7 @@ def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> No
     assert runtime_config.default_model == "kimi/kimi-k2.7-code-highspeed"
     assert runtime_config.memory_spec.model == "openai/kimi-k2.6"
     assert runtime_config.memory_spec.api_base == "https://api.moonshot.cn/v1"
+    assert runtime_config.memory_spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
     assert client.spec.model == "openai/kimi-k2.7-code-highspeed"
     assert client.spec.api_base == "https://api.moonshot.cn/v1"
+    assert client.spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS

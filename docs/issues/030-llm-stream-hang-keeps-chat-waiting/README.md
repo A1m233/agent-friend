@@ -1,6 +1,6 @@
 # 030 · LLM stream hang keeps chat waiting forever
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：high
 - **发现日期**：2026-06-26
 - **关联需求**：006-agent-bridge、010-desktop-shell-and-chat-ui
@@ -67,3 +67,7 @@ litellm.completion(..., stream=True, **kwargs)
 4. 明确 stop/cancel 语义：前端 abort fetch 后，后端如果已经进入阻塞式 provider generator，可能无法立即取消；至少应依赖 provider timeout 收敛，并尽量在 client disconnect / `GeneratorExit` 时关闭 provider response，必要时再评估 run registry / cancellation token。
 5. 前端增加“长时间等待”兜底：例如超过阈值后提示“这次回复有点卡住了，可以停止后重试”，但这只能改善体感，不能替代后端 timeout。
 6. 可选增加 provider 健康 / 熔断：连续 LLM timeout 后在连接状态或 debug 面板里暴露“LLM 上游异常”，不要只显示 bridge 已连接。
+
+---
+
+已在 commit `12b3c1e` 修复。

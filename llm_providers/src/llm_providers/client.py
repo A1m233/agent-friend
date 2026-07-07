@@ -75,7 +75,16 @@ def _map_exception(e: Exception) -> LLMError:
         return LLMAuthError(str(e))
     if isinstance(e, openai.RateLimitError):
         return LLMRateLimitError(str(e))
-    if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError)):
+    if isinstance(
+        e,
+        (
+            openai.APIConnectionError,
+            openai.APITimeoutError,
+            litellm.APIConnectionError,
+            litellm.Timeout,
+            litellm.CompletionTimeout,
+        ),
+    ):
         return LLMNetworkError(str(e))
     if isinstance(e, (litellm.ContextWindowExceededError, openai.BadRequestError)):
         return LLMBadRequestError(str(e))
