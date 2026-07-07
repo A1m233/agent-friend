@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from litellm.exceptions import Timeout as LiteLLMTimeout
 from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage
+from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
-from llm_providers import LLMClient, LLMUsage, ProviderConfig, ProviderSpec
+from llm_providers import LLMClient, LLMNetworkError, LLMUsage, ProviderConfig, ProviderSpec
 
 _GET_MODEL_INFO = "llm_providers.client.litellm.get_model_info"
+_COMPLETION = "llm_providers.client.litellm.completion"
 
 
 def _spec(**kw: object) -> ProviderSpec:
@@ -83,6 +87,20 @@ def test_spec_from_env_reads_context_window(monkeypatch: pytest.MonkeyPatch) -> 
     assert spec2.context_window is None
 
 
+def test_spec_from_env_reads_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """from_env 读 {prefix}_TIMEOUT_SECONDS；非法值回落 provider 默认。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
+
+    spec = ProviderSpec.from_env("DEEPSEEK")
+
+    assert spec.defaults["timeout"] == 12.5
+
+    monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "not-a-number")
+    spec2 = ProviderSpec.from_env("DEEPSEEK")
+    assert spec2.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
+
+
 def test_spec_from_env_can_read_dedicated_model_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,6 +143,16 @@ def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
     assert spec.api_key == "k"
     assert spec.model == "deepseek/deepseek-v4-flash"
     assert spec.context_window == 1000000
+    assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
+
+
+def test_spec_from_config_allows_timeout_override() -> None:
+    spec = ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(api_key="k", timeout_seconds=15.0),
+    )
+
+    assert spec.defaults["timeout"] == 15.0
 
 
 def test_spec_from_config_memory_model_defaults_to_v4_pro() -> None:
@@ -160,3 +188,63 @@ def test_extract_usage_handles_partial_fields() -> None:
     assert usage.prompt_tokens == 99
     assert usage.completion_tokens == 0
     assert usage.total_tokens == 0
+
+
+# ===== timeout 透传与异常映射 =====
+
+
+def test_complete_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_kwargs: dict[str, Any] = {}
+
+    def fake_completion(**kwargs: Any) -> Any:
+        seen_kwargs.update(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(defaults={"timeout": 12.5}))
+
+    assert client.complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert seen_kwargs["timeout"] == 12.5
+
+
+def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_kwargs: dict[str, Any] = {}
+
+    def fake_completion(**kwargs: Any) -> Any:
+        seen_kwargs.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(defaults={"timeout": 12.5}))
+
+    list(client.stream([{"role": "user", "content": "hi"}]))
+
+    assert seen_kwargs["timeout"] == 12.5
+
+
+def test_litellm_timeout_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_completion(**_kwargs: Any) -> Any:
+        raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(defaults={"timeout": 0.01}))
+
+    with pytest.raises(LLMNetworkError):
+        list(client.stream([{"role": "user", "content": "hi"}]))
+
+
+def test_litellm_stream_iteration_timeout_maps_to_network_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TimeoutIterator:
+        def __iter__(self) -> TimeoutIterator:
+            return self
+
+        def __next__(self) -> Any:
+            raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
+
+    monkeypatch.setattr(_COMPLETION, lambda **_kwargs: TimeoutIterator())
+    client = LLMClient(_spec(defaults={"timeout": 0.01}))
+
+    with pytest.raises(LLMNetworkError):
+        list(client.stream([{"role": "user", "content": "hi"}]))

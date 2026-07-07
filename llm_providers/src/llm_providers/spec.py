@@ -13,6 +13,13 @@ from typing import Any
 
 from .errors import LLMAuthError
 
+DEFAULT_LLM_TIMEOUT_SECONDS = 90.0
+"""Default upstream LLM call timeout.
+
+This is intentionally finite so a provider stream cannot keep chat surfaces in
+an unbounded waiting state. Provider-specific runtime config can override it.
+"""
+
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "DEEPSEEK": {
         # 注意：旧模型 ``deepseek-chat`` / ``deepseek-reasoner`` 将于
@@ -22,6 +29,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         # 记忆抽取是旁路质量任务，默认用更稳的旗舰款；主对话仍保持 v4-flash。
         "memory_model": "deepseek/deepseek-v4-pro",
         "api_base": None,
+        "defaults": {"timeout": DEFAULT_LLM_TIMEOUT_SECONDS},
     },
 }
 
@@ -34,6 +42,7 @@ class ProviderConfig:
     model: str | None = None
     api_base: str | None = None
     context_window: int | None = None
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -87,10 +96,15 @@ class ProviderSpec:
 
         api_base = config.api_base or provider_defaults.get("api_base")
 
+        defaults = dict(provider_defaults.get("defaults", {}))
+        if config.timeout_seconds is not None:
+            defaults["timeout"] = config.timeout_seconds
+
         return cls(
             model=model,
             api_key=api_key,
             api_base=api_base,
+            defaults=defaults,
             context_window=config.context_window,
         )
 
@@ -134,6 +148,16 @@ class ProviderSpec:
             except ValueError:
                 pass  # 非法值忽略，回落到 litellm 查询
 
+        timeout_seconds: float | None = None
+        raw_timeout = os.environ.get(f"{prefix}_TIMEOUT_SECONDS", "").strip()
+        if raw_timeout:
+            try:
+                parsed_timeout = float(raw_timeout)
+                if parsed_timeout > 0:
+                    timeout_seconds = parsed_timeout
+            except ValueError:
+                pass  # 非法值忽略，回落到 provider 默认 timeout
+
         return cls.from_config(
             prefix,
             ProviderConfig(
@@ -141,6 +165,7 @@ class ProviderSpec:
                 model=os.environ.get(model_env_name) or provider_defaults.get(default_model_key),
                 api_base=os.environ.get(f"{prefix}_API_BASE") or provider_defaults.get("api_base"),
                 context_window=context_window,
+                timeout_seconds=timeout_seconds,
             ),
             default_model_key=default_model_key,
         )
