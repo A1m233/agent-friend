@@ -13,6 +13,7 @@ import type { ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
+import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 
 /** 流式失败（网络/HTTP）时的拟人兜底；RUN_ERROR 用 bridge 下发的文案。 */
 const FRIENDLY_FALLBACK = "我这边好像走神了一下，待会儿再聊好吗？";
@@ -85,6 +86,10 @@ function rememberLastChatSession(sessionId: string | null): void {
   void setLastChatSessionId(sessionId).catch(() => {
     // UI 恢复状态写入失败不影响当前对话；后续有统一 telemetry 再上报。
   });
+}
+
+function applyStreamEvents(message: ChatMessage, events: Parameters<typeof applyAguiEvent>[1][]) {
+  return events.reduce((next, event) => applyAguiEvent(next, event), message);
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
@@ -175,22 +180,28 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set((s) => ({
         messages: s.messages.map((m) => (m.id === assistantId ? fn(m) : m)),
       }));
+    const streamUpdates = createStreamUpdateScheduler((events) => {
+      patch((m) => applyStreamEvents(m, events));
+    });
 
     try {
       for await (const evt of runAgentStream(
         { threadId: sessionId, text: trimmed },
         { signal: controller.signal },
       )) {
-        patch((m) => applyAguiEvent(m, evt));
+        streamUpdates.enqueue(evt);
       }
+      streamUpdates.flush();
       patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
     } catch {
+      streamUpdates.flush();
       if (controller.signal.aborted) {
         patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
       } else {
         patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
       }
     } finally {
+      streamUpdates.dispose();
       if (activeController === controller) activeController = null;
       set({ streaming: false });
       void useSessionsStore.getState().refresh();
@@ -238,6 +249,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set((s) => ({
         messages: s.messages.map((m) => (m.id === assistantId ? fn(m) : m)),
       }));
+    const streamUpdates = createStreamUpdateScheduler((events) => {
+      patch((m) => applyStreamEvents(m, events));
+    });
 
     let failedError: string | null = null;
     try {
@@ -245,8 +259,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         { sessionId, text: trimmed, expectedUserContent },
         { signal: controller.signal },
       )) {
-        patch((m) => applyAguiEvent(m, evt));
+        streamUpdates.enqueue(evt);
       }
+      streamUpdates.flush();
       const assistant = get().messages.find((m) => m.id === assistantId);
       if (assistant?.status === "error") {
         failedError = assistant.error ?? FRIENDLY_FALLBACK;
@@ -254,6 +269,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
       }
     } catch {
+      streamUpdates.flush();
       if (controller.signal.aborted) {
         patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
       } else {
@@ -261,6 +277,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
       }
     } finally {
+      streamUpdates.dispose();
       if (activeController === controller) activeController = null;
       set({ streaming: false });
       if (get().currentSessionId === sessionId) {

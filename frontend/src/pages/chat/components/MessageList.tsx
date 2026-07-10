@@ -1,8 +1,10 @@
 import {
   type UIEvent,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -27,13 +29,51 @@ type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
 const HISTORY_SCROLL_SETTLE_MS = 1200;
 const SCROLL_BUTTON_GAP_PX = 12;
+const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 
 function isNearBottom(el: HTMLDivElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
 }
 
+function useThrottledText(value: string, delayMs: number): string {
+  const [throttled, setThrottled] = useState(value);
+  const latestRef = useRef(value);
+  const timerRef = useRef<number | null>(null);
+  const lastFlushRef = useRef(0);
+
+  useEffect(() => {
+    latestRef.current = value;
+    if (timerRef.current !== null) return;
+
+    const now = performance.now();
+    const elapsed = now - lastFlushRef.current;
+    const remaining = Math.max(0, delayMs - elapsed);
+
+    if (remaining === 0) {
+      lastFlushRef.current = now;
+      setThrottled(value);
+      return;
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      lastFlushRef.current = performance.now();
+      setThrottled(latestRef.current);
+    }, remaining);
+  }, [delayMs, value]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  return throttled;
+}
+
 /** 一段 markdown 文本气泡（复用 tdesign 散件渲染 markdown / 代码，AC-M3.1）。 */
-function TextBubble({
+const TextBubble = memo(function TextBubble({
   role,
   text,
   actionBar,
@@ -42,12 +82,13 @@ function TextBubble({
   text: string;
   actionBar?: ReactNode;
 }) {
+  const content = useMemo(() => toMarkdownContent(text) as TdContentProp, [text]);
   return (
     <TdChatMessage
       role={role}
       placement={role === "user" ? "right" : "left"}
       variant={role === 'user' ? 'base' : 'text'}
-      content={toMarkdownContent(text) as TdContentProp}
+      content={content}
     >
       {actionBar && (
         <div slot="actionbar" className="contents">
@@ -56,7 +97,12 @@ function TextBubble({
       )}
     </TdChatMessage>
   );
-}
+});
+
+const StreamingMarkdownBubble = memo(function StreamingMarkdownBubble({ text }: { text: string }) {
+  const throttledText = useThrottledText(text, STREAMING_MARKDOWN_THROTTLE_MS);
+  return <TextBubble role="assistant" text={throttledText} />;
+});
 
 function messageCopyText(message: ChatMessage): string {
   return message.blocks
@@ -127,12 +173,16 @@ function MessageContent({
     .map((b, i) => {
       if (b.kind === "text") {
         return (
-          <TextBubble
-            key={`t:${b.mid || i}`}
-            role="assistant"
-            text={b.text}
-            actionBar={i === actionBarBlockIndex ? actionBar : undefined}
-          />
+          message.status === "streaming" ? (
+            <StreamingMarkdownBubble key={`t:${b.mid || i}`} text={b.text} />
+          ) : (
+            <TextBubble
+              key={`t:${b.mid || i}`}
+              role="assistant"
+              text={b.text}
+              actionBar={i === actionBarBlockIndex ? actionBar : undefined}
+            />
+          )
         );
       }
       if (b.kind === "tool") {
@@ -164,7 +214,7 @@ function MessageContent({
   );
 }
 
-function MessageItem({
+const MessageItem = memo(function MessageItem({
   message,
   canEdit,
   editing,
@@ -204,6 +254,25 @@ function MessageItem({
       />
     </div>
   );
+}, areMessageItemsEqual);
+
+function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
+  return (
+    prev.message === next.message &&
+    prev.canEdit === next.canEdit &&
+    prev.editing === next.editing &&
+    prev.editDisabled === next.editDisabled
+  );
+}
+
+interface MessageItemProps {
+  message: ChatMessage;
+  canEdit: boolean;
+  editing: boolean;
+  editDisabled: boolean;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onSubmitEdit: (text: string) => void;
 }
 
 function HistoryLoadingState() {
@@ -256,6 +325,7 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef(true);
   const programmaticScrollRef = useRef(false);
+  const scrollRafRef = useRef(0);
   const historySettleCleanupRef = useRef<(() => void) | null>(null);
   const historySettlingRef = useRef(false);
   const handledHistoryLoadSeqRef = useRef(0);
@@ -288,6 +358,15 @@ export function MessageList({
     },
     [setSticky],
   );
+
+  const scheduleScrollToBottom = useCallback((options: { force?: boolean } = {}) => {
+    if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = window.requestAnimationFrame(() => {
+      scrollRafRef.current = 0;
+      if (!options.force && !stickyRef.current) return;
+      scrollToBottom();
+    });
+  }, [scrollToBottom]);
 
   const startHistoryScrollSettle = useCallback(() => {
     const viewport = scrollRef.current;
@@ -346,18 +425,20 @@ export function MessageList({
     const addedMessages = messages.slice(prevMessages.length);
     const userSentMessage = addedMessages.some((m) => m.role === "user");
 
-    if (userSentMessage || stickyRef.current) {
-      scrollToBottom();
+    if (userSentMessage) {
+      scheduleScrollToBottom({ force: true });
+    } else if (stickyRef.current) {
+      scheduleScrollToBottom();
     }
 
     prevMessagesRef.current = messages;
-  }, [messages, scrollToBottom]);
+  }, [messages, scheduleScrollToBottom]);
 
   useLayoutEffect(() => {
     if (stickyRef.current) {
-      scrollToBottom();
+      scheduleScrollToBottom();
     }
-  }, [composerInset, scrollToBottom]);
+  }, [composerInset, scheduleScrollToBottom]);
 
   useLayoutEffect(() => {
     if (historyLoadSeq === 0 || historyLoadSeq === handledHistoryLoadSeqRef.current) return;
@@ -366,7 +447,13 @@ export function MessageList({
     startHistoryScrollSettle();
   }, [historyLoadSeq, historyLoading, messages.length, startHistoryScrollSettle]);
 
-  useEffect(() => stopHistoryScrollSettle, [stopHistoryScrollSettle]);
+  useEffect(
+    () => () => {
+      if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+      stopHistoryScrollSettle();
+    },
+    [stopHistoryScrollSettle],
+  );
 
   useEffect(() => {
     if (!editingMessageId) return;
