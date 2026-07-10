@@ -2,7 +2,8 @@
 #
 # 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），启动本地 voice_bridge（不启动 cloudflared），用于 Chat Composer 语音输入 ASR。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --voice：启动 voice_bridge，并自动拉起新的 cloudflared tunnel；如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
+# --voice：严格完整语音通话链路；先拿到公网回调 URL，再启动后续进程，cloudflared / public URL 不可用则 fail fast。
+#          如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
 # Windows Tauri 默认暴露 WebView2 CDP 到 127.0.0.1:9222，供 desktop-visual DOM / 截图验证；可用 --no-cdp 关闭，或 --cdp-port <port> 改端口。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
@@ -107,16 +108,38 @@ function Wait-HttpOk([string]$url, [int]$timeoutSeconds) {
     return $false
 }
 
-function Wait-CloudflaredUrl([string[]]$logPaths, [int]$timeoutSeconds) {
+function Get-LogTail([string[]]$logPaths, [int]$lineCount = 50) {
+    $blocks = @()
+    foreach ($path in $logPaths) {
+        if (-not (Test-Path $path)) {
+            $blocks += "===== $path (missing) ====="
+            continue
+        }
+        $lines = @(Get-Content -Tail $lineCount -Encoding UTF8 -ErrorAction SilentlyContinue $path)
+        if ($lines.Count -eq 0) {
+            $blocks += "===== $path (empty) ====="
+        }
+        else {
+            $blocks += "===== $path (last $lineCount lines) ====="
+            $blocks += $lines
+        }
+    }
+    return ($blocks -join [Environment]::NewLine)
+}
+
+function Wait-CloudflaredUrl([string[]]$logPaths, [int]$timeoutSeconds, $process = $null) {
     $deadline = (Get-Date).AddSeconds($timeoutSeconds)
     $pattern = "https://[a-z0-9-]+\.trycloudflare\.com"
     while ((Get-Date) -lt $deadline) {
         foreach ($path in $logPaths) {
             if (-not (Test-Path $path)) { continue }
-            $content = Get-Content -Raw -ErrorAction SilentlyContinue $path
+            $content = Get-Content -Raw -Encoding UTF8 -ErrorAction SilentlyContinue $path
             if ($content -match $pattern) {
                 return $Matches[0]
             }
+        }
+        if ($process -and $process.HasExited) {
+            return ""
         }
         Start-Sleep -Milliseconds 500
     }
@@ -151,12 +174,17 @@ function Start-VoiceTunnel {
         -PassThru `
         -WindowStyle Hidden
 
-    $publicUrl = Wait-CloudflaredUrl -logPaths @($outLog, $errLog) -timeoutSeconds 60
+    $publicUrl = Wait-CloudflaredUrl -logPaths @($outLog, $errLog) -timeoutSeconds 60 -process $proc
     if ([string]::IsNullOrWhiteSpace($publicUrl)) {
+        $reason = "cloudflared 60 秒内没有输出 trycloudflare URL。"
+        if ($proc -and $proc.HasExited) {
+            $reason = "cloudflared 在输出 trycloudflare URL 前退出，exit code=$($proc.ExitCode)。"
+        }
+        $tail = Get-LogTail -logPaths @($outLog, $errLog) -lineCount 50
         if ($proc -and -not $proc.HasExited) {
             Stop-ProcessTreeIfPresent $proc.Id | Out-Null
         }
-        Write-Error "cloudflared 60 秒内没有输出 trycloudflare URL。日志：$outLog / $errLog"
+        Write-Error "$reason`n日志：$outLog / $errLog`n最近日志：`n$tail`n提示：--voice 需要完整公网语音回调链路，因此 tunnel 失败会 fail fast。Cloudflare quick tunnel 返回 5xx/1101 时通常是临时服务端失败，可稍后重试，或设置 VOICE_BRIDGE_PUBLIC_URL + AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1 复用稳定公网 URL。"
     }
 
     $env:VOICE_BRIDGE_PUBLIC_URL = $publicUrl
@@ -504,6 +532,11 @@ $voice = $null
 $cloudflared = $null
 
 try {
+if ($voiceMode -eq "tunnel") {
+    $tunnel = Start-VoiceTunnel
+    $cloudflared = $tunnel.Process
+}
+
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
 Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
@@ -532,10 +565,6 @@ if ($voiceMode -ne "off") {
     }
 
     if (-not $reuseExistingVoiceBridge) {
-        if ($needsVoiceTunnel) {
-            $tunnel = Start-VoiceTunnel
-            $cloudflared = $tunnel.Process
-        }
         if ($restartVoiceBridgeReason) {
             Stop-VoiceBridgePortProcess 18900 $restartVoiceBridgeReason
         }
