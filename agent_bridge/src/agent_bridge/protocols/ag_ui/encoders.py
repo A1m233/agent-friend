@@ -20,7 +20,7 @@
   ``ToolCallResultEvent`` 无专用 ``is_error`` 字段，约定字符串前缀承担信号
 - 出错时 :class:`ag_ui.core.RunErrorEvent.message` / ``code`` 来自
   :func:`agent_bridge.errors.map_exception`——可恢复 vs 不可恢复的分类、
-  拟人化文案、错误码标识全部由错误模型转换层集中决定（design §4.6）
+  用户可见文案、错误码标识全部由错误模型转换层集中决定（design §4.6）
 """
 
 from __future__ import annotations
@@ -99,6 +99,7 @@ def encode_stream(
         return encoder.encode(event).encode("utf-8")
 
     open_message_id: str | None = None
+    conv: Conversation | None = None
 
     yield _encode(
         RunStartedEvent(
@@ -206,6 +207,17 @@ def encode_stream(
             open_message_id = None
         logger.exception("AG-UI run %s 失败", run_id)
         err = map_exception(exc)
+        if conv is not None:
+            try:
+                conv.append_run_error_event(
+                    code=err.code,
+                    message=err.message,
+                    recoverable=err.recoverable,
+                    source="ag_ui",
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.warning("AG-UI run_error 持久化失败", exc_info=True)
         yield _encode(
             RunErrorEvent(
                 type=EventType.RUN_ERROR,

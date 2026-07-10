@@ -301,6 +301,51 @@ class TestAgUiRunChannelBoundary:
         system_prompt = _RouteLLM.seen_messages[-1][0]["content"]
         assert "正在通过电话和用户对话" not in system_prompt
 
+    def test_text_run_error_persists_run_error_event(
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        def _fail_stream(
+            self: _RouteLLM,
+            messages: list[dict[str, Any]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            **overrides: Any,
+        ) -> Iterator[LLMStreamEvent]:
+            raise RuntimeError("upstream overloaded")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(_RouteLLM, "stream", _fail_stream)
+
+        resp = client.post(
+            "/ag-ui/run",
+            json={
+                "thread_id": sid,
+                "run_id": "run-error-1",
+                "messages": [{"id": "u-1", "role": "user", "content": "继续说"}],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+                "state": {},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        assert resp.status_code == 200
+        assert "RUN_ERROR" in resp.text
+        assert "这轮回答中断了，没有生成完整回复。请稍后重试。" in resp.text
+        loaded = runtime.persistent_session_manager.open(sid)
+        run_errors = [event for event in loaded.events if event.type == "run_error"]
+        assert len(run_errors) == 1
+        assert run_errors[0].payload == {
+            "code": "internal_error",
+            "message": "这轮回答中断了，没有生成完整回复。请稍后重试。",
+            "recoverable": False,
+            "source": "ag_ui",
+            "run_id": "run-error-1",
+        }
+
 
 # ===== POST /v1/sessions/{id}/channel =====
 

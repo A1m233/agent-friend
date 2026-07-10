@@ -28,6 +28,7 @@ EventType = Literal[
     "system_trigger",
     "memory_observation",
     "turn_rewrite",
+    "run_error",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -44,6 +45,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "system_trigger",
         "memory_observation",
         "turn_rewrite",
+        "run_error",
     }
 )
 
@@ -71,6 +73,10 @@ SCHEMA_VERSION: Final[int] = 1
 035 起新增 ``turn_rewrite`` 事件，用 append-only marker 标记一次"编辑并重发"
 产生的失活事件集合；原始事件不删除不改，active projection 在 ``Session`` 内派生，
 仍属于纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
+
+036 起新增 ``run_error`` 事件，用 append-only marker 记录一轮 assistant 运行失败
+的用户可见错误状态；它不参与 LLM history，仅供 UI 在刷新后恢复同一失败状态。
+纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
 """
 
 

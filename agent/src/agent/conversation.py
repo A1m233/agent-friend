@@ -1075,6 +1075,36 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+    def append_run_error_event(
+        self,
+        *,
+        code: str,
+        message: str,
+        recoverable: bool,
+        source: str,
+        run_id: str | None = None,
+    ) -> None:
+        """持久化一轮运行失败状态，供 UI 刷新后恢复同一错误。
+
+        这不是 assistant 正常回复，不进入 :attr:`Session.messages` / LLM history。
+        """
+        payload: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "recoverable": recoverable,
+            "source": source,
+        }
+        if run_id is not None:
+            payload["run_id"] = run_id
+        event = Event(
+            type="run_error",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload=payload,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
     def _build_openai_messages_first_turn(
         self,
         user_input: str,

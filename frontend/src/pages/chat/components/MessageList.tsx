@@ -121,7 +121,7 @@ function messageCopyText(message: ChatMessage): string {
  * - user：文本块合并成单个右侧气泡。
  * - assistant：按块顺序渲染（文本→tdesign 气泡、工具→自写 {@link ToolCard}），
  *   保留 text→tool→text 的过程态顺序；思考块本期挂起（issue 002）。
- * - 错误兜底：拟人文案作为一段左侧文本气泡（不暴露技术细节，R-M3.6）。
+ * - 错误状态：用户可见文案作为一段左侧文本气泡（不暴露技术细节）。
  */
 function lastRenderableBlockIndex(message: ChatMessage): number {
   for (let i = message.blocks.length - 1; i >= 0; i -= 1) {

@@ -83,7 +83,7 @@ beforeEach(() => {
   mockSetLastChatSessionId.mockClear();
 });
 
-describe("conversation store · 拟人化错误兜底 (AC-M3.4)", () => {
+describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   it("流式失败（带 http 状态的技术错误）→ 用户看到拟人兜底，不漏技术细节", async () => {
     // 模拟 stream.ts 在 HTTP 非 2xx 时抛的技术错误（store 的 for-await 求值即抛、被 catch）。
     mockStream.mockImplementation(() => {
@@ -101,9 +101,13 @@ describe("conversation store · 拟人化错误兜底 (AC-M3.4)", () => {
     expect(useConversationStore.getState().streaming).toBe(false);
   });
 
-  it("RUN_ERROR 事件 → 展示 bridge 已拟人化文案，不漏技术细节", async () => {
+  it("RUN_ERROR 事件 → 展示 bridge 清洗后的文案，不漏技术细节", async () => {
     mockStream.mockImplementation(async function* () {
-      yield ev({ type: EventType.RUN_ERROR, message: "我这边有点忙不过来，待会儿再聊好吗？" });
+      yield ev({
+        type: EventType.RUN_ERROR,
+        message: "模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。",
+        code: "rate_limit",
+      });
     });
 
     await useConversationStore.getState().send("hi");
@@ -111,6 +115,7 @@ describe("conversation store · 拟人化错误兜底 (AC-M3.4)", () => {
     const m = lastMessage();
     expect(m.status).toBe("error");
     expect(m.error!).not.toMatch(TECH_LEAK);
+    expect(m.errorCode).toBe("rate_limit");
   });
 
   it("历史会话加载失败 → 拟人兜底，不漏技术细节", async () => {
@@ -299,5 +304,59 @@ describe("conversation store · 拟人化错误兜底 (AC-M3.4)", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
+  });
+
+  it("编辑重发 RUN_ERROR 已落盘时不重复追加临时错误", async () => {
+    const errorText = "模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。";
+    mockGet
+      .mockResolvedValueOnce({
+        session_id: "sid-1",
+        title: "sid-1",
+        persona: "default",
+        model: "test",
+        events: [
+          {
+            type: "user_message",
+            uuid: "old-user",
+            ts: "2026-06-10T00:00:00Z",
+            payload: { content: "旧问题" },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        session_id: "sid-1",
+        title: "sid-1",
+        persona: "default",
+        model: "test",
+        events: [],
+        active_events: [
+          {
+            type: "user_message",
+            uuid: "new-user",
+            ts: "2026-06-10T00:00:02Z",
+            payload: { content: "新问题" },
+          },
+          {
+            type: "run_error",
+            uuid: "run-error",
+            ts: "2026-06-10T00:00:03Z",
+            payload: { code: "rate_limit", message: errorText, recoverable: true },
+          },
+        ],
+      });
+    mockEditStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_ERROR, message: errorText, code: "rate_limit" });
+    });
+
+    await useConversationStore.getState().openSession("sid-1");
+    const oldUserId = useConversationStore.getState().messages[0]?.id;
+    await useConversationStore.getState().editResendLatest(oldUserId!, "新问题");
+
+    const errors = useConversationStore
+      .getState()
+      .messages.filter((message) => message.status === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].error).toBe(errorText);
+    expect(errors[0].errorCode).toBe("rate_limit");
   });
 });

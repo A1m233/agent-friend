@@ -3,7 +3,7 @@
  *
  * - `send`：乐观插入 user + 占位 assistant，自写 fetch-SSE 消费、reducer 累积。
  * - `openSession`：拉历史事件投影成消息，续聊用同一 session_id 作 threadId。
- * - 错误统一兜底为拟人文案（R-M3.6），不暴露技术细节。
+ * - 错误统一为 turn 状态，不暴露技术细节。
  */
 
 import { create } from "zustand";
@@ -15,8 +15,8 @@ import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 
-/** 流式失败（网络/HTTP）时的拟人兜底；RUN_ERROR 用 bridge 下发的文案。 */
-const FRIENDLY_FALLBACK = "我这边好像走神了一下，待会儿再聊好吗？";
+/** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
+const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。请稍后重试。";
 
 /** 本窗口同一时刻只允许一条进行中的流。 */
 let activeController: AbortController | null = null;
@@ -80,6 +80,10 @@ function messageText(message: ChatMessage): string {
 
 function projectSessionDetail(detail: { events: Parameters<typeof projectSessionEvents>[0]; active_events?: Parameters<typeof projectSessionEvents>[0] }) {
   return projectSessionEvents(detail.active_events ?? detail.events);
+}
+
+function hasErrorMessage(messages: ChatMessage[], error: string): boolean {
+  return messages.some((message) => message.status === "error" && message.error === error);
 }
 
 function rememberLastChatSession(sessionId: string | null): void {
@@ -284,10 +288,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         try {
           const detail = await sessionsApi.get(sessionId);
           if (get().currentSessionId === sessionId) {
+            const projected = projectSessionDetail(detail);
             set((s) => ({
               messages: failedError
-                ? [...projectSessionDetail(detail), assistantErrorMessage(failedError)]
-                : projectSessionDetail(detail),
+                ? hasErrorMessage(projected, failedError)
+                  ? projected
+                  : [...projected, assistantErrorMessage(failedError)]
+                : projected,
               historyLoadSeq: s.historyLoadSeq + 1,
             }));
           }
