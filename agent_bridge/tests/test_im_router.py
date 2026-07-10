@@ -162,7 +162,7 @@ async def test_text_aggregated_until_generator_exhausts(
     exhausted = False
     closed_early = False
 
-    def stream(_user_input: str) -> Any:
+    def stream(_user_input: str, **kwargs: Any) -> Any:
         nonlocal exhausted, closed_early
         try:
             yield TextDelta(text="part1 ")

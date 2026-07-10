@@ -202,7 +202,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_conversation=lambda conv, value: conv.edit_resend_latest(
                     value,
                     expected_user_content=body.expected_user_content,
+                    channel="text",
                 ),
+                channel="text",
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={

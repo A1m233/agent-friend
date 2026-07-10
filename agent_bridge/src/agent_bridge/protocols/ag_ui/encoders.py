@@ -46,6 +46,7 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 from agent.runtime import AgentRuntime, UserEvent
+from agent.system_prompt.sections import PromptChannel
 
 from agent import (
     Conversation,
@@ -70,6 +71,7 @@ def encode_stream(
     accept: str | None = None,
     agent_runtime: AgentRuntime | None = None,
     run_conversation: Callable[[Conversation, str], Iterator[ConversationEvent]] | None = None,
+    channel: PromptChannel | None = None,
 ) -> Iterator[bytes]:
     """流式编码 AG-UI SSE bytes。
 
@@ -116,7 +118,7 @@ def encode_stream(
         event_stream = (
             run_conversation(conv, user_input)
             if run_conversation is not None
-            else conv.stream(user_input)
+            else conv.stream(user_input, channel=channel)
         )
         for ev in event_stream:
             # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）

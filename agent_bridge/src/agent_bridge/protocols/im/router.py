@@ -202,7 +202,7 @@ class IMRouter:
         """
         conv = self._bridge.bind_persistent(boot)
         buf: list[str] = []
-        for ev in conv.stream(boot.new_user_input):
+        for ev in conv.stream(boot.new_user_input, channel="text"):
             if isinstance(ev, TextDelta):
                 buf.append(ev.text)
             # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。

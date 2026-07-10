@@ -13,9 +13,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
 
 from ..personas import PersonaCatalog
 from ..sessions import Session
+
+PromptChannel = Literal["voice", "text"]
+"""单轮 prompt 渲染所采用的通道。"""
+
+
+@dataclass(frozen=True)
+class SystemPromptRenderContext:
+    """本次 system prompt 渲染的运行时上下文。
+
+    ``channel_override`` 表示这一次模型调用来自哪个交互入口。它优先于
+    ``Session.current_channel``，避免 session 级生命周期状态污染本轮 prompt。
+    """
+
+    channel_override: PromptChannel | None = None
 
 
 def _default_now() -> datetime:
@@ -36,7 +51,7 @@ class StaticSection:
     key: str
     text: str
 
-    def render(self) -> str | None:
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
         """返回去除首尾空白后的文本；为空时返回 ``None``。"""
         stripped = self.text.strip()
         return stripped if stripped else None
@@ -60,7 +75,7 @@ class PersonaSection:
     persona_id: str
     catalog: PersonaCatalog
 
-    def render(self) -> str | None:
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
         """读 persona body；空内容时返回 ``None``。"""
         text = self.catalog.read_content(self.persona_id)
         stripped = text.strip()
@@ -97,7 +112,7 @@ class RuntimeContextSection:
     template: str
     clock: Callable[[], datetime] = field(default=_default_now)
 
-    def render(self) -> str | None:
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
         """填充 ``{current_time}`` 占位符后返回结果。"""
         now = self.clock()
         current_time = now.strftime("%Y-%m-%d %H:%M")
@@ -108,14 +123,15 @@ class RuntimeContextSection:
 
 @dataclass(frozen=True)
 class ChannelSection:
-    """根据 ``session.current_channel`` 输出对应通道的 system_prompt 片段。
+    """根据本轮通道上下文输出对应的 system_prompt 片段。
 
     007 起新增。让 LLM 知道当前是语音 / 文字通道，生成对应表达风格的回复
     （语音通道下"短句、口语化、避免 markdown"等）。
 
     Args:
         key: 槽位标识，约定为 ``"channel"``。
-        session: 目标 Session；render 时读 :attr:`Session.current_channel` 决定输出。
+        session: 目标 Session；未传本轮 override 时，render 读
+            :attr:`Session.current_channel` 作为兼容 fallback。
         voice_template: ``"voice"`` 通道下输出的 prompt 文本（一般来自
             ``prompt_sections/channel_voice.md``）。
         text_template: ``"text"`` 通道下输出的 prompt 文本；默认空字符串——
@@ -124,10 +140,10 @@ class ChannelSection:
             老 session（``current_channel="text"``）行为完全一致。
 
     Note:
-        本 section 持有 ``Session`` 引用，每次 render 都重新读
-        :attr:`Session.current_channel` ——同一 :class:`Conversation` 内
-        若中途调 :meth:`Conversation.switch_channel`，下一轮 compose 即生效，
-        不需要外部重建 composer。
+        本 section 优先使用 ``SystemPromptRenderContext.channel_override``。
+        这让同一个 session 能安全混合文字 / 语音等入口，避免 session 级
+        生命周期状态污染本轮 prompt；没有 override 时才回落到
+        :attr:`Session.current_channel`，保持旧调用方兼容。
     """
 
     key: str
@@ -135,9 +151,12 @@ class ChannelSection:
     voice_template: str
     text_template: str = ""
 
-    def render(self) -> str | None:
-        """读 ``session.current_channel`` 选模板并返回。"""
-        if self.session.current_channel == "voice":
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
+        """按本轮 override 或 ``session.current_channel`` 选模板并返回。"""
+        channel = context.channel_override if context is not None else None
+        if channel is None:
+            channel = self.session.current_channel
+        if channel == "voice":
             stripped = self.voice_template.strip()
             return stripped if stripped else None
         stripped = self.text_template.strip()

@@ -149,6 +149,21 @@ class TestChannelSectionRender:
         )
         assert section.render() == "VOICE_INSTRUCTION_TEXT"
 
+    def test_text_override_suppresses_voice_session_template(self) -> None:
+        s = Session.new(title="t", persona="p", model="m", channel="voice")
+        section = ChannelSection(
+            key="channel",
+            session=s,
+            voice_template="VOICE_INSTRUCTION_TEXT",
+        )
+        composer_context = SystemPromptComposer.default(
+            BUILTIN_DEFAULT_PERSONA_ID,
+            catalog=PersonaCatalog(),
+            session=s,
+        )
+        assert section.render() == "VOICE_INSTRUCTION_TEXT"
+        assert "正在通过电话和用户对话" not in composer_context.compose(channel_override="text")
+
     def test_text_channel_returns_none(self) -> None:
         s = Session.new(title="t", persona="p", model="m")  # text
         section = ChannelSection(

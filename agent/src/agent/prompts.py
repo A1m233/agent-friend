@@ -25,12 +25,13 @@ from .errors import PersonaNotFoundError
 from .personas import PersonaCatalog
 from .sessions import Session
 from .system_prompt import SystemPromptComposer
+from .system_prompt.sections import PromptChannel
 
 
 class PromptBuilder(Protocol):
     """Prompt 构建器接口契约。"""
 
-    def build(self) -> str:
+    def build(self, *, channel_override: PromptChannel | None = None) -> str:
         """返回组装好的 system prompt 字符串。"""
         ...
 
@@ -95,14 +96,14 @@ class MarkdownPromptBuilder:
             session=session,
         )
 
-    def build(self) -> str:
+    def build(self, *, channel_override: PromptChannel | None = None) -> str:
         """返回组合后的 system_prompt 字符串。
 
         Raises:
             PersonaNotFoundError: ``persona_id`` 在 catalog 找不到（由内部
                 :class:`PersonaSection` 在渲染时抛出）。
         """
-        return self._composer.compose()
+        return self._composer.compose(channel_override=channel_override)
 
 
 __all__ = [

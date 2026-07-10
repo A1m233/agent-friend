@@ -144,6 +144,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     model=model,
                     agent_runtime=runtime.agent_runtime,
                     voice_latency_context=voice_latency,
+                    channel="voice" if voice_latency is not None else "text",
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -158,6 +159,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 decoded.latest_user_input,
                 model=model,
                 agent_runtime=runtime.agent_runtime,
+                channel="voice" if voice_latency is not None else "text",
             )
         except Exception as exc:
             logger.exception("OpenAI 非流式编码失败")

@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from agent_bridge.app import create_app_with_runtime
@@ -33,6 +33,7 @@ from llm_providers import LLMStreamEvent, LLMTextDelta, LLMTurnDone
 
 
 class _RouteLLM:
+    seen_messages: ClassVar[list[list[dict[str, Any]]]] = []
     context_window = 128000
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
@@ -45,6 +46,7 @@ class _RouteLLM:
         tools: list[dict[str, Any]] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
+        self.seen_messages.append(messages)
         yield LLMTextDelta(text="new answer")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -52,6 +54,7 @@ class _RouteLLM:
 @pytest.fixture
 def runtime(tmp_path: Path) -> BridgeRuntime:
     """构造一个全新 BridgeRuntime，sessions 落到 tmp_path 隔离。"""
+    _RouteLLM.seen_messages = []
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions")
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     catalog = PersonaCatalog()
@@ -264,6 +267,39 @@ class TestEditResendLatestEndpoint:
             "new question",
             "new answer",
         ]
+
+
+# ===== POST /ag-ui/run channel boundary =====
+
+
+class TestAgUiRunChannelBoundary:
+    def test_text_run_uses_text_prompt_without_mutating_voice_session(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={"channel": "voice"}).json()["session_id"]
+        assert runtime.persistent_session_manager.open(sid).current_channel == "voice"
+
+        resp = client.post(
+            "/ag-ui/run",
+            json={
+                "thread_id": sid,
+                "run_id": "run-text-1",
+                "messages": [{"id": "u-1", "role": "user", "content": "这是啥情况"}],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+                "state": {},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        assert resp.status_code == 200
+        assert "new answer" in resp.text
+        loaded = runtime.persistent_session_manager.open(sid)
+        assert loaded.current_channel == "voice"
+        assert _RouteLLM.seen_messages
+        system_prompt = _RouteLLM.seen_messages[-1][0]["content"]
+        assert "正在通过电话和用户对话" not in system_prompt
 
 
 # ===== POST /v1/sessions/{id}/channel =====

@@ -18,6 +18,7 @@ from agent.system_prompt import (
     SystemPromptComposer,
 )
 from agent.system_prompt.defaults import load_default_static_section
+from agent.system_prompt.sections import SystemPromptRenderContext
 
 # ===== 测试用辅助 =====
 
@@ -32,7 +33,7 @@ class _AlwaysSkipSection:
     def key(self) -> str:
         return self._key
 
-    def render(self) -> str | None:
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
         return None
 
 

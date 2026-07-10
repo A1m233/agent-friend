@@ -26,6 +26,7 @@ from uuid import uuid4
 
 from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from agent.runtime import AgentRuntime, UserEvent
+from agent.system_prompt.sections import PromptChannel
 
 from agent import Conversation, TextDelta, TurnDone
 
@@ -47,6 +48,7 @@ def encode_streaming(
     model: str,
     agent_runtime: AgentRuntime | None = None,
     voice_latency_context: VoiceLatencyContext | None = None,
+    channel: PromptChannel | None = None,
 ) -> Iterator[bytes]:
     """流式编码：生成 SSE bytes 流。
 
@@ -105,7 +107,7 @@ def encode_streaming(
         else None
     )
     try:
-        for ev in conv.stream(user_input):
+        for ev in conv.stream(user_input, channel=channel):
             # 014: 镜像复制给 push 通道订阅者
             if agent_runtime is not None and mirror_user_event is not None:
                 try:
@@ -191,6 +193,7 @@ def encode_nonstreaming(
     *,
     model: str,
     agent_runtime: AgentRuntime | None = None,
+    channel: PromptChannel | None = None,
 ) -> dict[str, Any]:
     """非流式编码：消费整段流拼成一个 ``chat.completion`` 对象。
 
@@ -212,7 +215,7 @@ def encode_nonstreaming(
         if agent_runtime is not None
         else None
     )
-    for ev in conv.stream(user_input):
+    for ev in conv.stream(user_input, channel=channel):
         if agent_runtime is not None and mirror_user_event is not None:
             try:
                 agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
