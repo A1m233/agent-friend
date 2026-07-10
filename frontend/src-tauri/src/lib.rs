@@ -15,6 +15,7 @@ mod push_subscriber;
 mod runtime_config;
 mod settings;
 mod ui_state;
+mod window_placement;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
@@ -454,6 +455,12 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
                     }
                 }
             }
+            let should_place = !w.is_visible().unwrap_or(false);
+            if should_place {
+                if let Err(e) = window_placement::place_window_before_show(&app_clone, &w) {
+                    log::warn!("show_and_focus: window={label} placement failed: {e}");
+                }
+            }
             match w.show() {
                 Ok(()) => log::info!("show_and_focus: window={label} show ok"),
                 Err(e) => log::warn!("show_and_focus: window={label} show failed: {e}"),
@@ -718,7 +725,9 @@ pub fn run() {
         runtime_config::delete_runtime_secret,
         avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
+        ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
+        ui_state::set_pet_monitor_anchor,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -742,7 +751,9 @@ pub fn run() {
         runtime_config::delete_runtime_secret,
         avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
+        ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
+        ui_state::set_pet_monitor_anchor,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -784,6 +795,17 @@ pub fn run() {
             ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    if let Some(webview_window) =
+                        window.app_handle().get_webview_window(window.label())
+                    {
+                        if let Err(e) = window_placement::remember_window_placement(&webview_window)
+                        {
+                            log::warn!(
+                                "window placement: remember failed for {}: {e}",
+                                window.label()
+                            );
+                        }
+                    }
                     if window.label() == "im-connect" {
                         if let Err(e) = window.emit(EVENT_WINDOW_HIDDEN, ()) {
                             log::warn!("im-connect emit hidden failed: {e}");

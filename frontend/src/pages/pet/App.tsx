@@ -19,10 +19,14 @@ import {
 } from "./petWebviewDisplayContext";
 import {
   getPetOverlayViewport,
+  loadPetDisplayPhysicalSnapshot,
+  loadPetInitialPlacementPoint,
   loadPetMonitorViewports,
   rebasePetPointByMonitorAnchorWithDiagnostics,
+  resolvePetMonitorRelativeAnchorForPoint,
   resolvePetPointFromMonitorRelativeAnchor,
   resolvePetViewportForRect,
+  savePetMonitorAnchor,
   type MonitorPhysicalSnapshot,
   type OverlayPhysicalBounds,
   type PetMonitorRelativeAnchor,
@@ -71,7 +75,6 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
 }
 
 const PET_DISPLAY_TOPOLOGY_CHANGED_EVENT = "pet://display-topology-changed";
-
 interface PetDisplayTopologyChangedPayload {
   reason: string;
   generation: number;
@@ -88,7 +91,7 @@ interface PendingTopologyAnchor {
   anchor: PetMonitorRelativeAnchor;
 }
 
-interface TopologyPlacement {
+interface AvatarPlacementIntent {
   generation: number;
   point: PetPoint;
 }
@@ -119,9 +122,11 @@ export function PetApp() {
   const [spriteScreen, setSpriteScreen] = useState<PetRect | null>(null);
   const [actionBarAnchor, setActionBarAnchor] = useState<PetRect | null>(null);
   const [avatarPlacementPoint, setAvatarPlacementPoint] = useState<PetPoint | null>(null);
-  const [topologyPlacement, setTopologyPlacement] =
-    useState<TopologyPlacement | null>(null);
+  const [placementIntent, setAvatarPlacementIntent] =
+    useState<AvatarPlacementIntent | null>(null);
   const spriteScreenRef = useRef<PetRect | null>(null);
+  const userMovedPetRef = useRef(false);
+  const placementIntentGenerationRef = useRef(0);
   const pendingTopologyAnchorRef = useRef<PendingTopologyAnchor | null>(null);
   const lastTopologyGenerationRef = useRef(0);
   const lastTopologySignatureRef = useRef<string | null>(null);
@@ -170,6 +175,13 @@ export function PetApp() {
     setActionBarAnchor((prev) => (sameRect(prev, next) ? prev : next));
   }, []);
 
+  const setIsDraggingWithTracking = useCallback((next: boolean) => {
+    if (next) {
+      userMovedPetRef.current = true;
+    }
+    setIsDragging(next);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let dprQuery: MediaQueryList | null = null;
@@ -178,6 +190,7 @@ export function PetApp() {
     let scaleUnlisten: (() => void) | null = null;
     let viewportRequestId = 0;
     let deferredAnchorTimer: number | null = null;
+    let initialPlacementRequested = false;
     const syncWebviewDpr = () => {
       const nextDpr = readWebviewDevicePixelRatio();
       setWebviewDpr((prev) =>
@@ -199,7 +212,7 @@ export function PetApp() {
       pendingTopologyAnchorRef.current = null;
       topologyOverlayViewportRef.current = overlaySize;
       setAvatarPlacementPoint((prev) => (samePoint(prev, point) ? prev : point));
-      setTopologyPlacement((prev) =>
+      setAvatarPlacementIntent((prev) =>
         prev?.generation === pending.generation && samePoint(prev.point, point)
           ? prev
           : { generation: pending.generation, point },
@@ -215,11 +228,34 @@ export function PetApp() {
         updateViewport("topology-anchor-deferred");
       }, 250);
     };
+    const resolveInitialPlacement = (overlaySize: PetViewport) => {
+      if (initialPlacementRequested) return;
+      initialPlacementRequested = true;
+      void loadPetInitialPlacementPoint(overlaySize)
+        .then((point) => {
+          if (cancelled) return;
+          if (point && !userMovedPetRef.current) {
+            setAvatarPlacementPoint((prev) => prev ?? point);
+            const generation = --placementIntentGenerationRef.current;
+            setAvatarPlacementIntent((prev) =>
+              prev?.generation === generation && samePoint(prev.point, point)
+                ? prev
+                : { generation, point },
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            console.warn("[pet] resolve initial placement failed:", error);
+          }
+        });
+    };
     const updateViewport = (reason = "unknown") => {
       const requestId = ++viewportRequestId;
       syncWebviewDpr();
       const nextOverlayViewport = getPetOverlayViewport();
       if (!isFiniteViewport(nextOverlayViewport)) return;
+      resolveInitialPlacement(nextOverlayViewport);
       setOverlayViewport((prev) =>
         sameRect(prev, nextOverlayViewport) ? prev : nextOverlayViewport,
       );
@@ -372,11 +408,11 @@ export function PetApp() {
         viewport: interactionViewport,
         previousAvatarSize: previousPetAvatarSizeRef.current,
       });
-      if (!topologyPlacement) return baseProfile;
+      if (!placementIntent) return baseProfile;
       return {
         ...baseProfile,
-        placementKey: `${baseProfile.placementKey}:topology-${topologyPlacement.generation}`,
-        placementPoint: topologyPlacement.point,
+        placementKey: `${baseProfile.placementKey}:placement-${placementIntent.generation}`,
+        placementPoint: placementIntent.point,
         edge: null,
       };
     },
@@ -385,7 +421,7 @@ export function PetApp() {
       interactionViewport,
       petAvatarSize,
       spriteScreen,
-      topologyPlacement,
+      placementIntent,
     ],
   );
 
@@ -394,12 +430,12 @@ export function PetApp() {
   }, [petAvatarSize]);
 
   useEffect(() => {
-    if (!topologyPlacement || !isFiniteRect(spriteScreen)) return;
+    if (!placementIntent || !isFiniteRect(spriteScreen)) return;
     const spriteCenter = centerPointOfRect(spriteScreen);
-    if (samePoint(spriteCenter, topologyPlacement.point)) {
-      setTopologyPlacement(null);
+    if (samePoint(spriteCenter, placementIntent.point)) {
+      setAvatarPlacementIntent(null);
     }
-  }, [spriteScreen, topologyPlacement]);
+  }, [spriteScreen, placementIntent]);
 
   useEffect(() => {
     setRuntime(null);
@@ -464,6 +500,48 @@ export function PetApp() {
       samePoint(prev, nextPlacementPoint) ? prev : nextPlacementPoint,
     );
   }, [actionBarAnchor, spriteScreen]);
+
+  useEffect(() => {
+    if (
+      !isTauri() ||
+      isDragging ||
+      placementIntent ||
+      !isFiniteRect(spriteScreen) ||
+      !isFiniteViewport(overlayViewport)
+    ) {
+      return;
+    }
+
+    const point = centerPointOfRect(spriteScreen);
+    const timer = window.setTimeout(() => {
+      void loadPetDisplayPhysicalSnapshot()
+        .then((snapshot) => {
+          if (!snapshot) return;
+          const anchor = resolvePetMonitorRelativeAnchorForPoint({
+            point,
+            bounds: snapshot.bounds,
+            monitors: snapshot.monitors,
+            overlaySize: { w: overlayViewport.w, h: overlayViewport.h },
+          });
+          if (!anchor) return;
+          void savePetMonitorAnchor(anchor).catch((error: unknown) => {
+            console.warn("[pet] save monitor anchor failed:", error);
+          });
+        })
+        .catch((error: unknown) => {
+          console.warn("[pet] resolve monitor anchor failed:", error);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    isDragging,
+    overlayViewport,
+    spriteScreen,
+    placementIntent,
+  ]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -658,7 +736,7 @@ export function PetApp() {
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreenIfChanged}
-          setIsDragging={setIsDragging}
+          setIsDragging={setIsDraggingWithTracking}
           onRuntimeChange={setRuntime}
         />
       ) : selectedEntry?.backend === "spine" ? (
@@ -670,7 +748,7 @@ export function PetApp() {
           displayContext={displayContext}
           setSpriteScreen={setSpriteScreenIfChanged}
           setActionBarAnchor={setActionBarAnchorIfChanged}
-          setIsDragging={setIsDragging}
+          setIsDragging={setIsDraggingWithTracking}
           onRuntimeChange={setRuntime}
         />
       ) : null}
