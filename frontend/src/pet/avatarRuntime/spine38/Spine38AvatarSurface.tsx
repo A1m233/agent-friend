@@ -23,7 +23,9 @@ import type { PixelRegion } from "@/pet/petAlphaHitTest";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import { isTauri } from "@/utils/tauri";
 import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
+import type { PetWebviewDisplayContext } from "@/pages/pet/petWebviewDisplayContext";
 import { isFiniteRect } from "@/pages/pet/petGeometry";
+import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
 import {
   boundsToRegion,
   fitSpine38ToStage,
@@ -48,6 +50,7 @@ interface Props {
   entry: SpineAvatarModelEntry;
   initialAnchorPoint: { x: number; y: number } | null;
   displayProfile: PetDisplayProfile;
+  displayContext: PetWebviewDisplayContext;
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void;
   setActionBarAnchor: (s: { x: number; y: number; w: number; h: number } | null) => void;
   setIsDragging: (v: boolean) => void;
@@ -151,6 +154,7 @@ export function Spine38AvatarSurface({
   entry,
   initialAnchorPoint,
   displayProfile,
+  displayContext,
   setSpriteScreen,
   setActionBarAnchor,
   setIsDragging,
@@ -169,6 +173,7 @@ export function Spine38AvatarSurface({
   const visualAnchorOffsetRef = useRef<PixelPoint | null>(null);
   const initialAnchorPointRef = useRef(initialAnchorPoint);
   const displayProfileRef = useRef(displayProfile);
+  const displayContextRef = useRef(displayContext);
   const baseScaleRef = useRef({ x: 1, y: 1 });
   const lastAppliedPlacementKeyRef = useRef<string | null>(null);
   const initialLayoutAnchorAlignedRef = useRef(false);
@@ -253,6 +258,7 @@ export function Spine38AvatarSurface({
 
   initialAnchorPointRef.current = initialAnchorPoint;
   displayProfileRef.current = displayProfile;
+  displayContextRef.current = displayContext;
 
   const applyDisplayProfile = useCallback(
     (currentBounds: PixelRegion): PixelRegion => {
@@ -424,7 +430,7 @@ export function Spine38AvatarSurface({
         resizeTo: stage,
         antialias: true,
         autoDensity: true,
-        resolution: window.devicePixelRatio || 1,
+        resolution: displayContextRef.current.dpr,
         preserveDrawingBuffer: true,
       });
       appRef.current = app;
@@ -638,6 +644,20 @@ export function Spine38AvatarSurface({
     setSpriteScreen,
     syncBounds,
   ]);
+
+  useEffect(() => {
+    const app = appRef.current;
+    if (!app || !syncPixiRendererDpr(app, displayContext.dpr)) return;
+
+    alphaScanReadyRef.current = false;
+    alphaScanGivenUpRef.current = false;
+    actionBarAnchorOffsetRef.current = null;
+    visualAnchorOffsetRef.current = null;
+    lastSpriteScreenRef.current = null;
+    lastActionBarAnchorRef.current = null;
+    setActionBarAnchorIfChanged(null);
+    syncBounds();
+  }, [displayContext.dpr, setActionBarAnchorIfChanged, syncBounds]);
 
   const runtime = useMemo<PetAvatarRuntime>(
     () => ({

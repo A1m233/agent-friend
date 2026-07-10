@@ -14,6 +14,10 @@ import {
   type PetViewport,
 } from "./petDisplayProfile";
 import {
+  readWebviewDevicePixelRatio,
+  type PetWebviewDisplayContext,
+} from "./petWebviewDisplayContext";
+import {
   getPetOverlayViewport,
   loadPetMonitorViewports,
   rebasePetPointByMonitorAnchorWithDiagnostics,
@@ -121,6 +125,8 @@ export function PetApp() {
   const pendingTopologyAnchorRef = useRef<PendingTopologyAnchor | null>(null);
   const lastTopologyGenerationRef = useRef(0);
   const lastTopologySignatureRef = useRef<string | null>(null);
+  const [webviewDpr, setWebviewDpr] = useState(readWebviewDevicePixelRatio);
+  const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
   // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
@@ -172,6 +178,12 @@ export function PetApp() {
     let scaleUnlisten: (() => void) | null = null;
     let viewportRequestId = 0;
     let deferredAnchorTimer: number | null = null;
+    const syncWebviewDpr = () => {
+      const nextDpr = readWebviewDevicePixelRatio();
+      setWebviewDpr((prev) =>
+        Math.abs(prev - nextDpr) < 0.001 ? prev : nextDpr,
+      );
+    };
     const applyPendingTopologyAnchor = (overlaySize: PetViewport): boolean => {
       const pending = pendingTopologyAnchorRef.current;
       if (!pending || !isFiniteViewport(overlaySize)) return false;
@@ -205,6 +217,7 @@ export function PetApp() {
     };
     const updateViewport = (reason = "unknown") => {
       const requestId = ++viewportRequestId;
+      syncWebviewDpr();
       const nextOverlayViewport = getPetOverlayViewport();
       if (!isFiniteViewport(nextOverlayViewport)) return;
       setOverlayViewport((prev) =>
@@ -256,6 +269,7 @@ export function PetApp() {
       }
       lastTopologyGenerationRef.current = event.payload.generation;
       lastTopologySignatureRef.current = signature;
+      setDisplayTopologyGeneration(event.payload.generation);
 
       const previousBounds = event.payload.previousBounds;
       const previousMonitors = event.payload.previousMonitors;
@@ -418,7 +432,7 @@ export function PetApp() {
       backend: selectedEntry?.backend ?? null,
       spriteScreen,
       actionBarAnchor: actionBarAnchor ?? spriteScreen,
-      dpr: typeof window === "undefined" ? undefined : window.devicePixelRatio,
+      dpr: webviewDpr,
       overlayViewport,
       selectedViewport: interactionViewport,
       monitorViewports,
@@ -439,6 +453,7 @@ export function PetApp() {
     selectedEntry?.backend,
     selectedEntry?.id,
     spriteScreen,
+    webviewDpr,
   ]);
 
   useEffect(() => {
@@ -469,43 +484,34 @@ export function PetApp() {
     disabled: passthroughDisabled,
   });
 
+  const displayContext = useMemo<PetWebviewDisplayContext>(
+    () => ({
+      dpr: webviewDpr,
+      overlayViewport,
+      monitorViewports,
+      topologyGeneration: displayTopologyGeneration,
+    }),
+    [
+      displayTopologyGeneration,
+      monitorViewports,
+      overlayViewport,
+      webviewDpr,
+    ],
+  );
+
   // 18b · 上报 webview viewport 实际 DPR 给 Rust（issue 012 跨屏 drag 修复 v2）。
   //
   // 让 spawn_cursor_feed 用 window.devicePixelRatio 这个固定值算 cursor logical px，
   // 跟 PIXI canvas / spriteScreen 同坐标系。否则跨屏 drag 时 cursor scale 切换 →
   // cursor 数字范围跳跃 → 跟 spriteScreen 矩形错位 → drag 中断 + 完全穿透。
   //
-  // matchMedia 监 DPR 变化（罕见，但 mac 跨外接 Retina / Win 改 display scale 偶发）：
-  // 写入当前 dpr 的 `(resolution: Xdppx)` query，DPR 变化时 query 不再 match → change。
+  // DPR 由上面的 WebView display context 统一观测；这里仅把当前快照分发给 Rust。
   useEffect(() => {
     if (!isTauri()) return;
-    const report = () => {
-      void invoke("set_pet_webview_dpr", { dpr: window.devicePixelRatio }).catch(
-        (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
-      );
-    };
-    let topologyUnlisten: (() => void) | null = null;
-    let scaleUnlisten: (() => void) | null = null;
-    let cancelled = false;
-    report();
-    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    const onChange = () => report();
-    mq.addEventListener("change", onChange);
-    void listen(PET_DISPLAY_TOPOLOGY_CHANGED_EVENT, report).then((u) => {
-      if (cancelled) safeUnlisten(u);
-      else topologyUnlisten = u;
-    });
-    void getCurrentWindow().onScaleChanged(report).then((u) => {
-      if (cancelled) safeUnlisten(u);
-      else scaleUnlisten = u;
-    });
-    return () => {
-      cancelled = true;
-      mq.removeEventListener("change", onChange);
-      safeUnlisten(topologyUnlisten);
-      safeUnlisten(scaleUnlisten);
-    };
-  }, []);
+    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr }).catch(
+      (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
+    );
+  }, [displayContext.dpr]);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
   //
@@ -648,6 +654,7 @@ export function PetApp() {
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
           displayProfile={displayProfile}
+          displayContext={displayContext}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreenIfChanged}
@@ -660,6 +667,7 @@ export function PetApp() {
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
           displayProfile={displayProfile}
+          displayContext={displayContext}
           setSpriteScreen={setSpriteScreenIfChanged}
           setActionBarAnchor={setActionBarAnchorIfChanged}
           setIsDragging={setIsDragging}
