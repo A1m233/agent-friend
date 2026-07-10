@@ -40,7 +40,7 @@ from collections.abc import Awaitable, Callable
 from agent import TextDelta
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
-from .content import OutboundContent
+from .content import OutboundContent, OutboundTextFormat
 from .event import InboundEvent
 
 __all__ = ["FALLBACK_TEXT", "IMRouter"]
@@ -145,6 +145,7 @@ class IMRouter:
             default_model=self._default_model,
         )
 
+        text_format: OutboundTextFormat = "markdown"
         try:
             text = await asyncio.to_thread(self._run_turn_sync, boot)
         except Exception:
@@ -156,6 +157,7 @@ class IMRouter:
                 _text_len(event.content),
             )
             text = FALLBACK_TEXT
+            text_format = "plain_text"
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not text:
@@ -166,13 +168,16 @@ class IMRouter:
                 event.message_id,
             )
             text = FALLBACK_TEXT
+            text_format = "plain_text"
 
         logger.info(
-            "IM inbound router reply im_type=%s session_id=%s message_id=%s reply_len=%d",
+            "IM inbound router reply im_type=%s session_id=%s message_id=%s "
+            "reply_len=%d text_format=%s",
             im_type,
             session_id,
             event.message_id,
             _text_len(text),
+            text_format,
         )
 
         await send_fn(
@@ -180,6 +185,7 @@ class IMRouter:
                 chat_id=event.chat_id,
                 chat_scope=event.chat_scope,
                 text=text,
+                text_format=text_format,
                 reply_to_message_id=event.message_id,
             )
         )

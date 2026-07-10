@@ -28,6 +28,7 @@ from agent_bridge.protocols.im.adapters.qq import QQAdapter
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
+from qqbot_agent_sdk.dto import QQMessageType
 
 # ---------- fixtures ----------
 
@@ -205,7 +206,7 @@ async def test_on_message_before_start_warns_but_no_raise(adapter: QQAdapter) ->
 
 
 @pytest.mark.asyncio
-async def test_send_calls_post_c2c_with_message_to_create(
+async def test_send_plain_text_calls_post_c2c_with_text_message(
     adapter: QQAdapter,
 ) -> None:
     mock_api = MagicMock()
@@ -226,9 +227,40 @@ async def test_send_calls_post_c2c_with_message_to_create(
     msg_arg = mock_api.post_c2c_message.await_args.args[1]
     assert chat_id_arg == "OPENID-DEST"
     assert msg_arg.content == "hello"
-    assert msg_arg.msg_type == 0  # 文本
+    assert msg_arg.markdown is None
+    assert msg_arg.msg_type == QQMessageType.TEXT
     assert msg_arg.msg_id == "MSG-IN-123"
     assert msg_arg.msg_seq == 100
+
+
+@pytest.mark.asyncio
+async def test_send_markdown_calls_post_c2c_with_markdown_message(
+    adapter: QQAdapter,
+) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+    adapter._next_msg_seq_value = 101
+
+    content = OutboundContent(
+        chat_id="OPENID-DEST",
+        chat_scope="c2c",
+        text="**hello**",
+        text_format="markdown",
+        reply_to_message_id="MSG-IN-456",
+    )
+    await adapter.send(content)
+
+    mock_api.post_c2c_message.assert_awaited_once()
+    chat_id_arg = mock_api.post_c2c_message.await_args.args[0]
+    msg_arg = mock_api.post_c2c_message.await_args.args[1]
+    assert chat_id_arg == "OPENID-DEST"
+    assert msg_arg.content == ""
+    assert msg_arg.markdown is not None
+    assert msg_arg.markdown.content == "**hello**"
+    assert msg_arg.msg_type == QQMessageType.MARKDOWN
+    assert msg_arg.msg_id == "MSG-IN-456"
+    assert msg_arg.msg_seq == 101
 
 
 @pytest.mark.asyncio

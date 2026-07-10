@@ -7,6 +7,7 @@
   ``session_id_for(...)``
 - mock ``Conversation.stream`` 返回 ``[TextDelta("hello"), TextDelta(" world"),
   TurnDone()]`` → ``send_fn`` 收到 ``OutboundContent.text == "hello world"``
+- agent 主链路正常输出声明为 Markdown,channel fallback 仍声明为纯文本
 - mock ``Conversation.stream`` 抛错 → ``send_fn`` 收到
   ``OutboundContent.text == FALLBACK_TEXT``
 - ``ToolCallRequest`` / ``ToolCallResult`` 不污染 outbound(只 TextDelta 进 buffer)
@@ -146,6 +147,7 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
 
     assert len(captured) == 1
     assert captured[0].text == "hello world"
+    assert captured[0].text_format == "markdown"
 
 
 @pytest.mark.asyncio
@@ -204,6 +206,7 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
 
     await router.handle_inbound("qq", _make_event(), send)
     assert captured[0].text == FALLBACK_TEXT
+    assert captured[0].text_format == "plain_text"
 
 
 @pytest.mark.asyncio
@@ -220,6 +223,7 @@ async def test_bind_persistent_exception_falls_back(
 
     await router.handle_inbound("qq", _make_event(), send)
     assert captured[0].text == FALLBACK_TEXT
+    assert captured[0].text_format == "plain_text"
 
 
 @pytest.mark.asyncio
@@ -234,6 +238,7 @@ async def test_empty_output_falls_back(router: IMRouter, session_bridge: MagicMo
 
     await router.handle_inbound("qq", _make_event(), send)
     assert captured[0].text == FALLBACK_TEXT
+    assert captured[0].text_format == "plain_text"
 
 
 # ---------- ToolCall* 不污染 outbound ----------
