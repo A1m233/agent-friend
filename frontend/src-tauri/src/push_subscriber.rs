@@ -220,8 +220,8 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
     #[test]
     fn parse_envelope_empty_frame_returns_none() {
         assert!(parse_envelope_frame(b"").is_none());
-        assert!(parse_envelope_frame(b"event: push\n").is_none());  // 只有 event:、无 data:
-        assert!(parse_envelope_frame(b": comment-only\n").is_none());  // SSE comment
+        assert!(parse_envelope_frame(b"event: push\n").is_none()); // 只有 event:、无 data:
+        assert!(parse_envelope_frame(b": comment-only\n").is_none()); // SSE comment
     }
 
     #[test]
@@ -237,9 +237,15 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         let env = parse_envelope_frame(frame_str.as_bytes()).unwrap();
         assert_eq!(env.events.len(), 1);
         let ev = &env.events[0];
-        assert_eq!(ev.get("type").and_then(|v| v.as_str()), Some("assistant_message"));
+        assert_eq!(
+            ev.get("type").and_then(|v| v.as_str()),
+            Some("assistant_message")
+        );
         // UTF-8 内容也能 round-trip
-        let content = ev.get("payload").and_then(|p| p.get("content")).and_then(|v| v.as_str());
+        let content = ev
+            .get("payload")
+            .and_then(|p| p.get("content"))
+            .and_then(|v| v.as_str());
         assert_eq!(content, Some("晚安"));
     }
 

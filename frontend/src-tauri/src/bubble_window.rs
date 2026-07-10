@@ -167,10 +167,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
 /// Windows / Linux 上 Tauri `.show()` 默认行为对透明无焦点 window 一般也不抢焦点
 /// （未真跑验证；跨平台 spike 留下个需求）。
 #[tauri::command]
-pub fn show_bubble(
-    app: AppHandle,
-    state: tauri::State<'_, BubbleState>,
-) -> Result<(), String> {
+pub fn show_bubble(app: AppHandle, state: tauri::State<'_, BubbleState>) -> Result<(), String> {
     let bubble = app
         .get_webview_window(BUBBLE_LABEL)
         .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
@@ -201,10 +198,7 @@ pub fn show_bubble(
 
 /// 隐藏 bubble window + 标记内部"应该不可见"（M16.4 轮询 task 读到后 park）。
 #[tauri::command]
-pub fn hide_bubble(
-    app: AppHandle,
-    state: tauri::State<'_, BubbleState>,
-) -> Result<(), String> {
+pub fn hide_bubble(app: AppHandle, state: tauri::State<'_, BubbleState>) -> Result<(), String> {
     let bubble = app
         .get_webview_window(BUBBLE_LABEL)
         .ok_or_else(|| format!("window '{BUBBLE_LABEL}' not found"))?;
@@ -293,8 +287,16 @@ pub fn update_sprite_pos(
             if let (Ok(bubble_size), Some(screen)) =
                 (bubble.outer_size(), current_screen_rect(&pet))
             {
-                let anchor = Anchor { x: sp.x, y: sp.y, w: sp.w, h: sp.h };
-                let bub = BubbleSize { w: bubble_size.width, h: bubble_size.height };
+                let anchor = Anchor {
+                    x: sp.x,
+                    y: sp.y,
+                    w: sp.w,
+                    h: sp.h,
+                };
+                let bub = BubbleSize {
+                    w: bubble_size.width,
+                    h: bubble_size.height,
+                };
                 let (bx, by) = compute_bubble_position(anchor, bub, screen);
                 let _ = bubble.set_position(PhysicalPosition { x: bx, y: by });
             }
@@ -358,7 +360,11 @@ pub fn compute_bubble_position(pet: Anchor, bubble: BubbleSize, screen: Screen) 
     let above_y = pet.y - (bubble.h as i32) - MARGIN;
     let below_y = pet.y + (pet.h as i32) + MARGIN;
     let top_limit = screen.y + MARGIN;
-    let y = if above_y >= top_limit { above_y } else { below_y };
+    let y = if above_y >= top_limit {
+        above_y
+    } else {
+        below_y
+    };
 
     (x, y)
 }
@@ -412,10 +418,9 @@ async fn run_follow_loop(app: AppHandle, state: BubbleState) {
             app.get_webview_window("pet"),
             app.get_webview_window(BUBBLE_LABEL),
         ) {
-            if let (Ok(bubble_size), Some(screen)) = (
-                bubble.outer_size(),
-                current_screen_rect(&pet),
-            ) {
+            if let (Ok(bubble_size), Some(screen)) =
+                (bubble.outer_size(), current_screen_rect(&pet))
+            {
                 let anchor = Anchor {
                     x: sp.x,
                     y: sp.y,
@@ -448,7 +453,12 @@ mod tests {
     use super::*;
 
     /// 标准屏幕：1920×1080，原点 (0, 0)。
-    const SCREEN: Screen = Screen { x: 0, y: 0, w: 1920, h: 1080 };
+    const SCREEN: Screen = Screen {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 1080,
+    };
     /// 默认 bubble 尺寸：280×96（与 tauri.conf.json 初始值一致）。
     const BUBBLE: BubbleSize = BubbleSize { w: 280, h: 96 };
     /// pet 主窗尺寸：240×320。
@@ -458,7 +468,12 @@ mod tests {
     #[test]
     fn case1_pet_at_screen_center_bubble_above_and_centered() {
         // pet 在屏幕中央 (840, 380) —— 顶部距屏顶 380px，远大于 bubble.h + MARGIN = 104
-        let pet = Anchor { x: 840, y: 380, w: PET_W, h: PET_H };
+        let pet = Anchor {
+            x: 840,
+            y: 380,
+            w: PET_W,
+            h: PET_H,
+        };
         let (x, y) = compute_bubble_position(pet, BUBBLE, SCREEN);
         // 水平居中：pet 中线 = 840 + 120 = 960；bubble 左上 x = 960 - 140 = 820
         assert_eq!(x, 820);
@@ -469,7 +484,12 @@ mod tests {
     #[test]
     fn case2_pet_at_top_edge_flips_below() {
         // pet 顶部贴墙 (840, 0) —— above_y = 0 - 96 - 8 = -104 < top_limit = 8 → 翻到下方
-        let pet = Anchor { x: 840, y: 0, w: PET_W, h: PET_H };
+        let pet = Anchor {
+            x: 840,
+            y: 0,
+            w: PET_W,
+            h: PET_H,
+        };
         let (_, y) = compute_bubble_position(pet, BUBBLE, SCREEN);
         assert_eq!(y, 0 + (PET_H as i32) + MARGIN);
     }
@@ -477,7 +497,12 @@ mod tests {
     #[test]
     fn case3_pet_at_left_edge_clamps_to_screen_left() {
         // pet 紧贴屏幕左边 (0, 380) —— pet 中线 = 120，raw_x = 120 - 140 = -20 < 0 → clamp 到 0
-        let pet = Anchor { x: 0, y: 380, w: PET_W, h: PET_H };
+        let pet = Anchor {
+            x: 0,
+            y: 380,
+            w: PET_W,
+            h: PET_H,
+        };
         let (x, _) = compute_bubble_position(pet, BUBBLE, SCREEN);
         assert_eq!(x, 0);
     }
@@ -486,7 +511,12 @@ mod tests {
     fn case4_pet_at_right_edge_clamps_to_screen_right() {
         // pet 紧贴屏幕右边 (1680, 380) —— pet 中线 = 1800，raw_x = 1800 - 140 = 1660
         // max_x = 1920 - 280 = 1640；1660 > 1640 → clamp 到 1640
-        let pet = Anchor { x: 1680, y: 380, w: PET_W, h: PET_H };
+        let pet = Anchor {
+            x: 1680,
+            y: 380,
+            w: PET_W,
+            h: PET_H,
+        };
         let (x, _) = compute_bubble_position(pet, BUBBLE, SCREEN);
         assert_eq!(x, 1920 - (BUBBLE.w as i32));
     }
@@ -495,8 +525,18 @@ mod tests {
     fn case5_bubble_wider_than_screen_pins_to_screen_left() {
         // 极端：screen 比 bubble 还窄（virtual screen=200×1080，bubble=280×96）
         // max_x = 200 - 280 = -80 < screen.x = 0 → clamp 到 screen.x，保证不越左
-        let narrow_screen = Screen { x: 0, y: 0, w: 200, h: 1080 };
-        let pet = Anchor { x: 0, y: 380, w: PET_W, h: PET_H };
+        let narrow_screen = Screen {
+            x: 0,
+            y: 0,
+            w: 200,
+            h: 1080,
+        };
+        let pet = Anchor {
+            x: 0,
+            y: 380,
+            w: PET_W,
+            h: PET_H,
+        };
         let (x, _) = compute_bubble_position(pet, BUBBLE, narrow_screen);
         assert_eq!(x, 0);
     }
@@ -530,7 +570,12 @@ mod tests {
         let state = BubbleState::default();
         {
             let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos { x: 100, y: 200, w: 160, h: 160 });
+            *g = Some(SpritePos {
+                x: 100,
+                y: 200,
+                w: 160,
+                h: 160,
+            });
         }
         let g = state.sprite_pos.lock().expect("lock");
         let sp = g.expect("Some");
@@ -545,11 +590,21 @@ mod tests {
         let state = BubbleState::default();
         {
             let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos { x: 1, y: 2, w: 10, h: 10 });
+            *g = Some(SpritePos {
+                x: 1,
+                y: 2,
+                w: 10,
+                h: 10,
+            });
         }
         {
             let mut g = state.sprite_pos.lock().expect("lock");
-            *g = Some(SpritePos { x: 999, y: -50, w: 20, h: 20 });
+            *g = Some(SpritePos {
+                x: 999,
+                y: -50,
+                w: 20,
+                h: 20,
+            });
         }
         let g = state.sprite_pos.lock().expect("lock");
         let sp = g.expect("Some");

@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
-mod bubble_window;
 mod avatar_models;
+mod bubble_window;
 mod paths;
+mod pet_display_topology;
 mod push_subscriber;
 mod runtime_config;
 mod settings;
@@ -16,10 +18,25 @@ mod ui_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
+const EVENT_PET_DISPLAY_TOPOLOGY_CHANGED: &str = "pet://display-topology-changed";
+const PET_OVERLAY_RECONCILE_INTERVAL_MS: u64 = 1000;
+const PET_OVERLAY_BOUNDS_SETTLE_MS: u64 = 1200;
 
 #[derive(Default)]
 struct VoiceLaunchState {
     pending_start: Mutex<Option<VoiceStartRequest>>,
+}
+
+#[derive(Default)]
+struct PetOverlayState {
+    inner: Mutex<PetOverlayStateInner>,
+}
+
+#[derive(Default)]
+struct PetOverlayStateInner {
+    topology_epoch: pet_display_topology::TopologyEpochState,
+    bounds_correction_request_id: u64,
+    bounds_correction_pending: bool,
 }
 
 impl VoiceLaunchState {
@@ -187,59 +204,206 @@ fn apply_pet_nspanel(window: &WebviewWindow) {
     }
 }
 
-/// 017 · 把 pet 窗撑成整屏 transparent overlay：算 `available_monitors()` 并集 →
-/// `set_position` + `set_size`。沿 macOS spike §5.5.5 + Win spike §6.4.4.2 同款 monitors union 算法。
-///
-/// **跨平台**实现（无 cfg gate）—— Tauri 的 `available_monitors` / `set_position` /
-/// `set_size` 三端原生支持。setup hook 在 macOS 上调本 fn → 再 `apply_pet_nspanel`
-/// （setBounds 顺序：必须先 setBounds → 再 to_panel，避免 to_panel 后 size 行为不确定）；
-/// Win / Linux 上调本 fn 后无加料（tauri.conf.json 已配 alwaysOnTop + transparent + skipTaskbar）。
-///
-/// 失败仅 log warn，不阻断 app 启动。
-fn apply_pet_overlay_fullscreen(window: &WebviewWindow) {
+fn read_pet_display_topology(
+    window: &WebviewWindow,
+) -> Option<pet_display_topology::DisplayTopologySnapshot> {
     let monitors = match window.available_monitors() {
         Ok(m) => m,
         Err(e) => {
-            log::warn!("apply_pet_overlay_fullscreen: available_monitors failed: {e}");
-            return;
+            log::warn!("pet overlay reconcile: available_monitors failed: {e}");
+            return None;
         }
     };
-    if monitors.is_empty() {
-        log::warn!("apply_pet_overlay_fullscreen: no monitors found");
+    let snapshots = monitors
+        .iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            pet_display_topology::MonitorSnapshot {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+                scale_milli: pet_display_topology::scale_to_milli(monitor.scale_factor()),
+            }
+        })
+        .collect();
+    let snapshot = pet_display_topology::display_topology_snapshot(snapshots);
+    if snapshot.is_none() {
+        log::warn!("pet overlay reconcile: no usable monitors found");
+    }
+    snapshot
+}
+
+fn pet_overlay_bounds_match(
+    window: &WebviewWindow,
+    bounds: pet_display_topology::OverlayBounds,
+) -> bool {
+    let Ok(position) = window.outer_position() else {
+        return false;
+    };
+    let Ok(size) = window.outer_size() else {
+        return false;
+    };
+    position.x == bounds.x
+        && position.y == bounds.y
+        && size.width == bounds.width
+        && size.height == bounds.height
+}
+
+fn resolve_pet_overlay_reconcile_decision(
+    app: &tauri::AppHandle,
+    snapshot: &pet_display_topology::DisplayTopologySnapshot,
+    force: bool,
+) -> pet_display_topology::TopologyEpochDecision {
+    app.try_state::<PetOverlayState>()
+        .and_then(|state| {
+            state
+                .inner
+                .lock()
+                .ok()
+                .map(|mut guard| guard.topology_epoch.accept(snapshot, force))
+        })
+        .unwrap_or(pet_display_topology::TopologyEpochDecision {
+            topology_changed: force,
+            generation: None,
+            previous_topology: None,
+        })
+}
+
+fn schedule_pet_overlay_bounds_correction(
+    app: &tauri::AppHandle,
+    reason: &'static str,
+    reset_pending: bool,
+) {
+    let Some(request_id) = app.try_state::<PetOverlayState>().and_then(|state| {
+        state.inner.lock().ok().and_then(|mut guard| {
+            if guard.bounds_correction_pending && !reset_pending {
+                return None;
+            }
+            guard.bounds_correction_request_id =
+                guard.bounds_correction_request_id.saturating_add(1);
+            guard.bounds_correction_pending = true;
+            Some(guard.bounds_correction_request_id)
+        })
+    }) else {
+        return;
+    };
+
+    log::info!(
+        "pet overlay bounds correction scheduled: reason={} request_id={} settle_ms={}",
+        reason,
+        request_id,
+        PET_OVERLAY_BOUNDS_SETTLE_MS
+    );
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(PET_OVERLAY_BOUNDS_SETTLE_MS)).await;
+        let should_run = handle
+            .try_state::<PetOverlayState>()
+            .and_then(|state| {
+                state.inner.lock().ok().map(|mut guard| {
+                    if guard.bounds_correction_request_id == request_id {
+                        guard.bounds_correction_pending = false;
+                        true
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false);
+        if should_run {
+            reconcile_pet_overlay(&handle, "bounds-settled", false);
+        }
+    });
+}
+
+/// 017 / display topology · 把 pet 窗撑成所有显示器并集，并在运行期持续校准。
+///
+/// 这不是一次性 setup 动作：外接屏拔插、分辨率变化、DPI scale 变化、主副屏布局变化
+/// 都会改变 pet overlay 的真实坐标系。Rust 侧持有 monitor topology signature，
+/// 发现变化或窗口 bounds 被系统改写时重新 set_position/set_size，并通知前端刷新
+/// monitor viewports。
+fn reconcile_pet_overlay(app: &tauri::AppHandle, reason: &'static str, force: bool) {
+    let Some(pet) = app.get_webview_window("pet") else {
+        return;
+    };
+    let Some(snapshot) = read_pet_display_topology(&pet) else {
+        return;
+    };
+    let bounds = snapshot.bounds;
+    let decision = resolve_pet_overlay_reconcile_decision(app, &snapshot, force);
+    let previous_bounds = decision
+        .previous_topology
+        .as_ref()
+        .map(|topology| topology.bounds);
+    let previous_monitors = decision
+        .previous_topology
+        .as_ref()
+        .map(|topology| topology.monitors.clone());
+    let bounds_changed = !pet_overlay_bounds_match(&pet, bounds);
+
+    if !decision.topology_changed && !bounds_changed {
         return;
     }
-    let min_x = monitors.iter().map(|m| m.position().x).min().unwrap_or(0);
-    let min_y = monitors.iter().map(|m| m.position().y).min().unwrap_or(0);
-    let max_x = monitors
-        .iter()
-        .map(|m| m.position().x + m.size().width as i32)
-        .max()
-        .unwrap_or(0);
-    let max_y = monitors
-        .iter()
-        .map(|m| m.position().y + m.size().height as i32)
-        .max()
-        .unwrap_or(0);
-    let union_w = (max_x - min_x).max(1) as u32;
-    let union_h = (max_y - min_y).max(1) as u32;
+    if !decision.topology_changed && bounds_changed && reason != "bounds-settled" {
+        schedule_pet_overlay_bounds_correction(app, reason, reason != "poll");
+        return;
+    }
+
+    let generation_label = decision
+        .generation
+        .map(|generation| generation.to_string())
+        .unwrap_or_else(|| "-".to_string());
     log::info!(
-        "apply_pet_overlay_fullscreen: monitors={} union=({},{}) {}x{}",
-        monitors.len(),
-        min_x,
-        min_y,
-        union_w,
-        union_h
+        "pet overlay reconcile: reason={} generation={} topology_changed={} bounds_changed={} monitors={} union=({},{}) {}x{}",
+        reason,
+        generation_label,
+        decision.topology_changed,
+        bounds_changed,
+        snapshot.monitors.len(),
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height
     );
-    if let Err(e) = window.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition::new(min_x, min_y),
-    )) {
-        log::warn!("apply_pet_overlay_fullscreen: set_position failed: {e}");
-    }
-    if let Err(e) = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
-        union_w, union_h,
+    if let Err(e) = pet.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+        bounds.x, bounds.y,
     ))) {
-        log::warn!("apply_pet_overlay_fullscreen: set_size failed: {e}");
+        log::warn!("pet overlay reconcile: set_position failed: {e}");
     }
+    if let Err(e) = pet.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+        bounds.width,
+        bounds.height,
+    ))) {
+        log::warn!("pet overlay reconcile: set_size failed: {e}");
+    }
+
+    let Some(generation) = decision.generation else {
+        return;
+    };
+
+    let payload = pet_display_topology::DisplayTopologyChangedPayload {
+        reason: reason.to_string(),
+        generation,
+        bounds,
+        previous_bounds,
+        previous_monitors,
+        monitors: snapshot.monitors,
+    };
+    if let Err(e) = app.emit_to("pet", EVENT_PET_DISPLAY_TOPOLOGY_CHANGED, payload) {
+        log::warn!("pet overlay reconcile: emit topology changed failed: {e}");
+    }
+}
+
+fn spawn_pet_overlay_reconciler(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(PET_OVERLAY_RECONCILE_INTERVAL_MS)).await;
+            reconcile_pet_overlay(&handle, "poll", false);
+        }
+    });
 }
 
 /// bridge HTTP base URL。
@@ -463,6 +627,9 @@ struct PetWebviewState {
 #[tauri::command]
 fn set_pet_webview_dpr(state: tauri::State<PetWebviewState>, dpr: f64) {
     if let Ok(mut g) = state.dpr.lock() {
+        if (*g - dpr).abs() < f64::EPSILON {
+            return;
+        }
         *g = dpr;
         log::info!("set_pet_webview_dpr: {dpr}");
     }
@@ -517,6 +684,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default())
+        .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
         .manage(settings_state.clone())
@@ -583,6 +751,25 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
+            if window.label() == "pet" {
+                match event {
+                    tauri::WindowEvent::Resized(_) => {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            reconcile_pet_overlay(&app, "pet-resized", false);
+                        });
+                    }
+                    tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            reconcile_pet_overlay(&app, "pet-scale-factor-changed", false);
+                        });
+                    }
+                    _ => {}
+                }
+            }
             // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
@@ -643,7 +830,10 @@ pub fn run() {
                                 .unwrap_or_else(|| record.target());
                             out.finish(format_args!(
                                 "{} [{:<5}] [{}] {}",
-                                ts, record.level(), component, message
+                                ts,
+                                record.level(),
+                                component,
+                                message
                             ))
                         },
                     )
@@ -684,14 +874,18 @@ pub fn run() {
             //     transparent；Win spike §6.4.3 实证 alwaysOnTop 天然支持 fullscreen 浮层
             //   - 015 → 016 的 apply_floating_window_level 在 pet 上不再调用（NSPanel 路径
             //     已等价覆盖 setLevel + collectionBehavior）；helper 本身保留供 bubble_window::init 用
-            if let Some(pet) = app.get_webview_window("pet") {
-                apply_pet_overlay_fullscreen(&pet);
+            if app.get_webview_window("pet").is_some() {
+                reconcile_pet_overlay(app.handle(), "setup", true);
                 #[cfg(target_os = "macos")]
                 {
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                    let pet = app
+                        .get_webview_window("pet")
+                        .expect("pet window checked before macOS panel setup");
                     apply_pet_nspanel(&pet);
                 }
             }
+            spawn_pet_overlay_reconciler(app.handle());
             #[cfg(debug_assertions)]
             setup_live2d_debugger_window(app.handle())?;
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level

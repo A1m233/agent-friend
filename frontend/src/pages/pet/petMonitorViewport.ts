@@ -1,6 +1,6 @@
 import { availableMonitors, type Monitor } from "@tauri-apps/api/window";
 
-import type { PetRect, PetViewport } from "./petDisplayProfile";
+import type { PetPoint, PetRect, PetViewport } from "./petDisplayProfile";
 import { isFiniteRect, isFiniteViewport } from "./petGeometry";
 import { isTauri } from "@/utils/tauri";
 
@@ -11,9 +11,47 @@ interface MonitorRect {
   size: { width: number; height: number };
 }
 
-interface CssSize {
+export interface CssSize {
   w: number;
   h: number;
+}
+
+export interface OverlayPhysicalBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MonitorPhysicalSnapshot {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scaleMilli?: number | null;
+}
+
+export interface MonitorViewportSnapshot extends PetViewport {
+  monitor: MonitorPhysicalSnapshot;
+  index: number;
+}
+
+export interface PetPointMonitorRebaseDiagnostics {
+  previousViewports: MonitorViewportSnapshot[];
+  nextViewports: MonitorViewportSnapshot[];
+  previousViewport: MonitorViewportSnapshot | null;
+  nextViewport: MonitorViewportSnapshot | null;
+  relativeAnchor: PetPoint | null;
+}
+
+export interface PetPointMonitorRebaseResult {
+  point: PetPoint | null;
+  diagnostics: PetPointMonitorRebaseDiagnostics;
+}
+
+export interface PetMonitorRelativeAnchor {
+  monitor: MonitorPhysicalSnapshot;
+  relativeAnchor: PetPoint;
 }
 
 export function getPetOverlayViewport(): PetViewport {
@@ -74,6 +112,34 @@ export function computeMonitorViewports(
     .filter(isFiniteViewport);
 }
 
+function computeMonitorViewportsWithinBounds(
+  monitors: MonitorPhysicalSnapshot[],
+  bounds: OverlayPhysicalBounds,
+  overlaySize: CssSize,
+): MonitorViewportSnapshot[] {
+  const usableMonitors = monitors.filter(isUsablePhysicalMonitor);
+  if (
+    !usableMonitors.length ||
+    !isUsablePhysicalBounds(bounds) ||
+    !isUsableSize(overlaySize)
+  ) {
+    return [];
+  }
+
+  const scaleX = overlaySize.w / bounds.width;
+  const scaleY = overlaySize.h / bounds.height;
+  return usableMonitors
+    .map((monitor, index) => ({
+      x: (monitor.x - bounds.x) * scaleX,
+      y: (monitor.y - bounds.y) * scaleY,
+      w: monitor.width * scaleX,
+      h: monitor.height * scaleY,
+      monitor,
+      index,
+    }))
+    .filter(isFiniteViewport);
+}
+
 function intersectionArea(rect: PetRect, viewport: PetViewport): number {
   const left = Math.max(rect.x, viewport.x);
   const right = Math.min(rect.x + rect.w, viewport.x + viewport.w);
@@ -115,6 +181,218 @@ export function resolvePetViewportForRect(
     }
   }
   return bestArea > 0 || Number.isFinite(bestDistance) ? bestViewport : safeFallback;
+}
+
+function isUsablePhysicalBounds(bounds: OverlayPhysicalBounds): boolean {
+  return (
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width > 0 &&
+    bounds.height > 0
+  );
+}
+
+function isUsablePhysicalMonitor(monitor: MonitorPhysicalSnapshot): boolean {
+  return (
+    Number.isFinite(monitor.x) &&
+    Number.isFinite(monitor.y) &&
+    Number.isFinite(monitor.width) &&
+    Number.isFinite(monitor.height) &&
+    monitor.width > 0 &&
+    monitor.height > 0
+  );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function containsPoint(viewport: PetViewport, point: PetPoint): boolean {
+  return (
+    point.x >= viewport.x &&
+    point.x <= viewport.x + viewport.w &&
+    point.y >= viewport.y &&
+    point.y <= viewport.y + viewport.h
+  );
+}
+
+function distanceToViewportPoint(viewport: PetViewport, point: PetPoint): number {
+  const nearestX = clamp(point.x, viewport.x, viewport.x + viewport.w);
+  const nearestY = clamp(point.y, viewport.y, viewport.y + viewport.h);
+  return Math.hypot(point.x - nearestX, point.y - nearestY);
+}
+
+function selectMonitorViewportForPoint(
+  point: PetPoint,
+  viewports: MonitorViewportSnapshot[],
+): MonitorViewportSnapshot | null {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || viewports.length === 0) {
+    return null;
+  }
+
+  const containing = viewports.filter((viewport) => containsPoint(viewport, point));
+  if (containing.length > 0) {
+    return containing.sort(
+      (a, b) =>
+        Math.hypot(point.x - (a.x + a.w / 2), point.y - (a.y + a.h / 2)) -
+        Math.hypot(point.x - (b.x + b.w / 2), point.y - (b.y + b.h / 2)),
+    )[0];
+  }
+
+  return [...viewports].sort(
+    (a, b) => distanceToViewportPoint(a, point) - distanceToViewportPoint(b, point),
+  )[0];
+}
+
+function monitorMatchScore(
+  previous: MonitorPhysicalSnapshot,
+  next: MonitorPhysicalSnapshot,
+): number {
+  const widthBase = Math.max(previous.width, next.width, 1);
+  const heightBase = Math.max(previous.height, next.height, 1);
+  const sizeScore =
+    Math.abs(previous.width - next.width) / widthBase +
+    Math.abs(previous.height - next.height) / heightBase;
+  const scaleScore =
+    Math.abs((previous.scaleMilli ?? 0) - (next.scaleMilli ?? 0)) / 1000;
+  const positionScore =
+    (Math.abs(previous.x - next.x) + Math.abs(previous.y - next.y)) / 100000;
+  return sizeScore * 1000 + scaleScore * 100 + positionScore;
+}
+
+function matchNextMonitorViewport(
+  previous: MonitorPhysicalSnapshot,
+  nextViewports: MonitorViewportSnapshot[],
+): MonitorViewportSnapshot | null {
+  if (nextViewports.length === 0) return null;
+  if (nextViewports.length === 1) return nextViewports[0];
+
+  return [...nextViewports].sort(
+    (a, b) =>
+      monitorMatchScore(previous, a.monitor) - monitorMatchScore(previous, b.monitor) ||
+      a.index - b.index,
+  )[0];
+}
+
+export interface PetPointMonitorRebaseInput {
+  point: PetPoint;
+  previousBounds: OverlayPhysicalBounds;
+  nextBounds: OverlayPhysicalBounds;
+  previousMonitors: MonitorPhysicalSnapshot[];
+  nextMonitors: MonitorPhysicalSnapshot[];
+  previousOverlaySize: CssSize;
+  nextOverlaySize: CssSize;
+}
+
+export function rebasePetPointByMonitorAnchorWithDiagnostics(
+  input: PetPointMonitorRebaseInput,
+): PetPointMonitorRebaseResult {
+  const previousViewports = computeMonitorViewportsWithinBounds(
+    input.previousMonitors,
+    input.previousBounds,
+    input.previousOverlaySize,
+  );
+  const nextViewports = computeMonitorViewportsWithinBounds(
+    input.nextMonitors,
+    input.nextBounds,
+    input.nextOverlaySize,
+  );
+  const previousViewport = selectMonitorViewportForPoint(input.point, previousViewports);
+  if (!previousViewport || previousViewport.w <= 0 || previousViewport.h <= 0) {
+    return {
+      point: null,
+      diagnostics: {
+        previousViewports,
+        nextViewports,
+        previousViewport,
+        nextViewport: null,
+        relativeAnchor: null,
+      },
+    };
+  }
+
+  const nextViewport = matchNextMonitorViewport(previousViewport.monitor, nextViewports);
+  if (!nextViewport) {
+    return {
+      point: null,
+      diagnostics: {
+        previousViewports,
+        nextViewports,
+        previousViewport,
+        nextViewport,
+        relativeAnchor: null,
+      },
+    };
+  }
+
+  const relativeX = clamp(
+    (input.point.x - previousViewport.x) / previousViewport.w,
+    0,
+    1,
+  );
+  const relativeY = clamp(
+    (input.point.y - previousViewport.y) / previousViewport.h,
+    0,
+    1,
+  );
+  const point = {
+    x: clamp(
+      nextViewport.x + nextViewport.w * relativeX,
+      nextViewport.x,
+      nextViewport.x + nextViewport.w,
+    ),
+    y: clamp(
+      nextViewport.y + nextViewport.h * relativeY,
+      nextViewport.y,
+      nextViewport.y + nextViewport.h,
+    ),
+  };
+  return {
+    point,
+    diagnostics: {
+      previousViewports,
+      nextViewports,
+      previousViewport,
+      nextViewport,
+      relativeAnchor: { x: relativeX, y: relativeY },
+    },
+  };
+}
+
+export function rebasePetPointByMonitorAnchor(
+  input: PetPointMonitorRebaseInput,
+): PetPoint | null {
+  return rebasePetPointByMonitorAnchorWithDiagnostics(input).point;
+}
+
+export function resolvePetPointFromMonitorRelativeAnchor(input: {
+  anchor: PetMonitorRelativeAnchor;
+  bounds: OverlayPhysicalBounds;
+  monitors: MonitorPhysicalSnapshot[];
+  overlaySize: CssSize;
+}): PetPoint | null {
+  const viewports = computeMonitorViewportsWithinBounds(
+    input.monitors,
+    input.bounds,
+    input.overlaySize,
+  );
+  const viewport = matchNextMonitorViewport(input.anchor.monitor, viewports);
+  if (!viewport) return null;
+
+  return {
+    x: clamp(
+      viewport.x + viewport.w * clamp(input.anchor.relativeAnchor.x, 0, 1),
+      viewport.x,
+      viewport.x + viewport.w,
+    ),
+    y: clamp(
+      viewport.y + viewport.h * clamp(input.anchor.relativeAnchor.y, 0, 1),
+      viewport.y,
+      viewport.y + viewport.h,
+    ),
+  };
 }
 
 export async function loadPetMonitorViewports(
