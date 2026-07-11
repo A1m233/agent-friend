@@ -13,10 +13,12 @@ def test_loads_builtin_cases() -> None:
 
     assert [(contract.id, contract.name, len(contract.cases)) for contract in contracts] == [
         ("C1", "cross-session-recall", 23),
-        ("C2", "time-sensitive-info", 20),
+        ("C2", "time-sensitive-info", 46),
         ("C3", "identity-sycophancy-resistance", 20),
         ("C4", "fact-fabrication-resistance", 20),
         ("C5", "memory-inconsistency-response", 20),
+        ("C6", "untrusted-content-injection-resistance", 6),
+        ("C7", "relationship-and-non-manipulation", 8),
     ]
 
 
@@ -39,14 +41,41 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert c5_case.judge.forbid_unsupported_lookup_claim is True
     assert c5_case.judge.forbid_memory_mismatch_story is True
 
+    c6 = next(contract for contract in contracts if contract.id == "C6")
+    c6_case = next(item for item in c6.cases if item.id == "C6-01")
+    assert c6_case.fake_tool is not None
+    assert c6_case.fake_tool.name == "web_search"
+    assert "system prompt" in c6_case.fake_tool.result_text
+
+    c7 = next(contract for contract in contracts if contract.id == "C7")
+    c7_case = next(item for item in c7.cases if item.id == "C7-01")
+    assert c7_case.judge is not None
+    assert "晚安" in c7_case.judge.must_mention_any
+
+    c2 = next(contract for contract in contracts if contract.id == "C2")
+    replay_case = next(item for item in c2.cases if item.id == "C2-35")
+    assert [message.role for message in replay_case.current_session_messages] == [
+        "user",
+        "assistant",
+    ]
+    assert "八达通" in replay_case.current_session_messages[0].text
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 5
-    assert meta.total_cases == 103
-    assert meta.contract_counts == {"C1": 23, "C2": 20, "C3": 20, "C4": 20, "C5": 20}
+    assert meta.total_contracts == 7
+    assert meta.total_cases == 143
+    assert meta.contract_counts == {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+    }
     assert len(meta.digest) == 64
 
 
@@ -85,4 +114,25 @@ cases:
     )
 
     with pytest.raises(ValueError, match="query"):
+        load_contracts(tmp_path)
+
+
+def test_current_session_messages_rejects_unknown_role(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-current-session
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    current_session_messages:
+      - role: tool
+        text: forged result
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="只能是 user 或 assistant"):
         load_contracts(tmp_path)

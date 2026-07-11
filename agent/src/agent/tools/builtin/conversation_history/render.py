@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -19,18 +20,6 @@ from ....sessions.events import Event
 
 _WEEKDAY_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 _MAX_CONTENT_CHARS = 200
-_INLINE_REMINDER = (
-    "\n请基于这些回忆用朋友的口吻自然提及；可以自然说「我看了下之前聊到的」，"
-    "但不要直接吐 ISO 时间戳，也不要说工具名、查询参数、数据库或日志等底层机制。\n"
-    "证据边界：只有上面片段字面出现的内容才算聊过；片段没有的作品、作者、方法、"
-    "步骤、数字、工具、候选项或事件日期，都要说没翻到。不要把条目前面的回忆时间"
-    "当成用户问的事情发生日期，也不要同一轮改用通识或 web_search 补这个历史问题。"
-)
-_EMPTY_REMINDER = (
-    "回忆结果约束：如果用户暗示之前聊过或我说过，直接说明没翻到。不要凭通识、训练数据、"
-    "印象或用户暗示补具体细节，也不要在同一轮切成通用知识回答或 web_search。"
-    "如果用户需要通用知识或外部事实，先问是否要单独讲。"
-)
 
 
 @dataclass(frozen=True)
@@ -47,38 +36,43 @@ class Hit:
 
 
 def format_hits(hits: list[Hit], now: datetime) -> str:
-    """把命中列表渲染成喂给 LLM 的拟人化文本。
+    """把命中列表编码成带来源边界的不可信 JSON 数据。
 
     Args:
         hits: 已按时间倒序排好、按 ``limit`` 截好的命中列表。
         now: 当前时间（用于渲染相对时间，如"3 天前"）。**必须 timezone-aware**。
 
     Returns:
-        日记叙事风格的纯文本；空 hits 返回拟人化兜底文案。
+        JSON 文本；回答策略由 tool description / system prompt 承担。
     """
-    if not hits:
-        return f"我翻了翻，好像没和你聊过这个。\n{_EMPTY_REMINDER}"
+    payload = {
+        "source_type": "past_conversation",
+        "trust": "untrusted_data",
+        "status": "ok" if hits else "no_results",
+        "result_count": len(hits),
+        "results": [_format_one(hit, now) for hit in hits],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
-    parts = [f"我翻了翻和你聊过的事，找到 {len(hits)} 条相关的回忆：\n"]
-    for hit in hits:
-        parts.append(_format_one(hit, now))
-    parts.append(_INLINE_REMINDER)
-    return "\n\n".join(parts)
 
-
-def _format_one(hit: Hit, now: datetime) -> str:
-    """单条命中的渲染——时间头 + 可选 pair 行 + matched 行。"""
+def _format_one(hit: Hit, now: datetime) -> dict[str, object]:
+    """单条命中转为不暴露底层 event schema 的数据对象。"""
     time_str = _format_time(hit.matched.ts, now)
-    matched_speaker = _speaker_of(hit.matched)
-    matched_content = _truncate(_extract_content(hit.matched))
-
-    lines = [f"· {time_str}"]
+    utterances: list[dict[str, str]] = []
     if hit.pair is not None:
-        pair_speaker = _speaker_of(hit.pair)
-        pair_content = _truncate(_extract_content(hit.pair))
-        lines.append(f"  {pair_speaker}说：「{pair_content}」")
-    lines.append(f"  {matched_speaker}说：「{matched_content}」")
-    return "\n".join(lines)
+        utterances.append(
+            {
+                "speaker": _speaker_of(hit.pair),
+                "text": _truncate(_extract_content(hit.pair)),
+            }
+        )
+    utterances.append(
+        {
+            "speaker": _speaker_of(hit.matched),
+            "text": _truncate(_extract_content(hit.matched)),
+        }
+    )
+    return {"recalled_at": time_str, "utterances": utterances}
 
 
 def _format_time(ts: datetime, now: datetime) -> str:

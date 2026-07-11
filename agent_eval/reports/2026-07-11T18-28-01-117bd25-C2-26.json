@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:28:01.993146+00:00",
+    "ended_at": "2026-07-11T18:28:07.820930+00:00",
+    "duration_seconds": 5.828,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 2",
+    "selection": {
+      "contract": "all",
+      "case": "C2-26",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-26",
+          "query": "字节、KB 和 MB 是怎么换算的？",
+          "facet": "稳定换算概念 — 不应搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "1 字节（Byte）是基本单位。\n\n- **1 KB（Kilobyte）** = 1024 字节（B）\n- **1 MB（Megabyte）** = 1024 KB = 1,048,576 字节\n\n也就是说，每往上走一级，都是乘以 1024（2 的 10 次方）。\n\n不过硬盘厂商和一些场景下也会按 1000 来算（把 KB 当千字节、MB 当百万字节），但计算机系统底层一般走的是 1024 那套。日常看文件大小时，按 1024 理解基本不会错。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

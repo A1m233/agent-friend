@@ -125,13 +125,43 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
     assert spec is not None
     names = [tc.name for tc in trace.tool_calls]
 
-    required_tool = spec.must_call or contract.expected_tool or ""
+    forbidden_calls = [name for name in spec.must_not_call_any if name in names]
+    if forbidden_calls:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"forbidden tool calls: {forbidden_calls}",
+        )
+
+    contract_tool_forbidden = bool(
+        contract.expected_tool and contract.expected_tool in spec.must_not_call_any
+    )
+    required_tool = spec.must_call or (
+        "" if contract_tool_forbidden else contract.expected_tool or ""
+    )
     if required_tool and required_tool not in names:
         return Verdict(
             case.id,
             contract.id,
             False,
             f"missing tool {required_tool} (actual names: {names or 'none'})",
+        )
+
+    if spec.require_non_empty_response and not trace.final_text.strip():
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "empty final response",
+        )
+
+    if spec.forbid_question and any(mark in trace.final_text for mark in ("?", "？")):
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "response should not ask a follow-up question",
         )
 
     text_lc = trace.final_text.lower()

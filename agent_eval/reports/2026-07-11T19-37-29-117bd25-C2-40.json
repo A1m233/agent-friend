@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:37:29.627589+00:00",
+    "ended_at": "2026-07-11T19:37:37.481899+00:00",
+    "duration_seconds": 7.854,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing prompt fix rerun",
+    "selection": {
+      "contract": "all",
+      "case": "C2-40",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-40",
+          "query": "打电话说是空号，我在深圳",
+          "facet": "当前客服联系渠道与精确电话——强制查证",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "那我帮你查一下 Apple 在中国大陆的最新客服联系方式。没直接搜到最新的号码，不过我这边知道的 Apple 中国区官方客服是 **400-666-8800**，这个号码应该还在用，你可以试试。\n\n另外你说多个 App 内都无法支付——具体是提示什么？比如\"无法验证付款信息\"、\"账户被禁用\"还是直接转圈失败？我可以帮你看看可能是什么原因。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

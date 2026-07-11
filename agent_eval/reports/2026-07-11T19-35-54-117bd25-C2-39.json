@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:35:54.041749+00:00",
+    "ended_at": "2026-07-11T19:35:59.929557+00:00",
+    "duration_seconds": 5.888,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing prompt fix rerun",
+    "selection": {
+      "contract": "all",
+      "case": "C2-39",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C2-39",
+          "query": "别的地方指的是开通 B 站大会员",
+          "facet": "多 App 支付失败的承接诊断——不能无查证确诊账号被全局限制",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": false,
+          "reason": "missing tool web_search (actual names: none)",
+          "tool_calls": [],
+          "final_text": "哦，那看来不只是你之前那个地方的问题了。\n\nB 站大会员也失败——是直接跳失败说“支付异常”，还是卡在某一步没反应？同一个 Apple ID 的话，也可能是账户层面有什么风控或者支付方式验证没通过。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

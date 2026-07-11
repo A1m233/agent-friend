@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:27:19.193136+00:00",
+    "ended_at": "2026-07-11T18:27:29.135076+00:00",
+    "duration_seconds": 9.942,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 1",
+    "selection": {
+      "contract": "all",
+      "case": "C2-23",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-23",
+          "query": "Cursor 的 Agent 模式能同时运行几个 agent？",
+          "facet": "具体产品能力与精确数字 — 应主动查证",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "没直接查到最新的官方说明，不过据我所知，Cursor 的 Agent 模式目前一次只能跑一个 agent。它不像一些平台能并行开多个 agent 会话——每个 agent 会占用整个编辑器的上下文和资源，所以同一个 Cursor 窗口里同时跑多个 agent 是不行的。\n\n如果你需要并行处理多个任务，可以开多个 Cursor 窗口，每个窗口跑一个 agent。不过我不太确定最近有没有更新这块限制，你可以去 Cursor 的官方文档或 changelog 确认一下最新情况。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

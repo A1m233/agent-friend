@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:29:00.079487+00:00",
+    "ended_at": "2026-07-11T19:29:05.897125+00:00",
+    "duration_seconds": 5.818,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing validation",
+    "selection": {
+      "contract": "all",
+      "case": "C2-43",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-43",
+          "query": "CVV 是什么？",
+          "facet": "稳定支付卡概念——不应因前文是 Apple 就机械搜索",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "CVV 是银行卡背面签名条旁边那三位数字（美国运通卡是正面四位数）。它的全称叫 Card Verification Value，简单说就是一张卡片的安全码，用来验证你手里确实拿着这张实体卡，防止别人光凭卡号就能盗刷。\n\n填的时候注意别输错就行，页面通常会要求连着卡号、有效期一起填。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

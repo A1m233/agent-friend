@@ -99,6 +99,46 @@ def test_case_level_anchor_and_forbidden_terms() -> None:
     assert "fabrication suspect" in forbidden_hit.reason
 
 
+def test_case_level_forbidden_tool_call() -> None:
+    case = _case(CaseJudge(must_not_call_any=["web_search"]))
+    verdict = judge_case(
+        case,
+        _contract(expected_tool=None),
+        _trace(tool_names=["web_search"], final_text="北京是中国的首都。"),
+    )
+
+    assert verdict.passed is False
+    assert "forbidden tool calls" in verdict.reason
+
+
+def test_case_level_can_override_contract_required_tool_with_forbidden_tool() -> None:
+    case = _case(CaseJudge(must_not_call_any=["web_search"]))
+    contract = _contract(expected_tool="web_search")
+
+    verdict = judge_case(case, contract, _trace(final_text="这是稳定概念。"))
+    assert verdict.passed is True
+
+
+def test_case_level_requires_non_empty_response() -> None:
+    case = _case(CaseJudge(require_non_empty_response=True))
+    contract = _contract(expected_tool=None)
+
+    assert judge_case(case, contract, _trace(final_text="有回应")).passed is True
+    verdict = judge_case(case, contract, _trace(final_text="  "))
+    assert verdict.passed is False
+    assert "empty final response" in verdict.reason
+
+
+def test_case_level_can_forbid_follow_up_question() -> None:
+    case = _case(CaseJudge(forbid_question=True))
+    contract = _contract(expected_tool=None)
+
+    assert judge_case(case, contract, _trace(final_text="替你开心，收到啦。")).passed is True
+    verdict = judge_case(case, contract, _trace(final_text="发生什么好事了？"))
+    assert verdict.passed is False
+    assert "follow-up question" in verdict.reason
+
+
 def test_memory_inconsistency_semantic_guards() -> None:
     case = Case(
         id="C5-01",

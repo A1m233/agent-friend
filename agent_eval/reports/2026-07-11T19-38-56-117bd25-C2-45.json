@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:38:56.996804+00:00",
+    "ended_at": "2026-07-11T19:39:02.983032+00:00",
+    "duration_seconds": 5.986,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing prompt fix rerun",
+    "selection": {
+      "contract": "all",
+      "case": "C2-45",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-45",
+          "query": "你需要我先提供哪些信息？",
+          "facet": "排障澄清问题——应向用户收集上下文而非立即搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "不用太多，先说说这几个就行：\n\n1. **哪个 App？** 名字告诉我\n2. **报错提示是什么？** 比如“支付失败”、“银行卡不支持”、“风控拦截”之类的具体字眼\n3. **用的什么支付方式？** 微信、支付宝、银行卡还是 App 内余额？\n\n有了这些基本能看出大致方向。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

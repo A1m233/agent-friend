@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:27:35.765340+00:00",
+    "ended_at": "2026-07-11T19:27:48.684911+00:00",
+    "duration_seconds": 12.92,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing validation",
+    "selection": {
+      "contract": "all",
+      "case": "C2-42",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-42",
+          "query": "帮我在网上看看其他玩家是否也遇到了同样的问题，他们怎么解决的",
+          "facet": "显式搜索的多轮正向对照",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "网上搜得不太顺利，没直接翻到相关帖子。不过之前碰到过不少 iOS 游戏内购失败的案例，我把常见的原因和解决思路给你列一下，你看看对号入座：\n\n1. **Apple ID 账单地址跟支付方式不匹配**  \n   换了支付方式后，去 App Store 设置里检查一下 Apple ID 的账单地址是不是还在旧地址，或者跟新卡/新方式对不上，改对就好了。\n\n2. **新支付方式没通过 Apple 验证**  \n   比如换了新卡或新支付宝/微信，先去 **设置 > 你的名字 > 付款与配送** 确认它显示\"已验证\"。如果显示\"有待处理\"或者红字提示，说明 Apple 那边还没确认成功。\n\n3. **沙箱 / 账号环境问题**  \n   如果你用的是 TestFlight 或开发版，得用沙箱账号才行。普通 App Store 下载的游戏，确定登录的是商店购买时用的那个 Apple ID 就好。\n\n4. **锁了付款方式（区域限制）**  \n   你的 Apple ID 区域和你新支付方式所属区域不一致的话，内购也会失败。比如国区 ID 绑了外币卡，或者外区 ID 绑了国内的支付方式，都不行。\n\n5. **游戏缓存 / 时间校准**  \n   可以试试彻底关掉游戏重开、重启手机，或者去设置里把时间自动校准开关一下（关掉再开）。\n\n你换的是哪种支付方式？微信/支付宝、新银行卡，还是换了 Apple ID 的区域？我可以帮你进一步缩小范围。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -355,7 +356,10 @@ def test_empty_store_returns_persona_fallback() -> None:
     tool = _tool(_StubStore([]))
     result = tool.invoke({"query": "anything"})
     assert result.is_error is False
-    assert "没和你聊过" in result.text
+    payload = json.loads(result.text)
+    assert payload["source_type"] == "past_conversation"
+    assert payload["status"] == "no_results"
+    assert payload["results"] == []
     assert result.meta is not None
     assert result.meta["result_count"] == 0
 

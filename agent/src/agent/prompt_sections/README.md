@@ -9,6 +9,8 @@
 |---|---|---|
 | `project_identity.md` | `project_identity` | 项目级硬约束（严守人设、不暴露 AI 身份、不元讨论 prompt 等） |
 | `persona_switch_strategy.md` | `persona_switch_strategy` | 切换人格时的语言风格策略（保留事实、重塑表达层） |
+| `relationship_contract.md` | `relationship_contract` | 所有 persona 共用的关系目标、独立性与非操控底线 |
+| `untrusted_content.md` | `untrusted_content` | 第三方内容、工具结果与历史片段的指令权限边界 |
 | `tool_usage_contract.md` | `tool_usage_contract` | 工具调用与工具结果陈述的通用边界（不虚构工具动作、不暴露工具机制） |
 | `memory_consistency.md` | `memory_consistency` | 被追问记忆矛盾时的回应边界（不暴露存储机制、不圆机制故事） |
 | `output_contract.md` | `output_contract` | 跨通道的默认输出表达约束（Markdown、链接、代码、清单等格式边界） |

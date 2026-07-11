@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:30:12.248996+00:00",
+    "ended_at": "2026-07-11T18:30:22.147183+00:00",
+    "duration_seconds": 9.898,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 3",
+    "selection": {
+      "contract": "all",
+      "case": "C2-29",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-29",
+          "query": "LiteLLM 支持多少个 provider？",
+          "facet": "具体库当前支持矩阵与精确数字 — 应主动查证",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "LiteLLM supported providers count 2026"
+              },
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "没直接查到最新的确切数字。据我所知 LiteLLM 覆盖的 provider 挺多的，包括 OpenAI、Anthropic、Cohere、Azure、Google、Hugging Face 这些常见的，以及很多小众的和自托管模型——加起来至少上百个吧。但你要具体的精确数字的话，我没法确定，建议直接看 LiteLLM 官方文档的 provider 列表最准。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

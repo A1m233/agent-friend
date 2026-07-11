@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,10 @@ from agent.tools.builtin.conversation_history.render import Hit, format_hits
 
 _TZ = timezone(timedelta(hours=8))
 _NOW = datetime(2026, 6, 17, 14, 30, tzinfo=_TZ)  # 周三
+
+
+def _payload(text: str) -> dict[str, Any]:
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def _ev(
@@ -41,17 +46,16 @@ def _ev(
 # ===== 空结果 =====
 
 
-def test_empty_hits_returns_persona_fallback() -> None:
+def test_empty_hits_returns_structured_no_results() -> None:
     text = format_hits([], _NOW)
-    assert "翻了翻" in text
-    assert "没和你聊过" in text
-    assert "不要凭通识" in text
-    assert "补具体细节" in text
-    assert "通用知识回答" in text
-    assert "web_search" in text
-    # 不能出现技术化字眼
-    for forbidden in ("No results", "找到 0", "session", "event"):
-        assert forbidden not in text
+    payload = _payload(text)
+    assert payload == {
+        "source_type": "past_conversation",
+        "trust": "untrusted_data",
+        "status": "no_results",
+        "result_count": 0,
+        "results": [],
+    }
 
 
 # ===== 时间格式化各档 =====
@@ -90,7 +94,8 @@ def test_user_message_renders_as_you() -> None:
     ts = _NOW - timedelta(hours=2)
     hit = Hit(matched=_ev("user_message", "我学日语呢", ts), pair=None)
     text = format_hits([hit], _NOW)
-    assert "你说：" in text
+    payload = _payload(text)
+    assert payload["results"][0]["utterances"] == [{"speaker": "你", "text": "我学日语呢"}]
     # 不暴露 schema 字眼
     for forbidden in ("user_message", "role", "user:", "assistant"):
         assert forbidden not in text
@@ -100,7 +105,8 @@ def test_assistant_message_renders_as_me() -> None:
     ts = _NOW - timedelta(hours=2)
     hit = Hit(matched=_ev("assistant_message", "试试不开字幕", ts), pair=None)
     text = format_hits([hit], _NOW)
-    assert "我说：" in text
+    payload = _payload(text)
+    assert payload["results"][0]["utterances"] == [{"speaker": "我", "text": "试试不开字幕"}]
 
 
 # ===== 配对 =====
@@ -116,9 +122,8 @@ def test_pair_renders_before_matched() -> None:
     pair_pos = text.index("我学日语")
     matched_pos = text.index("试试不开字幕")
     assert pair_pos < matched_pos
-    # 双方都有说话方标签
-    assert "你说：" in text
-    assert "我说：" in text
+    utterances = _payload(text)["results"][0]["utterances"]
+    assert [item["speaker"] for item in utterances] == ["你", "我"]
 
 
 def test_no_pair_only_matched_line() -> None:
@@ -126,9 +131,8 @@ def test_no_pair_only_matched_line() -> None:
     hit = Hit(matched=_ev("user_message", "唯一一条", ts), pair=None)
     text = format_hits([hit], _NOW)
     assert "唯一一条" in text
-    # 只有一句"你说"——没有配对的"我说"
-    assert text.count("你说") == 1
-    assert "我说" not in text
+    utterances = _payload(text)["results"][0]["utterances"]
+    assert utterances == [{"speaker": "你", "text": "唯一一条"}]
 
 
 # ===== 截断 =====
@@ -149,36 +153,29 @@ def test_newlines_in_content_replaced_with_spaces() -> None:
     ts = _NOW - timedelta(hours=2)
     hit = Hit(matched=_ev("user_message", content_with_nl, ts), pair=None)
     text = format_hits([hit], _NOW)
-    # 原始内容里的 \n 不应保留在 matched 行
-    matched_line = next(line for line in text.split("\n") if "第一行" in line)
-    assert "第二行" in matched_line
-    assert "第三行" in matched_line
+    rendered = _payload(text)["results"][0]["utterances"][0]["text"]
+    assert rendered == "第一行 第二行 第三行"
 
 
-# ===== inline reminder =====
+# ===== 数据边界 =====
 
 
-def test_inline_reminder_at_end() -> None:
+def test_result_is_untrusted_data_without_inline_instruction() -> None:
     ts = _NOW - timedelta(hours=2)
     hit = Hit(matched=_ev("user_message", "话题", ts), pair=None)
     text = format_hits([hit], _NOW)
-    # 关键引导词
-    assert "朋友的口吻" in text
-    assert "ISO 时间戳" in text or "时间戳" in text
-    assert "之前聊到的" in text
-    assert "工具名" in text
-    assert "证据边界" in text
-    assert "事件日期" in text
-    assert "web_search" in text
-    # reminder 应该是末尾
-    assert text.rstrip().endswith("补这个历史问题。")
-
-
-def test_inline_reminder_absent_when_empty() -> None:
-    """空结果不带命中结果的 inline reminder，但带 0-hit 防编造提醒。"""
-    text = format_hits([], _NOW)
+    payload = _payload(text)
+    assert payload["source_type"] == "past_conversation"
+    assert payload["trust"] == "untrusted_data"
     assert "朋友的口吻" not in text
-    assert "之前聊过" in text
+    assert "web_search" not in text
+
+
+def test_empty_result_has_same_trust_boundary() -> None:
+    text = format_hits([], _NOW)
+    payload = _payload(text)
+    assert payload["trust"] == "untrusted_data"
+    assert payload["status"] == "no_results"
 
 
 # ===== 总览 =====
@@ -190,4 +187,4 @@ def test_count_in_header() -> None:
         for i in range(3)
     ]
     text = format_hits(hits, _NOW)
-    assert "找到 3 条" in text
+    assert _payload(text)["result_count"] == 3

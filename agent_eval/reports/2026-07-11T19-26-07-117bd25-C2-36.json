@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:26:07.891677+00:00",
+    "ended_at": "2026-07-11T19:26:13.400125+00:00",
+    "duration_seconds": 5.508,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing validation",
+    "selection": {
+      "contract": "all",
+      "case": "C2-36",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C2-36",
+          "query": "游戏建议我重新登录 Apple ID，这要怎么做",
+          "facet": "具体产品当前操作路径——多轮故障处理中也应查证",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": false,
+          "reason": "missing tool web_search (actual names: none)",
+          "tool_calls": [],
+          "final_text": "退出登录：\n\n1. **设置** → 点顶部你的名字 → 滑到底部点**退出登录**\n2. 系统会问要不要保留什么，保持默认就行\n\n重新登录：\n\n1. 还在**设置**顶部，输入 Apple ID 和密码登录\n2. 如果弹出验证码，用受信任设备或手机号收\n\n登录完后，打开游戏再试一次充值，看看能不能弹出内购页面。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

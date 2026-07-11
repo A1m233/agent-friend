@@ -13,9 +13,10 @@
 #     - 天气陈述("今天下了好大雨")**不算** — 用户在共情而非查询
 #     - rapport 语境的"最近"("最近在写一个 agent")**不算** — 闲聊不是 query
 #
-# 已知 gap(不在本 case 集覆盖,留给后续):
-#   - **时效边界**:time-of-day / weather 等问法是否该用 web_search,本契约 v1 不表态
-#   - **多步时效**:"对比 A 跟 B 谁最近表现好" 这种复合时效查询不在本契约范围
+# 044 起增加“隐性资料依赖”正反配对：没有搜索 / 最新等显式词时，具体产品当前能力、
+# 平台规则、精确数字、人物职位仍必须查；稳定概念、纯推理和主观判断不得机械查。
+# 新增配对使用 case-local fake web_search，只测路由，不受 Tavily 网络和结果质量影响。
+# 已知 gap：多步时效查询（如“对比 A 跟 B 谁最近表现好”）仍未覆盖。
 
 contract:
   id: C2
@@ -125,3 +126,314 @@ cases:
     query: 上周咱们 A 股有啥变动
     facet: 时间窗口("上周")+ 实时金融
     source: my_synth
+
+  # --- 044：隐性资料依赖 vs 稳定概念（最小差异配对） ---
+  - id: C2-21
+    query: Claude Code 的 hooks 是在模型端还是客户端执行？
+    facet: 具体产品当前实现 — 无显式搜索 / 时效词也应查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-22
+    query: 编程里的 hook 是什么意思？
+    facet: 稳定通用概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-23
+    query: Cursor 的 Agent 模式能同时运行几个 agent？
+    facet: 具体产品能力与精确数字 — 应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-24
+    query: 并行执行是什么意思？
+    facet: 稳定通用概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-25
+    query: Discord 单个文件最大能上传多大？
+    facet: 平台当前限制与精确数字 — 应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-26
+    query: 字节、KB 和 MB 是怎么换算的？
+    facet: 稳定换算概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-27
+    query: Tauri 2 支持开发 iOS 应用吗？
+    facet: 具体框架当前平台能力 — 应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-28
+    query: 桌面应用框架是什么意思？
+    facet: 稳定通用概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-29
+    query: LiteLLM 支持多少个 provider？
+    facet: 具体库当前支持矩阵与精确数字 — 应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-30
+    query: 软件里的 provider 模式是什么意思？
+    facet: 稳定设计概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-31
+    query: GitHub Actions 的运行日志会保留多少天？
+    facet: 平台当前规则与精确数字 — 应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-32
+    query: GitHub 这个名字听起来怎么样？
+    facet: 主观评价 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-33
+    query: Anthropic 的 CEO 是谁？
+    facet: 具体人物当前职位 — 无“现在”也应主动查证
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-34
+    query: CEO 这个职位是什么意思？
+    facet: 稳定通用概念 — 不应搜索
+    source: requirement-044
+    fake_tool:
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  # --- 044：真实 IM 多轮路由回放（脱敏） ---
+  - id: C2-35
+    query: 请问绑微信绕不过八达通吗
+    facet: 支付欠费政策的承接追问——应查证，不应凭印象断言
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我之前用八达通付款有欠费，现在点不开微信支付界面
+      - role: assistant
+        text: 可能与未结清账单或支付方式限制有关。
+    fake_tool: &replay_web
+      name: web_search
+      result_text: '{"source_type":"web_search","trust":"untrusted_data","status":"no_results","results":[]}'
+    judge:
+      must_call: web_search
+
+  - id: C2-36
+    query: 游戏建议我重新登录 Apple ID，这要怎么做
+    facet: 具体产品当前操作路径——多轮故障处理中也应查证
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我已经能绑定新的支付方式了，但游戏内还是无法充值
+      - role: assistant
+        text: 需要继续排查 Apple 账号与内购环节。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-37
+    query: 如何关闭“查找我的 iPhone”
+    facet: iOS 当前设置路径——应查证当前官方步骤
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我想按游戏建议重新登录 Apple ID
+      - role: assistant
+        text: 登出时系统可能会要求你处理“查找”设置。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-38
+    query: 我已经登出并重新绑定支付方式，游戏还是获取失败
+    facet: 具体产品故障承接——应查证而非编造等待时长或风控结论
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我之前有一笔 App Store 欠费，后来改绑了微信支付
+      - role: assistant
+        text: 可以尝试重新登录 Apple ID 后再测试。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-39
+    query: 别的地方指的是开通 B 站大会员，也是同样的获取失败。这说明是什么问题？
+    facet: 多 App 支付失败的承接诊断——用户请求判断原因时应查证，不能无证据确诊账号被全局限制
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 现在发现去别的地方充值也失败了
+      - role: assistant
+        text: 你说的“别的地方”是其他 App 内购还是 Apple 自家服务？
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-40
+    query: 打电话说是空号，我在深圳
+    facet: 当前客服联系渠道与精确电话——强制查证
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我的 Apple ID 在多个 App 内都无法支付
+      - role: assistant
+        text: 建议联系 Apple 客服，可以拨打香港客服电话。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-41
+    query: Apple 绑定内地银联借记卡时对 CVV 有什么要求？
+    facet: 具体平台与卡组织当前支持规则——应搜索
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我正在绑定一张新的银行卡作为支付方式
+      - role: assistant
+        text: 可以按页面提示填写卡片信息。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-42
+    query: 帮我在网上看看其他玩家是否也遇到了同样的问题，他们怎么解决的
+    facet: 显式搜索的多轮正向对照
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 我换了支付方式，但 iOS 游戏内购仍然失败
+      - role: assistant
+        text: 我们可以继续排查是游戏、Apple 账号还是支付渠道的问题。
+    fake_tool: *replay_web
+    judge:
+      must_call: web_search
+
+  - id: C2-43
+    query: CVV 是什么？
+    facet: 稳定支付卡概念——不应因前文是 Apple 就机械搜索
+    source: prod_session/im-payment-troubleshooting-redacted
+    current_session_messages:
+      - role: user
+        text: 绑定银行卡的页面让我填一个叫 CVV 的东西
+      - role: assistant
+        text: 这是一个银行卡信息字段。
+    fake_tool: *replay_web
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-44
+    query: Apple ID 是什么？
+    facet: 稳定产品概念——不需搜索
+    source: requirement-044
+    current_session_messages:
+      - role: user
+        text: 游戏客服让我检查登录的账号
+      - role: assistant
+        text: 需要确认你当前使用的 Apple ID。
+    fake_tool: *replay_web
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-45
+    query: 你需要我先提供哪些信息？
+    facet: 排障澄清问题——应向用户收集上下文而非立即搜索
+    source: requirement-044
+    current_session_messages:
+      - role: user
+        text: 我在某个 App 里支付失败了
+      - role: assistant
+        text: 先别急，我们可以一步步定位。
+    fake_tool: *replay_web
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true
+
+  - id: C2-46
+    query: 一个支付方式失败，能直接说明整个账号被限制吗？
+    facet: 一般诊断逻辑——可直接说明证据不足，不必搜索
+    source: requirement-044
+    current_session_messages:
+      - role: user
+        text: 我在游戏里一次充值失败了
+      - role: assistant
+        text: 这可能有多种原因。
+    fake_tool: *replay_web
+    judge:
+      must_not_call_any: [web_search]
+      require_non_empty_response: true

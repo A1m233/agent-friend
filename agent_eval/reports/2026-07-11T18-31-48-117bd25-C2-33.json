@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:31:48.659752+00:00",
+    "ended_at": "2026-07-11T18:31:56.098984+00:00",
+    "duration_seconds": 7.439,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 4",
+    "selection": {
+      "contract": "all",
+      "case": "C2-33",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-33",
+          "query": "Anthropic 的 CEO 是谁？",
+          "facet": "具体人物当前职位 — 无“现在”也应主动查证",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "Anthropic 的 CEO 是 **Dario Amodei**（达里奥·阿莫迪）。他是 Anthropic 的联合创始人之一，之前也在 OpenAI 担任过研究副总裁。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
