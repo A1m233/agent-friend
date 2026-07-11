@@ -3,7 +3,8 @@
 #
 # 默认：Tauri 桌面（含桌宠 / 对话双窗口，首次编译 Rust 较慢），启动本地 voice_bridge（不启动 cloudflared），用于 Chat Composer 语音输入 ASR。
 # --web：改为浏览器 web 模式（仅 vite，不编译 Rust，热更快、但跑不出桌宠透明窗 / 多窗口）。
-# --voice：启动 voice_bridge，并自动拉起新的 cloudflared tunnel；如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
+# --voice：严格完整语音通话链路；先拿到公网回调 URL，再启动后续进程，cloudflared / public URL 不可用则 fail fast。
+#          如需复用当前 VOICE_BRIDGE_PUBLIC_URL，显式设置 AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1。
 # --no-voice：不启动 voice_bridge（保留给显式声明 / 兼容旧命令）。
 # --cdp-port / --no-cdp：与 Windows 入口保持接口一致；当前 mac/linux 端不启用 WebView2 CDP。
 # 其余参数透传给前端命令（pnpm tauri dev / pnpm dev）。
@@ -168,6 +169,7 @@ wait_cloudflared_url() {
     local out_log="$1"
     local err_log="$2"
     local timeout_seconds="$3"
+    local tunnel_pid="${4:-}"
     local deadline=$((SECONDS + timeout_seconds))
     local public_url=""
     while [ "$SECONDS" -lt "$deadline" ]; do
@@ -176,9 +178,28 @@ wait_cloudflared_url() {
             printf '%s\n' "$public_url"
             return 0
         fi
+        if [ -n "$tunnel_pid" ] && ! kill -0 "$tunnel_pid" 2>/dev/null; then
+            return 1
+        fi
         sleep 0.5
     done
     return 1
+}
+
+print_log_tail() {
+    local path
+    for path in "$@"; do
+        if [ ! -e "$path" ]; then
+            printf '===== %s (missing) =====\n' "$path" >&2
+            continue
+        fi
+        if [ ! -s "$path" ]; then
+            printf '===== %s (empty) =====\n' "$path" >&2
+            continue
+        fi
+        printf '===== %s (last 50 lines) =====\n' "$path" >&2
+        tail -n 50 "$path" >&2
+    done
 }
 
 start_voice_tunnel() {
@@ -207,9 +228,17 @@ start_voice_tunnel() {
     local tunnel_pid=$!
 
     local public_url
-    if ! public_url=$(wait_cloudflared_url "$out_log" "$err_log" 60); then
-        kill "$tunnel_pid" 2>/dev/null || true
-        echo "  [ERROR] cloudflared 60 秒内没有输出 trycloudflare URL。日志：$out_log / $err_log" >&2
+    if ! public_url=$(wait_cloudflared_url "$out_log" "$err_log" 60 "$tunnel_pid"); then
+        if kill -0 "$tunnel_pid" 2>/dev/null; then
+            kill "$tunnel_pid" 2>/dev/null || true
+            echo "  [ERROR] cloudflared 60 秒内没有输出 trycloudflare URL。日志：$out_log / $err_log" >&2
+        else
+            wait "$tunnel_pid" 2>/dev/null || true
+            echo "  [ERROR] cloudflared 在输出 trycloudflare URL 前退出。日志：$out_log / $err_log" >&2
+        fi
+        print_log_tail "$out_log" "$err_log"
+        echo "          --voice 需要完整公网语音回调链路，因此 tunnel 失败会 fail fast。" >&2
+        echo "          Cloudflare quick tunnel 返回 5xx/1101 时通常是临时服务端失败，可稍后重试，或设置 VOICE_BRIDGE_PUBLIC_URL + AGENT_FRIEND_DEV_REUSE_VOICE_PUBLIC_URL=1 复用稳定公网 URL。" >&2
         exit 1
     fi
 
@@ -287,13 +316,16 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-echo "===> 启动 bridge（127.0.0.1:18800）…"
-echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），
 # 让 dev-fire-source / 状态机调试 / 018 push 通道真跑可用。生产环境永不开。
 # 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式
 # 偶发不把 env 传到 child process；export 让 env 在脚本全局生效、subshell 自动继承。
 export AGENT_BRIDGE_DEV_MODE=true
+if [ "$VOICE_MODE" = "tunnel" ]; then
+    start_voice_tunnel
+fi
+echo "===> 启动 bridge（127.0.0.1:18800）…"
+echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 printf '\n===== %s bridge start: uv run python -m agent_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_BRIDGE_LOG"
 (cd "$ROOT" && uv run python -m agent_bridge) 2>&1 | tee -a "$DEV_BRIDGE_LOG" | prefix "[bridge] " &
 
@@ -318,9 +350,6 @@ if [ "$VOICE_MODE" != "off" ]; then
     fi
 
     if [ "$REUSE_EXISTING_VOICE_BRIDGE" != "1" ]; then
-        if [ "$NEEDS_VOICE_TUNNEL" = "1" ]; then
-            start_voice_tunnel
-        fi
         if [ -n "$RESTART_VOICE_BRIDGE_REASON" ]; then
             stop_voice_bridge_on_port 18900 "$RESTART_VOICE_BRIDGE_REASON"
         elif port_in_use 18900; then

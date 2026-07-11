@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeMonitorViewports,
+  rebasePetPointByMonitorAnchor,
+  resolvePetInitialPlacementPoint,
+  resolvePetMonitorRelativeAnchorForPoint,
+  resolvePetPointFromMonitorRelativeAnchor,
   resolvePetViewportForRect,
 } from "./petMonitorViewport";
 import type { PetViewport } from "./petDisplayProfile";
@@ -101,5 +105,145 @@ describe("petMonitorViewport · monitor-aware pet viewport", () => {
         fallback,
       ),
     ).toBe(valid);
+  });
+
+  it("keeps the pet at the same laptop-relative anchor when an external monitor is unplugged", () => {
+    const rebased = rebasePetPointByMonitorAnchor({
+      point: { x: 1020, y: 995.56 },
+      previousBounds: { x: -2560, y: 0, width: 5120, height: 1600 },
+      nextBounds: { x: 0, y: 0, width: 2560, height: 1600 },
+      previousMonitors: [
+        { x: -2560, y: 0, width: 2560, height: 1600, scaleMilli: 1750 },
+        { x: 0, y: 0, width: 2560, height: 1440, scaleMilli: 1250 },
+      ],
+      nextMonitors: [{ x: 0, y: 0, width: 2560, height: 1600, scaleMilli: 1750 }],
+      previousOverlaySize: { w: 4096, h: 1280 },
+      nextOverlaySize: { w: 2048, h: 1280 },
+    });
+
+    expect(rebased?.x).toBeCloseTo(1020);
+    expect(rebased?.y).toBeCloseTo(995.56);
+  });
+
+  it("moves the anchor with the original monitor when a new monitor appears on the negative side", () => {
+    expect(
+      rebasePetPointByMonitorAnchor({
+        point: { x: 320, y: 240 },
+        previousBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        nextBounds: { x: -2560, y: 0, width: 4480, height: 1440 },
+        previousMonitors: [{ x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 }],
+        nextMonitors: [
+          { x: -2560, y: 0, width: 2560, height: 1440, scaleMilli: 1000 },
+          { x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+        ],
+        previousOverlaySize: { w: 1920, h: 1080 },
+        nextOverlaySize: { w: 4480, h: 1440 },
+      }),
+    ).toEqual({ x: 2880, y: 240 });
+  });
+
+  it("falls back to the remaining monitor when the selected monitor disappears", () => {
+    expect(
+      rebasePetPointByMonitorAnchor({
+        point: { x: 3000, y: 360 },
+        previousBounds: { x: 0, y: 0, width: 3840, height: 1080 },
+        nextBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        previousMonitors: [
+          { x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+          { x: 1920, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+        ],
+        nextMonitors: [{ x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 }],
+        previousOverlaySize: { w: 3840, h: 1080 },
+        nextOverlaySize: { w: 1920, h: 1080 },
+      }),
+    ).toEqual({ x: 1080, y: 360 });
+  });
+
+  it("returns null when topology payloads are incomplete", () => {
+    expect(
+      rebasePetPointByMonitorAnchor({
+        point: { x: 320, y: 240 },
+        previousBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        nextBounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        previousMonitors: [],
+        nextMonitors: [{ x: 0, y: 0, width: 1920, height: 1080 }],
+        previousOverlaySize: { w: 1920, h: 1080 },
+        nextOverlaySize: { w: 1920, h: 1080 },
+      }),
+    ).toBeNull();
+  });
+
+  it("materializes a monitor-relative anchor against the latest CSS viewport", () => {
+    const point = resolvePetPointFromMonitorRelativeAnchor({
+        anchor: {
+          monitor: { x: 0, y: 0, width: 2560, height: 1600, scaleMilli: 1750 },
+          relativeAnchor: { x: 0.498046875, y: 0.77778125 },
+        },
+        bounds: { x: 0, y: 0, width: 2560, height: 1600 },
+        monitors: [{ x: 0, y: 0, width: 2560, height: 1600, scaleMilli: 1750 }],
+        overlaySize: { w: 1463, h: 915 },
+      });
+
+    expect(point?.x).toBeCloseTo(728.642578125);
+    expect(point?.y).toBeCloseTo(711.66984375);
+  });
+
+  it("places the initial pet at the center of the cursor monitor", () => {
+    expect(
+      resolvePetInitialPlacementPoint({
+        cursor: { x: 2500, y: 300 },
+        bounds: { x: 0, y: 0, width: 3840, height: 1080 },
+        monitors: [
+          { x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+          { x: 1920, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+        ],
+        overlaySize: { w: 3840, h: 1080 },
+      }),
+    ).toEqual({ x: 2880, y: 540 });
+  });
+
+  it("maps initial placement for a negative-origin monitor", () => {
+    expect(
+      resolvePetInitialPlacementPoint({
+        cursor: { x: -1200, y: 300 },
+        bounds: { x: -2560, y: 0, width: 4480, height: 1440 },
+        monitors: [
+          { x: -2560, y: 0, width: 2560, height: 1440, scaleMilli: 1000 },
+          { x: 0, y: 360, width: 1920, height: 1080, scaleMilli: 1000 },
+        ],
+        overlaySize: { w: 2240, h: 720 },
+      }),
+    ).toEqual({ x: 640, y: 360 });
+  });
+
+  it("uses the nearest monitor when the cursor is in a physical gap", () => {
+    expect(
+      resolvePetInitialPlacementPoint({
+        cursor: { x: 1250, y: 300 },
+        bounds: { x: 0, y: 0, width: 2400, height: 800 },
+        monitors: [
+          { x: 0, y: 0, width: 1000, height: 800, scaleMilli: 1000 },
+          { x: 1400, y: 0, width: 1000, height: 800, scaleMilli: 1000 },
+        ],
+        overlaySize: { w: 2400, h: 800 },
+      }),
+    ).toEqual({ x: 1900, y: 400 });
+  });
+
+  it("stores pet position as a monitor-relative anchor", () => {
+    expect(
+      resolvePetMonitorRelativeAnchorForPoint({
+        point: { x: 2880, y: 540 },
+        bounds: { x: 0, y: 0, width: 3840, height: 1080 },
+        monitors: [
+          { x: 0, y: 0, width: 1920, height: 1080, scaleMilli: 1000 },
+          { x: 1920, y: 0, width: 1920, height: 1080, scaleMilli: 1250 },
+        ],
+        overlaySize: { w: 3840, h: 1080 },
+      }),
+    ).toEqual({
+      monitor: { x: 1920, y: 0, width: 1920, height: 1080, scaleMilli: 1250 },
+      relativeAnchor: { x: 0.5, y: 0.5 },
+    });
   });
 });

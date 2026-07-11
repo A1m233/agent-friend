@@ -30,6 +30,25 @@ describe("projectSessionEvents", () => {
     expect(out[0].role).toBe("user");
   });
 
+  it("把 run_error 投影成可刷新的 assistant 错误状态", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "继续说" }),
+      ev("assistant_message", { content: "好的", partial: true }),
+      ev("run_error", {
+        code: "rate_limit",
+        message: "模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。",
+        recoverable: true,
+      }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].role).toBe("assistant");
+    expect(out[1].status).toBe("error");
+    expect(out[1].errorCode).toBe("rate_limit");
+    expect(out[1].error).toBe("模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。");
+    expect(out[1].blocks).toHaveLength(0);
+  });
+
   it("把工具调用 request/result 重建成工具块（切回历史不丢卡片）", () => {
     const out = projectSessionEvents([
       ev("user_message", { content: "搜新闻" }),
@@ -172,5 +191,19 @@ describe("projectSessionEvents", () => {
     expect((out[0].blocks[0] as { text: string }).text).toBe("我还醒着");
     expect(out[1].role).toBe("assistant");
     expect((out[1].blocks[0] as { text: string }).text).toBe("那继续聊");
+  });
+
+  it("user-visible system_trigger 后的 run_error 不投影到 chat 窗", () => {
+    const out = projectSessionEvents([
+      ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),
+      ev("run_error", { code: "upstream_transient", message: "模型服务连接不稳定" }),
+      ev("user_message", { content: "继续" }),
+      ev("assistant_message", { content: "好", partial: false }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[0].role).toBe("user");
+    expect(out[1].role).toBe("assistant");
+    expect(out[1].status).toBe("complete");
   });
 });

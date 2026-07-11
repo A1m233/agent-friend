@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
 import type { PushEnvelope } from "@/types/push";
 
@@ -13,9 +14,22 @@ import {
   type PetViewport,
 } from "./petDisplayProfile";
 import {
+  readWebviewDevicePixelRatio,
+  type PetWebviewDisplayContext,
+} from "./petWebviewDisplayContext";
+import {
   getPetOverlayViewport,
+  loadPetDisplayPhysicalSnapshot,
+  loadPetInitialPlacementPoint,
   loadPetMonitorViewports,
+  rebasePetPointByMonitorAnchorWithDiagnostics,
+  resolvePetMonitorRelativeAnchorForPoint,
+  resolvePetPointFromMonitorRelativeAnchor,
   resolvePetViewportForRect,
+  savePetMonitorAnchor,
+  type MonitorPhysicalSnapshot,
+  type OverlayPhysicalBounds,
+  type PetMonitorRelativeAnchor,
 } from "./petMonitorViewport";
 import {
   centerPointOfRect,
@@ -60,6 +74,38 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
   }
 }
 
+const PET_DISPLAY_TOPOLOGY_CHANGED_EVENT = "pet://display-topology-changed";
+interface PetDisplayTopologyChangedPayload {
+  reason: string;
+  generation: number;
+  bounds: OverlayPhysicalBounds;
+  previousBounds?: OverlayPhysicalBounds | null;
+  previousMonitors?: MonitorPhysicalSnapshot[] | null;
+  monitors: MonitorPhysicalSnapshot[];
+}
+
+interface PendingTopologyAnchor {
+  generation: number;
+  bounds: OverlayPhysicalBounds;
+  monitors: MonitorPhysicalSnapshot[];
+  anchor: PetMonitorRelativeAnchor;
+}
+
+interface AvatarPlacementIntent {
+  generation: number;
+  point: PetPoint;
+}
+
+function displayTopologySignature(payload: Pick<
+  PetDisplayTopologyChangedPayload,
+  "bounds" | "monitors"
+>): string {
+  return JSON.stringify({
+    bounds: payload.bounds,
+    monitors: payload.monitors,
+  });
+}
+
 /**
  * 桌宠窗（18 · Live2D 形象 + 状态机 + Codex 兼容 + lip-sync）。
  *
@@ -76,6 +122,16 @@ export function PetApp() {
   const [spriteScreen, setSpriteScreen] = useState<PetRect | null>(null);
   const [actionBarAnchor, setActionBarAnchor] = useState<PetRect | null>(null);
   const [avatarPlacementPoint, setAvatarPlacementPoint] = useState<PetPoint | null>(null);
+  const [placementIntent, setAvatarPlacementIntent] =
+    useState<AvatarPlacementIntent | null>(null);
+  const spriteScreenRef = useRef<PetRect | null>(null);
+  const userMovedPetRef = useRef(false);
+  const placementIntentGenerationRef = useRef(0);
+  const pendingTopologyAnchorRef = useRef<PendingTopologyAnchor | null>(null);
+  const lastTopologyGenerationRef = useRef(0);
+  const lastTopologySignatureRef = useRef<string | null>(null);
+  const [webviewDpr, setWebviewDpr] = useState(readWebviewDevicePixelRatio);
+  const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
   // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
@@ -94,6 +150,7 @@ export function PetApp() {
   const [overlayViewport, setOverlayViewport] = useState<PetViewport>(() =>
     getPetOverlayViewport(),
   );
+  const topologyOverlayViewportRef = useRef<PetViewport>(overlayViewport);
   const [monitorViewports, setMonitorViewports] = useState<PetViewport[]>([]);
   const {
     entries: installedAvatarModels,
@@ -103,6 +160,10 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    spriteScreenRef.current = spriteScreen;
+  }, [spriteScreen]);
 
   const setSpriteScreenIfChanged = useCallback((next: PetRect | null) => {
     if (next && !isFiniteRect(next)) return;
@@ -114,14 +175,87 @@ export function PetApp() {
     setActionBarAnchor((prev) => (sameRect(prev, next) ? prev : next));
   }, []);
 
+  const setIsDraggingWithTracking = useCallback((next: boolean) => {
+    if (next) {
+      userMovedPetRef.current = true;
+    }
+    setIsDragging(next);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let dprQuery: MediaQueryList | null = null;
+    let topologyUnlisten: (() => void) | null = null;
+    let resizedUnlisten: (() => void) | null = null;
+    let scaleUnlisten: (() => void) | null = null;
     let viewportRequestId = 0;
-    const updateViewport = () => {
+    let deferredAnchorTimer: number | null = null;
+    let initialPlacementRequested = false;
+    const syncWebviewDpr = () => {
+      const nextDpr = readWebviewDevicePixelRatio();
+      setWebviewDpr((prev) =>
+        Math.abs(prev - nextDpr) < 0.001 ? prev : nextDpr,
+      );
+    };
+    const applyPendingTopologyAnchor = (overlaySize: PetViewport): boolean => {
+      const pending = pendingTopologyAnchorRef.current;
+      if (!pending || !isFiniteViewport(overlaySize)) return false;
+
+      const point = resolvePetPointFromMonitorRelativeAnchor({
+        anchor: pending.anchor,
+        bounds: pending.bounds,
+        monitors: pending.monitors,
+        overlaySize: { w: overlaySize.w, h: overlaySize.h },
+      });
+      if (!point) return false;
+
+      pendingTopologyAnchorRef.current = null;
+      topologyOverlayViewportRef.current = overlaySize;
+      setAvatarPlacementPoint((prev) => (samePoint(prev, point) ? prev : point));
+      setAvatarPlacementIntent((prev) =>
+        prev?.generation === pending.generation && samePoint(prev.point, point)
+          ? prev
+          : { generation: pending.generation, point },
+      );
+      return true;
+    };
+    const scheduleDeferredAnchorApply = () => {
+      if (deferredAnchorTimer !== null) {
+        window.clearTimeout(deferredAnchorTimer);
+      }
+      deferredAnchorTimer = window.setTimeout(() => {
+        deferredAnchorTimer = null;
+        updateViewport("topology-anchor-deferred");
+      }, 250);
+    };
+    const resolveInitialPlacement = (overlaySize: PetViewport) => {
+      if (initialPlacementRequested) return;
+      initialPlacementRequested = true;
+      void loadPetInitialPlacementPoint(overlaySize)
+        .then((point) => {
+          if (cancelled) return;
+          if (point && !userMovedPetRef.current) {
+            setAvatarPlacementPoint((prev) => prev ?? point);
+            const generation = --placementIntentGenerationRef.current;
+            setAvatarPlacementIntent((prev) =>
+              prev?.generation === generation && samePoint(prev.point, point)
+                ? prev
+                : { generation, point },
+            );
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            console.warn("[pet] resolve initial placement failed:", error);
+          }
+        });
+    };
+    const updateViewport = (reason = "unknown") => {
       const requestId = ++viewportRequestId;
+      syncWebviewDpr();
       const nextOverlayViewport = getPetOverlayViewport();
       if (!isFiniteViewport(nextOverlayViewport)) return;
+      resolveInitialPlacement(nextOverlayViewport);
       setOverlayViewport((prev) =>
         sameRect(prev, nextOverlayViewport) ? prev : nextOverlayViewport,
       );
@@ -129,6 +263,14 @@ export function PetApp() {
         .then((nextMonitorViewports) => {
           if (cancelled || requestId !== viewportRequestId) return;
           const finiteMonitorViewports = nextMonitorViewports.filter(isFiniteViewport);
+          if (reason !== "topology-event") {
+            const hadPendingTopologyAnchor = pendingTopologyAnchorRef.current !== null;
+            const appliedPendingTopologyAnchor =
+              applyPendingTopologyAnchor(nextOverlayViewport);
+            if (!hadPendingTopologyAnchor || appliedPendingTopologyAnchor) {
+              topologyOverlayViewportRef.current = nextOverlayViewport;
+            }
+          }
           setMonitorViewports((prev) =>
             sameViewportList(prev, finiteMonitorViewports)
               ? prev
@@ -143,19 +285,107 @@ export function PetApp() {
         });
       bindDprListener();
     };
-    const onDprChange = () => updateViewport();
+    const onDprChange = () => updateViewport("dpr-media-query");
     const bindDprListener = () => {
       if (typeof window.matchMedia !== "function") return;
       dprQuery?.removeEventListener("change", onDprChange);
       dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
       dprQuery.addEventListener("change", onDprChange);
     };
-    updateViewport();
-    window.addEventListener("resize", updateViewport);
+    updateViewport("effect-init");
+    const onWindowResize = () => updateViewport("window-resize");
+    window.addEventListener("resize", onWindowResize);
+    const handleTopologyChanged = (event: { payload: PetDisplayTopologyChangedPayload }) => {
+      const signature = displayTopologySignature(event.payload);
+      if (
+        event.payload.generation <= lastTopologyGenerationRef.current ||
+        signature === lastTopologySignatureRef.current
+      ) {
+        return;
+      }
+      lastTopologyGenerationRef.current = event.payload.generation;
+      lastTopologySignatureRef.current = signature;
+      setDisplayTopologyGeneration(event.payload.generation);
+
+      const previousBounds = event.payload.previousBounds;
+      const previousMonitors = event.payload.previousMonitors;
+      const nextMonitors = event.payload.monitors;
+      const currentSpriteScreen = spriteScreenRef.current;
+      const previousOverlayViewport = topologyOverlayViewportRef.current;
+      const nextOverlayViewport = getPetOverlayViewport();
+      if (
+        previousBounds &&
+        previousMonitors?.length &&
+        nextMonitors.length &&
+        isFiniteRect(currentSpriteScreen) &&
+        isFiniteViewport(previousOverlayViewport) &&
+        isFiniteViewport(nextOverlayViewport)
+      ) {
+        const result = rebasePetPointByMonitorAnchorWithDiagnostics({
+          point: centerPointOfRect(currentSpriteScreen),
+          previousBounds,
+          nextBounds: event.payload.bounds,
+          previousMonitors,
+          nextMonitors,
+          previousOverlaySize: {
+            w: previousOverlayViewport.w,
+            h: previousOverlayViewport.h,
+          },
+          nextOverlaySize: {
+            w: nextOverlayViewport.w,
+            h: nextOverlayViewport.h,
+          },
+        });
+        if (
+          result.diagnostics.nextViewport &&
+          result.diagnostics.relativeAnchor
+        ) {
+          pendingTopologyAnchorRef.current = {
+            generation: event.payload.generation,
+            bounds: event.payload.bounds,
+            monitors: nextMonitors,
+            anchor: {
+              monitor: result.diagnostics.nextViewport.monitor,
+              relativeAnchor: result.diagnostics.relativeAnchor,
+            },
+          };
+        }
+      }
+      updateViewport("topology-event");
+      if (pendingTopologyAnchorRef.current) {
+        scheduleDeferredAnchorApply();
+      } else {
+        topologyOverlayViewportRef.current = nextOverlayViewport;
+      }
+    };
+    if (isTauri()) {
+      void listen<PetDisplayTopologyChangedPayload>(
+        PET_DISPLAY_TOPOLOGY_CHANGED_EVENT,
+        handleTopologyChanged,
+      ).then((u) => {
+        if (cancelled) safeUnlisten(u);
+        else topologyUnlisten = u;
+      });
+      const currentWindow = getCurrentWindow();
+      void currentWindow.onResized(() => updateViewport("tauri-resized")).then((u) => {
+        if (cancelled) safeUnlisten(u);
+        else resizedUnlisten = u;
+      });
+      void currentWindow.onScaleChanged(() => updateViewport("tauri-scale-changed")).then((u) => {
+        if (cancelled) safeUnlisten(u);
+        else scaleUnlisten = u;
+      });
+    }
     return () => {
       cancelled = true;
-      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("resize", onWindowResize);
       dprQuery?.removeEventListener("change", onDprChange);
+      if (deferredAnchorTimer !== null) {
+        window.clearTimeout(deferredAnchorTimer);
+      }
+      safeUnlisten(topologyUnlisten);
+      safeUnlisten(resizedUnlisten);
+      safeUnlisten(scaleUnlisten);
     };
   }, []);
 
@@ -172,19 +402,40 @@ export function PetApp() {
   const displayProfile = useMemo(
     () => {
       const anchor = actionBarAnchor ?? spriteScreen;
-      return resolvePetDisplayProfile({
+      const baseProfile = resolvePetDisplayProfile({
         avatarSize: petAvatarSize,
         rect: anchor,
         viewport: interactionViewport,
         previousAvatarSize: previousPetAvatarSizeRef.current,
       });
+      if (!placementIntent) return baseProfile;
+      return {
+        ...baseProfile,
+        placementKey: `${baseProfile.placementKey}:placement-${placementIntent.generation}`,
+        placementPoint: placementIntent.point,
+        edge: null,
+      };
     },
-    [actionBarAnchor, interactionViewport, petAvatarSize, spriteScreen],
+    [
+      actionBarAnchor,
+      interactionViewport,
+      petAvatarSize,
+      spriteScreen,
+      placementIntent,
+    ],
   );
 
   useEffect(() => {
     previousPetAvatarSizeRef.current = petAvatarSize;
   }, [petAvatarSize]);
+
+  useEffect(() => {
+    if (!placementIntent || !isFiniteRect(spriteScreen)) return;
+    const spriteCenter = centerPointOfRect(spriteScreen);
+    if (samePoint(spriteCenter, placementIntent.point)) {
+      setAvatarPlacementIntent(null);
+    }
+  }, [spriteScreen, placementIntent]);
 
   useEffect(() => {
     setRuntime(null);
@@ -217,7 +468,7 @@ export function PetApp() {
       backend: selectedEntry?.backend ?? null,
       spriteScreen,
       actionBarAnchor: actionBarAnchor ?? spriteScreen,
-      dpr: typeof window === "undefined" ? undefined : window.devicePixelRatio,
+      dpr: webviewDpr,
       overlayViewport,
       selectedViewport: interactionViewport,
       monitorViewports,
@@ -238,6 +489,7 @@ export function PetApp() {
     selectedEntry?.backend,
     selectedEntry?.id,
     spriteScreen,
+    webviewDpr,
   ]);
 
   useEffect(() => {
@@ -248,6 +500,48 @@ export function PetApp() {
       samePoint(prev, nextPlacementPoint) ? prev : nextPlacementPoint,
     );
   }, [actionBarAnchor, spriteScreen]);
+
+  useEffect(() => {
+    if (
+      !isTauri() ||
+      isDragging ||
+      placementIntent ||
+      !isFiniteRect(spriteScreen) ||
+      !isFiniteViewport(overlayViewport)
+    ) {
+      return;
+    }
+
+    const point = centerPointOfRect(spriteScreen);
+    const timer = window.setTimeout(() => {
+      void loadPetDisplayPhysicalSnapshot()
+        .then((snapshot) => {
+          if (!snapshot) return;
+          const anchor = resolvePetMonitorRelativeAnchorForPoint({
+            point,
+            bounds: snapshot.bounds,
+            monitors: snapshot.monitors,
+            overlaySize: { w: overlayViewport.w, h: overlayViewport.h },
+          });
+          if (!anchor) return;
+          void savePetMonitorAnchor(anchor).catch((error: unknown) => {
+            console.warn("[pet] save monitor anchor failed:", error);
+          });
+        })
+        .catch((error: unknown) => {
+          console.warn("[pet] resolve monitor anchor failed:", error);
+        });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    isDragging,
+    overlayViewport,
+    spriteScreen,
+    placementIntent,
+  ]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -268,27 +562,34 @@ export function PetApp() {
     disabled: passthroughDisabled,
   });
 
+  const displayContext = useMemo<PetWebviewDisplayContext>(
+    () => ({
+      dpr: webviewDpr,
+      overlayViewport,
+      monitorViewports,
+      topologyGeneration: displayTopologyGeneration,
+    }),
+    [
+      displayTopologyGeneration,
+      monitorViewports,
+      overlayViewport,
+      webviewDpr,
+    ],
+  );
+
   // 18b · 上报 webview viewport 实际 DPR 给 Rust（issue 012 跨屏 drag 修复 v2）。
   //
   // 让 spawn_cursor_feed 用 window.devicePixelRatio 这个固定值算 cursor logical px，
   // 跟 PIXI canvas / spriteScreen 同坐标系。否则跨屏 drag 时 cursor scale 切换 →
   // cursor 数字范围跳跃 → 跟 spriteScreen 矩形错位 → drag 中断 + 完全穿透。
   //
-  // matchMedia 监 DPR 变化（罕见，但 mac 跨外接 Retina / Win 改 display scale 偶发）：
-  // 写入当前 dpr 的 `(resolution: Xdppx)` query，DPR 变化时 query 不再 match → change。
+  // DPR 由上面的 WebView display context 统一观测；这里仅把当前快照分发给 Rust。
   useEffect(() => {
     if (!isTauri()) return;
-    const report = () => {
-      void invoke("set_pet_webview_dpr", { dpr: window.devicePixelRatio }).catch(
-        (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
-      );
-    };
-    report();
-    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-    const onChange = () => report();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+    void invoke("set_pet_webview_dpr", { dpr: displayContext.dpr }).catch(
+      (e: unknown) => console.warn("[pet] set_pet_webview_dpr failed:", e),
+    );
+  }, [displayContext.dpr]);
 
   // 18 · 启动 push event 订阅 → petStateStore.ingest（与 015 startPetBubbleSubscriber 双独立 listen 对称）
   //
@@ -431,10 +732,11 @@ export function PetApp() {
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
           displayProfile={displayProfile}
+          displayContext={displayContext}
           spriteScreen={spriteScreen}
           isDragging={isDragging}
           setSpriteScreen={setSpriteScreenIfChanged}
-          setIsDragging={setIsDragging}
+          setIsDragging={setIsDraggingWithTracking}
           onRuntimeChange={setRuntime}
         />
       ) : selectedEntry?.backend === "spine" ? (
@@ -443,9 +745,10 @@ export function PetApp() {
           entry={selectedEntry}
           initialAnchorPoint={avatarPlacementPoint}
           displayProfile={displayProfile}
+          displayContext={displayContext}
           setSpriteScreen={setSpriteScreenIfChanged}
           setActionBarAnchor={setActionBarAnchorIfChanged}
-          setIsDragging={setIsDragging}
+          setIsDragging={setIsDraggingWithTracking}
           onRuntimeChange={setRuntime}
         />
       ) : null}

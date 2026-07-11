@@ -82,19 +82,28 @@ def list_processes_windows() -> list[ProcessInfo]:
         "-NoProfile",
         "-Command",
         (
+            "$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
             "Get-CimInstance Win32_Process | "
             "Where-Object { $_.CommandLine -ne $null } | "
             "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
         ),
     ]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     except Exception:
         return []
-    if not result.stdout.strip():
+    stdout = result.stdout or ""
+    if not stdout.strip():
         return []
     try:
-        raw = json.loads(result.stdout)
+        raw = json.loads(stdout)
     except json.JSONDecodeError:
         return []
     items = raw if isinstance(raw, list) else [raw]

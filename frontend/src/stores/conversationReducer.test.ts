@@ -59,13 +59,14 @@ describe("applyAguiEvent", () => {
     expect(tool.result).toBe("炸了");
   });
 
-  it("RUN_ERROR → 消息标记 error 并带拟人文案", () => {
+  it("RUN_ERROR → 消息标记 error 并保留错误码", () => {
     const out = applyAguiEvent(
       base,
-      emit({ type: EventType.RUN_ERROR, message: "我走神了一下" }),
+      emit({ type: EventType.RUN_ERROR, message: "模型服务这会儿过载了", code: "rate_limit" }),
     );
     expect(out.status).toBe("error");
-    expect(out.error).toBe("我走神了一下");
+    expect(out.error).toBe("模型服务这会儿过载了");
+    expect(out.errorCode).toBe("rate_limit");
   });
 
   it("文本被工具调用打断 → 形成两个独立文本块", () => {

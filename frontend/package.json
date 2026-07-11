@@ -33,6 +33,7 @@
     "@tanstack/react-virtual": "^3.14.3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-log": "^2",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@tdesign-react/chat": "^1.0.2",
     "@volcengine/rtc": "4.66.20",
     "axios": "^1.7.0",

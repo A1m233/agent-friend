@@ -96,8 +96,8 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.RUN_ERROR: {
       const e = evt as RunErrorEvent;
-      // bridge 的 message 已是拟人化文案（map_exception），直接展示，不暴露技术细节。
-      return { ...msg, status: "error", error: e.message };
+      // RUN_ERROR 是 turn 失败状态，不是 assistant 正常文本；文案由 bridge 按错误码清洗。
+      return { ...msg, status: "error", error: e.message, errorCode: e.code };
     }
 
     default:

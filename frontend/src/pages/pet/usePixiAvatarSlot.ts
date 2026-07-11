@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import { findVisibleRegion } from "@/pet/petAlphaHitTest";
 import type { PetDisplayProfile } from "./petDisplayProfile";
+import type { PetWebviewDisplayContext } from "./petWebviewDisplayContext";
+import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
 
 /**
  * 17a · PIXI canvas + avatar-slot Container 生命周期 hook（design §5.1 ~ §5.3）。
@@ -67,6 +69,7 @@ export interface UsePixiAvatarSlotOptions {
   interactionsRef?: RefObject<PetInteractionCallbacks | null>;
   initialAnchorPoint?: { x: number; y: number } | null;
   displayProfile?: PetDisplayProfile;
+  displayContext?: PetWebviewDisplayContext;
 }
 
 export function usePixiAvatarSlot(
@@ -96,9 +99,14 @@ export function usePixiAvatarSlot(
   const displayProfileRef = useRef<PetDisplayProfile | null>(
     options.displayProfile ?? null,
   );
+  const displayContextRef = useRef<PetWebviewDisplayContext | null>(
+    options.displayContext ?? null,
+  );
   const lastAppliedPlacementKeyRef = useRef<string | null>(null);
+  const displayContextDpr = options.displayContext?.dpr ?? null;
 
   displayProfileRef.current = options.displayProfile ?? null;
+  displayContextRef.current = options.displayContext ?? null;
 
   const invalidateAnchor = useCallback(() => {
     cachedOffsetRef.current = null;
@@ -123,7 +131,7 @@ export function usePixiAvatarSlot(
         resizeTo: stage,
         antialias: true,
         autoDensity: true,
-        resolution: window.devicePixelRatio || 1,
+        resolution: (displayContextRef.current?.dpr ?? window.devicePixelRatio) || 1,
         // 18 · 让 alpha hit-test 能 readPixels 取上一帧 framebuffer alpha
         // （Live2D 形象不透明像素轮廓判定，让 cursor 在透明区精确穿透）
         preserveDrawingBuffer: true,
@@ -503,6 +511,16 @@ export function usePixiAvatarSlot(
       setIsDragging(false);
     };
   }, [stageRef, setSpriteScreen, setIsDragging]);
+
+  useEffect(() => {
+    if (!app) return;
+    const dpr = (displayContextRef.current?.dpr ?? window.devicePixelRatio) || 1;
+    if (!syncPixiRendererDpr(app, dpr)) return;
+
+    cachedOffsetRef.current = null;
+    alphaScanGivenUpRef.current = false;
+    resetInitialAnchorAlignmentRef.current?.();
+  }, [app, displayContextDpr]);
 
   return { slotRef, app, invalidateAnchor, alphaScanGivenUpRef };
 }

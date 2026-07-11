@@ -29,6 +29,22 @@ t-chat-item::part(t-chat__text--user) {
   word-wrap: break-word;
 }
 
+t-chat-item::part(t-chat__item__main),
+t-chat-item::part(t-chat__item__content__slot),
+t-chat-item::part(t-chat__item__content),
+t-chat-item::part(t-chat__text),
+t-chat-item::part(t-chat__text__markdown) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+t-chat-item::part(t-chat__text),
+t-chat-item::part(t-chat__text__markdown) {
+  word-break: normal;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
+
 t-chat-sender::part(t-textarea) {
   overflow: hidden;
 }

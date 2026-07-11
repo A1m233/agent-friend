@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import agent_bridge.assembly as assembly
 import pytest
@@ -33,6 +33,7 @@ type ScriptedLLMItem = LLMStreamEvent | BaseException
 class _ScriptedLLMClient:
     """与 agent 单测同模式的 scripted LLM。"""
 
+    seen_messages: ClassVar[list[list[dict[str, Any]]]] = []
     script: list[list[ScriptedLLMItem]] = field(default_factory=list)
     turn_idx: int = 0
     context_window: int = 128000
@@ -50,6 +51,7 @@ class _ScriptedLLMClient:
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
+        self.seen_messages.append(messages)
         events = self.script[self.turn_idx]
         self.turn_idx += 1
         for event in events:
@@ -63,6 +65,7 @@ def _build_runtime(
     *,
     llm_script: list[list[ScriptedLLMItem]],
 ) -> tuple[BridgeRuntime, LLMClientFactory]:
+    _ScriptedLLMClient.seen_messages = []
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     catalog = PersonaCatalog()
@@ -181,6 +184,31 @@ class TestSessionIdHeader:
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "bad_request"
         assert "content 不能为空" in resp.json()["error"]["message"]
+
+    def test_voice_headers_use_voice_prompt_for_this_turn(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        create_resp = client.post("/v1/sessions", json={})
+        assert create_resp.status_code == 200
+        sid = create_resp.json()["session_id"]
+        assert runtime.persistent_session_manager.open(sid).current_channel == "text"
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json=_openai_payload("hi"),
+            headers={
+                "X-Agent-Friend-Session-Id": sid,
+                "X-Agent-Friend-Voice-Trace-Id": "trace-1",
+                "X-Agent-Friend-Voice-Call-Id": "call-1",
+                "X-Agent-Friend-Voice-Round-Seq": "1",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert _ScriptedLLMClient.seen_messages
+        system_prompt = _ScriptedLLMClient.seen_messages[-1][0]["content"]
+        assert "正在通过电话和用户对话" in system_prompt
+        assert runtime.persistent_session_manager.open(sid).current_channel == "text"
 
 
 class TestStreamingError:

@@ -40,7 +40,7 @@ from collections.abc import Awaitable, Callable
 from agent import TextDelta
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
-from .content import OutboundContent
+from .content import OutboundContent, OutboundTextFormat
 from .event import InboundEvent
 
 __all__ = ["FALLBACK_TEXT", "IMRouter"]
@@ -145,6 +145,7 @@ class IMRouter:
             default_model=self._default_model,
         )
 
+        text_format: OutboundTextFormat = "markdown"
         try:
             text = await asyncio.to_thread(self._run_turn_sync, boot)
         except Exception:
@@ -156,6 +157,7 @@ class IMRouter:
                 _text_len(event.content),
             )
             text = FALLBACK_TEXT
+            text_format = "plain_text"
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not text:
@@ -166,13 +168,16 @@ class IMRouter:
                 event.message_id,
             )
             text = FALLBACK_TEXT
+            text_format = "plain_text"
 
         logger.info(
-            "IM inbound router reply im_type=%s session_id=%s message_id=%s reply_len=%d",
+            "IM inbound router reply im_type=%s session_id=%s message_id=%s "
+            "reply_len=%d text_format=%s",
             im_type,
             session_id,
             event.message_id,
             _text_len(text),
+            text_format,
         )
 
         await send_fn(
@@ -180,6 +185,7 @@ class IMRouter:
                 chat_id=event.chat_id,
                 chat_scope=event.chat_scope,
                 text=text,
+                text_format=text_format,
                 reply_to_message_id=event.message_id,
             )
         )
@@ -200,16 +206,17 @@ class IMRouter:
         Returns:
             聚合后的完整文本(可能空字符串,如果 LLM 没输出任何 text)。
         """
-        conv = self._bridge.bind_persistent(boot)
         buf: list[str] = []
-        for ev in conv.stream(boot.new_user_input):
-            if isinstance(ev, TextDelta):
-                buf.append(ev.text)
-            # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
-            # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
-            # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
-            # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
-            # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
+        with self._bridge.session_turn(boot.thread_id):
+            conv = self._bridge.bind_persistent(boot)
+            for ev in conv.stream(boot.new_user_input, channel="text"):
+                if isinstance(ev, TextDelta):
+                    buf.append(ev.text)
+                # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
+                # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
+                # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
+                # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
+                # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
         return "".join(buf)
 
 

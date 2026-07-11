@@ -54,6 +54,8 @@ export interface ChatMessage {
   createdAt: string;
   blocks: MessageBlock[];
   status: MessageStatus;
-  /** status==='error' 时的拟人化兜底文案（不含技术细节，见 R-M3.6）。 */
+  /** status==='error' 时的用户可见错误文案（不含技术细节）。 */
   error?: string;
+  /** 后端错误码，用于后续 retry / 诊断入口做类型化处理。 */
+  errorCode?: string;
 }

@@ -255,11 +255,12 @@ export function Composer({
         onPointerEnter={() => requestVoicePrewarm("composer_focus")}
         className={
           isBottomPlacement
-            ? cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-auto relative")
+            ? cn(CHAT_CONTENT_CONTAINER_CLASS, "pointer-events-none relative")
             : "pointer-events-auto relative w-full"
         }
       >
         <ChatSenderBox
+            className={isBottomPlacement ? "pointer-events-auto" : undefined}
             placement="bottom"
             ref={senderRef}
             value={draftText}
@@ -277,7 +278,7 @@ export function Composer({
             onSend={(e) => submit(e.detail.value)}
             onStop={() => stop()}
           >
-            <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-end overflow-visible pr-1">
+            <div slot="footer-prefix" className="ml-auto flex min-h-8 w-fit items-center justify-end overflow-visible pr-1">
               <TooltipProvider>
                 <VoiceInputAction
                   phase={voiceInputPhase}

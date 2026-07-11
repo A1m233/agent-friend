@@ -8,6 +8,7 @@ JSONL append-only 实现。
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +31,22 @@ _LOCK_TIMEOUT_SECONDS = 10.0
 单条 ``append_event`` 实际写盘开销 < 1ms；正常情况下不会逼近这个上限。撞到
 意味着有别的进程长时间持锁——按 SessionPersistError 抛出由上层决定如何
 重试或降级。"""
+
+_WINDOWS_RESERVED_FILENAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+"""Windows reserved device names, case-insensitive and extension-insensitive."""
+
+_WINDOWS_FORBIDDEN_FILENAME_CHARS = set('<>:"/\\|?*')
+"""Characters that cannot appear in a Windows filename component."""
+
+_ENCODED_SESSION_FILENAME_PREFIX = "sid_"
+"""Prefix for session ids that need a portable filename encoding."""
 
 
 @dataclass(frozen=True)
@@ -115,13 +132,15 @@ class SessionStore(Protocol):
 class JsonlSessionStore:
     """JSONL append-only 实现。
 
-    文件布局：``{base_dir}/{session_id}.jsonl``，每行一个 :class:`Event` 的 JSON
-    序列化结果。文件第一行**必须**是 ``session_meta`` 事件。
+    文件布局：``{base_dir}/{portable_filename(session_id)}.jsonl``，每行一个
+    :class:`Event` 的 JSON 序列化结果。文件第一行**必须**是 ``session_meta`` 事件。
+    安全的历史 ``session_id`` 仍沿用 raw 文件名；包含 ``:`` 等跨平台非法文件名
+    字符的 id 会编码成稳定文件名。
 
     每次 ``create`` / ``append_event`` **重新 open/close 文件**（不持有句柄）。
     写操作通过 :mod:`portalocker` 取 OS advisory exclusive 锁，多进程并发写
-    同一 ``{session_id}.jsonl`` 时排队进入；锁超时（``_LOCK_TIMEOUT_SECONDS``）
-    抛 :class:`SessionPersistError`。
+    同一会话文件时排队进入；锁超时（``_LOCK_TIMEOUT_SECONDS``）抛
+    :class:`SessionPersistError`。
 
     详见 docs/requirements/006-agent-bridge/design.md §4.5 / R-4.3.2，以及
     docs/requirements/002-engine-session-management/design.md §4.3。
@@ -144,12 +163,32 @@ class JsonlSessionStore:
         return self._base_dir
 
     def _path(self, session_id: str) -> Path:
+        return self._base_dir / f"{_session_filename_stem(session_id)}.jsonl"
+
+    def _legacy_raw_path(self, session_id: str) -> Path:
         return self._base_dir / f"{session_id}.jsonl"
+
+    def _candidate_paths(self, session_id: str) -> list[Path]:
+        current = self._path(session_id)
+        legacy = self._legacy_raw_path(session_id)
+        if legacy == current:
+            return [current]
+        return [current, legacy]
+
+    def _existing_path(self, session_id: str) -> Path | None:
+        for path in self._candidate_paths(session_id):
+            try:
+                if path.exists():
+                    return path
+            except OSError:
+                continue
+        return None
 
     def create(self, session: Session) -> None:
         path = self._path(session.session_id)
-        if path.exists():
-            raise SessionPersistError(f"会话文件已存在，不允许覆盖: {path}")
+        existing = self._existing_path(session.session_id)
+        if existing is not None:
+            raise SessionPersistError(f"会话文件已存在，不允许覆盖: {existing}")
         if not session.events or session.events[0].type != "session_meta":
             raise SessionPersistError(
                 "Session 必须以 session_meta 事件开头（请用 Session.new 构造）"
@@ -167,8 +206,8 @@ class JsonlSessionStore:
             raise SessionPersistError(f"写入会话文件失败: {path}: {e}") from e
 
     def append_event(self, session_id: str, event: Event) -> None:
-        path = self._path(session_id)
-        if not path.exists():
+        path = self._existing_path(session_id)
+        if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
             with portalocker.Lock(path, "a", encoding="utf-8", timeout=_LOCK_TIMEOUT_SECONDS) as f:
@@ -182,8 +221,8 @@ class JsonlSessionStore:
             raise SessionPersistError(f"追加事件失败: {path}: {e}") from e
 
     def load(self, session_id: str) -> Session:
-        path = self._path(session_id)
-        if not path.exists():
+        path = self._existing_path(session_id)
+        if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         events: list[Event] = []
         try:
@@ -215,8 +254,8 @@ class JsonlSessionStore:
         return summaries
 
     def delete(self, session_id: str) -> None:
-        path = self._path(session_id)
-        if not path.exists():
+        path = self._existing_path(session_id)
+        if path is None:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         try:
             path.unlink()
@@ -302,3 +341,27 @@ class NullSessionStore:
 
     def latest(self) -> SessionSummary | None:
         return None
+
+
+def _session_filename_stem(session_id: str) -> str:
+    """Return a portable filename stem for a logical session id.
+
+    Existing safe ids keep their historical raw filename for compatibility.
+    Unsafe ids are URL-safe base64 encoded so the logical id can still contain
+    protocol separators such as ``im:qq:<openid>``.
+    """
+    if _is_portable_raw_filename_stem(session_id):
+        return session_id
+    encoded = base64.urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii")
+    return f"{_ENCODED_SESSION_FILENAME_PREFIX}{encoded.rstrip('=')}"
+
+
+def _is_portable_raw_filename_stem(value: str) -> bool:
+    if not value or value in {".", ".."}:
+        return False
+    if value[-1] in {" ", "."}:
+        return False
+    if any(ord(ch) < 32 or ch in _WINDOWS_FORBIDDEN_FILENAME_CHARS for ch in value):
+        return False
+    base = value.split(".", 1)[0].upper()
+    return base not in _WINDOWS_RESERVED_FILENAMES

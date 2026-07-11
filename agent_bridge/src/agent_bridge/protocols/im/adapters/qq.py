@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 from qqbot_agent_sdk.api_client import QQApiClient
-from qqbot_agent_sdk.dto import MessageToCreate
+from qqbot_agent_sdk.dto import MarkdownContent, MessageToCreate, QQMessageType
 from qqbot_agent_sdk.event_parser import EventParser, InboundEvent
 from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
 
@@ -129,39 +129,37 @@ class QQAdapter:
             return
 
         msg_seq = self._next_msg_seq()
-        msg = MessageToCreate(
-            content=content.text,
-            msg_type=0,  # 0 = 文本
-            msg_id=content.reply_to_message_id or "",
-            msg_seq=msg_seq,
-        )
+        msg = _message_to_create(content, msg_seq=msg_seq)
         logger.info(
-            "QQ outbound send bind=%s chat=%s reply_to_message_id=%s msg_seq=%d text_len=%d",
+            "QQ outbound send bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
+            "text_len=%d text_format=%s",
             self.bind_id,
             content.chat_id,
             content.reply_to_message_id or "",
             msg_seq,
             _text_len(content.text),
+            content.text_format,
         )
         try:
             resp: dict[str, Any] = await self._api.post_c2c_message(content.chat_id, msg)
         except Exception:
             logger.exception(
                 "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s, "
-                "reply_to_message_id=%s, msg_seq=%d, text_len=%d)",
+                "reply_to_message_id=%s, msg_seq=%d, text_len=%d, text_format=%s)",
                 self.bind_id,
                 content.chat_id,
                 content.reply_to_message_id or "",
                 msg_seq,
                 _text_len(content.text),
+                content.text_format,
             )
             return
 
         code = resp.get("code", 0) if isinstance(resp, dict) else 0
         if code:
             logger.warning(
-                "QQ post_c2c_message 非零 code=%s msg=%s "
-                "(bind=%s, chat=%s, reply_to_message_id=%s, msg_seq=%d, text_len=%d)",
+                "QQ post_c2c_message 非零 code=%s msg=%s (bind=%s, chat=%s, "
+                "reply_to_message_id=%s, msg_seq=%d, text_len=%d, text_format=%s)",
                 code,
                 resp.get("message") if isinstance(resp, dict) else None,
                 self.bind_id,
@@ -169,16 +167,19 @@ class QQAdapter:
                 content.reply_to_message_id or "",
                 msg_seq,
                 _text_len(content.text),
+                content.text_format,
             )
             return
 
         logger.info(
-            "QQ outbound sent bind=%s chat=%s reply_to_message_id=%s msg_seq=%d text_len=%d",
+            "QQ outbound sent bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
+            "text_len=%d text_format=%s",
             self.bind_id,
             content.chat_id,
             content.reply_to_message_id or "",
             msg_seq,
             _text_len(content.text),
+            content.text_format,
         )
 
     async def stop(self) -> None:
@@ -344,6 +345,22 @@ class QQAdapter:
 
 def _text_len(value: object) -> int:
     return len(value) if isinstance(value, str) else 0
+
+
+def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCreate:
+    if content.text_format == "markdown":
+        return MessageToCreate(
+            msg_type=QQMessageType.MARKDOWN,
+            markdown=MarkdownContent(content=content.text),
+            msg_id=content.reply_to_message_id or "",
+            msg_seq=msg_seq,
+        )
+    return MessageToCreate(
+        content=content.text,
+        msg_type=QQMessageType.TEXT,
+        msg_id=content.reply_to_message_id or "",
+        msg_seq=msg_seq,
+    )
 
 
 def _attachment_count(event: InboundEvent) -> int:

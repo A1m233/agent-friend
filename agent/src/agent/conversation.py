@@ -67,6 +67,7 @@ from .messages import Message
 from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
+from .system_prompt.sections import PromptChannel
 from .tools import ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
@@ -239,10 +240,9 @@ class Conversation:
         self._voice_latency_short_reply_hint = ""
         self._voice_latency_llm_overrides: dict[str, Any] = {}
         self._voice_latency_disable_tools = False
-        # 007 起 ``_system_prompt`` 不再缓存——每次调用 :attr:`_current_system_prompt`
-        # 让 :class:`agent.system_prompt.ChannelSection` 等动态 section 在 channel
-        # 切换后立刻生效。``__init__`` 时仍 build 一次做客户端预检（persona 不存在
-        # 等错误尽早暴露）。
+        self._prompt_channel_override: PromptChannel | None = None
+        # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
+        # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
         prompt_builder.build()
 
     def set_voice_latency_context(
@@ -280,15 +280,16 @@ class Conversation:
 
     @property
     def _system_prompt(self) -> str:
-        """每轮重建 system_prompt（007 起；让 ChannelSection 等动态 section 生效）。
+        """每轮重建 system_prompt。
 
         本属性内部封装 :meth:`PromptBuilder.build`；调用频率为每轮 send / stream
         各 1~2 次（首轮 + 工具循环续轮），开销主要是 persona body 文件读 + 默认
         section 资源读，单次 < 1ms，孵化期可接受。
 
-        switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona。
+        switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona；
+        本轮 channel override 由 ``stream`` / ``edit_resend_latest`` 在调用期间设置。
         """
-        return self._prompt_builder.build()
+        return self._prompt_builder.build(channel_override=self._prompt_channel_override)
 
     @property
     def current_persona(self) -> str:
@@ -355,7 +356,12 @@ class Conversation:
                 text_buf.append(ev.text)
         return "".join(text_buf)
 
-    def stream(self, user_input: str) -> Iterator[ConversationEvent]:
+    def stream(
+        self,
+        user_input: str,
+        *,
+        channel: PromptChannel | None = None,
+    ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
         yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
 
@@ -401,6 +407,9 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
+        previous_prompt_channel = self._prompt_channel_override
+        self._prompt_channel_override = channel
+
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
@@ -444,6 +453,12 @@ class Conversation:
                         user_input,
                         extra_context=preflight_extra_context,
                     )
+                    # Once the turn has passed local context assembly, persist the
+                    # accepted user request before calling the provider. This gives
+                    # downstream error state a stable user turn to attach to.
+                    if not user_event_appended:
+                        self._append_user_event(user_input)
+                        user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
 
@@ -490,11 +505,6 @@ class Conversation:
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
-
-                # 第一轮 LLM 完成才落 user_event（保留"初始化失败完全不落盘"语义）
-                if not user_event_appended:
-                    self._append_user_event(user_input)
-                    user_event_appended = True
 
                 tool_calls = self._finalize_tool_calls(current_tc_acc)
 
@@ -567,12 +577,14 @@ class Conversation:
                     # 014: 默认行为保留——AgentRuntime 装配时 post_turn_external=True，
                     # 由 PostTurn hook 调 memory.observe；此处不重复触发
                     self._observe_turn(turn_start_idx)
+            self._prompt_channel_override = previous_prompt_channel
 
     def edit_resend_latest(
         self,
         user_input: str,
         *,
         expected_user_content: str | None = None,
+        channel: PromptChannel | None = None,
     ) -> Iterator[ConversationEvent]:
         """编辑并重发最后一条 active user 消息。
 
@@ -581,6 +593,9 @@ class Conversation:
         保持用户可重试的干净状态。
         """
         plan = self._latest_active_user_rewrite_plan(expected_user_content=expected_user_content)
+
+        previous_prompt_channel = self._prompt_channel_override
+        self._prompt_channel_override = channel
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -612,6 +627,12 @@ class Conversation:
                         prior_summary_override=prefix_prior_summary,
                         persist_compaction=False,
                     )
+                    if not rewrite_event_appended:
+                        self._append_turn_rewrite_event(plan, replacement_text=user_input)
+                        rewrite_event_appended = True
+                    if not user_event_appended:
+                        self._append_user_event(user_input)
+                        user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
 
@@ -658,14 +679,6 @@ class Conversation:
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
-
-                if not rewrite_event_appended:
-                    self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                    rewrite_event_appended = True
-
-                if not user_event_appended:
-                    self._append_user_event(user_input)
-                    user_event_appended = True
 
                 tool_calls = self._finalize_tool_calls(current_tc_acc)
 
@@ -736,6 +749,7 @@ class Conversation:
             else:
                 if not self._post_turn_external:
                     self._observe_turn(turn_start_idx)
+            self._prompt_channel_override = previous_prompt_channel
 
     # ----- 系统级触发轮（014：main loop 入口） -----
 
@@ -1056,6 +1070,36 @@ class Conversation:
             ts=datetime.now(UTC),
             payload={"content": content, "partial": partial},
             meta=meta,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def append_run_error_event(
+        self,
+        *,
+        code: str,
+        message: str,
+        recoverable: bool,
+        source: str,
+        run_id: str | None = None,
+    ) -> None:
+        """持久化一轮运行失败状态，供 UI 刷新后恢复同一错误。
+
+        这不是 assistant 正常回复，不进入 :attr:`Session.messages` / LLM history。
+        """
+        payload: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "recoverable": recoverable,
+            "source": source,
+        }
+        if run_id is not None:
+            payload["run_id"] = run_id
+        event = Event(
+            type="run_error",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload=payload,
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)

@@ -20,6 +20,7 @@ _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "persona_switch_strategy": "persona_switch_strategy.md",
     "tool_usage_contract": "tool_usage_contract.md",
     "memory_consistency": "memory_consistency.md",
+    "output_contract": "output_contract.md",
     "runtime_context": "runtime_context.md",
     "channel": "channel_voice.md",
 }
@@ -37,7 +38,8 @@ def load_default_static_section(key: str) -> StaticSection:
     Args:
         key: 默认槽位 key，必须是 :data:`_SECTION_KEY_TO_FILENAME` 中已知的
             key（``project_identity`` / ``persona_switch_strategy`` /
-            ``tool_usage_contract`` / ``memory_consistency``）。
+            ``tool_usage_contract`` / ``memory_consistency`` /
+            ``output_contract``）。
 
     Returns:
         StaticSection 实例，``text`` 为去除首尾空白的文件内容。

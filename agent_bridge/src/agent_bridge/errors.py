@@ -9,13 +9,12 @@
 
 映射表见 docs/requirements/006-agent-bridge/design.md §4.6.1。
 
-未识别的异常一律 ``500 / internal_error`` + 拟人化 message——技术细节交给调
-用方写日志，不暴露给客户端。
+未识别的异常一律 ``500 / internal_error`` + 稳定用户文案——技术细节交给调用方
+写日志，不暴露给客户端。
 """
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +24,6 @@ from agent import (
     SessionCorruptError,
     SessionNotFoundError,
     SessionPersistError,
-    random_fallback,
 )
 from llm_providers import (
     LLMAuthError,
@@ -34,20 +32,6 @@ from llm_providers import (
     LLMProviderError,
     LLMRateLimitError,
 )
-
-_BRIDGE_FALLBACK_MESSAGES: tuple[str, ...] = (
-    "我这边好像出了点小问题，能稍后再问我一遍吗？",
-    "刚刚信号有点不稳，再来一次试试看？",
-    "嗯⋯我突然走神了，可以再说一遍吗？",
-    "这会儿脑子里有点乱，等会儿再聊？",
-    "诶等等，我没接上你的话，可以再说一次吗？",
-)
-"""bridge 进程专属的拟人化兜底文案池。
-
-design §4.6.4 明确要求：bridge 错误兜底**不污染** 001 的 ``FALLBACKS`` 池；
-本常量与 :func:`agent.random_fallback` 混合使用，让用户在反复撞错时不会
-看到完全相同的话术。
-"""
 
 
 @dataclass(frozen=True)
@@ -79,14 +63,14 @@ def map_exception(exc: BaseException) -> ProtocolError:
         return ProtocolError(
             http_status=429,
             code="rate_limit",
-            message=_humane_message(),
+            message="模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。",
             recoverable=True,
         )
     if isinstance(exc, (LLMNetworkError, LLMProviderError)):
         return ProtocolError(
             http_status=502,
             code="upstream_transient",
-            message=_humane_message(),
+            message="模型服务连接不稳定，这轮没有生成完整回答。稍后可以重试。",
             recoverable=True,
         )
     if isinstance(exc, LLMAuthError):
@@ -121,13 +105,13 @@ def map_exception(exc: BaseException) -> ProtocolError:
         return ProtocolError(
             http_status=500,
             code="session_io_error",
-            message=_humane_message(),
+            message="会话保存时出了问题，这轮状态可能没有完整记录。请稍后重试。",
             recoverable=False,
         )
     return ProtocolError(
         http_status=500,
         code="internal_error",
-        message=_humane_message(),
+        message="这轮回答中断了，没有生成完整回复。请稍后重试。",
         recoverable=False,
     )
 
@@ -147,18 +131,6 @@ def build_openai_error_envelope(err: ProtocolError) -> dict[str, Any]:
             "code": err.code,
         }
     }
-
-
-def _humane_message() -> str:
-    """随机选一条拟人化兜底文案。
-
-    bridge 专属池与 :func:`agent.random_fallback` 池 50/50 混选，避免用户撞到
-    单一文案重复出现的诡异感（特别是在 voice 场景，TTS 出来的话听感是有"重复
-    幻觉"风险的）。
-    """
-    if random.random() < 0.5:
-        return random.choice(_BRIDGE_FALLBACK_MESSAGES)
-    return random_fallback()
 
 
 __all__ = [

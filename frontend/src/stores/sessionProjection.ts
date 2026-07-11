@@ -91,6 +91,21 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       continue;
     }
 
+    if (ev.type === "run_error") {
+      if (pendingSkipAssistant) {
+        pendingSkipAssistant = false;
+        currentAssistant = null;
+        continue;
+      }
+      const message = ensureAssistant(ev.uuid, ev.ts);
+      message.status = "error";
+      message.error = asString(p.message) || "这轮回答中断了，没有生成完整回复。请稍后重试。";
+      const code = asString(p.code);
+      if (code) message.errorCode = code;
+      currentAssistant = null;
+      continue;
+    }
+
     if (ev.type === "tool_call_request") {
       const id = asString(p.tool_call_id) || ev.uuid;
       const block: ToolBlock = {

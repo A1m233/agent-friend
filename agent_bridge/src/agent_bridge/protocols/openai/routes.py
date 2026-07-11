@@ -7,7 +7,7 @@
 - 流式 ``conv.stream`` 中段抛错 → 在 SSE 流里 emit 一个 error chunk + ``[DONE]``
   （在 :func:`encode_streaming` 内部完成，路由层只负责装配阶段失败）
 
-所有未识别异常统一走 :func:`agent_bridge.errors.map_exception` 兜底拟人化文案。
+所有未识别异常统一走 :func:`agent_bridge.errors.map_exception` 兜底为稳定用户文案。
 """
 
 from __future__ import annotations
@@ -144,6 +144,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     model=model,
                     agent_runtime=runtime.agent_runtime,
                     voice_latency_context=voice_latency,
+                    channel="voice" if voice_latency is not None else "text",
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -158,6 +159,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 decoded.latest_user_input,
                 model=model,
                 agent_runtime=runtime.agent_runtime,
+                channel="voice" if voice_latency is not None else "text",
             )
         except Exception as exc:
             logger.exception("OpenAI 非流式编码失败")
