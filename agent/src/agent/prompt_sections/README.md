@@ -11,6 +11,7 @@
 | `persona_switch_strategy.md` | `persona_switch_strategy` | 切换人格时的语言风格策略（保留事实、重塑表达层） |
 | `tool_usage_contract.md` | `tool_usage_contract` | 工具调用与工具结果陈述的通用边界（不虚构工具动作、不暴露工具机制） |
 | `memory_consistency.md` | `memory_consistency` | 被追问记忆矛盾时的回应边界（不暴露存储机制、不圆机制故事） |
+| `output_contract.md` | `output_contract` | 跨通道的默认输出表达约束（Markdown、链接、代码、清单等格式边界） |
 | `channel_voice.md` | `channel` | 语音通道下的表达约束（文字通道默认不输出） |
 | `runtime_context.md` | `runtime_context` | 当前时间、近期事实与历史归因的运行时证据边界 |
 

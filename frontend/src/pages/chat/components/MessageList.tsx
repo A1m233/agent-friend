@@ -24,6 +24,8 @@ import { toMarkdownContent } from "../projection";
 import { EditMessageSender } from "./EditMessageSender";
 import { MessageActionBar } from "./MessageActionBar";
 import { ToolCard } from "./ToolCard";
+import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
+import { useExternalLinkOpener } from "./useExternalLinkOpener";
 
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
@@ -87,8 +89,9 @@ const TextBubble = memo(function TextBubble({
     <TdChatMessage
       role={role}
       placement={role === "user" ? "right" : "left"}
-      variant={role === 'user' ? 'base' : 'text'}
+      variant={role === "user" ? "base" : "text"}
       content={content}
+      chatContentProps={CHAT_MARKDOWN_CONTENT_PROPS}
     >
       {actionBar && (
         <div slot="actionbar" className="contents">
@@ -335,6 +338,7 @@ export function MessageList({
   const composerInset = Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
   const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
+  const handleExternalLinkClick = useExternalLinkOpener();
 
   const setSticky = useCallback((next: boolean) => {
     stickyRef.current = next;
@@ -486,6 +490,7 @@ export function MessageList({
       >
         <div
           ref={contentRef}
+          onClickCapture={handleExternalLinkClick}
           className={`${CHAT_CONTENT_CONTAINER_CLASS} space-y-4 pt-4`}
           style={{ paddingBottom: composerInset }}
         >

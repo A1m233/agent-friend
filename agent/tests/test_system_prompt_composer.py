@@ -244,7 +244,7 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_without_session_has_six_slots(self, tmp_path: Path) -> None:
+    def test_default_without_session_has_seven_slots(self, tmp_path: Path) -> None:
         """``session=None`` 时 channel 槽位被跳过，其余默认槽位仍输出。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
@@ -255,11 +255,12 @@ class TestSystemPromptComposerDefault:
             "persona_switch_strategy",
             "tool_usage_contract",
             "memory_consistency",
+            "output_contract",
             "runtime_context",
         )
 
-    def test_default_with_session_has_seven_slots_in_fixed_order(self, tmp_path: Path) -> None:
-        """传入 session 时，channel 槽位被插入在 persona_switch_strategy 与
+    def test_default_with_session_has_eight_slots_in_fixed_order(self, tmp_path: Path) -> None:
+        """传入 session 时，channel 槽位被插入在 output_contract 与
         runtime_context 之间（007 起新增）。"""
         from agent import Session
 
@@ -276,6 +277,7 @@ class TestSystemPromptComposerDefault:
             "persona_switch_strategy",
             "tool_usage_contract",
             "memory_consistency",
+            "output_contract",
             "channel",
             "runtime_context",
         )
@@ -294,6 +296,7 @@ class TestSystemPromptComposerDefault:
             "persona_switch_strategy",
             "tool_usage_contract",
             "memory_consistency",
+            "output_contract",
         ):
             slot = next(s for s in composer.sections if s.key == key)
             assert isinstance(slot, StaticSection)
@@ -329,6 +332,7 @@ class TestSystemPromptComposerDefault:
         assert "关于过往对话的语言风格" in output
         assert "工具使用边界" in output
         assert "记忆矛盾回应边界" in output
+        assert "输出表达约束" in output
         assert "当前时间" in output
         assert "近期和实时信息" in output
 
@@ -406,6 +410,16 @@ class TestLoadDefaultStaticSection:
         assert "没翻到或没查到" in section.text
         assert "存储" in section.text
         assert "不要为了维护上一轮回复" in section.text
+
+    def test_loads_output_contract(self) -> None:
+        section = load_default_static_section("output_contract")
+        assert section.key == "output_contract"
+        assert "输出表达约束" in section.text
+        assert "显式 Markdown 链接" in section.text
+        assert "[标题](url)" in section.text
+        assert "不要依赖裸 URL 自动识别" in section.text
+        assert "**https://example.com**" in section.text
+        assert "**[标题](url)**" in section.text
 
     def test_unknown_key_raises_keyerror(self) -> None:
         with pytest.raises(KeyError):

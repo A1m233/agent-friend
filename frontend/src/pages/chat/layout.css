@@ -30,3 +30,11 @@
     transparent 100%
   );
 }
+
+.chat-message-viewport > div {
+  /* Radix ScrollArea uses an inline table wrapper that can outgrow percentage-width children. */
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100%;
+}

@@ -48,6 +48,8 @@
         "title": "agent-friend · 对话",
         "width": 720,
         "height": 640,
+        "minWidth": 720,
+        "minHeight": 560,
         "resizable": true,
         "visible": false,
         "fullscreen": false

@@ -17,6 +17,7 @@ _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
 _TOOL_USAGE_CONTRACT_KEY = "tool_usage_contract"
 _MEMORY_CONSISTENCY_KEY = "memory_consistency"
+_OUTPUT_CONTRACT_KEY = "output_contract"
 _CHANNEL_KEY = "channel"
 _RUNTIME_CONTEXT_KEY = "runtime_context"
 
@@ -72,6 +73,7 @@ class SystemPromptComposer:
         _PERSONA_SWITCH_STRATEGY_KEY,
         _TOOL_USAGE_CONTRACT_KEY,
         _MEMORY_CONSISTENCY_KEY,
+        _OUTPUT_CONTRACT_KEY,
         _CHANNEL_KEY,
         _RUNTIME_CONTEXT_KEY,
     )
@@ -87,8 +89,11 @@ class SystemPromptComposer:
     039 起在 ``persona_switch_strategy`` 与 ``channel`` 之间追加
     ``tool_usage_contract`` 与 ``memory_consistency`` 槽位。前者约束所有工具的
     调用陈述、证据来源和失败表达；后者约束被追问记忆矛盾时不暴露存储机制、
-    不圆机制故事。两者都是跨 persona 的表达边界，放在 persona / 切换策略之后，
-    通道 / 运行时上下文之前。
+    不圆机制故事。
+
+    之后追加 ``output_contract`` 槽位，承载跨通道的默认输出格式和可读性规则；
+    ``channel`` 仍作为语音等具体通道的覆盖层。表达边界整体放在 persona /
+    切换策略之后，通道 / 运行时上下文之前。
     """
 
     def compose(self, *, channel_override: PromptChannel | None = None) -> str:
@@ -156,7 +161,7 @@ class SystemPromptComposer:
         catalog: PersonaCatalog,
         session: Session | None = None,
     ) -> SystemPromptComposer:
-        """构造默认装配：7 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
+        """构造默认装配：8 个槽位按 :attr:`DEFAULT_KEYS` 顺序排列。
 
         - ``project_identity``：项目定位级硬约束（:class:`StaticSection`，
           文本来自 ``prompt_sections/project_identity.md``）
@@ -172,6 +177,10 @@ class SystemPromptComposer:
           （:class:`StaticSection`，文本来自
           ``prompt_sections/memory_consistency.md``）。039 起新增，禁止暴露
           存储机制 / 圆机制故事。
+        - ``output_contract``：跨通道的默认输出表达约束
+          （:class:`StaticSection`，文本来自
+          ``prompt_sections/output_contract.md``）。约束 Markdown、链接、代码、
+          清单等格式的默认使用方式，具体通道仍可在 ``channel`` 槽位覆盖。
         - ``channel``：当前通道指令（:class:`ChannelSection`，007 起新增；
           ``text`` 通道下不输出任何内容。渲染时可由本轮
           ``channel_override`` 覆盖 session 当前 channel；不传时回落到
@@ -188,7 +197,7 @@ class SystemPromptComposer:
                 时，channel 槽位会被跳过——保持完全向后兼容。**新调用方推荐显式传**。
 
         Returns:
-            含 6~7 个默认槽位的 composer。``session is None`` 时返回 6 个
+            含 7~8 个默认槽位的 composer。``session is None`` 时返回 7 个
             槽位；传了 ``session`` 时多出 channel 槽位。
         """
         from .defaults import (
@@ -208,6 +217,7 @@ class SystemPromptComposer:
             load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
             load_default_static_section(_TOOL_USAGE_CONTRACT_KEY),
             load_default_static_section(_MEMORY_CONSISTENCY_KEY),
+            load_default_static_section(_OUTPUT_CONTRACT_KEY),
         ]
         if session is not None:
             section_list.append(load_default_channel_section(session, _CHANNEL_KEY))

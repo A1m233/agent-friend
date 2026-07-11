@@ -407,6 +407,34 @@ fn spawn_pet_overlay_reconciler(app: &tauri::AppHandle) {
     });
 }
 
+fn is_loopback_dev_host(host: Option<&str>) -> bool {
+    matches!(host, Some("localhost" | "127.0.0.1" | "::1"))
+}
+
+fn is_allowed_app_navigation(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "asset" | "about" => true,
+        "http" | "https" if cfg!(debug_assertions) => is_loopback_dev_host(url.host_str()),
+        _ => false,
+    }
+}
+
+fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("navigation-guard")
+        .on_navigation(|webview, url| {
+            let allowed = is_allowed_app_navigation(url);
+            if !allowed {
+                log::warn!(
+                    "blocked external webview navigation: window={} url={}",
+                    webview.label(),
+                    url
+                );
+            }
+            allowed
+        })
+        .build()
+}
+
 /// bridge HTTP base URL。
 ///
 /// 默认 `http://127.0.0.1:18800`（与 `frontend/vite.config.ts` proxy target、
@@ -695,6 +723,8 @@ pub fn run() {
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
         .manage(settings_state.clone())
+        .plugin(navigation_guard())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(settings::init::<tauri::Wry>(init_script));
 
@@ -942,5 +972,24 @@ mod tests {
             Some(req)
         );
         assert_eq!(state.take_pending_start().expect("take again"), None);
+    }
+
+    #[test]
+    fn navigation_guard_allows_app_and_dev_urls_only() {
+        assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("tauri://localhost/chat.html").unwrap()
+        ));
+        assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("asset://localhost/avatar.png").unwrap()
+        ));
+        assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("http://localhost:1420/chat.html").unwrap()
+        ));
+        assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("http://127.0.0.1:1420/chat.html").unwrap()
+        ));
+        assert!(!is_allowed_app_navigation(
+            &tauri::Url::parse("https://example.com").unwrap()
+        ));
     }
 }
