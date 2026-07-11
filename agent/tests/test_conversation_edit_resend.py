@@ -170,7 +170,27 @@ def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Pa
     assert "old answer" not in second_prompt
 
 
-def test_edit_resend_latest_first_llm_failure_writes_no_marker(tmp_path: Path) -> None:
+def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
+    conv = _conversation(
+        tmp_path,
+        llm=cast(LLMClient, _FailingLLMClient()),
+    )
+
+    with pytest.raises(RuntimeError, match="llm init failed"):
+        list(conv.stream("question before failure"))
+
+    assert [ev.type for ev in conv.session.events] == [
+        "session_meta",
+        "user_message",
+    ]
+    assert [(m.role, m.content) for m in conv.session.messages] == [
+        ("user", "question before failure"),
+    ]
+
+
+def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
+    tmp_path: Path,
+) -> None:
     store = JsonlSessionStore(base_dir=tmp_path / "sessions")
     session = Session.new(
         title="t",
@@ -197,8 +217,9 @@ def test_edit_resend_latest_first_llm_failure_writes_no_marker(tmp_path: Path) -
         "session_meta",
         "user_message",
         "assistant_message",
+        "turn_rewrite",
+        "user_message",
     ]
     assert [(m.role, m.content) for m in conv.session.messages] == [
-        ("user", "old question"),
-        ("assistant", "old answer"),
+        ("user", "new question"),
     ]

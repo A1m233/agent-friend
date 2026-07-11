@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from agent import Conversation, Message, Session, SessionNotFoundError
@@ -80,6 +82,12 @@ class SessionBridge:
         except SessionNotFoundError:
             return False
         return True
+
+    @contextmanager
+    def session_turn(self, session_id: str) -> Iterator[None]:
+        """Hold the per-session mutating-turn lock for a persistent session."""
+        with self._runtime.turn_coordinator.hold(session_id):
+            yield
 
     def start_transient(self, boot: TransientBootstrap) -> Conversation:
         """OpenAI 默认无状态分支：用 ``boot.history`` 在内存里造 :class:`Session`，

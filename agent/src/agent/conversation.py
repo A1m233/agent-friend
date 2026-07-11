@@ -453,6 +453,12 @@ class Conversation:
                         user_input,
                         extra_context=preflight_extra_context,
                     )
+                    # Once the turn has passed local context assembly, persist the
+                    # accepted user request before calling the provider. This gives
+                    # downstream error state a stable user turn to attach to.
+                    if not user_event_appended:
+                        self._append_user_event(user_input)
+                        user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
 
@@ -499,11 +505,6 @@ class Conversation:
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
-
-                # 第一轮 LLM 完成才落 user_event（保留"初始化失败完全不落盘"语义）
-                if not user_event_appended:
-                    self._append_user_event(user_input)
-                    user_event_appended = True
 
                 tool_calls = self._finalize_tool_calls(current_tc_acc)
 
@@ -626,6 +627,12 @@ class Conversation:
                         prior_summary_override=prefix_prior_summary,
                         persist_compaction=False,
                     )
+                    if not rewrite_event_appended:
+                        self._append_turn_rewrite_event(plan, replacement_text=user_input)
+                        rewrite_event_appended = True
+                    if not user_event_appended:
+                        self._append_user_event(user_input)
+                        user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
 
@@ -672,14 +679,6 @@ class Conversation:
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
-
-                if not rewrite_event_appended:
-                    self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                    rewrite_event_appended = True
-
-                if not user_event_appended:
-                    self._append_user_event(user_input)
-                    user_event_appended = True
 
                 tool_calls = self._finalize_tool_calls(current_tc_acc)
 

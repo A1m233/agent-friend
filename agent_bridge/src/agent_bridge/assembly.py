@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +41,7 @@ from runtime_config import config_mode_from_env, credential_source_for_mode
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
 from .runtime_config import BridgeRuntimeConfig, resolve_bridge_runtime_config
+from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
 
 if TYPE_CHECKING:
@@ -107,6 +108,8 @@ class BridgeRuntime:
     llm_client_factory: Callable[[str], LLMClient] | None = None
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
+    turn_coordinator: SessionTurnCoordinator = field(default_factory=SessionTurnCoordinator)
+    """Per-session turn coordinator for persistent mutating channels."""
     agent_runtime: AgentRuntime | None = None
     """014 起新增：进程级 :class:`AgentRuntime`，main loop 调度内核。
 

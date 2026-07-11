@@ -336,6 +336,14 @@ class TestAgUiRunChannelBoundary:
         assert "RUN_ERROR" in resp.text
         assert "这轮回答中断了，没有生成完整回复。请稍后重试。" in resp.text
         loaded = runtime.persistent_session_manager.open(sid)
+        assert [event.type for event in loaded.events] == [
+            "session_meta",
+            "user_message",
+            "run_error",
+        ]
+        user_events = [event for event in loaded.events if event.type == "user_message"]
+        assert len(user_events) == 1
+        assert user_events[0].payload == {"content": "继续说"}
         run_errors = [event for event in loaded.events if event.type == "run_error"]
         assert len(run_errors) == 1
         assert run_errors[0].payload == {

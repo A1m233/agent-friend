@@ -206,16 +206,17 @@ class IMRouter:
         Returns:
             聚合后的完整文本(可能空字符串,如果 LLM 没输出任何 text)。
         """
-        conv = self._bridge.bind_persistent(boot)
         buf: list[str] = []
-        for ev in conv.stream(boot.new_user_input, channel="text"):
-            if isinstance(ev, TextDelta):
-                buf.append(ev.text)
-            # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
-            # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
-            # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
-            # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
-            # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
+        with self._bridge.session_turn(boot.thread_id):
+            conv = self._bridge.bind_persistent(boot)
+            for ev in conv.stream(boot.new_user_input, channel="text"):
+                if isinstance(ev, TextDelta):
+                    buf.append(ev.text)
+                # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
+                # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
+                # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
+                # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
+                # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
         return "".join(buf)
 
 

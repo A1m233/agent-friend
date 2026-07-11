@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from typing import Any
 from uuid import uuid4
 
@@ -58,6 +59,7 @@ from agent import (
 )
 
 from ...errors import map_exception
+from ...session_turns import SessionTurnCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,7 @@ def encode_stream(
     agent_runtime: AgentRuntime | None = None,
     run_conversation: Callable[[Conversation, str], Iterator[ConversationEvent]] | None = None,
     channel: PromptChannel | None = None,
+    turn_coordinator: SessionTurnCoordinator | None = None,
 ) -> Iterator[bytes]:
     """流式编码 AG-UI SSE bytes。
 
@@ -92,6 +95,8 @@ def encode_stream(
             ``None`` 时保持 006~013 行为，不镜像。
         run_conversation: 可选运行器；不传时调用 ``Conversation.stream``。编辑重发
             endpoint 通过这里切换到 ``Conversation.edit_resend_latest``，保持编码逻辑复用。
+        turn_coordinator: 可选 per-session turn 协调器。同一 ``thread_id`` 的持久化
+            写入轮必须串行，避免下一轮读到上一轮 finally 尚未落完的半旧状态。
     """
     encoder = EventEncoder(accept=accept or "")
 
@@ -101,102 +106,134 @@ def encode_stream(
     open_message_id: str | None = None
     conv: Conversation | None = None
 
-    yield _encode(
-        RunStartedEvent(
-            type=EventType.RUN_STARTED,
-            thread_id=thread_id,
-            run_id=run_id,
+    turn_scope = turn_coordinator.hold(thread_id) if turn_coordinator is not None else nullcontext()
+    with turn_scope:
+        yield _encode(
+            RunStartedEvent(
+                type=EventType.RUN_STARTED,
+                thread_id=thread_id,
+                run_id=run_id,
+            )
         )
-    )
 
-    try:
-        conv = conv_factory()
-        mirror_user_event = (
-            UserEvent(session_id=conv.session.session_id, user_input=user_input)
-            if agent_runtime is not None
-            else None
-        )
-        event_stream = (
-            run_conversation(conv, user_input)
-            if run_conversation is not None
-            else conv.stream(user_input, channel=channel)
-        )
-        for ev in event_stream:
-            # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
-            if agent_runtime is not None and mirror_user_event is not None:
-                try:
-                    agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
-                except Exception:
-                    # 镜像失败绝不影响 pull 路径——log warning 后继续
-                    logger.warning("listener fan_out 失败", exc_info=True)
-            if isinstance(ev, TextDelta):
-                if open_message_id is None:
-                    open_message_id = _new_message_id()
+        try:
+            conv = conv_factory()
+            mirror_user_event = (
+                UserEvent(session_id=conv.session.session_id, user_input=user_input)
+                if agent_runtime is not None
+                else None
+            )
+            event_stream = (
+                run_conversation(conv, user_input)
+                if run_conversation is not None
+                else conv.stream(user_input, channel=channel)
+            )
+            for ev in event_stream:
+                # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
+                if agent_runtime is not None and mirror_user_event is not None:
+                    try:
+                        agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
+                    except Exception:
+                        # 镜像失败绝不影响 pull 路径——log warning 后继续
+                        logger.warning("listener fan_out 失败", exc_info=True)
+                if isinstance(ev, TextDelta):
+                    if open_message_id is None:
+                        open_message_id = _new_message_id()
+                        yield _encode(
+                            TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START,
+                                message_id=open_message_id,
+                                role="assistant",
+                            )
+                        )
                     yield _encode(
-                        TextMessageStartEvent(
-                            type=EventType.TEXT_MESSAGE_START,
+                        TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT,
                             message_id=open_message_id,
-                            role="assistant",
+                            delta=ev.text,
                         )
                     )
+
+                elif isinstance(ev, ToolCallRequest):
+                    if open_message_id is not None:
+                        yield _encode(
+                            TextMessageEndEvent(
+                                type=EventType.TEXT_MESSAGE_END,
+                                message_id=open_message_id,
+                            )
+                        )
+                        open_message_id = None
+
+                    yield _encode(
+                        ToolCallStartEvent(
+                            type=EventType.TOOL_CALL_START,
+                            tool_call_id=ev.tool_call_id,
+                            tool_call_name=ev.tool_name,
+                        )
+                    )
+                    yield _encode(
+                        ToolCallArgsEvent(
+                            type=EventType.TOOL_CALL_ARGS,
+                            tool_call_id=ev.tool_call_id,
+                            delta=_dump_args(ev.args),
+                        )
+                    )
+                    yield _encode(
+                        ToolCallEndEvent(
+                            type=EventType.TOOL_CALL_END,
+                            tool_call_id=ev.tool_call_id,
+                        )
+                    )
+
+                elif isinstance(ev, ToolCallResult):
+                    content = ev.text if not ev.is_error else f"[error] {ev.text}"
+                    yield _encode(
+                        ToolCallResultEvent(
+                            type=EventType.TOOL_CALL_RESULT,
+                            message_id=_new_message_id(),
+                            tool_call_id=ev.tool_call_id,
+                            content=content,
+                            role="tool",
+                        )
+                    )
+
+                elif isinstance(ev, TurnDone):
+                    # TurnDone 仅作为"流结束"信号，AG-UI 用 RUN_FINISHED 承担。
+                    # max_turns_reached 等 stop_reason 信息本期不映射到 AG-UI 事件——
+                    # 客户端通过缺少 RUN_FINISHED 或后续 RunStartedEvent 推断异常。
+                    pass
+
+        except Exception as exc:
+            if open_message_id is not None:
                 yield _encode(
-                    TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
+                    TextMessageEndEvent(
+                        type=EventType.TEXT_MESSAGE_END,
                         message_id=open_message_id,
-                        delta=ev.text,
                     )
                 )
-
-            elif isinstance(ev, ToolCallRequest):
-                if open_message_id is not None:
-                    yield _encode(
-                        TextMessageEndEvent(
-                            type=EventType.TEXT_MESSAGE_END,
-                            message_id=open_message_id,
-                        )
+                open_message_id = None
+            logger.exception("AG-UI run %s 失败", run_id)
+            err = map_exception(exc)
+            if conv is not None:
+                try:
+                    conv.append_run_error_event(
+                        code=err.code,
+                        message=err.message,
+                        recoverable=err.recoverable,
+                        source="ag_ui",
+                        run_id=run_id,
                     )
-                    open_message_id = None
-
-                yield _encode(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=ev.tool_call_id,
-                        tool_call_name=ev.tool_name,
-                    )
+                except Exception:
+                    logger.warning("AG-UI run_error 持久化失败", exc_info=True)
+            yield _encode(
+                RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message=err.message,
+                    code=err.code,
                 )
-                yield _encode(
-                    ToolCallArgsEvent(
-                        type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=ev.tool_call_id,
-                        delta=_dump_args(ev.args),
-                    )
-                )
-                yield _encode(
-                    ToolCallEndEvent(
-                        type=EventType.TOOL_CALL_END,
-                        tool_call_id=ev.tool_call_id,
-                    )
-                )
+            )
+            return
 
-            elif isinstance(ev, ToolCallResult):
-                content = ev.text if not ev.is_error else f"[error] {ev.text}"
-                yield _encode(
-                    ToolCallResultEvent(
-                        type=EventType.TOOL_CALL_RESULT,
-                        message_id=_new_message_id(),
-                        tool_call_id=ev.tool_call_id,
-                        content=content,
-                        role="tool",
-                    )
-                )
-
-            elif isinstance(ev, TurnDone):
-                # TurnDone 仅作为"流结束"信号，AG-UI 用 RUN_FINISHED 承担。
-                # max_turns_reached 等 stop_reason 信息本期不映射到 AG-UI 事件——
-                # 客户端通过缺少 RUN_FINISHED 或后续 RunStartedEvent 推断异常。
-                pass
-
-    except Exception as exc:
         if open_message_id is not None:
             yield _encode(
                 TextMessageEndEvent(
@@ -204,44 +241,14 @@ def encode_stream(
                     message_id=open_message_id,
                 )
             )
-            open_message_id = None
-        logger.exception("AG-UI run %s 失败", run_id)
-        err = map_exception(exc)
-        if conv is not None:
-            try:
-                conv.append_run_error_event(
-                    code=err.code,
-                    message=err.message,
-                    recoverable=err.recoverable,
-                    source="ag_ui",
-                    run_id=run_id,
-                )
-            except Exception:
-                logger.warning("AG-UI run_error 持久化失败", exc_info=True)
+
         yield _encode(
-            RunErrorEvent(
-                type=EventType.RUN_ERROR,
-                message=err.message,
-                code=err.code,
+            RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=thread_id,
+                run_id=run_id,
             )
         )
-        return
-
-    if open_message_id is not None:
-        yield _encode(
-            TextMessageEndEvent(
-                type=EventType.TEXT_MESSAGE_END,
-                message_id=open_message_id,
-            )
-        )
-
-    yield _encode(
-        RunFinishedEvent(
-            type=EventType.RUN_FINISHED,
-            thread_id=thread_id,
-            run_id=run_id,
-        )
-    )
 
 
 def _new_message_id() -> str:

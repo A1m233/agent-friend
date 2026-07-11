@@ -20,7 +20,6 @@ design §6.2（弱稳定，本期落地后默认不变）。
 from __future__ import annotations
 
 import dataclasses
-import logging
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -30,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
+    Conversation,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     SessionNotFoundError,
@@ -38,8 +38,6 @@ from agent import (
 
 from ..assembly import BridgeRuntime
 from ..protocols.ag_ui.encoders import encode_stream
-
-logger = logging.getLogger(__name__)
 
 
 class PersonaSwitchBody(BaseModel):
@@ -185,18 +183,19 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         text = body.text.strip()
         if not text:
             raise HTTPException(status_code=400, detail="text 不能为空")
-        try:
-            mgr.open(session_id)
-        except SessionNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-
         accept = request.headers.get("accept") or ""
+        run_id = uuid4().hex
+
+        def _conversation_for_edit() -> Conversation:
+            session = mgr.open(session_id)
+            return mgr.start_conversation(session)
+
         return StreamingResponse(
             encode_stream(
-                lambda: mgr.start_conversation(mgr.open(session_id)),
+                _conversation_for_edit,
                 text,
                 thread_id=session_id,
-                run_id=uuid4().hex,
+                run_id=run_id,
                 accept=accept,
                 agent_runtime=runtime.agent_runtime,
                 run_conversation=lambda conv, value: conv.edit_resend_latest(
@@ -205,6 +204,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     channel="text",
                 ),
                 channel="text",
+                turn_coordinator=runtime.turn_coordinator,
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={
