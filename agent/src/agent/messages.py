@@ -11,13 +11,30 @@ docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.3。
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
 Role = Literal["system", "user", "assistant", "tool"]
 """消息角色。``"tool"`` 起自 005，承载工具执行结果回喂给 LLM 的消息。"""
+
+_INTERNAL_PROMPT_MARKERS = {
+    "<system_trigger>": "&lt;system_trigger&gt;",
+    "</system_trigger>": "&lt;/system_trigger&gt;",
+}
+
+
+def escape_internal_prompt_markers(text: str) -> str:
+    """转义普通用户文本中的项目内部 prompt 标记。
+
+    只处理 agent-friend 自有的保留标记，不做通用 HTML / XML 清洗。调用方应仅
+    对真实用户来源使用；runtime 内部的 ``trailing_user`` 需要保留原标记。
+    """
+    escaped = text
+    for marker, replacement in _INTERNAL_PROMPT_MARKERS.items():
+        escaped = escaped.replace(marker, replacement)
+    return escaped
 
 
 @dataclass
@@ -114,3 +131,16 @@ class Message:
         if "uuid" in data:
             kwargs["uuid"] = data["uuid"]
         return cls(**kwargs)
+
+
+def escape_user_messages_for_llm(messages: list[Message]) -> list[Message]:
+    """复制消息列表，并仅转义 ``role=user`` 的内部保留标记。
+
+    原 :class:`Message` 对象不被修改，session event / UI / memory 继续持有用户原文。
+    """
+    return [
+        replace(message, content=escape_internal_prompt_markers(message.content))
+        if message.role == "user"
+        else message
+        for message in messages
+    ]

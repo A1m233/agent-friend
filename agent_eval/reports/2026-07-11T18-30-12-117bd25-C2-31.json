@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:30:12.084190+00:00",
+    "ended_at": "2026-07-11T18:30:20.205921+00:00",
+    "duration_seconds": 8.122,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 3",
+    "selection": {
+      "contract": "all",
+      "case": "C2-31",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-31",
+          "query": "GitHub Actions 的运行日志会保留多少天？",
+          "facet": "平台当前规则与精确数字 — 应主动查证",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "GitHub Actions 的运行日志默认保留 **90 天**。超过这个期限的日志会被 GitHub 自动删除，不支持手动延长保留时间（企业版用户如果有自己的审计需求，可以考虑将日志导出到外部存储）。如果你有需要保存的日志，记得在期限内下载下来。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

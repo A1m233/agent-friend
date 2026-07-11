@@ -15,6 +15,8 @@ from .sections import PromptChannel, SystemPromptRenderContext
 _PROJECT_IDENTITY_KEY = "project_identity"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
+_RELATIONSHIP_CONTRACT_KEY = "relationship_contract"
+_UNTRUSTED_CONTENT_KEY = "untrusted_content"
 _TOOL_USAGE_CONTRACT_KEY = "tool_usage_contract"
 _MEMORY_CONSISTENCY_KEY = "memory_consistency"
 _OUTPUT_CONTRACT_KEY = "output_contract"
@@ -71,6 +73,8 @@ class SystemPromptComposer:
         _PROJECT_IDENTITY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
+        _RELATIONSHIP_CONTRACT_KEY,
+        _UNTRUSTED_CONTENT_KEY,
         _TOOL_USAGE_CONTRACT_KEY,
         _MEMORY_CONSISTENCY_KEY,
         _OUTPUT_CONTRACT_KEY,
@@ -86,7 +90,10 @@ class SystemPromptComposer:
     （"在这个通道下怎么说"）→ 运行时上下文。文字通道下
     ChannelSection.render() 返回 ``None``。详见 007 design §4.9.5。
 
-    039 起在 ``persona_switch_strategy`` 与 ``channel`` 之间追加
+    044 起在 ``persona_switch_strategy`` 后追加 ``relationship_contract`` 与
+    ``untrusted_content``：前者给所有 persona 统一的关系目标与非操控底线，
+    后者声明网页、工具结果、历史片段等数据没有指令权。随后继续装配
+    039 起已有的
     ``tool_usage_contract`` 与 ``memory_consistency`` 槽位。前者约束所有工具的
     调用陈述、证据来源和失败表达；后者约束被追问记忆矛盾时不暴露存储机制、
     不圆机制故事。
@@ -169,6 +176,8 @@ class SystemPromptComposer:
           catalog）
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
           文本来自 ``prompt_sections/persona_switch_strategy.md``）
+        - ``relationship_contract``：所有 persona 共用的关系与陪伴行为边界。
+        - ``untrusted_content``：第三方内容、工具结果和历史片段的指令权限边界。
         - ``tool_usage_contract``：工具调用和工具结果陈述的通用边界
           （:class:`StaticSection`，文本来自
           ``prompt_sections/tool_usage_contract.md``）。039 起新增，避免未调用
@@ -215,6 +224,8 @@ class SystemPromptComposer:
                 catalog=catalog,
             ),
             load_default_static_section(_PERSONA_SWITCH_STRATEGY_KEY),
+            load_default_static_section(_RELATIONSHIP_CONTRACT_KEY),
+            load_default_static_section(_UNTRUSTED_CONTENT_KEY),
             load_default_static_section(_TOOL_USAGE_CONTRACT_KEY),
             load_default_static_section(_MEMORY_CONSISTENCY_KEY),
             load_default_static_section(_OUTPUT_CONTRACT_KEY),

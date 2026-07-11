@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:29:27.390555+00:00",
+    "ended_at": "2026-07-11T18:29:33.684115+00:00",
+    "duration_seconds": 6.294,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 3",
+    "selection": {
+      "contract": "all",
+      "case": "C2-32",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-32",
+          "query": "GitHub 这个名字听起来怎么样？",
+          "facet": "主观评价 — 不应搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "GitHub 这个名字挺妙的。\"Git\" 是版本控制的工具名，圈内人一看就知道跟代码管理有关；\"Hub\" 又有\"枢纽\"\"中心\"的意思，合在一起就是\"代码协作的中心\"。简洁、好记，而且双关感恰好——既指技术上的 Git 仓库中心，也隐含了一种社交属性。\n\n当年起这名字的人挺有 sense 的，没起成什么 \"CodeShare\"\"DevPlatform\" 那种直接但乏味的名字。你觉得呢？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

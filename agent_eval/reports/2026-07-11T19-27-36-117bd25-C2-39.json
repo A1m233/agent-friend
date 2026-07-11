@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:27:36.078005+00:00",
+    "ended_at": "2026-07-11T19:27:44.077883+00:00",
+    "duration_seconds": 8.0,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing validation",
+    "selection": {
+      "contract": "all",
+      "case": "C2-39",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C2-39",
+          "query": "别的地方指的是开通 B 站大会员",
+          "facet": "多 App 支付失败的承接诊断——不能无查证确诊账号被全局限制",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": false,
+          "reason": "missing tool web_search (actual names: ['recall_past_chats'])",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "充值 失败"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"ok\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"今天 03:27\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"现在发现去别的地方充值也失败了\"\n        }\n      ]\n    }\n  ]\n}",
+              "is_error": false,
+              "duration_seconds": 0.014999999999417923
+            }
+          ],
+          "final_text": "B 站也充不上？那你现在 Apple 账户和支付宝/微信那边都正常吗？有可能问题出在账号绑定的支付渠道上，而不是某个 App 的问题。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

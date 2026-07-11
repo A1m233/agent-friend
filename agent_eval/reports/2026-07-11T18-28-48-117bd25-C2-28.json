@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:28:48.016693+00:00",
+    "ended_at": "2026-07-11T18:28:54.656649+00:00",
+    "duration_seconds": 6.64,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 2",
+    "selection": {
+      "contract": "all",
+      "case": "C2-28",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-28",
+          "query": "桌面应用框架是什么意思？",
+          "facet": "稳定通用概念 — 不应搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "桌面应用框架就是帮你搭建桌面软件的基础工具集——简单说，你不用从零写一堆底层代码（比如怎么画窗口、怎么处理鼠标点击、怎么管理内存这些），框架把这些脏活累活都包了，你只需要写你的业务逻辑就行。\n\n常见的例子：\n\n- **Electron**：用 HTML/CSS/JS 写桌面应用，比如 VS Code、Slack 就是用这个做的\n- **Qt**：老牌 C++ 框架，跨平台能力强，很多工业软件在用\n- **.NET (WPF / WinForms)**：Windows 生态里最主流的\n- **Tauri**：最近比较火，比 Electron 轻量很多，底层用 Rust\n\n选哪个看你需求——想做跨平台、追求性能、还是只想快速出东西，每家取舍不一样。你是在学前端想试试写桌面端？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

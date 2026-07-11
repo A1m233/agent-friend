@@ -13,6 +13,7 @@ from .schema import (
     CaseJudge,
     CaseSetMeta,
     Contract,
+    FakeTool,
     FixtureMessage,
     FixtureSession,
 )
@@ -70,16 +71,35 @@ def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
         days_ago = int(days_raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label}.days_ago 必须是整数") from exc
-    messages_raw = data.get("messages", [])
+    messages = _parse_fixture_messages(data.get("messages", []), label=f"{label}.messages")
+    return FixtureSession(days_ago=days_ago, messages=messages)
+
+
+def _parse_fixture_messages(raw: Any, *, label: str) -> list[FixtureMessage]:
+    messages_raw = raw
     if not isinstance(messages_raw, list):
-        raise ValueError(f"{label}.messages 必须是 list")
+        raise ValueError(f"{label} 必须是 list")
     messages: list[FixtureMessage] = []
     for index, msg_raw in enumerate(messages_raw):
-        msg = _mapping(msg_raw, label=f"{label}.messages[{index}]")
-        role = _required_str(msg, "role", label=f"{label}.messages[{index}]")
-        text = _required_str(msg, "text", label=f"{label}.messages[{index}]")
+        item_label = f"{label}[{index}]"
+        msg = _mapping(msg_raw, label=item_label)
+        role = _required_str(msg, "role", label=item_label)
+        if role not in {"user", "assistant"}:
+            raise ValueError(f"{item_label}.role 只能是 user 或 assistant")
+        text = _required_str(msg, "text", label=item_label)
         messages.append(FixtureMessage(role=role, text=text))
-    return FixtureSession(days_ago=days_ago, messages=messages)
+    return messages
+
+
+def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
+    if raw is None:
+        return None
+    data = _mapping(raw, label=label)
+    return FakeTool(
+        name=_required_str(data, "name", label=label),
+        result_text=_required_str(data, "result_text", label=label),
+        is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
+    )
 
 
 def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
@@ -88,6 +108,18 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
     data = _mapping(raw, label=label)
     return CaseJudge(
         must_call=_optional_str(data, "must_call"),
+        must_not_call_any=_str_list(
+            data.get("must_not_call_any"),
+            label=f"{label}.must_not_call_any",
+        ),
+        require_non_empty_response=_bool(
+            data.get("require_non_empty_response"),
+            label=f"{label}.require_non_empty_response",
+        ),
+        forbid_question=_bool(
+            data.get("forbid_question"),
+            label=f"{label}.forbid_question",
+        ),
         must_mention_any=_str_list(data.get("must_mention_any"), label=f"{label}.must_mention_any"),
         must_not_mention_any=_str_list(
             data.get("must_not_mention_any"),
@@ -141,6 +173,14 @@ def _load_contract_file(path: Path) -> Contract:
                 fixture_session=_parse_fixture_session(
                     case_data.get("fixture_session"),
                     label=f"{label}.fixture_session",
+                ),
+                current_session_messages=_parse_fixture_messages(
+                    case_data.get("current_session_messages", []),
+                    label=f"{label}.current_session_messages",
+                ),
+                fake_tool=_parse_fake_tool(
+                    case_data.get("fake_tool"),
+                    label=f"{label}.fake_tool",
                 ),
                 judge=_parse_judge(case_data.get("judge"), label=f"{label}.judge"),
             )

@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:26:07.749194+00:00",
+    "ended_at": "2026-07-11T19:26:14.197761+00:00",
+    "duration_seconds": 6.449,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing validation",
+    "selection": {
+      "contract": "all",
+      "case": "C2-37",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C2-37",
+          "query": "如何关闭“查找我的 iPhone”",
+          "facet": "iOS 当前设置路径——应查证当前官方步骤",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": false,
+          "reason": "missing tool web_search (actual names: none)",
+          "tool_calls": [],
+          "final_text": "很简单，几步就行：\n\n1. **打开设置** → 点顶部的你的名字（Apple ID 页面）\n2. **点「查找」** → 进入后点「查找我的 iPhone」\n3. **关掉「查找我的 iPhone」开关** — 系统会要求你输入 Apple ID 密码才能关闭\n\n关掉之后再回设置主页，拉到最底点 **「退出登录」**，就可以按提示重新登了。\n\n注意：如果你是在设备上直接关「查找」再登出，整个过程是正常的。但如果设备是别人给的或者有家长控制/MDM 限制，可能会提示无法关闭。那种情况需要先移除限制，不然关不掉。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

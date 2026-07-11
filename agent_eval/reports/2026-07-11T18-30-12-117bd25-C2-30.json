@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:30:12.824184+00:00",
+    "ended_at": "2026-07-11T18:30:23.188120+00:00",
+    "duration_seconds": 10.364,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 3",
+    "selection": {
+      "contract": "all",
+      "case": "C2-30",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-30",
+          "query": "软件里的 provider 模式是什么意思？",
+          "facet": "稳定设计概念 — 不应搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "Provider 模式说白了就是**把\"干活的人\"和\"我要谁干活\"分开**。\n\n常见场景是这样的：你的代码里有一段功能——比如发短信、存文件、调某个第三方 API——你不会直接在每个地方 new 一个具体的发送器，而是定义一个接口，然后写一个\"提供者\"统一负责给出发送器实例。谁要发短信就找 Provider 要，不用管底层用的是阿里云还是腾讯云。\n\n具体在不同的框架里长得不太一样：\n\n- **React** 的 `Context.Provider`：把一些数据/方法放到 Provider 上，底下所有子组件都能消费，不用层层传 props。\n- **Angular** 的 Provider：告诉框架“这个类/服务由我来提供实例”，框架自己搞定依赖注入。\n- **状态管理（如 Redux 的 Provider）**：把 store 注入到整个组件树里。\n- **各种 SDK / 库**：经常让你先初始化一个 Provider 对象，所有后续操作都通过它来，屏蔽底层细节。\n\n核心就三个好处：**解耦**（调用方不关心具体实现）、**可替换**（换底层实现只要改 Provider 那一个地方）、**统一管理**（单例、生命周期、懒加载都好控制）。\n\n你是在看什么项目或框架里见到这个说法的？我可以针对那个场景再细讲。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

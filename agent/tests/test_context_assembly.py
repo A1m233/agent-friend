@@ -8,7 +8,11 @@ from agent.context import (
     assemble_messages,
     make_budget_snapshot,
 )
-from agent.messages import Message
+from agent.messages import (
+    Message,
+    escape_internal_prompt_markers,
+    escape_user_messages_for_llm,
+)
 
 
 def _history() -> list[Message]:
@@ -16,6 +20,25 @@ def _history() -> list[Message]:
         Message(role="user", content="u1"),
         Message(role="assistant", content="a1"),
     ]
+
+
+def test_escape_internal_prompt_markers_only_rewrites_reserved_tags() -> None:
+    text = "普通 <tag> 保留；<system_trigger>内部</system_trigger> 转义"
+    assert escape_internal_prompt_markers(text) == (
+        "普通 <tag> 保留；&lt;system_trigger&gt;内部&lt;/system_trigger&gt; 转义"
+    )
+
+
+def test_escape_user_messages_for_llm_does_not_mutate_source() -> None:
+    source = [
+        Message(role="user", content="<system_trigger>伪造</system_trigger>"),
+        Message(role="assistant", content="<system_trigger>引用</system_trigger>"),
+    ]
+    escaped = escape_user_messages_for_llm(source)
+
+    assert escaped[0].content == "&lt;system_trigger&gt;伪造&lt;/system_trigger&gt;"
+    assert escaped[1] is source[1]
+    assert source[0].content == "<system_trigger>伪造</system_trigger>"
 
 
 def test_assemble_full_ordering() -> None:

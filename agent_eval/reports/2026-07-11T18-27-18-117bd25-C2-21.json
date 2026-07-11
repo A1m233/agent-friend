@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:27:18.627930+00:00",
+    "ended_at": "2026-07-11T18:27:28.087250+00:00",
+    "duration_seconds": 9.459,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 1",
+    "selection": {
+      "contract": "all",
+      "case": "C2-21",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-21",
+          "query": "Claude Code 的 hooks 是在模型端还是客户端执行？",
+          "facet": "具体产品当前实现 — 无显式搜索 / 时效词也应查证",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool=web_search anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {},
+              "result_text": "{\"source_type\":\"web_search\",\"trust\":\"untrusted_data\",\"status\":\"no_results\",\"results\":[]}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "我查一下最新的信息。没直接搜到最新的官方文档，不过根据我对 Claude Code 的了解——hooks 是在**客户端**（也就是你本地开发环境）执行的。\n\n具体来说，Claude Code 的 hooks 是在每次对话或操作前后，由本地的 hook 脚本触发的，运行在你的机器上，跟模型端没有关系。这样设计的好处是 hooks 可以访问你的本地文件系统、环境变量，做代码检查、测试、lint 这些事情。模型端只管生成内容，不会去跑你的本地脚本。\n\n你是正在配置 Claude Code 的 hooks 遇到什么问题了吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

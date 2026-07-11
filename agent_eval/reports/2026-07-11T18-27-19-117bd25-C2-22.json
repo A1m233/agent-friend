@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T18:27:19.030403+00:00",
+    "ended_at": "2026-07-11T18:27:26.550536+00:00",
+    "duration_seconds": 7.52,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 implicit websearch routing batch 1",
+    "selection": {
+      "contract": "all",
+      "case": "C2-22",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5d8f3294bfd6f6ccc5c2e71f2c070061c0f4e68ca0d6bc03d255e0e35f45d873",
+      "total_contracts": 7,
+      "total_cases": 131,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 34,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C2-22",
+          "query": "编程里的 hook 是什么意思？",
+          "facet": "稳定通用概念 — 不应搜索",
+          "source": "requirement-044",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "Hook 翻译过来就是\"钩子\"，顾名思义——它让你在程序执行流程中\"钩\"住某个节点，插入你自己的逻辑。\n\n好比说一个 CMS 系统，用户发了篇文章。正常的流程是：提交表单 → 存数据库 → 返回成功。但如果你想在文章发布后自动发给订阅用户、做敏感词过滤、记录日志……难道要改 CMS 核心代码吗？\n\n这时候 hook 就派上用场了。系统在关键节点（比如\"文章发布后\"）留一个接口，你把自己的函数\"钩\"上去，让它在那个节点自动执行。这样核心代码不动，扩展功能却可以自由插拔。\n\n常见场景：\n\n- **生命周期钩子**：比如 Vue/React 的 `onMounted`、`useEffect`，在组件挂载或数据变化时执行你的代码\n- **事件钩子**：Webhook，用户触发某个事件时，系统往你指定的 URL 发个 HTTP 请求\n- **插件系统的钩子**：WordPress 的 `do_action` / `apply_filters`，第三方插件靠它给系统增加功能\n\n一句话：**hook 就是系统给你留的\"在这时机干点啥\"的入口。**",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

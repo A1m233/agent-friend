@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -130,9 +131,14 @@ class WebSearchTool:
         "- 用户问及『今天』『现在』『最新』『最近』『目前』等时效词相关的内容\n"
         "- 涉及具体日期 / 时间点之后发生的事\n"
         "- 涉及具体公司、产品、人物、作品、视频、梗、活动、政策或数字细节，且你不能 100% 确定\n\n"
+        "- 即使没有『最新 / 现在』等时效词，只要答案依赖具体产品或平台的当前能力、配置、版本、价格、负责人、规则、精确数字或事件状态\n"
+        "- 具体产品的当前操作步骤、设置菜单路径、账号 / 支付政策、客服联系方式或故障机制\n"
+        "- 在多轮排障中，用户补充了新现象，而你需要依赖具体平台规则才能给出诊断或下一步\n"
+        "- 你发现自己正准备用『印象里 / 应该 / 大概 / 一般是』补一个具体外部事实\n\n"
         "**何时不要使用**：\n"
         "- 用户问的是你和用户过去是否聊过、推荐过或约定过；这类问题用历史对话工具核对\n"
         "- 用户要的是创作、改写、代码解释、情绪陪伴或明确不需要外部资料的判断\n"
+        "- 用户问的是稳定定义、通用概念、纯推理或主观评价，不依赖某个具体对象的当前外部事实\n"
         "- 当前对话里已经有用户提供的事实，且用户只是让你基于这些信息整理或推理\n\n"
         "**参数来源与证据边界**：\n"
         "- query 用清晰自然语言描述要找的信息，关键词 2~5 个，不超过一句话\n"
@@ -190,22 +196,21 @@ class WebSearchTool:
 
 
 def _format(query: str, hits: list[SearchHit]) -> str:
-    """把 :class:`SearchHit` 列表拼成喂给 LLM 的纯文本。
+    """把 :class:`SearchHit` 列表编码为有明确来源的不可信 JSON 数据。
 
     Provider 无关——任何 provider 返回的 hits 都经过同一格式化逻辑，
     便于未来加新 provider 时复用 + 视觉一致。
 
-    末尾追加一条 inline reminder 引导 LLM 用拟人化方式整合结果（与 product
-    vision §3.1 的"像真人朋友"原则一致），不要把搜索结果原文直接贴给用户。
+    回答规则属于 system prompt / tool description，不混入无指令权的结果正文。
+    JSON 编码也避免第三方 title / snippet 闭合自定义标签伪装外围说明。
     """
-    if not hits:
-        return f"对 '{query}' 的搜索没找到相关结果。"
-    lines = [f"对 '{query}' 的搜索结果（top {len(hits)}）："]
-    for i, h in enumerate(hits, 1):
-        snippet = h.snippet[:500]
-        lines.append(f"\n[{i}] {h.title}\nURL: {h.url}\n{snippet}")
-    lines.append(
-        "\n\n请基于以上信息用自己的话回答用户。如果引用了具体内容，"
-        '用拟人化方式提及来源（例如"我在新闻里看到..."），不要直接贴 URL。'
-    )
-    return "\n".join(lines)
+    payload = {
+        "source_type": "web_search",
+        "trust": "untrusted_data",
+        "query": query,
+        "status": "ok" if hits else "no_results",
+        "results": [
+            {"title": hit.title, "url": hit.url, "snippet": hit.snippet[:500]} for hit in hits
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)

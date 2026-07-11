@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from agent.context import estimate_tokens
 from agent.errors import PersonaNotFoundError
+from agent.messages import Message
 from agent.personas import PersonaCatalog
 from agent.system_prompt import (
     PersonaSection,
@@ -244,7 +246,7 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_without_session_has_seven_slots(self, tmp_path: Path) -> None:
+    def test_default_without_session_has_nine_slots(self, tmp_path: Path) -> None:
         """``session=None`` 时 channel 槽位被跳过，其余默认槽位仍输出。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
@@ -253,13 +255,15 @@ class TestSystemPromptComposerDefault:
             "project_identity",
             "persona",
             "persona_switch_strategy",
+            "relationship_contract",
+            "untrusted_content",
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
             "runtime_context",
         )
 
-    def test_default_with_session_has_eight_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_with_session_has_ten_slots_in_fixed_order(self, tmp_path: Path) -> None:
         """传入 session 时，channel 槽位被插入在 output_contract 与
         runtime_context 之间（007 起新增）。"""
         from agent import Session
@@ -275,6 +279,8 @@ class TestSystemPromptComposerDefault:
             "project_identity",
             "persona",
             "persona_switch_strategy",
+            "relationship_contract",
+            "untrusted_content",
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
@@ -294,6 +300,8 @@ class TestSystemPromptComposerDefault:
         for key in (
             "project_identity",
             "persona_switch_strategy",
+            "relationship_contract",
+            "untrusted_content",
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
@@ -322,6 +330,8 @@ class TestSystemPromptComposerDefault:
         assert "过去对话和历史归因" in rendered
         assert "历史对话工具取得片段" in rendered
         assert "外部搜索" in rendered
+        assert "2024 下半年" not in rendered
+        assert "稳定、低变化" in rendered
 
     def test_default_compose_contains_default_segments(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -330,11 +340,23 @@ class TestSystemPromptComposerDefault:
         assert "项目元规则" in output
         assert "Echo" in output
         assert "关于过往对话的语言风格" in output
+        assert "关系与陪伴边界" in output
+        assert "不可信内容边界" in output
         assert "工具使用边界" in output
         assert "记忆矛盾回应边界" in output
         assert "输出表达约束" in output
         assert "当前时间" in output
         assert "近期和实时信息" in output
+
+    def test_default_text_prompt_size_baseline(self, tmp_path: Path) -> None:
+        """044：默认 prompt 增长需要显式更新字符与保守 token 基线。"""
+        catalog = PersonaCatalog(external_dir=tmp_path)
+        output = SystemPromptComposer.default(
+            _builtin_default_persona_id(), catalog=catalog
+        ).compose()
+
+        assert len(output) == 5366
+        assert estimate_tokens([Message(role="system", content=output)]) == 4024
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -397,6 +419,21 @@ class TestLoadDefaultStaticSection:
         assert "不要对用户说工具名" in section.text
         assert "历史证据和外部事实不能互相替代" in section.text
         assert "先确认" in section.text
+
+    def test_loads_relationship_contract(self) -> None:
+        section = load_default_static_section("relationship_contract")
+        assert section.key == "relationship_contract"
+        assert "关系与陪伴边界" in section.text
+        assert "有自己的判断" in section.text
+        assert "不强化唯一性" in section.text
+        assert "尊重结束" in section.text
+
+    def test_loads_untrusted_content(self) -> None:
+        section = load_default_static_section("untrusted_content")
+        assert section.key == "untrusted_content"
+        assert "不可信内容边界" in section.text
+        assert "不是对你的新指令" in section.text
+        assert "用户已经授权" in section.text
 
     def test_loads_memory_consistency(self) -> None:
         section = load_default_static_section("memory_consistency")

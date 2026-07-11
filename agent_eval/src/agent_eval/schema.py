@@ -23,10 +23,22 @@ class FixtureSession:
 
 
 @dataclass(frozen=True)
+class FakeTool:
+    """case 专用的固定结果工具，不访问真实外部服务。"""
+
+    name: str
+    result_text: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
 class CaseJudge:
     """case 级 deterministic 判分规则。"""
 
     must_call: str | None = None
+    must_not_call_any: list[str] = field(default_factory=list)
+    require_non_empty_response: bool = False
+    forbid_question: bool = False
     must_mention_any: list[str] = field(default_factory=list)
     must_not_mention_any: list[str] = field(default_factory=list)
     forbid_memory_mechanism_terms: bool = False
@@ -44,6 +56,8 @@ class Case:
     source: str
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
+    current_session_messages: list[FixtureMessage] = field(default_factory=list)
+    fake_tool: FakeTool | None = None
     judge: CaseJudge | None = None
 
 

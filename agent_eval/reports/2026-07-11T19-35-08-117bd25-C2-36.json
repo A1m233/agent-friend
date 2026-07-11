@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-11T19:35:08.169503+00:00",
+    "ended_at": "2026-07-11T19:35:15.300686+00:00",
+    "duration_seconds": 7.131,
+    "git_commit": "117bd25",
+    "working_tree_dirty": true,
+    "note": "044 IM replay routing prompt fix rerun",
+    "selection": {
+      "contract": "all",
+      "case": "C2-36",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9eefd89b8965ceca96c090edf270b0559ea0c16d46ee01121af4f417526afc86",
+      "total_contracts": 7,
+      "total_cases": 143,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C2": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C2",
+      "name": "time-sensitive-info",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C2-36",
+          "query": "游戏建议我重新登录 Apple ID，这要怎么做",
+          "facet": "具体产品当前操作路径——多轮故障处理中也应查证",
+          "source": "prod_session/im-payment-troubleshooting-redacted",
+          "passed": false,
+          "reason": "missing tool web_search (actual names: none)",
+          "tool_calls": [],
+          "final_text": "退登录再重新登一下就好，步骤很简单：\n\n1. 打开 **设置** → 点最顶上你的头像/名字\n2. 滑到底部，点 **退出登录**\n3. 系统会让你选择在本地保留哪些数据（通讯录、钥匙串之类的），一般保持默认勾选就行，点继续\n4. 退出成功后，在设置首页重新点 **登录 iPhone**，输入你的 Apple ID 和密码\n5. 如果需要双重认证，收验证码过一下\n\n退出登录那一步会顺便断开 iCloud、App Store、iMessage 这些，重新登上去就全恢复了，不用担心数据丢。\n\n做完之后再去游戏里试一下充值，看看能不能走通？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
