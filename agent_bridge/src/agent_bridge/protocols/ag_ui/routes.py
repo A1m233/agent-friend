@@ -19,10 +19,15 @@ import logging
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
+from agent.runtime import UserEvent
+from agent.runtime.models import RunRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from agent import Conversation
+
 from ...assembly import BridgeRuntime
+from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .decoders import DecodeError, decode_run_agent_input
 from .encoders import encode_stream
@@ -50,6 +55,33 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         )
 
         accept = request.headers.get("accept") or ""
+        handle = None
+        if runtime.agent_runtime is not None:
+
+            def _persist_error(
+                conv: Conversation,
+                exc: BaseException,
+                run_request: RunRequest,
+            ) -> None:
+                err = map_exception(exc)
+                conv.append_run_error_event(
+                    code=err.code,
+                    message=err.message,
+                    recoverable=err.recoverable,
+                    source="ag_ui",
+                    run_id=run_request.run_id,
+                )
+
+            handle = runtime.agent_runtime.submit(
+                UserEvent(
+                    session_id=decoded.thread_id,
+                    user_input=decoded.new_user_input,
+                ),
+                run_id=decoded.run_id,
+                channel="text",
+                conversation_factory=lambda: bridge.bind_persistent(boot),
+                error_callback=_persist_error,
+            )
 
         return StreamingResponse(
             encode_stream(
@@ -61,6 +93,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 agent_runtime=runtime.agent_runtime,
                 channel="text",
                 turn_coordinator=runtime.turn_coordinator,
+                run_handle=handle,
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={

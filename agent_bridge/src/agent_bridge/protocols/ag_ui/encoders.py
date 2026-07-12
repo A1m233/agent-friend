@@ -29,7 +29,7 @@ import json
 import logging
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from ag_ui.core import (
@@ -46,7 +46,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.encoder import EventEncoder
-from agent.runtime import AgentRuntime, UserEvent
+from agent.runtime import AgentRuntime, RunHandle, RunOutcome, UserEvent
 from agent.system_prompt.sections import PromptChannel
 
 from agent import (
@@ -75,6 +75,7 @@ def encode_stream(
     run_conversation: Callable[[Conversation, str], Iterator[ConversationEvent]] | None = None,
     channel: PromptChannel | None = None,
     turn_coordinator: SessionTurnCoordinator | None = None,
+    run_handle: RunHandle | None = None,
 ) -> Iterator[bytes]:
     """流式编码 AG-UI SSE bytes。
 
@@ -106,7 +107,11 @@ def encode_stream(
     open_message_id: str | None = None
     conv: Conversation | None = None
 
-    turn_scope = turn_coordinator.hold(thread_id) if turn_coordinator is not None else nullcontext()
+    turn_scope = (
+        turn_coordinator.hold(thread_id)
+        if turn_coordinator is not None and run_handle is None
+        else nullcontext()
+    )
     with turn_scope:
         yield _encode(
             RunStartedEvent(
@@ -117,20 +122,28 @@ def encode_stream(
         )
 
         try:
-            conv = conv_factory()
-            mirror_user_event = (
-                UserEvent(session_id=conv.session.session_id, user_input=user_input)
-                if agent_runtime is not None
-                else None
-            )
-            event_stream = (
-                run_conversation(conv, user_input)
-                if run_conversation is not None
-                else conv.stream(user_input, channel=channel)
-            )
+            if run_handle is not None:
+                event_stream = cast(Iterator[ConversationEvent], run_handle.events())
+                mirror_user_event = None
+            else:
+                conv = conv_factory()
+                mirror_user_event = (
+                    UserEvent(session_id=conv.session.session_id, user_input=user_input)
+                    if agent_runtime is not None
+                    else None
+                )
+                event_stream = (
+                    run_conversation(conv, user_input)
+                    if run_conversation is not None
+                    else conv.stream(user_input, channel=channel)
+                )
             for ev in event_stream:
                 # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）
-                if agent_runtime is not None and mirror_user_event is not None:
+                if (
+                    run_handle is None
+                    and agent_runtime is not None
+                    and mirror_user_event is not None
+                ):
                     try:
                         agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
                     except Exception:
@@ -235,6 +248,29 @@ def encode_stream(
                 )
             )
             return
+
+        if run_handle is not None:
+            terminal = run_handle.terminal
+            if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
+                if open_message_id is not None:
+                    yield _encode(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=open_message_id,
+                        )
+                    )
+                    open_message_id = None
+                message = "本轮对话未能完成，请稍后重试"
+                if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:
+                    message = "本轮对话已取消"
+                yield _encode(
+                    RunErrorEvent(
+                        type=EventType.RUN_ERROR,
+                        message=message,
+                        code=terminal.reason_code if terminal is not None else "runtime_error",
+                    )
+                )
+                return
 
         if open_message_id is not None:
             yield _encode(

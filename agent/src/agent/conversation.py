@@ -192,6 +192,7 @@ class Conversation:
         self._voice_latency_llm_overrides: dict[str, Any] = {}
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
+        self._run_id_override: str | None = None
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
         prompt_builder.build()
@@ -312,6 +313,8 @@ class Conversation:
         user_input: str,
         *,
         channel: PromptChannel | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
         yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
@@ -359,7 +362,9 @@ class Conversation:
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         previous_prompt_channel = self._prompt_channel_override
+        previous_run_id = self._run_id_override
         self._prompt_channel_override = channel
+        self._run_id_override = run_id
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -372,7 +377,9 @@ class Conversation:
         total_tool_calls = 0
         turn_start_idx = len(self._session.events)
         try:
+            self._check_cancel(cancel_check)
             for turn_idx in range(self._max_tool_turns + 1):
+                self._check_cancel(cancel_check)
                 current_text_buf = []
                 current_text_persisted = False
                 current_tc_acc = {}
@@ -414,6 +421,7 @@ class Conversation:
                     tools=tool_specs,
                     **self._voice_latency_llm_overrides,
                 ):
+                    self._check_cancel(cancel_check)
                     if isinstance(ev, LLMTextDelta):
                         if not first_text_seen:
                             first_text_seen = True
@@ -455,6 +463,7 @@ class Conversation:
 
                 # 执行本轮的所有 tool_calls（顺序）
                 for tc in tool_calls:
+                    self._check_cancel(cancel_check)
                     self._append_tool_call_request_event(tc)
                     yield ToolCallRequest(
                         tool_call_id=tc["id"],
@@ -472,6 +481,7 @@ class Conversation:
                     duration = time.monotonic() - start
 
                     self._append_tool_call_result_event(tc, result, duration)
+                    self._check_cancel(cancel_check)
                     yield ToolCallResult(
                         tool_call_id=tc["id"],
                         event_tool_call_id=tc["event_id"],
@@ -508,6 +518,7 @@ class Conversation:
                     # 由 PostTurn hook 调 memory.observe；此处不重复触发
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._run_id_override = previous_run_id
 
     def edit_resend_latest(
         self,
@@ -515,6 +526,8 @@ class Conversation:
         *,
         expected_user_content: str | None = None,
         channel: PromptChannel | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
         """编辑并重发最后一条 active user 消息。
 
@@ -525,7 +538,9 @@ class Conversation:
         plan = self._latest_active_user_rewrite_plan(expected_user_content=expected_user_content)
 
         previous_prompt_channel = self._prompt_channel_override
+        previous_run_id = self._run_id_override
         self._prompt_channel_override = channel
+        self._run_id_override = run_id
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -545,7 +560,9 @@ class Conversation:
         turn_start_idx = len(self._session.events)
 
         try:
+            self._check_cancel(cancel_check)
             for turn_idx in range(self._max_tool_turns + 1):
+                self._check_cancel(cancel_check)
                 current_text_buf = []
                 current_text_persisted = False
                 current_tc_acc = {}
@@ -590,6 +607,7 @@ class Conversation:
                     tools=tool_specs,
                     **self._voice_latency_llm_overrides,
                 ):
+                    self._check_cancel(cancel_check)
                     if isinstance(ev, LLMTextDelta):
                         if not first_text_seen:
                             first_text_seen = True
@@ -629,6 +647,7 @@ class Conversation:
                     break
 
                 for tc in tool_calls:
+                    self._check_cancel(cancel_check)
                     self._append_tool_call_request_event(tc)
                     yield ToolCallRequest(
                         tool_call_id=tc["id"],
@@ -646,6 +665,7 @@ class Conversation:
                     duration = time.monotonic() - start
 
                     self._append_tool_call_result_event(tc, result, duration)
+                    self._check_cancel(cancel_check)
                     yield ToolCallResult(
                         tool_call_id=tc["id"],
                         event_tool_call_id=tc["event_id"],
@@ -682,6 +702,7 @@ class Conversation:
                 if not self._post_turn_external:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._run_id_override = previous_run_id
 
     # ----- 系统级触发轮（014：main loop 入口） -----
 
@@ -691,6 +712,8 @@ class Conversation:
         source_kind: str,
         system_prompt_addendum: str,
         output_visibility: Literal["user", "memory_only"] = "user",
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
         """系统级触发轮入口（014 R-4.4）。
 
@@ -718,6 +741,9 @@ class Conversation:
             本期 silent / system 触发轮**不开 tool**（``tools=None``），避免意外
             副作用 / 长耗时——主动陪伴场景的 tool 调用留下个需求扩展。
         """
+        previous_run_id = self._run_id_override
+        self._run_id_override = run_id
+        self._check_cancel(cancel_check)
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
@@ -733,6 +759,7 @@ class Conversation:
         openai_messages = self._assemble(trailing_user=system_prompt_addendum)
         text_buf: list[str] = []
         for ev in self._llm_client.stream(openai_messages, tools=None):
+            self._check_cancel(cancel_check)
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 if output_visibility == "user":
@@ -753,6 +780,7 @@ class Conversation:
                 model=model_snapshot,
             )
             yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+            self._run_id_override = previous_run_id
             return
 
         # output_visibility == "memory_only"：silent turn
@@ -787,6 +815,7 @@ class Conversation:
                 import logging
 
                 logging.getLogger(__name__).warning("silent turn observe 失败", exc_info=True)
+        self._run_id_override = previous_run_id
 
     # ----- 切换 persona / model -----
 
@@ -910,6 +939,17 @@ class Conversation:
 
     # ----- 内部辅助 -----
 
+    @staticmethod
+    def _check_cancel(cancel_check: Callable[[], None] | None) -> None:
+        if cancel_check is not None:
+            cancel_check()
+
+    def _run_event_meta(self, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        meta = dict(base or {})
+        if self._run_id_override is not None:
+            meta["run_id"] = self._run_id_override
+        return meta
+
     def _latest_active_user_rewrite_plan(
         self,
         *,
@@ -970,6 +1010,7 @@ class Conversation:
                 "inactive_event_uuids": list(plan.inactive_event_uuids),
                 "replacement_text_sha256": sha256(replacement_text.encode("utf-8")).hexdigest(),
             },
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -980,6 +1021,7 @@ class Conversation:
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
             payload={"content": content},
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -993,7 +1035,7 @@ class Conversation:
         persona_id: str | None,
         model: str,
     ) -> None:
-        meta: dict[str, Any] = {"persona": persona_name, "model": model}
+        meta: dict[str, Any] = self._run_event_meta({"persona": persona_name, "model": model})
         if persona_id is not None:
             meta["persona_id"] = persona_id
         event = Event(
@@ -1216,6 +1258,7 @@ class Conversation:
                 "tokens_after": record.tokens_after,
                 "model": record.model,
             },
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -1473,6 +1516,7 @@ class Conversation:
                 "tool_name": tc["name"],
                 "args": tc["args"],
             },
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -1484,7 +1528,7 @@ class Conversation:
         duration: float,
     ) -> None:
         """落 ``tool_call_result`` 事件。"""
-        meta: dict[str, Any] = {"duration_seconds": duration}
+        meta: dict[str, Any] = self._run_event_meta({"duration_seconds": duration})
         if result.meta:
             meta["extra"] = dict(result.meta)
         event = Event(
@@ -1524,6 +1568,7 @@ class Conversation:
                 "system_prompt_addendum": system_prompt_addendum,
                 "output_visibility": output_visibility,
             },
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -1553,6 +1598,7 @@ class Conversation:
                 "source_kind": source_kind,
                 "persona_id": persona_id,
             },
+            meta=self._run_event_meta(),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)

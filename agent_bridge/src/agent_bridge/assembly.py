@@ -286,6 +286,7 @@ def build_runtime(
             session_bridge=session_bridge,
             default_persona=default_persona,
             default_model=default_model,
+            agent_runtime=agent_runtime,
         )
         im_deduper = RecentMessageDeduper(
             ttl_seconds=settings.im_voice_dedupe_ttl_seconds,

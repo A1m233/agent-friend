@@ -15,8 +15,13 @@ from __future__ import annotations
 import logging
 
 from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
+from agent.runtime import UserEvent
+from agent.runtime.models import RunRequest
+from agent.system_prompt.sections import PromptChannel
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from agent import Conversation
 
 from ...assembly import BridgeRuntime
 from ...errors import ProtocolError, build_openai_error_envelope, map_exception
@@ -136,6 +141,37 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             logger.exception("OpenAI 装配 Conversation 失败")
             return _error_response(map_exception(exc))
 
+        channel: PromptChannel = "voice" if voice_latency is not None else "text"
+        handle = None
+        if runtime.agent_runtime is not None:
+
+            def _persist_error(
+                failed_conv: Conversation,
+                exc: BaseException,
+                run_request: RunRequest,
+            ) -> None:
+                if not session_id_hint:
+                    return
+                err = map_exception(exc)
+                failed_conv.append_run_error_event(
+                    code=err.code,
+                    message=err.message,
+                    recoverable=err.recoverable,
+                    source="openai",
+                    run_id=run_request.run_id,
+                )
+
+            handle = runtime.agent_runtime.submit(
+                UserEvent(
+                    session_id=conv.session.session_id,
+                    user_input=decoded.latest_user_input,
+                ),
+                channel=channel,
+                conversation_factory=lambda: conv,
+                metadata={"protocol": "openai", "persistent": bool(session_id_hint)},
+                error_callback=_persist_error,
+            )
+
         if decoded.stream:
             return StreamingResponse(
                 encode_streaming(
@@ -144,7 +180,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     model=model,
                     agent_runtime=runtime.agent_runtime,
                     voice_latency_context=voice_latency,
-                    channel="voice" if voice_latency is not None else "text",
+                    channel=channel,
+                    run_handle=handle,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -159,7 +196,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 decoded.latest_user_input,
                 model=model,
                 agent_runtime=runtime.agent_runtime,
-                channel="voice" if voice_latency is not None else "text",
+                channel=channel,
+                run_handle=handle,
             )
         except Exception as exc:
             logger.exception("OpenAI 非流式编码失败")

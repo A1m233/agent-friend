@@ -22,8 +22,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from agent.runtime import (
     AgentRuntime,
+    PostTurnContext,
     PushEnvelope,
     Subscriber,
     SystemTriggerEvent,
@@ -33,6 +35,7 @@ from agent.runtime import (
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
+    ConversationEvent,
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
@@ -348,3 +351,125 @@ def test_tool_hook_invoker_proceed_calls_default_and_post_tool_use() -> None:
     result = runtime.tool_hook_invoker("echo", {}, default_invoke)
     assert result.text == "real result"
     assert post_seen == [result]
+
+
+def test_listener_overflow_unregisters_slow_subscriber() -> None:
+    """旁路 subscriber 满时断开，不积累等待 queue.put 的 Future。"""
+    from agent import TurnDone
+
+    runtime = AgentRuntime(conversation_factory=lambda sid: cast(Conversation, None))
+    event = UserEvent(session_id="session-a", user_input="hello")
+    with _side_event_loop() as loop:
+        sub = Subscriber(
+            loop=loop,
+            accept_kinds=frozenset({"user_turn"}),
+            queue_maxsize=1,
+        )
+        runtime.listeners.register(sub)
+        done = TurnDone(stop_reason="end_turn", total_tool_calls=0)
+        runtime.listeners.fan_out_event(event, done)
+        runtime.listeners.fan_out_event(event, done)
+
+        async def barrier() -> None:
+            return None
+
+        asyncio.run_coroutine_threadsafe(barrier(), loop).result(timeout=2)
+        assert runtime.listeners.subscriber_count() == 0
+
+
+def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) -> None:
+    from agent.runtime import RunOutcome
+
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="runtime"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    runtime = AgentRuntime(conversation_factory=lambda sid: conv)
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="hello"),
+            run_id="run-045",
+            channel="text",
+        )
+        events = cast(list[ConversationEvent], list(handle.events()))
+        assert [event.type for event in events] == ["text_delta", "done"]
+        assert handle.terminal is not None
+        assert handle.terminal.outcome is RunOutcome.COMPLETED
+        user = next(event for event in conv.session.events if event.type == "user_message")
+        assistant = next(
+            event for event in conv.session.events if event.type == "assistant_message"
+        )
+        assert user.meta["run_id"] == "run-045"
+        assert assistant.meta["run_id"] == "run-045"
+    finally:
+        runtime.stop()
+
+
+def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -> None:
+    from agent.runtime import RunRequest
+    from agent.runtime.cancellation import CancelReason, RunCancelled
+    from agent.runtime.models import RunHandle
+
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMTextDelta(text="partial"),
+                LLMTextDelta(text="unseen"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    request = RunRequest(event=UserEvent(session_id=conv.session.session_id, user_input="hello"))
+    handle = RunHandle(request)
+    stream = conv.stream(
+        "hello",
+        run_id=request.run_id,
+        cancel_check=handle.token.raise_if_cancelled,
+    )
+    first = next(stream)
+    assert first.type == "text_delta"
+    assert handle.cancel(CancelReason.CLIENT_DISCONNECTED)
+    with pytest.raises(RunCancelled):
+        next(stream)
+    assistant = next(event for event in conv.session.events if event.type == "assistant_message")
+    assert assistant.payload == {"content": "partial", "partial": True}
+    assert assistant.meta["run_id"] == request.run_id
+
+
+def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) -> None:
+    from agent.runtime import HookKind, RunOutcome
+    from agent.runtime.cancellation import CancellationToken
+    from agent.runtime.models import RunRequest
+
+    fake = _ScriptedLLMClient(script=[])
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    runtime = AgentRuntime(conversation_factory=lambda sid: conv)
+    seen: list[PostTurnContext] = []
+    runtime.register_hook(HookKind.POST_TURN, seen.append)
+
+    def fail_runner(
+        _conv: Conversation,
+        _request: RunRequest,
+        _token: CancellationToken,
+    ) -> Iterator[ConversationEvent]:
+        raise RuntimeError("boom")
+        yield  # pragma: no cover
+
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="hello"),
+            conversation_factory=lambda: conv,
+            conversation_runner=fail_runner,
+        )
+        list(handle.events())
+        terminal = handle.terminal
+        assert terminal is not None
+        assert terminal.outcome is RunOutcome.FAILED
+        assert len(seen) == 1
+        assert seen[0].outcome is RunOutcome.FAILED
+        assert isinstance(seen[0].error, RuntimeError)
+    finally:
+        runtime.stop()

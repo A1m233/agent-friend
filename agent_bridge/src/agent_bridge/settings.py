@@ -157,3 +157,11 @@ class BridgeSettings(BaseSettings):
 
     idle_minutes: int = 30
     """idle reflection 触发的空闲阈值（分钟）。默认 30。"""
+    agent_runtime_max_workers: int = Field(default=4, gt=0)
+    """AgentRuntime 跨 session 最大并发运行数。"""
+
+    agent_runtime_max_queued_runs: int = Field(default=256, gt=0)
+    """AgentRuntime 全局排队上限。"""
+
+    agent_runtime_max_session_queue: int = Field(default=32, gt=0)
+    """单 session 排队上限。"""

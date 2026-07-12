@@ -20,16 +20,21 @@ design §6.2（弱稳定，本期落地后默认不变）。
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterator
 from typing import Any, Literal
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
+from agent.runtime import UserEvent
+from agent.runtime.cancellation import CancellationToken
+from agent.runtime.models import RunRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
     Conversation,
+    ConversationEvent,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     SessionNotFoundError,
@@ -190,6 +195,30 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             session = mgr.open(session_id)
             return mgr.start_conversation(session)
 
+        handle = None
+        if runtime.agent_runtime is not None:
+
+            def _edit_runner(
+                conv: Conversation,
+                run_request: RunRequest,
+                token: CancellationToken,
+            ) -> Iterator[ConversationEvent]:
+                return conv.edit_resend_latest(
+                    text,
+                    expected_user_content=body.expected_user_content,
+                    channel="text",
+                    run_id=run_request.run_id,
+                    cancel_check=token.raise_if_cancelled,
+                )
+
+            handle = runtime.agent_runtime.submit(
+                UserEvent(session_id=session_id, user_input=text),
+                run_id=run_id,
+                channel="text",
+                conversation_factory=_conversation_for_edit,
+                conversation_runner=_edit_runner,
+            )
+
         return StreamingResponse(
             encode_stream(
                 _conversation_for_edit,
@@ -205,6 +234,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 ),
                 channel="text",
                 turn_coordinator=runtime.turn_coordinator,
+                run_handle=handle,
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={

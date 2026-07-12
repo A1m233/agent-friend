@@ -32,6 +32,7 @@ from memory import Memory
 
 from ..conversation import Conversation
 from ..memory_feed import project_turn
+from ..system_prompt.sections import PromptChannel
 from ..tools import ToolResult
 from .hooks import (
     PRE_TOOL_PROCEED,
@@ -46,6 +47,16 @@ from .hooks import (
 )
 from .inbox import AgentEvent, SystemTriggerEvent, UserEvent
 from .listeners import ListenerRegistry, PushEnvelope, Subscriber
+from .models import (
+    ConversationFactory,
+    ConversationRunner,
+    RunErrorCallback,
+    RunHandle,
+    RunOutcome,
+    RunPriority,
+    RunRequest,
+)
+from .scheduler import RunScheduler
 
 __all__ = [
     "PRE_TOOL_PROCEED",
@@ -61,6 +72,10 @@ __all__ = [
     "PreToolUseDecision",
     "PreTurnDecision",
     "PushEnvelope",
+    "RunHandle",
+    "RunOutcome",
+    "RunPriority",
+    "RunRequest",
     "Subscriber",
     "SystemTriggerEvent",
     "UserEvent",
@@ -117,6 +132,9 @@ class AgentRuntime:
         *,
         conversation_factory: Callable[[str], Conversation],
         memory: Memory | None = None,
+        max_workers: int = 4,
+        max_queued_runs: int = 256,
+        max_session_queue: int = 32,
     ) -> None:
         self._conversation_factory = conversation_factory
         self._memory = memory
@@ -127,6 +145,12 @@ class AgentRuntime:
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
         self._last_dispatch_finished_at = datetime.now(UTC)
+        self._scheduler = RunScheduler(
+            self._execute_request,
+            max_workers=max_workers,
+            max_queued_runs=max_queued_runs,
+            max_session_queue=max_session_queue,
+        )
         self._register_default_hooks()
 
     # ----- public API -----
@@ -189,6 +213,7 @@ class AgentRuntime:
         """启动各 EventSource + dispatch thread；idempotent。"""
         if self._thread is not None:
             return
+        self._scheduler.start()
         for src in self._sources:
             src.start(self._inbox)
         self._stop_evt.clear()
@@ -203,6 +228,7 @@ class AgentRuntime:
                 daemon thread 会随进程退出，避免阻塞 shutdown。
         """
         if self._thread is None:
+            self._scheduler.stop(timeout=timeout)
             return
         self._stop_evt.set()
         self._inbox.put(_SENTINEL)  # 唤醒阻塞在 inbox.get() 的 dispatch loop
@@ -216,7 +242,50 @@ class AgentRuntime:
                     exc_info=True,
                 )
         self._thread.join(timeout=timeout)
-        self._thread = None
+        if not self._thread.is_alive():
+            self._thread = None
+        else:
+            logger.error("AgentRuntime legacy dispatch thread 未在 %.1fs 内停止", timeout)
+        if not self._scheduler.stop(timeout=timeout):
+            logger.error("AgentRuntime scheduler 未在 %.1fs 内干净停止", timeout)
+
+    def submit(
+        self,
+        event: AgentEvent,
+        *,
+        run_id: str | None = None,
+        priority: RunPriority | None = None,
+        expires_at: datetime | None = None,
+        dedupe_key: str | None = None,
+        channel: PromptChannel | None = None,
+        conversation_factory: ConversationFactory | None = None,
+        conversation_runner: ConversationRunner | None = None,
+        error_callback: RunErrorCallback | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RunHandle:
+        """提交一轮到 session-aware scheduler，返回可流式消费的句柄。"""
+        if priority is None:
+            priority = (
+                RunPriority.INTERACTIVE
+                if isinstance(event, UserEvent)
+                else RunPriority.PROACTIVE
+                if event.output_visibility == "user"
+                else RunPriority.BACKGROUND
+            )
+        kwargs: dict[str, Any] = {
+            "event": event,
+            "priority": priority,
+            "expires_at": expires_at,
+            "dedupe_key": dedupe_key,
+            "channel": channel,
+            "conversation_factory": conversation_factory,
+            "conversation_runner": conversation_runner,
+            "error_callback": error_callback,
+            "metadata": metadata or {},
+        }
+        if run_id is not None:
+            kwargs["run_id"] = run_id
+        return self._scheduler.submit(RunRequest(**kwargs))
 
     # ----- internals -----
 
@@ -263,11 +332,99 @@ class AgentRuntime:
                 logger.warning("AgentRuntime inbox 收到未知事件: %r", ev)
                 continue
             try:
-                self._dispatch(ev)
+                # legacy EventSource inbox 也进入新 scheduler；不再占用全局单 dispatch。
+                expires_at = None
+                dedupe_key = None
+                if isinstance(ev, SystemTriggerEvent):
+                    dedupe_key = ev.source_kind
+                    ttl = ev.event_metadata.get("ttl_seconds")
+                    if isinstance(ttl, (int, float)) and ttl > 0:
+                        from datetime import timedelta
+
+                        expires_at = datetime.now(UTC) + timedelta(seconds=float(ttl))
+                self.submit(
+                    ev,
+                    expires_at=expires_at,
+                    dedupe_key=dedupe_key,
+                    metadata={"detached": True},
+                )
             except Exception:
                 logger.exception("dispatch failed for %r", ev)
-            finally:
-                self._last_dispatch_finished_at = datetime.now(UTC)
+
+    def _execute_request(self, request: RunRequest, handle: RunHandle) -> None:
+        """Scheduler worker 执行一轮；terminal 由 Scheduler finish-once。"""
+        decision = self._hooks.run_pre_turn(request.event)
+        if decision.skip:
+            handle.finish_once(RunOutcome.SKIPPED, reason_code=decision.reason or "pre_turn_skip")
+            self._listeners.finish_run(
+                request.event,
+                run_id=request.run_id,
+                outcome=RunOutcome.SKIPPED,
+                reason_code=decision.reason or "pre_turn_skip",
+            )
+            return
+
+        conv = (
+            request.conversation_factory()
+            if request.conversation_factory is not None
+            else self._conversation_factory(request.session_id)
+        )
+        session = conv.session
+        turn_start_idx = len(session.events)
+        outcome = RunOutcome.FAILED
+        error: BaseException | None = None
+        try:
+            if request.conversation_runner is not None:
+                events_iter = request.conversation_runner(conv, request, handle.token)
+            elif isinstance(request.event, UserEvent):
+                events_iter = conv.stream(
+                    request.event.user_input,
+                    channel=request.channel,
+                    run_id=request.run_id,
+                    cancel_check=handle.token.raise_if_cancelled,
+                )
+            else:
+                events_iter = conv.dispatch_system_turn(
+                    source_kind=request.event.source_kind,
+                    system_prompt_addendum=request.event.system_prompt_addendum,
+                    output_visibility=request.event.output_visibility,
+                    run_id=request.run_id,
+                    cancel_check=handle.token.raise_if_cancelled,
+                )
+            for cev in events_iter:
+                handle.token.raise_if_cancelled()
+                handle.emit(cev)
+                self._listeners.fan_out_event(request.event, cev, run_id=request.run_id)
+            outcome = RunOutcome.COMPLETED
+        except BaseException as exc:
+            error = exc
+            from .cancellation import RunCancelled
+
+            outcome = RunOutcome.CANCELLED if isinstance(exc, RunCancelled) else RunOutcome.FAILED
+            if outcome is RunOutcome.FAILED and request.error_callback is not None:
+                try:
+                    request.error_callback(conv, exc, request)
+                except Exception:
+                    logger.warning("run error callback 失败: %s", request.run_id, exc_info=True)
+            raise
+        finally:
+            self._last_dispatch_finished_at = datetime.now(UTC)
+            self._hooks.run_post_turn(
+                PostTurnContext(
+                    session=session,
+                    turn_start_idx=turn_start_idx,
+                    event=request.event,
+                    run_id=request.run_id,
+                    outcome=outcome,
+                    error=error,
+                )
+            )
+            self._listeners.finish_run(
+                request.event,
+                run_id=request.run_id,
+                outcome=outcome,
+                reason_code=type(error).__name__ if error is not None else "",
+            )
 
     def _dispatch(self, ev: AgentEvent) -> None:
         """单条事件的 dispatch：PreTurn → 跑 conv → fan_out → PostTurn。"""
