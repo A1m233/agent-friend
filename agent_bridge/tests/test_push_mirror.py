@@ -189,13 +189,14 @@ def test_ag_ui_pull_mirrors_user_turn_to_push_listener(tmp_path: Path) -> None:
         runtime.agent_runtime.listeners.register(sub)
 
         app = create_app_with_runtime(runtime)
-        client = TestClient(app)
-        resp = client.post(
-            "/ag-ui/run",
-            json=_ag_ui_payload("test-thread", "hello"),
-        )
-        # SSE body 应是 200 + RUN_STARTED + 流 + RUN_FINISHED
-        assert resp.status_code == 200
+        # Runtime scheduler 由 FastAPI lifespan 启停；显式 context 走生产生命周期。
+        with TestClient(app) as client:
+            resp = client.post(
+                "/ag-ui/run",
+                json=_ag_ui_payload("test-thread", "hello"),
+            )
+            # SSE body 应是 200 + RUN_STARTED + 流 + RUN_FINISHED
+            assert resp.status_code == 200
 
         # subscriber 应在 fan_out 完成后立即拿到 envelope（无需 await SSE 流）
         env = _await_envelope(sub, timeout=3.0)

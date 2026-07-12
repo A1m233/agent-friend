@@ -136,7 +136,11 @@ def test_bedtime_source_fire_now_puts_correct_event() -> None:
         assert ev.source_kind == "cron:bedtime"
         assert ev.system_prompt_addendum == "该睡了"
         assert ev.output_visibility == "user"
-        assert ev.event_metadata == {"bedtime_hour": 23, "bedtime_minute": 0}
+        assert ev.event_metadata == {
+            "bedtime_hour": 23,
+            "bedtime_minute": 0,
+            "ttl_seconds": 900,
+        }
     finally:
         src.stop()
 
@@ -210,7 +214,10 @@ def test_idle_reflection_source_fire_now_puts_memory_only_event() -> None:
         assert ev.system_prompt_addendum == "reflect"
         # 关键：silent turn
         assert ev.output_visibility == "memory_only"
-        assert ev.event_metadata == {"idle_threshold_minutes": 30}
+        assert ev.event_metadata == {
+            "idle_threshold_minutes": 30,
+            "ttl_seconds": 1800,
+        }
     finally:
         src.stop()
 

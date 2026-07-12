@@ -196,6 +196,7 @@ class BedtimeSource:
                 event_metadata={
                     "bedtime_hour": self._bedtime_hour,
                     "bedtime_minute": self._bedtime_minute,
+                    "ttl_seconds": 900,
                 },
             )
         )
@@ -290,7 +291,10 @@ class IdleReflectionSource:
                 source_kind=self.name,
                 system_prompt_addendum=self._prompt_addendum,
                 output_visibility="memory_only",
-                event_metadata={"idle_threshold_minutes": self._idle_minutes},
+                event_metadata={
+                    "idle_threshold_minutes": self._idle_minutes,
+                    "ttl_seconds": max(60, self._idle_minutes * 60),
+                },
             )
         )
 

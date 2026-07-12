@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..sessions import Session
     from ..tools import ToolResult
     from .inbox import AgentEvent
+    from .models import RunOutcome
 
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,9 @@ class PostTurnContext:
     session: Session
     turn_start_idx: int
     event: AgentEvent
+    run_id: str | None = None
+    outcome: RunOutcome | None = None
+    error: BaseException | None = None
 
 
 PreTurnHook = Callable[["AgentEvent"], PreTurnDecision]

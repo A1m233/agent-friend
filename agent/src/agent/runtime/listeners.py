@@ -47,6 +47,9 @@ class PushEnvelope:
     seq: int
     source_kind: str | None
     events: list[dict[str, Any]]
+    run_id: str | None = None
+    outcome: str | None = None
+    reason_code: str = ""
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -88,8 +91,8 @@ class ListenerRegistry:
     def __init__(self) -> None:
         self._subs: dict[str, Subscriber] = {}
         self._seq: dict[str, int] = {}
-        # (sub_id, session_id) → 累积 events，TurnDone 时 flush 成一个 envelope
-        self._turn_buffers: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        # (sub_id, session_id, run_id) → 累积 events；新 Runtime 在 terminal 时 flush。
+        self._turn_buffers: dict[tuple[str, str, str | None], list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     def register(self, sub: Subscriber) -> None:
@@ -114,6 +117,8 @@ class ListenerRegistry:
         self,
         agent_event: AgentEvent,
         cev: ConversationEvent,
+        *,
+        run_id: str | None = None,
     ) -> None:
         """每个 :class:`ConversationEvent` 调一次；累积到 :class:`TurnDone`
         时打包一次性推送给订阅者。
@@ -138,10 +143,10 @@ class ListenerRegistry:
             for sub in list(self._subs.values()):
                 if kind not in sub.accept_kinds:
                     continue
-                key = (sub.id, agent_event.session_id)
+                key = (sub.id, agent_event.session_id, run_id)
                 buf = self._turn_buffers.setdefault(key, [])
                 buf.append(serialized)
-                if is_turn_done:
+                if is_turn_done and run_id is None:
                     self._seq[sub.id] += 1
                     envelope = PushEnvelope(
                         kind=kind,
@@ -153,10 +158,52 @@ class ListenerRegistry:
                     del self._turn_buffers[key]
                     self._safe_push(sub, envelope)
 
+    def finish_run(
+        self,
+        agent_event: AgentEvent,
+        *,
+        run_id: str,
+        outcome: str,
+        reason_code: str = "",
+    ) -> None:
+        """按 Runtime terminal flush；失败/取消也清理本轮 buffer。"""
+        kind: EnvelopeKind = "user_turn" if isinstance(agent_event, UserEvent) else "agent_turn"
+        source_kind = (
+            agent_event.source_kind if isinstance(agent_event, SystemTriggerEvent) else None
+        )
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if kind not in sub.accept_kinds:
+                    continue
+                key = (sub.id, agent_event.session_id, run_id)
+                events = self._turn_buffers.pop(key, [])
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind=kind,
+                        session_id=agent_event.session_id,
+                        seq=self._seq[sub.id],
+                        source_kind=source_kind,
+                        events=events,
+                        run_id=run_id,
+                        outcome=outcome,
+                        reason_code=reason_code,
+                    ),
+                )
+
     def _safe_push(self, sub: Subscriber, env: PushEnvelope) -> None:
-        """跨 thread 推 envelope；任何错误 log 后丢弃，不抛、不阻塞。"""
+        """跨 thread 做 put_nowait；overflow 断开慢订阅者。"""
+
+        def _put_nowait() -> None:
+            try:
+                sub.queue.put_nowait(env)
+            except asyncio.QueueFull:
+                logger.warning("subscriber %s queue overflow，断开订阅", sub.id)
+                self.unregister(sub.id)
+
         try:
-            asyncio.run_coroutine_threadsafe(sub.queue.put(env), sub.loop)
+            sub.loop.call_soon_threadsafe(_put_nowait)
         except RuntimeError:
             # loop closed 或其他 loop 状态异常
             logger.warning(

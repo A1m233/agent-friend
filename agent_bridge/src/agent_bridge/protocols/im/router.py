@@ -37,6 +37,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from agent.runtime import AgentRuntime, RunOutcome, UserEvent
+
 from agent import TextDelta
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
@@ -77,10 +79,12 @@ class IMRouter:
         session_bridge: SessionBridge,
         default_persona: str,
         default_model: str,
+        agent_runtime: AgentRuntime | None = None,
     ) -> None:
         self._bridge = session_bridge
         self._default_persona = default_persona
         self._default_model = default_model
+        self._agent_runtime = agent_runtime
 
     def session_id_for(self, im_type: str, event: InboundEvent) -> str:
         """计算 IM inbound 应该挂在哪个 session 上。**策略扩展点**。
@@ -207,6 +211,25 @@ class IMRouter:
             聚合后的完整文本(可能空字符串,如果 LLM 没输出任何 text)。
         """
         buf: list[str] = []
+        if self._agent_runtime is not None:
+            handle = self._agent_runtime.submit(
+                UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
+                channel="text",
+                conversation_factory=lambda: self._bridge.bind_persistent(boot),
+                metadata={"protocol": "im"},
+            )
+            for ev in handle.events():
+                if isinstance(ev, TextDelta):
+                    buf.append(ev.text)
+            terminal = handle.terminal
+            if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
+                if terminal is not None and terminal.error is not None:
+                    raise terminal.error
+                raise RuntimeError(
+                    terminal.reason_code if terminal is not None else "runtime terminated"
+                )
+            return "".join(buf)
+
         with self._bridge.session_turn(boot.thread_id):
             conv = self._bridge.bind_persistent(boot)
             for ev in conv.stream(boot.new_user_input, channel="text"):

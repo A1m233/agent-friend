@@ -21,14 +21,14 @@ import json
 import logging
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
-from agent.runtime import AgentRuntime, UserEvent
+from agent.runtime import AgentRuntime, RunHandle, RunOutcome, UserEvent
 from agent.system_prompt.sections import PromptChannel
 
-from agent import Conversation, TextDelta, TurnDone
+from agent import Conversation, ConversationEvent, TextDelta, TurnDone
 
 from ...errors import build_openai_error_envelope, map_exception
 
@@ -49,6 +49,7 @@ def encode_streaming(
     agent_runtime: AgentRuntime | None = None,
     voice_latency_context: VoiceLatencyContext | None = None,
     channel: PromptChannel | None = None,
+    run_handle: RunHandle | None = None,
 ) -> Iterator[bytes]:
     """流式编码：生成 SSE bytes 流。
 
@@ -103,11 +104,16 @@ def encode_streaming(
     first_text_seen = False
     mirror_user_event = (
         UserEvent(session_id=conv.session.session_id, user_input=user_input)
-        if agent_runtime is not None
+        if agent_runtime is not None and run_handle is None
         else None
     )
     try:
-        for ev in conv.stream(user_input, channel=channel):
+        event_stream = (
+            cast(Iterator[ConversationEvent], run_handle.events())
+            if run_handle is not None
+            else conv.stream(user_input, channel=channel)
+        )
+        for ev in event_stream:
             # 014: 镜像复制给 push 通道订阅者
             if agent_runtime is not None and mirror_user_event is not None:
                 try:
@@ -137,6 +143,14 @@ def encode_streaming(
             elif isinstance(ev, TurnDone) and ev.stop_reason == "max_turns_reached":
                 finish_reason = "length"
             # ToolCallRequest / ToolCallResult: OpenAI 协议下不外露
+        if run_handle is not None:
+            terminal = run_handle.terminal
+            if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
+                if terminal is not None and terminal.error is not None:
+                    raise terminal.error
+                raise RuntimeError(
+                    terminal.reason_code if terminal is not None else "runtime terminated"
+                )
     except Exception as exc:
         # 流式响应 HTTP 头已经发出（200 OK），无法改状态码；按 design §4.6.2 在
         # SSE 流中段补一条 error chunk，再 [DONE] 收尾——OpenAI SDK 能识别。
@@ -194,6 +208,7 @@ def encode_nonstreaming(
     model: str,
     agent_runtime: AgentRuntime | None = None,
     channel: PromptChannel | None = None,
+    run_handle: RunHandle | None = None,
 ) -> dict[str, Any]:
     """非流式编码：消费整段流拼成一个 ``chat.completion`` 对象。
 
@@ -212,10 +227,15 @@ def encode_nonstreaming(
 
     mirror_user_event = (
         UserEvent(session_id=conv.session.session_id, user_input=user_input)
-        if agent_runtime is not None
+        if agent_runtime is not None and run_handle is None
         else None
     )
-    for ev in conv.stream(user_input, channel=channel):
+    event_stream = (
+        cast(Iterator[ConversationEvent], run_handle.events())
+        if run_handle is not None
+        else conv.stream(user_input, channel=channel)
+    )
+    for ev in event_stream:
         if agent_runtime is not None and mirror_user_event is not None:
             try:
                 agent_runtime.listeners.fan_out_event(mirror_user_event, ev)
@@ -225,6 +245,15 @@ def encode_nonstreaming(
             text_parts.append(ev.text)
         elif isinstance(ev, TurnDone) and ev.stop_reason == "max_turns_reached":
             finish_reason = "length"
+
+    if run_handle is not None:
+        terminal = run_handle.terminal
+        if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
+            if terminal is not None and terminal.error is not None:
+                raise terminal.error
+            raise RuntimeError(
+                terminal.reason_code if terminal is not None else "runtime terminated"
+            )
 
     return {
         "id": response_id,

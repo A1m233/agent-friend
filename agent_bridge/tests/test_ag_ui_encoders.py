@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from threading import Event, Thread
 from typing import Any, cast
 
+from agent.runtime import RunHandle, RunOutcome, RunRequest, UserEvent
 from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
@@ -87,3 +88,55 @@ def test_closing_encoded_stream_closes_conversation_and_releases_turn_lock() -> 
     assert conversation_closed.is_set()
     with coordinator.hold("session-a"):
         pass
+
+
+def test_encode_stream_consumes_run_handle_without_calling_conversation_factory() -> None:
+    request = RunRequest(event=UserEvent(session_id="session-a", user_input="hello"))
+    handle = RunHandle(request)
+    assert handle.mark_running()
+    handle.emit(TextDelta(text="from runtime"))
+    handle.emit(TurnDone(stop_reason="end_turn", total_tool_calls=0))
+    assert handle.finish_once(RunOutcome.COMPLETED)
+    factory_called = False
+
+    def factory() -> Conversation:
+        nonlocal factory_called
+        factory_called = True
+        return cast(Conversation, _ConversationStub())
+
+    body = b"".join(
+        encode_stream(
+            factory,
+            "hello",
+            thread_id="session-a",
+            run_id=request.run_id,
+            accept="text/event-stream",
+            run_handle=handle,
+        )
+    )
+    assert not factory_called
+    assert b"from runtime" in body
+    assert b"RUN_FINISHED" in body
+
+
+def test_closing_run_handle_stream_cancels_abandoned_run() -> None:
+    from agent.runtime.cancellation import CancelReason
+
+    request = RunRequest(event=UserEvent(session_id="session-a", user_input="hello"))
+    handle = RunHandle(request)
+    assert handle.mark_running()
+    handle.emit(TextDelta(text="partial"))
+    stream = encode_stream(
+        lambda: cast(Conversation, _ConversationStub()),
+        "hello",
+        thread_id="session-a",
+        run_id=request.run_id,
+        accept="text/event-stream",
+        run_handle=handle,
+    )
+    assert b"RUN_STARTED" in next(stream)
+    assert b"TEXT_MESSAGE_START" in next(stream)
+    assert b"partial" in next(stream)
+    cast(Generator[bytes, None, None], stream).close()
+    assert handle.token.cancellation is not None
+    assert handle.token.cancellation.reason is CancelReason.CONSUMER_ABANDONED

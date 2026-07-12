@@ -53,6 +53,9 @@ def build_agent_runtime(
     runtime = AgentRuntime(
         conversation_factory=conversation_factory,
         memory=memory,
+        max_workers=settings.agent_runtime_max_workers,
+        max_queued_runs=settings.agent_runtime_max_queued_runs,
+        max_session_queue=settings.agent_runtime_max_session_queue,
     )
 
     # UserSource 永远注册（dev / 测试场景可用）；生产 pull 路径不走它
