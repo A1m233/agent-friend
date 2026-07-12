@@ -21,6 +21,7 @@ const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。�
 /** 本窗口同一时刻只允许一条进行中的流。 */
 let activeController: AbortController | null = null;
 let openSessionToken = 0;
+let detailRefreshSeq = 0;
 
 type OpenSessionFailureMode = "message" | "home";
 
@@ -38,10 +39,14 @@ interface ConversationState {
   historyLoading: boolean;
   /** 历史会话加载完成事件序号；UI 用它触发一次 post-layout 滚动校正。 */
   historyLoadSeq: number;
+  /** 后台同步完成序号；UI 用它保护阅读锚点，不触发历史首次加载滚底。 */
+  syncRefreshSeq: number;
   /** 开一个新会话（清空当前视图；session 在首次 send 时由 bridge 自动创建）。 */
   newSession: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
+  refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
+  invalidateBackgroundRefreshes: () => void;
   /** 发送一条消息并消费流式回复。 */
   send: (text: string) => Promise<void>;
   /** 编辑并重发最后一条用户消息。 */
@@ -102,9 +107,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   streaming: false,
   historyLoading: false,
   historyLoadSeq: 0,
+  syncRefreshSeq: 0,
 
   newSession() {
     openSessionToken += 1;
+    detailRefreshSeq += 1;
     if (get().streaming) get().stop();
     rememberLastChatSession(null);
     set({ currentSessionId: null, messages: [], historyLoading: false });
@@ -115,6 +122,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const remember = options?.remember ?? true;
     const token = openSessionToken + 1;
     openSessionToken = token;
+    detailRefreshSeq += 1;
     if (get().streaming) get().stop();
     if (remember) rememberLastChatSession(sessionId);
     set({ currentSessionId: sessionId, messages: [], historyLoading: true });
@@ -154,6 +162,35 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }));
       return false;
     }
+  },
+
+  async refreshCurrentSession(sessionId) {
+    const seq = detailRefreshSeq + 1;
+    detailRefreshSeq = seq;
+    const openToken = openSessionToken;
+    if (get().currentSessionId !== sessionId || get().streaming) return "stale";
+    try {
+      const detail = await sessionsApi.get(sessionId);
+      if (
+        seq !== detailRefreshSeq ||
+        openToken !== openSessionToken ||
+        get().currentSessionId !== sessionId ||
+        get().streaming
+      ) {
+        return "stale";
+      }
+      set((state) => ({
+        messages: projectSessionDetail(detail),
+        syncRefreshSeq: state.syncRefreshSeq + 1,
+      }));
+      return "applied";
+    } catch {
+      return seq === detailRefreshSeq ? "failed" : "stale";
+    }
+  },
+
+  invalidateBackgroundRefreshes() {
+    detailRefreshSeq += 1;
   },
 
   async send(text) {

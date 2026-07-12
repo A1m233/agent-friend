@@ -17,6 +17,7 @@ from typing import Protocol
 import portalocker
 from portalocker.exceptions import LockException
 
+from .changes import SessionChangeBroker
 from .errors import (
     SessionCorruptError,
     SessionNotFoundError,
@@ -351,6 +352,39 @@ class NullSessionStore:
 
     def latest(self) -> SessionSummary | None:
         return None
+
+
+class NotifyingSessionStore:
+    """Persistent store decorator that invalidates after successful mutations."""
+
+    def __init__(self, inner: SessionStore, broker: SessionChangeBroker) -> None:
+        self._inner = inner
+        self._broker = broker
+
+    @property
+    def inner(self) -> SessionStore:
+        return self._inner
+
+    def create(self, session: Session) -> None:
+        self._inner.create(session)
+        self._broker.record_change(session.session_id, change_kind="created")
+
+    def append_event(self, session_id: str, event: Event) -> None:
+        self._inner.append_event(session_id, event)
+        self._broker.record_change(session_id, change_kind="content")
+
+    def load(self, session_id: str) -> Session:
+        return self._inner.load(session_id)
+
+    def list(self) -> list[SessionSummary]:
+        return self._inner.list()
+
+    def delete(self, session_id: str) -> None:
+        self._inner.delete(session_id)
+        self._broker.record_change(session_id, change_kind="deleted")
+
+    def latest(self) -> SessionSummary | None:
+        return self._inner.latest()
 
 
 def _session_filename_stem(session_id: str) -> str:

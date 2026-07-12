@@ -6,6 +6,14 @@ JSONL 实现 / 业务编排管理器 / 异常体系。
 详见 docs/requirements/002-engine-session-management/。
 """
 
+from .changes import (
+    SessionChange,
+    SessionChangeBroker,
+    SessionMutationContext,
+    SessionRevisionStore,
+    current_session_mutation_context,
+    session_mutation_context,
+)
 from .errors import (
     SessionCorruptError,
     SessionError,
@@ -21,7 +29,13 @@ from .manager import (
 )
 from .metadata import SessionMetadata, SessionMetadataStore
 from .session import Session
-from .store import JsonlSessionStore, NullSessionStore, SessionStore, SessionSummary
+from .store import (
+    JsonlSessionStore,
+    NotifyingSessionStore,
+    NullSessionStore,
+    SessionStore,
+    SessionSummary,
+)
 
 __all__ = [
     "ALLOWED_EVENT_TYPES",
@@ -30,17 +44,24 @@ __all__ = [
     "EventType",
     "JsonlSessionStore",
     "LLMClientFactory",
+    "NotifyingSessionStore",
     "NullSessionStore",
     "PromptBuilderFactory",
     "Session",
+    "SessionChange",
+    "SessionChangeBroker",
     "SessionCorruptError",
     "SessionError",
     "SessionManager",
     "SessionMetadata",
     "SessionMetadataStore",
+    "SessionMutationContext",
     "SessionNotFoundError",
     "SessionPersistError",
+    "SessionRevisionStore",
     "SessionStore",
     "SessionSummary",
     "TitleGenerator",
+    "current_session_mutation_context",
+    "session_mutation_context",
 ]

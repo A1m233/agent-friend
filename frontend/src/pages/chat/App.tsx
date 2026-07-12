@@ -1,6 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
-import { useConnectionStore, useConversationStore, type ConnectionStatus } from "@/stores";
+import {
+  startSessionSyncSubscriber,
+  useConnectionStore,
+  useConversationStore,
+  type ConnectionStatus,
+} from "@/stores";
 import {
   focusVoiceCallWindow,
   publishActiveChatSession,
@@ -41,6 +46,8 @@ export function ChatApp() {
     }, 3000);
     return () => clearInterval(id);
   }, [ping]);
+
+  useEffect(() => startSessionSyncSubscriber(), []);
 
   useEffect(() => {
     void publishActiveChatSession(currentSessionId);

@@ -32,6 +32,7 @@ from memory import Memory
 
 from ..conversation import Conversation
 from ..memory_feed import project_turn
+from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
 from ..tools import ToolResult
 from .hooks import (
@@ -364,11 +365,22 @@ class AgentRuntime:
             )
             return
 
-        conv = (
-            request.conversation_factory()
-            if request.conversation_factory is not None
-            else self._conversation_factory(request.session_id)
+        origin = request.metadata.get("protocol")
+        if isinstance(request.event, SystemTriggerEvent):
+            origin = "system_trigger"
+        mutation_token = set_session_mutation_context(
+            origin=origin if isinstance(origin, str) else None,
+            channel=request.channel,
         )
+        try:
+            conv = (
+                request.conversation_factory()
+                if request.conversation_factory is not None
+                else self._conversation_factory(request.session_id)
+            )
+        except BaseException:
+            reset_session_mutation_context(mutation_token)
+            raise
         session = conv.session
         turn_start_idx = len(session.events)
         outcome = RunOutcome.FAILED
@@ -408,23 +420,26 @@ class AgentRuntime:
                     logger.warning("run error callback 失败: %s", request.run_id, exc_info=True)
             raise
         finally:
-            self._last_dispatch_finished_at = datetime.now(UTC)
-            self._hooks.run_post_turn(
-                PostTurnContext(
-                    session=session,
-                    turn_start_idx=turn_start_idx,
-                    event=request.event,
+            try:
+                self._last_dispatch_finished_at = datetime.now(UTC)
+                self._hooks.run_post_turn(
+                    PostTurnContext(
+                        session=session,
+                        turn_start_idx=turn_start_idx,
+                        event=request.event,
+                        run_id=request.run_id,
+                        outcome=outcome,
+                        error=error,
+                    )
+                )
+                self._listeners.finish_run(
+                    request.event,
                     run_id=request.run_id,
                     outcome=outcome,
-                    error=error,
+                    reason_code=type(error).__name__ if error is not None else "",
                 )
-            )
-            self._listeners.finish_run(
-                request.event,
-                run_id=request.run_id,
-                outcome=outcome,
-                reason_code=type(error).__name__ if error is not None else "",
-            )
+            finally:
+                reset_session_mutation_context(mutation_token)
 
     def _dispatch(self, ev: AgentEvent) -> None:
         """单条事件的 dispatch：PreTurn → 跑 conv → fan_out → PostTurn。"""

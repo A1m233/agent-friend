@@ -360,3 +360,40 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(errors[0].errorCode).toBe("rate_limit");
   });
 });
+
+describe("conversation store · background detail refresh", () => {
+  it("反序返回时旧 refresh 不覆盖新结果", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "initial"));
+    await useConversationStore.getState().openSession("sid-1");
+
+    const older = deferred<SessionDetail>();
+    const newer = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const olderRun = useConversationStore.getState().refreshCurrentSession("sid-1");
+    const newerRun = useConversationStore.getState().refreshCurrentSession("sid-1");
+    newer.resolve(sessionDetail("sid-1", "newest"));
+    expect(await newerRun).toBe("applied");
+    older.resolve(sessionDetail("sid-1", "old"));
+    expect(await olderRun).toBe("stale");
+    expect(firstText()).toBe("newest");
+  });
+
+  it("切换 session 后旧 refresh 返回不会污染新会话", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "one"));
+    await useConversationStore.getState().openSession("sid-1");
+    const pending = deferred<SessionDetail>();
+    mockGet.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(sessionDetail("sid-2", "two"));
+    const refresh = useConversationStore.getState().refreshCurrentSession("sid-1");
+    await useConversationStore.getState().openSession("sid-2");
+    pending.resolve(sessionDetail("sid-1", "late"));
+    expect(await refresh).toBe("stale");
+    expect(useConversationStore.getState().currentSessionId).toBe("sid-2");
+    expect(firstText()).toBe("two");
+  });
+
+  it("streaming 时拒绝后台 detail 替换", async () => {
+    useConversationStore.setState({ currentSessionId: "sid-1", streaming: true });
+    expect(await useConversationStore.getState().refreshCurrentSession("sid-1")).toBe("stale");
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+});

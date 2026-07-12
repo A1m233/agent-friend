@@ -20,12 +20,13 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from ..conversation_events import ConversationEvent, TurnDone
+from ..sessions.changes import SessionChange
 from .inbox import AgentEvent, SystemTriggerEvent, UserEvent
 
 logger = logging.getLogger(__name__)
 
 
-EnvelopeKind = Literal["user_turn", "agent_turn", "heartbeat"]
+EnvelopeKind = Literal["user_turn", "agent_turn", "session_changed", "heartbeat"]
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,10 @@ class PushEnvelope:
     run_id: str | None = None
     outcome: str | None = None
     reason_code: str = ""
+    revision: int | None = None
+    change_kind: str | None = None
+    origin: str | None = None
+    channel: str | None = None
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -189,6 +194,28 @@ class ListenerRegistry:
                         run_id=run_id,
                         outcome=outcome,
                         reason_code=reason_code,
+                    ),
+                )
+
+    def publish_session_change(self, change: SessionChange) -> None:
+        """Immediately publish a persistence invalidation without turn buffering."""
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "session_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="session_changed",
+                        session_id=change.session_id,
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        revision=change.revision,
+                        change_kind=change.change_kind,
+                        origin=change.origin,
+                        channel=change.channel,
                     ),
                 )
 

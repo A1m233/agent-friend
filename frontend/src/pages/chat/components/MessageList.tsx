@@ -251,7 +251,7 @@ const MessageItem = memo(function MessageItem({
     );
 
   return (
-    <div>
+    <div data-message-id={message.id}>
       <MessageContent
         message={message}
         actionBar={actionBar}
@@ -328,6 +328,7 @@ export function MessageList({
   const streaming = useConversationStore((s) => s.streaming);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
+  const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
   const editResendLatest = useConversationStore((s) => s.editResendLatest);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -338,6 +339,8 @@ export function MessageList({
   const historySettlingRef = useRef(false);
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
+  const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
+  const readingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const [isSticky, setIsSticky] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const composerInset = Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
@@ -415,6 +418,23 @@ export function MessageList({
       if (programmaticScrollRef.current && !atBottom) return;
       programmaticScrollRef.current = false;
       setSticky(atBottom);
+      if (!atBottom) {
+        const viewportTop = e.currentTarget.getBoundingClientRect().top;
+        const items = Array.from(
+          e.currentTarget.querySelectorAll<HTMLElement>("[data-message-id]"),
+        );
+        const firstVisible = items.find(
+          (item) => item.getBoundingClientRect().bottom > viewportTop,
+        );
+        if (firstVisible?.dataset.messageId) {
+          readingAnchorRef.current = {
+            id: firstVisible.dataset.messageId,
+            offset: firstVisible.getBoundingClientRect().top - viewportTop,
+          };
+        }
+      } else {
+        readingAnchorRef.current = null;
+      }
     },
     [setSticky],
   );
@@ -433,15 +453,30 @@ export function MessageList({
     const prevMessages = prevMessagesRef.current;
     const addedMessages = messages.slice(prevMessages.length);
     const userSentMessage = addedMessages.some((m) => m.role === "user");
+    const isBackgroundSync = syncRefreshSeq !== prevSyncRefreshSeqRef.current;
 
-    if (userSentMessage) {
+    if (import.meta.env.DEV && isBackgroundSync) {
+      console.debug("[session-sync][scroll] background messages applied", {
+        syncRefreshSeq,
+        sticky: stickyRef.current,
+        anchor: readingAnchorRef.current,
+        addedMessages: addedMessages.length,
+      });
+    }
+
+    if (isBackgroundSync) {
+      prevSyncRefreshSeqRef.current = syncRefreshSeq;
+      if (stickyRef.current) {
+        scheduleScrollToBottom();
+      }
+    } else if (userSentMessage) {
       scheduleScrollToBottom({ force: true });
     } else if (stickyRef.current) {
       scheduleScrollToBottom();
     }
 
     prevMessagesRef.current = messages;
-  }, [messages, scheduleScrollToBottom]);
+  }, [messages, scheduleScrollToBottom, syncRefreshSeq]);
 
   useLayoutEffect(() => {
     if (stickyRef.current) {
@@ -455,6 +490,33 @@ export function MessageList({
     if (historyLoading || messages.length === 0) return;
     startHistoryScrollSettle();
   }, [historyLoadSeq, historyLoading, messages.length, startHistoryScrollSettle]);
+
+  useLayoutEffect(() => {
+    if (syncRefreshSeq === 0 || stickyRef.current) return;
+    const viewport = scrollRef.current;
+    const anchor = readingAnchorRef.current;
+    if (!viewport || !anchor) return;
+    const target = viewport.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(anchor.id)}"]`,
+    );
+    if (!target) {
+      if (import.meta.env.DEV) {
+        console.debug("[session-sync][scroll] anchor missing", { syncRefreshSeq, anchor });
+      }
+      return;
+    }
+    const viewportTop = viewport.getBoundingClientRect().top;
+    const adjustment = target.getBoundingClientRect().top - viewportTop - anchor.offset;
+    viewport.scrollTop += adjustment;
+    if (import.meta.env.DEV) {
+      console.debug("[session-sync][scroll] anchor restored", {
+        syncRefreshSeq,
+        anchor,
+        adjustment,
+        scrollTop: viewport.scrollTop,
+      });
+    }
+  }, [syncRefreshSeq]);
 
   useEffect(
     () => () => {

@@ -13,9 +13,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
+
+from agent import Event, SessionNotFoundError, session_mutation_context
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -74,5 +78,43 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
         logger.info("dev fire-source 触发：%s", source_name)
         return {"status": "fired", "source": source_name}
+
+    @router.post("/dev/mock-session-event")
+    async def mock_session_event(
+        content: str = Query(..., min_length=1),
+        session_id: str | None = Query(None),
+        title: str = Query("Mock external session"),
+        role: str = Query("assistant", pattern="^(user|assistant)$"),
+    ) -> dict[str, str]:
+        """Persist a dev-only external message without invoking an LLM/provider."""
+        manager = runtime.persistent_session_manager
+        actual_session_id = session_id or str(uuid4())
+        with session_mutation_context(origin="dev_mock", channel="text"):
+            try:
+                manager.open(actual_session_id)
+            except SessionNotFoundError:
+                manager.create(
+                    persona=runtime.default_persona,
+                    model=runtime.default_model,
+                    title=title,
+                    session_id=actual_session_id,
+                )
+            event = Event(
+                type="user_message" if role == "user" else "assistant_message",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={
+                    "content": content,
+                    **({"partial": False} if role == "assistant" else {}),
+                },
+                meta={"dev_mock": True},
+            )
+            runtime.persistent_store.append_event(actual_session_id, event)
+        logger.info("dev mock session event: session_id=%s role=%s", actual_session_id, role)
+        return {
+            "status": "persisted",
+            "session_id": actual_session_id,
+            "role": role,
+        }
 
     app.include_router(router)
