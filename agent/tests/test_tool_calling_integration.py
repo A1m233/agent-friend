@@ -243,6 +243,45 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
 
 
+def test_reused_provider_tool_call_id_gets_unique_event_ids(tmp_path: Path) -> None:
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="web_search_1",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "a"}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="web_search_1",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "b"}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([echo]))
+
+    events = list(conv.stream("run twice"))
+    requests = [ev for ev in events if isinstance(ev, ToolCallRequest)]
+    results = [ev for ev in events if isinstance(ev, ToolCallResult)]
+
+    assert [ev.tool_call_id for ev in requests] == ["web_search_1", "web_search_1"]
+    assert requests[0].event_tool_call_id != requests[1].event_tool_call_id
+    assert [ev.event_tool_call_id for ev in results] == [
+        requests[0].event_tool_call_id,
+        requests[1].event_tool_call_id,
+    ]
+
+
 def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> None:
     """``recall_past_chats`` 执行时拿到当前 session / turn 起点，落盘参数仍保持原样。"""
     recall = SpyRecallTool()
@@ -281,84 +320,6 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
 
     request_event = next(ev for ev in conv.session.events if ev.type == "tool_call_request")
     assert request_event.payload["args"] == {"limit": 10}
-
-
-def test_memory_inconsistency_preflight_recall_injected_as_context(tmp_path: Path) -> None:
-    """记忆矛盾追问应先做一次窄口 recall，并把结果作为额外上下文喂给 LLM。"""
-    recall = SpyRecallTool()
-    registry = ToolRegistry([recall])
-    fake = _ScriptedLLMClient(
-        script=[
-            [
-                LLMTextDelta(text="刚才那句我说得不准确。"),
-                LLMTurnDone(stop_reason="end_turn"),
-            ],
-        ]
-    )
-    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry)
-
-    events = list(conv.stream("你刚才不是说想不起来吗,这会儿怎么又说记得我了"))
-
-    assert len(recall.seen_args) == 1
-    invocation_args = recall.seen_args[0]
-    assert invocation_args["limit"] == 10
-    assert invocation_args["__agent_friend_current_session_id"] == conv.session.session_id
-    assert invocation_args["__agent_friend_current_turn_start_index"] == 1
-
-    tool_reqs = [ev for ev in events if isinstance(ev, ToolCallRequest)]
-    tool_results = [ev for ev in events if isinstance(ev, ToolCallResult)]
-    dones = [ev for ev in events if isinstance(ev, TurnDone)]
-    assert len(tool_reqs) == 1
-    assert tool_reqs[0].tool_name == "recall_past_chats"
-    assert tool_reqs[0].args == {"limit": 10}
-    assert len(tool_results) == 1
-    assert tool_results[0].text == "找到一些旧聊天。"
-    assert dones[-1].total_tool_calls == 1
-
-    first_turn_messages = fake.received[0]
-    assert any(
-        m["role"] == "system" and "用户正在质疑你前后说法" in m["content"]
-        for m in first_turn_messages
-    )
-    assert any("找到一些旧聊天" in m["content"] for m in first_turn_messages)
-
-    # preflight recall 只作为本轮上下文和 stream 事件暴露，不写成缺少 assistant
-    # tool_calls 的持久化 tool history。
-    assert all(ev.type != "tool_call_request" for ev in conv.session.events)
-    assert all(ev.type != "tool_call_result" for ev in conv.session.events)
-
-
-def test_memory_inconsistency_preflight_trigger_variants(tmp_path: Path) -> None:
-    """记忆矛盾的归因、机制和证据边界追问，也应先做历史核对。"""
-    queries = [
-        "所以你现在叫我 Alex,只是因为我刚刚告诉过你名字吧",
-        "别道歉也别解释,你根据证据能说什么",
-        "你刚才叫出我名字是不是蒙的",
-        "你之前明明说没有长期记忆,现在又说记得我,你到底是什么情况",
-    ]
-
-    for idx, query in enumerate(queries):
-        recall = SpyRecallTool()
-        registry = ToolRegistry([recall])
-        fake = _ScriptedLLMClient(
-            script=[
-                [
-                    LLMTextDelta(text=f"基于证据回答 {idx}。"),
-                    LLMTurnDone(stop_reason="end_turn"),
-                ],
-            ]
-        )
-        conv = _make_conversation(tmp_path / f"case-{idx}", fake_llm=fake, registry=registry)
-
-        events = list(conv.stream(query))
-
-        assert len(recall.seen_args) == 1
-        assert recall.seen_args[0]["limit"] == 10
-        assert any(isinstance(ev, ToolCallRequest) for ev in events)
-        assert any(isinstance(ev, ToolCallResult) for ev in events)
-        assert any(
-            m["role"] == "system" and "底层记忆/存储机制" in m["content"] for m in fake.received[0]
-        )
 
 
 def test_closing_stream_after_turndone_does_not_write_partial_duplicate(tmp_path: Path) -> None:

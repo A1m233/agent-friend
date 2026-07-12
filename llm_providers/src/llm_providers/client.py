@@ -328,5 +328,12 @@ class LLMClient:
                     stop_reason = _map_finish_reason(finish_reason)
         except Exception as e:
             raise _map_exception(e) from e
+        finally:
+            # 下游 SSE 客户端断开时，上层 generator 会收到 GeneratorExit 并关闭本
+            # generator。显式关闭 LiteLLM / provider 的流，避免 HTTP 请求继续在后台
+            # 消耗额度、占用 per-session turn lock。
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
 
         yield LLMTurnDone(stop_reason=stop_reason, usage=usage)

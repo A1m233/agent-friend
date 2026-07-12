@@ -20,14 +20,16 @@ describe("projectSessionEvents", () => {
     expect(out[0].status).toBe("complete");
   });
 
-  it("跳过 partial assistant 消息与空内容", () => {
+  it("保留 partial assistant 内容并标记为 interrupted", () => {
     const out = projectSessionEvents([
       ev("assistant_message", { content: "半截", partial: true }),
-      ev("assistant_message", { content: "", partial: false }),
       ev("user_message", { content: "hi" }),
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0].role).toBe("user");
+    expect(out).toHaveLength(2);
+    expect(out[0].role).toBe("assistant");
+    expect(out[0].status).toBe("interrupted");
+    expect(out[0].blocks[0]).toMatchObject({ kind: "text", text: "半截" });
+    expect(out[1].role).toBe("user");
   });
 
   it("把 run_error 投影成可刷新的 assistant 错误状态", () => {
@@ -46,7 +48,8 @@ describe("projectSessionEvents", () => {
     expect(out[1].status).toBe("error");
     expect(out[1].errorCode).toBe("rate_limit");
     expect(out[1].error).toBe("模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。");
-    expect(out[1].blocks).toHaveLength(0);
+    expect(out[1].blocks).toHaveLength(1);
+    expect(out[1].blocks[0]).toMatchObject({ kind: "text", text: "好的" });
   });
 
   it("把工具调用 request/result 重建成工具块（切回历史不丢卡片）", () => {
@@ -98,6 +101,20 @@ describe("projectSessionEvents", () => {
       expect(block.status).toBe("error");
       expect(block.result).toBe("超时了");
     }
+  });
+
+  it("provider call id 重复时按 event_tool_call_id 分别关联结果", () => {
+    const out = projectSessionEvents([
+      ev("tool_call_request", { tool_call_id: "web_search_1", event_tool_call_id: "event-a", tool_name: "web_search", args: { query: "a" } }),
+      ev("tool_call_result", { tool_call_id: "web_search_1", event_tool_call_id: "event-a", tool_name: "web_search", content: "result-a" }),
+      ev("tool_call_request", { tool_call_id: "web_search_1", event_tool_call_id: "event-b", tool_name: "web_search", args: { query: "b" } }),
+      ev("tool_call_result", { tool_call_id: "web_search_1", event_tool_call_id: "event-b", tool_name: "web_search", content: "result-b" }),
+    ]);
+
+    const tools = out[0].blocks.filter((block) => block.kind === "tool");
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toMatchObject({ toolCallId: "event-a", status: "done", result: "result-a" });
+    expect(tools[1]).toMatchObject({ toolCallId: "event-b", status: "done", result: "result-b" });
   });
 
   it("新 user_message 会切开下一轮 assistant answer", () => {

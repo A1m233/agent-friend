@@ -77,16 +77,19 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       continue;
     }
 
-    if (ev.type === "assistant_message" && p.partial !== true) {
+    if (ev.type === "assistant_message") {
       if (pendingSkipAssistant) {
         pendingSkipAssistant = false;  // 消费 flag、丢弃这条
         currentAssistant = null;
         continue;
       }
       const content = asString(p.content);
+      const message = ensureAssistant(ev.uuid, ev.ts);
       if (content) {
-        const message = ensureAssistant(ev.uuid, ev.ts);
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content });
+      }
+      if (p.partial === true) {
+        message.status = "interrupted";
       }
       continue;
     }
@@ -107,7 +110,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "tool_call_request") {
-      const id = asString(p.tool_call_id) || ev.uuid;
+      const id = asString(p.event_tool_call_id) || asString(p.tool_call_id) || ev.uuid;
       const block: ToolBlock = {
         kind: "tool",
         toolCallId: id,
@@ -122,7 +125,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "tool_call_result") {
-      const id = asString(p.tool_call_id);
+      const id = asString(p.event_tool_call_id) || asString(p.tool_call_id);
       const block = toolBlocks.get(id);
       if (!block) continue;
       const content = asString(p.content);

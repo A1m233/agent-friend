@@ -53,6 +53,7 @@ class ToolCallRequest:
     """
 
     tool_call_id: str = ""
+    event_tool_call_id: str = ""
     tool_name: str = ""
     args: dict[str, Any] = field(default_factory=dict)
     type: Literal["tool_call_request"] = "tool_call_request"
@@ -74,6 +75,7 @@ class ToolCallResult:
     """
 
     tool_call_id: str = ""
+    event_tool_call_id: str = ""
     tool_name: str = ""
     text: str = ""
     is_error: bool = False

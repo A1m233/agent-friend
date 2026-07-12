@@ -9,7 +9,7 @@
 export type ChatRole = "user" | "assistant";
 
 /** 单条消息整体状态。 */
-export type MessageStatus = "streaming" | "complete" | "error";
+export type MessageStatus = "streaming" | "complete" | "interrupted" | "error";
 
 /** 工具调用卡片状态机：进行中 → 完成 / 失败（对应 R-M3.2）。 */
 export type ToolStatus = "running" | "done" | "error";

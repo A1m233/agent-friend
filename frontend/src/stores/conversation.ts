@@ -200,7 +200,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } catch {
       streamUpdates.flush();
       if (controller.signal.aborted) {
-        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
       } else {
         patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
       }
@@ -275,7 +275,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } catch {
       streamUpdates.flush();
       if (controller.signal.aborted) {
-        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
       } else {
         failedError = FRIENDLY_FALLBACK;
         patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));

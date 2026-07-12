@@ -226,7 +226,13 @@ class JsonlSessionStore:
             raise SessionNotFoundError(f"会话不存在: {session_id}")
         events: list[Event] = []
         try:
-            with path.open("r", encoding="utf-8") as f:
+            with portalocker.Lock(
+                path,
+                "r",
+                encoding="utf-8",
+                flags=portalocker.LOCK_SH | portalocker.LOCK_NB,
+                timeout=_LOCK_TIMEOUT_SECONDS,
+            ) as f:
                 for lineno, line in enumerate(f, start=1):
                     if not line.strip():
                         continue
@@ -234,6 +240,10 @@ class JsonlSessionStore:
                         events.append(Event.from_jsonl(line))
                     except SessionCorruptError as e:
                         raise SessionCorruptError(f"会话文件 {path} 第 {lineno} 行损坏: {e}") from e
+        except LockException as e:
+            raise SessionPersistError(
+                f"获取会话文件读锁超时 ({_LOCK_TIMEOUT_SECONDS}s): {path}: {e}"
+            ) from e
         except OSError as e:
             raise SessionPersistError(f"读取会话文件失败: {path}: {e}") from e
         return Session.from_events(events)
