@@ -4,7 +4,7 @@ This script is non-destructive but it DOES call the configured LLM provider.
 
 What it does:
 
-1. Load `.env` into process env if present.
+1. Resolve the current runtime_config mode and credential source.
 2. Create a temporary agent-friend data dir.
 3. Build the current bridge runtime against that temp dir.
 4. Seed one past session with a "learning Japanese" conversation.
@@ -12,6 +12,8 @@ What it does:
 6. Verify `recall_past_chats` is called and does not return "unregistered tool".
 
 It does not connect to QQ and does not touch the real user session directory.
+Credentials use the current runtime_config mode by default. Set
+`AGENT_FRIEND_CONFIG_MODE=legacy-dotenv` explicitly to read the repository `.env`.
 """
 
 from __future__ import annotations
@@ -130,20 +132,6 @@ SMOKE_CASES: tuple[SmokeCase, ...] = (
 )
 
 
-def _load_dotenv(path: Path) -> None:
-    """Minimal .env loader; existing environment variables win."""
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
 def _event(type_: str, content: str, ts: datetime) -> Event:
     if type_ == "user_message":
         payload = {"content": content}
@@ -231,12 +219,6 @@ def main() -> None:
             print(f"{case.name}: {case.description}")
         return
 
-    _load_dotenv(Path(".env"))
-
-    if not os.environ.get("DEEPSEEK_API_KEY", "").strip():
-        print("[smoke] FAIL: DEEPSEEK_API_KEY is missing; set it in .env or env.", file=sys.stderr)
-        sys.exit(1)
-
     tmp_root = Path(tempfile.mkdtemp(prefix="agent-friend-issue019-"))
     runtime = None
     try:
@@ -247,7 +229,22 @@ def main() -> None:
             memory_enabled=False,
             im_enabled=False,
         )
-        runtime = build_runtime(settings)
+        try:
+            runtime = build_runtime(settings)
+        except Exception as exc:
+            from llm_providers import LLMAuthError
+            from runtime_config import CredentialMissingError
+
+            if not isinstance(exc, (CredentialMissingError, LLMAuthError, ValueError)):
+                raise
+            print(
+                f"[配置错误] {exc}\n"
+                "默认请使用 scripts/credentials/run.* set-bundle deepseek 配置；"
+                "如需读取存量 .env，请设置 "
+                "AGENT_FRIEND_CONFIG_MODE=legacy-dotenv。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         tool_names = [tool.name for tool in runtime.tool_registry.all_tools()]
         seed_session_ids = _seed_history(runtime)
         cases = _selected_cases(args.case)

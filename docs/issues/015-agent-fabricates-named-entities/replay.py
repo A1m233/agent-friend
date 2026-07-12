@@ -13,7 +13,8 @@ ToolCallResult / TurnDone）逐个打到 stdout。
 
 依赖：
 
-- 项目根 ``.env`` 里有 ``DEEPSEEK_API_KEY`` 和 ``TAVILY_API_KEY``（与 CLI 同）
+- 默认从 runtime_config 凭证中心读取；如需读取存量 ``.env``，显式设置
+  ``AGENT_FRIEND_CONFIG_MODE=legacy-dotenv``（``TAVILY_API_KEY`` 缺失时只关闭 web search）
 - 原 session 文件在默认路径（``~/Library/Application Support/agent-friend/sessions/...``）
 
 注意 LLM 是 sampling 的——单次结果不能下定论。要更扎实就多跑几次取多数表现。
@@ -27,15 +28,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-# ---- 必须在 import agent 前完成的两件事 ----
+# ---- 必须在 import agent 前完成的凭证与数据隔离 ----
 
-# 1. 加载 .env：DEEPSEEK_API_KEY / TAVILY_API_KEY 等
 REPO_ROOT = Path(__file__).resolve().parents[3]  # docs/issues/<NNN>/replay.py → repo
-from dotenv import load_dotenv  # noqa: E402
 
-load_dotenv(REPO_ROOT / ".env")
-
-# 2. 隔离数据目录（覆盖 user_data_dir，使所有 session/memory 落到 /tmp）
+# 隔离数据目录（覆盖 user_data_dir，使所有 session/memory 落到 /tmp）
 ORIG_SESSION = (
     Path.home()
     / "Library"
@@ -98,11 +95,40 @@ from agent import (  # noqa: E402
     make_default_registry,
     sessions_dir,
 )
-from llm_providers import LLMClient, ProviderSpec  # noqa: E402
+from llm_providers import LLMClient, ProviderConfig, ProviderSpec  # noqa: E402
+from runtime_config import (  # noqa: E402
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_MODEL,
+    TAVILY_API_KEY,
+    CredentialMissingError,
+    config_mode_from_env,
+    credential_source_for_mode,
+    optional_secret,
+    require_secret,
+)
+
+CREDENTIAL_SOURCE = credential_source_for_mode(
+    config_mode_from_env(), dotenv_path=REPO_ROOT / ".env"
+)
+try:
+    BASE_SPEC = ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(
+            api_key=require_secret(CREDENTIAL_SOURCE, DEEPSEEK_API_KEY),
+            model=optional_secret(CREDENTIAL_SOURCE, DEEPSEEK_MODEL),
+            api_base=optional_secret(CREDENTIAL_SOURCE, "DEEPSEEK_API_BASE"),
+        ),
+    )
+except (CredentialMissingError, ValueError) as exc:
+    sys.stderr.write(
+        f"[配置错误] {exc}\n默认请使用 scripts/credentials/run.* set-bundle deepseek 配置；"
+        "如需读取存量 .env，请设置 AGENT_FRIEND_CONFIG_MODE=legacy-dotenv。\n"
+    )
+    sys.exit(1)
 
 
 def make_spec_with_thinking_off(model_override: str | None = None) -> ProviderSpec:
-    spec = ProviderSpec.from_env(prefix="DEEPSEEK")
+    spec = BASE_SPEC
     if model_override:
         spec = dataclasses.replace(spec, model=model_override)
     if "deepseek" in spec.model.lower():
@@ -125,7 +151,9 @@ def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
 
 
 store = JsonlSessionStore(sessions_dir())
-tool_registry = make_default_registry()
+tool_registry = make_default_registry(
+    tavily_api_key=optional_secret(CREDENTIAL_SOURCE, TAVILY_API_KEY)
+)
 
 mgr = SessionManager(
     store=store,

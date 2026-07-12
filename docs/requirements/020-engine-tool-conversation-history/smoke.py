@@ -14,9 +14,8 @@
 
 每轮收集 ConversationEvent + 整段 assistant 文本打到 stdout，末尾做一轮红线词扫描。
 
-依赖：
-
-- 项目根 ``.env`` 里有 ``DEEPSEEK_API_KEY``（与 CLI 同；``TAVILY_API_KEY`` 不强制）
+凭证默认从 runtime_config 凭证中心读取；如需读取存量 ``.env``，显式设置
+``AGENT_FRIEND_CONFIG_MODE=legacy-dotenv``。``TAVILY_API_KEY`` 始终可选，缺失时只关闭 web search。
 
 注意 LLM 是 sampling 的——单次结果不能下定论。
 """
@@ -34,12 +33,7 @@ from uuid import uuid4
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# 1. 加载 .env
-from dotenv import load_dotenv  # noqa: E402
-
-load_dotenv(REPO_ROOT / ".env")
-
-# 2. 隔离数据目录到 tmp（绝不动用户真实 session）
+# 1. 隔离数据目录到 tmp（绝不动用户真实 session）
 TMP_DATA = Path(tempfile.mkdtemp(prefix="agent-friend-smoke-020-"))
 os.environ["AGENT_FRIEND_DATA_DIR"] = str(TMP_DATA)
 (TMP_DATA / "sessions").mkdir(parents=True, exist_ok=True)
@@ -176,13 +170,31 @@ from agent import (  # noqa: E402
     make_default_registry,
     sessions_dir,
 )
-from llm_providers import LLMClient, ProviderSpec  # noqa: E402
+from llm_providers import LLMClient, ProviderConfig, ProviderSpec  # noqa: E402
+from runtime_config import (  # noqa: E402
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_MODEL,
+    TAVILY_API_KEY,
+    config_mode_from_env,
+    credential_source_for_mode,
+    optional_secret,
+    require_secret,
+)
+
+CREDENTIAL_SOURCE = credential_source_for_mode(
+    config_mode_from_env(), dotenv_path=REPO_ROOT / ".env"
+)
 
 
 def make_spec(model: str | None = None) -> ProviderSpec:
-    spec = ProviderSpec.from_env(prefix="DEEPSEEK")
-    if model:
-        spec = dataclasses.replace(spec, model=model)
+    spec = ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(
+            api_key=require_secret(CREDENTIAL_SOURCE, DEEPSEEK_API_KEY),
+            model=model or optional_secret(CREDENTIAL_SOURCE, DEEPSEEK_MODEL),
+            api_base=optional_secret(CREDENTIAL_SOURCE, "DEEPSEEK_API_BASE"),
+        ),
+    )
     if "deepseek" in spec.model.lower():
         spec = dataclasses.replace(
             spec,
@@ -203,7 +215,10 @@ def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
 
 
 store = JsonlSessionStore(sessions_dir())
-registry = make_default_registry(session_store=store)
+registry = make_default_registry(
+    session_store=store,
+    tavily_api_key=optional_secret(CREDENTIAL_SOURCE, TAVILY_API_KEY),
+)
 print(f"[setup] registry tools: {[t.name for t in registry.all_tools()]}")
 print()
 
