@@ -324,6 +324,20 @@ export AGENT_BRIDGE_DEV_MODE=true
 if [ "$VOICE_MODE" = "tunnel" ]; then
     start_voice_tunnel
 fi
+
+if [ "$MODE" = "tauri" ]; then
+    # 047 · source desktop runtime ownership belongs to Tauri Core. This
+    # script only prepares environment/tunnel state and launches the shell.
+    export AGENT_FRIEND_REPO_ROOT="$ROOT"
+    export AGENT_FRIEND_DEV_VOICE_MODE="$VOICE_MODE"
+    export AGENT_BRIDGE_DEV_MODE=true
+    echo "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
+    echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
+    (cd "$ROOT/frontend" && pnpm tauri dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
+    wait
+    exit $?
+fi
+
 echo "===> 启动 bridge（127.0.0.1:18800）…"
 echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 printf '\n===== %s bridge start: uv run python -m agent_bridge =====\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" >>"$DEV_BRIDGE_LOG"

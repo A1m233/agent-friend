@@ -23,6 +23,16 @@ CallState = Literal["pending", "active", "stopped", "error"]
 
 
 @dataclass(frozen=True)
+class VoiceActivitySnapshot:
+    pending_call_ids: tuple[str, ...]
+    active_call_ids: tuple[str, ...]
+
+    @property
+    def blocks_restart(self) -> bool:
+        return bool(self.pending_call_ids or self.active_call_ids)
+
+
+@dataclass(frozen=True)
 class CallBinding:
     """一通通话的全部内存状态。
 
@@ -114,6 +124,20 @@ class CallRegistry:
         """列出所有当前 ``state="active"`` 的通话。仅调试 / 测试用。"""
         with self._lock:
             return [b for b in self._bindings.values() if b.state == "active"]
+
+    def activity_snapshot(self) -> VoiceActivitySnapshot:
+        """Return the call activity that must block an ordinary service restart."""
+        with self._lock:
+            pending = tuple(
+                sorted(b.call_id for b in self._bindings.values() if b.state == "pending")
+            )
+            active = tuple(
+                sorted(b.call_id for b in self._bindings.values() if b.state == "active")
+            )
+        return VoiceActivitySnapshot(
+            pending_call_ids=pending,
+            active_call_ids=active,
+        )
 
     @staticmethod
     def now() -> datetime:
