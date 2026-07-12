@@ -26,6 +26,7 @@ from runtime_config import (
 )
 
 from .assembly import VoiceBridgeRuntime, build_runtime
+from .lifecycle import LIFECYCLE_TOKEN_ENV, VoiceLifecycleController, register_lifecycle_routes
 from .routes import (
     register_control_routes,
     register_llm_proxy_routes,
@@ -103,7 +104,12 @@ def _add_local_smoke_cors(app: FastAPI) -> None:
     )
 
 
-def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
+def create_app(
+    settings: VoiceBridgeSettings | None = None,
+    *,
+    lifecycle_token: str | None = None,
+    shutdown_callback: Callable[[], None] | None = None,
+) -> FastAPI:
     """构造 FastAPI 实例。
 
     Args:
@@ -156,10 +162,24 @@ def create_app(settings: VoiceBridgeSettings | None = None) -> FastAPI:
     register_control_routes(app, runtime)
     register_llm_proxy_routes(app, runtime)
     register_transcription_routes(app, runtime)
+    token = lifecycle_token or os.environ.get(LIFECYCLE_TOKEN_ENV)
+    if token:
+        controller = VoiceLifecycleController(
+            runtime,
+            token=token,
+            shutdown_callback=shutdown_callback,
+        )
+        app.state.lifecycle_controller = controller
+        register_lifecycle_routes(app, controller)
     return app
 
 
-def create_app_with_runtime(runtime: VoiceBridgeRuntime) -> FastAPI:
+def create_app_with_runtime(
+    runtime: VoiceBridgeRuntime,
+    *,
+    lifecycle_token: str | None = None,
+    shutdown_callback: Callable[[], None] | None = None,
+) -> FastAPI:
     """测试 helper：直接传 runtime（绕过环境变量装配）。"""
     _configure_logging(runtime.settings.log_level)
     app = FastAPI(
@@ -177,4 +197,12 @@ def create_app_with_runtime(runtime: VoiceBridgeRuntime) -> FastAPI:
     register_control_routes(app, runtime)
     register_llm_proxy_routes(app, runtime)
     register_transcription_routes(app, runtime)
+    if lifecycle_token:
+        controller = VoiceLifecycleController(
+            runtime,
+            token=lifecycle_token,
+            shutdown_callback=shutdown_callback,
+        )
+        app.state.lifecycle_controller = controller
+        register_lifecycle_routes(app, controller)
     return app

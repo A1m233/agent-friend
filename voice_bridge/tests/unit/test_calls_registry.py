@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from voice_bridge.calls import CallBinding, CallRegistry
+from voice_bridge.calls import CallBinding, CallRegistry, CallState
 
 
 def _make_binding(call_id: str = "c1", session_id: str = "s1") -> CallBinding:
@@ -81,6 +81,30 @@ class TestCallRegistry:
         actives = reg.list_active()
         assert len(actives) == 1
         assert actives[0].call_id == "active-1"
+
+    def test_activity_snapshot_blocks_for_pending_and_active_only(self) -> None:
+        reg = CallRegistry()
+        states: tuple[tuple[str, CallState], ...] = (
+            ("pending-2", "pending"),
+            ("pending-1", "pending"),
+            ("active-1", "active"),
+            ("stopped-1", "stopped"),
+            ("error-1", "error"),
+        )
+        for call_id, state in states:
+            reg.bind(_make_binding(call_id=call_id))
+            reg.update_state(call_id, state)
+
+        snapshot = reg.activity_snapshot()
+
+        assert snapshot.pending_call_ids == ("pending-1", "pending-2")
+        assert snapshot.active_call_ids == ("active-1",)
+        assert snapshot.blocks_restart
+
+        reg.update_state("pending-1", "stopped")
+        reg.update_state("pending-2", "error")
+        reg.update_state("active-1", "stopped")
+        assert not reg.activity_snapshot().blocks_restart
 
     def test_now_returns_utc(self) -> None:
         ts = CallRegistry.now()

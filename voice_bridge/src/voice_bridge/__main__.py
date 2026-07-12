@@ -18,6 +18,7 @@ from runtime_config import (
     settings_kwargs_for_mode,
 )
 
+from .app import create_app
 from .settings import VoiceBridgeSettings
 
 
@@ -45,14 +46,20 @@ def main(argv: list[str] | None = None) -> int:
 
     mode = config_mode_from_env()
     settings = VoiceBridgeSettings(**settings_kwargs_for_mode(mode))
-    uvicorn.run(
-        "voice_bridge.app:create_app",
-        host=settings.host,
-        port=settings.port,
-        factory=True,
-        log_level=settings.log_level.lower(),
-        reload=False,
+    app = create_app()
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=settings.host,
+            port=settings.port,
+            log_level=settings.log_level.lower(),
+            reload=False,
+        )
     )
+    controller = getattr(app.state, "lifecycle_controller", None)
+    if controller is not None:
+        controller.set_shutdown_callback(lambda: setattr(server, "should_exit", True))
+    server.run()
     return 0
 
 

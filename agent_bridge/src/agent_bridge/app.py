@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -33,6 +33,7 @@ from runtime_config import (
 )
 
 from .assembly import BridgeRuntime, build_runtime
+from .lifecycle import LIFECYCLE_TOKEN_ENV, BridgeLifecycleController, register_lifecycle_routes
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
@@ -64,10 +65,15 @@ def create_app() -> FastAPI:
     credentials = credential_source_for_mode(mode)
     runtime_config = resolve_bridge_runtime_config(credentials)
     runtime = build_runtime(settings, runtime_config=runtime_config)
-    return create_app_with_runtime(runtime)
+    return create_app_with_runtime(runtime, lifecycle_token=os.environ.get(LIFECYCLE_TOKEN_ENV))
 
 
-def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
+def create_app_with_runtime(
+    runtime: BridgeRuntime,
+    *,
+    lifecycle_token: str | None = None,
+    shutdown_callback: Callable[[], None] | None = None,
+) -> FastAPI:
     """测试 helper：直接传入已经装配好的 :class:`BridgeRuntime`，绕过环境变量加载。
 
     006 起新增。生产用 :func:`create_app`，测试 / 集成场景注入 runtime。
@@ -98,6 +104,15 @@ def create_app_with_runtime(runtime: BridgeRuntime) -> FastAPI:
         from .dev.fire_source import register_routes as register_dev_fire_routes
 
         register_dev_fire_routes(app, runtime)
+
+    if lifecycle_token:
+        controller = BridgeLifecycleController(
+            runtime,
+            token=lifecycle_token,
+            shutdown_callback=shutdown_callback,
+        )
+        app.state.lifecycle_controller = controller
+        register_lifecycle_routes(app, controller)
 
     return app
 
