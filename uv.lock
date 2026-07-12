@@ -846,16 +846,16 @@ source = { editable = "memory_eval" }
 dependencies = [
     { name = "llm-providers" },
     { name = "memory" },
-    { name = "python-dotenv" },
     { name = "rich" },
+    { name = "runtime-config" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "llm-providers", editable = "llm_providers" },
     { name = "memory", editable = "memory" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
+    { name = "runtime-config", editable = "runtime_config" },
 ]
 
 [[package]]

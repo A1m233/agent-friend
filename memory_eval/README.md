@@ -39,7 +39,7 @@ src/memory_eval/
 
 ## 运行
 
-> ⚠️ **会触发真实 LLM 抽取调用**（每段对话一次抽取）。按项目 `llm-api-confirm` 规则，运行前需获授权，并在项目根 `.env` 配置 `DEEPSEEK_API_KEY`。单测用 fake LLM，不触发真实调用。
+> ⚠️ **会触发真实 LLM 抽取调用**（每段对话一次抽取）。按项目 `llm-api-confirm` 规则，运行前需获授权。默认使用 runtime_config 当前配置和凭证中心；如需读取存量 `.env`，显式设置 `AGENT_FRIEND_CONFIG_MODE=legacy-dotenv`。单测用 fake LLM，不触发真实调用。
 
 ```bash
 # 默认 PerLTQA（中文）+ AnchorRecallJudge
@@ -55,7 +55,7 @@ src/memory_eval/
 | `--dataset` | `perltqa` | `perltqa`（中文，dialogues 子集）/ `locomo`（英文基线） |
 | `--limit-samples` | `1` | 只跑前 N 个样本（控制成本） |
 | `--limit-questions` | `5` | 每个样本只问前 N 个问题 |
-| `--model` | `.env` 默认 | 覆盖抽取用 model |
+| `--model` | runtime_config 默认 | 覆盖抽取用 model |
 
 ## 跑出来会得到什么
 
@@ -81,7 +81,7 @@ baseline 文件**随代码入 git 归档**，作为可在历史上溯源、跨�
 实际使用建议：
 
 - **小变动 / 直觉不确定**：手动跑 N=3 次（建议 N≥3），人工记录三次 macro 取均值，再判断 delta 是否真实。
-- **想要确定性更强**：把 `.env` 的 provider 参数设 `temperature=0`，或在 `--note` 里明示这次跑的温度设定，减少抖动。**baseline 文件的 `run.provider.defaults.temperature` 字段会忠实记录**。
+- **想要确定性更强**：在 runtime_config 当前配置中设置 provider 参数（legacy-dotenv 模式下可继续用 `.env`），或在 `--note` 里明示这次跑的温度设定，减少抖动。**baseline 文件的 `run.provider.defaults.temperature` 字段会忠实记录**。
 - **小幅 delta（< 5 个 percent）默认归因到噪声**：MVP 阶段对"真有变化"的判断保持谨慎，不基于单次差异下结论。
 
 ## 关于 PerLTQA 的非商用授权

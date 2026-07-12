@@ -1,8 +1,8 @@
 """memory_eval CLI 入口：在中文/英文记忆基准上跑 memory 的 ingest + retrieve + 判分。
 
 ⚠️ 运行会触发**真实 LLM 抽取调用**（每段对话一次抽取）。按项目 ``llm-api-confirm``
-规则需先获授权，并在项目根 ``.env`` 配置 ``DEEPSEEK_API_KEY``。单测用 fake LLM，不触发
-真实调用。
+规则需先获授权。默认从 runtime_config 凭证中心读取配置；如需读取存量
+``.env``，显式设置 ``AGENT_FRIEND_CONFIG_MODE=legacy-dotenv``。单测用 fake LLM，不触发真实调用。
 
 用法::
 
@@ -21,13 +21,10 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 from llm_providers import LLMAuthError, LLMClient, ProviderSpec
 from memory_eval.datasets import EvalCase, load_locomo, load_perltqa
@@ -43,6 +40,7 @@ from memory_eval.harness import (
 )
 from memory_eval.harness.baseline import BaselineRun
 from memory_eval.harness.baseline import write as write_baseline
+from runtime_config import CredentialMissingError, CredentialSource
 
 # __file__ = memory_eval/src/memory_eval/__main__.py → parents[2] = memory_eval/
 _DATA_DIR = Path(__file__).resolve().parents[2] / "data"
@@ -55,11 +53,43 @@ _PERLTQA_QA = _PERLTQA_DIR / "perltqa.json"
 _DATASETS = ("perltqa", "locomo")
 
 
-def _build_llm(model: str | None) -> tuple[LLMClient, ProviderSpec]:
+def _credential_source() -> CredentialSource:
+    from runtime_config import config_mode_from_env, credential_source_for_mode
+
+    return credential_source_for_mode(config_mode_from_env(), dotenv_path=Path.cwd() / ".env")
+
+
+def _optional_int(source: CredentialSource, name: str) -> int | None:
+    from runtime_config import optional_secret
+
+    raw = optional_secret(source, name)
+    if not raw:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _provider_spec(model: str | None, source: CredentialSource) -> ProviderSpec:
+    from llm_providers import ProviderConfig
+    from runtime_config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, optional_secret, require_secret
+
+    return ProviderSpec.from_config(
+        "DEEPSEEK",
+        ProviderConfig(
+            api_key=require_secret(source, DEEPSEEK_API_KEY),
+            model=model or optional_secret(source, DEEPSEEK_MODEL),
+            api_base=optional_secret(source, "DEEPSEEK_API_BASE"),
+            context_window=_optional_int(source, "DEEPSEEK_CONTEXT_WINDOW"),
+        ),
+    )
+
+
+def _build_llm(model: str | None, source: CredentialSource) -> tuple[LLMClient, ProviderSpec]:
     """返回 (client, 实际生效的 spec)。spec 给 baseline 记录 model / api_base / defaults。"""
-    spec = ProviderSpec.from_env(prefix="DEEPSEEK")
-    if model:
-        spec = dataclasses.replace(spec, model=model)
+    spec = _provider_spec(model, source)
     return LLMClient(spec), spec
 
 
@@ -113,7 +143,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--limit-samples", type=int, default=1, help="只跑前 N 个样本（控制成本）")
     p.add_argument("--limit-questions", type=int, default=5, help="每个样本只问前 N 个问题")
-    p.add_argument("--model", default=None, help="覆盖抽取用 model（默认取 .env）")
+    p.add_argument("--model", default=None, help="覆盖抽取用 model（默认取 runtime_config）")
     p.add_argument(
         "--note",
         default="",
@@ -139,7 +169,6 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    load_dotenv()
     args = _parse_args()
 
     cases, error = _load_cases(args.dataset, args.limit_samples)
@@ -151,10 +180,13 @@ def main() -> int:
         return 1
 
     try:
-        llm, spec = _build_llm(args.model)
-    except LLMAuthError as e:
+        source = _credential_source()
+        llm, spec = _build_llm(args.model, source)
+    except (CredentialMissingError, LLMAuthError, ValueError) as e:
         print(
-            f"[配置错误] {e}\n请在项目根 .env 配置 DEEPSEEK_API_KEY。",
+            f"[配置错误] {e}\n"
+            "默认请使用 scripts/credentials/run.* set-bundle deepseek 配置；"
+            "如需读取存量 .env，请设置 AGENT_FRIEND_CONFIG_MODE=legacy-dotenv。",
             file=sys.stderr,
         )
         return 1
