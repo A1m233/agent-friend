@@ -222,6 +222,39 @@ def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) 
     assert seen_kwargs["timeout"] == 12.5
 
 
+def test_stream_close_closes_upstream_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ClosableResponse:
+        closed = False
+
+        def __iter__(self) -> ClosableResponse:
+            return self
+
+        def __next__(self) -> Any:
+            return SimpleNamespace(
+                usage=None,
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="一", tool_calls=[]),
+                        finish_reason=None,
+                    )
+                ],
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = ClosableResponse()
+    monkeypatch.setattr(_COMPLETION, lambda **_kwargs: response)
+    client = LLMClient(_spec())
+
+    stream: Any = client.stream([{"role": "user", "content": "hi"}])
+    assert next(stream).text == "一"
+    close = stream.close
+    close()
+
+    assert response.closed is True
+
+
 def test_litellm_timeout_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_completion(**_kwargs: Any) -> Any:
         raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")

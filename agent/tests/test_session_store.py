@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event as ThreadEvent
+from threading import Thread
 from uuid import uuid4
 
+import portalocker
 from agent.sessions import Event, JsonlSessionStore, Session
 
 
@@ -68,3 +71,33 @@ def test_delete_unsafe_session_id_removes_encoded_file(tmp_path: Path) -> None:
 
     assert not created[0].exists()
     assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_load_waits_for_in_progress_writer(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = _session("session-a")
+    store.create(session)
+    path = tmp_path / "session-a.jsonl"
+    load_started = ThreadEvent()
+    load_finished = ThreadEvent()
+    loaded: list[Session] = []
+
+    def load_session() -> None:
+        load_started.set()
+        loaded.append(store.load("session-a"))
+        load_finished.set()
+
+    with portalocker.Lock(
+        path,
+        "a",
+        timeout=1,
+        flags=portalocker.LOCK_EX | portalocker.LOCK_NB,
+    ):
+        thread = Thread(target=load_session)
+        thread.start()
+        assert load_started.wait(timeout=1)
+        assert not load_finished.wait(timeout=0.05)
+
+    thread.join(timeout=2)
+    assert load_finished.is_set()
+    assert loaded[0].session_id == "session-a"

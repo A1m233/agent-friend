@@ -204,6 +204,11 @@ function MessageContent({
       {message.status === "error" && message.error && (
         <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
       )}
+      {message.status === "interrupted" && (
+        <p className="px-1 text-xs text-danger" role="status">
+          回答已被中断
+        </p>
+      )}
       {message.status === "streaming" && !hasContent && (
         <div className="flex items-center gap-1 px-1">
           <StatusDot tone="muted" pulse />

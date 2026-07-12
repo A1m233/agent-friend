@@ -155,6 +155,7 @@ def encode_stream(
                     )
 
                 elif isinstance(ev, ToolCallRequest):
+                    wire_tool_call_id = ev.event_tool_call_id or ev.tool_call_id
                     if open_message_id is not None:
                         yield _encode(
                             TextMessageEndEvent(
@@ -167,31 +168,32 @@ def encode_stream(
                     yield _encode(
                         ToolCallStartEvent(
                             type=EventType.TOOL_CALL_START,
-                            tool_call_id=ev.tool_call_id,
+                            tool_call_id=wire_tool_call_id,
                             tool_call_name=ev.tool_name,
                         )
                     )
                     yield _encode(
                         ToolCallArgsEvent(
                             type=EventType.TOOL_CALL_ARGS,
-                            tool_call_id=ev.tool_call_id,
+                            tool_call_id=wire_tool_call_id,
                             delta=_dump_args(ev.args),
                         )
                     )
                     yield _encode(
                         ToolCallEndEvent(
                             type=EventType.TOOL_CALL_END,
-                            tool_call_id=ev.tool_call_id,
+                            tool_call_id=wire_tool_call_id,
                         )
                     )
 
                 elif isinstance(ev, ToolCallResult):
+                    wire_tool_call_id = ev.event_tool_call_id or ev.tool_call_id
                     content = ev.text if not ev.is_error else f"[error] {ev.text}"
                     yield _encode(
                         ToolCallResultEvent(
                             type=EventType.TOOL_CALL_RESULT,
                             message_id=_new_message_id(),
-                            tool_call_id=ev.tool_call_id,
+                            tool_call_id=wire_tool_call_id,
                             content=content,
                             role="tool",
                         )
