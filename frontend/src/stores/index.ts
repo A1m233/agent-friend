@@ -10,3 +10,4 @@ export {
 export { useVoiceInputStore } from "./voiceInput";
 export { applyAguiEvent } from "./conversationReducer";
 export { projectSessionEvents } from "./sessionProjection";
+export { startSessionSyncSubscriber } from "./sessionSync";

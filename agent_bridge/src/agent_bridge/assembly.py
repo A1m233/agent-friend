@@ -26,10 +26,13 @@ from agent.tools import ToolRegistry
 from agent import (
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    NotifyingSessionStore,
     NullSessionStore,
     PersonaCatalog,
+    SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
+    SessionRevisionStore,
     SessionStore,
     default_context_manager,
     make_default_registry,
@@ -160,6 +163,7 @@ def _make_persistent_session_manager(
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder],
     llm_client_factory: Callable[[str], LLMClient],
     metadata_store: SessionMetadataStore | None = None,
+    session_change_broker: SessionChangeBroker | None = None,
 ) -> SessionManager:
     return SessionManager(
         store=store,
@@ -169,6 +173,7 @@ def _make_persistent_session_manager(
         tool_registry=tool_registry,
         memory=memory,
         metadata_store=metadata_store,
+        session_change_broker=session_change_broker,
     )
 
 
@@ -184,7 +189,11 @@ def build_runtime(
         llm_providers.LLMAuthError: ``DEEPSEEK_API_KEY`` 缺失或非法（仅做格式预检；
             真正调 LLM 时仍可能再次抛）。
     """
-    persistent_store = JsonlSessionStore(settings.sessions_dir)
+    base_persistent_store = JsonlSessionStore(settings.sessions_dir)
+    session_change_broker = SessionChangeBroker(
+        SessionRevisionStore(settings.sessions_dir / "session-revisions.json")
+    )
+    persistent_store = NotifyingSessionStore(base_persistent_store, session_change_broker)
     session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
@@ -232,6 +241,7 @@ def build_runtime(
         prompt_builder_factory,
         llm_client_factory,
         session_metadata_store,
+        session_change_broker,
     )
 
     agent_runtime = build_agent_runtime(
@@ -239,6 +249,7 @@ def build_runtime(
         session_manager=persistent_session_manager,
         memory=memory,
     )
+    session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
 
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
     im_runtime: IMRuntime | None = None

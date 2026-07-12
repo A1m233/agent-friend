@@ -80,6 +80,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_id=decoded.run_id,
                 channel="text",
                 conversation_factory=lambda: bridge.bind_persistent(boot),
+                metadata={"protocol": "ag_ui"},
                 error_callback=_persist_error,
             )
 

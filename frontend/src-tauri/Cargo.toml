@@ -33,7 +33,7 @@ dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 futures-util = "0.3"
 # 016 · bubble window 显隐 → 跟随轮询 task 唤醒（park / unpark 语义）
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
 tauri-plugin-opener = "2.5.4"
 
 # 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)

@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..errors import AgentError
+from .changes import SessionChangeBroker
 from .metadata import SessionMetadataStore
 from .session import Session
 from .store import SessionStore, SessionSummary
@@ -81,6 +82,7 @@ class SessionManager:
         tool_registry: ToolRegistry | None = None,
         memory: Memory | None = None,
         metadata_store: SessionMetadataStore | None = None,
+        session_change_broker: SessionChangeBroker | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -90,6 +92,7 @@ class SessionManager:
         self._tool_registry = tool_registry
         self._memory = memory
         self._metadata_store = metadata_store
+        self._session_change_broker = session_change_broker
 
     # ----- 会话 CRUD -----
 
@@ -198,6 +201,10 @@ class SessionManager:
         self._store.load(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_display_title(session_id, normalized)
+        if self._session_change_broker is not None:
+            self._session_change_broker.record_change(
+                session_id, change_kind="metadata", origin="session_management"
+            )
         return self._summary(session_id)
 
     def archive(self, session_id: str) -> SessionSummary:
@@ -205,6 +212,10 @@ class SessionManager:
         self._store.load(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, datetime.now(UTC))
+        if self._session_change_broker is not None:
+            self._session_change_broker.record_change(
+                session_id, change_kind="archived", origin="session_management"
+            )
         return self._summary(session_id)
 
     def unarchive(self, session_id: str) -> SessionSummary:
@@ -212,6 +223,10 @@ class SessionManager:
         self._store.load(session_id)
         if self._metadata_store is not None:
             self._metadata_store.set_archived_at(session_id, None)
+        if self._session_change_broker is not None:
+            self._session_change_broker.record_change(
+                session_id, change_kind="unarchived", origin="session_management"
+            )
         return self._summary(session_id)
 
     def delete(self, session_id: str) -> None:

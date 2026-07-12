@@ -1,9 +1,9 @@
 # 035 · 外部入口更新会话后 chat 视图不自动同步
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-07-01
-- **关联需求**：无
+- **关联需求**：[046-external-session-sync](../../requirements/046-external-session-sync/requirement.md)
 
 ## 现象
 当会话由非 chat 前端入口触发更新时，例如 QQ bot 收到语音消息并写入同一个 IM session，当前打开的 chat 窗不会自动看到最新消息。
@@ -34,3 +34,9 @@
 - Tauri push subscriber 同时订阅并分发 chat 所需的会话变更事件，而不是只服务 pet。
 - chat 收到当前 session 变更时按需重拉 `/v1/sessions/{id}`；收到其他 session 变更时刷新 session list。
 - 对当前用户正在阅读历史或本地正在 streaming 的场景做去抖、去重和滚动策略，避免打断体验。
+
+## 修复指向
+
+已由 [需求 046 · 外部会话更新同步](../../requirements/046-external-session-sync/requirement.md) 完成修复。该需求在统一 session 持久化边界发出 revision 化失效通知，由 Tauri subscriber 自动重连并转发，前端通过 push invalidation + pull refresh 校准会话列表和当前会话，同时保护 streaming、请求乱序及阅读位置。
+
+2026-07-13 验收记录：用户已确认当前/非当前 session 同步、streaming 延后、历史阅读与贴底、首次不可达恢复及 SSE 断流恢复；最终 `scripts/check` 全绿（Python 772 passed、前端 302 passed），Rust push subscriber 14 tests passed，未调用真实 LLM/provider API。

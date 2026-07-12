@@ -27,7 +27,7 @@ export interface PushEvent {
 
 export interface PushEnvelope {
   /** "user_turn" / "agent_turn" / "heartbeat"。pet 订阅端 (kinds=agent_turn) 主要看 agent_turn。 */
-  kind: "user_turn" | "agent_turn" | "heartbeat";
+  kind: "user_turn" | "agent_turn" | "session_changed" | "heartbeat";
   session_id: string;
   /** subscriber 视角下的单调递增序号；store 用 `${session_id}:${seq}` 作 BubbleItem id。 */
   seq: number;
@@ -35,6 +35,10 @@ export interface PushEnvelope {
   source_kind: string | null;
   /** 序列化后的 ConversationEvent 列表（**不是** SessionEvent；schema 见模块顶部注释）；heartbeat 时为空。 */
   events: PushEvent[];
+  revision?: number | null;
+  change_kind?: string | null;
+  origin?: string | null;
+  channel?: "text" | "voice" | null;
 }
 
 // SessionEvent 仍由 sessionProjection 消费（GET /v1/sessions/{id} 返回的持久化 events）；

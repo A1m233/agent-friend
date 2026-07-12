@@ -45,7 +45,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         request: Request,
         kinds: str = Query(
             "agent_turn,user_turn",
-            description="逗号分隔的 envelope kind 过滤：agent_turn / user_turn",
+            description="逗号分隔的 envelope kind 过滤：agent_turn / user_turn / session_changed",
         ),
     ) -> StreamingResponse:
         if runtime.agent_runtime is None:

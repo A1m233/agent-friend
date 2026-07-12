@@ -31,6 +31,7 @@ from agent.runtime import (
     SystemTriggerEvent,
     UserEvent,
 )
+from agent.sessions.changes import SessionChange
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -404,6 +405,34 @@ def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) 
         assert assistant.meta["run_id"] == "run-045"
     finally:
         runtime.stop()
+
+
+def test_session_changed_is_published_without_turn_buffer() -> None:
+    runtime = AgentRuntime(conversation_factory=lambda _sid: cast(Conversation, None))
+
+    async def scenario() -> None:
+        sub = Subscriber(
+            loop=asyncio.get_running_loop(), accept_kinds=frozenset({"session_changed"})
+        )
+        runtime.listeners.register(sub)
+        runtime.listeners.publish_session_change(
+            SessionChange(
+                session_id="s1",
+                revision=7,
+                change_kind="content",
+                origin="openai",
+                channel="voice",
+            )
+        )
+        env = await asyncio.wait_for(sub.queue.get(), timeout=1)
+        assert env.kind == "session_changed"
+        assert env.revision == 7
+        assert env.events == []
+        assert env.origin == "openai"
+        assert env.channel == "voice"
+        runtime.listeners.unregister(sub.id)
+
+    asyncio.run(scenario())
 
 
 def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -> None:

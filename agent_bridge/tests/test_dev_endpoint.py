@@ -135,6 +135,27 @@ def test_dev_mode_false_returns_404(tmp_path: Path) -> None:
     assert resp.status_code == 404
 
 
+def test_dev_mock_session_event_persists_without_runtime_dispatch(tmp_path: Path) -> None:
+    runtime, source = _build_runtime(tmp_path, dev_mode=True)
+    client = TestClient(create_app_with_runtime(runtime))
+    response = client.post(
+        "/dev/mock-session-event",
+        params={
+            "session_id": "mock-session",
+            "title": "Mock title",
+            "role": "assistant",
+            "content": "mock reply",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "mock-session"
+    session = runtime.persistent_session_manager.open("mock-session")
+    assert session.initial_title == "Mock title"
+    assert session.messages[-1].content == "mock reply"
+    assert source is not None
+    assert source.fire_count == 0
+
+
 # ===== dev_mode=True：端点行为 =====
 
 

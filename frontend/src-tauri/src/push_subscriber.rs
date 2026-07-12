@@ -13,6 +13,7 @@
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 /// 与 `agent_bridge/src/agent_bridge/push/protocol.py` 的 `PushEnvelope` schema 对齐。
@@ -27,6 +28,47 @@ pub struct PushEnvelope {
     pub seq: u64,
     pub source_kind: Option<String>,
     pub events: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub revision: Option<u64>,
+    #[serde(default)]
+    pub change_kind: Option<String>,
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub channel: Option<String>,
+}
+
+const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(400);
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
+
+#[derive(Debug)]
+struct ReconnectBackoff {
+    next: Duration,
+}
+
+impl ReconnectBackoff {
+    fn new() -> Self {
+        Self { next: RECONNECT_INITIAL_DELAY }
+    }
+
+    fn take_delay(&mut self) -> Duration {
+        let base = self.next;
+        self.next = std::cmp::min(self.next.saturating_mul(2), RECONNECT_MAX_DELAY);
+        jitter(base)
+    }
+
+    fn reset(&mut self) {
+        self.next = RECONNECT_INITIAL_DELAY;
+    }
+}
+
+fn jitter(base: Duration) -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let spread_ms = std::cmp::max(1, base.as_millis() as u64 / 5);
+    base.saturating_add(Duration::from_millis(nanos % spread_ms))
 }
 
 /// 启动 push channel 长 SSE 订阅；放在独立 tokio task 跑，app 退出时随 runtime drop。
@@ -35,28 +77,53 @@ pub struct PushEnvelope {
 pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_loop(handle, bridge_base_url).await {
-            log::warn!("push_subscriber 终止: {e}");
-        }
+        run_reconnecting(handle, bridge_base_url).await;
     });
 }
 
-async fn run_loop(
-    app: AppHandle,
-    base_url: String,
+async fn run_reconnecting(app: AppHandle, base_url: String) {
+    let url = format!(
+        "{}/push/subscribe?kinds=agent_turn,session_changed",
+        base_url.trim_end_matches('/')
+    );
+    let client = reqwest::Client::new();
+    let mut backoff = ReconnectBackoff::new();
+    let mut recovering = false;
+    loop {
+        match run_connection(&app, &client, &url, recovering, &mut backoff).await {
+            Ok(()) => log::warn!("push_subscriber stream ended; reconnecting"),
+            Err(error) => log::warn!("push_subscriber disconnected: {error}"),
+        }
+        recovering = true;
+        let delay = backoff.take_delay();
+        log::info!("push_subscriber retry in {}ms", delay.as_millis());
+        tokio::time::sleep(delay).await;
+    }
+}
+
+async fn run_connection(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    url: &str,
+    recovering: bool,
+    backoff: &mut ReconnectBackoff,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let url = format!("{base_url}/push/subscribe?kinds=agent_turn");
     log::info!("push_subscriber 启动: {url}");
 
-    let client = reqwest::Client::new();
     let resp = client
-        .get(&url)
+        .get(url)
         .header("Accept", "text/event-stream")
         .send()
         .await?;
     let status = resp.status();
     if !status.is_success() {
         return Err(format!("push subscribe failed: HTTP {status}").into());
+    }
+    backoff.reset();
+    if recovering {
+        if let Err(error) = app.emit_to("chat", "session://push-reconnected", ()) {
+            log::warn!("emit_to(chat, reconnected) failed: {error}");
+        }
     }
 
     let mut stream = resp.bytes_stream();
@@ -71,6 +138,11 @@ async fn run_loop(
             match parse_envelope_frame(frame) {
                 Some(env) if env.kind == "heartbeat" => {
                     log::trace!("push heartbeat seq={}", env.seq);
+                }
+                Some(env) if env.kind == "session_changed" => {
+                    if let Err(e) = app.emit_to("chat", "session://changed", env) {
+                        log::warn!("emit_to(chat, session changed) failed: {e}");
+                    }
                 }
                 Some(env) => {
                     log::debug!(
@@ -259,6 +331,10 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             seq: 42,
             source_kind: Some("idle_reflection".into()),
             events: vec![serde_json::json!({"type": "memory_observation"})],
+            revision: None,
+            change_kind: None,
+            origin: None,
+            channel: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();
@@ -267,5 +343,27 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(parsed.seq, original.seq);
         assert_eq!(parsed.source_kind, original.source_kind);
         assert_eq!(parsed.events.len(), 1);
+    }
+
+    #[test]
+    fn parse_session_changed_envelope() {
+        let frame = br#"data: {"kind":"session_changed","session_id":"s1","seq":4,"source_kind":null,"events":[],"revision":9,"change_kind":"content","origin":"openai","channel":"voice"}"#;
+        let env = parse_envelope_frame(frame).unwrap();
+        assert_eq!(env.kind, "session_changed");
+        assert_eq!(env.revision, Some(9));
+        assert_eq!(env.origin.as_deref(), Some("openai"));
+        assert_eq!(env.channel.as_deref(), Some("voice"));
+    }
+
+    #[test]
+    fn reconnect_backoff_is_capped_and_resettable() {
+        let mut backoff = ReconnectBackoff::new();
+        for _ in 0..20 {
+            let delay = backoff.take_delay();
+            assert!(delay >= RECONNECT_INITIAL_DELAY);
+            assert!(delay < RECONNECT_MAX_DELAY + RECONNECT_MAX_DELAY / 5);
+        }
+        backoff.reset();
+        assert_eq!(backoff.next, RECONNECT_INITIAL_DELAY);
     }
 }
