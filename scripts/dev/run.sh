@@ -20,6 +20,15 @@ VOICE_MODE="local"
 CDP_ENABLED=0
 CDP_PORT=""
 CONFIG_MODE="${AGENT_FRIEND_CONFIG_MODE:-desktop}"
+DEV_COMMAND="start"
+if [ "$#" -gt 0 ]; then
+    case "$1" in
+        status|stop|takeover)
+            DEV_COMMAND="$1"
+            shift
+            ;;
+    esac
+fi
 ARGS=()
 while [ "$#" -gt 0 ]; do
     a="$1"
@@ -76,6 +85,56 @@ if ! command -v uv >/dev/null 2>&1; then
     echo "  [ERROR] 未检测到 uv。先跑 ./scripts/setup/run.sh 初始化环境。" >&2
     exit 1
 fi
+
+RUNTIME_GUARD="$ROOT/scripts/dev/runtime_guard.py"
+RUNTIME_LEASE_ACQUIRED=0
+
+dev_runtime_ports() {
+    local ports="1420,1421,18800,18900"
+    if [ "$MODE" = "tauri" ] && [ "$CDP_ENABLED" = "1" ] && [ -n "$CDP_PORT" ]; then
+        ports="$ports,$CDP_PORT"
+    fi
+    printf '%s\n' "$ports"
+}
+
+run_runtime_guard() {
+    local command="$1"
+    shift
+    uv run python "$RUNTIME_GUARD" "$command" \
+        --worktree "$ROOT" \
+        --mode "$MODE" \
+        --ports "$(dev_runtime_ports)" \
+        "$@"
+}
+
+release_runtime_lease() {
+    if [ "$RUNTIME_LEASE_ACQUIRED" = "1" ]; then
+        uv run python "$RUNTIME_GUARD" release --owner-pid "$$" >/dev/null 2>&1 || true
+        RUNTIME_LEASE_ACQUIRED=0
+    fi
+}
+
+cleanup_lease_only() {
+    trap - INT TERM EXIT
+    release_runtime_lease
+}
+
+if [ "$DEV_COMMAND" = "status" ]; then
+    run_runtime_guard status
+    exit $?
+fi
+if [ "$DEV_COMMAND" = "stop" ]; then
+    run_runtime_guard stop
+    exit $?
+fi
+if [ "$DEV_COMMAND" = "takeover" ]; then
+    run_runtime_guard takeover --owner-pid "$$"
+else
+    run_runtime_guard acquire --owner-pid "$$"
+fi
+RUNTIME_LEASE_ACQUIRED=1
+trap cleanup_lease_only INT TERM EXIT
+
 # shellcheck source=/dev/null
 . "$ROOT/scripts/frontend/_ensure-node.sh"
 ensure_node_pnpm
@@ -246,62 +305,6 @@ start_voice_tunnel() {
     echo "  [OK] VOICE_BRIDGE_PUBLIC_URL=$public_url"
 }
 
-# 028 · dev 脚本启动前端前，若 1420 被上次残留进程占用，尝试自动清理。
-# 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
-DEV_PORT=1420
-
-cleanup_port() {
-    local port="$1"
-    if ! command -v lsof >/dev/null 2>&1; then
-        return 1
-    fi
-    local pids
-    pids=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-    if [ -z "$pids" ]; then
-        return 0
-    fi
-    echo "  [WARN] 端口 $port 被占用，尝试清理上次残留的 vite/tauri 进程…"
-    local killed=()
-    for pid in $pids; do
-        local comm
-        comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
-        # 只杀疑似前端 dev 相关的进程，避免误伤用户其他服务。
-        case "$comm" in
-            node|pnpm|tauri|cargo|"app"*)
-                if kill -TERM "$pid" 2>/dev/null; then
-                    killed+=("$pid")
-                fi
-                ;;
-        esac
-    done
-    # 等最多 2 秒让进程退出
-    for _ in {1..20}; do
-        if ! lsof -ti tcp:"$port" >/dev/null 2>&1; then
-            echo "  [OK] 端口 $port 已释放"
-            return 0
-        fi
-        sleep 0.1
-    done
-    # 还有残留则强制杀
-    local remaining
-    remaining=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-    for pid in $remaining; do
-        kill -KILL "$pid" 2>/dev/null || true
-    done
-    sleep 0.2
-    if ! lsof -ti tcp:"$port" >/dev/null 2>&1; then
-        echo "  [OK] 端口 $port 已释放"
-        return 0
-    fi
-    return 1
-}
-
-if ! cleanup_port "$DEV_PORT"; then
-    echo "  [ERROR] 端口 $DEV_PORT 仍被占用，无法启动前端 dev server。" >&2
-    echo "          请检查是否有其他程序占用该端口，或手动终止相关进程后再试。" >&2
-    exit 1
-fi
-
 if [ "$MODE" = "tauri" ] && [ "$CDP_ENABLED" = "1" ]; then
     echo "===> WebView2 CDP 仅 Windows dev 脚本启用；mac/linux 本次忽略 --cdp-port $CDP_PORT"
 fi
@@ -312,6 +315,7 @@ cleanup() {
     trap - INT TERM EXIT
     echo ""
     echo "===> 收尾：停止 bridge / voice_bridge / 前端…"
+    release_runtime_lease
     kill 0 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT

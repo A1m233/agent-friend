@@ -24,9 +24,20 @@ $voiceMode = "local"
 $cdpEnabled = $true
 $cdpPort = 9222
 $configMode = if ([string]::IsNullOrWhiteSpace($env:AGENT_FRIEND_CONFIG_MODE)) { "desktop" } else { $env:AGENT_FRIEND_CONFIG_MODE }
+$devCommand = "start"
+$inputArgs = @($args)
+if ($inputArgs.Count -gt 0 -and @("status", "stop", "takeover") -contains $inputArgs[0]) {
+    $devCommand = $inputArgs[0]
+    if ($inputArgs.Count -gt 1) {
+        $inputArgs = @($inputArgs[1..($inputArgs.Count - 1)])
+    }
+    else {
+        $inputArgs = @()
+    }
+}
 $rest = @()
-for ($i = 0; $i -lt $args.Count; $i++) {
-    $a = $args[$i]
+for ($i = 0; $i -lt $inputArgs.Count; $i++) {
+    $a = $inputArgs[$i]
     if ($a -like "--config-mode=*") {
         $configMode = $a.Substring("--config-mode=".Length)
         continue
@@ -39,14 +50,14 @@ for ($i = 0; $i -lt $args.Count; $i++) {
         "--no-cdp" { $cdpEnabled = $false }
         "--cdp-port" {
             $i += 1
-            if ($i -ge $args.Count) {
+            if ($i -ge $inputArgs.Count) {
                 Write-Error "--cdp-port 需要一个端口号，例如：--cdp-port 9222"
             }
             try {
-                $cdpPort = [int]$args[$i]
+                $cdpPort = [int]$inputArgs[$i]
             }
             catch {
-                Write-Error "--cdp-port 只接受数字端口，收到：$($args[$i])"
+                Write-Error "--cdp-port 只接受数字端口，收到：$($inputArgs[$i])"
             }
             $cdpEnabled = $true
         }
@@ -63,16 +74,49 @@ New-Item -ItemType Directory -Force -Path $env:AGENT_FRIEND_LOG_DIR | Out-Null
 $devBridgeLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-bridge.log"
 $devVoiceLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-voice.log"
 Write-Host "===> 日志目录：$env:AGENT_FRIEND_LOG_DIR"
+$runtimeGuardPath = Join-Path $root "scripts\dev\runtime_guard.py"
+$runtimeLeaseAcquired = $false
+$lastRuntimeGuardExitCode = 0
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
 }
+
+function Get-DevRuntimePorts {
+    $ports = @(1420, 1421, 18800, 18900)
+    if ($mode -eq "tauri" -and $cdpEnabled) {
+        $ports += $cdpPort
+    }
+    return @($ports | Sort-Object -Unique)
+}
+
+function Invoke-DevRuntimeGuard([string]$command) {
+    $portsText = (Get-DevRuntimePorts) -join ","
+    & uv run python $runtimeGuardPath $command --worktree $root --mode $mode --ports $portsText
+    $script:lastRuntimeGuardExitCode = $LASTEXITCODE
+}
+
+if ($devCommand -eq "status") {
+    Invoke-DevRuntimeGuard "status"
+    if ($lastRuntimeGuardExitCode -ne 0) { exit $lastRuntimeGuardExitCode }
+    return
+}
+if ($devCommand -eq "stop") {
+    Invoke-DevRuntimeGuard "stop"
+    if ($lastRuntimeGuardExitCode -ne 0) { exit $lastRuntimeGuardExitCode }
+    return
+}
+
+$guardCommand = if ($devCommand -eq "takeover") { "takeover" } else { "acquire" }
+$runtimePortsText = (Get-DevRuntimePorts) -join ","
+& uv run python $runtimeGuardPath $guardCommand --worktree $root --mode $mode --ports $runtimePortsText --owner-pid $PID
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+$runtimeLeaseAcquired = $true
+
 . (Join-Path $PSScriptRoot "..\frontend\_ensure-node.ps1")
 Ensure-NodePnpm
-
-# 028 · dev 脚本启动前端前，若 1420 被上次残留进程占用，尝试自动清理。
-# 不自动换端口：1420/1421 与 tauri.conf.json / vite.config.ts 多处约定耦合，换端口更易出错。
-$DevPort = 1420
 
 function Get-DevPortListeners($port) {
     try {
@@ -499,12 +543,6 @@ function Stop-AgentFriendDevRuntime($reason, [int[]]$requiredFreePorts, [switch]
     return $true
 }
 
-$preflightPorts = @($DevPort)
-if ($mode -eq "tauri" -and $cdpEnabled) {
-    $preflightPorts += $cdpPort
-}
-Stop-AgentFriendDevRuntime "检测到上次残留的 vite/tauri dev runtime" $preflightPorts -failOnBlockedPort
-
 if ($mode -eq "tauri" -and $cdpEnabled) {
     if (Test-PortInUse $cdpPort) {
         Write-Error "WebView2 CDP 端口 $cdpPort 已被占用。请关闭占用进程，或改用 --cdp-port <port>，或传 --no-cdp。"
@@ -640,5 +678,14 @@ finally {
 }
 }
 finally {
+    if ($runtimeLeaseAcquired) {
+        try {
+            & uv run python $runtimeGuardPath release --owner-pid $PID | Out-Null
+        }
+        catch {
+            Write-Warning "释放 dev runtime lease 失败：$($_.Exception.Message)"
+        }
+        $runtimeLeaseAcquired = $false
+    }
     Set-Location $previousLocation
 }
