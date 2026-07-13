@@ -101,15 +101,14 @@ def test_main_does_not_load_dotenv_into_process_env(
 
     captured: dict[str, Any] = {}
 
-    def fake_run(*args: Any, **kwargs: Any) -> None:
-        captured["args"] = args
-        captured["kwargs"] = kwargs
+    def fake_run(server: Any) -> None:
+        captured["port"] = server.config.port
 
-    monkeypatch.setattr("voice_bridge.__main__.uvicorn.run", fake_run)
+    monkeypatch.setattr("voice_bridge.__main__.uvicorn.Server.run", fake_run)
 
     assert voice_main.main([]) == 0
     assert "VOICE_BRIDGE_PUBLIC_URL" not in os.environ
-    assert captured["kwargs"]["port"] == 18900
+    assert captured["port"] == 18900
 
 
 def test_main_legacy_dotenv_reads_non_runtime_settings(
@@ -132,15 +131,14 @@ def test_main_legacy_dotenv_reads_non_runtime_settings(
 
     captured: dict[str, Any] = {}
 
-    def fake_run(*args: Any, **kwargs: Any) -> None:
-        captured["args"] = args
-        captured["kwargs"] = kwargs
+    def fake_run(server: Any) -> None:
+        captured["port"] = server.config.port
 
-    monkeypatch.setattr("voice_bridge.__main__.uvicorn.run", fake_run)
+    monkeypatch.setattr("voice_bridge.__main__.uvicorn.Server.run", fake_run)
 
     assert voice_main.main(["--legacy-dotenv"]) == 0
     assert "VOICE_BRIDGE_PUBLIC_URL" not in os.environ
-    assert captured["kwargs"]["port"] == 19999
+    assert captured["port"] == 19999
 
 
 def test_streaming_asr_defaults() -> None:

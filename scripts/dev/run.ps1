@@ -537,6 +537,23 @@ if ($voiceMode -eq "tunnel") {
     $cloudflared = $tunnel.Process
 }
 
+if ($mode -eq "tauri") {
+    # 047 · source desktop runtime ownership belongs to Tauri Core. The script
+    # only prepares environment/tunnel state and launches the desktop shell.
+    $env:AGENT_FRIEND_REPO_ROOT = $root
+    $env:AGENT_FRIEND_DEV_VOICE_MODE = $voiceMode
+    $env:AGENT_BRIDGE_DEV_MODE = "true"
+    Write-Host "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
+    Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
+    Set-Location (Join-Path $root "frontend")
+    pnpm tauri dev @rest
+    $frontendExitCode = $LASTEXITCODE
+    if ($frontendExitCode -ne 0) {
+        Write-Error "Tauri dev 命令退出，exit code=$frontendExitCode。已进入收尾清理。"
+    }
+    return
+}
+
 Write-Host "===> 启动 bridge（127.0.0.1:18800）…"
 Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
 # AGENT_BRIDGE_DEV_MODE=true 挂 /dev/* 端点（如 /dev/fire-source 立即触发主动轮），

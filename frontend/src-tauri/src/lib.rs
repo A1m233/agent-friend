@@ -13,6 +13,7 @@ mod paths;
 mod pet_display_topology;
 mod push_subscriber;
 mod runtime_config;
+mod runtime_services;
 mod settings;
 mod ui_state;
 mod window_placement;
@@ -716,6 +717,10 @@ pub fn run() {
     let bootstrap_settings = settings::load_from_disk_or_default();
     let init_script = settings::build_init_script(&bootstrap_settings);
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
+    let runtime_service_supervisor =
+        Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment());
+    let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
+    let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
 
     let builder = tauri::Builder::default()
         .manage(bubble_window::BubbleState::default())
@@ -723,6 +728,7 @@ pub fn run() {
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
         .manage(settings_state.clone())
+        .manage(runtime_service_supervisor.clone())
         .plugin(navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -753,6 +759,10 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        runtime_services::get_runtime_service_snapshot,
+        runtime_services::start_runtime_service,
+        runtime_services::stop_runtime_service,
+        runtime_services::restart_runtime_service,
         avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
         ui_state::get_pet_ui_persistence,
@@ -779,6 +789,10 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        runtime_services::get_runtime_service_snapshot,
+        runtime_services::start_runtime_service,
+        runtime_services::stop_runtime_service,
+        runtime_services::restart_runtime_service,
         avatar_models::get_installed_avatar_model_resources,
         ui_state::get_chat_ui_persistence,
         ui_state::get_pet_ui_persistence,
@@ -918,6 +932,29 @@ pub fn run() {
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
+            #[cfg(debug_assertions)]
+            {
+                let handle = app.handle().clone();
+                let supervisor = setup_runtime_service_supervisor.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = supervisor
+                        .start(Some(&handle), runtime_services::RuntimeServiceKind::Bridge)
+                        .await
+                    {
+                        log::error!("bridge supervisor startup failed: {error}");
+                    }
+                    let voice_mode = std::env::var("AGENT_FRIEND_DEV_VOICE_MODE")
+                        .unwrap_or_else(|_| "local".to_string());
+                    if voice_mode != "off" {
+                        if let Err(error) = supervisor
+                            .start(Some(&handle), runtime_services::RuntimeServiceKind::Voice)
+                            .await
+                        {
+                            log::error!("voice supervisor startup failed: {error}");
+                        }
+                    }
+                });
+            }
             // 017 · pet 窗形态切换为整屏 transparent overlay
             //   - cross-platform · monitors union setBounds（先于 to_panel）
             //   - macOS only · ActivationPolicy::Accessory + NSPanel 转换（沿
@@ -944,8 +981,15 @@ pub fn run() {
             bubble_window::init(app.handle())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(move |_app_handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                tauri::async_runtime::block_on(
+                    exit_runtime_service_supervisor.cleanup_owned_children(),
+                );
+            }
+        });
 }
 
 #[cfg(test)]

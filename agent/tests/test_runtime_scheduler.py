@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 from agent.runtime.cancellation import CancelReason, RunCancelled
 from agent.runtime.inbox import SystemTriggerEvent, UserEvent
-from agent.runtime.models import RunOutcome, RunPriority, RunRequest
-from agent.runtime.scheduler import RunScheduler
+from agent.runtime.models import RunHandle, RunOutcome, RunPriority, RunRequest
+from agent.runtime.scheduler import RunScheduler, RuntimeDrainReport
 
 
 def _user(session_id: str, text: str) -> RunRequest:
@@ -190,6 +191,72 @@ def test_stop_reports_non_clean_until_uncancellable_worker_returns() -> None:
     assert terminal is not None
     assert terminal.outcome is RunOutcome.CANCELLED
     assert scheduler.stop(timeout=2)
+
+
+def test_drain_rejects_new_work_and_cancels_queued_runs() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def execute(_request: RunRequest, _handle: RunHandle) -> None:
+        started.set()
+        release.wait(2)
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    active = scheduler.submit(_user("active", "first"))
+    assert started.wait(1)
+    queued = scheduler.submit(_user("active", "second"))
+
+    result: list[RuntimeDrainReport] = []
+
+    def drain() -> None:
+        result.append(scheduler.drain(grace_timeout=1, cancel_timeout=1))
+
+    thread = threading.Thread(target=drain)
+    thread.start()
+    queued_terminal = queued.wait(1)
+    rejected = scheduler.submit(_user("new", "third"))
+    release.set()
+    thread.join(2)
+
+    report = result[0]
+    assert queued_terminal is not None
+    assert queued_terminal.outcome is RunOutcome.CANCELLED
+    assert queued_terminal.reason_code == "runtime_draining"
+    assert rejected.wait(1).outcome is RunOutcome.REJECTED  # type: ignore[union-attr]
+    assert report.queued_cancelled == 1
+    assert report.running_at_start == 1
+    assert report.completed_during_grace == 1
+    assert not report.timed_out
+    assert active.wait(1).outcome is RunOutcome.COMPLETED  # type: ignore[union-attr]
+    assert scheduler.stop()
+
+
+def test_drain_cooperatively_cancels_worker_after_grace_timeout() -> None:
+    started = threading.Event()
+
+    def execute(_request: RunRequest, handle: RunHandle) -> None:
+        started.set()
+        while True:
+            handle.token.raise_if_cancelled()
+            time.sleep(0.005)
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    handle = scheduler.submit(_user("active", "first"))
+    assert started.wait(1)
+
+    report = scheduler.drain(grace_timeout=0, cancel_timeout=1)
+
+    terminal = handle.wait(1)
+    assert report.running_at_start == 1
+    assert report.completed_during_grace == 0
+    assert report.cancellation_requested == 1
+    assert report.still_running == 0
+    assert not report.timed_out
+    assert terminal is not None
+    assert terminal.outcome is RunOutcome.CANCELLED
+    assert scheduler.stop()
 
 
 def test_interactive_frees_same_session_background_capacity_before_admission() -> None:

@@ -57,7 +57,7 @@ from .models import (
     RunPriority,
     RunRequest,
 )
-from .scheduler import RunScheduler
+from .scheduler import RunScheduler, RuntimeActivitySnapshot, RuntimeDrainReport
 
 __all__ = [
     "PRE_TOOL_PROCEED",
@@ -77,6 +77,8 @@ __all__ = [
     "RunOutcome",
     "RunPriority",
     "RunRequest",
+    "RuntimeActivitySnapshot",
+    "RuntimeDrainReport",
     "Subscriber",
     "SystemTriggerEvent",
     "UserEvent",
@@ -287,6 +289,23 @@ class AgentRuntime:
         if run_id is not None:
             kwargs["run_id"] = run_id
         return self._scheduler.submit(RunRequest(**kwargs))
+
+    def activity_snapshot(self) -> RuntimeActivitySnapshot:
+        return self._scheduler.activity_snapshot()
+
+    def quiesce(self) -> RuntimeActivitySnapshot:
+        return self._scheduler.quiesce()
+
+    def drain(
+        self,
+        *,
+        grace_timeout: float = 5.0,
+        cancel_timeout: float = 5.0,
+    ) -> RuntimeDrainReport:
+        return self._scheduler.drain(
+            grace_timeout=grace_timeout,
+            cancel_timeout=cancel_timeout,
+        )
 
     # ----- internals -----
 

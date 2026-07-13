@@ -5,8 +5,10 @@ from __future__ import annotations
 import heapq
 import logging
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import count
 
@@ -16,6 +18,23 @@ from .models import RunHandle, RunOutcome, RunPriority, RunRequest, RunStatus
 logger = logging.getLogger(__name__)
 
 RunExecutor = Callable[[RunRequest, RunHandle], None]
+
+
+@dataclass(frozen=True)
+class RuntimeActivitySnapshot:
+    accepting: bool
+    queued: int
+    running: int
+
+
+@dataclass(frozen=True)
+class RuntimeDrainReport:
+    queued_cancelled: int
+    running_at_start: int
+    completed_during_grace: int
+    cancellation_requested: int
+    still_running: int
+    timed_out: bool
 
 
 class RunScheduler:
@@ -127,6 +146,80 @@ class RunScheduler:
             self._refresh_ready_locked(request.session_id)
             self._condition.notify_all()
         return handle
+
+    def activity_snapshot(self) -> RuntimeActivitySnapshot:
+        with self._condition:
+            return RuntimeActivitySnapshot(
+                accepting=self._accepting,
+                queued=self._queued_count,
+                running=len(self._active),
+            )
+
+    def quiesce(self) -> RuntimeActivitySnapshot:
+        """Stop accepting work without cancelling anything already admitted."""
+        with self._condition:
+            self._accepting = False
+            return RuntimeActivitySnapshot(
+                accepting=False,
+                queued=self._queued_count,
+                running=len(self._active),
+            )
+
+    def drain(
+        self,
+        *,
+        grace_timeout: float = 5.0,
+        cancel_timeout: float = 5.0,
+    ) -> RuntimeDrainReport:
+        """Quiesce, cancel queued work, then cooperatively cancel overdue workers."""
+        if grace_timeout < 0 or cancel_timeout < 0:
+            raise ValueError("drain timeouts must be non-negative")
+
+        with self._condition:
+            self._accepting = False
+            queued_cancelled = 0
+            for handle in self._handles.values():
+                if handle.status is RunStatus.QUEUED:
+                    handle.cancel(CancelReason.RUNTIME_STOPPING)
+                    if handle.finish_once(
+                        RunOutcome.CANCELLED,
+                        reason_code="runtime_draining",
+                    ):
+                        queued_cancelled += 1
+                        self._queued_count -= 1
+            running_at_start = len(self._active)
+            self._condition.notify_all()
+
+            grace_deadline = time.monotonic() + grace_timeout
+            while self._active:
+                remaining = grace_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._condition.wait(timeout=remaining)
+
+            completed_during_grace = running_at_start - len(self._active)
+            cancellation_requested = 0
+            for run_id in tuple(self._active.values()):
+                handle = self._handles[run_id]
+                if handle.cancel(CancelReason.RUNTIME_STOPPING):
+                    cancellation_requested += 1
+
+            cancel_deadline = time.monotonic() + cancel_timeout
+            while self._active:
+                remaining = cancel_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._condition.wait(timeout=remaining)
+
+            still_running = len(self._active)
+            return RuntimeDrainReport(
+                queued_cancelled=queued_cancelled,
+                running_at_start=running_at_start,
+                completed_during_grace=completed_during_grace,
+                cancellation_requested=cancellation_requested,
+                still_running=still_running,
+                timed_out=still_running > 0,
+            )
 
     def stop(self, timeout: float = 5.0) -> bool:
         with self._condition:
