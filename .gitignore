@@ -46,6 +46,7 @@ logs/
 .cache/
 tmp/
 .tmp/
+.codex-test-tmp/
 
 # ===== Python =====
 __pycache__/

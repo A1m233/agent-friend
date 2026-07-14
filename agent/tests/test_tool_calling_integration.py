@@ -313,6 +313,7 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
     assert invocation_args["limit"] == 10
     assert invocation_args["__agent_friend_current_session_id"] == conv.session.session_id
     assert invocation_args["__agent_friend_current_turn_start_index"] == 1
+    assert invocation_args["__agent_friend_current_persona_id"] == conv.session.current_persona_id
 
     tool_reqs = [ev for ev in events if isinstance(ev, ToolCallRequest)]
     assert len(tool_reqs) == 1

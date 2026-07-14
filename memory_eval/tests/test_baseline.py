@@ -55,14 +55,14 @@ def _run(tmp_path: Path) -> BaselineRun:
     )
 
 
-def test_baseline_write_produces_v2_schema(tmp_path: Path) -> None:
+def test_baseline_write_produces_v3_schema(tmp_path: Path) -> None:
     out_dir = tmp_path / "baselines"
     path = write([_outcome()], _run(tmp_path), out_dir)
     assert path.exists()
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     # schema 版本 + 文件名形态
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert path.name.startswith("2026-06-11T07-00-00-")
     assert path.name.endswith(".json")
 
@@ -87,6 +87,9 @@ def test_baseline_run_section_complete(tmp_path: Path) -> None:
     assert run["limit_samples"] == 1
     assert run["limit_questions"] == 1
     assert run["note"] == "schema lock test"
+    assert run["retrieval"]["mode"] == "keyword"
+    assert run["retrieval"]["code_fingerprint"] is None
+    assert run["retrieval"]["case_index_states"] == [None]
 
     # provider 段
     assert run["provider"]["model"] == "deepseek/deepseek-v4-flash"
@@ -126,6 +129,7 @@ def test_baseline_per_question_carries_recall_and_answer(tmp_path: Path) -> None
     assert r["layer"] == "semantic"
     assert r["source_ref"] == "case#1_0_0"
     assert r["score"] == 0.9
+    assert q["trace"] is None
 
 
 def test_baseline_macro_aggregates_only_scored(tmp_path: Path) -> None:

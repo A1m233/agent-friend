@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-13T16:37:11.110849+00:00",
+    "ended_at": "2026-07-13T16:37:42.182499+00:00",
+    "duration_seconds": 31.072,
+    "git_commit": "cc561b7",
+    "working_tree_dirty": true,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "system": "Windows",
+    "machine": "AMD64",
+    "python": "3.12.6",
+    "cpu_count": 20,
+    "corpus_size": 1000,
+    "query_count": 16,
+    "top_k": 10,
+    "iterations": 5,
+    "model_id": "BAAI/bge-small-zh-v1.5",
+    "model_revision": "main",
+    "device": "cpu",
+    "batch_size": 64,
+    "history_source": "local",
+    "history_sessions": 100,
+    "history_messages_per_session": 40,
+    "external_llm_calls": 0
+  },
+  "systems": {
+    "keyword": {
+      "status": "ok",
+      "engine": "sqlite-fts5-jieba",
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 0.8125,
+          "recall_at_3": 0.875,
+          "recall_at_5": 0.9375,
+          "mrr": 0.85625
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 0.625,
+          "recall_at_3": 0.75,
+          "recall_at_5": 0.875,
+          "mrr": 0.7125
+        }
+      },
+      "build_ms": 1951.755,
+      "startup_ms": 4.481,
+      "query_latency_ms": {
+        "samples": 80,
+        "p50": 0.237,
+        "p95": 1.04,
+        "max": 1.219
+      },
+      "rss_before_mb": 188.93,
+      "rss_after_build_mb": 244.121,
+      "rss_delta_mb": 55.191,
+      "index_disk_mb": 0.547
+    },
+    "dense": {
+      "status": "ok",
+      "engine": "chromadb",
+      "engine_version": "1.5.9",
+      "embedding_library": "sentence-transformers",
+      "embedding_library_version": "5.6.0",
+      "model_id": "BAAI/bge-small-zh-v1.5",
+      "requested_revision": "main",
+      "resolved_revision": "7999e1d3359715c523056ef9478215996d62a620",
+      "device": "cpu",
+      "dimension": 512,
+      "query_instruction": "为这个句子生成表示以用于检索相关文章：",
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 0.8125,
+          "recall_at_3": 0.8125,
+          "recall_at_5": 0.8125,
+          "mrr": 0.8125
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 0.75,
+          "recall_at_3": 0.75,
+          "recall_at_5": 0.75,
+          "mrr": 0.75
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 0.875,
+          "recall_at_3": 0.875,
+          "recall_at_5": 0.875,
+          "mrr": 0.875
+        }
+      },
+      "chroma_import_ms": 818.004,
+      "embedding_library_import_ms": 8566.573,
+      "model_load_ms": 14208.476,
+      "document_encode_ms": 2583.96,
+      "document_encode_per_item_ms": 2.58396,
+      "index_build_ms": 1092.952,
+      "startup_ms": 31.862,
+      "query_embedding_latency_ms": {
+        "samples": 80,
+        "p50": 9.806,
+        "p95": 11.537,
+        "max": 16.78
+      },
+      "index_query_latency_ms": {
+        "samples": 80,
+        "p50": 2.262,
+        "p95": 2.71,
+        "max": 2.996
+      },
+      "end_to_end_query_latency_ms": {
+        "samples": 80,
+        "p50": 12.003,
+        "p95": 13.894,
+        "max": 19.169
+      },
+      "rss_before_mb": 244.188,
+      "rss_after_chroma_import_mb": 265.562,
+      "rss_after_embedding_library_import_mb": 583.992,
+      "rss_after_model_mb": 600.102,
+      "rss_after_index_mb": 768.16,
+      "rss_chroma_import_delta_mb": 21.374,
+      "rss_embedding_library_import_delta_mb": 318.43,
+      "rss_model_load_delta_mb": 16.11,
+      "rss_pre_index_total_delta_mb": 355.914,
+      "rss_total_delta_mb": 523.972,
+      "model_asset_mb": 91.94,
+      "index_disk_mb": 6.877
+    },
+    "hybrid": {
+      "status": "ok",
+      "engine": "rrf",
+      "rank_constant": 60,
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 0.8125,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 0.90625
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 0.625,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 0.8125
+        }
+      },
+      "fusion_latency_ms": {
+        "samples": 80,
+        "p50": 0.005,
+        "p95": 0.008,
+        "max": 0.008
+      }
+    },
+    "history_scan": {
+      "status": "ok",
+      "source": "local-user-data",
+      "session_count": 31,
+      "jsonl_file_count": 31,
+      "jsonl_bytes": 887117,
+      "list_ms": 4.49,
+      "full_scan_latency_ms": {
+        "samples": 5,
+        "p50": 22.366,
+        "p95": 39.533,
+        "max": 43.621
+      },
+      "result_counts": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "content_recorded": false
+    }
+  }
+}

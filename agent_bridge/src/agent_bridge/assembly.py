@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent.memory_search import SessionHistorySource
 from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
 
@@ -38,7 +39,7 @@ from agent import (
     make_default_registry,
 )
 from llm_providers import LLMClient
-from memory import Memory, build_memory
+from memory import Memory, MemorySearchService, build_memory
 from runtime_config import config_mode_from_env, credential_source_for_mode
 
 from .agent_runtime_factory import build_agent_runtime
@@ -198,40 +199,36 @@ def build_runtime(
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
-    # 020:传 persistent_store → 注册 recall_past_chats 工具,让 LLM 能跨 session
-    # 翻历史对话(否则 IM session 这种新 session 撞到"recall_past_chats 未注册"错误)。
     if runtime_config is None:
         runtime_config = resolve_bridge_runtime_config(
             credential_source_for_mode(config_mode_from_env())
         )
-    tool_registry = make_default_registry(
-        session_store=persistent_store,
-        tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
-    )
     default_persona = catalog.find_by_name("default").name
     default_model = runtime_config.default_model
 
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
+    memory_search = MemorySearchService([SessionHistorySource(persistent_store)])
     if settings.memory_enabled:
-        # 022 hot-fix(issue 016):pinned_relevance_gate=False 让身份核心 pinned 始终注入。
-        # 默认 lenient gate 在"你还记得我吗" / "我们之前聊过什么"这类只表达记忆查询意图、
-        # 不含身份关键词的 query 上,会把"用户叫 Alex"误判为不相关过滤掉,导致 agent
-        # 体感"失忆"(违反决策 0001 §1.3 "记忆是第一护城河"原则)。完整 root cause +
-        # 长期方案见 docs/issues/016-memory-pinned-gate-misses-identity/。
-        # 026: 保持 pinned_relevance_gate=False；inspector 的价值之一就是让 dev 能看到
-        # 这一 hot-fix 状态。不要顺手改回 True，那是 issue 016 长期方案的范畴。
+        # 048：core 使用独立小预算始终在场，priority / normal 统一走相关性召回；
+        # bridge 与 CLI 不再通过 pinned gate hot-fix 产生入口差异。
         recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
             LLMClient(runtime_config.memory_spec),
             on_retrieved=recall_buffer.record,
-            pinned_relevance_gate=False,
+            search_service=memory_search,
         )
         try:
             memory.warmup()
         except Exception:
             logger.warning("memory warmup failed; continuing startup", exc_info=True)
+
+    # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
+    tool_registry = make_default_registry(
+        memory_search=memory_search,
+        tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
+    )
 
     llm_client_factory = runtime_config.llm_client_factory
     persistent_session_manager = _make_persistent_session_manager(

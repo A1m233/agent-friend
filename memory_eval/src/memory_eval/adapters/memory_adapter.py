@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BENCHMARK_PERSONA_ID",
+    "case_fragments",
     "ingest_case",
     "retrieve_for_question",
 ]
@@ -34,16 +35,13 @@ def _role(speaker: str, speaker_a: str) -> Speaker:
     return "user" if speaker == speaker_a else "agent"
 
 
-def ingest_case(memory: Memory, case: EvalCase) -> None:
-    """把一个 case 的全部 turns 按 session 投影成 fragment 灌入，**阻塞到抽取完成**。
-
-    抽取是异步的（``observe`` 非阻塞入队），评测需要"全部记忆落库后再召回"，故在末尾
-    ``flush()`` 等待抽取队列清空。
-    """
+def case_fragments(case: EvalCase) -> list[ConversationFragment]:
+    """把 case 确定性投影成 fragment，供正式 ingest 与稳定性 probe 共用。"""
     by_session: dict[int, list[EvalTurn]] = {}
     for turn in case.turns:
         by_session.setdefault(turn.session_index, []).append(turn)
 
+    fragments: list[ConversationFragment] = []
     for idx in sorted(by_session):
         utterances = [
             Utterance(
@@ -56,13 +54,24 @@ def ingest_case(memory: Memory, case: EvalCase) -> None:
         ]
         if not utterances:
             continue
-        memory.observe(
+        fragments.append(
             ConversationFragment(
                 session_id=case.sample_id,
                 utterances=utterances,
                 persona_id=BENCHMARK_PERSONA_ID,
             )
         )
+    return fragments
+
+
+def ingest_case(memory: Memory, case: EvalCase) -> None:
+    """把一个 case 的全部 turns 按 session 投影成 fragment 灌入，**阻塞到抽取完成**。
+
+    抽取是异步的（``observe`` 非阻塞入队），评测需要"全部记忆落库后再召回"，故在末尾
+    ``flush()`` 等待抽取队列清空。
+    """
+    for fragment in case_fragments(case):
+        memory.observe(fragment)
 
     memory.flush()
 

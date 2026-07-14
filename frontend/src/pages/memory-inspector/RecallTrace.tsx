@@ -202,10 +202,14 @@ function TraceCard({
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted">
         <span>persona: {trace.persona_id}</span>
         <span>top_k: {trace.top_k}</span>
-        <span>gate: {trace.gate_decision}</span>
-        <span>mode: {trace.gate_mode ?? "-"}</span>
+        <span>intent: {trace.intent ?? "legacy"}</span>
+        <span>mode: {trace.mode ?? trace.gate_mode ?? "legacy"}</span>
         <span>pre/post: {trace.pinned_pre_gate}/{trace.pinned_post_gate}</span>
         <span>candidates: {trace.candidates_count} / ranked: {trace.ranked_count}</span>
+        <span>dense: {trace.index_state?.dense_status ?? "legacy"}</span>
+        <span>
+          sources: {trace.source_runs?.map((run) => `${run.source}:${run.status}`).join(", ") ?? "-"}
+        </span>
       </div>
 
       {expanded && (

@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-13T17:06:54.969571+00:00",
+    "ended_at": "2026-07-13T17:07:33.889249+00:00",
+    "duration_seconds": 38.92,
+    "git_commit": "cc561b7",
+    "working_tree_dirty": true,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "system": "Windows",
+    "machine": "AMD64",
+    "python": "3.12.6",
+    "cpu_count": 20,
+    "corpus_size": 10000,
+    "query_count": 16,
+    "top_k": 10,
+    "iterations": 5,
+    "model_id": "onnx-community/bge-small-zh-v1.5-ONNX",
+    "model_revision": "9507db33464b5da99a532ac26b2a251767cbc62b",
+    "device": "cpu",
+    "batch_size": 64,
+    "history_source": "local",
+    "history_sessions": 100,
+    "history_messages_per_session": 40,
+    "external_llm_calls": 0
+  },
+  "systems": {
+    "keyword": {
+      "status": "ok",
+      "engine": "sqlite-fts5-jieba",
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 0.8125,
+          "recall_at_3": 0.875,
+          "recall_at_5": 0.9375,
+          "mrr": 0.85625
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 0.625,
+          "recall_at_3": 0.75,
+          "recall_at_5": 0.875,
+          "mrr": 0.7125
+        }
+      },
+      "build_ms": 15038.03,
+      "startup_ms": 3.341,
+      "query_latency_ms": {
+        "samples": 80,
+        "p50": 0.304,
+        "p95": 11.841,
+        "max": 13.862
+      },
+      "rss_before_mb": 190.949,
+      "rss_after_build_mb": 247.984,
+      "rss_delta_mb": 57.035,
+      "index_disk_mb": 4.672
+    },
+    "dense": {
+      "status": "ok",
+      "engine": "sqlite-vec",
+      "engine_version": "0.1.9",
+      "embedding_library": "onnxruntime+tokenizers",
+      "onnxruntime_version": "1.27.0",
+      "tokenizers_version": "0.22.2",
+      "model_id": "onnx-community/bge-small-zh-v1.5-ONNX",
+      "resolved_revision": "9507db33464b5da99a532ac26b2a251767cbc62b",
+      "model_variant": "onnx/model_quantized.onnx",
+      "dimension": 512,
+      "query_instruction": "为这个句子生成表示以用于检索相关文章：",
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        }
+      },
+      "asset_prepare_ms": 3873.479,
+      "huggingface_hub_import_ms": 171.591,
+      "numpy_import_ms": 104.441,
+      "onnxruntime_import_ms": 59.275,
+      "tokenizer_import_ms": 0.006,
+      "sqlite_vec_import_ms": 3.71,
+      "model_load_ms": 141.019,
+      "document_encode_ms": 15585.253,
+      "document_encode_per_item_ms": 1.558525,
+      "index_build_ms": 646.818,
+      "startup_ms": 6.489,
+      "query_embedding_latency_ms": {
+        "samples": 80,
+        "p50": 2.957,
+        "p95": 3.547,
+        "max": 6.86
+      },
+      "index_query_latency_ms": {
+        "samples": 80,
+        "p50": 26.399,
+        "p95": 34.565,
+        "max": 41.095
+      },
+      "end_to_end_query_latency_ms": {
+        "samples": 80,
+        "p50": 29.201,
+        "p95": 37.75,
+        "max": 44.847
+      },
+      "rss_before_mb": 248.352,
+      "rss_after_hub_import_mb": 251.934,
+      "rss_after_numpy_import_mb": 261.137,
+      "rss_after_onnxruntime_import_mb": 277.027,
+      "rss_after_tokenizer_import_mb": 277.027,
+      "rss_after_sqlite_vec_import_mb": 277.059,
+      "rss_after_model_mb": 300.906,
+      "rss_after_index_mb": 440.0,
+      "rss_model_load_delta_mb": 23.847,
+      "rss_total_delta_mb": 191.648,
+      "model_asset_mb": 23.179,
+      "model_asset_sha256": {
+        "model_quantized.onnx": "99a6e522710c00220c89f8c52e0cc5aa09d4cbb1c34c0e932eab3a9dfdc65df3",
+        "model_quantized.onnx_data": "952623481ca8beea884e3d3c9ecaf8a3c7bf1d0c21de29e970cd31af9d37a90b",
+        "tokenizer.json": "3d09c84ebd10306706a79a8276b3ab736a40d8ec03251c7639f4e52c3a1a4f8e",
+        "tokenizer_config.json": "7e3bd6113f18c20975eaa8e8cc03c95b727fd83d6357f8e171e22b3736bf706d"
+      },
+      "index_disk_mb": 20.68
+    },
+    "hybrid": {
+      "status": "ok",
+      "engine": "rrf",
+      "rank_constant": 60,
+      "quality": {
+        "overall": {
+          "query_count": 16,
+          "recall_at_1": 0.8125,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 0.90625
+        },
+        "keyword": {
+          "query_count": 8,
+          "recall_at_1": 1.0,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 1.0
+        },
+        "paraphrase": {
+          "query_count": 8,
+          "recall_at_1": 0.625,
+          "recall_at_3": 1.0,
+          "recall_at_5": 1.0,
+          "mrr": 0.8125
+        }
+      },
+      "fusion_latency_ms": {
+        "samples": 80,
+        "p50": 0.005,
+        "p95": 0.008,
+        "max": 0.009
+      }
+    },
+    "history_scan": {
+      "status": "ok",
+      "source": "local-user-data",
+      "session_count": 31,
+      "jsonl_file_count": 31,
+      "jsonl_bytes": 887117,
+      "list_ms": 7.449,
+      "full_scan_latency_ms": {
+        "samples": 5,
+        "p50": 26.901,
+        "p95": 42.959,
+        "max": 46.33
+      },
+      "result_counts": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "content_recorded": false
+    }
+  }
+}

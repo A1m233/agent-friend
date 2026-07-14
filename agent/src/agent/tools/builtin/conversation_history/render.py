@@ -16,6 +16,8 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 
+from memory.search import EvidenceCandidate
+
 from ....sessions.events import Event
 
 _WEEKDAY_ZH = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
@@ -53,6 +55,37 @@ def format_hits(hits: list[Hit], now: datetime) -> str:
         "results": [_format_one(hit, now) for hit in hits],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def format_evidence(evidence: tuple[EvidenceCandidate, ...], now: datetime) -> str:
+    """把统一搜索证据渲染成与旧工具兼容的不可信 JSON 数据。"""
+    payload = {
+        "source_type": "past_conversation",
+        "trust": "untrusted_data",
+        "status": "ok" if evidence else "no_results",
+        "result_count": len(evidence),
+        "results": [_format_evidence_one(candidate, now) for candidate in evidence],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _format_evidence_one(candidate: EvidenceCandidate, now: datetime) -> dict[str, object]:
+    if candidate.excerpts:
+        return {
+            "recalled_at": _format_time(candidate.excerpts[-1].occurred_at, now),
+            "utterances": [
+                {
+                    "speaker": "你" if excerpt.speaker == "user" else "我",
+                    "text": _truncate(excerpt.text),
+                }
+                for excerpt in candidate.excerpts
+            ],
+        }
+    timestamp = candidate.occurred_at or candidate.valid_from
+    return {
+        "recalled_at": _format_time(timestamp, now) if timestamp is not None else None,
+        "memory": _truncate(candidate.text),
+    }
 
 
 def _format_one(hit: Hit, now: datetime) -> dict[str, object]:

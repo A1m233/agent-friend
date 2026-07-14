@@ -333,6 +333,15 @@ def test_invalid_time_returns_is_error() -> None:
     assert "ValueError" not in result.text
 
 
+def test_reversed_time_range_returns_is_error() -> None:
+    tool = _tool(_two_session_store())
+
+    result = tool.invoke({"since": "今天", "until": "昨天"})
+
+    assert result.is_error is True
+    assert "时间格式" in result.text
+
+
 def test_invalid_said_by_returns_is_error() -> None:
     tool = _tool(_two_session_store())
     result = tool.invoke({"said_by": "him"})

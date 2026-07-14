@@ -324,8 +324,8 @@ def test_list_episodic_excludes_deleted() -> None:
     assert [r.id for r in rows] == ["e1"]
 
 
-def test_v1_to_v2_lazy_migration() -> None:
-    """旧库（v1 trigram FTS5 / 无 *_tokens 列）启动时自动升 v2 并回填。"""
+def test_v1_to_v4_lazy_migration() -> None:
+    """旧库启动时自动升 v4，回填 tokens 并安全分类旧 pinned。"""
     import sqlite3
     import tempfile
     from pathlib import Path as _Path
@@ -360,6 +360,10 @@ def test_v1_to_v2_lazy_migration() -> None:
                 USING fts5(summary, content='episodic', content_rowid='rowid', tokenize='trigram');
             INSERT INTO semantic(id, statement, persona_id, created_at, updated_at)
                 VALUES ('s1', '用户养了宠物Tom', 'p1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+            INSERT INTO semantic(id, statement, pinned, persona_id, created_at, updated_at)
+                VALUES ('name', '用户名字是小明', 1, 'p1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+            INSERT INTO semantic(id, statement, pinned, persona_id, created_at, updated_at)
+                VALUES ('hobby', '用户喜欢篮球', 1, 'p1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
             INSERT INTO semantic_fts(rowid, statement)
                 SELECT rowid, statement FROM semantic;
             """
@@ -370,11 +374,11 @@ def test_v1_to_v2_lazy_migration() -> None:
         # 用 SqliteMemoryStore 打开旧库 → 应自动迁移
         store = SqliteMemoryStore(str(db))
         try:
-            # 验证 schema_version 升到 2
+            # 验证 schema_version 升到当前版本
             meta = store._conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            assert meta["value"] == "2"
+            assert meta["value"] == "4"
 
             # 验证新列加好
             cols = {
@@ -385,9 +389,58 @@ def test_v1_to_v2_lazy_migration() -> None:
                 r["name"] for r in store._conn.execute("PRAGMA table_info(episodic)").fetchall()
             }
             assert "summary_tokens" in cols
+            assert {"memory_class", "fact_key", "supersedes_id"}.issubset(
+                {r["name"] for r in store._conn.execute("PRAGMA table_info(semantic)").fetchall()}
+            )
+
+            migrated = {row.id: row for row in store.list_semantic(owner_user_id="local")}
+            assert migrated["name"].memory_class == "core"
+            assert migrated["name"].fact_key == "user.name"
+            assert migrated["hobby"].memory_class == "priority"
 
             # 验证旧数据可被 jieba 召回（"宠物" 通过新 FTS5 命中）
             hits = store.search_semantic("宠物", owner_user_id="local", persona_id="p1", limit=10)
             assert [r.statement for r, _ in hits] == ["用户养了宠物Tom"]
         finally:
             store.close()
+
+
+def test_fact_key_supersede_is_atomic_and_historical_query_keeps_old_version() -> None:
+    store = _store()
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    second = datetime(2026, 6, 1, tzinfo=UTC)
+    old = _semantic(
+        "用户在腾讯工作",
+        id="old-job",
+        fact_key="user.employer",
+        memory_class="priority",
+        valid_from=first,
+        created_at=first,
+        updated_at=first,
+    )
+    new = _semantic(
+        "用户在字节工作",
+        id="new-job",
+        fact_key="user.employer",
+        memory_class="priority",
+        supersedes_id="old-job",
+        valid_from=second,
+        created_at=second,
+        updated_at=second,
+    )
+    store.add_semantic(old)
+
+    assert store.supersede_and_add_semantic("old-job", new, second) is True
+    assert store.semantic_by_fact_key("user.employer", owner_user_id="local").id == "new-job"  # type: ignore[union-attr]
+    current = store.search_semantic("工作", owner_user_id="local", persona_id="p1", limit=10)
+    assert [row.id for row, _ in current] == ["new-job"]
+    historical = store.search_semantic(
+        "工作",
+        owner_user_id="local",
+        persona_id="p1",
+        limit=10,
+        include_historical=True,
+        since=first,
+        until=second,
+    )
+    assert [row.id for row, _ in historical] == ["old-job"]

@@ -39,7 +39,7 @@ DEFAULT_OWNER_USER_ID = "local"
 Speaker = Literal["user", "agent"]
 """发言者来源。``user`` 的写入权重高一档（design §5.3）。"""
 
-Layer = Literal["episodic", "semantic", "pinned"]
+Layer = Literal["core", "episodic", "semantic", "pinned", "utterance"]
 """召回条目所属记忆层。``pinned`` 是 ``semantic`` 中 ``pinned=1`` 的子集，
 召回展示时单列一层便于观测。"""
 
@@ -194,3 +194,10 @@ class RecallTrace:
     candidates_count: int
     ranked_count: int
     items: list[RecallTraceItem]
+    intent: str | None = None
+    time_range: dict[str, str | None] | None = None
+    mode: Literal["automatic", "explicit", "probe"] | None = None
+    source_runs: list[dict[str, object]] | None = None
+    candidates: list[dict[str, object]] | None = None
+    budget: dict[str, int] | None = None
+    index_state: dict[str, object] | None = None

@@ -154,6 +154,13 @@ def _trace_to_dict(trace: RecallTrace) -> dict[str, Any]:
         "candidates_count": trace.candidates_count,
         "ranked_count": trace.ranked_count,
         "items": [_trace_item_to_dict(i) for i in trace.items],
+        "intent": trace.intent,
+        "time_range": trace.time_range,
+        "mode": trace.mode,
+        "source_runs": trace.source_runs,
+        "candidates": trace.candidates,
+        "budget": trace.budget,
+        "index_state": trace.index_state,
     }
 
 

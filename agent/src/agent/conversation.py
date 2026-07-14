@@ -93,6 +93,7 @@ MAX_TOOL_TURNS_DEFAULT = 5
 _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+_CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 logger = logging.getLogger(__name__)
 
 
@@ -1420,6 +1421,7 @@ class Conversation:
             **args,
             _CURRENT_SESSION_ID_ARG: self._session.session_id,
             _CURRENT_TURN_START_INDEX_ARG: current_turn_start_idx,
+            _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
         }
 
     def _finalize_on_tool_loop_limit(

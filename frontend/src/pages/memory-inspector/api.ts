@@ -15,6 +15,9 @@ export interface SemanticRow {
   pinned: boolean;
   source: string;
   speaker_origin: string;
+  memory_class: "core" | "priority" | "normal";
+  fact_key: string | null;
+  supersedes_id: string | null;
   valid_from: string | null;
   valid_until: string | null;
   provenance: string[];
@@ -35,7 +38,7 @@ export interface EpisodicRow {
   owner_user_id: string;
 }
 
-export type Layer = "episodic" | "semantic" | "pinned";
+export type Layer = "core" | "episodic" | "semantic" | "pinned" | "utterance";
 export type GateMode = "strict" | "lenient";
 export type GateDecision = "disabled" | "pass-through" | "matched";
 export type RecallSource = "natural" | "probe";
@@ -62,6 +65,34 @@ export interface RecallTrace {
   candidates_count: number;
   ranked_count: number;
   items: RecallTraceItem[];
+  intent: string | null;
+  time_range: { since: string | null; until: string | null } | null;
+  mode: "automatic" | "explicit" | "probe" | null;
+  source_runs: Array<{
+    source: string;
+    candidate_count: number;
+    limit: number;
+    status: "ok" | "failed" | "skipped";
+  }> | null;
+  candidates: Array<{
+    evidence_id: string;
+    kind: Layer;
+    source: string;
+    keyword_rank: number | null;
+    dense_rank: number | null;
+    fused_score: number | null;
+    decision: string;
+    decision_reason: string;
+  }> | null;
+  budget: Record<string, number> | null;
+  index_state: {
+    keyword_ready: boolean;
+    dense_status: string;
+    active_generation: string | null;
+    indexed_count?: number;
+    total_count?: number;
+    last_error?: string | null;
+  } | null;
 }
 
 export interface SearchResultRow<T> {

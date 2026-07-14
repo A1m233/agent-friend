@@ -11,6 +11,7 @@ from memory.extraction.result import ExtractionOutput, ExtractionResult, Semanti
 
 from memory import (
     ConversationFragment,
+    ExtractionAttempt,
     Extractor,
     Reconciler,
     SemanticRow,
@@ -63,6 +64,87 @@ def test_extractor_parses_add_and_supersede() -> None:
     assert out.semantic_ops[1].target_hint == "用户在腾讯工作"
 
 
+def test_extractor_whitelists_core_and_fact_keys() -> None:
+    reply = (
+        '{"episodic_entries": [], "semantic_ops": ['
+        '{"op":"add","statement":"用户名字是小明","memory_class":"core",'
+        '"fact_key":"user.name"},'
+        '{"op":"add","statement":"用户今天喝了咖啡","memory_class":"core",'
+        '"fact_key":"user.random"}'
+        "]}"
+    )
+    out = _extractor(reply).extract(_fragment(("user", "我叫小明，今天喝了咖啡")), [])
+
+    assert out.semantic_ops[0].memory_class == "core"
+    assert out.semantic_ops[0].fact_key == "user.name"
+    assert out.semantic_ops[1].memory_class == "priority"
+    assert out.semantic_ops[1].fact_key is None
+
+
+def test_extractor_derives_storage_metadata_from_pass1_contract() -> None:
+    reply = (
+        '{"episodic_entries": [], "semantic_ops": ['
+        '{"op":"add","statement":"用户名字是小明","pinned":true},'
+        '{"op":"add","statement":"用户在字节工作","pinned":false},'
+        '{"op":"add","statement":"用户居住在杭州","pinned":false},'
+        '{"op":"add","statement":"用户喜欢缅因猫","pinned":false}'
+        "]}"
+    )
+    out = _extractor(reply).extract(_fragment(("user", "我叫小明，在字节工作，住在杭州")), [])
+
+    assert [op.fact_key for op in out.semantic_ops] == [
+        "user.name",
+        "user.employer",
+        "user.residence",
+        None,
+    ]
+    assert [op.memory_class for op in out.semantic_ops] == [
+        "core",
+        "priority",
+        "priority",
+        "normal",
+    ]
+    assert [op.pinned for op in out.semantic_ops] == [True, True, True, False]
+
+
+def test_extractor_rejects_allowed_but_semantically_wrong_fact_key() -> None:
+    reply = (
+        '{"episodic_entries": [], "semantic_ops": ['
+        '{"op":"add","statement":"用户喜欢咖啡","memory_class":"core",'
+        '"fact_key":"user.name"}'
+        "]}"
+    )
+    out = _extractor(reply).extract(_fragment(("user", "我喜欢咖啡")), [])
+
+    assert out.semantic_ops[0].fact_key is None
+    assert out.semantic_ops[0].memory_class == "priority"
+
+
+def test_extractor_and_reconciler_can_replay_pass1_metadata_without_upgrade() -> None:
+    reply = (
+        '{"episodic_entries": [], "semantic_ops": ['
+        '{"op":"add","statement":"用户在字节工作","pinned":false}'
+        "]}"
+    )
+    output = Extractor(
+        FakeLLM(reply),  # type: ignore[arg-type]
+        prompt="x",
+        normalize_metadata=False,
+    ).extract(_fragment(("user", "我在字节工作")), [])
+    store = FakeStore()
+
+    Reconciler(store, normalize_metadata=False).apply(
+        output, _fragment(("user", "我在字节工作")), []
+    )
+
+    assert output.semantic_ops[0].fact_key is None
+    assert output.semantic_ops[0].memory_class == "normal"
+    assert output.semantic_ops[0].pinned is False
+    assert store.semantics[0].fact_key is None
+    assert store.semantics[0].memory_class == "normal"
+    assert store.semantics[0].pinned is False
+
+
 def test_extractor_legacy_episodic_summary_falls_back_to_single_entry() -> None:
     """旧 prompt 输出 ``episodic_summary: str`` 仍应被解析（兼容性）。"""
     reply = '{"episodic_summary": "用户分享养猫", "semantic_ops": []}'
@@ -95,6 +177,41 @@ def test_extractor_llm_error_returns_noop() -> None:
 
     out = Extractor(BoomLLM(), prompt="x").extract(_fragment(("user", "hi")), [])  # type: ignore[arg-type]
     assert out.is_noop()
+
+
+def test_extractor_reports_success_empty_invalid_and_error_attempts() -> None:
+    attempts: list[ExtractionAttempt] = []
+    fragment = _fragment(("user", "我养猫"))
+
+    success = Extractor(
+        FakeLLM('{"episodic_entries":["用户养猫"],"semantic_ops":[]}'),  # type: ignore[arg-type]
+        prompt="x",
+        on_attempt=attempts.append,
+    )
+    success.extract(fragment, [])
+    Extractor(FakeLLM("{}"), prompt="x", on_attempt=attempts.append).extract(  # type: ignore[arg-type]
+        fragment, []
+    )
+    Extractor(FakeLLM("not json"), prompt="x", on_attempt=attempts.append).extract(  # type: ignore[arg-type]
+        fragment, []
+    )
+
+    class BoomLLM:
+        def complete(self, messages: list[dict[str, object]], **_kw: object) -> str:
+            raise RuntimeError("boom")
+
+    Extractor(BoomLLM(), prompt="x", on_attempt=attempts.append).extract(fragment, [])  # type: ignore[arg-type]
+
+    assert [attempt.status for attempt in attempts] == [
+        "success",
+        "empty_output",
+        "invalid_json",
+        "llm_error",
+    ]
+    assert attempts[0].episodic_count == 1
+    assert attempts[0].raw_response is not None
+    assert attempts[-1].error_type == "RuntimeError"
+    assert attempts[-1].raw_response is None
 
 
 # ----- Reconciler 落库 -----
@@ -201,6 +318,47 @@ def test_reconciler_supersede_no_match_degrades_to_add() -> None:
     result = Reconciler(store).apply(out, _fragment(("user", "x")), [])
     assert store.superseded == []
     assert result.added_semantic == ["新事实"]
+
+
+def test_reconciler_prefers_fact_key_and_builds_version_chain() -> None:
+    class FactStore(FakeStore):
+        def __init__(self, current: SemanticRow) -> None:
+            super().__init__()
+            self.current = current
+
+        def semantic_by_fact_key(self, fact_key: str, **_kw: object) -> SemanticRow | None:
+            return self.current if fact_key == "user.employer" else None
+
+        def supersede_and_add_semantic(self, old_id: str, row: SemanticRow, _ts: datetime) -> bool:
+            self.superseded.append(old_id)
+            self.semantics.append(row)
+            return True
+
+    old = SemanticRow(
+        id="old",
+        statement="用户在腾讯工作",
+        persona_id="p1",
+        created_at=_now(),
+        updated_at=_now(),
+        fact_key="user.employer",
+    )
+    store = FactStore(old)
+    out = ExtractionOutput(
+        semantic_ops=[
+            SemanticOp(
+                op="add",
+                statement="用户在字节工作",
+                memory_class="priority",
+                fact_key="user.employer",
+            )
+        ]
+    )
+
+    result = Reconciler(store).apply(out, _fragment(("user", "我换到字节了")), [])
+
+    assert store.superseded == ["old"]
+    assert store.semantics[0].supersedes_id == "old"
+    assert result.superseded_semantic == ["用户在腾讯工作"]
 
 
 # ----- Worker -----

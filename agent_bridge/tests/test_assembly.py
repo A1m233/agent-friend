@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from agent.tools.builtin.conversation_history import ConversationHistoryTool
 from agent_bridge.assembly import build_runtime
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 from agent_bridge.settings import BridgeSettings
@@ -43,6 +44,36 @@ def test_persistent_runtime_registers_recall_past_chats(
 
         assert "recall_past_chats" in tool_names
         assert manager_registry is runtime.tool_registry
+    finally:
+        runtime.close()
+
+
+def test_memory_enabled_registers_history_and_structured_sources(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    runtime = build_runtime(
+        BridgeSettings(
+            sessions_dir=tmp_path / "sessions",
+            personas_dir=tmp_path / "personas",
+            memory_db=tmp_path / "memory.db",
+            memory_enabled=True,
+            im_enabled=False,
+        )
+    )
+
+    try:
+        history_tool = next(
+            tool
+            for tool in runtime.tool_registry.all_tools()
+            if isinstance(tool, ConversationHistoryTool)
+        )
+        assert history_tool._search_service.source_names == (
+            "session_history",
+            "structured_memory",
+        )
     finally:
         runtime.close()
 

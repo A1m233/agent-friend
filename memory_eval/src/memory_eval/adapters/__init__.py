@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from .memory_adapter import BENCHMARK_PERSONA_ID, ingest_case, retrieve_for_question
+from .memory_adapter import BENCHMARK_PERSONA_ID, case_fragments, ingest_case, retrieve_for_question
+from .session_history_adapter import case_history_source
 
 __all__ = [
     "BENCHMARK_PERSONA_ID",
+    "case_fragments",
+    "case_history_source",
     "ingest_case",
     "retrieve_for_question",
 ]

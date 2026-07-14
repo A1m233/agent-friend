@@ -10,24 +10,30 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
 __all__ = [
     "DDL_STATEMENTS",
     "SCHEMA_VERSION",
     "EpisodicRow",
+    "MemoryClass",
     "SemanticRow",
     "parse_ts",
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
 - v2（pass-1 / 013）：semantic 加 `statement_tokens` 列、episodic 加 `summary_tokens` 列，
   FTS5 改用 `tokenize='unicode61'` 索引 jieba 切词后空格连接的 tokens 列；中文召回从
   3-字滑窗换成"按词"匹配。详见 docs/requirements/013-memory-quality-pass-1/design.md §4。
+- v3（048 M48.2）：semantic 增加 memory_class / fact_key / supersedes_id。
+- v4（048 M48.3）：增加 embedding generation / manifest 派生索引元数据。
 """
+
+MemoryClass = Literal["core", "priority", "normal"]
 
 
 def serialize_ts(dt: datetime | None) -> str | None:
@@ -67,6 +73,9 @@ class SemanticRow:
     provenance: list[str] = field(default_factory=list)  # episode_id 列表
     deleted_at: datetime | None = None  # 非空 = 软删（forget 预留）
     owner_user_id: str = "local"
+    memory_class: MemoryClass = "normal"
+    fact_key: str | None = None
+    supersedes_id: str | None = None
 
 
 @dataclass
@@ -101,6 +110,9 @@ DDL_STATEMENTS: tuple[str, ...] = (
         pinned           INTEGER NOT NULL DEFAULT 0,
         source           TEXT NOT NULL DEFAULT 'extracted',
         speaker_origin   TEXT NOT NULL DEFAULT 'user',
+        memory_class     TEXT NOT NULL DEFAULT 'normal',
+        fact_key         TEXT,
+        supersedes_id    TEXT,
         valid_from       TEXT,
         valid_until      TEXT,
         provenance       TEXT NOT NULL DEFAULT '[]',
@@ -141,5 +153,31 @@ DDL_STATEMENTS: tuple[str, ...] = (
     # 常用过滤索引
     "CREATE INDEX IF NOT EXISTS idx_semantic_scope ON semantic(owner_user_id, persona_id)",
     "CREATE INDEX IF NOT EXISTS idx_semantic_pinned ON semantic(pinned)",
+    "CREATE INDEX IF NOT EXISTS idx_semantic_class ON semantic(owner_user_id, memory_class)",
+    "CREATE INDEX IF NOT EXISTS idx_semantic_fact_key ON semantic(owner_user_id, fact_key)",
     "CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic(owner_user_id, persona_id)",
+    """
+    CREATE TABLE IF NOT EXISTS embedding_generation (
+        generation_id TEXT PRIMARY KEY,
+        model_id       TEXT NOT NULL,
+        dimension      INTEGER NOT NULL,
+        status         TEXT NOT NULL,
+        total_count    INTEGER NOT NULL DEFAULT 0,
+        indexed_count  INTEGER NOT NULL DEFAULT 0,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL,
+        last_error     TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS embedding_manifest (
+        generation_id TEXT NOT NULL,
+        evidence_id   TEXT NOT NULL,
+        content_hash  TEXT NOT NULL,
+        indexed_at    TEXT NOT NULL,
+        PRIMARY KEY(generation_id, evidence_id),
+        FOREIGN KEY(generation_id) REFERENCES embedding_generation(generation_id)
+            ON DELETE CASCADE
+    )
+    """,
 )

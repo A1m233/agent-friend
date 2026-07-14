@@ -6,6 +6,10 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "llm-providers",
     "jieba>=0.42.1",
+    "numpy>=2.3.0,<3",
+    "onnxruntime>=1.27.0,<2",
+    "sqlite-vec>=0.1.9,<0.2",
+    "tokenizers>=0.22.2,<1",
 ]
 
 [tool.uv.sources]

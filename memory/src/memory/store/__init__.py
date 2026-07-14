@@ -3,7 +3,7 @@
 详见 docs/requirements/008-engine-memory/design.md §4。
 """
 
-from .schema import EpisodicRow, SemanticRow
+from .schema import EpisodicRow, MemoryClass, SemanticRow
 from .sqlite_store import SqliteMemoryStore
 
-__all__ = ["EpisodicRow", "SemanticRow", "SqliteMemoryStore"]
+__all__ = ["EpisodicRow", "MemoryClass", "SemanticRow", "SqliteMemoryStore"]
