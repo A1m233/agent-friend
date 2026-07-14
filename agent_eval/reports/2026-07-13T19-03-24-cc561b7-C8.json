@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-13T19:03:24.456097+00:00",
+    "ended_at": "2026-07-13T19:03:56.705865+00:00",
+    "duration_seconds": 32.25,
+    "git_commit": "cc561b7",
+    "working_tree_dirty": true,
+    "note": "048 memory retrieval quality pass 2 grounded evidence acceptance",
+    "selection": {
+      "contract": "C8",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": null
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "29a1d9281a143fab28c9e0153caa6267844a3d6c645bedf33f4097c2fc9e0ec6",
+      "total_contracts": 8,
+      "total_cases": 149,
+      "contract_counts": {
+        "C1": 23,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 6,
+    "passed": 4,
+    "failed": 2,
+    "runtime_errors": 0,
+    "pass_rate": 0.6666666666666666,
+    "by_contract": {
+      "C8": {
+        "total": 6,
+        "passed": 4,
+        "failed": 2,
+        "runtime_errors": 0,
+        "pass_rate": 0.6666666666666666
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C8",
+      "name": "memory-evidence-grounding",
+      "expected_behavior": "tool_must_be_called",
+      "total": 6,
+      "passed": 4,
+      "failed": 2,
+      "pass_rate": 0.6666666666666666,
+      "cases": [
+        {
+          "id": "C8-01",
+          "query": "那只总霸占键盘的小家伙叫什么",
+          "facet": "paraphrase evidence use",
+          "source": "requirement_048",
+          "passed": true,
+          "reason": "grounded: tool=recall_past_chats anchors=['豆沙']",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "霸占键盘 小家伙 猫"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"ok\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"4 天前 周五上午 03:04\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我家猫叫豆沙，最近老趴在键盘上。\"\n        }\n      ]\n    }\n  ]\n}",
+              "is_error": false,
+              "duration_seconds": 0.030999999999039574
+            }
+          ],
+          "final_text": "豆沙！你之前说它老趴键盘上，看来这毛病还在持续啊 😄",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C8-02",
+          "query": "我们之前聊过我在学什么语言吗",
+          "facet": "structured and raw evidence grounding",
+          "source": "requirement_048",
+          "passed": false,
+          "reason": "no anchor matched (need any of ['日语', '五十音'])",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "学语言 学习 语言"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"no_results\",\n  \"result_count\": 0,\n  \"results\": []\n}",
+              "is_error": false,
+              "duration_seconds": 0.03200000000288128
+            },
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "语言"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"no_results\",\n  \"result_count\": 0,\n  \"results\": []\n}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "final_text": "我没翻到我们之前聊过这个，可能没聊到过，或者太久了我记不太清了。你现在在学什么语言？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C8-03",
+          "query": "我现在在哪里工作，之前又在哪里",
+          "facet": "current and historical versions stay distinct",
+          "source": "requirement_048",
+          "passed": true,
+          "reason": "grounded: tool=recall_past_chats anchors=['字节']",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "工作 公司 职业"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"ok\",\n  \"result_count\": 2,\n  \"results\": [\n    {\n      \"recalled_at\": \"07-04 周六上午 03:05\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我以前在腾讯工作，后来换到字节了，现在还在字节。\"\n        },\n        {\n          \"speaker\": \"我\",\n          \"text\": \"换工作的变化我记下了。\"\n        }\n      ]\n    },\n    {\n      \"recalled_at\": \"07-04 周六上午 03:04\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我以前在腾讯工作，后来换到字节了，现在还在字节。\"\n        }\n      ]\n    }\n  ]\n}",
+              "is_error": false,
+              "duration_seconds": 0.0319999999992433
+            }
+          ],
+          "final_text": "你之前跟我说过，以前在腾讯，后来跳到字节了，现在还在字节。现在还是在那吗，还是又有变化？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C8-04",
+          "query": "我家狗叫什么名字",
+          "facet": "no evidence abstention",
+          "source": "requirement_048",
+          "passed": true,
+          "reason": "grounded: tool=recall_past_chats anchors=['不知道']",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "狗 名字"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"ok\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"2 天前 周日上午 03:04\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我最近想养一只狗，但还没决定。\"\n        }\n      ]\n    }\n  ]\n}",
+              "is_error": false,
+              "duration_seconds": 0.01599999999962165
+            },
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "狗的名字"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"no_results\",\n  \"result_count\": 0,\n  \"results\": []\n}",
+              "is_error": false,
+              "duration_seconds": 0.01599999999962165
+            },
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "狗狗"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"no_results\",\n  \"result_count\": 0,\n  \"results\": []\n}",
+              "is_error": false,
+              "duration_seconds": 0.014999999999417923
+            }
+          ],
+          "final_text": "你之前只跟我说过想养狗但还没决定，没提过已经养了或者叫什么名字。所以…我还真不知道😅 你家狗叫什么？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C8-05",
+          "query": "你还能确认我叫什么吗",
+          "facet": "identity evidence use",
+          "source": "requirement_048",
+          "passed": false,
+          "reason": "no anchor matched (need any of ['Alex'])",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "名字",
+                "limit": 5
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"no_results\",\n  \"result_count\": 0,\n  \"results\": []\n}",
+              "is_error": false,
+              "duration_seconds": 0.01600000000325963
+            }
+          ],
+          "final_text": "嗯，我翻了一下之前聊过的，没看到你跟我提过名字。你叫什么呀？还是说你更喜欢我叫你某个称呼？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C8-06",
+          "query": "我之前说 GMAT 哪部分总是超时",
+          "facet": "exact keyword evidence does not regress",
+          "source": "requirement_048",
+          "passed": true,
+          "reason": "grounded: tool=recall_past_chats anchors=['数学']",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "query": "GMAT 超时"
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"ok\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"昨天 周一上午 03:04\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我最近准备 GMAT，数学部分总是超时。\"\n        }\n      ]\n    }\n  ]\n}",
+              "is_error": false,
+              "duration_seconds": 0.01599999999962165
+            }
+          ],
+          "final_text": "翻到了，你之前说的是 GMAT 数学部分总是超时。是还在跟这个较劲，还是最近有新的情况了？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

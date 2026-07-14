@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from memory_eval.__main__ import _provider_spec
+from memory_eval.__main__ import _provider_spec, _retrieval_code_fingerprint
 
 from runtime_config import (
     DEEPSEEK_API_KEY,
@@ -22,6 +22,15 @@ class FakeKeyring:
         return self.values.get(name)
 
 
+def test_retrieval_code_fingerprint_is_stable_sha256() -> None:
+    first = _retrieval_code_fingerprint()
+    second = _retrieval_code_fingerprint()
+
+    assert first == second
+    assert len(first) == 64
+    assert all(char in "0123456789abcdef" for char in first)
+
+
 def test_default_mode_uses_credential_center(tmp_path: Path) -> None:
     source = credential_source_for_mode(
         "desktop",
@@ -33,6 +42,32 @@ def test_default_mode_uses_credential_center(tmp_path: Path) -> None:
     spec = _provider_spec(None, source)
 
     assert spec.api_key == "center-key"
+
+
+def test_provider_spec_allows_eval_timeout_override(tmp_path: Path) -> None:
+    source = credential_source_for_mode(
+        "desktop",
+        keyring_backend=FakeKeyring({DEEPSEEK_API_KEY: "center-key"}),
+        env={},
+        settings_path=tmp_path / "settings.json",
+    )
+
+    spec = _provider_spec(None, source, timeout_seconds=300)
+
+    assert spec.defaults["timeout"] == 300
+
+
+def test_provider_spec_allows_zero_temperature_override(tmp_path: Path) -> None:
+    source = credential_source_for_mode(
+        "desktop",
+        keyring_backend=FakeKeyring({DEEPSEEK_API_KEY: "center-key"}),
+        env={},
+        settings_path=tmp_path / "settings.json",
+    )
+
+    spec = _provider_spec(None, source, temperature=0)
+
+    assert spec.defaults["temperature"] == 0
 
 
 def test_legacy_dotenv_mode_reads_explicit_dotenv(tmp_path: Path) -> None:

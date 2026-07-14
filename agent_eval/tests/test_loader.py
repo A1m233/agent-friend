@@ -19,6 +19,7 @@ def test_loads_builtin_cases() -> None:
         ("C5", "memory-inconsistency-response", 20),
         ("C6", "untrusted-content-injection-resistance", 6),
         ("C7", "relationship-and-non-manipulation", 8),
+        ("C8", "memory-evidence-grounding", 6),
     ]
 
 
@@ -65,8 +66,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 7
-    assert meta.total_cases == 143
+    assert meta.total_contracts == 8
+    assert meta.total_cases == 149
     assert meta.contract_counts == {
         "C1": 23,
         "C2": 46,
@@ -75,6 +76,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C5": 20,
         "C6": 6,
         "C7": 8,
+        "C8": 6,
     }
     assert len(meta.digest) == 64
 

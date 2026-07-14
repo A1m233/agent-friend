@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -66,7 +67,7 @@ class SqliteMemoryStore:
                 # v1 → v2 迁移：在 DDL 跑之前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；
                 # 后续 DDL 的 CREATE IF NOT EXISTS 会用新 unicode61 配置建表，旧表
                 # IF NOT EXISTS 不会改、必须先 DROP。
-                need_backfill = _premigrate_v1_to_v2(self._conn)
+                need_backfill = _premigrate_schema(self._conn)
                 logger.info(
                     "schema premigrate need_backfill=%s version=%d", need_backfill, SCHEMA_VERSION
                 )
@@ -105,9 +106,9 @@ class SqliteMemoryStore:
                     """
                     INSERT INTO semantic
                         (id, statement, statement_tokens, importance, pinned, source, speaker_origin,
-                         valid_from, valid_until, provenance, deleted_at,
-                         owner_user_id, persona_id, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         memory_class, fact_key, supersedes_id, valid_from, valid_until,
+                         provenance, deleted_at, owner_user_id, persona_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row.id,
@@ -117,6 +118,9 @@ class SqliteMemoryStore:
                         1 if row.pinned else 0,
                         row.source,
                         row.speaker_origin,
+                        row.memory_class,
+                        row.fact_key,
+                        row.supersedes_id,
                         serialize_ts(row.valid_from),
                         serialize_ts(row.valid_until),
                         json.dumps(row.provenance, ensure_ascii=False),
@@ -135,6 +139,71 @@ class SqliteMemoryStore:
         except sqlite3.Error:
             logger.exception("add_semantic failed id=%s owner=%s", row.id, row.owner_user_id)
             raise
+
+    def supersede_and_add_semantic(
+        self,
+        old_id: str,
+        row: SemanticRow,
+        valid_until: datetime,
+    ) -> bool:
+        """在同一事务内失效旧版本并插入新版本。"""
+        tokens = _tokenize(row.statement)
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """
+                    UPDATE semantic SET valid_until = ?, updated_at = ?
+                    WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL
+                    """,
+                    (serialize_ts(valid_until), serialize_ts(valid_until), old_id),
+                )
+                if cur.rowcount == 0:
+                    self._conn.rollback()
+                    return False
+                inserted = self._insert_semantic(row, tokens=tokens)
+                self._conn.execute(
+                    "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
+                    (inserted, tokens),
+                )
+                self._conn.commit()
+                return True
+        except sqlite3.Error:
+            self._conn.rollback()
+            logger.exception("supersede_and_add_semantic failed old=%s new=%s", old_id, row.id)
+            raise
+
+    def _insert_semantic(self, row: SemanticRow, *, tokens: str) -> int:
+        cur = self._conn.execute(
+            """
+            INSERT INTO semantic
+                (id, statement, statement_tokens, importance, pinned, source, speaker_origin,
+                 memory_class, fact_key, supersedes_id, valid_from, valid_until,
+                 provenance, deleted_at, owner_user_id, persona_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row.id,
+                row.statement,
+                tokens,
+                row.importance,
+                1 if row.pinned else 0,
+                row.source,
+                row.speaker_origin,
+                row.memory_class,
+                row.fact_key,
+                row.supersedes_id,
+                serialize_ts(row.valid_from),
+                serialize_ts(row.valid_until),
+                json.dumps(row.provenance, ensure_ascii=False),
+                serialize_ts(row.deleted_at),
+                row.owner_user_id,
+                row.persona_id,
+                serialize_ts(row.created_at),
+                serialize_ts(row.updated_at),
+            ),
+        )
+        assert cur.lastrowid is not None
+        return int(cur.lastrowid)
 
     def supersede_semantic(self, old_id: str, valid_until: datetime) -> bool:
         """把某条语义记忆标记为失效（被取代）。
@@ -298,8 +367,50 @@ class SqliteMemoryStore:
             ).fetchall()
         return [_to_semantic(r) for r in rows]
 
+    def core(self, *, owner_user_id: str, limit: int = 50) -> list[SemanticRow]:
+        """取活跃 core 事实；core 是 owner 维度，跨 persona 共享。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM semantic
+                WHERE memory_class = 'core' AND deleted_at IS NULL AND valid_until IS NULL
+                  AND owner_user_id = ?
+                ORDER BY importance DESC, updated_at DESC
+                LIMIT ?
+                """,
+                (owner_user_id, limit),
+            ).fetchall()
+        return [_to_semantic(row) for row in rows]
+
+    def semantic_by_fact_key(
+        self,
+        fact_key: str,
+        *,
+        owner_user_id: str,
+    ) -> SemanticRow | None:
+        """返回某受限 fact key 的当前有效版本。"""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM semantic
+                WHERE fact_key = ? AND owner_user_id = ?
+                  AND deleted_at IS NULL AND valid_until IS NULL
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (fact_key, owner_user_id),
+            ).fetchone()
+        return _to_semantic(row) if row is not None else None
+
     def search_semantic(
-        self, query: str, *, owner_user_id: str, persona_id: str, limit: int
+        self,
+        query: str,
+        *,
+        owner_user_id: str,
+        persona_id: str,
+        limit: int,
+        include_historical: bool = False,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[tuple[SemanticRow, float]]:
         """按关键词检索活跃语义记忆。
 
@@ -310,21 +421,50 @@ class SqliteMemoryStore:
         match = _fts_query(query)
         if match is None:
             return []
+        sql = """
+            SELECT s.*, bm25(semantic_fts) AS _bm25
+            FROM semantic_fts
+            JOIN semantic s ON s.rowid = semantic_fts.rowid
+            WHERE semantic_fts MATCH ?
+              AND s.deleted_at IS NULL AND s.owner_user_id = ?
+        """
+        params: list[Any] = [match, owner_user_id]
+        if include_historical:
+            if since is not None:
+                sql += " AND (s.valid_until IS NULL OR s.valid_until > ?)"
+                params.append(serialize_ts(since))
+            if until is not None:
+                sql += " AND COALESCE(s.valid_from, s.created_at) < ?"
+                params.append(serialize_ts(until))
+        else:
+            sql += " AND s.valid_until IS NULL"
+        sql += " ORDER BY _bm25 LIMIT ?"
+        params.append(limit)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [(_to_semantic(r), float(r["_bm25"])) for r in rows]
+
+    def semantic_by_ids(self, ids: list[str]) -> dict[str, SemanticRow]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
         with self._lock:
             rows = self._conn.execute(
-                """
-                SELECT s.*, bm25(semantic_fts) AS _bm25
-                FROM semantic_fts
-                JOIN semantic s ON s.rowid = semantic_fts.rowid
-                WHERE semantic_fts MATCH ?
-                  AND s.deleted_at IS NULL AND s.valid_until IS NULL
-                  AND s.owner_user_id = ?
-                ORDER BY _bm25
-                LIMIT ?
-                """,
-                (match, owner_user_id, limit),
+                f"SELECT * FROM semantic WHERE id IN ({placeholders})",
+                ids,
             ).fetchall()
-        return [(_to_semantic(r), float(r["_bm25"])) for r in rows]
+        return {str(row["id"]): _to_semantic(row) for row in rows}
+
+    def episodic_by_ids(self, ids: list[str]) -> dict[str, EpisodicRow]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM episodic WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        return {str(row["id"]): _to_episodic(row) for row in rows}
 
     def search_episodic(
         self, query: str, *, owner_user_id: str, persona_id: str | None, limit: int
@@ -456,6 +596,134 @@ class SqliteMemoryStore:
             rows = self._conn.execute(base, params).fetchall()
         return [_to_episodic(r) for r in rows]
 
+    # ----- dense derived-index manifest -----
+
+    def upsert_embedding_generation(
+        self,
+        *,
+        generation_id: str,
+        model_id: str,
+        dimension: int,
+        status: str,
+        total_count: int,
+        indexed_count: int,
+        now: datetime,
+        last_error: str | None = None,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO embedding_generation(
+                    generation_id, model_id, dimension, status, total_count,
+                    indexed_count, created_at, updated_at, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(generation_id) DO UPDATE SET
+                    status=excluded.status,
+                    total_count=excluded.total_count,
+                    indexed_count=excluded.indexed_count,
+                    updated_at=excluded.updated_at,
+                    last_error=excluded.last_error
+                """,
+                (
+                    generation_id,
+                    model_id,
+                    dimension,
+                    status,
+                    total_count,
+                    indexed_count,
+                    serialize_ts(now),
+                    serialize_ts(now),
+                    last_error,
+                ),
+            )
+            self._conn.commit()
+
+    def embedding_generation(self, generation_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM embedding_generation WHERE generation_id = ?",
+                (generation_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def active_embedding_generation(self) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'active_embedding_generation'"
+            ).fetchone()
+        return str(row["value"]) if row is not None and row["value"] else None
+
+    def set_active_embedding_generation(self, generation_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO schema_meta(key, value) VALUES ('active_embedding_generation', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (generation_id,),
+            )
+            self._conn.commit()
+
+    def embedding_manifest(self, generation_id: str) -> dict[str, str]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT evidence_id, content_hash FROM embedding_manifest
+                WHERE generation_id = ?
+                """,
+                (generation_id,),
+            ).fetchall()
+        return {str(row["evidence_id"]): str(row["content_hash"]) for row in rows}
+
+    def upsert_embedding_manifest(
+        self,
+        generation_id: str,
+        entries: list[tuple[str, str]],
+        *,
+        indexed_at: datetime,
+    ) -> None:
+        if not entries:
+            return
+        with self._lock:
+            self._conn.executemany(
+                """
+                INSERT INTO embedding_manifest(
+                    generation_id, evidence_id, content_hash, indexed_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(generation_id, evidence_id) DO UPDATE SET
+                    content_hash=excluded.content_hash,
+                    indexed_at=excluded.indexed_at
+                """,
+                [
+                    (generation_id, evidence_id, content_hash, serialize_ts(indexed_at))
+                    for evidence_id, content_hash in entries
+                ],
+            )
+            self._conn.commit()
+
+    def delete_embedding_manifest(self, generation_id: str, evidence_ids: list[str]) -> None:
+        if not evidence_ids:
+            return
+        placeholders = ",".join("?" for _ in evidence_ids)
+        with self._lock:
+            self._conn.execute(
+                f"""
+                DELETE FROM embedding_manifest
+                WHERE generation_id = ? AND evidence_id IN ({placeholders})
+                """,
+                [generation_id, *evidence_ids],
+            )
+            self._conn.commit()
+
+    def delete_embedding_generation(self, generation_id: str) -> None:
+        """删除已退役 generation 的 manifest 元数据。"""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM embedding_generation WHERE generation_id = ?",
+                (generation_id,),
+            )
+            self._conn.commit()
+
     def close(self) -> None:
         """关闭连接。"""
         with self._lock:
@@ -493,6 +761,9 @@ def _to_semantic(r: sqlite3.Row) -> SemanticRow:
         provenance=json.loads(r["provenance"]),
         deleted_at=parse_ts(r["deleted_at"]),
         owner_user_id=r["owner_user_id"],
+        memory_class=r["memory_class"],
+        fact_key=r["fact_key"],
+        supersedes_id=r["supersedes_id"],
     )
 
 
@@ -557,10 +828,10 @@ def _fts_query(text: str) -> str | None:
     return " OR ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
 
 
-# ===== schema v1 → v2 迁移（pass-1 / 013） =====
+# ===== schema migration =====
 
 
-def _premigrate_v1_to_v2(conn: sqlite3.Connection) -> bool:
+def _premigrate_schema(conn: sqlite3.Connection) -> bool:
     """检测旧库（schema v1）并做 in-place 结构升级。
 
     在 :data:`DDL_STATEMENTS` 跑之前调用——必须先 ALTER TABLE 加 ``*_tokens`` 列
@@ -585,16 +856,25 @@ def _premigrate_v1_to_v2(conn: sqlite3.Connection) -> bool:
     if current >= SCHEMA_VERSION:
         return False
 
-    # 在 semantic / episodic 表存在的前提下加新列（IF NOT EXISTS 等价物用 try）
-    if _column_missing(conn, "semantic", "statement_tokens"):
-        conn.execute("ALTER TABLE semantic ADD COLUMN statement_tokens TEXT NOT NULL DEFAULT ''")
-    if _column_missing(conn, "episodic", "summary_tokens"):
-        conn.execute("ALTER TABLE episodic ADD COLUMN summary_tokens TEXT NOT NULL DEFAULT ''")
+    need_token_backfill = current < 2
+    if need_token_backfill:
+        if _column_missing(conn, "semantic", "statement_tokens"):
+            conn.execute(
+                "ALTER TABLE semantic ADD COLUMN statement_tokens TEXT NOT NULL DEFAULT ''"
+            )
+        if _column_missing(conn, "episodic", "summary_tokens"):
+            conn.execute("ALTER TABLE episodic ADD COLUMN summary_tokens TEXT NOT NULL DEFAULT ''")
+        conn.execute("DROP TABLE IF EXISTS semantic_fts")
+        conn.execute("DROP TABLE IF EXISTS episodic_fts")
 
-    # 删旧 trigram FTS5 表（如果存在）；后续 DDL 会用新配置重建
-    conn.execute("DROP TABLE IF EXISTS semantic_fts")
-    conn.execute("DROP TABLE IF EXISTS episodic_fts")
-    return True
+    if _column_missing(conn, "semantic", "memory_class"):
+        conn.execute("ALTER TABLE semantic ADD COLUMN memory_class TEXT NOT NULL DEFAULT 'normal'")
+    if _column_missing(conn, "semantic", "fact_key"):
+        conn.execute("ALTER TABLE semantic ADD COLUMN fact_key TEXT")
+    if _column_missing(conn, "semantic", "supersedes_id"):
+        conn.execute("ALTER TABLE semantic ADD COLUMN supersedes_id TEXT")
+    _migrate_legacy_pinned(conn)
+    return need_token_backfill
 
 
 def _column_missing(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -630,4 +910,31 @@ def _backfill_tokens_and_rebuild_fts(conn: sqlite3.Connection) -> None:
         conn.execute(
             "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
             (r["rowid"], tokens),
+        )
+
+
+_USER_NAME_RE = re.compile(r"用户(?:的)?(?:名字|姓名)(?:是|叫)|用户叫")
+_AGENT_NAME_RE = re.compile(r"(?:AI|助手|agent)(?:的)?(?:名字|姓名)?(?:是|叫)", re.IGNORECASE)
+_CORE_RELATION_RE = re.compile(
+    r"用户(?:的)?(?:伴侣|妻子|丈夫|男朋友|女朋友|父亲|母亲|爸爸|妈妈|儿子|女儿|孩子)"
+)
+
+
+def _migrate_legacy_pinned(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("SELECT id, statement, pinned FROM semantic").fetchall()
+    for row in rows:
+        statement = str(row["statement"])
+        if not bool(row["pinned"]):
+            memory_class, fact_key = "normal", None
+        elif _USER_NAME_RE.search(statement):
+            memory_class, fact_key = "core", "user.name"
+        elif _AGENT_NAME_RE.search(statement):
+            memory_class, fact_key = "core", "agent.name"
+        elif _CORE_RELATION_RE.search(statement):
+            memory_class, fact_key = "core", None
+        else:
+            memory_class, fact_key = "priority", None
+        conn.execute(
+            "UPDATE semantic SET memory_class = ?, fact_key = COALESCE(fact_key, ?) WHERE id = ?",
+            (memory_class, fact_key, row["id"]),
         )

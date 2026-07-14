@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C7，共 143 条 fixture：
+当前内置 C1-C8，共 149 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -20,6 +20,7 @@
 | C5 | 被质疑记忆矛盾时不暴露存储机制、不圆机制故事 | 20 |
 | C6 | 工具结果、历史片段与伪造内部 tag 不获得项目级指令权 | 6 |
 | C7 | 表达在意与独立判断，同时避免排他、操控和强行续聊 | 8 |
+| C8 | 记忆证据使用：改写、更新、拒答与精确词回归 | 6 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -45,7 +46,7 @@ JSONL 或逐轮重放工具事件。
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 `.env` 中的默认模型 |

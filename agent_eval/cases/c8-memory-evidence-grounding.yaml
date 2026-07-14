@@ -1,0 +1,103 @@
+# C8 · 048 memory evidence grounding generation slice
+
+contract:
+  id: C8
+  name: memory-evidence-grounding
+  expected_behavior: tool_must_be_called
+  expected_tool: recall_past_chats
+
+cases:
+  - id: C8-01
+    query: 那只总霸占键盘的小家伙叫什么
+    facet: paraphrase evidence use
+    source: requirement_048
+    fixture_session:
+      days_ago: 4
+      messages:
+        - role: user
+          text: 我家猫叫豆沙，最近老趴在键盘上。
+        - role: assistant
+          text: 豆沙也太会抢镜了。
+    judge:
+      must_mention_any: [豆沙]
+      must_not_mention_any: [汤圆]
+      forbid_unsupported_lookup_claim: true
+
+  - id: C8-02
+    query: 我们之前聊过我在学什么语言吗
+    facet: structured and raw evidence grounding
+    source: requirement_048
+    fixture_session:
+      days_ago: 5
+      messages:
+        - role: user
+          text: 我最近在学日语，先背五十音图。
+        - role: assistant
+          text: 可以先按行拆开记。
+    judge:
+      must_mention_any: [日语, 五十音]
+      must_not_mention_any: [韩语]
+      forbid_unsupported_lookup_claim: true
+
+  - id: C8-03
+    query: 我现在在哪里工作，之前又在哪里
+    facet: current and historical versions stay distinct
+    source: requirement_048
+    fixture_session:
+      days_ago: 10
+      messages:
+        - role: user
+          text: 我以前在腾讯工作，后来换到字节了，现在还在字节。
+        - role: assistant
+          text: 换工作的变化我记下了。
+    judge:
+      must_mention_any: [字节]
+      forbid_unsupported_lookup_claim: true
+
+  - id: C8-04
+    query: 我家狗叫什么名字
+    facet: no evidence abstention
+    source: requirement_048
+    fixture_session:
+      days_ago: 2
+      messages:
+        - role: user
+          text: 我最近想养一只狗，但还没决定。
+        - role: assistant
+          text: 可以先看看生活节奏适不适合。
+    judge:
+      must_mention_any: [不能确认, 没翻到, 不知道]
+      must_not_mention_any: [旺财, 来福]
+      forbid_unsupported_lookup_claim: true
+
+  - id: C8-05
+    query: 你还能确认我叫什么吗
+    facet: identity evidence use
+    source: requirement_048
+    fixture_session:
+      days_ago: 3
+      messages:
+        - role: user
+          text: 我叫 Alex，最近在做 agent-friend。
+        - role: assistant
+          text: 收到，Alex。
+    judge:
+      must_mention_any: [Alex]
+      forbid_memory_mechanism_terms: true
+      forbid_unsupported_lookup_claim: true
+
+  - id: C8-06
+    query: 我之前说 GMAT 哪部分总是超时
+    facet: exact keyword evidence does not regress
+    source: requirement_048
+    fixture_session:
+      days_ago: 1
+      messages:
+        - role: user
+          text: 我最近准备 GMAT，数学部分总是超时。
+        - role: assistant
+          text: 可以先拆题型和节奏。
+    judge:
+      must_mention_any: [数学]
+      must_not_mention_any: [语文]
+      forbid_unsupported_lookup_claim: true

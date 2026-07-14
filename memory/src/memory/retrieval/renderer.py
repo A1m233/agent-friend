@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..contracts import MemoryContext, MemoryItem
+from ..search import EvidenceCandidate
 from .strategy import Candidate
 
 if TYPE_CHECKING:
@@ -72,6 +73,78 @@ class Renderer:
         if not items:
             return MemoryContext.empty()
         return MemoryContext(rendered="\n".join(lines), items=items)
+
+    def render_search(
+        self,
+        evidence: tuple[EvidenceCandidate, ...] | list[EvidenceCandidate],
+        *,
+        now: datetime,
+    ) -> MemoryContext:
+        """把统一搜索证据按 core / recalled / raw evidence 三段渲染。"""
+        core = [candidate for candidate in evidence if candidate.kind == "core"]
+        recalled = [
+            candidate for candidate in evidence if candidate.kind in ("semantic", "episodic")
+        ]
+        raw = [candidate for candidate in evidence if candidate.kind == "utterance"]
+        lines: list[str] = []
+        items: list[MemoryItem] = []
+
+        if core:
+            lines.append("# 你一直记得的关系底色")
+            for candidate in core:
+                lines.append(f"- {candidate.text}")
+                items.append(_search_item(candidate, score=_PINNED_SCORE))
+        if recalled:
+            if lines:
+                lines.append("")
+            lines.append("# 这次让你想起的相关记忆")
+            for candidate in recalled:
+                lines.append(f"- {candidate.text}{_evidence_time_hint(candidate, now)}")
+                items.append(_search_item(candidate))
+        if raw:
+            if lines:
+                lines.append("")
+            lines.append("# 可核对的过往对话证据")
+            for candidate in raw:
+                lines.append(
+                    f"- {_raw_evidence_text(candidate)}{_evidence_time_hint(candidate, now)}"
+                )
+                items.append(_search_item(candidate))
+        if not items:
+            return MemoryContext.empty()
+        return MemoryContext(rendered="\n".join(lines), items=items)
+
+
+def _search_item(candidate: EvidenceCandidate, *, score: float | None = None) -> MemoryItem:
+    return MemoryItem(
+        text=candidate.text,
+        layer=candidate.kind,
+        source_ref=candidate.evidence_id,
+        score=candidate.fused_score or 0.0 if score is None else score,
+    )
+
+
+def _raw_evidence_text(candidate: EvidenceCandidate) -> str:
+    if not candidate.excerpts:
+        return candidate.text
+    return " / ".join(
+        f"{'用户' if excerpt.speaker == 'user' else '助手'}：{excerpt.text}"
+        for excerpt in candidate.excerpts
+    )
+
+
+def _evidence_time_hint(candidate: EvidenceCandidate, now: datetime) -> str:
+    occurred_at = candidate.occurred_at or candidate.valid_from
+    if occurred_at is None:
+        return ""
+    age_days = max(0, (now - occurred_at).days)
+    if age_days == 0:
+        relative = "今天"
+    elif age_days == 1:
+        relative = "昨天"
+    else:
+        relative = f"{age_days} 天前"
+    return f"（{occurred_at.date().isoformat()}，{relative}）"
 
 
 def _time_hint(cand: Candidate, now: datetime) -> str:

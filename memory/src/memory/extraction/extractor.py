@@ -11,10 +11,18 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING
 
-from .result import ExtractionOutput, SemanticOp
+from .result import (
+    ExtractionAttempt,
+    ExtractionAttemptStatus,
+    ExtractionOutput,
+    SemanticOp,
+    normalize_memory_metadata,
+)
 
 if TYPE_CHECKING:
     from llm_providers import LLMClient
@@ -39,9 +47,18 @@ class Extractor:
         prompt: 可选，覆盖默认抽取 system prompt（测试 / 调参用）。
     """
 
-    def __init__(self, llm_client: LLMClient, *, prompt: str | None = None) -> None:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        *,
+        prompt: str | None = None,
+        on_attempt: Callable[[ExtractionAttempt], None] | None = None,
+        normalize_metadata: bool = True,
+    ) -> None:
         self._llm = llm_client
         self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
+        self._on_attempt = on_attempt
+        self._normalize_metadata = normalize_metadata
 
     def extract(
         self, fragment: ConversationFragment, existing_facts: list[SemanticRow]
@@ -56,13 +73,63 @@ class Extractor:
             {"role": "system", "content": self._prompt},
             {"role": "user", "content": user_content},
         ]
+        started = perf_counter()
         try:
             raw = self._llm.complete(messages)
-        except Exception:
+        except Exception as exc:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
+            self._report_attempt(
+                fragment,
+                existing_facts,
+                status="llm_error",
+                started=started,
+                error=exc,
+            )
             return ExtractionOutput()
 
-        return _parse_output(raw)
+        output, status = _parse_output_with_status(raw, normalize_metadata=self._normalize_metadata)
+        self._report_attempt(
+            fragment,
+            existing_facts,
+            status=status,
+            started=started,
+            raw_response=raw,
+            output=output,
+        )
+        return output
+
+    def _report_attempt(
+        self,
+        fragment: ConversationFragment,
+        existing_facts: list[SemanticRow],
+        *,
+        status: ExtractionAttemptStatus,
+        started: float,
+        raw_response: str | None = None,
+        output: ExtractionOutput | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if self._on_attempt is None:
+            return
+        source_refs = [utterance.source_ref for utterance in fragment.utterances]
+        attempt = ExtractionAttempt(
+            session_id=fragment.session_id,
+            first_source_ref=source_refs[0] if source_refs else None,
+            last_source_ref=source_refs[-1] if source_refs else None,
+            utterance_count=len(fragment.utterances),
+            existing_fact_count=len(existing_facts),
+            status=status,
+            duration_ms=(perf_counter() - started) * 1000,
+            episodic_count=len(output.episodic_entries) if output is not None else 0,
+            semantic_count=len(output.semantic_ops) if output is not None else 0,
+            raw_response=raw_response,
+            error_type=type(error).__name__ if error is not None else None,
+            error_message=str(error) if error is not None else None,
+        )
+        try:
+            self._on_attempt(attempt)
+        except Exception:
+            logger.warning("记忆抽取 attempt 回调异常", exc_info=True)
 
     def _render_input(
         self, fragment: ConversationFragment, existing_facts: list[SemanticRow]
@@ -90,16 +157,22 @@ def _parse_output(raw: str) -> ExtractionOutput:
     - 新字段 ``episodic_entries: list[str]``（推荐）
     - 旧字段 ``episodic_summary: str | None``——单元素 list 处理（向下兼容）
     """
+    return _parse_output_with_status(raw)[0]
+
+
+def _parse_output_with_status(
+    raw: str, *, normalize_metadata: bool = True
+) -> tuple[ExtractionOutput, ExtractionAttemptStatus]:
     text = _strip_code_fence(raw).strip()
     if not text:
-        return ExtractionOutput()
+        return ExtractionOutput(), "empty_response"
     try:
         obj = json.loads(text)
     except json.JSONDecodeError:
         logger.warning("记忆抽取返回非法 JSON，跳过：%s", text[:200])
-        return ExtractionOutput()
+        return ExtractionOutput(), "invalid_json"
     if not isinstance(obj, dict):
-        return ExtractionOutput()
+        return ExtractionOutput(), "invalid_shape"
 
     entries = _parse_entries(obj)
 
@@ -107,10 +180,11 @@ def _parse_output(raw: str) -> ExtractionOutput:
     raw_ops = obj.get("semantic_ops")
     if isinstance(raw_ops, list):
         for item in raw_ops:
-            op = _parse_op(item)
+            op = _parse_op(item, normalize_metadata=normalize_metadata)
             if op is not None:
                 ops.append(op)
-    return ExtractionOutput(episodic_entries=entries, semantic_ops=ops)
+    output = ExtractionOutput(episodic_entries=entries, semantic_ops=ops)
+    return output, "empty_output" if output.is_noop() else "success"
 
 
 def _parse_entries(obj: dict[str, object]) -> list[str]:
@@ -132,7 +206,7 @@ def _parse_entries(obj: dict[str, object]) -> list[str]:
     return []
 
 
-def _parse_op(item: object) -> SemanticOp | None:
+def _parse_op(item: object, *, normalize_metadata: bool) -> SemanticOp | None:
     if not isinstance(item, dict):
         return None
     statement = item.get("statement")
@@ -152,6 +226,15 @@ def _parse_op(item: object) -> SemanticOp | None:
     target_hint = item.get("target_hint")
     if not isinstance(target_hint, str) or not target_hint.strip():
         target_hint = None
+    if normalize_metadata:
+        memory_class, fact_key, pinned = normalize_memory_metadata(
+            statement.strip(),
+            pinned=pinned,
+            memory_class=item.get("memory_class"),
+            fact_key=item.get("fact_key"),
+        )
+    else:
+        memory_class, fact_key = "normal", None
     return SemanticOp(
         op=op,  # type: ignore[arg-type]
         statement=statement.strip(),
@@ -159,6 +242,8 @@ def _parse_op(item: object) -> SemanticOp | None:
         pinned=pinned,
         speaker_origin=speaker_origin,
         target_hint=target_hint,
+        memory_class=memory_class,
+        fact_key=fact_key,
     )
 
 

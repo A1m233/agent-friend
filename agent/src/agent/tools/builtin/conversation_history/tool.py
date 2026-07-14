@@ -12,16 +12,18 @@ LLM 通过本工具主动检索过往对话；返回结果是**纯文本日记�
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, ClassVar
 
-from ....sessions.errors import SessionPersistError
-from ....sessions.events import Event
+from memory.search import MemorySearchService, QueryAnalyzer, SaidBy, SearchRequest, TimeRange
+
+from memory import DEFAULT_OWNER_USER_ID
+
+from ....memory_search import SessionHistorySource
 from ....sessions.store import SessionStore
 from ...protocol import ToolResult
-from .render import Hit, format_hits
+from .render import format_evidence
 from .time_parser import parse_time_expression
 
 _DEFAULT_LIMIT = 10
@@ -29,6 +31,7 @@ _MAX_LIMIT = 50
 _MIN_LIMIT = 1
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
+_CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 
 
 def _default_now() -> datetime:
@@ -39,12 +42,12 @@ def _default_now() -> datetime:
 class ConversationHistoryTool:
     """对 LLM 暴露的"回忆过去对话"工具，实现 :class:`agent.tools.Tool` Protocol。
 
-    数据源就一个 = 注入的 :class:`SessionStore`，无 provider 抽象（详见
-    020 design §5.2 N-1）。:class:`NullSessionStore` 等空 store 注入时
-    ``store.list()`` 返回空，自然走"翻不到"拟人兜底（详见 020 design §5.2 N-4）。
+    048 M48.1 起依赖统一 :class:`MemorySearchService`；旧 ``store`` 参数保留为
+    兼容入口，并会在构造期包装成只含 ``SessionHistorySource`` 的 service。
 
     Args:
-        store: 会话存储；本工具读 ``store.list()`` + ``store.load()`` 扫历史 events。
+        store: 020 兼容参数；未传 ``search_service`` 时用于构造历史 source。
+        search_service: bridge / 新调用方注入的统一搜索 service。
         clock: 注入"现在"，便于单测；默认系统本地时区 ``datetime.now().astimezone()``。
     """
 
@@ -113,10 +116,19 @@ class ConversationHistoryTool:
 
     def __init__(
         self,
-        store: SessionStore,
+        store: SessionStore | None = None,
+        *,
+        search_service: MemorySearchService | None = None,
         clock: Callable[[], datetime] = _default_now,
     ) -> None:
-        self._store = store
+        if search_service is None:
+            if store is None:
+                raise ValueError("search_service 和 store 至少提供一个")
+            search_service = MemorySearchService(
+                [SessionHistorySource(store)],
+                analyzer=QueryAnalyzer(clock),
+            )
+        self._search_service = search_service
         self._clock = clock
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
@@ -136,97 +148,51 @@ class ConversationHistoryTool:
         try:
             since = parse_time_expression(since_str, now, bias="start") if since_str else None
             until = parse_time_expression(until_str, now, bias="end") if until_str else None
+            explicit_time_range = (
+                TimeRange(since=since, until=until)
+                if since is not None or until is not None
+                else None
+            )
         except ValueError as e:
             return ToolResult(
                 text=(f"时间格式没看懂：{e}。可以用「3 天前」/「上周」/「2026-06-15」这种说法。"),
                 is_error=True,
             )
 
-        try:
-            current_turn_boundary = _current_turn_boundary(args)
-            hits = self._scan(query, since, until, said_by, limit, current_turn_boundary)
-        except SessionPersistError:
+        current_turn_boundary = _current_turn_boundary(args)
+        normalized_said_by: SaidBy | None = None
+        if said_by == "you":
+            normalized_said_by = "user"
+        elif said_by == "me":
+            normalized_said_by = "agent"
+        request = SearchRequest(
+            text=query or "",
+            owner_user_id=DEFAULT_OWNER_USER_ID,
+            persona_id=_opt_str(args, _CURRENT_PERSONA_ID_ARG) or "",
+            mode="explicit",
+            session_id=current_turn_boundary[0] if current_turn_boundary else None,
+            current_turn_start_index=(current_turn_boundary[1] if current_turn_boundary else None),
+            top_k=limit,
+            said_by=normalized_said_by,
+            explicit_time_range=explicit_time_range,
+        )
+        result = self._search_service.search(request)
+        if result.failures and not result.evidence:
             return ToolResult(
                 text="一时翻不到记录了，等下再说吧。",
                 is_error=True,
             )
 
-        text = format_hits(hits, now)
+        text = format_evidence(result.evidence, now)
         return ToolResult(
             text=text,
             is_error=False,
-            meta={"result_count": len(hits)},
+            meta={
+                "result_count": len(result.evidence),
+                "intent": result.query.intent,
+                "source_failures": len(result.failures),
+            },
         )
-
-    def _scan(
-        self,
-        query: str | None,
-        since: datetime | None,
-        until: datetime | None,
-        said_by: str | None,
-        limit: int,
-        current_turn_boundary: tuple[str, int] | None = None,
-    ) -> list[Hit]:
-        """扫描所有 session 的 events，按过滤条件收集 Hit。"""
-        summaries = self._store.list()
-
-        relevant = [
-            s
-            for s in summaries
-            if not (until is not None and s.created_at >= until)
-            and not (since is not None and s.updated_at < since)
-        ]
-
-        query_terms = _query_terms(query)
-        hits: list[Hit] = []
-
-        for summary in relevant:
-            session = self._store.load(summary.session_id)
-            cutoff_idx = (
-                current_turn_boundary[1]
-                if current_turn_boundary is not None
-                and summary.session_id == current_turn_boundary[0]
-                else None
-            )
-            prev: Event | None = None
-            for idx, ev in enumerate(session.events):
-                if cutoff_idx is not None and idx >= cutoff_idx:
-                    break
-
-                if ev.type not in ("user_message", "assistant_message"):
-                    continue
-                content = _recall_content(ev)
-                if content is None:
-                    continue
-
-                if since is not None and ev.ts < since:
-                    prev = ev
-                    continue
-                if until is not None and ev.ts >= until:
-                    break
-
-                is_user = ev.type == "user_message"
-                if said_by == "you" and not is_user:
-                    prev = ev
-                    continue
-                if said_by == "me" and is_user:
-                    prev = ev
-                    continue
-
-                if query_terms and not _matches_query_terms(content, query_terms):
-                    prev = ev
-                    continue
-
-                pair = (
-                    prev
-                    if (prev is not None and prev.type in ("user_message", "assistant_message"))
-                    else None
-                )
-                hits.append(Hit(matched=ev, pair=pair))
-                prev = ev
-
-        hits.sort(key=lambda h: h.matched.ts, reverse=True)
-        return hits[:limit]
 
 
 def _opt_str(args: dict[str, Any], key: str) -> str | None:
@@ -235,36 +201,6 @@ def _opt_str(args: dict[str, Any], key: str) -> str | None:
     if not isinstance(v, str):
         return None
     stripped = v.strip()
-    return stripped if stripped else None
-
-
-def _query_terms(query: str | None) -> list[str]:
-    """把 LLM 传入的 query 拆成 OR 关键词。
-
-    020 首版是整串 substring 匹配；真实 C5 replay 暴露 LLM 常传
-    ``"想不起来 不记得"`` 这类多关键词查询。整串匹配会假阴性，因此这里
-    只在 query 明显由空白 / 标点分隔成多个词时使用 OR 语义；单个短语仍保持
-    原 substring 行为。
-    """
-    if query is None:
-        return []
-    parts = [part.strip().lower() for part in re.split(r"[\s,，;；、|/]+", query) if part.strip()]
-    return parts
-
-
-def _matches_query_terms(content: str, query_terms: list[str]) -> bool:
-    haystack = content.lower()
-    return any(term in haystack for term in query_terms)
-
-
-def _recall_content(ev: Event) -> str | None:
-    """返回可作为 recall 内容的文本；partial / 空 assistant 不算历史发言。"""
-    if ev.type == "assistant_message" and ev.payload.get("partial"):
-        return None
-    content = ev.payload.get("content", "")
-    if not isinstance(content, str):
-        return None
-    stripped = content.strip()
     return stripped if stripped else None
 
 

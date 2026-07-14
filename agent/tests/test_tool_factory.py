@@ -16,6 +16,7 @@ from agent.tools import ToolRegistry, make_default_registry
 from agent.tools.builtin.conversation_history import ConversationHistoryTool
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.tools.builtin.web_search.providers.tavily import TavilyProvider
+from memory.search import MemorySearchService
 
 
 def test_returns_empty_registry_when_no_api_key(
@@ -113,3 +114,16 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
     tools = registry.all_tools()
     names = {t.name for t in tools}
     assert names == {"web_search", "recall_past_chats"}
+
+
+def test_explicit_memory_search_service_is_shared_with_history_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    service = MemorySearchService()
+
+    registry = make_default_registry(memory_search=service)
+
+    tool = registry.all_tools()[0]
+    assert isinstance(tool, ConversationHistoryTool)
+    assert tool._search_service is service

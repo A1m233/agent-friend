@@ -15,6 +15,9 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
+from memory.search import MemorySearchService, QueryAnalyzer
+
+from ..memory_search import SessionHistorySource
 from .builtin.conversation_history import ConversationHistoryTool
 from .builtin.web_search import WebSearchTool
 from .builtin.web_search.providers.tavily import TavilyProvider
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
 def make_default_registry(
     session_store: SessionStore | None = None,
     *,
+    memory_search: MemorySearchService | None = None,
     tavily_api_key: str | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
@@ -65,7 +69,12 @@ def make_default_registry(
             file=sys.stderr,
         )
 
-    if session_store is not None:
-        tools.append(ConversationHistoryTool(store=session_store))
+    if memory_search is None and session_store is not None:
+        memory_search = MemorySearchService(
+            [SessionHistorySource(session_store)],
+            analyzer=QueryAnalyzer(),
+        )
+    if memory_search is not None:
+        tools.append(ConversationHistoryTool(search_service=memory_search))
 
     return ToolRegistry(tools)

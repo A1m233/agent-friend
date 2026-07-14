@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..store import EpisodicRow, SemanticRow
-from .result import ExtractionOutput, ExtractionResult
+from .result import ExtractionOutput, ExtractionResult, normalize_memory_metadata
 
 if TYPE_CHECKING:
     from ..contracts import ConversationFragment
@@ -40,10 +40,17 @@ class Reconciler:
         user_said_bonus: user 来源事实的重要性加成。
     """
 
-    def __init__(self, store: object, *, user_said_bonus: float = _USER_SAID_BONUS) -> None:
+    def __init__(
+        self,
+        store: object,
+        *,
+        user_said_bonus: float = _USER_SAID_BONUS,
+        normalize_metadata: bool = True,
+    ) -> None:
         # store 用 duck typing：真实类型 SqliteMemoryStore；测试可注入 fake。
         self._store = store
         self._bonus = user_said_bonus
+        self._normalize_metadata = normalize_metadata
 
     def apply(
         self,
@@ -79,43 +86,76 @@ class Reconciler:
         superseded: list[str] = []
 
         for op in output.semantic_ops:
-            if op.op == "supersede" and op.target_hint:
+            if self._normalize_metadata:
+                memory_class, fact_key, pinned = normalize_memory_metadata(
+                    op.statement,
+                    pinned=op.pinned,
+                    memory_class=getattr(op, "memory_class", "normal"),
+                    fact_key=getattr(op, "fact_key", None),
+                )
+            else:
+                memory_class, fact_key, pinned = "normal", None, op.pinned
+            match: SemanticRow | None = None
+            if fact_key is not None and hasattr(self._store, "semantic_by_fact_key"):
+                match = self._store.semantic_by_fact_key(
+                    fact_key,
+                    owner_user_id=fragment.owner_user_id,
+                )
+            if match is None and op.op == "supersede" and op.target_hint:
                 match = _find_match(op.target_hint, existing_facts)
-                if match is not None:
-                    if self._store.supersede_semantic(match.id, now):  # type: ignore[attr-defined]
-                        superseded.append(match.statement)
-                        logger.warning("superseded fact=%s new=%s", match.statement, op.statement)
-                    else:
-                        logger.warning(
-                            "supersede race missed fact=%s new=%s", match.statement, op.statement
-                        )
-                else:
-                    logger.warning(
-                        "supersede hint unmatched hint=%s new=%s; downgrade to add",
-                        op.target_hint,
-                        op.statement,
-                    )
+            if match is None and op.op == "supersede" and op.target_hint:
+                logger.warning(
+                    "supersede hint unmatched hint=%s new=%s; downgrade to add",
+                    op.target_hint,
+                    op.statement,
+                )
+
+            if match is not None and match.statement.strip() == op.statement.strip():
+                continue
 
             importance = op.importance
             if op.speaker_origin == "user":
                 importance = min(1.0, importance + self._bonus)
 
-            self._store.add_semantic(  # type: ignore[attr-defined]
-                SemanticRow(
-                    id=str(uuid4()),
-                    statement=op.statement,
-                    persona_id=fragment.persona_id,
-                    created_at=now,
-                    updated_at=now,
-                    importance=importance,
-                    pinned=op.pinned,
-                    source="extracted",
-                    speaker_origin=op.speaker_origin,
-                    valid_from=now,
-                    provenance=list(provenance),
-                    owner_user_id=fragment.owner_user_id,
-                )
+            row = SemanticRow(
+                id=str(uuid4()),
+                statement=op.statement,
+                persona_id=fragment.persona_id,
+                created_at=now,
+                updated_at=now,
+                importance=importance,
+                pinned=pinned,
+                source="extracted",
+                speaker_origin=op.speaker_origin,
+                valid_from=now,
+                provenance=list(provenance),
+                owner_user_id=fragment.owner_user_id,
+                memory_class=memory_class,
+                fact_key=fact_key,
+                supersedes_id=match.id if match is not None else None,
             )
+            replaced = False
+            if match is not None:
+                if hasattr(self._store, "supersede_and_add_semantic"):
+                    replaced = self._store.supersede_and_add_semantic(
+                        match.id,
+                        row,
+                        now,
+                    )
+                else:
+                    replaced = self._store.supersede_semantic(  # type: ignore[attr-defined]
+                        match.id,
+                        now,
+                    )
+                    if replaced:
+                        self._store.add_semantic(row)  # type: ignore[attr-defined]
+                if replaced:
+                    superseded.append(match.statement)
+                    logger.warning("superseded fact=%s new=%s", match.statement, op.statement)
+            if not replaced:
+                if match is not None:
+                    row.supersedes_id = None
+                self._store.add_semantic(row)  # type: ignore[attr-defined]
             added.append(op.statement)
 
         return ExtractionResult(

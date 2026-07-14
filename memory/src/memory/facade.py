@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Literal
 from .contracts import DEFAULT_OWNER_USER_ID, MemoryContext, RecallTrace, RecallTraceItem
 from .extraction import AsyncExtractionWorker
 from .retrieval import Renderer, ScoreWeights, pinned_gate, rank
+from .search import MemorySearchService, SearchRequest
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from .contracts import ConversationFragment, GateMode
     from .extraction import ExtractionResult, Extractor, Reconciler
     from .retrieval import Candidate, RetrievalStrategy
+    from .search import DenseIndexState, EmbeddingIndexManager
     from .store import SqliteMemoryStore
 
 __all__ = ["Memory"]
@@ -75,6 +77,8 @@ class Memory:
         top_k: int = _RETRIEVE_TOP_K,
         pinned_relevance_gate: bool = True,
         pinned_gate_mode: GateMode = "lenient",
+        search_service: MemorySearchService | None = None,
+        index_manager: EmbeddingIndexManager | None = None,
     ) -> None:
         self._store = store
         self._retrieval = retrieval
@@ -85,8 +89,20 @@ class Memory:
         self._pinned_gate_enabled = pinned_relevance_gate
         self._pinned_gate_mode: GateMode = pinned_gate_mode
         self._on_retrieved = on_retrieved
+        self._search_service = search_service
+        self._index_manager = index_manager
+
+        def _extracted(result: ExtractionResult) -> None:
+            if self._index_manager is not None:
+                self._index_manager.request_backfill()
+            if on_extracted is not None:
+                on_extracted(result)
+
         self._worker = AsyncExtractionWorker(
-            store, extractor, reconciler, on_extracted=on_extracted
+            store,
+            extractor,
+            reconciler,
+            on_extracted=_extracted if index_manager is not None else on_extracted,
         )
 
     @property
@@ -128,16 +144,32 @@ class Memory:
             reason,
         )
         self.flush()
-        return self._store.soft_delete_by_source_events(
+        result = self._store.soft_delete_by_source_events(
             session_id=session_id,
             event_uuids=set(event_uuids),
             deleted_at=datetime.now(UTC),
         )
+        if self._index_manager is not None:
+            self._index_manager.request_backfill()
+        return result
 
     def warmup(self) -> None:
         """Warm read-path dependencies without changing memory semantics."""
         logger.info("warmup owner=%s", self._owner)
         self._store.warmup()
+        if self._index_manager is not None:
+            self._index_manager.start()
+
+    def rebuild_dense_index(self) -> DenseIndexState | None:
+        """同步刷新派生向量索引，供评测 / 维护入口建立确定性读取前置条件。
+
+        生产读路径仍使用后台回填；这个显式入口不会被普通 ``retrieve`` 自动调用。
+        没有装配 dense 组件时返回 ``None``，调用方可据此 fail closed。
+        """
+        self.flush()
+        if self._index_manager is None:
+            return None
+        return self._index_manager.backfill_once()
 
     # ----- 读路径 -----
 
@@ -168,6 +200,17 @@ class Memory:
             effective_top_k,
             source,
         )
+
+        if self._search_service is not None and self._pinned_gate_enabled:
+            return self._retrieve_with_search(
+                query,
+                persona_id=persona_id,
+                session_id=session_id,
+                owner=owner,
+                top_k=effective_top_k,
+                source=source,
+                now=now,
+            )
 
         pinned_raw = self._store.pinned(owner_user_id=owner, persona_id=persona_id)
         pinned_pre = len(pinned_raw)
@@ -240,6 +283,120 @@ class Memory:
 
         return ctx
 
+    def _retrieve_with_search(
+        self,
+        query: str,
+        *,
+        persona_id: str,
+        session_id: str | None,
+        owner: str,
+        top_k: int,
+        source: Literal["natural", "probe"],
+        now: datetime,
+    ) -> MemoryContext:
+        assert self._search_service is not None
+        mode: Literal["automatic", "probe"] = "probe" if source == "probe" else "automatic"
+        result = self._search_service.search(
+            SearchRequest(
+                text=query,
+                owner_user_id=owner,
+                persona_id=persona_id,
+                mode=mode,
+                session_id=session_id,
+                top_k=top_k,
+            )
+        )
+        ctx = self._renderer.render_search(result.evidence, now=now)
+        if self._on_retrieved is not None:
+            core_count = sum(candidate.kind == "core" for candidate in result.evidence)
+            ordinary_count = len(result.evidence) - core_count
+            time_range = None
+            if result.query.time_range is not None:
+                time_range = {
+                    "since": _iso(result.query.time_range.since),
+                    "until": _iso(result.query.time_range.until),
+                }
+            decisions = {item.evidence_id: item for item in result.decisions}
+            trace = RecallTrace(
+                timestamp=now,
+                query=query,
+                owner_user_id=owner,
+                persona_id=persona_id,
+                top_k=top_k,
+                source=source,
+                pinned_pre_gate=core_count,
+                pinned_post_gate=core_count,
+                gate_enabled=False,
+                gate_mode=None,
+                gate_decision="disabled",
+                candidates_count=sum(run.candidate_count for run in result.source_runs),
+                ranked_count=ordinary_count,
+                items=[
+                    RecallTraceItem(
+                        text=item.text,
+                        layer=item.layer,
+                        source_ref=item.source_ref,
+                        score=item.score,
+                    )
+                    for item in ctx.items
+                ],
+                intent=result.query.intent,
+                time_range=time_range,
+                mode=mode,
+                source_runs=[
+                    {
+                        "source": run.source_name,
+                        "candidate_count": run.candidate_count,
+                        "limit": run.limit,
+                        "status": run.status,
+                    }
+                    for run in result.source_runs
+                ],
+                candidates=[
+                    {
+                        "evidence_id": candidate.evidence_id,
+                        "kind": candidate.kind,
+                        "source": candidate.source_name,
+                        "keyword_rank": candidate.keyword_rank,
+                        "dense_rank": candidate.dense_rank,
+                        "fused_score": candidate.fused_score,
+                        "decision": decisions[candidate.evidence_id].decision,
+                        "decision_reason": decisions[candidate.evidence_id].reason,
+                    }
+                    for candidate in result.evidence
+                ],
+                budget={
+                    "core": 6,
+                    "semantic": top_k,
+                    "episodic": top_k,
+                    "utterance": 4 if mode == "automatic" else top_k,
+                    "total": 6 + top_k + (4 if mode == "automatic" else 0),
+                },
+                index_state=self._dense_index_state(),
+            )
+            try:
+                self._on_retrieved(trace)
+            except Exception:
+                logger.exception("on_retrieved callback failed; dropping trace")
+        return ctx
+
+    def _dense_index_state(self) -> dict[str, object]:
+        if self._index_manager is None:
+            return {
+                "keyword_ready": True,
+                "dense_status": "disabled",
+                "active_generation": None,
+            }
+        state = self._index_manager.state()
+        return {
+            "keyword_ready": True,
+            "dense_status": state.status,
+            "active_generation": state.active_generation,
+            "indexed_count": state.indexed_count,
+            "total_count": state.total_count,
+            "last_error": state.last_error,
+        }
+
     # ----- 生命周期 -----
 
     def flush(self) -> None:
@@ -249,4 +406,10 @@ class Memory:
     def close(self) -> None:
         """drain 抽取队列、停 worker、关库。幂等。"""
         self._worker.close()
+        if self._index_manager is not None:
+            self._index_manager.close()
         self._store.close()
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None

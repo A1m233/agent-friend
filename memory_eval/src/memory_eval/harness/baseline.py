@@ -7,7 +7,7 @@ baseline 不是评测的"被验收对象"——它是"用来对比的数字"：�
 - 单题维度（gold answer / anchors / 分数 / 完整召回）
 - 全局维度（macro / 总耗时）
 
-行为细节见 012 design §6。schema_version 当前为 2；schema 1 是 hotfix 前的"减信息版"。
+行为细节见 012 design §6。schema_version 当前为 3；schema 2 不含检索模式与候选 trace。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 __all__ = ["BaselineRun", "write"]
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _GIT_TIMEOUT_SEC = 5
 _HASH_CHUNK = 65536
 
@@ -48,6 +48,9 @@ class BaselineRun:
     limit_questions: int
     note: str = ""
     dataset_paths: tuple[Path, ...] = field(default_factory=tuple)
+    retrieval_mode: str = "keyword"
+    workspace: str | None = None
+    code_fingerprint: str | None = None
 
 
 def _short_sha() -> str:
@@ -145,6 +148,7 @@ def write(
     JSON 结构见 012 design §6.2（schema_version=2）：``schema_version`` / ``run`` /
     ``macro`` / ``per_question``，每题含完整 ``recalled`` 内容，便于离线 / 后续再判分。
     """
+    outcome_list = list(outcomes)
     out_dir.mkdir(parents=True, exist_ok=True)
     sha = _short_sha()
     dirty = _working_tree_dirty()
@@ -153,7 +157,7 @@ def write(
     per_question: list[dict[str, object]] = []
     scores: list[float] = []
     n_total = 0
-    for outcome in outcomes:
+    for outcome in outcome_list:
         for idx, qo in enumerate(outcome.outcomes):
             n_total += 1
             score = qo.judge.score
@@ -170,6 +174,7 @@ def write(
                     "detail": qo.judge.detail,
                     "recalled_count": len(qo.recalled),
                     "recalled": _serialize_recalled(qo.recalled),
+                    "trace": qo.trace,
                 }
             )
 
@@ -187,6 +192,12 @@ def write(
             "limit_samples": run.limit_samples,
             "limit_questions": run.limit_questions,
             "note": run.note,
+            "retrieval": {
+                "mode": run.retrieval_mode,
+                "workspace": run.workspace,
+                "code_fingerprint": run.code_fingerprint,
+                "case_index_states": [outcome.index_state for outcome in outcome_list],
+            },
             "provider": {
                 "model": run.model,
                 "api_base": run.api_base,

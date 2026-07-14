@@ -5,11 +5,12 @@
 
 from .extractor import Extractor
 from .reconciler import Reconciler
-from .result import ExtractionOutput, ExtractionResult, SemanticOp
+from .result import ExtractionAttempt, ExtractionOutput, ExtractionResult, SemanticOp
 from .worker import AsyncExtractionWorker
 
 __all__ = [
     "AsyncExtractionWorker",
+    "ExtractionAttempt",
     "ExtractionOutput",
     "ExtractionResult",
     "Extractor",
