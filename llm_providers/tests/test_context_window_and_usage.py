@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ssl
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +11,14 @@ from litellm.exceptions import Timeout as LiteLLMTimeout
 from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
-from llm_providers import LLMClient, LLMNetworkError, LLMUsage, ProviderConfig, ProviderSpec
+from llm_providers import (
+    LLMClient,
+    LLMNetworkError,
+    LLMTextDelta,
+    LLMUsage,
+    ProviderConfig,
+    ProviderSpec,
+)
 
 _GET_MODEL_INFO = "llm_providers.client.litellm.get_model_info"
 _COMPLETION = "llm_providers.client.litellm.completion"
@@ -260,7 +268,7 @@ def test_litellm_timeout_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) 
         raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
 
     monkeypatch.setattr(_COMPLETION, fake_completion)
-    client = LLMClient(_spec(defaults={"timeout": 0.01}))
+    client = LLMClient(_spec(defaults={"timeout": 0.01}), network_retries=0)
 
     with pytest.raises(LLMNetworkError):
         list(client.stream([{"role": "user", "content": "hi"}]))
@@ -277,7 +285,112 @@ def test_litellm_stream_iteration_timeout_maps_to_network_error(
             raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
 
     monkeypatch.setattr(_COMPLETION, lambda **_kwargs: TimeoutIterator())
-    client = LLMClient(_spec(defaults={"timeout": 0.01}))
+    client = LLMClient(_spec(defaults={"timeout": 0.01}), network_retries=0)
 
     with pytest.raises(LLMNetworkError):
         list(client.stream([{"role": "user", "content": "hi"}]))
+
+
+def test_wrapped_ssl_error_maps_to_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_completion(**_kwargs: Any) -> Any:
+        try:
+            raise ssl.SSLError("UNEXPECTED_EOF_WHILE_READING")
+        except ssl.SSLError as cause:
+            raise RuntimeError("provider wrapped TLS failure") from cause
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=0)
+
+    with pytest.raises(LLMNetworkError):
+        list(client.stream([{"role": "user", "content": "hi"}]))
+
+
+def test_complete_retries_network_error_before_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=1, network_retry_backoff_seconds=0)
+
+    assert client.complete([{"role": "user", "content": "hi"}]) == "ok"
+    assert calls == 2
+
+
+def test_stream_retries_network_error_before_first_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=1, network_retry_backoff_seconds=0)
+
+    events = list(client.stream([{"role": "user", "content": "hi"}]))
+
+    assert calls == 2
+    assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
+
+
+def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    class PartialThenTimeout:
+        def __init__(self) -> None:
+            self._step = 0
+
+        def __iter__(self) -> PartialThenTimeout:
+            return self
+
+        def __next__(self) -> Any:
+            self._step += 1
+            if self._step == 1:
+                return SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="partial", tool_calls=[]),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            raise LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek")
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return PartialThenTimeout()
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
+    stream = client.stream([{"role": "user", "content": "hi"}])
+
+    first = next(stream)
+    assert isinstance(first, LLMTextDelta)
+    assert first.text == "partial"
+    with pytest.raises(LLMNetworkError):
+        next(stream)
+    assert calls == 1

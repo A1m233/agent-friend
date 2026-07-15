@@ -11,6 +11,9 @@ docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.5。
 
 from __future__ import annotations
 
+import logging
+import ssl
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -40,6 +43,53 @@ DEFAULT_CONTEXT_WINDOW = 8192
 取小不取大：窗口估小 → 阈值偏低 → 上下文管理偏早触发裁剪/压缩，安全（宁可早
 压缩，不可漏压缩撑爆）。详见 009 design §3.2。
 """
+
+DEFAULT_NETWORK_RETRIES = 2
+"""Provider 尚未产出任何结果时，网络错误的默认重试次数。"""
+
+DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
+"""网络重试的初始退避秒数；后续重试按 2 倍递增。"""
+
+logger = logging.getLogger(__name__)
+
+
+def _exception_chain(error: BaseException) -> Iterator[BaseException]:
+    """沿 ``raise ... from ...`` 因果链遍历异常，避免只看到最外层包装。"""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _is_network_exception(error: Exception) -> bool:
+    """识别被 LiteLLM / provider 包装过的连接、TLS 与超时错误。"""
+    chain = tuple(_exception_chain(error))
+    known_types = (
+        openai.APIConnectionError,
+        openai.APITimeoutError,
+        litellm.APIConnectionError,
+        litellm.Timeout,
+        litellm.CompletionTimeout,
+        ssl.SSLError,
+        ConnectionError,
+        TimeoutError,
+    )
+    if any(isinstance(item, known_types) for item in chain):
+        return True
+
+    # 部分 provider adapter 会丢掉原始 cause，把 TLS 错误包装成 5xx。
+    # 只兜底匹配明确的网络错误特征，避免把普通 InternalServerError 误判为网络错。
+    message = " | ".join(str(item) for item in chain)
+    return any(
+        marker in message
+        for marker in (
+            "SSL: UNEXPECTED_EOF_WHILE_READING",
+            "EOF occurred in violation of protocol",
+            "getaddrinfo failed",
+        )
+    )
 
 
 def _extract_usage(response: Any) -> LLMUsage | None:
@@ -71,22 +121,17 @@ def _map_exception(e: Exception) -> LLMError:
     确保上层（``Conversation`` / CLI）只需 ``catch LLMError`` 体系，
     不需要 import LiteLLM 或 openai。
     """
-    if isinstance(e, openai.AuthenticationError):
+    chain = tuple(_exception_chain(e))
+    if any(isinstance(item, openai.AuthenticationError) for item in chain):
         return LLMAuthError(str(e))
-    if isinstance(e, openai.RateLimitError):
+    if any(isinstance(item, openai.RateLimitError) for item in chain):
         return LLMRateLimitError(str(e))
-    if isinstance(
-        e,
-        (
-            openai.APIConnectionError,
-            openai.APITimeoutError,
-            litellm.APIConnectionError,
-            litellm.Timeout,
-            litellm.CompletionTimeout,
-        ),
-    ):
+    if _is_network_exception(e):
         return LLMNetworkError(str(e))
-    if isinstance(e, (litellm.ContextWindowExceededError, openai.BadRequestError)):
+    if any(
+        isinstance(item, (litellm.ContextWindowExceededError, openai.BadRequestError))
+        for item in chain
+    ):
         return LLMBadRequestError(str(e))
     if isinstance(e, openai.APIError):
         return LLMProviderError(str(e))
@@ -115,8 +160,20 @@ class LLMClient:
             用什么 key。
     """
 
-    def __init__(self, spec: ProviderSpec):
+    def __init__(
+        self,
+        spec: ProviderSpec,
+        *,
+        network_retries: int = DEFAULT_NETWORK_RETRIES,
+        network_retry_backoff_seconds: float = DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS,
+    ):
+        if network_retries < 0:
+            raise ValueError("network_retries 不能小于 0")
+        if network_retry_backoff_seconds < 0:
+            raise ValueError("network_retry_backoff_seconds 不能小于 0")
         self.spec = spec
+        self._network_retries = network_retries
+        self._network_retry_backoff_seconds = network_retry_backoff_seconds
 
     @property
     def context_window(self) -> int:
@@ -174,7 +231,14 @@ class LLMClient:
             本方法**不支持工具调用**——仅做单次同步问答。如需工具调用走
             :meth:`stream`（``Conversation.send`` 内部走 stream 拼接得到完整文本）。
         """
-        return self._call_once(self.spec, messages, **overrides)
+        for attempt in range(self._network_retries + 1):
+            try:
+                return self._call_once(self.spec, messages, **overrides)
+            except LLMNetworkError:
+                if attempt >= self._network_retries:
+                    raise
+                self._wait_before_network_retry(attempt)
+        raise AssertionError("network retry loop should always return or raise")
 
     def stream(
         self,
@@ -210,7 +274,54 @@ class LLMClient:
         Raises:
             同 :meth:`complete`，异常可能在初始化或迭代中任一时机抛出。
         """
-        return self._stream_once(self.spec, messages, tools=tools, **overrides)
+        return self._stream_with_network_retries(
+            self.spec,
+            messages,
+            tools=tools,
+            **overrides,
+        )
+
+    def _stream_with_network_retries(
+        self,
+        spec: ProviderSpec,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
+        """仅在上游尚未产出任何事件时重试，避免重复文本或工具调用。"""
+        for attempt in range(self._network_retries + 1):
+            emitted = False
+            should_retry = False
+            upstream = self._stream_once(spec, messages, tools=tools, **overrides)
+            try:
+                for event in upstream:
+                    emitted = True
+                    yield event
+                return
+            except LLMNetworkError:
+                if emitted or attempt >= self._network_retries:
+                    raise
+                should_retry = True
+            finally:
+                close = getattr(upstream, "close", None)
+                if callable(close):
+                    close()
+            if should_retry:
+                self._wait_before_network_retry(attempt)
+
+    def _wait_before_network_retry(self, attempt: int) -> None:
+        delay = self._network_retry_backoff_seconds * (2**attempt)
+        logger.warning(
+            "LLM network request failed before first event; retrying model=%s retry=%d/%d "
+            "delay_seconds=%.3f",
+            self.spec.model,
+            attempt + 1,
+            self._network_retries,
+            delay,
+        )
+        if delay > 0:
+            time.sleep(delay)
 
     def _call_once(
         self,

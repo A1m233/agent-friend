@@ -17,11 +17,11 @@ class LLMAuthError(LLMError):
 
 
 class LLMRateLimitError(LLMError):
-    """被 Provider 限速。CLI 层期望行为：等 LiteLLM 自带 retry，仍失败则兜底。"""
+    """被 Provider 限速。上层期望行为：记录并使用兜底话术。"""
 
 
 class LLMNetworkError(LLMError):
-    """网络错误或超时。CLI 层期望行为：等 LiteLLM 自带 retry，仍失败则兜底。"""
+    """网络错误或超时。LLMClient 有限重试用尽后交给上层兜底。"""
 
 
 class LLMBadRequestError(LLMError):

@@ -14,7 +14,11 @@ import json
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar, cast
+
+import pytest
+from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -38,6 +42,7 @@ from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ProviderSpec,
 )
 
 # ---- Fake tools ----
@@ -134,7 +139,7 @@ class _ScriptedLLMClient:
 def _make_conversation(
     tmp_path: Path,
     *,
-    fake_llm: _ScriptedLLMClient,
+    fake_llm: LLMClient | _ScriptedLLMClient,
     registry: ToolRegistry | None = None,
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
@@ -162,6 +167,42 @@ def _make_conversation(
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=registry,
+    )
+
+
+def _tool_call_chunk(call_id: str, message: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=0,
+                            id=call_id,
+                            function=SimpleNamespace(
+                                name="echo",
+                                arguments=json.dumps({"message": message}),
+                            ),
+                        )
+                    ],
+                ),
+                finish_reason="tool_calls",
+            )
+        ],
+    )
+
+
+def _text_chunk(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(content=text, tool_calls=[]),
+                finish_reason="stop",
+            )
+        ],
     )
 
 
@@ -241,6 +282,50 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_network_retry_after_two_tools_does_not_repeat_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """第三次 LLM 初始化网络失败后重试，只重放 LLM 请求，不重复前两次工具。"""
+    echo = EchoTool()
+    responses: list[Any] = [
+        iter([_tool_call_chunk("call_1", "first")]),
+        iter([_tool_call_chunk("call_2", "second")]),
+        LiteLLMTimeout("timed out", model="deepseek/test", llm_provider="deepseek"),
+        iter([_text_chunk("两次搜索结果整理完成。")]),
+    ]
+    completion_calls = 0
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal completion_calls
+        response = responses[completion_calls]
+        completion_calls += 1
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr("llm_providers.client.litellm.completion", fake_completion)
+    client = LLMClient(
+        ProviderSpec(model="deepseek/test", api_key="test"),
+        network_retries=1,
+        network_retry_backoff_seconds=0,
+    )
+    conv = _make_conversation(tmp_path, fake_llm=client, registry=ToolRegistry([echo]))
+
+    events = list(conv.stream("run twice"))
+
+    assert completion_calls == 4
+    assert echo.call_count == 2
+    assert [event.tool_call_id for event in events if isinstance(event, ToolCallRequest)] == [
+        "call_1",
+        "call_2",
+    ]
+    assert "".join(event.text for event in events if isinstance(event, TextDelta)) == (
+        "两次搜索结果整理完成。"
+    )
+    assert isinstance(events[-1], TurnDone)
 
 
 def test_reused_provider_tool_call_id_gets_unique_event_ids(tmp_path: Path) -> None:
