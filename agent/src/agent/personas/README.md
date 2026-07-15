@@ -1,31 +1,30 @@
 # personas/
 
-本目录存放虚拟朋友的人设 markdown 文件。每个 `.md` 文件对应一个独立人设，加载时按 `persona_name` 选择（默认 `default`）。
+本目录存放随应用发布的内置人格基线。当前产品只支持一个人格，`default.md` 是首次初始化以及重置人格时使用的出厂内容。
 
-## 阶段 1 约定
+## 内容边界
 
-阶段 1 **只搭机制不填内容**——`default.md` 只写最低限度的身份信息（姓名 + 说话风格），不写：
+`default.md` 描述用户可以理解和调整的稳定人格维度，包括：
 
-- 行为准则
-- 失忆话术禁令（明确否决，详见 design.md §4.4.4）
-- 性格细节
-- 复杂角色设定
+- 身份与关系定位
+- 性格与价值取向
+- 相处和情绪回应方式
+- 交流节奏与说话风格
+- 用于校准上述特征的少量典型回应
 
-人设的语义内容由用户后续想清楚后填入 markdown，**不需要改任何代码**。
+项目级安全约束、工具规则、记忆一致性和通用输出格式不属于人格，不应写入这里；这些内容由 `prompt_sections/` 下对应的独立 section 负责。
 
 ## 加载方式
 
-`MarkdownPromptBuilder` 通过 `importlib.resources` 从本目录读取，文件随 `agent` 模块打包发布。
+`EffectivePersonaStore` 通过 `importlib.resources` 读取内置基线，并在首次使用时把去除 frontmatter 后的正文写入用户数据目录。正式对话和人格编辑统一读取这份用户文件；用户删除文件或执行重置后，再从 `default.md` 恢复。
 
 ```python
-from agent.prompts import MarkdownPromptBuilder
+from agent.personas import EffectivePersonaStore
 
-builder = MarkdownPromptBuilder(persona_name="default")
-system_prompt = builder.build()
+store = EffectivePersonaStore()
+persona = store.load()
 ```
 
-## 未来扩展（M0.3+）
+## 用户文件
 
-- `data/personas/{name}.md`（项目根 `data/`，gitignored）作为用户自定义 overlay，加载时优先于本目录
-- 多人设切换（`--persona` CLI 参数）
-- 动态拼接（时间感知、用户信息等）
+用户实际编辑的是 `agent.paths.personas_dir()` 下唯一人格对应的 `persona.md`。路径必须通过 `agent.paths` 获取，不要在调用方自行拼接平台目录。

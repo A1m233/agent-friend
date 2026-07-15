@@ -194,6 +194,7 @@ class Conversation:
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
         self._run_id_override: str | None = None
+        self._turn_prompt_builder: PromptBuilder | None = None
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
         prompt_builder.build()
@@ -242,7 +243,14 @@ class Conversation:
         switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona；
         本轮 channel override 由 ``stream`` / ``edit_resend_latest`` 在调用期间设置。
         """
-        return self._prompt_builder.build(channel_override=self._prompt_channel_override)
+        builder = self._turn_prompt_builder or self._prompt_builder
+        return builder.build(channel_override=self._prompt_channel_override)
+
+    def _snapshot_prompt_builder(self) -> PromptBuilder:
+        snapshot = getattr(self._prompt_builder, "snapshot", None)
+        if callable(snapshot):
+            return cast(PromptBuilder, snapshot())
+        return self._prompt_builder
 
     @property
     def current_persona(self) -> str:
@@ -364,8 +372,10 @@ class Conversation:
         """
         previous_prompt_channel = self._prompt_channel_override
         previous_run_id = self._run_id_override
+        previous_turn_prompt_builder = self._turn_prompt_builder
         self._prompt_channel_override = channel
         self._run_id_override = run_id
+        self._turn_prompt_builder = self._snapshot_prompt_builder()
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -520,6 +530,7 @@ class Conversation:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
+            self._turn_prompt_builder = previous_turn_prompt_builder
 
     def edit_resend_latest(
         self,
@@ -540,8 +551,10 @@ class Conversation:
 
         previous_prompt_channel = self._prompt_channel_override
         previous_run_id = self._run_id_override
+        previous_turn_prompt_builder = self._turn_prompt_builder
         self._prompt_channel_override = channel
         self._run_id_override = run_id
+        self._turn_prompt_builder = self._snapshot_prompt_builder()
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -704,6 +717,7 @@ class Conversation:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
+            self._turn_prompt_builder = previous_turn_prompt_builder
 
     # ----- 系统级触发轮（014：main loop 入口） -----
 

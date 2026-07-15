@@ -317,19 +317,33 @@ function HistoryLoadingState() {
  * 消息列表：领域消息（自写 fetch-SSE 累积）→ 受控渲染。文本交 tdesign 散件，
  * 工具卡片自渲染（tdesign alpha 不出 toolcall 块，见 projection / ToolCard 注释）。
  */
-interface MessageListProps {
+interface MessageTimelineProps {
+  messages: ChatMessage[];
+  streaming?: boolean;
+  historyLoading?: boolean;
+  historyLoadSeq?: number;
+  syncRefreshSeq?: number;
   composerHeight?: number;
+  overlayComposer?: boolean;
+  emptyLabel?: string;
+  onEditLatestUserMessage?: (messageId: string, text: string) => void | Promise<void>;
 }
 
-export function MessageList({
+/**
+ * Store 无关的受控消息时间线。正式聊天、人格编辑等 Agent 场景共享同一套
+ * TDesign 消息投影、滚动与流式展示；会话持久化和业务操作由外层 adapter 决定。
+ */
+export function MessageTimeline({
+  messages,
+  streaming = false,
+  historyLoading = false,
+  historyLoadSeq = 0,
+  syncRefreshSeq = 0,
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
-}: MessageListProps) {
-  const messages = useConversationStore((s) => s.messages);
-  const streaming = useConversationStore((s) => s.streaming);
-  const historyLoading = useConversationStore((s) => s.historyLoading);
-  const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
-  const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
-  const editResendLatest = useConversationStore((s) => s.editResendLatest);
+  overlayComposer = true,
+  emptyLabel = "开始一段对话吧～",
+  onEditLatestUserMessage,
+}: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef(true);
@@ -343,7 +357,9 @@ export function MessageList({
   const readingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const [isSticky, setIsSticky] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const composerInset = Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
+  const composerInset = overlayComposer
+    ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
+    : 0;
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
   const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
   const handleExternalLinkClick = useExternalLinkOpener();
@@ -540,7 +556,7 @@ export function MessageList({
   if (messages.length === 0) {
     return (
       <div className="grid flex-1 place-items-center text-sm text-muted">
-        开始一段对话吧～
+        {emptyLabel}
       </div>
     );
   }
@@ -568,6 +584,7 @@ export function MessageList({
             const canEdit =
               m.role === "user" &&
               m.id === lastUserMessageId &&
+              Boolean(onEditLatestUserMessage) &&
               !editDisabled &&
               !editingMessageId;
             return (
@@ -581,7 +598,7 @@ export function MessageList({
                 onCancelEdit={() => setEditingMessageId(null)}
                 onSubmitEdit={(text) => {
                   setEditingMessageId(null);
-                  void editResendLatest(m.id, text);
+                  void onEditLatestUserMessage?.(m.id, text);
                 }}
               />
             );
@@ -602,5 +619,33 @@ export function MessageList({
         </Button>
       )}
     </div>
+  );
+}
+
+interface MessageListProps {
+  composerHeight?: number;
+}
+
+/** 正式会话 adapter：只负责把 conversation store 接到共享时间线。 */
+export function MessageList({
+  composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
+}: MessageListProps) {
+  const messages = useConversationStore((s) => s.messages);
+  const streaming = useConversationStore((s) => s.streaming);
+  const historyLoading = useConversationStore((s) => s.historyLoading);
+  const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
+  const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
+  const editResendLatest = useConversationStore((s) => s.editResendLatest);
+
+  return (
+    <MessageTimeline
+      messages={messages}
+      streaming={streaming}
+      historyLoading={historyLoading}
+      historyLoadSeq={historyLoadSeq}
+      syncRefreshSeq={syncRefreshSeq}
+      composerHeight={composerHeight}
+      onEditLatestUserMessage={editResendLatest}
+    />
   );
 }

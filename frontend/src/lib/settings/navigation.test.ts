@@ -6,6 +6,7 @@ describe("locateSettings", () => {
   it("resolves every stable settings target", () => {
     for (const target of [
       "general",
+      "persona",
       "pet",
       "voice",
       "runtime",

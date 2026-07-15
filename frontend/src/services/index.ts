@@ -18,3 +18,15 @@ export type {
   ProviderInfo,
   ProviderStatus,
 } from "./api/im";
+export {
+  openPersonaTarget,
+  personaApi,
+  runPersonaEditor,
+} from "./api/persona";
+export type {
+  PersonaCandidate,
+  PersonaEditorSnapshot,
+  PersonaSource,
+  PersonaSourceStatus,
+  PersonaState,
+} from "./api/persona";

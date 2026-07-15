@@ -73,6 +73,7 @@ class MarkdownPromptBuilder:
         self.persona_id = persona_id
         self._catalog = catalog or PersonaCatalog(external_dir=external_dir)
         self._session = session
+        self._composer_was_explicit = composer is not None
         self._composer = composer or SystemPromptComposer.default(
             persona_id,
             catalog=self._catalog,
@@ -86,14 +87,33 @@ class MarkdownPromptBuilder:
         per-conversation 的 :class:`Session` 绑到工厂返回的 builder 上，让
         :class:`ChannelSection` 槽位生效。
 
-        Note:
-            返回的新 builder 重建了内部 composer——若调用方曾传入自定义
-            ``composer``，本方法**不**保留它（语义优先级：session > 自定义 composer）。
+        显式自定义 composer 会被保留；默认 composer 则按新 session 重建，
+        让 channel section 绑定正确的 session。
         """
+        if self._composer_was_explicit:
+            return MarkdownPromptBuilder(
+                persona_id=self.persona_id,
+                catalog=self._catalog,
+                composer=self._composer,
+                session=session,
+            )
         return MarkdownPromptBuilder(
             persona_id=self.persona_id,
             catalog=self._catalog,
             session=session,
+        )
+
+    def snapshot(self) -> MarkdownPromptBuilder:
+        """冻结当前 persona 槽位，供一个用户回合的多次 LLM 调用复用。"""
+        try:
+            composer = self._composer.freeze("persona")
+        except KeyError:
+            composer = self._composer
+        return MarkdownPromptBuilder(
+            persona_id=self.persona_id,
+            catalog=self._catalog,
+            composer=composer,
+            session=self._session,
         )
 
     def build(self, *, channel_override: PromptChannel | None = None) -> str:

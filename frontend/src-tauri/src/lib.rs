@@ -6,6 +6,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
+use tauri_plugin_opener::OpenerExt;
 
 mod avatar_models;
 mod bubble_window;
@@ -60,6 +61,13 @@ struct SettingsFeedbackContext {
 struct SettingsNavigationEnvelope {
     request_id: u64,
     request: SettingsOpenRequest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PersonaOpenTarget {
+    File,
+    Folder,
 }
 
 impl SettingsNavigationState {
@@ -599,6 +607,37 @@ fn consume_pending_settings_navigation(
     state.take_pending()
 }
 
+/// 050：只打开应用已知的人格文件或目录，不接受前端传入任意路径。
+#[tauri::command]
+fn open_persona_target(
+    app: tauri::AppHandle,
+    target: PersonaOpenTarget,
+) -> Result<(), String> {
+    let persona_dir = paths::editable_persona_dir();
+    let persona_file = paths::editable_persona_path();
+    if !persona_file.is_file() {
+        return Err("persona.md 尚未准备好，请稍后重试".to_string());
+    }
+
+    let canonical_dir = persona_dir
+        .canonicalize()
+        .map_err(|e| format!("resolve persona directory failed: {e}"))?;
+    let canonical_file = persona_file
+        .canonicalize()
+        .map_err(|e| format!("resolve persona file failed: {e}"))?;
+    if !canonical_file.starts_with(&canonical_dir) {
+        return Err("persona file resolved outside the expected directory".to_string());
+    }
+
+    let path = match target {
+        PersonaOpenTarget::File => canonical_file,
+        PersonaOpenTarget::Folder => canonical_dir,
+    };
+    app.opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+        .map_err(|e| format!("open persona target failed: {e}"))
+}
+
 /// 022 · 桌宠 ActionBar "接入 IM" 按钮调用。
 #[tauri::command]
 fn open_im_connect(app: tauri::AppHandle) -> Result<(), String> {
@@ -827,6 +866,7 @@ pub fn run() {
         open_chat,
         open_settings,
         consume_pending_settings_navigation,
+        open_persona_target,
         diagnostics::generate_diagnostic_bundle,
         open_im_connect,
         open_voice_call,
@@ -861,6 +901,7 @@ pub fn run() {
         open_chat,
         open_settings,
         consume_pending_settings_navigation,
+        open_persona_target,
         diagnostics::generate_diagnostic_bundle,
         open_im_connect,
         open_voice_call,

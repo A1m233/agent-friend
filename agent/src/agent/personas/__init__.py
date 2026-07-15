@@ -20,12 +20,34 @@ from .catalog import (
     PersonaCatalog,
     PersonaInfo,
 )
+from .editor import PersonaEditorPromptBuilder, PersonaEditorWorkspace, ProposePersonaTool
+from .effective import (
+    MAX_PERSONA_DISPLAY_NAME_CHARS,
+    PERSONA_DISPLAY_NAME_FALLBACK,
+    EffectivePersonaCatalog,
+    EffectivePersonaSnapshot,
+    EffectivePersonaStore,
+    PersonaDiagnostic,
+    extract_persona_display_name,
+    normalize_persona_content,
+)
 from .identity import BUILTIN_DEFAULT_PERSONA_ID
 
 __all__ = [
     "BUILTIN_DEFAULT_PERSONA_ID",
     "KEEP",
+    "MAX_PERSONA_DISPLAY_NAME_CHARS",
+    "PERSONA_DISPLAY_NAME_FALLBACK",
+    "EffectivePersonaCatalog",
+    "EffectivePersonaSnapshot",
+    "EffectivePersonaStore",
     "PersonaCatalog",
+    "PersonaDiagnostic",
+    "PersonaEditorPromptBuilder",
+    "PersonaEditorWorkspace",
     "PersonaInfo",
+    "ProposePersonaTool",
+    "extract_persona_display_name",
     "frontmatter",
+    "normalize_persona_content",
 ]

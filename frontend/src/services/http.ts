@@ -19,6 +19,18 @@ export interface FriendlyError {
 
 function backendDetailOf(data: unknown): FriendlyError | null {
   if (!data || typeof data !== "object") return null;
+  const envelope = "error" in data ? (data as { error?: unknown }).error : null;
+  if (envelope && typeof envelope === "object") {
+    const message =
+      "message" in envelope && typeof envelope.message === "string"
+        ? envelope.message
+        : null;
+    const code =
+      "code" in envelope && typeof envelope.code === "string"
+        ? envelope.code
+        : undefined;
+    if (message) return { friendly: message, code };
+  }
   const detail = "detail" in data ? (data as { detail?: unknown }).detail : null;
   if (!detail || typeof detail !== "object") return null;
 

@@ -28,6 +28,7 @@ import {
 import { AvatarModelPanel } from "./components/AvatarModelPanel";
 import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
+import { PersonaPanel } from "./components/PersonaPanel";
 import { FeedbackDiagnosticsPanel } from "./components/FeedbackDiagnosticsPanel";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
@@ -95,6 +96,14 @@ export function SettingsApp() {
               <SidebarMenu>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    isActive={section === "persona"}
+                    onClick={() => selectSection("persona")}
+                  >
+                    人格
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     isActive={section === "general"}
                     onClick={() => selectSection("general")}
                   >
@@ -152,7 +161,8 @@ export function SettingsApp() {
         </Sidebar>
 
         <main className="flex min-w-0 flex-1 flex-col bg-bg">
-          {section === "general" ? (
+          <PersonaPanel active={section === "persona"} />
+          {section === "persona" ? null : section === "general" ? (
             <SettingsPageLayout title="通用">
               <SettingsGroup title="外观">
                 <SettingsRow label="主题">

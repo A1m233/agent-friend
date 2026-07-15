@@ -65,8 +65,17 @@ export async function* runAgentStream(
   input: RunStreamInput,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
+  yield* runAgentStreamAtPath(AGUI_RUN_PATH, input, opts);
+}
+
+/** 供专用 Agent 复用同一套 RunAgentInput 与 SSE 消费，只替换后端 endpoint。 */
+export async function* runAgentStreamAtPath(
+  path: string,
+  input: RunStreamInput,
+  opts: RunStreamOptions = {},
+): AsyncGenerator<BaseEvent> {
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
-  const res = await fetch(`${base}${AGUI_RUN_PATH}`, {
+  const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -112,7 +121,9 @@ export async function* editResendLatestStream(
   yield* readEventStream(res.body);
 }
 
-async function* readEventStream(body: ReadableStream<Uint8Array>): AsyncGenerator<BaseEvent> {
+export async function* readEventStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<BaseEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
