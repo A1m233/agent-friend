@@ -4,6 +4,12 @@ export { checkHealth } from "./health";
 export { editResendLatestStream, runAgentStream } from "./stream";
 export type { EditResendLatestInput, RunStreamInput, RunStreamOptions } from "./stream";
 export { sessionsApi } from "./api/sessions";
+export { generateDiagnosticBundle } from "./diagnostics";
+export type {
+  DiagnosticCollectionFailure,
+  GenerateDiagnosticBundleInput,
+  GenerateDiagnosticBundleResult,
+} from "./diagnostics";
 export { imApi } from "./api/im";
 export type {
   IMType,

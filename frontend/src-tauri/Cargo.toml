@@ -36,6 +36,8 @@ rand = "0.8"
 # 016 · bubble window 显隐 → 跟随轮询 task 唤醒（park / unpark 语义）
 tokio = { version = "1", features = ["sync", "time"] }
 tauri-plugin-opener = "2.5.4"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+os_info = "3"
 
 # 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)
 [target.'cfg(target_os = "macos")'.dependencies]

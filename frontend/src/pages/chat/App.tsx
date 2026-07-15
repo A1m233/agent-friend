@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { LifeBuoy } from "lucide-react";
 import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
 import {
   startSessionSyncSubscriber,
@@ -16,6 +17,7 @@ import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
+import { openSettings } from "@/lib/settings/navigation";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -60,7 +62,22 @@ export function ChatApp() {
     >
       <HistorySidebar />
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-end border-b border-border px-4 py-2.5">
+        <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              void openSettings({
+                target: "feedback",
+                feedback: currentSessionId
+                  ? { preselectSessionId: currentSessionId }
+                  : undefined,
+              })
+            }
+          >
+            <LifeBuoy className="size-4" />
+            反馈问题
+          </Button>
           <ConnectionDot status={status} />
         </header>
         {voiceBlocksText && (

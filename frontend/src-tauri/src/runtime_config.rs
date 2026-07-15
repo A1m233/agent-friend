@@ -359,6 +359,91 @@ fn dotenv_value_configured(path: &Path, name: &str) -> bool {
     })
 }
 
+fn dotenv_value(path: &Path, name: &str) -> Result<Option<String>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(path)
+        .map_err(|e| format!("legacy credential file cannot be read for {name}: {e}"))?;
+    Ok(raw.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        let (key, value) = trimmed.split_once('=')?;
+        let key = key.trim().strip_prefix("export ").unwrap_or(key.trim());
+        if key != name {
+            return None;
+        }
+        let value = value.trim().trim_matches(&['"', '\''][..]).trim();
+        (!value.is_empty()).then(|| value.to_string())
+    }))
+}
+
+/// 仅供本 crate 在写诊断包前做精确凭据替换；值不得进入 command payload 或日志。
+/// 任一已知凭据来源无法可靠读取时返回错误，让诊断导出 fail closed。
+pub(crate) fn credential_redaction_values() -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    for spec in SECRET_REGISTRY {
+        for name in std::iter::once(spec.name).chain(spec.aliases.iter().copied()) {
+            match std::env::var(name) {
+                Ok(value) => push_unique_secret(&mut values, value),
+                Err(std::env::VarError::NotPresent) => {}
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(format!(
+                        "environment credential {name} is not valid Unicode"
+                    ));
+                }
+            }
+            for path in legacy_dotenv_paths() {
+                if let Some(value) = dotenv_value(&path, name)? {
+                    push_unique_secret(&mut values, value);
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            for entry in [
+                keyring_entry(spec.name),
+                python_service_keyring_entry(spec.name),
+                legacy_rust_keyring_entry(spec.name),
+            ] {
+                collect_keyring_secret(entry, spec.name, &mut values)?;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        collect_keyring_secret(keyring_entry(spec.name), spec.name, &mut values)?;
+    }
+    Ok(values)
+}
+
+fn collect_keyring_secret(
+    entry: Result<keyring::Entry, String>,
+    name: &str,
+    values: &mut Vec<String>,
+) -> Result<(), String> {
+    let entry = entry?;
+    match entry.get_password() {
+        Ok(value) => {
+            push_unique_secret(values, value);
+            Ok(())
+        }
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!(
+            "keyring credential cannot be read for {name}: {error}"
+        )),
+    }
+}
+
+fn push_unique_secret(values: &mut Vec<String>, value: String) {
+    let value = value.trim().to_string();
+    if !value.is_empty() && !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
 fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
     let mut error = None;
 
@@ -550,6 +635,14 @@ mod tests {
         assert!(dotenv_value_configured(&path, "DEEPSEEK_API_KEY"));
         assert!(!dotenv_value_configured(&path, "TAVILY_API_KEY"));
         assert!(!dotenv_value_configured(&path, "VOLC_ACCESS_KEY"));
+        assert_eq!(
+            dotenv_value(&path, "DEEPSEEK_API_KEY").expect("read dotenv value"),
+            Some("secret-value".to_string())
+        );
+        assert_eq!(
+            dotenv_value(&path, "TAVILY_API_KEY").expect("read empty dotenv value"),
+            None
+        );
 
         let _ = fs::remove_file(path);
     }

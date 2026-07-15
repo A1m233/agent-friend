@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
+import { openSettings as openSettingsWindow } from "@/lib/settings/navigation";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
@@ -677,8 +678,11 @@ export function PetApp() {
 
   // 019 · ActionBar 打开设置按钮 → 调 open_settings invoke（参 open_chat 同款 show + focus 逻辑）
   const openSettings = () => {
-    if (!isTauri()) return;
-    void invoke("open_settings");
+    void openSettingsWindow();
+  };
+
+  const openFeedback = () => {
+    void openSettingsWindow({ target: "feedback" });
   };
 
   const openIMConnect = () => {
@@ -766,6 +770,7 @@ export function PetApp() {
           onCollapseToEdge={collapseToEdge}
           onRestoreNormal={restoreNormal}
           onOpenSettings={openSettings}
+          onOpenFeedback={openFeedback}
           onOpenIMConnect={openIMConnect}
           onStartVoiceCall={startVoiceCall}
           voiceCallActive={isVoiceCallLive(voicePhase)}

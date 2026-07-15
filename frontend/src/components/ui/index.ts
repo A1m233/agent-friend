@@ -5,6 +5,7 @@
 export * from "./badge";
 export * from "./button";
 export * from "./carousel";
+export * from "./checkbox";
 export * from "./collapsible";
 export * from "./confirm-dialog";
 export * from "./dialog";
@@ -19,6 +20,7 @@ export * from "./skeleton";
 export * from "./spinner";
 export * from "./switch";
 export * from "./tabs";
+export * from "./textarea";
 export * from "./text-ellipsis";
 export * from "./tooltip";
 export * from "./tooltip-button";

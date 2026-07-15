@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ChevronUp,
   Lock,
+  LifeBuoy,
   Maximize2,
   MessageSquare,
   MessageSquareDashed,
@@ -71,6 +72,7 @@ interface Props {
   onRestoreNormal: () => void;
   /** 019 新：调 open_settings invoke 弹设置窗口 */
   onOpenSettings: () => void;
+  onOpenFeedback: () => void;
   /** 022 新：打开 IM 接入窗口 */
   onOpenIMConnect: () => void;
   onStartVoiceCall: () => void;
@@ -111,6 +113,7 @@ export function ActionBar({
   onCollapseToEdge,
   onRestoreNormal,
   onOpenSettings,
+  onOpenFeedback,
   onOpenIMConnect,
   onStartVoiceCall,
   voiceCallActive,
@@ -133,6 +136,7 @@ export function ActionBar({
       ? { icon: <Maximize2 />, tooltip: "恢复桌宠大小", onClick: onRestoreNormal }
       : { icon: <Minimize2 />, tooltip: "缩小桌宠并移动到边上", onClick: onCollapseToEdge },
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
+    { icon: <LifeBuoy />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
   ];
   if (import.meta.env.DEV) {

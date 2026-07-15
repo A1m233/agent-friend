@@ -1,10 +1,11 @@
-import { useState, type CSSProperties } from "react";
-import { Moon, Sun } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { LifeBuoy, Moon, Sun } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarHeader,
+  SidebarFooter,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -16,9 +17,18 @@ import {
   TooltipProvider,
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
+import {
+  consumePendingSettingsNavigation,
+  listenSettingsNavigation,
+  locateSettings,
+  type SettingsNavigationEnvelope,
+  type SettingsOpenRequest,
+  type SettingsTarget,
+} from "@/lib/settings/navigation";
 import { AvatarModelPanel } from "./components/AvatarModelPanel";
 import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
+import { FeedbackDiagnosticsPanel } from "./components/FeedbackDiagnosticsPanel";
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
@@ -28,14 +38,47 @@ import { SettingsRow } from "./components/SettingsRow";
  *
  * 后续新增设置项按 design.md 扩展点接入。
  */
-type SettingsSection = "general" | "archived" | "runtime" | "voice" | "pet";
-
 export function SettingsApp() {
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsTarget>("general");
+  const [feedbackPrefill, setFeedbackPrefill] = useState<{
+    requestId: number;
+    sessionId?: string;
+  } | null>(null);
+  const lastNavigationRequestId = useRef(0);
   const [theme, setTheme] = useSetting("theme");
   const [voiceTunnelConsentAccepted, setVoiceTunnelConsentAccepted] = useSetting(
     "voiceTunnelConsentAccepted",
   );
+
+  const navigate = useCallback(
+    (request: SettingsOpenRequest, requestId?: number) => {
+      if (requestId && requestId <= lastNavigationRequestId.current) return;
+      if (requestId) lastNavigationRequestId.current = requestId;
+      const location = locateSettings(request);
+      setSection(location.section);
+      setFeedbackPrefill(
+        location.section === "feedback" && requestId
+          ? { requestId, sessionId: location.preselectSessionId }
+          : null,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const applyEnvelope = (envelope: SettingsNavigationEnvelope) => {
+      navigate(envelope.request, envelope.requestId);
+    };
+    void consumePendingSettingsNavigation().then((pending) => {
+      if (pending) applyEnvelope(pending);
+    });
+    const unlistenPromise = listenSettingsNavigation(applyEnvelope);
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [navigate]);
+
+  const selectSection = (target: SettingsTarget) => navigate({ target });
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -53,7 +96,7 @@ export function SettingsApp() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     isActive={section === "general"}
-                    onClick={() => setSection("general")}
+                    onClick={() => selectSection("general")}
                   >
                     通用
                   </SidebarMenuButton>
@@ -61,7 +104,7 @@ export function SettingsApp() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     isActive={section === "pet"}
-                    onClick={() => setSection("pet")}
+                    onClick={() => selectSection("pet")}
                   >
                     桌宠
                   </SidebarMenuButton>
@@ -69,7 +112,7 @@ export function SettingsApp() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     isActive={section === "voice"}
-                    onClick={() => setSection("voice")}
+                    onClick={() => selectSection("voice")}
                   >
                     语音
                   </SidebarMenuButton>
@@ -77,7 +120,7 @@ export function SettingsApp() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     isActive={section === "runtime"}
-                    onClick={() => setSection("runtime")}
+                    onClick={() => selectSection("runtime")}
                   >
                     模型与凭据
                   </SidebarMenuButton>
@@ -85,7 +128,7 @@ export function SettingsApp() {
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     isActive={section === "archived"}
-                    onClick={() => setSection("archived")}
+                    onClick={() => selectSection("archived")}
                   >
                     已归档对话
                   </SidebarMenuButton>
@@ -93,6 +136,19 @@ export function SettingsApp() {
               </SidebarMenu>
             </SidebarGroup>
           </SidebarContent>
+          <SidebarFooter>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={section === "feedback"}
+                  onClick={() => selectSection("feedback")}
+                >
+                  <LifeBuoy className="size-4" />
+                  帮助与反馈
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarFooter>
         </Sidebar>
 
         <main className="flex min-w-0 flex-1 flex-col bg-bg">
@@ -122,6 +178,8 @@ export function SettingsApp() {
             <RuntimeConfigPanel />
           ) : section === "pet" ? (
             <AvatarModelPanel />
+          ) : section === "feedback" ? (
+            <FeedbackDiagnosticsPanel prefill={feedbackPrefill} />
           ) : (
             <SettingsPageLayout title="语音">
               <SettingsGroup title="语音通话">
