@@ -9,6 +9,7 @@ use tauri::{
 
 mod avatar_models;
 mod bubble_window;
+mod diagnostics;
 mod paths;
 mod pet_display_topology;
 mod push_subscriber;
@@ -20,6 +21,7 @@ mod window_placement;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
+const EVENT_SETTINGS_NAVIGATE: &str = "settings://navigate";
 const EVENT_PET_DISPLAY_TOPOLOGY_CHANGED: &str = "pet://display-topology-changed";
 const PET_OVERLAY_RECONCILE_INTERVAL_MS: u64 = 1000;
 const PET_OVERLAY_BOUNDS_SETTLE_MS: u64 = 1200;
@@ -27,6 +29,64 @@ const PET_OVERLAY_BOUNDS_SETTLE_MS: u64 = 1200;
 #[derive(Default)]
 struct VoiceLaunchState {
     pending_start: Mutex<Option<VoiceStartRequest>>,
+}
+
+#[derive(Default)]
+struct SettingsNavigationState {
+    inner: Mutex<SettingsNavigationStateInner>,
+}
+
+#[derive(Default)]
+struct SettingsNavigationStateInner {
+    next_request_id: u64,
+    pending: Option<SettingsNavigationEnvelope>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsOpenRequest {
+    target: Option<String>,
+    feedback: Option<SettingsFeedbackContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsFeedbackContext {
+    preselect_session_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsNavigationEnvelope {
+    request_id: u64,
+    request: SettingsOpenRequest,
+}
+
+impl SettingsNavigationState {
+    fn set_pending(
+        &self,
+        request: SettingsOpenRequest,
+    ) -> Result<SettingsNavigationEnvelope, String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| format!("settings navigation state poisoned: {e}"))?;
+        inner.next_request_id = inner.next_request_id.saturating_add(1);
+        let envelope = SettingsNavigationEnvelope {
+            request_id: inner.next_request_id,
+            request,
+        };
+        inner.pending = Some(envelope.clone());
+        Ok(envelope)
+    }
+
+    fn take_pending(&self) -> Result<Option<SettingsNavigationEnvelope>, String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| format!("settings navigation state poisoned: {e}"))?;
+        Ok(inner.pending.take())
+    }
 }
 
 #[derive(Default)]
@@ -514,10 +574,29 @@ fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "chat")
 }
 
-/// 019 · 桌宠 ActionBar "打开设置" 按钮调用（参 `open_chat` 同款 show + focus 加料）。
+/// 打开设置并投递一次性语义定位请求；无请求时保持兼容，仅打开窗口。
 #[tauri::command]
-fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
-    show_and_focus(&app, "settings")
+fn open_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SettingsNavigationState>,
+    request: Option<SettingsOpenRequest>,
+) -> Result<(), String> {
+    let envelope = request
+        .map(|request| state.set_pending(request))
+        .transpose()?;
+    show_and_focus(&app, "settings")?;
+    if let Some(envelope) = envelope {
+        app.emit_to("settings", EVENT_SETTINGS_NAVIGATE, envelope)
+            .map_err(|e| format!("emit settings navigation failed: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn consume_pending_settings_navigation(
+    state: tauri::State<'_, SettingsNavigationState>,
+) -> Result<Option<SettingsNavigationEnvelope>, String> {
+    state.take_pending()
 }
 
 /// 022 · 桌宠 ActionBar "接入 IM" 按钮调用。
@@ -727,6 +806,7 @@ pub fn run() {
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
+        .manage(SettingsNavigationState::default())
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .plugin(navigation_guard())
@@ -746,6 +826,8 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        consume_pending_settings_navigation,
+        diagnostics::generate_diagnostic_bundle,
         open_im_connect,
         open_voice_call,
         open_voice_call_with_start,
@@ -778,6 +860,8 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
         open_settings,
+        consume_pending_settings_navigation,
+        diagnostics::generate_diagnostic_bundle,
         open_im_connect,
         open_voice_call,
         open_voice_call_with_start,
@@ -1016,6 +1100,36 @@ mod tests {
             Some(req)
         );
         assert_eq!(state.take_pending_start().expect("take again"), None);
+    }
+
+    #[test]
+    fn settings_navigation_is_ordered_and_consumed_once() {
+        let state = SettingsNavigationState::default();
+        let first = state
+            .set_pending(SettingsOpenRequest {
+                target: Some("general".into()),
+                feedback: None,
+            })
+            .expect("set first navigation");
+        let second = state
+            .set_pending(SettingsOpenRequest {
+                target: Some("feedback".into()),
+                feedback: Some(SettingsFeedbackContext {
+                    preselect_session_id: Some("session-1".into()),
+                }),
+            })
+            .expect("set second navigation");
+
+        assert!(second.request_id > first.request_id);
+        assert_eq!(
+            state
+                .take_pending()
+                .expect("take pending")
+                .expect("pending envelope")
+                .request_id,
+            second.request_id
+        );
+        assert!(state.take_pending().expect("take again").is_none());
     }
 
     #[test]
