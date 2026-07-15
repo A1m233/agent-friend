@@ -26,14 +26,13 @@ def test_persistent_runtime_registers_recall_past_chats(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
-    runtime = build_runtime(
-        BridgeSettings(
-            sessions_dir=tmp_path / "sessions",
-            personas_dir=tmp_path / "personas",
-            memory_enabled=False,
-            im_enabled=False,
-        )
+    settings = BridgeSettings(
+        sessions_dir=tmp_path / "sessions",
+        personas_dir=tmp_path / "personas",
+        memory_enabled=False,
+        im_enabled=False,
     )
+    runtime = build_runtime(settings)
 
     try:
         tool_names = {tool.name for tool in runtime.tool_registry.all_tools()}
@@ -44,6 +43,7 @@ def test_persistent_runtime_registers_recall_past_chats(
 
         assert "recall_past_chats" in tool_names
         assert manager_registry is runtime.tool_registry
+        assert (settings.personas_dir / "default" / "persona.md").is_file()
     finally:
         runtime.close()
 

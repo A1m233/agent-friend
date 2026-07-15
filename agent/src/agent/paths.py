@@ -66,6 +66,16 @@ def personas_dir() -> Path:
     return user_data_dir() / "personas"
 
 
+def editable_persona_path() -> Path:
+    """唯一可编辑人格正文：``<personas_dir>/default/persona.md``。"""
+    return personas_dir() / "default" / "persona.md"
+
+
+def persona_internal_dir() -> Path:
+    """单一人格的内部状态目录；不向用户当作可编辑文件展示。"""
+    return personas_dir() / ".internal" / "default"
+
+
 def cli_history_path() -> Path:
     """CLI prompt 历史文件：``<user_data_dir>/.cli_history``。"""
     return user_data_dir() / ".cli_history"
@@ -89,8 +99,10 @@ __all__ = [
     "DATA_DIR_ENV",
     "LOG_DIR_ENV",
     "cli_history_path",
+    "editable_persona_path",
     "log_dir",
     "memory_db_path",
+    "persona_internal_dir",
     "personas_dir",
     "sessions_dir",
     "user_data_dir",

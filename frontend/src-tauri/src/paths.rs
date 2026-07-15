@@ -11,6 +11,8 @@ pub const SETTINGS_STORE_PATH: &str = "settings.json";
 pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
 pub const AVATAR_MODELS_DIR: &str = "avatar-models";
 pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
+pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
+pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
 
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
@@ -59,6 +61,16 @@ pub fn builtin_avatar_models_dir() -> PathBuf {
 /// 用户导入模型 catalog 预留位置：`<avatar_model_assets_dir>/catalog.json`。
 pub fn avatar_model_catalog_path() -> PathBuf {
     avatar_model_assets_dir().join(AVATAR_MODEL_CATALOG_FILE)
+}
+
+/// 050：唯一公开可编辑的人格目录。
+pub fn editable_persona_dir() -> PathBuf {
+    user_data_dir().join(PERSONA_EDITABLE_DIR)
+}
+
+/// 050：唯一公开可编辑的人格正文。
+pub fn editable_persona_path() -> PathBuf {
+    editable_persona_dir().join(PERSONA_EDITABLE_FILE)
 }
 
 /// Tauri / bridge / memory 共享的日志目录。
@@ -137,6 +149,12 @@ mod tests {
             PathBuf::from("agent-friend-data")
                 .join(AVATAR_MODELS_DIR)
                 .join("builtin")
+        );
+        assert_eq!(
+            editable_persona_path(),
+            PathBuf::from("agent-friend-data")
+                .join("personas/default")
+                .join("persona.md")
         );
 
         if let Some(value) = previous {

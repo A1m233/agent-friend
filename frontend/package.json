@@ -51,6 +51,8 @@
     "radix-ui": "^1.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.0.0",
     "tdesign-react": "^1.17.1",

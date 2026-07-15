@@ -34,4 +34,23 @@ describe("toFriendlyError", () => {
       code: "http_error",
     });
   });
+
+  it("preserves persona error envelopes for conflict handling", () => {
+    const error = {
+      isAxiosError: true,
+      response: {
+        data: {
+          error: {
+            code: "persona_revision_conflict",
+            message: "persona.md 已发生变化",
+          },
+        },
+      },
+    };
+
+    expect(toFriendlyError(error)).toEqual({
+      friendly: "persona.md 已发生变化",
+      code: "persona_revision_conflict",
+    });
+  });
 });

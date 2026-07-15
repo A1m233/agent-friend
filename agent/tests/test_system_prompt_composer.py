@@ -349,14 +349,14 @@ class TestSystemPromptComposerDefault:
         assert "近期和实时信息" in output
 
     def test_default_text_prompt_size_baseline(self, tmp_path: Path) -> None:
-        """044：默认 prompt 增长需要显式更新字符与保守 token 基线。"""
+        """044：记录默认 prompt 规模；这是回归基线，不是长度上限。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         output = SystemPromptComposer.default(
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 5366
-        assert estimate_tokens([Message(role="system", content=output)]) == 4024
+        assert len(output) == 6334
+        assert estimate_tokens([Message(role="system", content=output)]) == 4750
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

@@ -32,6 +32,18 @@ class PersonaPersistError(AgentError):
     """persona 文件持久化失败（IO 错）时抛出。"""
 
 
+class PersonaContentInvalidError(AgentError):
+    """单一可编辑人格正文不满足确定性格式约束。"""
+
+
+class PersonaRevisionConflictError(AgentError):
+    """应用草稿时源文件已被外部修改，禁止静默覆盖。"""
+
+
+class PersonaUndoUnavailableError(AgentError):
+    """当前没有可消费的引导式应用撤销点。"""
+
+
 class PersonaAmbiguousError(AgentError):
     """name 在多个 source 下歧义且未显式指定时抛出（本期为预留）。
 

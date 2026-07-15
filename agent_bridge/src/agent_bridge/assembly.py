@@ -18,18 +18,25 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from agent.memory_search import SessionHistorySource
 from agent.runtime import AgentRuntime
 from agent.tools import ToolRegistry
 
 from agent import (
+    BUILTIN_DEFAULT_PERSONA_ID,
+    EffectivePersonaCatalog,
+    EffectivePersonaStore,
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    NaiveContextManager,
     NotifyingSessionStore,
     NullSessionStore,
     PersonaCatalog,
+    PersonaEditorPromptBuilder,
+    PersonaEditorWorkspace,
+    ProposePersonaTool,
     SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
@@ -59,7 +66,9 @@ def _llm_factory(model: str) -> LLMClient:
     raise RuntimeError("BridgeRuntime.llm_client_factory is required before creating sessions")
 
 
-def _make_prompt_factory(personas_dir: Path) -> Callable[[str], MarkdownPromptBuilder]:
+def _make_prompt_factory(
+    catalog: PersonaCatalog | EffectivePersonaCatalog,
+) -> Callable[[str], MarkdownPromptBuilder]:
     """构造 prompt builder 工厂，绑定用户 persona 目录。
 
     让 meta REST 的 :class:`PersonaCatalog` 与对话期 prompt 构建读取**同一个**
@@ -68,7 +77,10 @@ def _make_prompt_factory(personas_dir: Path) -> Callable[[str], MarkdownPromptBu
     """
 
     def factory(persona_id: str) -> MarkdownPromptBuilder:
-        return MarkdownPromptBuilder(persona_id=persona_id, external_dir=personas_dir)
+        return MarkdownPromptBuilder(
+            persona_id=persona_id,
+            catalog=cast(PersonaCatalog, catalog),
+        )
 
     return factory
 
@@ -133,6 +145,12 @@ class BridgeRuntime:
     """022 起新增:进程级 IM 扫码 onboard 异步 task 注册表。
     跟 :attr:`im_runtime` 一起装配,供 ``/v1/im/onboard/*`` 路由用。
     """
+    persona_store: EffectivePersonaStore | None = None
+    """050：默认 persona 的唯一用户覆盖存储。None 仅用于旧测试 fixture。"""
+    persona_editor_session_manager: SessionManager | None = None
+    """050：独立于正式历史与记忆的人格编辑 Agent 会话。"""
+    persona_editor_workspace: PersonaEditorWorkspace | None = None
+    """050：持久化编辑会话绑定的正式人格基准 revision。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -178,6 +196,27 @@ def _make_persistent_session_manager(
     )
 
 
+def make_persona_editor_session_manager(
+    *,
+    store: EffectivePersonaStore,
+    sessions_dir: Path,
+    llm_client_factory: Callable[[str], LLMClient],
+    workspace: PersonaEditorWorkspace,
+) -> SessionManager:
+    """构造人格编辑专用 manager；目录、prompt、工具均不与正式会话共享。"""
+    editor_store = JsonlSessionStore(sessions_dir)
+    return SessionManager(
+        store=editor_store,
+        llm_client_factory=llm_client_factory,
+        prompt_builder_factory=lambda _persona_id: PersonaEditorPromptBuilder(store),
+        context_manager_factory=NaiveContextManager,
+        tool_registry=ToolRegistry(
+            [ProposePersonaTool(store, base_revision_provider=workspace.base_revision)]
+        ),
+        memory=None,
+    )
+
+
 def build_runtime(
     settings: BridgeSettings,
     *,
@@ -198,7 +237,16 @@ def build_runtime(
     session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
-    prompt_builder_factory = _make_prompt_factory(settings.personas_dir)
+    persona_store = EffectivePersonaStore(
+        user_file=settings.personas_dir / "default" / "persona.md",
+        internal_dir=settings.personas_dir / ".internal" / "default",
+        builtin_loader=lambda: catalog.read_content(BUILTIN_DEFAULT_PERSONA_ID),
+    )
+    # 050：persona.md 是唯一公开人格正文。Bridge 启动时即创建，避免把文件存在与否
+    # 暴露成用户需要理解的“默认 / 自定义”产品状态。
+    persona_store.materialize()
+    prompt_catalog = EffectivePersonaCatalog(persona_store, catalog)
+    prompt_builder_factory = _make_prompt_factory(prompt_catalog)
     if runtime_config is None:
         runtime_config = resolve_bridge_runtime_config(
             credential_source_for_mode(config_mode_from_env())
@@ -231,6 +279,16 @@ def build_runtime(
     )
 
     llm_client_factory = runtime_config.llm_client_factory
+    persona_editor_workspace = PersonaEditorWorkspace(
+        persona_store,
+        settings.personas_dir / ".internal" / "default" / "editor-base-revision.txt",
+    )
+    persona_editor_session_manager = make_persona_editor_session_manager(
+        store=persona_store,
+        sessions_dir=settings.personas_dir / ".internal" / "default" / "editor-sessions",
+        llm_client_factory=llm_client_factory,
+        workspace=persona_editor_workspace,
+    )
     persistent_session_manager = _make_persistent_session_manager(
         persistent_store,
         tool_registry,
@@ -288,6 +346,9 @@ def build_runtime(
             memory=memory,
             recall_buffer=recall_buffer,
             agent_runtime=agent_runtime,
+            persona_store=persona_store,
+            persona_editor_session_manager=persona_editor_session_manager,
+            persona_editor_workspace=persona_editor_workspace,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -334,4 +395,7 @@ def build_runtime(
         memory=memory,
         recall_buffer=recall_buffer,
         agent_runtime=agent_runtime,
+        persona_store=persona_store,
+        persona_editor_session_manager=persona_editor_session_manager,
+        persona_editor_workspace=persona_editor_workspace,
     )

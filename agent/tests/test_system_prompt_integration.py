@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -21,8 +21,16 @@ from agent import (
     Session,
     StaticSection,
     SystemPromptComposer,
+    ToolRegistry,
+    ToolResult,
 )
-from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LLMClient,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+)
 
 
 @dataclass
@@ -178,3 +186,78 @@ def test_disabled_strategy_section_is_absent(tmp_path: Path) -> None:
     assert "项目元规则" in output
     assert "Echo" in output
     assert "关于过往对话的语言风格" not in output
+
+
+def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path) -> None:
+    class MutableCatalog:
+        content = "persona A"
+
+        def read_content(self, persona_id: str) -> str:
+            return self.content
+
+    class ChangingLLM(_FakeLLMClient):
+        turn = 0
+
+        def stream(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            **overrides: Any,
+        ) -> Iterator[LLMStreamEvent]:
+            self.received.append(messages)
+            self.turn += 1
+            if self.turn == 1:
+                catalog.content = "persona B"
+                yield LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-1",
+                    tool_name="echo",
+                    args_json_delta='{"message":"hi"}',
+                )
+                yield LLMTurnDone(stop_reason="tool_use")
+                return
+            yield LLMTextDelta(text="ok")
+            yield LLMTurnDone(stop_reason="end_turn")
+
+    class EchoTool:
+        name: ClassVar[str] = "echo"
+        description: ClassVar[str] = "echo"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {},
+        }
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(text="ok")
+
+    catalog = MutableCatalog()
+    fake = ChangingLLM()
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    registry = ToolRegistry([EchoTool()])
+    builder = MarkdownPromptBuilder(
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        catalog=cast(PersonaCatalog, catalog),
+    )
+    conv = Conversation(
+        session=session,
+        store=store,
+        llm_client=cast(LLMClient, fake),
+        context_manager=NaiveContextManager(),
+        prompt_builder=builder,
+        tool_registry=registry,
+    )
+
+    conv.send("first")
+    assert "persona A" in fake.received[0][0]["content"]
+    assert "persona A" in fake.received[1][0]["content"]
+
+    conv.send("second")
+    assert "persona B" in fake.received[2][0]["content"]

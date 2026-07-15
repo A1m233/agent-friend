@@ -160,6 +160,15 @@ class SystemPromptComposer:
             )
         return replace(self, sections=new_sections)
 
+    def freeze(self, key: str) -> SystemPromptComposer:
+        """立即渲染指定槽位并替换成静态 section。"""
+        from .sections import StaticSection
+
+        for section in self.sections:
+            if section.key == key:
+                return self.with_section(StaticSection(key=key, text=section.render() or ""))
+        raise KeyError(f"freeze: 找不到 key={key!r} 的槽位")
+
     @classmethod
     def default(
         cls,

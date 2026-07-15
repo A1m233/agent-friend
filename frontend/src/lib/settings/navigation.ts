@@ -7,6 +7,7 @@ export const SETTINGS_NAVIGATE_EVENT = "settings://navigate";
 
 export type SettingsTarget =
   | "general"
+  | "persona"
   | "pet"
   | "voice"
   | "runtime"
@@ -32,6 +33,7 @@ export interface ResolvedSettingsLocation {
 
 const SETTINGS_TARGETS = new Set<SettingsTarget>([
   "general",
+  "persona",
   "pet",
   "voice",
   "runtime",
