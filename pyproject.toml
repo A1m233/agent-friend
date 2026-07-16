@@ -25,6 +25,9 @@ dev = [
     "httpx>=0.27.0",
     "respx>=0.23.1",
 ]
+package = [
+    "pyinstaller>=6.11.0,<7",
+]
 memory-retrieval-benchmark = [
     "chromadb>=1.5.9,<2",
     "huggingface-hub>=1.14.0,<2",
@@ -120,5 +123,5 @@ exclude = [
 # ============================================================
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["agent", "agent_bridge", "agent_eval", "memory", "memory_eval", "llm_providers", "runtime_config", "tools", "voice_bridge"]
+testpaths = ["agent", "agent_bridge", "agent_eval", "memory", "memory_eval", "llm_providers", "runtime_config", "scripts/package", "tools", "voice_bridge"]
 norecursedirs = ["memory_eval/data", ".codex-test-tmp"]

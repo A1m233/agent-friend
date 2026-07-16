@@ -11,6 +11,7 @@
 import { type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
 import { resolveDefaultConversationModel } from "@/lib/model-config";
+import { ensureLocalServiceReady } from "@/services/runtime";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -31,6 +32,23 @@ export interface EditResendLatestInput {
 export interface RunStreamOptions {
   baseUrl?: string;
   signal?: AbortSignal;
+}
+
+export function isEventStreamContentType(contentType: string | null): boolean {
+  return contentType?.toLowerCase().includes("text/event-stream") ?? false;
+}
+
+function requireEventStreamResponse(
+  response: Response,
+  operation: string,
+): ReadableStream<Uint8Array> {
+  if (!response.ok || !response.body) {
+    throw new Error(`${operation} failed: http ${response.status}`);
+  }
+  if (!isEventStreamContentType(response.headers.get("content-type"))) {
+    throw new Error(`${operation} failed: invalid response type`);
+  }
+  return response.body;
 }
 
 function newId(): string {
@@ -74,6 +92,7 @@ export async function* runAgentStreamAtPath(
   input: RunStreamInput,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
+  await ensureLocalServiceReady("bridge");
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
   const res = await fetch(`${base}${path}`, {
     method: "POST",
@@ -85,11 +104,7 @@ export async function* runAgentStreamAtPath(
     signal: opts.signal,
   });
 
-  if (!res.ok || !res.body) {
-    throw new Error(`ag-ui run failed: http ${res.status}`);
-  }
-
-  yield* readEventStream(res.body);
+  yield* readEventStream(requireEventStreamResponse(res, "ag-ui run"));
 }
 
 /** 编辑并重发最后一条 user 输入，返回与普通 send 相同的 AG-UI 事件流。 */
@@ -97,6 +112,7 @@ export async function* editResendLatestStream(
   input: EditResendLatestInput,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
+  await ensureLocalServiceReady("bridge");
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
   const res = await fetch(
     `${base}/v1/sessions/${encodeURIComponent(input.sessionId)}/edit-resend-latest`,
@@ -114,11 +130,7 @@ export async function* editResendLatestStream(
     },
   );
 
-  if (!res.ok || !res.body) {
-    throw new Error(`edit-resend latest failed: http ${res.status}`);
-  }
-
-  yield* readEventStream(res.body);
+  yield* readEventStream(requireEventStreamResponse(res, "edit-resend latest"));
 }
 
 export async function* readEventStream(

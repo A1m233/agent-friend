@@ -54,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
             port=settings.port,
             log_level=settings.log_level.lower(),
             reload=False,
+            timeout_graceful_shutdown=3,
         )
     )
     controller = getattr(app.state, "lifecycle_controller", None)

@@ -15,6 +15,7 @@ describe("voiceStateMachine", () => {
     expect(canStartVoiceCall("ended")).toBe(true);
     expect(canStartVoiceCall("error")).toBe(true);
     expect(canStartVoiceCall("dialing")).toBe(false);
+    expect(canStartVoiceCall("preparing_runtime")).toBe(false);
     expect(canStartVoiceCall("preflighting")).toBe(false);
     expect(canStartVoiceCall("preparing_microphone")).toBe(false);
     expect(canStartVoiceCall("connecting_agent")).toBe(false);
@@ -24,6 +25,7 @@ describe("voiceStateMachine", () => {
 
   it("通话链路占用当前文字输入", () => {
     expect(isVoiceCallBlockingText("dialing")).toBe(true);
+    expect(isVoiceCallBlockingText("preparing_runtime")).toBe(true);
     expect(isVoiceCallBlockingText("preflighting")).toBe(true);
     expect(isVoiceCallBlockingText("joining_room")).toBe(true);
     expect(isVoiceCallBlockingText("preparing_microphone")).toBe(true);
@@ -42,6 +44,7 @@ describe("voiceStateMachine", () => {
 
   it("提供用户可见状态文案", () => {
     expect(voicePhaseLabel("active")).toBe("正在听...");
+    expect(voicePhaseLabel("preparing_runtime")).toBe("正在准备语音服务...");
     expect(voicePhaseLabel("error")).toBe("没有接通");
     expect(voiceActivityLabel("thinking")).toBe("正在理解你的话");
     expect(voiceActivityLabel("speaking")).toBe("正在播放回答");
@@ -49,6 +52,7 @@ describe("voiceStateMachine", () => {
   });
 
   it("提供失败阶段诊断文案", () => {
+    expect(voiceFailureStageLabel("runtime_prepare")).toBe("准备语音服务");
     expect(voiceFailureStageLabel("preflight")).toBe("检查麦克风");
     expect(voiceFailureStageLabel("start_call")).toBe("创建通话");
     expect(voiceFailureStageLabel("rtc_publish")).toBe("发布麦克风");

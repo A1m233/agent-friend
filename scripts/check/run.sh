@@ -5,21 +5,31 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 
-echo "===> [1/4] lint"
+echo "===> [1/6] lint"
 "$here/../lint/run.sh"
 echo
-echo "===> [2/4] typecheck"
+echo "===> [2/6] typecheck"
 "$here/../typecheck/run.sh"
 echo
-echo "===> [3/4] test"
+echo "===> [3/6] test"
 "$here/../test/run.sh" "$@"
 echo
-echo "===> [4/4] frontend lint + test"
+echo "===> [4/6] frontend lint + test"
 if command -v node >/dev/null 2>&1 && [ -d "$here/../../frontend/node_modules" ]; then
     "$here/../frontend/lint.sh"
     "$here/../frontend/test.sh"
+    echo
+    echo "===> [5/6] production frontend build"
+    "$here/../frontend/build.sh"
 else
-    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test"
+    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test + build"
+fi
+echo
+echo "===> [6/6] Tauri Core test + release check"
+if command -v cargo >/dev/null 2>&1; then
+    "$here/../rust-check/run.sh"
+else
+    echo "  [skip] Rust 工具链未就绪（无 cargo），跳过 Tauri Core 门禁"
 fi
 echo
 echo "===> check 全部通过"

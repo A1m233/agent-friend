@@ -8,6 +8,13 @@ pub enum RuntimeServiceKind {
 }
 
 impl RuntimeServiceKind {
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Bridge => "bridge",
+            Self::Voice => "voice",
+        }
+    }
+
     pub fn module(self) -> &'static str {
         match self {
             Self::Bridge => "agent_bridge",

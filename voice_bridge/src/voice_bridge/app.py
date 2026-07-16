@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -38,6 +39,19 @@ from .runtime_config import (
     resolve_voice_credentials,
 )
 from .settings import VoiceBridgeSettings
+
+
+def _make_lifespan(runtime: VoiceBridgeRuntime):  # type: ignore[no-untyped-def]
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            close = getattr(runtime.asr_provider, "close", None)
+            if callable(close):
+                await close()
+
+    return lifespan
 
 
 def _voice_log_path() -> Path:
@@ -150,6 +164,7 @@ def create_app(
         title="voice-bridge",
         version="0.1.0",
         description="agent-friend · 语音通话控制平面 + LLM 入站代理",
+        lifespan=_make_lifespan(runtime),
     )
     app.state.runtime = runtime
 
@@ -185,6 +200,7 @@ def create_app_with_runtime(
     app = FastAPI(
         title="voice-bridge",
         version="0.1.0",
+        lifespan=_make_lifespan(runtime),
     )
     app.state.runtime = runtime
 

@@ -6,26 +6,38 @@ $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $here = $PSScriptRoot
 
-Write-Host "===> [1/4] lint"
+Write-Host "===> [1/6] lint"
 & (Join-Path $here "..\lint\run.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [2/4] typecheck"
+Write-Host "===> [2/6] typecheck"
 & (Join-Path $here "..\typecheck\run.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [3/4] test"
+Write-Host "===> [3/6] test"
 & (Join-Path $here "..\test\run.ps1") @args
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
-Write-Host "===> [4/4] frontend lint + test"
+Write-Host "===> [4/6] frontend lint + test"
 if ((Get-Command node -ErrorAction SilentlyContinue) -and (Test-Path (Join-Path $here "..\..\frontend\node_modules"))) {
     & (Join-Path $here "..\frontend\lint.ps1")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & (Join-Path $here "..\frontend\test.ps1")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Host ""
+    Write-Host "===> [5/6] production frontend build"
+    & (Join-Path $here "..\frontend\build.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
-    Write-Host "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test"
+    Write-Host "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test + build"
+}
+Write-Host ""
+Write-Host "===> [6/6] Tauri Core test + release check"
+if (Get-Command cargo -ErrorAction SilentlyContinue) {
+    & (Join-Path $here "..\rust-check\run.ps1")
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+} else {
+    Write-Host "  [skip] Rust 工具链未就绪（无 cargo），跳过 Tauri Core 门禁"
 }
 Write-Host ""
 Write-Host "===> check 全部通过"

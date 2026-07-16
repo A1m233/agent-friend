@@ -325,7 +325,7 @@ trap cleanup INT TERM EXIT
 # 用 export 而非 inline `env=val cmd`：subshell + background + pipe 组合下 inline 形式
 # 偶发不把 env 传到 child process；export 让 env 在脚本全局生效、subshell 自动继承。
 export AGENT_BRIDGE_DEV_MODE=true
-if [ "$VOICE_MODE" = "tunnel" ]; then
+if [ "$VOICE_MODE" = "tunnel" ] && [ "$MODE" = "web" ]; then
     start_voice_tunnel
 fi
 
@@ -335,6 +335,18 @@ if [ "$MODE" = "tauri" ]; then
     export AGENT_FRIEND_REPO_ROOT="$ROOT"
     export AGENT_FRIEND_DEV_VOICE_MODE="$VOICE_MODE"
     export AGENT_BRIDGE_DEV_MODE=true
+    unset VOICE_BRIDGE_PUBLIC_URL
+    if command -v cloudflared >/dev/null 2>&1; then
+        export AGENT_FRIEND_CLOUDFLARED_PATH="$(command -v cloudflared)"
+        echo "===> cloudflared 由 Tauri Core 按通话需要启动：$AGENT_FRIEND_CLOUDFLARED_PATH"
+    else
+        unset AGENT_FRIEND_CLOUDFLARED_PATH
+        if [ "$VOICE_MODE" = "tunnel" ]; then
+            echo "  [ERROR] --voice 需要 cloudflared；当前 PATH 中未找到。默认本地语音输入仍可用。" >&2
+            exit 1
+        fi
+        echo "  [WARN] 未找到 cloudflared；完整语音通话会给出 tunnel_binary_missing，文字与语音输入不受影响。"
+    fi
     echo "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
     (cd "$ROOT/frontend" && pnpm tauri dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &

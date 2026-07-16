@@ -375,7 +375,10 @@ fn is_allowed_log_name(name: &str) -> bool {
     [
         "tauri.log",
         "agent_bridge.log",
+        "voice_bridge.log",
         "memory.log",
+        "runtime-bridge.log",
+        "runtime-voice.log",
         "dev-bridge.log",
         "dev-voice.log",
     ]
@@ -626,6 +629,8 @@ mod tests {
     #[test]
     fn log_name_allowlist_is_narrow() {
         assert!(is_allowed_log_name("agent_bridge.log.1"));
+        assert!(is_allowed_log_name("voice_bridge.log"));
+        assert!(is_allowed_log_name("runtime-voice.log.1"));
         assert!(is_allowed_log_name("tauri.log.2026-07-15"));
         assert!(!is_allowed_log_name("settings.json"));
         assert!(!is_allowed_log_name("private-agent_bridge.log"));

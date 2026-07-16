@@ -202,6 +202,29 @@ describe("voice store", () => {
     expect(voiceApi.stopCall).toHaveBeenCalledWith("call-1");
   });
 
+  it("保留 Tauri runtime 准备失败的字符串诊断和准确阶段", async () => {
+    tauriMocks.isTauri.mockReturnValue(true);
+    browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
+      ...DEFAULT_SETTINGS,
+      voiceTunnelConsentAccepted: true,
+    };
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "prepare_voice_runtime") {
+        throw "tunnel_start_failed: cloudflared exited";
+      }
+      return undefined;
+    });
+
+    await useVoiceStore.getState().requestStart({ sessionId: "session-1" });
+
+    expect(useVoiceStore.getState().phase).toBe("error");
+    expect(useVoiceStore.getState().diagnostic).toEqual({
+      stage: "runtime_prepare",
+      message: "tunnel_start_failed: cloudflared exited",
+    });
+    expect(voiceApi.startCall).not.toHaveBeenCalled();
+  });
+
   it("joinRoom 后并行触发 startAgent，不等待 publishAudio 完成", async () => {
     browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
       ...DEFAULT_SETTINGS,

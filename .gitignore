@@ -104,6 +104,9 @@ frontend/public/spine-spike-local/
 # ===== Tauri build output =====
 src-tauri/target/
 src-tauri/gen/
+frontend/src-tauri/package-runtime/
+package-output/
+scripts/package/.cache/
 
 # ===== Spike: voice-poc =====
 # 官方 demo 入仓留档，但排除以下不该入的：

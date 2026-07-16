@@ -115,6 +115,7 @@ function phaseIsFinished(phase: VoiceCallPhase): boolean {
 }
 
 function diagnosticMessage(error: unknown): string {
+  if (typeof error === "string" && error.trim()) return error.trim();
   if (error instanceof Error) return error.message;
   const friendly = error as { code?: unknown; friendly?: unknown };
   const code = typeof friendly.code === "string" ? friendly.code : null;
@@ -233,7 +234,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     setAndPublish({
       isOwner: true,
       pendingStart: null,
-      phase: "preflighting",
+      phase: "preparing_runtime",
       activity: "idle",
       callId: null,
       sessionId: null,
@@ -248,7 +249,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
 
     let callId: string | null = null;
     let localRtcClient: RtcClient | null = null;
-    let stage: VoiceCallFailureStage = "preflight";
+    let stage: VoiceCallFailureStage = "runtime_prepare";
     let activeAnswerRoundId: number | null = null;
     let activeAnswerRoundStartedMs: number | null = null;
     const loggedRemoteVolumeRounds = new Set<number>();
@@ -256,6 +257,12 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
     try {
       await focusVoiceCallWindow();
       throwIfStartCancelled(startToken);
+      if (isTauri()) {
+        await invoke("prepare_voice_runtime");
+        throwIfStartCancelled(startToken);
+      }
+      stage = "preflight";
+      setAndPublish({ phase: "preflighting" });
       const { createVolcRtcClient } = await import("@/services/voice/rtcClient");
       throwIfStartCancelled(startToken);
       localRtcClient = createVolcRtcClient({
@@ -475,6 +482,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         clearSpeakingFallbackTimer();
         if (callId) await voiceApi.stopCall(callId).catch(() => {});
         await cleanupRtc(localRtcClient);
+        if (isTauri()) await invoke("stop_voice_tunnel").catch(() => {});
         if (callId) await emitSessionsChanged({ action: "voice-call-ended" });
         return;
       }
@@ -487,6 +495,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       clearSpeakingFallbackTimer();
       if (callId) await voiceApi.stopCall(callId).catch(() => {});
       await cleanupRtc(localRtcClient);
+      if (isTauri()) await invoke("stop_voice_tunnel").catch(() => {});
       if (callId) await emitSessionsChanged({ action: "voice-call-failed" });
       if (isStartCancelled(startToken)) return;
       setAndPublish({
@@ -656,6 +665,11 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       await cleanupRtc().catch((error) => {
         diagnostic = diagnostic ?? toDiagnostic("rtc_cleanup", error);
       });
+      if (isTauri()) {
+        await invoke("stop_voice_tunnel").catch((error) => {
+          diagnostic = diagnostic ?? toDiagnostic("stop_call", error);
+        });
+      }
       if (callId) await emitSessionsChanged({ sessionId, action: "voice-call-stopped" });
       if (diagnostic && activeStartToken === startToken && get().phase === "ended") {
         setAndPublish({ diagnostic });

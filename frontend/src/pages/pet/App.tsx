@@ -34,6 +34,7 @@ import {
 } from "./petMonitorViewport";
 import {
   centerPointOfRect,
+  hasReachedPlacementPoint,
   isFiniteRect,
   isFiniteViewport,
   samePoint,
@@ -76,6 +77,7 @@ function safeUnlisten(fn: (() => void) | null | undefined): void {
 }
 
 const PET_DISPLAY_TOPOLOGY_CHANGED_EVENT = "pet://display-topology-changed";
+const PET_INITIAL_PLACEMENT_SETTLE_MS = 150;
 interface PetDisplayTopologyChangedPayload {
   reason: string;
   generation: number;
@@ -125,6 +127,9 @@ export function PetApp() {
   const [avatarPlacementPoint, setAvatarPlacementPoint] = useState<PetPoint | null>(null);
   const [placementIntent, setAvatarPlacementIntent] =
     useState<AvatarPlacementIntent | null>(null);
+  const [initialPlacementSettled, setInitialPlacementSettled] = useState(
+    () => !isTauri(),
+  );
   const spriteScreenRef = useRef<PetRect | null>(null);
   const userMovedPetRef = useRef(false);
   const placementIntentGenerationRef = useRef(0);
@@ -191,6 +196,7 @@ export function PetApp() {
     let scaleUnlisten: (() => void) | null = null;
     let viewportRequestId = 0;
     let deferredAnchorTimer: number | null = null;
+    let initialPlacementTimer: number | null = null;
     let initialPlacementRequested = false;
     const syncWebviewDpr = () => {
       const nextDpr = readWebviewDevicePixelRatio();
@@ -235,6 +241,12 @@ export function PetApp() {
       void loadPetInitialPlacementPoint(overlaySize)
         .then((point) => {
           if (cancelled) return;
+          const currentOverlaySize = getPetOverlayViewport();
+          if (!sameRect(overlaySize, currentOverlaySize)) {
+            initialPlacementRequested = false;
+            scheduleInitialPlacement(currentOverlaySize, "result-size-changed");
+            return;
+          }
           if (point && !userMovedPetRef.current) {
             setAvatarPlacementPoint((prev) => prev ?? point);
             const generation = --placementIntentGenerationRef.current;
@@ -244,19 +256,34 @@ export function PetApp() {
                 : { generation, point },
             );
           }
+          setInitialPlacementSettled(true);
         })
         .catch((error: unknown) => {
           if (!cancelled) {
             console.warn("[pet] resolve initial placement failed:", error);
+            setInitialPlacementSettled(true);
           }
         });
+    };
+    const scheduleInitialPlacement = (
+      _overlaySize: PetViewport,
+      _reason: string,
+    ) => {
+      if (initialPlacementRequested) return;
+      if (initialPlacementTimer !== null) {
+        window.clearTimeout(initialPlacementTimer);
+      }
+      initialPlacementTimer = window.setTimeout(() => {
+        initialPlacementTimer = null;
+        resolveInitialPlacement(getPetOverlayViewport());
+      }, PET_INITIAL_PLACEMENT_SETTLE_MS);
     };
     const updateViewport = (reason = "unknown") => {
       const requestId = ++viewportRequestId;
       syncWebviewDpr();
       const nextOverlayViewport = getPetOverlayViewport();
       if (!isFiniteViewport(nextOverlayViewport)) return;
-      resolveInitialPlacement(nextOverlayViewport);
+      scheduleInitialPlacement(nextOverlayViewport, reason);
       setOverlayViewport((prev) =>
         sameRect(prev, nextOverlayViewport) ? prev : nextOverlayViewport,
       );
@@ -384,6 +411,9 @@ export function PetApp() {
       if (deferredAnchorTimer !== null) {
         window.clearTimeout(deferredAnchorTimer);
       }
+      if (initialPlacementTimer !== null) {
+        window.clearTimeout(initialPlacementTimer);
+      }
       safeUnlisten(topologyUnlisten);
       safeUnlisten(resizedUnlisten);
       safeUnlisten(scaleUnlisten);
@@ -431,12 +461,17 @@ export function PetApp() {
   }, [petAvatarSize]);
 
   useEffect(() => {
-    if (!placementIntent || !isFiniteRect(spriteScreen)) return;
-    const spriteCenter = centerPointOfRect(spriteScreen);
-    if (samePoint(spriteCenter, placementIntent.point)) {
+    if (!placementIntent) return;
+    if (
+      hasReachedPlacementPoint(
+        placementIntent.point,
+        actionBarAnchor,
+        spriteScreen,
+      )
+    ) {
       setAvatarPlacementIntent(null);
     }
-  }, [spriteScreen, placementIntent]);
+  }, [actionBarAnchor, spriteScreen, placementIntent]);
 
   useEffect(() => {
     setRuntime(null);
@@ -503,17 +538,19 @@ export function PetApp() {
   }, [actionBarAnchor, spriteScreen]);
 
   useEffect(() => {
+    const persistenceRect = actionBarAnchor ?? spriteScreen;
     if (
       !isTauri() ||
+      !initialPlacementSettled ||
       isDragging ||
       placementIntent ||
-      !isFiniteRect(spriteScreen) ||
+      !isFiniteRect(persistenceRect) ||
       !isFiniteViewport(overlayViewport)
     ) {
       return;
     }
 
-    const point = centerPointOfRect(spriteScreen);
+    const point = centerPointOfRect(persistenceRect);
     const timer = window.setTimeout(() => {
       void loadPetDisplayPhysicalSnapshot()
         .then((snapshot) => {
@@ -525,9 +562,10 @@ export function PetApp() {
             overlaySize: { w: overlayViewport.w, h: overlayViewport.h },
           });
           if (!anchor) return;
-          void savePetMonitorAnchor(anchor).catch((error: unknown) => {
-            console.warn("[pet] save monitor anchor failed:", error);
-          });
+          void savePetMonitorAnchor(anchor)
+            .catch((error: unknown) => {
+              console.warn("[pet] save monitor anchor failed:", error);
+            });
         })
         .catch((error: unknown) => {
           console.warn("[pet] resolve monitor anchor failed:", error);
@@ -538,7 +576,9 @@ export function PetApp() {
       window.clearTimeout(timer);
     };
   }, [
+    actionBarAnchor,
     isDragging,
+    initialPlacementSettled,
     overlayViewport,
     spriteScreen,
     placementIntent,
@@ -669,10 +709,16 @@ export function PetApp() {
   };
 
   const collapseToEdge = () => {
+    userMovedPetRef.current = true;
+    pendingTopologyAnchorRef.current = null;
+    setAvatarPlacementIntent(null);
     void setPetAvatarSize("mini");
   };
 
   const restoreNormal = () => {
+    userMovedPetRef.current = true;
+    pendingTopologyAnchorRef.current = null;
+    setAvatarPlacementIntent(null);
     void setPetAvatarSize("normal");
   };
 

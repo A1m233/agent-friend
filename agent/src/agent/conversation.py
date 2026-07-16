@@ -1291,6 +1291,35 @@ class Conversation:
         }
         notes.update(build.notes)
         self._last_context_notes = notes
+        prior = runtime.prior_summary
+        compaction = build.new_compaction
+        logger.info(
+            "[ContextCompactionDbg] context_build session_id=%s run_id=%s model=%s "
+            "messages=%d token_estimate=%s effective_window=%s trigger_threshold=%s "
+            "last_input_tokens=%s prior_summary=%s prior_covered_through=%s "
+            "folded=%s compacted=%s summary_input=%s new_compaction=%s "
+            "compaction_tokens_before=%s compaction_tokens_after=%s "
+            "compaction_covered_through=%s dropped_count=%s fallback_reason=%s",
+            self._session.session_id,
+            self._run_id_override or "none",
+            getattr(getattr(self._llm_client, "spec", None), "model", "unknown"),
+            len(build.messages),
+            notes.get("token_estimate"),
+            notes.get("effective_window"),
+            notes.get("trigger_threshold"),
+            notes.get("last_input_tokens"),
+            prior is not None,
+            prior.covered_through_uuid if prior is not None else "none",
+            notes.get("folded", False),
+            notes.get("compacted", False),
+            notes.get("summary_input", "none"),
+            compaction is not None,
+            compaction.tokens_before if compaction is not None else "none",
+            compaction.tokens_after if compaction is not None else "none",
+            compaction.covered_through_uuid if compaction is not None else "none",
+            notes.get("dropped_count"),
+            notes.get("fallback_reason", "none"),
+        )
 
     def _consume_usage(self, ev: LLMTurnDone) -> None:
         """消费 :class:`LLMTurnDone.usage`，更新下一轮估算的真实锚点（009 M1）。

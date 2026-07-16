@@ -15,7 +15,7 @@ export function VoiceTunnelConsentDialog({
     <ConfirmDialog
       open={open}
       title="确认语音通话前提"
-      description="语音通话需要你已经启动 voice_bridge，并让火山云通过公网穿透回调本机。确认后才会请求麦克风权限并开始拨号。"
+      description="语音通话会临时启动 Cloudflare Quick Tunnel，让火山云能够回调这台电脑。隧道只在通话期间运行；确认后才会继续请求麦克风权限并拨号。"
       confirmLabel="我已确认，继续拨号"
       cancelLabel="取消"
       confirmDelaySeconds={3}

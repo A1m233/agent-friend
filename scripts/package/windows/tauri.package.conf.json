@@ -1,0 +1,22 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "package-runtime/runtime/": "runtime",
+      "../public/live2d-models/hiyori/": "avatar-seed/live2d/hiyori",
+      "../public/spine-models/ark-models/": "avatar-seed/spine/ark-models"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "../../scripts/package/windows/nsis-hooks.nsh"
+      }
+    }
+  }
+}

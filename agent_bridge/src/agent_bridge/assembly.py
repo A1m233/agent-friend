@@ -266,6 +266,7 @@ def build_runtime(
             LLMClient(runtime_config.memory_spec),
             on_retrieved=recall_buffer.record,
             search_service=memory_search,
+            dense_model_dir=settings.memory_model_dir,
         )
         try:
             memory.warmup()

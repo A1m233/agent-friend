@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   centerPointOfRect,
+  hasReachedPlacementPoint,
   isFinitePoint,
   isFiniteRect,
   isFiniteViewport,
@@ -51,5 +52,25 @@ describe("petGeometry · finite guards and same-value checks", () => {
       x: 60,
       y: 50,
     });
+  });
+
+  it("consumes a placement intent using the visible anchor instead of layout bounds", () => {
+    const target = { x: 900, y: 500 };
+    const spriteScreen = { x: 100, y: 100, w: 1200, h: 700 };
+    const actionBarAnchor = { x: 800, y: 350, w: 200, h: 300 };
+
+    expect(centerPointOfRect(spriteScreen)).not.toEqual(target);
+    expect(hasReachedPlacementPoint(target, actionBarAnchor, spriteScreen)).toBe(true);
+  });
+
+  it("falls back to sprite bounds when a runtime has no separate visible anchor", () => {
+    expect(
+      hasReachedPlacementPoint(
+        { x: 60, y: 50 },
+        null,
+        { x: 10, y: 20, w: 100, h: 60 },
+      ),
+    ).toBe(true);
+    expect(hasReachedPlacementPoint({ x: 60, y: 50 }, null, null)).toBe(false);
   });
 });

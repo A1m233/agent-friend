@@ -88,8 +88,7 @@ def test_bind_id_from_user_openid(cred: ImCredential, resume_dir: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_start_setup_and_gateway_then_ws_start(adapter: QQAdapter, resume_dir: Path) -> None:
-    """start 调用顺序:QQApiClient(创建)→ setup(httpx)→ get_gateway_url_sync →
-    QQWebSocket(创建)→ ws.start。"""
+    """start 本地装配后异步取 gateway，再启动 QQWebSocket。"""
     mock_api = MagicMock()
     mock_api.get_gateway_url_sync.return_value = "wss://api.sgroup.qq.com/websocket"
     mock_ws = MagicMock()
@@ -104,6 +103,11 @@ async def test_start_setup_and_gateway_then_ws_start(adapter: QQAdapter, resume_
         mock_http = MagicMock()
         http_cls.return_value = mock_http
         adapter.start(on_inbound=AsyncMock())
+        # start() itself stays local/non-blocking; the optional external connection runs later.
+        mock_api.get_gateway_url_sync.assert_not_called()
+        startup_task = adapter._startup_task
+        assert startup_task is not None
+        await startup_task
 
     # QQApiClient 用 cred 构造
     api_cls.assert_called_once()
@@ -141,6 +145,9 @@ async def test_on_connected_sets_status_active(adapter: QQAdapter) -> None:
         patch("agent_bridge.protocols.im.adapters.qq.httpx.AsyncClient"),
     ):
         adapter.start(on_inbound=AsyncMock())
+        startup_task = adapter._startup_task
+        assert startup_task is not None
+        await startup_task
 
     cbs = captured["callbacks"]
     cbs.on_connected()
