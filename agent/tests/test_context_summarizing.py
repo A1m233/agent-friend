@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -420,7 +421,10 @@ def _count_compactions(session: Session) -> int:
     return sum(1 for ev in session.events if ev.type == "compaction")
 
 
-def test_ac34_35_compaction_persisted_and_reused(tmp_path: Path) -> None:
+def test_ac34_35_compaction_persisted_and_reused(
+    tmp_path: Path,
+    caplog: Any,
+) -> None:
     """AC-3.4/3.5：超阈值触发即落 compaction 事件；下一轮复用 prior_summary 不重摘。"""
     # window 8000 → threshold 6400；system prompt(~1359) + 折叠后 summary + tail 远低于阈值，
     # 故第二轮复用折叠不再触发；首轮 seed 大量历史越过阈值触发一次。
@@ -429,6 +433,7 @@ def test_ac34_35_compaction_persisted_and_reused(tmp_path: Path) -> None:
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
     _seed_turns(session, store, n=60, size=100)
+    caplog.set_level(logging.INFO, logger="agent.conversation")
 
     reply1 = conv.send("第一条新消息")
     assert reply1 == "ok"
@@ -440,6 +445,15 @@ def test_ac34_35_compaction_persisted_and_reused(tmp_path: Path) -> None:
     # 复用已有摘要折叠，未再触发摘要
     assert _count_compactions(session) == 1
     assert llm.complete_calls == 1
+    diagnostics = [
+        record.getMessage()
+        for record in caplog.records
+        if "[ContextCompactionDbg]" in record.getMessage()
+    ]
+    assert any("new_compaction=True" in message for message in diagnostics)
+    assert any(
+        "prior_summary=True" in message and "folded=True" in message for message in diagnostics
+    )
 
 
 def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,7 @@ class QQAdapter:
         self._api: QQApiClient | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._ws: QQWebSocket | None = None
+        self._startup_task: asyncio.Task[None] | None = None
         self._parser = EventParser()
         self._on_inbound: Callable[[InboundEvent], Awaitable[None]] | None = None
         self._status: ProviderStatus = "stopped"
@@ -82,10 +84,11 @@ class QQAdapter:
     # ------------------------------------------------------------------
 
     def start(self, on_inbound: Callable[[InboundEvent], Awaitable[None]]) -> None:
-        """启动长连(同步入口;SDK 内部起独立 daemon thread)。
+        """启动长连，不让 QQ token / gateway 网络请求阻塞 bridge readiness。
 
         调用前提:必须在 asyncio event loop 内调用(:func:`asyncio.get_running_loop`
-        要求 active loop),通常是 bridge 的 FastAPI lifespan 启动期。
+        要求 active loop),通常是 bridge 的 FastAPI lifespan 启动期。同步入口只完成
+        本地装配；首次 token / gateway 请求在线程中执行，完成后再拉起 SDK WebSocket。
         """
         self._on_inbound = on_inbound
 
@@ -98,7 +101,6 @@ class QQAdapter:
             log_tag=f"QQBot:{self.bind_id[:8]}",
         )
         self._api.setup(self._http_client)
-        gateway_url = self._api.get_gateway_url_sync()
 
         callbacks = WSCallbacks(
             on_message_event=self._on_message,
@@ -116,7 +118,27 @@ class QQAdapter:
         self._ws = QQWebSocket(callbacks=callbacks, log_tag=f"QQBot:{self.bind_id[:8]}")
 
         main_loop = asyncio.get_running_loop()
-        self._ws.start(gateway_url, main_loop)
+        self._startup_task = main_loop.create_task(self._start_websocket(main_loop))
+
+    async def _start_websocket(self, main_loop: asyncio.AbstractEventLoop) -> None:
+        api = self._api
+        ws = self._ws
+        if api is None or ws is None:
+            return
+        try:
+            gateway_url = await asyncio.to_thread(api.get_gateway_url_sync)
+            # stop() may have invalidated this generation while the blocking HTTP call ran.
+            if self._api is not api or self._ws is not ws:
+                return
+            ws.start(gateway_url, main_loop)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._set_status("error")
+            logger.exception("QQ gateway startup failed (bind=%s)", self.bind_id)
+        finally:
+            if self._startup_task is asyncio.current_task():
+                self._startup_task = None
 
     async def send(self, content: OutboundContent) -> None:
         """回写一条 c2c 文本消息给 QQ 平台。
@@ -184,6 +206,13 @@ class QQAdapter:
 
     async def stop(self) -> None:
         """停止长连,释放资源。幂等:重复调用不抛。"""
+        startup_task = self._startup_task
+        self._startup_task = None
+        if startup_task is not None:
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+
         ws = self._ws
         self._ws = None
         if ws is not None:

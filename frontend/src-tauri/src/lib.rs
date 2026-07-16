@@ -8,6 +8,7 @@ use tauri::{
 };
 use tauri_plugin_opener::OpenerExt;
 
+mod autostart;
 mod avatar_models;
 mod bubble_window;
 mod diagnostics;
@@ -480,9 +481,16 @@ fn is_loopback_dev_host(host: Option<&str>) -> bool {
     matches!(host, Some("localhost" | "127.0.0.1" | "::1"))
 }
 
+fn is_tauri_internal_host(host: Option<&str>) -> bool {
+    matches!(host, Some("tauri.localhost"))
+}
+
 fn is_allowed_app_navigation(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "asset" | "about" => true,
+        // Tauri 2 serves bundled assets through this internal HTTP(S) origin on Windows.
+        // It must remain allowed in release builds; arbitrary localhost/external HTTP stays blocked.
+        "http" | "https" if is_tauri_internal_host(url.host_str()) => true,
         "http" | "https" if cfg!(debug_assertions) => is_loopback_dev_host(url.host_str()),
         _ => false,
     }
@@ -609,10 +617,7 @@ fn consume_pending_settings_navigation(
 
 /// 050：只打开应用已知的人格文件或目录，不接受前端传入任意路径。
 #[tauri::command]
-fn open_persona_target(
-    app: tauri::AppHandle,
-    target: PersonaOpenTarget,
-) -> Result<(), String> {
+fn open_persona_target(app: tauri::AppHandle, target: PersonaOpenTarget) -> Result<(), String> {
     let persona_dir = paths::editable_persona_dir();
     let persona_file = paths::editable_persona_path();
     if !persona_file.is_file() {
@@ -831,12 +836,15 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    let resource_dir =
+        tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default()).ok();
     // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
     let bootstrap_settings = settings::load_from_disk_or_default();
     let init_script = settings::build_init_script(&bootstrap_settings);
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
     let runtime_service_supervisor =
-        Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment());
+        Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
 
@@ -850,6 +858,12 @@ pub fn run() {
         .manage(runtime_service_supervisor.clone())
         .plugin(navigation_guard())
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name("agent-friend")
+                .arg("--autostart")
+                .build(),
+        )
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(settings::init::<tauri::Wry>(init_script));
 
@@ -885,7 +899,11 @@ pub fn run() {
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
         runtime_services::restart_runtime_service,
+        runtime_services::prepare_voice_runtime,
+        runtime_services::stop_voice_tunnel,
         avatar_models::get_installed_avatar_model_resources,
+        autostart::get_autostart_status,
+        autostart::set_autostart_enabled,
         ui_state::get_chat_ui_persistence,
         ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
@@ -918,7 +936,11 @@ pub fn run() {
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
         runtime_services::restart_runtime_service,
+        runtime_services::prepare_voice_runtime,
+        runtime_services::stop_voice_tunnel,
         avatar_models::get_installed_avatar_model_resources,
+        autostart::get_autostart_status,
+        autostart::set_autostart_enabled,
         ui_state::get_chat_ui_persistence,
         ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
@@ -1057,29 +1079,26 @@ pub fn run() {
             spawn_cursor_feed(app.handle());
             // 015 · 启动 push channel 长 SSE 订阅；事件经 emit_to("pet", "agent://push", ...) 透传到 pet webview
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
-            #[cfg(debug_assertions)]
-            {
-                let handle = app.handle().clone();
-                let supervisor = setup_runtime_service_supervisor.clone();
-                tauri::async_runtime::spawn(async move {
+            let handle = app.handle().clone();
+            let supervisor = setup_runtime_service_supervisor.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = supervisor
+                    .start(Some(&handle), runtime_services::RuntimeServiceKind::Bridge)
+                    .await
+                {
+                    log::error!("bridge supervisor startup failed: {error}");
+                }
+                let voice_mode = std::env::var("AGENT_FRIEND_DEV_VOICE_MODE")
+                    .unwrap_or_else(|_| "local".to_string());
+                if voice_mode != "off" {
                     if let Err(error) = supervisor
-                        .start(Some(&handle), runtime_services::RuntimeServiceKind::Bridge)
+                        .start(Some(&handle), runtime_services::RuntimeServiceKind::Voice)
                         .await
                     {
-                        log::error!("bridge supervisor startup failed: {error}");
+                        log::error!("voice supervisor startup failed: {error}");
                     }
-                    let voice_mode = std::env::var("AGENT_FRIEND_DEV_VOICE_MODE")
-                        .unwrap_or_else(|_| "local".to_string());
-                    if voice_mode != "off" {
-                        if let Err(error) = supervisor
-                            .start(Some(&handle), runtime_services::RuntimeServiceKind::Voice)
-                            .await
-                        {
-                            log::error!("voice supervisor startup failed: {error}");
-                        }
-                    }
-                });
-            }
+                }
+            });
             // 017 · pet 窗形态切换为整屏 transparent overlay
             //   - cross-platform · monitors union setBounds（先于 to_panel）
             //   - macOS only · ActivationPolicy::Accessory + NSPanel 转换（沿
@@ -1088,14 +1107,21 @@ pub fn run() {
             //     transparent；Win spike §6.4.3 实证 alwaysOnTop 天然支持 fullscreen 浮层
             //   - 015 → 016 的 apply_floating_window_level 在 pet 上不再调用（NSPanel 路径
             //     已等价覆盖 setLevel + collectionBehavior）；helper 本身保留供 bubble_window::init 用
-            if app.get_webview_window("pet").is_some() {
+            if let Some(pet) = app.get_webview_window("pet") {
+                // Native fail-open must be installed before the transparent window spans the
+                // desktop. React later enables hit regions for the avatar/action bar. If the
+                // webview is slow or fails to mount, the invisible overlay must never eat all
+                // desktop clicks.
+                if let Err(error) = pet.set_ignore_cursor_events(true) {
+                    log::error!("pet overlay startup fail-open failed: {error}");
+                }
                 reconcile_pet_overlay(app.handle(), "setup", true);
+                if let Err(error) = pet.show() {
+                    log::warn!("pet overlay startup show failed: {error}");
+                }
                 #[cfg(target_os = "macos")]
                 {
                     let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    let pet = app
-                        .get_webview_window("pet")
-                        .expect("pet window checked before macOS panel setup");
                     apply_pet_nspanel(&pet);
                 }
             }
@@ -1106,7 +1132,7 @@ pub fn run() {
             bubble_window::init(app.handle())?;
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(move |_app_handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
@@ -1182,6 +1208,12 @@ mod tests {
             &tauri::Url::parse("asset://localhost/avatar.png").unwrap()
         ));
         assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("http://tauri.localhost/pet.html").unwrap()
+        ));
+        assert!(is_allowed_app_navigation(
+            &tauri::Url::parse("https://tauri.localhost/settings.html").unwrap()
+        ));
+        assert!(is_allowed_app_navigation(
             &tauri::Url::parse("http://localhost:1420/chat.html").unwrap()
         ));
         assert!(is_allowed_app_navigation(
@@ -1189,6 +1221,9 @@ mod tests {
         ));
         assert!(!is_allowed_app_navigation(
             &tauri::Url::parse("https://example.com").unwrap()
+        ));
+        assert!(!is_allowed_app_navigation(
+            &tauri::Url::parse("https://tauri.localhost.example.com/pet.html").unwrap()
         ));
     }
 }

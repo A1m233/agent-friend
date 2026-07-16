@@ -48,7 +48,9 @@ struct ReconnectBackoff {
 
 impl ReconnectBackoff {
     fn new() -> Self {
-        Self { next: RECONNECT_INITIAL_DELAY }
+        Self {
+            next: RECONNECT_INITIAL_DELAY,
+        }
     }
 
     fn take_delay(&mut self) -> Duration {

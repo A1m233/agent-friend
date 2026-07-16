@@ -2,6 +2,8 @@ import type {
   ServerVoiceInputEvent,
   VoiceInputAudioOptions,
 } from "@/services/voiceInput/types";
+import { localServiceAbsoluteBaseUrl } from "@/constants";
+import { ensureLocalServiceReady } from "@/services/runtime";
 
 interface ConnectVoiceInputOptions {
   traceId: string;
@@ -35,12 +37,11 @@ export interface VoiceInputPrewarmResult {
 
 const VOICE_INPUT_CONNECT_TIMEOUT_MS = 12_000;
 
-function voiceInputHttpBase(): string {
-  return import.meta.env.DEV ? window.location.origin : "http://127.0.0.1:18900";
-}
-
 function voiceInputWsUrl(traceId: string): string {
-  const url = new URL("/voice/transcriptions/stream", voiceInputHttpBase());
+  const url = new URL(
+    "/voice/transcriptions/stream",
+    localServiceAbsoluteBaseUrl("voice"),
+  );
   url.searchParams.set("trace_id", traceId);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
@@ -52,7 +53,10 @@ function parseServerEvent(raw: string): ServerVoiceInputEvent | null {
   return parsed as ServerVoiceInputEvent;
 }
 
-export function connectVoiceInput(options: ConnectVoiceInputOptions): Promise<VoiceInputConnection> {
+export async function connectVoiceInput(
+  options: ConnectVoiceInputOptions,
+): Promise<VoiceInputConnection> {
+  await ensureLocalServiceReady("voice");
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(voiceInputWsUrl(options.traceId));
     let opened = false;
@@ -137,7 +141,11 @@ export function connectVoiceInput(options: ConnectVoiceInputOptions): Promise<Vo
 export async function prewarmVoiceInput(
   options: PrewarmVoiceInputOptions,
 ): Promise<VoiceInputPrewarmResult> {
-  const url = new URL("/voice/transcriptions/prewarm", voiceInputHttpBase());
+  await ensureLocalServiceReady("voice");
+  const url = new URL(
+    "/voice/transcriptions/prewarm",
+    localServiceAbsoluteBaseUrl("voice"),
+  );
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

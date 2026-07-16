@@ -25,6 +25,7 @@ from logging.handlers import RotatingFileHandler
 
 from agent.paths import log_dir
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from runtime_config import (
     config_mode_from_env,
@@ -43,6 +44,27 @@ from .routes.meta import register_routes as register_meta_routes
 from .routes.persona import register_routes as register_persona_routes
 from .runtime_config import resolve_bridge_runtime_config
 from .settings import BridgeSettings
+
+TAURI_PRODUCTION_ORIGINS = [
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+]
+
+
+def _add_tauri_production_cors(app: FastAPI) -> None:
+    """Allow desktop WebViews to call the loopback bridge directly.
+
+    Tauri development uses a localhost Vite origin while packaged windows use
+    ``tauri.localhost``. Pure browser development may still use Vite's proxy, but allowing the
+    localhost origin lets Tauri dev exercise the same direct-loopback topology as production.
+    """
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=TAURI_PRODUCTION_ORIGINS,
+        allow_origin_regex=r"http://(127\.0\.0\.1|localhost):\d+",
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type"],
+    )
 
 
 def create_app() -> FastAPI:
@@ -88,6 +110,7 @@ def create_app_with_runtime(
         ),
         lifespan=_make_lifespan(runtime),
     )
+    _add_tauri_production_cors(app)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

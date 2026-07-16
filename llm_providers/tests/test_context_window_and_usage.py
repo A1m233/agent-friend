@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ssl
 from types import SimpleNamespace
 from typing import Any
@@ -394,3 +395,48 @@ def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(LLMNetworkError):
         next(stream)
     assert calls == 1
+
+
+def test_stream_logs_privacy_safe_empty_response_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret_reasoning = "private reasoning must not be logged"
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content=None,
+                                reasoning_content=secret_reasoning,
+                                tool_calls=[],
+                            ),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    caplog.set_level(logging.INFO, logger="llm_providers.client")
+    client = LLMClient(_spec(), network_retries=0)
+
+    list(client.stream([{"role": "user", "content": "sensitive prompt"}]))
+
+    diagnostic = next(
+        record.getMessage()
+        for record in caplog.records
+        if "[EmptyResponseDbg]" in record.getMessage()
+    )
+    assert "text_deltas=0" in diagnostic
+    assert "tool_call_deltas=0" in diagnostic
+    assert "reasoning_deltas=1" in diagnostic
+    assert "reasoning_content" in diagnostic
+    assert "finish_reason_raw=stop" in diagnostic
+    assert secret_reasoning not in diagnostic
+    assert "sensitive prompt" not in diagnostic

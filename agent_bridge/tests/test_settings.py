@@ -19,12 +19,15 @@ def test_data_paths_follow_user_data_dir_env(
     monkeypatch.setenv("AGENT_FRIEND_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("AGENT_BRIDGE_SESSIONS_DIR", raising=False)
     monkeypatch.delenv("AGENT_BRIDGE_MEMORY_DB", raising=False)
+    monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
+    monkeypatch.delenv("AGENT_BRIDGE_MEMORY_MODEL_DIR", raising=False)
     monkeypatch.delenv("AGENT_BRIDGE_PERSONAS_DIR", raising=False)
 
     settings = BridgeSettings()
 
     assert settings.sessions_dir == tmp_path / "sessions"
     assert settings.memory_db == tmp_path / "memory" / "memory.db"
+    assert settings.memory_model_dir is None
     assert settings.personas_dir == tmp_path / "personas"
 
 
@@ -39,6 +42,18 @@ def test_bridge_specific_env_overrides_data_dir(
     assert settings.sessions_dir == tmp_path / "custom-sessions"
     # 未单独覆盖的项仍跟随全局数据目录
     assert settings.memory_db == tmp_path / "global" / "memory" / "memory.db"
+
+
+def test_packaged_memory_model_dir_uses_explicit_global_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "runtime" / "assets" / "memory" / "bge-small-zh-v1.5"
+    monkeypatch.setenv("AGENT_FRIEND_MEMORY_MODEL_DIR", str(model_dir))
+
+    settings = BridgeSettings()
+
+    assert settings.memory_model_dir == model_dir
 
 
 def test_bridge_settings_ignore_dotenv_by_default(

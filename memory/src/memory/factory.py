@@ -60,6 +60,7 @@ def build_memory(
     embedding_provider: EmbeddingProvider | None = None,
     vector_index: VectorIndex | None = None,
     auto_dense: bool = True,
+    dense_model_dir: Path | str | None = None,
 ) -> Memory:
     """装配一个用 SQLite + 关键词召回 + LLM 抽取的 :class:`Memory`。
 
@@ -90,7 +91,10 @@ def build_memory(
         raise ValueError("embedding_provider 与 vector_index 必须同时提供")
     db_path = Path(db_path)
     if embedding_provider is None and auto_dense:
-        discovered = _discover_dense_components(db_path)
+        discovered = _discover_dense_components(
+            db_path,
+            dense_model_dir=Path(dense_model_dir) if dense_model_dir is not None else None,
+        )
         if discovered is not None:
             embedding_provider, vector_index = discovered
     store = SqliteMemoryStore(db_path)
@@ -132,9 +136,11 @@ def build_memory(
 
 def _discover_dense_components(
     db_path: Path,
+    *,
+    dense_model_dir: Path | None = None,
 ) -> tuple[EmbeddingProvider, VectorIndex] | None:
     """发现由 benchmark 安装入口准备的生产资产；不在启动时联网。"""
-    model_dir = db_path.parent / _DENSE_MODEL_DIR
+    model_dir = dense_model_dir or db_path.parent / _DENSE_MODEL_DIR
     model_path = model_dir / _DENSE_MODEL_FILE
     tokenizer_path = model_dir / "tokenizer.json"
     manifest_path = model_dir / "manifest.json"

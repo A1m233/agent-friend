@@ -54,6 +54,8 @@ class BridgeSettings(BaseSettings):
             下的 ``sessions/``，与 CLI in-process 模式共享同一份会话（参见 006 R-4.3.2）。
         memory_db: 长期记忆库（SQLite）路径；默认走系统用户数据目录下的
             ``memory/memory.db``，与 CLI in-process 模式共享同一份记忆（008）。父目录自动创建。
+        memory_model_dir: 可选的只读 dense model 目录。打包运行态由 Tauri 指向
+            安装资源；源码态未配置时继续从 memory DB 同级目录发现。
         personas_dir: 用户自定义 persona 目录；默认走系统用户数据目录下的 ``personas/``，
             与 CLI in-process 模式共享同一份用户 persona。
         memory_enabled: 是否启用长期记忆；默认开启。置 ``False`` 时 bridge 的
@@ -71,6 +73,13 @@ class BridgeSettings(BaseSettings):
     log_level: str = "INFO"
     sessions_dir: Path = Field(default_factory=sessions_dir)
     memory_db: Path = Field(default_factory=memory_db_path)
+    memory_model_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGENT_FRIEND_MEMORY_MODEL_DIR",
+            "AGENT_BRIDGE_MEMORY_MODEL_DIR",
+        ),
+    )
     personas_dir: Path = Field(default_factory=personas_dir)
     memory_enabled: bool = True
 

@@ -216,6 +216,27 @@ async def test_provider_prewarm_reuses_existing_warm_socket() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_close_releases_warm_socket() -> None:
+    socket = FakeVolcWebSocket()
+
+    async def fake_connect(uri: str, **kwargs: Any) -> FakeVolcWebSocket:
+        return socket
+
+    provider = VolcAsrProvider(
+        VoiceBridgeSettings(
+            volc_speech_app_id="speech-app",
+            volc_speech_access_token="speech-token",
+        ),
+        connect_factory=fake_connect,
+    )
+    await provider.prewarm(AsrPrewarmOptions(trace_id="warm-close", reason="unit"))
+
+    await provider.close()
+
+    assert socket.closed
+
+
+@pytest.mark.asyncio
 async def test_provider_prewarm_can_be_disabled() -> None:
     async def fake_connect(uri: str, **kwargs: Any) -> FakeVolcWebSocket:
         raise AssertionError("prewarm should not connect when disabled")

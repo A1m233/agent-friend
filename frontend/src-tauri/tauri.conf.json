@@ -1,7 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "agent-friend",
-  "version": "0.1.0",
+  "mainBinaryName": "agent-friend",
+  "version": "0.1.5",
   "identifier": "com.agentfriend.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -24,7 +25,8 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "shadow": false,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false
       },
       {
         "label": "bubble",

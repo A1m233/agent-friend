@@ -53,6 +53,34 @@ DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
 logger = logging.getLogger(__name__)
 
 
+def _present_delta_field_names(delta: Any) -> set[str]:
+    """Return populated delta field names without retaining or logging values."""
+    data: dict[str, Any] | None = None
+    model_dump = getattr(delta, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(exclude_none=True)
+            if isinstance(dumped, dict):
+                data = dumped
+        except Exception:
+            data = None
+    if data is None:
+        raw = getattr(delta, "__dict__", None)
+        if isinstance(raw, dict):
+            data = raw
+    if data is None:
+        return set()
+
+    present: set[str] = set()
+    for key, value in data.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, bytes, list, tuple, dict, set)) and not value:
+            continue
+        present.add(str(key))
+    return present
+
+
 def _exception_chain(error: BaseException) -> Iterator[BaseException]:
     """沿 ``raise ... from ...`` 因果链遍历异常，避免只看到最外层包装。"""
     current: BaseException | None = error
@@ -409,23 +437,47 @@ class LLMClient:
 
         stop_reason = "end_turn"
         usage: LLMUsage | None = None
+        chunk_count = 0
+        choice_chunk_count = 0
+        usage_only_chunk_count = 0
+        text_delta_count = 0
+        text_chars = 0
+        tool_call_delta_count = 0
+        reasoning_delta_count = 0
+        reasoning_chars = 0
+        finish_reason_raw = ""
+        delta_fields: set[str] = set()
         try:
             for chunk in response:
+                chunk_count += 1
                 chunk_usage = _extract_usage(chunk)
                 if chunk_usage is not None:
                     usage = chunk_usage
 
                 if not chunk.choices:
+                    usage_only_chunk_count += 1
                     continue  # 尾部 usage-only chunk（choices 为空）等
+                choice_chunk_count += 1
                 choice = chunk.choices[0]
                 delta = choice.delta
+                delta_fields.update(_present_delta_field_names(delta))
 
                 content = getattr(delta, "content", None)
                 if content:
+                    text_delta_count += 1
+                    text_chars += len(content)
                     yield LLMTextDelta(text=content)
+
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning is None:
+                    reasoning = getattr(delta, "reasoning", None)
+                if reasoning:
+                    reasoning_delta_count += 1
+                    reasoning_chars += len(reasoning)
 
                 tool_calls = getattr(delta, "tool_calls", None) or []
                 for tc in tool_calls:
+                    tool_call_delta_count += 1
                     func = getattr(tc, "function", None)
                     yield LLMToolCallDelta(
                         index=getattr(tc, "index", 0) or 0,
@@ -436,6 +488,7 @@ class LLMClient:
 
                 finish_reason = getattr(choice, "finish_reason", None)
                 if finish_reason:
+                    finish_reason_raw = str(finish_reason)
                     stop_reason = _map_finish_reason(finish_reason)
         except Exception as e:
             raise _map_exception(e) from e
@@ -446,5 +499,30 @@ class LLMClient:
             close = getattr(response, "close", None)
             if callable(close):
                 close()
+
+        log_terminal = (
+            logger.warning if text_delta_count == 0 and tool_call_delta_count == 0 else logger.info
+        )
+        log_terminal(
+            "[EmptyResponseDbg] llm_stream_terminal model=%s messages=%d tools=%s "
+            "chunks=%d choice_chunks=%d usage_only_chunks=%d text_deltas=%d text_chars=%d "
+            "tool_call_deltas=%d reasoning_deltas=%d reasoning_chars=%d "
+            "delta_fields=%s finish_reason_raw=%s stop_reason=%s usage=%s",
+            spec.model,
+            len(messages),
+            bool(tools),
+            chunk_count,
+            choice_chunk_count,
+            usage_only_chunk_count,
+            text_delta_count,
+            text_chars,
+            tool_call_delta_count,
+            reasoning_delta_count,
+            reasoning_chars,
+            ",".join(sorted(delta_fields)) or "none",
+            finish_reason_raw or "none",
+            stop_reason,
+            usage is not None,
+        )
 
         yield LLMTurnDone(stop_reason=stop_reason, usage=usage)

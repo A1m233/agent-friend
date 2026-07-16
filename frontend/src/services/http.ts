@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance } from "axios";
-import { BRIDGE_BASE_URL } from "@/constants";
+import { BRIDGE_BASE_URL, type LocalService } from "@/constants";
+import { ensureLocalServiceReady } from "@/services/runtime";
 
 /**
  * 基础请求层（REST 通道）。
@@ -15,6 +16,15 @@ export interface FriendlyError {
   friendly: string;
   /** 归一化错误码，便于上层分支处理（不展示给用户）。 */
   code?: string;
+}
+
+export function requireJsonRestResponse(data: unknown, contentType: unknown): void {
+  if (data === null || data === undefined || data === "") return;
+  if (typeof contentType === "string" && contentType.toLowerCase().includes("json")) return;
+  throw {
+    friendly: "本机服务返回了无法识别的内容，请重启应用后再试。",
+    code: "invalid_response",
+  } satisfies FriendlyError;
 }
 
 function backendDetailOf(data: unknown): FriendlyError | null {
@@ -57,10 +67,20 @@ export function toFriendlyError(err: unknown): FriendlyError {
   return { friendly: "我这边好像出了点小问题，能稍后再问我一遍吗？", code: "unknown" };
 }
 
-export function createHttp(baseURL: string = BRIDGE_BASE_URL): AxiosInstance {
+export function createHttp(
+  baseURL: string = BRIDGE_BASE_URL,
+  service: LocalService = "bridge",
+): AxiosInstance {
   const http = axios.create({ baseURL, timeout: 30_000 });
+  http.interceptors.request.use(async (config) => {
+    await ensureLocalServiceReady(service);
+    return config;
+  });
   http.interceptors.response.use(
-    (res) => res.data,
+    (res) => {
+      requireJsonRestResponse(res.data, res.headers["content-type"]);
+      return res.data;
+    },
     (err) => Promise.reject(toFriendlyError(err)),
   );
   return http;

@@ -36,6 +36,15 @@ export function ChatApp() {
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
+  const runtimeUnavailable = status !== "online";
+  const composerDisabled = runtimeUnavailable || voiceBlocksText || historyLoading;
+  const composerDisabledReason = runtimeUnavailable
+    ? status === "unknown"
+      ? "服务正在初始化..."
+      : "本机服务暂未连接"
+    : historyLoading
+      ? "正在打开这段对话..."
+      : "语音通话中，文字输入已暂时停用";
   const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
 
   useEffect(() => {
@@ -90,19 +99,15 @@ export function ChatApp() {
         )}
         {isHome ? (
           <HomeStart
-            disabled={voiceBlocksText || historyLoading}
-            disabledReason={
-              historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
-            }
+            disabled={composerDisabled}
+            disabledReason={composerDisabledReason}
           />
         ) : (
           <>
             <MessageList composerHeight={composerHeight} />
             <Composer
-              disabled={voiceBlocksText || historyLoading}
-              disabledReason={
-                historyLoading ? "正在打开这段对话..." : "语音通话中，文字输入已暂时停用"
-              }
+              disabled={composerDisabled}
+              disabledReason={composerDisabledReason}
               onHeightChange={setComposerHeight}
             />
           </>

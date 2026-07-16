@@ -69,3 +69,21 @@ export function centerPointOfRect(rect: PetRect): PetPoint {
     y: rect.y + rect.h / 2,
   };
 }
+
+/**
+ * Placement is applied against the visible/action-bar anchor when a runtime can
+ * provide one (notably Spine). The layout bounds can have a different center,
+ * so using spriteScreen alone leaves a completed one-shot intent alive forever.
+ */
+export function hasReachedPlacementPoint(
+  target: PetPoint,
+  actionBarAnchor: PetRect | null | undefined,
+  spriteScreen: PetRect | null | undefined,
+): boolean {
+  const anchor = isFiniteRect(actionBarAnchor)
+    ? actionBarAnchor
+    : isFiniteRect(spriteScreen)
+      ? spriteScreen
+      : null;
+  return anchor ? samePoint(centerPointOfRect(anchor), target) : false;
+}

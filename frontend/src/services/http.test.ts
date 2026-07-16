@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { toFriendlyError } from "./http";
+import { requireJsonRestResponse, toFriendlyError } from "./http";
+
+describe("requireJsonRestResponse", () => {
+  it("accepts JSON responses from local services", () => {
+    expect(() => requireJsonRestResponse({ status: "ok" }, "application/json")).not.toThrow();
+  });
+
+  it("rejects an HTML asset fallback before it reaches a store", () => {
+    expect(() => requireJsonRestResponse("<!doctype html>", "text/html")).toThrow(
+      expect.objectContaining({ code: "invalid_response" }),
+    );
+  });
+});
 
 describe("toFriendlyError", () => {
   it("preserves backend detail message and error code", () => {

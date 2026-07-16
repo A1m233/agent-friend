@@ -10,6 +10,11 @@ test_pinned_gate / test_store）覆盖。
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
+import pytest
+
 from memory import build_memory
 
 
@@ -77,5 +82,32 @@ def test_build_memory_explicit_extractor_prompt_overrides_switch() -> None:
     )
     try:
         assert mem._worker._extractor._prompt == "custom test prompt"
+    finally:
+        mem.close()
+
+
+def test_build_memory_passes_explicit_dense_model_dir_to_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_discover(db_path: Path, *, dense_model_dir: Path | None = None) -> None:
+        captured["db_path"] = db_path
+        captured["dense_model_dir"] = dense_model_dir
+        return None
+
+    monkeypatch.setattr("memory.factory._discover_dense_components", fake_discover)
+    model_dir = tmp_path / "packaged-model"
+    mem = build_memory(
+        tmp_path / "memory.db",
+        _FakeLLM(),  # type: ignore[arg-type]
+        dense_model_dir=model_dir,
+    )
+    try:
+        assert captured == {
+            "db_path": tmp_path / "memory.db",
+            "dense_model_dir": model_dir,
+        }
     finally:
         mem.close()

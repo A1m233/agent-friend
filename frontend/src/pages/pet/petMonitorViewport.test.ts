@@ -188,6 +188,34 @@ describe("petMonitorViewport · monitor-aware pet viewport", () => {
     expect(point?.y).toBeCloseTo(711.66984375);
   });
 
+  it("keeps a persisted right-monitor anchor on the right after the startup overlay settles", () => {
+    const input = {
+      anchor: {
+        monitor: { x: 0, y: 0, width: 2560, height: 1440, scaleMilli: 1250 },
+        relativeAnchor: { x: 0.7703472846784281, y: 0.78385415342119 },
+      },
+      bounds: { x: -2560, y: 0, width: 5120, height: 1600 },
+      monitors: [
+        { x: -2560, y: 0, width: 2560, height: 1600, scaleMilli: 1750 },
+        { x: 0, y: 0, width: 2560, height: 1440, scaleMilli: 1250 },
+      ],
+    };
+
+    const prematurePoint = resolvePetPointFromMonitorRelativeAnchor({
+      ...input,
+      overlaySize: { w: 240, h: 320 },
+    });
+    const settledPoint = resolvePetPointFromMonitorRelativeAnchor({
+      ...input,
+      overlaySize: { w: 4096, h: 1280 },
+    });
+
+    expect(prematurePoint?.x).toBeCloseTo(212.44167416141136);
+    expect(settledPoint?.x).toBeCloseTo(3625.6712390214207);
+    expect(settledPoint?.y).toBeCloseTo(902.9999847412109);
+    expect(settledPoint!.x).toBeGreaterThan(2048);
+  });
+
   it("places the initial pet at the center of the cursor monitor", () => {
     expect(
       resolvePetInitialPlacementPoint({

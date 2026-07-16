@@ -1,3 +1,6 @@
+import { BRIDGE_BASE_URL } from "@/constants";
+import { ensureLocalServiceReady } from "@/services/runtime";
+
 export interface Persona {
   id: string;
   name: string;
@@ -112,7 +115,8 @@ export interface RecallProbeResponse {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  await ensureLocalServiceReady("bridge");
+  const res = await fetch(`${BRIDGE_BASE_URL}${url}`, init);
   if (!res.ok) {
     const text = await res.text().catch(() => "unknown error");
     throw new Error(`${res.status} ${res.statusText}: ${text}`);

@@ -11,6 +11,7 @@ export function canStartVoiceCall(phase: VoiceCallPhase): boolean {
 export function isVoiceCallBlockingText(phase: VoiceCallPhase): boolean {
   return (
     phase === "dialing" ||
+    phase === "preparing_runtime" ||
     phase === "preflighting" ||
     phase === "joining_room" ||
     phase === "preparing_microphone" ||
@@ -24,6 +25,7 @@ export function isVoiceCallBlockingText(phase: VoiceCallPhase): boolean {
 export function isVoiceCallLive(phase: VoiceCallPhase): boolean {
   return (
     phase === "dialing" ||
+    phase === "preparing_runtime" ||
     phase === "preflighting" ||
     phase === "joining_room" ||
     phase === "preparing_microphone" ||
@@ -37,6 +39,8 @@ export function voicePhaseLabel(phase: VoiceCallPhase): string {
   switch (phase) {
     case "confirming_tunnel":
       return "等待确认";
+    case "preparing_runtime":
+      return "正在准备语音服务...";
     case "preflighting":
       return "正在检查麦克风...";
     case "dialing":
@@ -84,6 +88,8 @@ export function voiceActivityLabel(activity: VoiceCallActivity, muted = false): 
 
 export function voiceFailureStageLabel(stage: VoiceCallFailureStage): string {
   switch (stage) {
+    case "runtime_prepare":
+      return "准备语音服务";
     case "preflight":
       return "检查麦克风";
     case "start_call":

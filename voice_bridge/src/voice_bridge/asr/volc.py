@@ -79,6 +79,11 @@ class VolcAsrProvider:
         self._warm: _WarmVolcConnection | None = None
         self._warm_expire_task: asyncio.Task[None] | None = None
 
+    async def close(self) -> None:
+        """Release provider-owned prewarm resources during process shutdown."""
+        async with self._warm_lock:
+            await self._close_warm_locked(cancel_expiry=True)
+
     async def prewarm(self, options: AsrPrewarmOptions) -> AsrPrewarmResult:
         ttl_ms = self._settings.voice_input_prewarm_ttl_ms
         started_ms = monotonic_ms()

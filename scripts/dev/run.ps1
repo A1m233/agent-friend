@@ -570,7 +570,7 @@ $voice = $null
 $cloudflared = $null
 
 try {
-if ($voiceMode -eq "tunnel") {
+if ($voiceMode -eq "tunnel" -and $mode -eq "web") {
     $tunnel = Start-VoiceTunnel
     $cloudflared = $tunnel.Process
 }
@@ -581,6 +581,19 @@ if ($mode -eq "tauri") {
     $env:AGENT_FRIEND_REPO_ROOT = $root
     $env:AGENT_FRIEND_DEV_VOICE_MODE = $voiceMode
     $env:AGENT_BRIDGE_DEV_MODE = "true"
+    Remove-Item Env:VOICE_BRIDGE_PUBLIC_URL -ErrorAction SilentlyContinue
+    $cloudflaredCommand = Get-Command cloudflared -ErrorAction SilentlyContinue
+    if ($cloudflaredCommand) {
+        $env:AGENT_FRIEND_CLOUDFLARED_PATH = $cloudflaredCommand.Source
+        Write-Host "===> cloudflared 由 Tauri Core 按通话需要启动：$($cloudflaredCommand.Source)"
+    }
+    else {
+        Remove-Item Env:AGENT_FRIEND_CLOUDFLARED_PATH -ErrorAction SilentlyContinue
+        if ($voiceMode -eq "tunnel") {
+            Write-Error "--voice 需要 cloudflared；当前 PATH 中未找到。默认本地语音输入仍可用。"
+        }
+        Write-Host "  [WARN] 未找到 cloudflared；完整语音通话会给出 tunnel_binary_missing，文字与语音输入不受影响。"
+    }
     Write-Host "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
     Set-Location (Join-Path $root "frontend")

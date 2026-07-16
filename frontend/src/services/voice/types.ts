@@ -1,6 +1,7 @@
 export type VoiceCallPhase =
   | "idle"
   | "confirming_tunnel"
+  | "preparing_runtime"
   | "preflighting"
   | "dialing"
   | "joining_room"
@@ -21,6 +22,7 @@ export type VoiceCallActivity =
   | "speaking";
 
 export type VoiceCallFailureStage =
+  | "runtime_prepare"
   | "preflight"
   | "start_call"
   | "rtc_join"

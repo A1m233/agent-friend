@@ -33,6 +33,7 @@ import { FeedbackDiagnosticsPanel } from "./components/FeedbackDiagnosticsPanel"
 import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
+import { AutostartSetting } from "./components/AutostartSetting";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
@@ -180,6 +181,9 @@ export function SettingsApp() {
                     </TabsList>
                   </Tabs>
                 </SettingsRow>
+              </SettingsGroup>
+              <SettingsGroup title="启动">
+                <AutostartSetting />
               </SettingsGroup>
             </SettingsPageLayout>
           ) : section === "archived" ? (
