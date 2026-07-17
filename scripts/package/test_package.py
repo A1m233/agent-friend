@@ -59,7 +59,7 @@ def test_cloudflared_lock_has_pinned_version_and_hash() -> None:
     assert lock["url"].endswith("cloudflared-windows-amd64.exe")
 
 
-def test_nsis_uninstall_cleans_the_fixed_autostart_entry() -> None:
+def test_nsis_upgrade_preserves_and_normalizes_the_fixed_autostart_entry() -> None:
     tauri = json.loads(
         (PACKAGE_DIR.parent.parent / "frontend" / "src-tauri" / "tauri.conf.json").read_text(
             "utf-8"
@@ -72,11 +72,25 @@ def test_nsis_uninstall_cleans_the_fixed_autostart_entry() -> None:
     assert nsis["installerHooks"] == "../../scripts/package/windows/nsis-hooks.nsh"
 
     hooks = (PACKAGE_DIR / "windows" / "nsis-hooks.nsh").read_text("utf-8")
+    assert "MUI_CUSTOMFUNCTION_GUIINIT AgentFriendCaptureAutostart" in hooks
+    assert "AgentFriendAutostartCaptured" in hooks
+    assert "NSIS_HOOK_POSTINSTALL" in hooks
+    assert '"agent-friend" "$\\"$INSTDIR\\${MAINBINARYNAME}.exe$\\" --autostart"' in hooks
+
+
+def test_nsis_uninstall_uses_tauri_cleanup_without_touching_private_startup_state() -> None:
+    hooks = (PACKAGE_DIR / "windows" / "nsis-hooks.nsh").read_text("utf-8")
+
     assert "NSIS_HOOK_PREUNINSTALL" in hooks
-    assert (
-        'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "agent-friend"'
-        in hooks
+    assert "DeleteRegValue" not in hooks
+    assert "StartupApproved" not in hooks
+
+
+def test_tauri_cli_is_pinned_for_the_verified_nsis_template() -> None:
+    package_json = json.loads(
+        (PACKAGE_DIR.parent.parent / "frontend" / "package.json").read_text("utf-8")
     )
+    assert package_json["devDependencies"]["@tauri-apps/cli"] == "2.11.2"
 
 
 def test_nsis_install_uninstall_refuse_to_kill_a_running_app() -> None:

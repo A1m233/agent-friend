@@ -40,6 +40,11 @@ tauri-plugin-autostart = "2.5.1"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 os_info = "3"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# auto-launch 0.5 writes an unquoted Run command; normalize the public Run
+# value after the plugin updates Windows' autostart state.
+winreg = "0.10.1"
+
 # 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

@@ -30,6 +30,27 @@
   !undef AppClosedCheckId
 !macroend
 
+; A higher-version NSIS installer may run the old uninstaller before its install
+; section starts. Capture the public Run entry before the reinstall page so an
+; old installer cannot erase the user's autostart choice during an upgrade.
+Var AgentFriendAutostartBeforeInstall
+Var AgentFriendAutostartCaptured
+
+!define MUI_CUSTOMFUNCTION_GUIINIT AgentFriendCaptureAutostart
+Function AgentFriendCaptureAutostart
+  ${If} $AgentFriendAutostartCaptured == "1"
+    Return
+  ${EndIf}
+
+  StrCpy $AgentFriendAutostartCaptured "1"
+  ClearErrors
+  ReadRegStr $AgentFriendAutostartBeforeInstall HKCU \
+    "Software\Microsoft\Windows\CurrentVersion\Run" "agent-friend"
+  ${If} ${Errors}
+    StrCpy $AgentFriendAutostartBeforeInstall ""
+  ${EndIf}
+FunctionEnd
+
 ; Tauri's default macro force-kills a running process, especially for /S and
 ; passive installs. Replace it so the template's own install/uninstall check
 ; follows the same fail-closed policy as our pre-hooks.
@@ -39,6 +60,10 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  ; Silent installs do not create MUI pages, so capture here as a fallback.
+  ; The function is idempotent and will preserve an earlier GUI-time snapshot.
+  Call AgentFriendCaptureAutostart
+
   ; Check the new binary name first.
   !insertmacro REQUIRE_APP_CLOSED "${MAINBINARYNAME}.exe" "install or update"
 
@@ -51,10 +76,16 @@
   ${EndIf}
 !macroend
 
+!macro NSIS_HOOK_POSTINSTALL
+  ${If} $AgentFriendAutostartBeforeInstall != ""
+    ; Normalize the executable path while restoring the user's existing choice.
+    ; Quoting is required when $INSTDIR contains spaces.
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" \
+      "agent-friend" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --autostart"
+    DetailPrint "${PRODUCTNAME}: preserved Windows login startup."
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro REQUIRE_APP_CLOSED "${MAINBINARYNAME}.exe" "uninstall"
-
-  ; tauri-plugin-autostart uses the fixed app name as the Windows Run value.
-  ; The package is current-user, so cleanup stays scoped to HKCU.
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "agent-friend"
 !macroend

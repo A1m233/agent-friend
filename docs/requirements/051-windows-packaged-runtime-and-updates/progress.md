@@ -29,6 +29,10 @@ COMPLETED
 - [x] 人工验证最新版桌面壳启动、就绪状态与主要设置入口
 - [x] 完成覆盖升级验收；干净 Windows 验证经用户确认作为非阻塞后续项
 - [x] 用户确认验收完成
+- [x] 修复旧版 uninstaller 在手工覆盖升级时误删 autostart 的兼容问题
+- [x] 规范化 Windows Run 命令的 executable path 引号并增加失败回滚
+- [x] 固定已验证的 Tauri CLI，补齐 NSIS 生命周期静态测试与真实 makensis 编译冒烟
+- [ ] 下个正式高版本完整运行时包发布前，执行“旧版启用 → 覆盖升级 → 重新登录 → 显式卸载”安装态回归
 
 ## 实现日志
 
@@ -46,3 +50,4 @@ COMPLETED
 | 2026-07-16 | 修复桌宠缩小/恢复位置回归并升级安装到 0.1.2 | 根因是 Spine 的一次性初始放置实际按可见/action-bar anchor 对齐，但消费判断误用 layout bounds 中心，导致残留 intent 覆盖后续尺寸切换；现改为按可见 anchor 消费，并让用户主动缩小/恢复清除迟到的放置意图。新增 2 项几何回归测试；全量门禁 Python 887 passed / 2 skipped、frontend 325 passed、Rust 87 passed、release check 通过；D 盘原位升级及 installed-smoke 通过，桌面位置行为留待用户手工验收。 |
 | 2026-07-17 | 完成安装版回归修复并升级到 0.1.5 | 统一开发态与安装态 API 入口；修复设置子页、空响应诊断、桌宠跨屏位置持久化与首次放置；安装程序在新旧主程序运行时均拒绝覆盖且不强制结束应用；D 盘原位覆盖安装和 installed-smoke 通过。 |
 | 2026-07-17 | 完成可信用户 beta 验收 | 用户确认桌宠缩小/恢复与重启位置、开机自启、设置入口、文字对话和记忆主链路；真实安装版 Quick Tunnel 建立、RTC 回调与语音回答成功，挂断后本地语音输入恢复，临时 URL 未持久化且无 cloudflared 孤儿进程。真实隧道故障注入由自动化证据替代，干净 Windows 作为非阻塞后续验证项。最终全量门禁 Python 889 passed / 2 skipped、frontend 326 passed、Rust 87 passed，生产构建和 release check 通过。 |
+| 2026-07-17 | 彻底修复手工升级丢失开机自启 | 根因是项目 preuninstall hook 无条件删除 Run 值，而手工高版本安装会先调用旧 uninstaller。新版 hooks 在 reinstall 页前幂等快照、postinstall 按原选择恢复并把路径规范化为带引号命令；应用启用时同样规范化且失败回滚；不直接修改 StartupApproved。Tauri CLI 固定 2.11.2。全量门禁 Python 891 passed / 2 skipped、frontend 326 passed、Rust 88 passed，release check 与真实 makensis 编译冒烟通过；高版本正式完整包的登录 / 卸载 E2E 留作发布门禁。 |

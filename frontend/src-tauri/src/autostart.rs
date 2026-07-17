@@ -1,10 +1,35 @@
 use serde::Serialize;
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
+#[cfg(all(target_os = "windows", any(test, not(debug_assertions))))]
+use std::path::Path;
+
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 use tauri_plugin_autostart::ManagerExt;
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
 const SETTINGS_WINDOW: &str = "settings";
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+const WINDOWS_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+const WINDOWS_RUN_VALUE: &str = "agent-friend";
+
+#[cfg(all(target_os = "windows", any(test, not(debug_assertions))))]
+fn windows_autostart_command(executable: &Path) -> String {
+    format!("\"{}\" --autostart", executable.display())
+}
+
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+fn normalize_windows_run_entry() -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run = hkcu
+        .open_subkey_with_flags(WINDOWS_RUN_KEY, winreg::enums::KEY_SET_VALUE)
+        .map_err(|error| error.to_string())?;
+    run.set_value(WINDOWS_RUN_VALUE, &windows_autostart_command(&executable))
+        .map_err(|error| error.to_string())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,7 +116,17 @@ impl<R: Runtime> AutostartBackend for PluginBackend<'_, R> {
         self.0
             .autolaunch()
             .enable()
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Err(error) = normalize_windows_run_entry() {
+            let rollback = self.0.autolaunch().disable();
+            return Err(match rollback {
+                Ok(()) => format!("failed to normalize the Windows startup command: {error}"),
+                Err(rollback_error) => format!(
+                    "failed to normalize the Windows startup command: {error}; rollback failed: {rollback_error}"
+                ),
+            });
+        }
+        Ok(())
     }
 
     fn disable(&self) -> Result<(), String> {
@@ -240,5 +275,15 @@ mod tests {
         assert!(set_backend(&backend, true)
             .unwrap_err()
             .starts_with("autostart_state_mismatch:"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_startup_command_quotes_paths_with_spaces() {
+        let executable = std::path::Path::new(r"D:\Apps with spaces\agent-friend.exe");
+        assert_eq!(
+            windows_autostart_command(executable),
+            r#""D:\Apps with spaces\agent-friend.exe" --autostart"#
+        );
     }
 }

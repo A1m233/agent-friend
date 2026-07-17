@@ -341,6 +341,8 @@ agent-friend_<version>_windows_x64-release.json
 
 NSIS 对安装失败的完整事务回滚能力有限，因此本期硬保证是：用户资产和系统凭据不由 installer 删除；失败信息可见；正常覆盖升级经过真实验证。不承诺任意中断点都自动回滚旧程序文件。
 
+手工运行更高版本 NSIS 时，Tauri 的 reinstall 页可能先调用旧版 uninstaller，再进入新版 install section。因此不能假设“同一安装身份覆盖安装”会天然保留所有 per-user 系统集成。对开机自启采用显式迁移：新版 installer 在 reinstall 页之前读取 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 的固定 `agent-friend` 值，安装结束后仅在升级前确实存在该值时恢复为当前 `$INSTDIR\agent-friend.exe --autostart`。快照函数幂等，GUI / passive 路径在 MUI 初始化时执行，silent 路径在 preinstall 兜底执行，因此也兼容旧版 uninstaller 曾无条件删除启动项的安装实例。
+
 ### 11. Windows 登录后自动启动
 
 使用 Tauri 2 官方 `tauri-plugin-autostart` 作为系统集成层，固定启动项名称为 `agent-friend`，并为自动启动注册 `--autostart` 参数。Windows 登录时仍启动安装目录中的同一个 `agent-friend.exe`；现有 Tauri setup 继续显示桌宠并启动随包 runtime，不建立独立 service、计划任务或第二套后端入口。
@@ -360,9 +362,11 @@ set_autostart_enabled(enabled: bool) -> Result<AutostartStatus, String>
 
 两条 command 校验调用窗口为 `settings`。release Windows build 调用插件 `is_enabled` / `enable` / `disable`；写入后立即重新读取系统状态并返回，实际状态与请求不一致时按失败处理。普通 debug build 返回 `supported=false` 和明确原因，拒绝写入，避免把 worktree 下的 `target/debug/agent-friend.exe` 注册为登录启动项。
 
+插件负责 Windows 启用 / 禁用状态，包括 Windows 自身在任务管理器中记录的禁用状态；项目代码不直接解释或修改未公开的 `StartupApproved` 二进制结构。由于当前插件底层 `auto-launch 0.5` 写入的 `Run` 命令没有为 executable path 加引号，release facade 在插件启用成功后只规范化公开 `Run` 值为 `"<absolute executable path>" --autostart`。这样安装目录含空格时仍满足 Windows 命令行解析约束；规范化失败则回滚插件启用，避免半成功状态。
+
 前端新增独立 autostart service/hook，不复用 `useSetting`。设置页进入“通用”、设置窗口重新获得焦点和切换完成后刷新系统状态；加载或写入时禁用开关；失败后重新读取实际状态并使用现有 toast 呈现可行动错误。状态不注入所有 webview，也不产生跨窗口 settings 广播，因为只有设置窗口拥有该操作入口。
 
-package 专用 NSIS 配置增加 uninstall hook，按固定启动项名称清理 agent-friend 的 Windows 登录启动注册；覆盖安装不删除启动项，因此相同安装身份和稳定安装路径会保留用户选择。清理只作用于启动项，不触碰用户数据、settings、keyring 或日志。
+package 专用 NSIS hooks 只负责升级前快照与安装后恢复公开 `Run` 值；显式卸载继续复用 Tauri 2.11.2 模板自带的、仅在非 update 模式执行的固定启动项清理。为避免 hooks 与上游模板生命周期发生无审查漂移，前端 Tauri CLI 固定为已验证的 `2.11.2`。整个流程不触碰用户数据、settings、keyring、日志或 `StartupApproved` 私有结构。
 
 ### 12. secret 与供应链边界
 
@@ -435,8 +439,9 @@ package 专用 NSIS 配置增加 uninstall hook，按固定启动项名称清理
 
 - Rust fake backend 覆盖 enabled / disabled 查询、幂等启停、插件错误和写后复核不一致。
 - 非 settings 窗口不能调用 autostart facade；debug build 不能注册调试 executable。
-- 安装版启动项指向当前安装目录的 `agent-friend.exe` 并携带 `--autostart`，不单独启动 bridge/voice。
-- 覆盖升级后只有一个启动项且选择保持；卸载后固定启动项被清理。
+- 安装版启动项使用带引号的绝对 executable path 并携带 `--autostart`，不单独启动 bridge/voice；路径含空格有独立回归测试。
+- NSIS 静态测试锁定 GUI 前置快照、silent 兜底、postinstall 恢复、禁止项目 hook 直接修改 `StartupApproved`，并固定已验证的 Tauri CLI 版本。
+- hooks 必须通过真实 Tauri release + makensis 编译；正式发布前再用更高版本完整运行时包验证“旧版启用 → 覆盖升级 → 重新登录仍启动”以及显式卸载清理。
 
 #### 安装态
 
@@ -472,6 +477,7 @@ package 专用 NSIS 配置增加 uninstall hook，按固定启动项名称清理
 - 用户已在通话时重建 tunnel 会破坏回调：普通 prepare/restart 必须服从 047 active-call block。
 - Windows Defender / SmartScreen 可能影响未知 executable：无证书 beta 明示风险，保留 Authenticode 接入点。
 - 安装过程中应用仍运行可能锁文件：第一版要求退出应用，installer 失败不得删除用户资产。
+- Tauri NSIS 模板生命周期变化可能破坏升级快照时机：CLI 固定为 2.11.2，静态断言与真实 makensis 编译共同作为升级门禁；升级模板前必须重新审查 generated `installer.nsi`。
 
 ## 实施顺序
 
@@ -505,3 +511,4 @@ package 专用 NSIS 配置增加 uninstall hook，按固定启动项名称清理
 | 2026-07-16 | 初版确认：Windows x64 PyInstaller onedir 共享 runtime、Tauri NSIS、packaged supervisor、只读 memory 模型、人工覆盖升级 | 新设计，待实现 |
 | 2026-07-16 | 补齐完整语音闭包：锁版本 cloudflared + 用户 consent 后按需 Quick Tunnel + VoiceRuntimeCoordinator；明确可信 beta 边界 | 新设计，待实现 |
 | 2026-07-16 | Phase 1 回溯：把 Windows 登录后自动启动纳入 051；官方 autostart plugin + Rust facade，以系统状态为真相源，debug 禁止注册，覆盖升级保留、卸载清理 | 增量实现 |
+| 2026-07-17 | 修正“覆盖安装天然保留 autostart”的错误假设：在官方 NSIS hooks 中升级前快照 / 安装后恢复公开 Run 值；应用侧写入带引号命令并失败回滚；显式卸载仍由固定版本 Tauri 模板清理，不直接维护 StartupApproved | 回归修复 |
