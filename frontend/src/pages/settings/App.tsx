@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { LifeBuoy, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -34,6 +34,7 @@ import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
+import { PermissionPanel } from "./permissions/PermissionPanel";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
@@ -105,6 +106,14 @@ export function SettingsApp() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
+                    isActive={section === "permissions"}
+                    onClick={() => selectSection("permissions")}
+                  >
+                    系统权限
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
                     isActive={section === "general"}
                     onClick={() => selectSection("general")}
                   >
@@ -153,7 +162,6 @@ export function SettingsApp() {
                   isActive={section === "feedback"}
                   onClick={() => selectSection("feedback")}
                 >
-                  <LifeBuoy className="size-4" />
                   帮助与反馈
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -194,6 +202,8 @@ export function SettingsApp() {
             <AvatarModelPanel />
           ) : section === "feedback" ? (
             <FeedbackDiagnosticsPanel prefill={feedbackPrefill} />
+          ) : section === "permissions" ? (
+            <PermissionPanel />
           ) : (
             <SettingsPageLayout title="语音">
               <SettingsGroup title="语音通话">

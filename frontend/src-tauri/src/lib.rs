@@ -13,6 +13,7 @@ mod avatar_models;
 mod bubble_window;
 mod diagnostics;
 mod paths;
+mod permissions;
 mod pet_display_topology;
 mod push_subscriber;
 mod runtime_config;
@@ -608,6 +609,17 @@ fn open_settings(
     Ok(())
 }
 
+pub(crate) fn show_permission_settings(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<SettingsNavigationState>();
+    let envelope = state.set_pending(SettingsOpenRequest {
+        target: Some("permissions".to_string()),
+        feedback: None,
+    })?;
+    show_and_focus(app, "settings")?;
+    app.emit_to("settings", EVENT_SETTINGS_NAVIGATE, envelope)
+        .map_err(|error| format!("emit permission settings navigation failed: {error}"))
+}
+
 #[tauri::command]
 fn consume_pending_settings_navigation(
     state: tauri::State<'_, SettingsNavigationState>,
@@ -908,6 +920,14 @@ pub fn run() {
         ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
         ui_state::set_pet_monitor_anchor,
+        permissions::get_permission_snapshot,
+        permissions::refresh_permissions,
+        permissions::request_permission_flow,
+        permissions::begin_permission_attempt,
+        permissions::complete_permission_attempt,
+        permissions::defer_permission_flow,
+        permissions::open_permission_system_settings,
+        permissions::probe_permission_platform,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -945,6 +965,13 @@ pub fn run() {
         ui_state::get_pet_ui_persistence,
         ui_state::set_last_chat_session_id,
         ui_state::set_pet_monitor_anchor,
+        permissions::get_permission_snapshot,
+        permissions::refresh_permissions,
+        permissions::request_permission_flow,
+        permissions::begin_permission_attempt,
+        permissions::complete_permission_attempt,
+        permissions::defer_permission_flow,
+        permissions::open_permission_system_settings,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -953,6 +980,12 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                permissions::schedule_refresh(
+                    window.app_handle(),
+                    permissions::manager::PermissionRefreshReason::Focused,
+                );
+            }
             if window.label() == "pet" {
                 match event {
                     tauri::WindowEvent::Resized(_) => {
@@ -1071,6 +1104,12 @@ pub fn run() {
                 paths::avatar_model_assets_dir(),
                 paths::avatar_model_catalog_path()
             );
+            permissions::init(app.handle()).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("permissions init failed: {error}"),
+                )
+            })?;
             avatar_models::ensure_builtin_avatar_models_installed(app.handle()).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, format!("avatar models: {e}"))
             })?;
@@ -1128,13 +1167,21 @@ pub fn run() {
             spawn_pet_overlay_reconciler(app.handle());
             #[cfg(debug_assertions)]
             setup_live2d_debugger_window(app.handle())?;
+            #[cfg(debug_assertions)]
+            permissions::spawn_platform_probe(app.handle().clone());
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
             bubble_window::init(app.handle())?;
             Ok(())
         })
         .build(context)
         .expect("error while building tauri application")
-        .run(move |_app_handle, event| {
+        .run(move |app_handle, event| {
+            if matches!(event, tauri::RunEvent::Resumed) {
+                permissions::schedule_refresh(
+                    app_handle,
+                    permissions::manager::PermissionRefreshReason::Resumed,
+                );
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(
                     exit_runtime_service_supervisor.cleanup_owned_children(),

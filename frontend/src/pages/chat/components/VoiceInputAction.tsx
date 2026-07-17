@@ -30,7 +30,7 @@ export function VoiceInputAction({
   const live = isVoiceInputLive(phase);
   const stopEnabled = canStopVoiceInput(phase);
   const busy =
-    phase === "connecting" || phase === "requesting_microphone" || phase === "stopping";
+    phase === "connecting" || phase === "waiting_permission_flow" || phase === "stopping";
   const receivingVoice = phase === "recording" && hasMicActivity(volumeLevel);
   const tooltip = error ?? (live ? voiceInputStatusLabel(phase, volumeLevel) : voiceInputActionLabel(phase));
   const ariaLabel = live ? "停止语音输入" : "开始语音输入";

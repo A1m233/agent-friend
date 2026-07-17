@@ -1,6 +1,6 @@
 export type VoiceInputPhase =
   | "idle"
-  | "requesting_microphone"
+  | "waiting_permission_flow"
   | "connecting"
   | "recording"
   | "stopping"

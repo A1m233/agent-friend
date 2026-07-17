@@ -11,6 +11,7 @@ export function canStartVoiceCall(phase: VoiceCallPhase): boolean {
 export function isVoiceCallBlockingText(phase: VoiceCallPhase): boolean {
   return (
     phase === "dialing" ||
+    phase === "waiting_permission_flow" ||
     phase === "preparing_runtime" ||
     phase === "preflighting" ||
     phase === "joining_room" ||
@@ -25,6 +26,7 @@ export function isVoiceCallBlockingText(phase: VoiceCallPhase): boolean {
 export function isVoiceCallLive(phase: VoiceCallPhase): boolean {
   return (
     phase === "dialing" ||
+    phase === "waiting_permission_flow" ||
     phase === "preparing_runtime" ||
     phase === "preflighting" ||
     phase === "joining_room" ||
@@ -37,6 +39,8 @@ export function isVoiceCallLive(phase: VoiceCallPhase): boolean {
 
 export function voicePhaseLabel(phase: VoiceCallPhase): string {
   switch (phase) {
+    case "waiting_permission_flow":
+      return "等待处理麦克风权限";
     case "confirming_tunnel":
       return "等待确认";
     case "preparing_runtime":

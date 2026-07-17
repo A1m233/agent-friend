@@ -1,5 +1,6 @@
 export type VoiceCallPhase =
   | "idle"
+  | "waiting_permission_flow"
   | "confirming_tunnel"
   | "preparing_runtime"
   | "preflighting"
