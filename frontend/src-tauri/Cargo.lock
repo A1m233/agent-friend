@@ -100,6 +100,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-store",
  "tokio",
+ "winreg 0.10.1",
  "zip",
 ]
 
