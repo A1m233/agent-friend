@@ -3,6 +3,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 use tauri::{path::BaseDirectory, Manager};
 
@@ -12,6 +13,8 @@ const BUILTIN_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const BUILTIN_BUNDLE_VERSION: &str = "040-2026-06-30";
 const RESOURCE_SEED_ROOT: &str = "avatar-seed";
 const LIVE2D_HIYORI_ID: &str = "builtin:live2d:hiyori";
+
+static BUILTIN_INSTALL_LOCK: Mutex<()> = Mutex::new(());
 
 const ARK_SPINE_SLUGS: &[&str] = &[
     "002_amiya",
@@ -220,6 +223,9 @@ fn seed_dirs(app: &tauri::AppHandle) -> Vec<SeedDir> {
 }
 
 pub fn ensure_builtin_avatar_models_installed(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = BUILTIN_INSTALL_LOCK
+        .lock()
+        .map_err(|_| "avatar model install lock poisoned".to_string())?;
     let path = manifest_path();
     if let Some(manifest) = read_manifest(&path) {
         if manifest_matches_installed(&manifest) {
@@ -290,8 +296,13 @@ fn spine_resources(slug: &str) -> InstalledAvatarModelResources {
 }
 
 #[tauri::command]
-pub fn get_installed_avatar_model_resources() -> Result<Vec<InstalledAvatarModelResources>, String>
-{
+pub fn get_installed_avatar_model_resources(
+    app: tauri::AppHandle,
+) -> Result<Vec<InstalledAvatarModelResources>, String> {
+    // Configured webviews can request the catalog while Tauri setup is still installing the
+    // bundled seed files. Waiting on the same install lock prevents a first-launch empty catalog
+    // from being cached by the pet window until the next process restart.
+    ensure_builtin_avatar_models_installed(&app)?;
     let mut resources = Vec::with_capacity(1 + ARK_SPINE_SLUGS.len());
     resources.push(live2d_resources());
     resources.extend(ARK_SPINE_SLUGS.iter().map(|slug| spine_resources(slug)));

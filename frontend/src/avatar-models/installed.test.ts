@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_AVATAR_MODEL_ID,
@@ -7,6 +7,7 @@ import {
 } from "./catalog";
 import {
   mergeInstalledAvatarModelResources,
+  loadInstalledAvatarModelCatalogWithRetry,
   resolveInstalledAvatarModelSelection,
   type InstalledAvatarModelResources,
 } from "./installed";
@@ -133,5 +134,34 @@ describe("installed avatar model catalog", () => {
       DEFAULT_AVATAR_MODEL_ID,
     );
     expect(resolveInstalledAvatarModelSelection([], "missing")).toBeNull();
+  });
+
+  it("retries a transient empty catalog during first-launch asset installation", async () => {
+    const hiyori = {
+      ...HIYORI_LIVE2D_MODEL,
+      resources: { model3: "asset://hiyori.model3.json" },
+    } satisfies AvatarModelCatalogEntry;
+    const loader = vi
+      .fn<() => Promise<AvatarModelCatalogEntry[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([hiyori]);
+    const wait = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    await expect(
+      loadInstalledAvatarModelCatalogWithRetry(loader, wait, [100, 250]),
+    ).resolves.toEqual([hiyori]);
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(wait).toHaveBeenCalledOnce();
+  });
+
+  it("returns an empty catalog only after exhausting first-launch retries", async () => {
+    const loader = vi.fn<() => Promise<AvatarModelCatalogEntry[]>>().mockResolvedValue([]);
+    const wait = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    await expect(
+      loadInstalledAvatarModelCatalogWithRetry(loader, wait, [100, 250]),
+    ).resolves.toEqual([]);
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
   });
 });

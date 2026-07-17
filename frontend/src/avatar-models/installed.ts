@@ -33,6 +33,14 @@ interface InstalledCatalogState {
   error: string | null;
 }
 
+const EMPTY_CATALOG_RETRY_DELAYS_MS = [100, 250, 500] as const;
+
+type InstalledCatalogLoader = () => Promise<AvatarModelCatalogEntry[]>;
+type Delay = (milliseconds: number) => Promise<void>;
+
+const delay: Delay = (milliseconds) =>
+  new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
 function isLive2DResources(value: unknown): value is InstalledLive2DResourcePaths {
   const candidate = value as InstalledLive2DResourcePaths;
   return typeof candidate?.model3Path === "string";
@@ -99,6 +107,20 @@ export async function loadInstalledAvatarModelCatalog(): Promise<AvatarModelCata
   return mergeInstalledAvatarModelResources(installed);
 }
 
+export async function loadInstalledAvatarModelCatalogWithRetry(
+  loader: InstalledCatalogLoader = loadInstalledAvatarModelCatalog,
+  wait: Delay = delay,
+  retryDelays: readonly number[] = EMPTY_CATALOG_RETRY_DELAYS_MS,
+): Promise<AvatarModelCatalogEntry[]> {
+  let entries = await loader();
+  for (const retryDelay of retryDelays) {
+    if (entries.length > 0) return entries;
+    await wait(retryDelay);
+    entries = await loader();
+  }
+  return entries;
+}
+
 export function resolveInstalledAvatarModelSelection(
   entries: readonly AvatarModelCatalogEntry[],
   id: string,
@@ -120,9 +142,13 @@ export function useInstalledAvatarModelCatalog(): InstalledCatalogState {
 
   useEffect(() => {
     let cancelled = false;
-    void loadInstalledAvatarModelCatalog()
+    void loadInstalledAvatarModelCatalogWithRetry()
       .then((entries) => {
         if (cancelled) return;
+        if (entries.length === 0) {
+          throw new Error("桌宠模型资源安装完成后仍未找到可用模型");
+        }
+        console.info(`[avatar-models] installed catalog ready; entries=${entries.length}`);
         setState({ entries, loading: false, error: null });
       })
       .catch((error: unknown) => {
