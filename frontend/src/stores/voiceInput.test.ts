@@ -30,6 +30,20 @@ const voiceInputMocks = vi.hoisted(() => {
   };
 });
 
+const permissionMocks = vi.hoisted(() => {
+  const state = { listener: null as (() => void) | null };
+  return {
+    state,
+    hasPermissions: vi.fn(() => true),
+    refreshPermissions: vi.fn(() => Promise.resolve()),
+    subscribePermissionSnapshot: vi.fn((listener: () => void) => {
+      state.listener = listener;
+      return vi.fn();
+    }),
+    waitForFeaturePermissions: vi.fn(() => Promise.resolve(true)),
+  };
+});
+
 vi.mock("@/services/api/voiceInput", () => ({
   connectVoiceInput: voiceInputMocks.connectVoiceInput,
   prewarmVoiceInput: voiceInputMocks.prewarmVoiceInput,
@@ -42,6 +56,16 @@ vi.mock("@/services/voiceInput/recorder", () => ({
 vi.mock("@/services/voiceInput/latency", () => ({
   logVoiceInputLatency: voiceInputMocks.logVoiceInputLatency,
   nowVoiceInputLatencyMs: () => Date.now(),
+}));
+
+vi.mock("@/lib/permissions", () => ({
+  hasPermissions: permissionMocks.hasPermissions,
+  refreshPermissions: permissionMocks.refreshPermissions,
+  subscribePermissionSnapshot: permissionMocks.subscribePermissionSnapshot,
+}));
+
+vi.mock("@/lib/permissions/featureGuard", () => ({
+  waitForFeaturePermissions: permissionMocks.waitForFeaturePermissions,
 }));
 
 import { useVoiceInputStore } from "./voiceInput";
@@ -74,8 +98,9 @@ function resetVoiceInputStore(): void {
 }
 
 async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe("voice input store", () => {
@@ -86,6 +111,8 @@ describe("voice input store", () => {
     voiceInputMocks.recorder.stop.mockResolvedValue(undefined);
     voiceInputMocks.connectVoiceInput.mockResolvedValue(voiceInputMocks.connection);
     voiceInputMocks.startVoiceInputRecorder.mockResolvedValue(voiceInputMocks.recorder);
+    permissionMocks.hasPermissions.mockReturnValue(true);
+    permissionMocks.waitForFeaturePermissions.mockResolvedValue(true);
     resetVoiceInputStore();
   });
 
@@ -118,7 +145,7 @@ describe("voice input store", () => {
 
     await flushMicrotasks();
 
-    expect(useVoiceInputStore.getState().phase).toBe("requesting_microphone");
+    expect(useVoiceInputStore.getState().phase).toBe("connecting");
 
     await useVoiceInputStore.getState().stop("manual");
 
@@ -141,7 +168,7 @@ describe("voice input store", () => {
 
     await flushMicrotasks();
 
-    expect(useVoiceInputStore.getState().phase).toBe("requesting_microphone");
+    expect(useVoiceInputStore.getState().phase).toBe("connecting");
 
     await vi.advanceTimersByTimeAsync(8_000);
     await startPromise;
@@ -171,6 +198,45 @@ describe("voice input store", () => {
     expect(voiceInputMocks.connectVoiceInput).not.toHaveBeenCalled();
     expect(useVoiceInputStore.getState().phase).toBe("idle");
     expect(useVoiceInputStore.getState().errorCode).toBe("asr_provider_unavailable");
+  });
+
+  it("routes a missing microphone permission through the unified flow and resumes", async () => {
+    const permission = deferred<boolean>();
+    permissionMocks.hasPermissions.mockReturnValueOnce(false).mockReturnValue(true);
+    permissionMocks.waitForFeaturePermissions.mockReturnValueOnce(permission.promise);
+
+    await useVoiceInputStore.getState().start();
+
+    expect(useVoiceInputStore.getState().phase).toBe("waiting_permission_flow");
+    expect(voiceInputMocks.startVoiceInputRecorder).not.toHaveBeenCalled();
+    expect(permissionMocks.waitForFeaturePermissions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "feature_fallback",
+        permissionIds: ["microphone"],
+        sourceWindow: "chat",
+      }),
+      expect.any(AbortSignal),
+    );
+
+    permission.resolve(true);
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(voiceInputMocks.startVoiceInputRecorder).toHaveBeenCalledTimes(1);
+    expect(useVoiceInputStore.getState().phase).toBe("recording");
+    await useVoiceInputStore.getState().cancel();
+  });
+
+  it("stops recording when the unified snapshot reports microphone revocation", async () => {
+    await useVoiceInputStore.getState().start();
+    expect(useVoiceInputStore.getState().phase).toBe("recording");
+
+    permissionMocks.hasPermissions.mockReturnValue(false);
+    permissionMocks.state.listener?.();
+    await flushMicrotasks();
+
+    expect(voiceInputMocks.recorder.stop).toHaveBeenCalledTimes(1);
+    expect(useVoiceInputStore.getState().phase).toBe("idle");
   });
 
   it("times out a synchronously slow recorder startup before opening the websocket", async () => {

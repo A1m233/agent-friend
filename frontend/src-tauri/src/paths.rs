@@ -9,6 +9,7 @@ pub const BUNDLE_ID: &str = "com.agentfriend.desktop";
 pub const APP_NAME: &str = "agent-friend";
 pub const SETTINGS_STORE_PATH: &str = "settings.json";
 pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
+pub const PERMISSION_STATE_FILE: &str = "permission-state.json";
 pub const AVATAR_MODELS_DIR: &str = "avatar-models";
 pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
 pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
@@ -28,6 +29,11 @@ fn app_store_path(base: PathBuf) -> PathBuf {
 /// AppHandle 才能拿到 path resolver。
 pub fn settings_store_path() -> Option<PathBuf> {
     dirs::config_dir().map(app_store_path)
+}
+
+/// 统一系统权限模块的处理历史；只保存应用历史，不保存系统状态真相。
+pub fn permission_state_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|base| base.join(BUNDLE_ID).join(PERMISSION_STATE_FILE))
 }
 
 /// 历史版本曾误按 local data dir 读 settings；启动期只作为兼容 fallback 使用。
@@ -125,6 +131,13 @@ mod tests {
                 .join(BUNDLE_ID)
                 .join(SETTINGS_STORE_PATH)
         );
+    }
+
+    #[test]
+    fn permission_history_uses_the_app_config_directory() {
+        let path = permission_state_path().expect("permission state path");
+        assert_eq!(path.file_name().unwrap(), PERMISSION_STATE_FILE);
+        assert_eq!(path.parent().unwrap().file_name().unwrap(), BUNDLE_ID);
     }
 
     #[test]

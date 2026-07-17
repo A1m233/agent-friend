@@ -44,6 +44,13 @@ os_info = "3"
 # auto-launch 0.5 writes an unquoted Run command; normalize the public Run
 # value after the plugin updates Windows' autostart state.
 winreg = "0.10.1"
+# 053 · WebView2 profile permission inspection + passive OS microphone access probe.
+webview2-com = "0.38.2"
+windows = { version = "0.61.3", features = [
+    "Devices_Enumeration",
+    "Security_Authorization_AppCapabilityAccess",
+    "Win32_Storage_FileSystem",
+] }
 
 # 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)
 [target.'cfg(target_os = "macos")'.dependencies]

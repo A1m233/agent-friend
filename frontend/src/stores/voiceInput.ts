@@ -13,6 +13,12 @@ import {
   startVoiceInputRecorder,
   type VoiceInputRecorder,
 } from "@/services/voiceInput/recorder";
+import {
+  hasPermissions,
+  refreshPermissions,
+  subscribePermissionSnapshot,
+} from "@/lib/permissions";
+import { waitForFeaturePermissions } from "@/lib/permissions/featureGuard";
 import type {
   ServerVoiceInputEvent,
   VoiceInputSnapshot,
@@ -47,6 +53,7 @@ let prewarmInFlight: Promise<void> | null = null;
 let lastPrewarmRequestAt = 0;
 let stopFallbackTimeout: ReturnType<typeof setTimeout> | null = null;
 let availabilityAbortController: AbortController | null = null;
+let permissionIntentAbortController: AbortController | null = null;
 
 function makeTraceId(): string {
   const randomUuid = globalThis.crypto?.randomUUID?.();
@@ -109,6 +116,11 @@ function clearStopFallbackTimeout(): void {
 function abortAvailabilityCheck(): void {
   availabilityAbortController?.abort();
   availabilityAbortController = null;
+}
+
+function abortPermissionIntent(): void {
+  permissionIntentAbortController?.abort();
+  permissionIntentAbortController = null;
 }
 
 class VoiceInputStartTimeoutError extends Error {
@@ -400,6 +412,62 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
     async start() {
       const state = get();
       if (!canStartVoiceInput(state.phase)) return;
+      if (!hasPermissions(["microphone"])) {
+        const token = activeToken + 1;
+        activeToken = token;
+        abortPermissionIntent();
+        const controller = new AbortController();
+        permissionIntentAbortController = controller;
+        const traceId = makeTraceId();
+        set({
+          phase: "waiting_permission_flow",
+          traceId,
+          volumeLevel: 0,
+          latestTranscript: null,
+          error: null,
+          errorCode: null,
+          startedAt: nowMs(),
+          lastEventAt: nowMs(),
+        });
+        void waitForFeaturePermissions(
+          {
+            requestId: traceId,
+            reason: "feature_fallback",
+            permissionIds: ["microphone"],
+            sourceWindow: "chat",
+          },
+          controller.signal,
+        ).then(
+          (granted) => {
+            if (permissionIntentAbortController === controller) {
+              permissionIntentAbortController = null;
+            }
+            if (controller.signal.aborted || token !== activeToken) return;
+            if (!granted) {
+              set(
+                idleAfterFailureSnapshot(
+                  "需要先处理麦克风权限",
+                  "microphone_permission_required",
+                ),
+              );
+              return;
+            }
+            set(idleAfterStopSnapshot());
+            void get().start();
+          },
+          (error) => {
+            if (controller.signal.aborted || token !== activeToken) return;
+            permissionIntentAbortController = null;
+            set(
+              idleAfterFailureSnapshot(
+                error instanceof Error ? error.message : String(error),
+                "permission_flow_failed",
+              ),
+            );
+          },
+        );
+        return;
+      }
       const token = activeToken + 1;
       activeToken = token;
       const traceId = makeTraceId();
@@ -423,7 +491,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       try {
         if (!(await ensureVoiceInputAvailable(token, traceId))) return;
         if (token !== activeToken) return;
-        set({ phase: "requesting_microphone", lastEventAt: nowMs() });
+        set({ phase: "connecting", lastEventAt: nowMs() });
         logVoiceInputLatency("frontend_recorder_start", { traceId });
         const nextRecorder = await startRecorderWithTimeout(token, traceId, {
           onChunk(chunk) {
@@ -522,6 +590,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
         queuedAudioBytes = 0;
       } catch (error) {
         if (token !== activeToken) return;
+        void refreshPermissions("manual");
         await fail(
           token,
           toErrorMessage(error),
@@ -536,6 +605,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       const state = get();
       if (!isVoiceInputLive(state.phase)) return;
       const token = activeToken;
+      abortPermissionIntent();
       logVoiceInputLatency("frontend_stop_request", {
         traceId: state.traceId,
         reason,
@@ -565,6 +635,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       });
       const token = activeToken + 1;
       activeToken = token;
+      abortPermissionIntent();
       connection?.cancel();
       await cleanupLocalResources();
       set({ ...initialSnapshot() });
@@ -580,4 +651,12 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       set({ error: null, errorCode: null, lastEventAt: nowMs() });
     },
   };
+});
+
+subscribePermissionSnapshot(() => {
+  if (hasPermissions(["microphone"])) return;
+  const state = useVoiceInputStore.getState();
+  if (state.phase === "connecting" || state.phase === "recording") {
+    void state.cancel();
+  }
 });

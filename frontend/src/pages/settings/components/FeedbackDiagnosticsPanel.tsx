@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, FolderOpen, LifeBuoy, TriangleAlert } from "lucide-react";
+import { Check, Copy, FileArchive, FolderOpen, TriangleAlert } from "lucide-react";
 import dayjs from "dayjs";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -186,7 +186,7 @@ export function FeedbackDiagnosticsPanel({
       <SettingsGroup title="生成本地诊断包">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted">
-            <LifeBuoy className="size-4" />
+            <FileArchive className="size-4" />
             ZIP 只保存在本机下载目录，不会自动上传。
           </div>
           <Button

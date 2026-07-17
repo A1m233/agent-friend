@@ -26,6 +26,20 @@ const tauriMocks = vi.hoisted(() => ({
   isTauri: vi.fn(() => false),
 }));
 
+const permissionMocks = vi.hoisted(() => {
+  const state = { listener: null as (() => void) | null };
+  return {
+    state,
+    hasPermissions: vi.fn(() => true),
+    refreshPermissions: vi.fn(() => Promise.resolve()),
+    subscribePermissionSnapshot: vi.fn((listener: () => void) => {
+      state.listener = listener;
+      return vi.fn();
+    }),
+    waitForFeaturePermissions: vi.fn(() => Promise.resolve(true)),
+  };
+});
+
 const rtcMocks = vi.hoisted(() => {
   const client = {
     preflight: vi.fn(),
@@ -73,6 +87,16 @@ vi.mock("@/utils/tauri", () => ({
   isTauri: tauriMocks.isTauri,
 }));
 
+vi.mock("@/lib/permissions", () => ({
+  hasPermissions: permissionMocks.hasPermissions,
+  refreshPermissions: permissionMocks.refreshPermissions,
+  subscribePermissionSnapshot: permissionMocks.subscribePermissionSnapshot,
+}));
+
+vi.mock("@/lib/permissions/featureGuard", () => ({
+  waitForFeaturePermissions: permissionMocks.waitForFeaturePermissions,
+}));
+
 vi.mock("@/services/api/voice", () => ({
   voiceApi: {
     startCall: vi.fn(),
@@ -110,6 +134,8 @@ describe("voice store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     tauriMocks.isTauri.mockReturnValue(false);
+    permissionMocks.hasPermissions.mockReturnValue(true);
+    permissionMocks.waitForFeaturePermissions.mockResolvedValue(true);
     rtcMocks.client.preflight.mockResolvedValue(undefined);
     rtcMocks.client.prepare.mockResolvedValue(undefined);
     rtcMocks.client.joinRoom.mockResolvedValue(undefined);
@@ -117,6 +143,7 @@ describe("voice store", () => {
     rtcMocks.client.publishAudio.mockResolvedValue(undefined);
     rtcMocks.client.cleanup.mockResolvedValue(undefined);
     rtcMocks.client.setMuted.mockResolvedValue(undefined);
+    vi.mocked(voiceApi.stopCall).mockResolvedValue("ended");
     browserGlobals.testWindow.__AGENT_FRIEND_SETTINGS__ = {
       ...DEFAULT_SETTINGS,
       voiceTunnelConsentAccepted: false,
@@ -133,6 +160,53 @@ describe("voice store", () => {
       sessionId: "session-1",
     });
     expect(voiceApi.startCall).not.toHaveBeenCalled();
+  });
+
+  it("麦克风未授权时先进入统一权限 flow，完成后再检查隐私确认", async () => {
+    let resolvePermission!: (granted: boolean) => void;
+    const permission = new Promise<boolean>((resolve) => {
+      resolvePermission = resolve;
+    });
+    permissionMocks.hasPermissions.mockReturnValueOnce(false).mockReturnValue(true);
+    permissionMocks.waitForFeaturePermissions.mockReturnValueOnce(permission);
+
+    await useVoiceStore.getState().requestStart({ sessionId: "session-1" });
+
+    expect(useVoiceStore.getState().phase).toBe("waiting_permission_flow");
+    expect(useVoiceStore.getState().pendingStart).toEqual({ sessionId: "session-1" });
+    expect(voiceApi.startCall).not.toHaveBeenCalled();
+    expect(permissionMocks.waitForFeaturePermissions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "feature_fallback",
+        permissionIds: ["microphone"],
+        sourceWindow: "voice-call",
+      }),
+      expect.any(AbortSignal),
+    );
+
+    resolvePermission(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(useVoiceStore.getState().phase).toBe("confirming_tunnel");
+    expect(voiceApi.startCall).not.toHaveBeenCalled();
+  });
+
+  it("统一状态报告麦克风撤销时安全结束正在进行的通话", async () => {
+    useVoiceStore.setState({
+      phase: "active",
+      isOwner: true,
+      callId: "call-1",
+      sessionId: "session-1",
+      traceId: "trace-1",
+    });
+    permissionMocks.hasPermissions.mockReturnValue(false);
+
+    permissionMocks.state.listener?.();
+
+    expect(useVoiceStore.getState().phase).toBe("ended");
+    expect(useVoiceStore.getState().callId).toBeNull();
   });
 
   it("非 owner 窗口发起通话时通过 command 暂存 start intent 并打开语音窗口", async () => {

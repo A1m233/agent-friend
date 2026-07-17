@@ -17,7 +17,7 @@ describe("voiceInputStateMachine", () => {
   });
 
   it("marks mic/connection phases as live", () => {
-    expect(isVoiceInputLive("requesting_microphone")).toBe(true);
+    expect(isVoiceInputLive("waiting_permission_flow")).toBe(true);
     expect(isVoiceInputLive("connecting")).toBe(true);
     expect(isVoiceInputLive("recording")).toBe(true);
     expect(isVoiceInputLive("stopping")).toBe(true);
@@ -25,7 +25,7 @@ describe("voiceInputStateMachine", () => {
   });
 
   it("allows stop before the stop request is already in flight", () => {
-    expect(canStopVoiceInput("requesting_microphone")).toBe(true);
+    expect(canStopVoiceInput("waiting_permission_flow")).toBe(true);
     expect(canStopVoiceInput("connecting")).toBe(true);
     expect(canStopVoiceInput("recording")).toBe(true);
     expect(canStopVoiceInput("stopping")).toBe(false);

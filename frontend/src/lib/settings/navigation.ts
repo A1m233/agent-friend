@@ -10,6 +10,7 @@ export type SettingsTarget =
   | "persona"
   | "pet"
   | "voice"
+  | "permissions"
   | "runtime"
   | "archived"
   | "feedback";
@@ -36,6 +37,7 @@ const SETTINGS_TARGETS = new Set<SettingsTarget>([
   "persona",
   "pet",
   "voice",
+  "permissions",
   "runtime",
   "archived",
   "feedback",

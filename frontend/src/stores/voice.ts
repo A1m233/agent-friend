@@ -14,6 +14,12 @@ import type {
   VoiceCallPhase,
 } from "@/services/voice/types";
 import { getSettingsSnapshot, setSetting } from "@/lib/settings";
+import {
+  hasPermissions,
+  refreshPermissions,
+  subscribePermissionSnapshot,
+} from "@/lib/permissions";
+import { waitForFeaturePermissions } from "@/lib/permissions/featureGuard";
 import { isTauri } from "@/utils/tauri";
 import { emitSessionsChanged } from "./sessions";
 import { canStartVoiceCall, isVoiceCallLive } from "./voiceStateMachine";
@@ -55,6 +61,7 @@ let activeStartToken = 0;
 let cancelledStartToken: number | null = null;
 let callEventsUnsubscribe: (() => void) | null = null;
 let speakingFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let permissionIntentAbortController: AbortController | null = null;
 
 class VoiceStartCancelled extends Error {
   constructor() {
@@ -490,6 +497,9 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         stage,
         message: diagnosticMessage(error),
       });
+      if (stage === "rtc_capture" || stage === "rtc_publish") {
+        void refreshPermissions("manual");
+      }
       clearDurationTimer();
       closeCallEventStream();
       clearSpeakingFallbackTimer();
@@ -524,6 +534,68 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         ...req,
         sessionId: req.sessionId ?? state.activeChatSessionId ?? undefined,
       };
+
+      if (!hasPermissions(["microphone"])) {
+        permissionIntentAbortController?.abort();
+        const controller = new AbortController();
+        permissionIntentAbortController = controller;
+        const requestId = `voice-call-${makeTraceId()}`;
+        setAndPublish({
+          isOwner: true,
+          phase: "waiting_permission_flow",
+          activity: "idle",
+          pendingStart: withSession,
+          error: null,
+          diagnostic: null,
+        });
+        await focusVoiceCallWindow();
+        void waitForFeaturePermissions(
+          {
+            requestId,
+            reason: "feature_fallback",
+            permissionIds: ["microphone"],
+            sourceWindow: "voice-call",
+          },
+          controller.signal,
+        ).then(
+          (granted) => {
+            if (permissionIntentAbortController === controller) {
+              permissionIntentAbortController = null;
+            }
+            const current = get();
+            if (
+              controller.signal.aborted ||
+              current.phase !== "waiting_permission_flow" ||
+              current.pendingStart !== withSession
+            ) {
+              return;
+            }
+            if (!granted) {
+              setAndPublish({
+                isOwner: false,
+                phase: "error",
+                pendingStart: null,
+                error: "需要先处理麦克风权限",
+              });
+              return;
+            }
+            setAndPublish({ phase: "idle", pendingStart: null });
+            void get().requestStart(withSession);
+          },
+          (error) => {
+            const current = get();
+            if (controller.signal.aborted || current.phase !== "waiting_permission_flow") return;
+            permissionIntentAbortController = null;
+            setAndPublish({
+              isOwner: false,
+              phase: "error",
+              pendingStart: null,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          },
+        );
+        return;
+      }
 
       const consentAccepted = getSettingsSnapshot().voiceTunnelConsentAccepted;
       console.info("[voice] requestStart", {
@@ -568,7 +640,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         activity: "idle",
         diagnostic: null,
       });
-      await startInternal(pendingStart);
+      await get().requestStart(pendingStart);
     },
 
     async requestConfirmTunnelConsent() {
@@ -633,6 +705,8 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
       }
 
       const startToken = activeStartToken;
+      permissionIntentAbortController?.abort();
+      permissionIntentAbortController = null;
       cancelledStartToken = startToken;
       const callId = state.callId;
       const sessionId = state.sessionId;
@@ -643,6 +717,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => {
         phase: "ended",
         activity: "idle",
         isOwner: false,
+        pendingStart: null,
         callId: null,
         traceId: null,
         startedAt: null,
@@ -778,6 +853,18 @@ export async function focusVoiceCallWindow(): Promise<void> {
   if (!isTauri()) return;
   await invoke("open_voice_call").catch(() => {});
 }
+
+subscribePermissionSnapshot(() => {
+  if (hasPermissions(["microphone"])) return;
+  const state = useVoiceStore.getState();
+  if (
+    state.phase !== "waiting_permission_flow" &&
+    state.phase !== "confirming_tunnel" &&
+    isVoiceCallLive(state.phase)
+  ) {
+    void state.hangUp();
+  }
+});
 
 async function openVoiceCallWithStart(req: StartVoiceCallRequest): Promise<void> {
   if (!isTauri()) return;

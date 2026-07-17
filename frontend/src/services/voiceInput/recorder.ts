@@ -1,4 +1,5 @@
 import type { VoiceInputAudioOptions } from "./types";
+import { acquireMicrophoneCapture } from "@/services/permissions/microphone";
 
 const TARGET_SAMPLE_RATE = 16000;
 const VOLUME_ATTACK_SMOOTHING = 0.35;
@@ -26,7 +27,7 @@ interface StartVoiceInputRecorderOptions {
 export async function startVoiceInputRecorder(
   options: StartVoiceInputRecorderOptions,
 ): Promise<VoiceInputRecorder> {
-  const stream = await navigator.mediaDevices.getUserMedia({
+  const stream = await acquireMicrophoneCapture({
     audio: {
       channelCount: 1,
       echoCancellation: true,
