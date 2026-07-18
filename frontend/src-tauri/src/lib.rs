@@ -898,6 +898,7 @@ pub fn run() {
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
         .manage(SettingsNavigationState::default())
+        .manage(window_placement::WindowPlacementState::default())
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .plugin(navigation_guard())
@@ -1040,15 +1041,23 @@ pub fn run() {
             // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
-            if matches!(
-                window.label(),
-                "chat"
-                    | "settings"
-                    | "im-connect"
-                    | "voice-call"
-                    | "memory-inspector"
-                    | "live2d-debugger"
-            ) {
+            if window_placement::is_managed_window_label(window.label()) {
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                ) {
+                    if let Some(webview_window) =
+                        window.app_handle().get_webview_window(window.label())
+                    {
+                        if let Err(e) = window_placement::capture_window_placement(&webview_window)
+                        {
+                            log::warn!(
+                                "window placement: capture failed for {}: {e}",
+                                window.label()
+                            );
+                        }
+                    }
+                }
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     if let Some(webview_window) =
@@ -1215,6 +1224,17 @@ pub fn run() {
                 );
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                for window in app_handle.webview_windows().into_values() {
+                    if let Err(e) = window_placement::capture_window_placement(&window) {
+                        log::warn!(
+                            "window placement: exit capture failed for {}: {e}",
+                            window.label()
+                        );
+                    }
+                }
+                if let Err(e) = window_placement::persist_window_placements(app_handle) {
+                    log::warn!("window placement: exit persist failed: {e}");
+                }
                 tauri::async_runtime::block_on(
                     exit_runtime_service_supervisor.cleanup_owned_children(),
                 );

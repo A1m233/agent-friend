@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Runtime, Size, WebviewWindow,
 };
@@ -38,6 +39,11 @@ struct MonitorRect {
 
 type WindowPlacementMap = BTreeMap<String, WindowBounds>;
 
+#[derive(Default)]
+pub struct WindowPlacementState {
+    latest_normal_bounds: Mutex<WindowPlacementMap>,
+}
+
 pub fn is_managed_window_label(label: &str) -> bool {
     MANAGED_WINDOW_LABELS.contains(&label)
 }
@@ -55,6 +61,23 @@ fn load_window_placements<R: Runtime>(app: &AppHandle<R>) -> Result<WindowPlacem
         .store(paths::UI_STATE_STORE_PATH)
         .map_err(|e| e.to_string())?;
     parse_window_placements(store.get(WINDOW_PLACEMENTS_KEY))
+}
+
+fn effective_window_placements<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<WindowPlacementMap, String> {
+    let mut placements = load_window_placements(app)?;
+    let state = app.state::<WindowPlacementState>();
+    let latest = state
+        .latest_normal_bounds
+        .lock()
+        .map_err(|_| "window placement: state lock poisoned".to_string())?;
+    placements.extend(
+        latest
+            .iter()
+            .map(|(label, bounds)| (label.clone(), *bounds)),
+    );
+    Ok(placements)
 }
 
 fn save_window_placements<R: Runtime>(
@@ -250,7 +273,7 @@ pub fn place_window_before_show<R: Runtime>(
         return Ok(());
     }
 
-    let placements = load_window_placements(app)?;
+    let placements = effective_window_placements(app)?;
     let saved = placements.get(label).copied();
     let monitors = available_monitor_rects(window);
     let cursor = app.cursor_position().ok();
@@ -280,9 +303,19 @@ pub fn place_window_before_show<R: Runtime>(
     Ok(())
 }
 
-pub fn remember_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+fn should_capture_normal_bounds(is_minimized: bool, is_maximized: bool) -> bool {
+    !is_minimized && !is_maximized
+}
+
+pub fn capture_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
     let label = window.label();
     if !is_managed_window_label(label) {
+        return Ok(());
+    }
+
+    let is_minimized = window.is_minimized().map_err(|e| e.to_string())?;
+    let is_maximized = window.is_maximized().map_err(|e| e.to_string())?;
+    if !should_capture_normal_bounds(is_minimized, is_maximized) {
         return Ok(());
     }
 
@@ -292,9 +325,12 @@ pub fn remember_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Resul
         return Ok(());
     }
 
-    let app = window.app_handle().clone();
-    let mut placements = load_window_placements(&app)?;
-    placements.insert(
+    let state = window.app_handle().state::<WindowPlacementState>();
+    let mut latest = state
+        .latest_normal_bounds
+        .lock()
+        .map_err(|_| "window placement: state lock poisoned".to_string())?;
+    latest.insert(
         label.to_string(),
         WindowBounds {
             x: position.x,
@@ -303,7 +339,17 @@ pub fn remember_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Resul
             height: size.height,
         },
     );
-    save_window_placements(&app, placements)
+    Ok(())
+}
+
+pub fn persist_window_placements<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let placements = effective_window_placements(app)?;
+    save_window_placements(app, placements)
+}
+
+pub fn remember_window_placement<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    capture_window_placement(window)?;
+    persist_window_placements(window.app_handle())
 }
 
 #[cfg(test)]
@@ -317,6 +363,14 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn captures_bounds_only_for_normal_window_state() {
+        assert!(should_capture_normal_bounds(false, false));
+        assert!(!should_capture_normal_bounds(true, false));
+        assert!(!should_capture_normal_bounds(false, true));
+        assert!(!should_capture_normal_bounds(true, true));
     }
 
     #[test]
