@@ -530,7 +530,20 @@ struct CursorPos {
     y: f64,
 }
 
-/// 显示并聚焦指定 label 的 webview window（chat / settings 复用）。
+#[derive(Debug, PartialEq, Eq)]
+struct WindowRevealPlan {
+    place_before_show: bool,
+    unminimize: bool,
+}
+
+fn plan_window_reveal(is_visible: bool, is_minimized: bool) -> WindowRevealPlan {
+    WindowRevealPlan {
+        place_before_show: !is_visible,
+        unminimize: is_minimized,
+    }
+}
+
+/// 恢复、显示并聚焦指定 label 的 webview window（chat / settings 等复用）。
 ///
 /// **18 修 macOS Accessory policy 副作用**：17a `set_activation_policy(Accessory)`
 /// 让 pet 不进 Dock，但副作用是 `set_focus()` 不让 app 升级为前台 active app —— 新弹
@@ -561,8 +574,27 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
                     }
                 }
             }
-            let should_place = !w.is_visible().unwrap_or(false);
-            if should_place {
+            let is_visible = w.is_visible().unwrap_or_else(|e| {
+                log::warn!("show_and_focus: window={label} read visible state failed: {e}");
+                false
+            });
+            let is_minimized = w.is_minimized().unwrap_or_else(|e| {
+                log::warn!("show_and_focus: window={label} read minimized state failed: {e}");
+                false
+            });
+            let reveal_plan = plan_window_reveal(is_visible, is_minimized);
+
+            // visible 与 minimized 是两个独立状态。Windows 下 show/set_focus 不会恢复一个
+            // 已 visible 的最小化窗口，必须先显式 unminimize，才能让后续 focus 生效。
+            if reveal_plan.unminimize {
+                match w.unminimize() {
+                    Ok(()) => log::info!("show_and_focus: window={label} unminimize ok"),
+                    Err(e) => {
+                        log::warn!("show_and_focus: window={label} unminimize failed: {e}")
+                    }
+                }
+            }
+            if reveal_plan.place_before_show {
                 if let Err(e) = window_placement::place_window_before_show(&app_clone, &w) {
                     log::warn!("show_and_focus: window={label} placement failed: {e}");
                 }
@@ -1244,6 +1276,38 @@ mod tests {
             second.request_id
         );
         assert!(state.take_pending().expect("take again").is_none());
+    }
+
+    #[test]
+    fn window_reveal_plan_handles_visibility_and_minimized_state_independently() {
+        assert_eq!(
+            plan_window_reveal(false, false),
+            WindowRevealPlan {
+                place_before_show: true,
+                unminimize: false,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(false, true),
+            WindowRevealPlan {
+                place_before_show: true,
+                unminimize: true,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(true, false),
+            WindowRevealPlan {
+                place_before_show: false,
+                unminimize: false,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(true, true),
+            WindowRevealPlan {
+                place_before_show: false,
+                unminimize: true,
+            }
+        );
     }
 
     #[test]
