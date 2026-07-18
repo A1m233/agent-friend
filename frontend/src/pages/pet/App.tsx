@@ -7,6 +7,7 @@ import { openSettings as openSettingsWindow } from "@/lib/settings/navigation";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
+import { shouldRenderActionBar } from "./actionBarVisibility";
 import { usePetPassthrough } from "./usePetPassthrough";
 import {
   resolvePetDisplayProfile,
@@ -802,32 +803,35 @@ export function PetApp() {
           onRuntimeChange={setRuntime}
         />
       ) : null}
-      {spriteScreen &&
-        isFiniteRect(actionBarAnchor ?? spriteScreen) &&
-        isFiniteViewport(interactionViewport) && (
-        <ActionBar
-          actionBarAnchor={actionBarAnchor ?? spriteScreen}
-          viewport={interactionViewport}
-          visible={stickyVisible}
-          onMouseEnter={() => setHoverActionBarDom(true)}
-          onMouseLeave={() => setHoverActionBarDom(false)}
-          onOpenChat={openChat}
-          petAvatarSize={petAvatarSize}
-          onCollapseToEdge={collapseToEdge}
-          onRestoreNormal={restoreNormal}
-          onOpenSettings={openSettings}
-          onOpenFeedback={openFeedback}
-          onOpenIMConnect={openIMConnect}
-          onStartVoiceCall={startVoiceCall}
-          voiceCallActive={isVoiceCallLive(voicePhase)}
-          passthroughDisabled={passthroughDisabled}
-          onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
-          onOpenMemoryInspector={openMemoryInspector}
-          onOpenLive2DDebugger={openLive2DDebugger}
-          onInjectShort={injectShort}
-          onInjectLong={injectLong}
-        />
-      )}
+      {shouldRenderActionBar({
+        visible: stickyVisible,
+        spriteScreen,
+        actionBarAnchor,
+        viewport: interactionViewport,
+      }) &&
+        spriteScreen && (
+          <ActionBar
+            actionBarAnchor={actionBarAnchor ?? spriteScreen}
+            viewport={interactionViewport}
+            onMouseEnter={() => setHoverActionBarDom(true)}
+            onMouseLeave={() => setHoverActionBarDom(false)}
+            onOpenChat={openChat}
+            petAvatarSize={petAvatarSize}
+            onCollapseToEdge={collapseToEdge}
+            onRestoreNormal={restoreNormal}
+            onOpenSettings={openSettings}
+            onOpenFeedback={openFeedback}
+            onOpenIMConnect={openIMConnect}
+            onStartVoiceCall={startVoiceCall}
+            voiceCallActive={isVoiceCallLive(voicePhase)}
+            passthroughDisabled={passthroughDisabled}
+            onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
+            onOpenMemoryInspector={openMemoryInspector}
+            onOpenLive2DDebugger={openLive2DDebugger}
+            onInjectShort={injectShort}
+            onInjectLong={injectLong}
+          />
+        )}
     </>
   );
 }
