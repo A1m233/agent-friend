@@ -35,6 +35,7 @@ import {
   Separator,
 } from "@/components/ui";
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
+import { isPrimaryPointerButton } from "@/pet/pointerInput";
 import { cn } from "@/utils/cn";
 import {
   ARK_ACTION_MAPPING,
@@ -286,6 +287,7 @@ function setupSlotDrag(slot: RuntimeSlot): void {
   };
 
   emitter.on("pointerdown", (event) => {
+    if (!isPrimaryPointerButton(event)) return;
     const global = getGlobalPoint(event);
     if (!global) return;
     pointerStart = global;
@@ -298,7 +300,8 @@ function setupSlotDrag(slot: RuntimeSlot): void {
     slot.x = slotStart.x + global.x - pointerStart.x;
     slot.y = slotStart.y + global.y - pointerStart.y;
   });
-  const endDrag = () => {
+  const endDrag = (event: unknown) => {
+    if (!isPrimaryPointerButton(event)) return;
     pointerStart = null;
     slotStart = null;
     slot.cursor = "grab";

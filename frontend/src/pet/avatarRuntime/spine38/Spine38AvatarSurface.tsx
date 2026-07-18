@@ -26,6 +26,7 @@ import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
 import type { PetWebviewDisplayContext } from "@/pages/pet/petWebviewDisplayContext";
 import { isFiniteRect } from "@/pages/pet/petGeometry";
 import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
+import { isPrimaryPointerButton } from "@/pet/pointerInput";
 import {
   boundsToRegion,
   composeSpine38DisplayScale,
@@ -495,6 +496,7 @@ export function Spine38AvatarSurface({
       let dragArmed = false;
 
       slot.on("pointerdown", (event: unknown) => {
+        if (!isPrimaryPointerButton(event)) return;
         const global = getGlobalPoint(event);
         if (!global) return;
         pointerStart = global;
@@ -522,6 +524,7 @@ export function Spine38AvatarSurface({
 
       const endPointer = (event: unknown) => {
         if (!pointerStart || !slotStart) return;
+        if (!isPrimaryPointerButton(event)) return;
         const global = getGlobalPoint(event);
         const duration = performance.now() - downTimestamp;
         const dx = global ? global.x - pointerStart.x : 0;

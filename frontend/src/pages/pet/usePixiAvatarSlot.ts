@@ -7,6 +7,7 @@ import { findVisibleRegion } from "@/pet/petAlphaHitTest";
 import type { PetDisplayProfile } from "./petDisplayProfile";
 import type { PetWebviewDisplayContext } from "./petWebviewDisplayContext";
 import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
+import { isPrimaryPointerButton } from "@/pet/pointerInput";
 
 /**
  * 17a · PIXI canvas + avatar-slot Container 生命周期 hook（design §5.1 ~ §5.3）。
@@ -408,6 +409,7 @@ export function usePixiAvatarSlot(
       }
 
       slot.on("pointerdown", (e) => {
+        if (!isPrimaryPointerButton(e)) return;
         pointerStart = { x: e.global.x, y: e.global.y };
         lastPointer = { x: e.global.x, y: e.global.y };
         lastPointerTs = performance.now();
@@ -460,6 +462,7 @@ export function usePixiAvatarSlot(
 
       const endPointer = (e: PIXI.FederatedPointerEvent) => {
         if (!pointerStart || !slotStart) return;
+        if (!isPrimaryPointerButton(e)) return;
         const duration = performance.now() - downTimestamp;
         const dx = e.global.x - pointerStart.x;
         const dy = e.global.y - pointerStart.y;
