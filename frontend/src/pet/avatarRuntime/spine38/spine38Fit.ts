@@ -19,6 +19,12 @@ const DEFAULT_FIT = {
   topPaddingRatio: 0.16,
 };
 
+export interface Spine38ScaleFactors {
+  normalizationScale: number;
+  userScale: number;
+  displayModeScale: number;
+}
+
 function resolveFitBoxSize(stageSize: number, configuredSize?: number | null): number {
   if (
     typeof configuredSize !== "number" ||
@@ -28,6 +34,39 @@ function resolveFitBoxSize(stageSize: number, configuredSize?: number | null): n
     return stageSize;
   }
   return Math.min(stageSize, configuredSize);
+}
+
+export function composeSpine38DisplayScale({
+  normalizationScale,
+  userScale,
+  displayModeScale,
+}: Spine38ScaleFactors): number {
+  const factors = [normalizationScale, userScale, displayModeScale];
+  if (factors.some((value) => !Number.isFinite(value) || value <= 0)) return 1;
+  return normalizationScale * userScale * displayModeScale;
+}
+
+export function resolveSpine38NormalizationScale(
+  localBounds: PixelRegion,
+  stageViewport: Spine38StageViewport,
+  fit?: AvatarFitConfig,
+): number {
+  if (localBounds.w <= 0 || localBounds.h <= 0) return 1;
+  const fitWidthPx = fit?.fitWidthPx ?? DEFAULT_FIT.fitWidthPx;
+  const fitHeightPx = fit?.fitHeightPx ?? DEFAULT_FIT.fitHeightPx;
+  const fitWidthRatio = fit?.fitWidthRatio ?? DEFAULT_FIT.fitWidthRatio;
+  const fitHeightRatio = fit?.fitHeightRatio ?? DEFAULT_FIT.fitHeightRatio;
+  const slotYRatio = fit?.slotYRatio ?? DEFAULT_FIT.slotYRatio;
+  const topPaddingRatio = fit?.topPaddingRatio ?? DEFAULT_FIT.topPaddingRatio;
+  const fitBoxWidth = resolveFitBoxSize(stageViewport.w, fitWidthPx);
+  const fitBoxHeight = resolveFitBoxSize(stageViewport.h, fitHeightPx);
+  const maxHeightRatio = Math.max(0.01, slotYRatio - topPaddingRatio);
+  const effectiveFitHeightRatio = Math.min(fitHeightRatio, maxHeightRatio);
+  const fitScale = Math.min(
+    (fitBoxWidth * fitWidthRatio) / localBounds.w,
+    (fitBoxHeight * effectiveFitHeightRatio) / localBounds.h,
+  );
+  return Number.isFinite(fitScale) && fitScale > 0 ? fitScale : 1;
 }
 
 export function boundsToRegion(bounds: unknown): PixelRegion | null {
@@ -67,12 +106,7 @@ export function fitSpine38ToStage(
   layoutBounds?: PixelRegion | null,
   viewport?: Spine38StageViewport | null,
 ): void {
-  const fitWidthPx = fit?.fitWidthPx ?? DEFAULT_FIT.fitWidthPx;
-  const fitHeightPx = fit?.fitHeightPx ?? DEFAULT_FIT.fitHeightPx;
-  const fitWidthRatio = fit?.fitWidthRatio ?? DEFAULT_FIT.fitWidthRatio;
-  const fitHeightRatio = fit?.fitHeightRatio ?? DEFAULT_FIT.fitHeightRatio;
   const slotYRatio = fit?.slotYRatio ?? DEFAULT_FIT.slotYRatio;
-  const topPaddingRatio = fit?.topPaddingRatio ?? DEFAULT_FIT.topPaddingRatio;
   const stageViewport =
     viewport &&
     Number.isFinite(viewport.x) &&
@@ -81,10 +115,6 @@ export function fitSpine38ToStage(
     viewport.h > 0
       ? viewport
       : { x: 0, y: 0, w: app.screen.width, h: app.screen.height };
-  const fitBoxWidth = resolveFitBoxSize(stageViewport.w, fitWidthPx);
-  const fitBoxHeight = resolveFitBoxSize(stageViewport.h, fitHeightPx);
-  const maxHeightRatio = Math.max(0.01, slotYRatio - topPaddingRatio);
-  const effectiveFitHeightRatio = Math.min(fitHeightRatio, maxHeightRatio);
 
   slot.scale.set(1);
   slot.position.set(
@@ -97,11 +127,7 @@ export function fitSpine38ToStage(
   const localBounds = layoutBounds ?? boundsToRegion(spine.getLocalBounds());
   if (!localBounds || localBounds.w <= 0 || localBounds.h <= 0) return;
 
-  const fitScale = Math.min(
-    (fitBoxWidth * fitWidthRatio) / localBounds.w,
-    (fitBoxHeight * effectiveFitHeightRatio) / localBounds.h,
-  );
-  const safeScale = Number.isFinite(fitScale) && fitScale > 0 ? fitScale : 1;
+  const safeScale = resolveSpine38NormalizationScale(localBounds, stageViewport, fit);
   slot.scale.set(safeScale);
   spine.position.set(
     -localBounds.x - localBounds.w / 2,
