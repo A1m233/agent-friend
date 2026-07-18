@@ -35,6 +35,7 @@ from runtime_config import (
 
 from .assembly import BridgeRuntime, build_runtime
 from .lifecycle import LIFECYCLE_TOKEN_ENV, BridgeLifecycleController, register_lifecycle_routes
+from .migration import register_migration_routes
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
@@ -138,6 +139,7 @@ def create_app_with_runtime(
         )
         app.state.lifecycle_controller = controller
         register_lifecycle_routes(app, controller)
+        register_migration_routes(app, runtime, controller)
 
     return app
 

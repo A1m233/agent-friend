@@ -2192,12 +2192,14 @@ name = "runtime-config"
 version = "0.1.0"
 source = { editable = "runtime_config" }
 dependencies = [
+    { name = "cryptography" },
     { name = "keyring" },
     { name = "python-dotenv" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
 ]

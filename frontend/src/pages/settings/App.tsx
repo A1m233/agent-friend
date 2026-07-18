@@ -38,6 +38,7 @@ import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
+import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
@@ -162,6 +163,8 @@ export function SettingsApp() {
             <FeedbackDiagnosticsPanel prefill={feedbackPrefill} />
           ) : section === "permissions" ? (
             <PermissionPanel />
+          ) : section === "migration" ? (
+            <DataMigrationPanel />
           ) : (
             <SettingsPageLayout title="语音">
               <SettingsGroup title="语音通话">

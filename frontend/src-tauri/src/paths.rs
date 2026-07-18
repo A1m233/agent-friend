@@ -14,6 +14,8 @@ pub const AVATAR_MODELS_DIR: &str = "avatar-models";
 pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
 pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
 pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
+pub const MIGRATION_DIR: &str = "migration";
+pub const MIGRATION_BACKUPS_DIR: &str = "migration-backups";
 
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
@@ -77,6 +79,16 @@ pub fn editable_persona_dir() -> PathBuf {
 /// 050：唯一公开可编辑的人格正文。
 pub fn editable_persona_path() -> PathBuf {
     editable_persona_dir().join(PERSONA_EDITABLE_FILE)
+}
+
+/// 迁移事务工作区；不属于被替换资产，启动恢复依赖此目录。
+pub fn migration_work_dir() -> PathBuf {
+    user_data_dir().join(MIGRATION_DIR)
+}
+
+/// 当前设备唯一一份最近有效回滚备份所在目录。
+pub fn migration_backups_dir() -> PathBuf {
+    user_data_dir().join(MIGRATION_BACKUPS_DIR)
 }
 
 /// Tauri / bridge / memory 共享的日志目录。

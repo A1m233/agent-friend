@@ -11,6 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 mod autostart;
 mod avatar_models;
 mod bubble_window;
+mod data_migration;
 mod diagnostics;
 mod paths;
 mod permissions;
@@ -890,10 +891,13 @@ pub fn run() {
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
     let runtime_service_supervisor =
         Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
+    let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
+    let setup_settings_state = settings_state.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(bubble_window::BubbleState::default())
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
@@ -902,6 +906,7 @@ pub fn run() {
         .manage(window_placement::WindowPlacementState::default())
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
+        .manage(migration_coordinator)
         .plugin(navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -928,6 +933,15 @@ pub fn run() {
         consume_pending_settings_navigation,
         open_persona_target,
         diagnostics::generate_diagnostic_bundle,
+        data_migration::coordinator::get_migration_inventory,
+        data_migration::coordinator::export_migration_package,
+        data_migration::coordinator::preflight_migration_package,
+        data_migration::coordinator::preflight_latest_migration_backup,
+        data_migration::coordinator::commit_migration_package,
+        data_migration::coordinator::get_latest_migration_backup,
+        data_migration::coordinator::delete_latest_migration_backup,
+        data_migration::coordinator::get_last_migration_result,
+        data_migration::coordinator::clear_last_migration_result,
         open_im_connect,
         open_voice_call,
         open_voice_call_with_start,
@@ -974,6 +988,15 @@ pub fn run() {
         open_chat,
         open_settings,
         consume_pending_settings_navigation,
+        data_migration::coordinator::get_migration_inventory,
+        data_migration::coordinator::export_migration_package,
+        data_migration::coordinator::preflight_migration_package,
+        data_migration::coordinator::preflight_latest_migration_backup,
+        data_migration::coordinator::commit_migration_package,
+        data_migration::coordinator::get_latest_migration_backup,
+        data_migration::coordinator::delete_latest_migration_backup,
+        data_migration::coordinator::get_last_migration_result,
+        data_migration::coordinator::clear_last_migration_result,
         open_persona_target,
         diagnostics::generate_diagnostic_bundle,
         open_im_connect,
@@ -1164,7 +1187,22 @@ pub fn run() {
             push_subscriber::spawn_push_subscriber(app.handle(), bridge_base_url());
             let handle = app.handle().clone();
             let supervisor = setup_runtime_service_supervisor.clone();
+            let recovery_settings = setup_settings_state.clone();
             tauri::async_runtime::spawn(async move {
+                match data_migration::coordinator::recover_incomplete_transaction(
+                    &handle,
+                    &supervisor,
+                    &recovery_settings,
+                )
+                .await
+                {
+                    Ok(true) => log::warn!("migration: recovered an incomplete import"),
+                    Ok(false) => {}
+                    Err(error) => {
+                        log::error!("migration recovery failed; runtime startup blocked: {error}");
+                        return;
+                    }
+                }
                 if let Err(error) = supervisor
                     .start(Some(&handle), runtime_services::RuntimeServiceKind::Bridge)
                     .await

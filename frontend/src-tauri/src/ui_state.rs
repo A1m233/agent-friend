@@ -6,6 +6,7 @@ use crate::paths;
 
 const CHAT_UI_KEY: &str = "chatUi";
 const PET_UI_KEY: &str = "petUi";
+const MIGRATION_RESULT_KEY: &str = "migrationResult";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +131,69 @@ pub fn set_pet_monitor_anchor<R: Runtime>(
         PET_UI_KEY,
         serde_json::to_value(state).map_err(|e| e.to_string())?,
     );
+    store.save().map_err(|e| e.to_string())
+}
+
+pub fn migration_snapshot<R: Runtime>(app: &AppHandle<R>) -> Result<ChatUiPersistence, String> {
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    parse_chat_ui(store.get(CHAT_UI_KEY))
+}
+
+pub fn migration_replace<R: Runtime>(
+    app: &AppHandle<R>,
+    mut state: ChatUiPersistence,
+) -> Result<(), String> {
+    if let Some(session_id) = state.last_chat_session_id.as_deref() {
+        let exists = std::fs::read_dir(paths::user_data_dir().join("sessions"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")
+                    && entry.path().file_stem().and_then(|value| value.to_str()) == Some(session_id)
+            });
+        if !exists {
+            state.last_chat_session_id = None;
+        }
+    }
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    store.set(
+        CHAT_UI_KEY,
+        serde_json::to_value(state).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())
+}
+
+pub fn migration_result<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Option<serde_json::Value>, String> {
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    Ok(store.get(MIGRATION_RESULT_KEY))
+}
+
+pub fn set_migration_result<R: Runtime>(
+    app: &AppHandle<R>,
+    result: serde_json::Value,
+) -> Result<(), String> {
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    store.set(MIGRATION_RESULT_KEY, result);
+    store.save().map_err(|e| e.to_string())
+}
+
+pub fn clear_migration_result<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    store.delete(MIGRATION_RESULT_KEY);
     store.save().map_err(|e| e.to_string())
 }
 
