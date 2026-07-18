@@ -144,7 +144,7 @@ export function PetApp() {
   const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
-  // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
+  // 单一 hoverActionBar 不够：cursor 离开 sprite 后切回原生鼠标穿透，
   // PIXI 不再收事件、pointerout 不触发；改由 usePetPassthrough 拿 Rust cursor 数据每帧判断。
   const [cursorOnSprite, setCursorOnSprite] = useState(false);
   const [hoverActionBarDom, setHoverActionBarDom] = useState(false);

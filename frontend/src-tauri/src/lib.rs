@@ -14,6 +14,7 @@ mod bubble_window;
 mod diagnostics;
 mod paths;
 mod permissions;
+mod pet_cursor_passthrough;
 mod pet_display_topology;
 mod push_subscriber;
 mod runtime_config;
@@ -934,6 +935,7 @@ pub fn run() {
         open_memory_inspector,
         open_live2d_debugger,
         hide_pet,
+        pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
@@ -979,6 +981,7 @@ pub fn run() {
         open_voice_call_with_start,
         consume_pending_voice_start,
         hide_pet,
+        pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
