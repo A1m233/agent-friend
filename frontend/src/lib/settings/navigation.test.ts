@@ -4,21 +4,21 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@/utils/tauri", () => ({ isTauri: vi.fn(() => true) }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { locateSettings, openFeedback } from "./navigation";
+import {
+  DEFAULT_SETTINGS_TARGET,
+  locateSettings,
+  openFeedback,
+  PRIMARY_SETTINGS_SECTIONS,
+} from "./navigation";
 
 const mockInvoke = vi.mocked(invoke);
 
 describe("locateSettings", () => {
   it("resolves every stable settings target", () => {
     for (const target of [
-      "general",
-      "persona",
-      "pet",
-      "voice",
-      "runtime",
-      "archived",
-      "feedback",
-    ] as const) {
+      ...PRIMARY_SETTINGS_SECTIONS.map(({ key }) => key),
+      "feedback" as const,
+    ]) {
       expect(locateSettings({ target }).section).toBe(target);
     }
   });
@@ -39,10 +39,11 @@ describe("locateSettings", () => {
   });
 
   it("falls back safely for missing or unknown targets", () => {
-    expect(locateSettings(undefined).section).toBe("general");
+    expect(DEFAULT_SETTINGS_TARGET).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
+    expect(locateSettings(undefined).section).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
     expect(
       locateSettings({ target: "removed" as never }).section,
-    ).toBe("general");
+    ).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
   });
 });
 

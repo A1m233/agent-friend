@@ -15,6 +15,24 @@ export type SettingsTarget =
   | "archived"
   | "feedback";
 
+export type PrimarySettingsTarget = Exclude<SettingsTarget, "feedback">;
+
+export const PRIMARY_SETTINGS_SECTIONS = [
+  { key: "persona", label: "人格" },
+  { key: "pet", label: "桌宠" },
+  { key: "general", label: "通用" },
+  { key: "voice", label: "语音" },
+  { key: "runtime", label: "模型与凭据" },
+  { key: "permissions", label: "系统权限" },
+  { key: "archived", label: "已归档对话" },
+] as const satisfies readonly {
+  key: PrimarySettingsTarget;
+  label: string;
+}[];
+
+export const DEFAULT_SETTINGS_TARGET: PrimarySettingsTarget =
+  PRIMARY_SETTINGS_SECTIONS[0].key;
+
 export interface SettingsOpenRequest {
   target?: SettingsTarget;
   feedback?: {
@@ -37,13 +55,7 @@ export interface ResolvedSettingsLocation {
 }
 
 const SETTINGS_TARGETS = new Set<SettingsTarget>([
-  "general",
-  "persona",
-  "pet",
-  "voice",
-  "permissions",
-  "runtime",
-  "archived",
+  ...PRIMARY_SETTINGS_SECTIONS.map(({ key }) => key),
   "feedback",
 ]);
 
@@ -54,7 +66,7 @@ export function locateSettings(
   const section =
     requestedTarget && SETTINGS_TARGETS.has(requestedTarget)
       ? requestedTarget
-      : "general";
+      : DEFAULT_SETTINGS_TARGET;
   return {
     section,
     preselectSessionId:

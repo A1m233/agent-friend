@@ -20,8 +20,10 @@ import {
 import { useSetting, type ThemeMode } from "@/lib/settings";
 import {
   consumePendingSettingsNavigation,
+  DEFAULT_SETTINGS_TARGET,
   listenSettingsNavigation,
   locateSettings,
+  PRIMARY_SETTINGS_SECTIONS,
   type SettingsNavigationEnvelope,
   type SettingsOpenRequest,
   type SettingsTarget,
@@ -43,7 +45,7 @@ import { PermissionPanel } from "./permissions/PermissionPanel";
  * 后续新增设置项按 design.md 扩展点接入。
  */
 export function SettingsApp() {
-  const [section, setSection] = useState<SettingsTarget>("general");
+  const [section, setSection] = useState<SettingsTarget>(DEFAULT_SETTINGS_TARGET);
   const [feedbackPrefill, setFeedbackPrefill] = useState<{
     requestId: number;
     sessionId?: string;
@@ -97,62 +99,16 @@ export function SettingsApp() {
           <SidebarContent>
             <SidebarGroup>
               <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "persona"}
-                    onClick={() => selectSection("persona")}
-                  >
-                    人格
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "permissions"}
-                    onClick={() => selectSection("permissions")}
-                  >
-                    系统权限
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "general"}
-                    onClick={() => selectSection("general")}
-                  >
-                    通用
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "pet"}
-                    onClick={() => selectSection("pet")}
-                  >
-                    桌宠
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "voice"}
-                    onClick={() => selectSection("voice")}
-                  >
-                    语音
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "runtime"}
-                    onClick={() => selectSection("runtime")}
-                  >
-                    模型与凭据
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={section === "archived"}
-                    onClick={() => selectSection("archived")}
-                  >
-                    已归档对话
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                {PRIMARY_SETTINGS_SECTIONS.map(({ key, label }) => (
+                  <SidebarMenuItem key={key}>
+                    <SidebarMenuButton
+                      isActive={section === key}
+                      onClick={() => selectSection(key)}
+                    >
+                      {label}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
               </SidebarMenu>
             </SidebarGroup>
           </SidebarContent>
