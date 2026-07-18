@@ -13,7 +13,6 @@ import {
   ChevronRight,
   ChevronUp,
   Lock,
-  LifeBuoy,
   Maximize2,
   MessageSquare,
   MessageSquareDashed,
@@ -26,6 +25,7 @@ import {
   Unlock,
 } from "lucide-react";
 
+import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   Carousel,
   CarouselContent,
@@ -134,7 +134,7 @@ export function ActionBar({
       ? { icon: <Maximize2 />, tooltip: "恢复桌宠大小", onClick: onRestoreNormal }
       : { icon: <Minimize2 />, tooltip: "缩小桌宠并移动到边上", onClick: onCollapseToEdge },
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
-    { icon: <LifeBuoy />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
+    { icon: <FeedbackIcon />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
   ];
   if (import.meta.env.DEV) {

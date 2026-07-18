@@ -22,6 +22,10 @@ export interface SettingsOpenRequest {
   };
 }
 
+export interface OpenFeedbackOptions {
+  preselectSessionId?: string;
+}
+
 export interface SettingsNavigationEnvelope {
   requestId: number;
   request: SettingsOpenRequest;
@@ -63,6 +67,16 @@ export function locateSettings(
 export async function openSettings(request?: SettingsOpenRequest): Promise<void> {
   if (!isTauri()) return;
   await invoke("open_settings", { request: request ?? null });
+}
+
+/** 打开统一的帮助与反馈页，并按需携带来源会话。 */
+export async function openFeedback(options?: OpenFeedbackOptions): Promise<void> {
+  await openSettings({
+    target: "feedback",
+    feedback: options?.preselectSessionId
+      ? { preselectSessionId: options.preselectSessionId }
+      : undefined,
+  });
 }
 
 export async function consumePendingSettingsNavigation(): Promise<

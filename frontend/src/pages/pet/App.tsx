@@ -3,7 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
-import { openSettings as openSettingsWindow } from "@/lib/settings/navigation";
+import {
+  openFeedback as openFeedbackWindow,
+  openSettings as openSettingsWindow,
+} from "@/lib/settings/navigation";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
@@ -729,7 +732,7 @@ export function PetApp() {
   };
 
   const openFeedback = () => {
-    void openSettingsWindow({ target: "feedback" });
+    void openFeedbackWindow();
   };
 
   const openIMConnect = () => {

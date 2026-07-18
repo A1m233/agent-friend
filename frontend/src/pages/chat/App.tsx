@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { LifeBuoy } from "lucide-react";
 import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
+import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   startSessionSyncSubscriber,
   useConnectionStore,
@@ -17,7 +17,7 @@ import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
-import { openSettings } from "@/lib/settings/navigation";
+import { openFeedback } from "@/lib/settings/navigation";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -76,15 +76,14 @@ export function ChatApp() {
             size="sm"
             variant="ghost"
             onClick={() =>
-              void openSettings({
-                target: "feedback",
-                feedback: currentSessionId
+              void openFeedback(
+                currentSessionId
                   ? { preselectSessionId: currentSessionId }
                   : undefined,
-              })
+              )
             }
           >
-            <LifeBuoy className="size-4" />
+            <FeedbackIcon className="size-4" />
             反馈问题
           </Button>
           <ConnectionDot status={status} />

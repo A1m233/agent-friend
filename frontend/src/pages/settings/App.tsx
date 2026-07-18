@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Moon, Sun } from "lucide-react";
+import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   Sidebar,
   SidebarContent,
@@ -162,6 +163,7 @@ export function SettingsApp() {
                   isActive={section === "feedback"}
                   onClick={() => selectSection("feedback")}
                 >
+                  <FeedbackIcon />
                   帮助与反馈
                 </SidebarMenuButton>
               </SidebarMenuItem>

@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { locateSettings } from "./navigation";
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/utils/tauri", () => ({ isTauri: vi.fn(() => true) }));
+
+import { invoke } from "@tauri-apps/api/core";
+import { locateSettings, openFeedback } from "./navigation";
+
+const mockInvoke = vi.mocked(invoke);
 
 describe("locateSettings", () => {
   it("resolves every stable settings target", () => {
@@ -37,5 +43,32 @@ describe("locateSettings", () => {
     expect(
       locateSettings({ target: "removed" as never }).section,
     ).toBe("general");
+  });
+});
+
+describe("openFeedback", () => {
+  beforeEach(() => mockInvoke.mockReset());
+
+  it("opens the shared feedback destination without context", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    await openFeedback();
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_settings", {
+      request: { target: "feedback", feedback: undefined },
+    });
+  });
+
+  it("forwards the source session for feedback preselection", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    await openFeedback({ preselectSessionId: "session-1" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_settings", {
+      request: {
+        target: "feedback",
+        feedback: { preselectSessionId: "session-1" },
+      },
+    });
   });
 });
