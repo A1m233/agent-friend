@@ -201,6 +201,16 @@ class IMRuntime:
             for p in self._providers.values()
         ]
 
+    def migration_snapshot_credentials(self) -> list[ImCredential]:
+        """返回可跨设备重新加密的凭据对象，仅供 owner-only 迁移控制面。"""
+        return self._credentials.list_all()
+
+    async def migration_replace_credentials(self, credentials: list[ImCredential]) -> None:
+        """停止 provider、整体替换凭据，再按新机密文重新启动 provider。"""
+        await self.stop()
+        self._credentials.replace_all(credentials)
+        self.start()
+
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------

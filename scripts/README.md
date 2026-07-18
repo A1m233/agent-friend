@@ -15,6 +15,8 @@
 
 `.env` 只保留给存量 CLI / eval / CI / 临时调试；bridge / voice / dev 默认不读取仓库 `.env`。需要历史行为时显式传 `--legacy-dotenv`。
 
+> `package` 默认始终生成无凭据安装包。`--trusted-beta` 只供定向内测：它会从当前 Windows 用户的系统凭据库读取完整 provider 凭据，生成文件名带 `trusted-beta-SENSITIVE` 的敏感 installer。该安装包可被提取凭据，不得公开发布；如泄露，必须在各 provider 侧更换全部凭据并重新打包。
+
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。
 
 ## 脚本清单
@@ -44,6 +46,7 @@
 | `frontend/build` | 只构建生产前端静态资源（`pnpm run build`），用于暴露 dev/prod 编译差异；正式 Windows 安装包统一走 `package/` | `./scripts/frontend/build.sh` | `.\scripts\frontend\build.ps1` |
 | `rust-check/` | Tauri Core rustfmt 检查 + 测试 + release profile 编译检查，确保生产分支进入日常门禁 | `./scripts/rust-check/run.sh` | `.\scripts\rust-check\run.ps1` |
 | `package/` | 唯一正式 Windows 安装包入口：构建 x64 自包含运行时与 NSIS；锁定并校验 memory ONNX 资产和 cloudflared，冻结后跑无凭证 doctor（含真实 ONNX + sqlite-vec 查询）及 bridge/voice readiness/退出 smoke，再输出 setup.exe / SHA-256 / release.json。`runtime`、`installer` 可分步执行，`installed-smoke --install-dir PATH` 可对真实安装目录重复执行同一套无外部 API smoke；`--offline` 只用本地锁定缓存，资产 staging 失败后可用 `--reuse-frozen` 复用刚生成的 PyInstaller 结果。当前不产出 macOS 包 | `./scripts/package/run.sh [runtime\|installer\|all\|installed-smoke] [--install-dir PATH] [--offline] [--reuse-frozen]` | `.\scripts\package\run.ps1 [runtime\|installer\|all\|installed-smoke] [--install-dir PATH] [--offline] [--reuse-frozen]` |
+| `package/trusted-beta` | `package/` 的敏感内测模式：加 `--trusted-beta` 从当前 Windows 用户 keyring 读取完整托管凭据注册表并生成带 `SENSITIVE` 标识的安装包；任一运行必需凭据缺失即失败，可选鉴权字段允许未配置。安装后可用 `installed-smoke --expect-trusted-credentials` 仅检查运行必需凭据齐全，不调用 provider | `./scripts/package/run.sh installer --trusted-beta` | `.\scripts\package\run.ps1 installer --trusted-beta` |
 | `desktop-visual/` | coding-agent 桌面端视觉 / DOM 观察 harness：启动真实 Tauri 桌面、macOS Accessibility + CoreGraphics 窗口枚举、macOS 窗口截图 / 明确标注的全屏 fallback（`--fallback-full-screen`、`--metadata`）、Windows/WebView2 CDP + Playwright DOM dump；Windows 下 `start` 会沿用 dev 脚本默认 CDP `127.0.0.1:9222`，`dom` 可直接连接默认端点；用于避免把 web 预览误当桌面端结论 | `./scripts/desktop-visual/run.sh doctor\|start\|list-windows\|screenshot [--fallback-full-screen] [--metadata PATH]\|dom` | `.\scripts\desktop-visual\run.ps1 doctor\|start\|dom` |
 | `dev-push-subscribe/` | 014 起：订阅 bridge `/push/subscribe` SSE，美化打印 envelope（dev / 测试用；默认连本机 `127.0.0.1:18800`，按 `--kinds` 过滤；详见 `docs/requirements/014-engine-main-loop-and-bridge-push/`） | `./scripts/dev-push-subscribe/run.sh [--url URL] [--kinds K] [--verbose]` | `.\scripts\dev-push-subscribe\run.ps1 [...]` |
 | `dev-fire-source/` | 014 起：立即触发 bridge 上指定 EventSource 的 `fire_now`（如 `cron:bedtime` / `idle_reflection`）。**仅当 bridge 配置 `AGENT_BRIDGE_DEV_MODE=true` 时可用**；生产环境永不开 | `./scripts/dev-fire-source/run.sh <source_name> [bridge_url]` | `.\scripts\dev-fire-source\run.ps1 <source_name> [bridge_url]` |

@@ -1,7 +1,7 @@
 mod model;
 mod supervisor;
 
-pub use model::{RuntimeServiceKind, RuntimeServiceSnapshot};
+pub use model::{RuntimeServiceKind, RuntimeServicePhase, RuntimeServiceSnapshot};
 pub use supervisor::RuntimeServiceSupervisor;
 
 use crate::settings::Settings;

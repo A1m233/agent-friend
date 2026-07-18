@@ -10,7 +10,27 @@ import sys
 import tempfile
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+from runtime_config import (
+    ALL_CREDENTIAL_NAMES,
+    OPTIONAL_CREDENTIAL_NAMES,
+    REQUIRED_CREDENTIAL_NAMES,
+    CredentialSeedError,
+    KeyringSource,
+    decrypt_credential_seed,
+    install_credential_seed,
+)
+
+
+class _CredentialStore(Protocol):
+    def get(self, name: str) -> Any: ...
+
+    def status(self, name: str) -> Any: ...
+
+    def set(self, name: str, value: str) -> None: ...
+
+    def delete(self, name: str) -> None: ...
 
 
 def _runtime_root() -> Path:
@@ -123,14 +143,74 @@ def _doctor() -> int:
     return 0 if ok else 1
 
 
+def _seed_credentials(
+    payload_path: Path,
+    key_path: Path,
+    *,
+    store: _CredentialStore | None = None,
+) -> int:
+    credential_store = store or KeyringSource()
+    try:
+        credentials = decrypt_credential_seed(payload_path.read_bytes(), key_path.read_bytes())
+        count = install_credential_seed(credentials, credential_store)
+    except (CredentialSeedError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        return 2
+    cleared = sum(value is None for value in credentials.values())
+    print(json.dumps({"ok": True, "installed": count, "cleared": cleared}, ensure_ascii=False))
+    return 0
+
+
+def _credential_status(
+    *,
+    require_operational: bool,
+    store: _CredentialStore | None = None,
+) -> int:
+    credential_store = store or KeyringSource()
+    missing: list[str] = []
+    unreadable: list[str] = []
+    for name in ALL_CREDENTIAL_NAMES:
+        try:
+            status = credential_store.status(name)
+        except Exception:
+            unreadable.append(name)
+            continue
+        if status.error and not status.configured:
+            unreadable.append(name)
+        elif not status.configured:
+            missing.append(name)
+    missing_required = [name for name in missing if name in REQUIRED_CREDENTIAL_NAMES]
+    missing_optional = [name for name in missing if name in OPTIONAL_CREDENTIAL_NAMES]
+    ok = not unreadable and (not require_operational or not missing_required)
+    print(
+        json.dumps(
+            {
+                "ok": ok,
+                "configured": len(ALL_CREDENTIAL_NAMES) - len(missing) - len(unreadable),
+                "total": len(ALL_CREDENTIAL_NAMES),
+                "missing_required": missing_required,
+                "missing_optional": missing_optional,
+                "unreadable": unreadable,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0 if ok else 2
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="agent-friend-runtime")
     subparsers = parser.add_subparsers(dest="command", required=True)
     for command in ("bridge", "voice"):
         subparsers.add_parser(command)
     subparsers.add_parser("doctor")
+    seed_parser = subparsers.add_parser("seed-credentials")
+    seed_parser.add_argument("--payload", type=Path, required=True)
+    seed_parser.add_argument("--key-file", type=Path, required=True)
+    status_parser = subparsers.add_parser("credential-status")
+    status_parser.add_argument("--require-operational", action="store_true")
     args, remaining = parser.parse_known_args(argv)
-    if args.command == "doctor" and remaining:
+    if args.command not in {"bridge", "voice"} and remaining:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
     args.args = remaining
     return args
@@ -140,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     if args.command == "doctor":
         return _doctor()
+    if args.command == "seed-credentials":
+        return _seed_credentials(args.payload, args.key_file)
+    if args.command == "credential-status":
+        return _credential_status(require_operational=args.require_operational)
     if args.command == "bridge":
         from agent_bridge.__main__ import main as bridge_main
 

@@ -1,6 +1,6 @@
 {
   "name": "agent-friend-frontend",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.5.2+sha512.71c631e382066efc25625d5cf029075de07b61b37f6e27350fbd84b1bda5864c8c1967adc280776b45c30a715c0359a3be08fef42d5bb09e2b99029979692916",
@@ -22,6 +22,7 @@
   "dependencies": {
     "@ag-ui/core": "^0.0.39",
     "@esotericsoftware/spine-pixi-v8": "4.3.9",
+    "@pixi-spine/runtime-3.8": "4.0.6",
     "@pixi/assets": "7.4.3",
     "@pixi/core": "7.4.3",
     "@pixi/display": "7.4.3",
@@ -29,9 +30,9 @@
     "@pixi/mesh": "7.4.3",
     "@pixi/mesh-extras": "7.4.3",
     "@pixi/sprite": "7.4.3",
-    "@pixi-spine/runtime-3.8": "4.0.6",
     "@tanstack/react-virtual": "^3.14.3",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "~2.7.1",
     "@tauri-apps/plugin-log": "^2",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tdesign-react/chat": "^1.0.2",

@@ -469,6 +469,36 @@ fn current_state(state: tauri::State<'_, Arc<Mutex<Settings>>>) -> Result<Settin
         .map_err(|e| format!("settings state poisoned: {e}"))
 }
 
+pub(crate) fn migration_snapshot(state: &Arc<Mutex<Settings>>) -> Result<Settings, String> {
+    state
+        .lock()
+        .map(|settings| settings.clone())
+        .map_err(|error| format!("migration_settings_lock_failed: {error}"))
+}
+
+pub(crate) fn migration_replace<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &Arc<Mutex<Settings>>,
+    next: Settings,
+) -> Result<Settings, String> {
+    let previous = migration_snapshot(state)?;
+    let store = app
+        .store(paths::SETTINGS_STORE_PATH)
+        .map_err(|error| format!("migration_settings_store_failed: {error}"))?;
+    store.set(
+        "settings",
+        serde_json::to_value(&next)
+            .map_err(|error| format!("migration_settings_serialize_failed: {error}"))?,
+    );
+    store
+        .save()
+        .map_err(|error| format!("migration_settings_save_failed: {error}"))?;
+    *state
+        .lock()
+        .map_err(|error| format!("migration_settings_lock_failed: {error}"))? = next;
+    Ok(previous)
+}
+
 #[tauri::command]
 pub fn get_setting(state: tauri::State<'_, Arc<Mutex<Settings>>>) -> Result<Settings, String> {
     current_state(state)

@@ -48,6 +48,13 @@ ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
     VOLC_SPEECH_API_KEY,
 )
 
+# The newer Volc speech APP Key is optional while the legacy App ID + Access
+# Token authentication path remains supported by voice_bridge.
+OPTIONAL_CREDENTIAL_NAMES = frozenset({VOLC_SPEECH_API_KEY})
+REQUIRED_CREDENTIAL_NAMES: tuple[str, ...] = tuple(
+    name for name in ALL_CREDENTIAL_NAMES if name not in OPTIONAL_CREDENTIAL_NAMES
+)
+
 RUNTIME_ONLY_NAMES = frozenset({VOICE_BRIDGE_PUBLIC_URL})
 
 CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {

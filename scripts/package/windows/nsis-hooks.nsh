@@ -77,6 +77,42 @@ FunctionEnd
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
+  StrCpy $R1 "$INSTDIR\trusted-credential-seed.bin"
+  StrCpy $R2 "$INSTDIR\trusted-credential-seed.key"
+  StrCpy $R3 "$INSTDIR\runtime\python\agent-friend-runtime.exe"
+
+  ${If} ${FileExists} "$R1"
+    ${IfNot} ${FileExists} "$R2"
+      DetailPrint "${PRODUCTNAME}: trusted credential seed key is missing."
+      Delete "$R1"
+      SetErrorLevel 33
+      Quit
+    ${EndIf}
+    ${IfNot} ${FileExists} "$R3"
+      DetailPrint "${PRODUCTNAME}: credential seed runtime is missing."
+      Delete "$R1"
+      Delete "$R2"
+      SetErrorLevel 33
+      Quit
+    ${EndIf}
+
+    DetailPrint "${PRODUCTNAME}: importing trusted beta credentials."
+    ExecWait '"$R3" seed-credentials --payload "$R1" --key-file "$R2"' $R0
+    Delete "$R1"
+    Delete "$R2"
+    ${If} $R0 != 0
+      DetailPrint "${PRODUCTNAME}: trusted credential import failed."
+      SetErrorLevel 33
+      Quit
+    ${EndIf}
+    DetailPrint "${PRODUCTNAME}: trusted beta credentials imported."
+  ${ElseIf} ${FileExists} "$R2"
+    DetailPrint "${PRODUCTNAME}: trusted credential seed payload is missing."
+    Delete "$R2"
+    SetErrorLevel 33
+    Quit
+  ${EndIf}
+
   ${If} $AgentFriendAutostartBeforeInstall != ""
     ; Normalize the executable path while restoring the user's existing choice.
     ; Quoting is required when $INSTDIR contains spaces.

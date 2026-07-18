@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import socket
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -124,6 +125,40 @@ class CredentialStore:
     def delete(self, im_type: str, bind_id: str) -> None:
         """删除一条凭据。目标不存在时静默。"""
         self._path_for(im_type, bind_id).unlink(missing_ok=True)
+
+    def replace_all(self, credentials: list[ImCredential]) -> None:
+        """用一组已验证凭据整体替换当前目录。
+
+        新内容先在同级暂存目录完成加密和回读验证，再通过目录 rename 切换；
+        任一步失败都会保留原目录。调用方负责在没有 provider 写入的维护窗口调用。
+        """
+        parent = self._base_dir.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        nonce = os.urandom(8).hex()
+        staging = parent / f".{self._base_dir.name}.migration-{nonce}"
+        previous = parent / f".{self._base_dir.name}.previous-{nonce}"
+        staging_store = CredentialStore(staging)
+        expected = sorted((cred.im_type, cred.bind_id) for cred in credentials)
+        try:
+            for credential in credentials:
+                staging_store.save(credential)
+            actual = sorted(
+                (credential.im_type, credential.bind_id) for credential in staging_store.list_all()
+            )
+            if actual != expected:
+                raise ValueError("IM credential staging verification failed")
+
+            if self._base_dir.exists():
+                self._base_dir.replace(previous)
+            staging.replace(self._base_dir)
+            shutil.rmtree(previous, ignore_errors=True)
+        except Exception:
+            if not self._base_dir.exists() and previous.exists():
+                previous.replace(self._base_dir)
+            raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(previous, ignore_errors=True)
 
     # ---- internals ----
 

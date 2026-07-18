@@ -18,6 +18,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from runtime_config import (
+    ALL_CREDENTIAL_NAMES,
+    KeyringSource,
+    collect_trusted_credentials,
+    encrypt_credential_seed,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
 TAURI_DIR = REPO_ROOT / "frontend" / "src-tauri"
@@ -26,18 +33,21 @@ OUTPUT_DIR = REPO_ROOT / "package-output"
 CACHE_DIR = SCRIPT_DIR / ".cache"
 SPEC_PATH = SCRIPT_DIR / "windows" / "agent_friend_runtime.spec"
 TAURI_CONFIG = SCRIPT_DIR / "windows" / "tauri.package.conf.json"
+TRUSTED_SEED_PAYLOAD = TAURI_DIR / "package-runtime" / "trusted-credential-seed.bin"
+TRUSTED_SEED_KEY = TAURI_DIR / "package-runtime" / "trusted-credential-seed.key"
+TRUSTED_TAURI_CONFIG = TAURI_DIR / "package-runtime" / "trusted-tauri.package.conf.json"
 CLOUDFLARED_LOCK = SCRIPT_DIR / "vendor" / "cloudflared.lock.json"
 MODEL_RELATIVE_DIR = Path("models") / "bge-small-zh-v1.5"
 MODEL_REPOSITORY = "onnx-community/bge-small-zh-v1.5-ONNX"
 MODEL_REVISION = "9507db33464b5da99a532ac26b2a251767cbc62b"
 SECRET_NAMES = {
-    "DEEPSEEK_API_KEY",
-    "TAVILY_API_KEY",
-    "VOLC_ACCESS_KEY",
-    "VOLC_SECRET_KEY",
-    "VOLC_SPEECH_API_KEY",
+    *ALL_CREDENTIAL_NAMES,
     "VOICE_BRIDGE_VOLC_ACCESS_KEY",
     "VOICE_BRIDGE_VOLC_SECRET_KEY",
+    "VOICE_BRIDGE_VOLC_RTC_APP_ID",
+    "VOICE_BRIDGE_VOLC_RTC_APP_KEY",
+    "VOICE_BRIDGE_VOLC_SPEECH_APP_ID",
+    "VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN",
     "VOICE_BRIDGE_VOLC_SPEECH_API_KEY",
 }
 
@@ -349,44 +359,125 @@ def _write_runtime_inventory(root: Path) -> None:
     )
 
 
-def _build_installer(version: str) -> Path:
+def _cleanup_trusted_resources() -> None:
+    for path in (TRUSTED_SEED_PAYLOAD, TRUSTED_SEED_KEY, TRUSTED_TAURI_CONFIG):
+        path.unlink(missing_ok=True)
+    release_root = TAURI_DIR / "target" / "release"
+    if release_root.is_dir():
+        sensitive_names = {TRUSTED_SEED_PAYLOAD.name, TRUSTED_SEED_KEY.name}
+        for path in release_root.rglob("*"):
+            if path.is_file() and path.name in sensitive_names:
+                path.unlink(missing_ok=True)
+
+
+def _prepare_trusted_resources(store: Any | None = None) -> Path:
+    _cleanup_trusted_resources()
+    credentials = collect_trusted_credentials(store or KeyringSource())
+    artifacts = encrypt_credential_seed(credentials)
+    TRUSTED_SEED_PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
+    TRUSTED_SEED_PAYLOAD.write_bytes(artifacts.payload)
+    TRUSTED_SEED_KEY.write_bytes(artifacts.key)
+
+    config = _read_json(TAURI_CONFIG)
+    bundle = config.setdefault("bundle", {})
+    resources = bundle.setdefault("resources", {})
+    if not isinstance(resources, dict):
+        raise RuntimeError("package Tauri resources must be an object")
+    resources["package-runtime/trusted-credential-seed.bin"] = "trusted-credential-seed.bin"
+    resources["package-runtime/trusted-credential-seed.key"] = "trusted-credential-seed.key"
+    TRUSTED_TAURI_CONFIG.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    return TRUSTED_TAURI_CONFIG
+
+
+def _release_artifact_paths(version: str, *, trusted_beta: bool) -> tuple[Path, str]:
+    if trusted_beta:
+        directory = OUTPUT_DIR / f"agent-friend-{version}-windows-x64-trusted-beta-sensitive"
+        filename = f"agent-friend_{version}_windows_x64-trusted-beta-SENSITIVE-setup.exe"
+        return directory, filename
+    directory = OUTPUT_DIR / f"agent-friend-{version}-windows-x64"
+    filename = f"agent-friend_{version}_windows_x64-setup.exe"
+    return directory, filename
+
+
+def _build_installer(
+    version: str,
+    *,
+    trusted_beta: bool = False,
+    credential_store: Any | None = None,
+) -> Path:
     if not (STAGE_DIR / "runtime-inventory.json").is_file():
         raise RuntimeError("runtime stage missing; run the runtime step first")
     pnpm = shutil.which("pnpm")
     if pnpm is None:
         raise RuntimeError("pnpm is required on the Windows build machine")
-    _run(
-        [pnpm, "tauri", "build", "--config", str(TAURI_CONFIG), "--bundles", "nsis"],
-        cwd=REPO_ROOT / "frontend",
-        env=_sanitized_env(),
-    )
     bundle_dir = TAURI_DIR / "target" / "release" / "bundle" / "nsis"
-    candidates = sorted(bundle_dir.glob("*.exe"), key=lambda path: path.stat().st_mtime)
-    if not candidates:
-        raise RuntimeError(f"NSIS installer not found in {bundle_dir}")
-    release_dir = OUTPUT_DIR / f"agent-friend-{version}-windows-x64"
-    if release_dir.exists():
-        shutil.rmtree(release_dir)
-    release_dir.mkdir(parents=True)
-    setup = release_dir / f"agent-friend_{version}_windows_x64-setup.exe"
-    shutil.copy2(candidates[-1], setup)
-    digest = _sha256(setup)
-    (release_dir / f"{setup.name}.sha256").write_text(f"{digest}  {setup.name}\n", encoding="ascii")
-    manifest = {
-        "schema_version": 1,
-        "product": "agent-friend",
-        "version": version,
-        "platform": "windows-x64",
-        "created_at": datetime.now(UTC).isoformat(),
-        "installer": {"name": setup.name, "size": setup.stat().st_size, "sha256": digest},
-        "upgrade_mode": "manual-installer",
-        "identifier": "com.agentfriend.desktop",
+    previous_candidates = {
+        path.resolve(): path.stat().st_mtime_ns for path in bundle_dir.glob("*.exe")
     }
-    (release_dir / "release.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return setup
+    candidate: Path | None = None
+    try:
+        config_path = _prepare_trusted_resources(credential_store) if trusted_beta else TAURI_CONFIG
+        _run(
+            [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
+            cwd=REPO_ROOT / "frontend",
+            env=_sanitized_env(),
+        )
+        candidates = sorted(
+            (
+                path
+                for path in bundle_dir.glob("*.exe")
+                if previous_candidates.get(path.resolve()) != path.stat().st_mtime_ns
+            ),
+            key=lambda path: path.stat().st_mtime_ns,
+        )
+        if not candidates:
+            raise RuntimeError(f"new NSIS installer not found in {bundle_dir}")
+        candidate = candidates[-1]
+        release_dir, setup_name = _release_artifact_paths(version, trusted_beta=trusted_beta)
+        if release_dir.exists():
+            shutil.rmtree(release_dir)
+        release_dir.mkdir(parents=True)
+        setup = release_dir / setup_name
+        shutil.copy2(candidate, setup)
+        digest = _sha256(setup)
+        (release_dir / f"{setup.name}.sha256").write_text(
+            f"{digest}  {setup.name}\n", encoding="ascii"
+        )
+        manifest = {
+            "schema_version": 1,
+            "product": "agent-friend",
+            "version": version,
+            "platform": "windows-x64",
+            "created_at": datetime.now(UTC).isoformat(),
+            "distribution": "trusted-beta" if trusted_beta else "ordinary",
+            "sensitive": trusted_beta,
+            "installer": {
+                "name": setup.name,
+                "size": setup.stat().st_size,
+                "sha256": digest,
+            },
+            "upgrade_mode": "manual-installer",
+            "identifier": "com.agentfriend.desktop",
+        }
+        (release_dir / "release.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        if trusted_beta:
+            (release_dir / "SENSITIVE-DO-NOT-PUBLISH.txt").write_text(
+                "This trusted beta installer contains shared long-lived API credentials.\n"
+                "Distribute only to explicitly trusted recipients. If leaked, rotate all "
+                "provider credentials and rebuild.\n",
+                encoding="utf-8",
+            )
+        return setup
+    finally:
+        if trusted_beta:
+            _cleanup_trusted_resources()
+            if candidate is not None:
+                candidate.unlink(missing_ok=True)
 
 
-def _smoke_installed_runtime(install_dir: Path) -> None:
+def _smoke_installed_runtime(
+    install_dir: Path, *, expect_trusted_credentials: bool = False
+) -> None:
     install_root = install_dir.resolve()
     main_binary = install_root / "agent-friend.exe"
     runtime_dir = install_root / "runtime"
@@ -401,6 +492,12 @@ def _smoke_installed_runtime(install_dir: Path) -> None:
     smoke_env = _sanitized_env()
     smoke_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(model_dir)
     _run([str(launcher), "doctor"], cwd=launcher.parent, env=smoke_env)
+    if expect_trusted_credentials:
+        _run(
+            [str(launcher), "credential-status", "--require-operational"],
+            cwd=launcher.parent,
+            env=smoke_env,
+        )
     _smoke_frozen_services(launcher, smoke_env)
     print(f"installed runtime smoke passed: {install_dir.resolve()}")
 
@@ -426,6 +523,16 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="installed application directory used by the installed-smoke step",
     )
+    parser.add_argument(
+        "--trusted-beta",
+        action="store_true",
+        help="build a sensitive installer seeded from the current user's system keyring",
+    )
+    parser.add_argument(
+        "--expect-trusted-credentials",
+        action="store_true",
+        help="require the installed-smoke target to have all operational credentials",
+    )
     return parser.parse_args()
 
 
@@ -435,14 +542,25 @@ def main() -> int:
     if args.step == "installed-smoke":
         if args.install_dir is None:
             raise RuntimeError("installed-smoke requires --install-dir")
-        _smoke_installed_runtime(args.install_dir)
+        if args.trusted_beta:
+            raise RuntimeError(
+                "installed-smoke uses --expect-trusted-credentials, not --trusted-beta"
+            )
+        _smoke_installed_runtime(
+            args.install_dir,
+            expect_trusted_credentials=args.expect_trusted_credentials,
+        )
         return 0
+    if args.expect_trusted_credentials:
+        raise RuntimeError("--expect-trusted-credentials requires installed-smoke")
+    if args.trusted_beta and args.step == "runtime":
+        raise RuntimeError("--trusted-beta requires the installer or all step")
     version = _project_version()
     OUTPUT_DIR.mkdir(exist_ok=True)
     if args.step in {"runtime", "all"}:
         _build_runtime(offline=args.offline, reuse_frozen=args.reuse_frozen)
     if args.step in {"installer", "all"}:
-        setup = _build_installer(version)
+        setup = _build_installer(version, trusted_beta=args.trusted_beta)
         print(f"installer: {setup}")
     return 0
 

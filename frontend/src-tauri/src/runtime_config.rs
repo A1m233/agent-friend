@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -417,6 +418,89 @@ pub(crate) fn credential_redaction_values() -> Result<Vec<String>, String> {
         collect_keyring_secret(keyring_entry(spec.name), spec.name, &mut values)?;
     }
     Ok(values)
+}
+
+/// 054：只读取正常桌面设置写入的 canonical 系统凭据；不读取 Env 或 `.env`。
+pub(crate) fn migration_snapshot_managed_secrets() -> Result<BTreeMap<String, String>, String> {
+    let mut result = BTreeMap::new();
+    for spec in SECRET_REGISTRY {
+        match keyring_entry(spec.name)?.get_password() {
+            Ok(value) if !value.trim().is_empty() => {
+                result.insert(spec.name.to_string(), value);
+            }
+            Ok(_) | Err(keyring::Error::NoEntry) => {}
+            Err(error) => {
+                return Err(format!(
+                    "migration_keyring_read_failed for {}: {error}",
+                    spec.name
+                ));
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// 054：以迁移快照整体替换 canonical 系统凭据，返回替换前快照供事务回滚。
+pub(crate) fn migration_replace_managed_secrets(
+    next: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, String> {
+    let previous = migration_snapshot_managed_secrets()?;
+    for name in next.keys() {
+        require_secret(name)?;
+    }
+    let apply = || -> Result<(), String> {
+        for spec in SECRET_REGISTRY {
+            let entry = keyring_entry(spec.name)?;
+            if let Some(value) = next.get(spec.name) {
+                entry.set_password(value).map_err(|error| {
+                    format!("migration_keyring_write_failed for {}: {error}", spec.name)
+                })?;
+            } else {
+                match entry.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => {}
+                    Err(error) => {
+                        return Err(format!(
+                            "migration_keyring_delete_failed for {}: {error}",
+                            spec.name
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    };
+    if let Err(error) = apply() {
+        let _ = migration_restore_managed_secrets(&previous);
+        return Err(error);
+    }
+    Ok(previous)
+}
+
+pub(crate) fn migration_restore_managed_secrets(
+    snapshot: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    for spec in SECRET_REGISTRY {
+        let entry = keyring_entry(spec.name)?;
+        if let Some(value) = snapshot.get(spec.name) {
+            entry.set_password(value).map_err(|error| {
+                format!(
+                    "migration_keyring_rollback_failed for {}: {error}",
+                    spec.name
+                )
+            })?;
+        } else {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "migration_keyring_rollback_failed for {}: {error}",
+                        spec.name
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn collect_keyring_secret(

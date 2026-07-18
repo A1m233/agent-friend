@@ -12,6 +12,7 @@ export type SettingsTarget =
   | "voice"
   | "permissions"
   | "runtime"
+  | "migration"
   | "archived"
   | "feedback";
 
@@ -24,6 +25,7 @@ export const PRIMARY_SETTINGS_SECTIONS = [
   { key: "voice", label: "语音" },
   { key: "runtime", label: "模型与凭据" },
   { key: "permissions", label: "系统权限" },
+  { key: "migration", label: "数据与迁移" },
   { key: "archived", label: "已归档对话" },
 ] as const satisfies readonly {
   key: PrimarySettingsTarget;

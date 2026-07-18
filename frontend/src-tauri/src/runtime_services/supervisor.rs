@@ -127,6 +127,122 @@ impl RuntimeServiceSupervisor {
         self.slot(service).lock().await.snapshot.clone()
     }
 
+    pub async fn migration_snapshot_im_credentials(&self) -> Result<serde_json::Value, String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "migration_bridge_not_ready".to_string())?;
+        let response = self
+            .client
+            .get(format!(
+                "{}/internal/migration/im-credentials",
+                RuntimeServiceKind::Bridge.base_url()
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .send()
+            .await
+            .map_err(|error| format!("migration_im_snapshot_failed: {error}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "migration_im_snapshot_failed: HTTP {}",
+                response.status()
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| format!("migration_im_snapshot_invalid: {error}"))
+    }
+
+    pub async fn migration_inventory(&self) -> Result<serde_json::Value, String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "migration_bridge_not_ready".to_string())?;
+        let response = self
+            .client
+            .get(format!(
+                "{}/internal/migration/inventory",
+                RuntimeServiceKind::Bridge.base_url()
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .send()
+            .await
+            .map_err(|error| format!("migration_inventory_failed: {error}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "migration_inventory_failed: HTTP {}",
+                response.status()
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| format!("migration_inventory_invalid: {error}"))
+    }
+
+    pub async fn migration_replace_im_credentials(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<(), String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "migration_bridge_not_ready".to_string())?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/internal/migration/im-credentials/replace",
+                RuntimeServiceKind::Bridge.base_url()
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .json(payload)
+            .send()
+            .await
+            .map_err(|error| format!("migration_im_restore_failed: {error}"))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "migration_im_restore_failed: HTTP {}",
+                response.status()
+            ))
+        }
+    }
+
+    pub async fn migration_rebuild_memory_index(&self) -> Result<(), String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "migration_bridge_not_ready".to_string())?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/internal/migration/memory-index/rebuild",
+                RuntimeServiceKind::Bridge.base_url()
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .send()
+            .await
+            .map_err(|error| format!("migration_memory_index_rebuild_failed: {error}"))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "migration_memory_index_rebuild_failed: HTTP {}",
+                response.status()
+            ))
+        }
+    }
+
     pub async fn start(
         &self,
         app: Option<&AppHandle>,
