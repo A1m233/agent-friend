@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { boundsToRegion, fitSpine38ToStage } from "./spine38Fit";
+import {
+  boundsToRegion,
+  composeSpine38DisplayScale,
+  fitSpine38ToStage,
+  resolveSpine38NormalizationScale,
+} from "./spine38Fit";
 
 function makeFitHarness(bounds: { x: number; y: number; width: number; height: number }) {
   const slotScaleSet = vi.fn();
@@ -143,5 +148,45 @@ describe("fitSpine38ToStage", () => {
     );
 
     expect(harness.slotPositionSet).toHaveBeenLastCalledWith(960, 928.8);
+  });
+
+  it("normalizes complete visible pixels instead of the smaller geometry hint", () => {
+    const scale = resolveSpine38NormalizationScale(
+      { x: -50, y: -100, w: 100, h: 128 },
+      { x: 0, y: 0, w: 320, h: 320 },
+      {
+        fitWidthPx: 320,
+        fitHeightPx: 320,
+        fitWidthRatio: 1.35,
+        fitHeightRatio: 0.3,
+        slotYRatio: 0.86,
+        topPaddingRatio: 0.16,
+      },
+    );
+
+    expect(scale).toBeCloseTo(0.75);
+    expect(128 * scale).toBeCloseTo(96);
+  });
+
+  it("keeps normalization, future user scale, and ActionBar mini mode independent", () => {
+    const normal = composeSpine38DisplayScale({
+      normalizationScale: 0.75,
+      userScale: 1,
+      displayModeScale: 1,
+    });
+    const mini = composeSpine38DisplayScale({
+      normalizationScale: 0.75,
+      userScale: 1,
+      displayModeScale: 0.5,
+    });
+    const futureUserScaledMini = composeSpine38DisplayScale({
+      normalizationScale: 0.75,
+      userScale: 1.2,
+      displayModeScale: 0.5,
+    });
+
+    expect(normal).toBeCloseTo(0.75);
+    expect(mini).toBeCloseTo(normal * 0.5);
+    expect(futureUserScaledMini).toBeCloseTo(normal * 1.2 * 0.5);
   });
 });

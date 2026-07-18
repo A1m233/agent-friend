@@ -7,6 +7,7 @@ import { findVisibleRegion } from "@/pet/petAlphaHitTest";
 import type { PetDisplayProfile } from "./petDisplayProfile";
 import type { PetWebviewDisplayContext } from "./petWebviewDisplayContext";
 import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
+import { isPrimaryPointerButton } from "@/pet/pointerInput";
 
 /**
  * 17a · PIXI canvas + avatar-slot Container 生命周期 hook（design §5.1 ~ §5.3）。
@@ -25,7 +26,7 @@ import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
  * 上；17b 替 slot 内 children 为 Live2DSprite 时不重接。hook 返回 `{ slotRef, appRef }`
  * 暴露给 18 `usePetLive2D` 接力（18 design §6.1 / §6.2）。
  *
- * **AC-6 hover 不在本 hook 内承载**：PIXI pointerover/out 在 setIgnoreCursorEvents 切回
+ * **AC-6 hover 不在本 hook 内承载**：PIXI pointerover/out 在原生鼠标切回穿透后
  * true（cursor 离开 sprite 之后）后不再触发，会导致 hover state stuck；改由
  * `usePetPassthrough` 用 Rust 60Hz cursor 数据驱动 `setCursorOnSprite`（那个 channel 一直跑）。
  */
@@ -408,6 +409,7 @@ export function usePixiAvatarSlot(
       }
 
       slot.on("pointerdown", (e) => {
+        if (!isPrimaryPointerButton(e)) return;
         pointerStart = { x: e.global.x, y: e.global.y };
         lastPointer = { x: e.global.x, y: e.global.y };
         lastPointerTs = performance.now();
@@ -460,6 +462,7 @@ export function usePixiAvatarSlot(
 
       const endPointer = (e: PIXI.FederatedPointerEvent) => {
         if (!pointerStart || !slotStart) return;
+        if (!isPrimaryPointerButton(e)) return;
         const duration = performance.now() - downTimestamp;
         const dx = e.global.x - pointerStart.x;
         const dy = e.global.y - pointerStart.y;
@@ -484,7 +487,7 @@ export function usePixiAvatarSlot(
       slot.on("pointerupoutside", endPointer);
 
       // AC-6 修复：原 PIXI slot.on("pointerover/out") → setHoverActionBar
-      //   在 cursor 离开 sprite 后 setIgnoreCursorEvents 切回 true，webview 不再
+      //   在 cursor 离开 sprite 后原生鼠标切回穿透，webview 不再
       //   收 pointer 事件，PIXI pointerout 不再触发 → hover state stuck 在 true。
       //   改由 usePetPassthrough 用 Rust 60Hz cursor channel 驱动 cursorOnSprite。
 

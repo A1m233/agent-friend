@@ -13,7 +13,6 @@ import {
   ChevronRight,
   ChevronUp,
   Lock,
-  LifeBuoy,
   Maximize2,
   MessageSquare,
   MessageSquareDashed,
@@ -26,6 +25,7 @@ import {
   Unlock,
 } from "lucide-react";
 
+import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   Carousel,
   CarouselContent,
@@ -47,7 +47,7 @@ import type { PetViewport } from "./petDisplayProfile";
  *
  * 17a 接缝点（design §3.6）100% 不动：
  * - 浮动定位：通过 `computeActionBarLayout` 根据 sprite 锚和屏幕边缘选择横/竖布局
- * - 显隐机制：`visible` prop（PIXI sprite hover bridge + DOM 自身 onMouseEnter/Leave 双触发）
+ * - 显隐机制：由 PetApp 条件渲染（PIXI sprite hover bridge + DOM 自身 onMouseEnter/Leave 双触发）
  * - 命中机制：容器 + 每颗按钮标 `data-hit`（usePetPassthrough DOM hit-test 优先承担）
  *
  * 019 重做点：
@@ -63,7 +63,6 @@ import type { PetViewport } from "./petDisplayProfile";
 interface Props {
   actionBarAnchor: { x: number; y: number; w: number; h: number };
   viewport: PetViewport;
-  visible: boolean;
   onMouseEnter: MouseEventHandler<HTMLDivElement>;
   onMouseLeave: MouseEventHandler<HTMLDivElement>;
   onOpenChat: () => void;
@@ -105,7 +104,6 @@ type TooltipSide = "top" | "right" | "bottom" | "left";
 export function ActionBar({
   actionBarAnchor,
   viewport,
-  visible,
   onMouseEnter,
   onMouseLeave,
   onOpenChat,
@@ -136,7 +134,7 @@ export function ActionBar({
       ? { icon: <Maximize2 />, tooltip: "恢复桌宠大小", onClick: onRestoreNormal }
       : { icon: <Minimize2 />, tooltip: "缩小桌宠并移动到边上", onClick: onCollapseToEdge },
     { icon: <Plug />, tooltip: "接入 IM", onClick: onOpenIMConnect },
-    { icon: <LifeBuoy />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
+    { icon: <FeedbackIcon />, tooltip: "反馈与诊断", onClick: onOpenFeedback },
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
   ];
   if (import.meta.env.DEV) {
@@ -248,9 +246,6 @@ export function ActionBar({
     width: layoutWidth,
     height: layoutHeight,
   };
-  const visibleCls = visible
-    ? "opacity-100 pointer-events-auto"
-    : "opacity-0 pointer-events-none";
   const computedCenterX = actionBarCenterX;
   const tooltipContentProps = {
     "data-hit": "actionbar-tooltip",
@@ -269,14 +264,13 @@ export function ActionBar({
         ? { x: rect.x, y: rect.y, w: rect.width, h: rect.height }
         : null,
     });
-  }, [
-    actionBarAnchor,
-    hasValidGeometry,
-    layout,
-    left,
-    top,
-    visible,
-  ]);
+    return () => {
+      publishAnchorDiagnostics({
+        actionBarComputed: null,
+        actionBarRect: null,
+      });
+    };
+  }, [actionBarAnchor, hasValidGeometry, layout, left, top]);
 
   const renderActionButton = (button: BtnDef, key: string | number) => (
     <TooltipButton
@@ -407,7 +401,7 @@ export function ActionBar({
         style={style}
         className={`flex ${
           isVertical ? "flex-col items-center" : "items-center"
-        } gap-1 rounded-2xl bg-bg/95 border border-border shadow-lg px-2 py-1.5 transition-opacity ${visibleCls}`}
+        } gap-1 rounded-2xl bg-bg/95 border border-border shadow-lg px-2 py-1.5`}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >

@@ -14,6 +14,7 @@ mod bubble_window;
 mod diagnostics;
 mod paths;
 mod permissions;
+mod pet_cursor_passthrough;
 mod pet_display_topology;
 mod push_subscriber;
 mod runtime_config;
@@ -530,7 +531,20 @@ struct CursorPos {
     y: f64,
 }
 
-/// 显示并聚焦指定 label 的 webview window（chat / settings 复用）。
+#[derive(Debug, PartialEq, Eq)]
+struct WindowRevealPlan {
+    place_before_show: bool,
+    unminimize: bool,
+}
+
+fn plan_window_reveal(is_visible: bool, is_minimized: bool) -> WindowRevealPlan {
+    WindowRevealPlan {
+        place_before_show: !is_visible,
+        unminimize: is_minimized,
+    }
+}
+
+/// 恢复、显示并聚焦指定 label 的 webview window（chat / settings 等复用）。
 ///
 /// **18 修 macOS Accessory policy 副作用**：17a `set_activation_policy(Accessory)`
 /// 让 pet 不进 Dock，但副作用是 `set_focus()` 不让 app 升级为前台 active app —— 新弹
@@ -561,8 +575,27 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
                     }
                 }
             }
-            let should_place = !w.is_visible().unwrap_or(false);
-            if should_place {
+            let is_visible = w.is_visible().unwrap_or_else(|e| {
+                log::warn!("show_and_focus: window={label} read visible state failed: {e}");
+                false
+            });
+            let is_minimized = w.is_minimized().unwrap_or_else(|e| {
+                log::warn!("show_and_focus: window={label} read minimized state failed: {e}");
+                false
+            });
+            let reveal_plan = plan_window_reveal(is_visible, is_minimized);
+
+            // visible 与 minimized 是两个独立状态。Windows 下 show/set_focus 不会恢复一个
+            // 已 visible 的最小化窗口，必须先显式 unminimize，才能让后续 focus 生效。
+            if reveal_plan.unminimize {
+                match w.unminimize() {
+                    Ok(()) => log::info!("show_and_focus: window={label} unminimize ok"),
+                    Err(e) => {
+                        log::warn!("show_and_focus: window={label} unminimize failed: {e}")
+                    }
+                }
+            }
+            if reveal_plan.place_before_show {
                 if let Err(e) = window_placement::place_window_before_show(&app_clone, &w) {
                     log::warn!("show_and_focus: window={label} placement failed: {e}");
                 }
@@ -866,6 +899,7 @@ pub fn run() {
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
         .manage(SettingsNavigationState::default())
+        .manage(window_placement::WindowPlacementState::default())
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .plugin(navigation_guard())
@@ -901,6 +935,7 @@ pub fn run() {
         open_memory_inspector,
         open_live2d_debugger,
         hide_pet,
+        pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
@@ -946,6 +981,7 @@ pub fn run() {
         open_voice_call_with_start,
         consume_pending_voice_start,
         hide_pet,
+        pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,
         settings::get_setting,
         settings::set_setting,
@@ -1008,15 +1044,23 @@ pub fn run() {
             // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
             // 026 · memory-inspector 窗同语义。
-            if matches!(
-                window.label(),
-                "chat"
-                    | "settings"
-                    | "im-connect"
-                    | "voice-call"
-                    | "memory-inspector"
-                    | "live2d-debugger"
-            ) {
+            if window_placement::is_managed_window_label(window.label()) {
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                ) {
+                    if let Some(webview_window) =
+                        window.app_handle().get_webview_window(window.label())
+                    {
+                        if let Err(e) = window_placement::capture_window_placement(&webview_window)
+                        {
+                            log::warn!(
+                                "window placement: capture failed for {}: {e}",
+                                window.label()
+                            );
+                        }
+                    }
+                }
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     if let Some(webview_window) =
@@ -1183,6 +1227,17 @@ pub fn run() {
                 );
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                for window in app_handle.webview_windows().into_values() {
+                    if let Err(e) = window_placement::capture_window_placement(&window) {
+                        log::warn!(
+                            "window placement: exit capture failed for {}: {e}",
+                            window.label()
+                        );
+                    }
+                }
+                if let Err(e) = window_placement::persist_window_placements(app_handle) {
+                    log::warn!("window placement: exit persist failed: {e}");
+                }
                 tauri::async_runtime::block_on(
                     exit_runtime_service_supervisor.cleanup_owned_children(),
                 );
@@ -1244,6 +1299,38 @@ mod tests {
             second.request_id
         );
         assert!(state.take_pending().expect("take again").is_none());
+    }
+
+    #[test]
+    fn window_reveal_plan_handles_visibility_and_minimized_state_independently() {
+        assert_eq!(
+            plan_window_reveal(false, false),
+            WindowRevealPlan {
+                place_before_show: true,
+                unminimize: false,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(false, true),
+            WindowRevealPlan {
+                place_before_show: true,
+                unminimize: true,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(true, false),
+            WindowRevealPlan {
+                place_before_show: false,
+                unminimize: false,
+            }
+        );
+        assert_eq!(
+            plan_window_reveal(true, true),
+            WindowRevealPlan {
+                place_before_show: false,
+                unminimize: true,
+            }
+        );
     }
 
     #[test]

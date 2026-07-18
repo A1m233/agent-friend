@@ -5,6 +5,14 @@ export interface VisibleRegionSample {
   centroid: { x: number; y: number };
 }
 
+export interface AdaptiveVisibleRegionOptions {
+  threshold?: number;
+  paddingRatio?: number;
+  minPaddingPx?: number;
+  maxPasses?: number;
+  edgeTolerancePx?: number;
+}
+
 interface CanvasCarrier {
   canvas?: unknown;
   view?: unknown;
@@ -128,4 +136,95 @@ export function findVisibleRegionFromApp(
       y: weightedY / totalWeight / dpr,
     },
   };
+}
+
+function expandRegionWithinCanvas(
+  app: unknown,
+  region: PixelRegion,
+  sides: { left: boolean; top: boolean; right: boolean; bottom: boolean },
+  paddingX: number,
+  paddingY: number,
+): PixelRegion {
+  const canvas = getPixiCanvas(app);
+  const dpr = getPixiResolution(app);
+  const canvasWidth = canvas ? canvas.width / dpr : region.x + region.w;
+  const canvasHeight = canvas ? canvas.height / dpr : region.y + region.h;
+  const x0 = Math.max(0, region.x - (sides.left ? paddingX : 0));
+  const y0 = Math.max(0, region.y - (sides.top ? paddingY : 0));
+  const x1 = Math.min(
+    canvasWidth,
+    region.x + region.w + (sides.right ? paddingX : 0),
+  );
+  const y1 = Math.min(
+    canvasHeight,
+    region.y + region.h + (sides.bottom ? paddingY : 0),
+  );
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
+ * Treats geometry bounds as a scan hint, never as a hard visual boundary.
+ *
+ * Spine attachment AABBs can omit rendered pixels (for example Amiya's ears), so the first
+ * pass adds a guard band on every side. If visible pixels still touch a scan edge, that edge
+ * expands again until the content is enclosed or the pass limit/canvas edge is reached.
+ */
+export function findAdaptiveVisibleRegionFromApp(
+  app: unknown,
+  initialRegion: PixelRegion,
+  options: AdaptiveVisibleRegionOptions = {},
+): VisibleRegionSample | null {
+  const threshold = options.threshold ?? 30;
+  const paddingRatio = options.paddingRatio ?? 1;
+  const minPaddingPx = options.minPaddingPx ?? 16;
+  const maxPasses = Math.max(1, Math.floor(options.maxPasses ?? 4));
+  const edgeTolerancePx = options.edgeTolerancePx ?? 1;
+  const paddingX = Math.max(minPaddingPx, initialRegion.w * paddingRatio);
+  const paddingY = Math.max(minPaddingPx, initialRegion.h * paddingRatio);
+  const allSides = { left: true, top: true, right: true, bottom: true };
+  let scanRegion = expandRegionWithinCanvas(
+    app,
+    initialRegion,
+    allSides,
+    paddingX,
+    paddingY,
+  );
+  let latest: VisibleRegionSample | null = null;
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    latest = findVisibleRegionFromApp(app, scanRegion, threshold);
+    if (!latest) return null;
+
+    const bounds = latest.bounds;
+    const touches = {
+      left: bounds.x <= scanRegion.x + edgeTolerancePx,
+      top: bounds.y <= scanRegion.y + edgeTolerancePx,
+      right:
+        bounds.x + bounds.w >= scanRegion.x + scanRegion.w - edgeTolerancePx,
+      bottom:
+        bounds.y + bounds.h >= scanRegion.y + scanRegion.h - edgeTolerancePx,
+    };
+    if (!touches.left && !touches.top && !touches.right && !touches.bottom) {
+      return latest;
+    }
+
+    const expanded = expandRegionWithinCanvas(
+      app,
+      scanRegion,
+      touches,
+      paddingX,
+      paddingY,
+    );
+    if (
+      expanded.x === scanRegion.x &&
+      expanded.y === scanRegion.y &&
+      expanded.w === scanRegion.w &&
+      expanded.h === scanRegion.h
+    ) {
+      return latest;
+    }
+    scanRegion = expanded;
+  }
+
+  return latest;
 }

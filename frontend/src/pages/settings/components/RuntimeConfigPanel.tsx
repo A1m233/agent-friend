@@ -180,7 +180,7 @@ export function RuntimeConfigPanel() {
         <Button
           type="button"
           variant="outline"
-          size="xs"
+          size="sm"
           onClick={() => void refresh()}
           loading={loading}
           disabled={loading}

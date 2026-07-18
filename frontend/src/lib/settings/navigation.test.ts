@@ -1,18 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { locateSettings } from "./navigation";
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@/utils/tauri", () => ({ isTauri: vi.fn(() => true) }));
+
+import { invoke } from "@tauri-apps/api/core";
+import {
+  DEFAULT_SETTINGS_TARGET,
+  locateSettings,
+  openFeedback,
+  PRIMARY_SETTINGS_SECTIONS,
+} from "./navigation";
+
+const mockInvoke = vi.mocked(invoke);
 
 describe("locateSettings", () => {
   it("resolves every stable settings target", () => {
     for (const target of [
-      "general",
-      "persona",
-      "pet",
-      "voice",
-      "runtime",
-      "archived",
-      "feedback",
-    ] as const) {
+      ...PRIMARY_SETTINGS_SECTIONS.map(({ key }) => key),
+      "feedback" as const,
+    ]) {
       expect(locateSettings({ target }).section).toBe(target);
     }
   });
@@ -33,9 +39,37 @@ describe("locateSettings", () => {
   });
 
   it("falls back safely for missing or unknown targets", () => {
-    expect(locateSettings(undefined).section).toBe("general");
+    expect(DEFAULT_SETTINGS_TARGET).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
+    expect(locateSettings(undefined).section).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
     expect(
       locateSettings({ target: "removed" as never }).section,
-    ).toBe("general");
+    ).toBe(PRIMARY_SETTINGS_SECTIONS[0].key);
+  });
+});
+
+describe("openFeedback", () => {
+  beforeEach(() => mockInvoke.mockReset());
+
+  it("opens the shared feedback destination without context", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    await openFeedback();
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_settings", {
+      request: { target: "feedback", feedback: undefined },
+    });
+  });
+
+  it("forwards the source session for feedback preselection", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    await openFeedback({ preselectSessionId: "session-1" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_settings", {
+      request: {
+        target: "feedback",
+        feedback: { preselectSessionId: "session-1" },
+      },
+    });
   });
 });

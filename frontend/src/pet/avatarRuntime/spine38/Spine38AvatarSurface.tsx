@@ -13,7 +13,7 @@ import {
 } from "@/pet/avatarRuntime/actionMapping";
 import {
   alphaHitTestFromApp,
-  findVisibleRegionFromApp,
+  findAdaptiveVisibleRegionFromApp,
 } from "@/pet/avatarRuntime/framebuffer";
 import type {
   AvatarActionResult,
@@ -26,9 +26,12 @@ import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
 import type { PetWebviewDisplayContext } from "@/pages/pet/petWebviewDisplayContext";
 import { isFiniteRect } from "@/pages/pet/petGeometry";
 import { syncPixiRendererDpr } from "@/pet/avatarRuntime/pixiRendererDpr";
+import { isPrimaryPointerButton } from "@/pet/pointerInput";
 import {
   boundsToRegion,
+  composeSpine38DisplayScale,
   fitSpine38ToStage,
+  resolveSpine38NormalizationScale,
   type Spine38StageViewport,
 } from "./spine38Fit";
 import { sampleSpine38CanonicalLayoutBounds } from "./spine38LayoutBounds";
@@ -60,6 +63,8 @@ interface Props {
 const DRAG_MOVE_THRESHOLD_PX = 5;
 const CLICK_MAX_DURATION_MS = 300;
 const ALPHA_SCAN_NULL_FRAMES = 30;
+// Future settings slider plugs into this factor without changing model normalization or mini mode.
+const DEFAULT_USER_SCALE = 1;
 
 function getGlobalPoint(event: unknown): { x: number; y: number } | null {
   const candidate = event as { global?: { x?: unknown; y?: unknown } };
@@ -110,6 +115,43 @@ function toSlotHitRegion(spine: Spine38, bounds: PixelRegion): PixelRegion {
     y: spine.y + bounds.y,
     w: bounds.w,
     h: bounds.h,
+  };
+}
+
+function toSpineLocalRegion(
+  slot: PIXI7.Container,
+  spine: Spine38,
+  bounds: PixelRegion,
+): PixelRegion {
+  const scaleX = slot.scale.x || 1;
+  const scaleY = slot.scale.y || 1;
+  return {
+    x: (bounds.x - slot.x) / scaleX - spine.x,
+    y: (bounds.y - slot.y) / scaleY - spine.y,
+    w: bounds.w / scaleX,
+    h: bounds.h / scaleY,
+  };
+}
+
+function toSpineLocalPoint(
+  slot: PIXI7.Container,
+  spine: Spine38,
+  point: PixelPoint,
+): PixelPoint {
+  return {
+    x: (point.x - slot.x) / (slot.scale.x || 1) - spine.x,
+    y: (point.y - slot.y) / (slot.scale.y || 1) - spine.y,
+  };
+}
+
+function toScreenPoint(
+  slot: PIXI7.Container,
+  spine: Spine38,
+  point: PixelPoint,
+): PixelPoint {
+  return {
+    x: slot.x + (spine.x + point.x) * slot.scale.x,
+    y: slot.y + (spine.y + point.y) * slot.scale.y,
   };
 }
 
@@ -174,7 +216,7 @@ export function Spine38AvatarSurface({
   const initialAnchorPointRef = useRef(initialAnchorPoint);
   const displayProfileRef = useRef(displayProfile);
   const displayContextRef = useRef(displayContext);
-  const baseScaleRef = useRef({ x: 1, y: 1 });
+  const normalizationScaleRef = useRef(1);
   const lastAppliedPlacementKeyRef = useRef<string | null>(null);
   const initialLayoutAnchorAlignedRef = useRef(false);
   const initialVisibleAnchorAlignedRef = useRef(false);
@@ -267,8 +309,13 @@ export function Spine38AvatarSurface({
       if (!slot || !spine) return currentBounds;
 
       const profile = displayProfileRef.current;
-      const nextScaleX = baseScaleRef.current.x * profile.scale;
-      const nextScaleY = baseScaleRef.current.y * profile.scale;
+      const effectiveScale = composeSpine38DisplayScale({
+        normalizationScale: normalizationScaleRef.current,
+        userScale: DEFAULT_USER_SCALE,
+        displayModeScale: profile.scale,
+      });
+      const nextScaleX = effectiveScale;
+      const nextScaleY = effectiveScale;
       if (slot.scale.x !== nextScaleX || slot.scale.y !== nextScaleY) {
         const centerBefore = {
           x: currentBounds.x + currentBounds.w / 2,
@@ -449,6 +496,7 @@ export function Spine38AvatarSurface({
       let dragArmed = false;
 
       slot.on("pointerdown", (event: unknown) => {
+        if (!isPrimaryPointerButton(event)) return;
         const global = getGlobalPoint(event);
         if (!global) return;
         pointerStart = global;
@@ -476,6 +524,7 @@ export function Spine38AvatarSurface({
 
       const endPointer = (event: unknown) => {
         if (!pointerStart || !slotStart) return;
+        if (!isPrimaryPointerButton(event)) return;
         const global = getGlobalPoint(event);
         const duration = performance.now() - downTimestamp;
         const dx = global ? global.x - pointerStart.x : 0;
@@ -527,12 +576,14 @@ export function Spine38AvatarSurface({
         layoutBounds,
         resolveInitialStageViewport(app),
       );
-      baseScaleRef.current = { x: slot.scale.x, y: slot.scale.y };
+      normalizationScaleRef.current = slot.scale.x;
       playMappedAction("idle");
       syncBounds();
       setReady(true);
 
       app.ticker.add((ticker: unknown) => {
+        const currentApp = app;
+        if (!currentApp) return;
         tickerElapsed += getTickerDeltaMs(ticker);
         if (tickerElapsed < 250) return;
         tickerElapsed = 0;
@@ -542,11 +593,50 @@ export function Spine38AvatarSurface({
             ? toScreenRegion(slot, spine, layoutBounds)
             : boundsToRegion(slot.getBounds());
           const visibleRegion = screenBounds
-            ? findVisibleRegionFromApp(app, screenBounds)
+            ? findAdaptiveVisibleRegionFromApp(currentApp, screenBounds)
             : null;
           let scanned = visibleRegion?.bounds ?? null;
           let visibleCentroid = visibleRegion?.centroid ?? null;
           if (scanned) {
+            const localVisualBounds = toSpineLocalRegion(slot, spine, scanned);
+            const localVisibleCentroid = visibleCentroid
+              ? toSpineLocalPoint(slot, spine, visibleCentroid)
+              : null;
+            const centerBefore = {
+              x: scanned.x + scanned.w / 2,
+              y: scanned.y + scanned.h / 2,
+            };
+            const normalizationScale = resolveSpine38NormalizationScale(
+              localVisualBounds,
+              resolveInitialStageViewport(currentApp),
+              entry.spine.fit,
+            );
+            normalizationScaleRef.current = normalizationScale;
+            layoutBoundsRef.current = localVisualBounds;
+            const effectiveScale = composeSpine38DisplayScale({
+              normalizationScale,
+              userScale: DEFAULT_USER_SCALE,
+              displayModeScale: displayProfileRef.current.scale,
+            });
+            slot.scale.set(effectiveScale);
+            let normalizedBounds = toScreenRegion(slot, spine, localVisualBounds);
+            const normalizationDx =
+              centerBefore.x - (normalizedBounds.x + normalizedBounds.w / 2);
+            const normalizationDy =
+              centerBefore.y - (normalizedBounds.y + normalizedBounds.h / 2);
+            slot.x += normalizationDx;
+            slot.y += normalizationDy;
+            normalizedBounds = translateRegion(
+              normalizedBounds,
+              normalizationDx,
+              normalizationDy,
+            );
+            scanned = normalizedBounds;
+            screenBounds = normalizedBounds;
+            visibleCentroid = localVisibleCentroid
+              ? toScreenPoint(slot, spine, localVisibleCentroid)
+              : null;
+            lastSpriteScreenRef.current = null;
             alphaScanReadyRef.current = true;
             nullScanCount = 0;
             if (!initialVisibleAnchorAlignedRef.current) {
@@ -615,7 +705,7 @@ export function Spine38AvatarSurface({
       lastActionBarAnchorRef.current = null;
       actionBarAnchorOffsetRef.current = null;
       visualAnchorOffsetRef.current = null;
-      baseScaleRef.current = { x: 1, y: 1 };
+      normalizationScaleRef.current = 1;
       lastAppliedPlacementKeyRef.current = null;
       initialLayoutAnchorAlignedRef.current = false;
       initialVisibleAnchorAlignedRef.current = false;

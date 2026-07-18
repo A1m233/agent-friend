@@ -49,7 +49,9 @@ webview2-com = "0.38.2"
 windows = { version = "0.61.3", features = [
     "Devices_Enumeration",
     "Security_Authorization_AppCapabilityAccess",
+    "Win32_Foundation",
     "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 # 015 · pet window 全屏浮动需要直接调 macOS NSWindow setLevel (Tauri 2 抽象未暴露)

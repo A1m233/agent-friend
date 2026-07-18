@@ -3,10 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
-import { openSettings as openSettingsWindow } from "@/lib/settings/navigation";
+import {
+  openFeedback as openFeedbackWindow,
+  openSettings as openSettingsWindow,
+} from "@/lib/settings/navigation";
 import type { PushEnvelope } from "@/types/push";
 
 import { ActionBar } from "./ActionBar";
+import { shouldRenderActionBar } from "./actionBarVisibility";
 import { usePetPassthrough } from "./usePetPassthrough";
 import {
   resolvePetDisplayProfile,
@@ -140,7 +144,7 @@ export function PetApp() {
   const [displayTopologyGeneration, setDisplayTopologyGeneration] = useState(0);
   // AC-6 hover gate · 双源：cursorOnSprite（Rust 60Hz cursor channel 驱动）
   //                + hoverActionBarDom（ActionBar 自身 onMouseEnter/Leave 驱动）
-  // 单一 hoverActionBar 不够：cursor 离开 sprite 后 setIgnoreCursorEvents 切 true，
+  // 单一 hoverActionBar 不够：cursor 离开 sprite 后切回原生鼠标穿透，
   // PIXI 不再收事件、pointerout 不触发；改由 usePetPassthrough 拿 Rust cursor 数据每帧判断。
   const [cursorOnSprite, setCursorOnSprite] = useState(false);
   const [hoverActionBarDom, setHoverActionBarDom] = useState(false);
@@ -728,7 +732,7 @@ export function PetApp() {
   };
 
   const openFeedback = () => {
-    void openSettingsWindow({ target: "feedback" });
+    void openFeedbackWindow();
   };
 
   const openIMConnect = () => {
@@ -802,32 +806,35 @@ export function PetApp() {
           onRuntimeChange={setRuntime}
         />
       ) : null}
-      {spriteScreen &&
-        isFiniteRect(actionBarAnchor ?? spriteScreen) &&
-        isFiniteViewport(interactionViewport) && (
-        <ActionBar
-          actionBarAnchor={actionBarAnchor ?? spriteScreen}
-          viewport={interactionViewport}
-          visible={stickyVisible}
-          onMouseEnter={() => setHoverActionBarDom(true)}
-          onMouseLeave={() => setHoverActionBarDom(false)}
-          onOpenChat={openChat}
-          petAvatarSize={petAvatarSize}
-          onCollapseToEdge={collapseToEdge}
-          onRestoreNormal={restoreNormal}
-          onOpenSettings={openSettings}
-          onOpenFeedback={openFeedback}
-          onOpenIMConnect={openIMConnect}
-          onStartVoiceCall={startVoiceCall}
-          voiceCallActive={isVoiceCallLive(voicePhase)}
-          passthroughDisabled={passthroughDisabled}
-          onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
-          onOpenMemoryInspector={openMemoryInspector}
-          onOpenLive2DDebugger={openLive2DDebugger}
-          onInjectShort={injectShort}
-          onInjectLong={injectLong}
-        />
-      )}
+      {shouldRenderActionBar({
+        visible: stickyVisible,
+        spriteScreen,
+        actionBarAnchor,
+        viewport: interactionViewport,
+      }) &&
+        spriteScreen && (
+          <ActionBar
+            actionBarAnchor={actionBarAnchor ?? spriteScreen}
+            viewport={interactionViewport}
+            onMouseEnter={() => setHoverActionBarDom(true)}
+            onMouseLeave={() => setHoverActionBarDom(false)}
+            onOpenChat={openChat}
+            petAvatarSize={petAvatarSize}
+            onCollapseToEdge={collapseToEdge}
+            onRestoreNormal={restoreNormal}
+            onOpenSettings={openSettings}
+            onOpenFeedback={openFeedback}
+            onOpenIMConnect={openIMConnect}
+            onStartVoiceCall={startVoiceCall}
+            voiceCallActive={isVoiceCallLive(voicePhase)}
+            passthroughDisabled={passthroughDisabled}
+            onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
+            onOpenMemoryInspector={openMemoryInspector}
+            onOpenLive2DDebugger={openLive2DDebugger}
+            onInjectShort={injectShort}
+            onInjectLong={injectLong}
+          />
+        )}
     </>
   );
 }
