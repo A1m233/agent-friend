@@ -64,7 +64,6 @@ const DRAG_MOVE_THRESHOLD_PX = 5;
 const CLICK_MAX_DURATION_MS = 300;
 const ALPHA_SCAN_NULL_FRAMES = 30;
 // Future settings slider plugs into this factor without changing model normalization or mini mode.
-const DEFAULT_USER_SCALE = 1;
 
 function getGlobalPoint(event: unknown): { x: number; y: number } | null {
   const candidate = event as { global?: { x?: unknown; y?: unknown } };
@@ -311,8 +310,8 @@ export function Spine38AvatarSurface({
       const profile = displayProfileRef.current;
       const effectiveScale = composeSpine38DisplayScale({
         normalizationScale: normalizationScaleRef.current,
-        userScale: DEFAULT_USER_SCALE,
-        displayModeScale: profile.scale,
+        userScale: profile.modelScale,
+        displayModeScale: profile.modeScale,
       });
       const nextScaleX = effectiveScale;
       const nextScaleY = effectiveScale;
@@ -615,8 +614,8 @@ export function Spine38AvatarSurface({
             layoutBoundsRef.current = localVisualBounds;
             const effectiveScale = composeSpine38DisplayScale({
               normalizationScale,
-              userScale: DEFAULT_USER_SCALE,
-              displayModeScale: displayProfileRef.current.scale,
+              userScale: displayProfileRef.current.modelScale,
+              displayModeScale: displayProfileRef.current.modeScale,
             });
             slot.scale.set(effectiveScale);
             let normalizedBounds = toScreenRegion(slot, spine, localVisualBounds);

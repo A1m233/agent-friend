@@ -28,7 +28,9 @@ export interface AnchorDiagnosticCenters {
 export interface AnchorDiagnosticDisplayProfile {
   avatarSize: string;
   placementKey: string;
-  scale: number;
+  modelScale: number;
+  modeScale: number;
+  renderScale: number;
   placementPoint: AnchorDiagnosticPoint | null;
   edge: string | null;
 }

@@ -113,6 +113,47 @@ describe("installed avatar model catalog", () => {
     expect(entries).toEqual([]);
   });
 
+  it("creates catalog entries only for runtime-validated user models", () => {
+    const entries = mergeInstalledAvatarModelResources(
+      [
+        {
+          id: "user:spine38:abc",
+          name: "我的模型",
+          backend: "spine",
+          available: true,
+          contentRevision: "revision-1",
+          defaultAnimation: "Relax",
+          resources: {
+            skeletonPath: "C:/models/a/model.skel",
+            atlasPath: "C:/models/a/model.atlas",
+            texturePaths: ["C:/models/a/model.png"],
+          },
+        },
+        {
+          id: "user:spine38:not-validated",
+          name: "未校验",
+          backend: "spine",
+          available: true,
+          resources: {
+            skeletonPath: "C:/models/b/model.skel",
+            atlasPath: "C:/models/b/model.atlas",
+          },
+        },
+      ],
+      toAssetUrl,
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "user:spine38:abc",
+      name: "我的模型",
+      source: "user",
+      distribution: "user-local-only",
+      contentRevision: "revision-1",
+      spine: { defaultAnimation: "Relax", runtime: "spine38-pixi7" },
+    });
+  });
+
   it("resolves selected ids with Hiyori fallback from installed entries", () => {
     const entries = [
       {

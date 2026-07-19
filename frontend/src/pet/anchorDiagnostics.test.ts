@@ -65,7 +65,9 @@ describe("anchorDiagnostics", () => {
         displayProfile: {
           avatarSize: "mini",
           placementKey: "normal->mini",
-          scale: 0.5,
+          modelScale: 1,
+          modeScale: 0.5,
+          renderScale: 0.5,
           placementPoint: { x: 980, y: 400 },
           edge: "right",
         },

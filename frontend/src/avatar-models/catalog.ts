@@ -47,6 +47,7 @@ export interface AvatarModelBase {
   enabled: boolean;
   licenseName?: string;
   noticePath?: string;
+  contentRevision?: string;
 }
 
 export interface Live2DAvatarModelEntry extends AvatarModelBase {

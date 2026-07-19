@@ -8,6 +8,7 @@ import {
   DEFAULT_SETTINGS_TARGET,
   locateSettings,
   openFeedback,
+  openSettings,
   PRIMARY_SETTINGS_SECTIONS,
 } from "./navigation";
 
@@ -70,6 +71,20 @@ describe("openFeedback", () => {
         target: "feedback",
         feedback: { preselectSessionId: "session-1" },
       },
+    });
+  });
+});
+
+describe("openSettings", () => {
+  beforeEach(() => mockInvoke.mockReset());
+
+  it("forwards the desktop pet target through the shared navigation command", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    await openSettings({ target: "pet" });
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_settings", {
+      request: { target: "pet" },
     });
   });
 });
