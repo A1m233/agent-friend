@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -26,6 +27,10 @@ pub struct Settings {
     pub avatar_model_id: String,
     #[serde(default)]
     pub pet_avatar_size: PetAvatarSize,
+    #[serde(default)]
+    pub avatar_model_scale_percents: BTreeMap<String, u16>,
+    #[serde(default = "default_pet_mini_scale_percent")]
+    pub pet_mini_scale_percent: u16,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -123,6 +128,17 @@ fn default_avatar_model_id() -> String {
     "builtin:live2d:hiyori".to_string()
 }
 
+fn default_pet_mini_scale_percent() -> u16 {
+    50
+}
+
+fn validate_percent(value: u16, min: u16, max: u16, key: &str) -> Result<u16, String> {
+    if value < min || value > max {
+        return Err(format!("invalid {key}: expected {min}..={max}"));
+    }
+    Ok(value)
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -132,6 +148,8 @@ impl Default for Settings {
             memory_model: default_memory_model(),
             avatar_model_id: default_avatar_model_id(),
             pet_avatar_size: PetAvatarSize::Normal,
+            avatar_model_scale_percents: BTreeMap::new(),
+            pet_mini_scale_percent: default_pet_mini_scale_percent(),
         }
     }
 }
@@ -569,6 +587,24 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid petAvatarSize: {e}"))?;
             s.pet_avatar_size = size;
         }
+        "avatarModelScalePercents" => {
+            let scales: BTreeMap<String, u16> = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid avatarModelScalePercents: {e}"))?;
+            for (model_id, value) in &scales {
+                validate_percent(
+                    *value,
+                    50,
+                    200,
+                    &format!("avatarModelScalePercents.{model_id}"),
+                )?;
+            }
+            s.avatar_model_scale_percents = scales;
+        }
+        "petMiniScalePercent" => {
+            let percent: u16 = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid petMiniScalePercent: {e}"))?;
+            s.pet_mini_scale_percent = validate_percent(percent, 25, 75, "petMiniScalePercent")?;
+        }
         "petDisplayMode" => {
             let mode: LegacyPetDisplayMode = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid legacy petDisplayMode: {e}"))?;
@@ -731,6 +767,25 @@ mod tests {
         let settings = Settings::default();
 
         assert_eq!(settings.pet_avatar_size, PetAvatarSize::Normal);
+    }
+
+    #[test]
+    fn default_avatar_scales_are_normal_and_half_size() {
+        let settings = Settings::default();
+
+        assert!(settings.avatar_model_scale_percents.is_empty());
+        assert_eq!(settings.pet_mini_scale_percent, 50);
+    }
+
+    #[test]
+    fn scale_percent_validation_uses_product_ranges_with_one_percent_steps() {
+        assert_eq!(validate_percent(50, 50, 200, "model"), Ok(50));
+        assert_eq!(validate_percent(51, 50, 200, "model"), Ok(51));
+        assert_eq!(validate_percent(200, 50, 200, "model"), Ok(200));
+        assert!(validate_percent(49, 50, 200, "model").is_err());
+        assert_eq!(validate_percent(25, 25, 75, "mini"), Ok(25));
+        assert_eq!(validate_percent(26, 25, 75, "mini"), Ok(26));
+        assert!(validate_percent(80, 25, 75, "mini").is_err());
     }
 
     #[test]

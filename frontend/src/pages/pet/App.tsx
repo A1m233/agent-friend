@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEventHandler,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
 import {
@@ -8,9 +16,11 @@ import {
   openSettings as openSettingsWindow,
 } from "@/lib/settings/navigation";
 import type { PushEnvelope } from "@/types/push";
+import { useSpine38ImportCoordinator } from "@/avatar-models";
 
 import { ActionBar } from "./ActionBar";
 import { shouldRenderActionBar } from "./actionBarVisibility";
+import { runNativeContextMenuPopup } from "./nativeContextMenuLifecycle";
 import { usePetPassthrough } from "./usePetPassthrough";
 import {
   resolvePetDisplayProfile,
@@ -50,7 +60,7 @@ import {
   resolveInstalledAvatarModelSelection,
   useInstalledAvatarModelCatalog,
 } from "@/avatar-models";
-import { useSetting } from "@/lib/settings";
+import { getAvatarModelScalePercent, useSetting } from "@/lib/settings";
 import { Live2DAvatarSurface } from "@/pet/avatarRuntime/live2d/Live2DAvatarSurface";
 import { Spine38AvatarSurface } from "@/pet/avatarRuntime/spine38/Spine38AvatarSurface";
 import type { PetAvatarRuntime } from "@/pet/avatarRuntime/types";
@@ -126,6 +136,7 @@ function displayTopologySignature(payload: Pick<
  * 详见 [docs/requirements/018-pet-live2d-state-and-lipsync/](../../../../docs/requirements/018-pet-live2d-state-and-lipsync/)。
  */
 export function PetApp() {
+  useSpine38ImportCoordinator();
   const [spriteScreen, setSpriteScreen] = useState<PetRect | null>(null);
   const [actionBarAnchor, setActionBarAnchor] = useState<PetRect | null>(null);
   const [avatarPlacementPoint, setAvatarPlacementPoint] = useState<PetPoint | null>(null);
@@ -149,6 +160,9 @@ export function PetApp() {
   const [cursorOnSprite, setCursorOnSprite] = useState(false);
   const [hoverActionBarDom, setHoverActionBarDom] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [nativeContextMenuOpen, setNativeContextMenuOpen] = useState(false);
+  const nativeContextMenuRef = useRef<Promise<Menu> | null>(null);
+  const nativeContextMenuPopupInFlightRef = useRef(false);
   // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
   const voicePhase = useVoiceStore((s) => s.phase);
@@ -156,6 +170,13 @@ export function PetApp() {
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
   const [avatarModelId] = useSetting("avatarModelId");
   const [petAvatarSize, setPetAvatarSize] = useSetting("petAvatarSize");
+  const [avatarModelScalePercents] = useSetting("avatarModelScalePercents");
+  const [petMiniScalePercent] = useSetting("petMiniScalePercent");
+  const [scalePreview, setScalePreview] = useState<{
+    modelId?: string;
+    modelScalePercent?: number;
+    miniScalePercent?: number;
+  } | null>(null);
   const previousPetAvatarSizeRef = useRef<PetAvatarSize | null>(null);
   const [overlayViewport, setOverlayViewport] = useState<PetViewport>(() =>
     getPetOverlayViewport(),
@@ -170,6 +191,18 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const unlistenPromise = listen<{
+      modelId?: string;
+      modelScalePercent?: number;
+      miniScalePercent?: number;
+    }>("avatar-models://scale-preview", (event) => {
+      setScalePreview((current) => ({ ...current, ...event.payload }));
+    });
+    return () => void unlistenPromise.then((unlisten) => unlisten());
+  }, []);
 
   useEffect(() => {
     spriteScreenRef.current = spriteScreen;
@@ -442,6 +475,11 @@ export function PetApp() {
         rect: anchor,
         viewport: interactionViewport,
         previousAvatarSize: previousPetAvatarSizeRef.current,
+        modelScale:
+          (scalePreview?.modelId === avatarModelId && scalePreview.modelScalePercent !== undefined
+            ? scalePreview.modelScalePercent
+            : getAvatarModelScalePercent(avatarModelScalePercents, avatarModelId)) / 100,
+        miniScale: (scalePreview?.miniScalePercent ?? petMiniScalePercent) / 100,
       });
       if (!placementIntent) return baseProfile;
       return {
@@ -454,7 +492,11 @@ export function PetApp() {
     [
       actionBarAnchor,
       interactionViewport,
+      avatarModelId,
+      avatarModelScalePercents,
       petAvatarSize,
+      petMiniScalePercent,
+      scalePreview,
       spriteScreen,
       placementIntent,
     ],
@@ -515,7 +557,9 @@ export function PetApp() {
       displayProfile: {
         avatarSize: displayProfile.avatarSize,
         placementKey: displayProfile.placementKey,
-        scale: displayProfile.scale,
+        modelScale: displayProfile.modelScale,
+        modeScale: displayProfile.modeScale,
+        renderScale: displayProfile.renderScale,
         placementPoint: displayProfile.placementPoint,
         edge: displayProfile.edge,
       },
@@ -699,13 +743,18 @@ export function PetApp() {
   // AC-6 sticky 防抖（17a 原样保留）
   const [stickyVisible, setStickyVisible] = useState(false);
   useEffect(() => {
-    if (cursorOnSprite || hoverActionBarDom || isDragging) {
+    if (
+      cursorOnSprite ||
+      hoverActionBarDom ||
+      isDragging ||
+      nativeContextMenuOpen
+    ) {
       setStickyVisible(true);
     } else {
       const t = setTimeout(() => setStickyVisible(false), 400);
       return () => clearTimeout(t);
     }
-  }, [cursorOnSprite, hoverActionBarDom, isDragging]);
+  }, [cursorOnSprite, hoverActionBarDom, isDragging, nativeContextMenuOpen]);
 
   const openChat = () => {
     if (!isTauri()) return;
@@ -730,6 +779,74 @@ export function PetApp() {
   const openSettings = () => {
     void openSettingsWindow();
   };
+
+  const openPetSettings = useCallback(() => {
+    void openSettingsWindow({ target: "pet" });
+  }, []);
+
+  const getNativeContextMenu = useCallback(() => {
+    if (!nativeContextMenuRef.current) {
+      nativeContextMenuRef.current = Menu.new({
+        items: [
+          {
+            id: "open-pet-settings",
+            text: "桌宠设置",
+            action: openPetSettings,
+          },
+        ],
+      }).catch((error) => {
+        nativeContextMenuRef.current = null;
+        throw error;
+      });
+    }
+    return nativeContextMenuRef.current;
+  }, [openPetSettings]);
+
+  useEffect(() => {
+    if (isTauri()) {
+      void getNativeContextMenu().catch((error) => {
+        console.warn("[pet] failed to prepare native context menu:", error);
+      });
+    }
+
+    return () => {
+      const menuPromise = nativeContextMenuRef.current;
+      nativeContextMenuRef.current = null;
+      if (menuPromise) {
+        void menuPromise
+          .then((menu) => menu.close())
+          .catch((error) =>
+            console.warn("[pet] failed to release native context menu:", error),
+          );
+      }
+    };
+  }, [getNativeContextMenu]);
+
+  const showNativeContextMenu = useCallback<MouseEventHandler<HTMLDivElement>>(
+    (event) => {
+      if (!isTauri()) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (nativeContextMenuPopupInFlightRef.current) return;
+      nativeContextMenuPopupInFlightRef.current = true;
+
+      void runNativeContextMenuPopup({
+        popup: async () => {
+          const menu = await getNativeContextMenu();
+          await menu.popup(undefined, getCurrentWindow());
+        },
+        onOpenChange: setNativeContextMenuOpen,
+      })
+        .catch((error) => {
+          console.warn("[pet] failed to show native context menu:", error);
+        })
+        .finally(() => {
+          nativeContextMenuPopupInFlightRef.current = false;
+        });
+    },
+    [getNativeContextMenu],
+  );
 
   const openFeedback = () => {
     void openFeedbackWindow();
@@ -780,32 +897,34 @@ export function PetApp() {
 
   return (
     <>
-      {selectedEntry?.backend === "live2d" ? (
-        <Live2DAvatarSurface
-          key={selectedEntry.id}
-          entry={selectedEntry}
-          initialAnchorPoint={avatarPlacementPoint}
-          displayProfile={displayProfile}
-          displayContext={displayContext}
-          spriteScreen={spriteScreen}
-          isDragging={isDragging}
-          setSpriteScreen={setSpriteScreenIfChanged}
-          setIsDragging={setIsDraggingWithTracking}
-          onRuntimeChange={setRuntime}
-        />
-      ) : selectedEntry?.backend === "spine" ? (
-        <Spine38AvatarSurface
-          key={selectedEntry.id}
-          entry={selectedEntry}
-          initialAnchorPoint={avatarPlacementPoint}
-          displayProfile={displayProfile}
-          displayContext={displayContext}
-          setSpriteScreen={setSpriteScreenIfChanged}
-          setActionBarAnchor={setActionBarAnchorIfChanged}
-          setIsDragging={setIsDraggingWithTracking}
-          onRuntimeChange={setRuntime}
-        />
-      ) : null}
+      <div className="contents" onContextMenu={showNativeContextMenu}>
+        {selectedEntry?.backend === "live2d" ? (
+          <Live2DAvatarSurface
+            key={`${selectedEntry.id}@${selectedEntry.contentRevision ?? "builtin"}`}
+            entry={selectedEntry}
+            initialAnchorPoint={avatarPlacementPoint}
+            displayProfile={displayProfile}
+            displayContext={displayContext}
+            spriteScreen={spriteScreen}
+            isDragging={isDragging}
+            setSpriteScreen={setSpriteScreenIfChanged}
+            setIsDragging={setIsDraggingWithTracking}
+            onRuntimeChange={setRuntime}
+          />
+        ) : selectedEntry?.backend === "spine" ? (
+          <Spine38AvatarSurface
+            key={`${selectedEntry.id}@${selectedEntry.contentRevision ?? "builtin"}`}
+            entry={selectedEntry}
+            initialAnchorPoint={avatarPlacementPoint}
+            displayProfile={displayProfile}
+            displayContext={displayContext}
+            setSpriteScreen={setSpriteScreenIfChanged}
+            setActionBarAnchor={setActionBarAnchorIfChanged}
+            setIsDragging={setIsDraggingWithTracking}
+            onRuntimeChange={setRuntime}
+          />
+        ) : null}
+      </div>
       {shouldRenderActionBar({
         visible: stickyVisible,
         spriteScreen,

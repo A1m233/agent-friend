@@ -27,7 +27,9 @@ export type PetEdge = "left" | "right";
 export interface PetDisplayProfile {
   avatarSize: PetAvatarSize;
   placementKey: string;
-  scale: number;
+  modelScale: number;
+  modeScale: number;
+  renderScale: number;
   placementPoint: PetPoint | null;
   edge: PetEdge | null;
 }
@@ -126,12 +128,16 @@ export function resolvePetDisplayProfile(
     rect: PetRect | null;
     viewport: PetViewport;
     previousAvatarSize?: PetAvatarSize | null;
+    modelScale?: number;
+    miniScale?: number;
   },
 ): PetDisplayProfile {
   const { avatarSize, rect, viewport, previousAvatarSize } = input;
   const safeRect = isFiniteRect(rect) ? rect : null;
   const safeViewport = isFiniteViewport(viewport) ? viewport : null;
-  const scale = avatarSize === "mini" ? PET_MINI_SCALE : PET_NORMAL_SCALE;
+  const modelScale = input.modelScale ?? PET_NORMAL_SCALE;
+  const modeScale = avatarSize === "mini" ? (input.miniScale ?? PET_MINI_SCALE) : 1;
+  const renderScale = modelScale * modeScale;
   const placementKey = `${previousAvatarSize ?? "init"}->${avatarSize}`;
 
   if (
@@ -141,12 +147,14 @@ export function resolvePetDisplayProfile(
     safeViewport
   ) {
     const { point, edge } = computeEdgeDockPlacement(safeRect, safeViewport, {
-      scale,
+      scale: modeScale,
     });
     return {
       avatarSize,
       placementKey,
-      scale,
+      modelScale,
+      modeScale,
+      renderScale,
       placementPoint: point,
       edge,
     };
@@ -157,6 +165,7 @@ export function resolvePetDisplayProfile(
     safeRect &&
     safeViewport
   ) {
+    const previousMiniScale = input.miniScale ?? PET_MINI_SCALE;
     const center = {
       x: safeRect.x + safeRect.w / 2,
       y: safeRect.y + safeRect.h / 2,
@@ -164,10 +173,12 @@ export function resolvePetDisplayProfile(
     return {
       avatarSize,
       placementKey,
-      scale,
+      modelScale,
+      modeScale,
+      renderScale,
       placementPoint: clampAvatarCenter(
         center,
-        { w: safeRect.w, h: safeRect.h },
+        { w: safeRect.w / previousMiniScale, h: safeRect.h / previousMiniScale },
         safeViewport,
       ),
       edge: null,
@@ -176,7 +187,9 @@ export function resolvePetDisplayProfile(
   return {
     avatarSize,
     placementKey,
-    scale,
+    modelScale,
+    modeScale,
+    renderScale,
     placementPoint: null,
     edge: null,
   };

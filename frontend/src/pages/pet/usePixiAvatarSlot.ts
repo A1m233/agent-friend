@@ -259,7 +259,7 @@ export function usePixiAvatarSlot(
         const boundsBefore = computeBounds();
         if (!boundsBefore) return;
 
-        slot.scale.set(profile.scale);
+        slot.scale.set(profile.renderScale);
 
         const boundsAfterScale = computeBounds();
         if (!boundsAfterScale) return;

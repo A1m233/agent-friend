@@ -23,6 +23,8 @@ export interface Settings {
   memoryModel: ModelSelection;
   avatarModelId: AvatarModelId;
   petAvatarSize: PetAvatarSize;
+  avatarModelScalePercents: Record<string, number>;
+  petMiniScalePercent: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,7 +34,26 @@ export const DEFAULT_SETTINGS: Settings = {
   memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-pro" },
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
   petAvatarSize: "normal",
+  avatarModelScalePercents: {},
+  petMiniScalePercent: 50,
 };
+
+export const AVATAR_MODEL_SCALE_MIN_PERCENT = 50;
+export const AVATAR_MODEL_SCALE_MAX_PERCENT = 200;
+export const PET_MINI_SCALE_MIN_PERCENT = 25;
+export const PET_MINI_SCALE_MAX_PERCENT = 75;
+export const AVATAR_SCALE_STEP_PERCENT = 1;
+
+export function getAvatarModelScalePercent(
+  scales: Readonly<Record<string, number>>,
+  modelId: string,
+): number {
+  const value = scales[modelId] ?? 100;
+  return Math.min(
+    AVATAR_MODEL_SCALE_MAX_PERCENT,
+    Math.max(AVATAR_MODEL_SCALE_MIN_PERCENT, value),
+  );
+}
 
 const EVENT_CHANGED = "settings://changed";
 

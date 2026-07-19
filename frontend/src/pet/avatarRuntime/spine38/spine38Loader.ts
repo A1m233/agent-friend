@@ -1,4 +1,5 @@
 import * as PIXI7 from "pixi7";
+import { BaseTexture, Texture } from "@pixi/core";
 import { Spine as Spine38, TextureAtlas } from "pixi-spine";
 import { AtlasAttachmentLoader, SkeletonBinary } from "@pixi-spine/runtime-3.8";
 import type { SpineAvatarModelEntry } from "@/avatar-models";
@@ -8,14 +9,22 @@ interface Spine38Resource {
   spineAtlas: TextureAtlas;
 }
 
+interface Spine38TextureQualityTarget {
+  baseTexture: object;
+}
+
 const spine38ResourceCache = new Map<string, Promise<Spine38Resource>>();
 
 export function getSpine38AssetAlias(entry: SpineAvatarModelEntry): string {
-  return `spine38:v5:${entry.id}`;
+  return `spine38:v6:${entry.id}@${entry.contentRevision ?? "builtin"}`;
 }
 
-export function applySpine38TextureQuality(texture: PIXI7.Texture): void {
-  texture.baseTexture.setStyle(PIXI7.SCALE_MODES.LINEAR, PIXI7.MIPMAP_MODES.ON);
+export function applySpine38TextureQuality(texture: Spine38TextureQualityTarget): void {
+  const baseTexture = texture.baseTexture as BaseTexture;
+  baseTexture.setStyle(
+    PIXI7.SCALE_MODES.LINEAR as Parameters<BaseTexture["setStyle"]>[0],
+    PIXI7.MIPMAP_MODES.ON as Parameters<BaseTexture["setStyle"]>[1],
+  );
 }
 
 function readAtlasTexturePages(atlasText: string): string[] {
@@ -46,12 +55,17 @@ async function loadSpine38TextureAtlas(entry: SpineAvatarModelEntry) {
   }
   const atlasText = await response.text();
   const pages = readAtlasTexturePages(atlasText);
-  const textures: Record<string, PIXI7.Texture> = {};
+  const textures: Record<string, Texture> = {};
   await Promise.all(
     pages.map(async (page: string, index: number) => {
       const texturePath = entry.resources.textures?.[index];
       if (!texturePath) return;
-      const texture = await PIXI7.Assets.load<PIXI7.Texture>(texturePath);
+      const textureResponse = await fetch(texturePath);
+      if (!textureResponse.ok) {
+        throw new Error(`Failed to load Spine texture: ${textureResponse.status}`);
+      }
+      const bitmap = await createImageBitmap(await textureResponse.blob());
+      const texture = new Texture(BaseTexture.from(bitmap));
       applySpine38TextureQuality(texture);
       textures[page] = texture;
     }),
@@ -85,7 +99,7 @@ async function loadSpine38Resource(entry: SpineAvatarModelEntry): Promise<Spine3
   const alias = getSpine38AssetAlias(entry);
   let resourcePromise = spine38ResourceCache.get(alias);
   if (!resourcePromise) {
-    resourcePromise = (async () => {
+    const loadPromise = (async () => {
       const spineAtlas = await loadSpine38TextureAtlas(entry);
       if (!spineAtlas) {
         throw new Error(`Missing Spine atlas textures: ${entry.id}`);
@@ -102,7 +116,13 @@ async function loadSpine38Resource(entry: SpineAvatarModelEntry): Promise<Spine3
         spineAtlas,
       };
     })();
-    spine38ResourceCache.set(alias, resourcePromise);
+    spine38ResourceCache.set(alias, loadPromise);
+    void loadPromise.catch(() => {
+      if (spine38ResourceCache.get(alias) === loadPromise) {
+        spine38ResourceCache.delete(alias);
+      }
+    });
+    resourcePromise = loadPromise;
   }
   return resourcePromise;
 }

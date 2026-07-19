@@ -21,7 +21,9 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
     expect(profile).toEqual({
       avatarSize: "normal",
       placementKey: "init->normal",
-      scale: 1,
+      modelScale: 1,
+      modeScale: 1,
+      renderScale: 1,
       placementPoint: null,
       edge: null,
     });
@@ -37,7 +39,9 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
     expect(profile).toEqual({
       avatarSize: "mini",
       placementKey: "init->mini",
-      scale: PET_MINI_SCALE,
+      modelScale: 1,
+      modeScale: PET_MINI_SCALE,
+      renderScale: PET_MINI_SCALE,
       placementPoint: null,
       edge: null,
     });
@@ -54,8 +58,8 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
     });
 
     expect(profile.avatarSize).toBe("normal");
-    expect(profile.scale).toBe(1);
-    expect(profile.placementPoint).toEqual({ x: 58, y: 395 });
+    expect(profile.renderScale).toBe(1);
+    expect(profile.placementPoint).toEqual({ x: 108, y: 395 });
   });
 
   it("switching from normal to mini scales avatar and moves it to an edge", () => {
@@ -67,7 +71,7 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
     });
 
     expect(profile.avatarSize).toBe("mini");
-    expect(profile.scale).toBe(PET_MINI_SCALE);
+    expect(profile.renderScale).toBe(PET_MINI_SCALE);
     expect(profile.placementPoint).not.toBeNull();
     expect(profile.edge).not.toBeNull();
   });
@@ -80,7 +84,7 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
       previousAvatarSize: "mini",
     });
 
-    expect(profile.scale).toBe(PET_MINI_SCALE);
+    expect(profile.renderScale).toBe(PET_MINI_SCALE);
     expect(profile.placementPoint).toBeNull();
     expect(profile.edge).toBeNull();
   });
@@ -149,7 +153,7 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
       previousAvatarSize: "normal",
     });
 
-    expect(profile.scale).toBe(PET_MINI_SCALE);
+    expect(profile.renderScale).toBe(PET_MINI_SCALE);
     expect(profile.placementPoint).toBeNull();
     expect(profile.edge).toBeNull();
   });
@@ -162,8 +166,22 @@ describe("petDisplayProfile · avatar size and edge dock placement", () => {
       previousAvatarSize: "mini",
     });
 
-    expect(profile.scale).toBe(1);
+    expect(profile.renderScale).toBe(1);
     expect(profile.placementPoint).toBeNull();
     expect(profile.edge).toBeNull();
+  });
+
+  it("composes per-model scale with the configurable mini ratio", () => {
+    const profile = resolvePetDisplayProfile({
+      avatarSize: "mini",
+      rect,
+      viewport,
+      modelScale: 1.5,
+      miniScale: 0.4,
+    });
+
+    expect(profile.modelScale).toBe(1.5);
+    expect(profile.modeScale).toBe(0.4);
+    expect(profile.renderScale).toBeCloseTo(0.6);
   });
 });

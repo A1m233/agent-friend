@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/utils/tauri";
 import {
   AVATAR_MODEL_CATALOG,
@@ -25,6 +26,9 @@ export interface InstalledAvatarModelResources {
   resources: InstalledLive2DResourcePaths | InstalledSpineResourcePaths;
   available: boolean;
   error?: string | null;
+  name?: string;
+  contentRevision?: string;
+  defaultAnimation?: string;
 }
 
 interface InstalledCatalogState {
@@ -94,7 +98,98 @@ export function mergeInstalledAvatarModelResources(
     }
   }
 
+  for (const resource of installed) {
+    if (
+      !resource.available ||
+      resource.backend !== "spine" ||
+      !resource.id.startsWith("user:spine38:") ||
+      !isSpineResources(resource.resources) ||
+      !resource.name ||
+      !resource.contentRevision ||
+      !resource.defaultAnimation
+    ) {
+      continue;
+    }
+    entries.push({
+      id: resource.id,
+      name: resource.name,
+      backend: "spine",
+      source: "user",
+      distribution: "user-local-only",
+      enabled: true,
+      contentRevision: resource.contentRevision,
+      resources: {
+        skeleton: convertPath(resource.resources.skeletonPath),
+        atlas: convertPath(resource.resources.atlasPath),
+        textures: resource.resources.texturePaths?.map(convertPath),
+      },
+      spine: {
+        format: "skel",
+        runtime: "spine38-pixi7",
+        defaultAnimation: resource.defaultAnimation,
+      },
+      capabilities: {
+        motions: true,
+        alphaHitTest: true,
+        mouthParams: false,
+        gazeParams: false,
+        expressionParams: false,
+      },
+    });
+  }
+
   return entries;
+}
+
+export interface UserSpineCandidate {
+  id: string;
+  name: string;
+  modelDir: string;
+  skeletonPath: string;
+  atlasPath: string;
+  texturePaths: string[];
+  contentRevision: string;
+  runtimeVersion: string;
+}
+
+export interface UserModelDiagnostic {
+  modelDir: string;
+  code: string;
+  message: string;
+}
+
+export interface UserModelScanSnapshot {
+  candidates: UserSpineCandidate[];
+  diagnostics: UserModelDiagnostic[];
+}
+
+export function useUserAvatarModelScan(): UserModelScanSnapshot {
+  const [snapshot, setSnapshot] = useState<UserModelScanSnapshot>({
+    candidates: [],
+    diagnostics: [],
+  });
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const load = () =>
+      invoke<UserModelScanSnapshot>("get_user_avatar_model_scan").then((next) => {
+        if (!cancelled) setSnapshot(next);
+      });
+    void load();
+    const unlistenPromise = listen<UserModelScanSnapshot>(
+      "avatar-models://scan-updated",
+      (event) => {
+        if (!cancelled) setSnapshot(event.payload);
+      },
+    );
+    return () => {
+      cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  return snapshot;
 }
 
 export async function loadInstalledAvatarModelCatalog(): Promise<AvatarModelCatalogEntry[]> {
@@ -142,7 +237,7 @@ export function useInstalledAvatarModelCatalog(): InstalledCatalogState {
 
   useEffect(() => {
     let cancelled = false;
-    void loadInstalledAvatarModelCatalogWithRetry()
+    const reload = () => loadInstalledAvatarModelCatalogWithRetry()
       .then((entries) => {
         if (cancelled) return;
         if (entries.length === 0) {
@@ -161,8 +256,14 @@ export function useInstalledAvatarModelCatalog(): InstalledCatalogState {
         });
       });
 
+    void reload();
+    const unlistenPromise = isTauri()
+      ? listen("avatar-models://catalog-changed", () => void reload())
+      : Promise.resolve(() => undefined);
+
     return () => {
       cancelled = true;
+      void unlistenPromise.then((unlisten) => unlisten());
     };
   }, []);
 

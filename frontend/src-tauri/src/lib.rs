@@ -892,6 +892,8 @@ pub fn run() {
     let runtime_service_supervisor =
         Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
     let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
+    let avatar_model_manager = Arc::new(avatar_models::AvatarModelManager::new());
+    let setup_avatar_model_manager = avatar_model_manager.clone();
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
     let setup_settings_state = settings_state.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
@@ -907,6 +909,7 @@ pub fn run() {
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .manage(migration_coordinator)
+        .manage(avatar_model_manager)
         .plugin(navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -963,6 +966,10 @@ pub fn run() {
         runtime_services::prepare_voice_runtime,
         runtime_services::stop_voice_tunnel,
         avatar_models::get_installed_avatar_model_resources,
+        avatar_models::get_user_avatar_model_scan,
+        avatar_models::rescan_user_avatar_models,
+        avatar_models::open_user_spine38_models_directory,
+        avatar_models::complete_user_avatar_model_validation,
         autostart::get_autostart_status,
         autostart::set_autostart_enabled,
         ui_state::get_chat_ui_persistence,
@@ -1018,6 +1025,10 @@ pub fn run() {
         runtime_services::prepare_voice_runtime,
         runtime_services::stop_voice_tunnel,
         avatar_models::get_installed_avatar_model_resources,
+        avatar_models::get_user_avatar_model_scan,
+        avatar_models::rescan_user_avatar_models,
+        avatar_models::open_user_spine38_models_directory,
+        avatar_models::complete_user_avatar_model_validation,
         autostart::get_autostart_status,
         autostart::set_autostart_enabled,
         ui_state::get_chat_ui_persistence,
@@ -1171,6 +1182,14 @@ pub fn run() {
                 paths::avatar_model_assets_dir(),
                 paths::avatar_model_catalog_path()
             );
+            app.asset_protocol_scope()
+                .allow_directory(paths::avatar_model_assets_dir(), true)
+                .map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("avatar model asset scope: {error}"),
+                    )
+                })?;
             permissions::init(app.handle()).map_err(|error| {
                 std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -1180,6 +1199,14 @@ pub fn run() {
             avatar_models::ensure_builtin_avatar_models_installed(app.handle()).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, format!("avatar models: {e}"))
             })?;
+            setup_avatar_model_manager
+                .start(app.handle().clone())
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("avatar model watcher: {e}"),
+                    )
+                })?;
 
             setup_tray(app.handle())?;
             spawn_cursor_feed(app.handle());

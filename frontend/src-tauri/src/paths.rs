@@ -66,6 +66,11 @@ pub fn builtin_avatar_models_dir() -> PathBuf {
     avatar_model_assets_dir().join("builtin")
 }
 
+/// 用户自行管理的 Spine 3.8 模型目录；每个一级子目录视为一个模型。
+pub fn user_spine38_avatar_models_dir() -> PathBuf {
+    avatar_model_assets_dir().join("user").join("spine38")
+}
+
 /// 用户导入模型 catalog 预留位置：`<avatar_model_assets_dir>/catalog.json`。
 pub fn avatar_model_catalog_path() -> PathBuf {
     avatar_model_assets_dir().join(AVATAR_MODEL_CATALOG_FILE)
@@ -174,6 +179,13 @@ mod tests {
             PathBuf::from("agent-friend-data")
                 .join(AVATAR_MODELS_DIR)
                 .join("builtin")
+        );
+        assert_eq!(
+            user_spine38_avatar_models_dir(),
+            PathBuf::from("agent-friend-data")
+                .join(AVATAR_MODELS_DIR)
+                .join("user")
+                .join("spine38")
         );
         assert_eq!(
             editable_persona_path(),
