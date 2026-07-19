@@ -40,6 +40,16 @@ env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/rep
 
 历史 requirement / design 文档里仍可能写 `data/sessions/` `data/personas/` 等过时字面量（002 / 003 / 008 等），那是当时的决策快照，**现行约定以 `agent.paths` / `frontend/src-tauri/src/paths.rs` 为准**。
 
+## 开发构建产物
+
+安装包、打包缓存和编译中间产物属于**开发 / 发布工程资产**，不是运行期用户数据、桌面设置或日志，不得复用 `agent.paths`、Tauri settings path 或 log path：
+
+- 正式安装包及其 SHA / manifest、共享下载缓存、PyInstaller work、Tauri staging 和 Cargo target 默认都不得写入仓库或任意 worktree。
+- agent-friend 完整安装包统一通过 `scripts/package/run.sh` / `run.ps1` 构建；不要把裸 `pnpm tauri build` 的壳产物当成完整产品安装包。
+- 具体默认目录、override、worktree/build 隔离和版本 / 制品规则由 `scripts/package/paths.py`、`versioning.py`、`releases.py` 及 `scripts/package/run.py` 统一实现，Rule 和 Skill 不另写一套路径拼接或比较算法。
+- 修改打包路径或制品布局时，必须同步评估 package tests、`scripts/README.md` 与项目 `package-release` Skill；不要通过在调用处手拼绝对路径绕过统一入口。
+- 仓库内旧 `package-output/`、`scripts/package/.cache/`、`frontend/src-tauri/package-runtime/` 和 `frontend/src-tauri/target/` 只保留防御性 ignore / 兼容清理语义，不是当前默认输出位置。
+
 ## 适用范围与优先级
 
 - 适用于仓库内**凡无强制路径要求**的编排（代码、文档子树、`scripts/` 下的脚本族等）。

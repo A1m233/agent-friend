@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
@@ -16,19 +19,27 @@ from runtime_config import (
 )
 
 PACKAGE_DIR = Path(__file__).resolve().parent
+if str(PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_DIR))
 
 
 def _load(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
 def test_package_version_is_consistent() -> None:
     package = _load("package_run", PACKAGE_DIR / "run.py")
-    assert package._project_version() == "0.1.7"
+    tauri = json.loads(
+        (PACKAGE_DIR.parent.parent / "frontend" / "src-tauri" / "tauri.conf.json").read_text(
+            "utf-8"
+        )
+    )
+    assert package._project_version() == tauri["version"]
 
 
 def test_packaging_environment_removes_credentials(monkeypatch) -> None:
@@ -225,18 +236,26 @@ def test_nsis_postinstall_imports_and_deletes_trusted_seed() -> None:
 
 def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monkeypatch) -> None:
     package = _load("package_run_trusted_resources", PACKAGE_DIR / "run.py")
-    payload = tmp_path / "trusted-credential-seed.bin"
-    key = tmp_path / "trusted-credential-seed.key"
-    config_path = tmp_path / "trusted-tauri.package.conf.json"
     base_config = tmp_path / "tauri.package.conf.json"
     base_config.write_text(
         json.dumps({"bundle": {"resources": {"package-runtime/runtime/": "runtime"}}}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(package, "TRUSTED_SEED_PAYLOAD", payload)
-    monkeypatch.setattr(package, "TRUSTED_SEED_KEY", key)
-    monkeypatch.setattr(package, "TRUSTED_TAURI_CONFIG", config_path)
     monkeypatch.setattr(package, "TAURI_CONFIG", base_config)
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    home = tmp_path / "home"
+    common_git.mkdir(parents=True)
+    home.mkdir()
+    roots = package.resolve_package_roots(
+        repo,
+        state_dir=tmp_path / "state",
+        releases_dir=tmp_path / "releases",
+        home=home,
+        common_git_dir=common_git,
+    )
+    build_paths = package.create_build_paths(roots, build_id="trusted-test")
+    build_paths.build_dir.mkdir(parents=True)
     store = _FakeCredentialStore()
     credentials = {
         name: f"trusted-package-never-print-{index}"
@@ -244,17 +263,19 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
     }
     store.values.update(credentials)
 
-    assert package._prepare_trusted_resources(store) == config_path
+    config_path = package._write_package_config(
+        build_paths,
+        trusted_beta=True,
+        credential_store=store,
+    )
+    payload, key = package._trusted_resource_paths(build_paths)
     assert payload.is_file()
     assert key.is_file()
     config = json.loads(config_path.read_text("utf-8"))
     resources = config["bundle"]["resources"]
-    assert resources["package-runtime/trusted-credential-seed.bin"] == (
-        "trusted-credential-seed.bin"
-    )
-    assert resources["package-runtime/trusted-credential-seed.key"] == (
-        "trusted-credential-seed.key"
-    )
+    assert resources[payload.as_posix()] == "trusted-credential-seed.bin"
+    assert resources[key.as_posix()] == "trusted-credential-seed.key"
+    assert resources[build_paths.runtime_stage.as_posix() + "/"] == "runtime"
     decoded = decrypt_credential_seed(payload.read_bytes(), key.read_bytes())
     for name in OPTIONAL_CREDENTIAL_NAMES:
         assert decoded[name] is None
@@ -266,12 +287,398 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
 
 
 def test_trusted_artifact_paths_are_visibly_sensitive() -> None:
-    package = _load("package_run_artifact_paths", PACKAGE_DIR / "run.py")
+    releases = _load("package_release_artifact_paths", PACKAGE_DIR / "releases.py")
 
-    ordinary_dir, ordinary_name = package._release_artifact_paths("1.2.3", trusted_beta=False)
-    trusted_dir, trusted_name = package._release_artifact_paths("1.2.3", trusted_beta=True)
+    ordinary_dir = releases.formal_release_dir(Path("releases"), "1.2.3", "ordinary")
+    trusted_dir = releases.formal_release_dir(Path("releases"), "1.2.3", "trusted-beta")
+    ordinary_name = releases.installer_name("1.2.3", distribution="ordinary", local_test=False)
+    trusted_name = releases.installer_name("1.2.3", distribution="trusted-beta", local_test=False)
 
-    assert ordinary_dir.name == "agent-friend-1.2.3-windows-x64"
+    assert ordinary_dir.name == "ordinary"
     assert ordinary_name == "agent-friend_1.2.3_windows_x64-setup.exe"
     assert "trusted-beta-sensitive" in trusted_dir.name
     assert "trusted-beta-SENSITIVE" in trusted_name
+
+
+def test_package_roots_are_stable_across_worktrees_and_builds_are_isolated(tmp_path) -> None:
+    package_paths = _load("package_paths_isolation", PACKAGE_DIR / "paths.py")
+    common_git = tmp_path / "main" / ".git"
+    first_repo = tmp_path / "worktrees" / "first"
+    second_repo = tmp_path / "worktrees" / "second"
+    state = tmp_path / "machine-state"
+    releases = tmp_path / "machine-releases"
+    home = tmp_path / "home"
+    for path in (common_git, first_repo, second_repo, home):
+        path.mkdir(parents=True)
+
+    first = package_paths.resolve_package_roots(
+        first_repo,
+        state_dir=state,
+        releases_dir=releases,
+        home=home,
+        common_git_dir=common_git,
+    )
+    second = package_paths.resolve_package_roots(
+        second_repo,
+        state_dir=state,
+        releases_dir=releases,
+        home=home,
+        common_git_dir=common_git,
+    )
+
+    assert first.releases_root == second.releases_root == releases.resolve()
+    assert first.cache_dir == second.cache_dir
+    assert first.repo_id == second.repo_id
+    assert first.worktree_id != second.worktree_id
+    assert first.work_root != second.work_root
+    build_one = package_paths.create_build_paths(first, build_id="build-one")
+    build_two = package_paths.create_build_paths(first, build_id="build-two")
+    assert build_one.build_dir != build_two.build_dir
+
+
+def test_package_roots_reject_repository_and_broad_user_paths(tmp_path) -> None:
+    package_paths = _load("package_paths_safety", PACKAGE_DIR / "paths.py")
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    home = tmp_path / "home"
+    for path in (common_git, home):
+        path.mkdir(parents=True)
+
+    for state, releases in (
+        (repo / "package-output", tmp_path / "releases"),
+        (tmp_path / "state", home),
+    ):
+        try:
+            package_paths.resolve_package_roots(
+                repo,
+                state_dir=state,
+                releases_dir=releases,
+                home=home,
+                common_git_dir=common_git,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("unsafe package roots must fail closed")
+
+
+def test_safe_rmtree_only_deletes_inside_current_build(tmp_path) -> None:
+    package_paths = _load("package_paths_delete", PACKAGE_DIR / "paths.py")
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    home = tmp_path / "home"
+    common_git.mkdir(parents=True)
+    home.mkdir()
+    roots = package_paths.resolve_package_roots(
+        repo,
+        state_dir=tmp_path / "state",
+        releases_dir=tmp_path / "releases",
+        home=home,
+        common_git_dir=common_git,
+    )
+    build = package_paths.create_build_paths(roots, build_id="safe-build")
+    child = build.build_dir / "child"
+    child.mkdir(parents=True)
+
+    package_paths.safe_rmtree(child, build_paths=build)
+    assert not child.exists()
+    try:
+        package_paths.safe_rmtree(roots.state_root, build_paths=build)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("state root deletion must be rejected")
+
+
+def _write_version_fixture(root: Path, version: str = "1.2.3") -> None:
+    tauri = root / "frontend" / "src-tauri"
+    tauri.mkdir(parents=True)
+    (tauri / "tauri.conf.json").write_text(
+        json.dumps({"productName": "agent-friend", "version": version}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (root / "frontend" / "package.json").write_text(
+        json.dumps({"name": "frontend", "version": version}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (tauri / "Cargo.toml").write_text(
+        f'[package]\nname = "app"\nversion = "{version}"\n\n[dependencies]\n',
+        encoding="utf-8",
+    )
+
+
+def test_semver_validation_and_precedence() -> None:
+    versioning = _load("package_versioning_semver", PACKAGE_DIR / "versioning.py")
+    assert versioning.SemVer.parse("1.0.0-alpha.1") < versioning.SemVer.parse("1.0.0")
+    assert versioning.SemVer.parse("1.0.0+first") == versioning.SemVer.parse("1.0.0+second")
+    for invalid in ("1", "1.2", "01.2.3", "1.2.3-01", "v1.2.3"):
+        try:
+            versioning.SemVer.parse(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid SemVer was accepted: {invalid}")
+
+
+def test_project_version_set_updates_all_product_metadata(tmp_path) -> None:
+    versioning = _load("package_versioning_update", PACKAGE_DIR / "versioning.py")
+    _write_version_fixture(tmp_path)
+
+    result = versioning.set_project_version(tmp_path, "1.3.0-beta.1")
+
+    assert str(result.version) == "1.3.0-beta.1"
+    assert set(result.values.values()) == {"1.3.0-beta.1"}
+
+
+def test_project_version_set_rolls_back_after_partial_replace(tmp_path) -> None:
+    versioning = _load("package_versioning_rollback", PACKAGE_DIR / "versioning.py")
+    _write_version_fixture(tmp_path)
+    calls = 0
+
+    def fail_second(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated replace failure")
+        os.replace(source, target)
+
+    try:
+        versioning.set_project_version(tmp_path, "2.0.0", replace=fail_second)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("partial replace failure must be reported")
+    restored = versioning.read_project_version(tmp_path)
+    assert str(restored.version) == "1.2.3"
+
+
+def _release_manifest(*, version: str, build_id: str, local_test: bool) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "product": "agent-friend",
+        "version": version,
+        "platform": "windows-x64",
+        "build_mode": "local-test" if local_test else "formal",
+        "distribution": "ordinary",
+        "publishable": not local_test,
+        "sensitive": False,
+        "created_at": datetime.now(UTC).isoformat(),
+        "build_id": build_id,
+        "source": {"commit": "a" * 40, "dirty": local_test},
+        "toolchain": {"python": "3.12", "tauri_cli": "2.11.2"},
+        "installer": {},
+        "upgrade_mode": "manual-installer",
+        "identifier": "com.agentfriend.desktop",
+    }
+
+
+def test_formal_releases_are_immutable_and_local_test_is_not_latest(tmp_path) -> None:
+    releases = _load("package_releases_publish", PACKAGE_DIR / "releases.py")
+    candidate = tmp_path / "candidate.exe"
+    candidate.write_bytes(b"installer")
+    root = tmp_path / "release-root"
+    formal_manifest = _release_manifest(version="1.2.3", build_id="formal-one", local_test=False)
+    setup = releases.publish_installer(
+        candidate,
+        releases_root=root,
+        manifest=formal_manifest,
+        local_test=False,
+    )
+    assert setup.is_file()
+    try:
+        releases.publish_installer(
+            candidate,
+            releases_root=root,
+            manifest=formal_manifest,
+            local_test=False,
+        )
+    except RuntimeError as exc:
+        assert "immutable" in str(exc)
+    else:
+        raise AssertionError("formal release overwrite must fail closed")
+
+    local_manifest = _release_manifest(version="9.0.0", build_id="local-one", local_test=True)
+    local_setup = releases.publish_installer(
+        candidate,
+        releases_root=root,
+        manifest=local_manifest,
+        local_test=True,
+    )
+    assert "local-test-NOT-FOR-DISTRIBUTION" in local_setup.name
+    records, warnings = releases.discover_formal_releases(root)
+    assert not warnings
+    assert str(releases.latest_formal_version(records)) == "1.2.3"
+
+
+def test_invalid_formal_manifest_is_ignored_with_warning(tmp_path) -> None:
+    releases = _load("package_releases_invalid", PACKAGE_DIR / "releases.py")
+    invalid = tmp_path / "releases" / "releases" / "2.0.0" / "windows-x64" / "ordinary"
+    invalid.mkdir(parents=True)
+    (invalid / "release.json").write_text("{}", encoding="utf-8")
+
+    records, warnings = releases.discover_formal_releases(tmp_path / "releases")
+
+    assert not records
+    assert len(warnings) == 1
+
+
+def test_installer_build_uses_external_cargo_target_and_generated_resource_config(
+    tmp_path, monkeypatch
+) -> None:
+    package = _load("package_run_external_build", PACKAGE_DIR / "run.py")
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    home = tmp_path / "home"
+    common_git.mkdir(parents=True)
+    home.mkdir()
+    roots = package.resolve_package_roots(
+        repo,
+        state_dir=tmp_path / "state",
+        releases_dir=tmp_path / "releases",
+        home=home,
+        common_git_dir=common_git,
+    )
+    build_paths = package.create_build_paths(roots, build_id="external-build")
+    build_paths.runtime_stage.mkdir(parents=True)
+    (build_paths.runtime_stage / "runtime-inventory.json").write_text("{}", encoding="utf-8")
+    build_paths.cargo_target_dir.mkdir(parents=True)
+    stale_marker = build_paths.cargo_target_dir / "stale-frontend-embedding"
+    stale_marker.write_text("must be removed", encoding="utf-8")
+    base_config = tmp_path / "tauri.package.conf.json"
+    base_config.write_text(
+        json.dumps(
+            {
+                "bundle": {
+                    "resources": {
+                        "package-runtime/runtime/": "runtime",
+                        "../avatar/": "avatar-seed",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(package, "TAURI_CONFIG", base_config)
+    monkeypatch.setattr(package.shutil, "which", lambda _: "pnpm")
+    monkeypatch.setattr(package, "_toolchain_versions", lambda _: {"tauri_cli": "2.11.2"})
+    published: dict[str, object] = {}
+
+    def fake_run(command, *, cwd=package.REPO_ROOT, env=None) -> None:
+        assert env is not None
+        assert env["CARGO_TARGET_DIR"] == str(build_paths.cargo_target_dir)
+        if command[1:3] == ["run", "build"]:
+            assert command[3] == "--outDir"
+            build_paths.frontend_dist.mkdir(parents=True)
+            for entrypoint in package.REQUIRED_FRONTEND_ENTRYPOINTS:
+                (build_paths.frontend_dist / entrypoint).write_text("ok", encoding="utf-8")
+            return
+        assert not stale_marker.exists()
+        config_path = Path(command[command.index("--config") + 1])
+        config = json.loads(config_path.read_text("utf-8"))
+        resources = config["bundle"]["resources"]
+        assert "package-runtime/runtime/" not in resources
+        runtime_resource = build_paths.runtime_stage.as_posix() + "/"
+        assert resources[runtime_resource] == "runtime"
+        assert config["build"]["beforeBuildCommand"] == ""
+        assert config["build"]["frontendDist"] == package._tauri_relative_path(
+            build_paths.frontend_dist
+        )
+        bundle = build_paths.cargo_target_dir / "release" / "bundle" / "nsis"
+        bundle.mkdir(parents=True)
+        (bundle / "candidate.exe").write_bytes(b"candidate")
+        executable = build_paths.cargo_target_dir / "release" / "agent-friend.exe"
+        executable.write_bytes(
+            b"\0".join(name.encode("utf-8") for name in package.REQUIRED_FRONTEND_ENTRYPOINTS)
+        )
+
+    def fake_publish(candidate, *, releases_root, manifest, local_test):
+        published.update(
+            candidate=candidate,
+            releases_root=releases_root,
+            manifest=manifest,
+            local_test=local_test,
+        )
+        return tmp_path / "published.exe"
+
+    monkeypatch.setattr(package, "_run", fake_run)
+    monkeypatch.setattr(package, "publish_installer", fake_publish)
+
+    result = package._build_installer(
+        "1.2.3",
+        build_paths=build_paths,
+        source={"commit": "a" * 40, "dirty": True},
+        local_test=True,
+    )
+
+    assert result == tmp_path / "published.exe"
+    assert published["local_test"] is True
+    assert published["releases_root"] == roots.releases_root
+    manifest = published["manifest"]
+    assert isinstance(manifest, dict)
+    assert manifest["build_mode"] == "local-test"
+    assert manifest["publishable"] is False
+
+
+def test_frontend_dist_validation_rejects_missing_product_entrypoints(tmp_path) -> None:
+    package = _load("package_run_frontend_dist_guard", PACKAGE_DIR / "run.py")
+    frontend_dist = tmp_path / "frontend-dist"
+    frontend_dist.mkdir()
+    (frontend_dist / "index.html").write_text("ok", encoding="utf-8")
+
+    try:
+        package._validate_frontend_dist(frontend_dist)
+    except RuntimeError as error:
+        assert "frontend build output is incomplete" in str(error)
+        assert "chat.html" in str(error)
+        assert "pet.html" in str(error)
+    else:
+        raise AssertionError("incomplete frontendDist must be rejected")
+
+
+def test_embedded_frontend_validation_rejects_stale_tauri_executable(tmp_path) -> None:
+    package = _load("package_run_embedded_frontend_guard", PACKAGE_DIR / "run.py")
+    executable = tmp_path / "agent-friend.exe"
+    executable.write_bytes(b"index.html\0chat.html")
+
+    try:
+        package._validate_embedded_frontend(
+            executable,
+            ["index.html", "chat.html", "pet.html"],
+        )
+    except RuntimeError as error:
+        assert "does not contain the complete frontend" in str(error)
+        assert "pet.html" in str(error)
+    else:
+        raise AssertionError("stale Tauri executable must be rejected")
+
+
+def test_formal_build_rejects_dirty_source(tmp_path) -> None:
+    package = _load("package_run_formal_guard", PACKAGE_DIR / "run.py")
+    repo = tmp_path / "repo"
+    common_git = repo / ".git"
+    home = tmp_path / "home"
+    common_git.mkdir(parents=True)
+    home.mkdir()
+    roots = package.resolve_package_roots(
+        repo,
+        state_dir=tmp_path / "state",
+        releases_dir=tmp_path / "releases",
+        home=home,
+        common_git_dir=common_git,
+    )
+    project = package.ProjectVersion(
+        version=package.read_project_version(package.REPO_ROOT).version,
+        values={"tauri": "0.1.7", "frontend": "0.1.7", "cargo": "0.1.7"},
+    )
+
+    try:
+        package._validate_formal_build(
+            roots,
+            project,
+            source={"commit": "a" * 40, "dirty": True},
+            distribution="ordinary",
+        )
+    except RuntimeError as exc:
+        assert "clean worktree" in str(exc)
+    else:
+        raise AssertionError("dirty formal build must fail closed")

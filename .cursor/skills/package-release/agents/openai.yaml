@@ -1,0 +1,4 @@
+interface:
+  display_name: "Package Release"
+  short_description: "Build and govern agent-friend Windows installers"
+  default_prompt: "Use $package-release to inspect versions and build a governed Windows installer."
