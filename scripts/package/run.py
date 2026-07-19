@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -18,6 +17,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from paths import (
+    BuildPaths,
+    PackageRoots,
+    create_build_paths,
+    load_build_paths,
+    new_build_id,
+    resolve_package_roots,
+    safe_rmtree,
+)
+from releases import (
+    discover_formal_releases,
+    formal_release_dir,
+    latest_formal_version,
+    publish_installer,
+    sha256,
+)
+from versioning import ProjectVersion, read_project_version, set_project_version
+
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
     KeyringSource,
@@ -28,18 +45,24 @@ from runtime_config import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
 TAURI_DIR = REPO_ROOT / "frontend" / "src-tauri"
-STAGE_DIR = TAURI_DIR / "package-runtime" / "runtime"
-OUTPUT_DIR = REPO_ROOT / "package-output"
-CACHE_DIR = SCRIPT_DIR / ".cache"
 SPEC_PATH = SCRIPT_DIR / "windows" / "agent_friend_runtime.spec"
 TAURI_CONFIG = SCRIPT_DIR / "windows" / "tauri.package.conf.json"
-TRUSTED_SEED_PAYLOAD = TAURI_DIR / "package-runtime" / "trusted-credential-seed.bin"
-TRUSTED_SEED_KEY = TAURI_DIR / "package-runtime" / "trusted-credential-seed.key"
-TRUSTED_TAURI_CONFIG = TAURI_DIR / "package-runtime" / "trusted-tauri.package.conf.json"
 CLOUDFLARED_LOCK = SCRIPT_DIR / "vendor" / "cloudflared.lock.json"
 MODEL_RELATIVE_DIR = Path("models") / "bge-small-zh-v1.5"
 MODEL_REPOSITORY = "onnx-community/bge-small-zh-v1.5-ONNX"
 MODEL_REVISION = "9507db33464b5da99a532ac26b2a251767cbc62b"
+REQUIRED_FRONTEND_ENTRYPOINTS = {
+    "index.html",
+    "bubble.html",
+    "im-connect.html",
+    "memory-inspector.html",
+    "spine-spike.html",
+    "live2d-debugger.html",
+    "voice-call.html",
+    "chat.html",
+    "pet.html",
+    "settings.html",
+}
 SECRET_NAMES = {
     *ALL_CREDENTIAL_NAMES,
     "VOICE_BRIDGE_VOLC_ACCESS_KEY",
@@ -53,11 +76,7 @@ SECRET_NAMES = {
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256(path)
 
 
 def _sanitized_env() -> dict[str, str]:
@@ -74,6 +93,36 @@ def _sanitized_env() -> dict[str, str]:
 def _run(command: list[str], *, cwd: Path = REPO_ROOT, env: dict[str, str] | None = None) -> None:
     print("+", subprocess.list2cmdline(command))
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def _capture(command: list[str], *, cwd: Path = REPO_ROOT) -> str:
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.stdout.strip() or result.stderr.strip()
+
+
+def _source_metadata() -> dict[str, Any]:
+    commit = _capture(["git", "rev-parse", "HEAD"])
+    dirty = bool(_capture(["git", "status", "--porcelain"]))
+    return {"commit": commit, "dirty": dirty}
+
+
+def _toolchain_versions(pnpm: str) -> dict[str, str]:
+    frontend = _read_json(REPO_ROOT / "frontend" / "package.json")
+    tauri_cli = str(frontend.get("devDependencies", {}).get("@tauri-apps/cli", "unknown"))
+    return {
+        "python": platform.python_version(),
+        "pnpm": _capture([pnpm, "--version"]),
+        "rustc": _capture(["rustc", "--version"]),
+        "cargo": _capture(["cargo", "--version"]),
+        "tauri_cli": tauri_cli,
+    }
 
 
 def _free_loopback_port() -> int:
@@ -182,21 +231,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _project_version() -> str:
-    tauri = _read_json(TAURI_DIR / "tauri.conf.json")
-    frontend = _read_json(REPO_ROOT / "frontend" / "package.json")
-    cargo_version = ""
-    in_package = False
-    for raw_line in (TAURI_DIR / "Cargo.toml").read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if line.startswith("["):
-            in_package = line == "[package]"
-        elif in_package and line.startswith("version ="):
-            cargo_version = line.split("=", 1)[1].strip().strip('"')
-            break
-    versions = {str(tauri.get("version")), str(frontend.get("version")), cargo_version}
-    if len(versions) != 1 or not cargo_version:
-        raise RuntimeError(f"version mismatch across tauri/package.json/Cargo.toml: {versions}")
-    return cargo_version
+    return str(read_project_version(REPO_ROOT).version)
 
 
 def _ensure_windows_x64() -> None:
@@ -232,10 +267,10 @@ def _download(*, url: str, expected_sha256: str, destination: Path, offline: boo
     return destination
 
 
-def _install_memory_model(destination: Path) -> None:
+def _install_memory_model(destination: Path, *, cache_dir: Path) -> None:
     from memory_eval.retrieval_benchmark.runner import install_onnx_assets
 
-    cached_model = CACHE_DIR / f"memory-model-{MODEL_REVISION}"
+    cached_model = cache_dir / f"memory-model-{MODEL_REVISION}"
     if not cached_model.is_dir() or not any(cached_model.iterdir()):
         try:
             install_onnx_assets(
@@ -255,8 +290,8 @@ def _install_memory_model(destination: Path) -> None:
     shutil.copytree(cached_model, destination)
 
 
-def _build_runtime(*, offline: bool, reuse_frozen: bool) -> None:
-    work_dir = OUTPUT_DIR / "work" / "pyinstaller"
+def _build_runtime(build_paths: BuildPaths, *, offline: bool, reuse_frozen: bool) -> None:
+    work_dir = build_paths.pyinstaller_dir
     dist_dir = work_dir / "dist"
     frozen_launcher = dist_dir / "agent-friend-runtime" / "agent-friend-runtime.exe"
     if reuse_frozen:
@@ -264,7 +299,7 @@ def _build_runtime(*, offline: bool, reuse_frozen: bool) -> None:
             raise RuntimeError("--reuse-frozen requested but no previous frozen runtime exists")
     else:
         if work_dir.exists():
-            shutil.rmtree(work_dir)
+            safe_rmtree(work_dir, build_paths=build_paths)
         work_dir.mkdir(parents=True)
         _run(
             [
@@ -281,29 +316,31 @@ def _build_runtime(*, offline: bool, reuse_frozen: bool) -> None:
             ]
         )
 
-    if STAGE_DIR.exists():
-        shutil.rmtree(STAGE_DIR)
-    STAGE_DIR.mkdir(parents=True)
-    shutil.copytree(dist_dir / "agent-friend-runtime", STAGE_DIR / "python")
-    _copy_runtime_supplements(STAGE_DIR / "python")
+    stage_dir = build_paths.runtime_stage
+    if stage_dir.exists():
+        safe_rmtree(stage_dir, build_paths=build_paths)
+    stage_dir.mkdir(parents=True)
+    shutil.copytree(dist_dir / "agent-friend-runtime", stage_dir / "python")
+    _copy_runtime_supplements(stage_dir / "python")
 
     cloudflared_lock = _read_json(CLOUDFLARED_LOCK)
-    cloudflared_cache = CACHE_DIR / f"cloudflared-{cloudflared_lock['version']}-windows-amd64.exe"
+    cache_dir = build_paths.roots.cache_dir
+    cloudflared_cache = cache_dir / f"cloudflared-{cloudflared_lock['version']}-windows-amd64.exe"
     cloudflared = _download_locked(CLOUDFLARED_LOCK, cloudflared_cache, offline=offline)
-    vendor_dir = STAGE_DIR / "vendor"
+    vendor_dir = stage_dir / "vendor"
     vendor_dir.mkdir()
     shutil.copy2(cloudflared, vendor_dir / "cloudflared.exe")
     shutil.copy2(CLOUDFLARED_LOCK, vendor_dir / "cloudflared.lock.json")
     cloudflared_license = _download(
         url=str(cloudflared_lock["license_url"]),
         expected_sha256=str(cloudflared_lock["license_sha256"]),
-        destination=CACHE_DIR / f"cloudflared-{cloudflared_lock['version']}-LICENSE",
+        destination=cache_dir / f"cloudflared-{cloudflared_lock['version']}-LICENSE",
         offline=offline,
     )
     shutil.copy2(cloudflared_license, vendor_dir / "LICENSE-cloudflared.txt")
 
-    _install_memory_model(STAGE_DIR / MODEL_RELATIVE_DIR)
-    (STAGE_DIR / "THIRD-PARTY-NOTICES.txt").write_text(
+    _install_memory_model(stage_dir / MODEL_RELATIVE_DIR, cache_dir=cache_dir)
+    (stage_dir / "THIRD-PARTY-NOTICES.txt").write_text(
         "cloudflared\n"
         f"Version: {cloudflared_lock['version']}\n"
         f"Source: {cloudflared_lock['source']}\n"
@@ -312,11 +349,11 @@ def _build_runtime(*, offline: bool, reuse_frozen: bool) -> None:
     )
 
     doctor_env = _sanitized_env()
-    doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(STAGE_DIR / MODEL_RELATIVE_DIR)
-    staged_launcher = STAGE_DIR / "python" / "agent-friend-runtime.exe"
+    doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(stage_dir / MODEL_RELATIVE_DIR)
+    staged_launcher = stage_dir / "python" / "agent-friend-runtime.exe"
     _run([str(staged_launcher), "doctor"], env=doctor_env)
     _smoke_frozen_services(staged_launcher, doctor_env)
-    _write_runtime_inventory(STAGE_DIR)
+    _write_runtime_inventory(stage_dir)
 
 
 def _copy_runtime_supplements(frozen_root: Path) -> None:
@@ -359,118 +396,176 @@ def _write_runtime_inventory(root: Path) -> None:
     )
 
 
-def _cleanup_trusted_resources() -> None:
-    for path in (TRUSTED_SEED_PAYLOAD, TRUSTED_SEED_KEY, TRUSTED_TAURI_CONFIG):
+def _trusted_resource_paths(build_paths: BuildPaths) -> tuple[Path, Path]:
+    directory = build_paths.generated_config_dir / "trusted-resources"
+    return directory / "trusted-credential-seed.bin", directory / "trusted-credential-seed.key"
+
+
+def _tauri_relative_path(path: Path) -> str:
+    """Return a config path relative to src-tauri, as required by frontendDist/resources."""
+
+    try:
+        relative = Path(os.path.relpath(path.resolve(), TAURI_DIR.resolve()))
+    except ValueError as error:
+        raise RuntimeError(
+            f"package build directory must be on the same drive as the repository: {path}"
+        ) from error
+    return relative.as_posix()
+
+
+def _cleanup_trusted_resources(build_paths: BuildPaths) -> None:
+    payload, key = _trusted_resource_paths(build_paths)
+    for path in (payload, key):
         path.unlink(missing_ok=True)
-    release_root = TAURI_DIR / "target" / "release"
+    release_root = build_paths.cargo_target_dir / "release"
     if release_root.is_dir():
-        sensitive_names = {TRUSTED_SEED_PAYLOAD.name, TRUSTED_SEED_KEY.name}
+        sensitive_names = {payload.name, key.name}
         for path in release_root.rglob("*"):
             if path.is_file() and path.name in sensitive_names:
                 path.unlink(missing_ok=True)
 
 
-def _prepare_trusted_resources(store: Any | None = None) -> Path:
-    _cleanup_trusted_resources()
-    credentials = collect_trusted_credentials(store or KeyringSource())
-    artifacts = encrypt_credential_seed(credentials)
-    TRUSTED_SEED_PAYLOAD.parent.mkdir(parents=True, exist_ok=True)
-    TRUSTED_SEED_PAYLOAD.write_bytes(artifacts.payload)
-    TRUSTED_SEED_KEY.write_bytes(artifacts.key)
-
+def _write_package_config(
+    build_paths: BuildPaths,
+    *,
+    trusted_beta: bool,
+    credential_store: Any | None = None,
+) -> Path:
     config = _read_json(TAURI_CONFIG)
     bundle = config.setdefault("bundle", {})
     resources = bundle.setdefault("resources", {})
     if not isinstance(resources, dict):
         raise RuntimeError("package Tauri resources must be an object")
-    resources["package-runtime/trusted-credential-seed.bin"] = "trusted-credential-seed.bin"
-    resources["package-runtime/trusted-credential-seed.key"] = "trusted-credential-seed.key"
-    TRUSTED_TAURI_CONFIG.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    return TRUSTED_TAURI_CONFIG
-
-
-def _release_artifact_paths(version: str, *, trusted_beta: bool) -> tuple[Path, str]:
+    resources.pop("package-runtime/runtime/", None)
+    resources[build_paths.runtime_stage.as_posix() + "/"] = "runtime"
+    build = config.setdefault("build", {})
+    if not isinstance(build, dict):
+        raise RuntimeError("package Tauri build config must be an object")
+    build["beforeBuildCommand"] = ""
+    build["frontendDist"] = _tauri_relative_path(build_paths.frontend_dist)
+    build_paths.generated_config_dir.mkdir(parents=True, exist_ok=True)
     if trusted_beta:
-        directory = OUTPUT_DIR / f"agent-friend-{version}-windows-x64-trusted-beta-sensitive"
-        filename = f"agent-friend_{version}_windows_x64-trusted-beta-SENSITIVE-setup.exe"
-        return directory, filename
-    directory = OUTPUT_DIR / f"agent-friend-{version}-windows-x64"
-    filename = f"agent-friend_{version}_windows_x64-setup.exe"
-    return directory, filename
+        _cleanup_trusted_resources(build_paths)
+        credentials = collect_trusted_credentials(credential_store or KeyringSource())
+        artifacts = encrypt_credential_seed(credentials)
+        payload, key = _trusted_resource_paths(build_paths)
+        payload.parent.mkdir(parents=True, exist_ok=True)
+        payload.write_bytes(artifacts.payload)
+        key.write_bytes(artifacts.key)
+        resources[payload.as_posix()] = payload.name
+        resources[key.as_posix()] = key.name
+    config_path = build_paths.generated_config_dir / "tauri.package.generated.json"
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return config_path
+
+
+def _validate_frontend_dist(frontend_dist: Path) -> list[str]:
+    if not frontend_dist.is_dir():
+        raise RuntimeError(f"frontend build output is missing: {frontend_dist}")
+    entrypoints = sorted(path.name for path in frontend_dist.glob("*.html"))
+    missing = sorted(REQUIRED_FRONTEND_ENTRYPOINTS.difference(entrypoints))
+    if missing:
+        raise RuntimeError(
+            "frontend build output is incomplete; missing entrypoints: " + ", ".join(missing)
+        )
+    return entrypoints
+
+
+def _validate_embedded_frontend(executable: Path, entrypoints: list[str]) -> None:
+    if not executable.is_file():
+        raise RuntimeError(f"built Tauri executable is missing: {executable}")
+    binary = executable.read_bytes()
+    missing = [name for name in entrypoints if name.encode("utf-8") not in binary]
+    if missing:
+        raise RuntimeError(
+            "built Tauri executable does not contain the complete frontend; "
+            "refusing to publish. Missing embedded entrypoints: " + ", ".join(missing)
+        )
 
 
 def _build_installer(
     version: str,
     *,
+    build_paths: BuildPaths,
+    source: dict[str, Any],
+    local_test: bool,
     trusted_beta: bool = False,
     credential_store: Any | None = None,
 ) -> Path:
-    if not (STAGE_DIR / "runtime-inventory.json").is_file():
+    if not (build_paths.runtime_stage / "runtime-inventory.json").is_file():
         raise RuntimeError("runtime stage missing; run the runtime step first")
     pnpm = shutil.which("pnpm")
     if pnpm is None:
         raise RuntimeError("pnpm is required on the Windows build machine")
-    bundle_dir = TAURI_DIR / "target" / "release" / "bundle" / "nsis"
-    previous_candidates = {
-        path.resolve(): path.stat().st_mtime_ns for path in bundle_dir.glob("*.exe")
-    }
+    bundle_dir = build_paths.cargo_target_dir / "release" / "bundle" / "nsis"
     candidate: Path | None = None
     try:
-        config_path = _prepare_trusted_resources(credential_store) if trusted_beta else TAURI_CONFIG
+        config_path = _write_package_config(
+            build_paths,
+            trusted_beta=trusted_beta,
+            credential_store=credential_store,
+        )
+        build_env = _sanitized_env()
+        build_env["CARGO_TARGET_DIR"] = str(build_paths.cargo_target_dir)
+        if build_paths.frontend_dist.exists():
+            safe_rmtree(build_paths.frontend_dist, build_paths=build_paths)
+        _run(
+            [
+                pnpm,
+                "run",
+                "build",
+                "--outDir",
+                str(build_paths.frontend_dist),
+                "--emptyOutDir",
+            ],
+            cwd=REPO_ROOT / "frontend",
+            env=build_env,
+        )
+        entrypoints = _validate_frontend_dist(build_paths.frontend_dist)
+        # Tauri embeds frontendDist into the release executable. A failed build followed by
+        # --reuse-build-id must not reuse an executable compiled before frontendDist existed.
+        if build_paths.cargo_target_dir.exists():
+            safe_rmtree(build_paths.cargo_target_dir, build_paths=build_paths)
         _run(
             [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
             cwd=REPO_ROOT / "frontend",
-            env=_sanitized_env(),
+            env=build_env,
         )
-        candidates = sorted(
-            (
-                path
-                for path in bundle_dir.glob("*.exe")
-                if previous_candidates.get(path.resolve()) != path.stat().st_mtime_ns
-            ),
-            key=lambda path: path.stat().st_mtime_ns,
+        _validate_embedded_frontend(
+            build_paths.cargo_target_dir / "release" / "agent-friend.exe",
+            entrypoints,
         )
+        candidates = sorted(bundle_dir.glob("*.exe"), key=lambda path: path.stat().st_mtime_ns)
         if not candidates:
             raise RuntimeError(f"new NSIS installer not found in {bundle_dir}")
         candidate = candidates[-1]
-        release_dir, setup_name = _release_artifact_paths(version, trusted_beta=trusted_beta)
-        if release_dir.exists():
-            shutil.rmtree(release_dir)
-        release_dir.mkdir(parents=True)
-        setup = release_dir / setup_name
-        shutil.copy2(candidate, setup)
-        digest = _sha256(setup)
-        (release_dir / f"{setup.name}.sha256").write_text(
-            f"{digest}  {setup.name}\n", encoding="ascii"
-        )
+        distribution = "trusted-beta" if trusted_beta else "ordinary"
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "product": "agent-friend",
             "version": version,
             "platform": "windows-x64",
+            "build_mode": "local-test" if local_test else "formal",
+            "publishable": not local_test,
+            "build_id": build_paths.build_id,
             "created_at": datetime.now(UTC).isoformat(),
-            "distribution": "trusted-beta" if trusted_beta else "ordinary",
+            "distribution": distribution,
             "sensitive": trusted_beta,
-            "installer": {
-                "name": setup.name,
-                "size": setup.stat().st_size,
-                "sha256": digest,
-            },
+            "source": source,
+            "toolchain": _toolchain_versions(pnpm),
+            "installer": {},
             "upgrade_mode": "manual-installer",
             "identifier": "com.agentfriend.desktop",
         }
-        (release_dir / "release.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        if trusted_beta:
-            (release_dir / "SENSITIVE-DO-NOT-PUBLISH.txt").write_text(
-                "This trusted beta installer contains shared long-lived API credentials.\n"
-                "Distribute only to explicitly trusted recipients. If leaked, rotate all "
-                "provider credentials and rebuild.\n",
-                encoding="utf-8",
-            )
-        return setup
+        return publish_installer(
+            candidate,
+            releases_root=build_paths.roots.releases_root,
+            manifest=manifest,
+            local_test=local_test,
+        )
     finally:
         if trusted_beta:
-            _cleanup_trusted_resources()
+            _cleanup_trusted_resources(build_paths)
             if candidate is not None:
                 candidate.unlink(missing_ok=True)
 
@@ -502,21 +597,98 @@ def _smoke_installed_runtime(
     print(f"installed runtime smoke passed: {install_dir.resolve()}")
 
 
+def _resolve_roots(args: argparse.Namespace) -> PackageRoots:
+    return resolve_package_roots(
+        REPO_ROOT,
+        state_dir=args.state_dir,
+        releases_dir=args.releases_dir,
+    )
+
+
+def _release_status(roots: PackageRoots, project: ProjectVersion) -> dict[str, Any]:
+    source = _source_metadata()
+    records, warnings = discover_formal_releases(roots.releases_root)
+    latest = latest_formal_version(records)
+    version = str(project.version)
+    candidates: dict[str, dict[str, Any]] = {}
+    for distribution in ("ordinary", "trusted-beta"):
+        destination = formal_release_dir(roots.releases_root, version, distribution)
+        candidates[distribution] = {
+            "destination": str(destination),
+            "exists": destination.exists(),
+            "allowed": (
+                not source["dirty"]
+                and not destination.exists()
+                and (latest is None or project.version >= latest)
+            ),
+        }
+    return {
+        "project_version": version,
+        "version_sources": project.values,
+        "latest_formal_version": str(latest) if latest else None,
+        "source": source,
+        "paths": {
+            "state": str(roots.state_root),
+            "cache": str(roots.cache_dir),
+            "work": str(roots.work_root),
+            "releases": str(roots.releases_root),
+        },
+        "formal": candidates,
+        "warnings": warnings,
+    }
+
+
+def _validate_formal_build(
+    roots: PackageRoots,
+    project: ProjectVersion,
+    *,
+    source: dict[str, Any],
+    distribution: str,
+) -> None:
+    if source["dirty"]:
+        raise RuntimeError(
+            "formal package builds require a clean worktree; use --local-test for local validation"
+        )
+    records, warnings = discover_formal_releases(roots.releases_root)
+    for warning in warnings:
+        print(f"warning: invalid formal release ignored: {warning}")
+    latest = latest_formal_version(records)
+    if latest is not None and project.version < latest:
+        raise RuntimeError(
+            f"project version {project.version} is lower than latest formal release {latest}"
+        )
+    destination = formal_release_dir(roots.releases_root, str(project.version), distribution)
+    if destination.exists():
+        raise RuntimeError(f"formal release already exists and is immutable: {destination}")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "step",
-        choices=("runtime", "installer", "all", "installed-smoke"),
+        choices=(
+            "runtime",
+            "installer",
+            "all",
+            "installed-smoke",
+            "version-status",
+            "version-set",
+        ),
         nargs="?",
         default="all",
     )
+    parser.add_argument("version", nargs="?", help="explicit SemVer used by version-set")
     parser.add_argument(
         "--offline", action="store_true", help="require locked assets in local cache"
     )
     parser.add_argument(
         "--reuse-frozen",
         action="store_true",
-        help="reuse a previous PyInstaller result while retrying asset staging",
+        help="deprecated; use --reuse-build-id",
+    )
+    parser.add_argument(
+        "--reuse-build-id",
+        help="reuse a package build owned by this repository worktree",
     )
     parser.add_argument(
         "--install-dir",
@@ -533,11 +705,37 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="require the installed-smoke target to have all operational credentials",
     )
+    parser.add_argument(
+        "--local-test",
+        action="store_true",
+        help="build a non-publishable local test installer and allow a dirty worktree",
+    )
+    parser.add_argument("--state-dir", type=Path, help="override package cache/work root")
+    parser.add_argument("--releases-dir", type=Path, help="override package releases root")
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
+    if args.step == "version-set":
+        if args.version is None:
+            raise RuntimeError("version-set requires an explicit SemVer")
+        if args.local_test or args.trusted_beta or args.reuse_build_id or args.reuse_frozen:
+            raise RuntimeError("version-set does not accept package build mode options")
+        result = set_project_version(REPO_ROOT, args.version)
+        print(
+            json.dumps({"project_version": str(result.version), "sources": result.values}, indent=2)
+        )
+        return 0
+    if args.version is not None:
+        raise RuntimeError(f"unexpected positional version for {args.step}: {args.version}")
+    roots = _resolve_roots(args)
+    if args.step == "version-status":
+        if args.local_test or args.trusted_beta or args.reuse_build_id or args.reuse_frozen:
+            raise RuntimeError("version-status does not accept package build mode options")
+        print(json.dumps(_release_status(roots, read_project_version(REPO_ROOT)), indent=2))
+        return 0
+
     _ensure_windows_x64()
     if args.step == "installed-smoke":
         if args.install_dir is None:
@@ -555,12 +753,45 @@ def main() -> int:
         raise RuntimeError("--expect-trusted-credentials requires installed-smoke")
     if args.trusted_beta and args.step == "runtime":
         raise RuntimeError("--trusted-beta requires the installer or all step")
-    version = _project_version()
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    if args.reuse_frozen:
+        raise RuntimeError("--reuse-frozen was replaced by --reuse-build-id")
+    if args.step == "installer" and not args.reuse_build_id:
+        raise RuntimeError("installer requires --reuse-build-id from a previous runtime build")
+
+    project = read_project_version(REPO_ROOT)
+    source = _source_metadata()
+    distribution = "trusted-beta" if args.trusted_beta else "ordinary"
+    if not args.local_test:
+        _validate_formal_build(
+            roots,
+            project,
+            source=source,
+            distribution=distribution,
+        )
+    if args.reuse_build_id:
+        build_paths = load_build_paths(roots, build_id=args.reuse_build_id)
+    else:
+        build_paths = create_build_paths(
+            roots,
+            build_id=new_build_id(str(source["commit"])),
+        )
+        build_paths.build_dir.mkdir(parents=True)
+    roots.cache_dir.mkdir(parents=True, exist_ok=True)
+    print(f"build_id: {build_paths.build_id}")
     if args.step in {"runtime", "all"}:
-        _build_runtime(offline=args.offline, reuse_frozen=args.reuse_frozen)
+        _build_runtime(
+            build_paths,
+            offline=args.offline,
+            reuse_frozen=bool(args.reuse_build_id),
+        )
     if args.step in {"installer", "all"}:
-        setup = _build_installer(version, trusted_beta=args.trusted_beta)
+        setup = _build_installer(
+            str(project.version),
+            build_paths=build_paths,
+            source=source,
+            local_test=args.local_test,
+            trusted_beta=args.trusted_beta,
+        )
         print(f"installer: {setup}")
     return 0
 

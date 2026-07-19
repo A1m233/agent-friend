@@ -104,6 +104,7 @@ frontend/public/spine-spike-local/
 # ===== Tauri build output =====
 src-tauri/target/
 src-tauri/gen/
+# Legacy worktree-local package outputs. Current package state and releases live outside the repo.
 frontend/src-tauri/package-runtime/
 package-output/
 scripts/package/.cache/
