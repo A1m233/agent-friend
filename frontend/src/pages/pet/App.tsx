@@ -55,6 +55,10 @@ import {
   sameRect,
   sameViewportList,
 } from "./petGeometry";
+import {
+  nextPetInitialPlacementSettled,
+  shouldSchedulePetAnchorPersistence,
+} from "./petPlacementPersistence";
 import type { PetAvatarSize } from "@/lib/settings";
 import {
   resolveInstalledAvatarModelSelection,
@@ -218,12 +222,22 @@ export function PetApp() {
     setActionBarAnchor((prev) => (sameRect(prev, next) ? prev : next));
   }, []);
 
-  const setIsDraggingWithTracking = useCallback((next: boolean) => {
-    if (next) {
-      userMovedPetRef.current = true;
-    }
-    setIsDragging(next);
+  const markPetPositionUserOwned = useCallback(() => {
+    userMovedPetRef.current = true;
+    setInitialPlacementSettled((current) =>
+      nextPetInitialPlacementSettled(current, { type: "user-owned" }),
+    );
   }, []);
+
+  const setIsDraggingWithTracking = useCallback(
+    (next: boolean) => {
+      if (next) {
+        markPetPositionUserOwned();
+      }
+      setIsDragging(next);
+    },
+    [markPetPositionUserOwned],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -284,7 +298,8 @@ export function PetApp() {
             scheduleInitialPlacement(currentOverlaySize, "result-size-changed");
             return;
           }
-          if (point && !userMovedPetRef.current) {
+          const userMoved = userMovedPetRef.current;
+          if (point && !userMoved) {
             setAvatarPlacementPoint((prev) => prev ?? point);
             const generation = --placementIntentGenerationRef.current;
             setAvatarPlacementIntent((prev) =>
@@ -293,12 +308,22 @@ export function PetApp() {
                 : { generation, point },
             );
           }
-          setInitialPlacementSettled(true);
+          setInitialPlacementSettled((current) =>
+            nextPetInitialPlacementSettled(current, {
+              type: "resolved",
+              hasPoint: point !== null,
+              userMoved,
+            }),
+          );
         })
         .catch((error: unknown) => {
           if (!cancelled) {
             console.warn("[pet] resolve initial placement failed:", error);
-            setInitialPlacementSettled(true);
+            // Keep the persistence gate closed: saving the renderer's startup position here
+            // would overwrite the last valid anchor. A later user drag explicitly unlocks it.
+            setInitialPlacementSettled((current) =>
+              nextPetInitialPlacementSettled(current, { type: "failed" }),
+            );
           }
         });
     };
@@ -587,11 +612,12 @@ export function PetApp() {
 
   useEffect(() => {
     const persistenceRect = actionBarAnchor ?? spriteScreen;
-    if (
-      !isTauri() ||
-      !initialPlacementSettled ||
-      isDragging ||
-      placementIntent ||
+    if (!shouldSchedulePetAnchorPersistence({
+      isTauri: isTauri(),
+      initialPlacementSettled,
+      isDragging,
+      hasPlacementIntent: placementIntent !== null,
+    }) ||
       !isFiniteRect(persistenceRect) ||
       !isFiniteViewport(overlayViewport)
     ) {
@@ -762,14 +788,14 @@ export function PetApp() {
   };
 
   const collapseToEdge = () => {
-    userMovedPetRef.current = true;
+    markPetPositionUserOwned();
     pendingTopologyAnchorRef.current = null;
     setAvatarPlacementIntent(null);
     void setPetAvatarSize("mini");
   };
 
   const restoreNormal = () => {
-    userMovedPetRef.current = true;
+    markPetPositionUserOwned();
     pendingTopologyAnchorRef.current = null;
     setAvatarPlacementIntent(null);
     void setPetAvatarSize("normal");

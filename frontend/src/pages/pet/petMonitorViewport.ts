@@ -556,10 +556,9 @@ export async function loadPetInitialPlacementPoint(
 ): Promise<PetPoint | null> {
   if (!isTauri() || !isFiniteViewport(overlayViewport)) return null;
 
-  const [snapshot, persisted, cursor] = await Promise.all([
+  const [snapshot, persisted] = await Promise.all([
     loadPetDisplayPhysicalSnapshot(),
     loadPetUiPersistence(),
-    cursorPosition(),
   ]);
   if (!snapshot) return null;
   if (persisted.anchor) {
@@ -572,6 +571,9 @@ export async function loadPetInitialPlacementPoint(
     if (restoredPoint) return restoredPoint;
   }
 
+  // Cursor placement is only a first-run fallback. A transient cursor API failure must never
+  // prevent an already-persisted anchor from being restored.
+  const cursor = await cursorPosition();
   return resolvePetInitialPlacementPoint({
     cursor: { x: cursor.x, y: cursor.y },
     bounds: snapshot.bounds,
