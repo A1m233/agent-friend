@@ -6,6 +6,7 @@ import { DEFAULT_AVATAR_MODEL_ID } from "@/avatar-models";
 import { syncDocumentTheme } from "@/lib/settings/theme";
 
 export type ThemeMode = "light" | "dark";
+export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 export type ModelProvider = "deepseek" | "kimi";
 export interface ModelSelection {
@@ -18,6 +19,7 @@ type LegacyPetDisplayMode = "normal" | "edgeRecall";
 
 export interface Settings {
   theme: ThemeMode;
+  backgroundOnlinePolicy: BackgroundOnlinePolicy;
   voiceTunnelConsentAccepted: boolean;
   chatModel: ModelSelection;
   memoryModel: ModelSelection;
@@ -29,6 +31,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
+  backgroundOnlinePolicy: "followSystem",
   voiceTunnelConsentAccepted: false,
   chatModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
   memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-pro" },

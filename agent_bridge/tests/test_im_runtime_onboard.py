@@ -145,6 +145,9 @@ async def test_start_one_provider_fail_does_not_break_others(
     assert len(statuses) == 1
     # OPENID-OK 是 9 字符 > 8,会被 _mask 脱敏(头 4 + ... + 尾 4)
     assert statuses[0].bind_id_masked == "OPEN...D-OK"
+    snapshot = runtime.desired_online_snapshot()
+    assert snapshot.active is True
+    assert snapshot.binding_count == 2
 
 
 # ---------- IMRuntime.stop: 并发停止 ----------
@@ -198,6 +201,7 @@ async def test_register_after_onboard_saves_and_spawns(
     assert loaded[0].bind_id == "OPENID-NEW"
     # provider 已在 dict
     assert ("qq", "OPENID-NEW") in runtime._providers
+    assert runtime.desired_online_snapshot().binding_count == 1
 
 
 @pytest.mark.asyncio
@@ -234,6 +238,7 @@ async def test_unbind_stops_and_deletes(runtime: IMRuntime, credentials: Credent
     assert p.stopped
     assert ("qq", "OPENID-A") not in runtime._providers
     assert credentials.list_all() == []
+    assert runtime.desired_online_snapshot().active is False
 
 
 @pytest.mark.asyncio
