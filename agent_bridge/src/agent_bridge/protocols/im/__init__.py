@@ -30,10 +30,11 @@ from .onboard import OnboardSessionRegistry, OnboardStatus, OnboardTaskState
 from .provider import IMProvider, ProviderStatus
 from .router import IMRouter
 from .routes import register_routes
-from .runtime import IMRuntime, ProviderInfo
+from .runtime import IMDesiredOnlineSnapshot, IMRuntime, ProviderInfo
 
 __all__ = [
     "CredentialStore",
+    "IMDesiredOnlineSnapshot",
     "IMProvider",
     "IMRouter",
     "IMRuntime",

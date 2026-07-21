@@ -15,9 +15,11 @@ from fastapi.testclient import TestClient
 class FakeAgentRuntime:
     accepting: bool = True
     timed_out: bool = False
+    queued: int = 0
+    running: int = 0
 
     def activity_snapshot(self) -> RuntimeActivitySnapshot:
-        return RuntimeActivitySnapshot(self.accepting, 0, 0)
+        return RuntimeActivitySnapshot(self.accepting, self.queued, self.running)
 
     def quiesce(self) -> RuntimeActivitySnapshot:
         self.accepting = False
@@ -28,9 +30,24 @@ class FakeAgentRuntime:
         return RuntimeDrainReport(1, 1, 0, 1, int(self.timed_out), self.timed_out)
 
 
-def make_client(runtime: FakeAgentRuntime, shutdown: list[str]) -> TestClient:
+def make_client(
+    runtime: FakeAgentRuntime,
+    shutdown: list[str],
+    *,
+    im_active: bool = False,
+    im_binding_count: int = 0,
+) -> TestClient:
     app = FastAPI()
-    bridge_runtime = cast(BridgeRuntime, SimpleNamespace(agent_runtime=runtime))
+    im_runtime = SimpleNamespace(
+        desired_online_snapshot=lambda: SimpleNamespace(
+            active=im_active,
+            binding_count=im_binding_count,
+        )
+    )
+    bridge_runtime = cast(
+        BridgeRuntime,
+        SimpleNamespace(agent_runtime=runtime, im_runtime=im_runtime),
+    )
     controller = BridgeLifecycleController(
         bridge_runtime,
         token="secret-token",
@@ -60,6 +77,25 @@ def test_readiness_and_quiesce_are_distinct() -> None:
     assert (
         client.get("/internal/lifecycle/readiness", headers=headers).json()["status"] == "not_ready"
     )
+
+
+def test_background_demand_projects_agent_and_im_authorities() -> None:
+    runtime = FakeAgentRuntime(queued=2, running=1)
+    client = make_client(runtime, [], im_active=True, im_binding_count=3)
+    headers = {"X-Agent-Friend-Lifecycle-Token": "secret-token"}
+
+    response = client.get("/internal/lifecycle/background-demand", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "agentTask": {"active": True, "queued": 2, "running": 1},
+        "imOnline": {"active": True, "bindingCount": 3},
+    }
+
+
+def test_background_demand_requires_owner_token() -> None:
+    client = make_client(FakeAgentRuntime(), [])
+    assert client.get("/internal/lifecycle/background-demand").status_code == 401
 
 
 def test_shutdown_calls_callback_only_after_successful_drain() -> None:

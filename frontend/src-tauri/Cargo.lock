@@ -135,6 +135,7 @@ dependencies = [
  "age",
  "bip39",
  "chrono",
+ "core-foundation-sys",
  "dirs 5.0.1",
  "futures-util",
  "keyring",

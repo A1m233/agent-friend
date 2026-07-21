@@ -1,5 +1,6 @@
 use super::model::{
-    RuntimeServiceError, RuntimeServiceKind, RuntimeServicePhase, RuntimeServiceSnapshot,
+    BackgroundDemandSnapshot, RuntimeServiceError, RuntimeServiceKind, RuntimeServicePhase,
+    RuntimeServiceSnapshot,
 };
 use crate::paths;
 use rand::{rngs::OsRng, RngCore};
@@ -125,6 +126,36 @@ impl RuntimeServiceSupervisor {
 
     pub async fn snapshot(&self, service: RuntimeServiceKind) -> RuntimeServiceSnapshot {
         self.slot(service).lock().await.snapshot.clone()
+    }
+
+    pub async fn background_demand(&self) -> Result<BackgroundDemandSnapshot, String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "bridge_demand_unavailable: bridge is not owned or ready".to_string())?;
+        let response = self
+            .client
+            .get(format!(
+                "{}/internal/lifecycle/background-demand",
+                RuntimeServiceKind::Bridge.base_url()
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .timeout(Duration::from_secs(1))
+            .send()
+            .await
+            .map_err(|error| format!("bridge_demand_unavailable: {error}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "bridge_demand_unavailable: HTTP {}",
+                response.status()
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| format!("bridge_demand_unavailable: invalid response: {error}"))
     }
 
     pub async fn migration_snapshot_im_credentials(&self) -> Result<serde_json::Value, String> {

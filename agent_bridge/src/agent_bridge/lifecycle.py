@@ -54,6 +54,26 @@ class BridgeLifecycleController:
             },
         }
 
+    def background_demand(self) -> dict[str, object]:
+        """Project bridge-owned work into desktop power-policy reasons."""
+        agent_runtime = self.runtime.agent_runtime
+        activity = agent_runtime.activity_snapshot() if agent_runtime is not None else None
+        im_runtime = self.runtime.im_runtime
+        im = im_runtime.desired_online_snapshot() if im_runtime is not None else None
+        queued = activity.queued if activity is not None else 0
+        running = activity.running if activity is not None else 0
+        return {
+            "agentTask": {
+                "active": queued + running > 0,
+                "queued": queued,
+                "running": running,
+            },
+            "imOnline": {
+                "active": im.active if im is not None else False,
+                "bindingCount": im.binding_count if im is not None else 0,
+            },
+        }
+
     def quiesce(self) -> dict[str, object]:
         if self.runtime.agent_runtime is None:
             raise HTTPException(status_code=503, detail="agent runtime is unavailable")
@@ -90,6 +110,13 @@ def register_lifecycle_routes(app: FastAPI, controller: BridgeLifecycleControlle
     ) -> dict[str, object]:
         authorize(x_agent_friend_lifecycle_token)
         return controller.readiness()
+
+    @router.get("/background-demand")
+    def background_demand(
+        x_agent_friend_lifecycle_token: str | None = Header(default=None),
+    ) -> dict[str, object]:
+        authorize(x_agent_friend_lifecycle_token)
+        return controller.background_demand()
 
     @router.post("/quiesce")
     def quiesce(

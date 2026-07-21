@@ -68,6 +68,28 @@ pub struct RuntimeServiceSnapshot {
     pub error: Option<RuntimeServiceError>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskDemand {
+    pub active: bool,
+    pub queued: usize,
+    pub running: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImOnlineDemand {
+    pub active: bool,
+    pub binding_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundDemandSnapshot {
+    pub agent_task: AgentTaskDemand,
+    pub im_online: ImOnlineDemand,
+}
+
 impl RuntimeServiceSnapshot {
     pub fn stopped(service: RuntimeServiceKind) -> Self {
         Self {

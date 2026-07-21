@@ -61,6 +61,8 @@ windows = { version = "0.61.3", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
+    "Win32_System_Power",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
@@ -69,5 +71,6 @@ windows = { version = "0.61.3", features = [
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder"] }
 security-framework = "3"
+core-foundation-sys = "0.8.7"
 # 0004 / 017 · pet 窗切 NSPanel 路径（业界 macOS Tauri overlay 标准方案）
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }

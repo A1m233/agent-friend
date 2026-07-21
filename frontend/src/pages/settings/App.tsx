@@ -37,6 +37,7 @@ import { SettingsGroup } from "./components/SettingsGroup";
 import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
+import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
 import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
 
@@ -151,6 +152,12 @@ export function SettingsApp() {
               </SettingsGroup>
               <SettingsGroup title="启动">
                 <AutostartSetting />
+              </SettingsGroup>
+              <SettingsGroup
+                title="后台运行"
+                description="屏幕熄灭不等于电脑休眠。屏幕关闭后，Agent 和 QQ 仍可继续运行；电脑进入休眠后，Agent 和 QQ 会暂停运行。合盖是否休眠由系统设置决定（大多数笔记本默认合盖即休眠），agent-friend 不会自动修改合盖行为。"
+              >
+                <BackgroundOnlineSetting />
               </SettingsGroup>
             </SettingsPageLayout>
           ) : section === "archived" ? (

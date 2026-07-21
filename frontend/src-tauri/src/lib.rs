@@ -17,6 +17,7 @@ mod paths;
 mod permissions;
 mod pet_cursor_passthrough;
 mod pet_display_topology;
+mod power_policy;
 mod push_subscriber;
 mod runtime_config;
 mod runtime_services;
@@ -984,6 +985,9 @@ pub fn run() {
         permissions::defer_permission_flow,
         permissions::open_permission_system_settings,
         permissions::probe_permission_platform,
+        power_policy::get_power_policy_snapshot,
+        power_policy::refresh_power_policy,
+        power_policy::open_power_settings,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -1042,6 +1046,9 @@ pub fn run() {
         permissions::complete_permission_attempt,
         permissions::defer_permission_flow,
         permissions::open_permission_system_settings,
+        power_policy::get_power_policy_snapshot,
+        power_policy::refresh_power_policy,
+        power_policy::open_power_settings,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -1196,6 +1203,13 @@ pub fn run() {
                     format!("permissions init failed: {error}"),
                 )
             })?;
+            let power_policy_manager = power_policy::create_manager(
+                app.handle().clone(),
+                setup_settings_state.clone(),
+                setup_runtime_service_supervisor.clone(),
+            );
+            app.manage(power_policy_manager.clone());
+            power_policy_manager.start(app.handle().clone());
             avatar_models::ensure_builtin_avatar_models_installed(app.handle()).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, format!("avatar models: {e}"))
             })?;
@@ -1290,6 +1304,11 @@ pub fn run() {
                     app_handle,
                     permissions::manager::PermissionRefreshReason::Resumed,
                 );
+                if let Some(manager) =
+                    app_handle.try_state::<Arc<power_policy::PowerPolicyManager>>()
+                {
+                    manager.request_refresh();
+                }
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 for window in app_handle.webview_windows().into_values() {
@@ -1303,9 +1322,16 @@ pub fn run() {
                 if let Err(e) = window_placement::persist_window_placements(app_handle) {
                     log::warn!("window placement: exit persist failed: {e}");
                 }
-                tauri::async_runtime::block_on(
-                    exit_runtime_service_supervisor.cleanup_owned_children(),
-                );
+                tauri::async_runtime::block_on(async {
+                    if let Some(manager) =
+                        app_handle.try_state::<Arc<power_policy::PowerPolicyManager>>()
+                    {
+                        manager.shutdown().await;
+                    }
+                    exit_runtime_service_supervisor
+                        .cleanup_owned_children()
+                        .await;
+                });
             }
         });
 }

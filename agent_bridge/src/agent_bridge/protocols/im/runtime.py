@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +41,7 @@ from .provider import IMProvider, ProviderStatus
 if TYPE_CHECKING:
     from .router import IMRouter
 
-__all__ = ["IMRuntime", "ProviderInfo"]
+__all__ = ["IMDesiredOnlineSnapshot", "IMRuntime", "ProviderInfo"]
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,18 @@ class ProviderInfo:
     bind_id: str
     bind_id_masked: str
     status: ProviderStatus
+
+
+@dataclass(frozen=True)
+class IMDesiredOnlineSnapshot:
+    """用户仍要求持续在线的 IM 绑定快照。
+
+    该状态独立于 provider 的瞬时连接健康；断线重连或启动失败不会把已保存绑定
+    误判成“不再需要在线”。
+    """
+
+    active: bool
+    binding_count: int
 
 
 class IMRuntime:
@@ -90,6 +103,8 @@ class IMRuntime:
         self._deduper = deduper
         self._providers: dict[tuple[str, str], IMProvider] = {}
         self._provider_locks: dict[tuple[str, str], Any] = {}
+        self._desired_bindings: set[tuple[str, str]] = set()
+        self._desired_bindings_lock = threading.RLock()
         # 持有 fire-and-forget stop tasks 引用,防 GC 提前回收(RUF006)
         self._background_stops: set[asyncio.Task[None]] = set()
 
@@ -104,6 +119,8 @@ class IMRuntime:
         :func:`asyncio.get_running_loop`)。
         """
         creds = self._credentials.list_all()
+        with self._desired_bindings_lock:
+            self._desired_bindings = {(cred.im_type, _provider_bind_id(cred)) for cred in creds}
         logger.info("IMRuntime starting: %d credential(s) loaded", len(creds))
         for cred in creds:
             try:
@@ -160,6 +177,8 @@ class IMRuntime:
         """
         self._credentials.save(cred)
         key = (cred.im_type, _provider_bind_id(cred))
+        with self._desired_bindings_lock:
+            self._desired_bindings.add(key)
         old = self._providers.pop(key, None)
         if old is not None:
             # 旧 provider 异步 stop;不 block onboard 调用方
@@ -184,6 +203,8 @@ class IMRuntime:
             finally:
                 self._release_provider_lock(lock, provider.type, provider.bind_id)
         self._credentials.delete(im_type, bind_id)
+        with self._desired_bindings_lock:
+            self._desired_bindings.discard(key)
         return provider is not None
 
     def list_status(self) -> list[ProviderInfo]:
@@ -200,6 +221,12 @@ class IMRuntime:
             )
             for p in self._providers.values()
         ]
+
+    def desired_online_snapshot(self) -> IMDesiredOnlineSnapshot:
+        """返回期望持续在线的绑定数，而非当前成功连接的 provider 数。"""
+        with self._desired_bindings_lock:
+            count = len(self._desired_bindings)
+        return IMDesiredOnlineSnapshot(active=count > 0, binding_count=count)
 
     def migration_snapshot_credentials(self) -> list[ImCredential]:
         """返回可跨设备重新加密的凭据对象，仅供 owner-only 迁移控制面。"""

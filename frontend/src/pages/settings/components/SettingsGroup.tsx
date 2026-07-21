@@ -2,13 +2,19 @@ import type { ReactNode } from "react";
 
 interface SettingsGroupProps {
   title: string;
+  description?: ReactNode;
   children: ReactNode;
 }
 
-export function SettingsGroup({ title, children }: SettingsGroupProps) {
+export function SettingsGroup({ title, description, children }: SettingsGroupProps) {
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-border bg-surface/50 p-5">
-      <h3 className="text-sm font-medium text-muted">{title}</h3>
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium text-muted">{title}</h3>
+        {description ? (
+          <div className="text-xs leading-relaxed text-muted">{description}</div>
+        ) : null}
+      </div>
       {children}
     </section>
   );

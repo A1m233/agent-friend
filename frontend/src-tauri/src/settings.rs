@@ -7,16 +7,19 @@ use std::{
 };
 use tauri::{
     plugin::{Builder as PluginBuilder, TauriPlugin},
-    AppHandle, Emitter, Runtime,
+    AppHandle, Emitter, Manager, Runtime,
 };
 use tauri_plugin_store::StoreExt;
 
 use crate::paths;
+use crate::power_policy::{BackgroundOnlinePolicy, PowerPolicyManager};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub theme: ThemeMode,
+    #[serde(default)]
+    pub background_online_policy: BackgroundOnlinePolicy,
     #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
     #[serde(default = "default_chat_model")]
@@ -143,6 +146,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Light,
+            background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             voice_tunnel_consent_accepted: false,
             chat_model: default_chat_model(),
             memory_model: default_memory_model(),
@@ -514,7 +518,14 @@ pub(crate) fn migration_replace<R: Runtime>(
     *state
         .lock()
         .map_err(|error| format!("migration_settings_lock_failed: {error}"))? = next;
+    request_power_policy_refresh(app);
     Ok(previous)
+}
+
+fn request_power_policy_refresh<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(manager) = app.try_state::<Arc<PowerPolicyManager>>() {
+        manager.request_refresh();
+    }
 }
 
 #[tauri::command]
@@ -547,6 +558,11 @@ pub fn set_setting<R: Runtime>(
             let theme: ThemeMode = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid theme: {e}"))?;
             s.theme = theme;
+        }
+        "backgroundOnlinePolicy" => {
+            let policy: BackgroundOnlinePolicy = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid backgroundOnlinePolicy: {e}"))?;
+            s.background_online_policy = policy;
         }
         "voiceTunnelConsentAccepted" => {
             let accepted: bool = serde_json::from_value(payload.value.clone())
@@ -644,6 +660,10 @@ pub fn set_setting<R: Runtime>(
         serde_json::json!({ "key": event_key, "value": event_value }),
     )
     .map_err(|e| e.to_string())?;
+
+    if event_key == "backgroundOnlinePolicy" {
+        request_power_policy_refresh(&app);
+    }
 
     Ok(())
 }
@@ -753,6 +773,14 @@ mod tests {
 
         assert_eq!(settings.chat_model, default_chat_model());
         assert_eq!(settings.memory_model, default_memory_model());
+    }
+
+    #[test]
+    fn default_background_online_policy_follows_system() {
+        assert_eq!(
+            Settings::default().background_online_policy,
+            BackgroundOnlinePolicy::FollowSystem
+        );
     }
 
     #[test]
