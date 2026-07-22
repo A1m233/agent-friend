@@ -20,6 +20,7 @@ import type {
   PetAvatarRuntime,
 } from "@/pet/avatarRuntime/types";
 import type { PixelRegion } from "@/pet/petAlphaHitTest";
+import type { PetFacing } from "@/pet/avatarRuntime/facing";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import { isTauri } from "@/utils/tauri";
 import type { PetDisplayProfile } from "@/pages/pet/petDisplayProfile";
@@ -36,6 +37,17 @@ import {
 } from "./spine38Fit";
 import { sampleSpine38CanonicalLayoutBounds } from "./spine38LayoutBounds";
 import { loadSpine38Model } from "./spine38Loader";
+import {
+  Spine38DragFacingDetector,
+  orientPointOffset,
+  orientRegionOffset,
+  screenPointToSpineLocalPoint,
+  screenRegionToSpineLocalRegion,
+  slotRegionToScreenRegion,
+  spineLocalPointToScreenPoint,
+  spineLocalRegionToSlotRegion,
+} from "./spine38Facing";
+import { Spine38TurnTransition } from "./spine38TurnTransition";
 import {
   applyRegionOffset,
   computeCenteringDelta,
@@ -54,9 +66,11 @@ interface Props {
   initialAnchorPoint: { x: number; y: number } | null;
   displayProfile: PetDisplayProfile;
   displayContext: PetWebviewDisplayContext;
+  facing: PetFacing;
   setSpriteScreen: (s: { x: number; y: number; w: number; h: number } | null) => void;
   setActionBarAnchor: (s: { x: number; y: number; w: number; h: number } | null) => void;
   setIsDragging: (v: boolean) => void;
+  onFacingChange: (facing: PetFacing) => void;
   onRuntimeChange: (runtime: PetAvatarRuntime | null) => void;
 }
 
@@ -99,59 +113,66 @@ function toScreenRegion(
   slot: PIXI7.Container,
   spine: Spine38,
   bounds: PixelRegion,
+  facing: PetFacing,
 ): PixelRegion {
-  return {
-    x: slot.x + (spine.x + bounds.x) * slot.scale.x,
-    y: slot.y + (spine.y + bounds.y) * slot.scale.y,
-    w: bounds.w * slot.scale.x,
-    h: bounds.h * slot.scale.y,
-  };
+  return slotRegionToScreenRegion(
+    { x: slot.x, y: slot.y },
+    { x: slot.scale.x, y: slot.scale.y },
+    spineLocalRegionToSlotRegion({ x: spine.x, y: spine.y }, bounds, facing),
+  );
 }
 
-function toSlotHitRegion(spine: Spine38, bounds: PixelRegion): PixelRegion {
-  return {
-    x: spine.x + bounds.x,
-    y: spine.y + bounds.y,
-    w: bounds.w,
-    h: bounds.h,
-  };
+function toSlotHitRegion(
+  spine: Spine38,
+  bounds: PixelRegion,
+  facing: PetFacing,
+): PixelRegion {
+  return spineLocalRegionToSlotRegion({ x: spine.x, y: spine.y }, bounds, facing);
 }
 
 function toSpineLocalRegion(
   slot: PIXI7.Container,
   spine: Spine38,
   bounds: PixelRegion,
+  facing: PetFacing,
 ): PixelRegion {
-  const scaleX = slot.scale.x || 1;
-  const scaleY = slot.scale.y || 1;
-  return {
-    x: (bounds.x - slot.x) / scaleX - spine.x,
-    y: (bounds.y - slot.y) / scaleY - spine.y,
-    w: bounds.w / scaleX,
-    h: bounds.h / scaleY,
-  };
+  return screenRegionToSpineLocalRegion(
+    { x: slot.x, y: slot.y },
+    { x: slot.scale.x, y: slot.scale.y },
+    { x: spine.x, y: spine.y },
+    bounds,
+    facing,
+  );
 }
 
 function toSpineLocalPoint(
   slot: PIXI7.Container,
   spine: Spine38,
   point: PixelPoint,
+  facing: PetFacing,
 ): PixelPoint {
-  return {
-    x: (point.x - slot.x) / (slot.scale.x || 1) - spine.x,
-    y: (point.y - slot.y) / (slot.scale.y || 1) - spine.y,
-  };
+  return screenPointToSpineLocalPoint(
+    { x: slot.x, y: slot.y },
+    { x: slot.scale.x, y: slot.scale.y },
+    { x: spine.x, y: spine.y },
+    point,
+    facing,
+  );
 }
 
 function toScreenPoint(
   slot: PIXI7.Container,
   spine: Spine38,
   point: PixelPoint,
+  facing: PetFacing,
 ): PixelPoint {
-  return {
-    x: slot.x + (spine.x + point.x) * slot.scale.x,
-    y: slot.y + (spine.y + point.y) * slot.scale.y,
-  };
+  return spineLocalPointToScreenPoint(
+    { x: slot.x, y: slot.y },
+    { x: slot.scale.x, y: slot.scale.y },
+    { x: spine.x, y: spine.y },
+    point,
+    facing,
+  );
 }
 
 function reportSpritePosition(bounds: PixelRegion): void {
@@ -196,15 +217,21 @@ export function Spine38AvatarSurface({
   initialAnchorPoint,
   displayProfile,
   displayContext,
+  facing,
   setSpriteScreen,
   setActionBarAnchor,
   setIsDragging,
+  onFacingChange,
   onRuntimeChange,
 }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<PIXI7.Application<HTMLCanvasElement> | null>(null);
   const slotRef = useRef<PIXI7.Container | null>(null);
+  const facingLayerRef = useRef<PIXI7.Container | null>(null);
   const spineRef = useRef<Spine38 | null>(null);
+  const facingRef = useRef(facing);
+  const geometryFacingRef = useRef(facing);
+  const turnTransitionRef = useRef<Spine38TurnTransition | null>(null);
   const animationsRef = useRef<string[]>([]);
   const currentPhaseRef = useRef<AvatarRuntimePhase>("idle");
   const layoutBoundsRef = useRef<PixelRegion | null>(null);
@@ -300,6 +327,7 @@ export function Spine38AvatarSurface({
   initialAnchorPointRef.current = initialAnchorPoint;
   displayProfileRef.current = displayProfile;
   displayContextRef.current = displayContext;
+  facingRef.current = facing;
 
   const applyDisplayProfile = useCallback(
     (currentBounds: PixelRegion): PixelRegion => {
@@ -324,7 +352,7 @@ export function Spine38AvatarSurface({
         const layoutBounds = layoutBoundsRef.current;
         const afterScale =
           layoutBounds
-            ? toScreenRegion(slot, spine, layoutBounds)
+            ? toScreenRegion(slot, spine, layoutBounds, geometryFacingRef.current)
             : boundsToRegion(slot.getBounds());
         if (afterScale) {
           slot.x += centerBefore.x - (afterScale.x + afterScale.w / 2);
@@ -351,13 +379,25 @@ export function Spine38AvatarSurface({
         const scale = { x: slot.scale.x || 1, y: slot.scale.y || 1 };
         const anchorBounds = resolvePlacementAnchorRegion(
           currentBounds,
-          actionBarAnchorOffsetRef.current,
+          actionBarAnchorOffsetRef.current
+            ? orientRegionOffset(
+                actionBarAnchorOffsetRef.current,
+                layoutBoundsRef.current?.w ?? currentBounds.w / scale.x,
+                geometryFacingRef.current,
+              )
+            : null,
           scale,
         );
         const anchorPoint = profile.edge
           ? resolvePlacementAnchorPoint(
               currentBounds,
-              visualAnchorOffsetRef.current,
+              visualAnchorOffsetRef.current
+                ? orientPointOffset(
+                    visualAnchorOffsetRef.current,
+                    layoutBoundsRef.current?.w ?? currentBounds.w / scale.x,
+                    geometryFacingRef.current,
+                  )
+                : null,
               scale,
             )
           : null;
@@ -392,7 +432,7 @@ export function Spine38AvatarSurface({
 
     const layoutBounds = layoutBoundsRef.current;
     let nextBounds = layoutBounds
-      ? toScreenRegion(slot, spine, layoutBounds)
+      ? toScreenRegion(slot, spine, layoutBounds, geometryFacingRef.current)
       : boundsToRegion(spine.getBounds()) ?? boundsToRegion(slot.getBounds());
     if (!nextBounds) return;
     if (!initialLayoutAnchorAlignedRef.current) {
@@ -408,7 +448,7 @@ export function Spine38AvatarSurface({
     setSlotHitArea(
       slot,
       layoutBounds
-        ? toSlotHitRegion(spine, layoutBounds)
+        ? toSlotHitRegion(spine, layoutBounds, geometryFacingRef.current)
         : {
             x: (nextBounds.x - slot.x) / slot.scale.x,
             y: (nextBounds.y - slot.y) / slot.scale.y,
@@ -422,10 +462,18 @@ export function Spine38AvatarSurface({
     setSpriteScreen(nextBounds);
     const actionBarAnchorOffset = actionBarAnchorOffsetRef.current;
     const actionBarAnchor = actionBarAnchorOffset
-      ? applyRegionOffset(nextBounds, actionBarAnchorOffset, {
+      ? applyRegionOffset(
+          nextBounds,
+          orientRegionOffset(
+            actionBarAnchorOffset,
+            layoutBounds?.w ?? nextBounds.w / (slot.scale.x || 1),
+            geometryFacingRef.current,
+          ),
+          {
           x: slot.scale.x || 1,
           y: slot.scale.y || 1,
-        })
+          },
+        )
       : null;
     if (actionBarAnchor) {
       setActionBarAnchorIfChanged(actionBarAnchor);
@@ -489,6 +537,15 @@ export function Spine38AvatarSurface({
       app.stage.addChild(slot);
       slotRef.current = slot;
 
+      const facingLayer = new PIXI7.Container();
+      const turnTransition = new Spine38TurnTransition(facingRef.current);
+      facingLayer.scale.set(turnTransition.scaleX, 1);
+      slot.addChild(facingLayer);
+      facingLayerRef.current = facingLayer;
+      turnTransitionRef.current = turnTransition;
+      geometryFacingRef.current = facingRef.current;
+      const facingDetector = new Spine38DragFacingDetector(facingRef.current);
+
       let pointerStart: { x: number; y: number } | null = null;
       let slotStart: { x: number; y: number } | null = null;
       let downTimestamp = 0;
@@ -502,6 +559,7 @@ export function Spine38AvatarSurface({
         slotStart = { x: slot.x, y: slot.y };
         downTimestamp = performance.now();
         dragArmed = false;
+        facingDetector.begin(global, facingRef.current);
       });
 
       slot.on("globalpointermove", (event: unknown) => {
@@ -515,6 +573,10 @@ export function Spine38AvatarSurface({
           slot.cursor = "grabbing";
           setIsDragging(true);
           playMappedAction("dragStart");
+        }
+        const nextFacing = facingDetector.move(global);
+        if (nextFacing && turnTransition.turnTo(nextFacing)) {
+          onFacingChange(nextFacing);
         }
         slot.x = slotStart.x + dx;
         slot.y = slotStart.y + dy;
@@ -534,6 +596,7 @@ export function Spine38AvatarSurface({
 
         pointerStart = null;
         slotStart = null;
+        facingDetector.end();
 
         if (dragArmed) {
           setIsDragging(false);
@@ -556,7 +619,7 @@ export function Spine38AvatarSurface({
         return;
       }
       spine.eventMode = "none";
-      slot.addChild(spine);
+      facingLayer.addChild(spine);
       spineRef.current = spine;
       animationsRef.current = spine.skeleton.data.animations.map(
         (item: { name: string }) => item.name,
@@ -583,13 +646,25 @@ export function Spine38AvatarSurface({
       app.ticker.add((ticker: unknown) => {
         const currentApp = app;
         if (!currentApp) return;
-        tickerElapsed += getTickerDeltaMs(ticker);
+        const deltaMs = getTickerDeltaMs(ticker);
+        const turnFrame = turnTransition.update(deltaMs);
+        facingLayer.scale.x = turnFrame.scaleX;
+        if (turnFrame.completedFacing) {
+          geometryFacingRef.current = turnFrame.completedFacing;
+          lastSpriteScreenRef.current = null;
+          syncBounds();
+        }
+        tickerElapsed += deltaMs;
         if (tickerElapsed < 250) return;
         tickerElapsed = 0;
-        if (!alphaScanReadyRef.current && !alphaScanGivenUpRef.current) {
+        if (
+          !turnTransition.isAnimating &&
+          !alphaScanReadyRef.current &&
+          !alphaScanGivenUpRef.current
+        ) {
           const layoutBounds = layoutBoundsRef.current;
           let screenBounds = layoutBounds
-            ? toScreenRegion(slot, spine, layoutBounds)
+            ? toScreenRegion(slot, spine, layoutBounds, geometryFacingRef.current)
             : boundsToRegion(slot.getBounds());
           const visibleRegion = screenBounds
             ? findAdaptiveVisibleRegionFromApp(currentApp, screenBounds)
@@ -597,9 +672,19 @@ export function Spine38AvatarSurface({
           let scanned = visibleRegion?.bounds ?? null;
           let visibleCentroid = visibleRegion?.centroid ?? null;
           if (scanned) {
-            const localVisualBounds = toSpineLocalRegion(slot, spine, scanned);
+            const localVisualBounds = toSpineLocalRegion(
+              slot,
+              spine,
+              scanned,
+              geometryFacingRef.current,
+            );
             const localVisibleCentroid = visibleCentroid
-              ? toSpineLocalPoint(slot, spine, visibleCentroid)
+              ? toSpineLocalPoint(
+                  slot,
+                  spine,
+                  visibleCentroid,
+                  geometryFacingRef.current,
+                )
               : null;
             const centerBefore = {
               x: scanned.x + scanned.w / 2,
@@ -618,7 +703,12 @@ export function Spine38AvatarSurface({
               displayModeScale: displayProfileRef.current.modeScale,
             });
             slot.scale.set(effectiveScale);
-            let normalizedBounds = toScreenRegion(slot, spine, localVisualBounds);
+            let normalizedBounds = toScreenRegion(
+              slot,
+              spine,
+              localVisualBounds,
+              geometryFacingRef.current,
+            );
             const normalizationDx =
               centerBefore.x - (normalizedBounds.x + normalizedBounds.w / 2);
             const normalizationDy =
@@ -633,7 +723,12 @@ export function Spine38AvatarSurface({
             scanned = normalizedBounds;
             screenBounds = normalizedBounds;
             visibleCentroid = localVisibleCentroid
-              ? toScreenPoint(slot, spine, localVisibleCentroid)
+              ? toScreenPoint(
+                  slot,
+                  spine,
+                  localVisibleCentroid,
+                  geometryFacingRef.current,
+                )
               : null;
             lastSpriteScreenRef.current = null;
             alphaScanReadyRef.current = true;
@@ -722,10 +817,13 @@ export function Spine38AvatarSurface({
       });
       appRef.current = null;
       slotRef.current = null;
+      facingLayerRef.current = null;
       spineRef.current = null;
+      turnTransitionRef.current = null;
     };
   }, [
     entry,
+    onFacingChange,
     onRuntimeChange,
     playMappedAction,
     setIsDragging,
@@ -733,6 +831,17 @@ export function Spine38AvatarSurface({
     setSpriteScreen,
     syncBounds,
   ]);
+
+  useEffect(() => {
+    const transition = turnTransitionRef.current;
+    const facingLayer = facingLayerRef.current;
+    if (!transition || !facingLayer || transition.targetFacing === facing) return;
+    const frame = transition.snap(facing);
+    facingLayer.scale.x = frame.scaleX;
+    geometryFacingRef.current = facing;
+    lastSpriteScreenRef.current = null;
+    syncBounds();
+  }, [facing, syncBounds]);
 
   useEffect(() => {
     const app = appRef.current;

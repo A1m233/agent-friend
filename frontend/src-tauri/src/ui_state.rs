@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
@@ -39,10 +39,31 @@ pub struct PetMonitorRelativeAnchorPersistence {
     pub relative_anchor: PetPointPersistence,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PetFacingPersistence {
+    Left,
+    #[default]
+    Right,
+}
+
+fn deserialize_pet_facing<'de, D>(deserializer: D) -> Result<PetFacingPersistence, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some("left") => PetFacingPersistence::Left,
+        _ => PetFacingPersistence::Right,
+    })
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PetUiPersistence {
     pub anchor: Option<PetMonitorRelativeAnchorPersistence>,
+    #[serde(default, deserialize_with = "deserialize_pet_facing")]
+    pub facing: PetFacingPersistence,
 }
 
 #[derive(Deserialize)]
@@ -55,6 +76,12 @@ pub struct SetLastChatSessionPayload {
 #[serde(rename_all = "camelCase")]
 pub struct SetPetMonitorAnchorPayload {
     pub anchor: Option<PetMonitorRelativeAnchorPersistence>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPetFacingPayload {
+    pub facing: PetFacingPersistence,
 }
 
 fn normalize_session_id(value: Option<String>) -> Option<String> {
@@ -80,6 +107,22 @@ fn parse_pet_ui(value: Option<serde_json::Value>) -> Result<PetUiPersistence, St
     };
 
     serde_json::from_value(value).map_err(|e| format!("ui-state: parse petUi failed: {e}"))
+}
+
+fn update_pet_monitor_anchor(
+    mut state: PetUiPersistence,
+    anchor: Option<PetMonitorRelativeAnchorPersistence>,
+) -> PetUiPersistence {
+    state.anchor = anchor;
+    state
+}
+
+fn update_pet_facing(
+    mut state: PetUiPersistence,
+    facing: PetFacingPersistence,
+) -> PetUiPersistence {
+    state.facing = facing;
+    state
 }
 
 #[tauri::command]
@@ -124,9 +167,23 @@ pub fn set_pet_monitor_anchor<R: Runtime>(
     let store = app
         .store(paths::UI_STATE_STORE_PATH)
         .map_err(|e| e.to_string())?;
-    let state = PetUiPersistence {
-        anchor: payload.anchor,
-    };
+    let state = update_pet_monitor_anchor(parse_pet_ui(store.get(PET_UI_KEY))?, payload.anchor);
+    store.set(
+        PET_UI_KEY,
+        serde_json::to_value(state).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_pet_facing<R: Runtime>(
+    app: AppHandle<R>,
+    payload: SetPetFacingPayload,
+) -> Result<(), String> {
+    let store = app
+        .store(paths::UI_STATE_STORE_PATH)
+        .map_err(|e| e.to_string())?;
+    let state = update_pet_facing(parse_pet_ui(store.get(PET_UI_KEY))?, payload.facing);
     store.set(
         PET_UI_KEY,
         serde_json::to_value(state).map_err(|e| e.to_string())?,
@@ -269,8 +326,83 @@ mod tests {
                         scale_milli: Some(1250),
                     },
                     relative_anchor: PetPointPersistence { x: 0.5, y: 0.25 },
-                })
+                }),
+                facing: PetFacingPersistence::Right,
             }
         );
+    }
+
+    #[test]
+    fn parse_pet_ui_preserves_facing_and_defaults_invalid_values() {
+        assert_eq!(
+            parse_pet_ui(Some(serde_json::json!({ "facing": "left" })))
+                .expect("parse")
+                .facing,
+            PetFacingPersistence::Left
+        );
+        assert_eq!(
+            parse_pet_ui(Some(serde_json::json!({ "facing": "right" })))
+                .expect("parse")
+                .facing,
+            PetFacingPersistence::Right
+        );
+
+        for invalid_facing in [
+            serde_json::json!("sideways"),
+            serde_json::json!(42),
+            serde_json::json!({ "unexpected": true }),
+            serde_json::Value::Null,
+        ] {
+            assert_eq!(
+                parse_pet_ui(Some(serde_json::json!({
+                    "anchor": {
+                        "monitor": { "x": 0, "y": 0, "width": 100, "height": 100 },
+                        "relativeAnchor": { "x": 0.25, "y": 0.75 }
+                    },
+                    "facing": invalid_facing
+                })))
+                .expect("parse"),
+                PetUiPersistence {
+                    anchor: Some(PetMonitorRelativeAnchorPersistence {
+                        monitor: PetMonitorSnapshotPersistence {
+                            x: 0,
+                            y: 0,
+                            width: 100,
+                            height: 100,
+                            scale_milli: None,
+                        },
+                        relative_anchor: PetPointPersistence { x: 0.25, y: 0.75 },
+                    }),
+                    facing: PetFacingPersistence::Right,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn pet_ui_field_updates_preserve_the_other_field() {
+        let anchor = PetMonitorRelativeAnchorPersistence {
+            monitor: PetMonitorSnapshotPersistence {
+                x: 1,
+                y: 2,
+                width: 100,
+                height: 200,
+                scale_milli: Some(1250),
+            },
+            relative_anchor: PetPointPersistence { x: 0.2, y: 0.8 },
+        };
+        let state = update_pet_facing(
+            PetUiPersistence {
+                anchor: Some(anchor.clone()),
+                facing: PetFacingPersistence::Right,
+            },
+            PetFacingPersistence::Left,
+        );
+        assert_eq!(state.anchor, Some(anchor));
+        assert_eq!(state.facing, PetFacingPersistence::Left);
+
+        let state = update_pet_monitor_anchor(state, None);
+        assert_eq!(state.anchor, None);
+        assert_eq!(state.facing, PetFacingPersistence::Left);
     }
 }
