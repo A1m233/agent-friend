@@ -64,6 +64,7 @@ class BuildPaths:
     build_id: str
     build_dir: Path
     pyinstaller_dir: Path
+    pyinstaller_cache_dir: Path
     runtime_stage: Path
     frontend_dist: Path
     cargo_target_dir: Path
@@ -139,9 +140,10 @@ def create_build_paths(roots: PackageRoots, *, build_id: str) -> BuildPaths:
         build_id=build_id,
         build_dir=build_dir,
         pyinstaller_dir=build_dir / "pyinstaller",
+        pyinstaller_cache_dir=roots.work_root / "build-cache" / "pyinstaller",
         runtime_stage=build_dir / "runtime-stage",
         frontend_dist=build_dir / "frontend-dist",
-        cargo_target_dir=build_dir / "cargo-target",
+        cargo_target_dir=roots.work_root / "build-cache" / "cargo-target",
         generated_config_dir=build_dir / "config",
         publish_staging_dir=build_dir / "publish-staging",
     )
@@ -171,5 +173,24 @@ def safe_rmtree(path: Path, *, build_paths: BuildPaths) -> None:
         or not _is_within(build_dir, work_root)
     ):
         raise RuntimeError(f"refusing to delete outside current package build: {target}")
+    if target.exists():
+        shutil.rmtree(target)
+
+
+def safe_cache_rmtree(path: Path, *, build_paths: BuildPaths) -> None:
+    """Delete one shared build-cache child without widening general cleanup scope."""
+
+    target = _resolved(path)
+    cache_root = _resolved(build_paths.roots.work_root / "build-cache")
+    protected = {
+        cache_root,
+        _resolved(build_paths.roots.work_root),
+        _resolved(build_paths.roots.state_root),
+        _resolved(build_paths.roots.repo_root),
+        _resolved(Path.home()),
+        Path(target.anchor),
+    }
+    if target in protected or not _is_within(target, cache_root):
+        raise RuntimeError(f"refusing to delete outside package build cache: {target}")
     if target.exists():
         shutil.rmtree(target)
