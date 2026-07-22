@@ -51,7 +51,7 @@ from runtime_config import config_mode_from_env, credential_source_for_mode
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
-from .runtime_config import BridgeRuntimeConfig, resolve_bridge_runtime_config
+from .runtime_config import BridgeRuntimeConfig, DeferredLLMClient, resolve_bridge_runtime_config
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
 
@@ -263,7 +263,7 @@ def build_runtime(
         recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
-            LLMClient(runtime_config.memory_spec),
+            cast(LLMClient, DeferredLLMClient(runtime_config.memory_client_factory)),
             on_retrieved=recall_buffer.record,
             search_service=memory_search,
             dense_model_dir=settings.memory_model_dir,
