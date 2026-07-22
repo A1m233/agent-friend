@@ -41,11 +41,15 @@ import {
   resolvePetMonitorRelativeAnchorForPoint,
   resolvePetPointFromMonitorRelativeAnchor,
   resolvePetViewportForRect,
-  savePetMonitorAnchor,
   type MonitorPhysicalSnapshot,
   type OverlayPhysicalBounds,
   type PetMonitorRelativeAnchor,
 } from "./petMonitorViewport";
+import {
+  loadPetUiPersistence,
+  savePetFacing,
+  savePetMonitorAnchor,
+} from "./petUiPersistence";
 import {
   centerPointOfRect,
   hasReachedPlacementPoint,
@@ -68,6 +72,11 @@ import { getAvatarModelScalePercent, useSetting } from "@/lib/settings";
 import { Live2DAvatarSurface } from "@/pet/avatarRuntime/live2d/Live2DAvatarSurface";
 import { Spine38AvatarSurface } from "@/pet/avatarRuntime/spine38/Spine38AvatarSurface";
 import type { PetAvatarRuntime } from "@/pet/avatarRuntime/types";
+import {
+  DEFAULT_PET_FACING,
+  normalizePetFacing,
+  type PetFacing,
+} from "@/pet/avatarRuntime/facing";
 import { publishAnchorDiagnostics } from "@/pet/anchorDiagnostics";
 import {
   startPetStateSubscriber,
@@ -172,6 +181,10 @@ export function PetApp() {
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
+  const [petFacing, setPetFacing] = useState<PetFacing | null>(() =>
+    isTauri() ? null : DEFAULT_PET_FACING,
+  );
+  const petFacingRef = useRef<PetFacing | null>(petFacing);
   const [avatarModelId] = useSetting("avatarModelId");
   const [petAvatarSize, setPetAvatarSize] = useSetting("petAvatarSize");
   const [avatarModelScalePercents] = useSetting("avatarModelScalePercents");
@@ -195,6 +208,38 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    void loadPetUiPersistence()
+      .then((state) => {
+        if (!cancelled) {
+          const restoredFacing = normalizePetFacing(state.facing);
+          petFacingRef.current = restoredFacing;
+          setPetFacing(restoredFacing);
+        }
+      })
+      .catch((error: unknown) => {
+        console.warn("[pet] load facing failed:", error);
+        if (!cancelled) {
+          petFacingRef.current = DEFAULT_PET_FACING;
+          setPetFacing(DEFAULT_PET_FACING);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleFacingChange = useCallback((nextFacing: PetFacing) => {
+    if (petFacingRef.current === nextFacing) return;
+    petFacingRef.current = nextFacing;
+    setPetFacing(nextFacing);
+    void savePetFacing(nextFacing).catch((error: unknown) => {
+      console.warn("[pet] save facing failed:", error);
+    });
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -937,16 +982,18 @@ export function PetApp() {
             setIsDragging={setIsDraggingWithTracking}
             onRuntimeChange={setRuntime}
           />
-        ) : selectedEntry?.backend === "spine" ? (
+        ) : selectedEntry?.backend === "spine" && petFacing ? (
           <Spine38AvatarSurface
             key={`${selectedEntry.id}@${selectedEntry.contentRevision ?? "builtin"}`}
             entry={selectedEntry}
             initialAnchorPoint={avatarPlacementPoint}
             displayProfile={displayProfile}
             displayContext={displayContext}
+            facing={petFacing}
             setSpriteScreen={setSpriteScreenIfChanged}
             setActionBarAnchor={setActionBarAnchorIfChanged}
             setIsDragging={setIsDraggingWithTracking}
+            onFacingChange={handleFacingChange}
             onRuntimeChange={setRuntime}
           />
         ) : null}

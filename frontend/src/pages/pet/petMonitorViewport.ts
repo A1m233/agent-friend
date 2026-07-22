@@ -1,9 +1,9 @@
-import { invoke } from "@tauri-apps/api/core";
 import { availableMonitors, cursorPosition, type Monitor } from "@tauri-apps/api/window";
 
 import type { PetPoint, PetRect, PetViewport } from "./petDisplayProfile";
 import { isFiniteRect, isFiniteViewport } from "./petGeometry";
 import { isTauri } from "@/utils/tauri";
+import { loadPetUiPersistence } from "./petUiPersistence";
 
 const EMPTY_VIEWPORT: PetViewport = { x: 0, y: 0, w: 0, h: 0 };
 
@@ -53,10 +53,6 @@ export interface PetPointMonitorRebaseResult {
 export interface PetMonitorRelativeAnchor {
   monitor: MonitorPhysicalSnapshot;
   relativeAnchor: PetPoint;
-}
-
-export interface PetUiPersistence {
-  anchor?: PetMonitorRelativeAnchor | null;
 }
 
 export interface PetDisplayPhysicalSnapshot {
@@ -537,18 +533,6 @@ export async function loadPetDisplayPhysicalSnapshot(): Promise<PetDisplayPhysic
   const monitors = (await availableMonitors()).map(monitorToPhysicalSnapshot);
   const bounds = computeOverlayPhysicalBounds(monitors);
   return bounds ? { bounds, monitors } : null;
-}
-
-export async function loadPetUiPersistence(): Promise<PetUiPersistence> {
-  if (!isTauri()) return {};
-  return (await invoke("get_pet_ui_persistence")) as PetUiPersistence;
-}
-
-export async function savePetMonitorAnchor(
-  anchor: PetMonitorRelativeAnchor | null,
-): Promise<void> {
-  if (!isTauri()) return;
-  await invoke("set_pet_monitor_anchor", { payload: { anchor } });
 }
 
 export async function loadPetInitialPlacementPoint(
