@@ -51,11 +51,13 @@ impl ServiceSlot {
 
     fn fail(&mut self, phase: RuntimeServicePhase, code: &str, message: String) {
         self.snapshot.phase = phase;
-        self.snapshot.error = Some(RuntimeServiceError {
+        let error = RuntimeServiceError {
             code: code.to_string(),
             message,
             retryable: true,
-        });
+        };
+        self.snapshot.error = Some(error.clone());
+        self.snapshot.last_error = Some(error);
     }
 }
 
@@ -712,6 +714,8 @@ fn spawn_service(
     }
     command
         .env("AGENT_FRIEND_LIFECYCLE_TOKEN", token)
+        .env("PYTHONUTF8", "1")
+        .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null())
         .spawn()
         .map_err(|error| format!("failed to launch {}: {error}", service.module()))
@@ -875,6 +879,28 @@ mod tests {
         assert_eq!(RuntimeServiceKind::Bridge.port(), 18800);
         assert_eq!(RuntimeServiceKind::Voice.module(), "voice_bridge");
         assert_eq!(RuntimeServiceKind::Voice.port(), 18900);
+    }
+
+    #[test]
+    fn starting_a_retry_keeps_the_previous_failure_for_diagnostics() {
+        let mut slot = ServiceSlot::new(RuntimeServiceKind::Bridge);
+        slot.begin(RuntimeServicePhase::Starting);
+        slot.fail(
+            RuntimeServicePhase::Failed,
+            "process_exited_early",
+            "service exited".to_string(),
+        );
+
+        slot.begin(RuntimeServicePhase::Starting);
+
+        assert!(slot.snapshot.error.is_none());
+        assert_eq!(
+            slot.snapshot
+                .last_error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some("process_exited_early")
+        );
     }
 
     #[test]

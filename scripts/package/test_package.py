@@ -265,6 +265,8 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
 
     config_path = package._write_package_config(
         build_paths,
+        local_test=True,
+        source={"commit": "a" * 40, "dirty": True},
         trusted_beta=True,
         credential_store=store,
     )
@@ -276,6 +278,12 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
     assert resources[payload.as_posix()] == "trusted-credential-seed.bin"
     assert resources[key.as_posix()] == "trusted-credential-seed.key"
     assert resources[build_paths.runtime_stage.as_posix() + "/"] == "runtime"
+    metadata_path = package._package_metadata_path(build_paths)
+    assert resources[metadata_path.as_posix()] == "package-build.json"
+    metadata = json.loads(metadata_path.read_text("utf-8"))
+    assert metadata["buildMode"] == "local-test"
+    assert metadata["distribution"] == "trusted-beta"
+    assert metadata["sensitive"] is True
     decoded = decrypt_credential_seed(payload.read_bytes(), key.read_bytes())
     for name in OPTIONAL_CREDENTIAL_NAMES:
         assert decoded[name] is None
@@ -298,6 +306,15 @@ def test_trusted_artifact_paths_are_visibly_sensitive() -> None:
     assert ordinary_name == "agent-friend_1.2.3_windows_x64-setup.exe"
     assert "trusted-beta-sensitive" in trusted_dir.name
     assert "trusted-beta-SENSITIVE" in trusted_name
+
+    local_ordinary = releases.local_test_release_dir(
+        Path("releases"), "1.2.3", "ordinary", "build-one"
+    )
+    local_trusted = releases.local_test_release_dir(
+        Path("releases"), "1.2.3", "trusted-beta", "build-two"
+    )
+    assert "ordinary" in local_ordinary.parts
+    assert "trusted-beta-sensitive" in local_trusted.parts
 
 
 def test_package_roots_are_stable_across_worktrees_and_builds_are_isolated(tmp_path) -> None:
@@ -334,6 +351,8 @@ def test_package_roots_are_stable_across_worktrees_and_builds_are_isolated(tmp_p
     build_one = package_paths.create_build_paths(first, build_id="build-one")
     build_two = package_paths.create_build_paths(first, build_id="build-two")
     assert build_one.build_dir != build_two.build_dir
+    assert build_one.cargo_target_dir == build_two.cargo_target_dir
+    assert build_one.pyinstaller_cache_dir == build_two.pyinstaller_cache_dir
 
 
 def test_package_roots_reject_repository_and_broad_user_paths(tmp_path) -> None:
@@ -388,6 +407,11 @@ def test_safe_rmtree_only_deletes_inside_current_build(tmp_path) -> None:
         pass
     else:
         raise AssertionError("state root deletion must be rejected")
+
+    cached_child = build.cargo_target_dir / "release" / "bundle" / "nsis"
+    cached_child.mkdir(parents=True)
+    package_paths.safe_cache_rmtree(cached_child, build_paths=build)
+    assert not cached_child.exists()
 
 
 def _write_version_fixture(root: Path, version: str = "1.2.3") -> None:
@@ -565,14 +589,19 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
 
     def fake_run(command, *, cwd=package.REPO_ROOT, env=None) -> None:
         assert env is not None
-        assert env["CARGO_TARGET_DIR"] == str(build_paths.cargo_target_dir)
         if command[1:3] == ["run", "build"]:
+            assert env["CARGO_TARGET_DIR"] == str(build_paths.cargo_target_dir)
             assert command[3] == "--outDir"
             build_paths.frontend_dist.mkdir(parents=True)
             for entrypoint in package.REQUIRED_FRONTEND_ENTRYPOINTS:
                 (build_paths.frontend_dist / entrypoint).write_text("ok", encoding="utf-8")
             return
-        assert not stale_marker.exists()
+        if command[0:2] == ["cargo", "clean"]:
+            assert "--package" in command
+            assert "app" in command
+            assert stale_marker.exists()
+            return
+        assert stale_marker.exists()
         config_path = Path(command[command.index("--config") + 1])
         config = json.loads(config_path.read_text("utf-8"))
         resources = config["bundle"]["resources"]
@@ -617,6 +646,8 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     assert isinstance(manifest, dict)
     assert manifest["build_mode"] == "local-test"
     assert manifest["publishable"] is False
+    metadata = json.loads(package._package_metadata_path(build_paths).read_text("utf-8"))
+    assert metadata["distribution"] == "ordinary"
 
 
 def test_frontend_dist_validation_rejects_missing_product_entrypoints(tmp_path) -> None:

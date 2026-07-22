@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from paths import (
     load_build_paths,
     new_build_id,
     resolve_package_roots,
+    safe_cache_rmtree,
     safe_rmtree,
 )
 from releases import (
@@ -73,6 +75,70 @@ SECRET_NAMES = {
     "VOICE_BRIDGE_VOLC_SPEECH_ACCESS_TOKEN",
     "VOICE_BRIDGE_VOLC_SPEECH_API_KEY",
 }
+PACKAGE_METADATA_RESOURCE = "package-build.json"
+
+
+@contextmanager
+def _timed_step(name: str, build_paths: BuildPaths):  # type: ignore[no-untyped-def]
+    started = time.monotonic()
+    print(f"==> package step: {name}")
+    try:
+        yield
+    finally:
+        duration = time.monotonic() - started
+        print(f"<== package step: {name} ({duration:.1f}s)")
+        timing_path = build_paths.build_dir / "package-timings.json"
+        try:
+            timings = _read_json(timing_path) if timing_path.is_file() else {"steps": []}
+            timings.setdefault("steps", []).append(
+                {"name": name, "durationSeconds": round(duration, 3)}
+            )
+            timing_path.write_text(json.dumps(timings, indent=2) + "\n", encoding="utf-8")
+        except Exception as error:
+            print(f"warning: package timing record failed for {name}: {error}")
+
+
+@contextmanager
+def _package_build_lock(lock_path: Path):  # type: ignore[no-untyped-def]
+    """Serialize builds that share incremental PyInstaller and Cargo caches."""
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    stream = lock_path.open("a+b")
+    acquired = False
+    try:
+        if stream.tell() == 0:
+            stream.write(b"0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as error:
+            raise RuntimeError(
+                f"another package build is already using this worktree cache: {lock_path}"
+            ) from error
+        yield
+    finally:
+        try:
+            if acquired:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        finally:
+            stream.close()
 
 
 def _sha256(path: Path) -> str:
@@ -301,21 +367,27 @@ def _build_runtime(build_paths: BuildPaths, *, offline: bool, reuse_frozen: bool
         if work_dir.exists():
             safe_rmtree(work_dir, build_paths=build_paths)
         work_dir.mkdir(parents=True)
-        _run(
-            [
-                sys.executable,
-                "-m",
-                "PyInstaller",
-                "--noconfirm",
-                "--clean",
-                "--distpath",
-                str(dist_dir),
-                "--workpath",
-                str(work_dir / "build"),
-                str(SPEC_PATH),
-            ]
-        )
+        build_paths.pyinstaller_cache_dir.mkdir(parents=True, exist_ok=True)
+        with _timed_step("pyinstaller", build_paths):
+            _run(
+                [
+                    sys.executable,
+                    "-m",
+                    "PyInstaller",
+                    "--noconfirm",
+                    "--distpath",
+                    str(dist_dir),
+                    "--workpath",
+                    str(build_paths.pyinstaller_cache_dir),
+                    str(SPEC_PATH),
+                ]
+            )
 
+    with _timed_step("runtime-stage-and-smoke", build_paths):
+        _stage_runtime(build_paths, dist_dir=dist_dir, offline=offline)
+
+
+def _stage_runtime(build_paths: BuildPaths, *, dist_dir: Path, offline: bool) -> None:
     stage_dir = build_paths.runtime_stage
     if stage_dir.exists():
         safe_rmtree(stage_dir, build_paths=build_paths)
@@ -401,6 +473,10 @@ def _trusted_resource_paths(build_paths: BuildPaths) -> tuple[Path, Path]:
     return directory / "trusted-credential-seed.bin", directory / "trusted-credential-seed.key"
 
 
+def _package_metadata_path(build_paths: BuildPaths) -> Path:
+    return build_paths.generated_config_dir / PACKAGE_METADATA_RESOURCE
+
+
 def _tauri_relative_path(path: Path) -> str:
     """Return a config path relative to src-tauri, as required by frontendDist/resources."""
 
@@ -425,9 +501,35 @@ def _cleanup_trusted_resources(build_paths: BuildPaths) -> None:
                 path.unlink(missing_ok=True)
 
 
+def _clean_tauri_app_outputs(build_paths: BuildPaths) -> None:
+    """Force fresh app/resource embedding while preserving compiled dependencies."""
+
+    if build_paths.cargo_target_dir.exists():
+        _run(
+            [
+                "cargo",
+                "clean",
+                "--package",
+                "app",
+                "--release",
+                "--target-dir",
+                str(build_paths.cargo_target_dir),
+                "--manifest-path",
+                str(TAURI_DIR / "Cargo.toml"),
+            ],
+            cwd=TAURI_DIR,
+            env=_sanitized_env(),
+        )
+    bundle_dir = build_paths.cargo_target_dir / "release" / "bundle" / "nsis"
+    if bundle_dir.exists():
+        safe_cache_rmtree(bundle_dir, build_paths=build_paths)
+
+
 def _write_package_config(
     build_paths: BuildPaths,
     *,
+    local_test: bool,
+    source: dict[str, Any],
     trusted_beta: bool,
     credential_store: Any | None = None,
 ) -> Path:
@@ -444,6 +546,23 @@ def _write_package_config(
     build["beforeBuildCommand"] = ""
     build["frontendDist"] = _tauri_relative_path(build_paths.frontend_dist)
     build_paths.generated_config_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = _package_metadata_path(build_paths)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "buildMode": "local-test" if local_test else "formal",
+                "distribution": "trusted-beta" if trusted_beta else "ordinary",
+                "sensitive": trusted_beta,
+                "buildId": build_paths.build_id,
+                "source": source,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    resources[metadata_path.as_posix()] = PACKAGE_METADATA_RESOURCE
     if trusted_beta:
         _cleanup_trusted_resources(build_paths)
         credentials = collect_trusted_credentials(credential_store or KeyringSource())
@@ -502,6 +621,8 @@ def _build_installer(
     try:
         config_path = _write_package_config(
             build_paths,
+            local_test=local_test,
+            source=source,
             trusted_beta=trusted_beta,
             credential_store=credential_store,
         )
@@ -509,28 +630,30 @@ def _build_installer(
         build_env["CARGO_TARGET_DIR"] = str(build_paths.cargo_target_dir)
         if build_paths.frontend_dist.exists():
             safe_rmtree(build_paths.frontend_dist, build_paths=build_paths)
-        _run(
-            [
-                pnpm,
-                "run",
-                "build",
-                "--outDir",
-                str(build_paths.frontend_dist),
-                "--emptyOutDir",
-            ],
-            cwd=REPO_ROOT / "frontend",
-            env=build_env,
-        )
+        with _timed_step("frontend", build_paths):
+            _run(
+                [
+                    pnpm,
+                    "run",
+                    "build",
+                    "--outDir",
+                    str(build_paths.frontend_dist),
+                    "--emptyOutDir",
+                ],
+                cwd=REPO_ROOT / "frontend",
+                env=build_env,
+            )
         entrypoints = _validate_frontend_dist(build_paths.frontend_dist)
-        # Tauri embeds frontendDist into the release executable. A failed build followed by
-        # --reuse-build-id must not reuse an executable compiled before frontendDist existed.
-        if build_paths.cargo_target_dir.exists():
-            safe_rmtree(build_paths.cargo_target_dir, build_paths=build_paths)
-        _run(
-            [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
-            cwd=REPO_ROOT / "frontend",
-            env=build_env,
-        )
+        # Recompile the app/resource layer on every package while retaining Cargo dependency
+        # artifacts in the per-worktree cache. This prevents stale frontend or trusted-resource
+        # embedding without paying for a full dependency rebuild.
+        _clean_tauri_app_outputs(build_paths)
+        with _timed_step("tauri-and-nsis", build_paths):
+            _run(
+                [pnpm, "tauri", "build", "--config", str(config_path), "--bundles", "nsis"],
+                cwd=REPO_ROOT / "frontend",
+                env=build_env,
+            )
         _validate_embedded_frontend(
             build_paths.cargo_target_dir / "release" / "agent-friend.exe",
             entrypoints,
@@ -557,17 +680,19 @@ def _build_installer(
             "upgrade_mode": "manual-installer",
             "identifier": "com.agentfriend.desktop",
         }
-        return publish_installer(
-            candidate,
-            releases_root=build_paths.roots.releases_root,
-            manifest=manifest,
-            local_test=local_test,
-        )
+        with _timed_step("publish", build_paths):
+            return publish_installer(
+                candidate,
+                releases_root=build_paths.roots.releases_root,
+                manifest=manifest,
+                local_test=local_test,
+            )
     finally:
         if trusted_beta:
             _cleanup_trusted_resources(build_paths)
             if candidate is not None:
                 candidate.unlink(missing_ok=True)
+            _clean_tauri_app_outputs(build_paths)
 
 
 def _smoke_installed_runtime(
@@ -768,31 +893,32 @@ def main() -> int:
             source=source,
             distribution=distribution,
         )
-    if args.reuse_build_id:
-        build_paths = load_build_paths(roots, build_id=args.reuse_build_id)
-    else:
-        build_paths = create_build_paths(
-            roots,
-            build_id=new_build_id(str(source["commit"])),
-        )
-        build_paths.build_dir.mkdir(parents=True)
-    roots.cache_dir.mkdir(parents=True, exist_ok=True)
-    print(f"build_id: {build_paths.build_id}")
-    if args.step in {"runtime", "all"}:
-        _build_runtime(
-            build_paths,
-            offline=args.offline,
-            reuse_frozen=bool(args.reuse_build_id),
-        )
-    if args.step in {"installer", "all"}:
-        setup = _build_installer(
-            str(project.version),
-            build_paths=build_paths,
-            source=source,
-            local_test=args.local_test,
-            trusted_beta=args.trusted_beta,
-        )
-        print(f"installer: {setup}")
+    with _package_build_lock(roots.work_root / "package-build.lock"):
+        if args.reuse_build_id:
+            build_paths = load_build_paths(roots, build_id=args.reuse_build_id)
+        else:
+            build_paths = create_build_paths(
+                roots,
+                build_id=new_build_id(str(source["commit"])),
+            )
+            build_paths.build_dir.mkdir(parents=True)
+        roots.cache_dir.mkdir(parents=True, exist_ok=True)
+        print(f"build_id: {build_paths.build_id}")
+        if args.step in {"runtime", "all"}:
+            _build_runtime(
+                build_paths,
+                offline=args.offline,
+                reuse_frozen=bool(args.reuse_build_id),
+            )
+        if args.step in {"installer", "all"}:
+            setup = _build_installer(
+                str(project.version),
+                build_paths=build_paths,
+                source=source,
+                local_test=args.local_test,
+                trusted_beta=args.trusted_beta,
+            )
+            print(f"installer: {setup}")
     return 0
 
 

@@ -16,6 +16,7 @@ const MAX_DESCRIPTION_CHARS: usize = 20_000;
 const MAX_SESSIONS: usize = 20;
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_LOG_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
+const PACKAGE_BUILD_METADATA: &str = "package-build.json";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,10 +122,13 @@ pub async fn generate_diagnostic_bundle(
         });
     }
 
+    let resource_dir =
+        tauri::utils::platform::resource_dir(app.package_info(), &tauri::Env::default()).ok();
     let app_info = json!({
         "product": app.package_info().name,
         "version": app.package_info().version.to_string(),
         "buildMode": if cfg!(debug_assertions) { "debug" } else { "release" },
+        "packageBuild": load_package_build_metadata(resource_dir.as_deref()),
         "generatedAt": generated_at.to_rfc3339(),
     });
     let os = os_info::get();
@@ -224,6 +228,16 @@ pub async fn generate_diagnostic_bundle(
         included_session_ids,
         failures,
     })
+}
+
+fn load_package_build_metadata(resource_dir: Option<&Path>) -> Value {
+    let Some(path) = resource_dir.map(|directory| directory.join(PACKAGE_BUILD_METADATA)) else {
+        return Value::Null;
+    };
+    let Ok(bytes) = fs::read(path) else {
+        return Value::Null;
+    };
+    serde_json::from_slice(&bytes).unwrap_or(Value::Null)
 }
 
 fn normalize_description(description: Option<String>) -> Result<Option<String>, String> {
@@ -561,6 +575,27 @@ mod tests {
         assert!(
             normalize_session_ids((0..=MAX_SESSIONS).map(|i| i.to_string()).collect()).is_err()
         );
+    }
+
+    #[test]
+    fn package_build_metadata_is_optional_and_loaded_when_present() {
+        let dir = std::env::temp_dir().join(format!(
+            "agent-friend-package-metadata-{}",
+            rand::random::<u64>()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(load_package_build_metadata(Some(&dir)).is_null());
+        fs::write(
+            dir.join(PACKAGE_BUILD_METADATA),
+            br#"{"buildMode":"local-test","distribution":"trusted-beta"}"#,
+        )
+        .unwrap();
+
+        let metadata = load_package_build_metadata(Some(&dir));
+
+        assert_eq!(metadata["buildMode"], "local-test");
+        assert_eq!(metadata["distribution"], "trusted-beta");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

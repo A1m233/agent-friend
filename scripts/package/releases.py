@@ -39,8 +39,13 @@ def formal_release_dir(releases_root: Path, version: str, distribution: str) -> 
     return releases_root / "releases" / version / "windows-x64" / leaf
 
 
-def local_test_release_dir(releases_root: Path, version: str, build_id: str) -> Path:
-    return releases_root / "_local-test" / version / "windows-x64" / build_id
+def local_test_release_dir(
+    releases_root: Path, version: str, distribution: str, build_id: str
+) -> Path:
+    if distribution not in FORMAL_DISTRIBUTIONS:
+        raise RuntimeError(f"invalid local-test distribution: {distribution}")
+    channel = "trusted-beta-sensitive" if distribution == "trusted-beta" else "ordinary"
+    return releases_root / "_local-test" / version / "windows-x64" / channel / build_id
 
 
 def installer_name(version: str, *, distribution: str, local_test: bool) -> str:
@@ -169,7 +174,7 @@ def publish_installer(
     distribution = str(manifest["distribution"])
     build_id = str(manifest["build_id"])
     final_dir = (
-        local_test_release_dir(releases_root, version, build_id)
+        local_test_release_dir(releases_root, version, distribution, build_id)
         if local_test
         else formal_release_dir(releases_root, version, distribution)
     )

@@ -66,6 +66,7 @@ pub struct RuntimeServiceSnapshot {
     pub generation: u64,
     pub operation_id: Option<String>,
     pub error: Option<RuntimeServiceError>,
+    pub last_error: Option<RuntimeServiceError>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -98,6 +99,7 @@ impl RuntimeServiceSnapshot {
             generation: 0,
             operation_id: None,
             error: None,
+            last_error: None,
         }
     }
 }
