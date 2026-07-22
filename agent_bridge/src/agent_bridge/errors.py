@@ -32,6 +32,7 @@ from llm_providers import (
     LLMProviderError,
     LLMRateLimitError,
 )
+from runtime_config import CredentialMissingError
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,13 @@ def map_exception(exc: BaseException) -> ProtocolError:
 
     映射规则见 design §4.6.1。增改异常类型时同步更新映射表与 design 文档。
     """
+    if isinstance(exc, CredentialMissingError):
+        return ProtocolError(
+            http_status=503,
+            code="credential_missing",
+            message="模型凭据尚未配置，请先在设置中完成配置。",
+            recoverable=True,
+        )
     if isinstance(exc, LLMRateLimitError):
         return ProtocolError(
             http_status=429,

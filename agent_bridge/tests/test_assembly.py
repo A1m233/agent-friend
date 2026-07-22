@@ -6,12 +6,15 @@ from typing import Any, cast
 
 import pytest
 from agent.tools.builtin.conversation_history import ConversationHistoryTool
+from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import build_runtime
+from agent_bridge.errors import map_exception
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 from agent_bridge.settings import BridgeSettings
+from fastapi.testclient import TestClient
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
-from runtime_config import credential_source_for_mode
+from runtime_config import CredentialMissingError, credential_source_for_mode
 
 
 def test_persistent_runtime_registers_recall_past_chats(
@@ -76,6 +79,62 @@ def test_memory_enabled_registers_history_and_structured_sources(
         )
     finally:
         runtime.close()
+
+
+def test_runtime_starts_without_llm_credentials_for_local_control_plane(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+
+    runtime = build_runtime(
+        BridgeSettings(
+            sessions_dir=tmp_path / "sessions",
+            personas_dir=tmp_path / "personas",
+            memory_db=tmp_path / "memory.db",
+            memory_enabled=True,
+            im_enabled=False,
+        ),
+        runtime_config=resolve_bridge_runtime_config(credential_source_for_mode("env-only")),
+    )
+
+    try:
+        assert runtime.memory is not None
+        assert runtime.persona_store is not None
+        assert runtime.persona_store.user_file.is_file()
+        client = TestClient(create_app_with_runtime(runtime, lifecycle_token="owner-token"))
+        inventory = client.get(
+            "/internal/migration/inventory",
+            headers={"X-Agent-Friend-Lifecycle-Token": "owner-token"},
+        )
+        assert inventory.status_code == 200
+
+        initial = client.get("/v1/persona").json()
+        customized = client.put(
+            "/v1/persona",
+            json={
+                "content": "临时自定义人格",
+                "expectedRevision": initial["revision"],
+                "source": "guided",
+            },
+        )
+        assert customized.status_code == 200
+        reset = client.delete("/v1/persona/customization")
+        assert reset.status_code == 200
+
+        with pytest.raises(CredentialMissingError):
+            runtime.llm_client_factory(runtime.default_model)  # type: ignore[misc]
+    finally:
+        runtime.close()
+
+
+def test_missing_credentials_map_to_recoverable_protocol_error() -> None:
+    error = map_exception(CredentialMissingError(["DEEPSEEK_API_KEY"]))
+
+    assert error.http_status == 503
+    assert error.code == "credential_missing"
+    assert error.recoverable is True
 
 
 def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(

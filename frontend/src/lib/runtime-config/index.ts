@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { resetLocalServiceReadiness } from "@/services/runtime";
 
 export type RuntimeConfigGroup = "deepseek" | "kimi" | "tavily" | "volcVoice";
 export type RuntimeConfigKind = "secret";
@@ -82,6 +83,10 @@ function replaceItem(
   };
 }
 
+function resetAffectedService(effect: RuntimeConfigEffect): void {
+  resetLocalServiceReadiness(effect === "restartBridge" ? "bridge" : "voice");
+}
+
 export function describeRuntimeConfigEffect(effect: RuntimeConfigEffect): string {
   switch (effect) {
     case "restartBridge":
@@ -127,6 +132,7 @@ export function useRuntimeConfig() {
       setState((current) => ({ ...current, savingName: name, error: null }));
       try {
         const mutation = await setRuntimeSecret(name, value);
+        resetAffectedService(mutation.effect);
         setState((current) => ({
           ...current,
           snapshot: replaceItem(current.snapshot, mutation.item),
@@ -153,6 +159,7 @@ export function useRuntimeConfig() {
     setState((current) => ({ ...current, savingName: name, error: null }));
     try {
       const mutation = await deleteRuntimeSecret(name);
+      resetAffectedService(mutation.effect);
       setState((current) => ({
         ...current,
         snapshot: replaceItem(current.snapshot, mutation.item),

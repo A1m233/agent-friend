@@ -32,9 +32,52 @@ class BridgeRuntimeConfig:
     """Credentials and provider-aware model assembly used by the bridge."""
 
     default_model: str
-    memory_spec: ProviderSpec
+    memory_client_factory: Callable[[], LLMClient]
     llm_client_factory: Callable[[str], LLMClient]
     tool_credentials: ToolCredentials
+
+    @property
+    def memory_spec(self) -> ProviderSpec:
+        """Resolve the memory provider only when an LLM capability is requested."""
+        return self.memory_client_factory().spec
+
+
+class DeferredLLMClient:
+    """Delay credential resolution until code actually invokes the LLM.
+
+    Bridge startup also owns local-only control-plane capabilities such as persona
+    reset and migration inventory. Those capabilities must remain available before
+    the destination machine has imported any provider credentials.
+    """
+
+    def __init__(self, factory: Callable[[], LLMClient]) -> None:
+        self._factory = factory
+        self._client: LLMClient | None = None
+
+    def _get(self) -> LLMClient:
+        if self._client is None:
+            self._client = self._factory()
+        return self._client
+
+    @property
+    def spec(self) -> ProviderSpec:
+        return self._get().spec
+
+    @property
+    def context_window(self) -> int:
+        return self._get().context_window
+
+    def complete(self, messages: list[dict[str, object]], **overrides: object) -> str:
+        return self._get().complete(messages, **overrides)
+
+    def stream(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        tools: list[dict[str, object]] | None = None,
+        **overrides: object,
+    ) -> object:
+        return self._get().stream(messages, tools=tools, **overrides)
 
 
 def _optional_int(source: CredentialSource, name: str) -> int | None:
@@ -114,12 +157,15 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         purpose="memory",
     )
 
-    memory_spec = _provider_spec(
-        source,
-        provider_id=memory_provider_id,
-        model_id=memory_model,
-        purpose="memory",
-    )
+    def memory_client_factory() -> LLMClient:
+        return LLMClient(
+            _provider_spec(
+                source,
+                provider_id=memory_provider_id,
+                model_id=memory_model,
+                purpose="memory",
+            )
+        )
 
     def llm_client_factory(model_id: str) -> LLMClient:
         try:
@@ -137,7 +183,7 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
 
     return BridgeRuntimeConfig(
         default_model=default_model,
-        memory_spec=memory_spec,
+        memory_client_factory=memory_client_factory,
         llm_client_factory=llm_client_factory,
         tool_credentials=ToolCredentials(tavily_api_key=optional_secret(source, TAVILY_API_KEY)),
     )
