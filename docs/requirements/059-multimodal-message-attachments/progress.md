@@ -28,3 +28,4 @@ COMPLETED
 | 2026-07-23 | 构建带凭证的本地验收安装包 | `local-test + trusted-beta` 构建成功；build id `20260722T184217Z-a6352ba444f2-1ddad7df`，安装器 SHA-256 已与 release manifest 核对一致；制品敏感且不可发布 |
 | 2026-07-23 | 整合最新主干并完成收尾回归 | 保留主干延迟凭据初始化/打包元数据与 059 附件链路；补齐模型切换草稿兼容性、上下文附件预算与摘要标记、Kimi 远端图片缓存失效重传、文档窗口保护、IM PDF/TXT/下载失败覆盖；`scripts/check` 全绿（Python 957 项、前端 402 项、Rust 138 项） |
 | 2026-07-23 | 复跑真实 Tauri 与 Kimi AC | 真实 WebView 验证拖放、加号入口、TDesign 附件卡片、叉号移除及草稿保留；设置“模型与凭据”页面无白屏/console error；Kimi 图片识别成功，TXT 返回 `ORANGE-COMET-059`，PDF 返回 `BLUE-ORBIT-059`，三路均 `RUN_FINISHED` |
+| 2026-07-23 | 基于收尾提交重打带凭证本地验收包 | 0.1.7 `local-test + trusted-beta` 构建成功；build id `20260723T151241Z-c6526f4480ed-833e36d9`，源提交 `c6526f4` 且工作树干净；安装器大小与 SHA-256 均和 `release.json` 一致；制品敏感且不可发布 |
