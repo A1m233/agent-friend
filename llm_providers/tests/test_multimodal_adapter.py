@@ -81,9 +81,18 @@ def test_text_only_route_rejects_current_attachment(tmp_path: Path) -> None:
         adapter.render_message(message, _client("deepseek/deepseek-v4-flash"))
 
 
+@pytest.mark.parametrize(
+    "model",
+    (
+        "openai/kimi-k2.6",
+        "openai/kimi-k2.7-code",
+        "openai/kimi-k2.7-code-highspeed",
+    ),
+)
 def test_kimi_image_upload_is_cached_by_asset_and_account(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     files = _Files()
     monkeypatch.setattr(
@@ -92,7 +101,7 @@ def test_kimi_image_upload_is_cached_by_asset_and_account(
     )
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
-    client = _client("openai/kimi-k2.6")
+    client = _client(model)
 
     first = adapter.render_message(message, client)
     second = adapter.render_message(message, client)
@@ -125,9 +134,18 @@ def test_kimi_expired_cached_image_is_reuploaded(
     assert files.uploads == 2
 
 
+@pytest.mark.parametrize(
+    "model",
+    (
+        "openai/kimi-k2.6",
+        "openai/kimi-k2.7-code",
+        "openai/kimi-k2.7-code-highspeed",
+    ),
+)
 def test_kimi_document_extract_is_wrapped_as_untrusted_content(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     files = _Files()
     monkeypatch.setattr(
@@ -137,7 +155,7 @@ def test_kimi_document_extract_is_wrapped_as_untrusted_content(
     adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"pdf"), cache_dir=tmp_path)
     message = _Message(_attachment(kind="document", media_type="application/pdf"), current=True)
 
-    rendered = adapter.render_message(message, _client("openai/kimi-k2.6"))
+    rendered = adapter.render_message(message, _client(model))
 
     block = rendered["content"][1]["text"]
     assert '"trust": "untrusted_data"' in block
