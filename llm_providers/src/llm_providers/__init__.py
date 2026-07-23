@@ -27,6 +27,7 @@ from .client import LLMClient
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
+    LLMContentPolicyError,
     LLMError,
     LLMNetworkError,
     LLMProviderError,
@@ -52,6 +53,7 @@ __all__ = [
     "LLMAuthError",
     "LLMBadRequestError",
     "LLMClient",
+    "LLMContentPolicyError",
     "LLMError",
     "LLMNetworkError",
     "LLMProviderError",

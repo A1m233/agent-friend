@@ -19,7 +19,7 @@ from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
 
-CATALOG_REVISION = "2026-07-23.1"
+CATALOG_REVISION = "2026-07-24.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -143,11 +143,13 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 id="kimi/kimi-k2.7-code",
                 label="kimi-k2.7-code",
                 litellm_model="openai/kimi-k2.7-code",
+                capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.7-code-highspeed",
                 label="kimi-k2.7-code-highspeed",
                 litellm_model="openai/kimi-k2.7-code-highspeed",
+                capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
         ),
         default_model="kimi/kimi-k2.6",

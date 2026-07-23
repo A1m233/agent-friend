@@ -1,6 +1,6 @@
 ---
 name: add-shadcn-component
-description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当需要新增通用纯 UI 件、引入/添加 shadcn 组件、或在 frontend 里新建按钮/输入/弹层/列表/对话框等交互件时使用。强制走 CLI 拉源码，禁止手写后声称是 shadcn 源码。
+description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当按 frontend-ui-conventions 完成语义化组件选型、确认需要新增通用纯 UI 件或引入 shadcn 组件时使用。强制走 CLI 拉源码，禁止手写后声称是 shadcn 源码。
 ---
 
 # 引入 shadcn 组件（frontend/src/components/ui/）
@@ -10,6 +10,7 @@ description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shad
 ## 适用范围
 
 - 只管**通用纯 UI 件**（无业务、无 store、只吃 props：button / input / select / dialog / collapsible / scroll-area 等）。
+- 本 skill 不负责跳过组件选型直接把需求映射成 shadcn。必须先按 `frontend-ui-conventions.mdc` 的优先级确认：项目现有封装和已安装组件库中没有更匹配的专用组件，且 shadcn 的组件语义确实匹配。
 - **页面私有、带业务的组件不走本流程**，按既有约定放 `pages/<页>/components/`（它们本就不是 shadcn）。
 - 动手前先读 `.cursor/rules/frontend-ui-conventions.mdc`（护栏：交互件一律用封装件 + 颜色走 token）。
 - Node 要求 ≥ 22.13：CLI / pnpm 操作前先 `nvm use 22`。
@@ -17,13 +18,14 @@ description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shad
 
 ## Step 1 · 确定要哪个组件（别凭记忆猜）
 
-1. 把需求落成**交互形态**：常驻 inline 列表 / 弹出菜单 / 浮层对话框 / 表单控件 / 反馈提示 / 数据展示 …
-2. 用 **context7 查 `/shadcn-ui/ui`**（或官方 docs `ui.shadcn.com`）把形态映射到组件，**不靠记忆**。
-3. 当心**同名陷阱**：`Menubar` / `NavigationMenu` / `DropdownMenu` 都是「trigger + 弹出 content」的**弹出式**菜单；常驻竖向可选中列表是 `Sidebar` 区块（`SidebarMenu` / `SidebarMenuItem` / `SidebarMenuButton`）。
-4. 三种判定：
+1. 先确认已执行 `frontend-ui-conventions.mdc` 的组件选型顺序，没有可复用的项目封装或已安装组件库专用组件；否则停止本流程，改用职责更匹配的组件。
+2. 把需求落成**语义职责与交互形态**：常驻 inline 列表 / 弹出菜单 / 浮层对话框 / 表单控件 / 反馈提示 / 数据展示 …；不能只因视觉结构相似就用 Dialog 等通用容器模拟图片预览、日期选择等专用能力。
+3. 用 **context7 查 `/shadcn-ui/ui`**（或官方 docs `ui.shadcn.com`）把职责与形态映射到组件，**不靠记忆**。
+4. 当心**同名陷阱**：`Menubar` / `NavigationMenu` / `DropdownMenu` 都是「trigger + 弹出 content」的**弹出式**菜单；常驻竖向可选中列表是 `Sidebar` 区块（`SidebarMenu` / `SidebarMenuItem` / `SidebarMenuButton`）。
+5. 三种判定：
    - **有直接对应** → 进 Step 2。
    - **只有偏重 block**（如 `Sidebar`，自带 provider、一批级联依赖、自有 `--sidebar-*` token）→ **先和用户确认**值不值得引入（依赖 / token / 改造成本）。注意 block 会**连带拉一批内部依赖**（`Sidebar` 实测连带 `button`/`input`/`separator`/`sheet`/`skeleton`/`tooltip` + `use-mobile` hook）；若用精简模式（如 `collapsible="none"`），部分依赖只是**静态死引用**（编译需要、运行时走不到），这些可保留官方原样、只适配真正会渲染的部分。
-   - **shadcn 没有合适的** → 才允许**自写**项目纯 UI 件（`cva` + `cn` + 项目 token），且**文件头注释写明「非 shadcn，自写」**，不得谎称 shadcn 源码。
+   - **shadcn 没有合适的** → 回到 `frontend-ui-conventions.mdc` 的组件选型结论；确认其他层级也没有合适组件后，才允许**自写**项目纯 UI 件（`cva` + `cn` + 项目 token），且**文件头注释写明「非 shadcn，自写」**，不得谎称 shadcn 源码。
 
 ## Step 2 · 用 CLI 拉源码
 

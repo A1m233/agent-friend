@@ -28,5 +28,9 @@ class LLMBadRequestError(LLMError):
     """请求格式错或上下文超长。多半是 bug，CLI 层不重试。"""
 
 
+class LLMContentPolicyError(LLMError):
+    """请求内容被 Provider 的安全策略拒绝；原样重试通常仍会失败。"""
+
+
 class LLMProviderError(LLMError):
     """其他 Provider 侧错误。CLI 层期望行为：兜底话术。"""

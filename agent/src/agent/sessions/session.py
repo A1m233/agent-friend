@@ -340,6 +340,84 @@ class Session:
                 )
         return result
 
+    @property
+    def llm_messages(self) -> list[Message]:
+        """供模型使用的历史投影，安全替换内容策略拒绝的失败调用。
+
+        原始事件和 :attr:`messages` 保持不变，供 UI、审计和诊断使用。对明确
+        标记的失败调用，保留此前已经成功的模型 / 工具事务，只把最后一条
+        assistant 及其后续工具结果替换为安全占位。若首次模型调用就失败，则
+        不重放该轮原始用户输入。
+        """
+        active_events = self.active_events
+        run_ids_with_tool_results = {
+            run_id
+            for event in active_events
+            if event.type == "tool_call_result"
+            and isinstance((run_id := event.meta.get("run_id")), str)
+            and run_id
+        }
+        sanitizing_errors: dict[str, Event] = {}
+        for event in active_events:
+            if event.type != "run_error":
+                continue
+            run_id = event.payload.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                continue
+            explicitly_marked = event.payload.get("sanitize_failed_model_call") is True
+            legacy_tool_followup_failure = (
+                event.payload.get("code") == "bad_request" and run_id in run_ids_with_tool_results
+            )
+            if explicitly_marked or legacy_tool_followup_failure:
+                sanitizing_errors[run_id] = event
+        if not sanitizing_errors:
+            return self.messages
+
+        excluded_event_uuids: set[str] = set()
+        placeholders: dict[str, Event] = {}
+        for run_id, error_event in sanitizing_errors.items():
+            run_event_indexes = [
+                index
+                for index, event in enumerate(active_events)
+                if event.meta.get("run_id") == run_id
+            ]
+            if not run_event_indexes:
+                continue
+
+            assistant_indexes = [
+                index
+                for index in run_event_indexes
+                if active_events[index].type == "assistant_message"
+            ]
+            cutoff = assistant_indexes[-1] if assistant_indexes else run_event_indexes[0]
+            excluded_event_uuids.update(
+                active_events[index].uuid for index in run_event_indexes if index >= cutoff
+            )
+            placeholders[error_event.uuid] = Event(
+                type="assistant_message",
+                uuid=f"{error_event.uuid}-llm-placeholder",
+                ts=error_event.ts,
+                payload={
+                    "content": (
+                        "上一轮因模型安全限制未能完成，受限内容不再重放。"
+                        if error_event.payload.get("code") == "content_policy"
+                        else "上一轮工具结果未被模型接受，相关内容不再重放。"
+                    ),
+                    "partial": False,
+                },
+                meta={"synthetic": "content_policy_failure"},
+            )
+
+        sanitized_events: list[Event] = []
+        for event in active_events:
+            if event.uuid in excluded_event_uuids:
+                continue
+            placeholder = placeholders.get(event.uuid)
+            if placeholder is not None:
+                sanitized_events.append(placeholder)
+            sanitized_events.append(event)
+        return Session.from_events(sanitized_events).messages
+
     def latest_compaction(self) -> Event | None:
         """最近一次上下文摘要折叠点（009 M3）；无则 ``None``。
 

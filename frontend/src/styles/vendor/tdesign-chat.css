@@ -45,6 +45,11 @@ t-chat-item::part(t-chat__text__markdown) {
   word-wrap: break-word;
 }
 
+.chat-message-attachments {
+  --td-attachment-image-width: var(--size-chat-attachment-image);
+  --td-attachment-image-height: var(--size-chat-attachment-image);
+}
+
 t-chat-sender::part(t-textarea) {
   overflow: hidden;
 }

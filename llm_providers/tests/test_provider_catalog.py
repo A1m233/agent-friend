@@ -79,7 +79,21 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         "application/pdf",
         "text/plain",
     )
-    assert kimi["kimi/kimi-k2.7-code"]["capabilities"]["attachments"] is False
+    for model_id in ("kimi/kimi-k2.7-code", "kimi/kimi-k2.7-code-highspeed"):
+        assert kimi[model_id]["processingProfile"] == "kimi-multimodal-v1"
+        assert kimi[model_id]["capabilities"]["attachments"] is True
+        assert kimi[model_id]["capabilities"]["inputModalities"] == (
+            "text",
+            "image",
+            "document",
+        )
+        assert kimi[model_id]["capabilities"]["acceptedMediaTypes"] == (
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "application/pdf",
+            "text/plain",
+        )
 
 
 def test_missing_provider_key_raises_actionable_auth_error() -> None:

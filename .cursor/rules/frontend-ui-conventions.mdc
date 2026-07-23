@@ -1,18 +1,35 @@
 ---
-description: agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化
+description: agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化
 globs: frontend/**
 alwaysApply: false
 ---
 
 # 前端 UI 编写规范
 
-约束在 `frontend/` 下编写界面代码时的两条硬性规范，保证 UI 一致性与可换肤。
+约束在 `frontend/` 下编写界面代码时的三条硬性规范，保证组件职责正确、UI 一致性与可换肤。
+
+## 先按语义职责选组件，禁止用通用容器模拟专用组件
+
+- 先确认需求的**语义职责**（如图片预览、确认对话框、菜单、日期选择、轮播），不要只按“遮罩 + 居中内容”“点一下弹出来”等视觉形态选组件。
+- 按以下顺序查找实现，前一层已有合适能力时不继续向后自造：
+  1. 项目已有的封装组件或领域组件。
+  2. 项目已安装组件库或对应领域生态里的专用组件；对话相关既要查 `@tdesign-react/chat`，也要查配套的 `tdesign-react` 通用组件。
+  3. shadcn 中语义匹配的组件；确认要引入时走 `add-shadcn-component` skill。
+  4. 以上均不满足时，才组合基础组件或自写，并说明现成组件不适用的具体原因。
+- 查询组件库能力与 props 时必须核对当前官方文档，不凭记忆猜 API。专用组件已经覆盖 portal、键盘操作、无障碍、开关状态或生命周期时，不得在页面层重复实现这些能力。
+- 已选中的第三方专用组件若会被多处复用，在 `src/components/ui/` 做项目级适配；仅服务单个页面或带业务状态时，放在 `pages/<页>/components/`。封装不能改变其原本的语义职责。
+
+### 反例：图片放大预览不是 Dialog
+
+- ❌ 为了放大附件图片，使用 `Dialog + img + 自定义 CSS` 模拟图片查看器，再手写全屏挂载、点击遮罩关闭、Esc 关闭和缩放逻辑。
+- ✅ 使用 TDesign React 的 `ImageViewer`，通过 `visible`、`images`、`closeOnOverlay`、`closeOnEscKeydown`、`attach` 等组件能力完成交互，只在项目层管理业务状态和必要适配。
+- `Dialog` 只承载对话框语义；即使它与图片查看器都表现为“遮罩 + 居中内容”，也不能因此互相替代。
 
 ## 交互件一律用封装组件，禁止散写原生件
 
 - 通用纯 UI 件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（button / input / select / textarea / modal / tag 等）。需要时：
   - 已存在于 `src/components/ui/` → 直接复用。
-  - 不存在 → 在 `src/components/ui/` 新建：**引入 shadcn 组件必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码；完整流程（怎么定组件 / 拉取 / 适配 token 与目录）见 skill `add-shadcn-component`**。仅当 shadcn 没有对应件时才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
+  - 不存在 → 先按上一节完成语义选型。选中已安装组件库的专用组件时，在 `src/components/ui/` 做薄适配；选中 shadcn 时必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码，完整流程见 skill `add-shadcn-component`。只有各层都没有合适组件时才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
 - 对话域组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造。
 - 页面 / 业务代码里**不出现原生交互元素**。这条不靠"自觉"或"占位/MVP 也不例外"这类措辞维持，而是由机械门禁判定：
   - ESLint `react/forbid-elements` 见到 `<button>` / `<input>` 等原生交互件即报错，接入 `scripts/check`、合 main 前必过、IDE 内即时报错；门禁**不认**"临时 / 占位 / MVP"理由。
