@@ -2,7 +2,9 @@ use crate::{paths, runtime_config, runtime_services};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -17,6 +19,7 @@ const MAX_SESSIONS: usize = 20;
 const MAX_LOG_FILE_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_LOG_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 const PACKAGE_BUILD_METADATA: &str = "package-build.json";
+const MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +28,8 @@ pub struct GenerateDiagnosticBundleRequest {
     session_ids: Vec<String>,
     locale: Option<String>,
     timezone: Option<String>,
+    #[serde(default)]
+    include_attachment_originals: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -46,7 +51,23 @@ pub struct GenerateDiagnosticBundleResult {
 
 struct ArchiveEntry {
     name: String,
-    bytes: Vec<u8>,
+    source: ArchiveEntrySource,
+}
+
+enum ArchiveEntrySource {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+}
+
+#[derive(Clone)]
+struct AttachmentCandidate {
+    asset_id: String,
+    display_name: String,
+    kind: String,
+    media_type: String,
+    size_bytes: u64,
+    sha256: String,
+    references: Vec<Value>,
 }
 
 #[tauri::command]
@@ -114,11 +135,12 @@ pub async fn generate_diagnostic_bundle(
 
     let mut included_session_ids = Vec::new();
     let mut entries = Vec::new();
+    let mut attachment_candidates = BTreeMap::new();
     if let Some(description) = description {
         let (description, _) = redact_text(&description, &credentials, home.as_deref());
         entries.push(ArchiveEntry {
             name: "problem.txt".into(),
-            bytes: description.into_bytes(),
+            source: ArchiveEntrySource::Bytes(description.into_bytes()),
         });
     }
 
@@ -155,6 +177,7 @@ pub async fn generate_diagnostic_bundle(
     for (index, result) in session_results.into_iter().enumerate() {
         match result {
             Ok((session_id, mut value)) => {
+                collect_attachment_candidates(&session_id, &value, &mut attachment_candidates);
                 let mut count = 0;
                 redact_json(&mut value, &credentials, home.as_deref(), &mut count);
                 let entry_name = format!("sessions/session-{:03}.json", index + 1);
@@ -168,6 +191,18 @@ pub async fn generate_diagnostic_bundle(
             }),
         }
     }
+
+    let attachment_collection = collect_attachment_diagnostics(
+        &paths::user_data_dir().join("attachments"),
+        attachment_candidates,
+        request.include_attachment_originals,
+    );
+    entries.extend(attachment_collection.entries);
+    failures.extend(attachment_collection.failures);
+    entries.push(json_entry(
+        "diagnostics/attachments.json",
+        &attachment_collection.manifest,
+    )?);
 
     let log_dir = paths::log_dir();
     let log_result = tauri::async_runtime::spawn_blocking({
@@ -205,6 +240,7 @@ pub async fn generate_diagnostic_bundle(
             "maxBytesTotal": MAX_LOG_TOTAL_BYTES
         },
         "logs": log_manifest,
+        "attachments": attachment_collection.summary,
     });
     entries.push(json_entry("manifest.json", &manifest)?);
 
@@ -240,6 +276,203 @@ fn load_package_build_metadata(resource_dir: Option<&Path>) -> Value {
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
 }
 
+struct AttachmentCollectionResult {
+    entries: Vec<ArchiveEntry>,
+    failures: Vec<CollectionFailure>,
+    manifest: Value,
+    summary: Value,
+}
+
+fn collect_attachment_candidates(
+    session_id: &str,
+    session: &Value,
+    output: &mut BTreeMap<String, AttachmentCandidate>,
+) {
+    let Some(events) = session.get("events").and_then(Value::as_array) else {
+        return;
+    };
+    for event in events {
+        if event.get("type").and_then(Value::as_str) != Some("user_message") {
+            continue;
+        }
+        let Some(attachments) = event
+            .get("payload")
+            .and_then(|value| value.get("attachments"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for attachment in attachments {
+            let Some(asset_id) = attachment.get("asset_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let reference = json!({
+                "sessionId": session_id,
+                "eventId": event.get("uuid").and_then(Value::as_str),
+                "model": event.get("meta").and_then(|value| value.get("model")),
+            });
+            output
+                .entry(asset_id.to_string())
+                .and_modify(|candidate| candidate.references.push(reference.clone()))
+                .or_insert_with(|| AttachmentCandidate {
+                    asset_id: asset_id.to_string(),
+                    display_name: attachment
+                        .get("display_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("attachment")
+                        .to_string(),
+                    kind: attachment
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    media_type: attachment
+                        .get("media_type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("application/octet-stream")
+                        .to_string(),
+                    size_bytes: attachment
+                        .get("size_bytes")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    sha256: attachment
+                        .get("sha256")
+                        .and_then(Value::as_str)
+                        .unwrap_or(asset_id)
+                        .to_string(),
+                    references: vec![reference],
+                });
+        }
+    }
+}
+
+fn collect_attachment_diagnostics(
+    root: &Path,
+    candidates: BTreeMap<String, AttachmentCandidate>,
+    include_originals: bool,
+) -> AttachmentCollectionResult {
+    let mut entries = Vec::new();
+    let mut failures = Vec::new();
+    let mut items = Vec::new();
+    let estimated_bytes = candidates.values().map(|item| item.size_bytes).sum::<u64>();
+    let mut included_bytes = 0_u64;
+    let mut skipped_bytes = 0_u64;
+    let mut failed_bytes = 0_u64;
+
+    for (index, candidate) in candidates.into_values().enumerate() {
+        let valid_id = candidate.asset_id.len() == 64
+            && candidate
+                .asset_id
+                .chars()
+                .all(|value| value.is_ascii_hexdigit());
+        let metadata_path = root
+            .join("metadata")
+            .join(format!("{}.json", candidate.asset_id));
+        let blob_path = root
+            .join("blobs")
+            .join(candidate.asset_id.get(..2).unwrap_or("__"))
+            .join(&candidate.asset_id);
+        let metadata_exists = valid_id && metadata_path.is_file();
+        let metadata_matches = metadata_exists
+            && fs::read(&metadata_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|value| {
+                    value.get("asset_id").and_then(Value::as_str)
+                        == Some(candidate.asset_id.as_str())
+                        && value.get("sha256").and_then(Value::as_str)
+                            == Some(candidate.sha256.as_str())
+                        && value.get("size_bytes").and_then(Value::as_u64)
+                            == Some(candidate.size_bytes)
+                });
+        let blob_exists = valid_id && blob_path.is_file();
+        let actual_size = blob_path.metadata().ok().map(|value| value.len());
+        let size_matches = actual_size == Some(candidate.size_bytes);
+        let hash_matches = blob_exists
+            && hash_file(&blob_path)
+                .is_ok_and(|digest| digest == candidate.sha256 && digest == candidate.asset_id);
+        let integrity = metadata_matches && blob_exists && size_matches && hash_matches;
+
+        let (original_status, archive_entry) = if !include_originals {
+            ("excluded", None)
+        } else if !integrity {
+            failed_bytes = failed_bytes.saturating_add(candidate.size_bytes);
+            failures.push(CollectionFailure {
+                collection: "attachments".into(),
+                item: Some(candidate.display_name.clone()),
+                message: "attachment original is missing or failed integrity verification".into(),
+            });
+            ("failed", None)
+        } else if included_bytes.saturating_add(candidate.size_bytes)
+            > MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES
+        {
+            skipped_bytes = skipped_bytes.saturating_add(candidate.size_bytes);
+            ("skipped", None)
+        } else {
+            included_bytes = included_bytes.saturating_add(candidate.size_bytes);
+            let name = format!(
+                "attachments/{:03}-{}",
+                index + 1,
+                sanitize_entry_name(&candidate.display_name)
+            );
+            (
+                "included",
+                Some(ArchiveEntry {
+                    name,
+                    source: ArchiveEntrySource::File(blob_path),
+                }),
+            )
+        };
+        if let Some(entry) = archive_entry {
+            entries.push(entry);
+        }
+        items.push(json!({
+            "assetId": candidate.asset_id,
+            "displayName": candidate.display_name,
+            "kind": candidate.kind,
+            "mediaType": candidate.media_type,
+            "sizeBytes": candidate.size_bytes,
+            "metadataExists": metadata_exists,
+            "metadataMatches": metadata_matches,
+            "blobExists": blob_exists,
+            "sizeMatches": size_matches,
+            "hashMatches": hash_matches,
+            "references": candidate.references,
+            "processingStatus": "notRecorded",
+            "originalStatus": original_status,
+        }));
+    }
+    let summary = json!({
+        "includeOriginalsRequested": include_originals,
+        "itemCount": items.len(),
+        "estimatedBytes": estimated_bytes,
+        "includedBytes": included_bytes,
+        "skippedBytes": skipped_bytes,
+        "failedBytes": failed_bytes,
+        "maxOriginalBytes": MAX_ATTACHMENT_ORIGINAL_TOTAL_BYTES,
+    });
+    AttachmentCollectionResult {
+        entries,
+        failures,
+        manifest: json!({"formatVersion": 1, "summary": summary, "items": items}),
+        summary,
+    }
+}
+
+fn hash_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 fn normalize_description(description: Option<String>) -> Result<Option<String>, String> {
     let description = description.map(|value| value.trim().to_string());
     let description = description.filter(|value| !value.is_empty());
@@ -272,7 +505,9 @@ fn normalize_session_ids(session_ids: Vec<String>) -> Result<Vec<String>, String
 fn json_entry(name: &str, value: &Value) -> Result<ArchiveEntry, String> {
     Ok(ArchiveEntry {
         name: name.into(),
-        bytes: serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?,
+        source: ArchiveEntrySource::Bytes(
+            serde_json::to_vec_pretty(value).map_err(|e| e.to_string())?,
+        ),
     })
 }
 
@@ -365,7 +600,7 @@ fn collect_logs(
                 });
                 result.entries.push(ArchiveEntry {
                     name: entry_name,
-                    bytes: text.into_bytes(),
+                    source: ArchiveEntrySource::Bytes(text.into_bytes()),
                 });
             }
             Err(error) => result.failures.push(CollectionFailure {
@@ -543,9 +778,17 @@ fn write_archive_atomically(
             writer
                 .start_file(entry.name, options)
                 .map_err(|e| format!("start ZIP entry failed: {e}"))?;
-            writer
-                .write_all(&entry.bytes)
-                .map_err(|e| format!("write ZIP entry failed: {e}"))?;
+            match entry.source {
+                ArchiveEntrySource::Bytes(bytes) => writer
+                    .write_all(&bytes)
+                    .map_err(|e| format!("write ZIP entry failed: {e}"))?,
+                ArchiveEntrySource::File(path) => {
+                    let mut input =
+                        File::open(path).map_err(|e| format!("open ZIP source failed: {e}"))?;
+                    std::io::copy(&mut input, &mut writer)
+                        .map_err(|e| format!("copy ZIP source failed: {e}"))?;
+                }
+            }
         }
         let file = writer
             .finish()
@@ -692,7 +935,7 @@ mod tests {
             "test",
             vec![ArchiveEntry {
                 name: "sessions/session-001.json".into(),
-                bytes: b"{}".to_vec(),
+                source: ArchiveEntrySource::Bytes(b"{}".to_vec()),
             }],
         )
         .unwrap();
@@ -700,6 +943,91 @@ mod tests {
         assert!(!path.with_extension("zip.part").exists());
         fs::remove_file(path).unwrap();
         fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn attachment_diagnostics_excludes_originals_by_default() {
+        let root = std::env::temp_dir().join(format!(
+            "agent-friend-attachment-diagnostics-{}",
+            rand::random::<u64>()
+        ));
+        let payload = b"private-image";
+        let asset_id = format!("{:x}", Sha256::digest(payload));
+        let blob = root.join("blobs").join(&asset_id[..2]).join(&asset_id);
+        fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        fs::create_dir_all(root.join("metadata")).unwrap();
+        fs::write(&blob, payload).unwrap();
+        fs::write(
+            root.join("metadata").join(format!("{asset_id}.json")),
+            serde_json::to_vec(&json!({
+                "asset_id": asset_id,
+                "sha256": asset_id,
+                "size_bytes": payload.len(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let candidates = BTreeMap::from([(
+            asset_id.clone(),
+            AttachmentCandidate {
+                asset_id: asset_id.clone(),
+                display_name: "private.png".into(),
+                kind: "image".into(),
+                media_type: "image/png".into(),
+                size_bytes: payload.len() as u64,
+                sha256: asset_id,
+                references: vec![],
+            },
+        )]);
+
+        let result = collect_attachment_diagnostics(&root, candidates, false);
+
+        assert!(result.entries.is_empty());
+        assert_eq!(result.manifest["items"][0]["originalStatus"], "excluded");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn attachment_diagnostics_streams_explicitly_selected_original() {
+        let root = std::env::temp_dir().join(format!(
+            "agent-friend-attachment-original-{}",
+            rand::random::<u64>()
+        ));
+        let payload = b"private-document";
+        let asset_id = format!("{:x}", Sha256::digest(payload));
+        let blob = root.join("blobs").join(&asset_id[..2]).join(&asset_id);
+        fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        fs::create_dir_all(root.join("metadata")).unwrap();
+        fs::write(&blob, payload).unwrap();
+        fs::write(
+            root.join("metadata").join(format!("{asset_id}.json")),
+            serde_json::to_vec(&json!({
+                "asset_id": asset_id,
+                "sha256": asset_id,
+                "size_bytes": payload.len(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let candidates = BTreeMap::from([(
+            asset_id.clone(),
+            AttachmentCandidate {
+                asset_id: asset_id.clone(),
+                display_name: "notes.txt".into(),
+                kind: "document".into(),
+                media_type: "text/plain".into(),
+                size_bytes: payload.len() as u64,
+                sha256: asset_id,
+                references: vec![],
+            },
+        )]);
+
+        let result = collect_attachment_diagnostics(&root, candidates, true);
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.manifest["items"][0]["originalStatus"], "included");
+        assert_eq!(result.summary["includedBytes"], payload.len() as u64);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

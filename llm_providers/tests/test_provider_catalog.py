@@ -8,6 +8,7 @@ from llm_providers import (
     build_provider_spec,
     default_model_for_provider,
     infer_provider_id_from_model,
+    public_model_catalog,
     public_provider_models,
 )
 
@@ -55,6 +56,30 @@ def test_public_provider_models_are_safe_model_allowlists() -> None:
         "deepseek/deepseek-v4-pro",
     )
     assert "kimi/kimi-k2.6" in models["kimi"]
+
+
+def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
+    catalog = public_model_catalog()
+    providers = {provider["id"]: provider for provider in catalog["providers"]}
+    deepseek = {model["id"]: model for model in providers["deepseek"]["models"]}
+    kimi = {model["id"]: model for model in providers["kimi"]["models"]}
+
+    assert catalog["schemaVersion"] == 1
+    assert catalog["catalogRevision"]
+    assert deepseek["deepseek/deepseek-v4-flash"]["capabilities"]["attachments"] is False
+    assert kimi["kimi/kimi-k2.6"]["capabilities"]["inputModalities"] == (
+        "text",
+        "image",
+        "document",
+    )
+    assert kimi["kimi/kimi-k2.6"]["capabilities"]["acceptedMediaTypes"] == (
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "application/pdf",
+        "text/plain",
+    )
+    assert kimi["kimi/kimi-k2.7-code"]["capabilities"]["attachments"] is False
 
 
 def test_missing_provider_key_raises_actionable_auth_error() -> None:

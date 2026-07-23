@@ -4,6 +4,7 @@ export interface MigrationInventory {
   fileCount: number;
   totalBytes: number;
   sessionFileCount: number;
+  attachmentFileCount: number;
   memoryFileCount: number;
   personaFileCount: number;
   userModelFileCount: number;

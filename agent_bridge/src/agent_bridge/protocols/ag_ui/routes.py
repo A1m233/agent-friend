@@ -25,6 +25,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent import Conversation
+from llm_providers import model_capabilities
 
 from ...assembly import BridgeRuntime
 from ...errors import map_exception
@@ -54,6 +55,71 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             default_model=decoded.requested_model or runtime.default_model,
         )
 
+        effective_model = boot.default_model
+        if bridge.session_exists(decoded.thread_id):
+            effective_model = runtime.persistent_session_manager.open(
+                decoded.thread_id
+            ).current_model
+        capabilities = model_capabilities(effective_model)
+        if decoded.draft_attachments and not capabilities.attachments:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "attachment_model_unsupported",
+                    "message": "当前模型不支持附件，请切换到支持图片或文档的模型。",
+                },
+            )
+        if len(decoded.draft_attachments) > capabilities.max_attachments_per_turn:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "attachment_turn_limit_exceeded",
+                    "message": f"单轮最多添加 {capabilities.max_attachments_per_turn} 个附件。",
+                },
+            )
+        attachments = []
+        if decoded.draft_attachments:
+            store = runtime.attachment_store
+            if store is None:
+                raise HTTPException(status_code=503, detail="attachment store unavailable")
+            for draft in decoded.draft_attachments:
+                try:
+                    ref = store.draft(draft.draft_id)
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": getattr(exc, "code", "attachment_draft_expired"),
+                            "message": str(exc),
+                        },
+                    ) from exc
+                if (
+                    ref.kind != draft.kind
+                    or ref.media_type not in capabilities.accepted_media_types
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "attachment_type_unsupported",
+                            "message": "当前模型不支持此附件类型。",
+                        },
+                    )
+                attachments.append(ref)
+            if (
+                sum(item.size_bytes for item in attachments)
+                > capabilities.max_total_attachment_bytes
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "attachment_total_limit_exceeded",
+                        "message": "本轮附件总大小超过限制。",
+                    },
+                )
+            attachments = store.consume_drafts(
+                [item.draft_id for item in decoded.draft_attachments]
+            )
+
         accept = request.headers.get("accept") or ""
         handle = None
         if runtime.agent_runtime is not None:
@@ -81,6 +147,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel="text",
                 conversation_factory=lambda: bridge.bind_persistent(boot),
                 metadata={"protocol": "ag_ui"},
+                conversation_runner=lambda conv, run_request, token: conv.stream(
+                    decoded.new_user_input,
+                    attachments=attachments,
+                    user_event_id=decoded.user_message_id,
+                    channel=run_request.channel,
+                    run_id=run_request.run_id,
+                    cancel_check=token.raise_if_cancelled,
+                ),
                 error_callback=_persist_error,
             )
 
@@ -95,6 +169,13 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel="text",
                 turn_coordinator=runtime.turn_coordinator,
                 run_handle=handle,
+                run_conversation=lambda conv, text: conv.stream(
+                    text,
+                    attachments=attachments,
+                    user_event_id=decoded.user_message_id,
+                    channel="text",
+                    run_id=decoded.run_id,
+                ),
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),
             headers={

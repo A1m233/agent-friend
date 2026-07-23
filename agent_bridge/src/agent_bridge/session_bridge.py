@@ -83,6 +83,14 @@ class SessionBridge:
             return False
         return True
 
+    def persistent_model(self, session_id: str, *, default: str) -> str:
+        """Return the frozen model for an existing session, or its creation default."""
+
+        try:
+            return self._runtime.persistent_session_manager.open(session_id).current_model
+        except SessionNotFoundError:
+            return default
+
     @contextmanager
     def session_turn(self, session_id: str) -> Iterator[None]:
         """Hold the per-session mutating-turn lock for a persistent session."""

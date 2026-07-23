@@ -37,9 +37,11 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
+from agent.attachments import AttachmentRef
 from agent.runtime import AgentRuntime, RunOutcome, UserEvent
 
 from agent import TextDelta
+from llm_providers import model_capabilities
 
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
@@ -115,6 +117,7 @@ class IMRouter:
         im_type: str,
         event: InboundEvent,
         send_fn: SendCallback,
+        attachments: tuple[AttachmentRef, ...] = (),
     ) -> None:
         """处理一条 IM inbound:装配 Conversation → 跑一轮 → 回写 outbound。
 
@@ -149,9 +152,32 @@ class IMRouter:
             default_model=self._default_model,
         )
 
+        if attachments:
+            model = self._bridge.persistent_model(session_id, default=self._default_model)
+            capabilities = model_capabilities(model)
+            unsupported = (
+                not capabilities.attachments
+                or len(attachments) > capabilities.max_attachments_per_turn
+                or sum(item.size_bytes for item in attachments)
+                > capabilities.max_total_attachment_bytes
+                or any(
+                    item.media_type not in capabilities.accepted_media_types for item in attachments
+                )
+            )
+            if unsupported:
+                await send_fn(
+                    OutboundContent(
+                        chat_id=event.chat_id,
+                        chat_scope=event.chat_scope,
+                        text="当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。",
+                        reply_to_message_id=event.message_id,
+                    )
+                )
+                return
+
         text_format: OutboundTextFormat = "markdown"
         try:
-            text = await asyncio.to_thread(self._run_turn_sync, boot)
+            text = await asyncio.to_thread(self._run_turn_sync, boot, attachments)
         except Exception:
             logger.exception(
                 "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d)",
@@ -194,7 +220,11 @@ class IMRouter:
             )
         )
 
-    def _run_turn_sync(self, boot: PersistentBootstrap) -> str:
+    def _run_turn_sync(
+        self,
+        boot: PersistentBootstrap,
+        attachments: tuple[AttachmentRef, ...] = (),
+    ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
         ``Conversation.stream`` 是同步 generator,会 emit ``TextDelta`` /
@@ -216,6 +246,13 @@ class IMRouter:
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
                 channel="text",
                 conversation_factory=lambda: self._bridge.bind_persistent(boot),
+                conversation_runner=lambda conv, request, token: conv.stream(
+                    boot.new_user_input,
+                    attachments=list(attachments),
+                    channel=request.channel,
+                    run_id=request.run_id,
+                    cancel_check=token.raise_if_cancelled,
+                ),
                 metadata={"protocol": "im"},
             )
             for ev in handle.events():
@@ -232,7 +269,11 @@ class IMRouter:
 
         with self._bridge.session_turn(boot.thread_id):
             conv = self._bridge.bind_persistent(boot)
-            for ev in conv.stream(boot.new_user_input, channel="text"):
+            for ev in conv.stream(
+                boot.new_user_input,
+                attachments=list(attachments),
+                channel="text",
+            ):
                 if isinstance(ev, TextDelta):
                     buf.append(ev.text)
                 # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。

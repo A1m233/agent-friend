@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import {
   Badge,
@@ -10,9 +10,10 @@ import {
   SelectValue,
 } from "@/components/ui";
 import {
-  MODEL_PROVIDERS,
   defaultModelSelection,
-  providerModels,
+  modelProvidersFromCatalog,
+  providerModelsFromCatalog,
+  useModelCatalogStore,
 } from "@/lib/model-config";
 import {
   describeRuntimeConfigEffect,
@@ -109,7 +110,9 @@ function ModelSelectionRows({
   modelLabel: string;
   onChange: (next: ModelSelection) => Promise<void>;
 }) {
-  const models = providerModels(selection.provider);
+  const catalog = useModelCatalogStore((state) => state.catalog);
+  const providers = modelProvidersFromCatalog(catalog);
+  const models = providerModelsFromCatalog(catalog, selection.provider);
 
   return (
     <>
@@ -117,14 +120,17 @@ function ModelSelectionRows({
         <Select
           value={selection.provider}
           onValueChange={(value) =>
-            void onChange(defaultModelSelection(value as ModelProvider, purpose))
+            void (() => {
+              const next = defaultModelSelection(value as ModelProvider, purpose);
+              return next ? onChange(next) : Promise.resolve();
+            })()
           }
         >
           <SelectTrigger className="min-w-48">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {MODEL_PROVIDERS.map((provider) => (
+            {providers.map((provider) => (
               <SelectItem key={provider.id} value={provider.id}>
                 {provider.label}
               </SelectItem>
@@ -167,6 +173,11 @@ export function RuntimeConfigPanel() {
     saveSecret,
     removeSecret,
   } = useRuntimeConfig();
+  const loadModelCatalog = useModelCatalogStore((state) => state.load);
+
+  useEffect(() => {
+    void loadModelCatalog();
+  }, [loadModelCatalog]);
 
   const statuses = useMemo(
     () => new Map(snapshot.items.map((item) => [item.name, item] as const)),

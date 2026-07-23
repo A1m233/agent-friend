@@ -30,11 +30,12 @@ def test_tauri_production_origin_can_preflight_mutation() -> None:
         headers={
             "Origin": "http://tauri.localhost",
             "Access-Control-Request-Method": "PUT",
-            "Access-Control-Request-Headers": "content-type",
+            "Access-Control-Request-Headers": "content-type,x-attachment-filename",
         },
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://tauri.localhost"
+    assert "x-attachment-filename" in response.headers["access-control-allow-headers"].lower()
 
 
 def test_tauri_development_origin_can_call_bridge_directly() -> None:

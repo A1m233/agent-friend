@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent import (
+    AttachmentError,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     SessionCorruptError,
@@ -60,6 +61,13 @@ def map_exception(exc: BaseException) -> ProtocolError:
 
     映射规则见 design §4.6.1。增改异常类型时同步更新映射表与 design 文档。
     """
+    if isinstance(exc, AttachmentError):
+        return ProtocolError(
+            http_status=400,
+            code=exc.code,
+            message=str(exc),
+            recoverable=False,
+        )
     if isinstance(exc, CredentialMissingError):
         return ProtocolError(
             http_status=503,

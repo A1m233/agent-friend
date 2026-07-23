@@ -8,6 +8,7 @@ pub const MANIFEST_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase")]
 pub enum AssetGroup {
     Sessions,
+    Attachments,
     Memory,
     Persona,
     Settings,

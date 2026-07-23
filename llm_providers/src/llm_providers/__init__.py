@@ -4,10 +4,12 @@
 """
 
 from .catalog import (
+    CATALOG_REVISION,
     DEEPSEEK_PROVIDER_ID,
     KIMI_API_KEY,
     KIMI_PROVIDER_ID,
     ModelPurpose,
+    ModelRouteCapabilities,
     ProviderDefinition,
     ProviderModel,
     all_model_ids,
@@ -15,8 +17,10 @@ from .catalog import (
     default_model_for_provider,
     infer_provider_id_from_model,
     model_belongs_to_provider,
+    model_capabilities,
     normalize_provider_id,
     provider_definition,
+    public_model_catalog,
     public_provider_models,
 )
 from .client import LLMClient
@@ -28,6 +32,7 @@ from .errors import (
     LLMProviderError,
     LLMRateLimitError,
 )
+from .multimodal import MultimodalInputAdapter
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
     LLMStreamEvent,
@@ -40,6 +45,7 @@ from .stream_events import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "CATALOG_REVISION",
     "DEEPSEEK_PROVIDER_ID",
     "KIMI_API_KEY",
     "KIMI_PROVIDER_ID",
@@ -56,6 +62,8 @@ __all__ = [
     "LLMTurnDone",
     "LLMUsage",
     "ModelPurpose",
+    "ModelRouteCapabilities",
+    "MultimodalInputAdapter",
     "ProviderConfig",
     "ProviderDefinition",
     "ProviderModel",
@@ -65,7 +73,9 @@ __all__ = [
     "default_model_for_provider",
     "infer_provider_id_from_model",
     "model_belongs_to_provider",
+    "model_capabilities",
     "normalize_provider_id",
     "provider_definition",
+    "public_model_catalog",
     "public_provider_models",
 ]

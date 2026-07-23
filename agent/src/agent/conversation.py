@@ -47,6 +47,7 @@ from llm_providers import (
 )
 from memory import ConversationFragment, Memory, MemoryContext, Utterance
 
+from .attachments import AttachmentRef
 from .context import (
     BuildResult,
     CompactionRecord,
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
 
 # 014: tool-hook 注入点。AgentRuntime 装配时传入；None 时 _invoke_tool_safely 走原行为。
 ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
+MessageRenderer = Callable[[Message, LLMClient], dict[str, Any]]
 
 
 MAX_TOOL_TURNS_DEFAULT = 5
@@ -113,6 +115,7 @@ _UNSET = object()
 class _RewritePlan:
     target_user_uuid: str
     target_user_content: str
+    target_user_attachments: list[AttachmentRef]
     inactive_event_uuids: list[str]
     prefix_events: list[Event]
 
@@ -166,6 +169,7 @@ class Conversation:
         tool_registry: ToolRegistry | None = None,
         tool_hook_invoker: ToolHookInvoker | None = None,
         post_turn_external: bool = False,
+        message_renderer: MessageRenderer | None = None,
     ):
         self._session = session
         self._store = store
@@ -180,6 +184,7 @@ class Conversation:
         # 014: tool hook 与 PostTurn 外接（由 AgentRuntime 装配时打开）
         self._tool_hook_invoker = tool_hook_invoker
         self._post_turn_external = post_turn_external
+        self._message_renderer = message_renderer
         self._max_tool_turns = _resolve_max_tool_turns()
         self._last_memory_context: MemoryContext | None = None
         # 009 M1：上下文管理的会话级运行时状态
@@ -321,6 +326,8 @@ class Conversation:
         self,
         user_input: str,
         *,
+        attachments: list[AttachmentRef] | None = None,
+        user_event_id: str | None = None,
         channel: PromptChannel | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
@@ -381,7 +388,35 @@ class Conversation:
         persona_id = self._session.current_persona_id
         model_snapshot = self._session.current_model
 
-        user_event_appended = False
+        turn_attachments = list(attachments or [])
+        existing_user_event = next(
+            (
+                event
+                for event in self._session.events
+                if user_event_id and event.type == "user_message" and event.uuid == user_event_id
+            ),
+            None,
+        )
+        if existing_user_event is not None:
+            existing_attachments = existing_user_event.payload.get("attachments", [])
+            requested_attachments = [item.to_dict() for item in turn_attachments]
+            if (
+                existing_user_event.payload.get("content", "") != user_input
+                or existing_attachments != requested_attachments
+            ):
+                raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
+        user_event_appended = existing_user_event is not None
+        completed_replay_text: str | None = None
+        if existing_user_event is not None:
+            replay_start_index = self._session.events.index(existing_user_event) + 1
+            completed_parts: list[str] = []
+            for event in self._session.events[replay_start_index:]:
+                if event.type == "user_message":
+                    break
+                if event.type == "assistant_message" and not event.payload.get("partial", False):
+                    completed_parts.append(str(event.payload.get("content", "")))
+            if completed_parts:
+                completed_replay_text = "".join(completed_parts)
         current_text_buf: list[str] = []
         current_text_persisted = False
         current_tc_acc: dict[int, dict[str, Any]] = {}
@@ -389,6 +424,11 @@ class Conversation:
         turn_start_idx = len(self._session.events)
         try:
             self._check_cancel(cancel_check)
+            if completed_replay_text is not None:
+                if completed_replay_text:
+                    yield TextDelta(completed_replay_text)
+                yield TurnDone(stop_reason="idempotent_replay", total_tool_calls=0)
+                return
             for turn_idx in range(self._max_tool_turns + 1):
                 self._check_cancel(cancel_check)
                 current_text_buf = []
@@ -396,14 +436,23 @@ class Conversation:
                 current_tc_acc = {}
 
                 if turn_idx == 0:
-                    openai_messages = self._build_openai_messages_first_turn(
-                        user_input,
+                    openai_messages = (
+                        self._build_openai_messages_continuation()
+                        if user_event_appended
+                        else self._build_openai_messages_first_turn(
+                            user_input,
+                            attachments=turn_attachments,
+                        )
                     )
                     # Once the turn has passed local context assembly, persist the
                     # accepted user request before calling the provider. This gives
                     # downstream error state a stable user turn to attach to.
                     if not user_event_appended:
-                        self._append_user_event(user_input)
+                        self._append_user_event(
+                            user_input,
+                            attachments=turn_attachments,
+                            event_id=user_event_id,
+                        )
                         user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
@@ -584,6 +633,7 @@ class Conversation:
                 if turn_idx == 0:
                     openai_messages = self._build_openai_messages_first_turn(
                         user_input,
+                        attachments=plan.target_user_attachments,
                         history_override=prefix_history,
                         prior_summary_override=prefix_prior_summary,
                         persist_compaction=False,
@@ -592,7 +642,10 @@ class Conversation:
                         self._append_turn_rewrite_event(plan, replacement_text=user_input)
                         rewrite_event_appended = True
                     if not user_event_appended:
-                        self._append_user_event(user_input)
+                        self._append_user_event(
+                            user_input,
+                            attachments=plan.target_user_attachments,
+                        )
                         user_event_appended = True
                 else:
                     openai_messages = self._build_openai_messages_continuation()
@@ -986,10 +1039,16 @@ class Conversation:
         if expected_user_content is not None and content != expected_user_content:
             raise AgentError("最后一条用户消息已变化，请刷新后再编辑重发")
 
+        attachments = [
+            AttachmentRef.from_dict(item)
+            for item in target.payload.get("attachments", [])
+            if isinstance(item, dict)
+        ]
         inactive = [ev.uuid for ev in active_events[target_idx:]]
         return _RewritePlan(
             target_user_uuid=target.uuid,
             target_user_content=content,
+            target_user_attachments=attachments,
             inactive_event_uuids=inactive,
             prefix_events=list(active_events[:target_idx]),
         )
@@ -1025,18 +1084,27 @@ class Conversation:
                 "inactive_event_uuids": list(plan.inactive_event_uuids),
                 "replacement_text_sha256": sha256(replacement_text.encode("utf-8")).hexdigest(),
             },
-            meta=self._run_event_meta(),
+            meta=self._run_event_meta({"model": self._session.current_model}),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
-    def _append_user_event(self, content: str) -> None:
+    def _append_user_event(
+        self,
+        content: str,
+        *,
+        attachments: list[AttachmentRef] | None = None,
+        event_id: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"content": content}
+        if attachments:
+            payload["attachments"] = [item.to_dict() for item in attachments]
         event = Event(
             type="user_message",
-            uuid=str(uuid4()),
+            uuid=event_id or str(uuid4()),
             ts=datetime.now(UTC),
-            payload={"content": content},
-            meta=self._run_event_meta(),
+            payload=payload,
+            meta=self._run_event_meta({"model": self._session.current_model}),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -1097,6 +1165,7 @@ class Conversation:
         self,
         user_input: str,
         *,
+        attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
@@ -1150,7 +1219,10 @@ class Conversation:
             ]
         assemble_start_ms = monotonic_ms()
         result = self._assemble(
-            new_user_input=user_input,
+            new_user_input=(
+                user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
+            ),
+            new_user_attachments=attachments,
             extra_context=extra,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
@@ -1170,6 +1242,7 @@ class Conversation:
         self,
         *,
         new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -1202,6 +1275,7 @@ class Conversation:
             history=history_for_llm,
             system_prompt=self._system_prompt,
             new_user_input=user_input_for_llm,
+            new_user_attachments=new_user_attachments,
             extra_context=extra_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -1211,7 +1285,9 @@ class Conversation:
         if persist_compaction and build.new_compaction is not None:
             self._append_compaction_event(build.new_compaction)
         self._record_context_notes(build, runtime)
-        return [m.to_openai() for m in build.messages]
+        if self._message_renderer is None:
+            return [message.to_openai() for message in build.messages]
+        return [self._message_renderer(message, self._llm_client) for message in build.messages]
 
     def _build_runtime_context(
         self,

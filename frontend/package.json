@@ -20,7 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ag-ui/core": "^0.0.39",
+    "@ag-ui/core": "^0.0.57",
     "@esotericsoftware/spine-pixi-v8": "4.3.9",
     "@pixi-spine/runtime-3.8": "4.0.6",
     "@pixi/assets": "7.4.3",

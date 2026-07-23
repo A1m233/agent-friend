@@ -14,6 +14,7 @@ from agent.sessions import Event
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AttachmentRef,
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
@@ -21,6 +22,7 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
+    TextDelta,
 )
 from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
 
@@ -170,6 +172,31 @@ def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Pa
     assert "old answer" not in second_prompt
 
 
+def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTurnDone(stop_reason="end_turn")],
+            [LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    attachment = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="report.pdf",
+        kind="document",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="a" * 64,
+    )
+
+    list(conv.stream("read", attachments=[attachment]))
+    list(conv.edit_resend_latest("read carefully", expected_user_content="read"))
+
+    user = next(message for message in conv.session.messages if message.role == "user")
+    assert user.content == "read carefully"
+    assert user.attachments == [attachment]
+
+
 def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     conv = _conversation(
         tmp_path,
@@ -223,3 +250,16 @@ def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "new question"),
     ]
+
+
+def test_user_event_id_retry_rejects_different_content(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="stop")]])
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    list(conv.stream("first", user_event_id="stable-message-id"))
+    replay = list(conv.stream("first", user_event_id="stable-message-id"))
+
+    assert any(isinstance(event, TextDelta) and event.text == "ok" for event in replay)
+    assert len(fake.received) == 1
+
+    with pytest.raises(ValueError, match="user_event_id_conflict"):
+        list(conv.stream("different", user_event_id="stable-message-id"))

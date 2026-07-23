@@ -18,7 +18,7 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from agent import memory_db_path, personas_dir, sessions_dir
+from agent import attachments_dir, memory_db_path, personas_dir, sessions_dir
 from agent import user_data_dir as _user_data_dir
 
 
@@ -81,6 +81,7 @@ class BridgeSettings(BaseSettings):
         ),
     )
     personas_dir: Path = Field(default_factory=personas_dir)
+    attachments_dir: Path = Field(default_factory=attachments_dir)
     memory_enabled: bool = True
 
     voice_latency_experiment_short_reply: bool = Field(

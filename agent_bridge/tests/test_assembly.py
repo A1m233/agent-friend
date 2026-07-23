@@ -14,6 +14,7 @@ from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
+from agent import AttachmentError
 from runtime_config import CredentialMissingError, credential_source_for_mode
 
 
@@ -135,6 +136,16 @@ def test_missing_credentials_map_to_recoverable_protocol_error() -> None:
     assert error.http_status == 503
     assert error.code == "credential_missing"
     assert error.recoverable is True
+
+
+def test_attachment_error_keeps_stable_protocol_code() -> None:
+    error = map_exception(
+        AttachmentError("attachment_context_too_large", "附件内容超过当前模型容量。")
+    )
+
+    assert error.http_status == 400
+    assert error.code == "attachment_context_too_large"
+    assert error.message == "附件内容超过当前模型容量。"
 
 
 def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(

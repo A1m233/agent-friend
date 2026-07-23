@@ -40,8 +40,10 @@ from agent import (
     SessionNotFoundError,
     SessionPersistError,
 )
+from llm_providers import all_model_ids
 
 from ..assembly import BridgeRuntime
+from ..attachment_reconciliation import reconcile_attachments
 from ..protocols.ag_ui.encoders import encode_stream
 
 
@@ -252,6 +254,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             deleted = mgr.delete_archived(query=q)
         except SessionPersistError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
+        reconcile_attachments(runtime)
         return {"deleted": len(deleted), "session_ids": deleted}
 
     @router.delete("/sessions/{session_id}")
@@ -268,6 +271,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except SessionPersistError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
+        reconcile_attachments(runtime)
         return {"session_id": session_id, "deleted": True}
 
     @router.post("/sessions/{session_id}/persona")
@@ -294,13 +298,16 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     @router.post("/sessions/{session_id}/model")
     def switch_model(session_id: str, body: ModelSwitchBody) -> dict[str, Any]:
         """切换 session 当前 model；落盘 ``model_change`` 事件。"""
-        try:
-            session = mgr.open(session_id)
-        except SessionNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+        if body.model not in all_model_ids():
+            raise HTTPException(status_code=400, detail="不支持的模型")
+        with runtime.turn_coordinator.hold(session_id):
+            try:
+                session = mgr.open(session_id)
+            except SessionNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
 
-        conv = mgr.start_conversation(session)
-        conv.switch_model(body.model)
+            conv = mgr.start_conversation(session)
+            conv.switch_model(body.model)
 
         return {
             "session_id": session.session_id,

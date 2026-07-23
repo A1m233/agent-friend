@@ -12,12 +12,15 @@ import { type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
 import { resolveDefaultConversationModel } from "@/lib/model-config";
 import { ensureLocalServiceReady } from "@/services/runtime";
+import type { AttachmentDraft } from "./attachments";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
   threadId: string;
   /** 本轮 user 新输入。 */
   text: string;
+  messageId?: string;
+  attachments?: AttachmentDraft[];
 }
 
 export interface EditResendLatestInput {
@@ -59,11 +62,37 @@ function newId(): string {
  * 构造 AG-UI `RunAgentInput`（camelCase wire 格式，与 bridge 的 pydantic alias 对齐）。
  * 每轮只带最新一条 user message——历史以 bridge 的 jsonl 为真相源（design §3.5）。
  */
-function toRunAgentInput(input: RunStreamInput): RunAgentInput {
+export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
+  const content = input.attachments?.length
+    ? [
+        ...input.attachments.map((draft) =>
+          draft.attachment.kind === "image"
+            ? {
+                type: "image" as const,
+                source: {
+                  type: "url" as const,
+                  value: draft.contentUrl,
+                  mimeType: draft.attachment.mediaType,
+                },
+                metadata: { name: draft.attachment.displayName },
+              }
+            : {
+                type: "document" as const,
+                source: {
+                  type: "url" as const,
+                  value: draft.contentUrl,
+                  mimeType: draft.attachment.mediaType,
+                },
+                metadata: { name: draft.attachment.displayName },
+              },
+        ),
+        ...(input.text ? [{ type: "text" as const, text: input.text }] : []),
+      ]
+    : input.text;
   return {
     threadId: input.threadId,
     runId: newId(),
-    messages: [{ id: newId(), role: "user", content: input.text }],
+    messages: [{ id: input.messageId ?? newId(), role: "user", content }],
     tools: [],
     context: [],
     state: {},
@@ -100,7 +129,7 @@ export async function* runAgentStreamAtPath(
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify(toRunAgentInput(input)),
+    body: JSON.stringify(buildRunAgentInput(input)),
     signal: opts.signal,
   });
 

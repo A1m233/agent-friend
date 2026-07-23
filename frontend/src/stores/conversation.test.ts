@@ -110,12 +110,13 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
       });
     });
 
-    await useConversationStore.getState().send("hi");
+    const succeeded = await useConversationStore.getState().send("hi");
 
     const m = lastMessage();
     expect(m.status).toBe("error");
     expect(m.error!).not.toMatch(TECH_LEAK);
     expect(m.errorCode).toBe("rate_limit");
+    expect(succeeded).toBe(false);
   });
 
   it("历史会话加载失败 → 拟人兜底，不漏技术细节", async () => {

@@ -68,3 +68,70 @@ def test_decode_rejects_empty_user_content() -> None:
 
     with pytest.raises(DecodeError, match="content 不能为空"):
         decode_run_agent_input(payload)
+
+
+def test_decode_accepts_standard_attachment_only_content() -> None:
+    payload = RunAgentInput.model_validate(
+        {
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            "messages": [
+                {
+                    "id": "u-attachment",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "value": "/v1/attachments/drafts/abcdefghijklmnop/content",
+                                "mime_type": "image/png",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "tools": [],
+            "context": [],
+            "forwarded_props": {"model": "kimi/kimi-k2.6"},
+            "state": {},
+        }
+    )
+
+    decoded = decode_run_agent_input(payload)
+
+    assert decoded.new_user_input == ""
+    assert decoded.user_message_id == "u-attachment"
+    assert decoded.draft_attachments[0].draft_id == "abcdefghijklmnop"
+    assert decoded.draft_attachments[0].kind == "image"
+
+
+def test_decode_rejects_external_attachment_url() -> None:
+    payload = RunAgentInput.model_validate(
+        {
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            "messages": [
+                {
+                    "id": "u-attachment",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "url",
+                                "value": "https://example.com/report.pdf",
+                            },
+                        }
+                    ],
+                }
+            ],
+            "tools": [],
+            "context": [],
+            "forwarded_props": {},
+            "state": {},
+        }
+    )
+
+    with pytest.raises(DecodeError, match="本机"):
+        decode_run_agent_input(payload)

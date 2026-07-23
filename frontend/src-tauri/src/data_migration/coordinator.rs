@@ -47,6 +47,7 @@ pub struct MigrationInventory {
     pub file_count: usize,
     pub total_bytes: u64,
     pub session_file_count: usize,
+    pub attachment_file_count: usize,
     pub memory_file_count: usize,
     pub persona_file_count: usize,
     pub user_model_file_count: usize,
@@ -790,6 +791,7 @@ fn inventory_snapshot(
         .sum();
     let managed_credential_count = runtime_config::migration_snapshot_managed_secrets()?.len();
     let session_file_count = count(AssetGroup::Sessions);
+    let attachment_file_count = count(AssetGroup::Attachments);
     let memory_file_count = count(AssetGroup::Memory);
     let persona_file_count = count(AssetGroup::Persona);
     let user_model_file_count = count(AssetGroup::UserAvatarModels);
@@ -804,6 +806,7 @@ fn inventory_snapshot(
         || bridge.persona_modified
         || bridge.im_credentials > 0
         || settings_modified
+        || attachment_file_count > 0
         || user_model_file_count > 0
         || managed_credential_count > 0
         || cli_history_present;
@@ -811,6 +814,7 @@ fn inventory_snapshot(
         file_count,
         total_bytes,
         session_file_count,
+        attachment_file_count,
         memory_file_count,
         persona_file_count,
         user_model_file_count,
@@ -899,6 +903,11 @@ fn build_commit_result(
     let assets = [
         ("sessions", count(AssetGroup::Sessions), "历史会话已恢复"),
         (
+            "attachments",
+            count(AssetGroup::Attachments),
+            "会话附件已恢复",
+        ),
+        (
             "memory",
             count(AssetGroup::Memory),
             "长期记忆已恢复并重建索引",
@@ -972,6 +981,10 @@ fn validate_manifest_semantics(manifest: &Manifest) -> Result<(), String> {
     for entry in &manifest.entries {
         let valid = match entry.group {
             AssetGroup::Sessions => entry.path.starts_with("assets/sessions/"),
+            AssetGroup::Attachments => {
+                entry.path.starts_with("assets/attachments/blobs/")
+                    || entry.path.starts_with("assets/attachments/metadata/")
+            }
             AssetGroup::Memory => entry.path.starts_with("assets/memory/"),
             AssetGroup::Persona => entry.path.starts_with("assets/personas/"),
             AssetGroup::Settings => entry.path == "state/settings.json",
@@ -1024,7 +1037,7 @@ fn parse_app_version(value: &str) -> Result<(u64, u64, u64), String> {
 
 fn swap_managed_assets(staging: &Path, old: &Path) -> Result<(), String> {
     let root = paths::user_data_dir();
-    for name in ["sessions", "memory", "personas"] {
+    for name in ["sessions", "attachments", "memory", "personas"] {
         rotate_path(&root.join(name), &staging.join(name), &old.join(name))?;
     }
     rotate_path(
@@ -1104,7 +1117,13 @@ fn rollback_local(
     }
     if files_swapped {
         let root = paths::user_data_dir();
-        for name in ["sessions", "memory", "personas", ".cli_history"] {
+        for name in [
+            "sessions",
+            "attachments",
+            "memory",
+            "personas",
+            ".cli_history",
+        ] {
             let active = root.join(name);
             if active.is_dir() {
                 let _ = fs::remove_dir_all(&active);

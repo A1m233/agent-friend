@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from memory import Memory
 
     from ..context import ContextManager
-    from ..conversation import Conversation, ToolHookInvoker
+    from ..conversation import Conversation, MessageRenderer, ToolHookInvoker
     from ..prompts import PromptBuilder
     from ..tools import ToolRegistry
 
@@ -83,6 +83,7 @@ class SessionManager:
         memory: Memory | None = None,
         metadata_store: SessionMetadataStore | None = None,
         session_change_broker: SessionChangeBroker | None = None,
+        message_renderer: MessageRenderer | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -93,6 +94,7 @@ class SessionManager:
         self._memory = memory
         self._metadata_store = metadata_store
         self._session_change_broker = session_change_broker
+        self._message_renderer = message_renderer
 
     # ----- 会话 CRUD -----
 
@@ -375,4 +377,5 @@ class SessionManager:
             tool_registry=self._tool_registry,
             tool_hook_invoker=tool_hook_invoker,
             post_turn_external=post_turn_external,
+            message_renderer=self._message_renderer,
         )

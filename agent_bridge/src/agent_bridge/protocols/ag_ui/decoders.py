@@ -15,10 +15,18 @@ AG-UI 的 :class:`ag_ui.core.RunAgentInput` 已经是 pydantic 模型——FastA
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
-from ag_ui.core import RunAgentInput, UserMessage
+from ag_ui.core import (
+    DocumentInputContent,
+    ImageInputContent,
+    RunAgentInput,
+    TextInputContent,
+    UserMessage,
+)
 
 from llm_providers import all_model_ids, model_belongs_to_provider, normalize_provider_id
 
@@ -42,7 +50,34 @@ class DecodedRequest:
     thread_id: str
     run_id: str
     new_user_input: str
+    user_message_id: str
+    draft_attachments: tuple[DecodedDraftAttachment, ...] = ()
     requested_model: str | None = None
+
+
+@dataclass(frozen=True)
+class DecodedDraftAttachment:
+    draft_id: str
+    kind: str
+
+
+_DRAFT_CONTENT_PATH = re.compile(r"^/v1/attachments/drafts/([A-Za-z0-9_-]{16,80})/content$")
+
+
+def _draft_id_from_source(part: ImageInputContent | DocumentInputContent) -> str:
+    source = part.source
+    if getattr(source, "type", None) != "url":
+        raise DecodeError("附件只接受本机托管 URL，不接受内联 data")
+    raw = str(getattr(source, "value", ""))
+    parsed = urlparse(raw)
+    if (parsed.scheme or parsed.netloc) and (
+        parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}
+    ):
+        raise DecodeError("附件 URL 必须由本机 agent-friend Bridge 签发")
+    match = _DRAFT_CONTENT_PATH.fullmatch(parsed.path)
+    if match is None:
+        raise DecodeError("附件 URL 不是有效的本机草稿地址")
+    return match.group(1)
 
 
 def resolve_requested_model(payload: RunAgentInput) -> str | None:
@@ -100,11 +135,28 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         raise DecodeError(f"messages 最后一条必须是 role=user，收到 {type(last).__name__}")
 
     content = last.content if isinstance(last.content, str) else ""
-    if not content.strip():
+    drafts: list[DecodedDraftAttachment] = []
+    if isinstance(last.content, list):
+        text_parts: list[str] = []
+        for part in last.content:
+            if isinstance(part, TextInputContent):
+                text_parts.append(part.text)
+            elif isinstance(part, ImageInputContent):
+                drafts.append(DecodedDraftAttachment(_draft_id_from_source(part), "image"))
+            elif isinstance(part, DocumentInputContent):
+                drafts.append(DecodedDraftAttachment(_draft_id_from_source(part), "document"))
+            else:
+                raise DecodeError(f"暂不支持 AG-UI 内容类型：{getattr(part, 'type', 'unknown')}")
+        content = "\n".join(item for item in text_parts if item)
+    if not content.strip() and not drafts:
         raise DecodeError("messages 最后一条 user content 不能为空")
+    if len({item.draft_id for item in drafts}) != len(drafts):
+        raise DecodeError("同一个附件草稿不能重复发送")
     return DecodedRequest(
         thread_id=payload.thread_id,
         run_id=payload.run_id,
         new_user_input=content,
+        user_message_id=last.id,
+        draft_attachments=tuple(drafts),
         requested_model=resolve_requested_model(payload),
     )

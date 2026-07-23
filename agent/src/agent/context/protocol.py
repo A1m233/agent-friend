@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..attachments import AttachmentRef
 from ..messages import Message
 
 if TYPE_CHECKING:
@@ -159,6 +160,7 @@ class ContextManager(Protocol):
         history: list[Message],
         system_prompt: str,
         new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -170,6 +172,7 @@ def assemble_messages(
     history: list[Message],
     system_prompt: str,
     new_user_input: str | None = None,
+    new_user_attachments: list[AttachmentRef] | None = None,
     extra_context: list[Message] | None = None,
     trailing_user: str | None = None,
     trailing_system: str | None = None,
@@ -190,7 +193,14 @@ def assemble_messages(
         messages.extend(extra_context)
     messages.extend(history)
     if new_user_input is not None:
-        messages.append(Message(role="user", content=new_user_input))
+        messages.append(
+            Message(
+                role="user",
+                content=new_user_input,
+                attachments=list(new_user_attachments or []),
+                meta={"current_input": True} if new_user_attachments else {},
+            )
+        )
     if trailing_user is not None:
         messages.append(Message(role="user", content=trailing_user))
     if trailing_system is not None:

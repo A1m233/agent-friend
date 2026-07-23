@@ -26,6 +26,7 @@ from agent.tools import ToolRegistry
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AttachmentStore,
     EffectivePersonaCatalog,
     EffectivePersonaStore,
     JsonlSessionStore,
@@ -45,7 +46,7 @@ from agent import (
     default_context_manager,
     make_default_registry,
 )
-from llm_providers import LLMClient
+from llm_providers import LLMClient, MultimodalInputAdapter
 from memory import Memory, MemorySearchService, build_memory
 from runtime_config import config_mode_from_env, credential_source_for_mode
 
@@ -121,6 +122,7 @@ class BridgeRuntime:
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder]
     default_persona: str
     default_model: str
+    attachment_store: AttachmentStore | None = None
     llm_client_factory: Callable[[str], LLMClient] | None = None
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
@@ -183,6 +185,7 @@ def _make_persistent_session_manager(
     llm_client_factory: Callable[[str], LLMClient],
     metadata_store: SessionMetadataStore | None = None,
     session_change_broker: SessionChangeBroker | None = None,
+    multimodal_adapter: MultimodalInputAdapter | None = None,
 ) -> SessionManager:
     return SessionManager(
         store=store,
@@ -193,6 +196,7 @@ def _make_persistent_session_manager(
         memory=memory,
         metadata_store=metadata_store,
         session_change_broker=session_change_broker,
+        message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
     )
 
 
@@ -230,6 +234,11 @@ def build_runtime(
             真正调 LLM 时仍可能再次抛）。
     """
     base_persistent_store = JsonlSessionStore(settings.sessions_dir)
+    attachment_store = AttachmentStore(settings.attachments_dir)
+    multimodal_adapter = MultimodalInputAdapter(
+        open_asset=attachment_store.open,
+        cache_dir=settings.attachments_dir / "provider-cache",
+    )
     session_change_broker = SessionChangeBroker(
         SessionRevisionStore(settings.sessions_dir / "session-revisions.json")
     )
@@ -298,6 +307,7 @@ def build_runtime(
         llm_client_factory,
         session_metadata_store,
         session_change_broker,
+        multimodal_adapter,
     )
 
     agent_runtime = build_agent_runtime(
@@ -317,7 +327,9 @@ def build_runtime(
         )
         from .protocols.im import IMRuntime as _IMRuntime
         from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
+        from .protocols.im.attachments import IMAttachmentResolver
         from .protocols.im.dedupe import RecentMessageDeduper
+        from .protocols.im.inbound_resolver import CompositeInboundResolver
         from .protocols.im.voice import QQVoiceMessageResolver, SafeAudioDownloader
         from .protocols.im.voice_bridge_client import VoiceBridgeTranscriptionClient
         from .session_bridge import SessionBridge as _SessionBridge
@@ -344,6 +356,7 @@ def build_runtime(
             llm_client_factory=llm_client_factory,
             default_persona=default_persona,
             default_model=default_model,
+            attachment_store=attachment_store,
             memory=memory,
             recall_buffer=recall_buffer,
             agent_runtime=agent_runtime,
@@ -362,10 +375,13 @@ def build_runtime(
             ttl_seconds=settings.im_voice_dedupe_ttl_seconds,
             max_items=settings.im_voice_dedupe_max_items,
         )
-        im_inbound_resolver = QQVoiceMessageResolver(
-            downloader=SafeAudioDownloader(),
-            transcriber=VoiceBridgeTranscriptionClient(settings.voice_bridge_base_url),
-            max_audio_bytes=settings.im_voice_max_audio_bytes,
+        im_inbound_resolver = CompositeInboundResolver(
+            QQVoiceMessageResolver(
+                downloader=SafeAudioDownloader(),
+                transcriber=VoiceBridgeTranscriptionClient(settings.voice_bridge_base_url),
+                max_audio_bytes=settings.im_voice_max_audio_bytes,
+            ),
+            IMAttachmentResolver(attachment_store),
         )
         im_runtime = _IMRuntime(
             router=im_router,
@@ -393,6 +409,7 @@ def build_runtime(
         llm_client_factory=llm_client_factory,
         default_persona=default_persona,
         default_model=default_model,
+        attachment_store=attachment_store,
         memory=memory,
         recall_buffer=recall_buffer,
         agent_runtime=agent_runtime,
