@@ -50,13 +50,19 @@ interface ConversationState {
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
-  /** 发送一条消息并消费流式回复。 */
-  send: (text: string, attachments?: AttachmentDraft[]) => Promise<boolean>;
+  /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
+  send: (text: string, attachments?: AttachmentDraft[]) => SendStartResult;
   /** 编辑并重发最后一条用户消息。 */
   editResendLatest: (messageId: string, text: string) => Promise<void>;
   /** 打断当前流（保留已生成的部分）。 */
   stop: () => void;
 }
+
+export type SendOutcome = "completed" | "failed" | "interrupted";
+
+export type SendStartResult =
+  | { accepted: false; reason: "empty" | "busy" | "history-loading" }
+  | { accepted: true; completion: Promise<SendOutcome> };
 
 function newId(): string {
   return crypto.randomUUID();
@@ -210,9 +216,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
   },
 
-  async send(text, attachments = []) {
+  send(text, attachments = []) {
     const trimmed = text.trim();
-    if ((!trimmed && attachments.length === 0) || get().streaming || get().historyLoading) return false;
+    if (!trimmed && attachments.length === 0) return { accepted: false, reason: "empty" };
+    if (get().streaming) return { accepted: false, reason: "busy" };
+    if (get().historyLoading) return { accepted: false, reason: "history-loading" };
 
     const sessionId = get().currentSessionId ?? newId();
     const initialModel = get().currentModel ?? resolveDefaultConversationModel();
@@ -256,36 +264,43 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       patch((m) => applyStreamEvents(m, events));
     });
 
-    let succeeded = false;
-    try {
-      for await (const evt of runAgentStream(
-        {
-          threadId: sessionId,
-          text: trimmed,
-          messageId: userMessageId,
-          attachments,
-        },
-        { signal: controller.signal },
-      )) {
-        streamUpdates.enqueue(evt);
+    const completion = (async (): Promise<SendOutcome> => {
+      let outcome: SendOutcome = "failed";
+      try {
+        for await (const evt of runAgentStream(
+          {
+            threadId: sessionId,
+            text: trimmed,
+            messageId: userMessageId,
+            attachments,
+          },
+          { signal: controller.signal },
+        )) {
+          streamUpdates.enqueue(evt);
+        }
+        streamUpdates.flush();
+        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+        outcome = get().messages.find((message) => message.id === assistantId)?.status === "error"
+          ? "failed"
+          : "completed";
+      } catch {
+        streamUpdates.flush();
+        if (controller.signal.aborted) {
+          outcome = "interrupted";
+          patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
+        } else {
+          patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+        }
+      } finally {
+        streamUpdates.dispose();
+        if (activeController === controller) activeController = null;
+        set({ streaming: false });
+        void useSessionsStore.getState().refresh();
       }
-      streamUpdates.flush();
-      patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
-      succeeded = get().messages.find((message) => message.id === assistantId)?.status !== "error";
-    } catch {
-      streamUpdates.flush();
-      if (controller.signal.aborted) {
-        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
-      } else {
-        patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
-      }
-    } finally {
-      streamUpdates.dispose();
-      if (activeController === controller) activeController = null;
-      set({ streaming: false });
-      void useSessionsStore.getState().refresh();
-    }
-    return succeeded;
+      return outcome;
+    })();
+
+    return { accepted: true, completion };
   },
 
   async editResendLatest(messageId, text) {

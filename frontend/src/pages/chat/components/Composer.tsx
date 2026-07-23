@@ -11,7 +11,7 @@ import {
   uploadAttachment,
   type AttachmentDraft,
 } from "@/services";
-import { useConversationStore, useSessionsStore } from "@/stores";
+import { useConversationStore } from "@/stores";
 import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
 import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceInput/draft";
@@ -43,7 +43,8 @@ const VOICE_INPUT_PREWARM_MAX_RENEWS = 6;
  * keydown listener：composition 中的 Enter `stopImmediatePropagation` 阻止冒泡到 textarea
  * 上的 chat-sender handleKeyDown，让 IME 自己处理（confirm 候选词，input 内容更新）。
  *
- * 发送走 conversation store 的自写 fetch-SSE；发完刷新会话列表（新会话首发后会出现在历史）。
+ * 发送走 conversation store 的自写 fetch-SSE；store 接纳消息后立即清空草稿，
+ * 整轮完成与会话列表刷新由 conversation store 独立负责。
  */
 interface ComposerProps {
   disabled?: boolean;
@@ -85,7 +86,6 @@ export function Composer({
   const currentModel = useConversationStore((s) => s.currentModel);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
-  const refreshSessions = useSessionsStore((s) => s.refresh);
   const voiceInputPhase = useVoiceInputStore((s) => s.phase);
   const voiceInputVolume = useVoiceInputStore((s) => s.volumeLevel);
   const voiceInputError = useVoiceInputStore((s) => s.error);
@@ -377,19 +377,19 @@ export function Composer({
     }
     void (async () => {
       const voiceState = useVoiceInputStore.getState();
-      if (voiceState.traceId) {
-        sentVoiceTraceIdsRef.current.add(voiceState.traceId);
-      }
       if (isVoiceInputLive(voiceState.phase)) {
         await stopVoiceInput("send");
       }
-      voiceSegmentRef.current = null;
-      const succeeded = await send(trimmed, readyAttachments);
-      if (succeeded) {
-        applyDraftText("", "send");
-        setDraftAttachments([]);
+      const result = send(trimmed, readyAttachments);
+      if (!result.accepted) return;
+
+      if (voiceState.traceId) {
+        sentVoiceTraceIdsRef.current.add(voiceState.traceId);
       }
-      await refreshSessions();
+      voiceSegmentRef.current = null;
+      applyDraftText("", "send");
+      setDraftAttachments([]);
+      void result.completion;
     })();
   };
 

@@ -15,7 +15,7 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
 import type { SessionDetail } from "@/types/meta";
-import { useConversationStore } from "./conversation";
+import { useConversationStore, type SendStartResult } from "./conversation";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockEditStream = vi.mocked(editResendLatestStream);
@@ -42,6 +42,12 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+async function finishAcceptedSend(result: SendStartResult) {
+  expect(result.accepted).toBe(true);
+  if (!result.accepted) throw new Error(`send rejected: ${result.reason}`);
+  return result.completion;
 }
 
 function sessionDetail(sessionId: string, content: string): SessionDetail {
@@ -90,7 +96,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
       throw new Error("ag-ui run failed: http 503");
     });
 
-    await useConversationStore.getState().send("在吗");
+    await finishAcceptedSend(useConversationStore.getState().send("在吗"));
 
     const m = lastMessage();
     expect(m.role).toBe("assistant");
@@ -110,13 +116,13 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
       });
     });
 
-    const succeeded = await useConversationStore.getState().send("hi");
+    const outcome = await finishAcceptedSend(useConversationStore.getState().send("hi"));
 
     const m = lastMessage();
     expect(m.status).toBe("error");
     expect(m.error!).not.toMatch(TECH_LEAK);
     expect(m.errorCode).toBe("rate_limit");
-    expect(succeeded).toBe(false);
+    expect(outcome).toBe("failed");
   });
 
   it("历史会话加载失败 → 拟人兜底，不漏技术细节", async () => {
@@ -209,14 +215,61 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
       yield ev({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" });
     });
 
-    await useConversationStore.getState().send("hi");
+    const outcome = await finishAcceptedSend(useConversationStore.getState().send("hi"));
 
     const m = lastMessage();
     expect(m.status).toBe("complete");
+    expect(outcome).toBe("completed");
     expect(m.blocks.some((b) => b.kind === "text")).toBe(true);
     expect(mockSetLastChatSessionId).toHaveBeenCalledWith(
       useConversationStore.getState().currentSessionId,
     );
+  });
+
+  it("消息接纳不等待流式完成，调用方可立即清空草稿", async () => {
+    const streamGate = deferred<void>();
+    mockStream.mockImplementation(async function* () {
+      await streamGate.promise;
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" });
+    });
+
+    const result = useConversationStore.getState().send("立即发送");
+
+    expect(result.accepted).toBe(true);
+    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(messageTexts()).toContain("立即发送");
+    if (!result.accepted) throw new Error(`send rejected: ${result.reason}`);
+
+    let completed = false;
+    void result.completion.then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    streamGate.resolve();
+    await expect(result.completion).resolves.toBe("completed");
+  });
+
+  it("未接纳的发送明确返回原因且不改动消息", async () => {
+    expect(useConversationStore.getState().send("   ")).toEqual({
+      accepted: false,
+      reason: "empty",
+    });
+
+    const streamGate = deferred<void>();
+    mockStream.mockImplementation(async function* () {
+      await streamGate.promise;
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" });
+    });
+    const accepted = useConversationStore.getState().send("第一条");
+    expect(accepted.accepted).toBe(true);
+    expect(useConversationStore.getState().send("第二条")).toEqual({
+      accepted: false,
+      reason: "busy",
+    });
+    expect(messageTexts()).not.toContain("第二条");
+
+    streamGate.resolve();
+    if (accepted.accepted) await accepted.completion;
   });
 
   it("打开历史会话时优先投影 active_events", async () => {
