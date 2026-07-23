@@ -237,6 +237,7 @@ def encode_stream(
                         recoverable=err.recoverable,
                         source="ag_ui",
                         run_id=run_id,
+                        sanitize_failed_model_call=err.sanitize_failed_model_call,
                     )
                 except Exception:
                     logger.warning("AG-UI run_error 持久化失败", exc_info=True)
@@ -261,13 +262,18 @@ def encode_stream(
                     )
                     open_message_id = None
                 message = "本轮对话未能完成，请稍后重试"
+                code = terminal.reason_code if terminal is not None else "runtime_error"
                 if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:
                     message = "本轮对话已取消"
+                elif terminal is not None and terminal.error is not None:
+                    err = map_exception(terminal.error)
+                    message = err.message
+                    code = err.code
                 yield _encode(
                     RunErrorEvent(
                         type=EventType.RUN_ERROR,
                         message=message,
-                        code=terminal.reason_code if terminal is not None else "runtime_error",
+                        code=code,
                     )
                 )
                 return

@@ -8,12 +8,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from litellm.exceptions import ContentPolicyViolationError as LiteLLMContentPolicyViolationError
 from litellm.exceptions import Timeout as LiteLLMTimeout
-from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage
+from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage, _map_exception
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from llm_providers import (
     LLMClient,
+    LLMContentPolicyError,
     LLMNetworkError,
     LLMTextDelta,
     LLMUsage,
@@ -29,6 +31,22 @@ def _spec(**kw: object) -> ProviderSpec:
     base: dict[str, object] = {"model": "deepseek/deepseek-chat", "api_key": "x"}
     base.update(kw)
     return ProviderSpec(**base)  # type: ignore[arg-type]
+
+
+def test_deepseek_content_risk_maps_to_content_policy_error() -> None:
+    mapped = _map_exception(RuntimeError("DeepseekException - Content Exists Risk"))
+
+    assert isinstance(mapped, LLMContentPolicyError)
+
+
+def test_litellm_typed_content_policy_error_maps_without_string_matching() -> None:
+    provider_error = LiteLLMContentPolicyViolationError(
+        message="provider rejected content",
+        model="test-model",
+        llm_provider="test-provider",
+    )
+
+    assert isinstance(_map_exception(provider_error), LLMContentPolicyError)
 
 
 # ===== context_window 三层兜底 =====

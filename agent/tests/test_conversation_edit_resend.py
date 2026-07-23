@@ -104,12 +104,18 @@ def _conversation(
     )
 
 
-def _event(type_: str, payload: dict[str, Any]) -> Event:
+def _event(
+    type_: str,
+    payload: dict[str, Any],
+    *,
+    meta: dict[str, Any] | None = None,
+) -> Event:
     return Event(
         type=type_,  # type: ignore[arg-type]
         uuid=str(uuid4()),
         ts=datetime.now(UTC),
         payload=payload,
+        meta=meta or {},
     )
 
 
@@ -145,6 +151,161 @@ def test_session_active_events_hide_rewritten_tail() -> None:
     assert [(m.role, m.content) for m in session.messages] == [
         ("user", "new"),
         ("assistant", "new answer"),
+    ]
+
+
+def test_content_policy_failure_sanitizes_only_the_last_model_call(
+    tmp_path: Path,
+) -> None:
+    run_id = "rejected-run"
+    session = Session.new(title="t", persona="default", model="m")
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    store.create(session)
+    events = [
+        _event("user_message", {"content": "rejected question"}, meta={"run_id": run_id}),
+        _event(
+            "assistant_message",
+            {"content": "first search", "partial": False},
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "tool_call_request",
+            {
+                "tool_call_id": "safe-call",
+                "tool_name": "web_search",
+                "args": {"query": "safe"},
+            },
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "tool_call_result",
+            {
+                "tool_call_id": "safe-call",
+                "tool_name": "web_search",
+                "content": "safe search payload",
+                "is_error": False,
+            },
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "assistant_message",
+            {"content": "second search", "partial": False},
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "tool_call_request",
+            {
+                "tool_call_id": "rejected-call",
+                "tool_name": "web_search",
+                "args": {"query": "risky"},
+            },
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "tool_call_result",
+            {
+                "tool_call_id": "rejected-call",
+                "tool_name": "web_search",
+                "content": "rejected search payload",
+                "is_error": False,
+            },
+            meta={"run_id": run_id},
+        ),
+        _event(
+            "run_error",
+            {
+                "code": "content_policy",
+                "message": "blocked",
+                "run_id": run_id,
+                "sanitize_failed_model_call": True,
+            },
+        ),
+    ]
+    for event in events:
+        _append(store, session, event)
+
+    assert any(message.content == "rejected search payload" for message in session.messages)
+    assert [(message.role, message.content) for message in session.llm_messages] == [
+        ("user", "rejected question"),
+        ("assistant", "first search"),
+        ("tool", "safe search payload"),
+        ("assistant", "上一轮因模型安全限制未能完成，受限内容不再重放。"),
+    ]
+
+    fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    conv = _conversation(tmp_path, session=session, store=store, llm=cast(LLMClient, fake))
+    list(conv.stream("fresh question"))
+
+    sent = "\n".join(str(message.get("content", "")) for message in fake.received[0])
+    assert "fresh question" in sent
+    assert "rejected question" in sent
+    assert "safe search payload" in sent
+    assert "second search" not in sent
+    assert "rejected search payload" not in sent
+    assert "受限内容不再重放" in sent
+
+
+def test_content_policy_failure_on_first_model_call_does_not_replay_user_input() -> None:
+    run_id = "first-call-rejected"
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event(
+                "user_message",
+                {"content": "blocked raw user input"},
+                meta={"run_id": run_id},
+            ),
+            _event(
+                "run_error",
+                {
+                    "code": "content_policy",
+                    "message": "blocked",
+                    "run_id": run_id,
+                    "sanitize_failed_model_call": True,
+                },
+            ),
+        ]
+    )
+
+    assert [(message.role, message.content) for message in session.messages] == [
+        ("user", "blocked raw user input")
+    ]
+    assert [(message.role, message.content) for message in session.llm_messages] == [
+        ("assistant", "上一轮因模型安全限制未能完成，受限内容不再重放。")
+    ]
+
+
+def test_legacy_bad_request_after_tool_result_sanitizes_last_transaction() -> None:
+    run_id = "legacy-bad-request"
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", {"content": "question"}, meta={"run_id": run_id}),
+            _event(
+                "assistant_message",
+                {"content": "searching", "partial": False},
+                meta={"run_id": run_id},
+            ),
+            _event(
+                "tool_call_result",
+                {
+                    "tool_call_id": "legacy-call",
+                    "tool_name": "web_search",
+                    "content": "legacy rejected payload",
+                    "is_error": False,
+                },
+                meta={"run_id": run_id},
+            ),
+            _event(
+                "run_error",
+                {"code": "bad_request", "message": "bad request", "run_id": run_id},
+            ),
+        ]
+    )
+
+    assert [(message.role, message.content) for message in session.llm_messages] == [
+        ("user", "question"),
+        ("assistant", "上一轮工具结果未被模型接受，相关内容不再重放。"),
     ]
 
 

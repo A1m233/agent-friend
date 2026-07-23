@@ -29,6 +29,7 @@ from agent import (
 from llm_providers import (
     LLMAuthError,
     LLMBadRequestError,
+    LLMContentPolicyError,
     LLMNetworkError,
     LLMProviderError,
     LLMRateLimitError,
@@ -48,12 +49,15 @@ class ProtocolError:
             恢复错误用诊断性短句（如"找不到指定的会话"）。
         recoverable: 是否属于"可恢复"类。本字段**不影响** wire 形态——OpenAI
             照样 4xx/5xx，AG-UI 照样 RUN_ERROR。仅供上层埋点 / 日志级别决策。
+        sanitize_failed_model_call: 后续模型上下文是否应把失败模型调用新增的
+            事务替换为安全占位；原始事件仍保留供 UI、审计和诊断使用。
     """
 
     http_status: int
     code: str
     message: str
     recoverable: bool
+    sanitize_failed_model_call: bool = False
 
 
 def map_exception(exc: BaseException) -> ProtocolError:
@@ -95,6 +99,17 @@ def map_exception(exc: BaseException) -> ProtocolError:
             code="auth_failed",
             message="后端身份校验失败，请联系管理员确认 API 凭证。",
             recoverable=False,
+        )
+    if isinstance(exc, LLMContentPolicyError):
+        return ProtocolError(
+            http_status=400,
+            code="content_policy",
+            message=(
+                "请求内容触发了后端模型的安全限制，这轮没有生成完整回答。"
+                "可以换个问法或切换模型后重试。"
+            ),
+            recoverable=False,
+            sanitize_failed_model_call=True,
         )
     if isinstance(exc, LLMBadRequestError):
         return ProtocolError(

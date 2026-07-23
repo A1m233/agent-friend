@@ -12,6 +12,7 @@ from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
 from agent import Conversation, ConversationEvent, TextDelta, TurnDone
+from llm_providers import LLMContentPolicyError
 
 
 @dataclass
@@ -117,6 +118,34 @@ def test_encode_stream_consumes_run_handle_without_calling_conversation_factory(
     assert not factory_called
     assert b"from runtime" in body
     assert b"RUN_FINISHED" in body
+
+
+def test_encode_stream_maps_runtime_failure_from_terminal_error() -> None:
+    request = RunRequest(event=UserEvent(session_id="session-a", user_input="hello"))
+    handle = RunHandle(request)
+    assert handle.mark_running()
+    assert handle.finish_once(
+        RunOutcome.FAILED,
+        reason_code="executor_error",
+        error=LLMContentPolicyError("Content Exists Risk"),
+    )
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, _ConversationStub()),
+            "hello",
+            thread_id="session-a",
+            run_id=request.run_id,
+            accept="text/event-stream",
+            run_handle=handle,
+        )
+    )
+
+    assert b"RUN_ERROR" in body
+    assert b"content_policy" in body
+    assert "请求内容触发了后端模型的安全限制".encode() in body
+    assert b"executor_error" not in body
+    assert b"RUN_FINISHED" not in body
 
 
 def test_closing_run_handle_stream_cancels_abandoned_run() -> None:

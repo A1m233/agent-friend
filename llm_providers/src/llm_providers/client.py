@@ -23,6 +23,7 @@ import openai
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
+    LLMContentPolicyError,
     LLMError,
     LLMNetworkError,
     LLMProviderError,
@@ -156,6 +157,8 @@ def _map_exception(e: Exception) -> LLMError:
         return LLMRateLimitError(str(e))
     if _is_network_exception(e):
         return LLMNetworkError(str(e))
+    if _is_content_policy_exception(e):
+        return LLMContentPolicyError(str(e))
     if any(
         isinstance(item, (litellm.ContextWindowExceededError, openai.BadRequestError))
         for item in chain
@@ -164,6 +167,19 @@ def _map_exception(e: Exception) -> LLMError:
     if isinstance(e, openai.APIError):
         return LLMProviderError(str(e))
     return LLMProviderError(f"未预料的错误: {e}")
+
+
+def _is_content_policy_exception(e: Exception) -> bool:
+    """识别 Provider 明确返回的内容安全拒绝，不把它误报成参数错误。"""
+    if any(isinstance(item, litellm.ContentPolicyViolationError) for item in _exception_chain(e)):
+        return True
+    markers = (
+        "content exists risk",
+        "content_policy_violation",
+        "content policy violation",
+        "content_filter",
+    )
+    return any(marker in str(item).casefold() for item in _exception_chain(e) for marker in markers)
 
 
 def _map_finish_reason(finish_reason: str | None) -> str:

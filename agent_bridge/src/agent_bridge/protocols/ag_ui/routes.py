@@ -136,6 +136,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     recoverable=err.recoverable,
                     source="ag_ui",
                     run_id=run_request.run_id,
+                    sanitize_failed_model_call=err.sanitize_failed_model_call,
                 )
 
             handle = runtime.agent_runtime.submit(

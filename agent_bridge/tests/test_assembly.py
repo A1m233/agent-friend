@@ -148,6 +148,17 @@ def test_attachment_error_keeps_stable_protocol_code() -> None:
     assert error.message == "附件内容超过当前模型容量。"
 
 
+def test_content_policy_error_has_honest_message_and_sanitizes_failed_call() -> None:
+    from llm_providers import LLMContentPolicyError
+
+    error = map_exception(LLMContentPolicyError("Content Exists Risk"))
+
+    assert error.http_status == 400
+    assert error.code == "content_policy"
+    assert "安全限制" in error.message
+    assert error.sanitize_failed_model_call is True
+
+
 def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

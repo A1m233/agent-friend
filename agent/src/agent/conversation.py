@@ -1057,7 +1057,7 @@ class Conversation:
         """按 ``Session.messages`` 规则投影指定事件前缀。"""
         if not events:
             return []
-        return Session.from_events(list(events)).messages
+        return Session.from_events(list(events)).llm_messages
 
     def _invalidate_rewrite_memory(self, inactive_event_uuids: list[str]) -> None:
         if self._memory is None or not inactive_event_uuids:
@@ -1139,6 +1139,7 @@ class Conversation:
         recoverable: bool,
         source: str,
         run_id: str | None = None,
+        sanitize_failed_model_call: bool = False,
     ) -> None:
         """持久化一轮运行失败状态，供 UI 刷新后恢复同一错误。
 
@@ -1152,6 +1153,8 @@ class Conversation:
         }
         if run_id is not None:
             payload["run_id"] = run_id
+        if sanitize_failed_model_call:
+            payload["sanitize_failed_model_call"] = True
         event = Event(
             type="run_error",
             uuid=str(uuid4()),
@@ -1266,7 +1269,7 @@ class Conversation:
             可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
         """
         runtime = self._build_runtime_context(prior_summary_override=prior_summary_override)
-        raw_history = self._session.messages if history_override is None else history_override
+        raw_history = self._session.llm_messages if history_override is None else history_override
         history_for_llm = escape_user_messages_for_llm(raw_history)
         user_input_for_llm = (
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
