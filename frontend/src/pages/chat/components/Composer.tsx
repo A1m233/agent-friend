@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
 import { Button, Input, TooltipProvider } from "@/components/ui";
+import { resolveBridgeUrl } from "@/constants";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
 import {
@@ -17,6 +18,10 @@ import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceIn
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
+import {
+  AttachmentImageViewer,
+  type AttachmentImagePreview,
+} from "./AttachmentImageViewer";
 import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
@@ -100,6 +105,7 @@ export function Composer({
   const selectedModel = currentModel ?? chatModel.model;
   const capabilities = modelOption(selectedModel)?.capabilities ?? null;
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentState[]>([]);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const draftTextRef = useRef("");
@@ -140,7 +146,9 @@ export function Composer({
           ? "fail"
           : "success",
       percent: item.status === "uploading" ? 50 : item.status === "ready" ? 100 : 0,
-      url: item.status === "ready" ? item.draft.contentUrl : undefined,
+      url: item.status === "ready"
+        ? resolveBridgeUrl(item.draft.contentUrl)
+        : undefined,
     })),
     [draftAttachments, incompatibleAttachmentNames],
   );
@@ -471,6 +479,11 @@ export function Composer({
               overflow: "scrollX",
               removable: !streaming,
               imageViewer: false,
+              onFileClick: (event) => {
+                const item = event.detail;
+                if (item.fileType !== "image" || !item.url) return;
+                setAttachmentPreview({ name: item.name ?? "图片预览", url: item.url });
+              },
             }}
           >
             <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
@@ -516,6 +529,10 @@ export function Composer({
             </div>
         </ChatSenderBox>
       </div>
+      <AttachmentImageViewer
+        preview={attachmentPreview}
+        onClose={() => setAttachmentPreview(null)}
+      />
     </div>
   );
 }

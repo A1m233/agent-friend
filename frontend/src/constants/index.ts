@@ -60,5 +60,14 @@ export function localServiceAbsoluteBaseUrl(
  */
 export const BRIDGE_BASE_URL = localServiceHttpBaseUrl("bridge");
 
+export function resolveBridgeUrl(
+  url: string,
+  bridgeBaseUrl: string = BRIDGE_BASE_URL,
+): string {
+  if (/^[a-z][a-z\d+.-]*:/i.test(url) || url.startsWith("//")) return url;
+  const path = url.startsWith("/") ? url : `/${url}`;
+  return `${bridgeBaseUrl}${path}`;
+}
+
 // AG-UI 出口路径（006）。
 export const AGUI_RUN_PATH = "/ag-ui/run";

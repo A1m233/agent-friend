@@ -1,18 +1,15 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
-import { ImageViewer } from "tdesign-react";
-import "tdesign-react/es/image-viewer/style/css.js";
 import { attachmentAssetUrl } from "@/services";
 import type { ChatAttachment } from "@/types/chat";
+import {
+  AttachmentImageViewer,
+  type AttachmentImagePreview,
+} from "./AttachmentImageViewer";
 
 interface MessageAttachmentsProps {
   attachments: ChatAttachment[];
   unavailableAssets: Set<string>;
-}
-
-interface ImagePreview {
-  name: string;
-  url: string;
 }
 
 /**
@@ -23,7 +20,8 @@ export function MessageAttachments({
   attachments,
   unavailableAssets,
 }: MessageAttachmentsProps) {
-  const [preview, setPreview] = useState<ImagePreview | null>(null);
+  const [preview, setPreview] = useState<AttachmentImagePreview | null>(null);
+  const attachmentsRef = useRef<HTMLElement | undefined>(undefined);
   const items = useMemo<TdAttachmentItem[]>(
     () => attachments.map((item) => ({
       key: item.assetId,
@@ -40,10 +38,19 @@ export function MessageAttachments({
     })),
     [attachments, unavailableAssets],
   );
+  useLayoutEffect(() => {
+    if (!attachmentsRef.current) return;
+    // Omi 会把缺失的布尔 attribute 恢复成默认 true，需要显式写入字符串 false。
+    const attachments = attachmentsRef.current as HTMLElement & { update?: () => void };
+    attachments.setAttribute("removable", "false");
+    attachments.setAttribute("image-viewer", "false");
+    attachments.update?.();
+  }, [items]);
 
   return (
     <>
       <Attachments
+        ref={attachmentsRef}
         className="chat-message-attachments"
         items={items}
         removable={false}
@@ -54,14 +61,7 @@ export function MessageAttachments({
           setPreview({ name: item.name ?? "图片预览", url: item.url });
         }}
       />
-      <ImageViewer
-        visible={preview !== null}
-        images={preview ? [{ mainImage: preview.url, download: false }] : []}
-        title={preview?.name}
-        trigger={() => null}
-        closeOnOverlay
-        onClose={() => setPreview(null)}
-      />
+      <AttachmentImageViewer preview={preview} onClose={() => setPreview(null)} />
     </>
   );
 }
