@@ -14,7 +14,8 @@ import { ChatMessage as TdChatMessage } from "@tdesign-react/chat";
 import { ArrowDown } from "lucide-react";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
-import type { ChatMessage } from "@/types/chat";
+import { attachmentAssetUrl, isAttachmentAssetAvailable } from "@/services";
+import type { ChatAttachment, ChatMessage } from "@/types/chat";
 import {
   CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   CHAT_CONTENT_CONTAINER_CLASS,
@@ -32,6 +33,7 @@ const BOTTOM_THRESHOLD_PX = 16;
 const HISTORY_SCROLL_SETTLE_MS = 1200;
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
+const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 
 function isNearBottom(el: HTMLDivElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
@@ -79,12 +81,46 @@ const TextBubble = memo(function TextBubble({
   role,
   text,
   actionBar,
+  attachments = EMPTY_CHAT_ATTACHMENTS,
 }: {
   role: "user" | "assistant";
   text: string;
   actionBar?: ReactNode;
+  attachments?: ChatAttachment[];
 }) {
-  const content = useMemo(() => toMarkdownContent(text) as TdContentProp, [text]);
+  const [unavailableAssets, setUnavailableAssets] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    let active = true;
+    void Promise.all(
+      attachments.map(async (item) => ({
+        assetId: item.assetId,
+        available: await isAttachmentAssetAvailable(item.assetId),
+      })),
+    ).then((results) => {
+      if (!active) return;
+      setUnavailableAssets(
+        new Set(results.filter((item) => !item.available).map((item) => item.assetId)),
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [attachments]);
+  const content = useMemo(() => {
+    const attachmentContent = attachments.length
+      ? [{
+          type: "attachment",
+          data: attachments.map((item) => ({
+            fileType: item.kind === "image" ? "image" : item.mediaType === "application/pdf" ? "pdf" : "txt",
+            name: item.displayName,
+            size: item.sizeBytes,
+            url: attachmentAssetUrl(item.assetId),
+            status: unavailableAssets.has(item.assetId) ? "fail" : "success",
+          })),
+        }]
+      : [];
+    return [...attachmentContent, ...(text ? toMarkdownContent(text) : [])] as TdContentProp;
+  }, [attachments, text, unavailableAssets]);
   return (
     <TdChatMessage
       role={role}
@@ -156,7 +192,10 @@ function MessageContent({
       .join("\n\n");
     if (editing) {
       return (
-        <div className="ml-auto w-full">
+        <div className="ml-auto flex w-full flex-col items-end gap-2">
+          {message.attachments?.length ? (
+            <TextBubble role="user" text="" attachments={message.attachments} />
+          ) : null}
           <EditMessageSender
             initialText={text}
             disabled={editDisabled}
@@ -166,7 +205,14 @@ function MessageContent({
         </div>
       );
     }
-    return <TextBubble role="user" text={text} actionBar={actionBar} />;
+    return (
+      <TextBubble
+        role="user"
+        text={text}
+        attachments={message.attachments}
+        actionBar={actionBar}
+      />
+    );
   }
 
   const hasErrorBubble = message.status === "error" && !!message.error;

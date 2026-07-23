@@ -33,6 +33,7 @@ export function FeedbackDiagnosticsPanel({
   const [description, setDescription] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [generating, setGenerating] = useState(false);
+  const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
   const [result, setResult] = useState<GenerateDiagnosticBundleResult | null>(null);
   const appliedPrefillRequestId = useRef(0);
 
@@ -88,6 +89,7 @@ export function FeedbackDiagnosticsPanel({
       const next = await generateDiagnosticBundle({
         description: description.trim() || undefined,
         sessionIds: [...selectedIds],
+        includeAttachmentOriginals,
       });
       setResult(next);
       const partial = next.outcome === "partial";
@@ -184,6 +186,22 @@ export function FeedbackDiagnosticsPanel({
       </SettingsGroup>
 
       <SettingsGroup title="生成本地诊断包">
+        {selectedIds.size > 0 ? (
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
+            <Checkbox
+              className="mt-0.5"
+              checked={includeAttachmentOriginals}
+              onCheckedChange={(checked) => setIncludeAttachmentOriginals(checked === true)}
+              aria-label="包含相关原始附件"
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-fg">包含相关原始附件</span>
+              <span className="mt-1 block text-xs text-muted">
+                默认不包含。开启后仅收集所选会话引用的附件原件，可能包含私人图片和文档，并会增大诊断包；原件合计最多 200MB。
+              </span>
+            </span>
+          </label>
+        ) : null}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted">
             <FileArchive className="size-4" />

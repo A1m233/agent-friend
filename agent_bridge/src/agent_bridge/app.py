@@ -34,14 +34,17 @@ from runtime_config import (
 )
 
 from .assembly import BridgeRuntime, build_runtime
+from .attachment_reconciliation import reconcile_attachments
 from .lifecycle import LIFECYCLE_TOKEN_ENV, BridgeLifecycleController, register_lifecycle_routes
 from .migration import register_migration_routes
 from .protocols.ag_ui import register_routes as register_ag_ui_routes
 from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
+from .routes.attachments import register_routes as register_attachment_routes
 from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
+from .routes.models import register_routes as register_model_routes
 from .routes.persona import register_routes as register_persona_routes
 from .runtime_config import resolve_bridge_runtime_config
 from .settings import BridgeSettings
@@ -64,7 +67,7 @@ def _add_tauri_production_cors(app: FastAPI) -> None:
         allow_origins=TAURI_PRODUCTION_ORIGINS,
         allow_origin_regex=r"http://(127\.0\.0\.1|localhost):\d+",
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Accept", "Content-Type"],
+        allow_headers=["Accept", "Content-Type", "X-Attachment-Filename"],
     )
 
 
@@ -121,6 +124,8 @@ def create_app_with_runtime(
     register_ag_ui_routes(app, runtime)
     register_meta_routes(app, runtime)
     register_memory_routes(app, runtime)
+    register_attachment_routes(app, runtime)
+    register_model_routes(app)
     register_persona_routes(app, runtime)
     register_push_routes(app, runtime)
     if runtime.im_onboard_registry is not None:
@@ -149,6 +154,7 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        reconcile_attachments(runtime)
         if runtime.agent_runtime is not None:
             runtime.agent_runtime.start()
         if runtime.im_runtime is not None:

@@ -31,6 +31,13 @@ OUTPUT_RESERVE_RATIO = 0.1
 BUFFER_RATIO = 0.1
 """估算误差缓冲的窗口占比（009 design §3.3）。"""
 
+IMAGE_ATTACHMENT_TOKENS = 1536
+"""图片输入的保守固定预算；具体视觉切片成本由 provider 决定。"""
+
+DOCUMENT_BYTES_TO_TOKENS = 0.25
+DOCUMENT_ATTACHMENT_TOKEN_CAP = 64_000
+"""文档预估只用于压缩预检；实际抽取文本会在 provider 适配层再次按窗口校验。"""
+
 
 def estimate_tokens(messages: list[Message]) -> int:
     """对消息序列做保守的 token 估算（按字符数 × :data:`CHARS_TO_TOKENS`）。
@@ -49,7 +56,17 @@ def estimate_tokens(messages: list[Message]) -> int:
         tool_calls = msg.meta.get("tool_calls") if msg.meta else None
         if tool_calls:
             total_chars += len(str(tool_calls))
-    return int(total_chars * CHARS_TO_TOKENS)
+    attachment_tokens = 0
+    for msg in messages:
+        for attachment in msg.attachments:
+            if attachment.kind == "image":
+                attachment_tokens += IMAGE_ATTACHMENT_TOKENS
+            else:
+                attachment_tokens += min(
+                    DOCUMENT_ATTACHMENT_TOKEN_CAP,
+                    max(256, int(attachment.size_bytes * DOCUMENT_BYTES_TO_TOKENS)),
+                )
+    return int(total_chars * CHARS_TO_TOKENS) + attachment_tokens
 
 
 def make_budget_snapshot(

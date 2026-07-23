@@ -14,6 +14,8 @@ from agent.messages import (
     escape_user_messages_for_llm,
 )
 
+from agent import AttachmentRef
+
 
 def _history() -> list[Message]:
     return [
@@ -68,6 +70,26 @@ def test_assemble_omits_optional_parts() -> None:
         ("user", "u1"),
         ("assistant", "a1"),
     ]
+
+
+def test_assemble_keeps_current_user_attachments_before_budgeting() -> None:
+    attachment = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="sample.pdf",
+        kind="document",
+        media_type="application/pdf",
+        size_bytes=42,
+        sha256="a" * 64,
+    )
+    messages = assemble_messages(
+        history=[],
+        system_prompt="SYS",
+        new_user_input="看看",
+        new_user_attachments=[attachment],
+    )
+
+    assert messages[-1].attachments == [attachment]
+    assert messages[-1].meta["current_input"] is True
 
 
 def test_assemble_empty_system_prompt_no_leading_system() -> None:

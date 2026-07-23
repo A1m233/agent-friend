@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from ..attachments import AttachmentRef
 from ..messages import Message
 from .errors import SessionCorruptError
 from .events import SCHEMA_VERSION, Event, _ensure_utc, _parse_ts, _serialize_ts
@@ -290,6 +291,11 @@ class Session:
                         timestamp=ev.ts,
                         meta=dict(ev.meta),
                         uuid=ev.uuid,
+                        attachments=[
+                            AttachmentRef.from_dict(item)
+                            for item in ev.payload.get("attachments", [])
+                            if isinstance(item, dict)
+                        ],
                     )
                 )
                 last_assistant = None

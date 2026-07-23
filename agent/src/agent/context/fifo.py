@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+from ..attachments import AttachmentRef
 from ..messages import Message
 from .budget import estimate_tokens
 from .protocol import BuildResult, RuntimeContext, assemble_messages
@@ -39,6 +40,7 @@ class FifoContextManager:
         history: list[Message],
         system_prompt: str,
         new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -48,6 +50,7 @@ class FifoContextManager:
             history=history,
             system_prompt=system_prompt,
             new_user_input=new_user_input,
+            new_user_attachments=new_user_attachments,
             extra_context=extra_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -75,6 +78,7 @@ class FifoContextManager:
                 history=truncated,
                 system_prompt=system_prompt,
                 new_user_input=new_user_input,
+                new_user_attachments=new_user_attachments,
                 extra_context=extra_context,
                 trailing_user=trailing_user,
                 trailing_system=trailing_system,

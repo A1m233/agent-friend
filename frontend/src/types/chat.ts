@@ -46,6 +46,14 @@ export interface ThinkingBlock {
 
 export type MessageBlock = TextBlock | ToolBlock | ThinkingBlock;
 
+export interface ChatAttachment {
+  assetId: string;
+  displayName: string;
+  kind: "image" | "document";
+  mediaType: string;
+  sizeBytes: number;
+}
+
 /** 一条对话消息（user 或一整轮 assistant，assistant 轮可含多块文本/工具）。 */
 export interface ChatMessage {
   id: string;
@@ -53,6 +61,7 @@ export interface ChatMessage {
   /** 消息创建时间，ISO 字符串；历史消息来自后端事件 ts，实时消息由前端生成。 */
   createdAt: string;
   blocks: MessageBlock[];
+  attachments?: ChatAttachment[];
   status: MessageStatus;
   /** status==='error' 时的用户可见错误文案（不含技术细节）。 */
   error?: string;

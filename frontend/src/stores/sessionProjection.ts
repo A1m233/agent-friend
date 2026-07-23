@@ -22,7 +22,7 @@
  * 未来 chat 窗想回看历史主动轮：删掉 pendingSkipAssistant 即可，事件已在 JSONL 保留。
  */
 
-import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
+import type { ChatAttachment, ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 
@@ -42,6 +42,26 @@ function assistantMessage(id: string, createdAt: string): ChatMessage {
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+function attachmentsOf(value: unknown): ChatAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const data = item as Record<string, unknown>;
+    const assetId = asString(data.asset_id);
+    const displayName = asString(data.display_name);
+    const mediaType = asString(data.media_type);
+    const kind = data.kind === "image" || data.kind === "document" ? data.kind : null;
+    if (!assetId || !displayName || !mediaType || !kind) return [];
+    return [{
+      assetId,
+      displayName,
+      mediaType,
+      kind,
+      sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : 0,
+    }];
+  });
 }
 
 export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
@@ -71,7 +91,9 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "user_message") {
-      messages.push(textMessage(ev.uuid, "user", asString(p.content), ev.ts));
+      const message = textMessage(ev.uuid, "user", asString(p.content), ev.ts);
+      message.attachments = attachmentsOf(p.attachments);
+      messages.push(message);
       currentAssistant = null;
       pendingSkipAssistant = false;
       continue;

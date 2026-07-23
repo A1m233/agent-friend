@@ -66,6 +66,11 @@ def personas_dir() -> Path:
     return user_data_dir() / "personas"
 
 
+def attachments_dir() -> Path:
+    """Canonical attachment assets: ``<user_data_dir>/attachments``."""
+    return user_data_dir() / "attachments"
+
+
 def editable_persona_path() -> Path:
     """唯一可编辑人格正文：``<personas_dir>/default/persona.md``。"""
     return personas_dir() / "default" / "persona.md"
@@ -98,6 +103,7 @@ __all__ = [
     "APP_NAME",
     "DATA_DIR_ENV",
     "LOG_DIR_ENV",
+    "attachments_dir",
     "cli_history_path",
     "editable_persona_path",
     "log_dir",

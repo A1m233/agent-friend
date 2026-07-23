@@ -20,6 +20,34 @@ describe("projectSessionEvents", () => {
     expect(out[0].status).toBe("complete");
   });
 
+  it("把 user event 的稳定附件引用投影到历史消息", () => {
+    const out = projectSessionEvents([
+      ev("user_message", {
+        content: "看看",
+        attachments: [
+          {
+            asset_id: "a".repeat(64),
+            display_name: "screen.png",
+            kind: "image",
+            media_type: "image/png",
+            size_bytes: 8,
+            sha256: "a".repeat(64),
+          },
+        ],
+      }),
+    ]);
+
+    expect(out[0].attachments).toEqual([
+      {
+        assetId: "a".repeat(64),
+        displayName: "screen.png",
+        kind: "image",
+        mediaType: "image/png",
+        sizeBytes: 8,
+      },
+    ]);
+  });
+
   it("保留 partial assistant 内容并标记为 interrupted", () => {
     const out = projectSessionEvents([
       ev("assistant_message", { content: "半截", partial: true }),

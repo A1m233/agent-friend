@@ -18,6 +18,7 @@ import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 import { openFeedback } from "@/lib/settings/navigation";
+import { useModelCatalogStore } from "@/lib/model-config";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -33,6 +34,7 @@ export function ChatApp() {
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
+  const loadModelCatalog = useModelCatalogStore((state) => state.load);
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
     isVoiceCallBlockingText(voicePhase);
@@ -46,6 +48,10 @@ export function ChatApp() {
       ? "正在打开这段对话..."
       : "语音通话中，文字输入已暂时停用";
   const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
+
+  useEffect(() => {
+    if (status === "online") void loadModelCatalog();
+  }, [loadModelCatalog, status]);
 
   useEffect(() => {
     void ping();

@@ -8,8 +8,10 @@
 
 import { create } from "zustand";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
+import { resolveDefaultConversationModel } from "@/lib/model-config";
 import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
-import type { ChatMessage, TextBlock } from "@/types/chat";
+import type { AttachmentDraft } from "@/services";
+import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
@@ -34,6 +36,7 @@ interface OpenSessionOptions {
 
 interface ConversationState {
   currentSessionId: string | null;
+  currentModel: string | null;
   messages: ChatMessage[];
   streaming: boolean;
   historyLoading: boolean;
@@ -48,7 +51,7 @@ interface ConversationState {
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
   /** 发送一条消息并消费流式回复。 */
-  send: (text: string) => Promise<void>;
+  send: (text: string, attachments?: AttachmentDraft[]) => Promise<boolean>;
   /** 编辑并重发最后一条用户消息。 */
   editResendLatest: (messageId: string, text: string) => Promise<void>;
   /** 打断当前流（保留已生成的部分）。 */
@@ -59,10 +62,21 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
-function userMessage(text: string, createdAt = new Date().toISOString()): ChatMessage {
-  const id = newId();
+function userMessage(
+  text: string,
+  createdAt = new Date().toISOString(),
+  attachments: ChatAttachment[] = [],
+  id = newId(),
+): ChatMessage {
   const block: TextBlock = { kind: "text", mid: id, text };
-  return { id, role: "user", createdAt, blocks: [block], status: "complete" };
+  return {
+    id,
+    role: "user",
+    createdAt,
+    blocks: text ? [block] : [],
+    attachments,
+    status: "complete",
+  };
 }
 
 function assistantErrorMessage(error: string): ChatMessage {
@@ -103,6 +117,7 @@ function applyStreamEvents(message: ChatMessage, events: Parameters<typeof apply
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
+  currentModel: null,
   messages: [],
   streaming: false,
   historyLoading: false,
@@ -114,7 +129,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
     if (get().streaming) get().stop();
     rememberLastChatSession(null);
-    set({ currentSessionId: null, messages: [], historyLoading: false });
+    set({ currentSessionId: null, currentModel: null, messages: [], historyLoading: false });
   },
 
   async openSession(sessionId, options) {
@@ -125,12 +140,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
     if (get().streaming) get().stop();
     if (remember) rememberLastChatSession(sessionId);
-    set({ currentSessionId: sessionId, messages: [], historyLoading: true });
+    set({ currentSessionId: sessionId, currentModel: null, messages: [], historyLoading: true });
     try {
       const detail = await sessionsApi.get(sessionId);
       if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
       set((s) => ({
         messages: projectSessionDetail(detail),
+        currentModel: detail.model,
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq + 1,
       }));
@@ -140,6 +156,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       if (failureMode === "home") {
         set((s) => ({
           currentSessionId: null,
+          currentModel: null,
           messages: [],
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
@@ -193,13 +210,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
   },
 
-  async send(text) {
+  async send(text, attachments = []) {
     const trimmed = text.trim();
-    if (!trimmed || get().streaming || get().historyLoading) return;
+    if ((!trimmed && attachments.length === 0) || get().streaming || get().historyLoading) return false;
 
     const sessionId = get().currentSessionId ?? newId();
+    const initialModel = get().currentModel ?? resolveDefaultConversationModel();
     const assistantId = newId();
     const sentAt = new Date().toISOString();
+    const userMessageId = newId();
+    const chatAttachments: ChatAttachment[] = attachments.map((draft) => ({
+      assetId: draft.attachment.assetId,
+      displayName: draft.attachment.displayName,
+      kind: draft.attachment.kind,
+      mediaType: draft.attachment.mediaType,
+      sizeBytes: draft.attachment.sizeBytes,
+    }));
     const placeholder: ChatMessage = {
       id: assistantId,
       role: "assistant",
@@ -209,8 +235,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     };
     set((s) => ({
       currentSessionId: sessionId,
+      currentModel: initialModel,
       streaming: true,
-      messages: [...s.messages, userMessage(trimmed, sentAt), placeholder],
+      messages: [
+        ...s.messages,
+        userMessage(trimmed, sentAt, chatAttachments, userMessageId),
+        placeholder,
+      ],
     }));
     rememberLastChatSession(sessionId);
 
@@ -225,15 +256,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       patch((m) => applyStreamEvents(m, events));
     });
 
+    let succeeded = false;
     try {
       for await (const evt of runAgentStream(
-        { threadId: sessionId, text: trimmed },
+        {
+          threadId: sessionId,
+          text: trimmed,
+          messageId: userMessageId,
+          attachments,
+        },
         { signal: controller.signal },
       )) {
         streamUpdates.enqueue(evt);
       }
       streamUpdates.flush();
       patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+      succeeded = get().messages.find((message) => message.id === assistantId)?.status !== "error";
     } catch {
       streamUpdates.flush();
       if (controller.signal.aborted) {
@@ -247,6 +285,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       set({ streaming: false });
       void useSessionsStore.getState().refresh();
     }
+    return succeeded;
   },
 
   async editResendLatest(messageId, text) {
@@ -278,7 +317,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       streaming: true,
       messages: [
         ...state.messages.slice(0, targetIndex),
-        userMessage(trimmed, sentAt),
+        userMessage(trimmed, sentAt, target.attachments ?? []),
         placeholder,
       ],
     });

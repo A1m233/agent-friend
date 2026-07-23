@@ -140,6 +140,23 @@ def test_render_transcript_roles() -> None:
     assert "[工具结果 search]: 结果" in text
 
 
+def test_render_transcript_preserves_attachment_marker() -> None:
+    from agent import AttachmentRef
+
+    attachment = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="evidence.pdf",
+        kind="document",
+        media_type="application/pdf",
+        size_bytes=42,
+        sha256="a" * 64,
+    )
+
+    text = render_transcript([Message(role="user", content="请看", attachments=[attachment])])
+
+    assert "[附件: evidence.pdf | application/pdf]" in text
+
+
 def test_build_summary_messages_shape() -> None:
     msgs = build_summary_messages("一些对话")
     assert msgs[0]["role"] == "system"

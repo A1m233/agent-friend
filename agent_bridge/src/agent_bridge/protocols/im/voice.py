@@ -29,6 +29,7 @@ __all__ = [
     "QQVoiceMessageResolver",
     "SafeAudioDownloader",
     "VoiceAudioDownloadError",
+    "is_voice_attachment",
 ]
 
 VOICE_TRANSCRIPTION_FAILURE_TEXT = "这条语音我暂时没听清，可以再发一次或改发文字。"
@@ -248,6 +249,12 @@ def _is_voice_attachment(attachment: object) -> bool:
     if _sdk_is_voice_content_type is not None:
         return bool(_sdk_is_voice_content_type(content_type, filename))
     return content_type.strip().lower().startswith("audio/")
+
+
+def is_voice_attachment(attachment: object) -> bool:
+    """Return whether an SDK attachment belongs to the voice pipeline."""
+
+    return _is_voice_attachment(attachment)
 
 
 def _voice_attachments_for(event: InboundEvent) -> list[object]:

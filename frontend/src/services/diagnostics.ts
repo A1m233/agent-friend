@@ -16,6 +16,7 @@ export interface GenerateDiagnosticBundleResult {
 export interface GenerateDiagnosticBundleInput {
   description?: string;
   sessionIds: string[];
+  includeAttachmentOriginals?: boolean;
 }
 
 export function generateDiagnosticBundle(
@@ -28,6 +29,7 @@ export function generateDiagnosticBundle(
       sessionIds: input.sessionIds,
       locale: navigator.language || null,
       timezone: resolved.timeZone || null,
+      includeAttachmentOriginals: input.includeAttachmentOriginals ?? false,
     },
   });
 }

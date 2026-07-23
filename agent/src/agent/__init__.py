@@ -3,6 +3,7 @@
 详见 README.md 与 docs/requirements/001-foundation-chat-and-memory/。
 """
 
+from .attachments import AttachmentError, AttachmentKind, AttachmentRef, AttachmentStore
 from .context import (
     BudgetSnapshot,
     BuildResult,
@@ -37,6 +38,7 @@ from .errors import (
 from .fallbacks import random_fallback
 from .messages import Message, Role
 from .paths import (
+    attachments_dir,
     cli_history_path,
     log_dir,
     memory_db_path,
@@ -106,6 +108,10 @@ __all__ = [
     "KEEP",
     "MAX_TOOL_TURNS_DEFAULT",
     "AgentError",
+    "AttachmentError",
+    "AttachmentKind",
+    "AttachmentRef",
+    "AttachmentStore",
     "BudgetSnapshot",
     "BuildResult",
     "ChannelSection",
@@ -170,6 +176,7 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "TurnDone",
+    "attachments_dir",
     "cli_history_path",
     "default_context_manager",
     "extract_persona_display_name",

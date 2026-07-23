@@ -16,6 +16,8 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from .attachments import AttachmentRef
+
 Role = Literal["system", "user", "assistant", "tool"]
 """消息角色。``"tool"`` 起自 005，承载工具执行结果回喂给 LLM 的消息。"""
 
@@ -67,6 +69,7 @@ class Message:
     timestamp: datetime = field(default_factory=datetime.now)
     meta: dict[str, Any] = field(default_factory=dict)
     uuid: str = field(default_factory=lambda: str(uuid4()))
+    attachments: list[AttachmentRef] = field(default_factory=list)
 
     def to_openai(self) -> dict[str, Any]:
         """转为 OpenAI / LiteLLM 期望的消息格式。
@@ -87,7 +90,14 @@ class Message:
             返回类型从 005 起放宽为 ``dict[str, Any]``（原 ``dict[str, str]``）；
             扩展字段含 ``list`` / 嵌套 ``dict``。详见 005 design §1.3 / §6.1。
         """
-        out: dict[str, Any] = {"role": self.role, "content": self.content}
+        content = self.content
+        if self.attachments and self.role == "user":
+            markers = "\n".join(
+                f"[附件 {item.display_name} | {item.media_type} | {item.asset_id}]"
+                for item in self.attachments
+            )
+            content = f"{content}\n{markers}".strip()
+        out: dict[str, Any] = {"role": self.role, "content": content}
 
         if self.role == "tool":
             out["tool_call_id"] = self.meta.get("tool_call_id", "")
@@ -127,6 +137,11 @@ class Message:
             "content": data["content"],
             "timestamp": datetime.fromisoformat(data["timestamp"]),
             "meta": data.get("meta", {}),
+            "attachments": [
+                AttachmentRef.from_dict(item)
+                for item in data.get("attachments", [])
+                if isinstance(item, dict)
+            ],
         }
         if "uuid" in data:
             kwargs["uuid"] = data["uuid"]

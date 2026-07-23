@@ -11,6 +11,8 @@ from agent.context.budget import (
 )
 from agent.messages import Message
 
+from agent import AttachmentRef
+
 
 def test_estimate_tokens_char_based() -> None:
     """纯字符 × 系数；偏保守上界。"""
@@ -39,6 +41,29 @@ def test_estimate_tokens_counts_tool_calls_meta() -> None:
 
 def test_estimate_tokens_empty() -> None:
     assert estimate_tokens([]) == 0
+
+
+def test_estimate_tokens_includes_attachment_costs() -> None:
+    image = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="sample.png",
+        kind="image",
+        media_type="image/png",
+        size_bytes=10,
+        sha256="a" * 64,
+    )
+    document = AttachmentRef(
+        asset_id="b" * 64,
+        display_name="sample.txt",
+        kind="document",
+        media_type="text/plain",
+        size_bytes=1000,
+        sha256="b" * 64,
+    )
+
+    message = Message(role="user", content="", attachments=[image, document])
+
+    assert estimate_tokens([message]) == 1536 + 256
 
 
 def test_make_budget_snapshot_derives_threshold_from_window() -> None:

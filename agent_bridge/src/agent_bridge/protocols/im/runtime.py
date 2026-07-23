@@ -380,7 +380,7 @@ class IMRuntime:
                     await provider.send(result.reply)
                 return
 
-            if not (resolved_event.content or "").strip():
+            if not (resolved_event.content or "").strip() and not result.attachments:
                 logger.warning(
                     "IM inbound empty content ignored after resolver "
                     "(im_type=%s, chat_scope=%s, chat_id=%s, message_id=%s, "
@@ -409,6 +409,7 @@ class IMRuntime:
                 provider.type,
                 resolved_event,
                 send_fn=provider.send,
+                attachments=result.attachments,
             )
 
         return cb

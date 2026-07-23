@@ -7,6 +7,10 @@ use std::{fs, path::Path};
 
 pub fn collect_file_assets() -> Result<Vec<ArchiveSource>, String> {
     let root = paths::user_data_dir();
+    collect_file_assets_from(&root)
+}
+
+fn collect_file_assets_from(root: &Path) -> Result<Vec<ArchiveSource>, String> {
     let mut sources = Vec::new();
     collect_tree(
         &root.join("sessions"),
@@ -15,6 +19,15 @@ pub fn collect_file_assets() -> Result<Vec<ArchiveSource>, String> {
         &mut sources,
         &|path| is_temporary(path),
     )?;
+    for name in ["blobs", "metadata"] {
+        collect_tree(
+            &root.join("attachments").join(name),
+            &format!("assets/attachments/{name}"),
+            AssetGroup::Attachments,
+            &mut sources,
+            &|path| is_temporary(path),
+        )?;
+    }
     collect_tree(
         &root.join("memory"),
         "assets/memory",
@@ -143,5 +156,43 @@ mod tests {
         assert!(is_temporary(Path::new("metadata.json.lock")));
         assert!(is_temporary(Path::new("write.tmp")));
         assert!(!is_temporary(Path::new("session.jsonl")));
+    }
+
+    #[test]
+    fn attachment_inventory_includes_only_canonical_assets() {
+        let root = std::env::temp_dir().join(format!(
+            "agent-friend-migration-attachments-{}",
+            rand::random::<u64>()
+        ));
+        for (relative, bytes) in [
+            ("attachments/blobs/aa/asset", b"blob".as_slice()),
+            ("attachments/metadata/asset.json", b"{}".as_slice()),
+            ("attachments/drafts/draft.json", b"private".as_slice()),
+            (
+                "attachments/provider-cache/cache.json",
+                b"derived".as_slice(),
+            ),
+            ("attachments/tmp/upload.part", b"temporary".as_slice()),
+        ] {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+
+        let sources = collect_file_assets_from(&root).unwrap();
+        let attachment_paths = sources
+            .iter()
+            .filter(|source| source.group == AssetGroup::Attachments)
+            .map(|source| source.archive_path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            attachment_paths,
+            [
+                "assets/attachments/blobs/aa/asset",
+                "assets/attachments/metadata/asset.json"
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

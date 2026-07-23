@@ -72,8 +72,11 @@ def render_transcript(messages: list[Message]) -> str:
     """
     lines: list[str] = []
     for m in messages:
+        attachment_markers = " ".join(
+            f"[附件: {item.display_name} | {item.media_type}]" for item in m.attachments
+        )
         if m.role == "user":
-            lines.append(f"用户: {m.content}")
+            lines.append(f"用户: {m.content} {attachment_markers}".rstrip())
         elif m.role == "assistant":
             if m.content:
                 lines.append(f"AI: {m.content}")

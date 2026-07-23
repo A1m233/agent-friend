@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
 from .budget import estimate_tokens
 from .fifo import FifoContextManager
@@ -60,6 +61,7 @@ class _AssembleParts:
 
     system_prompt: str
     new_user_input: str | None
+    new_user_attachments: list[AttachmentRef] | None
     extra_context: list[Message] | None
     trailing_user: str | None
     trailing_system: str | None
@@ -69,6 +71,7 @@ class _AssembleParts:
             history=history,
             system_prompt=self.system_prompt,
             new_user_input=self.new_user_input,
+            new_user_attachments=self.new_user_attachments,
             extra_context=self.extra_context,
             trailing_user=self.trailing_user,
             trailing_system=self.trailing_system,
@@ -104,6 +107,7 @@ class SummarizingContextManager:
         history: list[Message],
         system_prompt: str,
         new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -112,6 +116,7 @@ class SummarizingContextManager:
         parts = _AssembleParts(
             system_prompt=system_prompt,
             new_user_input=new_user_input,
+            new_user_attachments=new_user_attachments,
             extra_context=extra_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -127,6 +132,18 @@ class SummarizingContextManager:
 
         threshold = runtime.budget.trigger_threshold
         prior = runtime.prior_summary
+
+        if parts.new_user_attachments:
+            attachment_only = Message(
+                role="user",
+                content="",
+                attachments=list(parts.new_user_attachments),
+            )
+            if estimate_tokens([attachment_only]) > threshold:
+                raise AttachmentError(
+                    "attachment_context_too_large",
+                    "附件内容超过当前模型的上下文容量，请减少附件后重试。",
+                )
 
         # 平时：用 prior_summary 折叠展示，估算未超阈值则直接返回
         folded_msgs = parts.assemble(self._fold_with_prior(history, prior))
@@ -222,6 +239,7 @@ class SummarizingContextManager:
             history=history,
             system_prompt=parts.system_prompt,
             new_user_input=parts.new_user_input,
+            new_user_attachments=parts.new_user_attachments,
             extra_context=parts.extra_context,
             trailing_user=parts.trailing_user,
             trailing_system=parts.trailing_system,

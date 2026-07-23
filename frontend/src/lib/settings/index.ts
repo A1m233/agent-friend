@@ -93,7 +93,9 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
 
 /** 启动期由 Rust facade plugin 的 js_init_script 同步注入，首帧即可用。 */
 export function getSettingsSnapshot(): Settings {
-  return normalizeSettingsSnapshot(window.__AGENT_FRIEND_SETTINGS__);
+  return normalizeSettingsSnapshot(
+    typeof window === "undefined" ? undefined : window.__AGENT_FRIEND_SETTINGS__,
+  );
 }
 
 /** 兼容旧调用名；新代码优先用 getSettingsSnapshot 表达"当前快照"。 */
