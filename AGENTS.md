@@ -19,7 +19,7 @@
 | `desktop-startup-default.mdc` | agent-friend 项目启动运行态默认值：coding agent 启动前端或项目时默认使用 Tauri 桌面端，除非用户或当前 skill / 流程明确要求 web。 |
 | `dev-workflow.mdc` | agent-friend 项目需求与修复交付流程：需求走 feature 分支，修复按影响范围选择 main 或 fix 分支 |
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
-| `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化 |
+| `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 |
 | `frontend-visual-verification.mdc` | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 |
 | `repo-directory-layout.mdc` | 仓库与模块的目录编排：顶层职责、模块用文件夹、单文件职责 |
 
@@ -435,7 +435,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 
 | 文件 | 触发条件 | 适用场景 |
 |---|---|---|
-| `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：组件复用与设计 token CSS 变量化 |
+| `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 |
 
 <!-- codex-rule-loading:end -->
@@ -451,7 +451,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | Skill | 触发场景 |
 |---|---|
 | `add-issue` | 在 agent-friend 仓库的 docs/issues/ 下登记一个"已知但暂不修复"的问题（bug、体感瑕疵、技术债、设计弱点）。当用户说"记一个 issue"、"登记问题"、"先记… |
-| `add-shadcn-component` | 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当需要新增通用纯 UI 件、引入/添加… |
+| `add-shadcn-component` | 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当按 frontend-ui-conv… |
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证前端视觉/DOM 的标准流程。Use only when 用户明确要求真实桌面端视觉验收 / 截图 / DOM / Playwright /… |
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |

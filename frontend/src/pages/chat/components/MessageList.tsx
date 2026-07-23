@@ -14,7 +14,7 @@ import { ChatMessage as TdChatMessage } from "@tdesign-react/chat";
 import { ArrowDown } from "lucide-react";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
-import { attachmentAssetUrl, isAttachmentAssetAvailable } from "@/services";
+import { isAttachmentAssetAvailable } from "@/services";
 import type { ChatAttachment, ChatMessage } from "@/types/chat";
 import {
   CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
@@ -23,6 +23,7 @@ import {
 } from "../layout";
 import { toMarkdownContent } from "../projection";
 import { EditMessageSender } from "./EditMessageSender";
+import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import { ToolCard } from "./ToolCard";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
@@ -34,6 +35,7 @@ const HISTORY_SCROLL_SETTLE_MS = 1200;
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
+const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 
 function isNearBottom(el: HTMLDivElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
@@ -109,18 +111,13 @@ const TextBubble = memo(function TextBubble({
   const content = useMemo(() => {
     const attachmentContent = attachments.length
       ? [{
-          type: "attachment",
-          data: attachments.map((item) => ({
-            fileType: item.kind === "image" ? "image" : item.mediaType === "application/pdf" ? "pdf" : "txt",
-            name: item.displayName,
-            size: item.sizeBytes,
-            url: attachmentAssetUrl(item.assetId),
-            status: unavailableAssets.has(item.assetId) ? "fail" : "success",
-          })),
+          type: "custom",
+          data: null,
+          slotName: MESSAGE_ATTACHMENTS_SLOT,
         }]
       : [];
     return [...attachmentContent, ...(text ? toMarkdownContent(text) : [])] as TdContentProp;
-  }, [attachments, text, unavailableAssets]);
+  }, [attachments.length, text]);
   return (
     <TdChatMessage
       role={role}
@@ -129,6 +126,14 @@ const TextBubble = memo(function TextBubble({
       content={content}
       chatContentProps={CHAT_MARKDOWN_CONTENT_PROPS}
     >
+      {attachments.length > 0 && (
+        <div slot={MESSAGE_ATTACHMENTS_SLOT} className="contents">
+          <MessageAttachments
+            attachments={attachments}
+            unavailableAssets={unavailableAssets}
+          />
+        </div>
+      )}
       {actionBar && (
         <div slot="actionbar" className="contents">
           {actionBar}
