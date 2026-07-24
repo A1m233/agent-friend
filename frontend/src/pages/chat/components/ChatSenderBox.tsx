@@ -9,6 +9,7 @@ import {
 import { ChatSender } from "@tdesign-react/chat";
 import { cn } from "@/utils/cn";
 import { readStringEventValue } from "@/utils/webComponentEvents";
+import { extractClipboardFiles } from "./attachmentInput";
 
 type ChatSenderProps = ComponentProps<typeof ChatSender>;
 
@@ -17,6 +18,7 @@ interface ChatSenderBoxProps extends ChatSenderProps {
   children?: ReactNode;
   className?: string;
   onNativeValueChange?: (value: string) => void;
+  onNativePasteFiles?: (files: File[]) => void;
   shouldIgnoreNativeValueChange?: () => boolean;
 }
 
@@ -26,6 +28,7 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
       placement,
       className,
       onNativeValueChange,
+      onNativePasteFiles,
       shouldIgnoreNativeValueChange,
       children,
       ...props
@@ -62,20 +65,29 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
         if (value === null) return;
         onNativeValueChange?.(value);
       };
+      const onPaste = (event: ClipboardEvent) => {
+        if (!onNativePasteFiles) return;
+        const files = extractClipboardFiles(event.clipboardData);
+        if (files.length === 0) return;
+        event.preventDefault();
+        onNativePasteFiles(files);
+      };
 
       el.addEventListener("compositionstart", onCompStart, true);
       el.addEventListener("compositionend", onCompEnd, true);
       el.addEventListener("keydown", onKey, true);
+      el.addEventListener("paste", onPaste, true);
       el.addEventListener("change", onNativeChange);
       el.addEventListener("input", onNativeChange);
       return () => {
         el.removeEventListener("compositionstart", onCompStart, true);
         el.removeEventListener("compositionend", onCompEnd, true);
         el.removeEventListener("keydown", onKey, true);
+        el.removeEventListener("paste", onPaste, true);
         el.removeEventListener("change", onNativeChange);
         el.removeEventListener("input", onNativeChange);
       };
-    }, [onNativeValueChange, shouldIgnoreNativeValueChange]);
+    }, [onNativePasteFiles, onNativeValueChange, shouldIgnoreNativeValueChange]);
 
     return (
       <div
