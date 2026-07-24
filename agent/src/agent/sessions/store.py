@@ -9,8 +9,9 @@ JSONL append-only 实现。
 from __future__ import annotations
 
 import base64
+from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -33,6 +34,35 @@ _LOCK_TIMEOUT_SECONDS = 10.0
 意味着有别的进程长时间持锁——按 SessionPersistError 抛出由上层决定如何
 重试或降级。"""
 
+_REVERSE_READ_CHUNK_BYTES = 8192
+
+
+def _iter_lines_reverse(path: Path) -> Iterator[str]:
+    """Yield non-empty UTF-8 lines from a file in reverse order."""
+    with path.open("rb") as file:
+        file.seek(0, 2)
+        position = file.tell()
+        pending = b""
+        while position > 0:
+            read_size = min(_REVERSE_READ_CHUNK_BYTES, position)
+            position -= read_size
+            file.seek(position)
+            pending = file.read(read_size) + pending
+            lines = pending.split(b"\n")
+            pending = lines[0]
+            for line in reversed(lines[1:]):
+                if line.strip():
+                    try:
+                        yield line.decode("utf-8")
+                    except UnicodeDecodeError:
+                        continue
+        if pending.strip():
+            try:
+                yield pending.decode("utf-8")
+            except UnicodeDecodeError:
+                return
+
+
 _WINDOWS_RESERVED_FILENAMES = {
     "CON",
     "PRN",
@@ -54,15 +84,16 @@ _ENCODED_SESSION_FILENAME_PREFIX = "sid_"
 class SessionSummary:
     """``list()`` 返回的轻量摘要。
 
-    仅基于"首行 ``session_meta`` + 文件 mtime"构造，**每文件 O(1)**，
-    不读全文件——这是本期"列表性能稳定"的核心保证（详见 design §5 决策 D-2）。
+    基于首行 ``session_meta`` 与从文件尾部找到的最后一条 user/assistant
+    message 构造。反向扫描会在命中最近消息后立即停止，不完整加载 Session。
 
     Attributes:
         session_id: 会话 id。
         title: ``session_meta.payload.initial_title``。**不会显示"当前可变状态"**
             （如当前 persona / 消息数）——这些是事件流派生属性，要显示就得读全文件。
         created_at: 来自首行事件 ``ts``。
-        updated_at: 来自文件 mtime，表示"最近一次有事件写入"。
+        updated_at: 最后一条 user/assistant message 的时间；没有消息时回退
+            ``created_at``。控制事件不会改变会话列表活跃时间。
         persona: ``initial_persona``（不展示"当前"，详见 design §1.2）。
     model: ``initial_model``。
         archived_at: 会话管理 metadata 中的归档时间。``None`` 表示未归档。
@@ -114,8 +145,8 @@ class SessionStore(Protocol):
     def list(self) -> list[SessionSummary]:
         """列出所有会话摘要，按 ``updated_at`` 倒序。
 
-        实现要求：**仅读每个文件首行 + stat mtime**，不读全文件。首行损坏的
-        文件**跳过**（不抛异常、不入结果）。
+        实现要求：读取每个文件首行，并从文件尾部反向查找最后一条会话消息；
+        不完整构造 Session。首行损坏的文件**跳过**（不抛异常、不入结果）。
         """
 
     def delete(self, session_id: str) -> None:
@@ -278,11 +309,10 @@ class JsonlSessionStore:
         return summaries[0] if summaries else None
 
     def _read_summary(self, path: Path) -> SessionSummary | None:
-        """读取文件首行 + stat mtime 构造摘要；首行损坏则跳过返回 ``None``。"""
+        """读取首行与最后会话消息构造摘要；首行损坏则跳过返回 ``None``。"""
         try:
             with path.open("r", encoding="utf-8") as f:
                 first_line = f.readline()
-            stat = path.stat()
         except OSError:
             return None
         if not first_line.strip():
@@ -299,7 +329,7 @@ class JsonlSessionStore:
         model = payload.get("initial_model")
         if not isinstance(title, str) or not isinstance(persona, str) or not isinstance(model, str):
             return None
-        updated_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+        updated_at = self._last_conversation_event_at(path, fallback=head.ts)
         return SessionSummary(
             session_id=head.uuid,
             title=title,
@@ -308,6 +338,26 @@ class JsonlSessionStore:
             persona=persona,
             model=model,
         )
+
+    @staticmethod
+    def _last_conversation_event_at(path: Path, *, fallback: datetime) -> datetime:
+        """Return the newest raw user/assistant timestamp without loading the session.
+
+        JSONL is scanned backwards in chunks and stops at the first conversational
+        event. A concurrently appended partial line or an older corrupt line is
+        ignored for summary projection; full ``load()`` remains strict.
+        """
+        try:
+            for line in _iter_lines_reverse(path):
+                try:
+                    event = Event.from_jsonl(line)
+                except SessionCorruptError:
+                    continue
+                if event.type in {"user_message", "assistant_message"}:
+                    return event.ts
+        except OSError:
+            return fallback
+        return fallback
 
 
 class NullSessionStore:

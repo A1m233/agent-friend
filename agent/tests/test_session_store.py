@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event as ThreadEvent
 from threading import Thread
 from uuid import uuid4
 
 import portalocker
-from agent.sessions import Event, JsonlSessionStore, Session
+from agent.sessions import Event, EventType, JsonlSessionStore, Session
 
 
 def _session(session_id: str) -> Session:
@@ -27,6 +27,16 @@ def _user_event(text: str) -> Event:
         uuid=str(uuid4()),
         ts=datetime.now(UTC),
         payload={"content": text},
+    )
+
+
+def _event(event_type: EventType, ts: datetime) -> Event:
+    payload = {"content": event_type} if event_type.endswith("_message") else {"to": "other"}
+    return Event(
+        type=event_type,
+        uuid=str(uuid4()),
+        ts=ts,
+        payload=payload,
     )
 
 
@@ -101,3 +111,89 @@ def test_load_waits_for_in_progress_writer(tmp_path: Path) -> None:
     thread.join(timeout=2)
     assert load_finished.is_set()
     assert loaded[0].session_id == "session-a"
+
+
+def test_summary_activity_uses_last_conversation_message_not_control_event(
+    tmp_path: Path,
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    created_at = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="m",
+        session_id="session-a",
+        created_at=created_at,
+    )
+    store.create(session)
+    message_at = created_at + timedelta(minutes=5)
+    store.append_event("session-a", _event("user_message", message_at))
+    store.append_event("session-a", _event("model_change", created_at + timedelta(hours=1)))
+
+    assert store.list()[0].updated_at == message_at
+
+
+def test_summary_activity_falls_back_to_created_at_and_sorts_by_latest_message(
+    tmp_path: Path,
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    created_at = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    empty = Session.new(
+        title="empty",
+        persona="default",
+        model="m",
+        session_id="empty",
+        created_at=created_at,
+    )
+    active = Session.new(
+        title="active",
+        persona="default",
+        model="m",
+        session_id="active",
+        created_at=created_at - timedelta(days=1),
+    )
+    store.create(empty)
+    store.create(active)
+    latest_message_at = created_at + timedelta(minutes=1)
+    store.append_event("active", _event("assistant_message", latest_message_at))
+
+    summaries = store.list()
+
+    assert [summary.session_id for summary in summaries] == ["active", "empty"]
+    assert summaries[0].updated_at == latest_message_at
+    assert summaries[1].updated_at == created_at
+
+
+def test_summary_reverse_scan_crosses_large_control_event_and_skips_partial_tail(
+    tmp_path: Path,
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    created_at = datetime(2026, 7, 24, 10, tzinfo=UTC)
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="m",
+        session_id="session-a",
+        created_at=created_at,
+    )
+    store.create(session)
+    message_at = created_at + timedelta(minutes=1)
+    store.append_event("session-a", _event("user_message", message_at))
+    store.append_event(
+        "session-a",
+        Event(
+            type="tool_call_result",
+            uuid=str(uuid4()),
+            ts=created_at + timedelta(hours=1),
+            payload={
+                "tool_call_id": "call-1",
+                "tool_name": "large-result",
+                "content": "x" * 20_000,
+                "is_error": False,
+            },
+        ),
+    )
+    with (tmp_path / "session-a.jsonl").open("ab") as file:
+        file.write(b'{"incomplete":')
+
+    assert store.list()[0].updated_at == message_at

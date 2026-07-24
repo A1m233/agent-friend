@@ -99,6 +99,20 @@ class SpyRecallTool:
         return ToolResult(text="找到一些旧聊天。")
 
 
+class SwitchModelTool:
+    name: ClassVar[str] = "switch_model_for_test"
+    description: ClassVar[str] = "切换测试会话模型。"
+    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+    def __init__(self) -> None:
+        self.conversation: Conversation | None = None
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        assert self.conversation is not None
+        self.conversation.switch_model("kimi/kimi-k2.6")
+        return ToolResult(text="switched")
+
+
 # ---- Scripted fake LLM ----
 
 
@@ -141,6 +155,7 @@ def _make_conversation(
     *,
     fake_llm: LLMClient | _ScriptedLLMClient,
     registry: ToolRegistry | None = None,
+    llm_client_factory: Any | None = None,
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
@@ -162,12 +177,74 @@ def _make_conversation(
         session=session,
         store=store,
         llm_client=cast(LLMClient, fake_llm),
+        llm_client_factory=llm_client_factory,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=registry,
     )
+
+
+def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) -> None:
+    old_client = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="switch-1",
+                    tool_name="switch_model_for_test",
+                    args_json_delta="{}",
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="finished on old client"), LLMTurnDone(stop_reason="end_turn")],
+        ],
+        context_window=128000,
+    )
+    new_client = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="wrong client"), LLMTurnDone(stop_reason="end_turn")]],
+        context_window=16000,
+    )
+    switch_tool = SwitchModelTool()
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=old_client,
+        registry=ToolRegistry([switch_tool]),
+        llm_client_factory=lambda _model: cast(LLMClient, new_client),
+    )
+    switch_tool.conversation = conv
+
+    events = list(conv.stream("switch during this run", run_id="run-snapshot"))
+
+    assert any(
+        isinstance(event, TextDelta) and event.text == "finished on old client" for event in events
+    )
+    assert len(old_client.received) == 2
+    assert new_client.received == []
+    assert conv.current_model == "kimi/kimi-k2.6"
+    assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
+    assert assistant_events
+    assert {event.meta["model"] for event in assistant_events} == {"deepseek/deepseek-chat"}
+
+
+def test_switch_model_factory_failure_is_atomic(tmp_path: Path) -> None:
+    old_client = _ScriptedLLMClient()
+
+    def unavailable_factory(_model: str) -> LLMClient:
+        raise RuntimeError("credential unavailable")
+
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=old_client,
+        llm_client_factory=unavailable_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="credential unavailable"):
+        conv.switch_model("kimi/kimi-k2.6")
+
+    assert conv.current_model == "deepseek/deepseek-chat"
+    assert not any(event.type == "model_change" for event in conv.session.events)
 
 
 def _tool_call_chunk(call_id: str, message: str) -> SimpleNamespace:

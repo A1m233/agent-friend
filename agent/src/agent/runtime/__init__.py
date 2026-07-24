@@ -25,6 +25,7 @@ import logging
 import queue
 import threading
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
@@ -35,6 +36,7 @@ from ..memory_feed import project_turn
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
 from ..tools import ToolResult
+from .errors import SessionBusyError
 from .hooks import (
     PRE_TOOL_PROCEED,
     PRE_TURN_PROCEED,
@@ -79,6 +81,7 @@ __all__ = [
     "RunRequest",
     "RuntimeActivitySnapshot",
     "RuntimeDrainReport",
+    "SessionBusyError",
     "Subscriber",
     "SystemTriggerEvent",
     "UserEvent",
@@ -138,6 +141,7 @@ class AgentRuntime:
         max_workers: int = 4,
         max_queued_runs: int = 256,
         max_session_queue: int = 32,
+        session_turn_guard: Callable[[str], AbstractContextManager[None]] | None = None,
     ) -> None:
         self._conversation_factory = conversation_factory
         self._memory = memory
@@ -148,6 +152,7 @@ class AgentRuntime:
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
         self._last_dispatch_finished_at = datetime.now(UTC)
+        self._session_turn_guard = session_turn_guard or (lambda _session_id: nullcontext())
         self._scheduler = RunScheduler(
             self._execute_request,
             max_workers=max_workers,
@@ -293,6 +298,11 @@ class AgentRuntime:
     def activity_snapshot(self) -> RuntimeActivitySnapshot:
         return self._scheduler.activity_snapshot()
 
+    def try_reserve_session_mutation(self, session_id: str) -> AbstractContextManager[None]:
+        """Reserve an idle session for a short state mutation without queueing it."""
+
+        return self._scheduler.try_reserve_session_mutation(session_id)
+
     def quiesce(self) -> RuntimeActivitySnapshot:
         return self._scheduler.quiesce()
 
@@ -373,6 +383,11 @@ class AgentRuntime:
 
     def _execute_request(self, request: RunRequest, handle: RunHandle) -> None:
         """Scheduler worker 执行一轮；terminal 由 Scheduler finish-once。"""
+        with self._session_turn_guard(request.session_id):
+            self._execute_request_guarded(request, handle)
+
+    def _execute_request_guarded(self, request: RunRequest, handle: RunHandle) -> None:
+        """Execute one run while the caller holds the persistent session guard."""
         decision = self._hooks.run_pre_turn(request.event)
         if decision.skip:
             handle.finish_once(RunOutcome.SKIPPED, reason_code=decision.reason or "pre_turn_skip")

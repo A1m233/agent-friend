@@ -355,6 +355,66 @@ class TestAgUiRunChannelBoundary:
         }
 
 
+# ===== POST /v1/sessions/{id}/model =====
+
+
+class TestSwitchModelEndpoint:
+    def test_switch_model_persists_event(self, client: TestClient, runtime: BridgeRuntime) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        response = client.post(
+            f"/v1/sessions/{sid}/model",
+            json={"model": "kimi/kimi-k2.6"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"session_id": sid, "model": "kimi/kimi-k2.6"}
+        loaded = runtime.persistent_session_manager.open(sid)
+        assert loaded.current_model == "kimi/kimi-k2.6"
+        changes = [event for event in loaded.events if event.type == "model_change"]
+        assert len(changes) == 1
+        assert changes[0].payload["to"] == "kimi/kimi-k2.6"
+
+    def test_switch_model_is_idempotent(self, client: TestClient, runtime: BridgeRuntime) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        client.post(f"/v1/sessions/{sid}/model", json={"model": "kimi/kimi-k2.6"})
+        before = len(runtime.persistent_session_manager.open(sid).events)
+
+        response = client.post(
+            f"/v1/sessions/{sid}/model",
+            json={"model": "kimi/kimi-k2.6"},
+        )
+
+        assert response.status_code == 200
+        assert len(runtime.persistent_session_manager.open(sid).events) == before
+
+    def test_switch_model_returns_stable_errors(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        unsupported = client.post(
+            f"/v1/sessions/{sid}/model",
+            json={"model": "unknown/model"},
+        )
+        assert unsupported.status_code == 400
+        assert unsupported.json()["error"]["code"] == "unsupported_model"
+
+        missing = client.post(
+            "/v1/sessions/missing/model",
+            json={"model": "kimi/kimi-k2.6"},
+        )
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "session_not_found"
+
+        with runtime.turn_coordinator.hold(sid):
+            busy = client.post(
+                f"/v1/sessions/{sid}/model",
+                json={"model": "kimi/kimi-k2.6"},
+            )
+        assert busy.status_code == 409
+        assert busy.json()["error"]["code"] == "session_busy"
+
+
 # ===== POST /v1/sessions/{id}/channel =====
 
 

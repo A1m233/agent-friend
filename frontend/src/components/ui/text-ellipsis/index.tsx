@@ -11,9 +11,15 @@ import {
 
 interface TextEllipsisProps extends React.ComponentProps<"span"> {
   children: string;
+  showTooltip?: boolean;
 }
 
-function TextEllipsis({ children, className, ...props }: TextEllipsisProps) {
+function TextEllipsis({
+  children,
+  className,
+  showTooltip = true,
+  ...props
+}: TextEllipsisProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const [isOverflow, setIsOverflow] = useState(false);
 
@@ -33,7 +39,7 @@ function TextEllipsis({ children, className, ...props }: TextEllipsisProps) {
     </span>
   );
 
-  if (!isOverflow) {
+  if (!showTooltip || !isOverflow) {
     return text;
   }
 

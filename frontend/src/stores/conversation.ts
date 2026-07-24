@@ -9,8 +9,8 @@
 import { create } from "zustand";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import { resolveDefaultConversationModel } from "@/lib/model-config";
-import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
-import type { AttachmentDraft } from "@/services";
+import { editResendLatestStream, modelsApi, runAgentStream, sessionsApi } from "@/services";
+import type { AttachmentDraft, FriendlyError } from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
@@ -24,6 +24,7 @@ const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。�
 let activeController: AbortController | null = null;
 let openSessionToken = 0;
 let detailRefreshSeq = 0;
+let modelMutationSeq = 0;
 
 type OpenSessionFailureMode = "message" | "home";
 
@@ -37,6 +38,9 @@ interface OpenSessionOptions {
 interface ConversationState {
   currentSessionId: string | null;
   currentModel: string | null;
+  modelSwitching: boolean;
+  modelSwitchTarget: string | null;
+  editingMessageId: string | null;
   messages: ChatMessage[];
   streaming: boolean;
   historyLoading: boolean;
@@ -50,6 +54,8 @@ interface ConversationState {
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
+  selectModel: (modelId: string) => Promise<ModelSelectionOutcome>;
+  setEditingMessage: (messageId: string | null) => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
   send: (text: string, attachments?: AttachmentDraft[]) => SendStartResult;
   /** 编辑并重发最后一条用户消息。 */
@@ -61,8 +67,27 @@ interface ConversationState {
 export type SendOutcome = "completed" | "failed" | "interrupted";
 
 export type SendStartResult =
-  | { accepted: false; reason: "empty" | "busy" | "history-loading" }
+  | {
+      accepted: false;
+      reason: "empty" | "busy" | "history-loading" | "model-switching" | "editing";
+    }
   | { accepted: true; completion: Promise<SendOutcome> };
+
+export type ModelSelectionOutcome =
+  | { status: "applied"; model: string }
+  | { status: "stale" }
+  | { status: "failed"; error: FriendlyError };
+
+function asFriendlyError(error: unknown): FriendlyError {
+  if (error && typeof error === "object" && "friendly" in error) {
+    const friendly = (error as { friendly?: unknown }).friendly;
+    const code = (error as { code?: unknown }).code;
+    if (typeof friendly === "string") {
+      return { friendly, code: typeof code === "string" ? code : undefined };
+    }
+  }
+  return { friendly: "模型没能切换成功，稍后再试试？", code: "unknown" };
+}
 
 function newId(): string {
   return crypto.randomUUID();
@@ -124,6 +149,9 @@ function applyStreamEvents(message: ChatMessage, events: Parameters<typeof apply
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   currentModel: null,
+  modelSwitching: false,
+  modelSwitchTarget: null,
+  editingMessageId: null,
   messages: [],
   streaming: false,
   historyLoading: false,
@@ -133,9 +161,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   newSession() {
     openSessionToken += 1;
     detailRefreshSeq += 1;
+    modelMutationSeq += 1;
     if (get().streaming) get().stop();
     rememberLastChatSession(null);
-    set({ currentSessionId: null, currentModel: null, messages: [], historyLoading: false });
+    set({
+      currentSessionId: null,
+      currentModel: null,
+      modelSwitching: false,
+      modelSwitchTarget: null,
+      editingMessageId: null,
+      messages: [],
+      historyLoading: false,
+    });
   },
 
   async openSession(sessionId, options) {
@@ -144,9 +181,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const token = openSessionToken + 1;
     openSessionToken = token;
     detailRefreshSeq += 1;
+    modelMutationSeq += 1;
     if (get().streaming) get().stop();
     if (remember) rememberLastChatSession(sessionId);
-    set({ currentSessionId: sessionId, currentModel: null, messages: [], historyLoading: true });
+    set({
+      currentSessionId: sessionId,
+      currentModel: null,
+      modelSwitching: false,
+      modelSwitchTarget: null,
+      editingMessageId: null,
+      messages: [],
+      historyLoading: true,
+    });
     try {
       const detail = await sessionsApi.get(sessionId);
       if (token !== openSessionToken || get().currentSessionId !== sessionId) return false;
@@ -163,6 +209,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         set((s) => ({
           currentSessionId: null,
           currentModel: null,
+          modelSwitching: false,
+          modelSwitchTarget: null,
+          editingMessageId: null,
           messages: [],
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
@@ -204,6 +253,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
       set((state) => ({
         messages: projectSessionDetail(detail),
+        currentModel: detail.model,
         syncRefreshSeq: state.syncRefreshSeq + 1,
       }));
       return "applied";
@@ -216,11 +266,63 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
   },
 
+  async selectModel(modelId) {
+    const current = get();
+    const effectiveModel = current.currentModel ?? resolveDefaultConversationModel();
+    if (modelId === effectiveModel) return { status: "applied", model: effectiveModel };
+    if (current.streaming || current.historyLoading || current.editingMessageId) {
+      return {
+        status: "failed",
+        error: { friendly: "请先结束当前操作，再切换模型。", code: "session_busy" },
+      };
+    }
+
+    const seq = modelMutationSeq + 1;
+    modelMutationSeq = seq;
+    detailRefreshSeq += 1;
+    const sessionId = current.currentSessionId;
+    const openToken = openSessionToken;
+    set({ modelSwitching: true, modelSwitchTarget: modelId });
+    try {
+      const appliedModel = sessionId
+        ? (await sessionsApi.switchModel(sessionId, modelId)).model
+        : (await modelsApi.validate(modelId)).model;
+      if (
+        seq !== modelMutationSeq ||
+        openToken !== openSessionToken ||
+        get().currentSessionId !== sessionId
+      ) {
+        return { status: "stale" };
+      }
+      set({ currentModel: appliedModel });
+      return { status: "applied", model: appliedModel };
+    } catch (error) {
+      if (
+        seq !== modelMutationSeq ||
+        openToken !== openSessionToken ||
+        get().currentSessionId !== sessionId
+      ) {
+        return { status: "stale" };
+      }
+      return { status: "failed", error: asFriendlyError(error) };
+    } finally {
+      if (seq === modelMutationSeq) {
+        set({ modelSwitching: false, modelSwitchTarget: null });
+      }
+    }
+  },
+
+  setEditingMessage(messageId) {
+    set({ editingMessageId: messageId });
+  },
+
   send(text, attachments = []) {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return { accepted: false, reason: "empty" };
     if (get().streaming) return { accepted: false, reason: "busy" };
     if (get().historyLoading) return { accepted: false, reason: "history-loading" };
+    if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
+    if (get().editingMessageId) return { accepted: false, reason: "editing" };
 
     const sessionId = get().currentSessionId ?? newId();
     const initialModel = get().currentModel ?? resolveDefaultConversationModel();
@@ -270,6 +372,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         for await (const evt of runAgentStream(
           {
             threadId: sessionId,
+            model: initialModel,
             text: trimmed,
             messageId: userMessageId,
             attachments,
@@ -306,7 +409,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   async editResendLatest(messageId, text) {
     const trimmed = text.trim();
     const state = get();
-    if (!trimmed || state.streaming || state.historyLoading || !state.currentSessionId) return;
+    if (
+      !trimmed ||
+      state.streaming ||
+      state.historyLoading ||
+      state.modelSwitching ||
+      !state.currentSessionId
+    ) return;
 
     const latestUserIndex = [...state.messages]
       .reverse()
@@ -329,6 +438,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     };
 
     set({
+      editingMessageId: null,
       streaming: true,
       messages: [
         ...state.messages.slice(0, targetIndex),
@@ -386,6 +496,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                   ? projected
                   : [...projected, assistantErrorMessage(failedError)]
                 : projected,
+              currentModel: detail.model,
               historyLoadSeq: s.historyLoadSeq + 1,
             }));
           }
