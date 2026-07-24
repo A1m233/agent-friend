@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Ban, Plus, Upload } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
-import { Button, Input, TooltipProvider } from "@/components/ui";
+import { useDropzone } from "react-dropzone";
+import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { resolveBridgeUrl } from "@/constants";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
@@ -25,6 +26,10 @@ import {
 import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
+import {
+  dropzoneAcceptFromMediaTypes,
+  filesFromDropEvent,
+} from "./attachmentInput";
 
 const COMPOSER_AUTOSIZE = { minRows: 2, maxRows: 6 } as const;
 const VOICE_INPUT_PREWARM_RENEW_MS = 25_000;
@@ -106,8 +111,6 @@ export function Composer({
   const capabilities = modelOption(selectedModel)?.capabilities ?? null;
   const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentState[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
   const draftTextRef = useRef("");
   const voiceSegmentRef = useRef<VoiceDraftSegment | null>(null);
   const applyingVoiceDraftRef = useRef(false);
@@ -117,6 +120,15 @@ export function Composer({
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
   const voiceInputDisabled = disabled || streaming;
   const attachmentsDisabled = disabled || streaming || !capabilities?.attachments;
+  const availableAttachmentSlots = capabilities?.attachments
+    ? Math.max(0, capabilities.maxAttachmentsPerTurn - draftAttachments.length)
+    : 0;
+  const dropzoneAccept = useMemo(
+    () => capabilities?.attachments
+      ? dropzoneAcceptFromMediaTypes(capabilities.acceptedMediaTypes)
+      : undefined,
+    [capabilities],
+  );
   const attachmentCompatibility = useMemo(
     () => evaluateAttachmentCompatibility(
       draftAttachments.map((item) => ({
@@ -161,17 +173,25 @@ export function Composer({
     });
   }, [attachmentCompatibility]);
 
-  const explainAttachmentDisabled = useCallback(() => {
-    if (!catalog) {
+  const explainAttachmentUnavailable = useCallback(() => {
+    if (disabled) {
+      toast.error(disabledReason ?? "暂时不能添加附件");
+    } else if (streaming) {
+      toast.error("请等待当前回复完成后再添加附件");
+    } else if (!catalog) {
       toast.error("模型能力尚未就绪，请稍后再添加附件");
     } else {
       toast.error(`当前模型 ${selectedModel} 不支持图片或文档`);
     }
-  }, [catalog, selectedModel]);
+  }, [catalog, disabled, disabledReason, selectedModel, streaming]);
 
   const addFiles = useCallback(async (files: File[]) => {
+    if (disabled || streaming) {
+      explainAttachmentUnavailable();
+      return;
+    }
     if (!capabilities?.attachments) {
-      explainAttachmentDisabled();
+      explainAttachmentUnavailable();
       return;
     }
     const available = capabilities.maxAttachmentsPerTurn - draftAttachments.length;
@@ -215,7 +235,51 @@ export function Composer({
         toast.error(`${file.name} 添加失败`);
       }
     }
-  }, [capabilities, draftAttachments.length, explainAttachmentDisabled]);
+  }, [capabilities, disabled, draftAttachments, explainAttachmentUnavailable, streaming]);
+
+  const {
+    getInputProps,
+    getRootProps,
+    isDragAccept,
+    isDragActive,
+    isDragReject,
+    isDragUnknown,
+    open: openFileDialog,
+  } = useDropzone({
+    accept: dropzoneAccept,
+    maxFiles: Math.max(1, availableAttachmentSlots),
+    maxSize: capabilities?.attachments ? capabilities.maxAttachmentBytes : undefined,
+    multiple: true,
+    noClick: true,
+    noKeyboard: true,
+    onDrop: (acceptedFiles, fileRejections, event) => {
+      const files = filesFromDropEvent(event, acceptedFiles, fileRejections);
+      if (files.length === 0) return;
+      if (attachmentsDisabled) {
+        explainAttachmentUnavailable();
+        return;
+      }
+      void addFiles(files);
+    },
+  });
+
+  const dropAllowed = !attachmentsDisabled
+    && availableAttachmentSlots > 0
+    && (isDragAccept || isDragUnknown)
+    && !isDragReject;
+  const dropFeedback = attachmentsDisabled
+    ? disabled
+      ? disabledReason ?? "暂时不能添加附件"
+      : streaming
+        ? "请等待当前回复完成"
+        : "当前模型不支持附件"
+    : availableAttachmentSlots <= 0
+      ? `单轮最多添加 ${capabilities?.maxAttachmentsPerTurn ?? 0} 个附件`
+      : isDragReject
+        ? "文件不符合当前模型的附件限制"
+        : isDragUnknown
+          ? "松开后检查并添加附件"
+          : "松开以添加附件";
 
   const removeAttachment = useCallback((localId: string) => {
     const target = draftAttachments.find((item) => item.localId === localId);
@@ -409,36 +473,13 @@ export function Composer({
 
   const isBottomPlacement = placement === "bottom";
 
-  const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = attachmentsDisabled ? "none" : "copy";
-    setDragging(true);
-  };
-
-  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.dataTransfer.files.length) return;
-    event.preventDefault();
-    setDragging(false);
-    if (attachmentsDisabled) {
-      explainAttachmentDisabled();
-      return;
-    }
-    void addFiles(Array.from(event.dataTransfer.files));
-  };
-
   return (
     <div
       ref={rootRef}
-      onDragEnter={handleDragOver}
-      onDragOver={handleDragOver}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
       className={
         isBottomPlacement
           ? cn(
               "pointer-events-none absolute inset-x-0 bottom-0 z-20 pb-5 pt-8",
-              dragging && attachmentsDisabled && "cursor-not-allowed",
             )
           : "w-full"
       }
@@ -452,7 +493,16 @@ export function Composer({
             : "pointer-events-auto relative w-full"
         }
       >
-        <ChatSenderBox
+        <div
+          {...getRootProps({
+            className: cn(
+              "pointer-events-auto relative",
+              isDragActive && !dropAllowed && "cursor-not-allowed",
+            ),
+          })}
+        >
+          <Input {...getInputProps()} />
+          <ChatSenderBox
             className={isBottomPlacement ? "pointer-events-auto" : undefined}
             placement="bottom"
             ref={senderRef}
@@ -463,6 +513,7 @@ export function Composer({
             placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
             shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
             onNativeValueChange={(value) => applyDraftText(value, "user")}
+            onNativePasteFiles={(files) => void addFiles(files)}
             onChange={(e) => {
               const value = readStringEventValue(e);
               if (value === null || applyingVoiceDraftRef.current) return;
@@ -487,37 +538,25 @@ export function Composer({
             }}
           >
             <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
-              <Input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,.txt"
-                className="hidden"
-                tabIndex={-1}
-                onChange={(event) => {
-                  const files = Array.from(event.target.files ?? []);
-                  event.target.value = "";
-                  if (files.length) void addFiles(files);
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                disabled={disabled || streaming}
-                aria-label="添加附件"
-                className={!capabilities?.attachments ? "cursor-not-allowed text-muted" : undefined}
-                onClick={() => {
-                  if (attachmentsDisabled) {
-                    explainAttachmentDisabled();
-                    return;
-                  }
-                  fileInputRef.current?.click();
-                }}
-              >
-                <Plus className="size-4" />
-              </Button>
               <TooltipProvider>
+                <TooltipButton
+                  type="button"
+                  disabled={disabled || streaming}
+                  aria-label="添加附件"
+                  tooltip="添加附件"
+                  icon={<Plus className="size-4" />}
+                  className={cn(
+                    "rounded-full",
+                    !capabilities?.attachments && "cursor-not-allowed text-muted",
+                  )}
+                  onClick={() => {
+                    if (attachmentsDisabled) {
+                      explainAttachmentUnavailable();
+                      return;
+                    }
+                    openFileDialog();
+                  }}
+                />
                 <VoiceInputAction
                   phase={voiceInputPhase}
                   volumeLevel={voiceInputVolume}
@@ -527,7 +566,22 @@ export function Composer({
                 />
               </TooltipProvider>
             </div>
-        </ChatSenderBox>
+          </ChatSenderBox>
+          {isDragActive && (
+            <div
+              aria-hidden="true"
+              className={cn(
+                "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 bg-surface/95 text-sm font-medium",
+                dropAllowed
+                  ? "border-accent text-accent"
+                  : "border-danger text-danger",
+              )}
+            >
+              {dropAllowed ? <Upload className="size-5" /> : <Ban className="size-5" />}
+              <span>{dropFeedback}</span>
+            </div>
+          )}
+        </div>
       </div>
       <AttachmentImageViewer
         preview={attachmentPreview}

@@ -53,6 +53,7 @@
         "minWidth": 720,
         "minHeight": 560,
         "resizable": true,
+        "dragDropEnabled": false,
         "visible": false,
         "fullscreen": false
       },
