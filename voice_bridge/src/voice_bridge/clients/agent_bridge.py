@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from ..errors import AgentBridgeUnreachableError, SessionBindFailedError
+from ..network import create_http_client
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,10 @@ class AgentBridgeClient:
     ) -> dict[str, object]:
         url = self._base_url + path
         try:
-            client = self._http_client or httpx.AsyncClient(timeout=self._timeout)
+            client = self._http_client or create_http_client(
+                url,
+                timeout=self._timeout,
+            )
             close_after = self._http_client is None
             try:
                 resp = await client.request(method, url, json=body)

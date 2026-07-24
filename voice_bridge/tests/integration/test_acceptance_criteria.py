@@ -18,6 +18,8 @@ from voice_bridge.app import create_app_with_runtime
 from voice_bridge.assembly import VoiceBridgeRuntime
 from voice_bridge.calls import CallRegistry, VoiceCallEventHub
 from voice_bridge.clients import AgentBridgeClient
+from voice_bridge.network import create_http_client
+from voice_bridge.routes import llm_proxy as llm_proxy_module
 from voice_bridge.rtc import VolcRtcClient
 from voice_bridge.settings import VoiceBridgeSettings
 
@@ -299,13 +301,28 @@ class TestAC3StateMachine:
 class TestAC4LLMProxySessionInject:
     @respx.mock
     def test_proxy_injects_session_header_and_streams(
-        self, client: TestClient, respx_mock: respx.MockRouter
+        self,
+        client: TestClient,
+        respx_mock: respx.MockRouter,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # 先拨打一通通话拿 call_id
         _mock_agent_bridge_create_session(respx_mock, session_id="sess-llm-1")
         _mock_volc_start_voice_chat_success(respx_mock)
 
         call_id = client.post("/voice/calls", json={"trace_id": "trace-llm-1"}).json()["call_id"]
+
+        upstream_client_targets: list[str] = []
+
+        def create_recording_http_client(url: str, **kwargs: Any) -> httpx.AsyncClient:
+            upstream_client_targets.append(url)
+            return create_http_client(url, **kwargs)
+
+        monkeypatch.setattr(
+            llm_proxy_module,
+            "create_http_client",
+            create_recording_http_client,
+        )
 
         # mock agent_bridge 的 OpenAI 端点
         sse_chunks = [
@@ -341,6 +358,7 @@ class TestAC4LLMProxySessionInject:
         assert upstream_req.headers["x-agent-friend-voice-trace-id"] == "trace-llm-1"
         assert upstream_req.headers["x-agent-friend-voice-call-id"] == call_id
         assert upstream_req.headers["x-agent-friend-voice-round-seq"] == "1"
+        assert upstream_client_targets == ["http://test-agent-bridge/v1/chat/completions"]
 
         # 校验 (b) body 完整透传
         forwarded_body = json.loads(upstream_req.content)
