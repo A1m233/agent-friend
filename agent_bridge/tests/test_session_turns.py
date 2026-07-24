@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from threading import Event, Thread
 
+import pytest
+from agent.runtime import SessionBusyError
 from agent_bridge.session_turns import SessionTurnCoordinator
 
 
@@ -64,3 +66,13 @@ def test_different_session_turns_can_overlap() -> None:
     release_first.set()
     first_thread.join(timeout=2)
     second_thread.join(timeout=2)
+
+
+def test_try_hold_fails_immediately_for_busy_session() -> None:
+    coordinator = SessionTurnCoordinator()
+    with coordinator.hold("session-a"):
+        with pytest.raises(SessionBusyError), coordinator.try_hold("session-a"):
+            pass
+
+        with coordinator.try_hold("session-b"):
+            pass

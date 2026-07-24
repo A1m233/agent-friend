@@ -4,6 +4,8 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from agent.runtime import SessionBusyError
 from agent.runtime.cancellation import CancelReason, RunCancelled
 from agent.runtime.inbox import SystemTriggerEvent, UserEvent
 from agent.runtime.models import RunHandle, RunOutcome, RunPriority, RunRequest
@@ -284,4 +286,47 @@ def test_interactive_frees_same_session_background_capacity_before_admission() -
     release.set()
     assert active.wait(2) is not None
     assert user.wait(2) is not None
+    assert scheduler.stop()
+
+
+def test_session_mutation_rejects_active_and_queued_work() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def execute(_request: RunRequest, _handle: object) -> None:
+        started.set()
+        assert release.wait(2)
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    active = scheduler.submit(_user("active", "hold"))
+    assert started.wait(2)
+    with pytest.raises(SessionBusyError), scheduler.try_reserve_session_mutation("active"):
+        pass
+
+    queued = scheduler.submit(_user("queued", "wait"))
+    with pytest.raises(SessionBusyError), scheduler.try_reserve_session_mutation("queued"):
+        pass
+
+    release.set()
+    assert active.wait(2) is not None
+    assert queued.wait(2) is not None
+    assert scheduler.stop()
+
+
+def test_runs_submitted_during_session_mutation_start_after_release() -> None:
+    started = threading.Event()
+
+    def execute(_request: RunRequest, _handle: object) -> None:
+        started.set()
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    with scheduler.try_reserve_session_mutation("s"):
+        handle = scheduler.submit(_user("s", "after switch"))
+        assert not started.wait(0.05)
+        assert handle.terminal is None
+
+    assert started.wait(2)
+    assert handle.wait(2) is not None
     assert scheduler.stop()

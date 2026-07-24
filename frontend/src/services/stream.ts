@@ -10,13 +10,14 @@
 
 import { type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
-import { resolveDefaultConversationModel } from "@/lib/model-config";
 import { ensureLocalServiceReady } from "@/services/runtime";
 import type { AttachmentDraft } from "./attachments";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
   threadId: string;
+  /** 本轮在接纳消息时冻结的会话模型；新 session 用它初始化。 */
+  model: string;
   /** 本轮 user 新输入。 */
   text: string;
   messageId?: string;
@@ -97,7 +98,7 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
     context: [],
     state: {},
     forwardedProps: {
-      model: resolveDefaultConversationModel(),
+      model: input.model,
     },
   };
 }

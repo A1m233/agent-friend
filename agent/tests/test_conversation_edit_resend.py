@@ -76,6 +76,7 @@ def _conversation(
     session: Session | None = None,
     store: JsonlSessionStore | None = None,
     llm: LLMClient,
+    llm_factory: Any | None = None,
 ) -> Conversation:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -97,11 +98,49 @@ def _conversation(
         session=session,
         store=store,
         llm_client=llm,
+        llm_client_factory=llm_factory,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
     )
+
+
+def test_edit_resend_preserves_later_model_change(tmp_path: Path) -> None:
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-v4-flash",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    _append(store, session, _event("user_message", {"content": "old question"}))
+    _append(
+        store,
+        session,
+        _event("assistant_message", {"content": "old answer", "partial": False}),
+    )
+    _append(
+        store,
+        session,
+        _event(
+            "model_change",
+            {"from": "deepseek/deepseek-v4-flash", "to": "kimi/kimi-k2.6"},
+        ),
+    )
+    llm = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="new answer"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _conversation(tmp_path, session=session, store=store, llm=cast(LLMClient, llm))
+
+    list(conv.edit_resend_latest("new question", expected_user_content="old question"))
+
+    assert session.current_model == "kimi/kimi-k2.6"
+    active_changes = [event for event in session.active_events if event.type == "model_change"]
+    assert len(active_changes) == 1
+    assistants = [event for event in session.active_events if event.type == "assistant_message"]
+    assert assistants[-1].meta["model"] == "kimi/kimi-k2.6"
 
 
 def _event(

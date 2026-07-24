@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agent.runtime import SessionBusyError
+
 from agent import (
     AttachmentError,
     PersonaAmbiguousError,
@@ -35,6 +37,10 @@ from llm_providers import (
     LLMRateLimitError,
 )
 from runtime_config import CredentialMissingError
+
+
+class UnsupportedModelError(ValueError):
+    """A requested model is absent from the public model catalog."""
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,20 @@ def map_exception(exc: BaseException) -> ProtocolError:
             code=exc.code,
             message=str(exc),
             recoverable=False,
+        )
+    if isinstance(exc, UnsupportedModelError):
+        return ProtocolError(
+            http_status=400,
+            code="unsupported_model",
+            message="找不到这个模型，请刷新模型列表后再试。",
+            recoverable=False,
+        )
+    if isinstance(exc, SessionBusyError):
+        return ProtocolError(
+            http_status=409,
+            code="session_busy",
+            message="当前会话正在处理消息，请等待这轮结束后再切换模型。",
+            recoverable=True,
         )
     if isinstance(exc, CredentialMissingError):
         return ProtocolError(
@@ -166,6 +186,7 @@ def build_openai_error_envelope(err: ProtocolError) -> dict[str, Any]:
 
 __all__ = [
     "ProtocolError",
+    "UnsupportedModelError",
     "build_openai_error_envelope",
     "map_exception",
 ]

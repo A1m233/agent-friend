@@ -43,6 +43,13 @@ export const sessionsApi = {
     return http.get<unknown, SessionDetail>(`/v1/sessions/${sessionId}`);
   },
 
+  switchModel(sessionId: string, model: string): Promise<{ session_id: string; model: string }> {
+    return http.post<unknown, { session_id: string; model: string }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/model`,
+      { model },
+    );
+  },
+
   rename(sessionId: string, title: string): Promise<SessionSummary> {
     return http.patch<unknown, SessionSummary>(`/v1/sessions/${sessionId}`, { title });
   },

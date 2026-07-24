@@ -25,6 +25,7 @@ import {
 } from "./AttachmentImageViewer";
 import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
+import { ConversationModelSelector } from "./ConversationModelSelector";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
   dropzoneAcceptFromMediaTypes,
@@ -539,24 +540,31 @@ export function Composer({
           >
             <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
               <TooltipProvider>
-                <TooltipButton
-                  type="button"
-                  disabled={disabled || streaming}
-                  aria-label="添加附件"
-                  tooltip="添加附件"
-                  icon={<Plus className="size-4" />}
-                  className={cn(
-                    "rounded-full",
-                    !capabilities?.attachments && "cursor-not-allowed text-muted",
-                  )}
-                  onClick={() => {
-                    if (attachmentsDisabled) {
-                      explainAttachmentUnavailable();
-                      return;
-                    }
-                    openFileDialog();
-                  }}
-                />
+                <div className="flex min-w-0 items-center gap-1">
+                  <TooltipButton
+                    type="button"
+                    disabled={disabled || streaming}
+                    aria-label="添加附件"
+                    tooltip="添加附件"
+                    icon={<Plus className="size-4" />}
+                    className={cn(
+                      "rounded-full",
+                      !capabilities?.attachments && "cursor-not-allowed text-muted",
+                    )}
+                    onClick={() => {
+                      if (attachmentsDisabled) {
+                        explainAttachmentUnavailable();
+                        return;
+                      }
+                      openFileDialog();
+                    }}
+                  />
+                  <ConversationModelSelector
+                    selectedModel={selectedModel}
+                    disabled={disabled || streaming}
+                    disabledReason={disabledReason ?? (streaming ? "请等待当前回复完成" : undefined)}
+                  />
+                </div>
                 <VoiceInputAction
                   phase={voiceInputPhase}
                   volumeLevel={voiceInputVolume}

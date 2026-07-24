@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterator
+from contextlib import ExitStack
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -29,7 +30,7 @@ from agent.runtime import UserEvent
 from agent.runtime.cancellation import CancellationToken
 from agent.runtime.models import RunRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
@@ -44,6 +45,7 @@ from llm_providers import all_model_ids
 
 from ..assembly import BridgeRuntime
 from ..attachment_reconciliation import reconcile_attachments
+from ..errors import UnsupportedModelError, build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
 
 
@@ -296,18 +298,26 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         }
 
     @router.post("/sessions/{session_id}/model")
-    def switch_model(session_id: str, body: ModelSwitchBody) -> dict[str, Any]:
+    def switch_model(session_id: str, body: ModelSwitchBody) -> Any:
         """切换 session 当前 model；落盘 ``model_change`` 事件。"""
-        if body.model not in all_model_ids():
-            raise HTTPException(status_code=400, detail="不支持的模型")
-        with runtime.turn_coordinator.hold(session_id):
-            try:
+        try:
+            if body.model not in all_model_ids():
+                raise UnsupportedModelError(body.model)
+            with ExitStack() as stack:
+                if runtime.agent_runtime is not None:
+                    stack.enter_context(
+                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                    )
+                stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
                 session = mgr.open(session_id)
-            except SessionNotFoundError as e:
-                raise HTTPException(status_code=404, detail=str(e)) from e
-
-            conv = mgr.start_conversation(session)
-            conv.switch_model(body.model)
+                conv = mgr.start_conversation(session)
+                conv.switch_model(body.model)
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
 
         return {
             "session_id": session.session_id,

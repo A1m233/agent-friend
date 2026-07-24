@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import Lock
 
+from agent.runtime import SessionBusyError
+
 
 class SessionTurnCoordinator:
     """Serialize mutating turns for the same persistent session.
@@ -24,6 +26,18 @@ class SessionTurnCoordinator:
     def hold(self, session_id: str) -> Iterator[None]:
         lock = self._lock_for(session_id)
         lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+
+    @contextmanager
+    def try_hold(self, session_id: str) -> Iterator[None]:
+        """Acquire the session turn lock without waiting behind an active run."""
+
+        lock = self._lock_for(session_id)
+        if not lock.acquire(blocking=False):
+            raise SessionBusyError(f"session {session_id!r} is busy")
         try:
             yield
         finally:

@@ -96,6 +96,7 @@ _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
+_SESSION_CONTROL_EVENT_TYPES = frozenset({"persona_change", "model_change", "channel_change"})
 logger = logging.getLogger(__name__)
 
 
@@ -118,6 +119,12 @@ class _RewritePlan:
     target_user_attachments: list[AttachmentRef]
     inactive_event_uuids: list[str]
     prefix_events: list[Event]
+
+
+@dataclass(frozen=True)
+class _RunModelSnapshot:
+    model_id: str
+    llm_client: LLMClient
 
 
 def _resolve_max_tool_turns() -> int:
@@ -174,6 +181,7 @@ class Conversation:
         self._session = session
         self._store = store
         self._llm_client = llm_client
+        self._run_model_snapshot: _RunModelSnapshot | None = None
         self._context_manager = context_manager
         self._prompt_builder = prompt_builder
         self._llm_client_factory = llm_client_factory
@@ -266,6 +274,20 @@ class Conversation:
     def current_model(self) -> str:
         """当前激活 model 名（从 session 派生）。"""
         return self._session.current_model
+
+    def _capture_run_model_snapshot(self) -> _RunModelSnapshot:
+        return _RunModelSnapshot(
+            model_id=self._session.current_model,
+            llm_client=self._llm_client,
+        )
+
+    def _active_llm_client(self) -> LLMClient:
+        snapshot = self._run_model_snapshot
+        return snapshot.llm_client if snapshot is not None else self._llm_client
+
+    def _active_model_id(self) -> str:
+        snapshot = self._run_model_snapshot
+        return snapshot.model_id if snapshot is not None else self._session.current_model
 
     @property
     def last_memory_context(self) -> MemoryContext | None:
@@ -380,13 +402,15 @@ class Conversation:
         previous_prompt_channel = self._prompt_channel_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
+        previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
+        self._run_model_snapshot = self._capture_run_model_snapshot()
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
-        model_snapshot = self._session.current_model
+        model_snapshot = self._active_model_id()
 
         turn_attachments = list(attachments or [])
         existing_user_event = next(
@@ -476,7 +500,7 @@ class Conversation:
                     tools=bool(tool_specs),
                 )
                 first_text_seen = False
-                for ev in self._llm_client.stream(
+                for ev in self._active_llm_client().stream(
                     openai_messages,
                     tools=tool_specs,
                     **self._voice_latency_llm_overrides,
@@ -580,6 +604,7 @@ class Conversation:
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
+            self._run_model_snapshot = previous_run_model_snapshot
 
     def edit_resend_latest(
         self,
@@ -601,13 +626,15 @@ class Conversation:
         previous_prompt_channel = self._prompt_channel_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
+        previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
+        self._run_model_snapshot = self._capture_run_model_snapshot()
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
-        model_snapshot = self._session.current_model
+        model_snapshot = self._active_model_id()
 
         self._invalidate_rewrite_memory(plan.inactive_event_uuids)
 
@@ -669,7 +696,7 @@ class Conversation:
                     tools=bool(tool_specs),
                 )
                 first_text_seen = False
-                for ev in self._llm_client.stream(
+                for ev in self._active_llm_client().stream(
                     openai_messages,
                     tools=tool_specs,
                     **self._voice_latency_llm_overrides,
@@ -771,10 +798,37 @@ class Conversation:
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
+            self._run_model_snapshot = previous_run_model_snapshot
 
     # ----- 系统级触发轮（014：main loop 入口） -----
 
     def dispatch_system_turn(
+        self,
+        *,
+        source_kind: str,
+        system_prompt_addendum: str,
+        output_visibility: Literal["user", "memory_only"] = "user",
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Iterator[ConversationEvent]:
+        """Run a system-triggered turn with a frozen model/client snapshot."""
+
+        previous_run_model_snapshot = self._run_model_snapshot
+        previous_run_id = self._run_id_override
+        self._run_model_snapshot = self._capture_run_model_snapshot()
+        try:
+            yield from self._dispatch_system_turn_impl(
+                source_kind=source_kind,
+                system_prompt_addendum=system_prompt_addendum,
+                output_visibility=output_visibility,
+                run_id=run_id,
+                cancel_check=cancel_check,
+            )
+        finally:
+            self._run_model_snapshot = previous_run_model_snapshot
+            self._run_id_override = previous_run_id
+
+    def _dispatch_system_turn_impl(
         self,
         *,
         source_kind: str,
@@ -814,7 +868,7 @@ class Conversation:
         self._check_cancel(cancel_check)
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
-        model_snapshot = self._session.current_model
+        model_snapshot = self._active_model_id()
 
         # 1. 落 system_trigger marker（与 compaction 同模式，不参与 messages 派生）
         self._append_system_trigger_event(
@@ -826,7 +880,7 @@ class Conversation:
         # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
         openai_messages = self._assemble(trailing_user=system_prompt_addendum)
         text_buf: list[str] = []
-        for ev in self._llm_client.stream(openai_messages, tools=None):
+        for ev in self._active_llm_client().stream(openai_messages, tools=None):
             self._check_cancel(cancel_check)
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
@@ -1044,7 +1098,11 @@ class Conversation:
             for item in target.payload.get("attachments", [])
             if isinstance(item, dict)
         ]
-        inactive = [ev.uuid for ev in active_events[target_idx:]]
+        inactive = [
+            ev.uuid
+            for ev in active_events[target_idx:]
+            if ev.type not in _SESSION_CONTROL_EVENT_TYPES
+        ]
         return _RewritePlan(
             target_user_uuid=target.uuid,
             target_user_content=content,
@@ -1290,7 +1348,8 @@ class Conversation:
         self._record_context_notes(build, runtime)
         if self._message_renderer is None:
             return [message.to_openai() for message in build.messages]
-        return [self._message_renderer(message, self._llm_client) for message in build.messages]
+        client = self._active_llm_client()
+        return [self._message_renderer(message, client) for message in build.messages]
 
     def _build_runtime_context(
         self,
@@ -1305,12 +1364,12 @@ class Conversation:
         老会话 / 未压缩过为 ``None``。
         """
         budget = make_budget_snapshot(
-            effective_window=self._llm_client.context_window,
+            effective_window=self._active_llm_client().context_window,
             last_input_tokens=self._last_input_tokens,
         )
         return RuntimeContext(
             budget=budget,
-            llm_client=self._llm_client,
+            llm_client=self._active_llm_client(),
             prior_summary=self._derive_prior_summary()
             if prior_summary_override is _UNSET
             else cast(PriorSummary | None, prior_summary_override),
@@ -1381,7 +1440,7 @@ class Conversation:
             "compaction_covered_through=%s dropped_count=%s fallback_reason=%s",
             self._session.session_id,
             self._run_id_override or "none",
-            getattr(getattr(self._llm_client, "spec", None), "model", "unknown"),
+            getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
             len(build.messages),
             notes.get("token_estimate"),
             notes.get("effective_window"),
@@ -1573,7 +1632,7 @@ class Conversation:
         openai_messages = self._assemble(trailing_system=extra_system)
 
         text_buf: list[str] = []
-        for ev in self._llm_client.stream(openai_messages, tools=None):
+        for ev in self._active_llm_client().stream(openai_messages, tools=None):
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield TextDelta(text=ev.text)

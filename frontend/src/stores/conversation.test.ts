@@ -4,8 +4,9 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 // mock services 层：只控制 runAgentStream / sessionsApi.get 的行为，验证 store 的错误兜底。
 vi.mock("@/services", () => ({
   editResendLatestStream: vi.fn(),
+  modelsApi: { validate: vi.fn() },
   runAgentStream: vi.fn(),
-  sessionsApi: { get: vi.fn() },
+  sessionsApi: { get: vi.fn(), switchModel: vi.fn() },
 }));
 
 vi.mock("@/lib/persistence/chatUi", () => ({
@@ -13,13 +14,15 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 }));
 
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { editResendLatestStream, runAgentStream, sessionsApi } from "@/services";
+import { editResendLatestStream, modelsApi, runAgentStream, sessionsApi } from "@/services";
 import type { SessionDetail } from "@/types/meta";
 import { useConversationStore, type SendStartResult } from "./conversation";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockEditStream = vi.mocked(editResendLatestStream);
 const mockGet = vi.mocked(sessionsApi.get);
+const mockSwitchModel = vi.mocked(sessionsApi.switchModel);
+const mockValidateModel = vi.mocked(modelsApi.validate);
 const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
 /** 技术细节特征：HTTP 状态码 / 英文异常字样等——拟人文案里**不应**出现任何一项。 */
@@ -50,12 +53,12 @@ async function finishAcceptedSend(result: SendStartResult) {
   return result.completion;
 }
 
-function sessionDetail(sessionId: string, content: string): SessionDetail {
+function sessionDetail(sessionId: string, content: string, model = "test"): SessionDetail {
   return {
     session_id: sessionId,
     title: sessionId,
     persona: "default",
-    model: "test",
+    model,
     events: [
       {
         type: "assistant_message",
@@ -86,7 +89,19 @@ function messageTexts() {
 beforeEach(() => {
   vi.clearAllMocks();
   useConversationStore.getState().newSession();
+  useConversationStore.setState({
+    streaming: false,
+    historyLoading: false,
+    modelSwitching: false,
+    modelSwitchTarget: null,
+    editingMessageId: null,
+  });
   mockSetLastChatSessionId.mockClear();
+  mockValidateModel.mockImplementation(async (model) => ({ model, available: true }));
+  mockSwitchModel.mockImplementation(async (sessionId, model) => ({
+    session_id: sessionId,
+    model,
+  }));
 });
 
 describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
@@ -449,5 +464,103 @@ describe("conversation store · background detail refresh", () => {
     useConversationStore.setState({ currentSessionId: "sid-1", streaming: true });
     expect(await useConversationStore.getState().refreshCurrentSession("sid-1")).toBe("stale");
     expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe("conversation store · session model selection", () => {
+  it("新会话先校验 pending model，并把同一模型传给首次 run", async () => {
+    mockStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+
+    const selection = await useConversationStore.getState().selectModel("kimi/kimi-k2.6");
+    expect(selection).toEqual({ status: "applied", model: "kimi/kimi-k2.6" });
+    expect(mockValidateModel).toHaveBeenCalledWith("kimi/kimi-k2.6");
+    expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.6");
+
+    await finishAcceptedSend(useConversationStore.getState().send("hello"));
+    expect(mockStream).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "kimi/kimi-k2.6" }),
+      expect.any(Object),
+    );
+  });
+
+  it("新会话模型校验失败时保持原 pending model", async () => {
+    mockValidateModel.mockRejectedValueOnce({
+      friendly: "模型凭据尚未配置",
+      code: "credential_missing",
+    });
+
+    const result = await useConversationStore.getState().selectModel("kimi/kimi-k2.6");
+    expect(result).toEqual({
+      status: "failed",
+      error: { friendly: "模型凭据尚未配置", code: "credential_missing" },
+    });
+    expect(useConversationStore.getState().currentModel).toBeNull();
+  });
+
+  it("已有会话只在后端成功后提交 effective model", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    const pending = deferred<{ session_id: string; model: string }>();
+    mockSwitchModel.mockReturnValueOnce(pending.promise);
+
+    const switching = useConversationStore.getState().selectModel("kimi/kimi-k2.6");
+    expect(useConversationStore.getState().currentModel).toBe("deepseek/old");
+    expect(useConversationStore.getState().modelSwitching).toBe(true);
+    pending.resolve({ session_id: "sid-1", model: "kimi/kimi-k2.6" });
+
+    expect(await switching).toEqual({ status: "applied", model: "kimi/kimi-k2.6" });
+    expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.6");
+    expect(useConversationStore.getState().modelSwitching).toBe(false);
+  });
+
+  it("连续切换的迟到响应不会覆盖最后一次选择", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    const older = deferred<{ session_id: string; model: string }>();
+    const newer = deferred<{ session_id: string; model: string }>();
+    mockSwitchModel.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    const olderRun = useConversationStore.getState().selectModel("kimi/older");
+    const newerRun = useConversationStore.getState().selectModel("kimi/newer");
+    newer.resolve({ session_id: "sid-1", model: "kimi/newer" });
+    expect(await newerRun).toEqual({ status: "applied", model: "kimi/newer" });
+    older.resolve({ session_id: "sid-1", model: "kimi/older" });
+    expect(await olderRun).toEqual({ status: "stale" });
+    expect(useConversationStore.getState().currentModel).toBe("kimi/newer");
+  });
+
+  it("后台 refresh 同步后端模型，但旧 refresh 不覆盖进行中的切换", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
+    await useConversationStore.getState().openSession("sid-1");
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "refreshed", "kimi/external"));
+    expect(await useConversationStore.getState().refreshCurrentSession("sid-1")).toBe("applied");
+    expect(useConversationStore.getState().currentModel).toBe("kimi/external");
+
+    const refreshDetail = deferred<SessionDetail>();
+    const switchResponse = deferred<{ session_id: string; model: string }>();
+    mockGet.mockReturnValueOnce(refreshDetail.promise);
+    mockSwitchModel.mockReturnValueOnce(switchResponse.promise);
+    const refresh = useConversationStore.getState().refreshCurrentSession("sid-1");
+    const switching = useConversationStore.getState().selectModel("kimi/final");
+    refreshDetail.resolve(sessionDetail("sid-1", "late", "deepseek/stale"));
+    expect(await refresh).toBe("stale");
+    switchResponse.resolve({ session_id: "sid-1", model: "kimi/final" });
+    expect(await switching).toEqual({ status: "applied", model: "kimi/final" });
+    expect(useConversationStore.getState().currentModel).toBe("kimi/final");
+  });
+
+  it("切换和编辑状态阻止发送", () => {
+    useConversationStore.setState({ modelSwitching: true });
+    expect(useConversationStore.getState().send("hello")).toEqual({
+      accepted: false,
+      reason: "model-switching",
+    });
+    useConversationStore.setState({ modelSwitching: false, editingMessageId: "user-1" });
+    expect(useConversationStore.getState().send("hello")).toEqual({
+      accepted: false,
+      reason: "editing",
+    });
   });
 });

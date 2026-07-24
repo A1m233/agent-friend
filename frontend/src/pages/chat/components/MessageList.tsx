@@ -378,6 +378,7 @@ interface MessageTimelineProps {
   overlayComposer?: boolean;
   emptyLabel?: string;
   onEditLatestUserMessage?: (messageId: string, text: string) => void | Promise<void>;
+  onEditingChange?: (messageId: string | null) => void;
 }
 
 /**
@@ -394,6 +395,7 @@ export function MessageTimeline({
   overlayComposer = true,
   emptyLabel = "开始一段对话吧～",
   onEditLatestUserMessage,
+  onEditingChange,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -408,6 +410,10 @@ export function MessageTimeline({
   const readingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const [isSticky, setIsSticky] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const updateEditingMessage = useCallback((messageId: string | null) => {
+    setEditingMessageId(messageId);
+    onEditingChange?.(messageId);
+  }, [onEditingChange]);
   const composerInset = overlayComposer
     ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
     : 0;
@@ -596,9 +602,11 @@ export function MessageTimeline({
   useEffect(() => {
     if (!editingMessageId) return;
     if (!messages.some((m) => m.id === editingMessageId) || streaming || historyLoading) {
-      setEditingMessageId(null);
+      updateEditingMessage(null);
     }
-  }, [editingMessageId, historyLoading, messages, streaming]);
+  }, [editingMessageId, historyLoading, messages, streaming, updateEditingMessage]);
+
+  useEffect(() => () => onEditingChange?.(null), [onEditingChange]);
 
   if (historyLoading) {
     return <HistoryLoadingState />;
@@ -645,10 +653,10 @@ export function MessageTimeline({
                 canEdit={canEdit}
                 editing={editing}
                 editDisabled={editDisabled}
-                onEdit={() => setEditingMessageId(m.id)}
-                onCancelEdit={() => setEditingMessageId(null)}
+                onEdit={() => updateEditingMessage(m.id)}
+                onCancelEdit={() => updateEditingMessage(null)}
                 onSubmitEdit={(text) => {
-                  setEditingMessageId(null);
+                  updateEditingMessage(null);
                   void onEditLatestUserMessage?.(m.id, text);
                 }}
               />
@@ -687,6 +695,7 @@ export function MessageList({
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
   const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
   const editResendLatest = useConversationStore((s) => s.editResendLatest);
+  const setEditingMessage = useConversationStore((s) => s.setEditingMessage);
 
   return (
     <MessageTimeline
@@ -697,6 +706,7 @@ export function MessageList({
       syncRefreshSeq={syncRefreshSeq}
       composerHeight={composerHeight}
       onEditLatestUserMessage={editResendLatest}
+      onEditingChange={setEditingMessage}
     />
   );
 }

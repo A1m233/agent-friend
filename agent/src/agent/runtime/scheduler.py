@@ -6,13 +6,15 @@ import heapq
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import count
 
 from .cancellation import CancelReason, RunCancelled
+from .errors import SessionBusyError
 from .models import RunHandle, RunOutcome, RunPriority, RunRequest, RunStatus
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ class RunScheduler:
         self._requests: dict[str, RunRequest] = {}
         self._dedupe: dict[tuple[str, str], str] = {}
         self._active: dict[str, str] = {}
+        self._mutating_sessions: set[str] = set()
         self._ready: list[tuple[int, int, str, int]] = []
         self._generation: dict[str, int] = {}
         self._seq = count()
@@ -146,6 +149,30 @@ class RunScheduler:
             self._refresh_ready_locked(request.session_id)
             self._condition.notify_all()
         return handle
+
+    @contextmanager
+    def try_reserve_session_mutation(self, session_id: str) -> Iterator[None]:
+        """Reserve an idle session for a short non-run mutation.
+
+        Existing active or queued work wins. Runs submitted after the reservation
+        are admitted to the mailbox but cannot start until the mutation releases.
+        """
+
+        with self._condition:
+            if (
+                session_id in self._active
+                or self._mailbox_head_locked(session_id) is not None
+                or session_id in self._mutating_sessions
+            ):
+                raise SessionBusyError(f"session {session_id!r} is busy")
+            self._mutating_sessions.add(session_id)
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._mutating_sessions.discard(session_id)
+                self._refresh_ready_locked(session_id)
+                self._condition.notify_all()
 
     def activity_snapshot(self) -> RuntimeActivitySnapshot:
         with self._condition:
@@ -280,7 +307,7 @@ class RunScheduler:
         return None
 
     def _refresh_ready_locked(self, session_id: str) -> None:
-        if session_id in self._active:
+        if session_id in self._active or session_id in self._mutating_sessions:
             return
         head = self._mailbox_head_locked(session_id)
         if head is None:
@@ -295,7 +322,11 @@ class RunScheduler:
     def _next_locked(self) -> tuple[RunRequest, RunHandle] | None:
         while self._ready:
             _, _, session_id, generation = heapq.heappop(self._ready)
-            if self._generation.get(session_id) != generation or session_id in self._active:
+            if (
+                self._generation.get(session_id) != generation
+                or session_id in self._active
+                or session_id in self._mutating_sessions
+            ):
                 continue
             head = self._mailbox_head_locked(session_id)
             if head is None:

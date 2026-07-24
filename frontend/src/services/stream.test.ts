@@ -16,6 +16,7 @@ describe("buildRunAgentInput", () => {
   it("uses standard ordered attachment parts and preserves message identity", () => {
     const payload = buildRunAgentInput({
       threadId: "session-1",
+      model: "kimi/kimi-k2.6",
       messageId: "user-message-1",
       text: "请分析",
       attachments: [
@@ -55,5 +56,6 @@ describe("buildRunAgentInput", () => {
       { type: "text", text: "请分析" },
     ]);
     expect(payload.forwardedProps).not.toHaveProperty("attachments");
+    expect(payload.forwardedProps).toMatchObject({ model: "kimi/kimi-k2.6" });
   });
 });

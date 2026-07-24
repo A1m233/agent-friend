@@ -371,7 +371,14 @@ class Session:
             if explicitly_marked or legacy_tool_followup_failure:
                 sanitizing_errors[run_id] = event
         if not sanitizing_errors:
-            return self.messages
+            normalized_events, tool_history_normalized = self._normalize_tool_transactions(
+                active_events
+            )
+            return (
+                Session.from_events(normalized_events).messages
+                if tool_history_normalized
+                else self.messages
+            )
 
         excluded_event_uuids: set[str] = set()
         placeholders: dict[str, Event] = {}
@@ -416,7 +423,93 @@ class Session:
             if placeholder is not None:
                 sanitized_events.append(placeholder)
             sanitized_events.append(event)
-        return Session.from_events(sanitized_events).messages
+        normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
+        return Session.from_events(normalized_events).messages
+
+    @staticmethod
+    def _normalize_tool_transactions(events: list[Event]) -> tuple[list[Event], bool]:
+        """Remove incomplete tool transactions from the LLM-only projection.
+
+        Raw session events remain untouched for UI, audit, and diagnostics. A
+        request/result pair is keyed by run id when available so provider-local
+        tool ids reused by old sessions do not accidentally match across runs.
+        """
+
+        def tool_key(event: Event) -> tuple[str | None, str] | None:
+            tool_call_id = event.payload.get("tool_call_id")
+            if not isinstance(tool_call_id, str) or not tool_call_id:
+                return None
+            run_id = event.meta.get("run_id")
+            return (run_id if isinstance(run_id, str) and run_id else None, tool_call_id)
+
+        request_keys = {
+            key
+            for event in events
+            if event.type == "tool_call_request" and (key := tool_key(event)) is not None
+        }
+        result_keys = {
+            key
+            for event in events
+            if event.type == "tool_call_result" and (key := tool_key(event)) is not None
+        }
+        unmatched_request_keys = request_keys - result_keys
+        orphan_result_keys = result_keys - request_keys
+        if not unmatched_request_keys and not orphan_result_keys:
+            return events, False
+
+        assistant_for_request: dict[str, str] = {}
+        remaining_requests_by_assistant: dict[str, int] = {}
+        current_assistant_uuid: str | None = None
+        for event in events:
+            if event.type == "user_message":
+                current_assistant_uuid = None
+            elif event.type == "assistant_message":
+                current_assistant_uuid = event.uuid
+            elif event.type == "tool_call_request" and current_assistant_uuid is not None:
+                assistant_for_request[event.uuid] = current_assistant_uuid
+                key = tool_key(event)
+                if key is not None and key not in unmatched_request_keys:
+                    remaining_requests_by_assistant[current_assistant_uuid] = (
+                        remaining_requests_by_assistant.get(current_assistant_uuid, 0) + 1
+                    )
+
+        placeholder_assistants: set[str] = set()
+        normalized: list[Event] = []
+        for event in events:
+            key = tool_key(event)
+            if event.type == "tool_call_request" and key in unmatched_request_keys:
+                assistant_uuid = assistant_for_request.get(event.uuid)
+                if assistant_uuid is not None:
+                    placeholder_assistants.add(assistant_uuid)
+                continue
+            if event.type == "tool_call_result" and key in orphan_result_keys:
+                continue
+            normalized.append(event)
+
+        if not placeholder_assistants:
+            return normalized, True
+
+        final_events: list[Event] = []
+        for event in normalized:
+            if (
+                event.type == "assistant_message"
+                and event.uuid in placeholder_assistants
+                and remaining_requests_by_assistant.get(event.uuid, 0) == 0
+                and not str(event.payload.get("content", "")).strip()
+            ):
+                payload = dict(event.payload)
+                payload["content"] = "上一轮工具调用未完成，可以继续当前对话。"
+                meta = dict(event.meta)
+                meta["synthetic"] = "incomplete_tool_transaction"
+                event = Event(
+                    type=event.type,
+                    uuid=event.uuid,
+                    ts=event.ts,
+                    payload=payload,
+                    meta=meta,
+                )
+            final_events.append(event)
+        return final_events, True
 
     def latest_compaction(self) -> Event | None:
         """最近一次上下文摘要折叠点（009 M3）；无则 ``None``。

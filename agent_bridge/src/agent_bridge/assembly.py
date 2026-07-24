@@ -310,10 +310,12 @@ def build_runtime(
         multimodal_adapter,
     )
 
+    turn_coordinator = SessionTurnCoordinator()
     agent_runtime = build_agent_runtime(
         settings=settings,
         session_manager=persistent_session_manager,
         memory=memory,
+        session_turn_guard=turn_coordinator.hold,
     )
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
 
@@ -359,6 +361,7 @@ def build_runtime(
             attachment_store=attachment_store,
             memory=memory,
             recall_buffer=recall_buffer,
+            turn_coordinator=turn_coordinator,
             agent_runtime=agent_runtime,
             persona_store=persona_store,
             persona_editor_session_manager=persona_editor_session_manager,
@@ -412,6 +415,7 @@ def build_runtime(
         attachment_store=attachment_store,
         memory=memory,
         recall_buffer=recall_buffer,
+        turn_coordinator=turn_coordinator,
         agent_runtime=agent_runtime,
         persona_store=persona_store,
         persona_editor_session_manager=persona_editor_session_manager,

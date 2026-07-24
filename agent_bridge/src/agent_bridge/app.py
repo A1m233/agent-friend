@@ -125,7 +125,7 @@ def create_app_with_runtime(
     register_meta_routes(app, runtime)
     register_memory_routes(app, runtime)
     register_attachment_routes(app, runtime)
-    register_model_routes(app)
+    register_model_routes(app, runtime)
     register_persona_routes(app, runtime)
     register_push_routes(app, runtime)
     if runtime.im_onboard_registry is not None:
