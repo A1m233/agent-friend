@@ -342,14 +342,17 @@ class Session:
 
     @property
     def llm_messages(self) -> list[Message]:
-        """供模型使用的历史投影，安全替换内容策略拒绝的失败调用。
+        """供模型使用的历史投影，规整中断与失败的模型调用。
 
-        原始事件和 :attr:`messages` 保持不变，供 UI、审计和诊断使用。对明确
-        标记的失败调用，保留此前已经成功的模型 / 工具事务，只把最后一条
-        assistant 及其后续工具结果替换为安全占位。若首次模型调用就失败，则
-        不重放该轮原始用户输入。
+        原始事件和 :attr:`messages` 保持不变，供 UI、审计和诊断使用。中断时
+        已经落盘的 partial assistant 只在本投影中替换为明确的中断占位，避免
+        后续用户轮把半截回复误当成待续写任务。对明确标记的失败调用，保留此前
+        已经成功的模型 / 工具事务，只把最后一条 assistant 及其后续工具结果
+        替换为安全占位。若首次模型调用就失败，则不重放该轮原始用户输入。
         """
-        active_events = self.active_events
+        active_events, partial_history_normalized = self._normalize_partial_assistants(
+            self.active_events
+        )
         run_ids_with_tool_results = {
             run_id
             for event in active_events
@@ -376,7 +379,7 @@ class Session:
             )
             return (
                 Session.from_events(normalized_events).messages
-                if tool_history_normalized
+                if partial_history_normalized or tool_history_normalized
                 else self.messages
             )
 
@@ -425,6 +428,30 @@ class Session:
             sanitized_events.append(event)
         normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
         return Session.from_events(normalized_events).messages
+
+    @staticmethod
+    def _normalize_partial_assistants(events: list[Event]) -> tuple[list[Event], bool]:
+        """Replace interrupted assistant fragments in the LLM-only projection."""
+
+        normalized: list[Event] = []
+        changed = False
+        for event in events:
+            if event.type != "assistant_message" or event.payload.get("partial") is not True:
+                normalized.append(event)
+                continue
+            changed = True
+            meta = dict(event.meta)
+            meta["synthetic"] = "interrupted_assistant"
+            normalized.append(
+                Event(
+                    type="assistant_message",
+                    uuid=f"{event.uuid}-llm-interrupted",
+                    ts=event.ts,
+                    payload={"content": "上一轮回复已中断。", "partial": False},
+                    meta=meta,
+                )
+            )
+        return normalized, changed
 
     @staticmethod
     def _normalize_tool_transactions(events: list[Event]) -> tuple[list[Event], bool]:
