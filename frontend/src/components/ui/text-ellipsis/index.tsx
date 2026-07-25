@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useRef, useState, useEffect } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "@/utils/cn";
 import {
@@ -8,6 +8,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { observeTextOverflow } from "./overflow";
 
 interface TextEllipsisProps extends React.ComponentProps<"span"> {
   children: string;
@@ -23,10 +24,11 @@ function TextEllipsis({
   const ref = useRef<HTMLSpanElement>(null);
   const [isOverflow, setIsOverflow] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    setIsOverflow(el.scrollWidth > el.clientWidth);
+
+    return observeTextOverflow(el, setIsOverflow);
   }, [children]);
 
   const text = (
@@ -39,7 +41,7 @@ function TextEllipsis({
     </span>
   );
 
-  if (!showTooltip || !isOverflow) {
+  if (!showTooltip) {
     return text;
   }
 
@@ -49,9 +51,11 @@ function TextEllipsis({
         <TooltipTrigger asChild>
           {text}
         </TooltipTrigger>
-        <TooltipContent side="top">
-          {children}
-        </TooltipContent>
+        {isOverflow ? (
+          <TooltipContent side="top">
+            {children}
+          </TooltipContent>
+        ) : null}
       </Tooltip>
     </TooltipProvider>
   );
