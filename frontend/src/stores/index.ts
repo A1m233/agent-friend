@@ -1,6 +1,7 @@
 export { useConnectionStore } from "./connection";
 export type { ConnectionStatus } from "./connection";
 export { useConversationStore } from "./conversation";
+export { draftKey, HOME_DRAFT_KEY, useDraftStore } from "./drafts";
 export {
   emitSessionsChanged,
   startSessionsChangedSubscriber,

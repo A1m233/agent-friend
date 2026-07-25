@@ -22,11 +22,18 @@ from uuid import uuid4
 from ..conversation_events import ConversationEvent, TurnDone
 from ..sessions.changes import SessionChange
 from .inbox import AgentEvent, SystemTriggerEvent, UserEvent
+from .models import RunSnapshot
 
 logger = logging.getLogger(__name__)
 
 
-EnvelopeKind = Literal["user_turn", "agent_turn", "session_changed", "heartbeat"]
+EnvelopeKind = Literal[
+    "user_turn",
+    "agent_turn",
+    "session_changed",
+    "run_changed",
+    "heartbeat",
+]
 
 
 @dataclass(frozen=True)
@@ -55,6 +62,7 @@ class PushEnvelope:
     change_kind: str | None = None
     origin: str | None = None
     channel: str | None = None
+    run: RunSnapshot | None = None
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -216,6 +224,25 @@ class ListenerRegistry:
                         change_kind=change.change_kind,
                         origin=change.origin,
                         channel=change.channel,
+                    ),
+                )
+
+    def publish_run_change(self, snapshot: RunSnapshot) -> None:
+        """Immediately publish one authoritative run lifecycle snapshot."""
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "run_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="run_changed",
+                        session_id=snapshot.session_id,
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        run=snapshot,
                     ),
                 )
 

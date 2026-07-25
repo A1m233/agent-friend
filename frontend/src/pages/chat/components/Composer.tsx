@@ -8,11 +8,10 @@ import { resolveBridgeUrl } from "@/constants";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
 import {
-  releaseAttachmentDraft,
   uploadAttachment,
-  type AttachmentDraft,
 } from "@/services";
-import { useConversationStore } from "@/stores";
+import { draftKey, HOME_DRAFT_KEY, useConversationStore, useDraftStore } from "@/stores";
+import type { DraftAttachmentState } from "@/stores/drafts";
 import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
 import { joinVoiceDraft, transcriptDeltaAfterConsumed } from "@/services/voiceInput/draft";
@@ -60,15 +59,11 @@ interface ComposerProps {
 }
 
 interface VoiceDraftSegment {
+  workspaceKey: string;
   traceId: string;
   baseText: string;
   consumedTranscript: string;
 }
-
-type DraftAttachmentState =
-  | { status: "uploading"; localId: string; file: File }
-  | { status: "ready"; localId: string; file: File; draft: AttachmentDraft }
-  | { status: "failed"; localId: string; file: File; message: string };
 
 function effectiveMediaType(file: File): string {
   if (file.type) return file.type;
@@ -89,6 +84,7 @@ export function Composer({
   onHeightChange,
 }: ComposerProps) {
   const streaming = useConversationStore((s) => s.streaming);
+  const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const currentModel = useConversationStore((s) => s.currentModel);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
@@ -105,14 +101,26 @@ export function Composer({
   const senderRef = useRef<HTMLElement>(null);
   const lastHeightRef = useRef(0);
   const prewarmRenewCountRef = useRef(0);
-  const [draftText, setDraftText] = useState("");
+  const workspaceKey = draftKey(currentSessionId);
+  const draftText = useDraftStore((state) => state.workspaces[workspaceKey]?.text ?? "");
+  const draftAttachments = useDraftStore(
+    (state) => state.workspaces[workspaceKey]?.attachments ?? [],
+  );
+  const setWorkspaceText = useDraftStore((state) => state.setText);
+  const addDraftAttachment = useDraftStore((state) => state.addAttachment);
+  const updateDraftAttachment = useDraftStore((state) => state.updateAttachment);
+  const removeDraftAttachment = useDraftStore((state) => state.removeAttachment);
+  const setDraftValidation = useDraftStore((state) => state.setValidation);
+  const claimHomeDraft = useDraftStore((state) => state.claimHome);
+  const beginDraftSubmission = useDraftStore((state) => state.beginSubmission);
+  const finishDraftSubmission = useDraftStore((state) => state.finishSubmission);
   const [chatModel] = useSetting("chatModel");
   const catalog = useModelCatalogStore((state) => state.catalog);
   const selectedModel = currentModel ?? chatModel.model;
   const capabilities = modelOption(selectedModel)?.capabilities ?? null;
-  const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentState[]>([]);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
+  const submittedValueEchoRef = useRef<{ workspaceKey: string; value: string } | null>(null);
   const voiceSegmentRef = useRef<VoiceDraftSegment | null>(null);
   const applyingVoiceDraftRef = useRef(false);
   const sentVoiceTraceIdsRef = useRef(new Set<string>());
@@ -155,7 +163,9 @@ export function Composer({
       fileType: attachmentFileType(item),
       status: item.status === "uploading"
         ? "progress"
-        : item.status === "failed" || incompatibleAttachmentNames.has(item.file.name)
+        : item.status === "failed"
+            || item.status === "expired"
+            || incompatibleAttachmentNames.has(item.file.name)
           ? "fail"
           : "success",
       percent: item.status === "uploading" ? 50 : item.status === "ready" ? 100 : 0,
@@ -165,6 +175,15 @@ export function Composer({
     })),
     [draftAttachments, incompatibleAttachmentNames],
   );
+
+  useEffect(() => {
+    setDraftValidation(workspaceKey, {
+      modelId: selectedModel,
+      compatible: attachmentCompatibility.compatible,
+      reason: attachmentCompatibility.reason ?? undefined,
+      incompatibleNames: [...attachmentCompatibility.incompatibleNames],
+    });
+  }, [attachmentCompatibility, selectedModel, setDraftValidation, workspaceKey]);
 
   useEffect(() => {
     if (attachmentCompatibility.compatible || !attachmentCompatibility.reason) return;
@@ -221,22 +240,36 @@ export function Composer({
       }
       selectedBytes += file.size;
       const localId = crypto.randomUUID();
-      setDraftAttachments((items) => [...items, { status: "uploading", localId, file }]);
+      const targetWorkspaceKey = workspaceKey;
+      addDraftAttachment(targetWorkspaceKey, { status: "uploading", localId, file });
       try {
         const draft = await uploadAttachment(file);
-        setDraftAttachments((items) => items.map((item) =>
-          item.localId === localId ? { status: "ready", localId, file, draft } : item,
-        ));
+        updateDraftAttachment(targetWorkspaceKey, localId, () => ({
+          status: "ready",
+          localId,
+          file,
+          draft,
+        }));
       } catch {
-        setDraftAttachments((items) => items.map((item) =>
-          item.localId === localId
-            ? { status: "failed", localId, file, message: "上传失败" }
-            : item,
-        ));
+        updateDraftAttachment(targetWorkspaceKey, localId, () => ({
+          status: "failed",
+          localId,
+          file,
+          message: "上传失败",
+        }));
         toast.error(`${file.name} 添加失败`);
       }
     }
-  }, [capabilities, disabled, draftAttachments, explainAttachmentUnavailable, streaming]);
+  }, [
+    addDraftAttachment,
+    capabilities,
+    disabled,
+    draftAttachments,
+    explainAttachmentUnavailable,
+    streaming,
+    updateDraftAttachment,
+    workspaceKey,
+  ]);
 
   const {
     getInputProps,
@@ -283,10 +316,8 @@ export function Composer({
           : "松开以添加附件";
 
   const removeAttachment = useCallback((localId: string) => {
-    const target = draftAttachments.find((item) => item.localId === localId);
-    setDraftAttachments((items) => items.filter((item) => item.localId !== localId));
-    if (target?.status === "ready") void releaseAttachmentDraft(target.draft.draftId);
-  }, [draftAttachments]);
+    removeDraftAttachment(workspaceKey, localId);
+  }, [removeDraftAttachment, workspaceKey]);
 
   const syncAttachmentsAfterSenderRemoval = useCallback((remaining: TdAttachmentItem[]) => {
     const remainingIds = new Set(remaining.map((item) => String(item.key)));
@@ -305,31 +336,46 @@ export function Composer({
   );
 
   const applyDraftText = useCallback((next: string, source: "user" | "voice" | "send") => {
+    const submittedEcho = submittedValueEchoRef.current;
+    if (
+      source === "user"
+      && submittedEcho?.workspaceKey === workspaceKey
+      && submittedEcho.value === next
+    ) {
+      return;
+    }
     draftTextRef.current = next;
     if (source === "user") {
       const voiceState = useVoiceInputStore.getState();
       if (voiceState.traceId && isVoiceInputLive(voiceState.phase)) {
         const currentSegment = voiceSegmentRef.current;
-        const consumedTranscript =
-          voiceState.latestTranscript?.traceId === voiceState.traceId
-            ? voiceState.latestTranscript.text
-            : currentSegment?.traceId === voiceState.traceId
-              ? currentSegment.consumedTranscript
-              : "";
-        voiceSegmentRef.current = {
-          traceId: voiceState.traceId,
-          baseText: next,
-          consumedTranscript,
-        };
-      } else {
+        if (!currentSegment || currentSegment.workspaceKey === workspaceKey) {
+          const consumedTranscript =
+            voiceState.latestTranscript?.traceId === voiceState.traceId
+              ? voiceState.latestTranscript.text
+              : currentSegment?.traceId === voiceState.traceId
+                ? currentSegment.consumedTranscript
+                : "";
+          voiceSegmentRef.current = {
+            workspaceKey,
+            traceId: voiceState.traceId,
+            baseText: next,
+            consumedTranscript,
+          };
+        }
+      } else if (voiceSegmentRef.current?.workspaceKey === workspaceKey) {
         voiceSegmentRef.current = null;
       }
     }
     if (source === "voice") {
       applyingVoiceDraftRef.current = true;
     }
-    setDraftText(next);
-  }, []);
+    setWorkspaceText(workspaceKey, next);
+  }, [setWorkspaceText, workspaceKey]);
+
+  useEffect(() => {
+    draftTextRef.current = draftText;
+  }, [draftText]);
 
   useEffect(() => {
     if (!applyingVoiceDraftRef.current) return;
@@ -384,12 +430,16 @@ export function Composer({
     if (!latestVoiceTranscript) return;
     if (sentVoiceTraceIdsRef.current.has(latestVoiceTranscript.traceId)) return;
     let segment = voiceSegmentRef.current;
-    if (!segment || segment.traceId !== latestVoiceTranscript.traceId) {
+    if (!segment || (segment.traceId && segment.traceId !== latestVoiceTranscript.traceId)) {
       segment = {
+        workspaceKey,
         traceId: latestVoiceTranscript.traceId,
-        baseText: draftTextRef.current,
+        baseText: useDraftStore.getState().workspaces[workspaceKey]?.text ?? "",
         consumedTranscript: "",
       };
+      voiceSegmentRef.current = segment;
+    } else if (!segment.traceId) {
+      segment = { ...segment, traceId: latestVoiceTranscript.traceId };
       voiceSegmentRef.current = segment;
     }
     const transcript = transcriptDeltaAfterConsumed(
@@ -397,17 +447,20 @@ export function Composer({
       segment.consumedTranscript,
     );
     const next = joinVoiceDraft(segment.baseText, transcript);
-    if (next !== draftTextRef.current) {
-      applyDraftText(next, "voice");
+    const targetText = useDraftStore.getState().workspaces[segment.workspaceKey]?.text ?? "";
+    if (next !== targetText) {
+      setWorkspaceText(segment.workspaceKey, next);
+      if (segment.workspaceKey === workspaceKey) draftTextRef.current = next;
     }
     if (latestVoiceTranscript.kind === "final") {
       voiceSegmentRef.current = {
+        workspaceKey: segment.workspaceKey,
         traceId: latestVoiceTranscript.traceId,
         baseText: next,
         consumedTranscript: latestVoiceTranscript.text,
       };
     }
-  }, [applyDraftText, latestVoiceTranscript]);
+  }, [latestVoiceTranscript, setWorkspaceText, workspaceKey]);
 
   useEffect(() => {
     if (!voiceErrorToastReadyRef.current) {
@@ -442,19 +495,34 @@ export function Composer({
     }
     void (async () => {
       const voiceState = useVoiceInputStore.getState();
-      if (isVoiceInputLive(voiceState.phase)) {
+      const voiceTargetsSubmission = voiceSegmentRef.current?.workspaceKey === workspaceKey;
+      if (isVoiceInputLive(voiceState.phase) && voiceTargetsSubmission) {
         await stopVoiceInput("send");
       }
       const result = send(trimmed, readyAttachments);
       if (!result.accepted) return;
 
-      if (voiceState.traceId) {
+      // TDesign may echo the pre-send value through its native change/input listeners
+      // after onSend returns. Keep that same-task echo from recreating the source draft.
+      const submittedEcho = { workspaceKey, value: visibleText };
+      submittedValueEchoRef.current = submittedEcho;
+      window.setTimeout(() => {
+        if (submittedValueEchoRef.current === submittedEcho) {
+          submittedValueEchoRef.current = null;
+        }
+      }, 0);
+
+      if (workspaceKey === HOME_DRAFT_KEY) claimHomeDraft(result.sessionId);
+      beginDraftSubmission(result.sessionId, result.sessionId, result.runId);
+
+      if (voiceState.traceId && voiceTargetsSubmission) {
         sentVoiceTraceIdsRef.current.add(voiceState.traceId);
       }
-      voiceSegmentRef.current = null;
-      applyDraftText("", "send");
-      setDraftAttachments([]);
-      void result.completion;
+      if (voiceTargetsSubmission) voiceSegmentRef.current = null;
+      draftTextRef.current = "";
+      void result.completion.then((outcome) => {
+        finishDraftSubmission(result.runId, outcome === "rejected");
+      });
     })();
   };
 
@@ -465,6 +533,7 @@ export function Composer({
       return;
     }
     voiceSegmentRef.current = {
+      workspaceKey,
       traceId: "",
       baseText: draftTextRef.current,
       consumedTranscript: "",

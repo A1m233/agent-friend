@@ -3,10 +3,29 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 
 // mock services 层：只控制 runAgentStream / sessionsApi.get 的行为，验证 store 的错误兜底。
 vi.mock("@/services", () => ({
+  StreamAdmissionError: class StreamAdmissionError extends Error {},
   continueToolResultStream: vi.fn(),
   editResendLatestStream: vi.fn(),
   modelsApi: { validate: vi.fn() },
   runAgentStream: vi.fn(),
+  runsApi: {
+    get: vi.fn(async (runId: string) => ({
+      run_id: runId,
+      session_id: "",
+      status: "terminal",
+      outcome: "completed",
+      reason_code: "",
+      channel: "text",
+      origin: "ag_ui",
+      control_scope: "desktop_text",
+      created_at: "2026-07-25T00:00:00Z",
+      started_at: "2026-07-25T00:00:00Z",
+      finished_at: "2026-07-25T00:00:01Z",
+      version: 3,
+    })),
+    list: vi.fn(async () => ({ runs: [] })),
+    cancel: vi.fn(),
+  },
   sessionsApi: { get: vi.fn(), switchModel: vi.fn() },
 }));
 
@@ -20,12 +39,16 @@ import {
   editResendLatestStream,
   modelsApi,
   runAgentStream,
+  runsApi,
   sessionsApi,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
 import { useConversationStore, type SendStartResult } from "./conversation";
+import { useDraftStore } from "./drafts";
 
 const mockStream = vi.mocked(runAgentStream);
+const mockRunGet = vi.mocked(runsApi.get);
+const mockRunList = vi.mocked(runsApi.list);
 const mockEditStream = vi.mocked(editResendLatestStream);
 const mockContinueStream = vi.mocked(continueToolResultStream);
 const mockGet = vi.mocked(sessionsApi.get);
@@ -96,14 +119,24 @@ function messageTexts() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockGet.mockReset();
   useConversationStore.getState().newSession();
   useConversationStore.setState({
+    currentSessionId: null,
+    currentModel: null,
+    messages: [],
     streaming: false,
     historyLoading: false,
     modelSwitching: false,
     modelSwitchTarget: null,
     editingMessageId: null,
+    sessionViews: {},
+    runSnapshots: {},
+    viewAccessedAt: {},
+    activeRunIdBySession: {},
+    unreadRunOutcomeBySession: {},
   });
+  useDraftStore.setState({ workspaces: {}, submissions: {} });
   mockSetLastChatSessionId.mockClear();
   mockValidateModel.mockImplementation(async (model) => ({ model, available: true }));
   mockSwitchModel.mockImplementation(async (sessionId, model) => ({
@@ -295,6 +328,106 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     if (accepted.accepted) await accepted.completion;
   });
 
+  it("切到新会话后可并发发送，两个 run 只更新各自 session workspace", async () => {
+    const gates = new Map<string, ReturnType<typeof deferred<void>>>();
+    mockStream.mockImplementation((input) => (async function* () {
+      const gate = deferred<void>();
+      gates.set(input.threadId, gate);
+      yield ev({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: `assistant:${input.threadId}`,
+        role: "assistant",
+      });
+      yield ev({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: `assistant:${input.threadId}`,
+        delta: input.text,
+      });
+      await gate.promise;
+      yield ev({ type: EventType.RUN_FINISHED, threadId: input.threadId, runId: input.runId });
+    })());
+
+    const first = useConversationStore.getState().send("A reply");
+    expect(first.accepted).toBe(true);
+    const firstSession = useConversationStore.getState().currentSessionId!;
+
+    useConversationStore.getState().newSession();
+    const second = useConversationStore.getState().send("B reply");
+    expect(second.accepted).toBe(true);
+    const secondSession = useConversationStore.getState().currentSessionId!;
+    expect(secondSession).not.toBe(firstSession);
+
+    await vi.waitFor(() => expect(gates.size).toBe(2));
+    gates.get(secondSession)!.resolve();
+    gates.get(firstSession)!.resolve();
+    if (first.accepted) await first.completion;
+    if (second.accepted) await second.completion;
+
+    const state = useConversationStore.getState();
+    expect(state.sessionViews[firstSession].messages.at(-1)?.blocks).toMatchObject([
+      { kind: "text", text: "A reply" },
+    ]);
+    expect(state.sessionViews[secondSession].messages.at(-1)?.blocks).toMatchObject([
+      { kind: "text", text: "B reply" },
+    ]);
+  });
+
+  it("服务端 admission reject 移除乐观消息，供 Composer 恢复 submission", async () => {
+    mockGet.mockReset();
+    mockGet.mockImplementation(async (sessionId) => ({
+      session_id: sessionId,
+      title: sessionId,
+      persona: "default",
+      model: "test",
+      events: [],
+      active_events: [],
+      revision: 0,
+    }));
+    mockStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" });
+    });
+    mockRunGet.mockImplementationOnce(async (runId) => ({
+      run_id: runId,
+      session_id: useConversationStore.getState().currentSessionId!,
+      status: "terminal",
+      outcome: "rejected",
+      reason_code: "interactive_busy",
+      channel: "text",
+      origin: "ag_ui",
+      control_scope: "desktop_text",
+      created_at: "2026-07-25T00:00:00Z",
+      started_at: null,
+      finished_at: "2026-07-25T00:00:00Z",
+      version: 2,
+    }));
+
+    const outcome = await finishAcceptedSend(useConversationStore.getState().send("重复发送"));
+
+    expect(outcome).toBe("rejected");
+    expect(useConversationStore.getState().messages).toEqual([]);
+  });
+
+  it("transport 断线且 run pull 暂时失败时保持 session busy，等待重连校准", async () => {
+    mockStream.mockImplementation(() => {
+      throw new Error("connection reset");
+    });
+    mockRunGet.mockRejectedValueOnce(new Error("bridge offline"));
+
+    const result = useConversationStore.getState().send("继续后台运行");
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) return;
+    expect(await result.completion).toBe("failed");
+
+    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(useConversationStore.getState().activeRunIdBySession[result.sessionId]).toBe(
+      result.runId,
+    );
+    expect(useConversationStore.getState().send("不应重复接纳")).toEqual({
+      accepted: false,
+      reason: "busy",
+    });
+  });
+
   it("打开历史会话时优先投影 active_events", async () => {
     mockGet.mockResolvedValue({
       session_id: "sid-1",
@@ -377,7 +510,12 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     await useConversationStore.getState().editResendLatest(oldUserId!, "新问题");
 
     expect(mockEditStream).toHaveBeenCalledWith(
-      { sessionId: "sid-1", text: "新问题", expectedUserContent: "旧问题" },
+      {
+        sessionId: "sid-1",
+        runId: expect.any(String),
+        text: "新问题",
+        expectedUserContent: "旧问题",
+      },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
@@ -516,6 +654,7 @@ describe("conversation store · continue tool result", () => {
 
     expect(mockContinueStream).toHaveBeenCalledWith(
       "sid-1",
+      expect.any(String),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(useConversationStore.getState().messages.filter((m) => m.role === "user")).toHaveLength(1);
@@ -524,6 +663,59 @@ describe("conversation store · continue tool result", () => {
 });
 
 describe("conversation store · background detail refresh", () => {
+  it("先收到 external active run，再打开 detail 时仍保持 busy", async () => {
+    useConversationStore.getState().applyRunSnapshot({
+      run_id: "external-run",
+      session_id: "sid-external",
+      status: "running",
+      outcome: null,
+      reason_code: "",
+      channel: "voice",
+      origin: "openai",
+      control_scope: "voice",
+      created_at: "2026-07-25T00:00:00Z",
+      started_at: "2026-07-25T00:00:01Z",
+      finished_at: null,
+      version: 2,
+    });
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-external", "external partial"));
+
+    await useConversationStore.getState().openSession("sid-external");
+
+    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(useConversationStore.getState().send("不应接纳")).toEqual({
+      accepted: false,
+      reason: "busy",
+    });
+  });
+
+  it("重连 pull 中缺失的旧 active run 会解除 busy 并刷新当前 detail", async () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-stale",
+      streaming: true,
+      activeRunIdBySession: { "sid-stale": "stale-run" },
+      sessionViews: {
+        "sid-stale": {
+          messages: [],
+          currentModel: "test",
+          streaming: true,
+          historyLoading: false,
+          historyLoadSeq: 0,
+          syncRefreshSeq: 0,
+          revision: 0,
+        },
+      },
+    });
+    mockRunList.mockResolvedValueOnce({ runs: [] });
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-stale", "recovered"));
+
+    await useConversationStore.getState().calibrateRuns();
+
+    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(useConversationStore.getState().activeRunIdBySession).toEqual({});
+    await vi.waitFor(() => expect(firstText()).toBe("recovered"));
+  });
+
   it("反序返回时旧 refresh 不覆盖新结果", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "initial"));
     await useConversationStore.getState().openSession("sid-1");
@@ -557,6 +749,45 @@ describe("conversation store · background detail refresh", () => {
     useConversationStore.setState({ currentSessionId: "sid-1", streaming: true });
     expect(await useConversationStore.getState().refreshCurrentSession("sid-1")).toBe("stale");
     expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe("conversation store · bounded caches", () => {
+  it("只驱逐超出 20 个的空闲 view，保留 current、active 和非空草稿 session", () => {
+    const emptyView = {
+      messages: [],
+      currentModel: null,
+      streaming: false,
+      historyLoading: false,
+      historyLoadSeq: 0,
+      syncRefreshSeq: 0,
+      revision: 0,
+    };
+    const idleEntries = Object.fromEntries(
+      Array.from({ length: 25 }, (_, index) => [`idle-${index}`, { ...emptyView }]),
+    );
+    useConversationStore.setState({
+      currentSessionId: "current",
+      sessionViews: {
+        ...idleEntries,
+        current: { ...emptyView },
+        active: { ...emptyView, streaming: true },
+        draft: { ...emptyView },
+      },
+      activeRunIdBySession: { active: "run-active" },
+      viewAccessedAt: Object.fromEntries(
+        Array.from({ length: 25 }, (_, index) => [`idle-${index}`, index]),
+      ),
+    });
+    useDraftStore.getState().setText("draft", "未发送内容");
+
+    useConversationStore.getState().pruneCaches();
+
+    const views = useConversationStore.getState().sessionViews;
+    expect(Object.keys(views).filter((key) => key.startsWith("idle-"))).toHaveLength(20);
+    expect(views.current).toBeDefined();
+    expect(views.active).toBeDefined();
+    expect(views.draft).toBeDefined();
   });
 });
 

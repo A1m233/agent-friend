@@ -8,7 +8,17 @@ import pytest
 from agent.runtime import SessionBusyError
 from agent.runtime.cancellation import CancelReason, RunCancelled
 from agent.runtime.inbox import SystemTriggerEvent, UserEvent
-from agent.runtime.models import RunHandle, RunOutcome, RunPriority, RunRequest
+from agent.runtime.models import (
+    ConsumerAbandonPolicy,
+    InteractiveBusyPolicy,
+    RunCancelResult,
+    RunHandle,
+    RunOutcome,
+    RunPriority,
+    RunRequest,
+    RunSnapshot,
+    RunStatus,
+)
 from agent.runtime.scheduler import RunScheduler, RuntimeDrainReport
 
 
@@ -330,3 +340,122 @@ def test_runs_submitted_during_session_mutation_start_after_release() -> None:
     assert started.wait(2)
     assert handle.wait(2) is not None
     assert scheduler.stop()
+
+
+def test_run_lifecycle_snapshots_are_versioned() -> None:
+    release = threading.Event()
+    snapshots: list[RunSnapshot] = []
+
+    def execute(_request: RunRequest, _handle: RunHandle) -> None:
+        assert release.wait(2)
+
+    scheduler = RunScheduler(execute, max_workers=1, on_run_changed=snapshots.append)
+    scheduler.start()
+    handle = scheduler.submit(_user("s", "hello"))
+    deadline = time.monotonic() + 2
+    while handle.status is not RunStatus.RUNNING and time.monotonic() < deadline:
+        time.sleep(0.005)
+    release.set()
+    assert handle.wait(2) is not None
+    assert [snapshot.status for snapshot in snapshots] == [
+        RunStatus.QUEUED,
+        RunStatus.RUNNING,
+        RunStatus.TERMINAL,
+    ]
+    assert [snapshot.version for snapshot in snapshots] == sorted(
+        snapshot.version for snapshot in snapshots
+    )
+    assert snapshots[-1].outcome is RunOutcome.COMPLETED
+    assert scheduler.stop()
+
+
+def test_desktop_interactive_rejects_same_session_interactive_work() -> None:
+    release = threading.Event()
+    started = threading.Event()
+
+    def execute(_request: RunRequest, _handle: RunHandle) -> None:
+        started.set()
+        assert release.wait(2)
+
+    scheduler = RunScheduler(execute, max_workers=1)
+    scheduler.start()
+    active = scheduler.submit(_user("s", "first"))
+    assert started.wait(2)
+    rejected = scheduler.submit(
+        RunRequest(
+            event=UserEvent(session_id="s", user_input="second"),
+            interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+        )
+    )
+    assert rejected.terminal is not None
+    assert rejected.terminal.outcome is RunOutcome.REJECTED
+    assert rejected.terminal.reason_code == "session_busy"
+    release.set()
+    assert active.wait(2) is not None
+    assert scheduler.stop()
+
+
+def test_precise_cancel_validates_session_and_scope_and_finishes_queued() -> None:
+    scheduler = RunScheduler(lambda _request, _handle: None, max_workers=1)
+    scheduler.start()
+    with scheduler.try_reserve_session_mutation("s"):
+        handle = scheduler.submit(
+            RunRequest(
+                event=UserEvent(session_id="s", user_input="hello"),
+                control_scope="desktop_text",
+            )
+        )
+        mismatch, _ = scheduler.cancel_run(
+            handle.run_id,
+            expected_session_id="other",
+            required_control_scope="desktop_text",
+        )
+        assert mismatch is RunCancelResult.SESSION_MISMATCH
+        scope_mismatch, _ = scheduler.cancel_run(
+            handle.run_id,
+            expected_session_id="s",
+            required_control_scope="voice",
+        )
+        assert scope_mismatch is RunCancelResult.SCOPE_MISMATCH
+        accepted, snapshot = scheduler.cancel_run(
+            handle.run_id,
+            expected_session_id="s",
+            required_control_scope="desktop_text",
+        )
+        assert accepted is RunCancelResult.ACCEPTED
+        assert snapshot is not None and snapshot.status is RunStatus.TERMINAL
+        assert snapshot.outcome is RunOutcome.CANCELLED
+    assert scheduler.stop()
+
+
+def test_detached_consumer_does_not_cancel_or_backpressure_run() -> None:
+    request = RunRequest(
+        event=UserEvent(session_id="s", user_input="hello"),
+        consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+    )
+    handle = RunHandle(request, event_queue_size=1)
+    handle.emit("first")
+    events = handle.events()
+    assert next(events) == "first"
+    handle.abandon_consumer()
+    assert not handle.token.is_cancelled
+    started = time.monotonic()
+    for index in range(100):
+        handle.emit(index)
+    assert time.monotonic() - started < 0.5
+    assert handle.finish_once(RunOutcome.COMPLETED)
+    assert handle.terminal is not None
+    assert handle.terminal.outcome is RunOutcome.COMPLETED
+
+
+def test_terminal_runs_release_scheduler_tracking_indexes() -> None:
+    scheduler = RunScheduler(lambda _request, _handle: None, max_workers=2)
+    scheduler.start()
+    handles = [scheduler.submit(_user(f"s-{index}", "hello")) for index in range(20)]
+    assert all(handle.wait(2) is not None for handle in handles)
+
+    assert scheduler.stop()
+    assert scheduler._handles == {}
+    assert scheduler._requests == {}
+    assert scheduler._dedupe == {}
+    assert scheduler._mailboxes == {}

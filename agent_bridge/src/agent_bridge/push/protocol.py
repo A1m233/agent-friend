@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime
 
 from agent.runtime import PushEnvelope
 
@@ -25,5 +26,11 @@ def encode_envelope_sse(env: PushEnvelope) -> bytes:
     ``message`` 事件。``event: push`` 名让消费方区分不同事件类别（未来若
     新增 ``event: error`` 等可加分支）。
     """
-    payload = json.dumps(asdict(env), ensure_ascii=False)
+    payload = json.dumps(asdict(env), ensure_ascii=False, default=_json_default)
     return f"event: push\ndata: {payload}\n\n".encode()
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"unsupported push value: {type(value).__name__}")

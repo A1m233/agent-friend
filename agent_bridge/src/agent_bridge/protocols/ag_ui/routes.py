@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import logging
+import threading
+from typing import Any
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
-from agent.runtime import UserEvent
+from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.models import RunRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -29,6 +31,7 @@ from llm_providers import model_capabilities
 
 from ...assembly import BridgeRuntime
 from ...errors import map_exception
+from ...routes.runs import DESKTOP_TEXT_CONTROL_SCOPE
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .decoders import DecodeError, decode_run_agent_input
 from .encoders import encode_stream
@@ -77,7 +80,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     "message": f"单轮最多添加 {capabilities.max_attachments_per_turn} 个附件。",
                 },
             )
-        attachments = []
+        validated_attachments = []
+        attachment_store = None
         if decoded.draft_attachments:
             store = runtime.attachment_store
             if store is None:
@@ -104,9 +108,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                             "message": "当前模型不支持此附件类型。",
                         },
                     )
-                attachments.append(ref)
+                validated_attachments.append(ref)
             if (
-                sum(item.size_bytes for item in attachments)
+                sum(item.size_bytes for item in validated_attachments)
                 > capabilities.max_total_attachment_bytes
             ):
                 raise HTTPException(
@@ -116,9 +120,23 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         "message": "本轮附件总大小超过限制。",
                     },
                 )
-            attachments = store.consume_drafts(
-                [item.draft_id for item in decoded.draft_attachments]
-            )
+            attachment_store = store
+
+        consume_lock = threading.Lock()
+        consumed_attachments: list[Any] | None = None
+
+        def _consume_attachments() -> list[Any]:
+            nonlocal consumed_attachments
+            with consume_lock:
+                if consumed_attachments is None:
+                    consumed_attachments = (
+                        attachment_store.consume_drafts(
+                            [item.draft_id for item in decoded.draft_attachments]
+                        )
+                        if attachment_store is not None
+                        else []
+                    )
+                return consumed_attachments
 
         accept = request.headers.get("accept") or ""
         handle = None
@@ -148,9 +166,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel="text",
                 conversation_factory=lambda: bridge.bind_persistent(boot),
                 metadata={"protocol": "ag_ui"},
+                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+                interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+                control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
                 conversation_runner=lambda conv, run_request, token: conv.stream(
                     decoded.new_user_input,
-                    attachments=attachments,
+                    attachments=_consume_attachments(),
                     user_event_id=decoded.user_message_id,
                     channel=run_request.channel,
                     run_id=run_request.run_id,
@@ -172,7 +193,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_handle=handle,
                 run_conversation=lambda conv, text: conv.stream(
                     text,
-                    attachments=attachments,
+                    attachments=_consume_attachments(),
                     user_event_id=decoded.user_message_id,
                     channel="text",
                     run_id=decoded.run_id,

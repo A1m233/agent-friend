@@ -98,6 +98,11 @@ class SessionManager:
 
     # ----- 会话 CRUD -----
 
+    def current_revision(self, session_id: str) -> int:
+        if self._session_change_broker is None:
+            return 0
+        return self._session_change_broker.current_revision(session_id)
+
     def create(
         self,
         persona: str,

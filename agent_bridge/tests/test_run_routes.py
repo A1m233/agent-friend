@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+from agent.runtime import (
+    AgentRuntime,
+    ConsumerAbandonPolicy,
+    InteractiveBusyPolicy,
+    UserEvent,
+)
+from agent_bridge.app import create_app_with_runtime
+from agent_bridge.assembly import BridgeRuntime
+from agent_bridge.routes.runs import DESKTOP_TEXT_CONTROL_SCOPE
+from agent_bridge.settings import BridgeSettings
+from fastapi.testclient import TestClient
+
+from agent import (
+    Conversation,
+    JsonlSessionStore,
+    MarkdownPromptBuilder,
+    NaiveContextManager,
+    PersonaCatalog,
+    SessionManager,
+    make_default_registry,
+)
+
+if TYPE_CHECKING:
+    from llm_providers import LLMClient
+
+
+def _runtime(tmp_path: Path) -> BridgeRuntime:
+    settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
+    store = JsonlSessionStore(settings.sessions_dir)
+    catalog = PersonaCatalog()
+    tools = make_default_registry()
+
+    def llm_factory(model: str) -> LLMClient:
+        from llm_providers import LLMClient, ProviderSpec
+
+        return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
+
+    def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
+        return MarkdownPromptBuilder(persona_id=persona_id)
+
+    manager = SessionManager(
+        store=store,
+        llm_client_factory=llm_factory,
+        prompt_builder_factory=prompt_factory,
+        context_manager_factory=NaiveContextManager,
+        tool_registry=tools,
+    )
+    agent_runtime = AgentRuntime(conversation_factory=lambda _sid: cast(Conversation, None))
+    return BridgeRuntime(
+        settings=settings,
+        persistent_store=store,
+        transient_store=store,
+        persistent_session_manager=manager,
+        catalog=catalog,
+        tool_registry=tools,
+        prompt_builder_factory=prompt_factory,
+        default_persona=catalog.find_by_name("default").name,
+        default_model="deepseek/deepseek-chat",
+        agent_runtime=agent_runtime,
+    )
+
+
+def test_run_query_returns_recent_terminal(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    assert runtime.agent_runtime is not None
+    runtime.agent_runtime.submit(UserEvent(session_id="s", user_input="hello"), run_id="r1")
+    client = TestClient(create_app_with_runtime(runtime))
+
+    listed = client.get("/v1/runs")
+    fetched = client.get("/v1/runs/r1")
+
+    assert listed.status_code == 200
+    assert [item["run_id"] for item in listed.json()["runs"]] == ["r1"]
+    assert fetched.status_code == 200
+    assert fetched.json()["status"] == "terminal"
+    assert fetched.json()["outcome"] == "rejected"
+
+
+def test_precise_cancel_endpoint_only_controls_matching_desktop_run(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    agent_runtime = runtime.agent_runtime
+    assert agent_runtime is not None
+    agent_runtime.start()
+    try:
+        with agent_runtime.try_reserve_session_mutation("s"):
+            handle = agent_runtime.submit(
+                UserEvent(session_id="s", user_input="hello"),
+                run_id="r1",
+                channel="text",
+                metadata={"protocol": "ag_ui"},
+                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+                interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+                control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
+            )
+            client = TestClient(create_app_with_runtime(runtime))
+            mismatch = client.post("/v1/sessions/other/runs/r1/cancel")
+            cancelled = client.post("/v1/sessions/s/runs/r1/cancel")
+
+            assert mismatch.status_code == 409
+            assert mismatch.json()["detail"]["error"] == "run_session_mismatch"
+            assert cancelled.status_code == 200
+            assert cancelled.json()["result"] == "accepted"
+            assert cancelled.json()["run"]["outcome"] == "cancelled"
+            assert handle.terminal is not None
+    finally:
+        agent_runtime.stop()
+
+
+def test_precise_cancel_rejects_external_control_scope(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    agent_runtime = runtime.agent_runtime
+    assert agent_runtime is not None
+    agent_runtime.start()
+    try:
+        with agent_runtime.try_reserve_session_mutation("s"):
+            agent_runtime.submit(
+                UserEvent(session_id="s", user_input="hello"),
+                run_id="voice-run",
+                channel="voice",
+                metadata={"protocol": "openai"},
+                control_scope="voice",
+            )
+            client = TestClient(create_app_with_runtime(runtime))
+            response = client.post("/v1/sessions/s/runs/voice-run/cancel")
+            assert response.status_code == 409
+            assert response.json()["detail"]["error"] == "run_not_desktop_controllable"
+    finally:
+        agent_runtime.stop()

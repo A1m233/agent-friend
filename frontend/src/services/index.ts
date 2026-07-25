@@ -1,7 +1,12 @@
 export { http, createHttp } from "./http";
 export type { FriendlyError } from "./http";
 export { checkHealth } from "./health";
-export { continueToolResultStream, editResendLatestStream, runAgentStream } from "./stream";
+export {
+  continueToolResultStream,
+  editResendLatestStream,
+  runAgentStream,
+  StreamAdmissionError,
+} from "./stream";
 export type { EditResendLatestInput, RunStreamInput, RunStreamOptions } from "./stream";
 export {
   attachmentAssetUrl,
@@ -12,6 +17,7 @@ export {
 export type { AttachmentDraft, AttachmentRef } from "./attachments";
 export { sessionsApi } from "./api/sessions";
 export { modelsApi } from "./api/models";
+export { runsApi } from "./api/runs";
 export type { ModelValidationResult } from "./api/models";
 export { generateDiagnosticBundle } from "./diagnostics";
 export type {

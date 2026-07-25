@@ -160,6 +160,42 @@ def test_encode_envelope_sse_handles_unicode() -> None:
     assert "该睡了".encode() in raw
 
 
+def test_encode_run_changed_envelope_serializes_snapshot_datetimes() -> None:
+    import json
+    from datetime import UTC, datetime
+
+    from agent.runtime import PushEnvelope, RunSnapshot, RunStatus
+    from agent_bridge.push.protocol import encode_envelope_sse
+
+    snapshot = RunSnapshot(
+        run_id="r1",
+        session_id="s1",
+        status=RunStatus.RUNNING,
+        outcome=None,
+        reason_code="",
+        channel="text",
+        origin="ag_ui",
+        control_scope="desktop_text",
+        created_at=datetime(2026, 7, 25, tzinfo=UTC),
+        started_at=datetime(2026, 7, 25, 0, 0, 1, tzinfo=UTC),
+        finished_at=None,
+        version=2,
+    )
+    raw = encode_envelope_sse(
+        PushEnvelope(
+            kind="run_changed",
+            session_id="s1",
+            seq=1,
+            source_kind=None,
+            events=[],
+            run=snapshot,
+        )
+    )
+    payload = json.loads(raw.decode().splitlines()[1][6:])
+    assert payload["run"]["run_id"] == "r1"
+    assert payload["run"]["started_at"] == "2026-07-25T00:00:01+00:00"
+
+
 # ===== 端点已挂载 / health 通 =====
 
 

@@ -10,6 +10,11 @@ vi.mock("@/services", () => ({
   runAgentStream: vi.fn(),
   editResendLatestStream: vi.fn(),
   continueToolResultStream: vi.fn(),
+  runsApi: {
+    get: vi.fn(),
+    list: vi.fn(async () => ({ runs: [] })),
+    cancel: vi.fn(),
+  },
 }));
 vi.mock("@/lib/persistence/chatUi", () => ({ setLastChatSessionId: vi.fn() }));
 
@@ -17,6 +22,7 @@ import { sessionsApi } from "@/services";
 import { useConversationStore } from "./conversation";
 import {
   handlePushReconnectedForSync,
+  handleRunChangedForSync,
   handleSessionChangedForSync,
   resetSessionSyncForTests,
   startSessionSyncSubscriber,
@@ -47,6 +53,10 @@ describe("sessionSync", () => {
       historyLoading: false,
       historyLoadSeq: 0,
       syncRefreshSeq: 0,
+      sessionViews: {},
+      runSnapshots: {},
+      activeRunIdBySession: {},
+      unreadRunOutcomeBySession: {},
     });
     vi.mocked(sessionsApi.list).mockResolvedValue([]);
     vi.mocked(sessionsApi.get).mockResolvedValue({
@@ -91,5 +101,32 @@ describe("sessionSync", () => {
     await vi.runAllTimersAsync();
     expect(sessionsApi.list).toHaveBeenCalledTimes(1);
     expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("run_changed updates only the matching session run projection", () => {
+    handleRunChangedForSync({
+      kind: "run_changed",
+      session_id: "background",
+      seq: 4,
+      source_kind: null,
+      events: [],
+      run: {
+        run_id: "run-b",
+        session_id: "background",
+        status: "running",
+        outcome: null,
+        reason_code: "",
+        channel: "text",
+        origin: "ag_ui",
+        control_scope: "desktop_text",
+        created_at: "2026-07-25T00:00:00Z",
+        started_at: "2026-07-25T00:00:01Z",
+        finished_at: null,
+        version: 2,
+      },
+    });
+    const state = useConversationStore.getState();
+    expect(state.activeRunIdBySession.background).toBe("run-b");
+    expect(state.streaming).toBe(false);
   });
 });

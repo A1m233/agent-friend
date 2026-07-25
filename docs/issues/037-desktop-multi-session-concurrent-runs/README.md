@@ -1,9 +1,9 @@
 # 037 · 桌面对话缺少完整的多会话并发运行态
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-07-25
-- **关联需求**：045-agent-runtime-unified-execution
+- **关联需求**：045-agent-runtime-unified-execution、062-desktop-multi-session-concurrent-runs
 
 ## 现象
 
@@ -33,3 +33,5 @@
 - 将发送、停止和 busy 判断收敛为 session 级语义，并在会话列表展示生成中 / 已完成状态。
 - 第一阶段仅保证应用进程存活期间的多会话并发；跨刷新、断网和重启的 detached run / 重新订阅能力另行评估。
 - 保留后端同 session 串行边界，并补桌面前端到 AG-UI 的跨 session 并发集成测试。
+
+修复指向：已由需求 `062-desktop-multi-session-concurrent-runs` 完成实现、自动化门禁与真实桌面验收。

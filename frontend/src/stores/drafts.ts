@@ -1,0 +1,212 @@
+import { create } from "zustand";
+import { releaseAttachmentDraft, type AttachmentDraft } from "@/services";
+
+export const HOME_DRAFT_KEY = "__agent_friend_home_draft__";
+
+export type DraftAttachmentState =
+  | { status: "uploading"; localId: string; file: File }
+  | { status: "ready"; localId: string; file: File; draft: AttachmentDraft }
+  | { status: "failed"; localId: string; file: File; message: string }
+  | { status: "expired"; localId: string; file: File; message: string };
+
+export interface DraftValidationState {
+  modelId: string;
+  compatible: boolean;
+  reason?: string;
+  incompatibleNames: string[];
+}
+
+export interface DraftWorkspace {
+  text: string;
+  attachments: DraftAttachmentState[];
+  validation: DraftValidationState | null;
+  revision: number;
+  updatedAt: number;
+}
+
+interface DraftSubmission {
+  runId: string;
+  sessionId: string;
+  sourceKey: string;
+  text: string;
+  attachments: DraftAttachmentState[];
+}
+
+interface DraftState {
+  workspaces: Record<string, DraftWorkspace>;
+  submissions: Record<string, DraftSubmission>;
+  setText: (key: string, text: string) => void;
+  addAttachment: (key: string, attachment: DraftAttachmentState) => void;
+  updateAttachment: (
+    key: string,
+    localId: string,
+    update: (current: DraftAttachmentState) => DraftAttachmentState,
+  ) => void;
+  removeAttachment: (key: string, localId: string) => void;
+  setValidation: (key: string, validation: DraftValidationState) => void;
+  claimHome: (sessionId: string) => void;
+  beginSubmission: (key: string, sessionId: string, runId: string) => void;
+  finishSubmission: (runId: string, restore: boolean) => void;
+  discard: (key: string) => void;
+}
+
+export function draftKey(sessionId: string | null): string {
+  return sessionId ?? HOME_DRAFT_KEY;
+}
+
+export const EMPTY_DRAFT_WORKSPACE: DraftWorkspace = Object.freeze({
+  text: "",
+  attachments: [],
+  validation: null,
+  revision: 0,
+  updatedAt: 0,
+});
+
+function workspace(state: DraftState, key: string): DraftWorkspace {
+  return state.workspaces[key] ?? EMPTY_DRAFT_WORKSPACE;
+}
+
+function changed(current: DraftWorkspace, patch: Partial<DraftWorkspace>): DraftWorkspace {
+  return {
+    ...current,
+    ...patch,
+    revision: current.revision + 1,
+    updatedAt: Date.now(),
+  };
+}
+
+export const useDraftStore = create<DraftState>((set, get) => ({
+  workspaces: {},
+  submissions: {},
+
+  setText(key, text) {
+    set((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        [key]: changed(workspace(state, key), { text }),
+      },
+    }));
+  },
+
+  addAttachment(key, attachment) {
+    set((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        [key]: changed(workspace(state, key), {
+          attachments: [...workspace(state, key).attachments, attachment],
+        }),
+      },
+    }));
+  },
+
+  updateAttachment(key, localId, update) {
+    set((state) => {
+      const current = workspace(state, key);
+      if (!current.attachments.some((item) => item.localId === localId)) return state;
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(current, {
+            attachments: current.attachments.map((item) =>
+              item.localId === localId ? update(item) : item),
+          }),
+        },
+      };
+    });
+  },
+
+  removeAttachment(key, localId) {
+    const target = workspace(get(), key).attachments.find((item) => item.localId === localId);
+    set((state) => {
+      const current = workspace(state, key);
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(current, {
+            attachments: current.attachments.filter((item) => item.localId !== localId),
+          }),
+        },
+      };
+    });
+    if (target?.status === "ready") void releaseAttachmentDraft(target.draft.draftId);
+  },
+
+  setValidation(key, validation) {
+    set((state) => ({
+      workspaces: {
+        ...state.workspaces,
+        [key]: { ...workspace(state, key), validation },
+      },
+    }));
+  },
+
+  claimHome(sessionId) {
+    set((state) => {
+      const home = state.workspaces[HOME_DRAFT_KEY];
+      if (!home) return state;
+      const workspaces = { ...state.workspaces, [sessionId]: home };
+      delete workspaces[HOME_DRAFT_KEY];
+      return { workspaces };
+    });
+  },
+
+  beginSubmission(key, sessionId, runId) {
+    set((state) => {
+      const current = workspace(state, key);
+      const workspaces = { ...state.workspaces };
+      delete workspaces[key];
+      return {
+        workspaces,
+        submissions: {
+          ...state.submissions,
+          [runId]: {
+            runId,
+            sessionId,
+            sourceKey: key,
+            text: current.text,
+            attachments: current.attachments,
+          },
+        },
+      };
+    });
+  },
+
+  finishSubmission(runId, restore) {
+    set((state) => {
+      const submission = state.submissions[runId];
+      if (!submission) return state;
+      const submissions = { ...state.submissions };
+      delete submissions[runId];
+      if (!restore) return { submissions };
+      const targetKey = submission.sessionId;
+      const current = workspace(state, targetKey);
+      const existingIds = new Set(current.attachments.map((item) => item.localId));
+      const restoredText = [submission.text, current.text].filter(Boolean).join("\n");
+      return {
+        submissions,
+        workspaces: {
+          ...state.workspaces,
+          [targetKey]: changed(current, {
+            text: restoredText,
+            attachments: [
+              ...submission.attachments.filter((item) => !existingIds.has(item.localId)),
+              ...current.attachments,
+            ],
+          }),
+        },
+      };
+    });
+  },
+
+  discard(key) {
+    const current = workspace(get(), key);
+    for (const item of current.attachments) {
+      if (item.status === "ready") void releaseAttachmentDraft(item.draft.draftId);
+    }
+    set((state) => {
+      const workspaces = { ...state.workspaces };
+      delete workspaces[key];
+      return { workspaces };
+    });
+  },
+}));

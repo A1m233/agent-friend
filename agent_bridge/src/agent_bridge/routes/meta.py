@@ -27,7 +27,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
-from agent.runtime import UserEvent
+from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.cancellation import CancellationToken
 from agent.runtime.models import RunRequest
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -48,6 +48,7 @@ from ..assembly import BridgeRuntime
 from ..attachment_reconciliation import reconcile_attachments
 from ..errors import UnsupportedModelError, build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
+from .runs import DESKTOP_TEXT_CONTROL_SCOPE
 
 
 class PersonaSwitchBody(BaseModel):
@@ -84,10 +85,27 @@ class EditResendLatestBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     text: str = Field(..., min_length=1, description="替换后的用户输入")
+    run_id: str | None = Field(
+        None,
+        alias="runId",
+        description="客户端预生成的稳定 run id；旧客户端不传时由 Bridge 生成",
+    )
     expected_user_content: str | None = Field(
         None,
         alias="expectedUserContent",
         description="客户端看到的旧最后一条 user 内容，用于并发变化保护",
+    )
+
+
+class ContinueToolResultBody(BaseModel):
+    """``POST /v1/sessions/{id}/continue-tool-result`` 请求体。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    run_id: str | None = Field(
+        None,
+        alias="runId",
+        description="客户端预生成的稳定 run id；旧客户端不传时由 Bridge 生成",
     )
 
 
@@ -148,7 +166,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def get_session(session_id: str) -> dict[str, Any]:
         """单个 session 的 ``events`` 列表（调试用，纯 REST 不走协议）。"""
         try:
+            revision_before = mgr.current_revision(session_id)
             session = mgr.open(session_id)
+            revision = mgr.current_revision(session_id)
+            if revision != revision_before:
+                session = mgr.open(session_id)
+                revision = mgr.current_revision(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         return {
@@ -158,27 +181,39 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": session.current_model,
             "events": [_dataclass_to_dict(ev) for ev in session.events],
             "active_events": [_dataclass_to_dict(ev) for ev in session.active_events],
+            "revision": revision,
         }
 
     @router.patch("/sessions/{session_id}")
-    def patch_session(session_id: str, body: SessionPatchBody) -> dict[str, Any]:
+    def patch_session(session_id: str, body: SessionPatchBody) -> Any:
         """更新会话管理 metadata：展示标题 / 归档状态。"""
         if body.title is None and body.archived is None:
             raise HTTPException(status_code=400, detail="至少需要提供 title 或 archived")
         try:
-            summary = None
-            if body.title is not None:
-                summary = mgr.rename(session_id, body.title)
-            if body.archived is True:
-                summary = mgr.archive(session_id)
-            elif body.archived is False:
-                summary = mgr.unarchive(session_id)
-        except SessionNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except SessionPersistError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            with ExitStack() as stack:
+                if body.archived is not None:
+                    if runtime.agent_runtime is not None:
+                        stack.enter_context(
+                            runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                        )
+                    stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
+                summary = None
+                if body.title is not None:
+                    summary = mgr.rename(session_id, body.title)
+                if body.archived is True:
+                    summary = mgr.archive(session_id)
+                elif body.archived is False:
+                    summary = mgr.unarchive(session_id)
+        except Exception as exc:
+            if isinstance(exc, SessionNotFoundError):
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if isinstance(exc, ValueError):
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
         if summary is None:  # 防御：前面已检查至少一个字段。
             raise HTTPException(status_code=400, detail="没有可更新字段")
         return _dataclass_to_dict(summary)
@@ -194,7 +229,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         if not text:
             raise HTTPException(status_code=400, detail="text 不能为空")
         accept = request.headers.get("accept") or ""
-        run_id = uuid4().hex
+        run_id = body.run_id or uuid4().hex
 
         def _conversation_for_edit() -> Conversation:
             session = mgr.open(session_id)
@@ -222,6 +257,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel="text",
                 conversation_factory=_conversation_for_edit,
                 conversation_runner=_edit_runner,
+                metadata={"protocol": "ag_ui", "operation": "edit_resend_latest"},
+                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+                interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+                control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
             )
 
         return StreamingResponse(
@@ -249,10 +288,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         )
 
     @router.post("/sessions/{session_id}/continue-tool-result")
-    async def continue_tool_result(session_id: str, request: Request) -> StreamingResponse:
+    async def continue_tool_result(
+        session_id: str,
+        request: Request,
+        body: ContinueToolResultBody | None = None,
+    ) -> StreamingResponse:
         """从最新可恢复失败轮的已完成工具结果继续生成，禁止再次调用工具。"""
         accept = request.headers.get("accept") or ""
-        run_id = uuid4().hex
+        run_id = body.run_id if body and body.run_id else uuid4().hex
 
         def _conversation_for_continue() -> Conversation:
             session = mgr.open(session_id)
@@ -281,6 +324,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel="text",
                 conversation_factory=_conversation_for_continue,
                 metadata={"protocol": "ag_ui", "operation": "continue_tool_result"},
+                consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
+                interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,
+                control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
                 conversation_runner=lambda conv, run_request, token: conv.continue_after_tool_error(
                     channel="text",
                     run_id=run_request.run_id,
@@ -312,17 +358,29 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     @router.delete("/sessions/archived")
     def delete_archived_sessions(
         q: str | None = Query(None, description="可选：只删除标题搜索命中的归档会话"),
-    ) -> dict[str, Any]:
+    ) -> Any:
         """删除已归档会话。"""
         try:
-            deleted = mgr.delete_archived(query=q)
-        except SessionPersistError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            targets = mgr.list(archived=True, query=q)
+            with ExitStack() as stack:
+                for summary in sorted(targets, key=lambda item: item.session_id):
+                    if runtime.agent_runtime is not None:
+                        stack.enter_context(
+                            runtime.agent_runtime.try_reserve_session_mutation(summary.session_id)
+                        )
+                    stack.enter_context(runtime.turn_coordinator.try_hold(summary.session_id))
+                deleted = mgr.delete_archived(query=q)
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
         reconcile_attachments(runtime)
         return {"deleted": len(deleted), "session_ids": deleted}
 
     @router.delete("/sessions/{session_id}")
-    def delete_session(session_id: str) -> dict[str, Any]:
+    def delete_session(session_id: str) -> Any:
         """删除 session（内部清理用）。
 
         当前唯一调用方是 voice_bridge：如果它为一次语音通话临时创建了 session，
@@ -330,28 +388,49 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         历史列表被无内容通话污染。
         """
         try:
-            mgr.delete(session_id)
+            with ExitStack() as stack:
+                if runtime.agent_runtime is not None:
+                    stack.enter_context(
+                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                    )
+                stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
+                mgr.delete(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        except SessionPersistError as e:
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
         reconcile_attachments(runtime)
         return {"session_id": session_id, "deleted": True}
 
     @router.post("/sessions/{session_id}/persona")
-    def switch_persona(session_id: str, body: PersonaSwitchBody) -> dict[str, Any]:
+    def switch_persona(session_id: str, body: PersonaSwitchBody) -> Any:
         """切换 session 当前 persona；落盘 ``persona_change`` 事件。"""
         try:
             persona_info = runtime.catalog.find_by_name(body.persona)
         except (PersonaNotFoundError, PersonaAmbiguousError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         try:
-            session = mgr.open(session_id)
+            with ExitStack() as stack:
+                if runtime.agent_runtime is not None:
+                    stack.enter_context(
+                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                    )
+                stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
+                session = mgr.open(session_id)
+                conv = mgr.start_conversation(session)
+                conv.switch_persona(persona_info.id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-
-        conv = mgr.start_conversation(session)
-        conv.switch_persona(persona_info.id)
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
 
         return {
             "session_id": session.session_id,
@@ -387,18 +466,29 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         }
 
     @router.post("/sessions/{session_id}/channel")
-    def switch_channel(session_id: str, body: ChannelSwitchBody) -> dict[str, Any]:
+    def switch_channel(session_id: str, body: ChannelSwitchBody) -> Any:
         """切换 session 当前 channel（007 起新增）；落盘 ``channel_change`` 事件。
 
         与 persona / model 切换同模式：幂等（与当前 channel 相同时 no-op）。
         """
         try:
-            session = mgr.open(session_id)
+            with ExitStack() as stack:
+                if runtime.agent_runtime is not None:
+                    stack.enter_context(
+                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
+                    )
+                stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
+                session = mgr.open(session_id)
+                conv = mgr.start_conversation(session)
+                conv.switch_channel(body.channel)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-
-        conv = mgr.start_conversation(session)
-        conv.switch_channel(body.channel)
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
 
         return {
             "session_id": session.session_id,
