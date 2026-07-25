@@ -20,7 +20,7 @@ from __future__ import annotations
 from ..attachments import AttachmentRef
 from ..messages import Message
 from .budget import estimate_request_tokens
-from .errors import ContextInputTooLargeError
+from .errors import ContextBaseOverBudgetError, ContextInputTooLargeError
 from .protocol import BuildResult, RuntimeContext, assemble_messages
 from .tool_projection import project_tool_results
 from .turns import recent_turn_start_candidates
@@ -116,6 +116,17 @@ class FifoContextManager:
         chosen_messages = emergency_messages
         chosen_estimate = estimate_request_tokens(chosen_messages, runtime)
         if chosen_estimate > threshold:
+            fixed_messages = assemble_messages(
+                history=[],
+                system_prompt=system_prompt,
+                extra_context=extra_context,
+                trailing_system=trailing_system,
+            )
+            fixed_estimate = estimate_request_tokens(fixed_messages, runtime)
+            if fixed_estimate > threshold:
+                raise ContextBaseOverBudgetError(
+                    "系统提示词、运行上下文与工具定义已超过模型预算，请调整模型配置后重试。"
+                )
             raise ContextInputTooLargeError(
                 "当前输入在安全收缩后仍超过模型上下文预算，请缩短输入或减少附件后重试。"
             )

@@ -25,7 +25,7 @@ from .budget import (
     estimate_tool_schema_tokens,
     make_budget_snapshot,
 )
-from .errors import ContextInputTooLargeError
+from .errors import ContextBaseOverBudgetError, ContextInputTooLargeError
 from .fifo import RECENT_PROTECT_TURNS, FifoContextManager
 from .naive import NaiveContextManager
 from .protocol import (
@@ -64,6 +64,7 @@ __all__ = [
     "BudgetSnapshot",
     "BuildResult",
     "CompactionRecord",
+    "ContextBaseOverBudgetError",
     "ContextInputTooLargeError",
     "ContextManager",
     "FifoContextManager",

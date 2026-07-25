@@ -22,6 +22,8 @@ from agent.runtime import SessionBusyError
 
 from agent import (
     AttachmentError,
+    ContextBaseOverBudgetError,
+    ContextInputTooLargeError,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     SessionCorruptError,
@@ -32,7 +34,10 @@ from llm_providers import (
     LLMAuthError,
     LLMBadRequestError,
     LLMContentPolicyError,
+    LLMEmptyResponseError,
+    LLMModelMetadataError,
     LLMNetworkError,
+    LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
 )
@@ -97,6 +102,41 @@ def map_exception(exc: BaseException) -> ProtocolError:
             http_status=503,
             code="credential_missing",
             message="模型凭据尚未配置，请先在设置中完成配置。",
+            recoverable=True,
+        )
+    if isinstance(exc, ContextBaseOverBudgetError):
+        return ProtocolError(
+            http_status=400,
+            code=exc.code,
+            message="当前模型的基础提示词与工具已超过上下文预算，请切换模型或精简配置。",
+            recoverable=False,
+        )
+    if isinstance(exc, ContextInputTooLargeError):
+        return ProtocolError(
+            http_status=400,
+            code=exc.code,
+            message="当前输入超过模型上下文预算，请缩短内容或减少附件后重试。",
+            recoverable=False,
+        )
+    if isinstance(exc, LLMModelMetadataError):
+        return ProtocolError(
+            http_status=500,
+            code="model_context_profile_invalid",
+            message="模型运行限制配置不完整，请更新应用或模型配置后重试。",
+            recoverable=False,
+        )
+    if isinstance(exc, LLMOutputBudgetExhaustedError):
+        return ProtocolError(
+            http_status=502,
+            code="output_budget_exhausted",
+            message="模型把本轮输出额度用于推理，未生成可见回答。请重试或提高输出额度。",
+            recoverable=True,
+        )
+    if isinstance(exc, LLMEmptyResponseError):
+        return ProtocolError(
+            http_status=502,
+            code="empty_model_response",
+            message="模型没有返回可见回答，这轮未完成。请稍后重试。",
             recoverable=True,
         )
     if isinstance(exc, LLMRateLimitError):

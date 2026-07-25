@@ -59,8 +59,10 @@ class ProviderSpec:
             可被单次调用的 ``overrides`` 覆盖。
         context_window: 可选的 context window（最大输入 token）覆盖值（009 起新增）。
             ``None``（默认）时由 :attr:`LLMClient.context_window` 走 litellm 元数据
-            查询 + 保守兜底。仅当 litellm 不认识该 model（私有 ``api_base`` / 自建
-            网关）时才需显式设置。
+            查询。仅当 litellm 不认识该 model（私有 ``api_base`` / 自建网关）时
+            才需显式设置；无法解析时明确失败，不猜测默认窗口。
+        context_window_source: ``context_window`` 的证据来源；目录装配与 runtime
+            override 会显式传入，直接构造 spec 时回落为 ``provider_spec``。
     """
 
     model: str
@@ -68,6 +70,7 @@ class ProviderSpec:
     api_base: str | None = None
     defaults: dict[str, Any] = field(default_factory=dict)
     context_window: int | None = None
+    context_window_source: str | None = None
 
     @classmethod
     def from_config(
@@ -106,6 +109,7 @@ class ProviderSpec:
             api_base=api_base,
             defaults=defaults,
             context_window=config.context_window,
+            context_window_source=("runtime_override" if config.context_window else None),
         )
 
     @classmethod

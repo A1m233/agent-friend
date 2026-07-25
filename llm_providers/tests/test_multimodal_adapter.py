@@ -52,7 +52,7 @@ def _attachment(*, kind: str, media_type: str):  # type: ignore[no-untyped-def]
     )
 
 
-def _client(model: str, *, context_window: int | None = None) -> LLMClient:
+def _client(model: str, *, context_window: int = 256 * 1024) -> LLMClient:
     return LLMClient(
         ProviderSpec(
             model=model,

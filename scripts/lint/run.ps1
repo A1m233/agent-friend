@@ -7,8 +7,10 @@ Set-Location (Join-Path $PSScriptRoot "..\..")
 
 Write-Host "==> ruff check"
 uv run ruff check
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
 Write-Host "==> ruff format --check"
 uv run ruff format --check
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Write-Host ""
 Write-Host "==> lint 全部通过"

@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+from agent.context import (
+    estimate_tokens,
+    estimate_tool_schema_tokens,
+    make_budget_snapshot,
+)
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from agent import (
+    BUILTIN_DEFAULT_PERSONA_ID,
+    ContextBaseOverBudgetError,
+    Message,
+)
 from llm_providers import all_model_ids, public_model_catalog
 
 from ..assembly import BridgeRuntime
@@ -28,11 +38,32 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
                 raise UnsupportedModelError(body.model)
             if runtime is None or runtime.llm_client_factory is None:
                 raise RuntimeError("llm client factory unavailable")
-            runtime.llm_client_factory(body.model)
+            client = runtime.llm_client_factory(body.model)
+            limits = client.model_limits
+            system_prompt = runtime.prompt_builder_factory(BUILTIN_DEFAULT_PERSONA_ID).build()
+            tool_specs = runtime.tool_registry.to_openai_tools()
+            baseline_tokens = estimate_tokens(
+                [Message(role="system", content=system_prompt)]
+            ) + estimate_tool_schema_tokens(tool_specs)
+            threshold = make_budget_snapshot(limits.context_window, None).trigger_threshold
+            if baseline_tokens > threshold:
+                raise ContextBaseOverBudgetError(
+                    "default persona and tool schemas exceed the model context budget"
+                )
         except Exception as exc:
             error = map_exception(exc)
             return JSONResponse(
                 status_code=error.http_status,
                 content=build_openai_error_envelope(error),
             )
-        return {"model": body.model, "available": True}
+        return {
+            "model": body.model,
+            "available": True,
+            "limits": {
+                "contextWindow": limits.context_window,
+                "contextWindowSource": limits.context_window_source,
+                "safeInputThreshold": threshold,
+                "baselineRequestTokens": baseline_tokens,
+                "baselineHeadroomTokens": threshold - baseline_tokens,
+            },
+        }

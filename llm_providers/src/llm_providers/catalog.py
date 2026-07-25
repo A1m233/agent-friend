@@ -19,7 +19,7 @@ from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
 
-CATALOG_REVISION = "2026-07-24.1"
+CATALOG_REVISION = "2026-07-25.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -28,6 +28,7 @@ DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
 KIMI_API_KEY = "KIMI_API_KEY"
 
 KIMI_API_BASE = "https://api.moonshot.cn/v1"
+KIMI_CONTEXT_WINDOW = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,7 @@ class ProviderModel:
     id: str
     label: str
     litellm_model: str
-    context_window: int | None = None
+    context_window: int
     capabilities: ModelRouteCapabilities = TEXT_ONLY_CAPABILITIES
 
 
@@ -131,24 +132,28 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 id="kimi/kimi-k2.6",
                 label="kimi-k2.6",
                 litellm_model="openai/kimi-k2.6",
+                context_window=KIMI_CONTEXT_WINDOW,
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.5",
                 label="kimi-k2.5",
                 litellm_model="openai/kimi-k2.5",
+                context_window=KIMI_CONTEXT_WINDOW,
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.7-code",
                 label="kimi-k2.7-code",
                 litellm_model="openai/kimi-k2.7-code",
+                context_window=KIMI_CONTEXT_WINDOW,
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.7-code-highspeed",
                 label="kimi-k2.7-code-highspeed",
                 litellm_model="openai/kimi-k2.7-code-highspeed",
+                context_window=KIMI_CONTEXT_WINDOW,
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
         ),
@@ -249,6 +254,9 @@ def build_provider_spec(
         api_base=provider.api_base,
         defaults=defaults,
         context_window=context_window or model_window,
+        context_window_source=(
+            "runtime_override" if context_window is not None else "catalog" if model else None
+        ),
     )
 
 
@@ -279,6 +287,10 @@ def public_model_catalog() -> dict[str, Any]:
                     "processingProfile": (
                         "kimi-multimodal-v1" if model.capabilities.attachments else "text-only-v1"
                     ),
+                    "limits": {
+                        "contextWindow": model.context_window,
+                        "contextWindowSource": "catalog",
+                    },
                     "capabilities": {
                         "inputModalities": capabilities["input_modalities"],
                         "acceptedMediaTypes": capabilities["accepted_media_types"],
@@ -325,4 +337,5 @@ def replace_spec_model(spec: ProviderSpec, model_id: str) -> ProviderSpec:
         api_base=provider.api_base,
         defaults=defaults,
         context_window=model.context_window if model else spec.context_window,
+        context_window_source="catalog" if model else spec.context_window_source,
     )
