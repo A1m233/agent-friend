@@ -14,7 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-__all__ = ["OutboundContent", "OutboundTextFormat"]
+__all__ = [
+    "OutboundAction",
+    "OutboundContent",
+    "OutboundControls",
+    "OutboundTextFormat",
+]
 
 
 OutboundTextFormat = Literal["plain_text", "markdown"]
@@ -23,6 +28,25 @@ OutboundTextFormat = Literal["plain_text", "markdown"]
 ``plain_text`` 表示 adapter 必须按纯文本发送;``markdown`` 表示 adapter 可在平台
 支持时使用 Markdown 消息类型,不支持的平台再自行降级。
 """
+
+
+@dataclass(frozen=True)
+class OutboundAction:
+    """A platform-neutral clickable action attached to an outbound message."""
+
+    id: str
+    label: str
+    visited_label: str
+    payload: str
+    style: Literal["default", "primary"] = "default"
+    click_limit: int = 1
+
+
+@dataclass(frozen=True)
+class OutboundControls:
+    """Rows of actions; adapters translate them to platform-specific controls."""
+
+    rows: tuple[tuple[OutboundAction, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -49,3 +73,4 @@ class OutboundContent:
     text: str
     reply_to_message_id: str | None = None
     text_format: OutboundTextFormat = "plain_text"
+    controls: OutboundControls | None = None

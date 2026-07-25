@@ -9,9 +9,12 @@ import {
 } from "@/stores";
 import {
   focusVoiceCallWindow,
-  publishActiveChatSession,
   useVoiceStore,
 } from "@/stores/voice";
+import {
+  publishActiveChatSession,
+  subscribeActiveChatSessionRequests,
+} from "@/lib/active-chat-session";
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
@@ -65,6 +68,14 @@ export function ChatApp() {
   }, [ping]);
 
   useEffect(() => startSessionSyncSubscriber(), []);
+
+  useEffect(
+    () =>
+      subscribeActiveChatSessionRequests(
+        () => useConversationStore.getState().currentSessionId,
+      ),
+    [],
+  );
 
   useEffect(() => {
     void publishActiveChatSession(currentSessionId);

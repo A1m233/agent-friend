@@ -42,11 +42,10 @@ from agent import (
     SessionNotFoundError,
     SessionPersistError,
 )
-from llm_providers import all_model_ids
 
 from ..assembly import BridgeRuntime
 from ..attachment_reconciliation import reconcile_attachments
-from ..errors import UnsupportedModelError, build_openai_error_envelope, map_exception
+from ..errors import build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
 from .runs import DESKTOP_TEXT_CONTROL_SCOPE
 
@@ -442,17 +441,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def switch_model(session_id: str, body: ModelSwitchBody) -> Any:
         """切换 session 当前 model；落盘 ``model_change`` 事件。"""
         try:
-            if body.model not in all_model_ids():
-                raise UnsupportedModelError(body.model)
-            with ExitStack() as stack:
-                if runtime.agent_runtime is not None:
-                    stack.enter_context(
-                        runtime.agent_runtime.try_reserve_session_mutation(session_id)
-                    )
-                stack.enter_context(runtime.turn_coordinator.try_hold(session_id))
-                session = mgr.open(session_id)
-                conv = mgr.start_conversation(session)
-                conv.switch_model(body.model)
+            from ..session_models import SessionModelService
+
+            service = runtime.session_model_service or SessionModelService(
+                mgr,
+                runtime.turn_coordinator,
+                runtime.agent_runtime,
+            )
+            model = service.switch(session_id, body.model)
         except Exception as exc:
             error = map_exception(exc)
             return JSONResponse(
@@ -461,8 +457,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
 
         return {
-            "session_id": session.session_id,
-            "model": session.current_model,
+            "session_id": session_id,
+            "model": model,
         }
 
     @router.post("/sessions/{session_id}/channel")

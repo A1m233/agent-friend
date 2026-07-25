@@ -33,6 +33,12 @@ function hasArchivedOption(
 }
 
 export const sessionsApi = {
+  create(): Promise<{ session_id: string; persona: string; model: string; channel: string }> {
+    return http.post<unknown, { session_id: string; persona: string; model: string; channel: string }>(
+      "/v1/sessions",
+      { channel: "text" },
+    );
+  },
   /** 列出历史会话（GET /v1/sessions）。 */
   list(options?: ListSessionsOptions): Promise<SessionSummary[]> {
     return http.get<unknown, SessionSummary[]>(`/v1/sessions${sessionQuery(options)}`);

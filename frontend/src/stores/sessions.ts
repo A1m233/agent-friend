@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 import { emit, listen } from "@tauri-apps/api/event";
-import { sessionsApi } from "@/services";
+import { imApi, sessionsApi, type IMType, type ProviderInfo } from "@/services";
 import type { SessionSummary } from "@/types/meta";
 import { isTauri } from "@/utils/tauri";
 
@@ -20,6 +20,7 @@ interface SessionsChangedPayload {
 
 interface SessionsState {
   list: SessionSummary[];
+  imTypesBySession: Record<string, IMType[]>;
   loading: boolean;
   /** 至少成功拉取过一次列表；用于区分“空列表”和“还没拿到真相源”。 */
   loaded: boolean;
@@ -50,6 +51,7 @@ let sessionsChangedSubscriberStarted = false;
 
 export const useSessionsStore = create<SessionsState>((set) => ({
   list: [],
+  imTypesBySession: {},
   loading: false,
   loaded: false,
   async refresh() {
@@ -57,9 +59,20 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     refreshSeq = seq;
     set({ loading: true });
     try {
-      const list = await sessionsApi.list();
+      const [list, providers] = await Promise.all([
+        sessionsApi.list(),
+        imApi.listProviders().catch(() => null),
+      ]);
       if (seq === refreshSeq) {
-        set({ list, loading: false, loaded: true });
+        set((state) => ({
+          list,
+          imTypesBySession:
+            providers === null
+              ? state.imTypesBySession
+              : collectBoundIMTypesBySession(providers),
+          loading: false,
+          loaded: true,
+        }));
       }
     } catch {
       // 列表拉取失败不弹技术错误，保留旧列表即可。
@@ -89,6 +102,19 @@ export const useSessionsStore = create<SessionsState>((set) => ({
     }
   },
 }));
+
+export function collectBoundIMTypesBySession(
+  providers: ProviderInfo[],
+): Record<string, IMType[]> {
+  const result: Record<string, IMType[]> = {};
+  for (const provider of providers) {
+    if (provider.binding_status !== "bound" || !provider.session_id) continue;
+    const types = result[provider.session_id] ?? [];
+    if (!types.includes(provider.im_type)) types.push(provider.im_type);
+    result[provider.session_id] = types;
+  }
+  return result;
+}
 
 export const useArchivedSessionsStore = create<ArchivedSessionsState>((set, get) => ({
   list: [],

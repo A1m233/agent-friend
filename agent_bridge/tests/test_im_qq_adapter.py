@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_bridge.protocols.im.adapters.qq import QQAdapter
 from agent_bridge.protocols.im.content import OutboundContent
+from agent_bridge.protocols.im.control import menu_controls
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
 from qqbot_agent_sdk.dto import QQMessageType
@@ -336,6 +337,54 @@ async def test_send_nonzero_code_logs_warning_no_raise(
         )
     assert "40034" in caplog.text
     assert "内容审核未通过" in caplog.text
+    mock_api.post_c2c_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_menu_keyboard_marks_capability_supported(adapter: QQAdapter) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+
+    await adapter.send(
+        OutboundContent(
+            chat_id="OPENID-DEST",
+            chat_scope="c2c",
+            text="reply",
+            controls=menu_controls(),
+        )
+    )
+
+    keyboard = mock_api.post_c2c_message.await_args.kwargs["keyboard"]
+    button = keyboard.content.rows[0].buttons[0]
+    assert button.render_data.label == "☰ 菜单"
+    assert adapter.controls_capability() == "supported"
+
+
+@pytest.mark.asyncio
+async def test_keyboard_rejection_retries_plain_and_marks_unsupported(adapter: QQAdapter) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(
+        side_effect=[
+            {"code": 11244, "message": "机器人没有 keyboard 权限"},
+            {"code": 0},
+        ]
+    )
+    adapter._api = mock_api
+
+    await adapter.send(
+        OutboundContent(
+            chat_id="OPENID-DEST",
+            chat_scope="c2c",
+            text="reply",
+            controls=menu_controls(),
+        )
+    )
+
+    assert mock_api.post_c2c_message.await_count == 2
+    assert mock_api.post_c2c_message.await_args_list[0].kwargs["keyboard"] is not None
+    assert "keyboard" not in mock_api.post_c2c_message.await_args_list[1].kwargs
+    assert adapter.controls_capability() == "unsupported"
 
 
 @pytest.mark.asyncio

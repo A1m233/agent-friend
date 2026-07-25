@@ -141,6 +141,17 @@ def test_main_legacy_dotenv_reads_non_runtime_settings(
     assert captured["port"] == 19999
 
 
+def test_main_treats_keyboard_interrupt_as_clean_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(_server: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("voice_bridge.__main__.uvicorn.Server.run", interrupt)
+
+    assert voice_main.main([]) == 0
+
+
 def test_streaming_asr_defaults() -> None:
     settings = VoiceBridgeSettings()
 

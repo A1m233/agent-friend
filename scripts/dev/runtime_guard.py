@@ -71,6 +71,7 @@ def main() -> int:
     add_context_args(stop)
 
     release = sub.add_parser("release")
+    add_context_args(release)
     release.add_argument("--owner-pid", type=int, required=True)
 
     args = parser.parse_args()

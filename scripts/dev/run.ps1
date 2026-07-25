@@ -597,7 +597,7 @@ if ($mode -eq "tauri") {
     Write-Host "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
     Set-Location (Join-Path $root "frontend")
-    pnpm tauri dev @rest
+    & node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
     $frontendExitCode = $LASTEXITCODE
     if ($frontendExitCode -ne 0) {
         Write-Error "Tauri dev 命令退出，exit code=$frontendExitCode。已进入收尾清理。"
@@ -663,7 +663,7 @@ else {
     }
     else {
         Write-Host "===> 前端模式：tauri（桌面，含双窗口；首次编译 Rust 较慢）"
-        pnpm tauri dev @rest
+        & node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
         $frontendExitCode = $LASTEXITCODE
     }
     if ($frontendExitCode -ne 0) {
@@ -693,7 +693,8 @@ finally {
 finally {
     if ($runtimeLeaseAcquired) {
         try {
-            & uv run python $runtimeGuardPath release --owner-pid $PID | Out-Null
+            $releasePortsText = (Get-DevRuntimePorts) -join ","
+            & uv run python $runtimeGuardPath release --worktree $root --mode $mode --ports $releasePortsText --owner-pid $PID | Out-Null
         }
         catch {
             Write-Warning "释放 dev runtime lease 失败：$($_.Exception.Message)"

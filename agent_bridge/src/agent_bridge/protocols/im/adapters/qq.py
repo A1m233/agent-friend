@@ -27,18 +27,33 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 from qqbot_agent_sdk.api_client import QQApiClient
-from qqbot_agent_sdk.dto import MarkdownContent, MessageToCreate, QQMessageType
+from qqbot_agent_sdk.dto import (
+    InlineKeyboard,
+    KeyboardButton,
+    KeyboardButtonAction,
+    KeyboardButtonPermission,
+    KeyboardButtonRenderData,
+    KeyboardContent,
+    KeyboardRow,
+    MarkdownContent,
+    MessageToCreate,
+    QQMessageType,
+    parse_interaction_event,
+)
 from qqbot_agent_sdk.event_parser import EventParser, InboundEvent
 from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
 
-from ..content import OutboundContent
+from ..content import OutboundContent, OutboundControls
 from ..credentials import ImCredential
+from ..event import InboundInteraction
 from ..provider import ProviderStatus
+from ..state import ControlCapability, IMStateStore
 
 __all__ = ["QQAdapter"]
 
@@ -47,6 +62,9 @@ logger = logging.getLogger(__name__)
 
 _RESUME_FILE_PREFIX = "qq_"
 """resume token 文件命名前缀;路径 = ``<base>/qq_<bind_id_hash[:16]>.json``。"""
+
+
+_CAPABILITY_REPROBE_AFTER = timedelta(hours=24)
 
 
 class QQAdapter:
@@ -63,10 +81,21 @@ class QQAdapter:
 
     type: str = "qq"
 
-    def __init__(self, cred: ImCredential, resume_base_dir: Path) -> None:
+    def __init__(
+        self,
+        cred: ImCredential,
+        resume_base_dir: Path,
+        state_store: IMStateStore | None = None,
+    ) -> None:
         self._cred = cred
         self.bind_id: str = cred.user_openid or cred.bind_id
         self._resume_path = self._make_resume_path(resume_base_dir, self.bind_id)
+        self._state_store = state_store
+        persisted = state_store.capability("qq", self.bind_id) if state_store is not None else None
+        self._controls_capability: ControlCapability = (
+            persisted.status if persisted is not None else "unknown"
+        )
+        self._controls_checked_at = persisted.checked_at if persisted is not None else None
 
         # 长连组件,start() 时初始化
         self._api: QQApiClient | None = None
@@ -75,6 +104,7 @@ class QQAdapter:
         self._startup_task: asyncio.Task[None] | None = None
         self._parser = EventParser()
         self._on_inbound: Callable[[InboundEvent], Awaitable[None]] | None = None
+        self._on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None
         self._status: ProviderStatus = "stopped"
         self._heartbeat_interval: float = 30.0  # SDK 默认值,set_heartbeat_interval 回调更新
         self._next_msg_seq_value = int(time.monotonic_ns() % 65_535) or 1
@@ -83,7 +113,11 @@ class QQAdapter:
     # IMProvider lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, on_inbound: Callable[[InboundEvent], Awaitable[None]]) -> None:
+    def start(
+        self,
+        on_inbound: Callable[[InboundEvent], Awaitable[None]],
+        on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None,
+    ) -> None:
         """启动长连，不让 QQ token / gateway 网络请求阻塞 bridge readiness。
 
         调用前提:必须在 asyncio event loop 内调用(:func:`asyncio.get_running_loop`
@@ -91,6 +125,7 @@ class QQAdapter:
         本地装配；首次 token / gateway 请求在线程中执行，完成后再拉起 SDK WebSocket。
         """
         self._on_inbound = on_inbound
+        self._on_interaction = on_interaction
 
         # httpx async client 由 adapter 持有 + 管理生命周期
         self._http_client = httpx.AsyncClient(timeout=30.0)
@@ -114,6 +149,7 @@ class QQAdapter:
             clear_token=self._api.clear_token,
             fail_pending=self._fail_pending,
             get_gateway_url=self._api.get_gateway_url_sync,
+            on_interaction_event=self._on_interaction_event,
         )
         self._ws = QQWebSocket(callbacks=callbacks, log_tag=f"QQBot:{self.bind_id[:8]}")
 
@@ -152,6 +188,8 @@ class QQAdapter:
 
         msg_seq = self._next_msg_seq()
         msg = _message_to_create(content, msg_seq=msg_seq)
+        controls = content.controls if self._should_try_controls(content.controls) else None
+        keyboard = _keyboard_from_controls(controls) if controls is not None else None
         logger.info(
             "QQ outbound send bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
             "text_len=%d text_format=%s",
@@ -163,7 +201,11 @@ class QQAdapter:
             content.text_format,
         )
         try:
-            resp: dict[str, Any] = await self._api.post_c2c_message(content.chat_id, msg)
+            resp: dict[str, Any] = await self._api.post_c2c_message(
+                content.chat_id,
+                msg,
+                keyboard=keyboard,
+            )
         except Exception:
             logger.exception(
                 "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s, "
@@ -191,7 +233,12 @@ class QQAdapter:
                 _text_len(content.text),
                 content.text_format,
             )
+            if keyboard is not None and _is_controls_rejection(resp):
+                await self._retry_without_controls_after_rejection(content)
             return
+
+        if keyboard is not None:
+            self._set_controls_capability("supported")
 
         response_message_id = _response_message_id(resp)
         logger.info(
@@ -236,6 +283,15 @@ class QQAdapter:
 
     def status(self) -> ProviderStatus:
         return self._status
+
+    def controls_capability(self) -> ControlCapability:
+        if self._controls_capability == "unsupported" and self._controls_checked_at is not None:
+            checked_at = self._controls_checked_at
+            if checked_at.tzinfo is None:
+                checked_at = checked_at.replace(tzinfo=UTC)
+            if datetime.now(UTC) - checked_at >= _CAPABILITY_REPROBE_AFTER:
+                return "unknown"
+        return self._controls_capability
 
     # ------------------------------------------------------------------
     # SDK callbacks
@@ -295,6 +351,45 @@ class QQAdapter:
         )
         await self._on_inbound(event)
 
+    async def _on_interaction_event(self, event_type: str, raw: dict[str, Any]) -> None:
+        """ACK QQ message-button interactions before forwarding validated controls."""
+        api = self._api
+        interaction_id = str(raw.get("id", ""))
+        if api is not None and interaction_id:
+            try:
+                await api.acknowledge_interaction(interaction_id, code=0)
+            except Exception:
+                logger.warning(
+                    "QQ interaction ACK failed (bind=%s, interaction=%s)",
+                    self.bind_id,
+                    interaction_id,
+                    exc_info=True,
+                )
+
+        parsed = parse_interaction_event(raw)
+        if not parsed.is_c2c or parsed.user_openid != self.bind_id:
+            logger.warning(
+                "QQ interaction operator mismatch ignored (bind=%s, chat=%s, operator=%s)",
+                self.bind_id,
+                parsed.chat_id,
+                parsed.operator_openid,
+            )
+            return
+        if self._on_interaction is None:
+            logger.info("QQ interaction ignored without handler (bind=%s)", self.bind_id)
+            return
+        self._set_controls_capability("supported")
+        await self._on_interaction(
+            InboundInteraction(
+                interaction_id=parsed.id,
+                event_type=event_type,
+                chat_scope="c2c",
+                chat_id=parsed.chat_id,
+                operator_id=parsed.operator_openid,
+                payload=parsed.data.resolved.button_data,
+            )
+        )
+
     def _on_connected(self) -> None:
         logger.info("QQ ws connected (bind=%s)", self.bind_id)
         self._set_status("active")
@@ -322,6 +417,43 @@ class QQAdapter:
         if self._next_msg_seq_value > 65_535:
             self._next_msg_seq_value = 1
         return value
+
+    def _should_try_controls(self, controls: OutboundControls | None) -> bool:
+        return controls is not None and self.controls_capability() != "unsupported"
+
+    async def _retry_without_controls_after_rejection(self, content: OutboundContent) -> None:
+        api = self._api
+        if api is None:
+            return
+        msg_seq = self._next_msg_seq()
+        msg = _message_to_create(content, msg_seq=msg_seq)
+        try:
+            response = await api.post_c2c_message(content.chat_id, msg)
+        except Exception:
+            logger.warning(
+                "QQ text fallback after keyboard rejection failed (bind=%s, chat=%s)",
+                self.bind_id,
+                content.chat_id,
+                exc_info=True,
+            )
+            return
+        code = response.get("code", 0) if isinstance(response, dict) else 0
+        if code:
+            logger.warning(
+                "QQ text fallback after keyboard rejection returned code=%s (bind=%s, chat=%s)",
+                code,
+                self.bind_id,
+                content.chat_id,
+            )
+            return
+        self._set_controls_capability("unsupported")
+
+    def _set_controls_capability(self, status: ControlCapability) -> None:
+        self._controls_capability = status
+        self._controls_checked_at = datetime.now(UTC)
+        if self._state_store is not None:
+            saved = self._state_store.set_capability("qq", self.bind_id, status)
+            self._controls_checked_at = saved.checked_at
 
     # ------------------------------------------------------------------
     # Resume token (SDK get_session/set_session callbacks)
@@ -389,6 +521,14 @@ def _response_message_id(response: object) -> str:
     return ""
 
 
+def _is_controls_rejection(response: object) -> bool:
+    """Only retry when QQ explicitly attributes rejection to keyboard capability."""
+    if not isinstance(response, dict):
+        return False
+    message = str(response.get("message", "")).lower()
+    return any(marker in message for marker in ("keyboard", "按钮", "按键", "权限"))
+
+
 def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCreate:
     if content.text_format == "markdown":
         return MessageToCreate(
@@ -403,6 +543,34 @@ def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCr
         msg_id=content.reply_to_message_id or "",
         msg_seq=msg_seq,
     )
+
+
+def _keyboard_from_controls(controls: OutboundControls | None) -> InlineKeyboard | None:
+    if controls is None:
+        return None
+    rows: list[KeyboardRow] = []
+    for row in controls.rows:
+        buttons: list[KeyboardButton] = []
+        for action in row:
+            buttons.append(
+                KeyboardButton(
+                    id=action.id,
+                    render_data=KeyboardButtonRenderData(
+                        label=action.label,
+                        visited_label=action.visited_label,
+                        style=1 if action.style == "primary" else 0,
+                    ),
+                    action=KeyboardButtonAction(
+                        type=1,
+                        data=action.payload,
+                        permission=KeyboardButtonPermission(type=2),
+                        click_limit=action.click_limit,
+                    ),
+                    group_id=action.id,
+                )
+            )
+        rows.append(KeyboardRow(buttons=buttons))
+    return InlineKeyboard(content=KeyboardContent(rows=rows))
 
 
 def _attachment_count(event: InboundEvent) -> int:

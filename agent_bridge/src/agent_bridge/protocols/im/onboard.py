@@ -50,6 +50,7 @@ class OnboardTaskState:
     im_type: str
     status: OnboardStatus = OnboardStatus.PENDING
     qr_url: str | None = None
+    bind_id: str | None = None
     bind_id_masked: str | None = None  # SUCCESS 后填(脱敏后)
     error: str | None = None
     _task: asyncio.Task[None] | None = field(default=None, repr=False, compare=False)
@@ -116,6 +117,7 @@ class OnboardSessionRegistry:
                 user_openid=result.user_openid,
             )
             self._runtime.register_after_onboard(cred)
+            state.bind_id = cred.bind_id
             state.bind_id_masked = _mask(cred.bind_id)
             state.status = OnboardStatus.SUCCESS
             logger.info(

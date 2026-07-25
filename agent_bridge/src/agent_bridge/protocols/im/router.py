@@ -46,6 +46,7 @@ from llm_providers import model_capabilities
 from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
+from .control import menu_controls
 from .event import InboundEvent
 
 __all__ = ["FALLBACK_TEXT", "IMRouter"]
@@ -119,6 +120,8 @@ class IMRouter:
         event: InboundEvent,
         send_fn: SendCallback,
         attachments: tuple[AttachmentRef, ...] = (),
+        *,
+        session_id: str | None = None,
     ) -> None:
         """处理一条 IM inbound:装配 Conversation → 跑一轮 → 回写 outbound。
 
@@ -133,7 +136,7 @@ class IMRouter:
             exception + 回写 :data:`FALLBACK_TEXT`,**不向上抛**(IM 长连不该
             因为单轮挂掉而断开)。
         """
-        session_id = self.session_id_for(im_type, event)
+        session_id = session_id or self.session_id_for(im_type, event)
         logger.info(
             "IM inbound router start im_type=%s session_id=%s chat_scope=%s chat_id=%s "
             "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
@@ -177,6 +180,7 @@ class IMRouter:
                 return
 
         text_format: OutboundTextFormat = "markdown"
+        include_menu = True
         try:
             text = await asyncio.to_thread(self._run_turn_sync, boot, attachments)
         except Exception:
@@ -189,6 +193,7 @@ class IMRouter:
             )
             text = FALLBACK_TEXT
             text_format = "plain_text"
+            include_menu = False
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not text:
@@ -200,6 +205,7 @@ class IMRouter:
             )
             text = FALLBACK_TEXT
             text_format = "plain_text"
+            include_menu = False
 
         logger.info(
             "IM inbound router reply im_type=%s session_id=%s message_id=%s "
@@ -218,6 +224,7 @@ class IMRouter:
                 text=text,
                 text_format=text_format,
                 reply_to_message_id=event.message_id,
+                controls=menu_controls() if include_menu else None,
             )
         )
 

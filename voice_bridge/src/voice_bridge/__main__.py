@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from contextlib import suppress
 
 import uvicorn
 
@@ -60,7 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     controller = getattr(app.state, "lifecycle_controller", None)
     if controller is not None:
         controller.set_shutdown_callback(lambda: setattr(server, "should_exit", True))
-    server.run()
+    # Windows dev Ctrl+C is broadcast to the Tauri-owned child services.
+    # Uvicorn has already completed graceful shutdown when it re-raises here.
+    with suppress(KeyboardInterrupt):
+        server.run()
     return 0
 
 

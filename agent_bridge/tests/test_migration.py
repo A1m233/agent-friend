@@ -19,7 +19,14 @@ class FakeImRuntime:
     def migration_snapshot_credentials(self) -> list[ImCredential]:
         return self.store.list_all()
 
-    async def migration_replace_credentials(self, credentials: list[ImCredential]) -> None:
+    def migration_snapshot_state(self) -> dict[str, object]:
+        return {"schema_version": 1, "bindings": [], "capabilities": []}
+
+    async def migration_replace_credentials(
+        self,
+        credentials: list[ImCredential],
+        state: dict[str, object] | None = None,
+    ) -> None:
         self.store.replace_all(credentials)
 
 
@@ -91,7 +98,8 @@ def test_migration_routes_require_owner_token(tmp_path: Path) -> None:
 def test_im_credentials_round_trip_without_logging_secret(tmp_path: Path) -> None:
     client, store = migration_client(tmp_path)
     headers = {"X-Agent-Friend-Lifecycle-Token": "owner-token"}
-    payload = {"credentials": [as_payload(credential())]}
+    state = {"schema_version": 1, "bindings": [], "capabilities": []}
+    payload = {"credentials": [as_payload(credential())], "state": state}
 
     response = client.post(
         "/internal/migration/im-credentials/replace", json=payload, headers=headers

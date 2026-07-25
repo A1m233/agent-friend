@@ -5,17 +5,30 @@
  * `open_im_connect` 打开独立 Tauri 窗口，由窗口负责拖动、关闭即隐藏。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Plug, RefreshCcw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check, MessageSquarePlus, Plug, RefreshCcw, Trash2 } from "lucide-react";
 import QRCode from "qrcode";
 
-import { Button, Spinner } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Spinner,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  TextEllipsis,
+} from "@/components/ui";
 import {
   imApi,
+  sessionsApi,
   type IMType,
   type OnboardTaskState,
   type ProviderInfo,
 } from "@/services";
+import type { SessionSummary } from "@/types/meta";
+import { subscribeActiveChatSession } from "@/lib/active-chat-session";
+import { emitSessionsChanged } from "@/stores/sessions";
 import { cn } from "@/utils/cn";
 
 interface Props {
@@ -33,6 +46,15 @@ export function IMConnectPanel({ active = true }: Props) {
   const [onboardTask, setOnboardTask] = useState<OnboardTaskState | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
+  const [recentSessions, setRecentSessions] = useState<SessionSummary[]>([]);
+  const [bindingTarget, setBindingTarget] = useState<{
+    imType: IMType;
+    bindId: string;
+  } | null>(null);
+  const [bindingMode, setBindingMode] = useState<"new" | "recent">("recent");
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [bindingSession, setBindingSession] = useState(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const onboardProgressRef = useRef<HTMLDivElement | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -77,6 +99,37 @@ export function IMConnectPanel({ active = true }: Props) {
     return clearPollTimer;
   }, [active, clearPollTimer, refreshProviders, resetTransientState]);
 
+  useEffect(() => subscribeActiveChatSession(setActiveChatSessionId), []);
+
+  useEffect(() => {
+    const hasSessionBinding = providers.some((provider) => Boolean(provider.session_id));
+    if (!active || (!bindingTarget && !hasSessionBinding)) return;
+    let cancelled = false;
+    void sessionsApi
+      .list()
+      .then((sessions) => {
+        if (cancelled) return;
+        setRecentSessions(sessions);
+        if (!bindingTarget) return;
+        setSelectedSessionId((current) => {
+          if (current && sessions.some((session) => session.session_id === current)) {
+            return current;
+          }
+          if (
+            activeChatSessionId &&
+            sessions.some((session) => session.session_id === activeChatSessionId)
+          ) {
+            return activeChatSessionId;
+          }
+          return sessions[0]?.session_id ?? null;
+        });
+      })
+      .catch(() => setErrorMsg("拉取最近会话失败，稍后重试。"));
+    return () => {
+      cancelled = true;
+    };
+  }, [active, activeChatSessionId, bindingTarget, providers]);
+
   useEffect(() => {
     if (onboardTask?.qr_url) {
       QRCode.toDataURL(onboardTask.qr_url, { margin: 1, width: 240 })
@@ -119,6 +172,16 @@ export function IMConnectPanel({ active = true }: Props) {
       clearPollTimer();
       if (onboardTask.status === "success") {
         void refreshProviders();
+        if (onboardTask.bind_id) {
+          setBindingMode("recent");
+          setSelectedSessionId(null);
+          setRecentSessions([]);
+          setBindingTarget({
+            imType: onboardTask.im_type,
+            bindId: onboardTask.bind_id,
+          });
+          setOnboardTask(null);
+        }
       }
       return;
     }
@@ -149,6 +212,7 @@ export function IMConnectPanel({ active = true }: Props) {
         im_type: "qq",
         status: "pending",
         qr_url: null,
+        bind_id: null,
         bind_id_masked: null,
         error: null,
       });
@@ -166,6 +230,7 @@ export function IMConnectPanel({ active = true }: Props) {
       setUnbindingKey(key);
       try {
         await imApi.unbindProvider(imType, bindId);
+        await emitSessionsChanged({ action: "im-unbind" });
         await refreshProviders();
       } catch {
         setErrorMsg("解绑失败，稍后重试。");
@@ -175,6 +240,33 @@ export function IMConnectPanel({ active = true }: Props) {
     },
     [active, refreshProviders, unbindingKey],
   );
+
+  const confirmBinding = useCallback(async () => {
+    if (!bindingTarget || bindingSession) return;
+    setBindingSession(true);
+    setErrorMsg(null);
+    try {
+      const sessionId =
+        bindingMode === "new"
+          ? (await sessionsApi.create()).session_id
+          : selectedSessionId;
+      if (!sessionId) {
+        setErrorMsg("还没有可选择的最近会话，请新建一个独立会话。 ");
+        return;
+      }
+      await imApi.bindSession(bindingTarget.imType, bindingTarget.bindId, sessionId);
+      await emitSessionsChanged({ action: "im-bind", sessionId });
+      setBindingTarget(null);
+      setOnboardTask(null);
+      setRecentSessions([]);
+      setSelectedSessionId(null);
+      await refreshProviders();
+    } catch {
+      setErrorMsg("会话绑定失败，稍后重试。 ");
+    } finally {
+      setBindingSession(false);
+    }
+  }, [bindingMode, bindingSession, bindingTarget, refreshProviders, selectedSessionId]);
 
   return (
     <div className="flex h-full flex-col bg-bg text-fg">
@@ -211,34 +303,88 @@ export function IMConnectPanel({ active = true }: Props) {
               {providers.map((p) => (
                 <li
                   key={`${p.im_type}-${p.bind_id}`}
-                  className="flex items-center justify-between rounded-lg border border-border bg-surface px-3 py-2"
+                  className="overflow-hidden rounded-lg border border-border bg-surface"
                 >
-                  <span className="text-sm text-fg">
-                    {labelOfIMType(p.im_type)} · {p.bind_id_masked}
-                    <span
-                      className={cn(
-                        "ml-2 text-xs",
-                        p.status === "active" && "text-success",
-                        p.status === "degraded" && "text-warning",
-                        p.status === "error" && "text-danger",
-                        p.status === "stopped" && "text-fg/50",
+                  <div className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div className="min-w-0 text-sm text-fg">
+                      <div>
+                        {labelOfIMType(p.im_type)} · {p.bind_id_masked}
+                        <span
+                          className={cn(
+                            "ml-2 text-xs",
+                            p.status === "active" && "text-success",
+                            p.status === "degraded" && "text-warning",
+                            p.status === "error" && "text-danger",
+                            p.status === "stopped" && "text-fg/50",
+                          )}
+                        >
+                          {labelOfStatus(p.status)}
+                        </span>
+                      </div>
+                      <TextEllipsis className="mt-0.5 text-xs text-fg/60">
+                        {`会话：${bindingLabel(p, recentSessions)}`}
+                      </TextEllipsis>
+                      {p.controls_capability === "unsupported" && (
+                        <p className="mt-1 text-xs text-warning">
+                          QQ 仍可正常聊天；会话和模型请在桌面端管理。
+                        </p>
                       )}
-                    >
-                      {labelOfStatus(p.status)}
-                    </span>
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => void unbind(p.im_type, p.bind_id)}
-                    loading={unbindingKey === `${p.im_type}:${p.bind_id}`}
-                    disabled={Boolean(unbindingKey)}
-                    aria-label="解绑"
-                  >
-                    {unbindingKey !== `${p.im_type}:${p.bind_id}` && (
-                      <Trash2 className="size-4" />
-                    )}
-                  </Button>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="hover:bg-bg"
+                        aria-expanded={isBindingTarget(bindingTarget, p)}
+                        onClick={() => {
+                          if (isBindingTarget(bindingTarget, p)) {
+                            setBindingTarget(null);
+                            return;
+                          }
+                          setBindingMode("recent");
+                          setSelectedSessionId(p.session_id ?? null);
+                          setRecentSessions([]);
+                          setBindingTarget({
+                            imType: p.im_type,
+                            bindId: p.bind_id,
+                          });
+                        }}
+                      >
+                        {isBindingTarget(bindingTarget, p)
+                          ? "收起"
+                          : p.binding_status === "bound"
+                            ? "更换会话"
+                            : "选择会话"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-muted hover:bg-danger/10 hover:text-danger"
+                        onClick={() => void unbind(p.im_type, p.bind_id)}
+                        loading={unbindingKey === `${p.im_type}:${p.bind_id}`}
+                        disabled={Boolean(unbindingKey)}
+                        aria-label="解绑"
+                      >
+                        {unbindingKey !== `${p.im_type}:${p.bind_id}` && (
+                          <Trash2 className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  {isBindingTarget(bindingTarget, p) && (
+                    <SessionBindingStep
+                      imLabel={labelOfIMType(p.im_type)}
+                      mode={bindingMode}
+                      onModeChange={setBindingMode}
+                      sessions={recentSessions}
+                      activeChatSessionId={activeChatSessionId}
+                      selectedSessionId={selectedSessionId}
+                      onSelectSession={setSelectedSessionId}
+                      onConfirm={() => void confirmBinding()}
+                      onCancel={() => setBindingTarget(null)}
+                      loading={bindingSession}
+                    />
+                  )}
                 </li>
               ))}
             </ul>
@@ -283,6 +429,120 @@ export function IMConnectPanel({ active = true }: Props) {
           </p>
         )}
       </main>
+    </div>
+  );
+}
+
+function SessionBindingStep({
+  imLabel,
+  mode,
+  onModeChange,
+  sessions,
+  activeChatSessionId,
+  selectedSessionId,
+  onSelectSession,
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  imLabel: string;
+  mode: "new" | "recent";
+  onModeChange: (mode: "new" | "recent") => void;
+  sessions: SessionSummary[];
+  activeChatSessionId: string | null;
+  selectedSessionId: string | null;
+  onSelectSession: (sessionId: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const sessionListRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (mode !== "recent" || !selectedSessionId) return;
+    const container = sessionListRef.current;
+    const selected = container?.querySelector<HTMLElement>("[data-selected='true']");
+    if (!container || !selected) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const selectedRect = selected.getBoundingClientRect();
+    if (selectedRect.top < containerRect.top) {
+      container.scrollTop += selectedRect.top - containerRect.top;
+    } else if (selectedRect.bottom > containerRect.bottom) {
+      container.scrollTop += selectedRect.bottom - containerRect.bottom;
+    }
+  }, [mode, selectedSessionId, sessions]);
+
+  return (
+    <div className="border-t border-border bg-bg p-3">
+      <h2 className="text-sm font-medium text-fg">选择 {imLabel} 要使用的会话</h2>
+      <Tabs
+        value={mode}
+        onValueChange={(value) => onModeChange(value as "new" | "recent")}
+        className="mt-3 gap-0 overflow-hidden rounded-lg border border-border bg-bg"
+      >
+        <TabsList className="grid h-auto w-full grid-cols-2 rounded-none border-b border-border bg-surface p-1">
+          <TabsTrigger value="recent">选择最近会话</TabsTrigger>
+          <TabsTrigger value="new">新建独立会话</TabsTrigger>
+        </TabsList>
+        <TabsContent value="recent" className="m-0 p-2">
+          {sessions.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-fg/60">
+              暂无最近会话
+            </p>
+          ) : (
+            <div
+              ref={sessionListRef}
+              className="flex max-h-56 flex-col gap-1 overflow-y-auto"
+            >
+              {sessions.map((session) => {
+                const selected = session.session_id === selectedSessionId;
+                const current = session.session_id === activeChatSessionId;
+                return (
+                  <Button
+                    key={session.session_id}
+                    type="button"
+                    variant={selected ? "secondary" : "ghost"}
+                    data-selected={selected || undefined}
+                    className="h-auto w-full justify-start px-3 py-2 text-left"
+                    onClick={() => onSelectSession(session.session_id)}
+                  >
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">{session.title || "未命名会话"}</span>
+                      {current && <Badge variant="secondary">上次活跃会话</Badge>}
+                      {selected && <Check className="size-4 shrink-0 text-accent" />}
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+        <TabsContent value="new" className="m-0 p-2">
+          <div className="rounded-md bg-surface px-3 py-3">
+            <p className="flex items-center gap-2 text-sm font-medium text-fg">
+              <MessageSquarePlus className="size-4" />
+              为 QQ 新建独立会话
+            </p>
+            <p className="mt-1 text-xs leading-5 text-fg/60">
+              QQ 之后的消息会进入这段新会话，不影响你当前正在聊的内容。
+            </p>
+          </div>
+        </TabsContent>
+      </Tabs>
+      <div className="mt-3 flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={loading}>
+          取消
+        </Button>
+        <Button
+          size="sm"
+          onClick={onConfirm}
+          loading={loading}
+          disabled={mode === "recent" && !selectedSessionId}
+        >
+          {mode === "new" ? "新建并绑定" : "绑定此会话"}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -366,4 +626,20 @@ function labelOfStatus(s: ProviderInfo["status"]): string {
       stopped: "已停止",
     } as const
   )[s];
+}
+
+function bindingLabel(provider: ProviderInfo, sessions: SessionSummary[]): string {
+  if (provider.binding_status === "unbound") return "尚未选择会话";
+  if (provider.binding_status === "invalid") return "原会话已不存在，请重新选择";
+  return (
+    sessions.find((session) => session.session_id === provider.session_id)?.title ??
+    "已选择会话"
+  );
+}
+
+function isBindingTarget(
+  target: { imType: IMType; bindId: string } | null,
+  provider: ProviderInfo,
+): boolean {
+  return target?.imType === provider.im_type && target.bindId === provider.bind_id;
 }

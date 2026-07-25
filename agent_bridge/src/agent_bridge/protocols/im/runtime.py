@@ -25,20 +25,23 @@ import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import portalocker
 from portalocker.exceptions import LockException
 
 from .adapters.qq import QQAdapter
 from .content import OutboundContent
+from .coordinator import IMBindingCoordinator
 from .credentials import CredentialStore, ImCredential
 from .dedupe import RecentMessageDeduper
-from .event import InboundEvent
+from .event import InboundEvent, InboundInteraction
 from .inbound_resolver import InboundResolver, InboundResolveResult, NoopInboundResolver
 from .provider import IMProvider, ProviderStatus
+from .state import ControlCapability, IMBindingKey, IMStateStore
 
 if TYPE_CHECKING:
+    from .control import IMControlService
     from .router import IMRouter
 
 __all__ = ["IMDesiredOnlineSnapshot", "IMRuntime", "ProviderInfo"]
@@ -63,6 +66,9 @@ class ProviderInfo:
     bind_id: str
     bind_id_masked: str
     status: ProviderStatus
+    binding_status: Literal["unbound", "bound", "invalid"]
+    session_id: str | None
+    controls_capability: ControlCapability
 
 
 @dataclass(frozen=True)
@@ -94,6 +100,10 @@ class IMRuntime:
         inbound_resolver: InboundResolver | None = None,
         deduper: RecentMessageDeduper | None = None,
         lock_base_dir: Path | None = None,
+        state_store: IMStateStore | None = None,
+        coordinator: IMBindingCoordinator | None = None,
+        control_service: IMControlService | None = None,
+        session_exists: Callable[[str], bool] | None = None,
     ) -> None:
         self._router = router
         self._credentials = credentials
@@ -101,6 +111,10 @@ class IMRuntime:
         self._lock_base_dir = lock_base_dir or resume_base_dir.parent / "im_provider_locks"
         self._inbound_resolver = inbound_resolver or NoopInboundResolver()
         self._deduper = deduper
+        self._state = state_store or IMStateStore(resume_base_dir.parent / "im_state.json")
+        self._coordinator = coordinator or IMBindingCoordinator()
+        self._control_service = control_service
+        self._session_exists = session_exists or (lambda _session_id: False)
         self._providers: dict[tuple[str, str], IMProvider] = {}
         self._provider_locks: dict[tuple[str, str], Any] = {}
         self._desired_bindings: set[tuple[str, str]] = set()
@@ -124,6 +138,7 @@ class IMRuntime:
         logger.info("IMRuntime starting: %d credential(s) loaded", len(creds))
         for cred in creds:
             try:
+                self._reconcile_legacy_binding(cred)
                 self._spawn_provider(cred)
             except Exception:
                 logger.exception(
@@ -203,6 +218,7 @@ class IMRuntime:
             finally:
                 self._release_provider_lock(lock, provider.type, provider.bind_id)
         self._credentials.delete(im_type, bind_id)
+        self._state.delete_provider(im_type, bind_id)
         with self._desired_bindings_lock:
             self._desired_bindings.discard(key)
         return provider is not None
@@ -212,15 +228,45 @@ class IMRuntime:
 
         wire 暴露 raw ``bind_id``(给前端 unbind 用)+ ``bind_id_masked``(展示用)。
         """
-        return [
-            ProviderInfo(
-                im_type=p.type,
-                bind_id=p.bind_id,
-                bind_id_masked=_mask(p.bind_id),
-                status=p.status(),
+        result: list[ProviderInfo] = []
+        for provider in self._providers.values():
+            key = self._primary_binding_key(provider.type, provider.bind_id)
+            binding = self._state.get_binding(key)
+            binding_status: Literal["unbound", "bound", "invalid"] = "unbound"
+            session_id: str | None = None
+            if binding is not None:
+                session_id = binding.session_id
+                binding_status = "bound" if self._session_exists(session_id) else "invalid"
+            result.append(
+                ProviderInfo(
+                    im_type=provider.type,
+                    bind_id=provider.bind_id,
+                    bind_id_masked=_mask(provider.bind_id),
+                    status=provider.status(),
+                    binding_status=binding_status,
+                    session_id=session_id,
+                    controls_capability=provider.controls_capability(),
+                )
             )
-            for p in self._providers.values()
-        ]
+        return result
+
+    async def bind_session(self, im_type: str, bind_id: str, session_id: str) -> ProviderInfo:
+        """Bind the provider's primary chat to an existing Agent session."""
+        provider = self._providers.get((im_type, bind_id))
+        if provider is None:
+            raise KeyError((im_type, bind_id))
+        if not self._session_exists(session_id):
+            from agent import SessionNotFoundError
+
+            raise SessionNotFoundError(session_id)
+        key = self._primary_binding_key(im_type, bind_id)
+        async with self._coordinator.try_mutation(key):
+            self._state.set_binding(key, session_id)
+        return next(
+            info
+            for info in self.list_status()
+            if info.im_type == im_type and info.bind_id == bind_id
+        )
 
     def desired_online_snapshot(self) -> IMDesiredOnlineSnapshot:
         """返回期望持续在线的绑定数，而非当前成功连接的 provider 数。"""
@@ -232,10 +278,20 @@ class IMRuntime:
         """返回可跨设备重新加密的凭据对象，仅供 owner-only 迁移控制面。"""
         return self._credentials.list_all()
 
-    async def migration_replace_credentials(self, credentials: list[ImCredential]) -> None:
+    def migration_snapshot_state(self) -> dict[str, Any]:
+        """Return non-secret IM routing/capability state for device migration."""
+        return self._state.snapshot()
+
+    async def migration_replace_credentials(
+        self,
+        credentials: list[ImCredential],
+        state: dict[str, Any] | None = None,
+    ) -> None:
         """停止 provider、整体替换凭据，再按新机密文重新启动 provider。"""
         await self.stop()
         self._credentials.replace_all(credentials)
+        if state is not None:
+            self._state.replace(state)
         self.start()
 
     # ------------------------------------------------------------------
@@ -250,8 +306,9 @@ class IMRuntime:
             lock = self._acquire_provider_lock(provider.type, provider.bind_id)
             self._provider_locks[key] = lock
         on_inbound = self._make_inbound_cb(provider)
+        on_interaction = self._make_interaction_cb(provider)
         try:
-            provider.start(on_inbound=on_inbound)
+            provider.start(on_inbound=on_inbound, on_interaction=on_interaction)
         except Exception:
             self._providers.pop(key, None)
             self._provider_locks.pop(key, None)
@@ -304,7 +361,11 @@ class IMRuntime:
         即可,IMRuntime / Router / Routes 零改动。
         """
         if cred.im_type == "qq":
-            return QQAdapter(cred=cred, resume_base_dir=self._resume_base_dir)
+            return QQAdapter(
+                cred=cred,
+                resume_base_dir=self._resume_base_dir,
+                state_store=self._state,
+            )
         raise ValueError(f"unsupported IM type: {cred.im_type}")
 
     def _make_inbound_cb(self, provider: IMProvider) -> Callable[[InboundEvent], Awaitable[None]]:
@@ -344,75 +405,144 @@ class IMRuntime:
                     )
                     return
 
-            result = await self._resolve_inbound(provider, event)
-            resolved_event = result.event or event
+            binding_key = IMBindingKey(
+                im_type=provider.type,
+                provider_bind_id=provider.bind_id,
+                chat_scope=event.chat_scope,
+                chat_id=event.chat_id,
+            )
+            async with self._coordinator.turn(binding_key):
+                await self._handle_bound_inbound(provider, event, binding_key)
+
+        return cb
+
+    async def _handle_bound_inbound(
+        self,
+        provider: IMProvider,
+        event: InboundEvent,
+        binding_key: IMBindingKey,
+    ) -> None:
+        binding = self._state.get_binding(binding_key)
+        if binding is None:
+            await provider.send(
+                OutboundContent(
+                    chat_id=event.chat_id,
+                    chat_scope=event.chat_scope,
+                    text="还没有选择会话，请先在 agent-friend 的“接入 IM”窗口完成选择。",
+                    reply_to_message_id=event.message_id,
+                )
+            )
+            return
+        if not self._session_exists(binding.session_id):
+            await provider.send(
+                OutboundContent(
+                    chat_id=event.chat_id,
+                    chat_scope=event.chat_scope,
+                    text="当前绑定的会话已经不存在，请在 agent-friend 中重新选择。",
+                    reply_to_message_id=event.message_id,
+                )
+            )
+            return
+
+        result = await self._resolve_inbound(provider, event)
+        resolved_event = result.event or event
+        logger.info(
+            "IM inbound resolver result im_type=%s action=%s reason=%s "
+            "message_id=%s resolved_message_id=%s content_len=%d resolved_content_len=%d "
+            "resolved_attachment_count=%d",
+            provider.type,
+            result.action,
+            result.reason,
+            event.message_id,
+            resolved_event.message_id,
+            _text_len(event.content),
+            _text_len(resolved_event.content),
+            _attachment_count(resolved_event),
+        )
+        if result.action == "ignore":
             logger.info(
-                "IM inbound resolver result im_type=%s action=%s reason=%s "
-                "message_id=%s resolved_message_id=%s content_len=%d resolved_content_len=%d "
-                "resolved_attachment_count=%d",
+                "IM inbound ignored (im_type=%s, reason=%s, message_id=%s, content_len=%d)",
                 provider.type,
-                result.action,
                 result.reason,
                 event.message_id,
-                resolved_event.message_id,
                 _text_len(event.content),
-                _text_len(resolved_event.content),
-                _attachment_count(resolved_event),
             )
-            if result.action == "ignore":
+            return
+        if result.action == "reply":
+            if result.reply is not None:
                 logger.info(
-                    "IM inbound ignored (im_type=%s, reason=%s, message_id=%s, content_len=%d)",
+                    "IM inbound direct reply im_type=%s reason=%s message_id=%s reply_len=%d",
                     provider.type,
                     result.reason,
                     event.message_id,
-                    _text_len(event.content),
+                    _text_len(result.reply.text),
                 )
-                return
-            if result.action == "reply":
-                if result.reply is not None:
-                    logger.info(
-                        "IM inbound direct reply im_type=%s reason=%s message_id=%s reply_len=%d",
-                        provider.type,
-                        result.reason,
-                        event.message_id,
-                        _text_len(result.reply.text),
-                    )
-                    await provider.send(result.reply)
-                return
+                await provider.send(result.reply)
+            return
 
-            if not (resolved_event.content or "").strip() and not result.attachments:
-                logger.warning(
-                    "IM inbound empty content ignored after resolver "
-                    "(im_type=%s, chat_scope=%s, chat_id=%s, message_id=%s, "
-                    "original_content_len=%d, attachment_count=%d)",
-                    provider.type,
-                    resolved_event.chat_scope,
-                    resolved_event.chat_id,
-                    resolved_event.message_id,
-                    _text_len(event.content),
-                    _attachment_count(resolved_event),
-                )
-                return
-
-            logger.info(
-                "IM inbound routing to router im_type=%s chat_scope=%s chat_id=%s "
-                "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
+        if not (resolved_event.content or "").strip() and not result.attachments:
+            logger.warning(
+                "IM inbound empty content ignored after resolver "
+                "(im_type=%s, chat_scope=%s, chat_id=%s, message_id=%s, "
+                "original_content_len=%d, attachment_count=%d)",
                 provider.type,
                 resolved_event.chat_scope,
                 resolved_event.chat_id,
                 resolved_event.message_id,
-                _text_len(resolved_event.content),
-                _text_len((resolved_event.content or "").strip()),
+                _text_len(event.content),
                 _attachment_count(resolved_event),
             )
-            await self._router.handle_inbound(
-                provider.type,
-                resolved_event,
-                send_fn=provider.send,
-                attachments=result.attachments,
-            )
+            return
+
+        logger.info(
+            "IM inbound routing to router im_type=%s chat_scope=%s chat_id=%s "
+            "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
+            provider.type,
+            resolved_event.chat_scope,
+            resolved_event.chat_id,
+            resolved_event.message_id,
+            _text_len(resolved_event.content),
+            _text_len((resolved_event.content or "").strip()),
+            _attachment_count(resolved_event),
+        )
+        await self._router.handle_inbound(
+            provider.type,
+            resolved_event,
+            send_fn=provider.send,
+            attachments=result.attachments,
+            session_id=binding.session_id,
+        )
+
+    def _make_interaction_cb(
+        self,
+        provider: IMProvider,
+    ) -> Callable[[InboundInteraction], Awaitable[None]] | None:
+        control_service = self._control_service
+        if control_service is None:
+            return None
+
+        async def cb(event: InboundInteraction) -> None:
+            await control_service.handle(provider, event)
 
         return cb
+
+    def _reconcile_legacy_binding(self, cred: ImCredential) -> None:
+        bind_id = _provider_bind_id(cred)
+        key = self._primary_binding_key(cred.im_type, bind_id)
+        if self._state.get_binding(key) is not None:
+            return
+        legacy_session_id = f"im:{cred.im_type}:{bind_id}"
+        if self._session_exists(legacy_session_id):
+            self._state.set_binding(key, legacy_session_id)
+
+    @staticmethod
+    def _primary_binding_key(im_type: str, bind_id: str) -> IMBindingKey:
+        return IMBindingKey(
+            im_type=im_type,
+            provider_bind_id=bind_id,
+            chat_scope="c2c",
+            chat_id=bind_id,
+        )
 
     async def _resolve_inbound(
         self,

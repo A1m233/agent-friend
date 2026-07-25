@@ -20,6 +20,7 @@ OnboardSessionRegistry:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,11 +28,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_bridge.protocols.im.credentials import CredentialStore, ImCredential
+from agent_bridge.protocols.im.event import InboundEvent, InboundInteraction
 from agent_bridge.protocols.im.onboard import (
     OnboardSessionRegistry,
     OnboardStatus,
 )
 from agent_bridge.protocols.im.runtime import IMRuntime
+from agent_bridge.protocols.im.state import IMBindingKey, IMStateStore
 
 # ---------- 测试 stub IMProvider(替代 QQAdapter,避免真启 SDK) ----------
 
@@ -49,7 +52,11 @@ class _StubProvider:
     stopped: bool = False
     _status: str = "stopped"  # IMProvider.status() 返回
 
-    def start(self, on_inbound: Any) -> None:
+    def start(
+        self,
+        on_inbound: Callable[[InboundEvent], Awaitable[None]],
+        on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None,
+    ) -> None:
         self.started = True
         self._status = "active"
 
@@ -62,6 +69,9 @@ class _StubProvider:
 
     def status(self) -> Any:
         return self._status
+
+    def controls_capability(self) -> Any:
+        return "unknown"
 
 
 def _make_cred(bind_id: str = "OPENID-A") -> ImCredential:
@@ -263,6 +273,57 @@ def test_list_status_masks_bind_id(runtime: IMRuntime) -> None:
     assert statuses[0].bind_id_masked == "OPEN...FIER"
 
 
+@pytest.mark.asyncio
+async def test_bind_session_persists_primary_c2c_route(
+    credentials: CredentialStore,
+    router: MagicMock,
+    tmp_path: Path,
+) -> None:
+    state = IMStateStore(tmp_path / "im_state.json")
+    runtime = IMRuntime(
+        router=router,
+        credentials=credentials,
+        resume_base_dir=tmp_path / "im_resume",
+        state_store=state,
+        session_exists=lambda session_id: session_id == "SESSION-1",
+    )
+    provider = _StubProvider(bind_id="OPENID-A")
+    runtime._providers[("qq", "OPENID-A")] = provider
+
+    info = await runtime.bind_session("qq", "OPENID-A", "SESSION-1")
+
+    key = IMBindingKey("qq", "OPENID-A", "c2c", "OPENID-A")
+    assert state.get_binding(key).session_id == "SESSION-1"  # type: ignore[union-attr]
+    assert info.binding_status == "bound"
+
+
+@pytest.mark.asyncio
+async def test_start_reconciles_existing_legacy_qq_session_only(
+    credentials: CredentialStore,
+    router: MagicMock,
+    tmp_path: Path,
+) -> None:
+    state = IMStateStore(tmp_path / "im_state.json")
+    credentials.save(_make_cred("OPENID-LEGACY"))
+    runtime = IMRuntime(
+        router=router,
+        credentials=credentials,
+        resume_base_dir=tmp_path / "im_resume",
+        state_store=state,
+        session_exists=lambda session_id: session_id == "im:qq:OPENID-LEGACY",
+    )
+    with patch.object(
+        runtime,
+        "_build_provider",
+        return_value=_StubProvider(bind_id="OPENID-LEGACY"),
+    ):
+        runtime.start()
+
+    key = IMBindingKey("qq", "OPENID-LEGACY", "c2c", "OPENID-LEGACY")
+    assert state.get_binding(key).session_id == "im:qq:OPENID-LEGACY"  # type: ignore[union-attr]
+    await runtime.stop()
+
+
 # ---------- _build_provider 工厂行为 ----------
 
 
@@ -349,6 +410,7 @@ async def test_onboard_success_flow(
     assert final.qr_url is not None
     assert final.qr_url.startswith("https://q.qq.com/")
     assert final.bind_id_masked is not None
+    assert final.bind_id == "FAKE-OPENID-12345678"
     assert final.error is None
     # IMRuntime 已经为新凭据 spawn provider
     assert ("qq", "FAKE-OPENID-12345678") in runtime._providers

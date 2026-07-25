@@ -8,7 +8,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import agent_bridge.__main__ as bridge_main
 import pytest
 from agent_bridge.settings import BridgeSettings
 
@@ -80,3 +83,17 @@ def test_bridge_settings_legacy_dotenv_is_explicit(
     settings = BridgeSettings(_env_file=".env")  # type: ignore[call-arg]
 
     assert settings.port == 19999
+
+
+def test_main_treats_keyboard_interrupt_as_clean_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = SimpleNamespace(state=SimpleNamespace(lifecycle_controller=None))
+    monkeypatch.setattr(bridge_main, "create_app", lambda: app)
+
+    def interrupt(_server: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("agent_bridge.__main__.uvicorn.Server.run", interrupt)
+
+    assert bridge_main.main([]) == 0

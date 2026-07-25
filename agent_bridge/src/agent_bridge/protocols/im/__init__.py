@@ -21,33 +21,45 @@
 详见 docs/requirements/022-im-channel-and-qq-adapter/design.md。
 """
 
-from .content import OutboundContent
+from .content import OutboundAction, OutboundContent, OutboundControls
+from .control import IMControlService, menu_controls
+from .coordinator import IMBindingBusyError, IMBindingCoordinator
 from .credentials import CredentialStore, ImCredential
 from .dedupe import RecentMessageDeduper
-from .event import InboundEvent
+from .event import InboundEvent, InboundInteraction
 from .inbound_resolver import InboundResolver, InboundResolveResult
 from .onboard import OnboardSessionRegistry, OnboardStatus, OnboardTaskState
 from .provider import IMProvider, ProviderStatus
 from .router import IMRouter
 from .routes import register_routes
 from .runtime import IMDesiredOnlineSnapshot, IMRuntime, ProviderInfo
+from .state import IMBindingKey, IMStateStore
 
 __all__ = [
     "CredentialStore",
+    "IMBindingBusyError",
+    "IMBindingCoordinator",
+    "IMBindingKey",
+    "IMControlService",
     "IMDesiredOnlineSnapshot",
     "IMProvider",
     "IMRouter",
     "IMRuntime",
+    "IMStateStore",
     "ImCredential",
     "InboundEvent",
+    "InboundInteraction",
     "InboundResolveResult",
     "InboundResolver",
     "OnboardSessionRegistry",
     "OnboardStatus",
     "OnboardTaskState",
+    "OutboundAction",
     "OutboundContent",
+    "OutboundControls",
     "ProviderInfo",
     "ProviderStatus",
     "RecentMessageDeduper",
+    "menu_controls",
     "register_routes",
 ]
