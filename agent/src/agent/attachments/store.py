@@ -3,6 +3,7 @@ from __future__ import annotations
 import codecs
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -12,9 +13,11 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Literal
 
 from .models import AttachmentKind, AttachmentRef
+
+logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 DEFAULT_DRAFT_TTL_SECONDS = 24 * 60 * 60
@@ -22,6 +25,11 @@ DEFAULT_GC_GRACE_SECONDS = 24 * 60 * 60
 SUPPORTED_MEDIA_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"}
 )
+_CANONICAL_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
 
 class AttachmentError(ValueError):
@@ -61,6 +69,17 @@ def _extension_media_type(display_name: str) -> str | None:
     }.get(Path(display_name).suffix.lower())
 
 
+def _canonical_image_name(display_name: str, media_type: str) -> str:
+    name = _safe_name(display_name)
+    extension = _CANONICAL_EXTENSIONS[media_type]
+    path = Path(name)
+    if path.suffix.lower() == extension:
+        return name
+    stem = path.stem if path.suffix else path.name
+    stem = stem[: 255 - len(extension)] or "attachment"
+    return f"{stem}{extension}"
+
+
 class AttachmentStore:
     """Content-addressed attachment store with short-lived draft leases."""
 
@@ -88,6 +107,7 @@ class AttachmentStore:
         *,
         display_name: str,
         declared_media_type: str | None = None,
+        image_metadata_policy: Literal["strict", "advisory"] = "strict",
     ) -> tuple[str, AttachmentRef]:
         fd, tmp_name = tempfile.mkstemp(prefix="upload-", dir=self.tmp_dir)
         tmp = Path(tmp_name)
@@ -131,17 +151,45 @@ class AttachmentStore:
             media_type, kind = _detect_media_type(bytes(head), valid_utf8_text=valid_utf8_text)
             declared = (declared_media_type or "").split(";", 1)[0].strip().lower()
             if declared and declared not in ("application/octet-stream", media_type):
-                raise AttachmentError("attachment_type_mismatch", "文件内容与声明的类型不一致。")
+                if kind != "image" or image_metadata_policy == "strict":
+                    raise AttachmentError(
+                        "attachment_type_mismatch", "文件内容与声明的类型不一致。"
+                    )
+                logger.warning(
+                    "Attachment image metadata mismatch "
+                    "reason=declared_media_type_mismatch "
+                    "declared_media_type=%s detected_media_type=%s",
+                    declared,
+                    media_type,
+                )
             extension_type = _extension_media_type(display_name)
-            if extension_type is not None and extension_type != media_type:
+            if (
+                extension_type is not None
+                and extension_type != media_type
+                and (kind != "image" or image_metadata_policy == "strict")
+            ):
                 raise AttachmentError(
                     "attachment_type_mismatch", "文件扩展名与实际内容类型不一致。"
                 )
 
+            normalized_display_name = _safe_name(display_name)
+            if kind == "image" and image_metadata_policy == "advisory":
+                filename_extension = Path(normalized_display_name).suffix.lower()
+                canonical_extension = _CANONICAL_EXTENSIONS[media_type]
+                if filename_extension and filename_extension != canonical_extension:
+                    logger.warning(
+                        "Attachment image metadata mismatch "
+                        "reason=filename_extension_mismatch "
+                        "filename_extension=%s detected_media_type=%s",
+                        filename_extension,
+                        media_type,
+                    )
+                normalized_display_name = _canonical_image_name(display_name, media_type)
+
             sha256 = digest.hexdigest()
             ref = AttachmentRef(
                 asset_id=sha256,
-                display_name=_safe_name(display_name),
+                display_name=normalized_display_name,
                 kind=kind,
                 media_type=media_type,
                 size_bytes=size,

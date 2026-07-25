@@ -95,6 +95,7 @@ class IMAttachmentResolver:
                         response.aiter_bytes(),
                         display_name=name,
                         declared_media_type=declared,
+                        image_metadata_policy="advisory",
                     )
                     return self._store.consume_draft(draft_id)
 

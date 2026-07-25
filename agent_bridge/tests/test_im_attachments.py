@@ -58,6 +58,81 @@ async def test_resolver_imports_image_for_attachment_only_message(tmp_path: Path
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("filename", "sdk_content_type", "response_content_type"),
+    [
+        ("photo.jpg", "image/png", "image/png"),
+        ("photo.png", "image/jpeg", "image/jpeg"),
+        ("photo.bin", "", "application/octet-stream"),
+    ],
+)
+async def test_resolver_accepts_qq_image_metadata_mismatch_using_detected_type(
+    tmp_path: Path,
+    filename: str,
+    sdk_content_type: str,
+    response_content_type: str,
+) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"\x89PNG\r\n\x1a\ncontent",
+            headers={"content-type": response_content_type},
+        )
+
+    resolver = IMAttachmentResolver(
+        AttachmentStore(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+    result = await resolver.resolve(
+        "qq",
+        _event(
+            attachments=[
+                MessageAttachment(
+                    url="https://cdn.example.test/media",
+                    filename=filename,
+                    content_type=sdk_content_type,
+                )
+            ]
+        ),
+    )
+
+    assert result.action == "route"
+    assert len(result.attachments) == 1
+    assert result.attachments[0].media_type == "image/png"
+    assert result.attachments[0].display_name == "photo.png"
+
+
+@pytest.mark.asyncio
+async def test_resolver_still_rejects_unknown_attachment_bytes(tmp_path: Path) -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=b"\x00not-a-supported-image",
+            headers={"content-type": "image/png"},
+        )
+
+    resolver = IMAttachmentResolver(
+        AttachmentStore(tmp_path),
+        transport=httpx.MockTransport(handler),
+    )
+    result = await resolver.resolve(
+        "qq",
+        _event(
+            attachments=[
+                MessageAttachment(
+                    url="https://cdn.example.test/media",
+                    filename="photo.png",
+                    content_type="image/png",
+                )
+            ]
+        ),
+    )
+
+    assert result.action == "reply"
+    assert result.reason == "attachment_import_failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("url", "filename", "content_type", "content", "expected_media_type"),
     [
         (
