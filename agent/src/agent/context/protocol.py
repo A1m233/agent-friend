@@ -43,11 +43,13 @@ class BudgetSnapshot:
     last_input_tokens: int | None
     output_reserve: int
     buffer: int
+    emergency_ratio: float = 1.0
 
     @property
     def trigger_threshold(self) -> int:
         """触发裁剪 / 压缩的 token 阈值（窗口 − 输出预留 − 缓冲，下限 0）。"""
-        return max(0, self.effective_window - self.output_reserve - self.buffer)
+        base = max(0, self.effective_window - self.output_reserve - self.buffer)
+        return int(base * self.emergency_ratio)
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,11 @@ class PriorSummary:
 
     summary: str
     covered_through_uuid: str
+    checkpoint_version: int = 1
+    summary_prompt_version: int = 0
+    summary_source_from_uuid: str = ""
+    retained_from_uuid: str = ""
+    omitted_before_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,17 @@ class CompactionRecord:
     tokens_before: int = 0
     tokens_after: int = 0
     model: str = ""
+    checkpoint_version: int = 2
+    summary_prompt_version: int = 1
+    summary_source_from_uuid: str = ""
+    retained_from_uuid: str = ""
+    omitted_before_count: int = 0
+    effective_window: int = 0
+    calibration_factor: float = 1.0
+    trigger_reason: str = "budget"
+    summary_attempts: int = 1
+    tool_results_truncated: int = 0
+    tool_results_omitted: int = 0
 
 
 @dataclass
@@ -107,6 +125,9 @@ class RuntimeContext:
     budget: BudgetSnapshot
     llm_client: LLMClient
     prior_summary: PriorSummary | None = None
+    request_overhead_tokens: int = 0
+    calibration_factor: float = 1.0
+    trigger_reason: str = "budget"
 
 
 @dataclass

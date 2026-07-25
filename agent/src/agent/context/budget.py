@@ -14,8 +14,12 @@
 
 from __future__ import annotations
 
+import json
+import math
+from typing import Any
+
 from ..messages import Message
-from .protocol import BudgetSnapshot
+from .protocol import BudgetSnapshot, RuntimeContext
 
 CHARS_TO_TOKENS = 0.75
 """字符 → token 的保守系数（009 design §3.3 / Q-4）。
@@ -69,9 +73,25 @@ def estimate_tokens(messages: list[Message]) -> int:
     return int(total_chars * CHARS_TO_TOKENS) + attachment_tokens
 
 
+def estimate_tool_schema_tokens(tool_specs: list[dict[str, Any]] | None) -> int:
+    """估算本轮实际发送的 tool schema 成本。"""
+    if not tool_specs:
+        return 0
+    rendered = json.dumps(tool_specs, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return int(len(rendered) * CHARS_TO_TOKENS)
+
+
+def estimate_request_tokens(messages: list[Message], runtime: RuntimeContext) -> int:
+    """按当前模型 usage 校准和 tool schema 开销估算完整请求输入。"""
+    raw = estimate_tokens(messages) + runtime.request_overhead_tokens
+    return math.ceil(raw * runtime.calibration_factor)
+
+
 def make_budget_snapshot(
     effective_window: int,
     last_input_tokens: int | None,
+    *,
+    emergency_ratio: float = 1.0,
 ) -> BudgetSnapshot:
     """按 model 窗口动态推导本轮预算快照（009 R-1.3）。
 
@@ -89,4 +109,5 @@ def make_budget_snapshot(
         last_input_tokens=last_input_tokens,
         output_reserve=output_reserve,
         buffer=buffer,
+        emergency_ratio=max(0.1, min(1.0, emergency_ratio)),
     )

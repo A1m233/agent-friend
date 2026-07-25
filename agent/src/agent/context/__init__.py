@@ -20,9 +20,12 @@ from .budget import (
     BUFFER_RATIO,
     CHARS_TO_TOKENS,
     OUTPUT_RESERVE_RATIO,
+    estimate_request_tokens,
     estimate_tokens,
+    estimate_tool_schema_tokens,
     make_budget_snapshot,
 )
+from .errors import ContextInputTooLargeError
 from .fifo import RECENT_PROTECT_TURNS, FifoContextManager
 from .naive import NaiveContextManager
 from .protocol import (
@@ -61,6 +64,7 @@ __all__ = [
     "BudgetSnapshot",
     "BuildResult",
     "CompactionRecord",
+    "ContextInputTooLargeError",
     "ContextManager",
     "FifoContextManager",
     "NaiveContextManager",
@@ -69,6 +73,8 @@ __all__ = [
     "SummarizingContextManager",
     "assemble_messages",
     "default_context_manager",
+    "estimate_request_tokens",
     "estimate_tokens",
+    "estimate_tool_schema_tokens",
     "make_budget_snapshot",
 ]
