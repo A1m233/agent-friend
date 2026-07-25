@@ -238,6 +238,38 @@ def test_status_stop_and_release(monkeypatch: Any, tmp_path: Path) -> None:
     assert not (tmp_path / "lease.json").exists()
 
 
+def test_release_cli_accepts_runtime_context_and_removes_lease(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    configure_guard(
+        monkeypatch,
+        tmp_path,
+        processes=[process(111, "owner-a", "powershell run.ps1")],
+    )
+    write_lease(tmp_path, pid=111, start_id="owner-a", worktree=str(tmp_path))
+    monkeypatch.setattr(guard, "git_repo_id", lambda worktree: "local:agent-friend")
+    monkeypatch.setattr(guard, "git_branch", lambda worktree: "feature/test")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(GUARD_PATH),
+            "release",
+            "--worktree",
+            str(tmp_path),
+            "--mode",
+            "tauri",
+            "--ports",
+            "1420,18800",
+            "--owner-pid",
+            "111",
+        ],
+    )
+
+    assert guard.main() == 0
+    assert not (tmp_path / "lease.json").exists()
+
+
 def test_posix_entry_no_longer_contains_startup_dev_port_killer() -> None:
     run_sh = (ROOT / "scripts" / "dev" / "run.sh").read_text(encoding="utf-8")
 

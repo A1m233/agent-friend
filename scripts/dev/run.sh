@@ -109,7 +109,7 @@ run_runtime_guard() {
 
 release_runtime_lease() {
     if [ "$RUNTIME_LEASE_ACQUIRED" = "1" ]; then
-        uv run python "$RUNTIME_GUARD" release --owner-pid "$$" >/dev/null 2>&1 || true
+        run_runtime_guard release --owner-pid "$$" >/dev/null 2>&1 || true
         RUNTIME_LEASE_ACQUIRED=0
     fi
 }
@@ -349,7 +349,7 @@ if [ "$MODE" = "tauri" ]; then
     fi
     echo "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
-    (cd "$ROOT/frontend" && pnpm tauri dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
+    (cd "$ROOT/frontend" && node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
     wait
     exit $?
 fi
@@ -406,7 +406,7 @@ if [ "$MODE" = "web" ]; then
     (cd "$ROOT/frontend" && pnpm dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[web] " &
 else
     echo "===> 前端模式：tauri（桌面，含双窗口；首次编译 Rust 较慢）"
-    (cd "$ROOT/frontend" && pnpm tauri dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
+    (cd "$ROOT/frontend" && node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
 fi
 
 if [ "$VOICE_MODE" = "off" ]; then
