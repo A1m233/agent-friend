@@ -23,6 +23,9 @@ export interface ProviderInfo {
   /** 头 4 字符 + … + 尾 4 字符,前端可直接渲染。 */
   bind_id_masked: string;
   status: ProviderStatus;
+  binding_status: "unbound" | "bound" | "invalid";
+  session_id: string | null;
+  controls_capability: "unknown" | "supported" | "unsupported";
 }
 
 export type OnboardStatus = "pending" | "qr_ready" | "success" | "failed";
@@ -32,6 +35,7 @@ export interface OnboardTaskState {
   im_type: IMType;
   status: OnboardStatus;
   qr_url: string | null;
+  bind_id: string | null;
   bind_id_masked: string | null;
   error: string | null;
 }
@@ -52,6 +56,13 @@ export const imApi = {
   /** 轮询 onboard 状态。 */
   getOnboardState(taskId: string): Promise<OnboardTaskState> {
     return http.get<unknown, OnboardTaskState>(`/v1/im/onboard/${taskId}`);
+  },
+
+  bindSession(imType: IMType, bindId: string, sessionId: string): Promise<ProviderInfo> {
+    return http.put<unknown, ProviderInfo>(
+      `/v1/im/providers/${imType}/${encodeURIComponent(bindId)}/session-binding`,
+      { session_id: sessionId },
+    );
   },
 
   /** 解绑(stop provider + 删凭据);幂等。 */

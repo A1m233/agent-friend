@@ -20,6 +20,7 @@ import {
   subscribePermissionSnapshot,
 } from "@/lib/permissions";
 import { waitForFeaturePermissions } from "@/lib/permissions/featureGuard";
+import { subscribeActiveChatSession } from "@/lib/active-chat-session";
 import { isTauri } from "@/utils/tauri";
 import { emitSessionsChanged } from "./sessions";
 import { canStartVoiceCall, isVoiceCallLive } from "./voiceStateMachine";
@@ -31,7 +32,6 @@ const EVENT_TOGGLE_MUTE_REQUEST = "voice://toggle-mute-request";
 const EVENT_CONFIRM_TUNNEL_CONSENT = "voice://confirm-tunnel-consent";
 const EVENT_CANCEL_TUNNEL_CONSENT = "voice://cancel-tunnel-consent";
 const EVENT_SNAPSHOT_REQUEST = "voice://snapshot-request";
-const EVENT_ACTIVE_CHAT_SESSION = "voice://active-chat-session";
 const EVENT_WINDOW_SHOWN = "window://shown";
 
 interface VoiceState extends VoiceCallSnapshot {
@@ -959,9 +959,6 @@ export function startVoiceOwnerCommandListener(): void {
     void listen(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
     void listen(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
     void listen(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);
-    void listen<{ sessionId: string | null }>(EVENT_ACTIVE_CHAT_SESSION, (event) =>
-      onActiveSession(event.payload.sessionId),
-    );
   }
 
   window.addEventListener(EVENT_START_REQUEST, (event) => {
@@ -972,12 +969,6 @@ export function startVoiceOwnerCommandListener(): void {
   window.addEventListener(EVENT_CONFIRM_TUNNEL_CONSENT, onConfirmTunnelConsent);
   window.addEventListener(EVENT_CANCEL_TUNNEL_CONSENT, onCancelTunnelConsent);
   window.addEventListener(EVENT_SNAPSHOT_REQUEST, onSnapshotRequest);
-  window.addEventListener(EVENT_ACTIVE_CHAT_SESSION, (event) => {
-    onActiveSession((event as CustomEvent<{ sessionId: string | null }>).detail?.sessionId ?? null);
-  });
+  subscribeActiveChatSession(onActiveSession);
   void consumePendingVoiceStart();
-}
-
-export async function publishActiveChatSession(sessionId: string | null): Promise<void> {
-  await emitEverywhere(EVENT_ACTIVE_CHAT_SESSION, { sessionId });
 }

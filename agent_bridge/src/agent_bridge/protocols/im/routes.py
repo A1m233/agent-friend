@@ -27,7 +27,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from agent import SessionNotFoundError
+
 from ...assembly import BridgeRuntime
+from .coordinator import IMBindingBusyError
 from .onboard import OnboardSessionRegistry
 
 __all__ = ["register_routes"]
@@ -43,6 +46,10 @@ class OnboardStartBody(BaseModel):
 
 class OnboardStartResponse(BaseModel):
     task_id: str
+
+
+class SessionBindingBody(BaseModel):
+    session_id: str = Field(..., min_length=1)
 
 
 def register_routes(
@@ -106,6 +113,7 @@ def register_routes(
             "im_type": state.im_type,
             "status": state.status.value,
             "qr_url": state.qr_url,
+            "bind_id": state.bind_id,
             "bind_id_masked": state.bind_id_masked,
             "error": state.error,
         }
@@ -121,5 +129,22 @@ def register_routes(
         im = _require_im_runtime()
         found = await im.unbind(im_type, bind_id)
         return {"ok": True, "found": found}
+
+    @router.put("/providers/{im_type}/{bind_id}/session-binding")
+    async def bind_provider_session(
+        im_type: str,
+        bind_id: str,
+        body: SessionBindingBody,
+    ) -> dict[str, Any]:
+        im = _require_im_runtime()
+        try:
+            info = await im.bind_session(im_type, bind_id, body.session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="IM provider not found") from exc
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="session not found") from exc
+        except IMBindingBusyError as exc:
+            raise HTTPException(status_code=409, detail="IM reply is still running") from exc
+        return asdict(info)
 
     app.include_router(router)

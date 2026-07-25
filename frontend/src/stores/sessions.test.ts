@@ -23,6 +23,9 @@ const browserGlobals = vi.hoisted(() => {
 });
 
 vi.mock("@/services", () => ({
+  imApi: {
+    listProviders: vi.fn(),
+  },
   sessionsApi: {
     list: vi.fn(),
     rename: vi.fn(),
@@ -40,9 +43,10 @@ vi.mock("@/utils/tauri", () => ({
   isTauri: () => false,
 }));
 
-import { sessionsApi } from "@/services";
+import { imApi, sessionsApi } from "@/services";
 import type { SessionSummary } from "@/types/meta";
 import {
+  collectBoundIMTypesBySession,
   emitSessionsChanged,
   startSessionsChangedSubscriber,
   useArchivedSessionsStore,
@@ -50,6 +54,7 @@ import {
 } from "./sessions";
 
 const mockList = vi.mocked(sessionsApi.list);
+const mockListProviders = vi.mocked(imApi.listProviders);
 const mockDelete = vi.mocked(sessionsApi.delete);
 const mockDeleteArchived = vi.mocked(sessionsApi.deleteArchived);
 const mockUnarchive = vi.mocked(sessionsApi.unarchive);
@@ -67,7 +72,13 @@ function summary(sessionId: string): SessionSummary {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useSessionsStore.setState({ list: [], loading: false, loaded: false });
+  mockListProviders.mockResolvedValue([]);
+  useSessionsStore.setState({
+    list: [],
+    imTypesBySession: {},
+    loading: false,
+    loaded: false,
+  });
   useArchivedSessionsStore.setState({
     list: [],
     query: "",
@@ -87,6 +98,59 @@ describe("sessions store", () => {
     expect(useSessionsStore.getState().list.map((s) => s.session_id)).toEqual(["sid-1"]);
     expect(useSessionsStore.getState().loaded).toBe(true);
     expect(useSessionsStore.getState().loading).toBe(false);
+  });
+
+  it("projects bound IM types into the session list cache", async () => {
+    mockList.mockResolvedValue([summary("sid-1")]);
+    mockListProviders.mockResolvedValue([
+      {
+        im_type: "qq",
+        bind_id: "bind-1",
+        bind_id_masked: "bind…1",
+        status: "active",
+        binding_status: "bound",
+        session_id: "sid-1",
+        controls_capability: "supported",
+      },
+    ]);
+
+    await useSessionsStore.getState().refresh();
+
+    expect(useSessionsStore.getState().imTypesBySession).toEqual({ "sid-1": ["qq"] });
+  });
+
+  it("ignores unbound providers and deduplicates the same IM type", () => {
+    expect(
+      collectBoundIMTypesBySession([
+        {
+          im_type: "qq",
+          bind_id: "a",
+          bind_id_masked: "a",
+          status: "active",
+          binding_status: "bound",
+          session_id: "sid-1",
+          controls_capability: "supported",
+        },
+        {
+          im_type: "qq",
+          bind_id: "b",
+          bind_id_masked: "b",
+          status: "active",
+          binding_status: "bound",
+          session_id: "sid-1",
+          controls_capability: "supported",
+        },
+        {
+          im_type: "qq",
+          bind_id: "c",
+          bind_id_masked: "c",
+          status: "active",
+          binding_status: "unbound",
+          session_id: null,
+          controls_capability: "supported",
+        },
+      ]),
+    ).toEqual({ "sid-1": ["qq"] });
   });
 
   it("keeps the previous loaded state when refresh fails", async () => {

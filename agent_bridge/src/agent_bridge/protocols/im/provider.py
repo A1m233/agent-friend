@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol
 
 from .content import OutboundContent
-from .event import InboundEvent
+from .event import InboundEvent, InboundInteraction
 
 __all__ = ["IMProvider", "ProviderStatus"]
 
@@ -61,7 +61,11 @@ class IMProvider(Protocol):
     计算 + actionbar 面板"已绑定列表"展示(脱敏后)+ ``IMRuntime._providers``
     dict 主键(``(type, bind_id)``)。"""
 
-    def start(self, on_inbound: Callable[[InboundEvent], Awaitable[None]]) -> None:
+    def start(
+        self,
+        on_inbound: Callable[[InboundEvent], Awaitable[None]],
+        on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None,
+    ) -> None:
         """启动长连。inbound 消息时调 ``on_inbound``。
 
         Args:
@@ -85,3 +89,6 @@ class IMProvider(Protocol):
 
     def status(self) -> ProviderStatus:
         """返回当前通道状态。"""
+
+    def controls_capability(self) -> Literal["unknown", "supported", "unsupported"]:
+        """Return the observed availability of platform message controls."""

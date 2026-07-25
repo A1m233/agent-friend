@@ -14,6 +14,18 @@ dataclass,Router / Runtime 零改动。本期不实装。
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from qqbot_agent_sdk.event_parser import InboundEvent
 
-__all__ = ["InboundEvent"]
+__all__ = ["InboundEvent", "InboundInteraction"]
+
+
+@dataclass(frozen=True)
+class InboundInteraction:
+    interaction_id: str
+    event_type: str
+    chat_scope: str
+    chat_id: str
+    operator_id: str
+    payload: str

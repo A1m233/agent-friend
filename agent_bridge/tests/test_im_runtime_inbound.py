@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.credentials import CredentialStore, ImCredential
 from agent_bridge.protocols.im.dedupe import RecentMessageDeduper
-from agent_bridge.protocols.im.event import InboundEvent
+from agent_bridge.protocols.im.event import InboundEvent, InboundInteraction
 from agent_bridge.protocols.im.inbound_resolver import InboundResolveResult
 from agent_bridge.protocols.im.provider import ProviderStatus
 from agent_bridge.protocols.im.runtime import IMRuntime
+from agent_bridge.protocols.im.state import ControlCapability, IMBindingKey, IMStateStore
 
 
 class StubProvider:
@@ -24,7 +25,11 @@ class StubProvider:
     def __init__(self) -> None:
         self.sent: list[OutboundContent] = []
 
-    def start(self, on_inbound: Any) -> None:
+    def start(
+        self,
+        on_inbound: Callable[[InboundEvent], Awaitable[None]],
+        on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None,
+    ) -> None:
         pass
 
     async def send(self, content: OutboundContent) -> None:
@@ -35,6 +40,9 @@ class StubProvider:
 
     def status(self) -> ProviderStatus:
         return "active"
+
+    def controls_capability(self) -> ControlCapability:
+        return "unknown"
 
 
 class StubResolver:
@@ -67,12 +75,19 @@ def make_runtime(
     resolver: StubResolver,
     deduper: RecentMessageDeduper | None = None,
 ) -> IMRuntime:
+    state = IMStateStore(tmp_path / "im_state.json")
+    state.set_binding(
+        IMBindingKey("qq", "OPENID-STUB", "c2c", "OPENID-USER"),
+        "SESSION-BOUND",
+    )
     return IMRuntime(
         router=router,
         credentials=CredentialStore(base_dir=tmp_path / "im_credentials"),
         resume_base_dir=tmp_path / "im_resume",
         inbound_resolver=resolver,
         deduper=deduper,
+        state_store=state,
+        session_exists=lambda session_id: session_id == "SESSION-BOUND",
     )
 
 
@@ -91,6 +106,7 @@ async def test_runtime_routes_resolved_event(tmp_path: Path) -> None:
     router.handle_inbound.assert_awaited_once()
     assert router.handle_inbound.await_args.args[0] == "qq"
     assert router.handle_inbound.await_args.args[1].content == "after"
+    assert router.handle_inbound.await_args.kwargs["session_id"] == "SESSION-BOUND"
     assert provider.sent == []
 
 

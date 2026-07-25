@@ -53,6 +53,7 @@ from runtime_config import config_mode_from_env, credential_source_for_mode
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
 from .runtime_config import BridgeRuntimeConfig, DeferredLLMClient, resolve_bridge_runtime_config
+from .session_models import SessionModelService
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
 
@@ -135,6 +136,8 @@ class BridgeRuntime:
     :meth:`AgentRuntime.start` / :meth:`stop`。``None`` 仅在过渡期 /
     测试 fixture 不需要 main loop 时出现。
     """
+    session_model_service: SessionModelService | None = None
+    """Shared model mutation path used by desktop REST and IM controls."""
     im_runtime: IMRuntime | None = None
     """022 起新增:进程级 :class:`agent_bridge.protocols.im.IMRuntime`,
     管理 IM 长连(QQ / 未来飞书 / TG)。``None`` 表示本进程未启用 IM 通道
@@ -318,6 +321,11 @@ def build_runtime(
         session_turn_guard=turn_coordinator.hold,
     )
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
+    session_model_service = SessionModelService(
+        persistent_session_manager,
+        turn_coordinator,
+        agent_runtime,
+    )
 
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
     im_runtime: IMRuntime | None = None
@@ -325,7 +333,10 @@ def build_runtime(
     if settings.im_enabled:
         from .protocols.im import (
             CredentialStore,
+            IMBindingCoordinator,
+            IMControlService,
             IMRouter,
+            IMStateStore,
         )
         from .protocols.im import IMRuntime as _IMRuntime
         from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
@@ -363,6 +374,7 @@ def build_runtime(
             recall_buffer=recall_buffer,
             turn_coordinator=turn_coordinator,
             agent_runtime=agent_runtime,
+            session_model_service=session_model_service,
             persona_store=persona_store,
             persona_editor_session_manager=persona_editor_session_manager,
             persona_editor_workspace=persona_editor_workspace,
@@ -373,6 +385,14 @@ def build_runtime(
             default_persona=default_persona,
             default_model=default_model,
             agent_runtime=agent_runtime,
+        )
+        im_state_store = IMStateStore(settings.im_state_path)
+        im_binding_coordinator = IMBindingCoordinator()
+        im_control_service = IMControlService(
+            sessions=persistent_session_manager,
+            state_store=im_state_store,
+            coordinator=im_binding_coordinator,
+            model_service=session_model_service,
         )
         im_deduper = RecentMessageDeduper(
             ttl_seconds=settings.im_voice_dedupe_ttl_seconds,
@@ -392,6 +412,10 @@ def build_runtime(
             resume_base_dir=settings.im_resume_dir,
             inbound_resolver=im_inbound_resolver,
             deduper=im_deduper,
+            state_store=im_state_store,
+            coordinator=im_binding_coordinator,
+            control_service=im_control_service,
+            session_exists=session_bridge.session_exists,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
         # final BridgeRuntime = pre_runtime + IM 字段
@@ -417,6 +441,7 @@ def build_runtime(
         recall_buffer=recall_buffer,
         turn_coordinator=turn_coordinator,
         agent_runtime=agent_runtime,
+        session_model_service=session_model_service,
         persona_store=persona_store,
         persona_editor_session_manager=persona_editor_session_manager,
         persona_editor_workspace=persona_editor_workspace,

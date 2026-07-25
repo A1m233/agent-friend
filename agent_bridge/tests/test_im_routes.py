@@ -66,6 +66,9 @@ def test_list_providers_returns_bindings() -> None:
             bind_id="OPENID-USER-FULL-EE26",
             bind_id_masked="OPEN...EE26",
             status="active",
+            binding_status="bound",
+            session_id="SESSION-1",
+            controls_capability="supported",
         ),
     ]
     onboard = MagicMock()
@@ -80,6 +83,9 @@ def test_list_providers_returns_bindings() -> None:
         "bind_id": "OPENID-USER-FULL-EE26",
         "bind_id_masked": "OPEN...EE26",
         "status": "active",
+        "binding_status": "bound",
+        "session_id": "SESSION-1",
+        "controls_capability": "supported",
     }
 
 
@@ -167,6 +173,7 @@ def test_onboard_status_returns_state() -> None:
     assert body["im_type"] == "qq"
     assert body["status"] == "qr_ready"
     assert body["qr_url"] == "https://q.qq.com/test"
+    assert body["bind_id"] is None
     assert body["bind_id_masked"] is None
     assert body["error"] is None
 
@@ -180,6 +187,7 @@ def test_onboard_status_success_state() -> None:
         status=OnboardStatus.SUCCESS,
         qr_url="https://q.qq.com/x",
         bind_id_masked="ABCD...EFGH",
+        bind_id="OPENID-FULL",
     )
     client = TestClient(_make_app(im_runtime, onboard))
 
@@ -188,6 +196,32 @@ def test_onboard_status_success_state() -> None:
     body = resp.json()
     assert body["status"] == "success"
     assert body["bind_id_masked"] == "ABCD...EFGH"
+    assert body["bind_id"] == "OPENID-FULL"
+
+
+def test_bind_provider_session() -> None:
+    im_runtime = MagicMock()
+    im_runtime.bind_session = AsyncMock(
+        return_value=ProviderInfo(
+            im_type="qq",
+            bind_id="OPENID-X",
+            bind_id_masked="OPEN...ID-X",
+            status="active",
+            binding_status="bound",
+            session_id="SESSION-1",
+            controls_capability="unknown",
+        )
+    )
+    client = TestClient(_make_app(im_runtime, MagicMock()))
+
+    response = client.put(
+        "/v1/im/providers/qq/OPENID-X/session-binding",
+        json={"session_id": "SESSION-1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "SESSION-1"
+    im_runtime.bind_session.assert_awaited_once_with("qq", "OPENID-X", "SESSION-1")
 
 
 def test_onboard_status_failed_state() -> None:

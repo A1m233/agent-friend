@@ -39,6 +39,11 @@ def _im_resume_dir() -> Path:
     return _user_data_dir() / "im_resume"
 
 
+def _im_state_path() -> Path:
+    """默认 IM 会话绑定与能力状态文件。"""
+    return _user_data_dir() / "im_state.json"
+
+
 class BridgeSettings(BaseSettings):
     """bridge 启动配置。
 
@@ -126,6 +131,9 @@ class BridgeSettings(BaseSettings):
     im_resume_dir: Path = Field(default_factory=_im_resume_dir)
     """IM SDK Resume token(WebSocket session_id + last_seq)落盘目录;
     默认 ``<user_data_dir>/im_resume/``,不加密。"""
+
+    im_state_path: Path = Field(default_factory=_im_state_path)
+    """IM 会话绑定与消息按钮能力状态；默认 ``<user_data_dir>/im_state.json``。"""
 
     voice_bridge_base_url: str = "http://127.0.0.1:18900"
     """本机 voice_bridge 地址；QQ 语音消息 fallback ASR 通过此地址调用 one-shot 转写。"""

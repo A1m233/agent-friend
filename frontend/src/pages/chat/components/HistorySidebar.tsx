@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Archive, Circle, CircleAlert, Clock3, MoreVertical, Pencil, SquarePen } from "lucide-react";
 import {
+  Badge,
   ConfirmDialog,
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,7 @@ import {
   Spinner,
   TextEllipsis,
 } from "@/components/ui";
+import type { IMType } from "@/services";
 import {
   getChatUiPersistence,
   resolveRestorableChatSessionId,
@@ -101,6 +103,7 @@ function formatSessionAge(input: string, now = Date.now()): string {
  */
 export function HistorySidebar() {
   const list = useSessionsStore((s) => s.list);
+  const imTypesBySession = useSessionsStore((s) => s.imTypesBySession);
   const refresh = useSessionsStore((s) => s.refresh);
   const renameSession = useSessionsStore((s) => s.rename);
   const archiveSession = useSessionsStore((s) => s.archive);
@@ -330,6 +333,7 @@ export function HistorySidebar() {
                 {list.map((s) => {
                   const ageText = formatSessionAge(s.updated_at || s.created_at, now);
                   const title = s.title || "新对话";
+                  const boundIMTypes = imTypesBySession[s.session_id] ?? [];
                   const activeRunId = activeRunIdBySession[s.session_id];
                   const activeRun = activeRunId ? runSnapshots[activeRunId] : undefined;
                   const unreadOutcome = unreadRunOutcomeBySession[s.session_id];
@@ -369,8 +373,19 @@ export function HistorySidebar() {
                         className="px-2 text-sm font-normal data-[active=true]:bg-bg transition-none"
                         onClick={() => handleOpenSession(s.session_id)}
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-2">
-                          <TextEllipsis className="min-w-0 flex-1">{title}</TextEllipsis>
+                        <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                          <span className="flex min-w-0 flex-1 items-center gap-2">
+                            <TextEllipsis className="min-w-0">{title}</TextEllipsis>
+                            {boundIMTypes.map((imType) => (
+                              <Badge
+                                key={imType}
+                                variant="secondary"
+                                className="px-1.5 py-0 font-normal text-muted"
+                              >
+                                IM · {labelOfIMType(imType)}
+                              </Badge>
+                            ))}
+                          </span>
                           {!actionVisible && runIndicator === "running" ? (
                             <span title="正在处理" aria-label="正在处理">
                               <Spinner className="size-3 text-accent" />
@@ -510,4 +525,8 @@ export function HistorySidebar() {
       />
     </Sidebar>
   );
+}
+
+function labelOfIMType(imType: IMType): string {
+  return { qq: "QQ Bot" }[imType] ?? imType;
 }

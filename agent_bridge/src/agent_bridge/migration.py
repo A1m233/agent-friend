@@ -10,7 +10,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent import BUILTIN_DEFAULT_PERSONA_ID
 
@@ -34,6 +34,7 @@ class ReplaceImCredentialsPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     credentials: list[ImCredentialPayload]
+    state: dict[str, Any] | None = Field(default=None)
 
 
 def register_migration_routes(
@@ -91,8 +92,12 @@ def register_migration_routes(
         x_agent_friend_lifecycle_token: str | None = Header(default=None),
     ) -> dict[str, object]:
         authorize(x_agent_friend_lifecycle_token)
-        credentials = require_im_runtime().migration_snapshot_credentials()
-        return {"credentials": [asdict(credential) for credential in credentials]}
+        im_runtime = require_im_runtime()
+        credentials = im_runtime.migration_snapshot_credentials()
+        return {
+            "credentials": [asdict(credential) for credential in credentials],
+            "state": im_runtime.migration_snapshot_state(),
+        }
 
     @router.post("/im-credentials/replace")
     async def replace_im_credentials(
@@ -101,7 +106,7 @@ def register_migration_routes(
     ) -> dict[str, object]:
         authorize(x_agent_friend_lifecycle_token)
         credentials = [ImCredential(**item.model_dump()) for item in payload.credentials]
-        await require_im_runtime().migration_replace_credentials(credentials)
+        await require_im_runtime().migration_replace_credentials(credentials, payload.state)
         return {"status": "ok", "count": len(credentials)}
 
     @router.post("/memory-index/rebuild")
