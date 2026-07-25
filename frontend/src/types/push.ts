@@ -18,6 +18,7 @@
  */
 
 import type { SessionEvent } from "./meta";
+import type { RunSnapshot } from "./run";
 
 /** ConversationEvent serialize 后的平铺 dict（字段随 type 不同）。 */
 export interface PushEvent {
@@ -27,7 +28,7 @@ export interface PushEvent {
 
 export interface PushEnvelope {
   /** "user_turn" / "agent_turn" / "heartbeat"。pet 订阅端 (kinds=agent_turn) 主要看 agent_turn。 */
-  kind: "user_turn" | "agent_turn" | "session_changed" | "heartbeat";
+  kind: "user_turn" | "agent_turn" | "session_changed" | "run_changed" | "heartbeat";
   session_id: string;
   /** subscriber 视角下的单调递增序号；store 用 `${session_id}:${seq}` 作 BubbleItem id。 */
   seq: number;
@@ -39,6 +40,7 @@ export interface PushEnvelope {
   change_kind?: string | null;
   origin?: string | null;
   channel?: "text" | "voice" | null;
+  run?: RunSnapshot | null;
 }
 
 // SessionEvent 仍由 sessionProjection 消费（GET /v1/sessions/{id} 返回的持久化 events）；

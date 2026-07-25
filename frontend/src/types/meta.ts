@@ -34,4 +34,5 @@ export interface SessionDetail {
   model: string;
   events: SessionEvent[];
   active_events?: SessionEvent[];
+  revision?: number;
 }

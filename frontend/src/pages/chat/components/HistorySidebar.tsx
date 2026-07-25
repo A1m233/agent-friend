@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, MoreVertical, Pencil, SquarePen } from "lucide-react";
+import { Archive, Circle, CircleAlert, Clock3, MoreVertical, Pencil, SquarePen } from "lucide-react";
 import {
   ConfirmDialog,
   DropdownMenu,
@@ -18,6 +18,7 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  Spinner,
   TextEllipsis,
 } from "@/components/ui";
 import {
@@ -25,7 +26,13 @@ import {
   resolveRestorableChatSessionId,
   setLastChatSessionId,
 } from "@/lib/persistence/chatUi";
-import { useConnectionStore, useConversationStore, useSessionsStore } from "@/stores";
+import {
+  useConnectionStore,
+  useConversationStore,
+  useDraftStore,
+  useSessionsStore,
+} from "@/stores";
+import type { RunSnapshot } from "@/types/run";
 import { isTauri } from "@/utils/tauri";
 
 const WINDOW_SHOWN_EVENT = "window://shown";
@@ -40,6 +47,17 @@ interface MissingCurrentSessionResetInput {
   streaming: boolean;
   historyLoading: boolean;
   messageCount: number;
+}
+
+export type SessionRunIndicator = "queued" | "running" | "completed" | "failed" | null;
+
+export function sessionRunIndicator(
+  activeRun: RunSnapshot | undefined,
+  unreadOutcome: "completed" | "failed" | undefined,
+): SessionRunIndicator {
+  if (activeRun?.status === "queued") return "queued";
+  if (activeRun?.status === "running") return "running";
+  return unreadOutcome ?? null;
 }
 
 export function shouldResetMissingCurrentSession({
@@ -94,6 +112,10 @@ export function HistorySidebar() {
   const messageCount = useConversationStore((s) => s.messages.length);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
+  const activeRunIdBySession = useConversationStore((s) => s.activeRunIdBySession);
+  const runSnapshots = useConversationStore((s) => s.runSnapshots);
+  const unreadRunOutcomeBySession = useConversationStore((s) => s.unreadRunOutcomeBySession);
+  const draftWorkspaces = useDraftStore((s) => s.workspaces);
   const [renamingSession, setRenamingSession] = useState<{
     sessionId: string;
     title: string;
@@ -308,6 +330,12 @@ export function HistorySidebar() {
                 {list.map((s) => {
                   const ageText = formatSessionAge(s.updated_at || s.created_at, now);
                   const title = s.title || "新对话";
+                  const activeRunId = activeRunIdBySession[s.session_id];
+                  const activeRun = activeRunId ? runSnapshots[activeRunId] : undefined;
+                  const unreadOutcome = unreadRunOutcomeBySession[s.session_id];
+                  const runIndicator = sessionRunIndicator(activeRun, unreadOutcome);
+                  const draft = draftWorkspaces[s.session_id];
+                  const hasDraft = Boolean(draft?.text || draft?.attachments.length);
                   const actionVisible =
                     openActionSessionId === s.session_id ||
                     (!openActionSessionId &&
@@ -343,6 +371,20 @@ export function HistorySidebar() {
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-2">
                           <TextEllipsis className="min-w-0 flex-1">{title}</TextEllipsis>
+                          {!actionVisible && runIndicator === "running" ? (
+                            <span title="正在处理" aria-label="正在处理">
+                              <Spinner className="size-3 text-accent" />
+                            </span>
+                          ) : null}
+                          {!actionVisible && runIndicator === "queued" ? (
+                            <Clock3 className="size-3 shrink-0 text-muted" aria-label="等待处理" />
+                          ) : null}
+                          {!actionVisible && runIndicator === "failed" ? (
+                            <CircleAlert className="size-3 shrink-0 text-danger" aria-label="处理失败" />
+                          ) : null}
+                          {!actionVisible && runIndicator === "completed" ? (
+                            <Circle className="size-3 shrink-0 fill-accent text-accent" aria-label="有新回复" />
+                          ) : null}
                           {!actionVisible && ageText ? (
                             <span
                               className="shrink-0 tabular-nums text-xs text-muted"
@@ -401,12 +443,17 @@ export function HistorySidebar() {
                               重命名
                             </DropdownMenuItem>
                             <DropdownMenuItem
+                              disabled={Boolean(activeRun) || hasDraft}
                               onSelect={() =>
                                 setArchivingSession({ sessionId: s.session_id, title })
                               }
                             >
                               <Archive />
-                              归档
+                              {activeRun
+                                ? "运行中，暂不能归档"
+                                : hasDraft
+                                  ? "有未发送草稿，暂不能归档"
+                                  : "归档"}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

@@ -36,6 +36,24 @@ pub struct PushEnvelope {
     pub origin: Option<String>,
     #[serde(default)]
     pub channel: Option<String>,
+    #[serde(default)]
+    pub run: Option<RunSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunSnapshot {
+    pub run_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub outcome: Option<String>,
+    pub reason_code: String,
+    pub channel: Option<String>,
+    pub origin: Option<String>,
+    pub control_scope: Option<String>,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub version: u64,
 }
 
 const RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(400);
@@ -85,7 +103,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,session_changed",
+        "{}/push/subscribe?kinds=agent_turn,session_changed,run_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -144,6 +162,11 @@ async fn run_connection(
                 Some(env) if env.kind == "session_changed" => {
                     if let Err(e) = app.emit_to("chat", "session://changed", env) {
                         log::warn!("emit_to(chat, session changed) failed: {e}");
+                    }
+                }
+                Some(env) if env.kind == "run_changed" => {
+                    if let Err(e) = app.emit_to("chat", "session://run-changed", env) {
+                        log::warn!("emit_to(chat, run changed) failed: {e}");
                     }
                 }
                 Some(env) => {
@@ -337,6 +360,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             change_kind: None,
             origin: None,
             channel: None,
+            run: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();
@@ -355,6 +379,17 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(env.revision, Some(9));
         assert_eq!(env.origin.as_deref(), Some("openai"));
         assert_eq!(env.channel.as_deref(), Some("voice"));
+    }
+
+    #[test]
+    fn parse_run_changed_envelope() {
+        let frame = br#"data: {"kind":"run_changed","session_id":"s1","seq":5,"source_kind":null,"events":[],"run":{"run_id":"r1","session_id":"s1","status":"running","outcome":null,"reason_code":"","channel":"text","origin":"ag_ui","control_scope":"desktop_text","created_at":"2026-07-25T00:00:00+00:00","started_at":"2026-07-25T00:00:01+00:00","finished_at":null,"version":2}}"#;
+        let env = parse_envelope_frame(frame).unwrap();
+        assert_eq!(env.kind, "run_changed");
+        let run = env.run.unwrap();
+        assert_eq!(run.run_id, "r1");
+        assert_eq!(run.status, "running");
+        assert_eq!(run.version, 2);
     }
 
     #[test]

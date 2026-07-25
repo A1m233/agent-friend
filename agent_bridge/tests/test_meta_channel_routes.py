@@ -251,13 +251,18 @@ class TestEditResendLatestEndpoint:
         with client.stream(
             "POST",
             f"/v1/sessions/{sid}/edit-resend-latest",
-            json={"text": "new question", "expectedUserContent": "old question"},
+            json={
+                "runId": "edit-client-run",
+                "text": "new question",
+                "expectedUserContent": "old question",
+            },
             headers={"accept": "text/event-stream"},
         ) as resp:
             body = "".join(resp.iter_text())
 
         assert resp.status_code == 200
         assert "new answer" in body
+        assert "edit-client-run" in body
 
         detail = client.get(f"/v1/sessions/{sid}").json()
         assert [ev["type"] for ev in detail["events"]].count("turn_rewrite") == 1
@@ -330,12 +335,14 @@ class TestContinueToolResultEndpoint:
         with client.stream(
             "POST",
             f"/v1/sessions/{sid}/continue-tool-result",
+            json={"runId": "continue-client-run"},
             headers={"accept": "text/event-stream"},
         ) as resp:
             body = "".join(resp.iter_text())
 
         assert resp.status_code == 200
         assert "new answer" in body
+        assert "continue-client-run" in body
         assert _RouteLLM.seen_tools[-1] is None
         assert any(
             message.get("role") == "tool" and message.get("content") == "saved result"
@@ -541,3 +548,22 @@ class TestSwitchChannelEndpoint:
         assert change_events[0].payload["to"] == "voice"
         assert change_events[1].payload["to"] == "text"
         assert loaded.current_channel == "text"
+
+
+def test_destructive_session_mutations_reject_busy_session(
+    client: TestClient,
+    runtime: BridgeRuntime,
+) -> None:
+    sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+    with runtime.turn_coordinator.hold(sid):
+        responses = [
+            client.patch(f"/v1/sessions/{sid}", json={"archived": True}),
+            client.delete(f"/v1/sessions/{sid}"),
+            client.post(f"/v1/sessions/{sid}/persona", json={"persona": "default"}),
+            client.post(f"/v1/sessions/{sid}/channel", json={"channel": "voice"}),
+        ]
+
+    assert [response.status_code for response in responses] == [409, 409, 409, 409]
+    assert all(response.json()["error"]["code"] == "session_busy" for response in responses)
+    assert runtime.persistent_session_manager.open(sid).current_channel == "text"

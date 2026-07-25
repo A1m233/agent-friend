@@ -76,6 +76,11 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
   scheduleDetailRefresh(env.session_id, revision as number, activeGeneration);
 }
 
+export function handleRunChangedForSync(env: PushEnvelope): void {
+  if (env.kind !== "run_changed" || !env.run) return;
+  useConversationStore.getState().applyRunSnapshot(env.run);
+}
+
 export function handlePushReconnectedForSync(activeGeneration = generation): void {
   if (import.meta.env.DEV) {
     console.debug("[session-sync] push reconnected; scheduling calibration", {
@@ -86,6 +91,7 @@ export function handlePushReconnectedForSync(activeGeneration = generation): voi
     });
   }
   scheduleListRefresh(activeGeneration);
+  void useConversationStore.getState().calibrateRuns();
   const sessionId = useConversationStore.getState().currentSessionId;
   if (sessionId) scheduleDetailRefresh(sessionId, undefined, activeGeneration);
 }
@@ -105,6 +111,12 @@ export function startSessionSyncSubscriber(): () => void {
     });
     void listen("session://push-reconnected", () => {
       if (!stopped) handlePushReconnectedForSync(activeGeneration);
+    }).then((unlisten) => {
+      if (stopped) unlisten();
+      else unlisteners.push(unlisten);
+    });
+    void listen<PushEnvelope>("session://run-changed", (event) => {
+      if (!stopped) handleRunChangedForSync(event.payload);
     }).then((unlisten) => {
       if (stopped) unlisten();
       else unlisteners.push(unlisten);

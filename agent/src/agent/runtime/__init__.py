@@ -24,9 +24,10 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from collections.abc import Callable
+from collections import OrderedDict
+from collections.abc import Callable, Collection
 from contextlib import AbstractContextManager, nullcontext
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from memory import Memory
@@ -51,13 +52,18 @@ from .hooks import (
 from .inbox import AgentEvent, SystemTriggerEvent, UserEvent
 from .listeners import ListenerRegistry, PushEnvelope, Subscriber
 from .models import (
+    ConsumerAbandonPolicy,
     ConversationFactory,
     ConversationRunner,
+    InteractiveBusyPolicy,
+    RunCancelResult,
     RunErrorCallback,
     RunHandle,
     RunOutcome,
     RunPriority,
     RunRequest,
+    RunSnapshot,
+    RunStatus,
 )
 from .scheduler import RunScheduler, RuntimeActivitySnapshot, RuntimeDrainReport
 
@@ -67,18 +73,23 @@ __all__ = [
     "PRE_TURN_SKIP",
     "AgentEvent",
     "AgentRuntime",
+    "ConsumerAbandonPolicy",
     "EventSource",
     "HookKind",
     "HookRegistry",
+    "InteractiveBusyPolicy",
     "ListenerRegistry",
     "PostTurnContext",
     "PreToolUseDecision",
     "PreTurnDecision",
     "PushEnvelope",
+    "RunCancelResult",
     "RunHandle",
     "RunOutcome",
     "RunPriority",
     "RunRequest",
+    "RunSnapshot",
+    "RunStatus",
     "RuntimeActivitySnapshot",
     "RuntimeDrainReport",
     "SessionBusyError",
@@ -142,13 +153,22 @@ class AgentRuntime:
         max_queued_runs: int = 256,
         max_session_queue: int = 32,
         session_turn_guard: Callable[[str], AbstractContextManager[None]] | None = None,
+        recent_terminal_ttl: timedelta = timedelta(minutes=15),
+        recent_terminal_limit: int = 512,
     ) -> None:
+        if recent_terminal_ttl.total_seconds() <= 0 or recent_terminal_limit <= 0:
+            raise ValueError("recent terminal limits must be positive")
         self._conversation_factory = conversation_factory
         self._memory = memory
         self._inbox: queue.Queue[Any] = queue.Queue()
         self._sources: list[EventSource] = []
         self._hooks = HookRegistry()
         self._listeners = ListenerRegistry()
+        self._run_lock = threading.Lock()
+        self._active_run_snapshots: dict[str, RunSnapshot] = {}
+        self._recent_terminal_snapshots: OrderedDict[str, RunSnapshot] = OrderedDict()
+        self._recent_terminal_ttl = recent_terminal_ttl
+        self._recent_terminal_limit = recent_terminal_limit
         self._thread: threading.Thread | None = None
         self._stop_evt = threading.Event()
         self._last_dispatch_finished_at = datetime.now(UTC)
@@ -158,6 +178,7 @@ class AgentRuntime:
             max_workers=max_workers,
             max_queued_runs=max_queued_runs,
             max_session_queue=max_session_queue,
+            on_run_changed=self._handle_run_changed,
         )
         self._register_default_hooks()
 
@@ -270,6 +291,9 @@ class AgentRuntime:
         conversation_runner: ConversationRunner | None = None,
         error_callback: RunErrorCallback | None = None,
         metadata: dict[str, Any] | None = None,
+        consumer_abandon_policy: ConsumerAbandonPolicy = ConsumerAbandonPolicy.CANCEL,
+        interactive_busy_policy: InteractiveBusyPolicy = InteractiveBusyPolicy.QUEUE,
+        control_scope: str | None = None,
     ) -> RunHandle:
         """提交一轮到 session-aware scheduler，返回可流式消费的句柄。"""
         if priority is None:
@@ -290,10 +314,58 @@ class AgentRuntime:
             "conversation_runner": conversation_runner,
             "error_callback": error_callback,
             "metadata": metadata or {},
+            "consumer_abandon_policy": consumer_abandon_policy,
+            "interactive_busy_policy": interactive_busy_policy,
+            "control_scope": control_scope,
         }
         if run_id is not None:
             kwargs["run_id"] = run_id
         return self._scheduler.submit(RunRequest(**kwargs))
+
+    def list_run_snapshots(
+        self,
+        *,
+        session_ids: Collection[str] | None = None,
+        include_recent_terminal: bool = True,
+    ) -> list[RunSnapshot]:
+        wanted = set(session_ids) if session_ids is not None else None
+        with self._run_lock:
+            self._prune_recent_terminal_locked(datetime.now(UTC))
+            snapshots = list(self._active_run_snapshots.values())
+            if include_recent_terminal:
+                snapshots.extend(self._recent_terminal_snapshots.values())
+        if wanted is not None:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.session_id in wanted]
+        return sorted(snapshots, key=lambda snapshot: (snapshot.created_at, snapshot.run_id))
+
+    def get_run_snapshot(self, run_id: str) -> RunSnapshot | None:
+        with self._run_lock:
+            self._prune_recent_terminal_locked(datetime.now(UTC))
+            return self._active_run_snapshots.get(run_id) or self._recent_terminal_snapshots.get(
+                run_id
+            )
+
+    def cancel_run(
+        self,
+        run_id: str,
+        *,
+        expected_session_id: str,
+        required_control_scope: str,
+    ) -> tuple[RunCancelResult, RunSnapshot | None]:
+        snapshot = self.get_run_snapshot(run_id)
+        if snapshot is None:
+            return RunCancelResult.NOT_FOUND, None
+        if snapshot.session_id != expected_session_id:
+            return RunCancelResult.SESSION_MISMATCH, snapshot
+        if snapshot.control_scope != required_control_scope:
+            return RunCancelResult.SCOPE_MISMATCH, snapshot
+        if snapshot.status is RunStatus.TERMINAL:
+            return RunCancelResult.ALREADY_TERMINAL, snapshot
+        return self._scheduler.cancel_run(
+            run_id,
+            expected_session_id=expected_session_id,
+            required_control_scope=required_control_scope,
+        )
 
     def activity_snapshot(self) -> RuntimeActivitySnapshot:
         return self._scheduler.activity_snapshot()
@@ -318,6 +390,32 @@ class AgentRuntime:
         )
 
     # ----- internals -----
+
+    def _handle_run_changed(self, snapshot: RunSnapshot) -> None:
+        with self._run_lock:
+            if snapshot.status is RunStatus.TERMINAL:
+                self._active_run_snapshots.pop(snapshot.run_id, None)
+                self._recent_terminal_snapshots[snapshot.run_id] = snapshot
+                self._recent_terminal_snapshots.move_to_end(snapshot.run_id)
+                self._prune_recent_terminal_locked(snapshot.finished_at or datetime.now(UTC))
+            else:
+                previous = self._active_run_snapshots.get(snapshot.run_id)
+                if previous is not None and previous.version >= snapshot.version:
+                    return
+                self._active_run_snapshots[snapshot.run_id] = snapshot
+        self._listeners.publish_run_change(snapshot)
+
+    def _prune_recent_terminal_locked(self, now: datetime) -> None:
+        cutoff = now - self._recent_terminal_ttl
+        while self._recent_terminal_snapshots:
+            first_run_id, first = next(iter(self._recent_terminal_snapshots.items()))
+            if (
+                len(self._recent_terminal_snapshots) <= self._recent_terminal_limit
+                and first.finished_at is not None
+                and first.finished_at >= cutoff
+            ):
+                break
+            self._recent_terminal_snapshots.pop(first_run_id, None)
 
     def _register_default_hooks(self) -> None:
         """默认 PostTurn hook：把 ``_observe_turn`` 从 conversation.py 硬编码迁过来

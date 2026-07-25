@@ -16,6 +16,8 @@ import type { AttachmentDraft } from "./attachments";
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
   threadId: string;
+  /** 客户端预生成的稳定 run id；用于后台状态和精确停止。 */
+  runId: string;
   /** 本轮在接纳消息时冻结的会话模型；新 session 用它初始化。 */
   model: string;
   /** 本轮 user 新输入。 */
@@ -27,6 +29,8 @@ export interface RunStreamInput {
 export interface EditResendLatestInput {
   /** 已存在的 session_id。 */
   sessionId: string;
+  /** 客户端预生成的稳定 run id。 */
+  runId: string;
   /** 替换后的 user 输入。 */
   text: string;
   /** 前端当前看到的旧最后一条 user 内容，用于后端并发保护。 */
@@ -38,6 +42,9 @@ export interface RunStreamOptions {
   signal?: AbortSignal;
 }
 
+/** HTTP admission 在建立 SSE 之前被明确拒绝；与已接纳后的 transport 断线分开。 */
+export class StreamAdmissionError extends Error {}
+
 export function isEventStreamContentType(contentType: string | null): boolean {
   return contentType?.toLowerCase().includes("text/event-stream") ?? false;
 }
@@ -47,10 +54,10 @@ function requireEventStreamResponse(
   operation: string,
 ): ReadableStream<Uint8Array> {
   if (!response.ok || !response.body) {
-    throw new Error(`${operation} failed: http ${response.status}`);
+    throw new StreamAdmissionError(`${operation} failed: http ${response.status}`);
   }
   if (!isEventStreamContentType(response.headers.get("content-type"))) {
-    throw new Error(`${operation} failed: invalid response type`);
+    throw new StreamAdmissionError(`${operation} failed: invalid response type`);
   }
   return response.body;
 }
@@ -92,7 +99,7 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
     : input.text;
   return {
     threadId: input.threadId,
-    runId: newId(),
+    runId: input.runId,
     messages: [{ id: input.messageId ?? newId(), role: "user", content }],
     tools: [],
     context: [],
@@ -153,6 +160,7 @@ export async function* editResendLatestStream(
         Accept: "text/event-stream",
       },
       body: JSON.stringify({
+        runId: input.runId,
         text: input.text,
         expectedUserContent: input.expectedUserContent,
       }),
@@ -166,6 +174,7 @@ export async function* editResendLatestStream(
 /** 不重跑工具，直接用会话中最后一次成功工具结果继续整理。 */
 export async function* continueToolResultStream(
   sessionId: string,
+  runId: string,
   opts: RunStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
   await ensureLocalServiceReady("bridge");
@@ -174,7 +183,11 @@ export async function* continueToolResultStream(
     `${base}/v1/sessions/${encodeURIComponent(sessionId)}/continue-tool-result`,
     {
       method: "POST",
-      headers: { Accept: "text/event-stream" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ runId }),
       signal: opts.signal,
     },
   );

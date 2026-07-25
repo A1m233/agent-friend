@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { shouldResetMissingCurrentSession } from "./HistorySidebar";
+import { sessionRunIndicator, shouldResetMissingCurrentSession } from "./HistorySidebar";
+
+const queuedRun = {
+  run_id: "run-1",
+  session_id: "session-1",
+  status: "queued" as const,
+  outcome: null,
+  reason_code: "",
+  channel: "text" as const,
+  origin: "ag_ui",
+  control_scope: "desktop_text",
+  created_at: "2026-07-25T00:00:00Z",
+  started_at: null,
+  finished_at: null,
+  version: 1,
+};
 
 describe("HistorySidebar missing current session guard", () => {
   it("keeps a locally-created conversation while the backend list is catching up", () => {
@@ -61,5 +76,20 @@ describe("HistorySidebar missing current session guard", () => {
         messageCount: 0,
       }),
     ).toBe(false);
+  });
+});
+
+describe("HistorySidebar run indicator", () => {
+  it("active queued/running 优先于旧的 unread 终态", () => {
+    expect(sessionRunIndicator(queuedRun, "failed")).toBe("queued");
+    expect(
+      sessionRunIndicator({ ...queuedRun, status: "running", started_at: queuedRun.created_at }, "completed"),
+    ).toBe("running");
+  });
+
+  it("没有 active run 时显示后台完成或失败反馈", () => {
+    expect(sessionRunIndicator(undefined, "completed")).toBe("completed");
+    expect(sessionRunIndicator(undefined, "failed")).toBe("failed");
+    expect(sessionRunIndicator(undefined, undefined)).toBeNull();
   });
 });

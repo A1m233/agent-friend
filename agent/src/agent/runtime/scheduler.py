@@ -15,7 +15,17 @@ from itertools import count
 
 from .cancellation import CancelReason, RunCancelled
 from .errors import SessionBusyError
-from .models import RunHandle, RunOutcome, RunPriority, RunRequest, RunStatus
+from .models import (
+    InteractiveBusyPolicy,
+    RunCancelResult,
+    RunChangeCallback,
+    RunHandle,
+    RunOutcome,
+    RunPriority,
+    RunRequest,
+    RunSnapshot,
+    RunStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +60,7 @@ class RunScheduler:
         max_queued_runs: int = 256,
         max_session_queue: int = 32,
         now_factory: Callable[[], datetime] | None = None,
+        on_run_changed: RunChangeCallback | None = None,
     ) -> None:
         if max_workers <= 0 or max_queued_runs <= 0 or max_session_queue <= 0:
             raise ValueError("scheduler limits must be positive")
@@ -60,6 +71,7 @@ class RunScheduler:
         self._max_queued_runs = max_queued_runs
         self._max_session_queue = max_session_queue
         self._now = now_factory or (lambda: datetime.now(UTC))
+        self._on_run_changed = on_run_changed
         self._condition = threading.Condition()
         self._mailboxes: dict[str, list[tuple[int, int, str]]] = {}
         self._handles: dict[str, RunHandle] = {}
@@ -98,6 +110,7 @@ class RunScheduler:
         handle = RunHandle(
             request,
             primary_consumer=not bool(request.metadata.get("detached", False)),
+            on_change=self._on_run_changed,
         )
         with self._condition:
             if not self._accepting:
@@ -116,6 +129,13 @@ class RunScheduler:
             if request.priority is RunPriority.INTERACTIVE:
                 self._supersede_lower_priority_locked(request.session_id)
                 self._mailbox_head_locked(request.session_id)
+                if (
+                    request.interactive_busy_policy
+                    is InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY
+                    and self._has_interactive_work_locked(request.session_id)
+                ):
+                    handle.finish_once(RunOutcome.REJECTED, reason_code="session_busy")
+                    return handle
             if (
                 self._queued_count >= self._max_queued_runs
                 or len(mailbox) >= self._max_session_queue
@@ -147,8 +167,40 @@ class RunScheduler:
             )
             self._queued_count += 1
             self._refresh_ready_locked(request.session_id)
+            handle.publish_initial()
             self._condition.notify_all()
         return handle
+
+    def cancel_run(
+        self,
+        run_id: str,
+        *,
+        expected_session_id: str,
+        required_control_scope: str,
+    ) -> tuple[RunCancelResult, RunSnapshot | None]:
+        """Precisely cancel one admitted run after validating its ownership."""
+        with self._condition:
+            handle = self._handles.get(run_id)
+            request = self._requests.get(run_id)
+            if handle is None or request is None:
+                return RunCancelResult.NOT_FOUND, None
+            snapshot = handle.snapshot()
+            if request.session_id != expected_session_id:
+                return RunCancelResult.SESSION_MISMATCH, snapshot
+            if request.control_scope != required_control_scope:
+                return RunCancelResult.SCOPE_MISMATCH, snapshot
+            if snapshot.status is RunStatus.TERMINAL:
+                return RunCancelResult.ALREADY_TERMINAL, snapshot
+            if not handle.cancel(CancelReason.EXPLICIT_REQUEST):
+                return RunCancelResult.ALREADY_REQUESTED, handle.snapshot()
+            if snapshot.status is RunStatus.QUEUED and handle.finish_once(
+                RunOutcome.CANCELLED,
+                reason_code=str(CancelReason.EXPLICIT_REQUEST),
+            ):
+                self._queued_count -= 1
+                self._refresh_ready_locked(request.session_id)
+                self._condition.notify_all()
+            return RunCancelResult.ACCEPTED, handle.snapshot()
 
     @contextmanager
     def try_reserve_session_mutation(self, session_id: str) -> Iterator[None]:
@@ -294,23 +346,53 @@ class RunScheduler:
                 handle.finish_once(RunOutcome.CANCELLED, reason_code="superseded_by_user")
                 self._queued_count -= 1
 
+    def _has_interactive_work_locked(self, session_id: str) -> bool:
+        active_id = self._active.get(session_id)
+        if active_id is not None:
+            active_request = self._requests.get(active_id)
+            if active_request is not None and active_request.priority is RunPriority.INTERACTIVE:
+                return True
+        for _, _, run_id in self._mailboxes.get(session_id, []):
+            request = self._requests.get(run_id)
+            handle = self._handles.get(run_id)
+            if (
+                request is not None
+                and handle is not None
+                and request.priority is RunPriority.INTERACTIVE
+                and handle.status is RunStatus.QUEUED
+            ):
+                return True
+        return False
+
     def _mailbox_head_locked(self, session_id: str) -> tuple[int, int, str] | None:
         mailbox = self._mailboxes.get(session_id)
         if mailbox is None:
             return None
         while mailbox:
             item = mailbox[0]
-            handle = self._handles[item[2]]
-            if handle.status is RunStatus.QUEUED:
+            handle = self._handles.get(item[2])
+            if handle is not None and handle.status is RunStatus.QUEUED:
                 return item
-            heapq.heappop(mailbox)
+            _, _, run_id = heapq.heappop(mailbox)
+            self._drop_run_locked(run_id)
         return None
+
+    def _drop_run_locked(self, run_id: str) -> None:
+        request = self._requests.pop(run_id, None)
+        self._handles.pop(run_id, None)
+        if request is not None and request.dedupe_key is not None:
+            key = (request.session_id, request.dedupe_key)
+            if self._dedupe.get(key) == run_id:
+                self._dedupe.pop(key, None)
 
     def _refresh_ready_locked(self, session_id: str) -> None:
         if session_id in self._active or session_id in self._mutating_sessions:
             return
         head = self._mailbox_head_locked(session_id)
         if head is None:
+            self._mailboxes.pop(session_id, None)
+            if session_id not in self._active and session_id not in self._mutating_sessions:
+                self._generation.pop(session_id, None)
             return
         generation = self._generation.get(session_id, 0) + 1
         self._generation[session_id] = generation
@@ -337,6 +419,7 @@ class RunScheduler:
             if request.expires_at is not None and request.expires_at <= self._now():
                 self._queued_count -= 1
                 handle.finish_once(RunOutcome.EXPIRED, reason_code="expired_before_start")
+                self._drop_run_locked(run_id)
                 self._refresh_ready_locked(session_id)
                 continue
             if not handle.mark_running():
@@ -344,6 +427,8 @@ class RunScheduler:
                 continue
             self._queued_count -= 1
             self._active[session_id] = run_id
+            if not self._mailboxes[session_id]:
+                self._mailboxes.pop(session_id, None)
             if request.dedupe_key is not None:
                 self._dedupe.pop((session_id, request.dedupe_key), None)
             return request, handle
@@ -383,5 +468,6 @@ class RunScheduler:
         finally:
             with self._condition:
                 self._active.pop(request.session_id, None)
+                self._drop_run_locked(request.run_id)
                 self._refresh_ready_locked(request.session_id)
                 self._condition.notify_all()

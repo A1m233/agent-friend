@@ -68,7 +68,12 @@ export async function* runPersonaEditor(
 ): AsyncGenerator<BaseEvent> {
   yield* runAgentStreamAtPath(
     "/ag-ui/persona-editor/run",
-    { threadId, model: resolveDefaultConversationModel(), text: message },
+    {
+      threadId,
+      runId: crypto.randomUUID(),
+      model: resolveDefaultConversationModel(),
+      text: message,
+    },
     { signal },
   );
 }

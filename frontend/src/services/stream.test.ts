@@ -16,6 +16,7 @@ describe("buildRunAgentInput", () => {
   it("uses standard ordered attachment parts and preserves message identity", () => {
     const payload = buildRunAgentInput({
       threadId: "session-1",
+      runId: "run-1",
       model: "kimi/kimi-k2.6",
       messageId: "user-message-1",
       text: "请分析",
@@ -50,6 +51,7 @@ describe("buildRunAgentInput", () => {
     });
 
     expect(payload.messages[0].id).toBe("user-message-1");
+    expect(payload.runId).toBe("run-1");
     expect(payload.messages[0].content).toMatchObject([
       { type: "image" },
       { type: "document" },

@@ -96,6 +96,22 @@ class SessionRevisionStore:
         except (OSError, ValueError, TypeError) as exc:
             raise SessionPersistError(f"更新 session revision 失败: {self._path}: {exc}") from exc
 
+    def current_revision(self, session_id: str) -> int:
+        """Read the durable per-session revision without mutating it."""
+        if not self._path.exists():
+            return 0
+        try:
+            with portalocker.Lock(self._lock_path, "a", encoding="utf-8", timeout=10.0):
+                payload = self._read_unlocked()
+                current = payload.get("sessions", {}).get(session_id, {})
+                return int(current.get("revision", 0))
+        except LockException as exc:
+            raise SessionPersistError(
+                f"获取 session revision 文件锁超时: {self._path}: {exc}"
+            ) from exc
+        except (OSError, ValueError, TypeError) as exc:
+            raise SessionPersistError(f"读取 session revision 失败: {self._path}: {exc}") from exc
+
     def _read_unlocked(self) -> dict[str, Any]:
         if not self._path.exists():
             return {"version": 1, "sessions": {}}
@@ -126,6 +142,9 @@ class SessionChangeBroker:
 
     def set_publisher(self, publisher: Callable[[SessionChange], None] | None) -> None:
         self._publisher = publisher
+
+    def current_revision(self, session_id: str) -> int:
+        return self._revision_store.current_revision(session_id)
 
     def record_change(
         self,
