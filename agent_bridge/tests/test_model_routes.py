@@ -8,6 +8,7 @@ from agent_bridge.routes.models import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from llm_providers import LLMModelMetadataError, ResolvedModelLimits
 from runtime_config import CredentialMissingError
 
 
@@ -25,11 +26,19 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
     k26 = next(model for model in kimi["models"] if model["id"] == "kimi/kimi-k2.6")
     assert k26["capabilities"]["attachments"] is True
     assert "application/pdf" in k26["capabilities"]["acceptedMediaTypes"]
+    assert k26["limits"]["contextWindow"] == 256 * 1024
 
 
 def _validation_client(factory: object) -> TestClient:
     app = FastAPI()
-    runtime = cast(BridgeRuntime, SimpleNamespace(llm_client_factory=factory))
+    runtime = cast(
+        BridgeRuntime,
+        SimpleNamespace(
+            llm_client_factory=factory,
+            prompt_builder_factory=lambda _persona_id: SimpleNamespace(build=lambda: "system"),
+            tool_registry=SimpleNamespace(to_openai_tools=lambda: []),
+        ),
+    )
     register_routes(app, runtime)
     return TestClient(app)
 
@@ -39,14 +48,24 @@ def test_model_validation_preflights_client_without_creating_session() -> None:
 
     def factory(model: str) -> object:
         seen.append(model)
-        return object()
+        return SimpleNamespace(model_limits=ResolvedModelLimits(256 * 1024, "catalog"))
 
     client = _validation_client(factory)
 
     response = client.post("/v1/models/validate", json={"model": "kimi/kimi-k2.6"})
 
     assert response.status_code == 200
-    assert response.json() == {"model": "kimi/kimi-k2.6", "available": True}
+    assert response.json() == {
+        "model": "kimi/kimi-k2.6",
+        "available": True,
+        "limits": {
+            "contextWindow": 256 * 1024,
+            "contextWindowSource": "catalog",
+            "safeInputThreshold": 209716,
+            "baselineRequestTokens": 4,
+            "baselineHeadroomTokens": 209712,
+        },
+    }
     assert seen == ["kimi/kimi-k2.6"]
 
 
@@ -66,3 +85,17 @@ def test_model_validation_returns_stable_errors() -> None:
     assert credential.status_code == 503
     assert credential.json()["error"]["code"] == "credential_missing"
     assert "KIMI_API_KEY" not in credential.text
+
+
+def test_model_validation_rejects_unresolved_runtime_limits() -> None:
+    class InvalidClient:
+        @property
+        def model_limits(self) -> object:
+            raise LLMModelMetadataError("missing context window")
+
+    response = _validation_client(lambda _model: InvalidClient()).post(
+        "/v1/models/validate", json={"model": "kimi/kimi-k2.6"}
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "model_context_profile_invalid"

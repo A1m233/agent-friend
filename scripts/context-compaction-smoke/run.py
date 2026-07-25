@@ -71,13 +71,14 @@ def _client(
     runtime_config: BridgeRuntimeConfig,
     *,
     context_window: int,
+    max_output_tokens: int,
     counts: _CallCounts,
 ) -> _CountingClient:
     base = runtime_config.llm_client_factory(runtime_config.default_model)
     spec = replace(
         base.spec,
         context_window=context_window,
-        defaults={**base.spec.defaults, "temperature": 0, "max_tokens": 256},
+        defaults={**base.spec.defaults, "max_tokens": max_output_tokens},
     )
     return _CountingClient(LLMClient(spec), counts)
 
@@ -160,7 +161,7 @@ def _assert_codes(text: str, *, label: str) -> None:
         raise AssertionError(f"{label} missing critical codes: {missing}")
 
 
-def run(*, context_window: int, seed_turns: int) -> dict[str, Any]:
+def run(*, context_window: int, seed_turns: int, max_output_tokens: int) -> dict[str, Any]:
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
     counts = _CallCounts()
 
@@ -178,7 +179,12 @@ def run(*, context_window: int, seed_turns: int) -> dict[str, Any]:
         conversation = _conversation(
             session,
             store,
-            _client(runtime_config, context_window=context_window, counts=counts),
+            _client(
+                runtime_config,
+                context_window=context_window,
+                max_output_tokens=max_output_tokens,
+                counts=counts,
+            ),
             catalog,
         )
 
@@ -217,7 +223,12 @@ def run(*, context_window: int, seed_turns: int) -> dict[str, Any]:
         restarted = _conversation(
             reloaded,
             reloaded_store,
-            _client(runtime_config, context_window=context_window, counts=counts),
+            _client(
+                runtime_config,
+                context_window=context_window,
+                max_output_tokens=max_output_tokens,
+                counts=counts,
+            ),
             PersonaCatalog(external_dir=root / "personas"),
         )
         restarted_reply = restarted.send(
@@ -247,6 +258,7 @@ def run(*, context_window: int, seed_turns: int) -> dict[str, Any]:
             "status": "passed",
             "model": runtime_config.default_model,
             "effective_window": context_window,
+            "max_output_tokens": max_output_tokens,
             "real_llm_calls": {"complete": counts.complete, "stream": counts.stream},
             "first_prompt_tokens": prompt_tokens,
             "first_calibration_factor": first_usage.get("calibration_factor"),
@@ -268,6 +280,12 @@ def main() -> None:
     )
     parser.add_argument("--context-window", type=int, default=8000)
     parser.add_argument("--seed-turns", type=int, default=36)
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=2048,
+        help="output budget per request; provider temperature defaults remain untouched",
+    )
     args = parser.parse_args()
     if not args.allow_llm:
         parser.error("real LLM calls require explicit --allow-llm")
@@ -275,7 +293,18 @@ def main() -> None:
         parser.error("--context-window must be at least 4000")
     if args.seed_turns < 20:
         parser.error("--seed-turns must be at least 20")
-    print(json.dumps(run(context_window=args.context_window, seed_turns=args.seed_turns), indent=2))
+    if args.max_output_tokens < 512:
+        parser.error("--max-output-tokens must be at least 512")
+    print(
+        json.dumps(
+            run(
+                context_window=args.context_window,
+                seed_turns=args.seed_turns,
+                max_output_tokens=args.max_output_tokens,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

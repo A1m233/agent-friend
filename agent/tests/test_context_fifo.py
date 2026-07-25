@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 from agent.context import (
     RECENT_PROTECT_TURNS,
+    ContextBaseOverBudgetError,
     ContextInputTooLargeError,
     FifoContextManager,
     RuntimeContext,
@@ -236,6 +237,20 @@ def test_no_user_messages_over_budget_fails_closed() -> None:
     cm = FifoContextManager()
     with pytest.raises(ContextInputTooLargeError):
         cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=100))
+
+
+def test_fixed_prompt_and_tools_over_budget_has_specific_error() -> None:
+    cm = FifoContextManager()
+    runtime = _runtime(window=100)
+    runtime.request_overhead_tokens = 100
+
+    with pytest.raises(ContextBaseOverBudgetError):
+        cm.build_messages(
+            history=[],
+            system_prompt="system prompt",
+            new_user_input="hi",
+            runtime=runtime,
+        )
 
 
 def test_large_tool_result_is_truncated_only_in_model_view() -> None:

@@ -23,14 +23,17 @@ from .catalog import (
     public_model_catalog,
     public_provider_models,
 )
-from .client import LLMClient
+from .client import LLMClient, ResolvedModelLimits
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
     LLMContentPolicyError,
     LLMContextWindowError,
+    LLMEmptyResponseError,
     LLMError,
+    LLMModelMetadataError,
     LLMNetworkError,
+    LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
     LLMTransientProviderError,
@@ -58,8 +61,11 @@ __all__ = [
     "LLMClient",
     "LLMContentPolicyError",
     "LLMContextWindowError",
+    "LLMEmptyResponseError",
     "LLMError",
+    "LLMModelMetadataError",
     "LLMNetworkError",
+    "LLMOutputBudgetExhaustedError",
     "LLMProviderError",
     "LLMRateLimitError",
     "LLMRetryScheduled",
@@ -76,6 +82,7 @@ __all__ = [
     "ProviderDefinition",
     "ProviderModel",
     "ProviderSpec",
+    "ResolvedModelLimits",
     "all_model_ids",
     "build_provider_spec",
     "default_model_for_provider",

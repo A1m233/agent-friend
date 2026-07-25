@@ -455,7 +455,7 @@ def test_network_retry_after_two_tools_does_not_repeat_tools(
 
     monkeypatch.setattr("llm_providers.client.litellm.completion", fake_completion)
     client = LLMClient(
-        ProviderSpec(model="deepseek/test", api_key="test"),
+        ProviderSpec(model="deepseek/test", api_key="test", context_window=128_000),
         network_retries=1,
         network_retry_backoff_seconds=0,
     )
