@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -13,7 +13,7 @@ IN_PROGRESS
 - [x] M64.5 补齐 Python / frontend / Rust 自动化测试
 - [x] M64.6 运行局部检查、`scripts/check` 全量门禁与需求 AC 核对
 - [x] M64.7 完成真实 Tauri 桌面视觉验收；真实 QQ keyboard smoke 经用户明确确认本次豁免
-- [ ] M64.8 同步最新 main、运行最终门禁并完成用户验收
+- [x] M64.8 同步最新 main、运行最终门禁并完成用户验收
 
 ## 实现日志
 
@@ -27,3 +27,4 @@ IN_PROGRESS
 | 2026-07-26 | 完成视觉反馈修正与复验 | 补充按钮 hover、会话选择面板边界、会话名称省略提示、上次活跃会话文案和对话列表 IM 标签；desktop DOM via CDP 通过 |
 | 2026-07-26 | 真实 QQ keyboard smoke 豁免 | 用户确认本次无需执行，不作为收尾阻塞项 |
 | 2026-07-26 | 更正收尾范围 | 删除未由 requirement / design 确认的“外部代码评审”门槛 |
+| 2026-07-26 | 完成最终收尾 | 无冲突同步最新 `origin/main`；`scripts/check/run.ps1` 全部通过；用户确认进入验收、打包与合入流程 |
