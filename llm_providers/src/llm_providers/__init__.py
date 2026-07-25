@@ -32,6 +32,7 @@ from .errors import (
     LLMNetworkError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMTransientProviderError,
 )
 from .multimodal import MultimodalInputAdapter
 from .spec import ProviderConfig, ProviderSpec
@@ -63,6 +64,7 @@ __all__ = [
     "LLMStreamEvent",
     "LLMTextDelta",
     "LLMToolCallDelta",
+    "LLMTransientProviderError",
     "LLMTurnDone",
     "LLMUsage",
     "ModelPurpose",

@@ -196,8 +196,9 @@ async def test_text_aggregated_until_generator_exhausts(
 
 @pytest.mark.asyncio
 async def test_stream_exception_falls_back(router: IMRouter, session_bridge: MagicMock) -> None:
-    """``Conversation.stream`` 抛错 → 回 ``FALLBACK_TEXT``。"""
-    session_bridge.bind_persistent.return_value = _make_conv(RuntimeError("LLM broke"))
+    """``Conversation.stream`` 抛错 → 持久化失败状态并回 ``FALLBACK_TEXT``。"""
+    conv = _make_conv(RuntimeError("LLM broke"))
+    session_bridge.bind_persistent.return_value = conv
 
     captured: list[OutboundContent] = []
 
@@ -207,6 +208,14 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
     await router.handle_inbound("qq", _make_event(), send)
     assert captured[0].text == FALLBACK_TEXT
     assert captured[0].text_format == "plain_text"
+    conv.append_run_error_event.assert_called_once_with(
+        code="internal_error",
+        message="这轮回答中断了，没有生成完整回复。请稍后重试。",
+        recoverable=False,
+        source="im",
+        run_id=None,
+        sanitize_failed_model_call=False,
+    )
 
 
 @pytest.mark.asyncio

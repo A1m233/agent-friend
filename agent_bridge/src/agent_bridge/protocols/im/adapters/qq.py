@@ -77,7 +77,7 @@ class QQAdapter:
         self._on_inbound: Callable[[InboundEvent], Awaitable[None]] | None = None
         self._status: ProviderStatus = "stopped"
         self._heartbeat_interval: float = 30.0  # SDK 默认值,set_heartbeat_interval 回调更新
-        self._next_msg_seq_value = int(time.monotonic_ns() % 1_000_000_000) or 1
+        self._next_msg_seq_value = int(time.monotonic_ns() % 65_535) or 1
 
     # ------------------------------------------------------------------
     # IMProvider lifecycle
@@ -193,13 +193,15 @@ class QQAdapter:
             )
             return
 
+        response_message_id = _response_message_id(resp)
         logger.info(
             "QQ outbound sent bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
-            "text_len=%d text_format=%s",
+            "response_message_id=%s text_len=%d text_format=%s",
             self.bind_id,
             content.chat_id,
             content.reply_to_message_id or "",
             msg_seq,
+            response_message_id,
             _text_len(content.text),
             content.text_format,
         )
@@ -317,7 +319,7 @@ class QQAdapter:
     def _next_msg_seq(self) -> int:
         value = self._next_msg_seq_value
         self._next_msg_seq_value = value + 1
-        if self._next_msg_seq_value > 2_147_483_647:
+        if self._next_msg_seq_value > 65_535:
             self._next_msg_seq_value = 1
         return value
 
@@ -374,6 +376,17 @@ class QQAdapter:
 
 def _text_len(value: object) -> int:
     return len(value) if isinstance(value, str) else 0
+
+
+def _response_message_id(response: object) -> str:
+    """只提取平台回执 ID，不记录响应正文或其他潜在敏感字段。"""
+    if not isinstance(response, dict):
+        return ""
+    for key in ("id", "message_id", "msg_id"):
+        value = response.get(key)
+        if isinstance(value, (str, int)):
+            return str(value)
+    return ""
 
 
 def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCreate:

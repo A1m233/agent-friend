@@ -28,6 +28,7 @@ from .errors import (
     LLMNetworkError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMTransientProviderError,
 )
 from .spec import ProviderSpec
 from .stream_events import (
@@ -125,6 +126,15 @@ def _is_network_exception(error: Exception) -> bool:
     )
 
 
+def _is_transient_provider_exception(error: Exception) -> bool:
+    """识别明确的 Provider 5xx，避免把认证、限流或参数错误纳入重试。"""
+    for item in _exception_chain(error):
+        status_code = getattr(item, "status_code", None)
+        if isinstance(status_code, int) and 500 <= status_code <= 599:
+            return True
+    return False
+
+
 def _extract_usage(response: Any) -> LLMUsage | None:
     """从 litellm 响应对象 / 尾 chunk 抽取 token 用量（009 起）。
 
@@ -168,6 +178,8 @@ def _map_exception(e: Exception) -> LLMError:
         for item in chain
     ):
         return LLMBadRequestError(str(e))
+    if _is_transient_provider_exception(e):
+        return LLMTransientProviderError(str(e))
     if isinstance(e, openai.APIError):
         return LLMProviderError(str(e))
     return LLMProviderError(f"未预料的错误: {e}")
@@ -286,11 +298,11 @@ class LLMClient:
         for attempt in range(self._network_retries + 1):
             try:
                 return self._call_once(self.spec, messages, **overrides)
-            except LLMNetworkError:
+            except (LLMNetworkError, LLMTransientProviderError):
                 if attempt >= self._network_retries:
                     raise
                 self._wait_before_network_retry(attempt)
-        raise AssertionError("network retry loop should always return or raise")
+        raise AssertionError("transient retry loop should always return or raise")
 
     def stream(
         self,
@@ -341,7 +353,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
-        """仅在上游尚未产出任何事件时重试，避免重复文本或工具调用。"""
+        """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
         for attempt in range(self._network_retries + 1):
             emitted = False
             should_retry = False
@@ -351,7 +363,7 @@ class LLMClient:
                     emitted = True
                     yield event
                 return
-            except LLMNetworkError:
+            except (LLMNetworkError, LLMTransientProviderError):
                 if emitted or attempt >= self._network_retries:
                     raise
                 should_retry = True
@@ -374,7 +386,7 @@ class LLMClient:
     def _wait_before_network_retry(self, attempt: int) -> None:
         delay = self._network_retry_delay(attempt)
         logger.warning(
-            "LLM network request failed before first event; retrying model=%s retry=%d/%d "
+            "LLM transient request failed before first event; retrying model=%s retry=%d/%d "
             "delay_seconds=%.3f",
             self.spec.model,
             attempt + 1,
