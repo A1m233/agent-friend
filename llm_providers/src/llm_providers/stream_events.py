@@ -50,6 +50,16 @@ class LLMToolCallDelta:
 
 
 @dataclass(frozen=True)
+class LLMRetryScheduled:
+    """模型流在尚未产出业务事件时安排了一次网络重试。"""
+
+    attempt: int = 1
+    max_attempts: int = 1
+    delay_seconds: float = 0.0
+    type: Literal["retry_scheduled"] = "retry_scheduled"
+
+
+@dataclass(frozen=True)
 class LLMUsage:
     """单次 LLM 调用的 token 用量（009 起新增）。
 
@@ -90,5 +100,5 @@ class LLMTurnDone:
     type: Literal["done"] = "done"
 
 
-LLMStreamEvent = LLMTextDelta | LLMToolCallDelta | LLMTurnDone
+LLMStreamEvent = LLMTextDelta | LLMToolCallDelta | LLMRetryScheduled | LLMTurnDone
 """所有 :meth:`LLMClient.stream` 可能 yield 的事件类型并集。"""

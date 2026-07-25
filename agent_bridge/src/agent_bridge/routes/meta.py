@@ -6,6 +6,7 @@
 | ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
 | ``POST /v1/sessions/{id}/edit-resend-latest`` | 编辑并重发最后一条 user 输入 | （内部） |
+| ``POST /v1/sessions/{id}/continue-tool-result`` | 从已完成工具结果继续整理 | （内部） |
 | ``DELETE /v1/sessions/{id}``      | 删除 session（内部清理用）            | （内部）           |
 | ``POST /v1/sessions/{id}/persona`` | 切换 persona                          | ``/persona <name>``|
 | ``POST /v1/sessions/{id}/model``  | 切换 model                             | ``/model <name>``  |
@@ -245,6 +246,67 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 "Cache-Control": "no-cache",
                 "X-Accel-Buffering": "no",
             },
+        )
+
+    @router.post("/sessions/{session_id}/continue-tool-result")
+    async def continue_tool_result(session_id: str, request: Request) -> StreamingResponse:
+        """从最新可恢复失败轮的已完成工具结果继续生成，禁止再次调用工具。"""
+        accept = request.headers.get("accept") or ""
+        run_id = uuid4().hex
+
+        def _conversation_for_continue() -> Conversation:
+            session = mgr.open(session_id)
+            return mgr.start_conversation(session)
+
+        def _persist_error(
+            conv: Conversation,
+            exc: BaseException,
+            run_request: RunRequest,
+        ) -> None:
+            err = map_exception(exc)
+            conv.append_run_error_event(
+                code=err.code,
+                message=err.message,
+                recoverable=err.recoverable,
+                source="ag_ui",
+                run_id=run_request.run_id,
+                sanitize_failed_model_call=err.sanitize_failed_model_call,
+            )
+
+        handle = None
+        if runtime.agent_runtime is not None:
+            handle = runtime.agent_runtime.submit(
+                UserEvent(session_id=session_id, user_input=""),
+                run_id=run_id,
+                channel="text",
+                conversation_factory=_conversation_for_continue,
+                metadata={"protocol": "ag_ui", "operation": "continue_tool_result"},
+                conversation_runner=lambda conv, run_request, token: conv.continue_after_tool_error(
+                    channel="text",
+                    run_id=run_request.run_id,
+                    cancel_check=token.raise_if_cancelled,
+                ),
+                error_callback=_persist_error,
+            )
+
+        return StreamingResponse(
+            encode_stream(
+                _conversation_for_continue,
+                "",
+                thread_id=session_id,
+                run_id=run_id,
+                accept=accept,
+                agent_runtime=runtime.agent_runtime,
+                run_conversation=lambda conv, _value: conv.continue_after_tool_error(
+                    channel="text",
+                    run_id=run_id,
+                ),
+                channel="text",
+                turn_coordinator=runtime.turn_coordinator,
+                run_handle=handle,
+            ),
+            media_type=EventEncoder(accept=accept).get_content_type(),
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @router.delete("/sessions/archived")

@@ -14,6 +14,13 @@ export type MessageStatus = "streaming" | "complete" | "interrupted" | "error";
 /** 工具调用卡片状态机：进行中 → 完成 / 失败（对应 R-M3.2）。 */
 export type ToolStatus = "running" | "done" | "error";
 
+export interface ModelResponseProgress {
+  phase: "waiting" | "retrying";
+  afterTool: boolean;
+  attempt: number;
+  maxAttempts: number;
+}
+
 /** 文本块：assistant 一段连续文本（markdown）。AG-UI 把被工具调用打断的两段文本
  * 视为不同 message_id，这里对应 {@link ChatMessage.blocks} 里的两个文本块。 */
 export interface TextBlock {
@@ -67,4 +74,6 @@ export interface ChatMessage {
   error?: string;
   /** 后端错误码，用于后续 retry / 诊断入口做类型化处理。 */
   errorCode?: string;
+  /** 当前 run 的瞬态模型请求状态；不参与历史持久化。 */
+  runStatus?: ModelResponseProgress;
 }

@@ -3,6 +3,7 @@ import { EventType, type BaseEvent } from "@ag-ui/core";
 
 // mock services 层：只控制 runAgentStream / sessionsApi.get 的行为，验证 store 的错误兜底。
 vi.mock("@/services", () => ({
+  continueToolResultStream: vi.fn(),
   editResendLatestStream: vi.fn(),
   modelsApi: { validate: vi.fn() },
   runAgentStream: vi.fn(),
@@ -14,12 +15,19 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 }));
 
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { editResendLatestStream, modelsApi, runAgentStream, sessionsApi } from "@/services";
+import {
+  continueToolResultStream,
+  editResendLatestStream,
+  modelsApi,
+  runAgentStream,
+  sessionsApi,
+} from "@/services";
 import type { SessionDetail } from "@/types/meta";
 import { useConversationStore, type SendStartResult } from "./conversation";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockEditStream = vi.mocked(editResendLatestStream);
+const mockContinueStream = vi.mocked(continueToolResultStream);
 const mockGet = vi.mocked(sessionsApi.get);
 const mockSwitchModel = vi.mocked(sessionsApi.switchModel);
 const mockValidateModel = vi.mocked(modelsApi.validate);
@@ -427,6 +435,91 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toBe(errorText);
     expect(errors[0].errorCode).toBe("rate_limit");
+  });
+});
+
+describe("conversation store · continue tool result", () => {
+  it("复用完成的工具结果继续生成，不插入新的用户消息", async () => {
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "test",
+      events: [
+        {
+          type: "user_message",
+          uuid: "user-1",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "查一下" },
+        },
+        {
+          type: "assistant_message",
+          uuid: "assistant-tool",
+          ts: "2026-06-10T00:00:01Z",
+          payload: { content: "", partial: false },
+        },
+        {
+          type: "tool_call_request",
+          uuid: "tool-request",
+          ts: "2026-06-10T00:00:02Z",
+          payload: {
+            tool_call_id: "provider-call",
+            event_tool_call_id: "tool-1",
+            tool_name: "web_search",
+            args: { query: "latest" },
+          },
+        },
+        {
+          type: "tool_call_result",
+          uuid: "tool-result",
+          ts: "2026-06-10T00:00:03Z",
+          payload: {
+            tool_call_id: "provider-call",
+            event_tool_call_id: "tool-1",
+            tool_name: "web_search",
+            content: "saved result",
+            is_error: false,
+          },
+        },
+        {
+          type: "run_error",
+          uuid: "run-error",
+          ts: "2026-06-10T00:00:04Z",
+          payload: {
+            code: "upstream_transient",
+            message: "模型服务连接不稳定",
+            recoverable: true,
+          },
+        },
+      ],
+    });
+    mockContinueStream.mockImplementation(async function* () {
+      yield ev({
+        type: EventType.TEXT_MESSAGE_START,
+        messageId: "continued",
+        role: "assistant",
+      });
+      yield ev({
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "continued",
+        delta: "根据已有结果整理完成",
+      });
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "sid-1", runId: "r" });
+    });
+
+    await useConversationStore.getState().openSession("sid-1");
+    const before = useConversationStore.getState().messages;
+    const errorMessage = before.at(-1);
+    expect(errorMessage?.status).toBe("error");
+
+    await useConversationStore.getState().continueToolResult(errorMessage!.id);
+
+    expect(mockContinueStream).toHaveBeenCalledWith(
+      "sid-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(useConversationStore.getState().messages.filter((m) => m.role === "user")).toHaveLength(1);
+    expect(messageTexts().at(-1)).toBe("根据已有结果整理完成");
   });
 });
 

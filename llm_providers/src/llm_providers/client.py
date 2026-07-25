@@ -31,6 +31,7 @@ from .errors import (
 )
 from .spec import ProviderSpec
 from .stream_events import (
+    LLMRetryScheduled,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -45,11 +46,14 @@ DEFAULT_CONTEXT_WINDOW = 8192
 压缩，不可漏压缩撑爆）。详见 009 design §3.2。
 """
 
-DEFAULT_NETWORK_RETRIES = 2
+DEFAULT_NETWORK_RETRIES = 1
 """Provider 尚未产出任何结果时，网络错误的默认重试次数。"""
 
 DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
 """网络重试的初始退避秒数；后续重试按 2 倍递增。"""
+
+DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
+"""聊天流单次等待上游事件的最大秒数；两次总尝试约束在 90 秒内。"""
 
 logger = logging.getLogger(__name__)
 
@@ -210,14 +214,18 @@ class LLMClient:
         *,
         network_retries: int = DEFAULT_NETWORK_RETRIES,
         network_retry_backoff_seconds: float = DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS,
+        stream_timeout_seconds: float = DEFAULT_STREAM_TIMEOUT_SECONDS,
     ):
         if network_retries < 0:
             raise ValueError("network_retries 不能小于 0")
         if network_retry_backoff_seconds < 0:
             raise ValueError("network_retry_backoff_seconds 不能小于 0")
+        if stream_timeout_seconds <= 0:
+            raise ValueError("stream_timeout_seconds 必须大于 0")
         self.spec = spec
         self._network_retries = network_retries
         self._network_retry_backoff_seconds = network_retry_backoff_seconds
+        self._stream_timeout_seconds = stream_timeout_seconds
 
     @property
     def context_window(self) -> int:
@@ -352,10 +360,19 @@ class LLMClient:
                 if callable(close):
                     close()
             if should_retry:
+                delay = self._network_retry_delay(attempt)
+                yield LLMRetryScheduled(
+                    attempt=attempt + 2,
+                    max_attempts=self._network_retries + 1,
+                    delay_seconds=delay,
+                )
                 self._wait_before_network_retry(attempt)
 
+    def _network_retry_delay(self, attempt: int) -> float:
+        return self._network_retry_backoff_seconds * (2**attempt)
+
     def _wait_before_network_retry(self, attempt: int) -> None:
-        delay = self._network_retry_backoff_seconds * (2**attempt)
+        delay = self._network_retry_delay(attempt)
         logger.warning(
             "LLM network request failed before first event; retrying model=%s retry=%d/%d "
             "delay_seconds=%.3f",
@@ -382,6 +399,9 @@ class LLMClient:
             不需要改 :meth:`complete` 的公开签名。
         """
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
+        # LiteLLM/OpenAI SDK 自带重试会与本层的有界重试相乘。统一关闭内层重试，
+        # 让 attempt 数、总等待时间与可观测状态只有一个所有者。
+        kwargs.setdefault("max_retries", 0)
 
         try:
             response = litellm.completion(
@@ -434,6 +454,12 @@ class LLMClient:
             ``include_usage`` 时 usage 为 ``None``，上层退化到字符估算。
         """
         kwargs: dict[str, Any] = {**spec.defaults, **overrides}
+        kwargs.setdefault("max_retries", 0)
+        configured_timeout = kwargs.get("timeout")
+        if isinstance(configured_timeout, (int, float)):
+            kwargs["timeout"] = min(float(configured_timeout), self._stream_timeout_seconds)
+        elif configured_timeout is None:
+            kwargs["timeout"] = self._stream_timeout_seconds
         if tools:
             kwargs["tools"] = tools
         # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖

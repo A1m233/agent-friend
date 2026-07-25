@@ -11,6 +11,7 @@
 import {
   EventType,
   type BaseEvent,
+  type CustomEvent,
   type RunErrorEvent,
   type TextMessageContentEvent,
   type TextMessageStartEvent,
@@ -22,6 +23,7 @@ import {
 import type {
   ChatMessage,
   MessageBlock,
+  ModelResponseProgress,
   TextBlock,
   ThinkingBlock,
   ToolBlock,
@@ -36,7 +38,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
     case EventType.TEXT_MESSAGE_START: {
       const e = evt as TextMessageStartEvent;
       const block: TextBlock = { kind: "text", mid: e.messageId, text: "" };
-      return { ...msg, status: "streaming", blocks: [...msg.blocks, block] };
+      return { ...msg, status: "streaming", runStatus: undefined, blocks: [...msg.blocks, block] };
     }
 
     case EventType.TEXT_MESSAGE_CONTENT: {
@@ -44,6 +46,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       return {
         ...msg,
         status: "streaming",
+        runStatus: undefined,
         blocks: appendText(msg.blocks, e.messageId, e.delta),
       };
     }
@@ -57,7 +60,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
         args: "",
         status: "running",
       };
-      return { ...msg, status: "streaming", blocks: [...msg.blocks, block] };
+      return { ...msg, status: "streaming", runStatus: undefined, blocks: [...msg.blocks, block] };
     }
 
     case EventType.TOOL_CALL_ARGS: {
@@ -91,19 +94,48 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       return { ...msg, status: "streaming", blocks: appendThinking(msg.blocks, e.delta) };
     }
 
+    case EventType.CUSTOM: {
+      const e = evt as CustomEvent;
+      if (e.name !== "agent_friend.run_status") return msg;
+      const runStatus = parseRunStatus(e.value);
+      return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+    }
+
     case EventType.RUN_FINISHED:
-      return { ...msg, status: "complete" };
+      return { ...msg, status: "complete", runStatus: undefined };
 
     case EventType.RUN_ERROR: {
       const e = evt as RunErrorEvent;
       // RUN_ERROR 是 turn 失败状态，不是 assistant 正常文本；文案由 bridge 按错误码清洗。
-      return { ...msg, status: "error", error: e.message, errorCode: e.code };
+      return {
+        ...msg,
+        status: "error",
+        error: e.message,
+        errorCode: e.code,
+        runStatus: undefined,
+      };
     }
 
     default:
       // RUN_STARTED / TEXT_MESSAGE_END / TOOL_CALL_END / THINKING_* 边界事件等无需改状态。
       return msg;
   }
+}
+
+function parseRunStatus(value: unknown): ModelResponseProgress | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const phase = candidate.phase;
+  const afterTool = candidate.afterTool;
+  const attempt = candidate.attempt;
+  const maxAttempts = candidate.maxAttempts;
+  if (
+    (phase !== "waiting" && phase !== "retrying")
+    || typeof afterTool !== "boolean"
+    || typeof attempt !== "number"
+    || typeof maxAttempts !== "number"
+  ) return null;
+  return { phase, afterTool, attempt, maxAttempts };
 }
 
 function appendText(blocks: MessageBlock[], mid: string, delta: string): MessageBlock[] {

@@ -33,6 +33,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from ag_ui.core import (
+    CustomEvent,
     EventType,
     RunErrorEvent,
     RunFinishedEvent,
@@ -52,6 +53,7 @@ from agent.system_prompt.sections import PromptChannel
 from agent import (
     Conversation,
     ConversationEvent,
+    ModelResponseStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -209,6 +211,20 @@ def encode_stream(
                             tool_call_id=wire_tool_call_id,
                             content=content,
                             role="tool",
+                        )
+                    )
+
+                elif isinstance(ev, ModelResponseStatus):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.run_status",
+                            value={
+                                "phase": ev.phase,
+                                "afterTool": ev.after_tool,
+                                "attempt": ev.attempt,
+                                "maxAttempts": ev.max_attempts,
+                            },
                         )
                     )
 

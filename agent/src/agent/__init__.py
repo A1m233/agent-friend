@@ -19,6 +19,7 @@ from .context import (
 from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
     ConversationEvent,
+    ModelResponseStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -128,6 +129,7 @@ __all__ = [
     "JsonlSessionStore",
     "MarkdownPromptBuilder",
     "Message",
+    "ModelResponseStatus",
     "NaiveContextManager",
     "NotifyingSessionStore",
     "NullSessionStore",

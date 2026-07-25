@@ -11,7 +11,7 @@ from agent.runtime import RunHandle, RunOutcome, RunRequest, UserEvent
 from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
-from agent import Conversation, ConversationEvent, TextDelta, TurnDone
+from agent import Conversation, ConversationEvent, ModelResponseStatus, TextDelta, TurnDone
 from llm_providers import LLMContentPolicyError
 
 
@@ -118,6 +118,33 @@ def test_encode_stream_consumes_run_handle_without_calling_conversation_factory(
     assert not factory_called
     assert b"from runtime" in body
     assert b"RUN_FINISHED" in body
+
+
+def test_encode_stream_maps_model_response_status_to_custom_event() -> None:
+    class StatusConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield ModelResponseStatus(
+                phase="retrying",
+                after_tool=True,
+                attempt=2,
+                max_attempts=2,
+            )
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, StatusConversation()),
+            "hello",
+            thread_id="session-a",
+            run_id="run-a",
+            accept="text/event-stream",
+        )
+    )
+
+    assert b"CUSTOM" in body
+    assert b"agent_friend.run_status" in body
+    assert b'"afterTool":true' in body
+    assert b'"attempt":2' in body
 
 
 def test_encode_stream_maps_runtime_failure_from_terminal_error() -> None:

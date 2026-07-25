@@ -9,6 +9,7 @@ vi.mock("@/services", () => ({
   },
   runAgentStream: vi.fn(),
   editResendLatestStream: vi.fn(),
+  continueToolResultStream: vi.fn(),
 }));
 vi.mock("@/lib/persistence/chatUi", () => ({ setLastChatSessionId: vi.fn() }));
 

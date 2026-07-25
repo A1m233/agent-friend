@@ -11,13 +11,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 
-import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ..assembly import VoiceBridgeRuntime
 from ..errors import UnknownCallError
 from ..latency import SseTextObserver, log_latency, monotonic_ms
+from ..network import create_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def register_llm_proxy_routes(app: FastAPI, runtime: VoiceBridgeRuntime) -> None
             last_chunk_ms = inbound_ms
             # 嵌套 with 是有意为之：合并到单个 with 在某些 mypy 版本下会把
             # `client.stream(...)` 的返回类型擦成 Any。SIM117 在这里安全可忽略。
-            async with httpx.AsyncClient(timeout=None) as client:
+            async with create_http_client(upstream_url, timeout=None) as client:
                 request_ms = monotonic_ms()
                 log_latency(
                     logger,

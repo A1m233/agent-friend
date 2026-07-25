@@ -36,6 +36,7 @@ from .errors import (
 from .multimodal import MultimodalInputAdapter
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
+    LLMRetryScheduled,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -58,6 +59,7 @@ __all__ = [
     "LLMNetworkError",
     "LLMProviderError",
     "LLMRateLimitError",
+    "LLMRetryScheduled",
     "LLMStreamEvent",
     "LLMTextDelta",
     "LLMToolCallDelta",

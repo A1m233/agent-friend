@@ -17,6 +17,7 @@ from llm_providers import (
     LLMClient,
     LLMContentPolicyError,
     LLMNetworkError,
+    LLMRetryScheduled,
     LLMTextDelta,
     LLMUsage,
     ProviderConfig,
@@ -232,6 +233,7 @@ def test_complete_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch
 
     assert client.complete([{"role": "user", "content": "hi"}]) == "ok"
     assert seen_kwargs["timeout"] == 12.5
+    assert seen_kwargs["max_retries"] == 0
 
 
 def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,6 +249,27 @@ def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) 
     list(client.stream([{"role": "user", "content": "hi"}]))
 
     assert seen_kwargs["timeout"] == 12.5
+    assert seen_kwargs["max_retries"] == 0
+
+
+def test_stream_clamps_provider_timeout_to_bounded_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_kwargs: dict[str, Any] = {}
+
+    def fake_completion(**kwargs: Any) -> Any:
+        seen_kwargs.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(
+        _spec(defaults={"timeout": 90.0}),
+        stream_timeout_seconds=45.0,
+    )
+
+    list(client.stream([{"role": "user", "content": "hi"}]))
+
+    assert seen_kwargs["timeout"] == 45.0
 
 
 def test_stream_close_closes_upstream_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -371,6 +394,10 @@ def test_stream_retries_network_error_before_first_event(
     events = list(client.stream([{"role": "user", "content": "hi"}]))
 
     assert calls == 2
+    retry = next(event for event in events if isinstance(event, LLMRetryScheduled))
+    assert retry.attempt == 2
+    assert retry.max_attempts == 2
+    assert retry.delay_seconds == 0
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
 
 
