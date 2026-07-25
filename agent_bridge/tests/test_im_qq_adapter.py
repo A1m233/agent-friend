@@ -287,6 +287,36 @@ async def test_send_msg_seq_increments(adapter: QQAdapter) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_msg_seq_wraps_within_qq_range(adapter: QQAdapter) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+    adapter._next_msg_seq_value = 65_535
+
+    await adapter.send(OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="one"))
+    await adapter.send(OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="two"))
+
+    first_msg = mock_api.post_c2c_message.await_args_list[0].args[1]
+    second_msg = mock_api.post_c2c_message.await_args_list[1].args[1]
+    assert first_msg.msg_seq == 65_535
+    assert second_msg.msg_seq == 1
+
+
+@pytest.mark.asyncio
+async def test_send_success_logs_response_message_id(
+    adapter: QQAdapter, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0, "id": "QQ-OUT-123"})
+    adapter._api = mock_api
+
+    with caplog.at_level("INFO"):
+        await adapter.send(OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="ok"))
+
+    assert "response_message_id=QQ-OUT-123" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_send_nonzero_code_logs_warning_no_raise(
     adapter: QQAdapter, caplog: pytest.LogCaptureFixture
 ) -> None:

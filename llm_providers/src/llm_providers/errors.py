@@ -1,6 +1,6 @@
 """LLM Provider 抽象层错误模型。
 
-把底层（LiteLLM / OpenAI SDK）的各种异常抹平成项目自定义的 5 类
+把底层（LiteLLM / OpenAI SDK）的各种异常抹平成项目自定义的错误类型，
 ``LLMError`` 子类，让上层（Conversation / CLI）只需依赖本模块的异常类型，
 不需要 import LiteLLM。
 
@@ -34,3 +34,7 @@ class LLMContentPolicyError(LLMError):
 
 class LLMProviderError(LLMError):
     """其他 Provider 侧错误。CLI 层期望行为：兜底话术。"""
+
+
+class LLMTransientProviderError(LLMProviderError):
+    """Provider 临时不可用（典型为 HTTP 5xx），可在未产出结果时有限重试。"""

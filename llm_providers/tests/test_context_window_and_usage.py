@@ -17,8 +17,10 @@ from llm_providers import (
     LLMClient,
     LLMContentPolicyError,
     LLMNetworkError,
+    LLMProviderError,
     LLMRetryScheduled,
     LLMTextDelta,
+    LLMTransientProviderError,
     LLMUsage,
     ProviderConfig,
     ProviderSpec,
@@ -439,6 +441,68 @@ def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch
     assert first.text == "partial"
     with pytest.raises(LLMNetworkError):
         next(stream)
+    assert calls == 1
+
+
+class _StatusError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"provider returned HTTP {status_code}")
+        self.status_code = status_code
+
+
+def test_stream_retries_provider_503_before_first_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise _StatusError(503)
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
+
+    events = list(client.stream([{"role": "user", "content": "hi"}]))
+
+    assert calls == 3
+    assert len([event for event in events if isinstance(event, LLMRetryScheduled)]) == 2
+    assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
+
+
+def test_provider_503_maps_to_transient_provider_error() -> None:
+    assert isinstance(_map_exception(_StatusError(503)), LLMTransientProviderError)
+
+
+def test_stream_does_not_retry_permanent_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise _StatusError(400)
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
+
+    with pytest.raises(LLMProviderError):
+        list(client.stream([{"role": "user", "content": "hi"}]))
     assert calls == 1
 
 

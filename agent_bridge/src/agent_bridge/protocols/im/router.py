@@ -38,11 +38,12 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from agent.attachments import AttachmentRef
-from agent.runtime import AgentRuntime, RunOutcome, UserEvent
+from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 
-from agent import TextDelta
+from agent import Conversation, TextDelta
 from llm_providers import model_capabilities
 
+from ...errors import map_exception
 from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
 from .event import InboundEvent
@@ -253,6 +254,7 @@ class IMRouter:
                     run_id=request.run_id,
                     cancel_check=token.raise_if_cancelled,
                 ),
+                error_callback=self._persist_run_error,
                 metadata={"protocol": "im"},
             )
             for ev in handle.events():
@@ -269,19 +271,44 @@ class IMRouter:
 
         with self._bridge.session_turn(boot.thread_id):
             conv = self._bridge.bind_persistent(boot)
-            for ev in conv.stream(
-                boot.new_user_input,
-                attachments=list(attachments),
-                channel="text",
-            ):
-                if isinstance(ev, TextDelta):
-                    buf.append(ev.text)
-                # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
-                # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
-                # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
-                # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
-                # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
+            try:
+                for ev in conv.stream(
+                    boot.new_user_input,
+                    attachments=list(attachments),
+                    channel="text",
+                ):
+                    if isinstance(ev, TextDelta):
+                        buf.append(ev.text)
+                    # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
+                    # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
+                    # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
+                    # prompt 时 history 里同条 assistant 文本出现两次 → LLM 自洽地真把回复说两遍。
+                    # ToolCallRequest / ToolCallResult:agent 主链路自处理,IM 不感知
+            except BaseException as exc:
+                self._persist_run_error(conv, exc, None)
+                raise
         return "".join(buf)
+
+    @staticmethod
+    def _persist_run_error(
+        conv: Conversation,
+        exc: BaseException,
+        request: RunRequest | None,
+    ) -> None:
+        """把 IM 终态失败写入共享 session，让桌面端刷新后看到同一结果。"""
+        err = map_exception(exc)
+        run_id = getattr(request, "run_id", None)
+        try:
+            conv.append_run_error_event(
+                code=err.code,
+                message=err.message,
+                recoverable=err.recoverable,
+                source="im",
+                run_id=run_id if isinstance(run_id, str) else None,
+                sanitize_failed_model_call=err.sanitize_failed_model_call,
+            )
+        except Exception:
+            logger.warning("IM run_error 持久化失败", exc_info=True)
 
 
 def _text_len(value: object) -> int:
