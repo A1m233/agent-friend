@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  tdesign-web-components@1.3.0-alpha.2: f6322b7e83d362ea9986e074c4e4864eb23239c0ad05ba9d5cf51cdfe880d6f8
+
 importers:
 
   .:
@@ -6022,7 +6025,7 @@ snapshots:
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       react-fast-compare: 3.2.2
-      tdesign-web-components: 1.3.0-alpha.2
+      tdesign-web-components: 1.3.0-alpha.2(patch_hash=f6322b7e83d362ea9986e074c4e4864eb23239c0ad05ba9d5cf51cdfe880d6f8)
       zod: 3.25.76
     transitivePeerDependencies:
       - bufferutil
@@ -8843,7 +8846,7 @@ snapshots:
       tslib: 2.3.1
       validator: 13.15.35
 
-  tdesign-web-components@1.3.0-alpha.2:
+  tdesign-web-components@1.3.0-alpha.2(patch_hash=f6322b7e83d362ea9986e074c4e4864eb23239c0ad05ba9d5cf51cdfe880d6f8):
     dependencies:
       '@babel/runtime': 7.26.10
       '@popperjs/core': 2.11.8

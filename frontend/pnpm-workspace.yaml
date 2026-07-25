@@ -2,3 +2,8 @@
 # 放行 esbuild 的构建脚本（Vite 依赖；pnpm 默认拦截 postinstall）。
 allowBuilds:
   esbuild: true
+
+allowUnusedPatches: false
+
+patchedDependencies:
+  tdesign-web-components@1.3.0-alpha.2: patches/tdesign-web-components@1.3.0-alpha.2.patch

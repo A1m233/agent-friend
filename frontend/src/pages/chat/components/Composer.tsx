@@ -592,8 +592,8 @@ export function Composer({
             onSend={(e) => submit(e.detail.value)}
             onStop={() => stop()}
             onFileRemove={(event) => syncAttachmentsAfterSenderRemoval(event.detail)}
-            readyToSend={(value) => attachmentCompatibility.compatible && (
-              Boolean(value.trim()) || attachmentItems.some((item) => item.status === "success")
+            sendBtnDisabled={(value) => !attachmentCompatibility.compatible || (
+              !value.trim() && !attachmentItems.some((item) => item.status === "success")
             )}
             attachmentsProps={{
               items: attachmentItems,
