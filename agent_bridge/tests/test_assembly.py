@@ -14,7 +14,8 @@ from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
-from agent import AttachmentError
+from agent import AttachmentError, ContextBaseOverBudgetError, ContextInputTooLargeError
+from llm_providers import LLMOutputBudgetExhaustedError
 from runtime_config import CredentialMissingError, credential_source_for_mode
 
 
@@ -146,6 +147,21 @@ def test_attachment_error_keeps_stable_protocol_code() -> None:
     assert error.http_status == 400
     assert error.code == "attachment_context_too_large"
     assert error.message == "附件内容超过当前模型容量。"
+
+
+@pytest.mark.parametrize(
+    ("exc", "code"),
+    [
+        (ContextBaseOverBudgetError("too large"), "base_prompt_over_budget"),
+        (ContextInputTooLargeError("too large"), "turn_input_too_large"),
+        (LLMOutputBudgetExhaustedError("empty"), "output_budget_exhausted"),
+    ],
+)
+def test_budget_failures_keep_specific_protocol_codes(exc: Exception, code: str) -> None:
+    error = map_exception(exc)
+
+    assert error.code == code
+    assert error.http_status in {400, 502}
 
 
 def test_content_policy_error_has_honest_message_and_sanitizes_failed_call() -> None:

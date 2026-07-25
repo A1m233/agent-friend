@@ -32,6 +32,10 @@ class LLMContextWindowError(LLMBadRequestError):
     """请求输入超过当前 Provider / Model 的上下文窗口。"""
 
 
+class LLMModelMetadataError(LLMError):
+    """无法可靠解析当前模型的运行限制，禁止带着猜测值继续请求。"""
+
+
 class LLMContentPolicyError(LLMError):
     """请求内容被 Provider 的安全策略拒绝；原样重试通常仍会失败。"""
 
@@ -42,3 +46,11 @@ class LLMProviderError(LLMError):
 
 class LLMTransientProviderError(LLMProviderError):
     """Provider 临时不可用（典型为 HTTP 5xx），可在未产出结果时有限重试。"""
+
+
+class LLMEmptyResponseError(LLMProviderError):
+    """Provider 正常结束了请求，但没有返回正文或工具调用。"""
+
+
+class LLMOutputBudgetExhaustedError(LLMEmptyResponseError):
+    """Provider 把输出预算耗尽在推理内容中，未产生可见正文。"""

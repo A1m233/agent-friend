@@ -107,6 +107,23 @@ pub async fn generate_diagnostic_bundle(
         .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("create local diagnostics client failed: {e}"))?;
+    let model_catalog_result = {
+        let client = client.clone();
+        async move {
+            let mut url =
+                reqwest::Url::parse(runtime_services::RuntimeServiceKind::Bridge.base_url())
+                    .map_err(|e| e.to_string())?;
+            url.path_segments_mut()
+                .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
+                .extend(["v1", "models", "catalog"]);
+            let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+            if !response.status().is_success() {
+                return Err(format!("bridge returned HTTP {}", response.status()));
+            }
+            response.json::<Value>().await.map_err(|e| e.to_string())
+        }
+    }
+    .await;
     let session_results = futures_util::future::join_all(session_ids.iter().map(|session_id| {
         let client = client.clone();
         let session_id = session_id.clone();
@@ -172,6 +189,19 @@ pub async fn generate_diagnostic_bundle(
         let mut count = 0;
         redact_json(&mut value, &credentials, home.as_deref(), &mut count);
         entries.push(json_entry(name, &value)?);
+    }
+
+    match model_catalog_result {
+        Ok(mut value) => {
+            let mut count = 0;
+            redact_json(&mut value, &credentials, home.as_deref(), &mut count);
+            entries.push(json_entry("diagnostics/model-catalog.json", &value)?);
+        }
+        Err(message) => failures.push(CollectionFailure {
+            collection: "model-catalog".into(),
+            item: None,
+            message: redact_text(&message, &credentials, home.as_deref()).0,
+        }),
     }
 
     for (index, result) in session_results.into_iter().enumerate() {

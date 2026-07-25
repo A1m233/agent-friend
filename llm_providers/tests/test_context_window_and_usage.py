@@ -11,14 +11,17 @@ import pytest
 from litellm.exceptions import ContentPolicyViolationError as LiteLLMContentPolicyViolationError
 from litellm.exceptions import ContextWindowExceededError as LiteLLMContextWindowExceededError
 from litellm.exceptions import Timeout as LiteLLMTimeout
-from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage, _map_exception
+from llm_providers.client import _extract_usage, _map_exception
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from llm_providers import (
     LLMClient,
     LLMContentPolicyError,
     LLMContextWindowError,
+    LLMEmptyResponseError,
+    LLMModelMetadataError,
     LLMNetworkError,
+    LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRetryScheduled,
     LLMTextDelta,
@@ -83,6 +86,7 @@ def test_context_window_uses_spec_override_first(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(_GET_MODEL_INFO, _boom)
     client = LLMClient(_spec(context_window=4096))
     assert client.context_window == 4096
+    assert client.model_limits.context_window_source == "provider_spec"
 
 
 def test_context_window_falls_back_to_litellm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,37 +94,41 @@ def test_context_window_falls_back_to_litellm(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(_GET_MODEL_INFO, lambda _model: {"max_input_tokens": 200000})
     client = LLMClient(_spec())
     assert client.context_window == 200000
+    assert client.model_limits.context_window_source == "litellm.max_input_tokens"
 
 
-def test_context_window_litellm_max_tokens_fallback_key(
+def test_context_window_rejects_output_limit_as_input_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """litellm 只给 max_tokens（无 max_input_tokens）时也能取到。"""
+    """max_tokens 是输出上限，不能被误用成输入上下文窗口。"""
     monkeypatch.setattr(_GET_MODEL_INFO, lambda _model: {"max_tokens": 32000})
     client = LLMClient(_spec())
-    assert client.context_window == 32000
+    with pytest.raises(LLMModelMetadataError):
+        _ = client.context_window
 
 
-def test_context_window_default_when_litellm_unknown(
+def test_context_window_fails_when_litellm_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """第 3 层：litellm 抛错（不认识私有 model）→ 保守默认窗口。"""
+    """未声明的私有 model 必须显式配置窗口，不能静默猜值。"""
 
     def _raise(_model: str) -> dict[str, int]:
         raise Exception("unknown model")
 
     monkeypatch.setattr(_GET_MODEL_INFO, _raise)
     client = LLMClient(_spec())
-    assert client.context_window == DEFAULT_CONTEXT_WINDOW
+    with pytest.raises(LLMModelMetadataError):
+        _ = client.context_window
 
 
-def test_context_window_default_when_litellm_empty(
+def test_context_window_fails_when_litellm_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """litellm 返回无窗口字段 → 保守默认窗口。"""
+    """litellm 返回无输入窗口字段时明确失败。"""
     monkeypatch.setattr(_GET_MODEL_INFO, lambda _model: {})
     client = LLMClient(_spec())
-    assert client.context_window == DEFAULT_CONTEXT_WINDOW
+    with pytest.raises(LLMModelMetadataError):
+        _ = client.context_window
 
 
 def test_spec_from_env_reads_context_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -262,7 +270,19 @@ def test_stream_passes_spec_timeout_to_litellm(monkeypatch: pytest.MonkeyPatch) 
 
     def fake_completion(**kwargs: Any) -> Any:
         seen_kwargs.update(kwargs)
-        return iter(())
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
 
     monkeypatch.setattr(_COMPLETION, fake_completion)
     client = LLMClient(_spec(defaults={"timeout": 12.5}))
@@ -280,7 +300,19 @@ def test_stream_clamps_provider_timeout_to_bounded_attempt(
 
     def fake_completion(**kwargs: Any) -> Any:
         seen_kwargs.update(kwargs)
-        return iter(())
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
 
     monkeypatch.setattr(_COMPLETION, fake_completion)
     client = LLMClient(
@@ -554,7 +586,8 @@ def test_stream_logs_privacy_safe_empty_response_shape(
     caplog.set_level(logging.INFO, logger="llm_providers.client")
     client = LLMClient(_spec(), network_retries=0)
 
-    list(client.stream([{"role": "user", "content": "sensitive prompt"}]))
+    with pytest.raises(LLMEmptyResponseError):
+        list(client.stream([{"role": "user", "content": "sensitive prompt"}]))
 
     diagnostic = next(
         record.getMessage()
@@ -568,3 +601,32 @@ def test_stream_logs_privacy_safe_empty_response_shape(
     assert "finish_reason_raw=stop" in diagnostic
     assert secret_reasoning not in diagnostic
     assert "sensitive prompt" not in diagnostic
+
+
+def test_stream_rejects_reasoning_only_output_budget_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_completion(**_kwargs: Any) -> Any:
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content=None,
+                                reasoning_content="hidden reasoning",
+                                tool_calls=[],
+                            ),
+                            finish_reason="length",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    client = LLMClient(_spec(), network_retries=0)
+
+    with pytest.raises(LLMOutputBudgetExhaustedError):
+        list(client.stream([{"role": "user", "content": "hi"}]))

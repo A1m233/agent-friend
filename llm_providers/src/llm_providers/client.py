@@ -15,6 +15,8 @@ import logging
 import ssl
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 import litellm
@@ -25,8 +27,11 @@ from .errors import (
     LLMBadRequestError,
     LLMContentPolicyError,
     LLMContextWindowError,
+    LLMEmptyResponseError,
     LLMError,
+    LLMModelMetadataError,
     LLMNetworkError,
+    LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
     LLMTransientProviderError,
@@ -41,13 +46,6 @@ from .stream_events import (
     LLMUsage,
 )
 
-DEFAULT_CONTEXT_WINDOW = 8192
-"""litellm 查不到、spec 也没 override 时的保守兜底窗口（009 起）。
-
-取小不取大：窗口估小 → 阈值偏低 → 上下文管理偏早触发裁剪/压缩，安全（宁可早
-压缩，不可漏压缩撑爆）。详见 009 design §3.2。
-"""
-
 DEFAULT_NETWORK_RETRIES = 1
 """Provider 尚未产出任何结果时，网络错误的默认重试次数。"""
 
@@ -58,6 +56,14 @@ DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
 """聊天流单次等待上游事件的最大秒数；两次总尝试约束在 90 秒内。"""
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ResolvedModelLimits:
+    """LLMClient 实际采用的模型限制及其证据来源。"""
+
+    context_window: int
+    context_window_source: str
 
 
 def _present_delta_field_names(delta: Any) -> set[str]:
@@ -272,34 +278,49 @@ class LLMClient:
 
     @property
     def context_window(self) -> int:
-        """当前 model 的最大输入 token 窗口（009 起；三层兜底）。
+        """当前 model 的最大输入 token 窗口。"""
+        return self.model_limits.context_window
 
-        解析顺序（009 design §3.2）：
-
-        1. :attr:`ProviderSpec.context_window` override（私有 ``api_base`` /
-           litellm 不认识的 model 时显式指定）
-        2. ``litellm.get_model_info(model)`` 的 ``max_input_tokens`` /
-           ``max_tokens`` 元数据
-        3. :data:`DEFAULT_CONTEXT_WINDOW` 保守兜底（取小，偏早触发上下文管理）
-
-        Note:
-            把 litellm 细节收口在本层，让 ``agent`` 侧的 budget 逻辑只依赖本属性、
-            **不直接 import litellm**，保持现有分层隔离。
-        """
+    @cached_property
+    def model_limits(self) -> ResolvedModelLimits:
+        """按显式配置、LiteLLM 输入元数据的顺序解析并缓存模型限制。"""
         if self.spec.context_window is not None:
-            return self.spec.context_window
+            limits = ResolvedModelLimits(
+                self.spec.context_window,
+                self.spec.context_window_source or "provider_spec",
+            )
+            logger.info(
+                "resolved model limits: model=%s context_window=%d source=%s",
+                self.spec.model,
+                limits.context_window,
+                limits.context_window_source,
+            )
+            return limits
         try:
             info = litellm.get_model_info(self.spec.model)
-        except Exception:
-            return DEFAULT_CONTEXT_WINDOW
+        except Exception as exc:
+            raise LLMModelMetadataError(
+                f"无法解析模型 {self.spec.model!r} 的上下文窗口；请在模型目录或运行配置中声明。"
+            ) from exc
         if isinstance(info, dict):
-            win = info.get("max_input_tokens") or info.get("max_tokens")
+            win = info.get("max_input_tokens")
             if win:
                 try:
-                    return int(win)
+                    parsed = int(win)
+                    if parsed > 0:
+                        limits = ResolvedModelLimits(parsed, "litellm.max_input_tokens")
+                        logger.info(
+                            "resolved model limits: model=%s context_window=%d source=%s",
+                            self.spec.model,
+                            limits.context_window,
+                            limits.context_window_source,
+                        )
+                        return limits
                 except (ValueError, TypeError):
                     pass
-        return DEFAULT_CONTEXT_WINDOW
+        raise LLMModelMetadataError(
+            f"模型 {self.spec.model!r} 缺少有效的 max_input_tokens；请显式声明上下文窗口。"
+        )
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
         """同步调用 LLM，返回完整的 assistant 文本回复。
@@ -609,5 +630,12 @@ class LLMClient:
             stop_reason,
             usage is not None,
         )
+
+        if text_delta_count == 0 and tool_call_delta_count == 0:
+            if stop_reason == "max_tokens" and reasoning_chars > 0:
+                raise LLMOutputBudgetExhaustedError(
+                    "模型输出预算已被推理内容耗尽，未生成可见正文。"
+                )
+            raise LLMEmptyResponseError("模型未返回可见正文或工具调用。")
 
         yield LLMTurnDone(stop_reason=stop_reason, usage=usage)

@@ -457,6 +457,12 @@ class RunScheduler:
             handle.token.raise_if_cancelled()
             handle.finish_once(RunOutcome.COMPLETED)
         except RunCancelled as exc:
+            logger.info(
+                "run cancelled: run_id=%s session_id=%s reason=%s",
+                request.run_id,
+                request.session_id,
+                exc.cancellation.reason,
+            )
             handle.finish_once(
                 RunOutcome.CANCELLED,
                 reason_code=str(exc.cancellation.reason),

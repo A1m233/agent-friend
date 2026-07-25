@@ -28,6 +28,8 @@ def test_kimi_defaults_use_official_openai_compatible_base_url() -> None:
 
     assert spec.model == "openai/kimi-k2.6"
     assert spec.api_base == "https://api.moonshot.cn/v1"
+    assert spec.context_window == 256 * 1024
+    assert spec.context_window_source == "catalog"
     assert spec.defaults == {"timeout": DEFAULT_LLM_TIMEOUT_SECONDS}
 
 
@@ -79,6 +81,13 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         "application/pdf",
         "text/plain",
     )
+    assert kimi["kimi/kimi-k2.6"]["limits"] == {
+        "contextWindow": 256 * 1024,
+        "contextWindowSource": "catalog",
+    }
+    for provider in providers.values():
+        for model in provider["models"]:
+            assert model["limits"]["contextWindow"] > 0
     for model_id in ("kimi/kimi-k2.7-code", "kimi/kimi-k2.7-code-highspeed"):
         assert kimi[model_id]["processingProfile"] == "kimi-multimodal-v1"
         assert kimi[model_id]["capabilities"]["attachments"] is True
