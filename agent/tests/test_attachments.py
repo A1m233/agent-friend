@@ -57,6 +57,44 @@ def test_attachment_store_rejects_declared_type_mismatch_and_cleans_temp(tmp_pat
     assert list(store.tmp_dir.iterdir()) == []
 
 
+def test_attachment_store_advisory_image_metadata_uses_detected_type(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = AttachmentStore(tmp_path / "attachments")
+
+    _, ref = asyncio.run(
+        store.import_stream(
+            _chunks(b"\xff\xd8\xffpayload"),
+            display_name="photo.png",
+            declared_media_type="image/png",
+            image_metadata_policy="advisory",
+        )
+    )
+
+    assert ref.media_type == "image/jpeg"
+    assert ref.display_name == "photo.jpg"
+    assert "reason=declared_media_type_mismatch" in caplog.text
+    assert "reason=filename_extension_mismatch" in caplog.text
+
+
+def test_attachment_store_keeps_document_metadata_strict_in_advisory_image_mode(
+    tmp_path: Path,
+) -> None:
+    store = AttachmentStore(tmp_path / "attachments")
+
+    with pytest.raises(AttachmentError) as error:
+        asyncio.run(
+            store.import_stream(
+                _chunks(b"%PDF-1.7\nbody"),
+                display_name="report.txt",
+                declared_media_type="text/plain",
+                image_metadata_policy="advisory",
+            )
+        )
+
+    assert error.value.code == "attachment_type_mismatch"
+
+
 def test_attachment_store_enforces_streaming_size_limit(tmp_path: Path) -> None:
     store = AttachmentStore(tmp_path / "attachments", max_attachment_bytes=8)
 
