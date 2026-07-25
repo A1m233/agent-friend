@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -41,6 +42,7 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMClient,
+    LLMContextWindowError,
     LLMRetryScheduled,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -55,6 +57,7 @@ from .context import (
     ContextManager,
     PriorSummary,
     RuntimeContext,
+    estimate_tool_schema_tokens,
     make_budget_snapshot,
 )
 from .conversation_events import (
@@ -202,6 +205,13 @@ class Conversation:
         # 更新）；``_last_context_notes``：最近一轮上下文组装的度量观测（token 估算 /
         # 有效窗口 / 触发阈值），供调试入口读取（AC-1.3）。
         self._last_input_tokens: int | None = None
+        self._calibration_by_model: dict[str, float] = {}
+        self._pending_context_usage: dict[str, Any] | None = None
+        self._pending_compaction: CompactionRecord | None = None
+        self._context_emergency_ratio = 1.0
+        self._context_trigger_reason = "budget"
+        self._checkpoint_status = "none"
+        self._checkpoint_invalid_reason = ""
         self._last_context_notes: dict[str, Any] = {}
         self._voice_latency_context: VoiceLatencyContext | None = None
         self._voice_latency_short_reply_hint = ""
@@ -213,6 +223,7 @@ class Conversation:
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
         prompt_builder.build()
+        self._restore_context_usage()
 
     def set_voice_latency_context(
         self,
@@ -509,10 +520,10 @@ class Conversation:
                         attempt=1,
                         max_attempts=2,
                     )
-                for ev in self._active_llm_client().stream(
+                for ev in self._iter_model_stream(
                     openai_messages,
                     tools=tool_specs,
-                    **self._voice_latency_llm_overrides,
+                    overrides=self._voice_latency_llm_overrides,
                 ):
                     self._check_cancel(cancel_check)
                     if isinstance(ev, LLMTextDelta):
@@ -719,10 +730,10 @@ class Conversation:
                         attempt=1,
                         max_attempts=2,
                     )
-                for ev in self._active_llm_client().stream(
+                for ev in self._iter_model_stream(
                     openai_messages,
                     tools=tool_specs,
-                    **self._voice_latency_llm_overrides,
+                    overrides=self._voice_latency_llm_overrides,
                 ):
                     self._check_cancel(cancel_check)
                     if isinstance(ev, LLMTextDelta):
@@ -858,14 +869,14 @@ class Conversation:
 
         try:
             self._check_cancel(cancel_check)
-            openai_messages = self._build_openai_messages_continuation()
+            openai_messages = self._build_openai_messages_continuation(tool_specs=None)
             yield ModelResponseStatus(
                 phase="waiting",
                 after_tool=True,
                 attempt=1,
                 max_attempts=2,
             )
-            for ev in self._active_llm_client().stream(openai_messages, tools=None):
+            for ev in self._iter_model_stream(openai_messages, tools=None):
                 self._check_cancel(cancel_check)
                 if isinstance(ev, LLMTextDelta):
                     current_text_buf.append(ev.text)
@@ -985,9 +996,16 @@ class Conversation:
         )
 
         # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
-        openai_messages = self._assemble(trailing_user=system_prompt_addendum)
+        openai_messages = self._assemble(trailing_user=system_prompt_addendum, tool_specs=None)
         text_buf: list[str] = []
-        for ev in self._active_llm_client().stream(openai_messages, tools=None):
+        for ev in self._iter_model_stream(
+            openai_messages,
+            tools=None,
+            recovery_builder=lambda: self._assemble(
+                trailing_user=system_prompt_addendum,
+                tool_specs=None,
+            ),
+        ):
             self._check_cancel(cancel_check)
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
@@ -1312,6 +1330,9 @@ class Conversation:
         meta: dict[str, Any] = self._run_event_meta({"persona": persona_name, "model": model})
         if persona_id is not None:
             meta["persona_id"] = persona_id
+        if self._pending_context_usage is not None:
+            meta["context_usage"] = dict(self._pending_context_usage)
+            self._pending_context_usage = None
         event = Event(
             type="assistant_message",
             uuid=str(uuid4()),
@@ -1443,6 +1464,7 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
+        tool_specs: list[dict[str, Any]] | None | object = _UNSET,
     ) -> list[dict[str, Any]]:
         """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
 
@@ -1459,7 +1481,11 @@ class Conversation:
         Returns:
             可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
         """
-        runtime = self._build_runtime_context(prior_summary_override=prior_summary_override)
+        actual_tool_specs = self._current_tool_specs() if tool_specs is _UNSET else tool_specs
+        runtime = self._build_runtime_context(
+            prior_summary_override=prior_summary_override,
+            tool_specs=cast(list[dict[str, Any]] | None, actual_tool_specs),
+        )
         raw_history = self._session.llm_messages if history_override is None else history_override
         history_for_llm = escape_user_messages_for_llm(raw_history)
         user_input_for_llm = (
@@ -1475,9 +1501,11 @@ class Conversation:
             trailing_system=trailing_system,
             runtime=runtime,
         )
-        # 009 M3：context manager 只"生成"摘要，落盘 IO 在此执行（职责边界，design §4.3）。
-        if persist_compaction and build.new_compaction is not None:
-            self._append_compaction_event(build.new_compaction)
+        self._pending_compaction = (
+            build.new_compaction
+            if persist_compaction and build.new_compaction is not None
+            else None
+        )
         self._record_context_notes(build, runtime)
         if self._message_renderer is None:
             return [message.to_openai() for message in build.messages]
@@ -1488,6 +1516,7 @@ class Conversation:
         self,
         *,
         prior_summary_override: PriorSummary | None | object = _UNSET,
+        tool_specs: list[dict[str, Any]] | None = None,
     ) -> RuntimeContext:
         """构造本轮 :class:`RuntimeContext`（预算快照 + 当前 llm_client）。
 
@@ -1499,13 +1528,18 @@ class Conversation:
         budget = make_budget_snapshot(
             effective_window=self._active_llm_client().context_window,
             last_input_tokens=self._last_input_tokens,
+            emergency_ratio=self._context_emergency_ratio,
         )
+        model_id = self._active_model_id()
         return RuntimeContext(
             budget=budget,
             llm_client=self._active_llm_client(),
             prior_summary=self._derive_prior_summary()
             if prior_summary_override is _UNSET
             else cast(PriorSummary | None, prior_summary_override),
+            request_overhead_tokens=estimate_tool_schema_tokens(tool_specs),
+            calibration_factor=self._calibration_by_model.get(model_id, 1.0),
+            trigger_reason=self._context_trigger_reason,
         )
 
     def _derive_prior_summary(self) -> PriorSummary | None:
@@ -1520,12 +1554,48 @@ class Conversation:
                 comp = ev
                 break
         if comp is None:
+            self._checkpoint_status = "none"
+            self._checkpoint_invalid_reason = ""
             return None
         summary = comp.payload.get("summary", "")
         covered = comp.payload.get("covered_through_uuid", "")
         if not summary or not covered:
+            self._checkpoint_status = "invalid"
+            self._checkpoint_invalid_reason = "missing_summary_or_covered_boundary"
             return None
-        return PriorSummary(summary=summary, covered_through_uuid=covered)
+        messages = self._messages_from_events(events)
+        indices = {message.uuid: index for index, message in enumerate(messages)}
+        covered_index = indices.get(covered)
+        if covered_index is None:
+            self._checkpoint_status = "invalid"
+            self._checkpoint_invalid_reason = "covered_boundary_not_active"
+            return None
+        checkpoint_version = int(comp.payload.get("checkpoint_version", 1))
+        source_from = str(comp.payload.get("summary_source_from_uuid", ""))
+        retained_from = str(comp.payload.get("retained_from_uuid", ""))
+        if checkpoint_version >= 2:
+            source_index = indices.get(source_from)
+            retained_index = indices.get(retained_from) if retained_from else len(messages)
+            if (
+                source_index is None
+                or retained_index is None
+                or source_index > covered_index
+                or retained_index != covered_index + 1
+            ):
+                self._checkpoint_status = "invalid"
+                self._checkpoint_invalid_reason = "checkpoint_boundaries_not_contiguous"
+                return None
+        self._checkpoint_status = "valid" if checkpoint_version >= 2 else "legacy_revalidated"
+        self._checkpoint_invalid_reason = ""
+        return PriorSummary(
+            summary=summary,
+            covered_through_uuid=covered,
+            checkpoint_version=checkpoint_version,
+            summary_prompt_version=int(comp.payload.get("summary_prompt_version", 0)),
+            summary_source_from_uuid=source_from,
+            retained_from_uuid=retained_from,
+            omitted_before_count=int(comp.payload.get("omitted_before_count", 0)),
+        )
 
     def _append_compaction_event(self, record: CompactionRecord) -> None:
         """把本轮新生成的摘要落为 ``compaction`` 事件（append-only，不动原始消息）。
@@ -1543,6 +1613,17 @@ class Conversation:
                 "tokens_before": record.tokens_before,
                 "tokens_after": record.tokens_after,
                 "model": record.model,
+                "checkpoint_version": record.checkpoint_version,
+                "summary_prompt_version": record.summary_prompt_version,
+                "summary_source_from_uuid": record.summary_source_from_uuid,
+                "retained_from_uuid": record.retained_from_uuid,
+                "omitted_before_count": record.omitted_before_count,
+                "effective_window": record.effective_window,
+                "calibration_factor": record.calibration_factor,
+                "trigger_reason": record.trigger_reason,
+                "summary_attempts": record.summary_attempts,
+                "tool_results_truncated": record.tool_results_truncated,
+                "tool_results_omitted": record.tool_results_omitted,
             },
             meta=self._run_event_meta(),
         )
@@ -1559,8 +1640,16 @@ class Conversation:
             "trigger_threshold": runtime.budget.trigger_threshold,
             "last_input_tokens": runtime.budget.last_input_tokens,
             "dropped_count": build.dropped_count,
+            "request_overhead_tokens": runtime.request_overhead_tokens,
+            "calibration_factor": runtime.calibration_factor,
+            "raw_request_tokens": estimate_tokens(build.messages) + runtime.request_overhead_tokens,
+            "trigger_reason": runtime.trigger_reason,
+            "checkpoint_status": self._checkpoint_status,
+            "checkpoint_invalid_reason": self._checkpoint_invalid_reason,
         }
         notes.update(build.notes)
+        if build.new_compaction is not None:
+            notes["checkpoint_status"] = "candidate"
         self._last_context_notes = notes
         prior = runtime.prior_summary
         compaction = build.new_compaction
@@ -1570,7 +1659,8 @@ class Conversation:
             "last_input_tokens=%s prior_summary=%s prior_covered_through=%s "
             "folded=%s compacted=%s summary_input=%s new_compaction=%s "
             "compaction_tokens_before=%s compaction_tokens_after=%s "
-            "compaction_covered_through=%s dropped_count=%s fallback_reason=%s",
+            "compaction_covered_through=%s dropped_count=%s fallback_reason=%s "
+            "checkpoint_status=%s checkpoint_invalid_reason=%s trigger_reason=%s",
             self._session.session_id,
             self._run_id_override or "none",
             getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
@@ -1590,7 +1680,90 @@ class Conversation:
             compaction.covered_through_uuid if compaction is not None else "none",
             notes.get("dropped_count"),
             notes.get("fallback_reason", "none"),
+            notes.get("checkpoint_status", "none"),
+            notes.get("checkpoint_invalid_reason", "none") or "none",
+            notes.get("trigger_reason", "budget"),
         )
+
+    def _current_tool_specs(self) -> list[dict[str, Any]] | None:
+        """返回本轮真正会发送的工具定义，供预算和 provider 请求共用。"""
+        if self._voice_latency_disable_tools or self._tool_registry is None:
+            return None
+        return self._tool_registry.to_openai_tools()
+
+    def _restore_context_usage(self) -> None:
+        """从 active assistant event 恢复各模型最近的 usage 校准。"""
+        for event in reversed(self._session.active_events):
+            if event.type != "assistant_message":
+                continue
+            usage = event.meta.get("context_usage")
+            if not isinstance(usage, dict):
+                continue
+            model = usage.get("model")
+            factor = usage.get("calibration_factor")
+            prompt_tokens = usage.get("prompt_tokens")
+            if (
+                isinstance(model, str)
+                and model not in self._calibration_by_model
+                and isinstance(factor, (int, float))
+                and math.isfinite(float(factor))
+            ):
+                self._calibration_by_model[model] = min(4.0, max(1.0, float(factor)))
+            if (
+                model == self._session.current_model
+                and self._last_input_tokens is None
+                and isinstance(prompt_tokens, int)
+                and prompt_tokens > 0
+            ):
+                self._last_input_tokens = prompt_tokens
+
+    def _commit_pending_compaction(self) -> None:
+        """幂等提交本次被 provider 接受的 compaction candidate。"""
+        record = self._pending_compaction
+        self._pending_compaction = None
+        if record is not None:
+            self._append_compaction_event(record)
+
+    def _iter_model_stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        overrides: dict[str, Any] | None = None,
+        recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+    ) -> Iterator[Any]:
+        """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
+        current_messages = messages
+        recovery_builder = recovery_builder or (lambda: self._assemble(tool_specs=tools))
+        for recovery_attempt in range(2):
+            request_accepted = False
+            try:
+                for event in self._active_llm_client().stream(
+                    current_messages,
+                    tools=tools,
+                    **(overrides or {}),
+                ):
+                    if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
+                        request_accepted = True
+                        self._commit_pending_compaction()
+                    yield event
+                self._commit_pending_compaction()
+                return
+            except LLMContextWindowError:
+                self._pending_compaction = None
+                if request_accepted or recovery_attempt > 0:
+                    raise
+                previous_ratio = self._context_emergency_ratio
+                previous_reason = self._context_trigger_reason
+                self._context_emergency_ratio = 0.8
+                self._context_trigger_reason = "provider_context_exceeded"
+                try:
+                    current_messages = recovery_builder()
+                finally:
+                    self._context_emergency_ratio = previous_ratio
+                    self._context_trigger_reason = previous_reason
+
+        raise AssertionError("context recovery loop should always return or raise")
 
     def _consume_usage(self, ev: LLMTurnDone) -> None:
         """消费 :class:`LLMTurnDone.usage`，更新下一轮估算的真实锚点（009 M1）。
@@ -1599,6 +1772,21 @@ class Conversation:
         """
         if ev.usage is not None and ev.usage.prompt_tokens > 0:
             self._last_input_tokens = ev.usage.prompt_tokens
+            model_id = self._active_model_id()
+            raw_estimate = int(self._last_context_notes.get("raw_request_tokens") or 0)
+            previous = self._calibration_by_model.get(model_id, 1.0)
+            if raw_estimate > 0:
+                observed = ev.usage.prompt_tokens / raw_estimate
+                factor = min(4.0, max(1.0, 0.75 * previous + 0.25 * observed))
+            else:
+                factor = previous
+            self._calibration_by_model[model_id] = factor
+            self._pending_context_usage = {
+                "model": model_id,
+                "prompt_tokens": ev.usage.prompt_tokens,
+                "raw_estimate": raw_estimate,
+                "calibration_factor": factor,
+            }
 
     def _observe_turn(self, start_idx: int) -> None:
         """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。
@@ -1623,14 +1811,18 @@ class Conversation:
 
             logging.getLogger(__name__).warning("observe 本轮对话失败", exc_info=True)
 
-    def _build_openai_messages_continuation(self) -> list[dict[str, Any]]:
+    def _build_openai_messages_continuation(
+        self,
+        *,
+        tool_specs: list[dict[str, Any]] | None | object = _UNSET,
+    ) -> list[dict[str, Any]]:
         """工具调用循环第 N>0 轮：经统一入口 :meth:`_assemble` 组装（009 R-0.3）。
 
         续轮没有新用户输入（用户输入早进了 :attr:`Session.messages`），故
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        return self._assemble()
+        return self._assemble(tool_specs=tool_specs)
 
     def _accumulate_tool_call_delta(
         self,
@@ -1762,10 +1954,17 @@ class Conversation:
         )
         # 009 R-0.3：兜底收尾也走统一入口，收尾指令作为 trailing_system 注入，
         # 不再手拼消息（消除与续轮组装的重复）。
-        openai_messages = self._assemble(trailing_system=extra_system)
+        openai_messages = self._assemble(trailing_system=extra_system, tool_specs=None)
 
         text_buf: list[str] = []
-        for ev in self._active_llm_client().stream(openai_messages, tools=None):
+        for ev in self._iter_model_stream(
+            openai_messages,
+            tools=None,
+            recovery_builder=lambda: self._assemble(
+                trailing_system=extra_system,
+                tool_specs=None,
+            ),
+        ):
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield TextDelta(text=ev.text)

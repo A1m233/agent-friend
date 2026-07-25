@@ -1,33 +1,33 @@
-"""``SummarizingContextManager``：摘要压缩主策略（009 M3）。
+"""``SummarizingContextManager``：带安全预算与 checkpoint 的摘要压缩主策略。
 
 把长历史蒸馏成结构化 summary，腾出窗口同时尽量不丢关键信息。核心行为：
 
 - **平时折叠**：用 ``runtime.prior_summary``（由 ``Conversation`` 从
   :meth:`Session.latest_compaction` 派生）把已覆盖的旧消息替换为一条 summary
   system 消息，省 token；估算仍在阈值内则直接返回。
-- **超阈值触发摘要**：把"较旧部分"（保留最近 N 个 user 轮逐字不折，复用 M2 的
-  user 轮边界保组逻辑）重新蒸馏成 summary，并生成 :class:`CompactionRecord` 交给
-  ``Conversation`` 落 ``compaction`` 事件。
-- **全量重摘不做 summary-of-summary**（design §6.3）：摘要输入用**全量原始**的较旧
-  部分，不在 prior_summary 上增量叠加——避免"摘要的摘要"累积失真。仅当较旧部分
-  本身就超过摘要输入预算（极端长会话，摘要调用自己塞不下）时，才退回增量模式
-  （prior_summary + 其后原始消息）。
+- **超阈值触发摘要**：按 token 预算选择 recent tail 和可发送的连续摘要来源，不拆
+  user/tool turn；首次历史已经过大时明确记录未进入摘要的旧 turn 数。
+- **摘要后二次验算**：只有 summary + recent tail 仍满足主请求预算，才生成
+  :class:`CompactionRecord` 候选。
 - **circuit breaker**：摘要连续失败 :data:`MAX_CONSECUTIVE_FAILURES` 次跳闸，退化到
   注入的 FIFO 兜底，不反复重试拖垮对话（design §6.1 / Q-6）。状态 per-session
   （工厂为每个会话产独立实例，见 design §7）。
 
 ⚠️ 摘要是**真实 LLM 调用**，运行时触发受 ``llm-api-confirm`` 约束。
 
-详见 docs/requirements/009-engine-context-management/design.md §6。
+详见 docs/requirements/063-context-compaction-reliability/design.md。
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+
+from llm_providers import LLMContextWindowError
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
-from .budget import estimate_tokens
+from .budget import estimate_request_tokens, estimate_tokens
 from .fifo import FifoContextManager
 from .protocol import (
     BuildResult,
@@ -38,21 +38,26 @@ from .protocol import (
     assemble_messages,
 )
 from .summary_prompt import (
+    SUMMARY_SYSTEM_PROMPT,
     build_summary_messages,
     render_summary_as_context,
     render_transcript,
     strip_analysis,
 )
+from .tool_projection import project_tool_results
+from .turns import recent_turn_start_candidates
 
 MAX_CONSECUTIVE_FAILURES = 3
 """摘要连续失败多少次后跳闸退化到 FIFO（design §6.1 / Q-6）。"""
 
 SUMMARY_RECENT_TAIL_TURNS = 2
-"""触发摘要时保留最近多少个 user 轮**逐字不折**（保组完整 + 近期上下文连续性）。
+"""旧构造参数的兼容默认值；063 起 recent tail 完全由 token 预算决定。"""
 
-按 user 轮边界切，保证进行中的工具组（assistant tool_calls + tool 结果）不被折断，
-也给摘要后的对话留逐字近况。较旧的部分才被蒸馏进 summary。
-"""
+POST_COMPACTION_TARGET_RATIO = 0.7
+"""压缩后目标占用相对触发阈值的比例，给后续 turn 与 usage 校准留出余量。"""
+
+SUMMARY_PROMPT_VERSION = 1
+MAX_SUMMARY_CONTEXT_RETRIES = 2
 
 
 @dataclass(frozen=True)
@@ -85,8 +90,7 @@ class SummarizingContextManager:
         fallback: 摘要不可用（跳闸 / 无可压缩较旧部分）时的兜底策略，默认
             :class:`FifoContextManager`。
         max_failures: circuit breaker 阈值，默认 :data:`MAX_CONSECUTIVE_FAILURES`。
-        recent_tail_turns: 触发摘要时保留逐字的最近 user 轮数，默认
-            :data:`SUMMARY_RECENT_TAIL_TURNS`。
+        recent_tail_turns: 旧调用方兼容参数；063 起不再参与选择。
     """
 
     def __init__(
@@ -98,7 +102,6 @@ class SummarizingContextManager:
     ) -> None:
         self._fallback: ContextManager = fallback or FifoContextManager()
         self._max_failures = max_failures
-        self._recent_tail_turns = recent_tail_turns
         self._consecutive_failures = 0
         self._tripped = False
 
@@ -146,8 +149,9 @@ class SummarizingContextManager:
                 )
 
         # 平时：用 prior_summary 折叠展示，估算未超阈值则直接返回
-        folded_msgs = parts.assemble(self._fold_with_prior(history, prior))
-        est = estimate_tokens(folded_msgs)
+        projected_history, projection = project_tool_results(history, runtime)
+        folded_msgs = parts.assemble(self._fold_with_prior(projected_history, prior))
+        est = estimate_request_tokens(folded_msgs, runtime)
         if est <= threshold:
             return BuildResult(
                 messages=folded_msgs,
@@ -155,11 +159,14 @@ class SummarizingContextManager:
                     "context_strategy": "summarizing",
                     "folded": prior is not None,
                     "token_estimate": est,
+                    "tool_results_truncated": projection.truncated,
+                    "tool_results_omitted": 0,
+                    "final_strategy": "summary" if prior is not None else "full",
                 },
             )
 
         # 超阈值：重新蒸馏较旧部分
-        return self._compact(history, parts, runtime, prior, threshold)
+        return self._compact(projected_history, parts, runtime, threshold, projection.truncated)
 
     # ----- 触发摘要 -----
 
@@ -168,10 +175,11 @@ class SummarizingContextManager:
         history: list[Message],
         parts: _AssembleParts,
         runtime: RuntimeContext,
-        prior: PriorSummary | None,
         threshold: int,
+        tool_results_truncated: int,
     ) -> BuildResult:
-        cut = self._recent_tail_cut(history)
+        summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
+        cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
         if cut <= 0:
             # 没有可压缩的较旧部分（全在保护 tail / 无 user 边界）→ 本轮退 FIFO 兜底，
             # 不计失败、不跳闸（这不是摘要失败，是无从压缩）。
@@ -179,12 +187,32 @@ class SummarizingContextManager:
 
         older = history[:cut]
         tail = history[cut:]
-        summary_text, input_kind = self._summary_input(older, prior, threshold)
-
-        try:
-            raw = runtime.llm_client.complete(build_summary_messages(summary_text))
-        except Exception:
-            return self._on_failure(history, parts, runtime, reason="llm_error")
+        raw = ""
+        summary_source: list[Message] = []
+        attempts = 0
+        input_kind = "bounded_full"
+        for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 1):
+            attempts = attempt + 1
+            ratio = 0.75**attempt
+            summary_source = self._bounded_summary_source(older, runtime, ratio=ratio)
+            if not summary_source:
+                return self._fallback_result(
+                    history, parts, runtime, reason="summary_input_too_large"
+                )
+            summary_text = render_transcript(summary_source)
+            try:
+                raw = runtime.llm_client.complete(
+                    build_summary_messages(summary_text),
+                    max_tokens=summary_output_budget,
+                )
+                break
+            except LLMContextWindowError:
+                if attempt >= MAX_SUMMARY_CONTEXT_RETRIES:
+                    return self._on_failure(
+                        history, parts, runtime, reason="summary_context_window_exceeded"
+                    )
+            except Exception:
+                return self._on_failure(history, parts, runtime, reason="llm_error")
 
         summary = strip_analysis(raw).strip()
         if not summary:
@@ -194,12 +222,30 @@ class SummarizingContextManager:
         self._consecutive_failures = 0
         summary_msg = Message(role="system", content=render_summary_as_context(summary))
         msgs = parts.assemble([summary_msg, *tail])
+        tokens_after = estimate_request_tokens(msgs, runtime)
+        if tokens_after > threshold:
+            return self._fallback_result(
+                history, parts, runtime, reason="summary_result_over_budget"
+            )
         record = CompactionRecord(
             summary=summary,
             covered_through_uuid=older[-1].uuid,
-            tokens_before=estimate_tokens(parts.assemble(history)),
-            tokens_after=estimate_tokens(msgs),
+            tokens_before=estimate_request_tokens(parts.assemble(history), runtime),
+            tokens_after=tokens_after,
             model=getattr(getattr(runtime.llm_client, "spec", None), "model", ""),
+            summary_prompt_version=SUMMARY_PROMPT_VERSION,
+            summary_source_from_uuid=summary_source[0].uuid,
+            retained_from_uuid=tail[0].uuid if tail else "",
+            omitted_before_count=sum(
+                1
+                for message in older[: max(0, len(older) - len(summary_source))]
+                if message.role == "user"
+            ),
+            effective_window=runtime.budget.effective_window,
+            calibration_factor=runtime.calibration_factor,
+            trigger_reason=runtime.trigger_reason,
+            summary_attempts=attempts,
+            tool_results_truncated=tool_results_truncated,
         )
         return BuildResult(
             messages=msgs,
@@ -209,6 +255,17 @@ class SummarizingContextManager:
                 "compacted": True,
                 "summary_input": input_kind,
                 "token_estimate": record.tokens_after,
+                "summary_attempts": attempts,
+                "summary_input_tokens": estimate_tokens(
+                    [
+                        Message(role="system", content=SUMMARY_SYSTEM_PROMPT),
+                        Message(role="user", content=render_transcript(summary_source)),
+                    ]
+                ),
+                "summary_input_budget": runtime.budget.trigger_threshold,
+                "tool_results_truncated": tool_results_truncated,
+                "tool_results_omitted": 0,
+                "final_strategy": "summary",
             },
         )
 
@@ -266,36 +323,55 @@ class SummarizingContextManager:
         summary_msg = Message(role="system", content=render_summary_as_context(prior.summary))
         return [summary_msg, *history[idx + 1 :]]
 
-    def _summary_input(
-        self, older: list[Message], prior: PriorSummary | None, threshold: int
-    ) -> tuple[str, str]:
-        """决定摘要输入文本：默认全量原始较旧部分；极端超长退回增量。
+    def _bounded_summary_source(
+        self,
+        older: list[Message],
+        runtime: RuntimeContext,
+        *,
+        ratio: float,
+    ) -> list[Message]:
+        """在摘要调用预算内选择连续的最新完整旧 turn。"""
+        budget = int(runtime.budget.trigger_threshold * ratio)
+        candidates = recent_turn_start_candidates(older)
+        if candidates and candidates[-1] == len(older):
+            candidates = candidates[:-1]
+        if not candidates and older:
+            candidates = [0]
+        for start in candidates:
+            source = older[start:]
+            transcript = render_transcript(source)
+            request = build_summary_messages(transcript)
+            summary_messages = [
+                Message(role=message["role"], content=message["content"]) for message in request
+            ]
+            summary_request_tokens = math.ceil(
+                estimate_tokens(summary_messages) * runtime.calibration_factor
+            )
+            if summary_request_tokens <= budget:
+                return source
+        return []
 
-        Returns:
-            ``(转录文本, "full" | "incremental")``。
-        """
-        full_text = render_transcript(older)
-        full_est = estimate_tokens([Message(role="user", content=full_text)])
-        if prior is None or full_est <= threshold:
-            return full_text, "full"
-
-        # 极端退化：较旧部分自己都超摘要输入预算 → prior_summary + 其后原始增量
-        idx = self._index_of_uuid(older, prior.covered_through_uuid)
-        after = older[idx + 1 :] if idx is not None else older
-        text = f"[此前摘要]\n{prior.summary}\n\n[此后新增对话]\n{render_transcript(after)}"
-        return text, "incremental"
-
-    def _recent_tail_cut(self, history: list[Message]) -> int:
-        """返回"保护 tail 起点"下标：保留最近 N 个 user 轮，其前为可压缩较旧部分。
-
-        ``<=0`` 表示没有可压缩的较旧部分（user 轮数 <= N，或无 user 消息）。
-        切点取 user 消息下标 → 保证不折断工具组（assistant tool_calls + tool 结果
-        总在同一个 user 轮内、下一个 user 之前）。
-        """
-        user_indices = [i for i, m in enumerate(history) if m.role == "user"]
-        if len(user_indices) <= self._recent_tail_turns:
+    def _recent_tail_cut(
+        self,
+        history: list[Message],
+        parts: _AssembleParts,
+        runtime: RuntimeContext,
+        summary_output_budget: int,
+    ) -> int:
+        """选择连续 recent turn 后缀，并让压缩结果回落到稳定目标水位。"""
+        user_indices = recent_turn_start_candidates(history)
+        if user_indices and user_indices[-1] == len(history):
+            user_indices = user_indices[:-1]
+        if len(user_indices) <= 1:
             return 0
-        return user_indices[-self._recent_tail_turns]
+        placeholder_chars = max(1, int(summary_output_budget / 0.75))
+        placeholder = Message(role="system", content="S" * placeholder_chars)
+        target = int(runtime.budget.trigger_threshold * POST_COMPACTION_TARGET_RATIO)
+        for cut in user_indices[1:]:
+            candidate = parts.assemble([placeholder, *history[cut:]])
+            if estimate_request_tokens(candidate, runtime) <= target:
+                return cut
+        return user_indices[-1]
 
     @staticmethod
     def _index_of_uuid(messages: list[Message], uuid: str) -> int | None:

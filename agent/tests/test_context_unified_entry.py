@@ -63,6 +63,8 @@ class _SpyContextManager:
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
                 "has_runtime": runtime is not None,
+                "request_overhead_tokens": runtime.request_overhead_tokens if runtime else None,
+                "calibration_factor": runtime.calibration_factor if runtime else None,
             }
         )
         msgs = assemble_messages(
@@ -182,6 +184,8 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
 
     # 所有入口都传了 runtime
     assert all(c["has_runtime"] for c in spy.calls)
+    assert all(c["request_overhead_tokens"] > 0 for c in spy.calls[:-1])
+    assert spy.calls[-1]["request_overhead_tokens"] == 0
 
 
 def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
@@ -193,7 +197,7 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
                 LLMTextDelta(text="hi"),
                 LLMTurnDone(
                     stop_reason="end_turn",
-                    usage=LLMUsage(prompt_tokens=1234, completion_tokens=5, total_tokens=1239),
+                    usage=LLMUsage(prompt_tokens=5000, completion_tokens=5, total_tokens=5005),
                 ),
             ],
             [LLMTextDelta(text="yo"), LLMTurnDone(stop_reason="end_turn")],
@@ -211,4 +215,5 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
 
     conv.send("yo")
     # 第二轮锚点应为首轮 usage.prompt_tokens
-    assert conv.last_context_notes["last_input_tokens"] == 1234
+    assert conv.last_context_notes["last_input_tokens"] == 5000
+    assert conv.last_context_notes["calibration_factor"] > 1.0

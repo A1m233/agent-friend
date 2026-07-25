@@ -23,7 +23,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
 
+import pytest
 from agent.context import (
+    ContextInputTooLargeError,
     RuntimeContext,
     SummarizingContextManager,
     make_budget_snapshot,
@@ -46,7 +48,13 @@ from agent import (
     PromptBuilder,
     Session,
 )
-from llm_providers import LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LLMContextWindowError,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMTurnDone,
+    LLMUsage,
+)
 
 # ===================== fake LLM =====================
 
@@ -58,6 +66,7 @@ class _FakeLLM:
     context_window: int = 2000
     summary_text: str = "<summary>这是压缩后的结构化摘要</summary>"
     fail: bool = False
+    prompt_tokens: int | None = None
     complete_calls: int = 0
     spec: Any = field(default_factory=lambda: SimpleNamespace(model="deepseek/test"))
 
@@ -75,16 +84,62 @@ class _FakeLLM:
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         yield LLMTextDelta(text="ok")
+        usage = (
+            LLMUsage(
+                prompt_tokens=self.prompt_tokens,
+                completion_tokens=1,
+                total_tokens=self.prompt_tokens + 1,
+            )
+            if self.prompt_tokens is not None
+            else None
+        )
+        yield LLMTurnDone(stop_reason="end_turn", usage=usage)
+
+
+@dataclass
+class _ContextRejectOnceLLM(_FakeLLM):
+    stream_calls: int = 0
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
+        self.stream_calls += 1
+        if self.stream_calls == 1:
+            raise LLMContextWindowError("provider says context is too large")
+        yield LLMTextDelta(text="ok")
         yield LLMTurnDone(stop_reason="end_turn")
 
 
+@dataclass
+class _SummaryContextRetryLLM(_FakeLLM):
+    remaining_context_failures: int = 2
+    summary_input_lengths: list[int] = field(default_factory=list)
+
+    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
+        self.complete_calls += 1
+        self.summary_input_lengths.append(len(str(messages[-1]["content"])))
+        if self.remaining_context_failures > 0:
+            self.remaining_context_failures -= 1
+            raise LLMContextWindowError("summary input too large")
+        return self.summary_text
+
+
 def _runtime(
-    llm: Any, window: int, prior: Any = None, last_input_tokens: int | None = None
+    llm: Any,
+    window: int,
+    prior: Any = None,
+    last_input_tokens: int | None = None,
+    calibration_factor: float = 1.0,
 ) -> RuntimeContext:
     return RuntimeContext(
         budget=make_budget_snapshot(window, last_input_tokens),
         llm_client=cast(Any, llm),
         prior_summary=prior,
+        calibration_factor=calibration_factor,
     )
 
 
@@ -261,12 +316,12 @@ def test_summarizing_passes_trailing_user() -> None:
     # 路径 2：触发摘要（仍要保留 trailing_user 在末尾）
     llm = _FakeLLM()
     cm = SummarizingContextManager()
-    history = _turns(6, 60)
+    history = _turns(6, 100)
     result = cm.build_messages(
         history=history,
         system_prompt="sys",
         trailing_user="ADDENDUM",
-        runtime=_runtime(llm, window=100),
+        runtime=_runtime(llm, window=1000),
     )
     assert result.new_compaction is not None
     assert result.messages[-1].role == "user"
@@ -289,17 +344,17 @@ def test_summarizing_passes_trailing_user() -> None:
 def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()
-    history = _turns(6, 60)  # users u0..u5；recent_tail=2 → cut 在 u4(idx8)，older 到 a3
+    history = _turns(6, 100)
     result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=100)
+        history=history, system_prompt="sys", runtime=_runtime(llm, window=1000)
     )
 
     assert llm.complete_calls == 1
     assert result.new_compaction is not None
-    assert result.new_compaction.covered_through_uuid == "a3"
+    assert result.new_compaction.covered_through_uuid == "a4"
     assert result.new_compaction.model == "deepseek/test"
     assert result.notes["compacted"] is True
-    assert result.notes["summary_input"] == "full"
+    assert result.notes["summary_input"] == "bounded_full"
     joined = _joined(result.messages)
     # 摘要前缀在、最老轮被折掉、最近 tail 逐字保留
     assert "压缩后的结构化摘要" in joined
@@ -326,25 +381,61 @@ def test_prior_summary_folds_without_resummarizing() -> None:
     assert "U3-" in joined  # a2 之后的逐字保留
 
 
-def test_extreme_degradation_uses_incremental_input() -> None:
-    llm = _FakeLLM()
+def test_compaction_leaves_headroom_for_usage_calibration_and_next_turn() -> None:
+    llm = _FakeLLM(summary_text="<summary>压缩摘要</summary>")
     cm = SummarizingContextManager()
-    history = _turns(6, 200)  # 较旧部分很大
-    prior = SimpleNamespace(summary="老摘要", covered_through_uuid="a1")
-    result = cm.build_messages(
+    history = _turns(36, 140)
+    first = cm.build_messages(
         history=history,
         system_prompt="sys",
-        runtime=_runtime(llm, window=50, prior=prior),
+        new_user_input="首次压缩",
+        runtime=_runtime(llm, window=8000),
+    )
+
+    record = first.new_compaction
+    assert record is not None
+    assert record.tokens_after <= int(record.effective_window * 0.8 * 0.7)
+
+    history.extend(
+        [
+            _m("user", "首次压缩", "next-u"),
+            _m("assistant", "完成", "next-a"),
+        ]
+    )
+    prior = SimpleNamespace(
+        summary=record.summary,
+        covered_through_uuid=record.covered_through_uuid,
+    )
+    resumed = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        new_user_input="重启后继续",
+        runtime=_runtime(llm, window=8000, prior=prior, calibration_factor=1.1),
+    )
+
+    assert resumed.new_compaction is None
+    assert resumed.notes["folded"] is True
+    assert llm.complete_calls == 1
+
+
+def test_first_huge_compaction_uses_bounded_recent_source() -> None:
+    llm = _FakeLLM()
+    cm = SummarizingContextManager()
+    history = _turns(6, 500)  # 较旧部分很大
+    prior = SimpleNamespace(summary="老摘要", covered_through_uuid="a1")
+    result = cm.build_messages(
+        history=history, system_prompt="sys", runtime=_runtime(llm, window=2000, prior=prior)
     )
     assert result.new_compaction is not None
-    assert result.notes["summary_input"] == "incremental"
+    assert result.notes["summary_input"] == "bounded_full"
+    assert result.new_compaction.omitted_before_count > 0
 
 
 def test_circuit_breaker_trips_after_max_failures() -> None:
     llm = _FakeLLM(fail=True)
     cm = SummarizingContextManager()
-    history = _turns(6, 60)
-    rt = _runtime(llm, window=100)
+    history = _turns(6, 100)
+    rt = _runtime(llm, window=1000)
 
     # 前 3 次摘要失败 → 退 FIFO 兜底，不崩
     for _ in range(3):
@@ -362,25 +453,40 @@ def test_circuit_breaker_trips_after_max_failures() -> None:
 def test_empty_summary_counts_as_failure() -> None:
     llm = _FakeLLM(summary_text="<summary>   </summary>")
     cm = SummarizingContextManager()
-    history = _turns(6, 60)
+    history = _turns(6, 100)
     result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=100)
+        history=history, system_prompt="sys", runtime=_runtime(llm, window=1000)
     )
     assert result.notes["fell_back"] is True
     assert result.notes["fallback_reason"] == "empty_summary"
     assert result.new_compaction is None
 
 
-def test_nothing_to_compact_falls_back_without_counting_failure() -> None:
+def test_summary_context_error_retries_with_smaller_complete_turn_source() -> None:
+    llm = _SummaryContextRetryLLM()
+    cm = SummarizingContextManager()
+    history = _turns(20, 100)
+
+    result = cm.build_messages(
+        history=history,
+        system_prompt="sys",
+        runtime=_runtime(llm, window=2000),
+    )
+
+    assert result.new_compaction is not None
+    assert llm.complete_calls == 3
+    assert llm.summary_input_lengths[0] > llm.summary_input_lengths[1]
+    assert llm.summary_input_lengths[1] > llm.summary_input_lengths[2]
+    assert result.new_compaction.summary_attempts == 3
+
+
+def test_indivisible_current_turn_over_budget_fails_closed() -> None:
     llm = _FakeLLM()
     cm = SummarizingContextManager()
-    history = _turns(2, 200)  # 只有 2 轮（<= recent_tail）→ 无较旧部分可压
-    result = cm.build_messages(
-        history=history, system_prompt="sys", runtime=_runtime(llm, window=50)
-    )
+    history = _turns(1, 1000)
+    with pytest.raises(ContextInputTooLargeError):
+        cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(llm, window=1000))
     assert llm.complete_calls == 0
-    assert result.notes["fallback_reason"] == "nothing_to_compact"
-    assert result.notes["circuit_tripped"] is False
 
 
 # ===================== 集成（Conversation）=====================
@@ -487,3 +593,119 @@ def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
     # 摘要一直失败，但对话每轮都正常完成；3 次后跳闸不再调 complete
     assert llm.complete_calls == 3
     assert _count_compactions(session) == 0
+
+
+def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=8000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    _seed_turns(session, store, n=60, size=100)
+
+    assert conv.send("压缩前的新消息") == "ok"
+    assert llm.complete_calls == 1
+    compaction = session.latest_compaction()
+    assert compaction is not None
+    assert compaction.payload["checkpoint_version"] == 2
+
+    reloaded_store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    reloaded = reloaded_store.load(session.session_id)
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    persona_id = BUILTIN_DEFAULT_PERSONA_ID
+    builder = MarkdownPromptBuilder(persona_id=persona_id, catalog=catalog)
+
+    def builder_factory(pid: str) -> PromptBuilder:
+        return MarkdownPromptBuilder(persona_id=pid, catalog=catalog)
+
+    restarted = Conversation(
+        session=reloaded,
+        store=reloaded_store,
+        llm_client=cast(Any, llm),
+        context_manager=SummarizingContextManager(),
+        prompt_builder=builder,
+        prompt_builder_factory=builder_factory,
+        catalog=catalog,
+    )
+
+    assert restarted.send("应用重启后的继续消息") == "ok"
+    assert llm.complete_calls == 1
+    assert _count_compactions(reloaded) == 1
+
+
+def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
+    tmp_path: Path,
+) -> None:
+    llm = _ContextRejectOnceLLM(context_window=8000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    _seed_turns(session, store, n=60, size=100)
+
+    assert conv.send("触发 provider 超窗恢复") == "ok"
+
+    assert llm.stream_calls == 2
+    assert _count_compactions(session) == 1
+    assert conv.last_context_notes["trigger_reason"] == "provider_context_exceeded"
+
+
+def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=8000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    _seed_turns(session, store, n=60, size=100)
+    invalid = Event(
+        type="compaction",
+        uuid="invalid-compaction",
+        ts=datetime.now(UTC),
+        payload={
+            "checkpoint_version": 2,
+            "summary_prompt_version": 1,
+            "summary": "错误边界摘要",
+            "summary_source_from_uuid": session.messages[0].uuid,
+            "covered_through_uuid": session.messages[20].uuid,
+            "retained_from_uuid": "missing-message",
+        },
+    )
+    store.append_event(session.session_id, invalid)
+    session.append(invalid)
+
+    assert conv.send("失效 checkpoint 后继续") == "ok"
+
+    assert llm.complete_calls == 1
+    latest = session.latest_compaction()
+    assert latest is not None
+    assert latest.uuid != "invalid-compaction"
+    assert latest.payload["checkpoint_version"] == 2
+
+
+def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=100_000, prompt_tokens=12_000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+
+    assert conv.send("校准一次") == "ok"
+    assistant = next(
+        event for event in reversed(session.events) if event.type == "assistant_message"
+    )
+    usage = assistant.meta["context_usage"]
+    assert usage["prompt_tokens"] == 12_000
+    assert usage["calibration_factor"] > 1.0
+
+    reloaded = store.load(session.session_id)
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    builder = MarkdownPromptBuilder(persona_id=BUILTIN_DEFAULT_PERSONA_ID, catalog=catalog)
+    restarted = Conversation(
+        session=reloaded,
+        store=store,
+        llm_client=cast(Any, llm),
+        context_manager=SummarizingContextManager(),
+        prompt_builder=builder,
+        catalog=catalog,
+    )
+
+    assert restarted.send("校准恢复后") == "ok"
+    assert restarted.last_context_notes["calibration_factor"] == pytest.approx(
+        usage["calibration_factor"]
+    )

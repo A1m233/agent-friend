@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from agent.context import BudgetSnapshot, make_budget_snapshot
+from typing import Any, cast
+
+from agent.context import BudgetSnapshot, RuntimeContext, make_budget_snapshot
 from agent.context.budget import (
     BUFFER_RATIO,
     CHARS_TO_TOKENS,
     OUTPUT_RESERVE_RATIO,
+    estimate_request_tokens,
     estimate_tokens,
+    estimate_tool_schema_tokens,
 )
 from agent.messages import Message
 
@@ -95,3 +99,37 @@ def test_trigger_threshold_floors_at_zero() -> None:
         buffer=20,
     )
     assert snap.trigger_threshold == 0
+
+
+def test_tool_schema_cost_is_part_of_request_estimate() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "x" * 200,
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+        }
+    ]
+    overhead = estimate_tool_schema_tokens(tools)
+    runtime = RuntimeContext(
+        budget=make_budget_snapshot(10_000, None),
+        llm_client=cast(Any, object()),
+        request_overhead_tokens=overhead,
+    )
+    messages = [Message(role="user", content="hello")]
+
+    assert overhead > 0
+    assert estimate_request_tokens(messages, runtime) == estimate_tokens(messages) + overhead
+
+
+def test_usage_calibration_only_increases_conservative_estimate() -> None:
+    messages = [Message(role="user", content="x" * 100)]
+    runtime = RuntimeContext(
+        budget=make_budget_snapshot(10_000, 500),
+        llm_client=cast(Any, object()),
+        calibration_factor=1.5,
+    )
+
+    assert estimate_request_tokens(messages, runtime) == 113

@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
 
+import pytest
 from agent.context import (
     RECENT_PROTECT_TURNS,
+    ContextInputTooLargeError,
     FifoContextManager,
     RuntimeContext,
     estimate_tokens,
@@ -178,18 +180,18 @@ def test_over_threshold_drops_oldest_until_within_budget() -> None:
     assert _first_history_role(result.messages) == "user"
 
 
-def test_protection_floor_caps_truncation() -> None:
-    """连最近 N 轮都超预算时，只裁到地板、不裁光（标记 over_budget）。"""
+def test_adaptive_budget_keeps_latest_complete_turn() -> None:
+    """不再固定保护轮数；预算只够一轮时保留最新完整轮。"""
     history = _history(6, 100)  # 每轮 est 150
     cm = FifoContextManager()
-    # window=100 → threshold = 100 - 10 - 10 = 80；连 1 轮(150)都放不下
-    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=100))
+    # window=250 → threshold=200，只能保留最近一轮。
+    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=250))
 
     assert result.dropped_count > 0
-    assert result.notes["over_budget_after_truncation"] is True
-    # 地板保住最近 N 轮
-    assert _user_count(result.messages) == RECENT_PROTECT_TURNS
+    assert result.notes["over_budget_after_truncation"] is False
+    assert _user_count(result.messages) == 1
     assert any("u5" in m.content for m in result.messages)
+    assert estimate_tokens(result.messages) <= 200
     _assert_no_orphan_tool(result.messages)
 
 
@@ -217,8 +219,8 @@ def test_truncation_never_splits_tool_group() -> None:
         Message(role="assistant", content="a2" + big),
     ]
     cm = FifoContextManager()
-    # 小窗口逼着丢 turn0（保护地板 = 最近 2 轮 = turn1 + turn2）
-    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=200))
+    # 预算允许完整保留 turn1 + turn2，但放不下 turn0。
+    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=1200))
 
     assert result.dropped_count > 0
     # turn0 被丢，turn1 的工具组完整保留
@@ -228,13 +230,68 @@ def test_truncation_never_splits_tool_group() -> None:
     assert _first_history_role(result.messages) == "user"
 
 
-def test_no_user_messages_cannot_truncate() -> None:
-    """历史里没有 user 边界 → 没有可安全裁剪的点，原样返回（尽力而为）。"""
+def test_no_user_messages_over_budget_fails_closed() -> None:
+    """历史里没有 user 边界且无法安全裁剪时，不发送已知超预算请求。"""
     history = [Message(role="assistant", content="x" * 500) for _ in range(3)]
     cm = FifoContextManager()
-    result = cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=100))
-    assert result.dropped_count == 0
-    assert len(result.messages) == len(history) + 1
+    with pytest.raises(ContextInputTooLargeError):
+        cm.build_messages(history=history, system_prompt="sys", runtime=_runtime(window=100))
+
+
+def test_large_tool_result_is_truncated_only_in_model_view() -> None:
+    raw = "HEAD-" + "x" * 20_000 + "-TAIL"
+    history = [
+        Message(role="user", content="run"),
+        Message(
+            role="assistant",
+            content="",
+            meta={"tool_calls": [{"id": "c1", "name": "read", "args": {}}]},
+        ),
+        Message(role="tool", content=raw, meta={"tool_call_id": "c1", "tool_name": "read"}),
+    ]
+
+    result = FifoContextManager().build_messages(
+        history=history,
+        system_prompt="sys",
+        runtime=_runtime(window=10_000),
+    )
+
+    tool_message = next(message for message in result.messages if message.role == "tool")
+    assert history[-1].content == raw
+    assert "HEAD-" in tool_message.content
+    assert "-TAIL" in tool_message.content
+    assert "tool result truncated for model context" in tool_message.content
+    assert result.notes["tool_results_truncated"] == 1
+    _assert_no_orphan_tool(result.messages)
+
+
+def test_large_current_tool_result_can_fall_back_to_placeholder() -> None:
+    history = [
+        Message(role="user", content="run" + "u" * 100),
+        Message(
+            role="assistant",
+            content="",
+            meta={"tool_calls": [{"id": "c1", "name": "read", "args": {}}]},
+        ),
+        Message(
+            role="tool",
+            content="x" * 20_000,
+            meta={"tool_call_id": "c1", "tool_name": "read"},
+        ),
+        Message(role="assistant", content="a" * 300),
+    ]
+
+    result = FifoContextManager().build_messages(
+        history=history,
+        system_prompt="sys",
+        runtime=_runtime(window=1000),
+    )
+
+    tool_message = next(message for message in result.messages if message.role == "tool")
+    assert "tool result omitted from model context" in tool_message.content
+    assert result.notes["tool_results_omitted"] == 1
+    assert estimate_tokens(result.messages) <= 800
+    _assert_no_orphan_tool(result.messages)
 
 
 # ===================== 集成测辅助 =====================
@@ -349,11 +406,11 @@ def _make_conversation(
 
 def test_ac21_long_conversation_truncates_and_keeps_recent(tmp_path: Path) -> None:
     """AC-2.1/2.2：长会话触发 FIFO 裁剪、不抛错、最新输入仍在上下文里。"""
-    fake = _RecordingLLM(context_window=200)  # 小窗口逼裁剪
+    fake = _RecordingLLM(context_window=8000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=fake, context_manager=FifoContextManager()
     )
-    _seed_turns(session, store, n=5, size=60)
+    _seed_turns(session, store, n=60, size=100)
 
     # 不抛 LLMBadRequestError，对话正常完成
     reply = conv.send("最新的问题ABC")
@@ -379,13 +436,13 @@ def test_ac23_tool_loop_continuation_truncates(tmp_path: Path) -> None:
             ],
             [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
         ],
-        context_window=200,
+        context_window=8000,
     )
     rec = _RecordingFifo()
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=fake, context_manager=rec, registry=ToolRegistry([_LoopTool()])
     )
-    _seed_turns(session, store, n=4, size=60)
+    _seed_turns(session, store, n=60, size=100)
 
     reply = conv.send("触发工具的问题")
     assert reply == "done"

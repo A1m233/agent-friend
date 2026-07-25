@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from litellm.exceptions import ContentPolicyViolationError as LiteLLMContentPolicyViolationError
+from litellm.exceptions import ContextWindowExceededError as LiteLLMContextWindowExceededError
 from litellm.exceptions import Timeout as LiteLLMTimeout
 from llm_providers.client import DEFAULT_CONTEXT_WINDOW, _extract_usage, _map_exception
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
@@ -16,6 +17,7 @@ from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 from llm_providers import (
     LLMClient,
     LLMContentPolicyError,
+    LLMContextWindowError,
     LLMNetworkError,
     LLMProviderError,
     LLMRetryScheduled,
@@ -50,6 +52,23 @@ def test_litellm_typed_content_policy_error_maps_without_string_matching() -> No
     )
 
     assert isinstance(_map_exception(provider_error), LLMContentPolicyError)
+
+
+def test_litellm_context_window_error_maps_to_specific_error() -> None:
+    provider_error = LiteLLMContextWindowExceededError(
+        message="request is too large",
+        model="test-model",
+        llm_provider="test-provider",
+    )
+
+    assert isinstance(_map_exception(provider_error), LLMContextWindowError)
+
+
+def test_wrapped_context_window_code_maps_to_specific_error() -> None:
+    class ProviderBadRequest(Exception):
+        code = "context_length_exceeded"
+
+    assert isinstance(_map_exception(ProviderBadRequest("too large")), LLMContextWindowError)
 
 
 # ===== context_window 三层兜底 =====

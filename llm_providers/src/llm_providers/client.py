@@ -24,6 +24,7 @@ from .errors import (
     LLMAuthError,
     LLMBadRequestError,
     LLMContentPolicyError,
+    LLMContextWindowError,
     LLMError,
     LLMNetworkError,
     LLMProviderError,
@@ -173,16 +174,46 @@ def _map_exception(e: Exception) -> LLMError:
         return LLMNetworkError(str(e))
     if _is_content_policy_exception(e):
         return LLMContentPolicyError(str(e))
-    if any(
-        isinstance(item, (litellm.ContextWindowExceededError, openai.BadRequestError))
-        for item in chain
-    ):
+    if _is_context_window_exception(e):
+        return LLMContextWindowError(str(e))
+    if any(isinstance(item, openai.BadRequestError) for item in chain):
         return LLMBadRequestError(str(e))
     if _is_transient_provider_exception(e):
         return LLMTransientProviderError(str(e))
     if isinstance(e, openai.APIError):
         return LLMProviderError(str(e))
     return LLMProviderError(f"未预料的错误: {e}")
+
+
+_CONTEXT_WINDOW_ERROR_CODES = frozenset(
+    {
+        "context_length_exceeded",
+        "context_window_exceeded",
+        "input_too_long",
+        "prompt_too_long",
+    }
+)
+
+
+def _is_context_window_exception(e: Exception) -> bool:
+    """识别明确的上下文窗口错误，不把普通 bad request 纳入恢复重试。"""
+    for item in _exception_chain(e):
+        if isinstance(item, litellm.ContextWindowExceededError):
+            return True
+        code = getattr(item, "code", None)
+        if isinstance(code, str) and code.casefold() in _CONTEXT_WINDOW_ERROR_CODES:
+            return True
+        body = getattr(item, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error", body)
+            if isinstance(error, dict):
+                body_code = error.get("code")
+                if (
+                    isinstance(body_code, str)
+                    and body_code.casefold() in _CONTEXT_WINDOW_ERROR_CODES
+                ):
+                    return True
+    return False
 
 
 def _is_content_policy_exception(e: Exception) -> bool:

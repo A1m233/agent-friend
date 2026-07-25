@@ -25,7 +25,11 @@ class LLMNetworkError(LLMError):
 
 
 class LLMBadRequestError(LLMError):
-    """请求格式错或上下文超长。多半是 bug，CLI 层不重试。"""
+    """请求格式错误。多半是 bug，CLI 层不重试。"""
+
+
+class LLMContextWindowError(LLMBadRequestError):
+    """请求输入超过当前 Provider / Model 的上下文窗口。"""
 
 
 class LLMContentPolicyError(LLMError):
