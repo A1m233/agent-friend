@@ -83,3 +83,47 @@ def test_llm_messages_keeps_closed_sibling_and_removes_unmatched_request() -> No
     assert [call["id"] for call in assistant.meta["tool_calls"]] == ["call-1"]
     assert projected[2].role == "tool"
     assert projected[2].meta["tool_call_id"] == "call-1"
+
+
+def test_llm_messages_replaces_partial_assistant_before_new_attachment_turn() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.append(_event("user_message", "old-user", {"content": "马杜罗是什么情况"}))
+    session.append(
+        _event(
+            "assistant_message",
+            "partial-assistant",
+            {"content": "我查一下马杜罗的最新情况。", "partial": True},
+        )
+    )
+    session.append(
+        _event(
+            "user_message",
+            "image-user",
+            {
+                "content": "",
+                "attachments": [
+                    {
+                        "asset_id": "image-asset",
+                        "display_name": "result.png",
+                        "kind": "image",
+                        "media_type": "image/png",
+                        "size_bytes": 8,
+                        "sha256": "image-asset",
+                    }
+                ],
+            },
+            run_id="run-2",
+        )
+    )
+
+    projected = session.llm_messages
+
+    assert [(message.role, message.content) for message in projected] == [
+        ("user", "马杜罗是什么情况"),
+        ("assistant", "上一轮回复已中断。"),
+        ("user", ""),
+    ]
+    assert projected[1].meta["synthetic"] == "interrupted_assistant"
+    assert projected[2].attachments[0].display_name == "result.png"
+    assert session.messages[1].content == "我查一下马杜罗的最新情况。"
+    assert session.messages[1].meta["partial"] is True
