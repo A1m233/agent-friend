@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspect Agent-Friend Diagnostics"
+  short_description: "Safely inspect agent-friend diagnostic bundles"
+  default_prompt: "Use $inspect-agent-friend-diagnostics to inspect this agent-friend diagnostic ZIP and ground the diagnosis in its runtime evidence."

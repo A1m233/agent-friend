@@ -1,0 +1,75 @@
+---
+name: inspect-agent-friend-diagnostics
+description: Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend repository whenever the user provides an `agent-friend-diagnostics-*.zip`, asks what a diagnostic bundle contains or whether it is complete, or asks to diagnose an agent-friend symptom using a generated diagnostic package. Use alongside `diagnose-bug` for root-cause investigation; this skill owns bundle validation, build-to-source binding, format knowledge, privacy boundaries, and agent-friend-specific evidence routing, not generic diagnosis or fixes.
+---
+
+# Inspect Agent-Friend Diagnostics
+
+Interpret an agent-friend diagnostic bundle as a versioned runtime evidence snapshot. Keep generic hypothesis ranking and confidence semantics under `diagnose-bug`; keep changes and fixes outside this read-only skill.
+
+## Start Safely
+
+1. Confirm the current repository is agent-friend using its git remote, falling back to the repository root name only when no remote is configured. Stop applying this project skill when the repository does not match.
+2. Treat the ZIP as private user data. It may contain complete selected conversations, tool arguments/results, user-written problem text, and attachment originals.
+3. Do not bulk-print session bodies, logs, or attachment contents. Do not extract the archive into the repository.
+4. Run the bundled inspector before manually reading entries:
+
+   ```powershell
+   py .cursor/skills/inspect-agent-friend-diagnostics/scripts/inspect_bundle.py <bundle.zip>
+   ```
+
+   On macOS/Linux, use `python3`. Add `--json` for machine-readable output or `--skip-crc` only when full CRC verification is disproportionately expensive.
+
+The inspector reads the archive in place, rejects unsafe entry names, validates the known structure, and emits metadata and counts without conversation or log bodies.
+
+## Bind Runtime Evidence to Source
+
+Read `diagnostics/application.json` before explaining behavior. Prefer `packageBuild.source.commit` as the runtime code identity.
+
+- Verify the commit object with `git cat-file -e <commit>^{commit}`.
+- Inspect matching source with `git show <commit>:<path>`; do not switch the user's checkout merely to inspect it.
+- Treat `packageBuild.source.dirty: true` as an exact-source gap because uncommitted build inputs are unknown.
+- If the commit is absent locally, distinguish bundle/runtime facts from explanations based only on the current checkout.
+- Do not assume `formatVersion: 1` means every v1 bundle has identical optional fields; v1 has evolved additively.
+
+## Establish Evidence Coverage
+
+Read [references/bundle-format-v1.md](references/bundle-format-v1.md) when `manifest.formatVersion` is `1`. For an unknown version, use only fields proven by the bundle and inspect the producer at the recorded build commit before assigning semantics.
+
+Before diagnosing, establish:
+
+- archive validity, duplicate/unsafe names, and CRC result;
+- manifest outcome and every collection failure;
+- requested versus included sessions;
+- generated time, timezone, application version, distribution, build mode, commit, and dirty state;
+- log source, modification time, original size, tail start offset, and included size;
+- attachment request, inclusion status, integrity flags, and byte limits;
+- explicit exclusions.
+
+`outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
+
+## Correlate the Smallest Relevant Slice
+
+1. Use `problem.txt` only to frame the reported symptom; corroborate it with runtime evidence.
+2. Locate the relevant selected session and reconstruct its event order. Account for `turn_rewrite`, `compaction`, tool request/result pairs, model/persona metadata, and attachment references.
+3. Start correlation with exact identifiers such as session id, event UUID, run id, tool call id, trace id, or attachment asset id. Then inspect a narrow surrounding time/event window.
+4. Route evidence to the correct log family using the v1 reference. Compare application-owned logs with packaged stdout/stderr capture when both exist.
+5. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
+6. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
+
+Open an attachment original only when its content is necessary to evaluate the symptom. Extract only the referenced entry to an agent-created temporary directory, inspect it, and remove that temporary directory afterward. Never treat `processingStatus: notRecorded` as proof that downstream processing succeeded or failed.
+
+## Report
+
+When only inventorying the bundle, report structure, completeness, runtime identity, and evidence gaps without forcing a root cause.
+
+When diagnosing with `diagnose-bug`, report:
+
+1. the runtime occurrence and exact build identity;
+2. the decisive session/log/attachment evidence chain;
+3. collector coverage and exclusions;
+4. root cause or best explanation with calibrated confidence;
+5. rejected alternatives and remaining evidence gaps;
+6. minimal fix direction without editing.
+
+Do not expose credentials or unnecessary private content in the report. Do not implement a fix unless the user separately authorizes code changes.
