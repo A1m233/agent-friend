@@ -11,7 +11,6 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 MAX_JSON_BYTES = 64 * 1024 * 1024
 CORE_ENTRIES = (
     "manifest.json",
@@ -145,14 +144,14 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
 
         application = optional_json(archive, "diagnostics/application.json", warnings)
         environment = optional_json(archive, "diagnostics/environment.json", warnings)
-        runtime_services = optional_json(
-            archive, "diagnostics/runtime-services.json", warnings
-        )
+        runtime_services = optional_json(archive, "diagnostics/runtime-services.json", warnings)
         runtime_config = optional_json(archive, "diagnostics/runtime-config.json", warnings)
         attachments = optional_json(archive, "diagnostics/attachments.json", warnings)
 
         sessions: list[dict[str, Any]] = []
-        for name in sorted(name for name in names if name.startswith("sessions/") and name.endswith(".json")):
+        for name in sorted(
+            name for name in names if name.startswith("sessions/") and name.endswith(".json")
+        ):
             try:
                 sessions.append(summarize_session(read_json(archive, name), name))
             except BundleError as error:
@@ -166,24 +165,30 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             attachment_integrity = {
                 "checkedItems": len(items),
                 "failedItems": sum(
-                    1 for item in items if not all(item.get(field) is True for field in integrity_fields)
+                    1
+                    for item in items
+                    if not all(item.get(field) is True for field in integrity_fields)
                 ),
             }
             attachment_statuses = dict(
-                sorted(Counter(str(item.get("originalStatus", "<missing>")) for item in items).items())
+                sorted(
+                    Counter(str(item.get("originalStatus", "<missing>")) for item in items).items()
+                )
             )
 
         app = application if isinstance(application, dict) else {}
         package_build = app.get("packageBuild") if isinstance(app.get("packageBuild"), dict) else {}
-        source = package_build.get("source") if isinstance(package_build.get("source"), dict) else {}
-        config_items = (
-            runtime_config.get("items", []) if isinstance(runtime_config, dict) else []
+        source = (
+            package_build.get("source") if isinstance(package_build.get("source"), dict) else {}
         )
+        config_items = runtime_config.get("items", []) if isinstance(runtime_config, dict) else []
         configured_count = sum(
             1 for item in config_items if isinstance(item, dict) and item.get("configured") is True
         )
         config_error_count = sum(
-            1 for item in config_items if isinstance(item, dict) and item.get("error") not in (None, "")
+            1
+            for item in config_items
+            if isinstance(item, dict) and item.get("error") not in (None, "")
         )
 
         logs = manifest.get("logs") if isinstance(manifest.get("logs"), list) else []
