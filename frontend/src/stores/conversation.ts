@@ -9,7 +9,13 @@
 import { create } from "zustand";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import { resolveDefaultConversationModel } from "@/lib/model-config";
-import { editResendLatestStream, modelsApi, runAgentStream, sessionsApi } from "@/services";
+import {
+  continueToolResultStream,
+  editResendLatestStream,
+  modelsApi,
+  runAgentStream,
+  sessionsApi,
+} from "@/services";
 import type { AttachmentDraft, FriendlyError } from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import { applyAguiEvent } from "./conversationReducer";
@@ -60,6 +66,8 @@ interface ConversationState {
   send: (text: string, attachments?: AttachmentDraft[]) => SendStartResult;
   /** 编辑并重发最后一条用户消息。 */
   editResendLatest: (messageId: string, text: string) => Promise<void>;
+  /** 不重跑工具，复用失败轮中已经完成的工具结果继续生成。 */
+  continueToolResult: (messageId: string) => Promise<void>;
   /** 打断当前流（保留已生成的部分）。 */
   stop: () => void;
 }
@@ -504,6 +512,64 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
         }
       }
+      void useSessionsStore.getState().refresh();
+    }
+  },
+
+  async continueToolResult(messageId) {
+    const state = get();
+    const target = state.messages.at(-1);
+    if (
+      state.streaming ||
+      state.historyLoading ||
+      state.modelSwitching ||
+      !state.currentSessionId ||
+      target?.id !== messageId ||
+      target.status !== "error" ||
+      !["upstream_transient", "rate_limit"].includes(target.errorCode ?? "") ||
+      !target.blocks.some((block) => block.kind === "tool" && block.status === "done")
+    ) return;
+
+    const sessionId = state.currentSessionId;
+    const assistantId = newId();
+    const placeholder: ChatMessage = {
+      id: assistantId,
+      role: "assistant",
+      createdAt: new Date().toISOString(),
+      blocks: [],
+      status: "streaming",
+    };
+    set({ streaming: true, messages: [...state.messages, placeholder] });
+
+    const controller = new AbortController();
+    activeController = controller;
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      set((s) => ({
+        messages: s.messages.map((m) => (m.id === assistantId ? fn(m) : m)),
+      }));
+    const streamUpdates = createStreamUpdateScheduler((events) => {
+      patch((m) => applyStreamEvents(m, events));
+    });
+
+    try {
+      for await (const evt of continueToolResultStream(sessionId, {
+        signal: controller.signal,
+      })) {
+        streamUpdates.enqueue(evt);
+      }
+      streamUpdates.flush();
+      patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+    } catch {
+      streamUpdates.flush();
+      if (controller.signal.aborted) {
+        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
+      } else {
+        patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+      }
+    } finally {
+      streamUpdates.dispose();
+      if (activeController === controller) activeController = null;
+      set({ streaming: false });
       void useSessionsStore.getState().refresh();
     }
   },

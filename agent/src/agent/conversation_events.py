@@ -84,6 +84,17 @@ class ToolCallResult:
 
 
 @dataclass(frozen=True)
+class ModelResponseStatus:
+    """当前模型请求的瞬态进度；只供实时 UI，不持久化到 session。"""
+
+    phase: Literal["waiting", "retrying"] = "waiting"
+    after_tool: bool = False
+    attempt: int = 1
+    max_attempts: int = 1
+    type: Literal["model_response_status"] = "model_response_status"
+
+
+@dataclass(frozen=True)
 class TurnDone:
     """本轮对话正常结束。
 
@@ -100,7 +111,7 @@ class TurnDone:
     type: Literal["done"] = "done"
 
 
-ConversationEvent = TextDelta | ToolCallRequest | ToolCallResult | TurnDone
+ConversationEvent = TextDelta | ToolCallRequest | ToolCallResult | ModelResponseStatus | TurnDone
 """所有 :meth:`Conversation.stream` 可能 yield 的事件类型并集。
 
 形态承诺：**只增不减**——新增子类型不算破坏；删除/重命名既有子类型才算破坏。

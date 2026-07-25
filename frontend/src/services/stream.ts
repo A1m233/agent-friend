@@ -163,6 +163,24 @@ export async function* editResendLatestStream(
   yield* readEventStream(requireEventStreamResponse(res, "edit-resend latest"));
 }
 
+/** 不重跑工具，直接用会话中最后一次成功工具结果继续整理。 */
+export async function* continueToolResultStream(
+  sessionId: string,
+  opts: RunStreamOptions = {},
+): AsyncGenerator<BaseEvent> {
+  await ensureLocalServiceReady("bridge");
+  const base = opts.baseUrl ?? BRIDGE_BASE_URL;
+  const res = await fetch(
+    `${base}/v1/sessions/${encodeURIComponent(sessionId)}/continue-tool-result`,
+    {
+      method: "POST",
+      headers: { Accept: "text/event-stream" },
+      signal: opts.signal,
+    },
+  );
+  yield* readEventStream(requireEventStreamResponse(res, "continue tool result"));
+}
+
 export async function* readEventStream(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<BaseEvent> {

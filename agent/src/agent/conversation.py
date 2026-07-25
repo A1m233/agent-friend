@@ -41,6 +41,7 @@ from uuid import uuid4
 
 from llm_providers import (
     LLMClient,
+    LLMRetryScheduled,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
@@ -58,6 +59,7 @@ from .context import (
 )
 from .conversation_events import (
     ConversationEvent,
+    ModelResponseStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -500,6 +502,13 @@ class Conversation:
                     tools=bool(tool_specs),
                 )
                 first_text_seen = False
+                if turn_idx > 0:
+                    yield ModelResponseStatus(
+                        phase="waiting",
+                        after_tool=True,
+                        attempt=1,
+                        max_attempts=2,
+                    )
                 for ev in self._active_llm_client().stream(
                     openai_messages,
                     tools=tool_specs,
@@ -522,6 +531,13 @@ class Conversation:
                         yield TextDelta(text=ev.text)
                     elif isinstance(ev, LLMToolCallDelta):
                         self._accumulate_tool_call_delta(current_tc_acc, ev)
+                    elif isinstance(ev, LLMRetryScheduled):
+                        yield ModelResponseStatus(
+                            phase="retrying",
+                            after_tool=turn_idx > 0,
+                            attempt=ev.attempt,
+                            max_attempts=ev.max_attempts,
+                        )
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
@@ -696,6 +712,13 @@ class Conversation:
                     tools=bool(tool_specs),
                 )
                 first_text_seen = False
+                if turn_idx > 0:
+                    yield ModelResponseStatus(
+                        phase="waiting",
+                        after_tool=True,
+                        attempt=1,
+                        max_attempts=2,
+                    )
                 for ev in self._active_llm_client().stream(
                     openai_messages,
                     tools=tool_specs,
@@ -718,6 +741,13 @@ class Conversation:
                         yield TextDelta(text=ev.text)
                     elif isinstance(ev, LLMToolCallDelta):
                         self._accumulate_tool_call_delta(current_tc_acc, ev)
+                    elif isinstance(ev, LLMRetryScheduled):
+                        yield ModelResponseStatus(
+                            phase="retrying",
+                            after_tool=turn_idx > 0,
+                            attempt=ev.attempt,
+                            max_attempts=ev.max_attempts,
+                        )
                     elif isinstance(ev, LLMTurnDone):
                         stop_reason = ev.stop_reason
                         self._consume_usage(ev)
@@ -795,6 +825,83 @@ class Conversation:
             else:
                 if not self._post_turn_external:
                     self._observe_turn(turn_start_idx)
+            self._prompt_channel_override = previous_prompt_channel
+            self._run_id_override = previous_run_id
+            self._turn_prompt_builder = previous_turn_prompt_builder
+            self._run_model_snapshot = previous_run_model_snapshot
+
+    def continue_after_tool_error(
+        self,
+        *,
+        channel: PromptChannel | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Iterator[ConversationEvent]:
+        """复用最后一轮已完成的工具结果，请模型继续整理，不再次执行工具。"""
+        self._validate_tool_error_continuation()
+
+        previous_prompt_channel = self._prompt_channel_override
+        previous_run_id = self._run_id_override
+        previous_turn_prompt_builder = self._turn_prompt_builder
+        previous_run_model_snapshot = self._run_model_snapshot
+        self._prompt_channel_override = channel
+        self._run_id_override = run_id
+        self._turn_prompt_builder = self._snapshot_prompt_builder()
+        self._run_model_snapshot = self._capture_run_model_snapshot()
+
+        persona_name = self._session.current_persona_name
+        persona_id = self._session.current_persona_id
+        model_snapshot = self._active_model_id()
+        current_text_buf: list[str] = []
+        current_text_persisted = False
+        turn_start_idx = len(self._session.events)
+
+        try:
+            self._check_cancel(cancel_check)
+            openai_messages = self._build_openai_messages_continuation()
+            yield ModelResponseStatus(
+                phase="waiting",
+                after_tool=True,
+                attempt=1,
+                max_attempts=2,
+            )
+            for ev in self._active_llm_client().stream(openai_messages, tools=None):
+                self._check_cancel(cancel_check)
+                if isinstance(ev, LLMTextDelta):
+                    current_text_buf.append(ev.text)
+                    yield TextDelta(text=ev.text)
+                elif isinstance(ev, LLMRetryScheduled):
+                    yield ModelResponseStatus(
+                        phase="retrying",
+                        after_tool=True,
+                        attempt=ev.attempt,
+                        max_attempts=ev.max_attempts,
+                    )
+                elif isinstance(ev, LLMTurnDone):
+                    self._consume_usage(ev)
+
+            self._append_assistant_event(
+                "".join(current_text_buf),
+                partial=False,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model=model_snapshot,
+            )
+            current_text_persisted = True
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+        finally:
+            interrupted = sys.exc_info()[0] is not None
+            if interrupted:
+                if current_text_buf and not current_text_persisted:
+                    self._append_assistant_event(
+                        "".join(current_text_buf),
+                        partial=True,
+                        persona_name=persona_name,
+                        persona_id=persona_id,
+                        model=model_snapshot,
+                    )
+            elif not self._post_turn_external:
+                self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
@@ -1110,6 +1217,32 @@ class Conversation:
             inactive_event_uuids=inactive,
             prefix_events=list(active_events[:target_idx]),
         )
+
+    def _validate_tool_error_continuation(self) -> None:
+        """只允许从最新失败轮的已完成工具结果恢复，避免重放旧工具。"""
+        active_events = self._session.active_events
+        latest_error_idx: int | None = None
+        for idx in range(len(active_events) - 1, -1, -1):
+            event = active_events[idx]
+            if event.type in {"session_meta", "memory_observation", "compaction"}:
+                continue
+            if event.type != "run_error":
+                raise AgentError("当前会话没有可继续整理的失败工具轮")
+            latest_error_idx = idx
+            break
+        if latest_error_idx is None:
+            raise AgentError("当前会话没有可继续整理的失败工具轮")
+
+        error_event = active_events[latest_error_idx]
+        if error_event.payload.get("recoverable") is not True:
+            raise AgentError("这次失败不能直接从工具结果继续")
+
+        for event in reversed(active_events[:latest_error_idx]):
+            if event.type == "user_message":
+                break
+            if event.type == "tool_call_result" and event.payload.get("is_error") is not True:
+                return
+        raise AgentError("最近的失败轮没有可复用的工具结果")
 
     def _messages_from_events(self, events: list[Event]) -> list[Message]:
         """按 ``Session.messages`` 规则投影指定事件前缀。"""

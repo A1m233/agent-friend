@@ -15,7 +15,7 @@ import { ArrowDown } from "lucide-react";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
 import { isAttachmentAssetAvailable } from "@/services";
-import type { ChatAttachment, ChatMessage } from "@/types/chat";
+import type { ChatAttachment, ChatMessage, ModelResponseProgress } from "@/types/chat";
 import {
   CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   CHAT_CONTENT_CONTAINER_CLASS,
@@ -36,6 +36,33 @@ const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
+const SLOW_MODEL_RESPONSE_MS = 10_000;
+
+function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    setSlow(false);
+    if (status.phase !== "waiting") return;
+    const timer = window.setTimeout(() => setSlow(true), SLOW_MODEL_RESPONSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [status.phase, status.afterTool]);
+
+  const label = status.phase === "retrying"
+    ? `连接不稳定，正在重试 ${Math.max(1, status.attempt - 1)}/${Math.max(1, status.maxAttempts - 1)}`
+    : slow
+      ? "模型响应较慢，仍在等待…"
+      : status.afterTool
+        ? "正在整理工具结果…"
+        : "正在等待模型响应…";
+
+  return (
+    <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
+      <StatusDot tone="muted" pulse />
+      {label}
+    </p>
+  );
+}
 
 function isNearBottom(el: HTMLDivElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
@@ -182,6 +209,7 @@ function MessageContent({
   editDisabled,
   onCancelEdit,
   onSubmitEdit,
+  onContinueToolResult,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
@@ -189,6 +217,7 @@ function MessageContent({
   editDisabled?: boolean;
   onCancelEdit?: () => void;
   onSubmitEdit?: (text: string) => void;
+  onContinueToolResult?: () => void;
 }) {
   if (message.role === "user") {
     const text = message.blocks
@@ -253,14 +282,24 @@ function MessageContent({
     <div className="flex flex-col gap-2">
       {rendered}
       {message.status === "error" && message.error && (
-        <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
+        <div className="flex flex-col items-start gap-2">
+          <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
+          {onContinueToolResult && (
+            <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
+              继续整理
+            </Button>
+          )}
+        </div>
       )}
       {message.status === "interrupted" && (
         <p className="px-1 text-xs text-danger" role="status">
           回答已被中断
         </p>
       )}
-      {message.status === "streaming" && !hasContent && (
+      {message.status === "streaming" && message.runStatus && (
+        <ModelResponseStatus status={message.runStatus} />
+      )}
+      {message.status === "streaming" && !hasContent && !message.runStatus && (
         <div className="flex items-center gap-1 px-1">
           <StatusDot tone="muted" pulse />
           <StatusDot tone="muted" pulse className="[animation-delay:150ms]" />
@@ -281,6 +320,7 @@ const MessageItem = memo(function MessageItem({
   onEdit,
   onCancelEdit,
   onSubmitEdit,
+  onContinueToolResult,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -289,6 +329,7 @@ const MessageItem = memo(function MessageItem({
   onEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
+  onContinueToolResult?: () => void;
 }) {
   const actionBar =
     message.status === "streaming" || editing ? null : (
@@ -310,6 +351,7 @@ const MessageItem = memo(function MessageItem({
         editDisabled={editDisabled}
         onCancelEdit={onCancelEdit}
         onSubmitEdit={onSubmitEdit}
+        onContinueToolResult={onContinueToolResult}
       />
     </div>
   );
@@ -321,6 +363,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
     prev.canEdit === next.canEdit &&
     prev.editing === next.editing &&
     prev.editDisabled === next.editDisabled
+    && prev.onContinueToolResult === next.onContinueToolResult
   );
 }
 
@@ -332,6 +375,7 @@ interface MessageItemProps {
   onEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
+  onContinueToolResult?: () => void;
 }
 
 function HistoryLoadingState() {
@@ -378,6 +422,7 @@ interface MessageTimelineProps {
   overlayComposer?: boolean;
   emptyLabel?: string;
   onEditLatestUserMessage?: (messageId: string, text: string) => void | Promise<void>;
+  onContinueToolResult?: (messageId: string) => void | Promise<void>;
   onEditingChange?: (messageId: string | null) => void;
 }
 
@@ -395,6 +440,7 @@ export function MessageTimeline({
   overlayComposer = true,
   emptyLabel = "开始一段对话吧～",
   onEditLatestUserMessage,
+  onContinueToolResult,
   onEditingChange,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -646,6 +692,13 @@ export function MessageTimeline({
               Boolean(onEditLatestUserMessage) &&
               !editDisabled &&
               !editingMessageId;
+            const canContinueToolResult =
+              index === messages.length - 1 &&
+              m.role === "assistant" &&
+              m.status === "error" &&
+              ["upstream_transient", "rate_limit"].includes(m.errorCode ?? "") &&
+              m.blocks.some((block) => block.kind === "tool" && block.status === "done") &&
+              !editDisabled;
             return (
               <MessageItem
                 key={renderKey}
@@ -659,6 +712,9 @@ export function MessageTimeline({
                   updateEditingMessage(null);
                   void onEditLatestUserMessage?.(m.id, text);
                 }}
+                onContinueToolResult={canContinueToolResult
+                  ? () => void onContinueToolResult?.(m.id)
+                  : undefined}
               />
             );
           })}
@@ -695,6 +751,7 @@ export function MessageList({
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
   const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
   const editResendLatest = useConversationStore((s) => s.editResendLatest);
+  const continueToolResult = useConversationStore((s) => s.continueToolResult);
   const setEditingMessage = useConversationStore((s) => s.setEditingMessage);
 
   return (
@@ -706,6 +763,7 @@ export function MessageList({
       syncRefreshSeq={syncRefreshSeq}
       composerHeight={composerHeight}
       onEditLatestUserMessage={editResendLatest}
+      onContinueToolResult={continueToolResult}
       onEditingChange={setEditingMessage}
     />
   );

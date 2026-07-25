@@ -25,6 +25,7 @@ from agent import (
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    ModelResponseStatus,
     NaiveContextManager,
     PersonaCatalog,
     PromptBuilder,
@@ -38,6 +39,7 @@ from agent import (
 )
 from llm_providers import (
     LLMClient,
+    LLMNetworkError,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -337,6 +339,10 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert dones[0].total_tool_calls == 1
 
     assert echo.call_count == 1
+    assert any(
+        isinstance(event, ModelResponseStatus) and event.phase == "waiting" and event.after_tool
+        for event in events
+    )
 
     # 事件落盘：session_meta + user + assistant(turn 0) + tool_call_request +
     # tool_call_result + assistant(turn 1)
@@ -359,6 +365,70 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_path: Path) -> None:
+    echo = EchoTool()
+
+    @dataclass
+    class RecoverableFollowupClient:
+        calls: int = 0
+        received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
+        context_window: int = 128000
+
+        def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
+            return ""
+
+        def stream(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            **overrides: Any,
+        ) -> Iterator[LLMStreamEvent]:
+            self.calls += 1
+            self.received_tools.append(tools)
+            if self.calls == 1:
+                yield LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-recover",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "saved"}),
+                )
+                yield LLMTurnDone(stop_reason="tool_use")
+                return
+            if self.calls == 2:
+                raise LLMNetworkError("follow-up timeout")
+            yield LLMTextDelta(text="已根据保存的结果整理完成。")
+            yield LLMTurnDone(stop_reason="end_turn")
+
+    fake = RecoverableFollowupClient()
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=cast(LLMClient, fake),
+        registry=ToolRegistry([echo]),
+    )
+
+    with pytest.raises(LLMNetworkError):
+        list(conv.stream("please use the tool", run_id="failed-run"))
+    conv.append_run_error_event(
+        code="upstream_transient",
+        message="模型服务连接不稳定",
+        recoverable=True,
+        source="test",
+        run_id="failed-run",
+    )
+
+    events = list(conv.continue_after_tool_error(run_id="continue-run"))
+
+    assert echo.call_count == 1
+    assert fake.received_tools[-1] is None
+    assert any(
+        isinstance(event, TextDelta) and event.text == "已根据保存的结果整理完成。"
+        for event in events
+    )
+    assert conv.session.events[-1].type == "assistant_message"
+    assert conv.session.events[-1].meta["run_id"] == "continue-run"
 
 
 def test_network_retry_after_two_tools_does_not_repeat_tools(

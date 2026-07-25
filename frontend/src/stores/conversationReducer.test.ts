@@ -69,6 +69,29 @@ describe("applyAguiEvent", () => {
     expect(out.errorCode).toBe("rate_limit");
   });
 
+  it("自定义 run status 投影重试状态，并在文本到达时清除", () => {
+    const waiting = applyAguiEvent(
+      base,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.run_status",
+        value: { phase: "retrying", afterTool: true, attempt: 2, maxAttempts: 2 },
+      }),
+    );
+    expect(waiting.runStatus).toEqual({
+      phase: "retrying",
+      afterTool: true,
+      attempt: 2,
+      maxAttempts: 2,
+    });
+
+    const content = reduce(waiting, [
+      { type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant" },
+      { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "恢复了" },
+    ]);
+    expect(content.runStatus).toBeUndefined();
+  });
+
   it("文本被工具调用打断 → 形成两个独立文本块", () => {
     const out = reduce(base, [
       { type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant" },

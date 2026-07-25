@@ -1,7 +1,7 @@
 export { http, createHttp } from "./http";
 export type { FriendlyError } from "./http";
 export { checkHealth } from "./health";
-export { editResendLatestStream, runAgentStream } from "./stream";
+export { continueToolResultStream, editResendLatestStream, runAgentStream } from "./stream";
 export type { EditResendLatestInput, RunStreamInput, RunStreamOptions } from "./stream";
 export {
   attachmentAssetUrl,

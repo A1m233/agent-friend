@@ -34,6 +34,7 @@ from llm_providers import LLMStreamEvent, LLMTextDelta, LLMTurnDone
 
 class _RouteLLM:
     seen_messages: ClassVar[list[list[dict[str, Any]]]] = []
+    seen_tools: ClassVar[list[list[dict[str, Any]] | None]] = []
     context_window = 128000
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
@@ -47,6 +48,7 @@ class _RouteLLM:
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         self.seen_messages.append(messages)
+        self.seen_tools.append(tools)
         yield LLMTextDelta(text="new answer")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -55,6 +57,7 @@ class _RouteLLM:
 def runtime(tmp_path: Path) -> BridgeRuntime:
     """构造一个全新 BridgeRuntime，sessions 落到 tmp_path 隔离。"""
     _RouteLLM.seen_messages = []
+    _RouteLLM.seen_tools = []
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions")
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     catalog = PersonaCatalog()
@@ -267,6 +270,77 @@ class TestEditResendLatestEndpoint:
             "new question",
             "new answer",
         ]
+
+
+class TestContinueToolResultEndpoint:
+    def test_continues_from_saved_result_without_exposing_tools(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        events = [
+            Event(
+                type="user_message",
+                uuid="user-1",
+                ts=datetime.now(UTC),
+                payload={"content": "查一下"},
+            ),
+            Event(
+                type="assistant_message",
+                uuid="assistant-tool",
+                ts=datetime.now(UTC),
+                payload={"content": "", "partial": False},
+            ),
+            Event(
+                type="tool_call_request",
+                uuid="tool-request",
+                ts=datetime.now(UTC),
+                payload={
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "tool-1",
+                    "tool_name": "web_search",
+                    "args": {"query": "latest"},
+                },
+            ),
+            Event(
+                type="tool_call_result",
+                uuid="tool-result",
+                ts=datetime.now(UTC),
+                payload={
+                    "tool_call_id": "provider-call",
+                    "event_tool_call_id": "tool-1",
+                    "tool_name": "web_search",
+                    "content": "saved result",
+                    "is_error": False,
+                },
+            ),
+            Event(
+                type="run_error",
+                uuid="run-error",
+                ts=datetime.now(UTC),
+                payload={
+                    "code": "upstream_transient",
+                    "message": "模型服务连接不稳定",
+                    "recoverable": True,
+                },
+            ),
+        ]
+        for event in events:
+            runtime.persistent_store.append_event(sid, event)
+
+        with client.stream(
+            "POST",
+            f"/v1/sessions/{sid}/continue-tool-result",
+            headers={"accept": "text/event-stream"},
+        ) as resp:
+            body = "".join(resp.iter_text())
+
+        assert resp.status_code == 200
+        assert "new answer" in body
+        assert _RouteLLM.seen_tools[-1] is None
+        assert any(
+            message.get("role") == "tool" and message.get("content") == "saved result"
+            for message in _RouteLLM.seen_messages[-1]
+        )
 
 
 # ===== POST /ag-ui/run channel boundary =====
