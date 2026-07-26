@@ -30,8 +30,15 @@ if TYPE_CHECKING:
     from memory import Memory
 
     from ..context import ContextManager
-    from ..conversation import Conversation, MessageRenderer, ToolHookInvoker
+    from ..conversation import (
+        Conversation,
+        MessageRenderer,
+        PostToolHook,
+        PreToolHook,
+        ToolHookInvoker,
+    )
     from ..prompts import PromptBuilder
+    from ..tool_runtime import ToolRunPolicy
     from ..tools import ToolRegistry
 
 
@@ -289,6 +296,9 @@ class SessionManager:
         session: Session,
         *,
         tool_hook_invoker: ToolHookInvoker | None = None,
+        tool_pre_hook: PreToolHook | None = None,
+        tool_post_hook: PostToolHook | None = None,
+        tool_run_policy: ToolRunPolicy | None = None,
         post_turn_external: bool = False,
     ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
@@ -381,6 +391,9 @@ class SessionManager:
             memory=self._memory,
             tool_registry=self._tool_registry,
             tool_hook_invoker=tool_hook_invoker,
+            tool_pre_hook=tool_pre_hook,
+            tool_post_hook=tool_post_hook,
+            tool_run_policy=tool_run_policy,
             post_turn_external=post_turn_external,
             message_renderer=self._message_renderer,
         )

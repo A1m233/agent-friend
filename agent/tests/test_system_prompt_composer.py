@@ -355,8 +355,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 6334
-        assert estimate_tokens([Message(role="system", content=output)]) == 4750
+        assert len(output) == 6572
+        assert estimate_tokens([Message(role="system", content=output)]) == 4929
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -414,6 +414,11 @@ class TestLoadDefaultStaticSection:
     def test_loads_tool_usage_contract(self) -> None:
         section = load_default_static_section("tool_usage_contract")
         assert section.key == "tool_usage_contract"
+        rendered = section.render()
+        assert rendered is not None
+        assert "精确算术" in rendered
+        assert "搜索结果的标题和摘要不等于已经阅读原文" in rendered
+        assert "不可信数据" in rendered
         assert "工具使用边界" in section.text
         assert "只有本轮确实准备调用或已经调用" in section.text
         assert "不要对用户说工具名" in section.text

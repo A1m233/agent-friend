@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 import pytest
@@ -23,8 +23,18 @@ from agent import (
     PromptBuilder,
     Session,
     TextDelta,
+    ToolRegistry,
+    ToolResult,
+    ToolRunPolicy,
+    TurnDone,
 )
-from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LLMClient,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+)
 
 
 @dataclass
@@ -70,6 +80,15 @@ class _FailingLLMClient:
         yield  # pragma: no cover
 
 
+class _EchoTool:
+    name: ClassVar[str] = "echo"
+    description: ClassVar[str] = "test echo"
+    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(text=str(args.get("message", "")))
+
+
 def _conversation(
     tmp_path: Path,
     *,
@@ -77,6 +96,8 @@ def _conversation(
     store: JsonlSessionStore | None = None,
     llm: LLMClient,
     llm_factory: Any | None = None,
+    tool_registry: ToolRegistry | None = None,
+    tool_run_policy: ToolRunPolicy | None = None,
 ) -> Conversation:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -103,6 +124,8 @@ def _conversation(
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
+        tool_registry=tool_registry,
+        tool_run_policy=tool_run_policy,
     )
 
 
@@ -370,6 +393,39 @@ def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Pa
     assert "new question" in second_prompt
     assert "old question" not in second_prompt
     assert "old answer" not in second_prompt
+
+
+def test_edit_resend_uses_the_same_tool_budget_stop_semantics(tmp_path: Path) -> None:
+    tool_use: list[LLMStreamEvent] = [
+        LLMToolCallDelta(
+            index=0,
+            tool_call_id="edit-call",
+            tool_name="echo",
+            args_json_delta='{"message":"evidence"}',
+        ),
+        LLMTurnDone(stop_reason="tool_use"),
+    ]
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTextDelta(text="old answer"), LLMTurnDone(stop_reason="end_turn")],
+            tool_use,
+            tool_use,
+            [LLMTextDelta(text="bounded answer"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _conversation(
+        tmp_path,
+        llm=cast(LLMClient, fake),
+        tool_registry=ToolRegistry([_EchoTool()]),
+        tool_run_policy=ToolRunPolicy(max_model_continuations=1),
+    )
+    list(conv.stream("old question"))
+    events = list(conv.edit_resend_latest("new question", expected_user_content="old question"))
+
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.stop_reason == "budget_exhausted"
+    assert done.budget_dimension == "model_continuations"
+    assert done.total_tool_calls == 2
 
 
 def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:

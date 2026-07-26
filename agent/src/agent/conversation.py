@@ -32,7 +32,6 @@ import logging
 import math
 import os
 import sys
-import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -75,6 +74,13 @@ from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 from .system_prompt.sections import PromptChannel
+from .tool_runtime import (
+    NoProgressTracker,
+    ToolBatchExecutor,
+    ToolRunContext,
+    ToolRunPolicy,
+    ToolRunState,
+)
 from .tools import ToolRegistry, ToolResult
 
 if TYPE_CHECKING:
@@ -84,18 +90,13 @@ if TYPE_CHECKING:
 
 # 014: tool-hook 注入点。AgentRuntime 装配时传入；None 时 _invoke_tool_safely 走原行为。
 ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
+PreToolHook = Callable[[str, dict[str, Any]], ToolResult | None]
+PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
 MessageRenderer = Callable[[Message, LLMClient], dict[str, Any]]
 
 
 MAX_TOOL_TURNS_DEFAULT = 5
-"""工具调用循环的默认硬上限。可被环境变量 ``AGENT_MAX_TOOL_TURNS`` 覆盖。
-
-经验值：单次 turn 通常 1 ~ 2 次 tool 调用足够；3 次以上往往是 LLM 在死循环。
-触上限时由 :meth:`Conversation._finalize_on_tool_loop_limit` 注入收尾 system msg
-引导 LLM 用已有信息直接回复用户。
-
-详见 docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.6.3。
-"""
+"""Deprecated legacy constant; the default :class:`ToolRunPolicy` does not use it."""
 
 _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
@@ -132,16 +133,58 @@ class _RunModelSnapshot:
     llm_client: LLMClient
 
 
-def _resolve_max_tool_turns() -> int:
-    """读 ``AGENT_MAX_TOOL_TURNS`` 环境变量，无效或缺失时回落到默认值。"""
-    raw = os.environ.get("AGENT_MAX_TOOL_TURNS")
-    if not raw:
-        return MAX_TOOL_TURNS_DEFAULT
-    try:
-        v = int(raw)
-        return v if v > 0 else MAX_TOOL_TURNS_DEFAULT
-    except ValueError:
-        return MAX_TOOL_TURNS_DEFAULT
+@dataclass
+class _ToolLoopFrame:
+    """Mutable per-iteration state needed by interruption persistence."""
+
+    current_text_buf: list[str]
+    current_text_persisted: bool = False
+
+
+def _resolve_tool_run_policy() -> ToolRunPolicy:
+    """Resolve optional process defaults without inventing task-length limits."""
+
+    def optional_int(name: str) -> int | None:
+        raw_value = os.environ.get(name)
+        if raw_value is None or not raw_value.strip():
+            return None
+        try:
+            value = int(raw_value)
+        except ValueError:
+            logger.warning("忽略无效的 %s=%r", name, raw_value)
+            return None
+        if value <= 0:
+            logger.warning("忽略非正数的 %s=%r", name, raw_value)
+            return None
+        return value
+
+    def optional_float(name: str) -> float | None:
+        raw_value = os.environ.get(name)
+        if raw_value is None or not raw_value.strip():
+            return None
+        try:
+            value = float(raw_value)
+        except ValueError:
+            logger.warning("忽略无效的 %s=%r", name, raw_value)
+            return None
+        if not math.isfinite(value) or value <= 0:
+            logger.warning("忽略非正数的 %s=%r", name, raw_value)
+            return None
+        return value
+
+    max_continuations = optional_int("AGENT_TOOL_MAX_MODEL_CONTINUATIONS")
+    legacy = optional_int("AGENT_MAX_TOOL_TURNS")
+    if max_continuations is None and legacy is not None:
+        logger.warning("AGENT_MAX_TOOL_TURNS 已弃用，请改用 AGENT_TOOL_MAX_MODEL_CONTINUATIONS")
+        max_continuations = legacy
+    return ToolRunPolicy(
+        max_model_continuations=max_continuations,
+        max_total_tool_calls=optional_int("AGENT_TOOL_MAX_TOTAL_CALLS"),
+        max_elapsed_seconds=optional_float("AGENT_TOOL_MAX_ELAPSED_SECONDS"),
+        default_tool_timeout_seconds=optional_float("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS") or 60.0,
+        max_parallel_read_tools=optional_int("AGENT_TOOL_MAX_PARALLEL_READS") or 4,
+        repeated_no_progress_limit=optional_int("AGENT_TOOL_NO_PROGRESS_LIMIT") or 3,
+    )
 
 
 class Conversation:
@@ -180,6 +223,9 @@ class Conversation:
         memory: Memory | None = None,
         tool_registry: ToolRegistry | None = None,
         tool_hook_invoker: ToolHookInvoker | None = None,
+        tool_pre_hook: PreToolHook | None = None,
+        tool_post_hook: PostToolHook | None = None,
+        tool_run_policy: ToolRunPolicy | None = None,
         post_turn_external: bool = False,
         message_renderer: MessageRenderer | None = None,
     ):
@@ -196,9 +242,13 @@ class Conversation:
         self._tool_registry = tool_registry
         # 014: tool hook 与 PostTurn 外接（由 AgentRuntime 装配时打开）
         self._tool_hook_invoker = tool_hook_invoker
+        self._tool_pre_hook = tool_pre_hook
+        self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
-        self._max_tool_turns = _resolve_max_tool_turns()
+        self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
+        self._tool_batch_executor = ToolBatchExecutor(self._tool_run_policy.max_parallel_read_tools)
+        self._active_tool_run_state: ToolRunState | None = None
         self._last_memory_context: MemoryContext | None = None
         # 009 M1：上下文管理的会话级运行时状态
         # ``_last_input_tokens``：上轮真实 usage.prompt_tokens 锚点（消费 LLMTurnDone.usage
@@ -391,8 +441,8 @@ class Conversation:
            - ``tool_use`` → 落盘 assistant_event + tool_call_request_events，
              顺序执行所有 tool（捕获异常转 :class:`ToolResult` ``is_error=True``），
              落盘 tool_call_result_events，进入下一轮
-        3. 触 :data:`MAX_TOOL_TURNS_DEFAULT` 上限 → 走
-           :meth:`_finalize_on_tool_loop_limit` 兜底，注入收尾 system msg
+        3. 显式预算、无进展或时间边界触发后，禁用工具做一次诚实收尾；默认不以固定
+           工具轮数截断任务
 
         Args:
             user_input: 用户输入文本。
@@ -454,11 +504,33 @@ class Conversation:
                     completed_parts.append(str(event.payload.get("content", "")))
             if completed_parts:
                 completed_replay_text = "".join(completed_parts)
-        current_text_buf: list[str] = []
-        current_text_persisted = False
-        current_tc_acc: dict[int, dict[str, Any]] = {}
-        total_tool_calls = 0
+        loop_frame = _ToolLoopFrame(current_text_buf=[])
+        tool_run_context = ToolRunContext.create(user_input)
+        tool_run_state = ToolRunState(self._tool_run_policy)
+        self._active_tool_run_state = tool_run_state
+        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
         turn_start_idx = len(self._session.events)
+
+        def prepare_first_turn() -> list[dict[str, Any]]:
+            nonlocal user_event_appended
+            messages = (
+                self._build_openai_messages_continuation()
+                if user_event_appended
+                else self._build_openai_messages_first_turn(
+                    user_input,
+                    attachments=turn_attachments,
+                )
+            )
+            # Persist only after local context assembly has accepted the request.
+            if not user_event_appended:
+                self._append_user_event(
+                    user_input,
+                    attachments=turn_attachments,
+                    event_id=user_event_id,
+                )
+                user_event_appended = True
+            return messages
+
         try:
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
@@ -466,149 +538,17 @@ class Conversation:
                     yield TextDelta(completed_replay_text)
                 yield TurnDone(stop_reason="idempotent_replay", total_tool_calls=0)
                 return
-            for turn_idx in range(self._max_tool_turns + 1):
-                self._check_cancel(cancel_check)
-                current_text_buf = []
-                current_text_persisted = False
-                current_tc_acc = {}
-
-                if turn_idx == 0:
-                    openai_messages = (
-                        self._build_openai_messages_continuation()
-                        if user_event_appended
-                        else self._build_openai_messages_first_turn(
-                            user_input,
-                            attachments=turn_attachments,
-                        )
-                    )
-                    # Once the turn has passed local context assembly, persist the
-                    # accepted user request before calling the provider. This gives
-                    # downstream error state a stable user turn to attach to.
-                    if not user_event_appended:
-                        self._append_user_event(
-                            user_input,
-                            attachments=turn_attachments,
-                            event_id=user_event_id,
-                        )
-                        user_event_appended = True
-                else:
-                    openai_messages = self._build_openai_messages_continuation()
-
-                tool_specs = (
-                    None
-                    if self._voice_latency_disable_tools
-                    else self._tool_registry.to_openai_tools()
-                    if self._tool_registry
-                    else None
-                )
-
-                stop_reason = ""
-                llm_start_ms = monotonic_ms()
-                log_voice_latency(
-                    logger,
-                    self._voice_latency_context,
-                    "agent_llm_stream_start",
-                    session_id=self._session.session_id,
-                    turn_idx=turn_idx,
-                    tools=bool(tool_specs),
-                )
-                first_text_seen = False
-                if turn_idx > 0:
-                    yield ModelResponseStatus(
-                        phase="waiting",
-                        after_tool=True,
-                        attempt=1,
-                        max_attempts=2,
-                    )
-                for ev in self._iter_model_stream(
-                    openai_messages,
-                    tools=tool_specs,
-                    overrides=self._voice_latency_llm_overrides,
-                ):
-                    self._check_cancel(cancel_check)
-                    if isinstance(ev, LLMTextDelta):
-                        if not first_text_seen:
-                            first_text_seen = True
-                            log_voice_latency(
-                                logger,
-                                self._voice_latency_context,
-                                "agent_first_llm_text_delta",
-                                session_id=self._session.session_id,
-                                turn_idx=turn_idx,
-                                elapsed_ms=monotonic_ms() - llm_start_ms,
-                                chars=len(ev.text),
-                            )
-                        current_text_buf.append(ev.text)
-                        yield TextDelta(text=ev.text)
-                    elif isinstance(ev, LLMToolCallDelta):
-                        self._accumulate_tool_call_delta(current_tc_acc, ev)
-                    elif isinstance(ev, LLMRetryScheduled):
-                        yield ModelResponseStatus(
-                            phase="retrying",
-                            after_tool=turn_idx > 0,
-                            attempt=ev.attempt,
-                            max_attempts=ev.max_attempts,
-                        )
-                    elif isinstance(ev, LLMTurnDone):
-                        stop_reason = ev.stop_reason
-                        self._consume_usage(ev)
-
-                tool_calls = self._finalize_tool_calls(current_tc_acc)
-
-                self._append_assistant_event(
-                    "".join(current_text_buf),
-                    partial=False,
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model=model_snapshot,
-                )
-                current_text_persisted = True
-
-                if not tool_calls or stop_reason != "tool_use":
-                    yield TurnDone(stop_reason="end_turn", total_tool_calls=total_tool_calls)
-                    return
-
-                # 触上限后不再执行 tool（已经做完了 _max_tool_turns 轮）
-                if turn_idx >= self._max_tool_turns:
-                    break
-
-                # 执行本轮的所有 tool_calls（顺序）
-                for tc in tool_calls:
-                    self._check_cancel(cancel_check)
-                    self._append_tool_call_request_event(tc)
-                    yield ToolCallRequest(
-                        tool_call_id=tc["id"],
-                        event_tool_call_id=tc["event_id"],
-                        tool_name=tc["name"],
-                        args=tc["args"],
-                    )
-
-                    start = time.monotonic()
-                    result = self._invoke_tool_safely(
-                        tc["name"],
-                        tc["args"],
-                        current_turn_start_idx=turn_start_idx,
-                    )
-                    duration = time.monotonic() - start
-
-                    self._append_tool_call_result_event(tc, result, duration)
-                    self._check_cancel(cancel_check)
-                    yield ToolCallResult(
-                        tool_call_id=tc["id"],
-                        event_tool_call_id=tc["event_id"],
-                        tool_name=tc["name"],
-                        text=result.text,
-                        is_error=result.is_error,
-                        duration_seconds=duration,
-                    )
-                    total_tool_calls += 1
-
-            # 走出 for 循环 = 触上限：执行兜底逻辑
-            yield from self._finalize_on_tool_loop_limit(
+            yield from self._run_tool_loop(
+                prepare_first_turn=prepare_first_turn,
                 persona_name=persona_name,
                 persona_id=persona_id,
                 model_snapshot=model_snapshot,
-                total_tool_calls=total_tool_calls,
+                runtime=tool_run_state,
+                context=tool_run_context,
+                progress=no_progress,
+                frame=loop_frame,
+                current_turn_start_idx=turn_start_idx,
+                cancel_check=cancel_check,
             )
         finally:
             exc_info = sys.exc_info()
@@ -617,8 +557,8 @@ class Conversation:
                 self._on_interrupt(
                     user_input=user_input,
                     user_event_appended=user_event_appended,
-                    current_text_buf=current_text_buf,
-                    current_text_persisted=current_text_persisted,
+                    current_text_buf=loop_frame.current_text_buf,
+                    current_text_persisted=loop_frame.current_text_persisted,
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
@@ -632,6 +572,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_tool_run_state = None
 
     def edit_resend_latest(
         self,
@@ -670,165 +611,61 @@ class Conversation:
 
         rewrite_event_appended = False
         user_event_appended = False
-        current_text_buf: list[str] = []
-        current_text_persisted = False
-        current_tc_acc: dict[int, dict[str, Any]] = {}
-        total_tool_calls = 0
+        loop_frame = _ToolLoopFrame(current_text_buf=[])
+        tool_run_context = ToolRunContext.create(user_input)
+        tool_run_state = ToolRunState(self._tool_run_policy)
+        self._active_tool_run_state = tool_run_state
+        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
         turn_start_idx = len(self._session.events)
+
+        def prepare_first_turn() -> list[dict[str, Any]]:
+            nonlocal rewrite_event_appended, user_event_appended
+            messages = self._build_openai_messages_first_turn(
+                user_input,
+                attachments=plan.target_user_attachments,
+                history_override=prefix_history,
+                prior_summary_override=prefix_prior_summary,
+                persist_compaction=False,
+            )
+            if not rewrite_event_appended:
+                self._append_turn_rewrite_event(plan, replacement_text=user_input)
+                rewrite_event_appended = True
+            if not user_event_appended:
+                self._append_user_event(
+                    user_input,
+                    attachments=plan.target_user_attachments,
+                )
+                user_event_appended = True
+            return messages
 
         try:
             self._check_cancel(cancel_check)
-            for turn_idx in range(self._max_tool_turns + 1):
-                self._check_cancel(cancel_check)
-                current_text_buf = []
-                current_text_persisted = False
-                current_tc_acc = {}
-
-                if turn_idx == 0:
-                    openai_messages = self._build_openai_messages_first_turn(
-                        user_input,
-                        attachments=plan.target_user_attachments,
-                        history_override=prefix_history,
-                        prior_summary_override=prefix_prior_summary,
-                        persist_compaction=False,
-                    )
-                    if not rewrite_event_appended:
-                        self._append_turn_rewrite_event(plan, replacement_text=user_input)
-                        rewrite_event_appended = True
-                    if not user_event_appended:
-                        self._append_user_event(
-                            user_input,
-                            attachments=plan.target_user_attachments,
-                        )
-                        user_event_appended = True
-                else:
-                    openai_messages = self._build_openai_messages_continuation()
-
-                tool_specs = (
-                    None
-                    if self._voice_latency_disable_tools
-                    else self._tool_registry.to_openai_tools()
-                    if self._tool_registry
-                    else None
-                )
-
-                stop_reason = ""
-                llm_start_ms = monotonic_ms()
-                log_voice_latency(
-                    logger,
-                    self._voice_latency_context,
-                    "agent_llm_stream_start",
-                    session_id=self._session.session_id,
-                    turn_idx=turn_idx,
-                    tools=bool(tool_specs),
-                )
-                first_text_seen = False
-                if turn_idx > 0:
-                    yield ModelResponseStatus(
-                        phase="waiting",
-                        after_tool=True,
-                        attempt=1,
-                        max_attempts=2,
-                    )
-                for ev in self._iter_model_stream(
-                    openai_messages,
-                    tools=tool_specs,
-                    overrides=self._voice_latency_llm_overrides,
-                ):
-                    self._check_cancel(cancel_check)
-                    if isinstance(ev, LLMTextDelta):
-                        if not first_text_seen:
-                            first_text_seen = True
-                            log_voice_latency(
-                                logger,
-                                self._voice_latency_context,
-                                "agent_first_llm_text_delta",
-                                session_id=self._session.session_id,
-                                turn_idx=turn_idx,
-                                elapsed_ms=monotonic_ms() - llm_start_ms,
-                                chars=len(ev.text),
-                            )
-                        current_text_buf.append(ev.text)
-                        yield TextDelta(text=ev.text)
-                    elif isinstance(ev, LLMToolCallDelta):
-                        self._accumulate_tool_call_delta(current_tc_acc, ev)
-                    elif isinstance(ev, LLMRetryScheduled):
-                        yield ModelResponseStatus(
-                            phase="retrying",
-                            after_tool=turn_idx > 0,
-                            attempt=ev.attempt,
-                            max_attempts=ev.max_attempts,
-                        )
-                    elif isinstance(ev, LLMTurnDone):
-                        stop_reason = ev.stop_reason
-                        self._consume_usage(ev)
-
-                tool_calls = self._finalize_tool_calls(current_tc_acc)
-
-                self._append_assistant_event(
-                    "".join(current_text_buf),
-                    partial=False,
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model=model_snapshot,
-                )
-                current_text_persisted = True
-
-                if not tool_calls or stop_reason != "tool_use":
-                    yield TurnDone(stop_reason="end_turn", total_tool_calls=total_tool_calls)
-                    return
-
-                if turn_idx >= self._max_tool_turns:
-                    break
-
-                for tc in tool_calls:
-                    self._check_cancel(cancel_check)
-                    self._append_tool_call_request_event(tc)
-                    yield ToolCallRequest(
-                        tool_call_id=tc["id"],
-                        event_tool_call_id=tc["event_id"],
-                        tool_name=tc["name"],
-                        args=tc["args"],
-                    )
-
-                    start = time.monotonic()
-                    result = self._invoke_tool_safely(
-                        tc["name"],
-                        tc["args"],
-                        current_turn_start_idx=turn_start_idx,
-                    )
-                    duration = time.monotonic() - start
-
-                    self._append_tool_call_result_event(tc, result, duration)
-                    self._check_cancel(cancel_check)
-                    yield ToolCallResult(
-                        tool_call_id=tc["id"],
-                        event_tool_call_id=tc["event_id"],
-                        tool_name=tc["name"],
-                        text=result.text,
-                        is_error=result.is_error,
-                        duration_seconds=duration,
-                    )
-                    total_tool_calls += 1
-
-            yield from self._finalize_on_tool_loop_limit(
+            yield from self._run_tool_loop(
+                prepare_first_turn=prepare_first_turn,
                 persona_name=persona_name,
                 persona_id=persona_id,
                 model_snapshot=model_snapshot,
-                total_tool_calls=total_tool_calls,
+                runtime=tool_run_state,
+                context=tool_run_context,
+                progress=no_progress,
+                frame=loop_frame,
+                current_turn_start_idx=turn_start_idx,
+                cancel_check=cancel_check,
             )
         finally:
             exc_info = sys.exc_info()
             interrupted = exc_info[0] is not None
             if interrupted:
-                if not rewrite_event_appended and (user_event_appended or current_text_buf):
+                if not rewrite_event_appended and (
+                    user_event_appended or loop_frame.current_text_buf
+                ):
                     self._append_turn_rewrite_event(plan, replacement_text=user_input)
                     rewrite_event_appended = True
                 self._on_interrupt(
                     user_input=user_input,
                     user_event_appended=user_event_appended,
-                    current_text_buf=current_text_buf,
-                    current_text_persisted=current_text_persisted,
+                    current_text_buf=loop_frame.current_text_buf,
+                    current_text_persisted=loop_frame.current_text_persisted,
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
@@ -840,6 +677,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_tool_run_state = None
 
     def continue_after_tool_error(
         self,
@@ -1333,6 +1171,8 @@ class Conversation:
         if self._pending_context_usage is not None:
             meta["context_usage"] = dict(self._pending_context_usage)
             self._pending_context_usage = None
+        if self._active_tool_run_state is not None:
+            meta["tool_run"] = self._active_tool_run_state.diagnostics()
         event = Event(
             type="assistant_message",
             uuid=str(uuid4()),
@@ -1859,6 +1699,9 @@ class Conversation:
                     args = {}
             except json.JSONDecodeError:
                 args = {}
+            args = {
+                key: value for key, value in args.items() if not key.startswith("__agent_friend_")
+            }
             result.append(
                 {
                     "id": slot["id"],
@@ -1918,39 +1761,287 @@ class Conversation:
         args: dict[str, Any],
         *,
         current_turn_start_idx: int | None,
+        tool_run_context: ToolRunContext | None = None,
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
-        if name != _RECALL_PAST_CHATS_TOOL_NAME or current_turn_start_idx is None:
-            return args
+        invocation_args = dict(args)
+        if name == _RECALL_PAST_CHATS_TOOL_NAME and current_turn_start_idx is not None:
+            invocation_args.update(
+                {
+                    _CURRENT_SESSION_ID_ARG: self._session.session_id,
+                    _CURRENT_TURN_START_INDEX_ARG: current_turn_start_idx,
+                    _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
+                }
+            )
+        if name == "datetime_calculate" and tool_run_context is not None:
+            invocation_args.update(
+                {
+                    "__agent_friend_runtime_now": tool_run_context.trusted_now.isoformat(),
+                    "__agent_friend_runtime_timezone": tool_run_context.trusted_timezone,
+                }
+            )
+        if name == "web_fetch" and tool_run_context is not None:
+            url = args.get("url")
+            authorization = (
+                tool_run_context.url_authorizations.authorize(url) if isinstance(url, str) else None
+            )
+            if authorization is not None:
+                invocation_args["__agent_friend_url_authorization"] = {
+                    "normalized_url": authorization.normalized_url,
+                    "source": authorization.source,
+                    "source_call_id": authorization.source_call_id,
+                }
+        return invocation_args
 
-        return {
-            **args,
-            _CURRENT_SESSION_ID_ARG: self._session.session_id,
-            _CURRENT_TURN_START_INDEX_ARG: current_turn_start_idx,
-            _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
-        }
+    def _run_tool_loop(
+        self,
+        *,
+        prepare_first_turn: Callable[[], list[dict[str, Any]]],
+        persona_name: str,
+        persona_id: str | None,
+        model_snapshot: str,
+        runtime: ToolRunState,
+        context: ToolRunContext,
+        progress: NoProgressTracker,
+        frame: _ToolLoopFrame,
+        current_turn_start_idx: int,
+        cancel_check: Callable[[], None] | None,
+    ) -> Iterator[ConversationEvent]:
+        """Run the common model/tool continuation loop for send and edit-resend."""
 
-    def _finalize_on_tool_loop_limit(
+        turn_idx = 0
+        while True:
+            self._check_cancel(cancel_check)
+            if turn_idx > 0:
+                dimension = runtime.hard_limit(continuation=True)
+                if dimension is not None:
+                    runtime.mark_stopped("budget_exhausted", dimension)
+                    yield from self._finalize_on_tool_run_stop(
+                        persona_name=persona_name,
+                        persona_id=persona_id,
+                        model_snapshot=model_snapshot,
+                        runtime=runtime,
+                        cancel_check=cancel_check,
+                    )
+                    return
+                runtime.model_continuations += 1
+
+            frame.current_text_buf = []
+            frame.current_text_persisted = False
+            current_tc_acc: dict[int, dict[str, Any]] = {}
+            tool_specs = (
+                None
+                if self._voice_latency_disable_tools
+                else self._tool_registry.to_openai_tools()
+                if self._tool_registry
+                else None
+            )
+            if turn_idx == 0:
+                openai_messages = prepare_first_turn()
+            else:
+                reminder = runtime.soft_reminder()
+                openai_messages = (
+                    self._assemble(trailing_system=reminder, tool_specs=tool_specs)
+                    if reminder
+                    else self._build_openai_messages_continuation()
+                )
+
+            stop_reason = ""
+            llm_start_ms = monotonic_ms()
+            log_voice_latency(
+                logger,
+                self._voice_latency_context,
+                "agent_llm_stream_start",
+                session_id=self._session.session_id,
+                turn_idx=turn_idx,
+                tools=bool(tool_specs),
+            )
+            first_text_seen = False
+            if turn_idx > 0:
+                yield ModelResponseStatus(
+                    phase="waiting",
+                    after_tool=True,
+                    attempt=1,
+                    max_attempts=2,
+                )
+            for event in self._iter_model_stream(
+                openai_messages,
+                tools=tool_specs,
+                overrides=self._voice_latency_llm_overrides,
+            ):
+                self._check_cancel(cancel_check)
+                if isinstance(event, LLMTextDelta):
+                    if not first_text_seen:
+                        first_text_seen = True
+                        log_voice_latency(
+                            logger,
+                            self._voice_latency_context,
+                            "agent_first_llm_text_delta",
+                            session_id=self._session.session_id,
+                            turn_idx=turn_idx,
+                            elapsed_ms=monotonic_ms() - llm_start_ms,
+                            chars=len(event.text),
+                        )
+                    frame.current_text_buf.append(event.text)
+                    yield TextDelta(text=event.text)
+                elif isinstance(event, LLMToolCallDelta):
+                    self._accumulate_tool_call_delta(current_tc_acc, event)
+                elif isinstance(event, LLMRetryScheduled):
+                    yield ModelResponseStatus(
+                        phase="retrying",
+                        after_tool=turn_idx > 0,
+                        attempt=event.attempt,
+                        max_attempts=event.max_attempts,
+                    )
+                elif isinstance(event, LLMTurnDone):
+                    stop_reason = event.stop_reason
+                    self._consume_usage(event)
+
+            tool_calls = self._finalize_tool_calls(current_tc_acc)
+            self._append_assistant_event(
+                "".join(frame.current_text_buf),
+                partial=False,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model=model_snapshot,
+            )
+            frame.current_text_persisted = True
+
+            if not tool_calls or stop_reason != "tool_use":
+                yield self._turn_done(runtime)
+                return
+            yield from self._execute_tool_calls(
+                tool_calls,
+                runtime=runtime,
+                context=context,
+                progress=progress,
+                current_turn_start_idx=current_turn_start_idx,
+                cancel_check=cancel_check,
+            )
+            if runtime.stop_reason is not None:
+                yield from self._finalize_on_tool_run_stop(
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model_snapshot=model_snapshot,
+                    runtime=runtime,
+                    cancel_check=cancel_check,
+                )
+                return
+            turn_idx += 1
+
+    def _execute_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        runtime: ToolRunState,
+        context: ToolRunContext,
+        progress: NoProgressTracker,
+        current_turn_start_idx: int,
+        cancel_check: Callable[[], None] | None,
+    ) -> Iterator[ConversationEvent]:
+        """Execute one model-emitted call list with stable request/result ordering."""
+        for tc in tool_calls:
+            self._check_cancel(cancel_check)
+            self._append_tool_call_request_event(tc)
+            yield ToolCallRequest(
+                tool_call_id=tc["id"],
+                event_tool_call_id=tc["event_id"],
+                tool_name=tc["name"],
+                args=tc["args"],
+            )
+
+        remaining = runtime.remaining_tool_calls()
+        allowed_count = len(tool_calls) if remaining is None else min(len(tool_calls), remaining)
+        allowed = tool_calls[:allowed_count]
+        legacy_hooks = (
+            self._tool_hook_invoker
+            if self._tool_pre_hook is None and self._tool_post_hook is None
+            else None
+        )
+        runtime.parallel_batch_count += self._tool_batch_executor.parallel_batch_count(
+            allowed,
+            registry=self._tool_registry,
+            force_serial=legacy_hooks is not None,
+        )
+        executed = self._tool_batch_executor.execute(
+            allowed,
+            registry=self._tool_registry,
+            default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
+            invocation_args=lambda name, args: self._tool_args_with_invocation_context(
+                name,
+                args,
+                current_turn_start_idx=current_turn_start_idx,
+                tool_run_context=context,
+            ),
+            cancel_check=(lambda: self._check_cancel(cancel_check)),
+            legacy_hook_invoker=legacy_hooks,
+            pre_hook=self._tool_pre_hook,
+            post_hook=self._tool_post_hook,
+        )
+        by_id = {item.call["id"]: item for item in executed}
+        runtime.total_tool_calls += len(tool_calls)
+        no_progress = False
+        for tc in tool_calls:
+            item = by_id.get(tc["id"])
+            if item is None:
+                result = ToolResult(
+                    text="本轮工具调用预算已经用尽，这个调用没有执行。",
+                    is_error=True,
+                    meta={"error_kind": "tool_budget_exhausted"},
+                )
+                duration = 0.0
+            else:
+                result = item.result
+                duration = item.duration_seconds
+            if result.meta.get("error_kind") == "timeout":
+                runtime.timeout_count += 1
+            if result.meta.get("error_kind") == "blocked":
+                runtime.blocked_count += 1
+            context.register_tool_result(tc["name"], tc["id"], result.meta.get("source_urls"))
+            no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
+            self._append_tool_call_result_event(tc, result, duration)
+            self._check_cancel(cancel_check)
+            yield ToolCallResult(
+                tool_call_id=tc["id"],
+                event_tool_call_id=tc["event_id"],
+                tool_name=tc["name"],
+                text=result.text,
+                is_error=result.is_error,
+                duration_seconds=duration,
+            )
+
+        if allowed_count < len(tool_calls):
+            runtime.mark_stopped("budget_exhausted", "total_tool_calls")
+        elif no_progress:
+            runtime.mark_stopped("no_progress")
+        else:
+            dimension = runtime.hard_limit()
+            if dimension is not None:
+                runtime.mark_stopped("budget_exhausted", dimension)
+
+    @staticmethod
+    def _turn_done(runtime: ToolRunState, reason: str = "end_turn") -> TurnDone:
+        return TurnDone(
+            stop_reason=reason,
+            total_tool_calls=runtime.total_tool_calls,
+            model_continuations=runtime.model_continuations,
+            elapsed_seconds=runtime.elapsed_seconds,
+            budget_dimension=runtime.stop_dimension,
+        )
+
+    def _finalize_on_tool_run_stop(
         self,
         *,
         persona_name: str,
         persona_id: str | None,
         model_snapshot: str,
-        total_tool_calls: int,
+        runtime: ToolRunState,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
-        """工具调用循环触达 :attr:`_max_tool_turns` 上限时的兜底策略。
-
-        注入一条临时 system message，引导 LLM 用已有信息直接回复用户、
-        不再调任何工具（``tools=None``）。生成的最终 assistant 文本会落盘。
-
-        **抽出独立方法**便于未来替换不同策略（如改成截断式收尾、
-        或交由用户决定继续）。
-
-        详见 docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.6.2。
-        """
+        """Finalize once with tools disabled after a policy or progress stop."""
         extra_system = (
-            "你已经多次调用工具仍未达成目标，请基于已有信息用一两句话直接回复用户，"
-            "不要再调用任何工具。"
+            "当前工具执行已经到达运行边界。请只基于已经取得的工具结果直接回复用户，"
+            "不要再调用任何工具；证据不足或尚未完成的部分必须明确说明。"
         )
         # 009 R-0.3：兜底收尾也走统一入口，收尾指令作为 trailing_system 注入，
         # 不再手拼消息（消除与续轮组装的重复）。
@@ -1965,6 +2056,7 @@ class Conversation:
                 tool_specs=None,
             ),
         ):
+            self._check_cancel(cancel_check)
             if isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield TextDelta(text=ev.text)
@@ -1979,10 +2071,7 @@ class Conversation:
             persona_id=persona_id,
             model=model_snapshot,
         )
-        yield TurnDone(
-            stop_reason="max_turns_reached",
-            total_tool_calls=total_tool_calls,
-        )
+        yield self._turn_done(runtime, runtime.stop_reason or "tool_runtime_failed")
 
     def _on_interrupt(
         self,
@@ -2045,7 +2134,11 @@ class Conversation:
         """落 ``tool_call_result`` 事件。"""
         meta: dict[str, Any] = self._run_event_meta({"duration_seconds": duration})
         if result.meta:
-            meta["extra"] = dict(result.meta)
+            diagnostic_extra = {
+                key: value for key, value in result.meta.items() if key != "source_urls"
+            }
+            if diagnostic_extra:
+                meta["extra"] = diagnostic_extra
         event = Event(
             type="tool_call_result",
             uuid=str(uuid4()),

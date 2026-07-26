@@ -12,7 +12,7 @@
  *   - `text_delta`  → `{type: "text_delta", text: string}`           ← assistant 流式增量
  *   - `tool_call_request` → `{type: "tool_call_request", tool_call_id, tool_name, args}`
  *   - `tool_call_result`  → `{type: "tool_call_result", tool_call_id, tool_name, text, is_error, duration_seconds}`
- *   - `done`        → `{type: "done", stop_reason, total_tool_calls}`
+ *   - `done`        → `{type: "done", stop_reason, total_tool_calls, model_continuations, elapsed_seconds, budget_dimension}`
  *
  * 详见 014 design §8.2 + agent/src/agent/conversation_events.py。
  */

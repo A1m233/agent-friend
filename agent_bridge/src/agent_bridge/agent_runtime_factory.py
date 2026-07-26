@@ -3,7 +3,7 @@
 把 :class:`agent.SessionManager` + :class:`memory.Memory` 与 :class:`agent.runtime.AgentRuntime`
 连接起来：构造 ``conversation_factory``（每次 dispatch 时通过 SessionManager 找
 session + 装配 Conversation 时开启 ``post_turn_external=True`` 并注入
-``tool_hook_invoker``），按 :class:`BridgeSettings` 装上启用的 EventSource。
+串行前后 tool hooks），按 :class:`BridgeSettings` 装上启用的 EventSource。
 
 详见 docs/requirements/014-engine-main-loop-and-bridge-push/design.md §4.4。
 """
@@ -50,7 +50,8 @@ def build_agent_runtime(
         return session_manager.start_conversation(
             session,
             post_turn_external=True,
-            tool_hook_invoker=runtime.tool_hook_invoker,
+            tool_pre_hook=runtime.pre_tool_hook,
+            tool_post_hook=runtime.post_tool_hook,
         )
 
     runtime = AgentRuntime(

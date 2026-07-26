@@ -18,7 +18,10 @@ from typing import TYPE_CHECKING
 from memory.search import MemorySearchService, QueryAnalyzer
 
 from ..memory_search import SessionHistorySource
+from .builtin.calculate import CalculateTool
 from .builtin.conversation_history import ConversationHistoryTool
+from .builtin.datetime_calculate import DateTimeCalculateTool
+from .builtin.web_fetch import TavilyExtractProvider, WebFetchTool
 from .builtin.web_search import WebSearchTool
 from .builtin.web_search.providers.tavily import TavilyProvider
 from .protocol import Tool
@@ -35,7 +38,7 @@ def make_default_registry(
     tavily_api_key: str | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
-    """构造默认 registry。本期按当前可用资源装配两个内置工具。
+    """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
 
     Args:
         session_store: 020 起新增。非 ``None`` 时注册 :class:`ConversationHistoryTool`
@@ -51,16 +54,18 @@ def make_default_registry(
     Returns:
         :class:`ToolRegistry`：
 
-        - ``TAVILY_API_KEY`` 已配置 → 含 :class:`WebSearchTool`（Tavily provider）
+        - 始终包含 ``calculate`` 与 ``datetime_calculate``
+        - ``TAVILY_API_KEY`` 已配置 → 含 ``web_search`` 与 ``web_fetch``
         - ``session_store`` 非 ``None`` → 含 :class:`ConversationHistoryTool`
-        - 两条都不满足 → 空 registry（保证未配置工具的用户也能正常使用基础对话）
+        - 网络与记忆条件都不满足 → 仍保留两个本地确定性工具
     """
-    tools: list[Tool] = []
+    tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
 
     api_key = tavily_api_key or os.environ.get("TAVILY_API_KEY")
     if api_key:
         provider = TavilyProvider(api_key=api_key)
         tools.append(WebSearchTool(provider=provider))
+        tools.append(WebFetchTool(provider=TavilyExtractProvider(api_key=api_key)))
     elif stderr_warn:
         print(
             "[tool] 未配置 TAVILY_API_KEY，搜索能力已关闭。"
