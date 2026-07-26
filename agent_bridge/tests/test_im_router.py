@@ -27,6 +27,54 @@ from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
 
 from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
 
+
+class StubStreamSession:
+    def __init__(self, *, fail_first: bool = False) -> None:
+        self.updates: list[str] = []
+        self.finishes: list[str] = []
+        self.aborts: list[tuple[str, str]] = []
+        self._fail_first = fail_first
+        self._failed = False
+
+    @property
+    def has_started(self) -> bool:
+        return bool(self.updates)
+
+    @property
+    def is_completed(self) -> bool:
+        return bool(self.finishes)
+
+    @property
+    def is_failed(self) -> bool:
+        return self._failed
+
+    async def update(self, full_text: str) -> None:
+        if self._fail_first:
+            self._failed = True
+            return
+        self.updates.append(full_text)
+
+    async def finish(self, full_text: str) -> None:
+        self.finishes.append(full_text)
+
+    async def abort(self, full_text: str, reason: str) -> None:
+        self.aborts.append((full_text, reason))
+
+
+class StubStreamingProvider:
+    def __init__(self, stream: StubStreamSession | None) -> None:
+        self.stream = stream
+        self.sent: list[OutboundContent] = []
+        self.contexts: list[Any] = []
+
+    async def send(self, content: OutboundContent) -> None:
+        self.sent.append(content)
+
+    def open_text_stream(self, context: Any) -> StubStreamSession | None:
+        self.contexts.append(context)
+        return self.stream
+
+
 # ---------- fixtures ----------
 
 
@@ -324,3 +372,106 @@ async def test_send_callback_exception_propagates(
 
     with pytest.raises(ConnectionError, match="network down"):
         await router.handle_inbound("qq", _make_event(), send_fail)
+
+
+# ---------- native stream routing ----------
+
+
+@pytest.mark.asyncio
+async def test_native_stream_sends_body_once_then_separate_menu(
+    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [TextDelta(text="hello"), TextDelta(text=" world"), TurnDone()]
+    )
+    stream = StubStreamSession()
+    provider = StubStreamingProvider(stream)
+    sleep_delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", fake_sleep)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    assert stream.updates
+    assert stream.finishes == ["hello world"]
+    assert [item.text for item in provider.sent] == ["操作"]
+    assert provider.sent[0].controls is not None
+    assert all(item.text != "hello world" for item in provider.sent)
+    assert sleep_delays[-1] == pytest.approx(0.8)
+
+
+@pytest.mark.asyncio
+async def test_native_stream_first_failure_falls_back_to_static_body(
+    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [TextDelta(text="complete answer"), TurnDone()]
+    )
+    stream = StubStreamSession(fail_first=True)
+    provider = StubStreamingProvider(stream)
+    sleep_delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", fake_sleep)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    assert stream.has_started is False
+    assert stream.finishes == []
+    assert [item.text for item in provider.sent] == ["complete answer"]
+    assert provider.sent[0].controls is not None
+    assert 0.8 not in sleep_delays
+
+
+@pytest.mark.asyncio
+async def test_native_stream_agent_error_aborts_partial_without_static_duplicate(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    def stream(_user_input: str, **_kwargs: Any) -> Any:
+        yield TextDelta(text="partial answer")
+        raise RuntimeError("agent failed")
+
+    conv = MagicMock()
+    conv.stream.side_effect = stream
+    session_bridge.bind_persistent.return_value = conv
+    stream_session = StubStreamSession()
+    provider = StubStreamingProvider(stream_session)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    assert stream_session.has_started is True
+    assert len(stream_session.aborts) == 1
+    assert stream_session.aborts[0][0].startswith("partial answer")
+    assert "回复生成中断" in stream_session.aborts[0][0]
+    assert provider.sent == []
+
+
+@pytest.mark.asyncio
+async def test_attachments_keep_static_path_without_opening_stream(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    from agent.attachments import AttachmentRef
+
+    session_bridge.persistent_model.return_value = "kimi/kimi-k2.7-code"
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [TextDelta(text="attachment answer"), TurnDone()]
+    )
+    provider = StubStreamingProvider(StubStreamSession())
+    attachment = AttachmentRef(
+        asset_id="asset-1",
+        kind="image",
+        media_type="image/png",
+        display_name="a.png",
+        size_bytes=10,
+        sha256="0" * 64,
+    )
+
+    await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
+
+    assert provider.contexts == []
+    assert [item.text for item in provider.sent] == ["attachment answer"]

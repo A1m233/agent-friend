@@ -5,10 +5,11 @@
 1. 用临时 ``AGENT_FRIEND_DATA_DIR`` 启动 :class:`BridgeRuntime`
 2. monkey-patch :meth:`SessionBridge.bind_persistent` 让它返回一个 fake
    :class:`Conversation`(stream 出 ``TextDelta + TurnDone``),**避开真 LLM 调用**
-3. 灌一条假 ``InboundEvent`` 到 :meth:`IMRouter.handle_inbound`
+3. 灌一条假 ``InboundEvent`` 到 :meth:`IMRouter.handle_inbound`,由 fake Provider
+   暴露原生流式会话
 4. 断言:
-   - mock send 收到 ``OutboundContent``,文本非空 + 等于 fake reply
-   - ``chat_id`` / ``chat_scope`` / ``reply_to_message_id`` 跟 inbound 一致
+   - 流式会话收到中间快照和完整 DONE 文本
+   - 普通 send 只收到独立菜单控制消息,不重复发送正文
 
 **不接真 QQ gateway,不发真消息,不动用户数据**。
 
@@ -24,6 +25,46 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+
+
+class _FakeStream:
+    def __init__(self) -> None:
+        self.updates: list[str] = []
+        self.finishes: list[str] = []
+        self.aborts: list[tuple[str, str]] = []
+
+    @property
+    def has_started(self) -> bool:
+        return bool(self.updates)
+
+    @property
+    def is_completed(self) -> bool:
+        return bool(self.finishes)
+
+    @property
+    def is_failed(self) -> bool:
+        return False
+
+    async def update(self, full_text: str) -> None:
+        self.updates.append(full_text)
+
+    async def finish(self, full_text: str) -> None:
+        self.finishes.append(full_text)
+
+    async def abort(self, full_text: str, reason: str) -> None:
+        self.aborts.append((full_text, reason))
+
+
+class _FakeProvider:
+    def __init__(self) -> None:
+        self.stream = _FakeStream()
+        self.sent: list[Any] = []
+
+    async def send(self, content: Any) -> None:
+        self.sent.append(content)
+
+    def open_text_stream(self, _context: Any) -> _FakeStream:
+        return self.stream
 
 
 def _build_fake_conv(reply: str) -> Any:
@@ -48,7 +89,6 @@ async def _run() -> int:
 
     from agent_bridge.assembly import build_runtime
     from agent_bridge.protocols.im import IMRouter
-    from agent_bridge.protocols.im.content import OutboundContent
     from agent_bridge.protocols.im.event import InboundEvent
     from agent_bridge.session_bridge import SessionBridge
 
@@ -71,10 +111,7 @@ async def _run() -> int:
         default_model=bridge_runtime.default_model,
     )
 
-    captured: list[OutboundContent] = []
-
-    async def fake_send(content: OutboundContent) -> None:
-        captured.append(content)
+    provider = _FakeProvider()
 
     inbound = InboundEvent(
         event_type="C2C_MESSAGE_CREATE",
@@ -88,34 +125,37 @@ async def _run() -> int:
     )
 
     with patch.object(session_bridge, "bind_persistent", return_value=_build_fake_conv(fake_reply)):
-        await router.handle_inbound("fake", inbound, fake_send)
+        await router.handle_inbound("fake", inbound, provider)
 
     # ---- 断言 ----
-    if not captured:
-        print("[smoke] FAIL · send_fn 未被调用", file=sys.stderr)
+    if not provider.stream.updates:
+        print("[smoke] FAIL · stream update 未被调用", file=sys.stderr)
         return 1
-    out = captured[0]
-    if out.text != fake_reply:
+    if provider.stream.finishes != [fake_reply]:
         print(
-            f"[smoke] FAIL · outbound text 不匹配:{out.text!r} != {fake_reply!r}", file=sys.stderr
-        )
-        return 1
-    if out.chat_id != inbound.chat_id:
-        print(f"[smoke] FAIL · chat_id 不匹配:{out.chat_id!r}", file=sys.stderr)
-        return 1
-    if out.reply_to_message_id != inbound.message_id:
-        print(
-            f"[smoke] FAIL · reply_to_message_id 不匹配:{out.reply_to_message_id!r}",
+            f"[smoke] FAIL · stream final 不匹配:{provider.stream.finishes!r}",
             file=sys.stderr,
         )
         return 1
-    if out.chat_scope != "c2c":
-        print(f"[smoke] FAIL · chat_scope 不匹配:{out.chat_scope!r}", file=sys.stderr)
+    if len(provider.sent) != 1 or provider.sent[0].text != "操作":
+        print(f"[smoke] FAIL · 独立菜单消息不匹配:{provider.sent!r}", file=sys.stderr)
+        return 1
+    menu = provider.sent[0]
+    if menu.controls is None:
+        print("[smoke] FAIL · 菜单 controls 缺失", file=sys.stderr)
+        return 1
+    if any(item.text == fake_reply for item in provider.sent):
+        print("[smoke] FAIL · 完整正文被普通 send 重复发送", file=sys.stderr)
         return 1
 
-    print(f"[smoke] PASS · outbound = {out!r}")
+    print(f"[smoke] PASS · stream updates = {provider.stream.updates!r}")
+    print(f"[smoke] PASS · stream final = {provider.stream.finishes!r}")
+    print(
+        "[smoke] PASS · menu outbound "
+        f"text_len={len(menu.text)} controls={menu.controls is not None}"
+    )
     print(f"[smoke] PASS · IMRuntime 状态 = {bridge_runtime.im_runtime.list_status()}")
-    print("[smoke] PASS · 全部断言通过 ✓")
+    print("[smoke] PASS · 全部断言通过")
 
     bridge_runtime.close()
     return 0

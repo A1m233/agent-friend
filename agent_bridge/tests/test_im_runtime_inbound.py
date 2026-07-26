@@ -106,6 +106,7 @@ async def test_runtime_routes_resolved_event(tmp_path: Path) -> None:
     router.handle_inbound.assert_awaited_once()
     assert router.handle_inbound.await_args.args[0] == "qq"
     assert router.handle_inbound.await_args.args[1].content == "after"
+    assert router.handle_inbound.await_args.kwargs["provider_or_send"] is provider
     assert router.handle_inbound.await_args.kwargs["session_id"] == "SESSION-BOUND"
     assert provider.sent == []
 

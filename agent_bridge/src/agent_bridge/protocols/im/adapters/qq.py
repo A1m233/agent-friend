@@ -54,6 +54,8 @@ from ..credentials import ImCredential
 from ..event import InboundInteraction
 from ..provider import ProviderStatus
 from ..state import ControlCapability, IMStateStore
+from ..streaming import IMStreamSession, OutboundStreamContext
+from .qq_streaming import QQC2CStreamSession
 
 __all__ = ["QQAdapter"]
 
@@ -302,6 +304,31 @@ class QQAdapter:
             response_message_id,
             _text_len(content.text),
             content.text_format,
+        )
+
+    def open_text_stream(self, context: OutboundStreamContext) -> IMStreamSession | None:
+        """Create a QQ native C2C stream using the already configured API client."""
+
+        api = self._api
+        if (
+            api is None
+            or context.chat_scope != "c2c"
+            or not context.reply_to_message_id
+            or context.text_format not in {"plain_text", "markdown"}
+        ):
+            return None
+        logger.info(
+            "QQ stream opened locally stream_trace=%s run_id=%s bind_ref=%s chat_ref=%s",
+            context.stream_trace,
+            context.run_id or "",
+            hashlib.sha256(self.bind_id.encode("utf-8")).hexdigest()[:12],
+            hashlib.sha256(context.chat_id.encode("utf-8")).hexdigest()[:12],
+        )
+        return QQC2CStreamSession(
+            api=api,
+            bind_id=self.bind_id,
+            context=context,
+            msg_seq=self._next_msg_seq(),
         )
 
     async def stop(self) -> None:
