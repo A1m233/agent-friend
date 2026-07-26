@@ -1,35 +1,5 @@
 #!/usr/bin/env bash
-# scripts/check/run.sh — 合入 main 前的一键全绿检查（mac/linux）
-# 串联：lint（ruff check + format --check）→ typecheck（mypy strict）→ test（pytest）
-# 任意一步失败立即退出。pytest 参数可透传：./scripts/check/run.sh -k foo
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"
+cd "$(dirname "$0")/../.."
 
-echo "===> [1/6] lint"
-"$here/../lint/run.sh"
-echo
-echo "===> [2/6] typecheck"
-"$here/../typecheck/run.sh"
-echo
-echo "===> [3/6] test"
-"$here/../test/run.sh" "$@"
-echo
-echo "===> [4/6] frontend lint + test"
-if command -v node >/dev/null 2>&1 && [ -d "$here/../../frontend/node_modules" ]; then
-    "$here/../frontend/lint.sh"
-    "$here/../frontend/test.sh"
-    echo
-    echo "===> [5/6] production frontend build"
-    "$here/../frontend/build.sh"
-else
-    echo "  [skip] 前端工具链/依赖未就绪（无 node 或未跑 frontend/install），跳过前端 lint + test + build"
-fi
-echo
-echo "===> [6/6] Tauri Core test + release check"
-if command -v cargo >/dev/null 2>&1; then
-    "$here/../rust-check/run.sh"
-else
-    echo "  [skip] Rust 工具链未就绪（无 cargo），跳过 Tauri Core 门禁"
-fi
-echo
-echo "===> check 全部通过"
+exec uv run python scripts/check/run.py "$@"

@@ -123,5 +123,5 @@ exclude = [
 # ============================================================
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["agent", "agent_bridge", "agent_eval", "memory", "memory_eval", "llm_providers", "runtime_config", "scripts/package", "tools", "voice_bridge"]
+testpaths = ["agent", "agent_bridge", "agent_eval", "memory", "memory_eval", "llm_providers", "runtime_config", "scripts/check", "scripts/package", "tools", "voice_bridge"]
 norecursedirs = ["memory_eval/data", ".codex-test-tmp"]
