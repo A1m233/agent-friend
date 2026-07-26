@@ -94,6 +94,7 @@ from .system_prompt import (
     StaticSection,
     SystemPromptComposer,
 )
+from .tool_runtime import ToolRunPolicy
 from .tools import (
     Tool,
     ToolDuplicateError,
@@ -181,6 +182,7 @@ __all__ = [
     "ToolNotFoundError",
     "ToolRegistry",
     "ToolResult",
+    "ToolRunPolicy",
     "TurnDone",
     "attachments_dir",
     "cli_history_path",

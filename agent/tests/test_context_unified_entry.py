@@ -17,6 +17,7 @@ from typing import Any, ClassVar, cast
 
 from agent.context import assemble_messages
 from agent.messages import Message
+from agent.tool_runtime import ToolRunPolicy
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -121,6 +122,7 @@ def _make_conversation(
     fake_llm: Any,
     context_manager: Any,
     registry: ToolRegistry | None = None,
+    tool_run_policy: ToolRunPolicy | None = None,
 ) -> Conversation:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -143,6 +145,7 @@ def _make_conversation(
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=registry,
+        tool_run_policy=tool_run_policy,
     )
 
 
@@ -159,7 +162,11 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     # LLM 一直要求调工具 → 跑满 max_tool_turns → 触发兜底收尾
     fake = _UsageLLM(script=[_tool_use_turn() for _ in range(10)])
     conv = _make_conversation(
-        tmp_path, fake_llm=fake, context_manager=spy, registry=ToolRegistry([_LoopTool()])
+        tmp_path,
+        fake_llm=fake,
+        context_manager=spy,
+        registry=ToolRegistry([_LoopTool()]),
+        tool_run_policy=ToolRunPolicy(max_model_continuations=2),
     )
 
     list(conv.stream("hi"))
@@ -175,7 +182,10 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     middle = spy.calls[1:-1]
     assert middle, "应至少有一次工具续轮"
     assert all(c["new_user_input"] is None for c in middle)
-    assert all(c["trailing_system"] is None for c in middle)
+    assert all(
+        c["trailing_system"] is None or "工具运行预算即将到达边界" in c["trailing_system"]
+        for c in middle
+    )
 
     # 兜底收尾（最后一次）：无 new_user_input、带 trailing_system
     last = spy.calls[-1]

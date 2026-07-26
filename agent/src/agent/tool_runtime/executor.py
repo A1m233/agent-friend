@@ -1,0 +1,206 @@
+"""Bounded execution of synchronous tools with deterministic result ordering."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
+
+from ..tools.protocol import ToolResult
+from ..tools.registry import ToolRegistry
+
+ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
+PreToolHook = Callable[[str, dict[str, Any]], ToolResult | None]
+PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
+
+
+class ToolExecutionKind(StrEnum):
+    SERIAL = "serial"
+    PARALLEL_READ = "parallel_read"
+
+
+@dataclass(frozen=True)
+class ExecutedToolCall:
+    call: dict[str, Any]
+    result: ToolResult
+    duration_seconds: float
+
+
+@dataclass
+class _Pending:
+    call: dict[str, Any]
+    public_args: dict[str, Any]
+    future: Future[ToolResult] | None
+    started_at: float
+    timeout_seconds: float
+    immediate_result: ToolResult | None = None
+    invoke: Callable[[], ToolResult] | None = None
+
+
+class ToolBatchExecutor:
+    def __init__(self, max_workers: int) -> None:
+        self._max_workers = max_workers
+        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="agent-tool")
+
+    def parallel_batch_count(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        registry: ToolRegistry | None,
+        force_serial: bool = False,
+    ) -> int:
+        """Return the number of batches that will actually have parallel capacity."""
+
+        if self._max_workers < 2:
+            return 0
+        return sum(
+            len(batch) > 1 for batch in self._batches(calls, registry, force_serial=force_serial)
+        )
+
+    def execute(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        registry: ToolRegistry | None,
+        default_timeout_seconds: float,
+        invocation_args: Callable[[str, dict[str, Any]], dict[str, Any]],
+        cancel_check: Callable[[], None] | None = None,
+        legacy_hook_invoker: ToolHookInvoker | None = None,
+        pre_hook: PreToolHook | None = None,
+        post_hook: PostToolHook | None = None,
+    ) -> list[ExecutedToolCall]:
+        results: list[ExecutedToolCall] = []
+        for batch in self._batches(calls, registry, force_serial=legacy_hook_invoker is not None):
+            pending = [
+                self._prepare(
+                    call,
+                    registry=registry,
+                    default_timeout_seconds=default_timeout_seconds,
+                    invocation_args=invocation_args,
+                    legacy_hook_invoker=legacy_hook_invoker,
+                    pre_hook=pre_hook,
+                )
+                for call in batch
+            ]
+            # All PreToolUse hooks for this batch finish in model-call order before
+            # any permitted read body starts.
+            for item in pending:
+                if item.immediate_result is None:
+                    assert item.invoke is not None
+                    item.started_at = time.monotonic()
+                    item.future = self._pool.submit(item.invoke)
+                    item.invoke = None
+            for item in pending:
+                result = self._finish(item, cancel_check)
+                if post_hook is not None and legacy_hook_invoker is None:
+                    post_hook(item.call["name"], item.public_args, result.result)
+                results.append(result)
+        return results
+
+    def _prepare(
+        self,
+        call: dict[str, Any],
+        *,
+        registry: ToolRegistry | None,
+        default_timeout_seconds: float,
+        invocation_args: Callable[[str, dict[str, Any]], dict[str, Any]],
+        legacy_hook_invoker: ToolHookInvoker | None,
+        pre_hook: PreToolHook | None,
+    ) -> _Pending:
+        name = call["name"]
+        public_args = call["args"]
+        started_at = time.monotonic()
+        timeout = default_timeout_seconds
+        if registry is not None:
+            try:
+                configured = getattr(registry.get(name), "timeout_seconds", timeout)
+                if isinstance(configured, (int, float)) and configured > 0:
+                    timeout = float(configured)
+            except Exception:
+                pass
+        if pre_hook is not None and legacy_hook_invoker is None:
+            blocked = pre_hook(name, public_args)
+            if blocked is not None:
+                return _Pending(call, public_args, None, started_at, timeout, blocked)
+
+        def invoke() -> ToolResult:
+            def raw() -> ToolResult:
+                if registry is None:
+                    return ToolResult(
+                        text=f"工具 {name!r} 不可用：当前会话未配置工具集",
+                        is_error=True,
+                        meta={"error_kind": "unavailable"},
+                    )
+                try:
+                    return registry.invoke(name, invocation_args(name, public_args))
+                except Exception as exc:
+                    return ToolResult(
+                        text=f"工具 {name!r} 执行出错: {exc}",
+                        is_error=True,
+                        meta={"error_kind": "internal_error", "exception_type": type(exc).__name__},
+                    )
+
+            return legacy_hook_invoker(name, public_args, raw) if legacy_hook_invoker else raw()
+
+        return _Pending(call, public_args, None, started_at, timeout, invoke=invoke)
+
+    def _finish(
+        self, pending: _Pending, cancel_check: Callable[[], None] | None
+    ) -> ExecutedToolCall:
+        if pending.immediate_result is not None:
+            return ExecutedToolCall(
+                pending.call, pending.immediate_result, time.monotonic() - pending.started_at
+            )
+        assert pending.future is not None
+        deadline = pending.started_at + pending.timeout_seconds
+        while True:
+            if cancel_check is not None:
+                cancel_check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                pending.future.cancel()
+                result = ToolResult(
+                    text="工具在限定时间内没有返回，未取得可用证据。",
+                    is_error=True,
+                    meta={
+                        "error_kind": "timeout",
+                        "underlying_cancelled": pending.future.cancelled(),
+                    },
+                )
+                return ExecutedToolCall(pending.call, result, time.monotonic() - pending.started_at)
+            try:
+                result = pending.future.result(timeout=min(remaining, 0.05))
+                return ExecutedToolCall(pending.call, result, time.monotonic() - pending.started_at)
+            except TimeoutError:
+                continue
+
+    @staticmethod
+    def _batches(
+        calls: list[dict[str, Any]], registry: ToolRegistry | None, *, force_serial: bool
+    ) -> list[list[dict[str, Any]]]:
+        if force_serial:
+            return [[call] for call in calls]
+        batches: list[list[dict[str, Any]]] = []
+        parallel: list[dict[str, Any]] = []
+        for call in calls:
+            kind = ToolExecutionKind.SERIAL
+            if registry is not None:
+                try:
+                    kind = ToolExecutionKind(
+                        getattr(registry.get(call["name"]), "execution_kind", "serial")
+                    )
+                except Exception:
+                    kind = ToolExecutionKind.SERIAL
+            if kind is ToolExecutionKind.PARALLEL_READ:
+                parallel.append(call)
+                continue
+            if parallel:
+                batches.append(parallel)
+                parallel = []
+            batches.append([call])
+        if parallel:
+            batches.append(parallel)
+        return batches
