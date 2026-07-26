@@ -4,7 +4,7 @@
 
 <!-- NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED -->
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -16,7 +16,7 @@ IN_PROGRESS
 - [x] 扩展 fake Agent IM smoke 并运行相关验证
 - [x] 运行项目统一检查门禁
 - [x] 完成真实 QQ C2C smoke 与落盘日志核验
-- [ ] 获得用户验收确认
+- [x] 获得用户验收确认
 
 ## 实现日志
 
@@ -28,3 +28,4 @@ IN_PROGRESS
 | 2026-07-27 | 真实 QQ C2C 长回复流式链路跑通 | 15 次累计更新、最终 2880 字、13.7 秒完成，无 fallback 或重复正文；菜单发送成功 |
 | 2026-07-27 | 根据真实客户端观感增加菜单发送缓冲 | DONE 成功后等待 800ms 再发独立菜单；普通降级、非流式和错误路径不等待 |
 | 2026-07-27 | backend、frontend、rust 项目门禁全绿 | 800ms 调整后复验：backend 1071 passed/2 skipped；frontend 435 passed + production build；rust 139 passed/1 ignored + release check |
+| 2026-07-27 | 用户确认验收并授权合入主干 | 合入最新主干后复验：backend 1152 passed/2 skipped；frontend 443 passed + production build；rust 140 passed/1 ignored + release check |
