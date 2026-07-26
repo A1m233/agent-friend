@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri";
 import {
   ensureLocalServiceReady,
+  restartLocalService,
   resetLocalServiceReadiness,
 } from "./runtime";
 
@@ -70,5 +71,24 @@ describe("ensureLocalServiceReady", () => {
     resetLocalServiceReadiness("bridge");
     await expect(ensureLocalServiceReady("bridge")).resolves.toBeUndefined();
     expect(mockInvoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("restarts the requested Tauri service", async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockInvoke.mockResolvedValue(undefined);
+
+    await restartLocalService("bridge");
+
+    expect(mockInvoke).toHaveBeenCalledWith("restart_runtime_service", {
+      service: "bridge",
+    });
+  });
+
+  it("does not invoke a runtime restart in browser development", async () => {
+    mockIsTauri.mockReturnValue(false);
+
+    await restartLocalService("voice");
+
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 });

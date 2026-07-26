@@ -16,6 +16,7 @@ pub enum RuntimeConfigKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeConfigGroup {
+    Amap,
     Deepseek,
     Kimi,
     Tavily,
@@ -86,6 +87,12 @@ struct SecretSpec {
 }
 
 const SECRET_REGISTRY: &[SecretSpec] = &[
+    SecretSpec {
+        name: "AMAP_WEBSERVICE_KEY",
+        aliases: &[],
+        group: RuntimeConfigGroup::Amap,
+        effect: RuntimeConfigEffect::RestartBridge,
+    },
     SecretSpec {
         name: "DEEPSEEK_API_KEY",
         aliases: &[],
@@ -661,6 +668,7 @@ mod tests {
 
     #[test]
     fn registry_only_contains_current_managed_secrets() {
+        assert!(find_secret("AMAP_WEBSERVICE_KEY").is_some());
         assert!(find_secret("DEEPSEEK_API_KEY").is_some());
         assert!(find_secret("KIMI_API_KEY").is_some());
         assert!(find_secret("TAVILY_API_KEY").is_some());

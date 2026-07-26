@@ -289,6 +289,7 @@ def build_runtime(
     tool_registry = make_default_registry(
         memory_search=memory_search,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
+        amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
     )
 
     llm_client_factory = runtime_config.llm_client_factory

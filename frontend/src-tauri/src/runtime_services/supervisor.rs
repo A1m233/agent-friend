@@ -59,6 +59,19 @@ impl ServiceSlot {
         self.snapshot.error = Some(error.clone());
         self.snapshot.last_error = Some(error);
     }
+
+    fn reject_stop_while_running(&mut self, code: &str, message: String) -> String {
+        let error = RuntimeServiceError {
+            code: code.to_string(),
+            message,
+            retryable: true,
+        };
+        let result = format!("{}: {}", error.code, error.message);
+        self.snapshot.phase = RuntimeServicePhase::Ready;
+        self.snapshot.error = None;
+        self.snapshot.last_error = Some(error);
+        result
+    }
 }
 
 pub struct RuntimeServiceSupervisor {
@@ -427,27 +440,25 @@ impl RuntimeServiceSupervisor {
         match response {
             Ok(status) if status.is_success() => {}
             Ok(status) if status == reqwest::StatusCode::CONFLICT => {
-                slot.fail(
-                    RuntimeServicePhase::Blocked,
-                    "voice_activity_blocked",
-                    "active or connecting voice call blocks restart".to_string(),
+                let error = slot.reject_stop_while_running(
+                    "service_activity_blocked",
+                    format!("active work blocks {} restart", service.module()),
                 );
                 emit(app, &slot.snapshot);
-                return Err(error_message(&slot.snapshot));
+                return Err(error);
             }
             Ok(status) => {
-                slot.fail(
-                    RuntimeServicePhase::Failed,
+                let error = slot.reject_stop_while_running(
                     "shutdown_rejected",
                     format!("lifecycle shutdown returned HTTP {status}"),
                 );
                 emit(app, &slot.snapshot);
-                return Err(error_message(&slot.snapshot));
+                return Err(error);
             }
             Err(error) => {
-                slot.fail(RuntimeServicePhase::Failed, "control_request_failed", error);
+                let error = slot.reject_stop_while_running("control_request_failed", error);
                 emit(app, &slot.snapshot);
-                return Err(error_message(&slot.snapshot));
+                return Err(error);
             }
         }
 
@@ -900,6 +911,29 @@ mod tests {
                 .as_ref()
                 .map(|error| error.code.as_str()),
             Some("process_exited_early")
+        );
+    }
+
+    #[test]
+    fn rejected_stop_keeps_the_running_service_ready() {
+        let mut slot = ServiceSlot::new(RuntimeServiceKind::Voice);
+        slot.begin(RuntimeServicePhase::Starting);
+        slot.snapshot.phase = RuntimeServicePhase::Ready;
+
+        let error = slot.reject_stop_while_running(
+            "service_activity_blocked",
+            "active work blocks voice_bridge restart".to_string(),
+        );
+
+        assert!(error.contains("service_activity_blocked"));
+        assert_eq!(slot.snapshot.phase, RuntimeServicePhase::Ready);
+        assert!(slot.snapshot.error.is_none());
+        assert_eq!(
+            slot.snapshot
+                .last_error
+                .as_ref()
+                .map(|item| item.code.as_str()),
+            Some("service_activity_blocked")
         );
     }
 
