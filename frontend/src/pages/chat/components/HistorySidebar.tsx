@@ -398,7 +398,7 @@ export function HistorySidebar() {
                             <CircleAlert className="size-3 shrink-0 text-danger" aria-label="处理失败" />
                           ) : null}
                           {!actionVisible && runIndicator === "completed" ? (
-                            <Circle className="size-3 shrink-0 fill-accent text-accent" aria-label="有新回复" />
+                            <Circle className="size-2 shrink-0 fill-accent text-accent" aria-label="有新回复" />
                           ) : null}
                           {!actionVisible && ageText ? (
                             <span
