@@ -30,6 +30,7 @@ from agent_bridge.protocols.im.content import OutboundAction, OutboundContent, O
 from agent_bridge.protocols.im.control import menu_controls
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
+from agent_bridge.protocols.im.streaming import OutboundStreamContext
 from qqbot_agent_sdk.dto import QQMessageType
 
 # ---------- fixtures ----------
@@ -83,6 +84,31 @@ def test_adapter_type_is_qq(adapter: QQAdapter) -> None:
 def test_bind_id_from_user_openid(cred: ImCredential, resume_dir: Path) -> None:
     a = QQAdapter(cred=cred, resume_base_dir=resume_dir)
     assert a.bind_id == "OPENID-USER"
+
+
+def test_open_text_stream_only_for_ready_c2c(adapter: QQAdapter) -> None:
+    context = OutboundStreamContext(
+        chat_id="OPENID-X",
+        chat_scope="c2c",
+        reply_to_message_id="MSG-1",
+        text_format="markdown",
+        stream_trace="TRACE-1",
+    )
+
+    assert adapter.open_text_stream(context) is None
+    adapter._api = MagicMock()
+    stream = adapter.open_text_stream(context)
+    assert stream is not None
+    assert stream.has_started is False
+
+    group_context = OutboundStreamContext(
+        chat_id="GROUP-X",
+        chat_scope="group",
+        reply_to_message_id="MSG-2",
+        text_format="markdown",
+        stream_trace="TRACE-2",
+    )
+    assert adapter.open_text_stream(group_context) is None
 
 
 # ---------- start 调用顺序 ----------

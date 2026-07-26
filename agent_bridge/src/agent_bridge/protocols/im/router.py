@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from uuid import uuid4
 
 from agent.attachments import AttachmentRef
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
@@ -48,6 +49,13 @@ from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
 from .control import menu_controls
 from .event import InboundEvent
+from .provider import IMOutboundProvider
+from .streaming import (
+    IMStreamSession,
+    IMTextStreamingProvider,
+    OutboundStreamContext,
+    StreamRelay,
+)
 
 __all__ = ["FALLBACK_TEXT", "IMRouter"]
 
@@ -64,6 +72,11 @@ FALLBACK_TEXT = "我现在有点问题,稍后再试 🤖"
 
 SendCallback = Callable[[OutboundContent], Awaitable[None]]
 """IM adapter 提供给 Router 的回写回调签名。"""
+
+_STREAM_END = object()
+_STREAM_INTERRUPTED_SUFFIX = "\n\n（回复生成中断，请稍后重试。）"
+_STREAM_MENU_TEXT = "操作"
+_STREAM_MENU_DELAY_SECONDS = 0.8
 
 
 class IMRouter:
@@ -118,7 +131,7 @@ class IMRouter:
         self,
         im_type: str,
         event: InboundEvent,
-        send_fn: SendCallback,
+        provider_or_send: IMOutboundProvider | SendCallback,
         attachments: tuple[AttachmentRef, ...] = (),
         *,
         session_id: str | None = None,
@@ -129,13 +142,14 @@ class IMRouter:
             im_type: 平台标识,用于 :meth:`session_id_for`。
             event: inbound 事件;``event.content`` 作为 ``new_user_input`` 喂给
                 ``Conversation.stream``。
-            send_fn: adapter 提供的回写回调,接 :class:`OutboundContent`。
+            provider_or_send: adapter 实例；兼容旧调用方直接传 send callback。
 
         异常策略:
             ``Conversation.stream`` / ``bind_persistent`` 抛任何异常 → log
             exception + 回写 :data:`FALLBACK_TEXT`,**不向上抛**(IM 长连不该
             因为单轮挂掉而断开)。
         """
+        send_fn = _send_callback(provider_or_send)
         session_id = session_id or self.session_id_for(im_type, event)
         logger.info(
             "IM inbound router start im_type=%s session_id=%s chat_scope=%s chat_id=%s "
@@ -181,19 +195,68 @@ class IMRouter:
 
         text_format: OutboundTextFormat = "markdown"
         include_menu = True
+        stream_trace = uuid4().hex[:12]
+        run_id = uuid4().hex if self._agent_runtime is not None else None
+        stream_session = self._open_stream(
+            provider_or_send,
+            event,
+            attachments=attachments,
+            stream_trace=stream_trace,
+            run_id=run_id,
+        )
+        relay: StreamRelay | None = None
+        delta_queue: asyncio.Queue[object] | None = None
+        relay_task: asyncio.Task[None] | None = None
+        on_text_delta: Callable[[str], None] | None = None
+        if stream_session is not None:
+            delta_queue = asyncio.Queue()
+            relay = StreamRelay(stream_session, stream_trace=stream_trace)
+            relay_task = asyncio.create_task(relay.feed_from_queue(delta_queue, _STREAM_END))
+            loop = asyncio.get_running_loop()
+
+            def publish_delta(delta: str) -> None:
+                loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
+
+            on_text_delta = publish_delta
+            logger.info(
+                "IM stream eligible stream_trace=%s run_id=%s im_type=%s session_id=%s "
+                "message_id=%s chat_scope=%s",
+                stream_trace,
+                run_id or "",
+                im_type,
+                session_id,
+                event.message_id,
+                event.chat_scope,
+            )
         try:
-            text = await asyncio.to_thread(self._run_turn_sync, boot, attachments)
-        except Exception:
+            text = await asyncio.to_thread(
+                self._run_turn_sync,
+                boot,
+                attachments,
+                on_text_delta,
+                run_id,
+            )
+        except Exception as exc:
+            partial_text = await _finish_relay(delta_queue, relay_task, relay)
             logger.exception(
-                "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d)",
+                "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d, "
+                "stream_trace=%s, stream_started=%s)",
                 im_type,
                 session_id,
                 event.message_id,
                 _text_len(event.content),
+                stream_trace,
+                stream_session.has_started if stream_session is not None else False,
             )
+            if stream_session is not None and stream_session.has_started:
+                interrupted = (partial_text or FALLBACK_TEXT) + _STREAM_INTERRUPTED_SUFFIX
+                await stream_session.abort(interrupted, type(exc).__name__)
+                return
             text = FALLBACK_TEXT
             text_format = "plain_text"
             include_menu = False
+        else:
+            await _finish_relay(delta_queue, relay_task, relay)
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not text:
@@ -217,6 +280,49 @@ class IMRouter:
             text_format,
         )
 
+        if stream_session is not None and stream_session.has_started:
+            await stream_session.finish(text)
+            logger.info(
+                "IM stream final result stream_trace=%s run_id=%s message_id=%s "
+                "content_len=%d completed=%s had_failure=%s duplicate_fallback=false",
+                stream_trace,
+                run_id or "",
+                event.message_id,
+                _text_len(text),
+                stream_session.is_completed,
+                stream_session.is_failed,
+            )
+            if stream_session.is_completed and include_menu:
+                logger.info(
+                    "IM stream menu scheduled stream_trace=%s run_id=%s message_id=%s delay_ms=%d",
+                    stream_trace,
+                    run_id or "",
+                    event.message_id,
+                    round(_STREAM_MENU_DELAY_SECONDS * 1000),
+                )
+                await asyncio.sleep(_STREAM_MENU_DELAY_SECONDS)
+                await send_fn(
+                    OutboundContent(
+                        chat_id=event.chat_id,
+                        chat_scope=event.chat_scope,
+                        text=_STREAM_MENU_TEXT,
+                        text_format="markdown",
+                        reply_to_message_id=event.message_id,
+                        controls=menu_controls(),
+                    )
+                )
+            return
+
+        if stream_session is not None and stream_session.is_failed:
+            logger.warning(
+                "IM stream falling back to static stream_trace=%s run_id=%s message_id=%s "
+                "content_len=%d",
+                stream_trace,
+                run_id or "",
+                event.message_id,
+                _text_len(text),
+            )
+
         await send_fn(
             OutboundContent(
                 chat_id=event.chat_id,
@@ -232,6 +338,8 @@ class IMRouter:
         self,
         boot: PersistentBootstrap,
         attachments: tuple[AttachmentRef, ...] = (),
+        on_text_delta: Callable[[str], None] | None = None,
+        run_id: str | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -252,6 +360,7 @@ class IMRouter:
         if self._agent_runtime is not None:
             handle = self._agent_runtime.submit(
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
+                run_id=run_id,
                 channel="text",
                 conversation_factory=lambda: self._bridge.bind_persistent(boot),
                 conversation_runner=lambda conv, request, token: conv.stream(
@@ -267,6 +376,8 @@ class IMRouter:
             for ev in handle.events():
                 if isinstance(ev, TextDelta):
                     buf.append(ev.text)
+                    if on_text_delta is not None:
+                        on_text_delta(ev.text)
             terminal = handle.terminal
             if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
                 if terminal is not None and terminal.error is not None:
@@ -286,6 +397,8 @@ class IMRouter:
                 ):
                     if isinstance(ev, TextDelta):
                         buf.append(ev.text)
+                        if on_text_delta is not None:
+                            on_text_delta(ev.text)
                     # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
                     # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
                     # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
@@ -295,6 +408,30 @@ class IMRouter:
                 self._persist_run_error(conv, exc, None)
                 raise
         return "".join(buf)
+
+    @staticmethod
+    def _open_stream(
+        provider_or_send: IMOutboundProvider | SendCallback,
+        event: InboundEvent,
+        *,
+        attachments: tuple[AttachmentRef, ...],
+        stream_trace: str,
+        run_id: str | None,
+    ) -> IMStreamSession | None:
+        if attachments:
+            return None
+        if not isinstance(provider_or_send, IMTextStreamingProvider):
+            return None
+        return provider_or_send.open_text_stream(
+            OutboundStreamContext(
+                chat_id=event.chat_id,
+                chat_scope=event.chat_scope,
+                reply_to_message_id=event.message_id,
+                text_format="markdown",
+                stream_trace=stream_trace,
+                run_id=run_id,
+            )
+        )
 
     @staticmethod
     def _persist_run_error(
@@ -325,3 +462,26 @@ def _text_len(value: object) -> int:
 def _attachment_count(event: InboundEvent) -> int:
     attachments = getattr(event, "attachments", None)
     return len(attachments) if isinstance(attachments, list) else 0
+
+
+def _send_callback(provider_or_send: IMOutboundProvider | SendCallback) -> SendCallback:
+    if isinstance(provider_or_send, IMOutboundProvider):
+        return provider_or_send.send
+    if callable(provider_or_send):
+        return provider_or_send
+    raise TypeError("IM provider must expose send()")
+
+
+async def _finish_relay(
+    queue: asyncio.Queue[object] | None,
+    task: asyncio.Task[None] | None,
+    relay: StreamRelay | None,
+) -> str:
+    if queue is None or task is None or relay is None:
+        return ""
+    # Worker callbacks are scheduled on this loop before the to_thread future
+    # completes. Yield once so they enter the queue before the terminal marker.
+    await asyncio.sleep(0)
+    await queue.put(_STREAM_END)
+    await task
+    return relay.full_text

@@ -540,7 +540,7 @@ class IMRuntime:
         await self._router.handle_inbound(
             provider.type,
             resolved_event,
-            send_fn=provider.send,
+            provider_or_send=provider,
             attachments=result.attachments,
             session_id=binding.session_id,
         )

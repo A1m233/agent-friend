@@ -17,12 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from .content import OutboundContent
 from .event import InboundEvent, InboundInteraction
 
-__all__ = ["IMProvider", "ProviderStatus"]
+__all__ = ["IMOutboundProvider", "IMProvider", "ProviderStatus"]
 
 
 ProviderStatus = Literal["active", "degraded", "error", "stopped"]
@@ -33,6 +33,14 @@ ProviderStatus = Literal["active", "degraded", "error", "stopped"]
 - ``"error"``     — 不可恢复错误(凭据失效 / fatal error),需要用户介入
 - ``"stopped"``   — 主动 stop(进程退出 / 用户解绑前)
 """
+
+
+@runtime_checkable
+class IMOutboundProvider(Protocol):
+    """Minimal Router-facing outbound contract."""
+
+    async def send(self, content: OutboundContent) -> None:
+        """Send one complete platform message."""
 
 
 class IMProvider(Protocol):
