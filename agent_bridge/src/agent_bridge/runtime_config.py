@@ -15,6 +15,7 @@ from llm_providers import (
     provider_definition,
 )
 from runtime_config import (
+    AMAP_WEBSERVICE_KEY,
     LLM_CHAT_MODEL,
     LLM_CHAT_PROVIDER,
     LLM_MEMORY_MODEL,
@@ -185,5 +186,8 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         default_model=default_model,
         memory_client_factory=memory_client_factory,
         llm_client_factory=llm_client_factory,
-        tool_credentials=ToolCredentials(tavily_api_key=optional_secret(source, TAVILY_API_KEY)),
+        tool_credentials=ToolCredentials(
+            tavily_api_key=optional_secret(source, TAVILY_API_KEY),
+            amap_webservice_key=optional_secret(source, AMAP_WEBSERVICE_KEY),
+        ),
     )

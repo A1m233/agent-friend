@@ -18,7 +18,16 @@ from typing import TYPE_CHECKING
 from memory.search import MemorySearchService, QueryAnalyzer
 
 from ..memory_search import SessionHistorySource
+from .builtin.calculate import CalculateTool
 from .builtin.conversation_history import ConversationHistoryTool
+from .builtin.datetime_calculate import DateTimeCalculateTool
+from .builtin.nearby_place_search import (
+    NearbyPlaceProvider,
+    NearbyPlaceSearchTool,
+    UnavailableNearbyPlaceProvider,
+)
+from .builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from .builtin.web_fetch import TavilyExtractProvider, WebFetchTool
 from .builtin.web_search import WebSearchTool
 from .builtin.web_search.providers.tavily import TavilyProvider
 from .protocol import Tool
@@ -33,9 +42,10 @@ def make_default_registry(
     *,
     memory_search: MemorySearchService | None = None,
     tavily_api_key: str | None = None,
+    amap_webservice_key: str | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
-    """构造默认 registry。本期按当前可用资源装配两个内置工具。
+    """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
 
     Args:
         session_store: 020 起新增。非 ``None`` 时注册 :class:`ConversationHistoryTool`
@@ -45,22 +55,28 @@ def make_default_registry(
             （详见 020 design §5.2 N-4）。
         tavily_api_key: Tavily API key。新桌面主路径由 runtime config 显式注入；
             ``None`` 时保留旧的 process env fallback。
+        amap_webservice_key: 高德 Web 服务 Key。新桌面主路径由 runtime config
+            显式注入；``None`` 时保留 process env fallback。无 Key 时仍注册地点
+            工具，并在调用时返回可恢复的配置提示。
         stderr_warn: 未配置 ``TAVILY_API_KEY`` 时是否往 stderr 打一行提示。
             默认开启；测试场景可传 ``False`` 关闭以避免日志噪声。
 
     Returns:
         :class:`ToolRegistry`：
 
-        - ``TAVILY_API_KEY`` 已配置 → 含 :class:`WebSearchTool`（Tavily provider）
+        - 始终包含 ``calculate`` 与 ``datetime_calculate``
+        - ``TAVILY_API_KEY`` 已配置 → 含 ``web_search`` 与 ``web_fetch``
+        - 始终包含 ``nearby_place_search``；无高德 Key 时返回配置提示
         - ``session_store`` 非 ``None`` → 含 :class:`ConversationHistoryTool`
-        - 两条都不满足 → 空 registry（保证未配置工具的用户也能正常使用基础对话）
+        - 网络与记忆条件都不满足 → 仍保留两个本地工具和地点工具表面
     """
-    tools: list[Tool] = []
+    tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
 
     api_key = tavily_api_key or os.environ.get("TAVILY_API_KEY")
     if api_key:
         provider = TavilyProvider(api_key=api_key)
         tools.append(WebSearchTool(provider=provider))
+        tools.append(WebFetchTool(provider=TavilyExtractProvider(api_key=api_key)))
     elif stderr_warn:
         print(
             "[tool] 未配置 TAVILY_API_KEY，搜索能力已关闭。"
@@ -68,6 +84,19 @@ def make_default_registry(
             "存量脚本可显式使用 legacy-dotenv。",
             file=sys.stderr,
         )
+
+    amap_key = amap_webservice_key or os.environ.get("AMAP_WEBSERVICE_KEY")
+    nearby_provider: NearbyPlaceProvider
+    if amap_key:
+        nearby_provider = AmapNearbyPlaceProvider(api_key=amap_key)
+    else:
+        nearby_provider = UnavailableNearbyPlaceProvider()
+        if stderr_warn:
+            print(
+                "[tool] 未配置 AMAP_WEBSERVICE_KEY，附近地点查询需要先在设置页配置。",
+                file=sys.stderr,
+            )
+    tools.append(NearbyPlaceSearchTool(provider=nearby_provider))
 
     if memory_search is None and session_store is not None:
         memory_search = MemorySearchService(

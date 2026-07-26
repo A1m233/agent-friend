@@ -231,12 +231,31 @@ class AgentRuntime:
         """
         pre = self._hooks.run_pre_tool_use(name, args)
         if pre.block:
-            result = ToolResult(text=pre.blocked_result_text, is_error=True)
+            result = ToolResult(
+                text=pre.blocked_result_text,
+                is_error=True,
+                meta={"error_kind": "blocked"},
+            )
             self._hooks.run_post_tool_use(name, args, result)
             return result
         result = default_invoke()
         self._hooks.run_post_tool_use(name, args, result)
         return result
+
+    def pre_tool_hook(self, name: str, args: dict[str, Any]) -> ToolResult | None:
+        """Run ordered PreToolUse hooks without executing the tool body."""
+        decision = self._hooks.run_pre_tool_use(name, args)
+        if not decision.block:
+            return None
+        return ToolResult(
+            text=decision.blocked_result_text,
+            is_error=True,
+            meta={"error_kind": "blocked"},
+        )
+
+    def post_tool_hook(self, name: str, args: dict[str, Any], result: ToolResult) -> None:
+        """Run ordered PostToolUse hooks after the coordinator accepts a result."""
+        self._hooks.run_post_tool_use(name, args, result)
 
     def start(self) -> None:
         """启动各 EventSource + dispatch thread；idempotent。"""

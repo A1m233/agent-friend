@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+AMAP_WEBSERVICE_KEY = "AMAP_WEBSERVICE_KEY"
 DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
 DEEPSEEK_MODEL = "DEEPSEEK_MODEL"
 DEEPSEEK_MEMORY_MODEL = "DEEPSEEK_MEMORY_MODEL"
@@ -36,6 +37,7 @@ CREDENTIAL_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
+    AMAP_WEBSERVICE_KEY,
     DEEPSEEK_API_KEY,
     KIMI_API_KEY,
     TAVILY_API_KEY,
@@ -50,7 +52,7 @@ ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
 
 # The newer Volc speech APP Key is optional while the legacy App ID + Access
 # Token authentication path remains supported by voice_bridge.
-OPTIONAL_CREDENTIAL_NAMES = frozenset({VOLC_SPEECH_API_KEY})
+OPTIONAL_CREDENTIAL_NAMES = frozenset({AMAP_WEBSERVICE_KEY, VOLC_SPEECH_API_KEY})
 REQUIRED_CREDENTIAL_NAMES: tuple[str, ...] = tuple(
     name for name in ALL_CREDENTIAL_NAMES if name not in OPTIONAL_CREDENTIAL_NAMES
 )
@@ -58,6 +60,7 @@ REQUIRED_CREDENTIAL_NAMES: tuple[str, ...] = tuple(
 RUNTIME_ONLY_NAMES = frozenset({VOICE_BRIDGE_PUBLIC_URL})
 
 CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {
+    "amap": (AMAP_WEBSERVICE_KEY,),
     "deepseek": (DEEPSEEK_API_KEY,),
     "kimi": (KIMI_API_KEY,),
     "tavily": (TAVILY_API_KEY,),
@@ -103,6 +106,7 @@ class ToolCredentials:
     """Optional tool credentials for agent runtime assembly."""
 
     tavily_api_key: str | None = None
+    amap_webservice_key: str | None = None
 
 
 @dataclass(frozen=True)

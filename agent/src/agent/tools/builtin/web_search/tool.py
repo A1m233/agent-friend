@@ -124,6 +124,8 @@ class WebSearchTool:
     """
 
     name: ClassVar[str] = "web_search"
+    execution_kind: ClassVar[str] = "parallel_read"
+    timeout_seconds: ClassVar[float] = 30.0
     description: ClassVar[str] = (
         "搜索互联网获取实时或可能变化的信息。\n\n"
         "**何时使用**：\n"
@@ -191,6 +193,7 @@ class WebSearchTool:
                 "duration_seconds": duration,
                 "result_count": len(hits),
                 "provider": self._provider.name,
+                "source_urls": [hit.url for hit in hits],
             },
         )
 

@@ -18,6 +18,14 @@ from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 
 import pytest
+from agent.tool_runtime import ToolRunPolicy
+from agent.tools.builtin.nearby_place_search import (
+    AnchorCandidate,
+    NearbyPlace,
+    NearbyPlaceSearchTool,
+    PlaceSort,
+)
+from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
 from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from agent import (
@@ -115,6 +123,45 @@ class SwitchModelTool:
         return ToolResult(text="switched")
 
 
+class NearbyPlaceProviderStub:
+    """为 Conversation 集成测试提供确定性的地点结果。"""
+
+    name: ClassVar[str] = "stub"
+
+    def search_anchors(self, *, near: str, city: str | None) -> tuple[AnchorCandidate, ...]:
+        return (
+            AnchorCandidate(
+                ref="anchor-1",
+                name="福民银行",
+                address="广东省深圳市福田区福民路1号",
+                city="深圳市",
+                district="福田区",
+                longitude=114.055,
+                latitude=22.521,
+            ),
+        )
+
+    def get_anchor(self, *, ref: str) -> AnchorCandidate | None:
+        return None
+
+    def search_nearby(
+        self,
+        *,
+        query: str,
+        anchor: AnchorCandidate,
+        radius_meters: int,
+        sort: PlaceSort,
+        limit: int,
+    ) -> tuple[NearbyPlace, ...]:
+        return (
+            NearbyPlace(
+                name="证件照相馆",
+                distance_meters=320,
+                address="广东省深圳市福田区福强路2号",
+            ),
+        )
+
+
 # ---- Scripted fake LLM ----
 
 
@@ -158,6 +205,7 @@ def _make_conversation(
     fake_llm: LLMClient | _ScriptedLLMClient,
     registry: ToolRegistry | None = None,
     llm_client_factory: Any | None = None,
+    tool_run_policy: ToolRunPolicy | None = None,
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
@@ -185,6 +233,7 @@ def _make_conversation(
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=registry,
+        tool_run_policy=tool_run_policy,
     )
 
 
@@ -365,6 +414,58 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_nearby_place_search_uses_existing_tool_event_loop(tmp_path: Path) -> None:
+    """真实地点工具经通用事件链执行，并把范围证据交回模型整合。"""
+    tool = NearbyPlaceSearchTool(NearbyPlaceProviderStub())
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="nearby-1",
+                    tool_name="nearby_place_search",
+                    args_json_delta=json.dumps(
+                        {
+                            "query": "照相馆",
+                            "near": "福民银行",
+                            "city": "深圳",
+                            "sort": "distance",
+                        }
+                    ),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMTextDelta(
+                    text=(
+                        "以福民银行为中心 5 公里内，最近的是证件照相馆，约 320 米，"
+                        "完整地址为广东省深圳市福田区福强路2号。"
+                    )
+                ),
+                LLMTurnDone(stop_reason="end_turn"),
+            ],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([tool]))
+
+    events = list(conv.stream("帮我找福民银行附近最近的照相点"))
+
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    payload = json.loads(result.text)
+    assert result.is_error is False
+    assert payload["status"] == "success"
+    assert payload["search_area"]["description"] == "以福民银行为中心 5 公里内"
+    assert payload["places"][0]["distance_meters"] == 320
+    assert [event.type for event in conv.session.events].count("tool_call_result") == 1
+
+    tool_message = next(message for message in fake.received[1] if message.get("role") == "tool")
+    assert json.loads(tool_message["content"])["search_area"]["radius_meters"] == 5000
+    assert "5 公里内" in "".join(event.text for event in events if isinstance(event, TextDelta))
+    assert "广东省深圳市福田区福强路2号" in "".join(
+        event.text for event in events if isinstance(event, TextDelta)
+    )
 
 
 def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_path: Path) -> None:
@@ -625,13 +726,8 @@ def test_tool_failure_does_not_break_loop(tmp_path: Path) -> None:
 # ===== 触上限 =====
 
 
-def test_tool_loop_max_turns_triggers_finalization(tmp_path: Path) -> None:
-    """LLM 持续 stop_reason=tool_use 直至循环上限 → 触发兜底，输出收尾文本。
-
-    默认 ``MAX_TOOL_TURNS_DEFAULT = 5``：循环 ``range(6) = 0..5``；前 5 轮各
-    执行一次 tool（turn 0..4），turn 5 LLM 完成后 ``turn_idx >= 5`` break，
-    不再执行 tool；进入兜底再调一次 LLM（``tools=None``）输出收尾文本。
-    """
+def test_explicit_continuation_budget_triggers_finalization(tmp_path: Path) -> None:
+    """显式 continuation 预算触发后禁用工具并收尾。"""
     echo = EchoTool()
     registry = ToolRegistry([echo])
 
@@ -655,21 +751,248 @@ def test_tool_loop_max_turns_triggers_finalization(tmp_path: Path) -> None:
             ],
         ]
     )
-    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry)
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=registry,
+        tool_run_policy=ToolRunPolicy(max_model_continuations=5),
+    )
 
     events = list(conv.stream("loop forever"))
     dones = [ev for ev in events if isinstance(ev, TurnDone)]
 
     assert len(dones) == 1
-    assert dones[0].stop_reason == "max_turns_reached"
-    assert dones[0].total_tool_calls == 5
+    assert dones[0].stop_reason == "budget_exhausted"
+    assert dones[0].budget_dimension == "model_continuations"
+    assert dones[0].total_tool_calls == 6
 
     text = "".join(ev.text for ev in events if isinstance(ev, TextDelta))
     assert "尽力了" in text
 
-    assert echo.call_count == 5
+    assert echo.call_count == 6
 
     # 兜底调用（最后一次 LLM 调用）messages 应包含 "不要再调用任何工具" 的 system msg
     finalization_messages = fake.received[-1]
     system_msgs = [m for m in finalization_messages if m.get("role") == "system"]
     assert any("不要再调用任何工具" in m["content"] for m in system_msgs)
+
+
+def test_default_policy_can_complete_after_more_than_five_continuations(tmp_path: Path) -> None:
+    echo = EchoTool()
+    registry = ToolRegistry([echo])
+
+    def tool_use_events(call_id: str) -> list[LLMStreamEvent]:
+        return [
+            LLMToolCallDelta(
+                index=0,
+                tool_call_id=call_id,
+                tool_name="echo",
+                args_json_delta=json.dumps({"message": call_id}),
+            ),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+
+    fake = _ScriptedLLMClient(
+        script=[tool_use_events(f"call_{i}") for i in range(7)]
+        + [[LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry)
+    events = list(conv.stream("long but useful"))
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.stop_reason == "end_turn"
+    assert done.total_tool_calls == 7
+    assert done.model_continuations == 7
+    final_assistant = [event for event in conv.session.events if event.type == "assistant_message"][
+        -1
+    ]
+    assert final_assistant.meta["tool_run"]["total_tool_calls"] == 7
+
+
+def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: Path) -> None:
+    target = "https://example.com/source"
+
+    class SearchTool:
+        name: ClassVar[str] = "web_search"
+        description: ClassVar[str] = "test search"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult("search result", meta={"source_urls": [target]})
+
+    class FetchProvider:
+        name: ClassVar[str] = "fake"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            self.calls += 1
+            return ExtractedContent(url, url, "verified source")
+
+    provider = FetchProvider()
+    registry = ToolRegistry([SearchTool(), WebFetchTool(provider)])
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "search-1", "web_search", '{"query":"x"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(0, "fetch-1", "web_fetch", json.dumps({"url": target})),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="verified"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry)
+    events = list(conv.stream("check"))
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    assert provider.calls == 1
+    assert [event.is_error for event in results] == [False, False]
+    search_event = next(
+        event
+        for event in conv.session.events
+        if event.type == "tool_call_result" and event.payload["tool_name"] == "web_search"
+    )
+    assert "source_urls" not in search_event.meta.get("extra", {})
+
+
+def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> None:
+    class FetchProvider:
+        name: ClassVar[str] = "fake"
+
+        def extract(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            raise AssertionError("unauthorized provider call")
+
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    0,
+                    "fetch-1",
+                    "web_fetch",
+                    '{"url":"https://example.com/not-provided"}',
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="cannot read"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    registry = ToolRegistry([WebFetchTool(FetchProvider())])
+    events = list(_make_conversation(tmp_path, fake_llm=fake, registry=registry).stream("check"))
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert result.is_error
+    assert "不是用户本轮提供" in result.text
+
+
+def test_datetime_tool_receives_hidden_trusted_runtime_without_persisting_it(
+    tmp_path: Path,
+) -> None:
+    seen_args: list[dict[str, Any]] = []
+
+    class CaptureDateTool:
+        name: ClassVar[str] = "datetime_calculate"
+        description: ClassVar[str] = "capture runtime"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            seen_args.append(args)
+            return ToolResult("ok")
+
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "date-1", "datetime_calculate", '{"date":"$today"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([CaptureDateTool()]))
+    list(conv.stream("今天星期几"))
+    assert "__agent_friend_runtime_now" in seen_args[0]
+    request = next(event for event in conv.session.events if event.type == "tool_call_request")
+    assert "__agent_friend_runtime_now" not in request.payload["args"]
+
+
+def test_repeated_identical_failures_stop_as_no_progress(tmp_path: Path) -> None:
+    fail = FailingTool()
+    registry = ToolRegistry([fail])
+    repeated: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(0, f"fail-{index}", "fail_tool", "{}"),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+        for index in range(3)
+    ]
+    fake = _ScriptedLLMClient(
+        script=[*repeated, [LLMTextDelta(text="stopped"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    events = list(_make_conversation(tmp_path, fake_llm=fake, registry=registry).stream("retry"))
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.stop_reason == "no_progress"
+    assert done.total_tool_calls == 3
+
+
+def test_soft_budget_reminder_is_injected_once(tmp_path: Path) -> None:
+    echo = EchoTool()
+    calls: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(
+                0,
+                f"echo-{index}",
+                "echo",
+                json.dumps({"message": str(index)}),
+            ),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+        for index in range(2)
+    ]
+    fake = _ScriptedLLMClient(
+        script=[*calls, [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+        tool_run_policy=ToolRunPolicy(max_model_continuations=3, soft_limit_ratio=0.5),
+    )
+    list(conv.stream("work"))
+    reminders = [
+        message["content"]
+        for request in fake.received
+        for message in request
+        if message.get("role") == "system" and "工具运行预算即将到达边界" in message["content"]
+    ]
+    assert len(reminders) == 1
+
+
+def test_call_budget_executes_only_original_order_prefix_and_closes_all_calls(
+    tmp_path: Path,
+) -> None:
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "one", "echo", '{"message":"one"}'),
+                LLMToolCallDelta(1, "two", "echo", '{"message":"two"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="partial evidence"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+        tool_run_policy=ToolRunPolicy(max_total_tool_calls=1),
+    )
+    events = list(conv.stream("two calls"))
+    requests = [event for event in events if isinstance(event, ToolCallRequest)]
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert echo.call_count == 1
+    assert len(requests) == len(results) == 2
+    assert results[1].is_error and "预算" in results[1].text
+    assert done.stop_reason == "budget_exhausted"
+    assert done.budget_dimension == "total_tool_calls"

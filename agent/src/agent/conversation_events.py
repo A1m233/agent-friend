@@ -102,12 +102,16 @@ class TurnDone:
         stop_reason: 结束原因。常见值：
 
             - ``"end_turn"`` — LLM 主动结束（无工具调用 或 整合工具结果后结束）
-            - ``"max_turns_reached"`` — 触工具调用循环上限（已走过收尾兜底逻辑）
+            - ``"budget_exhausted"`` — 显式运行预算耗尽（已走收尾兜底逻辑）
+            - ``"no_progress"`` — 连续重复失败触发无进展保护
         total_tool_calls: 本轮累计执行的工具调用次数（含失败）。
     """
 
     stop_reason: str = ""
     total_tool_calls: int = 0
+    model_continuations: int = 0
+    elapsed_seconds: float = 0.0
+    budget_dimension: str | None = None
     type: Literal["done"] = "done"
 
 

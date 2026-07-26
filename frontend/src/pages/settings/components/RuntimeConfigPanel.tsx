@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
 import {
   Badge,
@@ -17,12 +18,18 @@ import {
 } from "@/lib/model-config";
 import {
   describeRuntimeConfigEffect,
+  persistBridgeRuntimeSetting,
   type RuntimeConfigItemStatus,
   type RuntimeConfigSource,
   type RuntimeSecretName,
   useRuntimeConfig,
 } from "@/lib/runtime-config";
-import { useSetting, type ModelProvider, type ModelSelection } from "@/lib/settings";
+import {
+  setSetting,
+  useSetting,
+  type ModelProvider,
+  type ModelSelection,
+} from "@/lib/settings";
 import {
   RuntimeSecretList,
   type RuntimeSecretListItem,
@@ -32,6 +39,7 @@ import { SettingsPageLayout } from "./SettingsPageLayout";
 import { SettingsRow } from "./SettingsRow";
 
 const SECRET_LABELS: Record<RuntimeSecretName, string> = {
+  AMAP_WEBSERVICE_KEY: "高德 Web Service Key",
   DEEPSEEK_API_KEY: "DeepSeek API Key",
   KIMI_API_KEY: "Kimi API Key",
   TAVILY_API_KEY: "Tavily API Key",
@@ -104,11 +112,13 @@ function ModelSelectionRows({
   purpose,
   modelLabel,
   onChange,
+  disabled,
 }: {
   selection: ModelSelection;
   purpose: "chat" | "memory";
   modelLabel: string;
   onChange: (next: ModelSelection) => Promise<void>;
+  disabled?: boolean;
 }) {
   const catalog = useModelCatalogStore((state) => state.catalog);
   const providers = modelProvidersFromCatalog(catalog);
@@ -119,6 +129,7 @@ function ModelSelectionRows({
       <SettingsRow label="供应商">
         <Select
           value={selection.provider}
+          disabled={disabled}
           onValueChange={(value) =>
             void (() => {
               const next = defaultModelSelection(value as ModelProvider, purpose);
@@ -141,6 +152,7 @@ function ModelSelectionRows({
       <SettingsRow label={modelLabel}>
         <Select
           value={selection.model}
+          disabled={disabled}
           onValueChange={(value) =>
             void onChange({ provider: selection.provider, model: value })
           }
@@ -162,8 +174,9 @@ function ModelSelectionRows({
 }
 
 export function RuntimeConfigPanel() {
-  const [chatModel, setChatModel] = useSetting("chatModel");
-  const [memoryModel, setMemoryModel] = useSetting("memoryModel");
+  const [chatModel] = useSetting("chatModel");
+  const [memoryModel] = useSetting("memoryModel");
+  const [savingModel, setSavingModel] = useState<"chatModel" | "memoryModel" | null>(null);
   const {
     snapshot,
     loading,
@@ -183,6 +196,31 @@ export function RuntimeConfigPanel() {
     () => new Map(snapshot.items.map((item) => [item.name, item] as const)),
     [snapshot.items],
   );
+
+  async function saveModelSetting(
+    key: "chatModel" | "memoryModel",
+    selection: ModelSelection,
+  ): Promise<void> {
+    setSavingModel(key);
+    try {
+      const result = await persistBridgeRuntimeSetting(() =>
+        setSetting(key, selection),
+      );
+      if (result.applied) {
+        toast.success("模型设置已保存并生效", {
+          description: "对话服务已自动重启",
+        });
+      } else {
+        toast.warning("模型设置已保存，但尚未应用", {
+          description: result.applyError ?? undefined,
+        });
+      }
+    } catch (error) {
+      toast.error("模型设置保存失败", { description: String(error) });
+    } finally {
+      setSavingModel(null);
+    }
+  }
 
   return (
     <SettingsPageLayout
@@ -206,7 +244,8 @@ export function RuntimeConfigPanel() {
           selection={chatModel}
           purpose="chat"
           modelLabel="主对话模型"
-          onChange={setChatModel}
+          onChange={(selection) => saveModelSetting("chatModel", selection)}
+          disabled={savingModel !== null}
         />
       </SettingsGroup>
 
@@ -215,7 +254,8 @@ export function RuntimeConfigPanel() {
           selection={memoryModel}
           purpose="memory"
           modelLabel="记忆模型"
-          onChange={setMemoryModel}
+          onChange={(selection) => saveModelSetting("memoryModel", selection)}
+          disabled={savingModel !== null}
         />
       </SettingsGroup>
 
@@ -252,6 +292,25 @@ export function RuntimeConfigPanel() {
         </SettingsRow>
         <RuntimeSecretList
           items={secretItems({ names: ["TAVILY_API_KEY"], statuses })}
+          savingName={savingName}
+          onSave={saveSecret}
+          onDelete={removeSecret}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup title="地图与地点">
+        <SettingsRow label="供应商">
+          <Select value="amap" disabled>
+            <SelectTrigger className="min-w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="amap">高德地图</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <RuntimeSecretList
+          items={secretItems({ names: ["AMAP_WEBSERVICE_KEY"], statuses })}
           savingName={savingName}
           onSave={saveSecret}
           onDelete={removeSecret}

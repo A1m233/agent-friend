@@ -140,7 +140,10 @@ def encode_streaming(
                         finish_reason=None,
                     )
                 )
-            elif isinstance(ev, TurnDone) and ev.stop_reason == "max_turns_reached":
+            elif isinstance(ev, TurnDone) and ev.stop_reason in {
+                "max_turns_reached",
+                "budget_exhausted",
+            }:
                 finish_reason = "length"
             # ToolCallRequest / ToolCallResult: OpenAI 协议下不外露
         if run_handle is not None:
@@ -243,7 +246,10 @@ def encode_nonstreaming(
                 logger.warning("listener fan_out 失败", exc_info=True)
         if isinstance(ev, TextDelta):
             text_parts.append(ev.text)
-        elif isinstance(ev, TurnDone) and ev.stop_reason == "max_turns_reached":
+        elif isinstance(ev, TurnDone) and ev.stop_reason in {
+            "max_turns_reached",
+            "budget_exhausted",
+        }:
             finish_reason = "length"
 
     if run_handle is not None:
