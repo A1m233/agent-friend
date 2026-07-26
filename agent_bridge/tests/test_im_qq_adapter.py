@@ -19,13 +19,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_bridge.protocols.im.adapters.qq import QQAdapter
-from agent_bridge.protocols.im.content import OutboundContent
+from agent_bridge.protocols.im.content import OutboundAction, OutboundContent, OutboundControls
 from agent_bridge.protocols.im.control import menu_controls
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
@@ -341,7 +342,10 @@ async def test_send_nonzero_code_logs_warning_no_raise(
 
 
 @pytest.mark.asyncio
-async def test_send_menu_keyboard_marks_capability_supported(adapter: QQAdapter) -> None:
+async def test_send_menu_keyboard_marks_capability_supported(
+    adapter: QQAdapter, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="agent_bridge.protocols.im.adapters.qq")
     mock_api = MagicMock()
     mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
     adapter._api = mock_api
@@ -358,7 +362,58 @@ async def test_send_menu_keyboard_marks_capability_supported(adapter: QQAdapter)
     keyboard = mock_api.post_c2c_message.await_args.kwargs["keyboard"]
     button = keyboard.content.rows[0].buttons[0]
     assert button.render_data.label == "☰ 菜单"
+    wire_button = keyboard.to_dict()["content"]["rows"][0]["buttons"][0]
+    assert "group_id" not in wire_button
+    assert wire_button["action"]["click_limit"] == 1000
+    assert "visited_label" not in wire_button["render_data"]
     assert adapter.controls_capability() == "supported"
+
+    send_log = next(
+        record for record in caplog.records if record.getMessage().startswith("QQ outbound send")
+    )
+    assert isinstance(send_log.args, tuple)
+    assert send_log.args[-3:] == (0, 1, 0)
+
+
+@pytest.mark.asyncio
+async def test_keyboard_normalizes_duplicate_and_illegal_button_ids(adapter: QQAdapter) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+    controls = OutboundControls(
+        rows=(
+            (
+                OutboundAction(
+                    id="duplicate:id",
+                    label="A",
+                    visited_label="A",
+                    payload="payload-a",
+                    click_limit=2,
+                ),
+                OutboundAction(
+                    id="duplicate:id",
+                    label="B",
+                    visited_label="B",
+                    payload="payload-b",
+                ),
+            ),
+        )
+    )
+
+    await adapter.send(
+        OutboundContent(chat_id="OPENID-DEST", chat_scope="c2c", text="menu", controls=controls)
+    )
+
+    keyboard = mock_api.post_c2c_message.await_args.kwargs["keyboard"]
+    buttons = keyboard.content.rows[0].buttons
+    assert len({button.id for button in buttons}) == 2
+    assert all(button.id.startswith("af-") and len(button.id) == 19 for button in buttons)
+    assert [button.action.data for button in buttons] == ["payload-a", "payload-b"]
+    wire_buttons = keyboard.to_dict()["content"]["rows"][0]["buttons"]
+    assert all("group_id" not in button for button in wire_buttons)
+    assert [button["action"]["click_limit"] for button in wire_buttons] == [2, 1000]
+    assert wire_buttons[0]["render_data"]["visited_label"] == "A"
+    assert "visited_label" not in wire_buttons[1]["render_data"]
 
 
 @pytest.mark.asyncio
@@ -367,6 +422,34 @@ async def test_keyboard_rejection_retries_plain_and_marks_unsupported(adapter: Q
     mock_api.post_c2c_message = AsyncMock(
         side_effect=[
             {"code": 11244, "message": "机器人没有 keyboard 权限"},
+            {"code": 0},
+        ]
+    )
+    adapter._api = mock_api
+
+    await adapter.send(
+        OutboundContent(
+            chat_id="OPENID-DEST",
+            chat_scope="c2c",
+            text="reply",
+            controls=menu_controls(),
+        )
+    )
+
+    assert mock_api.post_c2c_message.await_count == 2
+    assert mock_api.post_c2c_message.await_args_list[0].kwargs["keyboard"] is not None
+    assert "keyboard" not in mock_api.post_c2c_message.await_args_list[1].kwargs
+    assert adapter.controls_capability() == "unsupported"
+
+
+@pytest.mark.asyncio
+async def test_keyboard_http_rejection_retries_plain_and_marks_unsupported(
+    adapter: QQAdapter,
+) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(
+        side_effect=[
+            RuntimeError("QQ Bot API error [400]: 请求参数rows.buttons.group_id无效"),
             {"code": 0},
         ]
     )

@@ -124,7 +124,9 @@ async def test_menu_switches_future_session_without_routing_control_to_agent(
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
     assert menu.text == "当前会话：Alpha\n当前模型：model-a"
+    assert menu.text_format == "markdown"
     assert menu.controls is not None
+    assert menu.controls.rows[0][0].click_limit is None
     session_menu_payload = menu.controls.rows[0][0].payload
 
     await service.handle(cast(IMProvider, provider), interaction(session_menu_payload))
@@ -141,7 +143,74 @@ async def test_menu_switches_future_session_without_routing_control_to_agent(
     key = IMBindingKey("qq", "OPENID-USER", "c2c", "OPENID-USER")
     assert state.get_binding(key).session_id == "SESSION-B"  # type: ignore[union-attr]
     assert provider.sent[-1].controls is None
+    assert provider.sent[-1].text_format == "plain_text"
     assert "最近回复：最近一条回复" in provider.sent[-1].text
+
+
+@pytest.mark.asyncio
+async def test_dynamic_menu_button_can_be_reused_within_token_ttl(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, _models = make_service(tmp_path)
+
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    session_menu_payload = menu.controls.rows[0][0].payload
+
+    await service.handle(cast(IMProvider, provider), interaction(session_menu_payload))
+    first_page = provider.sent[-1]
+    await service.handle(cast(IMProvider, provider), interaction(session_menu_payload))
+    second_page = provider.sent[-1]
+
+    assert first_page.text == second_page.text == "选择会话（第 1/1 页）"
+    assert second_page.controls is not None
+
+
+@pytest.mark.asyncio
+async def test_session_pagination_keeps_ids_unique_for_same_prefixes(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, _models = make_service(tmp_path)
+    sessions = cast(Any, service._sessions)
+    now = datetime.now(UTC)
+    sessions.summaries = [
+        SimpleNamespace(session_id=f"ordinary-{index}", title=f"Ordinary {index}", updated_at=now)
+        for index in range(8)
+    ] + [
+        SimpleNamespace(
+            session_id=f"acceptance-059-{kind}-{index}",
+            title=f"Acceptance {index}",
+            updated_at=now,
+        )
+        for index, kind in enumerate(("image", "pdf", "txt", "image-extra"))
+    ]
+
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][0].payload))
+    first_page = provider.sent[-1]
+    assert first_page.controls is not None
+    next_payload = next(
+        action.payload
+        for row in first_page.controls.rows
+        for action in row
+        if action.label == "下一页"
+    )
+    await service.handle(cast(IMProvider, provider), interaction(next_payload))
+    second_page = provider.sent[-1]
+    assert second_page.controls is not None
+    next_payload = next(
+        action.payload
+        for row in second_page.controls.rows
+        for action in row
+        if action.label == "下一页"
+    )
+    await service.handle(cast(IMProvider, provider), interaction(next_payload))
+
+    third_page = provider.sent[-1]
+    assert third_page.text == "选择会话（第 3/3 页）"
+    assert third_page.controls is not None
+    ids = [action.id for row in third_page.controls.rows for action in row]
+    assert len(ids) == len(set(ids))
+    assert all(":" not in action_id for action_id in ids)
 
 
 @pytest.mark.asyncio

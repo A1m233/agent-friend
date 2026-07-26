@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import secrets
 import threading
 import time
@@ -70,14 +71,14 @@ class _ControlTokenRegistry:
             )
         return f"{_TOKEN_PREFIX}{token}"
 
-    def consume(self, payload: str) -> _ControlAction | None:
+    def resolve(self, payload: str) -> _ControlAction | None:
         if not payload.startswith(_TOKEN_PREFIX):
             return None
         token = payload.removeprefix(_TOKEN_PREFIX)
         now = time.monotonic()
         with self._lock:
-            entry = self._entries.pop(token, None)
             self._prune(now)
+            entry = self._entries.get(token)
         if entry is None or entry.expires_at <= now:
             return None
         return entry.action
@@ -132,7 +133,7 @@ class IMControlService:
             await self._send_main_menu(provider, key)
             return
 
-        action = self._tokens.consume(event.payload)
+        action = self._tokens.resolve(event.payload)
         if action is None or action.key != key:
             await self._send_text(
                 provider,
@@ -190,7 +191,7 @@ class IMControlService:
             rows.append(
                 (
                     self._token_button(
-                        f"session-{summary.session_id[:12]}",
+                        _session_button_id(summary.session_id),
                         _truncate(f"{prefix}{summary.title}", 28),
                         key,
                         "switch_session",
@@ -366,7 +367,9 @@ class IMControlService:
                 chat_id=key.chat_id,
                 chat_scope=key.chat_scope,
                 text=text,
-                text_format="plain_text",
+                # QQ only renders inline keyboards reliably on Markdown messages.
+                # Keep control-free notices as plain text to preserve their literal text.
+                text_format="markdown" if controls is not None else "plain_text",
                 controls=controls,
             )
         )
@@ -384,6 +387,12 @@ def _model_options() -> list[tuple[str, str]]:
                 if model_id:
                     result.append((model_id, str(model.get("label", model_id))))
     return result
+
+
+def _session_button_id(session_id: str) -> str:
+    """Build a QQ-safe stable ID without leaking or truncating the session ID."""
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+    return f"session-{digest}"
 
 
 def _last_assistant_preview(session: object) -> str:

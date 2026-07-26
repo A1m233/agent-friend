@@ -42,6 +42,10 @@ class OnboardStartBody(BaseModel):
     """``POST /v1/im/onboard/start`` 请求体。"""
 
     im_type: Literal["qq"] = Field(..., description="目标 IM 类型;本期仅支持 qq")
+    conflict_policy: Literal["replace", "reject"] = Field(
+        default="replace",
+        description="同一绑定已存在时替换旧连接或拒绝本次接入",
+    )
 
 
 class OnboardStartResponse(BaseModel):
@@ -87,7 +91,10 @@ def register_routes(
         """启动一次扫码 onboard;返回 ``task_id`` 给前端轮询。"""
         _require_im_runtime()  # 仅检查 im_runtime 已装配
         try:
-            task_id = await onboard_registry.start(body.im_type)
+            task_id = await onboard_registry.start(
+                body.im_type,
+                replace_existing=body.conflict_policy == "replace",
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return OnboardStartResponse(task_id=task_id)

@@ -39,7 +39,7 @@ class OutboundAction:
     visited_label: str
     payload: str
     style: Literal["default", "primary"] = "default"
-    click_limit: int = 1
+    click_limit: int | None = None
 
 
 @dataclass(frozen=True)

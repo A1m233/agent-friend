@@ -44,9 +44,18 @@ if TYPE_CHECKING:
     from .control import IMControlService
     from .router import IMRouter
 
-__all__ = ["IMDesiredOnlineSnapshot", "IMRuntime", "ProviderInfo"]
+__all__ = [
+    "IMDesiredOnlineSnapshot",
+    "IMProviderAlreadyRegisteredError",
+    "IMRuntime",
+    "ProviderInfo",
+]
 
 logger = logging.getLogger(__name__)
+
+
+class IMProviderAlreadyRegisteredError(RuntimeError):
+    """Raised when add-only onboarding collides with an existing binding."""
 
 
 @dataclass(frozen=True)
@@ -184,14 +193,26 @@ class IMRuntime:
     # External API(给 routes / onboard 用)
     # ------------------------------------------------------------------
 
-    def register_after_onboard(self, cred: ImCredential) -> None:
+    def register_after_onboard(
+        self,
+        cred: ImCredential,
+        *,
+        replace_existing: bool = True,
+    ) -> None:
         """onboard 完成后:落盘凭据 + 立即建 provider 启动。
 
-        如果同 ``(im_type, bind_id)`` 的 provider 已存在,**覆盖**:先 schedule
-        旧的 stop(异步,不阻塞当前调用),再启新的。
+        默认沿用历史行为:如果同 ``(im_type, bind_id)`` 的 provider 已存在,
+        **覆盖**旧连接。``replace_existing=False`` 用于安全追加账号:冲突时会在
+        凭据落盘和 provider stop 之前抛错,确保原连接完全不受影响。
         """
-        self._credentials.save(cred)
         key = (cred.im_type, _provider_bind_id(cred))
+        if not replace_existing and self._binding_exists(key):
+            raise IMProviderAlreadyRegisteredError(
+                "IM binding already exists; add-only onboarding refused to replace it: "
+                f"im_type={cred.im_type}, bind_id={_mask(key[1])}"
+            )
+
+        self._credentials.save(cred)
         with self._desired_bindings_lock:
             self._desired_bindings.add(key)
         old = self._providers.pop(key, None)
@@ -202,6 +223,17 @@ class IMRuntime:
             self._background_stops.add(task)
             task.add_done_callback(self._background_stops.discard)
         self._spawn_provider(cred)
+
+    def _binding_exists(self, key: tuple[str, str]) -> bool:
+        """Check runtime and persisted desired state before an add-only write."""
+        if key in self._providers:
+            return True
+        with self._desired_bindings_lock:
+            if key in self._desired_bindings:
+                return True
+        return any(
+            (cred.im_type, _provider_bind_id(cred)) == key for cred in self._credentials.list_all()
+        )
 
     async def unbind(self, im_type: str, bind_id: str) -> bool:
         """解绑:stop provider + 删凭据。

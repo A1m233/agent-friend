@@ -53,6 +53,7 @@ class OnboardTaskState:
     bind_id: str | None = None
     bind_id_masked: str | None = None  # SUCCESS 后填(脱敏后)
     error: str | None = None
+    replace_existing: bool = True
     _task: asyncio.Task[None] | None = field(default=None, repr=False, compare=False)
 
 
@@ -74,7 +75,7 @@ class OnboardSessionRegistry:
         self._runtime = im_runtime
         self._tasks: dict[str, OnboardTaskState] = {}
 
-    async def start(self, im_type: str) -> str:
+    async def start(self, im_type: str, *, replace_existing: bool = True) -> str:
         """启动一次 onboard;返回 ``task_id``,前端用它轮询状态。
 
         Raises:
@@ -84,7 +85,11 @@ class OnboardSessionRegistry:
             raise ValueError(f"unsupported IM type for onboard: {im_type}")
 
         task_id = uuid.uuid4().hex
-        state = OnboardTaskState(task_id=task_id, im_type=im_type)
+        state = OnboardTaskState(
+            task_id=task_id,
+            im_type=im_type,
+            replace_existing=replace_existing,
+        )
         self._tasks[task_id] = state
 
         # 把 onboard 流程放后台 task,立刻返回 task_id 给前端
@@ -116,7 +121,10 @@ class OnboardSessionRegistry:
                 client_secret=result.client_secret,
                 user_openid=result.user_openid,
             )
-            self._runtime.register_after_onboard(cred)
+            self._runtime.register_after_onboard(
+                cred,
+                replace_existing=state.replace_existing,
+            )
             state.bind_id = cred.bind_id
             state.bind_id_masked = _mask(cred.bind_id)
             state.status = OnboardStatus.SUCCESS

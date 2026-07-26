@@ -33,7 +33,7 @@ from agent_bridge.protocols.im.onboard import (
     OnboardSessionRegistry,
     OnboardStatus,
 )
-from agent_bridge.protocols.im.runtime import IMRuntime
+from agent_bridge.protocols.im.runtime import IMProviderAlreadyRegisteredError, IMRuntime
 from agent_bridge.protocols.im.state import IMBindingKey, IMStateStore
 
 # ---------- 测试 stub IMProvider(替代 QQAdapter,避免真启 SDK) ----------
@@ -233,6 +233,55 @@ async def test_register_after_onboard_replaces_existing(
     assert runtime._providers[("qq", "OPENID-DUPE")] is new
 
 
+@pytest.mark.asyncio
+async def test_register_after_onboard_add_only_rejects_without_touching_existing(
+    runtime: IMRuntime,
+    credentials: CredentialStore,
+) -> None:
+    """Add-only collision fails before saving or stopping the existing provider."""
+    original_cred = _make_cred("OPENID-DUPE")
+    credentials.save(original_cred)
+    old = _StubProvider(bind_id="OPENID-DUPE", started=True, _status="active")
+    runtime._providers[("qq", "OPENID-DUPE")] = old
+
+    replacement = ImCredential(
+        im_type="qq",
+        bind_id="OPENID-DUPE",
+        app_id="OTHER-APP",
+        client_secret="OTHER-SECRET",
+        user_openid="OPENID-DUPE",
+    )
+    with pytest.raises(IMProviderAlreadyRegisteredError, match="add-only onboarding refused"):
+        runtime.register_after_onboard(replacement, replace_existing=False)
+
+    await asyncio.sleep(0)
+    assert runtime._providers[("qq", "OPENID-DUPE")] is old
+    assert old.stopped is False
+    assert credentials.list_all() == [original_cred]
+
+
+@pytest.mark.asyncio
+async def test_register_after_onboard_add_only_accepts_distinct_binding(
+    runtime: IMRuntime,
+    credentials: CredentialStore,
+) -> None:
+    credentials.save(_make_cred("OPENID-EXISTING"))
+    old = _StubProvider(bind_id="OPENID-EXISTING", started=True, _status="active")
+    runtime._providers[("qq", "OPENID-EXISTING")] = old
+    new = _StubProvider(bind_id="OPENID-NEW")
+
+    with patch.object(runtime, "_build_provider", return_value=new):
+        runtime.register_after_onboard(_make_cred("OPENID-NEW"), replace_existing=False)
+
+    assert runtime._providers[("qq", "OPENID-EXISTING")] is old
+    assert runtime._providers[("qq", "OPENID-NEW")] is new
+    assert old.stopped is False
+    assert {cred.bind_id for cred in credentials.list_all()} == {
+        "OPENID-EXISTING",
+        "OPENID-NEW",
+    }
+
+
 # ---------- unbind ----------
 
 
@@ -414,6 +463,40 @@ async def test_onboard_success_flow(
     assert final.error is None
     # IMRuntime 已经为新凭据 spawn provider
     assert ("qq", "FAKE-OPENID-12345678") in runtime._providers
+
+
+@pytest.mark.asyncio
+async def test_onboard_add_only_collision_marks_failed_without_replacing(
+    onboard_registry: OnboardSessionRegistry,
+    runtime: IMRuntime,
+    credentials: CredentialStore,
+    fake_onboard_result: Any,
+) -> None:
+    original = _make_cred("FAKE-OPENID-12345678")
+    credentials.save(original)
+    old = _StubProvider(
+        bind_id="FAKE-OPENID-12345678",
+        started=True,
+        _status="active",
+    )
+    runtime._providers[("qq", old.bind_id)] = old
+
+    async def fake_start_onboard(*, on_qr_ready: Any) -> Any:
+        on_qr_ready("https://q.qq.com/test")
+        return fake_onboard_result
+
+    with patch("qqbot_agent_sdk.onboard.start_onboard", new=fake_start_onboard):
+        task_id = await onboard_registry.start("qq", replace_existing=False)
+        state = onboard_registry.get(task_id)
+        assert state is not None and state._task is not None
+        await state._task
+
+    assert state.status == OnboardStatus.FAILED
+    assert state.error is not None
+    assert "IMProviderAlreadyRegisteredError" in state.error
+    assert runtime._providers[("qq", old.bind_id)] is old
+    assert old.stopped is False
+    assert credentials.list_all() == [original]
 
 
 # ---------- start: QR_READY 中间状态可见 ----------

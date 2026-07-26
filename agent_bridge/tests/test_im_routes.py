@@ -112,7 +112,23 @@ def test_onboard_start_returns_task_id() -> None:
     resp = client.post("/v1/im/onboard/start", json={"im_type": "qq"})
     assert resp.status_code == 200
     assert resp.json() == {"task_id": "TASK-ABC"}
-    onboard.start.assert_awaited_once_with("qq")
+    onboard.start.assert_awaited_once_with("qq", replace_existing=True)
+
+
+def test_onboard_start_can_reject_existing_binding() -> None:
+    im_runtime = MagicMock()
+    onboard = MagicMock()
+    onboard.start = AsyncMock(return_value="TASK-SAFE")
+    client = TestClient(_make_app(im_runtime, onboard))
+
+    resp = client.post(
+        "/v1/im/onboard/start",
+        json={"im_type": "qq", "conflict_policy": "reject"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"task_id": "TASK-SAFE"}
+    onboard.start.assert_awaited_once_with("qq", replace_existing=False)
 
 
 def test_onboard_start_rejects_invalid_im_type() -> None:

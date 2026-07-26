@@ -49,7 +49,7 @@ from qqbot_agent_sdk.dto import (
 from qqbot_agent_sdk.event_parser import EventParser, InboundEvent
 from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
 
-from ..content import OutboundContent, OutboundControls
+from ..content import OutboundAction, OutboundContent, OutboundControls
 from ..credentials import ImCredential
 from ..event import InboundInteraction
 from ..provider import ProviderStatus
@@ -65,6 +65,34 @@ _RESUME_FILE_PREFIX = "qq_"
 
 
 _CAPABILITY_REPROBE_AFTER = timedelta(hours=24)
+_QQ_REUSABLE_CLICK_LIMIT = 1000
+
+
+class _QQInlineKeyboard(InlineKeyboard):
+    """SDK keyboard that preserves independent QQ callback buttons."""
+
+    def __init__(
+        self,
+        content: KeyboardContent,
+        reusable_buttons: frozenset[tuple[int, int]],
+    ) -> None:
+        super().__init__(content=content)
+        self._reusable_buttons = reusable_buttons
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = super().to_dict()
+        rows = payload["content"]["rows"]
+        for row in rows:
+            for button in row["buttons"]:
+                # The SDK serializes every button into the same ``default`` group.
+                # QQ treats callback buttons in a group as mutually exclusive, which
+                # makes reusable controls grey and unclickable after the first click.
+                button.pop("group_id", None)
+        for row_index, button_index in self._reusable_buttons:
+            # Keep the explicit multi-click limit while removing the field most
+            # likely to force QQ's C2C client into its one-shot visited state.
+            rows[row_index]["buttons"][button_index]["render_data"].pop("visited_label", None)
+        return payload
 
 
 class QQAdapter:
@@ -190,15 +218,30 @@ class QQAdapter:
         msg = _message_to_create(content, msg_seq=msg_seq)
         controls = content.controls if self._should_try_controls(content.controls) else None
         keyboard = _keyboard_from_controls(controls) if controls is not None else None
+        requested_rows, requested_buttons = _controls_shape(content.controls)
+        sent_rows, sent_buttons = _controls_shape(controls)
+        wire_group_ids, wire_click_limits, wire_visited_labels = _keyboard_restriction_counts(
+            keyboard
+        )
         logger.info(
             "QQ outbound send bind=%s chat=%s reply_to_message_id=%s msg_seq=%d "
-            "text_len=%d text_format=%s",
+            "text_len=%d text_format=%s controls_requested_rows=%d "
+            "controls_requested_buttons=%d controls_sent_rows=%d controls_sent_buttons=%d "
+            "controls_wire_group_ids=%d controls_wire_click_limits=%d "
+            "controls_wire_visited_labels=%d",
             self.bind_id,
             content.chat_id,
             content.reply_to_message_id or "",
             msg_seq,
             _text_len(content.text),
             content.text_format,
+            requested_rows,
+            requested_buttons,
+            sent_rows,
+            sent_buttons,
+            wire_group_ids,
+            wire_click_limits,
+            wire_visited_labels,
         )
         try:
             resp: dict[str, Any] = await self._api.post_c2c_message(
@@ -206,7 +249,15 @@ class QQAdapter:
                 msg,
                 keyboard=keyboard,
             )
-        except Exception:
+        except Exception as exc:
+            if keyboard is not None and _is_controls_rejection(exc):
+                logger.warning(
+                    "QQ keyboard rejected over HTTP; retrying without controls (bind=%s, chat=%s)",
+                    self.bind_id,
+                    content.chat_id,
+                )
+                await self._retry_without_controls_after_rejection(content)
+                return
             logger.exception(
                 "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s, "
                 "reply_to_message_id=%s, msg_seq=%d, text_len=%d, text_format=%s)",
@@ -523,10 +574,10 @@ def _response_message_id(response: object) -> str:
 
 def _is_controls_rejection(response: object) -> bool:
     """Only retry when QQ explicitly attributes rejection to keyboard capability."""
-    if not isinstance(response, dict):
-        return False
-    message = str(response.get("message", "")).lower()
-    return any(marker in message for marker in ("keyboard", "按钮", "按键", "权限"))
+    message = (
+        str(response.get("message", "")) if isinstance(response, dict) else str(response)
+    ).lower()
+    return any(marker in message for marker in ("keyboard", "group_id", "按钮", "按键", "权限"))
 
 
 def _message_to_create(content: OutboundContent, *, msg_seq: int) -> MessageToCreate:
@@ -549,12 +600,15 @@ def _keyboard_from_controls(controls: OutboundControls | None) -> InlineKeyboard
     if controls is None:
         return None
     rows: list[KeyboardRow] = []
-    for row in controls.rows:
+    reusable_buttons: set[tuple[int, int]] = set()
+    for row_index, row in enumerate(controls.rows):
         buttons: list[KeyboardButton] = []
-        for action in row:
+        for button_index, action in enumerate(row):
+            if action.click_limit is None:
+                reusable_buttons.add((row_index, button_index))
             buttons.append(
                 KeyboardButton(
-                    id=action.id,
+                    id=_qq_button_id(action, row_index=row_index, button_index=button_index),
                     render_data=KeyboardButtonRenderData(
                         label=action.label,
                         visited_label=action.visited_label,
@@ -564,13 +618,58 @@ def _keyboard_from_controls(controls: OutboundControls | None) -> InlineKeyboard
                         type=1,
                         data=action.payload,
                         permission=KeyboardButtonPermission(type=2),
-                        click_limit=action.click_limit,
+                        # QQ's C2C callback client currently treats an omitted limit
+                        # as single-use. Tencent's multi-click example sends an
+                        # explicit finite value, so map our reusable default to a
+                        # generously high practical limit.
+                        click_limit=(
+                            action.click_limit
+                            if action.click_limit is not None
+                            else _QQ_REUSABLE_CLICK_LIMIT
+                        ),
                     ),
-                    group_id=action.id,
                 )
             )
         rows.append(KeyboardRow(buttons=buttons))
-    return InlineKeyboard(content=KeyboardContent(rows=rows))
+    return _QQInlineKeyboard(
+        content=KeyboardContent(rows=rows),
+        reusable_buttons=frozenset(reusable_buttons),
+    )
+
+
+def _controls_shape(controls: OutboundControls | None) -> tuple[int, int]:
+    """Return non-sensitive control counts for persisted outbound diagnostics."""
+    if controls is None:
+        return 0, 0
+    return len(controls.rows), sum(len(row) for row in controls.rows)
+
+
+def _keyboard_restriction_counts(keyboard: InlineKeyboard | None) -> tuple[int, int, int]:
+    """Count restrictive wire fields without logging labels or callback payloads."""
+    if keyboard is None:
+        return 0, 0, 0
+    rows = keyboard.to_dict()["content"]["rows"]
+    buttons = [button for row in rows for button in row["buttons"]]
+    group_ids = sum("group_id" in button for button in buttons)
+    click_limits = sum("click_limit" in button["action"] for button in buttons)
+    visited_labels = sum("visited_label" in button["render_data"] for button in buttons)
+    return group_ids, click_limits, visited_labels
+
+
+def _qq_button_id(
+    action: OutboundAction,
+    *,
+    row_index: int,
+    button_index: int,
+) -> str:
+    """Map platform-neutral IDs to short, legal, per-keyboard-unique QQ IDs.
+
+    QQ rejects an entire keyboard when IDs contain unsupported characters or collide.
+    Callback semantics live in ``action.payload``, so the wire ID can be a safe digest.
+    Row/button coordinates ensure duplicate upstream actions still map differently.
+    """
+    material = f"{row_index}:{button_index}:{action.id}:{action.payload}".encode()
+    return f"af-{hashlib.sha256(material).hexdigest()[:16]}"
 
 
 def _attachment_count(event: InboundEvent) -> int:
