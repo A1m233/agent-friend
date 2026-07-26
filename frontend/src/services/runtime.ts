@@ -44,6 +44,13 @@ export function ensureLocalServiceReady(service: LocalService): Promise<void> {
   return start;
 }
 
+/** 配置已持久化后，重启对应本机服务并刷新 readiness 缓存。 */
+export async function restartLocalService(service: LocalService): Promise<void> {
+  resetLocalServiceReadiness(service);
+  if (!isTauri()) return;
+  await invoke("restart_runtime_service", { service });
+}
+
 /** 配置变化等已知恢复动作后，允许对应服务立即重新拉起。 */
 export function resetLocalServiceReadiness(service?: LocalService): void {
   if (service) {

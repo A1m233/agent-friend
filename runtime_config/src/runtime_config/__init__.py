@@ -2,6 +2,7 @@
 
 from .credentials import (
     ALL_CREDENTIAL_NAMES,
+    AMAP_WEBSERVICE_KEY,
     CREDENTIAL_BUNDLES,
     DEEPSEEK_API_KEY,
     DEEPSEEK_MEMORY_MODEL,
@@ -59,6 +60,7 @@ from .sources import (
 
 __all__ = [
     "ALL_CREDENTIAL_NAMES",
+    "AMAP_WEBSERVICE_KEY",
     "CONFIG_MODE_ENV",
     "CREDENTIAL_BUNDLES",
     "DEEPSEEK_API_KEY",

@@ -8,6 +8,7 @@ from runtime_config.seed import SEED_AAD, SEED_MAGIC, SEED_NONCE_SIZE
 
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
+    AMAP_WEBSERVICE_KEY,
     OPTIONAL_CREDENTIAL_NAMES,
     REQUIRED_CREDENTIAL_NAMES,
     CredentialSeedError,
@@ -67,7 +68,7 @@ def test_seed_round_trip_and_ciphertext_do_not_contain_plaintext() -> None:
 
 def test_seed_rejects_incomplete_extra_and_empty_sets() -> None:
     credentials = _credentials()
-    missing_name = ALL_CREDENTIAL_NAMES[0]
+    missing_name = REQUIRED_CREDENTIAL_NAMES[0]
     credentials.pop(missing_name)
     with pytest.raises(CredentialSeedError, match=f"missing={missing_name}"):
         encrypt_credential_seed(credentials)
@@ -127,6 +128,12 @@ def test_collect_trusted_credentials_requires_operational_keyring() -> None:
     store.values.pop(missing_required)
     with pytest.raises(CredentialSeedError, match=f"missing={missing_required}"):
         collect_trusted_credentials(store)
+
+
+def test_amap_key_is_managed_but_optional_for_trusted_seed() -> None:
+    assert AMAP_WEBSERVICE_KEY in ALL_CREDENTIAL_NAMES
+    assert AMAP_WEBSERVICE_KEY in OPTIONAL_CREDENTIAL_NAMES
+    assert AMAP_WEBSERVICE_KEY not in REQUIRED_CREDENTIAL_NAMES
 
 
 def test_install_seed_overwrites_complete_set() -> None:

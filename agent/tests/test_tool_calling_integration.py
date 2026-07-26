@@ -19,6 +19,12 @@ from typing import Any, ClassVar, cast
 
 import pytest
 from agent.tool_runtime import ToolRunPolicy
+from agent.tools.builtin.nearby_place_search import (
+    AnchorCandidate,
+    NearbyPlace,
+    NearbyPlaceSearchTool,
+    PlaceSort,
+)
 from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
 from litellm.exceptions import Timeout as LiteLLMTimeout
 
@@ -115,6 +121,45 @@ class SwitchModelTool:
         assert self.conversation is not None
         self.conversation.switch_model("kimi/kimi-k2.6")
         return ToolResult(text="switched")
+
+
+class NearbyPlaceProviderStub:
+    """为 Conversation 集成测试提供确定性的地点结果。"""
+
+    name: ClassVar[str] = "stub"
+
+    def search_anchors(self, *, near: str, city: str | None) -> tuple[AnchorCandidate, ...]:
+        return (
+            AnchorCandidate(
+                ref="anchor-1",
+                name="福民银行",
+                address="广东省深圳市福田区福民路1号",
+                city="深圳市",
+                district="福田区",
+                longitude=114.055,
+                latitude=22.521,
+            ),
+        )
+
+    def get_anchor(self, *, ref: str) -> AnchorCandidate | None:
+        return None
+
+    def search_nearby(
+        self,
+        *,
+        query: str,
+        anchor: AnchorCandidate,
+        radius_meters: int,
+        sort: PlaceSort,
+        limit: int,
+    ) -> tuple[NearbyPlace, ...]:
+        return (
+            NearbyPlace(
+                name="证件照相馆",
+                distance_meters=320,
+                address="广东省深圳市福田区福强路2号",
+            ),
+        )
 
 
 # ---- Scripted fake LLM ----
@@ -369,6 +414,58 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_nearby_place_search_uses_existing_tool_event_loop(tmp_path: Path) -> None:
+    """真实地点工具经通用事件链执行，并把范围证据交回模型整合。"""
+    tool = NearbyPlaceSearchTool(NearbyPlaceProviderStub())
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="nearby-1",
+                    tool_name="nearby_place_search",
+                    args_json_delta=json.dumps(
+                        {
+                            "query": "照相馆",
+                            "near": "福民银行",
+                            "city": "深圳",
+                            "sort": "distance",
+                        }
+                    ),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMTextDelta(
+                    text=(
+                        "以福民银行为中心 5 公里内，最近的是证件照相馆，约 320 米，"
+                        "完整地址为广东省深圳市福田区福强路2号。"
+                    )
+                ),
+                LLMTurnDone(stop_reason="end_turn"),
+            ],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([tool]))
+
+    events = list(conv.stream("帮我找福民银行附近最近的照相点"))
+
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    payload = json.loads(result.text)
+    assert result.is_error is False
+    assert payload["status"] == "success"
+    assert payload["search_area"]["description"] == "以福民银行为中心 5 公里内"
+    assert payload["places"][0]["distance_meters"] == 320
+    assert [event.type for event in conv.session.events].count("tool_call_result") == 1
+
+    tool_message = next(message for message in fake.received[1] if message.get("role") == "tool")
+    assert json.loads(tool_message["content"])["search_area"]["radius_meters"] == 5000
+    assert "5 公里内" in "".join(event.text for event in events if isinstance(event, TextDelta))
+    assert "广东省深圳市福田区福强路2号" in "".join(
+        event.text for event in events if isinstance(event, TextDelta)
+    )
 
 
 def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_path: Path) -> None:
