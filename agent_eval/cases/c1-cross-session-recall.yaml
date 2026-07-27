@@ -12,10 +12,8 @@
 #   - 优先采纳真实 session 中已出现过的 query(source: prod_session/<id>)作为 anchor
 #   - 其余补足(my_synth)覆盖真实样本未达到的多样性维度
 #
-# 已知 gap(不在本 case 集覆盖,留给后续):
-#   - **multi-turn push-back failure**: agent 第一次拒绝后用户反复 push 仍不调工具
-#     的失败模式(im:qq:27 + im:qq:28 都呈现过)需要多轮 schema,本契约 v1 不覆盖。
-#     单轮的 push-back 语气 query 已含在下面 C1-03 / C1-04。
+# 多轮 runner 仍以“前置当前会话消息 + 本轮 query”表达；C1-03 / C1-04 覆盖
+# push-back 语气，C1-24 开始覆盖产品展示标题定向查询与错误能力陈述禁区。
 
 contract:
   id: C1
@@ -196,4 +194,21 @@ cases:
     judge:
       must_mention_any: ["领导", "加班", "跑路"]
       must_not_mention_any: ["年终", "裁员", "涨薪", "同事抢", "客户投诉"]
+
+  - id: C1-24
+    query: 帮我看看诗欣IM这个会话今天聊了什么
+    facet: fixture-grounded · 展示标题定向 · 时间约束 · 会话总结
+    source: regression/069
+    fixture_session:
+      title: 诗欣IM（用户在用）
+      days_ago: 0
+      messages:
+        - role: user
+          text: 今天我们确认了蓝鲸发布计划，先做灰度再全量
+        - role: assistant
+          text: 好，我记下关键顺序是蓝鲸、灰度、全量
+    judge:
+      must_mention_any: ["蓝鲸", "灰度", "全量"]
+      must_not_mention_any: ["只能查当前会话", "无法查看其他会话", "不能跨会话"]
+      forbid_unsupported_lookup_claim: true
 

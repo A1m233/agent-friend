@@ -16,6 +16,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from agent.sessions.catalog import SessionCatalog
 from agent.sessions.errors import SessionNotFoundError, SessionPersistError
 from agent.sessions.events import SCHEMA_VERSION, Event
 from agent.sessions.session import Session
@@ -126,6 +127,10 @@ def _two_session_store() -> _StubStore:
 
 def _tool(store: _StubStore) -> ConversationHistoryTool:
     return ConversationHistoryTool(store=store, clock=lambda: _NOW)
+
+
+def _catalog_tool(store: _StubStore, catalog: SessionCatalog) -> ConversationHistoryTool:
+    return ConversationHistoryTool(store=store, session_catalog=catalog, clock=lambda: _NOW)
 
 
 # ===== happy path =====
@@ -411,6 +416,115 @@ def test_non_string_query_treated_as_missing() -> None:
     assert result.is_error is False
     assert result.meta is not None
     assert result.meta["result_count"] == 4
+
+
+def test_display_title_scopes_results_and_original_today_is_preserved() -> None:
+    store = _two_session_store()
+    catalog = SessionCatalog(store)
+    tool = _catalog_tool(store, catalog)
+
+    result = tool.invoke(
+        {
+            "session_title": "session sess-b",
+            "mode": "summary",
+            "__agent_friend_original_user_input": "看看 session sess-b 这个会话今天聊了什么",
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert payload["scope"]["session_title"] == "session sess-b"
+    assert payload["status"] == "no_results"
+    assert "日语" not in result.text
+
+
+def test_ambiguous_session_title_returns_candidates_without_evidence() -> None:
+    session_a = Session.new(title="项目讨论 A", persona="test", model="test/m")
+    session_b = Session.new(title="项目讨论 B", persona="test", model="test/m")
+    store = _StubStore([session_a, session_b])
+    tool = _catalog_tool(store, SessionCatalog(store))
+
+    result = tool.invoke({"session_title": "项目讨论"})
+
+    payload = json.loads(result.text)
+    assert result.is_error is False
+    assert payload["status"] == "ambiguous_session"
+    assert set(payload["candidate_session_titles"]) == {"项目讨论 A", "项目讨论 B"}
+
+
+def test_planner_builds_visible_title_time_and_summary_args() -> None:
+    store = _two_session_store()
+    tool = _catalog_tool(store, SessionCatalog(store))
+
+    args = tool.plan_explicit_invocation("帮我看看 session sess-b 这个会话今天聊了什么")
+
+    assert args is not None
+    assert args["session_title"] == "session sess-b"
+    assert args["since"] == "今天"
+    assert args["until"] == "今天"
+    assert args["mode"] == "summary"
+
+
+def test_inactive_rewritten_branch_is_not_recalled() -> None:
+    session = _make_session(
+        "rewrite",
+        _NOW - timedelta(hours=2),
+        [
+            ("user_message", "旧分支秘密", _NOW - timedelta(hours=2)),
+            ("assistant_message", "旧分支回答", _NOW - timedelta(hours=2) + timedelta(seconds=1)),
+        ],
+    )
+    old_user, old_assistant = session.events[-2:]
+    session.events.append(
+        Event(
+            type="turn_rewrite",
+            uuid=str(uuid4()),
+            ts=_NOW - timedelta(hours=1),
+            payload={
+                "reason": "edit_resend_latest",
+                "target_user_uuid": old_user.uuid,
+                "inactive_event_uuids": [old_user.uuid, old_assistant.uuid],
+                "replacement_text_sha256": "x",
+            },
+        )
+    )
+    session.events.extend(
+        [
+            Event(
+                type="user_message",
+                uuid=str(uuid4()),
+                ts=_NOW - timedelta(minutes=50),
+                payload={"content": "新分支内容"},
+            ),
+            Event(
+                type="assistant_message",
+                uuid=str(uuid4()),
+                ts=_NOW - timedelta(minutes=49),
+                payload={"content": "新分支回答"},
+            ),
+        ]
+    )
+    tool = _tool(_StubStore([session]))
+
+    old_result = tool.invoke({"query": "旧分支秘密"})
+    new_result = tool.invoke({"query": "新分支内容"})
+
+    assert old_result.meta["result_count"] == 0
+    assert new_result.meta["result_count"] == 1
+
+
+def test_original_speaker_constraint_overrides_missing_tool_argument() -> None:
+    tool = _tool(_two_session_store())
+
+    result = tool.invoke(
+        {
+            "query": "英语",
+            "__agent_friend_original_user_input": "我有没有跟你说过我在学英语？",
+        }
+    )
+
+    assert result.meta["result_count"] == 1
+    assert "最近我学英语呢" in result.text
+    assert "Practice makes perfect" not in result.text
 
 
 # ===== schema 字眼不暴露 =====

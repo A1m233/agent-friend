@@ -29,7 +29,14 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         # 记忆抽取是旁路质量任务，默认用更稳的旗舰款；主对话仍保持 v4-flash。
         "memory_model": "deepseek/deepseek-v4-pro",
         "api_base": None,
-        "defaults": {"timeout": DEFAULT_LLM_TIMEOUT_SECONDS},
+        # Keep the legacy env/config builder aligned with the provider catalog.
+        # DeepSeek thinking-mode tool calls require replaying the provider's
+        # reasoning_content. The runtime does not expose that hidden content, so
+        # the supported default is explicitly non-thinking mode.
+        "defaults": {
+            "extra_body": {"thinking": {"type": "disabled"}},
+            "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
+        },
     },
 }
 

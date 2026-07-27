@@ -244,6 +244,22 @@ def test_core_has_independent_count_and_character_budget() -> None:
     assert result.evidence[-1].evidence_id == "ordinary"
 
 
+def test_explicit_search_does_not_fill_empty_result_with_unmatched_core() -> None:
+    core = replace(
+        _candidate("core", "structured_memory", 1),
+        kind="core",
+        text="用户喜欢蓝色",
+        keyword_rank=None,
+        dense_rank=None,
+    )
+    service = MemorySearchService([_Source("structured_memory", [core])])
+
+    result = service.search(_request(text="完全无关的话题", top_k=5))
+
+    assert result.evidence == ()
+    assert any(decision.reason == "explicit_unmatched_core" for decision in result.decisions)
+
+
 def test_structured_source_distinguishes_current_and_historical_fact_versions() -> None:
     store = SqliteMemoryStore(":memory:")
     old_time = datetime(2025, 1, 1, tzinfo=UTC)

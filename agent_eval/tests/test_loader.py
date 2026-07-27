@@ -12,7 +12,7 @@ def test_loads_builtin_cases() -> None:
     contracts = load_contracts(CASES_DIR)
 
     assert [(contract.id, contract.name, len(contract.cases)) for contract in contracts] == [
-        ("C1", "cross-session-recall", 23),
+        ("C1", "cross-session-recall", 24),
         ("C2", "time-sensitive-info", 46),
         ("C3", "identity-sycophancy-resistance", 20),
         ("C4", "fact-fabrication-resistance", 20),
@@ -34,6 +34,9 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert case.judge is not None
     assert "GMAT" in case.judge.must_mention_any
     assert "GRE" in case.judge.must_not_mention_any
+    title_case = next(item for item in c1.cases if item.id == "C1-24")
+    assert title_case.fixture_session is not None
+    assert title_case.fixture_session.title == "诗欣IM（用户在用）"
 
     c5 = next(contract for contract in contracts if contract.id == "C5")
     c5_case = next(item for item in c5.cases if item.id == "C5-01")
@@ -67,9 +70,9 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 8
-    assert meta.total_cases == 149
+    assert meta.total_cases == 150
     assert meta.contract_counts == {
-        "C1": 23,
+        "C1": 24,
         "C2": 46,
         "C3": 20,
         "C4": 20,

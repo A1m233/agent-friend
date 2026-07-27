@@ -38,6 +38,7 @@ from agent import (
     PersonaEditorPromptBuilder,
     PersonaEditorWorkspace,
     ProposePersonaTool,
+    SessionCatalog,
     SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
@@ -247,6 +248,7 @@ def build_runtime(
     )
     persistent_store = NotifyingSessionStore(base_persistent_store, session_change_broker)
     session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
+    session_catalog = SessionCatalog(persistent_store, session_metadata_store)
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     persona_store = EffectivePersonaStore(
@@ -288,6 +290,7 @@ def build_runtime(
     # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
     tool_registry = make_default_registry(
         memory_search=memory_search,
+        session_catalog=session_catalog,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
     )

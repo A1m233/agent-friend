@@ -140,7 +140,21 @@ def _fuse(
     ordinary_limit: int,
 ) -> tuple[list[EvidenceCandidate], list[CandidateDecision]]:
     """RRF 融合、跨源文本去重，以及 core / ordinary 独立预算。"""
-    scored = [replace(candidate, fused_score=_rrf_score(candidate)) for candidate in candidates]
+    decisions: list[CandidateDecision] = []
+    eligible: list[EvidenceCandidate] = []
+    for candidate in candidates:
+        if (
+            request.mode == "explicit"
+            and candidate.kind == "core"
+            and candidate.keyword_rank is None
+            and candidate.dense_rank is None
+        ):
+            decisions.append(
+                CandidateDecision(candidate.evidence_id, "quota", "explicit_unmatched_core")
+            )
+            continue
+        eligible.append(candidate)
+    scored = [replace(candidate, fused_score=_rrf_score(candidate)) for candidate in eligible]
     scored.sort(key=_rank_key)
     if request.mode == "explicit":
         scored.sort(key=lambda candidate: candidate.kind != "utterance")
@@ -148,7 +162,6 @@ def _fuse(
     unique: list[EvidenceCandidate] = []
     seen_ids: set[str] = set()
     seen_text: set[str] = set()
-    decisions: list[CandidateDecision] = []
     for candidate in scored:
         normalized = " ".join(candidate.text.lower().split())
         if candidate.evidence_id in seen_ids or normalized in seen_text:
