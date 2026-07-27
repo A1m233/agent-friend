@@ -13,6 +13,7 @@ from agent.attachments import AttachmentError, AttachmentRef, AttachmentStore
 from .content import OutboundContent
 from .event import InboundEvent
 from .inbound_resolver import InboundResolveResult
+from .media import InboundMedia
 from .voice import is_voice_attachment
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 IM_ATTACHMENT_FAILURE_TEXT = (
     "这条消息里的附件我暂时没处理好，可以重新发送或改发支持的图片、PDF、TXT。"
 )
+IM_GIF_UNSUPPORTED_TEXT = "我暂时不能读取 GIF 动图，可以发一张 JPG、PNG 或 WebP 静态截图。"
 
 
 class IMAttachmentResolver:
@@ -44,26 +46,62 @@ class IMAttachmentResolver:
         if not candidates:
             return InboundResolveResult.route(event)
 
-        imported: list[AttachmentRef] = []
-        try:
-            for index, attachment in enumerate(candidates):
-                imported.append(await self._import_one(attachment, fallback_index=index))
-        except (AttachmentError, httpx.HTTPError, ValueError) as exc:
-            logger.warning(
-                "IM attachment import failed message_id=%s code=%s",
-                event.message_id,
-                getattr(exc, "code", type(exc).__name__),
-            )
+        media: list[InboundMedia] = []
+        for index, attachment in enumerate(candidates):
+            try:
+                imported = await self._import_one(attachment, fallback_index=index)
+            except AttachmentError as exc:
+                if exc.code == "attachment_type_unsupported" and exc.media_type == "image/gif":
+                    media.append(
+                        InboundMedia(
+                            source="im_attachment",
+                            kind="animated_image",
+                            fidelity="unsupported",
+                            reason="media_gif_unsupported",
+                            display_name=_display_name(
+                                attachment,
+                                _attachment_url(attachment),
+                                fallback_index=index,
+                            ),
+                        )
+                    )
+                    continue
+                return self._failure(event, exc)
+            except (httpx.HTTPError, ValueError) as exc:
+                return self._failure(event, exc)
+            else:
+                media.append(InboundMedia.readable_attachment(imported))
+
+        has_unsupported = any(item.fidelity == "unsupported" for item in media)
+        has_meaningful_text = bool((event.content or "").strip())
+        if has_unsupported and not has_meaningful_text:
             return InboundResolveResult.direct_reply(
                 OutboundContent(
                     chat_id=event.chat_id,
                     chat_scope=event.chat_scope,
-                    text=IM_ATTACHMENT_FAILURE_TEXT,
+                    text=IM_GIF_UNSUPPORTED_TEXT,
                     reply_to_message_id=event.message_id,
                 ),
-                reason="attachment_import_failed",
+                reason="media_gif_unsupported",
             )
-        return InboundResolveResult.route(event, attachments=tuple(imported))
+        return InboundResolveResult.route(event, media=tuple(media))
+
+    @staticmethod
+    def _failure(event: InboundEvent, exc: Exception) -> InboundResolveResult:
+        logger.warning(
+            "IM attachment import failed message_id=%s code=%s",
+            event.message_id,
+            getattr(exc, "code", type(exc).__name__),
+        )
+        return InboundResolveResult.direct_reply(
+            OutboundContent(
+                chat_id=event.chat_id,
+                chat_scope=event.chat_scope,
+                text=IM_ATTACHMENT_FAILURE_TEXT,
+                reply_to_message_id=event.message_id,
+            ),
+            reason="attachment_import_failed",
+        )
 
     async def _import_one(self, attachment: object, *, fallback_index: int) -> AttachmentRef:
         url = _attachment_url(attachment)

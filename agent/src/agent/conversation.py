@@ -269,6 +269,7 @@ class Conversation:
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
         self._run_id_override: str | None = None
+        self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
@@ -416,6 +417,7 @@ class Conversation:
         channel: PromptChannel | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
+        turn_context: str | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
         yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
@@ -446,6 +448,8 @@ class Conversation:
 
         Args:
             user_input: 用户输入文本。
+            turn_context: 仅在当前运行的模型视图中生效、不落盘的系统上下文；
+                工具续轮会重复注入，适合承载通道已验证的输入边界。
 
         Yields:
             :class:`TextDelta` / :class:`ToolCallRequest` / :class:`ToolCallResult` /
@@ -464,10 +468,12 @@ class Conversation:
         """
         previous_prompt_channel = self._prompt_channel_override
         previous_run_id = self._run_id_override
+        previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
         self._run_id_override = run_id
+        self._turn_context_override = (turn_context or "").strip()
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
 
@@ -570,6 +576,7 @@ class Conversation:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
             self._run_id_override = previous_run_id
+            self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
@@ -1233,6 +1240,8 @@ class Conversation:
         ``extra_context`` 注入（008 design §6.1）。空召回不注入任何记忆段。
         """
         extra: list[Message] | None = list(extra_context) if extra_context else None
+        if self._turn_context_override:
+            extra = [Message(role="system", content=self._turn_context_override), *(extra or [])]
         if self._memory is not None:
             memory_start_ms = monotonic_ms()
             log_voice_latency(
@@ -1662,7 +1671,12 @@ class Conversation:
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        return self._assemble(tool_specs=tool_specs)
+        extra_context = (
+            [Message(role="system", content=self._turn_context_override)]
+            if self._turn_context_override
+            else None
+        )
+        return self._assemble(tool_specs=tool_specs, extra_context=extra_context)
 
     def _accumulate_tool_call_delta(
         self,

@@ -87,6 +87,7 @@ class StreamRelay:
         self._throttle_seconds = max(0.0, throttle_seconds)
         self._parts: list[str] = []
         self._last_attempt_at: float | None = None
+        self._last_sent_text = ""
 
     @property
     def full_text(self) -> str:
@@ -116,7 +117,21 @@ class StreamRelay:
             return
 
         self._last_attempt_at = now
-        await self._session.update(self.full_text)
+        snapshot = self.full_text
+        await self._session.update(snapshot)
+        if not self._session.is_failed:
+            self._last_sent_text = snapshot
+
+    async def flush(self) -> None:
+        """Send a coalesced trailing snapshot before the terminal update."""
+
+        snapshot = self.full_text
+        if not snapshot or snapshot == self._last_sent_text or self._session.is_failed:
+            return
+        self._last_attempt_at = time.monotonic()
+        await self._session.update(snapshot)
+        if not self._session.is_failed:
+            self._last_sent_text = snapshot
 
     async def feed_from_queue(self, queue: asyncio.Queue[object], end_marker: object) -> None:
         """Consume deltas until ``end_marker``, draining bursts before each feed."""

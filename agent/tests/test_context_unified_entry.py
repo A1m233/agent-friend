@@ -63,6 +63,7 @@ class _SpyContextManager:
                 "new_user_input": new_user_input,
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
+                "extra_context": [item.content for item in extra_context or []],
                 "has_runtime": runtime is not None,
                 "request_overhead_tokens": runtime.request_overhead_tokens if runtime else None,
                 "calibration_factor": runtime.calibration_factor if runtime else None,
@@ -196,6 +197,29 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     assert all(c["has_runtime"] for c in spy.calls)
     assert all(c["request_overhead_tokens"] > 0 for c in spy.calls[:-1])
     assert spy.calls[-1]["request_overhead_tokens"] == 0
+
+
+def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path: Path) -> None:
+    spy = _SpyContextManager()
+    fake = _UsageLLM(
+        script=[
+            _tool_use_turn(),
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        context_manager=spy,
+        registry=ToolRegistry([_LoopTool()]),
+    )
+
+    list(conv.stream("hi", turn_context="MEDIA FIDELITY BOUNDARY"))
+
+    assert len(spy.calls) == 2
+    assert all("MEDIA FIDELITY BOUNDARY" in call["extra_context"] for call in spy.calls)
+    user_messages = [message for message in conv.session.messages if message.role == "user"]
+    assert user_messages[-1].content == "hi"
 
 
 def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:

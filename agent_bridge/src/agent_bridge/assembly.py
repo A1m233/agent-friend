@@ -344,6 +344,7 @@ def build_runtime(
         from .protocols.im.attachments import IMAttachmentResolver
         from .protocols.im.dedupe import RecentMessageDeduper
         from .protocols.im.inbound_resolver import CompositeInboundResolver
+        from .protocols.im.media import QQFaceResolver
         from .protocols.im.voice import QQVoiceMessageResolver, SafeAudioDownloader
         from .protocols.im.voice_bridge_client import VoiceBridgeTranscriptionClient
         from .session_bridge import SessionBridge as _SessionBridge
@@ -400,6 +401,7 @@ def build_runtime(
             max_items=settings.im_voice_dedupe_max_items,
         )
         im_inbound_resolver = CompositeInboundResolver(
+            QQFaceResolver(),
             QQVoiceMessageResolver(
                 downloader=SafeAudioDownloader(),
                 transcriber=VoiceBridgeTranscriptionClient(settings.voice_bridge_base_url),
