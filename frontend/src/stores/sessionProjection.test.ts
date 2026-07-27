@@ -145,6 +145,39 @@ describe("projectSessionEvents", () => {
     expect(tools[1]).toMatchObject({ toolCallId: "event-b", status: "done", result: "result-b" });
   });
 
+  it("旧事件重复 provider call id 时使用事件 UUID 生成唯一工具块", () => {
+    const firstRequest = ev("tool_call_request", {
+      tool_call_id: "web_search_5",
+      tool_name: "web_search",
+      args: { query: "a" },
+    });
+    const secondRequest = ev("tool_call_request", {
+      tool_call_id: "web_search_5",
+      tool_name: "web_search",
+      args: { query: "b" },
+    });
+    const out = projectSessionEvents([
+      firstRequest,
+      ev("tool_call_result", { tool_call_id: "web_search_5", content: "result-a" }),
+      secondRequest,
+      ev("tool_call_result", { tool_call_id: "web_search_5", content: "result-b" }),
+    ]);
+
+    const tools = out[0].blocks.filter((block) => block.kind === "tool");
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toMatchObject({
+      toolCallId: firstRequest.uuid,
+      status: "done",
+      result: "result-a",
+    });
+    expect(tools[1]).toMatchObject({
+      toolCallId: secondRequest.uuid,
+      status: "done",
+      result: "result-b",
+    });
+    expect(tools[0].toolCallId).not.toBe(tools[1].toolCallId);
+  });
+
   it("新 user_message 会切开下一轮 assistant answer", () => {
     const out = projectSessionEvents([
       ev("user_message", { content: "第一问" }),

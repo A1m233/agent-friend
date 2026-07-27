@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from agent.attachments import AttachmentRef
 
 from .content import OutboundContent
 from .event import InboundEvent
+
+if TYPE_CHECKING:
+    from .media import InboundMedia
 
 __all__ = [
     "CompositeInboundResolver",
@@ -26,7 +29,11 @@ class InboundResolveResult:
     event: InboundEvent | None = None
     reply: OutboundContent | None = None
     reason: str = ""
-    attachments: tuple[AttachmentRef, ...] = ()
+    media: tuple[InboundMedia, ...] = ()
+
+    @property
+    def attachments(self) -> tuple[AttachmentRef, ...]:
+        return tuple(item.attachment for item in self.media if item.attachment is not None)
 
     @classmethod
     def route(
@@ -34,8 +41,13 @@ class InboundResolveResult:
         event: InboundEvent,
         *,
         attachments: tuple[AttachmentRef, ...] = (),
+        media: tuple[InboundMedia, ...] = (),
     ) -> InboundResolveResult:
-        return cls(action="route", event=event, attachments=attachments)
+        if attachments:
+            from .media import InboundMedia
+
+            media = (*media, *(InboundMedia.readable_attachment(item) for item in attachments))
+        return cls(action="route", event=event, media=media)
 
     @classmethod
     def direct_reply(cls, content: OutboundContent, *, reason: str = "") -> InboundResolveResult:
@@ -68,11 +80,11 @@ class CompositeInboundResolver:
 
     async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
         current = event
-        attachments: list[AttachmentRef] = []
+        media: list[InboundMedia] = []
         for resolver in self._resolvers:
             result = await resolver.resolve(im_type, current)
-            attachments.extend(result.attachments)
+            media.extend(result.media)
             if result.action != "route":
                 return result
             current = result.event or current
-        return InboundResolveResult.route(current, attachments=tuple(attachments))
+        return InboundResolveResult.route(current, media=tuple(media))

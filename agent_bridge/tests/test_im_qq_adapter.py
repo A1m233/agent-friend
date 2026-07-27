@@ -31,7 +31,7 @@ from agent_bridge.protocols.im.control import menu_controls
 from agent_bridge.protocols.im.credentials import ImCredential
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.streaming import OutboundStreamContext
-from qqbot_agent_sdk.dto import QQMessageType
+from qqbot_agent_sdk.dto import MessageAttachment, QQMessageType
 
 # ---------- fixtures ----------
 
@@ -57,7 +57,12 @@ def adapter(cred: ImCredential, resume_dir: Path) -> QQAdapter:
     return QQAdapter(cred=cred, resume_base_dir=resume_dir)
 
 
-def _make_c2c_event(chat_id: str = "OPENID-X", content: str = "你好") -> InboundEvent:
+def _make_c2c_event(
+    chat_id: str = "OPENID-X",
+    content: str = "你好",
+    *,
+    attachments: list[MessageAttachment] | None = None,
+) -> InboundEvent:
     return InboundEvent(
         event_type="C2C_MESSAGE_CREATE",
         chat_id=chat_id,
@@ -67,6 +72,7 @@ def _make_c2c_event(chat_id: str = "OPENID-X", content: str = "你好") -> Inbou
         message_id="MSG-1",
         timestamp="2026-06-17T10:00:00Z",
         message_type=0,
+        attachments=attachments or [],
     )
 
 

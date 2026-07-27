@@ -53,6 +53,19 @@ async def test_relay_sends_first_delta_and_coalesces_followups() -> None:
 
 
 @pytest.mark.asyncio
+async def test_relay_flushes_trailing_coalesced_snapshot() -> None:
+    session = StubStreamSession()
+    relay = StreamRelay(session, stream_trace="trace-flush", throttle_seconds=60)
+
+    await relay.feed("你")
+    await relay.feed("要我 fetch 的完整回答")
+    await relay.flush()
+    await relay.flush()
+
+    assert session.updates == ["你", "你要我 fetch 的完整回答"]
+
+
+@pytest.mark.asyncio
 async def test_relay_sends_latest_snapshot_after_throttle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
