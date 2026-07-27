@@ -15,7 +15,9 @@ from agent import (
     JsonlSessionStore,
     MarkdownPromptBuilder,
     Session,
+    SessionCatalog,
     SessionManager,
+    SessionMetadataStore,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -63,9 +65,12 @@ def _build_manager(
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)
 
+    metadata_store = SessionMetadataStore(store.base_dir / "metadata.json")
+    session_catalog = SessionCatalog(store, metadata_store)
     registry = make_default_registry(
         tavily_api_key=tavily_api_key,
         session_store=store,
+        session_catalog=session_catalog,
         stderr_warn=False,
     )
     if fake_tool is not None:
@@ -79,6 +84,7 @@ def _build_manager(
         prompt_builder_factory=_prompt_factory,
         context_manager_factory=default_context_manager,
         tool_registry=registry,
+        metadata_store=metadata_store,
     )
 
 
@@ -87,7 +93,7 @@ def _inject_fixture(store: JsonlSessionStore, fixture: FixtureSession, model: st
     now = datetime.now(UTC)
     session_ts = now - timedelta(days=fixture.days_ago)
     session = Session.new(
-        title=f"fixture-{fixture.days_ago}d-ago",
+        title=fixture.title or f"fixture-{fixture.days_ago}d-ago",
         persona="default",
         model=model,
         persona_id=BUILTIN_DEFAULT_PERSONA_ID,

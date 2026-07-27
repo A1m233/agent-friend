@@ -56,6 +56,7 @@ class ToolCallRequest:
     event_tool_call_id: str = ""
     tool_name: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    origin: Literal["model", "deterministic_history_router"] = "model"
     type: Literal["tool_call_request"] = "tool_call_request"
 
 
@@ -80,6 +81,7 @@ class ToolCallResult:
     text: str = ""
     is_error: bool = False
     duration_seconds: float = 0.0
+    origin: Literal["model", "deterministic_history_router"] = "model"
     type: Literal["tool_call_result"] = "tool_call_result"
 
 

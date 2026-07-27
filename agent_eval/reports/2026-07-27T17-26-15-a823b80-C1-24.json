@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-27T17:26:15.407540+00:00",
+    "ended_at": "2026-07-27T17:26:17.415121+00:00",
+    "duration_seconds": 2.008,
+    "git_commit": "a823b80",
+    "working_tree_dirty": true,
+    "note": "069 session-title targeted recall verification",
+    "selection": {
+      "contract": "all",
+      "case": "C1-24",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": null
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "4aaf216e02b3f88ff7fcdb3a3a70cd6b24fd9060afd263f5509c18d22efde1f8",
+      "total_contracts": 8,
+      "total_cases": 150,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 1,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C1": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 1,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C1",
+      "name": "cross-session-recall",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C1-24",
+          "query": "帮我看看诗欣IM这个会话今天聊了什么",
+          "facet": "fixture-grounded · 展示标题定向 · 时间约束 · 会话总结",
+          "source": "regression/069",
+          "passed": false,
+          "reason": "runtime error: LLMBadRequestError: litellm.BadRequestError: DeepseekException - {\"error\":{\"message\":\"The `reasoning_content` in the thinking mode must be passed back to the API.\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+          "tool_calls": [],
+          "final_text": "",
+          "stop_reason": "error",
+          "error": "LLMBadRequestError: litellm.BadRequestError: DeepseekException - {\"error\":{\"message\":\"The `reasoning_content` in the thinking mode must be passed back to the API.\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}"
+        }
+      ]
+    }
+  ]
+}

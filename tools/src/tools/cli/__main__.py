@@ -65,8 +65,10 @@ from agent import (
     PersonaInfo,
     PersonaNotFoundError,
     Session,
+    SessionCatalog,
     SessionCorruptError,
     SessionManager,
+    SessionMetadataStore,
     SessionNotFoundError,
     SessionPersistError,
     SessionSummary,
@@ -889,7 +891,12 @@ def main() -> int:
         stderr.print(rf"[red]\[初始化失败] 无法创建会话目录: {e}[/red]")
         return 1
 
-    tool_registry = make_default_registry(session_store=store)
+    session_metadata_store = SessionMetadataStore(SESSIONS_DIR / "metadata.json")
+    session_catalog = SessionCatalog(store, session_metadata_store)
+    tool_registry = make_default_registry(
+        session_store=store,
+        session_catalog=session_catalog,
+    )
 
     memory_debug = bool(os.environ.get(MEMORY_DEBUG_ENV))
     memory_obj: Memory | None = None
@@ -910,6 +917,7 @@ def main() -> int:
         context_manager_factory=default_context_manager,
         tool_registry=tool_registry,
         memory=memory_obj,
+        metadata_store=session_metadata_store,
     )
     catalog = PersonaCatalog()
 

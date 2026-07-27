@@ -200,6 +200,7 @@ def test_spec_from_config_uses_explicit_config_and_defaults() -> None:
     assert spec.api_key == "k"
     assert spec.model == "deepseek/deepseek-v4-flash"
     assert spec.context_window == 1000000
+    assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
     assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
 
 
