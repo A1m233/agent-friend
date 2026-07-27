@@ -40,3 +40,4 @@ COMPLETED
 | 2026-07-28 | 对齐 eval 与产品的 DeepSeek 默认调用参数 | 首次 C1-24 暴露 eval 旧装配遗漏 `thinking: disabled`；未伪造 `reasoning_content`，改为使 legacy `ProviderSpec` 与 provider catalog 保持一致；相关 lint、typecheck 与 41 tests 通过 |
 | 2026-07-28 | 单例真实 LLM 评测 | 仅运行 C1-24；`deepseek/deepseek-v4-flash` 调用 `recall_past_chats(session_title=诗欣IM, since=今天, until=今天, mode=summary)`，最终回答命中“蓝鲸 / 灰度 / 全量”，1/1 通过；证据：`agent_eval/reports/2026-07-27T17-30-32-a823b80-C1-24.json` |
 | 2026-07-28 | 用户确认验收并授权合入主干 | 用户接受本次无前端源码变更场景下的 frontend check 豁免；需求状态更新为 `COMPLETED`，进入提交、合入与推送流程 |
+| 2026-07-28 | 同步最新主干并完成合入前复验 | 无冲突合入本地最新 `main`；backend lint、typecheck、1175 passed / 2 skipped；Rust 140 passed / 1 ignored 且 release check 通过；frontend 阶段按已确认豁免记录为 dependencies 未安装而 skip |
