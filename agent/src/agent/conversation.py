@@ -74,6 +74,10 @@ from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 from .system_prompt.sections import PromptChannel
+from .system_prompt.surfaces import (
+    DEFAULT_INTERACTION_CONTEXT_RENDERER,
+    InteractionSurfaceId,
+)
 from .tool_runtime import (
     NoProgressTracker,
     ToolBatchExecutor,
@@ -270,6 +274,7 @@ class Conversation:
         self._voice_latency_llm_overrides: dict[str, Any] = {}
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
+        self._prompt_surface_override: InteractionSurfaceId | None = None
         self._run_id_override: str | None = None
         self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
@@ -320,7 +325,8 @@ class Conversation:
         section 资源读，单次 < 1ms，孵化期可接受。
 
         switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona；
-        本轮 channel override 由 ``stream`` / ``edit_resend_latest`` 在调用期间设置。
+        本轮 channel override 由 user-run 入口在调用期间设置；surface 不进入
+        基础 system prompt，而是在 :meth:`_assemble` 中作为 turn context 注入。
         """
         builder = self._turn_prompt_builder or self._prompt_builder
         return builder.build(channel_override=self._prompt_channel_override)
@@ -417,6 +423,7 @@ class Conversation:
         attachments: list[AttachmentRef] | None = None,
         user_event_id: str | None = None,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
         turn_context: str | None = None,
@@ -469,11 +476,13 @@ class Conversation:
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
         previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_context_override = (turn_context or "").strip()
         self._turn_prompt_builder = self._snapshot_prompt_builder()
@@ -579,6 +588,7 @@ class Conversation:
                     # 由 PostTurn hook 调 memory.observe；此处不重复触发
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
@@ -591,6 +601,7 @@ class Conversation:
         *,
         expected_user_content: str | None = None,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -603,10 +614,12 @@ class Conversation:
         plan = self._latest_active_user_rewrite_plan(expected_user_content=expected_user_content)
 
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
@@ -687,6 +700,7 @@ class Conversation:
                 if not self._post_turn_external:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
@@ -696,6 +710,7 @@ class Conversation:
         self,
         *,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -703,10 +718,12 @@ class Conversation:
         self._validate_tool_error_continuation()
 
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
@@ -765,6 +782,7 @@ class Conversation:
             elif not self._post_turn_external:
                 self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
@@ -1346,12 +1364,35 @@ class Conversation:
         user_input_for_llm = (
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
+        system_prompt = self._system_prompt
+        turn_context = (
+            [
+                Message(
+                    role="system",
+                    content=DEFAULT_INTERACTION_CONTEXT_RENDERER.render(
+                        self._prompt_surface_override
+                    ),
+                )
+            ]
+            if self._prompt_surface_override is not None
+            else None
+        )
+        logger.info(
+            "[SurfaceContextDbg] prompt_build session_id=%s run_id=%s surface=%s "
+            "turn_context=%s system_prompt_chars=%d",
+            self._session.session_id,
+            self._run_id_override or "none",
+            self._prompt_surface_override or "none",
+            "present" if turn_context else "none",
+            len(system_prompt),
+        )
         build = self._context_manager.build_messages(
             history=history_for_llm,
-            system_prompt=self._system_prompt,
+            system_prompt=system_prompt,
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
             runtime=runtime,

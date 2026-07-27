@@ -30,6 +30,7 @@ from ag_ui.encoder import EventEncoder
 from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.cancellation import CancellationToken
 from agent.runtime.models import RunRequest
+from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -246,6 +247,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     text,
                     expected_user_content=body.expected_user_content,
                     channel="text",
+                    surface=run_request.surface,
                     run_id=run_request.run_id,
                     cancel_check=token.raise_if_cancelled,
                 )
@@ -254,6 +256,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 UserEvent(session_id=session_id, user_input=text),
                 run_id=run_id,
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 conversation_factory=_conversation_for_edit,
                 conversation_runner=_edit_runner,
                 metadata={"protocol": "ag_ui", "operation": "edit_resend_latest"},
@@ -274,8 +277,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     value,
                     expected_user_content=body.expected_user_content,
                     channel="text",
+                    surface=DESKTOP_CHAT_SURFACE,
                 ),
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 turn_coordinator=runtime.turn_coordinator,
                 run_handle=handle,
             ),
@@ -321,6 +326,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 UserEvent(session_id=session_id, user_input=""),
                 run_id=run_id,
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 conversation_factory=_conversation_for_continue,
                 metadata={"protocol": "ag_ui", "operation": "continue_tool_result"},
                 consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
@@ -328,6 +334,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
                 conversation_runner=lambda conv, run_request, token: conv.continue_after_tool_error(
                     channel="text",
+                    surface=run_request.surface,
                     run_id=run_request.run_id,
                     cancel_check=token.raise_if_cancelled,
                 ),
@@ -344,9 +351,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 agent_runtime=runtime.agent_runtime,
                 run_conversation=lambda conv, _value: conv.continue_after_tool_error(
                     channel="text",
+                    surface=DESKTOP_CHAT_SURFACE,
                     run_id=run_id,
                 ),
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 turn_coordinator=runtime.turn_coordinator,
                 run_handle=handle,
             ),

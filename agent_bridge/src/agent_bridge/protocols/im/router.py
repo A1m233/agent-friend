@@ -40,6 +40,7 @@ from uuid import uuid4
 
 from agent.attachments import AttachmentRef
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
+from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
 from agent import Conversation, TextDelta
 from llm_providers import model_capabilities
@@ -78,6 +79,14 @@ _STREAM_END = object()
 _STREAM_INTERRUPTED_SUFFIX = "\n\n（回复生成中断，请稍后重试。）"
 _STREAM_MENU_TEXT = "操作"
 _STREAM_MENU_DELAY_SECONDS = 0.8
+_IM_SURFACES: dict[str, InteractionSurfaceId] = {"qq": IM_QQ_SURFACE}
+
+
+def _surface_for_im(im_type: str) -> InteractionSurfaceId:
+    try:
+        return _IM_SURFACES[im_type]
+    except KeyError as exc:
+        raise RuntimeError(f"IM adapter missing interaction surface: {im_type}") from exc
 
 
 class IMRouter:
@@ -236,6 +245,7 @@ class IMRouter:
                 event.chat_scope,
             )
         try:
+            surface = _surface_for_im(im_type)
             agent_text = await asyncio.to_thread(
                 self._run_turn_sync,
                 boot,
@@ -243,6 +253,7 @@ class IMRouter:
                 on_text_delta,
                 run_id,
                 model_media_context,
+                surface,
             )
         except Exception as exc:
             partial_text = await _finish_relay(delta_queue, relay_task, relay)
@@ -351,6 +362,7 @@ class IMRouter:
         on_text_delta: Callable[[str], None] | None = None,
         run_id: str | None = None,
         turn_context: str | None = None,
+        surface: InteractionSurfaceId | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -373,11 +385,13 @@ class IMRouter:
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
                 run_id=run_id,
                 channel="text",
+                surface=surface,
                 conversation_factory=lambda: self._bridge.bind_persistent(boot),
                 conversation_runner=lambda conv, request, token: conv.stream(
                     boot.new_user_input,
                     attachments=list(attachments),
                     channel=request.channel,
+                    surface=request.surface,
                     run_id=request.run_id,
                     cancel_check=token.raise_if_cancelled,
                     turn_context=turn_context,
@@ -407,6 +421,7 @@ class IMRouter:
                     attachments=list(attachments),
                     channel="text",
                     turn_context=turn_context,
+                    surface=surface,
                 ):
                     if isinstance(ev, TextDelta):
                         buf.append(ev.text)

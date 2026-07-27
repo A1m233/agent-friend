@@ -14,6 +14,8 @@ from agent.errors import PersonaNotFoundError
 from agent.messages import Message
 from agent.personas import PersonaCatalog
 from agent.system_prompt import (
+    InteractionContextRenderer,
+    InteractionSurfaceContext,
     PersonaSection,
     Section,
     StaticSection,
@@ -21,6 +23,7 @@ from agent.system_prompt import (
 )
 from agent.system_prompt.defaults import load_default_static_section
 from agent.system_prompt.sections import SystemPromptRenderContext
+from agent.system_prompt.surfaces import DESKTOP_CHAT_SURFACE, InteractionSurfaceId
 
 # ===== 测试用辅助 =====
 
@@ -135,6 +138,36 @@ class TestRuntimeContextSection:
         assert section.render() == "static text"
 
 
+class TestInteractionContextRenderer:
+    def test_renders_registered_surface(self) -> None:
+        renderer = InteractionContextRenderer(
+            surfaces={
+                DESKTOP_CHAT_SURFACE: InteractionSurfaceContext(
+                    attributes=(("type", "desktop_chat"),)
+                )
+            }
+        )
+        assert renderer.render(DESKTOP_CHAT_SURFACE) == (
+            '<interaction_context>\n  <surface type="desktop_chat" />\n</interaction_context>'
+        )
+
+    def test_unregistered_non_null_surface_fails_closed(self) -> None:
+        renderer = InteractionContextRenderer(surfaces={})
+        with pytest.raises(ValueError, match="unsupported interaction surface: im:test"):
+            renderer.render(InteractionSurfaceId("im:test"))
+
+    def test_new_surface_only_requires_local_registration(self) -> None:
+        test_surface = InteractionSurfaceId("im:test")
+        renderer = InteractionContextRenderer(
+            surfaces={
+                test_surface: InteractionSurfaceContext(
+                    attributes=(("type", "im"), ("provider", "test&chat"))
+                )
+            }
+        )
+        assert '<surface type="im" provider="test&amp;chat" />' in renderer.render(test_surface)
+
+
 # ===== SystemPromptComposer.compose =====
 
 
@@ -246,7 +279,7 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_without_session_has_nine_slots(self, tmp_path: Path) -> None:
+    def test_default_without_session_has_ten_slots(self, tmp_path: Path) -> None:
         """``session=None`` 时 channel 槽位被跳过，其余默认槽位仍输出。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
@@ -260,10 +293,11 @@ class TestSystemPromptComposerDefault:
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
+            "interaction_context_contract",
             "runtime_context",
         )
 
-    def test_default_with_session_has_ten_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_with_session_has_eleven_slots_in_fixed_order(self, tmp_path: Path) -> None:
         """传入 session 时，channel 槽位被插入在 output_contract 与
         runtime_context 之间（007 起新增）。"""
         from agent import Session
@@ -284,6 +318,7 @@ class TestSystemPromptComposerDefault:
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
+            "interaction_context_contract",
             "channel",
             "runtime_context",
         )
@@ -305,6 +340,7 @@ class TestSystemPromptComposerDefault:
             "tool_usage_contract",
             "memory_consistency",
             "output_contract",
+            "interaction_context_contract",
         ):
             slot = next(s for s in composer.sections if s.key == key)
             assert isinstance(slot, StaticSection)
@@ -355,8 +391,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 6572
-        assert estimate_tokens([Message(role="system", content=output)]) == 4929
+        assert len(output) == 6716
+        assert estimate_tokens([Message(role="system", content=output)]) == 5037
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

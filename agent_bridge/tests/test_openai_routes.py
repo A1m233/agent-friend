@@ -208,7 +208,22 @@ class TestSessionIdHeader:
         assert _ScriptedLLMClient.seen_messages
         system_prompt = _ScriptedLLMClient.seen_messages[-1][0]["content"]
         assert "正在通过电话和用户对话" in system_prompt
+        assert system_prompt.count("正在通过电话和用户对话") == 1
+        assert any(
+            '<surface type="voice_call" />' in message.get("content", "")
+            for message in _ScriptedLLMClient.seen_messages[-1]
+        )
         assert runtime.persistent_session_manager.open(sid).current_channel == "text"
+
+    def test_plain_openai_text_does_not_claim_supported_surface(self, client: TestClient) -> None:
+        resp = client.post("/v1/chat/completions", json=_openai_payload("hi"))
+        assert resp.status_code == 200
+        messages = _ScriptedLLMClient.seen_messages[-1]
+        system_prompt = messages[0]["content"]
+        assert not any(
+            message.get("content", "").startswith("<interaction_context>\n") for message in messages
+        )
+        assert "正在通过电话和用户对话" not in system_prompt
 
 
 class TestStreamingError:

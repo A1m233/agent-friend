@@ -17,6 +17,7 @@ import logging
 from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from agent.runtime import UserEvent
 from agent.runtime.models import RunRequest
+from agent.system_prompt import VOICE_CALL_SURFACE
 from agent.system_prompt.sections import PromptChannel
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -142,6 +143,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             return _error_response(map_exception(exc))
 
         channel: PromptChannel = "voice" if voice_latency is not None else "text"
+        surface = VOICE_CALL_SURFACE if voice_latency is not None else None
         handle = None
         if runtime.agent_runtime is not None:
 
@@ -168,6 +170,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     user_input=decoded.latest_user_input,
                 ),
                 channel=channel,
+                surface=surface,
                 conversation_factory=lambda: conv,
                 metadata={"protocol": "openai", "persistent": bool(session_id_hint)},
                 error_callback=_persist_error,
@@ -182,6 +185,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     agent_runtime=runtime.agent_runtime,
                     voice_latency_context=voice_latency,
                     channel=channel,
+                    surface=surface,
                     run_handle=handle,
                 ),
                 media_type="text/event-stream",
@@ -198,6 +202,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 model=model,
                 agent_runtime=runtime.agent_runtime,
                 channel=channel,
+                surface=surface,
                 run_handle=handle,
             )
         except Exception as exc:

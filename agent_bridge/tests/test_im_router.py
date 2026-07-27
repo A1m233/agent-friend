@@ -21,6 +21,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agent.system_prompt import IM_QQ_SURFACE
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.media import InboundMedia
@@ -197,6 +198,13 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
     assert len(captured) == 1
     assert captured[0].text == "hello world"
     assert captured[0].text_format == "markdown"
+    session_bridge.bind_persistent.return_value.stream.assert_called_once_with(
+        "你好",
+        attachments=[],
+        channel="text",
+        turn_context=None,
+        surface=IM_QQ_SURFACE,
+    )
 
 
 @pytest.mark.asyncio
@@ -304,6 +312,22 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
         run_id=None,
         sanitize_failed_model_call=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_unregistered_adapter_mapping_fails_before_llm(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    captured: list[OutboundContent] = []
+
+    async def send(content: OutboundContent) -> None:
+        captured.append(content)
+
+    await router.handle_inbound("test-im", _make_event(), send)
+
+    session_bridge.bind_persistent.assert_not_called()
+    assert captured[0].text == FALLBACK_TEXT
+    assert captured[0].text_format == "plain_text"
 
 
 @pytest.mark.asyncio

@@ -31,7 +31,11 @@ from .system_prompt.sections import PromptChannel
 class PromptBuilder(Protocol):
     """Prompt 构建器接口契约。"""
 
-    def build(self, *, channel_override: PromptChannel | None = None) -> str:
+    def build(
+        self,
+        *,
+        channel_override: PromptChannel | None = None,
+    ) -> str:
         """返回组装好的 system prompt 字符串。"""
         ...
 
@@ -116,7 +120,11 @@ class MarkdownPromptBuilder:
             session=self._session,
         )
 
-    def build(self, *, channel_override: PromptChannel | None = None) -> str:
+    def build(
+        self,
+        *,
+        channel_override: PromptChannel | None = None,
+    ) -> str:
         """返回组合后的 system_prompt 字符串。
 
         Raises:

@@ -23,6 +23,7 @@ from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
 from agent.runtime import ConsumerAbandonPolicy, InteractiveBusyPolicy, UserEvent
 from agent.runtime.models import RunRequest
+from agent.system_prompt import DESKTOP_CHAT_SURFACE
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -164,6 +165,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 ),
                 run_id=decoded.run_id,
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 conversation_factory=lambda: bridge.bind_persistent(boot),
                 metadata={"protocol": "ag_ui"},
                 consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
@@ -174,6 +176,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     attachments=_consume_attachments(),
                     user_event_id=decoded.user_message_id,
                     channel=run_request.channel,
+                    surface=run_request.surface,
                     run_id=run_request.run_id,
                     cancel_check=token.raise_if_cancelled,
                 ),
@@ -189,6 +192,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 accept=accept,
                 agent_runtime=runtime.agent_runtime,
                 channel="text",
+                surface=DESKTOP_CHAT_SURFACE,
                 turn_coordinator=runtime.turn_coordinator,
                 run_handle=handle,
                 run_conversation=lambda conv, text: conv.stream(
@@ -196,6 +200,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     attachments=_consume_attachments(),
                     user_event_id=decoded.user_message_id,
                     channel="text",
+                    surface=DESKTOP_CHAT_SURFACE,
                     run_id=decoded.run_id,
                 ),
             ),

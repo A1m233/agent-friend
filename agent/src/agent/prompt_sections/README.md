@@ -15,12 +15,13 @@
 | `memory_consistency.md` | `memory_consistency` | 被追问记忆矛盾时的回应边界（不暴露存储机制、不圆机制故事） |
 | `output_contract.md` | `output_contract` | 跨通道的默认输出表达约束（Markdown、链接、代码、清单等格式边界） |
 | `channel_voice.md` | `channel` | 语音通道下的表达约束（文字通道默认不输出） |
+| `interaction_context_contract.md` | `interaction_context_contract` | 解释宿主提供的当前回合结构化交互上下文；具体 surface 值不在基础 prompt 中 |
 | `runtime_context.md` | `runtime_context` | 当前时间、近期事实与历史归因的运行时证据边界 |
 
 ## 加载方式
 
-由 `agent.system_prompt.defaults.load_default_static_section(key)` 通过
-`importlib.resources` 加载，与 `agent.personas` 加载 builtin persona 同模式。
+由 `agent.system_prompt.defaults` 中的 section 工厂通过 `importlib.resources`
+加载，与 `agent.personas` 加载 builtin persona 同模式。
 
 ## 迭代说明
 
