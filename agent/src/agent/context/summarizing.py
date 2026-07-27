@@ -68,6 +68,7 @@ class _AssembleParts:
     new_user_input: str | None
     new_user_attachments: list[AttachmentRef] | None
     extra_context: list[Message] | None
+    turn_context: list[Message] | None
     trailing_user: str | None
     trailing_system: str | None
 
@@ -78,6 +79,7 @@ class _AssembleParts:
             new_user_input=self.new_user_input,
             new_user_attachments=self.new_user_attachments,
             extra_context=self.extra_context,
+            turn_context=self.turn_context,
             trailing_user=self.trailing_user,
             trailing_system=self.trailing_system,
         )
@@ -112,6 +114,7 @@ class SummarizingContextManager:
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
@@ -121,6 +124,7 @@ class SummarizingContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
@@ -298,6 +302,7 @@ class SummarizingContextManager:
             new_user_input=parts.new_user_input,
             new_user_attachments=parts.new_user_attachments,
             extra_context=parts.extra_context,
+            turn_context=parts.turn_context,
             trailing_user=parts.trailing_user,
             trailing_system=parts.trailing_system,
             runtime=runtime,

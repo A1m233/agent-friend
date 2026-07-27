@@ -89,7 +89,11 @@ class PersonaEditorPromptBuilder:
             .strip()
         )
 
-    def build(self, *, channel_override: PromptChannel | None = None) -> str:
+    def build(
+        self,
+        *,
+        channel_override: PromptChannel | None = None,
+    ) -> str:
         del channel_override
         return self._template.format(current_persona=self._store.load().content)
 
@@ -103,7 +107,11 @@ class _FrozenPersonaEditorPromptBuilder:
     def __init__(self, text: str) -> None:
         self._text = text
 
-    def build(self, *, channel_override: PromptChannel | None = None) -> str:
+    def build(
+        self,
+        *,
+        channel_override: PromptChannel | None = None,
+    ) -> str:
         del channel_override
         return self._text
 

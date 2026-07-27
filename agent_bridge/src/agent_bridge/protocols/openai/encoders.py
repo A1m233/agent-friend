@@ -27,6 +27,7 @@ from uuid import uuid4
 from agent.latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
 from agent.runtime import AgentRuntime, RunHandle, RunOutcome, UserEvent
 from agent.system_prompt.sections import PromptChannel
+from agent.system_prompt.surfaces import InteractionSurfaceId
 
 from agent import Conversation, ConversationEvent, TextDelta, TurnDone
 
@@ -49,6 +50,7 @@ def encode_streaming(
     agent_runtime: AgentRuntime | None = None,
     voice_latency_context: VoiceLatencyContext | None = None,
     channel: PromptChannel | None = None,
+    surface: InteractionSurfaceId | None = None,
     run_handle: RunHandle | None = None,
 ) -> Iterator[bytes]:
     """流式编码：生成 SSE bytes 流。
@@ -111,7 +113,7 @@ def encode_streaming(
         event_stream = (
             cast(Iterator[ConversationEvent], run_handle.events())
             if run_handle is not None
-            else conv.stream(user_input, channel=channel)
+            else conv.stream(user_input, channel=channel, surface=surface)
         )
         for ev in event_stream:
             # 014: 镜像复制给 push 通道订阅者
@@ -211,6 +213,7 @@ def encode_nonstreaming(
     model: str,
     agent_runtime: AgentRuntime | None = None,
     channel: PromptChannel | None = None,
+    surface: InteractionSurfaceId | None = None,
     run_handle: RunHandle | None = None,
 ) -> dict[str, Any]:
     """非流式编码：消费整段流拼成一个 ``chat.completion`` 对象。
@@ -236,7 +239,7 @@ def encode_nonstreaming(
     event_stream = (
         cast(Iterator[ConversationEvent], run_handle.events())
         if run_handle is not None
-        else conv.stream(user_input, channel=channel)
+        else conv.stream(user_input, channel=channel, surface=surface)
     )
     for ev in event_stream:
         if agent_runtime is not None and mirror_user_event is not None:

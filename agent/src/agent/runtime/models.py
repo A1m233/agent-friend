@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ..system_prompt.sections import PromptChannel
+from ..system_prompt.surfaces import InteractionSurfaceId
 from .cancellation import CancellationToken, CancelReason
 from .inbox import AgentEvent
 
@@ -89,6 +90,7 @@ class RunRequest:
     expires_at: datetime | None = None
     dedupe_key: str | None = None
     channel: PromptChannel | None = None
+    surface: InteractionSurfaceId | None = None
     conversation_factory: ConversationFactory | None = None
     conversation_runner: ConversationRunner | None = None
     error_callback: RunErrorCallback | None = None

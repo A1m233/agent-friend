@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from agent.system_prompt.sections import SystemPromptRenderContext
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -206,6 +207,15 @@ class TestChannelSectionRender:
         s = Session.new(title="t", persona="p", model="m", channel="voice")
         section = ChannelSection(key="channel", session=s, voice_template="")
         assert section.render() is None
+
+    def test_channel_instruction_is_independent_from_turn_surface_context(self) -> None:
+        s = Session.new(title="t", persona="p", model="m", channel="voice")
+        section = ChannelSection(
+            key="channel",
+            session=s,
+            voice_template="VOICE_INSTRUCTION_TEXT",
+        )
+        assert section.render(SystemPromptRenderContext()) == "VOICE_INSTRUCTION_TEXT"
 
 
 # ===== SystemPromptComposer.default 与 session 注入 =====

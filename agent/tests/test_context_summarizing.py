@@ -37,6 +37,7 @@ from agent.context.summary_prompt import (
     strip_analysis,
 )
 from agent.messages import Message
+from agent.system_prompt import IM_QQ_SURFACE
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -68,6 +69,7 @@ class _FakeLLM:
     fail: bool = False
     prompt_tokens: int | None = None
     complete_calls: int = 0
+    received: list[list[dict[str, Any]]] = field(default_factory=list)
     spec: Any = field(default_factory=lambda: SimpleNamespace(model="deepseek/test"))
 
     def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
@@ -83,6 +85,7 @@ class _FakeLLM:
         tools: list[dict[str, Any]] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
+        self.received.append(messages)
         yield LLMTextDelta(text="ok")
         usage = (
             LLMUsage(
@@ -563,8 +566,12 @@ def test_ac34_35_compaction_persisted_and_reused(
     assert _count_compactions(session) == 1
     assert llm.complete_calls == 1
 
-    reply2 = conv.send("第二条新消息")
-    assert reply2 == "ok"
+    list(conv.stream("第二条新消息", surface=IM_QQ_SURFACE))
+    assert any(
+        '<surface type="im" provider="qq" />' in message.get("content", "")
+        for message in llm.received[-1]
+    )
+    assert "<interaction_context>" not in llm.summary_text
     # 复用已有摘要折叠，未再触发摘要
     assert _count_compactions(session) == 1
     assert llm.complete_calls == 1

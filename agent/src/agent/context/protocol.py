@@ -135,8 +135,8 @@ class BuildResult:
     """:meth:`ContextManager.build_messages` 的结构化返回值。
 
     Attributes:
-        messages: 实际要发给 LLM 的消息序列（``system`` 在最前、若有
-            ``new_user_input`` / ``trailing_user`` 则在 ``history`` 之后、若有
+        messages: 实际要发给 LLM 的消息序列（``system`` 在最前；当前回合的
+            ``turn_context`` 位于 ``history`` 之后、``new_user_input`` 之前；若有
             ``trailing_system`` 则在最末）。
         dropped_count: 截掉的历史消息条数。:class:`NaiveContextManager` 永远是 0。
         new_compaction: 本轮新生成、待 ``Conversation`` 落盘的摘要记录（009 M3）；
@@ -160,14 +160,16 @@ class ContextManager(Protocol):
     2. ``new_user_input`` **若提供**（非 ``None``），放在 ``new_user_input``/``history``
        序列的最后；续轮 / 兜底收尾传 ``None`` 表示本轮无新用户输入
     3. ``extra_context``（memory 注入）若提供，应放在 ``system`` 之后、``history`` 之前
-    4. ``trailing_user`` 若提供，rendered 为 ``role="user"`` 消息，位置在
+    4. ``turn_context`` 若提供，作为可信、非持久化消息放在 ``history`` 之后、
+       ``new_user_input`` 之前；用于当前回合运行时事实，不参与历史摘要
+    5. ``trailing_user`` 若提供，rendered 为 ``role="user"`` 消息，位置在
        ``new_user_input`` 之后、``trailing_system`` 之前。语义：仅活在 LLM 视图、
        **不落盘**——主动 source（``system_trigger``）注入触发信号专用（021）。与
        ``new_user_input``（已落盘的真用户输入）语义边界明确，互不替代
-    5. ``trailing_system`` 若提供，放在**所有消息之后**（比 ``trailing_user`` 还靠后），
+    6. ``trailing_system`` 若提供，放在**所有消息之后**（比 ``trailing_user`` 还靠后），
        用于工具调用循环兜底收尾的临时指令
-    6. ``history`` 可能被截断 / 折叠，截断的条数记入 :attr:`BuildResult.dropped_count`
-    7. ``runtime`` 为 ``None`` 时实现应退化为"不做预算判断"（:class:`NaiveContextManager`
+    7. ``history`` 可能被截断 / 折叠，截断的条数记入 :attr:`BuildResult.dropped_count`
+    8. ``runtime`` 为 ``None`` 时实现应退化为"不做预算判断"（:class:`NaiveContextManager`
        行为完全不变）；非 ``None`` 时按策略做度量 / 裁剪 / 压缩
 
     Note:
@@ -183,6 +185,7 @@ class ContextManager(Protocol):
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
@@ -195,12 +198,13 @@ def assemble_messages(
     new_user_input: str | None = None,
     new_user_attachments: list[AttachmentRef] | None = None,
     extra_context: list[Message] | None = None,
+    turn_context: list[Message] | None = None,
     trailing_user: str | None = None,
     trailing_system: str | None = None,
 ) -> list[Message]:
     """按 :class:`ContextManager` 不变量把各成分拼成消息序列（所有策略共用）。
 
-    顺序：``[system?] + extra_context? + history + [new_user_input?] + [trailing_user?] + [trailing_system?]``。
+    顺序：``[system?] + extra_context? + history + turn_context? + [new_user_input?] + [trailing_user?] + [trailing_system?]``。
     ``history`` 由各策略在调用前自行裁剪 / 折叠——本函数只负责拼装顺序，不做预算判断。
 
     ``trailing_user`` 与 ``new_user_input`` 都 rendered 为 ``role="user"``——前者
@@ -213,6 +217,8 @@ def assemble_messages(
     if extra_context:
         messages.extend(extra_context)
     messages.extend(history)
+    if turn_context:
+        messages.extend(turn_context)
     if new_user_input is not None:
         messages.append(
             Message(

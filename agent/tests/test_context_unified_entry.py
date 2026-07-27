@@ -54,6 +54,7 @@ class _SpyContextManager:
         new_user_input: str | None = None,
         new_user_attachments: list[Any] | None = None,
         extra_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
@@ -61,6 +62,7 @@ class _SpyContextManager:
         self.calls.append(
             {
                 "new_user_input": new_user_input,
+                "turn_context": turn_context,
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
                 "has_runtime": runtime is not None,
@@ -74,6 +76,7 @@ class _SpyContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
@@ -207,7 +210,7 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
                 LLMTextDelta(text="hi"),
                 LLMTurnDone(
                     stop_reason="end_turn",
-                    usage=LLMUsage(prompt_tokens=5000, completion_tokens=5, total_tokens=5005),
+                    usage=LLMUsage(prompt_tokens=6000, completion_tokens=5, total_tokens=6005),
                 ),
             ],
             [LLMTextDelta(text="yo"), LLMTurnDone(stop_reason="end_turn")],
@@ -225,5 +228,5 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
 
     conv.send("yo")
     # 第二轮锚点应为首轮 usage.prompt_tokens
-    assert conv.last_context_notes["last_input_tokens"] == 5000
+    assert conv.last_context_notes["last_input_tokens"] == 6000
     assert conv.last_context_notes["calibration_factor"] > 1.0
