@@ -26,6 +26,7 @@ export type ServerVoiceInputEvent =
 export interface VoiceInputTranscript {
   kind: "partial" | "final";
   traceId: string;
+  targetWorkspaceKey: string;
   text: string;
   seq: number;
 }
@@ -33,6 +34,7 @@ export interface VoiceInputTranscript {
 export interface VoiceInputSnapshot {
   phase: VoiceInputPhase;
   traceId: string | null;
+  targetWorkspaceKey: string | null;
   volumeLevel: number;
   latestTranscript: VoiceInputTranscript | null;
   error: string | null;

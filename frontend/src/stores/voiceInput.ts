@@ -28,9 +28,10 @@ import { canStartVoiceInput, isVoiceInputLive } from "./voiceInputStateMachine";
 
 interface VoiceInputState extends VoiceInputSnapshot {
   prewarm: (reason?: string) => Promise<void>;
-  start: () => Promise<void>;
+  start: (targetWorkspaceKey: string) => Promise<void>;
   stop: (reason?: "manual" | "send") => Promise<void>;
   cancel: () => Promise<void>;
+  acknowledgeTranscript: (seq: number) => void;
   resetError: () => void;
 }
 
@@ -73,6 +74,7 @@ function initialSnapshot(): VoiceInputSnapshot {
   return {
     phase: "idle",
     traceId: null,
+    targetWorkspaceKey: null,
     volumeLevel: 0,
     latestTranscript: null,
     error: null,
@@ -86,6 +88,7 @@ function idleAfterStopSnapshot(): Partial<VoiceInputSnapshot> {
   return {
     phase: "idle",
     traceId: null,
+    targetWorkspaceKey: null,
     volumeLevel: 0,
     error: null,
     errorCode: null,
@@ -98,6 +101,7 @@ function idleAfterFailureSnapshot(message: string, code: string): Partial<VoiceI
   return {
     phase: "idle",
     traceId: null,
+    targetWorkspaceKey: null,
     volumeLevel: 0,
     latestTranscript: null,
     error: message,
@@ -327,6 +331,8 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       return;
     }
     if (event.type === "partial" || event.type === "final") {
+      const targetWorkspaceKey = get().targetWorkspaceKey;
+      if (!targetWorkspaceKey) return;
       if (!firstTranscriptLogged) {
         firstTranscriptLogged = true;
         logVoiceInputLatency("frontend_first_transcript", {
@@ -347,6 +353,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       const latestTranscript: VoiceInputTranscript = {
         kind: event.type,
         traceId: event.traceId,
+        targetWorkspaceKey,
         text: event.text,
         seq: transcriptSeq,
       };
@@ -409,7 +416,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       await request;
     },
 
-    async start() {
+    async start(targetWorkspaceKey) {
       const state = get();
       if (!canStartVoiceInput(state.phase)) return;
       if (!hasPermissions(["microphone"])) {
@@ -422,6 +429,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
         set({
           phase: "waiting_permission_flow",
           traceId,
+          targetWorkspaceKey,
           volumeLevel: 0,
           latestTranscript: null,
           error: null,
@@ -453,7 +461,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
               return;
             }
             set(idleAfterStopSnapshot());
-            void get().start();
+            void get().start(targetWorkspaceKey);
           },
           (error) => {
             if (controller.signal.aborted || token !== activeToken) return;
@@ -480,6 +488,7 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       set({
         phase: "connecting",
         traceId,
+        targetWorkspaceKey,
         volumeLevel: 0,
         latestTranscript: null,
         error: null,
@@ -639,6 +648,11 @@ export const useVoiceInputStore = create<VoiceInputState>((set, get) => {
       connection?.cancel();
       await cleanupLocalResources();
       set({ ...initialSnapshot() });
+    },
+
+    acknowledgeTranscript(seq) {
+      if (get().latestTranscript?.seq !== seq) return;
+      set({ latestTranscript: null });
     },
 
     resetError() {

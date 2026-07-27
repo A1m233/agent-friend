@@ -88,6 +88,7 @@ function resetVoiceInputStore(): void {
   useVoiceInputStore.setState({
     phase: "idle",
     traceId: null,
+    targetWorkspaceKey: null,
     volumeLevel: 0,
     latestTranscript: null,
     error: null,
@@ -121,7 +122,7 @@ describe("voice input store", () => {
   });
 
   it("falls back to idle when stopping gets no server acknowledgement", async () => {
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
 
     expect(useVoiceInputStore.getState().phase).toBe("recording");
 
@@ -141,7 +142,7 @@ describe("voice input store", () => {
     const recorderStart = deferred<typeof voiceInputMocks.recorder>();
     voiceInputMocks.startVoiceInputRecorder.mockReturnValueOnce(recorderStart.promise);
 
-    const startPromise = useVoiceInputStore.getState().start();
+    const startPromise = useVoiceInputStore.getState().start("session-a");
 
     await flushMicrotasks();
 
@@ -164,7 +165,7 @@ describe("voice input store", () => {
     const recorderStart = deferred<typeof voiceInputMocks.recorder>();
     voiceInputMocks.startVoiceInputRecorder.mockReturnValueOnce(recorderStart.promise);
 
-    const startPromise = useVoiceInputStore.getState().start();
+    const startPromise = useVoiceInputStore.getState().start("session-a");
 
     await flushMicrotasks();
 
@@ -192,7 +193,7 @@ describe("voice input store", () => {
       message: "语音输入识别服务还没有接上，请稍后再试",
     });
 
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
 
     expect(voiceInputMocks.startVoiceInputRecorder).not.toHaveBeenCalled();
     expect(voiceInputMocks.connectVoiceInput).not.toHaveBeenCalled();
@@ -205,7 +206,7 @@ describe("voice input store", () => {
     permissionMocks.hasPermissions.mockReturnValueOnce(false).mockReturnValue(true);
     permissionMocks.waitForFeaturePermissions.mockReturnValueOnce(permission.promise);
 
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
 
     expect(useVoiceInputStore.getState().phase).toBe("waiting_permission_flow");
     expect(voiceInputMocks.startVoiceInputRecorder).not.toHaveBeenCalled();
@@ -228,7 +229,7 @@ describe("voice input store", () => {
   });
 
   it("stops recording when the unified snapshot reports microphone revocation", async () => {
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
     expect(useVoiceInputStore.getState().phase).toBe("recording");
 
     permissionMocks.hasPermissions.mockReturnValue(false);
@@ -245,7 +246,7 @@ describe("voice input store", () => {
       return Promise.resolve(voiceInputMocks.recorder);
     });
 
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
 
     expect(voiceInputMocks.recorder.stop).toHaveBeenCalledTimes(1);
     expect(voiceInputMocks.connectVoiceInput).not.toHaveBeenCalled();
@@ -255,6 +256,42 @@ describe("voice input store", () => {
       "frontend_recorder_start_timeout",
       expect.objectContaining({ elapsedMs: 9_000 }),
     );
+  });
+
+  it("binds transcripts to their source workspace and acknowledges each event once", async () => {
+    let emitServerEvent: (event: ServerVoiceInputEvent) => void = () => {
+      throw new Error("voice input test did not capture onEvent");
+    };
+    voiceInputMocks.connectVoiceInput.mockImplementationOnce(async (options) => {
+      emitServerEvent = options.onEvent;
+      return voiceInputMocks.connection;
+    });
+
+    await useVoiceInputStore.getState().start("session-a");
+    const traceId = useVoiceInputStore.getState().traceId ?? "trace-1";
+
+    emitServerEvent({ type: "partial", traceId, text: "第一段" });
+    const partial = useVoiceInputStore.getState().latestTranscript;
+    expect(partial).toMatchObject({
+      traceId,
+      targetWorkspaceKey: "session-a",
+      text: "第一段",
+    });
+
+    emitServerEvent({ type: "final", traceId, text: "第一段完成" });
+    const final = useVoiceInputStore.getState().latestTranscript;
+    expect(final?.seq).toBeGreaterThan(partial?.seq ?? 0);
+
+    useVoiceInputStore.getState().acknowledgeTranscript(partial?.seq ?? -1);
+    expect(useVoiceInputStore.getState().latestTranscript?.seq).toBe(final?.seq);
+
+    useVoiceInputStore.getState().acknowledgeTranscript(final?.seq ?? -1);
+    expect(useVoiceInputStore.getState().latestTranscript).toBeNull();
+
+    await useVoiceInputStore.getState().stop("manual");
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(useVoiceInputStore.getState().targetWorkspaceKey).toBeNull();
+    expect(useVoiceInputStore.getState().latestTranscript).toBeNull();
   });
 
   it("keeps the composer interactive after ASR unavailable errors", async () => {
@@ -268,7 +305,7 @@ describe("voice input store", () => {
       return voiceInputMocks.connection;
     });
 
-    await useVoiceInputStore.getState().start();
+    await useVoiceInputStore.getState().start("session-a");
 
     expect(useVoiceInputStore.getState().phase).toBe("recording");
     expect(capturedServerEventHandler).toBe(true);
