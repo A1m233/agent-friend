@@ -17,12 +17,20 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
 from .content import OutboundContent
 from .event import InboundEvent, InboundInteraction
 
-__all__ = ["IMOutboundProvider", "IMProvider", "ProviderStatus"]
+__all__ = ["IMOutboundProvider", "IMProvider", "OutboundSendResult", "ProviderStatus"]
+
+
+@dataclass(frozen=True)
+class OutboundSendResult:
+    outcome: Literal["delivered", "failed", "unknown"]
+    provider_message_id: str | None = None
+    error_kind: str | None = None
 
 
 ProviderStatus = Literal["active", "degraded", "error", "stopped"]
@@ -39,7 +47,7 @@ ProviderStatus = Literal["active", "degraded", "error", "stopped"]
 class IMOutboundProvider(Protocol):
     """Minimal Router-facing outbound contract."""
 
-    async def send(self, content: OutboundContent) -> None:
+    async def send(self, content: OutboundContent) -> OutboundSendResult | None:
         """Send one complete platform message."""
 
 
@@ -82,7 +90,7 @@ class IMProvider(Protocol):
                 bridge 主 event loop。
         """
 
-    async def send(self, content: OutboundContent) -> None:
+    async def send(self, content: OutboundContent) -> OutboundSendResult | None:
         """回写消息给 IM 平台。
 
         Args:

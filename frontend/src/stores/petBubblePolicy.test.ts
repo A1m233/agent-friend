@@ -53,6 +53,19 @@ describe("defaultPolicy", () => {
     expect(defaultPolicy(env)).toBeNull();
   });
 
+  it("conversation presentation 只进入对话，不重复冒桌宠气泡", () => {
+    const env = envelope({
+      presentation: "conversation",
+      events: [delta("该提交周报了。")],
+    });
+    expect(defaultPolicy(env)).toBeNull();
+  });
+
+  it("旧 envelope 缺少 presentation 时仍按 ambient 展示", () => {
+    const env = envelope({ events: [delta("该休息了。")] });
+    expect(defaultPolicy(env)?.text).toBe("该休息了。");
+  });
+
   it("heartbeat 一律丢弃（兜底，正常情况下 Rust 已丢）", () => {
     const env = envelope({ kind: "heartbeat", session_id: "", seq: 0, events: [] });
     expect(defaultPolicy(env)).toBeNull();

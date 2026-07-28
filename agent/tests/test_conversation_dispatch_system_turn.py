@@ -161,6 +161,7 @@ def test_dispatch_system_turn_user_visibility_writes_assistant_message(tmp_path:
             source_kind="cron:bedtime",
             system_prompt_addendum="该睡了",
             output_visibility="user",
+            presentation="conversation",
         )
     )
 
@@ -291,6 +292,7 @@ def test_dispatch_system_turn_writes_system_trigger_marker(tmp_path: Path) -> No
             source_kind="cron:bedtime",
             system_prompt_addendum="该睡了",
             output_visibility="user",
+            presentation="conversation",
         )
     )
 
@@ -300,6 +302,7 @@ def test_dispatch_system_turn_writes_system_trigger_marker(tmp_path: Path) -> No
     assert p["source_kind"] == "cron:bedtime"
     assert p["system_prompt_addendum"] == "该睡了"
     assert p["output_visibility"] == "user"
+    assert p["presentation"] == "conversation"
 
 
 # ===== 021：trailing_user 注入路径 =====

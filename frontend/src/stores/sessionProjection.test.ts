@@ -240,6 +240,43 @@ describe("projectSessionEvents", () => {
     }
   });
 
+  it("把 todo_reminder 投影为固定事实块，并保留 conversation Agent 回应", () => {
+    const out = projectSessionEvents([
+      ev("todo_reminder", {
+        occurrence_id: "occ-1",
+        todo_id: "todo-1",
+        reminder_id: "reminder-1",
+        title: "提交周报",
+        description: "附上本周数据",
+        scheduled_at_utc: "2026-07-28T10:00:00+00:00",
+        scheduled_local: "2026-07-28T18:00:00+08:00",
+        timezone: "Asia/Shanghai",
+        recurrence: "weekly:2@18:00:00",
+        todo_status: "open",
+      }),
+      ev("system_trigger", {
+        source_kind: "todo_reminder",
+        output_visibility: "user",
+        presentation: "conversation",
+      }),
+      ev("assistant_message", { content: "到时间啦，要不要现在一起把它收尾？" }),
+    ]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].role).toBe("assistant");
+    expect(out[0].blocks).toHaveLength(2);
+    expect(out[0].blocks[0]).toMatchObject({
+      kind: "reminder",
+      occurrenceId: "occ-1",
+      title: "提交周报",
+      todoStatus: "open",
+    });
+    expect(out[0].blocks[1]).toMatchObject({
+      kind: "text",
+      text: "到时间啦，要不要现在一起把它收尾？",
+    });
+  });
+
   it("user-visible system_trigger 之后再来的 user_message 不会被误跳过（flag 只消费一次）", () => {
     const events: SessionEvent[] = [
       ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),

@@ -30,6 +30,7 @@ def test_data_paths_follow_user_data_dir_env(
 
     assert settings.sessions_dir == tmp_path / "sessions"
     assert settings.memory_db == tmp_path / "memory" / "memory.db"
+    assert settings.todos_db is None
     assert settings.memory_model_dir is None
     assert settings.personas_dir == tmp_path / "personas"
 

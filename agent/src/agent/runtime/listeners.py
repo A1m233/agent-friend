@@ -63,6 +63,7 @@ class PushEnvelope:
     origin: str | None = None
     channel: str | None = None
     run: RunSnapshot | None = None
+    presentation: str | None = None
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -167,6 +168,11 @@ class ListenerRegistry:
                         seq=self._seq[sub.id],
                         source_kind=source_kind,
                         events=list(buf),
+                        presentation=(
+                            agent_event.presentation
+                            if isinstance(agent_event, SystemTriggerEvent)
+                            else None
+                        ),
                     )
                     del self._turn_buffers[key]
                     self._safe_push(sub, envelope)
@@ -202,6 +208,42 @@ class ListenerRegistry:
                         run_id=run_id,
                         outcome=outcome,
                         reason_code=reason_code,
+                        presentation=(
+                            agent_event.presentation
+                            if isinstance(agent_event, SystemTriggerEvent)
+                            else None
+                        ),
+                    ),
+                )
+
+    def publish_fixed_ambient(
+        self,
+        *,
+        source_kind: str,
+        text: str,
+        occurrence_id: str,
+    ) -> None:
+        """Push one deterministic ambient message without starting an LLM turn."""
+        events: list[dict[str, Any]] = [
+            {"type": "text_delta", "text": text},
+            {"type": "done", "stop_reason": "fixed_reminder", "total_tool_calls": 0},
+        ]
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "agent_turn" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="agent_turn",
+                        session_id="",
+                        seq=self._seq[sub.id],
+                        source_kind=source_kind,
+                        events=events,
+                        run_id=occurrence_id,
+                        outcome="completed",
+                        presentation="ambient",
                     ),
                 )
 

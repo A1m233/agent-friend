@@ -22,7 +22,13 @@
  * 未来 chat 窗想回看历史主动轮：删掉 pendingSkipAssistant 即可，事件已在 JSONL 保留。
  */
 
-import type { ChatAttachment, ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ReminderBlock,
+  TextBlock,
+  ToolBlock,
+} from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
 import { TOOL_ERROR_PREFIX } from "./conversationReducer";
 
@@ -86,7 +92,28 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     if (ev.type === "system_trigger") {
       // user-visible 触发会紧跟一条 assistant_message——置 flag 让下一条跳过
       const visibility = asString(p.output_visibility);
-      if (visibility === "user") pendingSkipAssistant = true;
+      const presentation = asString(p.presentation);
+      if (visibility === "user" && presentation !== "conversation") {
+        pendingSkipAssistant = true;
+      }
+      continue;
+    }
+
+    if (ev.type === "todo_reminder") {
+      const block: ReminderBlock = {
+        kind: "reminder",
+        occurrenceId: asString(p.occurrence_id) || ev.uuid,
+        todoId: asString(p.todo_id),
+        reminderId: asString(p.reminder_id),
+        title: asString(p.title),
+        description: asString(p.description),
+        scheduledAtUtc: asString(p.scheduled_at_utc),
+        scheduledLocal: asString(p.scheduled_local),
+        timezone: asString(p.timezone),
+        recurrence: asString(p.recurrence),
+        todoStatus: asString(p.todo_status),
+      };
+      ensureAssistant(`reminder:${block.occurrenceId}`, ev.ts).blocks.push(block);
       continue;
     }
 

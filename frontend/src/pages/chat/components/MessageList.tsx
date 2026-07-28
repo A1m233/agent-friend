@@ -25,6 +25,7 @@ import { toMarkdownContent } from "../projection";
 import { EditMessageSender } from "./EditMessageSender";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
+import { ReminderCard } from "./ReminderCard";
 import { ToolCard } from "./ToolCard";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
@@ -179,6 +180,15 @@ function messageCopyText(message: ChatMessage): string {
   return message.blocks
     .flatMap((block) => {
       if (block.kind === "text" || block.kind === "thinking") return [block.text];
+      if (block.kind === "reminder") {
+        return [
+          `提醒：${block.title}`,
+          block.description,
+          `计划时间：${block.scheduledLocal} (${block.timezone})`,
+          `周期：${block.recurrence}`,
+          `状态：${block.todoStatus}`,
+        ].filter(Boolean);
+      }
       return [];
     })
     .concat(message.status === "error" && message.error ? [message.error] : [])
@@ -197,7 +207,7 @@ function messageCopyText(message: ChatMessage): string {
 function lastRenderableBlockIndex(message: ChatMessage): number {
   for (let i = message.blocks.length - 1; i >= 0; i -= 1) {
     const block = message.blocks[i];
-    if (block.kind === "text" || block.kind === "tool") return i;
+    if (block.kind === "text" || block.kind === "tool" || block.kind === "reminder") return i;
   }
   return -1;
 }
@@ -271,6 +281,10 @@ function MessageContent({
       if (b.kind === "tool") {
         if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
         return <ToolCard key={`c:${b.toolCallId || i}`} block={b} />;
+      }
+      if (b.kind === "reminder") {
+        if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
+        return <ReminderCard key={`r:${b.occurrenceId || i}`} block={b} />;
       }
       return null;
     })

@@ -78,6 +78,8 @@ class BridgeSettings(BaseSettings):
     log_level: str = "INFO"
     sessions_dir: Path = Field(default_factory=sessions_dir)
     memory_db: Path = Field(default_factory=memory_db_path)
+    todos_db: Path | None = None
+    """Todo DB 单项覆盖；未设置时跟随 ``sessions_dir`` 的用户数据根。"""
     memory_model_dir: Path | None = Field(
         default=None,
         validation_alias=AliasChoices(

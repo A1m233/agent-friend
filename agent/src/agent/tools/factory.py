@@ -36,12 +36,14 @@ from .registry import ToolRegistry
 if TYPE_CHECKING:
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
+    from ..todos import TodoService
 
 
 def make_default_registry(
     session_store: SessionStore | None = None,
     *,
     memory_search: MemorySearchService | None = None,
+    todo_service: TodoService | None = None,
     session_catalog: SessionCatalog | None = None,
     tavily_api_key: str | None = None,
     amap_webservice_key: str | None = None,
@@ -73,6 +75,11 @@ def make_default_registry(
         - 网络与记忆条件都不满足 → 仍保留两个本地工具和地点工具表面
     """
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
+
+    if todo_service is not None:
+        from .builtin.todo_manage import TodoManageTool
+
+        tools.append(TodoManageTool(todo_service))
 
     api_key = tavily_api_key or os.environ.get("TAVILY_API_KEY")
     if api_key:

@@ -795,6 +795,7 @@ class Conversation:
         source_kind: str,
         system_prompt_addendum: str,
         output_visibility: Literal["user", "memory_only"] = "user",
+        presentation: Literal["conversation", "ambient", "none"] = "ambient",
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -808,6 +809,7 @@ class Conversation:
                 source_kind=source_kind,
                 system_prompt_addendum=system_prompt_addendum,
                 output_visibility=output_visibility,
+                presentation=presentation,
                 run_id=run_id,
                 cancel_check=cancel_check,
             )
@@ -821,6 +823,7 @@ class Conversation:
         source_kind: str,
         system_prompt_addendum: str,
         output_visibility: Literal["user", "memory_only"] = "user",
+        presentation: Literal["conversation", "ambient", "none"] = "ambient",
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -862,6 +865,7 @@ class Conversation:
             source_kind=source_kind,
             system_prompt_addendum=system_prompt_addendum,
             output_visibility=output_visibility,
+            presentation=presentation,
         )
 
         # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
@@ -1841,13 +1845,15 @@ class Conversation:
                         _RUNTIME_NOW_ARG: tool_run_context.trusted_now.isoformat(),
                     }
                 )
-        if name == "datetime_calculate" and tool_run_context is not None:
+        if name in {"datetime_calculate", "todo_manage"} and tool_run_context is not None:
             invocation_args.update(
                 {
                     "__agent_friend_runtime_now": tool_run_context.trusted_now.isoformat(),
                     "__agent_friend_runtime_timezone": tool_run_context.trusted_timezone,
                 }
             )
+        if name == "todo_manage":
+            invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name == "web_fetch" and tool_run_context is not None:
             url = args.get("url")
             authorization = (
@@ -2332,6 +2338,7 @@ class Conversation:
         source_kind: str,
         system_prompt_addendum: str,
         output_visibility: str,
+        presentation: str,
     ) -> None:
         """落 ``system_trigger`` 事件（014）：non-user 触发轮的 marker。
 
@@ -2346,6 +2353,7 @@ class Conversation:
                 "source_kind": source_kind,
                 "system_prompt_addendum": system_prompt_addendum,
                 "output_visibility": output_visibility,
+                "presentation": presentation,
             },
             meta=self._run_event_meta(),
         )

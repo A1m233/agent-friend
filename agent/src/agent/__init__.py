@@ -47,6 +47,7 @@ from .paths import (
     memory_db_path,
     personas_dir,
     sessions_dir,
+    todos_db_path,
     user_data_dir,
 )
 from .personas import (
@@ -95,6 +96,19 @@ from .system_prompt import (
     StaticSection,
     SystemPromptComposer,
 )
+from .todos import (
+    OnceSchedule,
+    RecurringSchedule,
+    Reminder,
+    ReminderOccurrence,
+    Todo,
+    TodoDetails,
+    TodoError,
+    TodoListQuery,
+    TodoService,
+    TodoStatus,
+    TodoStore,
+)
 from .tool_runtime import ToolRunPolicy
 from .tools import (
     Tool,
@@ -139,6 +153,7 @@ __all__ = [
     "NaiveContextManager",
     "NotifyingSessionStore",
     "NullSessionStore",
+    "OnceSchedule",
     "PersonaAlreadyExistsError",
     "PersonaAmbiguousError",
     "PersonaCatalog",
@@ -155,6 +170,9 @@ __all__ = [
     "PriorSummary",
     "PromptBuilder",
     "ProposePersonaTool",
+    "RecurringSchedule",
+    "Reminder",
+    "ReminderOccurrence",
     "Role",
     "RuntimeContext",
     "Section",
@@ -176,6 +194,13 @@ __all__ = [
     "SummarizingContextManager",
     "SystemPromptComposer",
     "TextDelta",
+    "Todo",
+    "TodoDetails",
+    "TodoError",
+    "TodoListQuery",
+    "TodoService",
+    "TodoStatus",
+    "TodoStore",
     "Tool",
     "ToolCallRequest",
     "ToolCallResult",
@@ -197,5 +222,6 @@ __all__ = [
     "random_fallback",
     "session_mutation_context",
     "sessions_dir",
+    "todos_db_path",
     "user_data_dir",
 ]

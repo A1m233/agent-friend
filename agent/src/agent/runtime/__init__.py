@@ -555,6 +555,7 @@ class AgentRuntime:
                     source_kind=request.event.source_kind,
                     system_prompt_addendum=request.event.system_prompt_addendum,
                     output_visibility=request.event.output_visibility,
+                    presentation=request.event.presentation,
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )
@@ -614,6 +615,7 @@ class AgentRuntime:
                 source_kind=ev.source_kind,
                 system_prompt_addendum=ev.system_prompt_addendum,
                 output_visibility=ev.output_visibility,
+                presentation=ev.presentation,
             )
 
         for cev in events_iter:

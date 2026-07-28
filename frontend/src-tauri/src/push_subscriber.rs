@@ -27,6 +27,8 @@ pub struct PushEnvelope {
     pub session_id: String,
     pub seq: u64,
     pub source_kind: Option<String>,
+    #[serde(default)]
+    pub presentation: Option<String>,
     pub events: Vec<serde_json::Value>,
     #[serde(default)]
     pub revision: Option<u64>,
@@ -355,6 +357,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             session_id: "s1".into(),
             seq: 42,
             source_kind: Some("idle_reflection".into()),
+            presentation: Some("ambient".into()),
             events: vec![serde_json::json!({"type": "memory_observation"})],
             revision: None,
             change_kind: None,
@@ -368,6 +371,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(parsed.session_id, original.session_id);
         assert_eq!(parsed.seq, original.seq);
         assert_eq!(parsed.source_kind, original.source_kind);
+        assert_eq!(parsed.presentation, original.presentation);
         assert_eq!(parsed.events.len(), 1);
     }
 

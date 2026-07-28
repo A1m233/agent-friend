@@ -52,7 +52,7 @@ from qqbot_agent_sdk.websocket import QQWebSocket, WSCallbacks
 from ..content import OutboundAction, OutboundContent, OutboundControls
 from ..credentials import ImCredential
 from ..event import InboundInteraction
-from ..provider import ProviderStatus
+from ..provider import OutboundSendResult, ProviderStatus
 from ..state import ControlCapability, IMStateStore
 from ..streaming import IMStreamSession, OutboundStreamContext
 from .qq_streaming import QQC2CStreamSession
@@ -206,7 +206,7 @@ class QQAdapter:
             if self._startup_task is asyncio.current_task():
                 self._startup_task = None
 
-    async def send(self, content: OutboundContent) -> None:
+    async def send(self, content: OutboundContent) -> OutboundSendResult:
         """回写一条 c2c 文本消息给 QQ 平台。
 
         非零 ``code`` 错误码仅 log warning(43xxx 内容审核 / 11xxx 权限等),
@@ -214,7 +214,7 @@ class QQAdapter:
         """
         if self._api is None:
             logger.warning("QQAdapter.send called before start (bind=%s)", self.bind_id)
-            return
+            return OutboundSendResult("failed", error_kind="provider_not_started")
 
         msg_seq = self._next_msg_seq()
         msg = _message_to_create(content, msg_seq=msg_seq)
@@ -258,8 +258,7 @@ class QQAdapter:
                     self.bind_id,
                     content.chat_id,
                 )
-                await self._retry_without_controls_after_rejection(content)
-                return
+                return await self._retry_without_controls_after_rejection(content)
             logger.exception(
                 "QQ post_c2c_message 网络/HTTP 失败 (bind=%s, chat=%s, "
                 "reply_to_message_id=%s, msg_seq=%d, text_len=%d, text_format=%s)",
@@ -270,7 +269,7 @@ class QQAdapter:
                 _text_len(content.text),
                 content.text_format,
             )
-            return
+            return OutboundSendResult("unknown", error_kind="network_or_http")
 
         code = resp.get("code", 0) if isinstance(resp, dict) else 0
         if code:
@@ -287,8 +286,8 @@ class QQAdapter:
                 content.text_format,
             )
             if keyboard is not None and _is_controls_rejection(resp):
-                await self._retry_without_controls_after_rejection(content)
-            return
+                return await self._retry_without_controls_after_rejection(content)
+            return OutboundSendResult("failed", error_kind=f"provider_code_{code}")
 
         if keyboard is not None:
             self._set_controls_capability("supported")
@@ -305,6 +304,7 @@ class QQAdapter:
             _text_len(content.text),
             content.text_format,
         )
+        return OutboundSendResult("delivered", provider_message_id=response_message_id or None)
 
     def open_text_stream(self, context: OutboundStreamContext) -> IMStreamSession | None:
         """Create a QQ native C2C stream using the already configured API client."""
@@ -499,10 +499,12 @@ class QQAdapter:
     def _should_try_controls(self, controls: OutboundControls | None) -> bool:
         return controls is not None and self.controls_capability() != "unsupported"
 
-    async def _retry_without_controls_after_rejection(self, content: OutboundContent) -> None:
+    async def _retry_without_controls_after_rejection(
+        self, content: OutboundContent
+    ) -> OutboundSendResult:
         api = self._api
         if api is None:
-            return
+            return OutboundSendResult("failed", error_kind="provider_not_started")
         msg_seq = self._next_msg_seq()
         msg = _message_to_create(content, msg_seq=msg_seq)
         try:
@@ -514,7 +516,7 @@ class QQAdapter:
                 content.chat_id,
                 exc_info=True,
             )
-            return
+            return OutboundSendResult("unknown", error_kind="fallback_network_or_http")
         code = response.get("code", 0) if isinstance(response, dict) else 0
         if code:
             logger.warning(
@@ -523,8 +525,12 @@ class QQAdapter:
                 self.bind_id,
                 content.chat_id,
             )
-            return
+            return OutboundSendResult("failed", error_kind=f"provider_code_{code}")
         self._set_controls_capability("unsupported")
+        return OutboundSendResult(
+            "delivered",
+            provider_message_id=_response_message_id(response) or None,
+        )
 
     def _set_controls_capability(self, status: ControlCapability) -> None:
         self._controls_capability = status
