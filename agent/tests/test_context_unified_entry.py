@@ -54,6 +54,7 @@ class _SpyContextManager:
         new_user_input: str | None = None,
         new_user_attachments: list[Any] | None = None,
         extra_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
@@ -61,8 +62,10 @@ class _SpyContextManager:
         self.calls.append(
             {
                 "new_user_input": new_user_input,
+                "turn_context": turn_context,
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
+                "extra_context": [item.content for item in extra_context or []],
                 "has_runtime": runtime is not None,
                 "request_overhead_tokens": runtime.request_overhead_tokens if runtime else None,
                 "calibration_factor": runtime.calibration_factor if runtime else None,
@@ -74,6 +77,7 @@ class _SpyContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
         )
@@ -198,6 +202,29 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     assert spy.calls[-1]["request_overhead_tokens"] == 0
 
 
+def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path: Path) -> None:
+    spy = _SpyContextManager()
+    fake = _UsageLLM(
+        script=[
+            _tool_use_turn(),
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        context_manager=spy,
+        registry=ToolRegistry([_LoopTool()]),
+    )
+
+    list(conv.stream("hi", turn_context="MEDIA FIDELITY BOUNDARY"))
+
+    assert len(spy.calls) == 2
+    assert all("MEDIA FIDELITY BOUNDARY" in call["extra_context"] for call in spy.calls)
+    user_messages = [message for message in conv.session.messages if message.role == "user"]
+    assert user_messages[-1].content == "hi"
+
+
 def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
     """LLMTurnDone.usage → 下一轮估算锚点；last_context_notes 暴露度量。"""
     spy = _SpyContextManager()
@@ -207,7 +234,7 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
                 LLMTextDelta(text="hi"),
                 LLMTurnDone(
                     stop_reason="end_turn",
-                    usage=LLMUsage(prompt_tokens=5000, completion_tokens=5, total_tokens=5005),
+                    usage=LLMUsage(prompt_tokens=6000, completion_tokens=5, total_tokens=6005),
                 ),
             ],
             [LLMTextDelta(text="yo"), LLMTurnDone(stop_reason="end_turn")],
@@ -225,5 +252,5 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
 
     conv.send("yo")
     # 第二轮锚点应为首轮 usage.prompt_tokens
-    assert conv.last_context_notes["last_input_tokens"] == 5000
+    assert conv.last_context_notes["last_input_tokens"] == 6000
     assert conv.last_context_notes["calibration_factor"] > 1.0

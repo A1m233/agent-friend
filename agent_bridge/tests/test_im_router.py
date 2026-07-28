@@ -21,8 +21,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agent.system_prompt import IM_QQ_SURFACE
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.event import InboundEvent
+from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
 
 from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
@@ -196,6 +198,48 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
     assert len(captured) == 1
     assert captured[0].text == "hello world"
     assert captured[0].text_format == "markdown"
+    session_bridge.bind_persistent.return_value.stream.assert_called_once_with(
+        "你好",
+        attachments=[],
+        channel="text",
+        turn_context=None,
+        surface=IM_QQ_SURFACE,
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_boundary_is_given_to_model_and_prefixed_for_user(
+    router: IMRouter,
+    session_bridge: MagicMock,
+) -> None:
+    conv = _make_conv([TextDelta(text="先回答你的文字。"), TurnDone()])
+    session_bridge.bind_persistent.return_value = conv
+    media = (
+        InboundMedia(
+            source="im_attachment",
+            kind="animated_image",
+            fidelity="unsupported",
+            reason="media_gif_unsupported",
+            display_name="sticker.gif",
+        ),
+    )
+    captured: list[OutboundContent] = []
+
+    async def send(content: OutboundContent) -> None:
+        captured.append(content)
+
+    await router.handle_inbound(
+        "qq",
+        _make_event(content="先看文字"),
+        send,
+        media=media,
+    )
+
+    assert captured[0].text.startswith("（你发的 GIF 我暂时看不了")
+    assert captured[0].text.endswith("先回答你的文字。")
+    turn_context = conv.stream.call_args.kwargs["turn_context"]
+    assert '"fidelity": "unsupported"' in turn_context
+    assert "不得声称看到了未提供的图像" in turn_context
 
 
 @pytest.mark.asyncio
@@ -242,6 +286,10 @@ async def test_text_aggregated_until_generator_exhausts(
 # ---------- 异常兜底 ----------
 
 
+def test_fallback_text_is_plain_without_robot_emoji() -> None:
+    assert FALLBACK_TEXT == "我现在有点问题，稍后再试"
+
+
 @pytest.mark.asyncio
 async def test_stream_exception_falls_back(router: IMRouter, session_bridge: MagicMock) -> None:
     """``Conversation.stream`` 抛错 → 持久化失败状态并回 ``FALLBACK_TEXT``。"""
@@ -264,6 +312,22 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
         run_id=None,
         sanitize_failed_model_call=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_unregistered_adapter_mapping_fails_before_llm(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    captured: list[OutboundContent] = []
+
+    async def send(content: OutboundContent) -> None:
+        captured.append(content)
+
+    await router.handle_inbound("test-im", _make_event(), send)
+
+    session_bridge.bind_persistent.assert_not_called()
+    assert captured[0].text == FALLBACK_TEXT
+    assert captured[0].text_format == "plain_text"
 
 
 @pytest.mark.asyncio
@@ -396,6 +460,7 @@ async def test_native_stream_sends_body_once_then_separate_menu(
     await router.handle_inbound("qq", _make_event(), provider)
 
     assert stream.updates
+    assert stream.updates[-1] == "hello world"
     assert stream.finishes == ["hello world"]
     assert [item.text for item in provider.sent] == ["操作"]
     assert provider.sent[0].controls is not None
@@ -452,8 +517,8 @@ async def test_native_stream_agent_error_aborts_partial_without_static_duplicate
 
 
 @pytest.mark.asyncio
-async def test_attachments_keep_static_path_without_opening_stream(
-    router: IMRouter, session_bridge: MagicMock
+async def test_inbound_attachments_allow_text_output_streaming(
+    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from agent.attachments import AttachmentRef
 
@@ -461,9 +526,40 @@ async def test_attachments_keep_static_path_without_opening_stream(
     session_bridge.bind_persistent.return_value = _make_conv(
         [TextDelta(text="attachment answer"), TurnDone()]
     )
-    provider = StubStreamingProvider(StubStreamSession())
+    stream = StubStreamSession()
+    provider = StubStreamingProvider(stream)
     attachment = AttachmentRef(
         asset_id="asset-1",
+        kind="image",
+        media_type="image/png",
+        display_name="a.png",
+        size_bytes=10,
+        sha256="0" * 64,
+    )
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", fake_sleep)
+
+    await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
+
+    assert len(provider.contexts) == 1
+    assert stream.updates[-1] == "attachment answer"
+    assert stream.finishes == ["attachment answer"]
+    assert [item.text for item in provider.sent] == ["操作"]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_inbound_attachment_does_not_open_stream(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    from agent.attachments import AttachmentRef
+
+    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-flash"
+    provider = StubStreamingProvider(StubStreamSession())
+    attachment = AttachmentRef(
+        asset_id="asset-unsupported",
         kind="image",
         media_type="image/png",
         display_name="a.png",
@@ -474,4 +570,6 @@ async def test_attachments_keep_static_path_without_opening_stream(
     await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
 
     assert provider.contexts == []
-    assert [item.text for item in provider.sent] == ["attachment answer"]
+    assert [item.text for item in provider.sent] == [
+        "当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。"
+    ]

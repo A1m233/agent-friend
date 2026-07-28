@@ -26,8 +26,7 @@ PromptChannel = Literal["voice", "text"]
 class SystemPromptRenderContext:
     """本次 system prompt 渲染的运行时上下文。
 
-    ``channel_override`` 表示这一次模型调用来自哪个交互入口。它优先于
-    ``Session.current_channel``，避免 session 级生命周期状态污染本轮 prompt。
+    ``channel_override`` 表示本轮媒介类型，优先于 ``Session.current_channel``。
     """
 
     channel_override: PromptChannel | None = None

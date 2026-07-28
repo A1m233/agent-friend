@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 SearchMode = Literal["automatic", "explicit", "probe"]
+RetrievalGoal = Literal["search", "summary"]
 SearchIntent = Literal[
     "general",
     "identity",
@@ -56,6 +57,8 @@ class SearchRequest:
     explicit_time_range: TimeRange | None = None
     source_scope: frozenset[str] | None = None
     current_turn_start_index: int | None = None
+    target_session_ids: tuple[str, ...] = ()
+    retrieval_goal: RetrievalGoal = "search"
 
     def __post_init__(self) -> None:
         if self.top_k is not None and self.top_k <= 0:
@@ -105,6 +108,7 @@ class EvidenceCandidate:
     dense_rank: int | None = None
     fused_score: float | None = None
     excerpts: tuple[EvidenceExcerpt, ...] = ()
+    session_id: str | None = None
 
 
 class EvidenceSource(Protocol):

@@ -94,6 +94,7 @@ export function Composer({
   const voiceInputErrorCode = useVoiceInputStore((s) => s.errorCode);
   const voiceInputLastEventAt = useVoiceInputStore((s) => s.lastEventAt);
   const latestVoiceTranscript = useVoiceInputStore((s) => s.latestTranscript);
+  const acknowledgeVoiceTranscript = useVoiceInputStore((s) => s.acknowledgeTranscript);
   const prewarmVoiceInput = useVoiceInputStore((s) => s.prewarm);
   const startVoiceInput = useVoiceInputStore((s) => s.start);
   const stopVoiceInput = useVoiceInputStore((s) => s.stop);
@@ -428,13 +429,17 @@ export function Composer({
 
   useEffect(() => {
     if (!latestVoiceTranscript) return;
-    if (sentVoiceTraceIdsRef.current.has(latestVoiceTranscript.traceId)) return;
+    if (sentVoiceTraceIdsRef.current.has(latestVoiceTranscript.traceId)) {
+      acknowledgeVoiceTranscript(latestVoiceTranscript.seq);
+      return;
+    }
     let segment = voiceSegmentRef.current;
     if (!segment || (segment.traceId && segment.traceId !== latestVoiceTranscript.traceId)) {
       segment = {
-        workspaceKey,
+        workspaceKey: latestVoiceTranscript.targetWorkspaceKey,
         traceId: latestVoiceTranscript.traceId,
-        baseText: useDraftStore.getState().workspaces[workspaceKey]?.text ?? "",
+        baseText:
+          useDraftStore.getState().workspaces[latestVoiceTranscript.targetWorkspaceKey]?.text ?? "",
         consumedTranscript: "",
       };
       voiceSegmentRef.current = segment;
@@ -460,7 +465,8 @@ export function Composer({
         consumedTranscript: latestVoiceTranscript.text,
       };
     }
-  }, [latestVoiceTranscript, setWorkspaceText, workspaceKey]);
+    acknowledgeVoiceTranscript(latestVoiceTranscript.seq);
+  }, [acknowledgeVoiceTranscript, latestVoiceTranscript, setWorkspaceText, workspaceKey]);
 
   useEffect(() => {
     if (!voiceErrorToastReadyRef.current) {
@@ -517,6 +523,10 @@ export function Composer({
 
       if (voiceState.traceId && voiceTargetsSubmission) {
         sentVoiceTraceIdsRef.current.add(voiceState.traceId);
+        const pendingTranscript = useVoiceInputStore.getState().latestTranscript;
+        if (pendingTranscript?.traceId === voiceState.traceId) {
+          acknowledgeVoiceTranscript(pendingTranscript.seq);
+        }
       }
       if (voiceTargetsSubmission) voiceSegmentRef.current = null;
       draftTextRef.current = "";
@@ -538,7 +548,7 @@ export function Composer({
       baseText: draftTextRef.current,
       consumedTranscript: "",
     };
-    void startVoiceInput();
+    void startVoiceInput(workspaceKey);
   };
 
   const isBottomPlacement = placement === "bottom";

@@ -57,15 +57,37 @@ def format_hits(hits: list[Hit], now: datetime) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def format_evidence(evidence: tuple[EvidenceCandidate, ...], now: datetime) -> str:
-    """把统一搜索证据渲染成与旧工具兼容的不可信 JSON 数据。"""
-    payload = {
+def format_evidence(
+    evidence: tuple[EvidenceCandidate, ...],
+    now: datetime,
+    *,
+    status: str | None = None,
+    session_title: str | None = None,
+    candidate_session_titles: tuple[str, ...] = (),
+    mode: str = "search",
+    time_scope: str | None = None,
+    truncated: bool = False,
+    message: str | None = None,
+) -> str:
+    """Render unified evidence plus a stable, user-comprehensible query scope."""
+    resolved_status = status or ("ok" if evidence else "no_results")
+    payload: dict[str, object] = {
         "source_type": "past_conversation",
         "trust": "untrusted_data",
-        "status": "ok" if evidence else "no_results",
+        "status": resolved_status,
         "result_count": len(evidence),
         "results": [_format_evidence_one(candidate, now) for candidate in evidence],
     }
+    if status is not None or session_title is not None or candidate_session_titles or time_scope:
+        payload["scope"] = {
+            "session_title": session_title,
+            "time": time_scope,
+            "mode": mode,
+        }
+        payload["candidate_session_titles"] = list(candidate_session_titles)
+        payload["truncated"] = truncated
+    if message:
+        payload["message"] = message
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

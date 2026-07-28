@@ -49,6 +49,7 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 from agent.runtime import AgentRuntime, RunHandle, RunOutcome, UserEvent
 from agent.system_prompt.sections import PromptChannel
+from agent.system_prompt.surfaces import InteractionSurfaceId
 
 from agent import (
     Conversation,
@@ -76,6 +77,7 @@ def encode_stream(
     agent_runtime: AgentRuntime | None = None,
     run_conversation: Callable[[Conversation, str], Iterator[ConversationEvent]] | None = None,
     channel: PromptChannel | None = None,
+    surface: InteractionSurfaceId | None = None,
     turn_coordinator: SessionTurnCoordinator | None = None,
     run_handle: RunHandle | None = None,
 ) -> Iterator[bytes]:
@@ -137,7 +139,7 @@ def encode_stream(
                 event_stream = (
                     run_conversation(conv, user_input)
                     if run_conversation is not None
-                    else conv.stream(user_input, channel=channel)
+                    else conv.stream(user_input, channel=channel, surface=surface)
                 )
             for ev in event_stream:
                 # 014: 镜像复制给 push 通道订阅者（kinds=user_turn 时可见）

@@ -20,6 +20,7 @@ class FixtureSession:
 
     days_ago: int
     messages: list[FixtureMessage]
+    title: str | None = None
 
 
 @dataclass(frozen=True)

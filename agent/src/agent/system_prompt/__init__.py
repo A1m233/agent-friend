@@ -10,6 +10,7 @@
 - :class:`PersonaSection`：动态从 :class:`PersonaCatalog` 读 persona body 的实现
 - :class:`RuntimeContextSection`：动态注入运行时上下文（005 起）
 - :class:`ChannelSection`：按 ``session.current_channel`` 注入通道指令（007 起）
+- :class:`InteractionContextRenderer`：把可信交互端渲染为当前回合上下文（068 起）
 - :class:`SystemPromptComposer`：有序的若干 Section 的不可变装配；
   ``compose() -> str`` 输出最终 system_prompt
 """
@@ -23,9 +24,25 @@ from .sections import (
     RuntimeContextSection,
     StaticSection,
 )
+from .surfaces import (
+    DEFAULT_INTERACTION_CONTEXT_RENDERER,
+    DESKTOP_CHAT_SURFACE,
+    IM_QQ_SURFACE,
+    VOICE_CALL_SURFACE,
+    InteractionContextRenderer,
+    InteractionSurfaceContext,
+    InteractionSurfaceId,
+)
 
 __all__ = [
+    "DEFAULT_INTERACTION_CONTEXT_RENDERER",
+    "DESKTOP_CHAT_SURFACE",
+    "IM_QQ_SURFACE",
+    "VOICE_CALL_SURFACE",
     "ChannelSection",
+    "InteractionContextRenderer",
+    "InteractionSurfaceContext",
+    "InteractionSurfaceId",
     "PersonaSection",
     "RuntimeContextSection",
     "Section",

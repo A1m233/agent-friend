@@ -159,16 +159,20 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "tool_call_request") {
-      const id = asString(p.event_tool_call_id) || asString(p.tool_call_id) || ev.uuid;
+      const eventToolCallId = asString(p.event_tool_call_id);
+      const correlationId = eventToolCallId || asString(p.tool_call_id) || ev.uuid;
       const block: ToolBlock = {
         kind: "tool",
-        toolCallId: id,
+        // Legacy events may reuse a provider tool_call_id within one assistant turn.
+        // The event UUID remains unique and stable for rendering; correlationId still
+        // lets the matching result update the block below.
+        toolCallId: eventToolCallId || ev.uuid,
         name: asString(p.tool_name) || "tool",
         // 历史里 args 是对象；序列化成字符串与实时 ToolBlock.args 类型对齐（ToolCard 再美化）。
         args: p.args === undefined ? "" : JSON.stringify(p.args),
         status: "running",
       };
-      toolBlocks.set(id, block);
+      toolBlocks.set(correlationId, block);
       ensureAssistant(ev.uuid, ev.ts).blocks.push(block);
       continue;
     }

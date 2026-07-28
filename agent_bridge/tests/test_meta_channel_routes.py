@@ -275,6 +275,10 @@ class TestEditResendLatestEndpoint:
             "new question",
             "new answer",
         ]
+        assert any(
+            '<surface type="desktop_chat" />' in message.get("content", "")
+            for message in _RouteLLM.seen_messages[-1]
+        )
 
 
 class TestContinueToolResultEndpoint:
@@ -348,6 +352,10 @@ class TestContinueToolResultEndpoint:
             message.get("role") == "tool" and message.get("content") == "saved result"
             for message in _RouteLLM.seen_messages[-1]
         )
+        assert any(
+            '<surface type="desktop_chat" />' in message.get("content", "")
+            for message in _RouteLLM.seen_messages[-1]
+        )
 
 
 # ===== POST /ag-ui/run channel boundary =====
@@ -381,6 +389,14 @@ class TestAgUiRunChannelBoundary:
         assert _RouteLLM.seen_messages
         system_prompt = _RouteLLM.seen_messages[-1][0]["content"]
         assert "正在通过电话和用户对话" not in system_prompt
+        messages = _RouteLLM.seen_messages[-1]
+        context_index = next(
+            index
+            for index, message in enumerate(messages)
+            if '<surface type="desktop_chat" />' in message.get("content", "")
+        )
+        assert messages[context_index]["role"] == "system"
+        assert messages[context_index + 1]["role"] == "user"
 
     def test_text_run_error_persists_run_error_event(
         self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch

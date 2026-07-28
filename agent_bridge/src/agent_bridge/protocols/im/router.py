@@ -40,6 +40,7 @@ from uuid import uuid4
 
 from agent.attachments import AttachmentRef
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
+from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
 from agent import Conversation, TextDelta
 from llm_providers import model_capabilities
@@ -49,6 +50,7 @@ from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
 from .control import menu_controls
 from .event import InboundEvent
+from .media import InboundMedia, render_model_media_context, render_user_media_notice
 from .provider import IMOutboundProvider, OutboundSendResult
 from .streaming import (
     IMStreamSession,
@@ -62,7 +64,7 @@ __all__ = ["FALLBACK_TEXT", "IMRouter"]
 logger = logging.getLogger(__name__)
 
 
-FALLBACK_TEXT = "我现在有点问题,稍后再试 🤖"
+FALLBACK_TEXT = "我现在有点问题，稍后再试"
 """``Conversation.stream`` 抛错时 IM 回写的兜底文案。
 
 固定文案,不走 persona 渲染 —— 这是 channel 层 fallback,语义不该过 persona 层
@@ -77,6 +79,14 @@ _STREAM_END = object()
 _STREAM_INTERRUPTED_SUFFIX = "\n\n（回复生成中断，请稍后重试。）"
 _STREAM_MENU_TEXT = "操作"
 _STREAM_MENU_DELAY_SECONDS = 0.8
+_IM_SURFACES: dict[str, InteractionSurfaceId] = {"qq": IM_QQ_SURFACE}
+
+
+def _surface_for_im(im_type: str) -> InteractionSurfaceId:
+    try:
+        return _IM_SURFACES[im_type]
+    except KeyError as exc:
+        raise RuntimeError(f"IM adapter missing interaction surface: {im_type}") from exc
 
 
 class IMRouter:
@@ -133,6 +143,7 @@ class IMRouter:
         event: InboundEvent,
         provider_or_send: IMOutboundProvider | SendCallback,
         attachments: tuple[AttachmentRef, ...] = (),
+        media: tuple[InboundMedia, ...] = (),
         *,
         session_id: str | None = None,
     ) -> None:
@@ -193,6 +204,10 @@ class IMRouter:
                 )
                 return
 
+        model_media_context = render_model_media_context(media)
+        media_notice = render_user_media_notice(media)
+        reply_prefix = f"（{media_notice}）\n\n" if media_notice else ""
+
         text_format: OutboundTextFormat = "markdown"
         include_menu = True
         stream_trace = uuid4().hex[:12]
@@ -200,7 +215,6 @@ class IMRouter:
         stream_session = self._open_stream(
             provider_or_send,
             event,
-            attachments=attachments,
             stream_trace=stream_trace,
             run_id=run_id,
         )
@@ -218,6 +232,8 @@ class IMRouter:
                 loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
 
             on_text_delta = publish_delta
+            if reply_prefix:
+                delta_queue.put_nowait(reply_prefix)
             logger.info(
                 "IM stream eligible stream_trace=%s run_id=%s im_type=%s session_id=%s "
                 "message_id=%s chat_scope=%s",
@@ -229,12 +245,15 @@ class IMRouter:
                 event.chat_scope,
             )
         try:
-            text = await asyncio.to_thread(
+            surface = _surface_for_im(im_type)
+            agent_text = await asyncio.to_thread(
                 self._run_turn_sync,
                 boot,
                 attachments,
                 on_text_delta,
                 run_id,
+                model_media_context,
+                surface,
             )
         except Exception as exc:
             partial_text = await _finish_relay(delta_queue, relay_task, relay)
@@ -252,21 +271,23 @@ class IMRouter:
                 interrupted = (partial_text or FALLBACK_TEXT) + _STREAM_INTERRUPTED_SUFFIX
                 await stream_session.abort(interrupted, type(exc).__name__)
                 return
-            text = FALLBACK_TEXT
+            agent_text = ""
+            text = reply_prefix + FALLBACK_TEXT
             text_format = "plain_text"
             include_menu = False
         else:
             await _finish_relay(delta_queue, relay_task, relay)
+            text = reply_prefix + agent_text
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
-        if not text:
+        if not agent_text:
             logger.warning(
                 "IM inbound router empty agent output im_type=%s session_id=%s message_id=%s",
                 im_type,
                 session_id,
                 event.message_id,
             )
-            text = FALLBACK_TEXT
+            text = reply_prefix + FALLBACK_TEXT
             text_format = "plain_text"
             include_menu = False
 
@@ -340,6 +361,8 @@ class IMRouter:
         attachments: tuple[AttachmentRef, ...] = (),
         on_text_delta: Callable[[str], None] | None = None,
         run_id: str | None = None,
+        turn_context: str | None = None,
+        surface: InteractionSurfaceId | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -362,13 +385,16 @@ class IMRouter:
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
                 run_id=run_id,
                 channel="text",
+                surface=surface,
                 conversation_factory=lambda: self._bridge.bind_persistent(boot),
                 conversation_runner=lambda conv, request, token: conv.stream(
                     boot.new_user_input,
                     attachments=list(attachments),
                     channel=request.channel,
+                    surface=request.surface,
                     run_id=request.run_id,
                     cancel_check=token.raise_if_cancelled,
+                    turn_context=turn_context,
                 ),
                 error_callback=self._persist_run_error,
                 metadata={"protocol": "im"},
@@ -394,6 +420,8 @@ class IMRouter:
                     boot.new_user_input,
                     attachments=list(attachments),
                     channel="text",
+                    turn_context=turn_context,
+                    surface=surface,
                 ):
                     if isinstance(ev, TextDelta):
                         buf.append(ev.text)
@@ -414,12 +442,9 @@ class IMRouter:
         provider_or_send: IMOutboundProvider | SendCallback,
         event: InboundEvent,
         *,
-        attachments: tuple[AttachmentRef, ...],
         stream_trace: str,
         run_id: str | None,
     ) -> IMStreamSession | None:
-        if attachments:
-            return None
         if not isinstance(provider_or_send, IMTextStreamingProvider):
             return None
         return provider_or_send.open_text_stream(
@@ -484,4 +509,5 @@ async def _finish_relay(
     await asyncio.sleep(0)
     await queue.put(_STREAM_END)
     await task
+    await relay.flush()
     return relay.full_text

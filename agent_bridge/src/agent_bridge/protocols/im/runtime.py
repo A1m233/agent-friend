@@ -572,7 +572,7 @@ class IMRuntime:
         logger.info(
             "IM inbound resolver result im_type=%s action=%s reason=%s "
             "message_id=%s resolved_message_id=%s content_len=%d resolved_content_len=%d "
-            "resolved_attachment_count=%d",
+            "resolved_attachment_count=%d media_count=%d media_fidelities=%s media_reasons=%s",
             provider.type,
             result.action,
             result.reason,
@@ -581,6 +581,9 @@ class IMRuntime:
             _text_len(event.content),
             _text_len(resolved_event.content),
             _attachment_count(resolved_event),
+            len(result.media),
+            ",".join(item.fidelity for item in result.media) or "none",
+            ",".join(item.reason for item in result.media if item.reason) or "none",
         )
         if result.action == "ignore":
             logger.info(
@@ -633,6 +636,7 @@ class IMRuntime:
             resolved_event,
             provider_or_send=provider,
             attachments=result.attachments,
+            media=result.media,
             session_id=binding.session_id,
         )
 

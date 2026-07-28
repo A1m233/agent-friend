@@ -36,6 +36,7 @@ from ..conversation import Conversation
 from ..memory_feed import project_turn
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
+from ..system_prompt.surfaces import InteractionSurfaceId
 from ..tools import ToolResult
 from .errors import SessionBusyError
 from .hooks import (
@@ -306,6 +307,7 @@ class AgentRuntime:
         expires_at: datetime | None = None,
         dedupe_key: str | None = None,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         conversation_factory: ConversationFactory | None = None,
         conversation_runner: ConversationRunner | None = None,
         error_callback: RunErrorCallback | None = None,
@@ -329,6 +331,7 @@ class AgentRuntime:
             "expires_at": expires_at,
             "dedupe_key": dedupe_key,
             "channel": channel,
+            "surface": surface,
             "conversation_factory": conversation_factory,
             "conversation_runner": conversation_runner,
             "error_callback": error_callback,
@@ -543,6 +546,7 @@ class AgentRuntime:
                 events_iter = conv.stream(
                     request.event.user_input,
                     channel=request.channel,
+                    surface=request.surface,
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )

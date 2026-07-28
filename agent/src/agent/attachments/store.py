@@ -33,9 +33,10 @@ _CANONICAL_EXTENSIONS = {
 
 
 class AttachmentError(ValueError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, media_type: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.media_type = media_type
 
 
 def _safe_name(value: str) -> str:
@@ -51,6 +52,12 @@ def _detect_media_type(head: bytes, *, valid_utf8_text: bool) -> tuple[str, Atta
         return "image/png", "image"
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp", "image"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        raise AttachmentError(
+            "attachment_type_unsupported",
+            "暂不支持 GIF 动图。",
+            media_type="image/gif",
+        )
     if head.startswith(b"%PDF-"):
         return "application/pdf", "document"
     if valid_utf8_text:

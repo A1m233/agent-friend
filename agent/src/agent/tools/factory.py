@@ -34,6 +34,7 @@ from .protocol import Tool
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
     from ..todos import TodoService
 
@@ -43,6 +44,7 @@ def make_default_registry(
     *,
     memory_search: MemorySearchService | None = None,
     todo_service: TodoService | None = None,
+    session_catalog: SessionCatalog | None = None,
     tavily_api_key: str | None = None,
     amap_webservice_key: str | None = None,
     stderr_warn: bool = True,
@@ -111,6 +113,11 @@ def make_default_registry(
             analyzer=QueryAnalyzer(),
         )
     if memory_search is not None:
-        tools.append(ConversationHistoryTool(search_service=memory_search))
+        tools.append(
+            ConversationHistoryTool(
+                search_service=memory_search,
+                session_catalog=session_catalog,
+            )
+        )
 
     return ToolRegistry(tools)

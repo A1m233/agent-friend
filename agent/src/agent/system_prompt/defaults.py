@@ -23,6 +23,7 @@ _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "tool_usage_contract": "tool_usage_contract.md",
     "memory_consistency": "memory_consistency.md",
     "output_contract": "output_contract.md",
+    "interaction_context_contract": "interaction_context_contract.md",
     "runtime_context": "runtime_context.md",
     "channel": "channel_voice.md",
 }

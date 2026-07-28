@@ -32,6 +32,7 @@ from agent.runtime import (
     UserEvent,
 )
 from agent.sessions.changes import SessionChange
+from agent.system_prompt import IM_QQ_SURFACE
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -403,6 +404,28 @@ def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) 
         )
         assert user.meta["run_id"] == "run-045"
         assert assistant.meta["run_id"] == "run-045"
+    finally:
+        runtime.stop()
+
+
+def test_submit_forwards_surface_to_default_user_runner(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="runtime"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    runtime = AgentRuntime(conversation_factory=lambda sid: conv)
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="hello"),
+            surface=IM_QQ_SURFACE,
+        )
+        list(handle.events())
+        assert any(
+            '<surface type="im" provider="qq" />' in message.get("content", "")
+            for message in fake.received[-1]
+        )
+        assert handle.request.surface == IM_QQ_SURFACE
     finally:
         runtime.stop()
 

@@ -72,7 +72,13 @@ def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label}.days_ago 必须是整数") from exc
     messages = _parse_fixture_messages(data.get("messages", []), label=f"{label}.messages")
-    return FixtureSession(days_ago=days_ago, messages=messages)
+    title_raw = data.get("title")
+    title = None
+    if title_raw is not None:
+        if not isinstance(title_raw, str) or not title_raw.strip():
+            raise ValueError(f"{label}.title 必须是非空字符串")
+        title = title_raw.strip()
+    return FixtureSession(days_ago=days_ago, messages=messages, title=title)
 
 
 def _parse_fixture_messages(raw: Any, *, label: str) -> list[FixtureMessage]:

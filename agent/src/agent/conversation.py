@@ -74,6 +74,10 @@ from .personas import PersonaCatalog
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 from .system_prompt.sections import PromptChannel
+from .system_prompt.surfaces import (
+    DEFAULT_INTERACTION_CONTEXT_RENDERER,
+    InteractionSurfaceId,
+)
 from .tool_runtime import (
     NoProgressTracker,
     ToolBatchExecutor,
@@ -102,6 +106,8 @@ _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
+_ORIGINAL_USER_INPUT_ARG = "__agent_friend_original_user_input"
+_RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
 _SESSION_CONTROL_EVENT_TYPES = frozenset({"persona_change", "model_change", "channel_change"})
 logger = logging.getLogger(__name__)
 
@@ -268,7 +274,9 @@ class Conversation:
         self._voice_latency_llm_overrides: dict[str, Any] = {}
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
+        self._prompt_surface_override: InteractionSurfaceId | None = None
         self._run_id_override: str | None = None
+        self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
@@ -317,7 +325,8 @@ class Conversation:
         section 资源读，单次 < 1ms，孵化期可接受。
 
         switch_persona 时已重建 :attr:`_prompt_builder`，本属性会自动反映新 persona；
-        本轮 channel override 由 ``stream`` / ``edit_resend_latest`` 在调用期间设置。
+        本轮 channel override 由 user-run 入口在调用期间设置；surface 不进入
+        基础 system prompt，而是在 :meth:`_assemble` 中作为 turn context 注入。
         """
         builder = self._turn_prompt_builder or self._prompt_builder
         return builder.build(channel_override=self._prompt_channel_override)
@@ -414,8 +423,10 @@ class Conversation:
         attachments: list[AttachmentRef] | None = None,
         user_event_id: str | None = None,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
+        turn_context: str | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
         yield 多通道事件（文本增量 / 工具调用请求 / 工具调用结果 / 完成）。
@@ -446,6 +457,8 @@ class Conversation:
 
         Args:
             user_input: 用户输入文本。
+            turn_context: 仅在当前运行的模型视图中生效、不落盘的系统上下文；
+                工具续轮会重复注入，适合承载通道已验证的输入边界。
 
         Yields:
             :class:`TextDelta` / :class:`ToolCallRequest` / :class:`ToolCallResult` /
@@ -463,11 +476,15 @@ class Conversation:
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
+        previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
+        self._turn_context_override = (turn_context or "").strip()
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
 
@@ -506,6 +523,7 @@ class Conversation:
                 completed_replay_text = "".join(completed_parts)
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = ToolRunContext.create(user_input)
+        planned_tool_calls = self._planned_history_tool_calls(user_input)
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -549,6 +567,7 @@ class Conversation:
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
                 cancel_check=cancel_check,
+                planned_tool_calls=planned_tool_calls,
             )
         finally:
             exc_info = sys.exc_info()
@@ -569,7 +588,9 @@ class Conversation:
                     # 由 PostTurn hook 调 memory.observe；此处不重复触发
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
+            self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
@@ -580,6 +601,7 @@ class Conversation:
         *,
         expected_user_content: str | None = None,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -592,10 +614,12 @@ class Conversation:
         plan = self._latest_active_user_rewrite_plan(expected_user_content=expected_user_content)
 
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
@@ -613,6 +637,7 @@ class Conversation:
         user_event_appended = False
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = ToolRunContext.create(user_input)
+        planned_tool_calls = self._planned_history_tool_calls(user_input)
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -651,6 +676,7 @@ class Conversation:
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
                 cancel_check=cancel_check,
+                planned_tool_calls=planned_tool_calls,
             )
         finally:
             exc_info = sys.exc_info()
@@ -674,6 +700,7 @@ class Conversation:
                 if not self._post_turn_external:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
@@ -683,6 +710,7 @@ class Conversation:
         self,
         *,
         channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -690,10 +718,12 @@ class Conversation:
         self._validate_tool_error_continuation()
 
         previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
@@ -752,6 +782,7 @@ class Conversation:
             elif not self._post_turn_external:
                 self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
@@ -1237,6 +1268,8 @@ class Conversation:
         ``extra_context`` 注入（008 design §6.1）。空召回不注入任何记忆段。
         """
         extra: list[Message] | None = list(extra_context) if extra_context else None
+        if self._turn_context_override:
+            extra = [Message(role="system", content=self._turn_context_override), *(extra or [])]
         if self._memory is not None:
             memory_start_ms = monotonic_ms()
             log_voice_latency(
@@ -1335,12 +1368,35 @@ class Conversation:
         user_input_for_llm = (
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
+        system_prompt = self._system_prompt
+        turn_context = (
+            [
+                Message(
+                    role="system",
+                    content=DEFAULT_INTERACTION_CONTEXT_RENDERER.render(
+                        self._prompt_surface_override
+                    ),
+                )
+            ]
+            if self._prompt_surface_override is not None
+            else None
+        )
+        logger.info(
+            "[SurfaceContextDbg] prompt_build session_id=%s run_id=%s surface=%s "
+            "turn_context=%s system_prompt_chars=%d",
+            self._session.session_id,
+            self._run_id_override or "none",
+            self._prompt_surface_override or "none",
+            "present" if turn_context else "none",
+            len(system_prompt),
+        )
         build = self._context_manager.build_messages(
             history=history_for_llm,
-            system_prompt=self._system_prompt,
+            system_prompt=system_prompt,
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
             runtime=runtime,
@@ -1666,7 +1722,12 @@ class Conversation:
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        return self._assemble(tool_specs=tool_specs)
+        extra_context = (
+            [Message(role="system", content=self._turn_context_override)]
+            if self._turn_context_override
+            else None
+        )
+        return self._assemble(tool_specs=tool_specs, extra_context=extra_context)
 
     def _accumulate_tool_call_delta(
         self,
@@ -1777,6 +1838,13 @@ class Conversation:
                     _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
                 }
             )
+            if tool_run_context is not None:
+                invocation_args.update(
+                    {
+                        _ORIGINAL_USER_INPUT_ARG: tool_run_context.original_user_input,
+                        _RUNTIME_NOW_ARG: tool_run_context.trusted_now.isoformat(),
+                    }
+                )
         if name in {"datetime_calculate", "todo_manage"} and tool_run_context is not None:
             invocation_args.update(
                 {
@@ -1799,6 +1867,65 @@ class Conversation:
                 }
         return invocation_args
 
+    def _planned_history_tool_calls(self, user_input: str) -> list[dict[str, Any]]:
+        """Ask the built-in history tool for a conservative deterministic invocation."""
+        if self._voice_latency_disable_tools or self._tool_registry is None:
+            return []
+        try:
+            tool = self._tool_registry.get(_RECALL_PAST_CHATS_TOOL_NAME)
+        except Exception:
+            return []
+        planner = getattr(tool, "plan_explicit_invocation", None)
+        if not callable(planner):
+            return []
+        try:
+            args = planner(user_input)
+        except Exception:
+            logger.exception("history intent router failed")
+            return []
+        pending_args = self._pending_history_query_args()
+        if isinstance(args, dict) and pending_args is not None:
+            args = {**pending_args, **args}
+        if not isinstance(args, dict):
+            return []
+        return [
+            {
+                "id": f"call_history_{uuid4().hex}",
+                "event_id": f"tool_{uuid4().hex}",
+                "name": _RECALL_PAST_CHATS_TOOL_NAME,
+                "args": args,
+                "origin": "deterministic_history_router",
+            }
+        ]
+
+    def _pending_history_query_args(self) -> dict[str, Any] | None:
+        """Return the latest unresolved history request from the immediately previous turn."""
+        events = self._session.active_events
+        last_user_index = max(
+            (index for index, event in enumerate(events) if event.type == "user_message"),
+            default=-1,
+        )
+        for result_index in range(len(events) - 1, last_user_index, -1):
+            event = events[result_index]
+            if event.type != "tool_call_result":
+                continue
+            if event.payload.get("tool_name") != _RECALL_PAST_CHATS_TOOL_NAME:
+                continue
+            extra = event.meta.get("extra")
+            status = extra.get("resolution_status") if isinstance(extra, dict) else None
+            if status not in {"ambiguous", "not_found"}:
+                return None
+            call_id = event.payload.get("tool_call_id")
+            for request in reversed(events[last_user_index:result_index]):
+                if (
+                    request.type == "tool_call_request"
+                    and request.payload.get("tool_call_id") == call_id
+                    and isinstance(request.payload.get("args"), dict)
+                ):
+                    return dict(request.payload["args"])
+            return None
+        return None
+
     def _run_tool_loop(
         self,
         *,
@@ -1812,10 +1939,40 @@ class Conversation:
         frame: _ToolLoopFrame,
         current_turn_start_idx: int,
         cancel_check: Callable[[], None] | None,
+        planned_tool_calls: list[dict[str, Any]] | None = None,
     ) -> Iterator[ConversationEvent]:
         """Run the common model/tool continuation loop for send and edit-resend."""
 
         turn_idx = 0
+        deterministic_history_completed = bool(planned_tool_calls)
+        if planned_tool_calls:
+            prepare_first_turn()
+            self._append_assistant_event(
+                "",
+                partial=False,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model=model_snapshot,
+            )
+            frame.current_text_persisted = True
+            yield from self._execute_tool_calls(
+                planned_tool_calls,
+                runtime=runtime,
+                context=context,
+                progress=progress,
+                current_turn_start_idx=current_turn_start_idx,
+                cancel_check=cancel_check,
+            )
+            if runtime.stop_reason is not None:
+                yield from self._finalize_on_tool_run_stop(
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model_snapshot=model_snapshot,
+                    runtime=runtime,
+                    cancel_check=cancel_check,
+                )
+                return
+            turn_idx = 1
         while True:
             self._check_cancel(cancel_check)
             if turn_idx > 0:
@@ -1846,9 +2003,16 @@ class Conversation:
                 openai_messages = prepare_first_turn()
             else:
                 reminder = runtime.soft_reminder()
+                route_reminder = (
+                    "本轮已经完成一次显式会话历史查询。请直接依据刚取得的工具结果回答；"
+                    "除非需要改变会话、时间或主题条件，不要用相同参数重复查询。"
+                    if deterministic_history_completed and turn_idx == 1
+                    else None
+                )
+                trailing = "\n".join(item for item in (reminder, route_reminder) if item)
                 openai_messages = (
-                    self._assemble(trailing_system=reminder, tool_specs=tool_specs)
-                    if reminder
+                    self._assemble(trailing_system=trailing, tool_specs=tool_specs)
+                    if trailing
                     else self._build_openai_messages_continuation()
                 )
 
@@ -1945,7 +2109,7 @@ class Conversation:
         current_turn_start_idx: int,
         cancel_check: Callable[[], None] | None,
     ) -> Iterator[ConversationEvent]:
-        """Execute one model-emitted call list with stable request/result ordering."""
+        """Execute a model- or deterministic-router-emitted call list in stable order."""
         for tc in tool_calls:
             self._check_cancel(cancel_check)
             self._append_tool_call_request_event(tc)
@@ -1954,6 +2118,7 @@ class Conversation:
                 event_tool_call_id=tc["event_id"],
                 tool_name=tc["name"],
                 args=tc["args"],
+                origin=tc.get("origin", "model"),
             )
 
         remaining = runtime.remaining_tool_calls()
@@ -2014,6 +2179,7 @@ class Conversation:
                 text=result.text,
                 is_error=result.is_error,
                 duration_seconds=duration,
+                origin=tc.get("origin", "model"),
             )
 
         if allowed_count < len(tool_calls):
@@ -2126,7 +2292,7 @@ class Conversation:
                 "tool_name": tc["name"],
                 "args": tc["args"],
             },
-            meta=self._run_event_meta(),
+            meta=self._run_event_meta({"tool_call_origin": tc.get("origin", "model")}),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -2138,7 +2304,12 @@ class Conversation:
         duration: float,
     ) -> None:
         """落 ``tool_call_result`` 事件。"""
-        meta: dict[str, Any] = self._run_event_meta({"duration_seconds": duration})
+        meta: dict[str, Any] = self._run_event_meta(
+            {
+                "duration_seconds": duration,
+                "tool_call_origin": tc.get("origin", "model"),
+            }
+        )
         if result.meta:
             diagnostic_extra = {
                 key: value for key, value in result.meta.items() if key != "source_urls"

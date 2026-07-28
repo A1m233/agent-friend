@@ -71,6 +71,7 @@ class ToolRunContext:
     run_id: str
     trusted_now: datetime
     trusted_timezone: str
+    original_user_input: str
     url_authorizations: UrlAuthorizationLedger = field(default_factory=UrlAuthorizationLedger)
 
     @classmethod
@@ -81,7 +82,7 @@ class ToolRunContext:
         zone = getattr(trusted_now.tzinfo, "key", None) or _offset_text(trusted_now)
         ledger = UrlAuthorizationLedger()
         ledger.register_user_text(user_input)
-        return cls(f"toolrun_{uuid4().hex}", trusted_now, str(zone), ledger)
+        return cls(f"toolrun_{uuid4().hex}", trusted_now, str(zone), user_input, ledger)
 
     def register_tool_result(self, name: str, call_id: str, source_urls: object) -> None:
         if name != "web_search" or not isinstance(source_urls, list):

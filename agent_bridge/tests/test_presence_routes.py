@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import cast
 
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 
 def test_desktop_presence_round_trip() -> None:
+    observed_at = datetime.now(UTC)
     registry = PresenceRegistry()
     runtime = cast(
         BridgeRuntime,
@@ -27,30 +28,29 @@ def test_desktop_presence_round_trip() -> None:
     response = client.post(
         "/v1/runtime/presence/desktop",
         json={
-            "observedAt": "2026-07-28T01:00:00Z",
+            "observedAt": observed_at.isoformat(),
             "currentSessionId": "session-1",
             "windowVisible": True,
             "windowFocused": True,
             "windowMinimized": False,
             "osIdleMs": 500,
             "sessionState": "active",
-            "lastDesktopInteractionAt": "2026-07-28T00:59:59.500Z",
+            "lastDesktopInteractionAt": (observed_at - timedelta(milliseconds=500)).isoformat(),
             "capabilities": ["idle", "window"],
         },
     )
     assert response.status_code == 200
-    snapshot = registry.snapshot(now=datetime(2026, 7, 28, 1, tzinfo=UTC), pet_available=False)
+    snapshot = registry.snapshot(now=observed_at, pet_available=False)
     assert snapshot.desktop is not None
     assert snapshot.desktop.current_session_id == "session-1"
     diagnostics = client.get("/v1/runtime/reminder-diagnostics")
     assert diagnostics.status_code == 200
     presence = diagnostics.json()["presence"]
     assert presence["desktop"]["os_idle_ms"] == 500
-    assert presence["desktopSignal"] == {
-        "fresh": True,
-        "ageMs": 0,
-        "eligible": True,
-        "idleBucket": "0-30s",
-        "reason": "eligible",
-    }
+    desktop_signal = presence["desktopSignal"]
+    assert desktop_signal["fresh"] is True
+    assert desktop_signal["ageMs"] < 1_000
+    assert desktop_signal["eligible"] is True
+    assert desktop_signal["idleBucket"] == "0-30s"
+    assert desktop_signal["reason"] == "eligible"
     assert presence["previewDecision"]["kind"] == "desktop"

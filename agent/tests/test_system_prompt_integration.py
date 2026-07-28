@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+from agent.system_prompt import DESKTOP_CHAT_SURFACE, IM_QQ_SURFACE
+
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     Conversation,
@@ -255,9 +257,52 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
         tool_registry=registry,
     )
 
-    conv.send("first")
+    list(conv.stream("first", surface=DESKTOP_CHAT_SURFACE))
     assert "persona A" in fake.received[0][0]["content"]
     assert "persona A" in fake.received[1][0]["content"]
+    assert '<surface type="desktop_chat" />' in "\n".join(
+        message["content"] for message in fake.received[0]
+    )
+    assert '<surface type="desktop_chat" />' in "\n".join(
+        message["content"] for message in fake.received[1]
+    )
 
     conv.send("second")
     assert "persona B" in fake.received[2][0]["content"]
+
+
+def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Path) -> None:
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    fake = _FakeLLMClient(reply="ok")
+    conv = _make_conversation(
+        tmp_path,
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        catalog=catalog,
+        fake_llm=fake,
+    )
+
+    list(conv.stream("我在 QQ 吗？", surface=DESKTOP_CHAT_SURFACE))
+    list(conv.stream("现在在哪？", surface=IM_QQ_SURFACE))
+    list(conv.stream("旧入口"))
+
+    first_prompt = "\n".join(message["content"] for message in fake.received[0])
+    second_prompt = "\n".join(message["content"] for message in fake.received[1])
+    third_prompt = "\n".join(message["content"] for message in fake.received[2])
+    assert fake.received[0][-2] == {
+        "role": "system",
+        "content": '<interaction_context>\n  <surface type="desktop_chat" />\n</interaction_context>',
+    }
+    assert fake.received[0][-1]["role"] == "user"
+    assert fake.received[1][-2] == {
+        "role": "system",
+        "content": (
+            '<interaction_context>\n  <surface type="im" provider="qq" />\n</interaction_context>'
+        ),
+    }
+    assert fake.received[1][-1]["role"] == "user"
+    assert '<surface type="desktop_chat" />' in first_prompt
+    assert 'provider="qq"' not in first_prompt
+    assert '<surface type="im" provider="qq" />' in second_prompt
+    assert 'type="desktop_chat"' not in second_prompt
+    assert 'type="desktop_chat"' not in third_prompt
+    assert 'provider="qq"' not in third_prompt

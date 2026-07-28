@@ -39,6 +39,7 @@ from agent import (
     PersonaEditorPromptBuilder,
     PersonaEditorWorkspace,
     ProposePersonaTool,
+    SessionCatalog,
     SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
@@ -258,6 +259,7 @@ def build_runtime(
     )
     persistent_store = NotifyingSessionStore(base_persistent_store, session_change_broker)
     session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
+    session_catalog = SessionCatalog(persistent_store, session_metadata_store)
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     persona_store = EffectivePersonaStore(
@@ -304,6 +306,7 @@ def build_runtime(
     tool_registry = make_default_registry(
         memory_search=memory_search,
         todo_service=todo_service,
+        session_catalog=session_catalog,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
     )
@@ -360,6 +363,7 @@ def build_runtime(
         from .protocols.im.attachments import IMAttachmentResolver
         from .protocols.im.dedupe import RecentMessageDeduper
         from .protocols.im.inbound_resolver import CompositeInboundResolver
+        from .protocols.im.media import QQFaceResolver
         from .protocols.im.voice import QQVoiceMessageResolver, SafeAudioDownloader
         from .protocols.im.voice_bridge_client import VoiceBridgeTranscriptionClient
         from .session_bridge import SessionBridge as _SessionBridge
@@ -419,6 +423,7 @@ def build_runtime(
             max_items=settings.im_voice_dedupe_max_items,
         )
         im_inbound_resolver = CompositeInboundResolver(
+            QQFaceResolver(),
             QQVoiceMessageResolver(
                 downloader=SafeAudioDownloader(),
                 transcriber=VoiceBridgeTranscriptionClient(settings.voice_bridge_base_url),
