@@ -24,12 +24,14 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import portalocker
 from portalocker.exceptions import LockException
 
+from ...presence import IMPresenceSnapshot
 from .adapters.qq import QQAdapter
 from .content import OutboundContent
 from .coordinator import IMBindingCoordinator
@@ -37,7 +39,7 @@ from .credentials import CredentialStore, ImCredential
 from .dedupe import RecentMessageDeduper
 from .event import InboundEvent, InboundInteraction
 from .inbound_resolver import InboundResolver, InboundResolveResult, NoopInboundResolver
-from .provider import IMProvider, ProviderStatus
+from .provider import IMProvider, OutboundSendResult, ProviderStatus
 from .state import ControlCapability, IMBindingKey, IMStateStore
 
 if TYPE_CHECKING:
@@ -130,6 +132,9 @@ class IMRuntime:
         self._desired_bindings_lock = threading.RLock()
         # 持有 fire-and-forget stop tasks 引用,防 GC 提前回收(RUF006)
         self._background_stops: set[asyncio.Task[None]] = set()
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._last_inbound: dict[IMBindingKey, datetime] = {}
+        self._presence_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -141,6 +146,7 @@ class IMRuntime:
         调用前提:必须在 asyncio event loop 内调用(provider 内部用
         :func:`asyncio.get_running_loop`)。
         """
+        self._event_loop = asyncio.get_running_loop()
         creds = self._credentials.list_all()
         with self._desired_bindings_lock:
             self._desired_bindings = {(cred.im_type, _provider_bind_id(cred)) for cred in creds}
@@ -188,6 +194,81 @@ class IMRuntime:
 
         if records:
             await asyncio.gather(*(_stop_one(p, lock) for _key, p, lock in records))
+        self._event_loop = None
+
+    def presence_snapshots(self) -> tuple[IMPresenceSnapshot, ...]:
+        result: list[IMPresenceSnapshot] = []
+        payload = self._state.snapshot()
+        with self._presence_lock:
+            activity = dict(self._last_inbound)
+        for raw in payload.get("bindings", []):
+            if not isinstance(raw, dict):
+                continue
+            try:
+                key = IMBindingKey(
+                    im_type=str(raw["im_type"]),
+                    provider_bind_id=str(raw["provider_bind_id"]),
+                    chat_scope=str(raw["chat_scope"]),
+                    chat_id=str(raw["chat_id"]),
+                )
+                session_id = str(raw["session_id"])
+            except KeyError:
+                continue
+            provider = self._providers.get((key.im_type, key.provider_bind_id))
+            result.append(
+                IMPresenceSnapshot(
+                    im_type=key.im_type,
+                    provider_bind_id=key.provider_bind_id,
+                    chat_scope=key.chat_scope,
+                    chat_id=key.chat_id,
+                    session_id=session_id,
+                    online=provider is not None and provider.status() == "active",
+                    last_interaction_at=activity.get(key),
+                )
+            )
+        return tuple(result)
+
+    def send_proactive(
+        self,
+        destination_id: str,
+        text: str,
+        *,
+        timeout: float = 20.0,
+    ) -> OutboundSendResult:
+        parts = destination_id.split("|", 4)
+        if len(parts) != 5:
+            return OutboundSendResult("failed", error_kind="invalid_destination")
+        im_type, provider_bind_id, chat_scope, chat_id, session_id = parts
+        provider = self._providers.get((im_type, provider_bind_id))
+        if provider is None or provider.status() != "active":
+            return OutboundSendResult("failed", error_kind="provider_unavailable")
+        binding = self._state.get_binding(
+            IMBindingKey(im_type, provider_bind_id, chat_scope, chat_id)
+        )
+        if binding is None or binding.session_id != session_id:
+            return OutboundSendResult("failed", error_kind="binding_changed")
+        loop = self._event_loop
+        if loop is None or loop.is_closed():
+            return OutboundSendResult("failed", error_kind="runtime_stopped")
+        future = asyncio.run_coroutine_threadsafe(
+            provider.send(
+                OutboundContent(
+                    chat_id=chat_id,
+                    chat_scope=chat_scope,
+                    text=text,
+                    reply_to_message_id=None,
+                )
+            ),
+            loop,
+        )
+        try:
+            result = future.result(timeout=timeout)
+        except TimeoutError:
+            return OutboundSendResult("unknown", error_kind="send_timeout")
+        except Exception:
+            logger.exception("IM proactive send failed (im_type=%s)", im_type)
+            return OutboundSendResult("unknown", error_kind="send_exception")
+        return result or OutboundSendResult("unknown", error_kind="provider_no_receipt")
 
     # ------------------------------------------------------------------
     # External API(给 routes / onboard 用)
@@ -475,6 +556,16 @@ class IMRuntime:
                 )
             )
             return
+
+        observed_at = (
+            datetime.fromisoformat(event.timestamp.replace("Z", "+00:00"))
+            if isinstance(event.timestamp, str)
+            else event.timestamp
+        )
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=UTC)
+        with self._presence_lock:
+            self._last_inbound[binding_key] = observed_at.astimezone(UTC)
 
         result = await self._resolve_inbound(provider, event)
         resolved_event = result.event or event

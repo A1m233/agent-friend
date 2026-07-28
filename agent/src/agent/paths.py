@@ -61,6 +61,11 @@ def memory_db_path() -> Path:
     return user_data_dir() / "memory" / "memory.db"
 
 
+def todos_db_path() -> Path:
+    """Todo SQLite 文件：``<user_data_dir>/todos/todos.db``。"""
+    return user_data_dir() / "todos" / "todos.db"
+
+
 def personas_dir() -> Path:
     """用户自定义 persona 目录：``<user_data_dir>/personas``。"""
     return user_data_dir() / "personas"
@@ -111,5 +116,6 @@ __all__ = [
     "persona_internal_dir",
     "personas_dir",
     "sessions_dir",
+    "todos_db_path",
     "user_data_dir",
 ]

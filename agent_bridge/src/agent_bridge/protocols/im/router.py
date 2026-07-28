@@ -49,7 +49,7 @@ from ...session_bridge import PersistentBootstrap, SessionBridge
 from .content import OutboundContent, OutboundTextFormat
 from .control import menu_controls
 from .event import InboundEvent
-from .provider import IMOutboundProvider
+from .provider import IMOutboundProvider, OutboundSendResult
 from .streaming import (
     IMStreamSession,
     IMTextStreamingProvider,
@@ -70,7 +70,7 @@ FALLBACK_TEXT = "我现在有点问题,稍后再试 🤖"
 """
 
 
-SendCallback = Callable[[OutboundContent], Awaitable[None]]
+SendCallback = Callable[[OutboundContent], Awaitable[OutboundSendResult | None]]
 """IM adapter 提供给 Router 的回写回调签名。"""
 
 _STREAM_END = object()

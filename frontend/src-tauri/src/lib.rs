@@ -18,6 +18,7 @@ mod permissions;
 mod pet_cursor_passthrough;
 mod pet_display_topology;
 mod power_policy;
+mod presence;
 mod push_subscriber;
 mod runtime_config;
 mod runtime_services;
@@ -989,6 +990,7 @@ pub fn run() {
         power_policy::get_power_policy_snapshot,
         power_policy::refresh_power_policy,
         power_policy::open_power_settings,
+        presence::desktop_presence_probe,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,
@@ -1051,6 +1053,7 @@ pub fn run() {
         power_policy::get_power_policy_snapshot,
         power_policy::refresh_power_policy,
         power_policy::open_power_settings,
+        presence::desktop_presence_probe,
         bubble_window::show_bubble,
         bubble_window::hide_bubble,
         bubble_window::set_bubble_size,

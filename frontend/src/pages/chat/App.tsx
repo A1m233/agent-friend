@@ -22,6 +22,7 @@ import { Composer } from "./components/Composer";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 import { openFeedback } from "@/lib/settings/navigation";
 import { useModelCatalogStore } from "@/lib/model-config";
+import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -80,6 +81,13 @@ export function ChatApp() {
   useEffect(() => {
     void publishActiveChatSession(currentSessionId);
   }, [currentSessionId]);
+
+  useEffect(
+    () => startDesktopPresenceReporter(
+      () => useConversationStore.getState().currentSessionId,
+    ),
+    [],
+  );
 
   return (
     <SidebarProvider

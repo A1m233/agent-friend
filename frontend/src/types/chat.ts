@@ -51,7 +51,22 @@ export interface ThinkingBlock {
   text: string;
 }
 
-export type MessageBlock = TextBlock | ToolBlock | ThinkingBlock;
+/** 到期提醒的持久化事实块；字段来自 todo_reminder session event，不经过模型。 */
+export interface ReminderBlock {
+  kind: "reminder";
+  occurrenceId: string;
+  todoId: string;
+  reminderId: string;
+  title: string;
+  description: string;
+  scheduledAtUtc: string;
+  scheduledLocal: string;
+  timezone: string;
+  recurrence: string;
+  todoStatus: string;
+}
+
+export type MessageBlock = TextBlock | ToolBlock | ThinkingBlock | ReminderBlock;
 
 export interface ChatAttachment {
   assetId: string;

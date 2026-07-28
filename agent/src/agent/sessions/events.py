@@ -29,6 +29,7 @@ EventType = Literal[
     "memory_observation",
     "turn_rewrite",
     "run_error",
+    "todo_reminder",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -46,6 +47,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "memory_observation",
         "turn_rewrite",
         "run_error",
+        "todo_reminder",
     }
 )
 

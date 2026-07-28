@@ -50,6 +50,7 @@ function extractText(ev: PushEvent): string | null {
  */
 export const defaultPolicy: PushPolicy = (env) => {
   if (env.kind !== "agent_turn") return null;
+  if (env.presentation === "conversation" || env.presentation === "none") return null;
   const texts = env.events
     .map(extractText)
     .filter((t): t is string => t !== null);

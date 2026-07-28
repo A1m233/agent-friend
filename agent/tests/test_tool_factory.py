@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from agent.sessions.store import NullSessionStore
+from agent.todos import TodoService, TodoStore
 from agent.tools import ToolRegistry, make_default_registry
 from agent.tools.builtin.conversation_history import ConversationHistoryTool
 from agent.tools.builtin.nearby_place_search import (
@@ -175,3 +178,11 @@ def test_explicit_memory_search_service_is_shared_with_history_tool(
     tool = registry.get("recall_past_chats")
     assert isinstance(tool, ConversationHistoryTool)
     assert tool._search_service is service
+
+
+def test_todo_service_registers_todo_manage(tmp_path: Path) -> None:
+    registry = make_default_registry(
+        todo_service=TodoService(TodoStore(tmp_path / "todos.db")),
+        stderr_warn=False,
+    )
+    assert "todo_manage" in registry

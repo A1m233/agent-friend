@@ -34,6 +34,8 @@ export interface PushEnvelope {
   seq: number;
   /** 仅 agent_turn 有；user_turn / heartbeat 是 null。 */
   source_kind: string | null;
+  /** 主动输出呈现位置；旧 envelope 缺失时按 ambient 兼容。 */
+  presentation?: "conversation" | "ambient" | "none" | null;
   /** 序列化后的 ConversationEvent 列表（**不是** SessionEvent；schema 见模块顶部注释）；heartbeat 时为空。 */
   events: PushEvent[];
   revision?: number | null;

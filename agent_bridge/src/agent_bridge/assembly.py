@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, cast
 
 from agent.memory_search import SessionHistorySource
 from agent.runtime import AgentRuntime
+from agent.todos import ReminderScheduler, TodoService, TodoStore
 from agent.tools import ToolRegistry
 
 from agent import (
@@ -52,6 +53,8 @@ from runtime_config import config_mode_from_env, credential_source_for_mode
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
+from .presence import PresenceRegistry
+from .reminders import ReminderDeliveryOrchestrator
 from .runtime_config import BridgeRuntimeConfig, DeferredLLMClient, resolve_bridge_runtime_config
 from .session_models import SessionModelService
 from .session_turns import SessionTurnCoordinator
@@ -156,6 +159,14 @@ class BridgeRuntime:
     """050：独立于正式历史与记忆的人格编辑 Agent 会话。"""
     persona_editor_workspace: PersonaEditorWorkspace | None = None
     """050：持久化编辑会话绑定的正式人格基准 revision。"""
+    todo_store: TodoStore | None = None
+    """070：Todo/Reminder 独立 SQLite store。"""
+    todo_service: TodoService | None = None
+    """070：Agent tool、REST 与调度共享的领域服务。"""
+    presence_registry: PresenceRegistry | None = None
+    """070：桌面/IM 活跃信号和最近路由诊断。"""
+    reminder_scheduler: ReminderScheduler | None = None
+    """070：Bridge lifespan 内运行的可恢复 Reminder scheduler。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -285,9 +296,14 @@ def build_runtime(
         except Exception:
             logger.warning("memory warmup failed; continuing startup", exc_info=True)
 
+    todo_store = TodoStore(settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db")
+    todo_service = TodoService(todo_store)
+    presence_registry = PresenceRegistry()
+
     # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
     tool_registry = make_default_registry(
         memory_search=memory_search,
+        todo_service=todo_service,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
     )
@@ -379,6 +395,9 @@ def build_runtime(
             persona_store=persona_store,
             persona_editor_session_manager=persona_editor_session_manager,
             persona_editor_workspace=persona_editor_workspace,
+            todo_store=todo_store,
+            todo_service=todo_service,
+            presence_registry=presence_registry,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -419,13 +438,31 @@ def build_runtime(
             session_exists=session_bridge.session_exists,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
+        reminder_delivery = ReminderDeliveryOrchestrator(
+            todo_store=todo_store,
+            session_store=persistent_store,
+            agent_runtime=agent_runtime,
+            presence_registry=presence_registry,
+            im_runtime=im_runtime,
+        )
+        reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver)
+        todo_service.add_wake_listener(reminder_scheduler.wake)
         # final BridgeRuntime = pre_runtime + IM 字段
         return dataclasses.replace(
             pre_runtime,
             im_runtime=im_runtime,
             im_onboard_registry=im_onboard_registry,
+            reminder_scheduler=reminder_scheduler,
         )
 
+    reminder_delivery = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=persistent_store,
+        agent_runtime=agent_runtime,
+        presence_registry=presence_registry,
+    )
+    reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver)
+    todo_service.add_wake_listener(reminder_scheduler.wake)
     return BridgeRuntime(
         settings=settings,
         persistent_store=persistent_store,
@@ -446,4 +483,8 @@ def build_runtime(
         persona_store=persona_store,
         persona_editor_session_manager=persona_editor_session_manager,
         persona_editor_workspace=persona_editor_workspace,
+        todo_store=todo_store,
+        todo_service=todo_service,
+        presence_registry=presence_registry,
+        reminder_scheduler=reminder_scheduler,
     )

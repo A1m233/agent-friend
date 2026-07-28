@@ -24,6 +24,7 @@ from agent import (
     memory_db_path,
     personas_dir,
     sessions_dir,
+    todos_db_path,
     user_data_dir,
 )
 
@@ -49,6 +50,7 @@ def test_subpaths_hang_under_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path))
     assert sessions_dir() == tmp_path / "sessions"
     assert memory_db_path() == tmp_path / "memory" / "memory.db"
+    assert todos_db_path() == tmp_path / "todos" / "todos.db"
     assert personas_dir() == tmp_path / "personas"
     assert cli_history_path() == tmp_path / ".cli_history"
 

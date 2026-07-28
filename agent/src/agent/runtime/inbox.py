@@ -51,6 +51,7 @@ class SystemTriggerEvent:
     source_kind: str
     system_prompt_addendum: str
     output_visibility: Literal["user", "memory_only"] = "user"
+    presentation: Literal["conversation", "ambient", "none"] = "ambient"
     event_metadata: dict[str, Any] = field(default_factory=dict)
     type: Literal["system_trigger"] = "system_trigger"
 

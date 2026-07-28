@@ -193,6 +193,7 @@ class BedtimeSource:
                 source_kind=self.name,
                 system_prompt_addendum=self._prompt_addendum,
                 output_visibility="user",
+                presentation="ambient",
                 event_metadata={
                     "bedtime_hour": self._bedtime_hour,
                     "bedtime_minute": self._bedtime_minute,
@@ -291,6 +292,7 @@ class IdleReflectionSource:
                 source_kind=self.name,
                 system_prompt_addendum=self._prompt_addendum,
                 output_visibility="memory_only",
+                presentation="none",
                 event_metadata={
                     "idle_threshold_minutes": self._idle_minutes,
                     "ttl_seconds": max(60, self._idle_minutes * 60),
