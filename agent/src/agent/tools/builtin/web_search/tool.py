@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import json
+import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
@@ -29,21 +31,67 @@ from ...protocol import ToolResult
 class WebSearchError(ToolError):
     """所有 :mod:`web_search` 模块异常的基类。继承自 :class:`ToolError` 体系。"""
 
+    error_kind: ClassVar[str] = "provider"
+    retryable: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+        request_id: str | None = None,
+        exception_type: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.request_id = request_id
+        self.exception_type = exception_type
+        self.is_retryable = self.retryable if retryable is None else retryable
+
+    def diagnostic_meta(self) -> dict[str, Any]:
+        """Return safe structured diagnostics without exposing provider messages."""
+
+        meta: dict[str, Any] = {
+            "error_kind": self.error_kind,
+            "exception_type": self.exception_type or type(self).__name__,
+            "retryable": self.is_retryable,
+        }
+        if self.status_code is not None:
+            meta["status_code"] = self.status_code
+        if self.retry_after_seconds is not None:
+            meta["retry_after_seconds"] = self.retry_after_seconds
+        if self.request_id:
+            meta["request_id"] = self.request_id
+        return meta
+
 
 class WebSearchAuthError(WebSearchError):
     """API key 错或失效。"""
+
+    error_kind = "auth"
 
 
 class WebSearchRateLimitError(WebSearchError):
     """触达 provider 的限流 / 配额 / 临时禁用。"""
 
+    error_kind = "rate_limit"
+    retryable = True
+
 
 class WebSearchNetworkError(WebSearchError):
     """网络错或超时。"""
 
+    error_kind = "network"
+    retryable = True
+
 
 class WebSearchProviderError(WebSearchError):
     """其它 provider 侧错（含未分类）。"""
+
+    error_kind = "provider"
 
 
 # ===== 数据结构 =====
@@ -69,6 +117,27 @@ class SearchHit:
     snippet: str
 
 
+@dataclass(frozen=True)
+class SearchResponse:
+    """Provider-neutral successful response plus safe diagnostic metadata."""
+
+    hits: list[SearchHit]
+    request_id: str | None = None
+    provider_duration_seconds: float | None = None
+
+
+@dataclass(frozen=True)
+class WebSearchRetryPolicy:
+    """Bound retries by both attempt count and the interactive tool deadline."""
+
+    max_attempts: int = 3
+    deadline_seconds: float = 28.0
+    attempt_timeout_seconds: float = 12.0
+    minimum_attempt_seconds: float = 1.0
+    base_delay_seconds: float = 0.5
+    max_retry_after_seconds: float = 5.0
+
+
 # ===== Provider 协议 =====
 
 
@@ -89,7 +158,13 @@ class WebSearchProvider(Protocol):
     name: ClassVar[str]
     """provider 标识，写入 :class:`ToolResult` ``meta["provider"]`` 便于观测。"""
 
-    def search(self, query: str, max_results: int) -> list[SearchHit]:
+    def search(
+        self,
+        query: str,
+        max_results: int,
+        *,
+        timeout_seconds: float,
+    ) -> SearchResponse:
         """同步发起搜索请求。
 
         Args:
@@ -97,7 +172,7 @@ class WebSearchProvider(Protocol):
             max_results: 期望返回的最大结果数；provider 实际返回数可少于此值。
 
         Returns:
-            按 provider 给出的相关性排序的 :class:`SearchHit` 列表。无结果时返回空列表。
+            Provider-neutral response。无结果时 ``hits`` 为空列表。
 
         Raises:
             WebSearchAuthError: API key 错或失效
@@ -166,36 +241,130 @@ class WebSearchTool:
         "required": ["query"],
     }
 
-    def __init__(self, provider: WebSearchProvider, max_results: int = 5) -> None:
+    def __init__(
+        self,
+        provider: WebSearchProvider,
+        max_results: int = 5,
+        *,
+        retry_policy: WebSearchRetryPolicy | None = None,
+        _clock: Callable[[], float] = time.monotonic,
+        _sleep: Callable[[float], None] = time.sleep,
+        _jitter: Callable[[], float] = random.random,
+    ) -> None:
         self._provider = provider
         self._max_results = max_results
+        self._retry_policy = retry_policy or WebSearchRetryPolicy()
+        self._clock = _clock
+        self._sleep = _sleep
+        self._jitter = _jitter
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         query = args["query"]
-        start = time.monotonic()
-        try:
-            hits = self._provider.search(query, self._max_results)
-        except WebSearchAuthError:
-            return ToolResult(text="搜索失败：API 鉴权错误", is_error=True)
-        except WebSearchRateLimitError:
-            return ToolResult(text="搜索失败：触达限流", is_error=True)
-        except WebSearchNetworkError:
-            return ToolResult(text="搜索失败：网络错误", is_error=True)
-        except WebSearchProviderError as exc:
-            return ToolResult(text=f"搜索失败：{exc}", is_error=True)
+        started_at = self._clock()
+        deadline = started_at + self._retry_policy.deadline_seconds
+        attempts: list[dict[str, Any]] = []
 
-        text = _format(query, hits)
-        duration = time.monotonic() - start
-        return ToolResult(
-            text=text,
-            is_error=False,
-            meta={
-                "duration_seconds": duration,
+        for attempt in range(1, self._retry_policy.max_attempts + 1):
+            remaining = deadline - self._clock()
+            if remaining < self._retry_policy.minimum_attempt_seconds:
+                break
+            timeout = min(self._retry_policy.attempt_timeout_seconds, remaining)
+            attempt_started_at = self._clock()
+            try:
+                response = self._provider.search(
+                    query,
+                    self._max_results,
+                    timeout_seconds=timeout,
+                )
+            except WebSearchError as exc:
+                attempt_meta = {
+                    "attempt": attempt,
+                    "duration_seconds": self._clock() - attempt_started_at,
+                    "outcome": "error",
+                    **exc.diagnostic_meta(),
+                }
+                attempts.append(attempt_meta)
+                delay = self._retry_delay(exc, attempt)
+                can_retry = (
+                    exc.is_retryable
+                    and attempt < self._retry_policy.max_attempts
+                    and delay is not None
+                    and deadline - self._clock()
+                    >= delay + self._retry_policy.minimum_attempt_seconds
+                )
+                if not can_retry:
+                    return self._error_result(exc, started_at, attempts)
+                assert delay is not None
+                attempt_meta["retry_delay_seconds"] = delay
+                self._sleep(delay)
+                continue
+
+            hits = response.hits
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "duration_seconds": self._clock() - attempt_started_at,
+                    "outcome": "success",
+                }
+            )
+            meta: dict[str, Any] = {
+                "duration_seconds": self._clock() - started_at,
                 "result_count": len(hits),
                 "provider": self._provider.name,
+                "attempt_count": attempt,
+                "retries_taken": attempt - 1,
+                "attempts": attempts,
                 "source_urls": [hit.url for hit in hits],
-            },
+            }
+            if response.request_id:
+                meta["request_id"] = response.request_id
+            if response.provider_duration_seconds is not None:
+                meta["provider_duration_seconds"] = response.provider_duration_seconds
+            return ToolResult(text=_format(query, hits), is_error=False, meta=meta)
+
+        deadline_error = WebSearchNetworkError(
+            "web search deadline exhausted",
+            exception_type="WebSearchDeadlineError",
         )
+        return self._error_result(deadline_error, started_at, attempts)
+
+    def _retry_delay(self, exc: WebSearchError, attempt: int) -> float | None:
+        retry_after = exc.retry_after_seconds
+        if retry_after is not None:
+            if retry_after < 0 or retry_after > self._retry_policy.max_retry_after_seconds:
+                return None
+            return retry_after
+        ceiling = self._retry_policy.base_delay_seconds * (2 ** (attempt - 1))
+        jitter = float(self._jitter())
+        bounded_jitter: float = min(1.0, max(0.0, jitter))
+        return float(ceiling * bounded_jitter)
+
+    def _error_result(
+        self,
+        exc: WebSearchError,
+        started_at: float,
+        attempts: list[dict[str, Any]],
+    ) -> ToolResult:
+        if isinstance(exc, WebSearchAuthError):
+            text = "搜索失败：API 鉴权错误"
+        elif isinstance(exc, WebSearchRateLimitError):
+            text = "搜索失败：触达限流"
+        elif isinstance(exc, WebSearchNetworkError):
+            text = "搜索失败：网络错误"
+        elif exc.is_retryable:
+            text = "搜索失败：搜索服务暂时不可用"
+        else:
+            text = f"搜索失败：{exc}"
+        meta = {
+            "duration_seconds": self._clock() - started_at,
+            "provider": self._provider.name,
+            "attempt_count": len(attempts),
+            "retries_taken": max(0, len(attempts) - 1),
+            "attempts": attempts,
+            "final_outcome": "failed",
+            **exc.diagnostic_meta(),
+        }
+        return ToolResult(text=text, is_error=True, meta=meta)
 
 
 def _format(query: str, hits: list[SearchHit]) -> str:
