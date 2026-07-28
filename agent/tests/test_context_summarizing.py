@@ -649,7 +649,10 @@ def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: P
 def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
     tmp_path: Path,
 ) -> None:
-    llm = _ContextRejectOnceLLM(context_window=8000)
+    # Keep the fixture comfortably above the default system-prompt baseline so
+    # the emergency rebuild can still create (rather than FIFO-trim past) a
+    # compaction candidate after the provider rejects the first request.
+    llm = _ContextRejectOnceLLM(context_window=10_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )

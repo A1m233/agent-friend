@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -102,9 +102,12 @@ class ToolRunContext:
         drifting apart during a multi-call turn.
         """
         current_datetime = self.trusted_now.isoformat(timespec="seconds")
+        today = self.trusted_now.date()
         return (
-            f'<runtime_now at="{current_datetime}" tz="{self.trusted_timezone}" />\n'
-            "本轮时间以此为准；历史日期不覆盖，勿反推。"
+            f'<runtime_now at="{current_datetime}" tz="{self.trusted_timezone}" '
+            f'yesterday="{today - timedelta(days=1)}" today="{today}" '
+            f'tomorrow="{today + timedelta(days=1)}" />\n'
+            "本轮时间以此为准；日历锚点同样可信，历史日期不覆盖，勿反推。"
         )
 
 

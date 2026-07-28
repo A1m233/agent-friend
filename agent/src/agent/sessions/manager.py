@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         ToolHookInvoker,
     )
     from ..prompts import PromptBuilder
-    from ..tool_runtime import ToolRunPolicy
+    from ..tool_runtime import ToolRunContext, ToolRunPolicy
     from ..tools import ToolRegistry
 
 
@@ -299,6 +299,7 @@ class SessionManager:
         tool_pre_hook: PreToolHook | None = None,
         tool_post_hook: PostToolHook | None = None,
         tool_run_policy: ToolRunPolicy | None = None,
+        tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         post_turn_external: bool = False,
     ) -> Conversation:
         """根据 ``session.current_persona_id / current_model`` 装配 :class:`Conversation`。
@@ -394,6 +395,7 @@ class SessionManager:
             tool_pre_hook=tool_pre_hook,
             tool_post_hook=tool_post_hook,
             tool_run_policy=tool_run_policy,
+            tool_run_context_factory=tool_run_context_factory,
             post_turn_external=post_turn_external,
             message_renderer=self._message_renderer,
         )

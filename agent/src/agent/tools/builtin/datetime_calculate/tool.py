@@ -27,8 +27,13 @@ class DateTimeCalculateTool:
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 5.0
     description: ClassVar[str] = (
-        "对日期差、时间加减、星期、闰年和时区换算使用此工具。"
+        "把绝对日期时间说成今天、明天、今晚、明早或昨天时，若运行时日历锚点不能直接覆盖目标，"
+        "必须调用此工具的 calendar_relation。"
+        "calendar_relation 只传绝对目标到 target，参考时间由运行时自动提供；"
+        "例如 target=2026-07-30T03:59:00+08:00，禁止把 $now 当 target。"
+        "日期差、时间加减、星期、闰年和时区换算也使用此工具。"
         "日期时间使用 ISO 8601；相对当前时刻只能传 $now 或 $today，由运行时可信时间解析。"
+        "calendar_relation 按指定时区的本地日历日比较，不按是否相差 24 小时判断。"
         "涉及本地时间必须提供 IANA 时区或 UTC offset；夏令时重复时间需提供 fold。"
         "输入不足或工具失败时先澄清，不要猜测日期、时区或换算结果。"
     )
@@ -44,12 +49,20 @@ class DateTimeCalculateTool:
                     "weekday",
                     "is_leap_year",
                     "convert_timezone",
+                    "calendar_relation",
                 ],
             },
             "start": {"type": "string"},
             "end": {"type": "string"},
             "datetime": {"type": "string"},
             "date": {"type": "string"},
+            "target": {
+                "type": "string",
+                "description": (
+                    "仅供 calendar_relation：要判断的绝对目标日期或日期时间。"
+                    "参考时间是运行时可信的当前时间，无需也禁止传 $now。"
+                ),
+            },
             "year": {"type": "integer"},
             "timezone": {"type": "string"},
             "target_timezone": {"type": "string"},
@@ -150,6 +163,60 @@ class DateTimeCalculateTool:
                 "days": delta.days,
             }
 
+        if operation == "calendar_relation":
+            if runtime_now is None:
+                raise _DateTimeInputError(
+                    "invalid_datetime", "calendar_relation 需要可信当前时间基准"
+                )
+            if not args.get("target"):
+                raise _DateTimeInputError(
+                    "invalid_datetime",
+                    "calendar_relation 必须把要判断的绝对日期时间放在 target；"
+                    "参考时间由运行时自动提供，不要传 $now",
+                )
+            comparison_zone = _parse_timezone(args.get("timezone") or runtime_zone)
+            target = _parse_temporal(
+                args.get("target"),
+                args.get("timezone") or runtime_zone,
+                runtime_now,
+                runtime_zone,
+                fold,
+            )
+            reference_local = runtime_now.astimezone(comparison_zone)
+            if isinstance(target, datetime):
+                if target.tzinfo is None:
+                    raise _DateTimeInputError(
+                        "missing_timezone", "calendar_relation 的日期时间必须明确时区"
+                    )
+                target_local: date | datetime = target.astimezone(comparison_zone)
+                elapsed_seconds: float | None = (
+                    target.astimezone(UTC) - runtime_now.astimezone(UTC)
+                ).total_seconds()
+            else:
+                target_local = target
+                elapsed_seconds = None
+            day_delta = (
+                (target_local.date() - reference_local.date()).days
+                if isinstance(target_local, datetime)
+                else (target_local - reference_local.date()).days
+            )
+            relation = {
+                -1: "yesterday",
+                0: "today",
+                1: "tomorrow",
+            }.get(day_delta, "past" if day_delta < 0 else "future")
+            payload: dict[str, Any] = {
+                "operation": operation,
+                "reference_local": _iso(reference_local),
+                "target_local": _iso(target_local),
+                "timezone": str(args.get("timezone") or runtime_zone),
+                "calendar_day_delta": day_delta,
+                "relation": relation,
+            }
+            if elapsed_seconds is not None:
+                payload["elapsed_seconds"] = elapsed_seconds
+            return payload
+
         if operation in {"add", "subtract"}:
             value = _parse_temporal(
                 args.get("datetime") or args.get("date"),
@@ -184,8 +251,8 @@ class DateTimeCalculateTool:
                 raise _DateTimeInputError("invalid_datetime", "时区换算需要日期时间，而不是纯日期")
             if value.tzinfo is None:
                 raise _DateTimeInputError("missing_timezone", "源日期时间缺少时区")
-            target = _parse_timezone(args.get("target_timezone"))
-            result = value.astimezone(target)
+            target_zone = _parse_timezone(args.get("target_timezone"))
+            result = value.astimezone(target_zone)
             return {
                 "operation": operation,
                 "input": _iso(value),
