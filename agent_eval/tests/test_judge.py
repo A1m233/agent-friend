@@ -139,6 +139,46 @@ def test_case_level_can_forbid_follow_up_question() -> None:
     assert "follow-up question" in verdict.reason
 
 
+def test_case_level_rejects_assertive_source_attribution_but_allows_uncertainty() -> None:
+    case = _case(CaseJudge(forbid_unsupported_source_attribution=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    assert (
+        judge_case(
+            case,
+            contract,
+            _trace(final_text="看起来有点像某个角色，但我不能确认出处。"),
+        ).passed
+        is True
+    )
+
+    assert (
+        judge_case(
+            case,
+            contract,
+            _trace(final_text="可能像某个角色；我不确定这是不是原作里的名场面。"),
+        ).passed
+        is True
+    )
+
+    assert (
+        judge_case(
+            case,
+            contract,
+            _trace(final_text="这不是任何原作里的名场面，只能按图片本身来理解。"),
+        ).passed
+        is True
+    )
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(final_text="这是某部动画里的角色，这张‘要谈几个’是她的名场面。"),
+    )
+    assert verdict.passed is False
+    assert "unsupported source attribution" in verdict.reason
+
+
 def test_memory_inconsistency_semantic_guards() -> None:
     case = Case(
         id="C5-01",

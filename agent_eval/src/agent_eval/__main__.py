@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -39,7 +40,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contract",
         default="all",
-        help="只跑指定契约，如 C1 / C2 / C3 / C4 / C5 / C6 / C7 / C8；默认 all",
+        help="只跑指定契约，如 C1 / C2 / C3 / C4 / C5 / C6 / C7 / C8 / C9；默认 all",
     )
     parser.add_argument(
         "--case",
@@ -100,17 +101,32 @@ def _optional_int(source: CredentialSource, name: str) -> int | None:
 
 
 def _provider_spec(model: str | None, source: CredentialSource) -> ProviderSpec:
-    from llm_providers import ProviderConfig, ProviderSpec
-    from runtime_config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, optional_secret, require_secret
+    from llm_providers import (
+        build_provider_spec,
+        default_model_for_provider,
+        infer_provider_id_from_model,
+        provider_definition,
+    )
+    from runtime_config import DEEPSEEK_MODEL, optional_secret, require_secret
 
-    return ProviderSpec.from_config(
-        "DEEPSEEK",
-        ProviderConfig(
-            api_key=require_secret(source, DEEPSEEK_API_KEY),
-            model=model or optional_secret(source, DEEPSEEK_MODEL),
-            api_base=optional_secret(source, "DEEPSEEK_API_BASE"),
-            context_window=_optional_int(source, "DEEPSEEK_CONTEXT_WINDOW"),
-        ),
+    model_id = (
+        model or optional_secret(source, DEEPSEEK_MODEL) or default_model_for_provider("deepseek")
+    )
+    try:
+        provider_id = infer_provider_id_from_model(model_id)
+    except ValueError:
+        provider_id = "deepseek"
+    provider = provider_definition(provider_id)
+    prefix = provider.credential_name.removesuffix("_API_KEY")
+    spec = build_provider_spec(
+        provider_id=provider_id,
+        api_key=require_secret(source, provider.credential_name),
+        model_id=model_id,
+        context_window=_optional_int(source, f"{prefix}_CONTEXT_WINDOW"),
+    )
+    return replace(
+        spec,
+        api_base=optional_secret(source, f"{prefix}_API_BASE") or spec.api_base,
     )
 
 
@@ -156,7 +172,7 @@ def main() -> int:
     except (CredentialMissingError, LLMAuthError, ValueError) as exc:
         print(
             f"[配置错误] {exc}\n"
-            "默认请使用 scripts/credentials/run.* set-bundle deepseek 配置；"
+            "请使用 scripts/credentials/run.* 配置被测 model 对应的 provider credential；"
             "如需读取存量 .env，请设置 AGENT_FRIEND_CONFIG_MODE=legacy-dotenv。",
             file=sys.stderr,
         )

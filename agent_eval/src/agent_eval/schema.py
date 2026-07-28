@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class FixtureAttachment:
+    """Project-owned local asset attached to an eval message."""
+
+    path: Path
+    display_name: str
 
 
 @dataclass(frozen=True)
@@ -12,6 +21,7 @@ class FixtureMessage:
 
     role: str
     text: str
+    attachments: list[FixtureAttachment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,7 @@ class CaseJudge:
     forbid_memory_mechanism_terms: bool = False
     forbid_unsupported_lookup_claim: bool = False
     forbid_memory_mismatch_story: bool = False
+    forbid_unsupported_source_attribution: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +69,7 @@ class Case:
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
     current_session_messages: list[FixtureMessage] = field(default_factory=list)
+    query_attachments: list[FixtureAttachment] = field(default_factory=list)
     fake_tool: FakeTool | None = None
     judge: CaseJudge | None = None
 

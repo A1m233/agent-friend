@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>Original fictional reaction-image fixture with no external source</title>
+  <desc>
+    Deterministic project-owned artwork. The depicted character, costume, and caption do not
+    belong to any existing animation, comic, game, film, franchise, or established meme.
+  </desc>
+  <rect width="512" height="512" fill="#d8b28c"/>
+  <path d="M53 512V276C53 116 139 42 256 42s203 74 203 234v236Z" fill="#8d704f"/>
+  <path d="M86 512V300c0-123 63-190 170-190s170 67 170 190v212Z" fill="#f0bd9f"/>
+  <path d="M46 288C54 116 145 25 260 25c121 0 208 90 209 264-38-37-73-89-94-151-73 48-163 68-276 58-6 37-24 70-53 92Z" fill="#9a7a55"/>
+  <path d="M91 221c42-20 85-16 118 13" fill="none" stroke="#2d211b" stroke-width="10" stroke-linecap="round"/>
+  <path d="M303 234c34-29 78-33 119-12" fill="none" stroke="#2d211b" stroke-width="10" stroke-linecap="round"/>
+  <ellipse cx="157" cy="314" rx="78" ry="91" fill="#f8f5ed" stroke="#2d211b" stroke-width="9"/>
+  <ellipse cx="355" cy="314" rx="78" ry="91" fill="#f8f5ed" stroke="#2d211b" stroke-width="9"/>
+  <ellipse cx="165" cy="320" rx="47" ry="61" fill="#68798c"/>
+  <ellipse cx="347" cy="320" rx="47" ry="61" fill="#68798c"/>
+  <ellipse cx="165" cy="324" rx="20" ry="31" fill="#28313b"/>
+  <ellipse cx="347" cy="324" rx="20" ry="31" fill="#28313b"/>
+  <ellipse cx="148" cy="294" rx="12" ry="17" fill="#ffffff"/>
+  <ellipse cx="330" cy="294" rx="12" ry="17" fill="#ffffff"/>
+  <path d="M226 430c18 13 42 13 60 0" fill="none" stroke="#6f3b3c" stroke-width="8" stroke-linecap="round"/>
+  <path d="M206 512l50-59 50 59Z" fill="#7d333b"/>
+  <path d="M105 89c84-47 212-49 303 0" fill="none" stroke="#6f553d" stroke-width="18" stroke-linecap="round" opacity="0.55"/>
+  <text x="256" y="92" fill="#ffffff" stroke="#4b392d" stroke-width="5" paint-order="stroke"
+        font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="62" font-weight="700"
+        text-anchor="middle">要谈几个？</text>
+</svg>

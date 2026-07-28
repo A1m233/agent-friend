@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -10,6 +12,8 @@ from uuid import uuid4
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AttachmentRef,
+    AttachmentStore,
     Event,
     EventType,
     JsonlSessionStore,
@@ -27,9 +31,19 @@ from agent import (
     default_context_manager,
     make_default_registry,
 )
-from llm_providers import LLMClient, ProviderSpec
+from llm_providers import LLMClient, MultimodalInputAdapter, ProviderSpec
 
-from .schema import Case, FakeTool, FixtureMessage, FixtureSession, ToolCallTrace, Trace
+from .schema import (
+    Case,
+    FakeTool,
+    FixtureAttachment,
+    FixtureMessage,
+    FixtureSession,
+    ToolCallTrace,
+    Trace,
+)
+
+ResolveAttachments = Callable[[list[FixtureAttachment]], list[AttachmentRef]]
 
 
 class _FixtureTool:
@@ -56,6 +70,7 @@ def _build_manager(
     *,
     tavily_api_key: str | None = None,
     fake_tool: FakeTool | None = None,
+    attachment_store: AttachmentStore | None = None,
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
@@ -85,10 +100,33 @@ def _build_manager(
         context_manager_factory=default_context_manager,
         tool_registry=registry,
         metadata_store=metadata_store,
+        message_renderer=(
+            MultimodalInputAdapter(
+                open_asset=attachment_store.open,
+                cache_dir=attachment_store.root / "provider-cache",
+            ).render_message
+            if attachment_store is not None
+            else None
+        ),
     )
 
 
-def _inject_fixture(store: JsonlSessionStore, fixture: FixtureSession, model: str) -> None:
+def _event_payload(msg: FixtureMessage, resolve: ResolveAttachments | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"content": msg.text}
+    if msg.attachments:
+        if resolve is None:
+            raise ValueError("fixture attachments require an attachment resolver")
+        payload["attachments"] = [item.to_dict() for item in resolve(msg.attachments)]
+    return payload
+
+
+def _inject_fixture(
+    store: JsonlSessionStore,
+    fixture: FixtureSession,
+    model: str,
+    *,
+    resolve_attachments: ResolveAttachments | None = None,
+) -> None:
     """把 fixture session 写入 store，作为一条独立的过去 session。"""
     now = datetime.now(UTC)
     session_ts = now - timedelta(days=fixture.days_ago)
@@ -107,7 +145,7 @@ def _inject_fixture(store: JsonlSessionStore, fixture: FixtureSession, model: st
                 type=event_type,
                 uuid=str(uuid4()),
                 ts=session_ts + timedelta(minutes=index + 1),
-                payload={"content": msg.text},
+                payload=_event_payload(msg, resolve_attachments),
                 meta={},
             )
         )
@@ -118,6 +156,8 @@ def _inject_current_session_messages(
     store: JsonlSessionStore,
     session: Session,
     messages: list[FixtureMessage],
+    *,
+    resolve_attachments: ResolveAttachments | None = None,
 ) -> None:
     """把前置轮次注入当前被测会话，不触发 LLM。"""
     now = datetime.now(UTC)
@@ -127,33 +167,76 @@ def _inject_current_session_messages(
             type=event_type,
             uuid=str(uuid4()),
             ts=now + timedelta(milliseconds=index),
-            payload={"content": msg.text},
+            payload=_event_payload(msg, resolve_attachments),
             meta={},
         )
         session.append(event)
         store.append_event(session.session_id, event)
 
 
+async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
+    yield path.read_bytes()
+
+
+def _import_fixture_attachment(
+    store: AttachmentStore,
+    attachment: FixtureAttachment,
+) -> AttachmentRef:
+    draft_id, _ = asyncio.run(
+        store.import_stream(
+            _file_chunks(attachment.path),
+            display_name=attachment.display_name,
+        )
+    )
+    return store.consume_draft(draft_id)
+
+
 def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = None) -> Trace:
     """跑一个 case，返回完整 Trace；异常以 ``Trace.error`` 形式返回。"""
     try:
         with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp:
-            store = JsonlSessionStore(Path(tmp))
+            temp_root = Path(tmp)
+            store = JsonlSessionStore(temp_root / "sessions")
+            attachment_store = AttachmentStore(temp_root / "attachments")
+            attachment_cache: dict[tuple[Path, str], AttachmentRef] = {}
+
+            def resolve_attachments(items: list[FixtureAttachment]) -> list[AttachmentRef]:
+                resolved: list[AttachmentRef] = []
+                for item in items:
+                    key = (item.path, item.display_name)
+                    ref = attachment_cache.get(key)
+                    if ref is None:
+                        ref = _import_fixture_attachment(attachment_store, item)
+                        attachment_cache[key] = ref
+                    resolved.append(ref)
+                return resolved
+
             if case.fixture_session is not None:
-                _inject_fixture(store, case.fixture_session, spec.model)
+                _inject_fixture(
+                    store,
+                    case.fixture_session,
+                    spec.model,
+                    resolve_attachments=resolve_attachments,
+                )
 
             manager = _build_manager(
                 store,
                 spec,
                 tavily_api_key=tavily_api_key,
                 fake_tool=case.fake_tool,
+                attachment_store=attachment_store,
             )
             session = manager.create(
                 persona="default",
                 model=spec.model,
                 persona_id=BUILTIN_DEFAULT_PERSONA_ID,
             )
-            _inject_current_session_messages(store, session, case.current_session_messages)
+            _inject_current_session_messages(
+                store,
+                session,
+                case.current_session_messages,
+                resolve_attachments=resolve_attachments,
+            )
             conversation = manager.start_conversation(session)
 
             tool_requests: dict[str, ToolCallRequest] = {}
@@ -161,7 +244,10 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             text_buf: list[str] = []
             stop_reason = "unknown"
 
-            for event in conversation.stream(case.query):
+            for event in conversation.stream(
+                case.query,
+                attachments=resolve_attachments(case.query_attachments),
+            ):
                 if isinstance(event, ToolCallRequest):
                     tool_requests[event.tool_call_id] = event
                 elif isinstance(event, ToolCallResult):

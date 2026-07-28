@@ -14,6 +14,7 @@ from .schema import (
     CaseSetMeta,
     Contract,
     FakeTool,
+    FixtureAttachment,
     FixtureMessage,
     FixtureSession,
 )
@@ -62,7 +63,54 @@ def _bool(raw: Any, *, label: str) -> bool:
     return raw
 
 
-def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
+def _parse_fixture_attachment(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> FixtureAttachment:
+    data = _mapping(raw, label=label)
+    relative = Path(_required_str(data, "path", label=label))
+    if relative.is_absolute():
+        raise ValueError(f"{label}.path 必须是相对路径")
+    root = asset_root.resolve()
+    resolved = (root / relative).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"{label}.path 不能逃逸 agent_eval 目录")
+    if not resolved.is_file():
+        raise ValueError(f"{label}.path 文件不存在: {relative.as_posix()}")
+    display_name = _optional_str(data, "display_name") or resolved.name
+    if not display_name.strip():
+        raise ValueError(f"{label}.display_name 必须是非空字符串")
+    return FixtureAttachment(path=resolved, display_name=display_name.strip())
+
+
+def _parse_fixture_attachments(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> list[FixtureAttachment]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} 必须是 list")
+    return [
+        _parse_fixture_attachment(
+            item,
+            label=f"{label}[{index}]",
+            asset_root=asset_root,
+        )
+        for index, item in enumerate(raw)
+    ]
+
+
+def _parse_fixture_session(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> FixtureSession | None:
     if raw is None:
         return None
     data = _mapping(raw, label=label)
@@ -71,7 +119,11 @@ def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
         days_ago = int(days_raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{label}.days_ago 必须是整数") from exc
-    messages = _parse_fixture_messages(data.get("messages", []), label=f"{label}.messages")
+    messages = _parse_fixture_messages(
+        data.get("messages", []),
+        label=f"{label}.messages",
+        asset_root=asset_root,
+    )
     title_raw = data.get("title")
     title = None
     if title_raw is not None:
@@ -81,7 +133,12 @@ def _parse_fixture_session(raw: Any, *, label: str) -> FixtureSession | None:
     return FixtureSession(days_ago=days_ago, messages=messages, title=title)
 
 
-def _parse_fixture_messages(raw: Any, *, label: str) -> list[FixtureMessage]:
+def _parse_fixture_messages(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> list[FixtureMessage]:
     messages_raw = raw
     if not isinstance(messages_raw, list):
         raise ValueError(f"{label} 必须是 list")
@@ -92,8 +149,23 @@ def _parse_fixture_messages(raw: Any, *, label: str) -> list[FixtureMessage]:
         role = _required_str(msg, "role", label=item_label)
         if role not in {"user", "assistant"}:
             raise ValueError(f"{item_label}.role 只能是 user 或 assistant")
-        text = _required_str(msg, "text", label=item_label)
-        messages.append(FixtureMessage(role=role, text=text))
+        text_raw = msg.get("text", "")
+        if not isinstance(text_raw, str):
+            raise ValueError(f"{item_label}.text 必须是字符串")
+        attachments = _parse_fixture_attachments(
+            msg.get("attachments"),
+            label=f"{item_label}.attachments",
+            asset_root=asset_root,
+        )
+        if not text_raw.strip() and not attachments:
+            raise ValueError(f"{item_label} 必须包含非空 text 或 attachment")
+        messages.append(
+            FixtureMessage(
+                role=role,
+                text=text_raw,
+                attachments=attachments,
+            )
+        )
     return messages
 
 
@@ -143,6 +215,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_memory_mismatch_story"),
             label=f"{label}.forbid_memory_mismatch_story",
         ),
+        forbid_unsupported_source_attribution=_bool(
+            data.get("forbid_unsupported_source_attribution"),
+            label=f"{label}.forbid_unsupported_source_attribution",
+        ),
     )
 
 
@@ -158,6 +234,7 @@ def _load_contract_file(path: Path) -> Contract:
         raise ValueError(f"{path}.cases 必须是非空 list")
 
     cases: list[Case] = []
+    asset_root = path.parent.parent
     seen_case_ids: set[str] = set()
     for index, case_raw in enumerate(cases_raw):
         label = f"{path}.cases[{index}]"
@@ -179,10 +256,17 @@ def _load_contract_file(path: Path) -> Contract:
                 fixture_session=_parse_fixture_session(
                     case_data.get("fixture_session"),
                     label=f"{label}.fixture_session",
+                    asset_root=asset_root,
                 ),
                 current_session_messages=_parse_fixture_messages(
                     case_data.get("current_session_messages", []),
                     label=f"{label}.current_session_messages",
+                    asset_root=asset_root,
+                ),
+                query_attachments=_parse_fixture_attachments(
+                    case_data.get("query_attachments"),
+                    label=f"{label}.query_attachments",
+                    asset_root=asset_root,
                 ),
                 fake_tool=_parse_fake_tool(
                     case_data.get("fake_tool"),
@@ -234,6 +318,27 @@ def build_case_set_meta(cases_dir: Path, contracts: list[Contract]) -> CaseSetMe
     digest = hashlib.sha256()
     for path in case_files(cases_dir):
         rel = path.relative_to(cases_dir).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    asset_root = cases_dir.parent.resolve()
+    attachment_paths = {
+        attachment.path.resolve()
+        for contract in contracts
+        for case in contract.cases
+        for attachment in (
+            list(case.query_attachments)
+            + [item for message in case.current_session_messages for item in message.attachments]
+            + [
+                item
+                for message in (case.fixture_session.messages if case.fixture_session else [])
+                for item in message.attachments
+            ]
+        )
+    }
+    for path in sorted(attachment_paths, key=lambda item: item.as_posix()):
+        rel = path.relative_to(asset_root).as_posix()
         digest.update(rel.encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())

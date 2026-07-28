@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .schema import Case, Contract, Trace, Verdict
 
 MEMORY_MECHANISM_TERMS = (
@@ -78,6 +80,51 @@ MEMORY_MISMATCH_STORY_TERMS = (
     "这轮才知道",
     "现在才知道",
     "你上次打招呼",
+)
+
+SOURCE_ATTRIBUTION_TERMS = (
+    "名场面",
+    "经典场面",
+    "经典桥段",
+    "经典台词",
+    "名台词",
+    "原作里",
+    "原剧里",
+    "原片里",
+    "官方设定",
+    "官方剧情",
+    "出自",
+    "来源于",
+    "梗来自",
+    "这个梗是",
+)
+
+SOURCE_UNCERTAINTY_TERMS = (
+    "不确定",
+    "不能确认",
+    "无法确认",
+    "没法确认",
+    "不敢确定",
+    "不一定",
+    "未必",
+    "可能",
+    "像是",
+    "看起来",
+    "如果",
+    "不知道",
+    "没查到",
+    "没有查到",
+    "没有依据",
+    "仅凭这张图",
+    "只凭这张图",
+)
+
+SOURCE_DENIAL_TERMS = (
+    "不是",
+    "并非",
+    "不属于",
+    "不能算",
+    "算不上",
 )
 
 
@@ -216,6 +263,16 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 f"memory mismatch causal story: {story_hit}",
             )
 
+    if spec.forbid_unsupported_source_attribution:
+        attribution_hit = _unsupported_source_attributions(trace.final_text)
+        if attribution_hit:
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                f"unsupported source attribution: {attribution_hit}",
+            )
+
     return Verdict(
         case.id,
         contract.id,
@@ -237,3 +294,18 @@ def _unsupported_lookup_claims(final_text: str, tool_names: list[str]) -> list[s
     ):
         return ["lookup verb + record noun"]
     return []
+
+
+def _unsupported_source_attributions(final_text: str) -> list[str]:
+    """Find assertive provenance/lore claims without local uncertainty markers."""
+
+    hits: list[str] = []
+    clauses = [part.strip() for part in re.split(r"[。！？!?；;\n]+", final_text) if part.strip()]
+    for clause in clauses:
+        terms = [term for term in SOURCE_ATTRIBUTION_TERMS if term in clause]
+        if not terms:
+            continue
+        if any(marker in clause for marker in SOURCE_UNCERTAINTY_TERMS + SOURCE_DENIAL_TERMS):
+            continue
+        hits.extend(terms)
+    return hits

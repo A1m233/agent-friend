@@ -3,10 +3,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_eval.runner import _FixtureTool, _inject_current_session_messages
-from agent_eval.schema import FakeTool, FixtureMessage
+from agent_eval.runner import (
+    _FixtureTool,
+    _import_fixture_attachment,
+    _inject_current_session_messages,
+)
+from agent_eval.schema import FakeTool, FixtureAttachment, FixtureMessage
 
-from agent import JsonlSessionStore, Session
+from agent import AttachmentStore, JsonlSessionStore, Session
+
+FIXTURE_IMAGE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "unsupported-source-attribution"
+    / "ambiguous-reaction.png"
+)
 
 
 def test_fixture_tool_returns_case_local_result_without_external_call() -> None:
@@ -51,3 +62,32 @@ def test_inject_current_session_messages_populates_active_session_without_llm(
         "前置问题",
         "前置回答",
     ]
+
+
+def test_inject_current_session_message_persists_multimodal_fixture(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    attachment_store = AttachmentStore(tmp_path / "attachments")
+    fixture = FixtureAttachment(path=FIXTURE_IMAGE, display_name="ambiguous-reaction.png")
+    ref = _import_fixture_attachment(attachment_store, fixture)
+    session = Session.new(
+        title="multimodal replay",
+        persona="default",
+        model="kimi/kimi-k2.6",
+        created_at=datetime.now(UTC),
+    )
+    store.create(session)
+
+    _inject_current_session_messages(
+        store,
+        session,
+        [FixtureMessage(role="user", text="", attachments=[fixture])],
+        resolve_attachments=lambda _items: [ref],
+    )
+
+    event = store.load(session.session_id).events[-1]
+    attachment = event.payload["attachments"][0]
+    assert event.payload["content"] == ""
+    assert attachment["asset_id"] == ref.asset_id
+    assert attachment["media_type"] == "image/png"
+    with attachment_store.open(ref.asset_id) as source:
+        assert source.read(8) == b"\x89PNG\r\n\x1a\n"

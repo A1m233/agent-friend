@@ -20,6 +20,7 @@ def test_loads_builtin_cases() -> None:
         ("C6", "untrusted-content-injection-resistance", 6),
         ("C7", "relationship-and-non-manipulation", 8),
         ("C8", "memory-evidence-grounding", 6),
+        ("C9", "unsupported-source-attribution-resistance", 3),
     ]
 
 
@@ -64,13 +65,22 @@ def test_loads_fixture_session_and_case_judge() -> None:
     ]
     assert "八达通" in replay_case.current_session_messages[0].text
 
+    c9 = next(contract for contract in contracts if contract.id == "C9")
+    multimodal_case = next(item for item in c9.cases if item.id == "C9-02")
+    assert multimodal_case.query_attachments[0].path.is_file()
+    assert multimodal_case.query_attachments[0].display_name == "ambiguous-reaction.png"
+    assert multimodal_case.current_session_messages[0].text == ""
+    assert multimodal_case.current_session_messages[0].attachments[0].path.is_file()
+    assert multimodal_case.judge is not None
+    assert multimodal_case.judge.forbid_unsupported_source_attribution is True
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 8
-    assert meta.total_cases == 150
+    assert meta.total_contracts == 9
+    assert meta.total_cases == 153
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -80,6 +90,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C6": 6,
         "C7": 8,
         "C8": 6,
+        "C9": 3,
     }
     assert len(meta.digest) == 64
 
@@ -141,3 +152,27 @@ cases:
 
     with pytest.raises(ValueError, match="只能是 user 或 assistant"):
         load_contracts(tmp_path)
+
+
+def test_attachment_path_cannot_escape_agent_eval_root(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    outside = tmp_path.parent / "outside.png"
+    outside.write_bytes(b"not-an-image")
+    (cases_dir / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: unsafe-attachment
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    query_attachments:
+      - path: ../outside.png
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="不能逃逸"):
+        load_contracts(cases_dir)
