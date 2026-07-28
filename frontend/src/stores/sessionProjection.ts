@@ -78,6 +78,9 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
   // 015 R-4.5.1 · 见模块顶部注释：紧跟 user-visible system_trigger 的 assistant_message 是
   // 主动轮的"用户可见"输出，应被 chat 窗 MessageList 跳过（出口是 pet 气泡，不在 chat 窗）。
   let pendingSkipAssistant = false;
+  // 只有紧邻持久化事实卡片的 Todo 主动轮，才允许把 Agent 增强回应投影进桌面对话。
+  // 这既保护固定事实优先级，也兼容修复前已落盘的 IM orphan response。
+  let pendingReminderCard = false;
 
   const ensureAssistant = (id: string, createdAt: string): ChatMessage => {
     if (currentAssistant) return currentAssistant;
@@ -93,7 +96,13 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       // user-visible 触发会紧跟一条 assistant_message——置 flag 让下一条跳过
       const visibility = asString(p.output_visibility);
       const presentation = asString(p.presentation);
-      if (visibility === "user" && presentation !== "conversation") {
+      const sourceKind = asString(p.source_kind);
+      const hasReminderCard = sourceKind === "todo_reminder" && pendingReminderCard;
+      pendingReminderCard = false;
+      if (
+        visibility === "user" &&
+        (presentation !== "conversation" || (sourceKind === "todo_reminder" && !hasReminderCard))
+      ) {
         pendingSkipAssistant = true;
       }
       continue;
@@ -113,7 +122,10 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         recurrence: asString(p.recurrence),
         todoStatus: asString(p.todo_status),
       };
+      // 主动提醒是独立消息，不得并入此前仍打开的 assistant turn。
+      currentAssistant = null;
       ensureAssistant(`reminder:${block.occurrenceId}`, ev.ts).blocks.push(block);
+      pendingReminderCard = true;
       continue;
     }
 
@@ -123,6 +135,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       messages.push(message);
       currentAssistant = null;
       pendingSkipAssistant = false;
+      pendingReminderCard = false;
       continue;
     }
 

@@ -277,6 +277,56 @@ describe("projectSessionEvents", () => {
     });
   });
 
+  it("Todo 提醒另起消息，不并入上一轮 assistant 回答", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "继续聊工资" }),
+      ev("assistant_message", { content: "可以直接问 HR。", partial: false }),
+      ev("todo_reminder", {
+        occurrence_id: "occ-2",
+        todo_id: "todo-2",
+        reminder_id: "reminder-2",
+        title: "查看诊断包",
+        scheduled_local: "2026-07-28T22:30:00+08:00",
+        timezone: "Asia/Shanghai",
+        recurrence: "once",
+        todo_status: "open",
+      }),
+      ev("system_trigger", {
+        source_kind: "todo_reminder",
+        output_visibility: "user",
+        presentation: "conversation",
+      }),
+      ev("assistant_message", { content: "到时间啦，记得看一下。" }),
+    ]);
+
+    expect(out).toHaveLength(3);
+    expect(out[1].blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "可以直接问 HR。" }),
+    ]);
+    expect(out[2].blocks).toEqual([
+      expect.objectContaining({ kind: "reminder", occurrenceId: "occ-2" }),
+      expect.objectContaining({ kind: "text", text: "到时间啦，记得看一下。" }),
+    ]);
+  });
+
+  it("没有固定卡片的 Todo Agent 回应不单独投影到桌面对话", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "继续聊工资" }),
+      ev("assistant_message", { content: "可以直接问 HR。", partial: false }),
+      ev("system_trigger", {
+        source_kind: "todo_reminder",
+        output_visibility: "user",
+        presentation: "conversation",
+      }),
+      ev("assistant_message", { content: "提醒到了，记得查看诊断包。" }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "可以直接问 HR。" }),
+    ]);
+  });
+
   it("user-visible system_trigger 之后再来的 user_message 不会被误跳过（flag 只消费一次）", () => {
     const events: SessionEvent[] = [
       ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),

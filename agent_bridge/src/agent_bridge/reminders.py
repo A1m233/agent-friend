@@ -241,7 +241,9 @@ class ReminderDeliveryOrchestrator:
                     source_kind="todo_reminder",
                     system_prompt_addendum=_agent_prompt(occurrence),
                     output_visibility="user",
-                    presentation="conversation",
+                    # IM 的固定事实已经投递到唯一目标出口；Agent 回应仍借目标
+                    # session 生成，但不能因此再次出现在桌面对话里。
+                    presentation="conversation" if destination_kind == "desktop" else "none",
                     event_metadata={"occurrence_id": occurrence.id},
                 ),
                 dedupe_key=f"todo-reminder-response:{occurrence.id}",

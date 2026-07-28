@@ -153,6 +153,24 @@ def test_im_unknown_does_not_fall_back_to_pet(tmp_path: Path) -> None:
     assert agent_runtime.listeners.ambient == []
 
 
+def test_im_delivery_keeps_agent_response_out_of_desktop_conversation(tmp_path: Path) -> None:
+    todo_store, occurrence = _claimed(tmp_path)
+    agent_runtime = FakeAgentRuntime(subscribers=1)
+    im_runtime = FakeIMRuntime("delivered")
+    orchestrator = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=JsonlSessionStore(tmp_path / "sessions"),
+        agent_runtime=cast(AgentRuntime, agent_runtime),
+        presence_registry=PresenceRegistry(),
+        im_runtime=cast(Any, im_runtime),
+        clock=lambda: NOW,
+    )
+
+    orchestrator.deliver(occurrence)
+
+    assert agent_runtime.submitted[0].presentation == "none"
+
+
 def test_cancelled_claim_is_not_sent_to_any_destination(tmp_path: Path) -> None:
     todo_store, occurrence = _claimed(tmp_path)
     todo = todo_store.get_todo(occurrence.todo_id).todo
