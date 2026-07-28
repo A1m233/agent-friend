@@ -327,6 +327,35 @@ describe("projectSessionEvents", () => {
     ]);
   });
 
+  it("IM 的隐藏 Todo 事实只供审计和模型状态使用，不在桌面对话重复渲染", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "继续聊工资" }),
+      ev("assistant_message", { content: "可以直接问 HR。", partial: false }),
+      ev("todo_reminder", {
+        occurrence_id: "occ-im",
+        todo_id: "todo-im",
+        reminder_id: "reminder-im",
+        title: "查看诊断包",
+        scheduled_local: "2026-07-28T22:30:00+08:00",
+        timezone: "Asia/Shanghai",
+        recurrence: "once",
+        occurrence_status: "delivered",
+        presentation: "none",
+      }),
+      ev("system_trigger", {
+        source_kind: "todo_reminder",
+        output_visibility: "user",
+        presentation: "none",
+      }),
+      ev("assistant_message", { content: "提醒到了，记得查看诊断包。" }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "可以直接问 HR。" }),
+    ]);
+  });
+
   it("user-visible system_trigger 之后再来的 user_message 不会被误跳过（flag 只消费一次）", () => {
     const events: SessionEvent[] = [
       ev("system_trigger", { source_kind: "cron:bedtime", output_visibility: "user" }),

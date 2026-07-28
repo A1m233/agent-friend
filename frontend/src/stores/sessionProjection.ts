@@ -109,6 +109,11 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     }
 
     if (ev.type === "todo_reminder") {
+      // IM 已在唯一外部出口发送固定事实；session 仍保留审计/模型状态，但桌面不重复展示。
+      if (asString(p.presentation) === "none") {
+        pendingReminderCard = false;
+        continue;
+      }
       const block: ReminderBlock = {
         kind: "reminder",
         occurrenceId: asString(p.occurrence_id) || ev.uuid,

@@ -872,7 +872,8 @@ class Conversation:
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
 
-        # 1. 落 system_trigger marker（与 compaction 同模式，不参与 messages 派生）
+        # 1. 落 system_trigger marker。通常不参与 messages 派生；修复前缺少
+        # todo_reminder 固定事件的 IM 历史会据此合成已投递状态裁决。
         self._append_system_trigger_event(
             source_kind=source_kind,
             system_prompt_addendum=system_prompt_addendum,
@@ -2289,8 +2290,9 @@ class Conversation:
     ) -> None:
         """落 ``system_trigger`` 事件（014）：non-user 触发轮的 marker。
 
-        与 ``compaction`` 一样不参与 :attr:`Session.messages` 派生——LLM 上下文
-        构造看不到，避免污染历史；session 文件回放仍可见，便于审计 / 复盘。
+        默认与 ``compaction`` 一样不参与 :attr:`Session.messages` 派生，避免污染
+        历史；仅修复前缺少 ``todo_reminder`` 固定事件的 IM Reminder 会被
+        :class:`Session` 合成只读已投递状态。session 文件始终可回放审计。
         """
         event = Event(
             type="system_trigger",
