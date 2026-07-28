@@ -1,0 +1,73 @@
+# C10 · 相对日历落地（relative-calendar-grounding）
+#
+# 绝对截止时间被改写为“今天/明天”等相对说法时，必须以本轮可信时间和时区做
+# 确定性日历比较。C10-01 验证运行时日历锚点或工具路径最终落到正确表达，C10-02
+# 保留生产 bad case 的自然触发方式并检查不得重复原始错误。
+
+contract:
+  id: C10
+  name: relative-calendar-grounding
+  expected_behavior: response_must_hold
+
+cases:
+  - id: C10-01
+    query: 我现在准备去赶快打一下明日方舟活动。你提醒我一下，到底是今天凌晨还是明天凌晨结束？
+    facet: 生产 bad case 的显式辨析版——长会话中的绝对截止时间必须按本地日历日解析
+    source: prod_session/3f2685e3-b594-5b6e-8176-21e436904e1c#686
+    runtime_now: "2026-07-29T01:12:32+08:00"
+    current_session_messages:
+      - role: user
+        text: 帮我查一下红丝绒复刻什么时候不能打活动关卡。
+      - role: assistant
+        text: 查到了，国服 SideStory「红丝绒」复刻中，「演出开始」和「为戏剧，为永恒」开放到 2026 年 7 月 30 日 03:59。
+      - role: user
+        text: 先记着，我还要处理工资、offer 和前端的一些事情。
+      - role: assistant
+        text: 好，活动截止时间和其他事情我都先记着。
+      - role: user
+        text: 今天工资到了，绩效奖金什么时候发还是没写清楚。
+      - role: assistant
+        text: 通知里只写按当年度奖金方案执行，没有写具体发放月份。
+      - role: user
+        text: 算了，我今晚先把项目再做一点。
+      - role: assistant
+        text: 行，别把自己搞得太累。
+    judge:
+      require_non_empty_response: true
+      must_mention_any:
+        - 明天凌晨
+        - 7 月 30 日
+        - 7月30日
+      must_not_mention_any:
+        - 今天凌晨 03:59
+        - 今天凌晨03:59
+
+  - id: C10-02
+    query: 搞了一阵了。你是我个人的项目，不是公司的，所以我是自愿花自己额外时间做的。我现在准备去赶快打一下明日方舟活动
+    facet: 生产 bad case 原句——允许不主动报截止时间，但禁止把次日截止说成今天或重放已履约提醒
+    source: prod_session/3f2685e3-b594-5b6e-8176-21e436904e1c#685-686
+    runtime_now: "2026-07-29T01:12:32+08:00"
+    current_session_messages:
+      - role: user
+        text: 帮我查一下红丝绒复刻什么时候不能打活动关卡。
+      - role: assistant
+        text: 查到了，「演出开始」和「为戏剧，为永恒」到 2026 年 7 月 30 日 03:59 关闭。
+      - role: user
+        text: 22:30 提醒我查看诊断包和调研 ScriptMem。
+      - role: assistant
+        text: 好，到点提醒你。
+      - role: assistant
+        text: 提醒到了，记得查看诊断包。
+      - role: assistant
+        text: 提醒到了，有空可以想想 ScriptMem 从哪块动手。
+      - role: user
+        text: 这是录用通知书，绩效奖金也没说什么时候发。
+      - role: assistant
+        text: 确实没写清楚具体发放时间，最好以当年度奖金方案为准。
+    judge:
+      require_non_empty_response: true
+      must_not_mention_any:
+        - 今天凌晨 03:59
+        - 今天凌晨03:59
+        - 今晚 22:30 的提醒我会照常发
+        - 今晚22:30的提醒我会照常发

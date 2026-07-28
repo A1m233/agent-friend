@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,21 @@ def _optional_str(raw: dict[str, Any], key: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{key} 必须是字符串或 null")
     return value
+
+
+def _optional_aware_datetime(raw: dict[str, Any], key: str, *, label: str) -> datetime | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label}.{key} 必须是 ISO 8601 字符串或 null")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label}.{key} 必须是合法 ISO 8601 日期时间") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label}.{key} 必须包含时区")
+    return parsed
 
 
 def _str_list(raw: Any, *, label: str) -> list[str]:
@@ -249,6 +266,7 @@ def _load_contract_file(path: Path) -> Contract:
                 query=_required_str(case_data, "query", label=label),
                 facet=str(case_data.get("facet", "")),
                 source=str(case_data.get("source", "")),
+                runtime_now=_optional_aware_datetime(case_data, "runtime_now", label=label),
                 forbidden_terms=_str_list(
                     case_data.get("forbidden_terms"),
                     label=f"{label}.forbidden_terms",
@@ -288,7 +306,12 @@ def _load_contract_file(path: Path) -> Contract:
 
 def case_files(cases_dir: Path) -> list[Path]:
     """返回排序后的 case 文件列表。"""
-    return sorted(cases_dir.glob("c*.yaml"))
+
+    def sort_key(path: Path) -> tuple[int, str]:
+        match = re.match(r"c(\d+)", path.stem, re.IGNORECASE)
+        return (int(match.group(1)) if match else 2**31, path.name)
+
+    return sorted(cases_dir.glob("c*.yaml"), key=sort_key)
 
 
 def load_contracts(cases_dir: Path) -> list[Contract]:

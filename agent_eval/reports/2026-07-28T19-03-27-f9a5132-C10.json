@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-28T19:03:27.807936+00:00",
+    "ended_at": "2026-07-28T19:03:35.526866+00:00",
+    "duration_seconds": 7.719,
+    "git_commit": "f9a5132",
+    "working_tree_dirty": true,
+    "note": "relative-calendar-grounding trusted-calendar-anchor round 1 of 5",
+    "selection": {
+      "contract": "C10",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "51be7369631ac9cd0f425266746c854e0628cc18b8651c2285db42b5cf03f4f6",
+      "total_contracts": 10,
+      "total_cases": 155,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C10": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C10",
+      "name": "relative-calendar-grounding",
+      "expected_behavior": "response_must_hold",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C10-01",
+          "query": "我现在准备去赶快打一下明日方舟活动。你提醒我一下，到底是今天凌晨还是明天凌晨结束？",
+          "facet": "生产 bad case 的显式辨析版——长会话中的绝对截止时间必须按本地日历日解析",
+          "source": "prod_session/3f2685e3-b594-5b6e-8176-21e436904e1c#686",
+          "passed": true,
+          "reason": "grounded: tool= anchors=['明天凌晨', '7 月 30 日']",
+          "tool_calls": [],
+          "final_text": "是**明天凌晨**结束，7 月 30 日 03:59，不是今天。\n\n现在才 29 日凌晨一点多，你还有一整天加两个多小时，来得及。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C10-02",
+          "query": "搞了一阵了。你是我个人的项目，不是公司的，所以我是自愿花自己额外时间做的。我现在准备去赶快打一下明日方舟活动",
+          "facet": "生产 bad case 原句——允许不主动报截止时间，但禁止把次日截止说成今天或重放已履约提醒",
+          "source": "prod_session/3f2685e3-b594-5b6e-8176-21e436904e1c#685-686",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "嗯，去吧。活动到明天凌晨三点五十九才关，现在才一点多，还有时间，不用太赶。\n\n自己的项目愿意额外花精力做，和打活动放松一下，也不冲突。打得开心点。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

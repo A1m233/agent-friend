@@ -33,6 +33,68 @@ def test_timezone_conversion_crosses_date() -> None:
     assert payload["crossed_date"] is True
 
 
+def test_calendar_relation_uses_local_calendar_day_for_reported_bad_case() -> None:
+    payload = _payload(
+        operation="calendar_relation",
+        target="2026-07-30T03:59:00+08:00",
+        timezone="Asia/Shanghai",
+        __agent_friend_runtime_now="2026-07-29T01:12:32+08:00",
+        __agent_friend_runtime_timezone="Asia/Shanghai",
+    )
+
+    assert payload["reference_local"] == "2026-07-29T01:12:32+08:00"
+    assert payload["target_local"] == "2026-07-30T03:59:00+08:00"
+    assert payload["calendar_day_delta"] == 1
+    assert payload["relation"] == "tomorrow"
+    assert payload["elapsed_seconds"] == 96388
+
+
+def test_calendar_relation_does_not_treat_under_24_hours_as_same_day() -> None:
+    payload = _payload(
+        operation="calendar_relation",
+        target="2026-05-12T12:51:00-07:00",
+        timezone="America/Los_Angeles",
+        __agent_friend_runtime_now="2026-05-11T18:40:00-07:00",
+        __agent_friend_runtime_timezone="America/Los_Angeles",
+    )
+
+    assert payload["calendar_day_delta"] == 1
+    assert payload["relation"] == "tomorrow"
+    elapsed_seconds = payload["elapsed_seconds"]
+    assert isinstance(elapsed_seconds, (int, float))
+    assert 0 < elapsed_seconds < 86400
+
+
+def test_calendar_relation_localizes_aware_target_before_comparing_dates() -> None:
+    payload = _payload(
+        operation="calendar_relation",
+        target="2026-07-29T17:30:00Z",
+        timezone="Asia/Shanghai",
+        __agent_friend_runtime_now="2026-07-29T23:30:00+08:00",
+        __agent_friend_runtime_timezone="Asia/Shanghai",
+    )
+
+    assert payload["target_local"] == "2026-07-30T01:30:00+08:00"
+    assert payload["calendar_day_delta"] == 1
+    assert payload["relation"] == "tomorrow"
+
+
+def test_calendar_relation_rejects_now_as_an_ambiguous_target() -> None:
+    result = DateTimeCalculateTool().invoke(
+        {
+            "operation": "calendar_relation",
+            "date": "2026-07-30",
+            "datetime": "$now",
+            "timezone": "+08:00",
+            "__agent_friend_runtime_now": "2026-07-29T01:12:32+08:00",
+            "__agent_friend_runtime_timezone": "+08:00",
+        }
+    )
+
+    assert result.is_error
+    assert "target" in result.text
+
+
 def test_fixed_hour_addition_uses_elapsed_time_across_dst() -> None:
     payload = _payload(
         operation="add",

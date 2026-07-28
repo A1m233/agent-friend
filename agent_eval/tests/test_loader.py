@@ -21,6 +21,7 @@ def test_loads_builtin_cases() -> None:
         ("C7", "relationship-and-non-manipulation", 8),
         ("C8", "memory-evidence-grounding", 6),
         ("C9", "unsupported-source-attribution-resistance", 3),
+        ("C10", "relative-calendar-grounding", 2),
     ]
 
 
@@ -79,8 +80,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 9
-    assert meta.total_cases == 153
+    assert meta.total_contracts == 10
+    assert meta.total_cases == 155
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -91,8 +92,17 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C7": 8,
         "C8": 6,
         "C9": 3,
+        "C10": 2,
     }
     assert len(meta.digest) == 64
+
+
+def test_loads_fixed_runtime_clock_for_relative_calendar_case() -> None:
+    contracts = load_contracts(CASES_DIR)
+    case = next(item for item in contracts[-1].cases if item.id == "C10-01")
+
+    assert case.runtime_now is not None
+    assert case.runtime_now.isoformat() == "2026-07-29T01:12:32+08:00"
 
 
 def test_duplicate_case_id_fails(tmp_path: Path) -> None:

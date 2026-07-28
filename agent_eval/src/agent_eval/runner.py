@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
 
+from agent.tool_runtime import ToolRunContext
+
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     AttachmentRef,
@@ -237,7 +239,14 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 case.current_session_messages,
                 resolve_attachments=resolve_attachments,
             )
-            conversation = manager.start_conversation(session)
+
+            def tool_run_context_factory(user_input: str) -> ToolRunContext:
+                return ToolRunContext.create(user_input, now=case.runtime_now)
+
+            conversation = manager.start_conversation(
+                session,
+                tool_run_context_factory=tool_run_context_factory,
+            )
 
             tool_requests: dict[str, ToolCallRequest] = {}
             tool_calls: list[ToolCallTrace] = []

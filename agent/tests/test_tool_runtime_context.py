@@ -37,6 +37,9 @@ def test_model_context_renders_the_same_trusted_clock_snapshot() -> None:
 
     assert 'at="2026-07-28T22:04:13+08:00"' in rendered
     assert 'tz="Asia/Shanghai"' in rendered
+    assert 'yesterday="2026-07-27"' in rendered
+    assert 'today="2026-07-28"' in rendered
+    assert 'tomorrow="2026-07-29"' in rendered
     assert "本轮时间以此为准" in rendered
     assert "勿反推" in rendered
 
