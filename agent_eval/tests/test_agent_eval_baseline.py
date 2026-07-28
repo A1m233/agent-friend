@@ -27,7 +27,7 @@ def _result() -> CaseRunResult:
         tool_calls=[
             ToolCallTrace(
                 name="recall_past_chats",
-                args={"query": "诺兰"},
+                args={"search_text": "诺兰"},
                 result_text="我翻了翻，好像没和你聊过这个。",
                 is_error=False,
                 duration_seconds=0.01,
@@ -99,4 +99,4 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     case = payload["contracts"][0]["cases"][0]
     assert case["id"] == "C4-07"
     assert case["passed"] is True
-    assert case["tool_calls"][0]["args"] == {"query": "诺兰"}
+    assert case["tool_calls"][0]["args"] == {"search_text": "诺兰"}

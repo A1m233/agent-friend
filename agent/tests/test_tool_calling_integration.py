@@ -109,31 +109,6 @@ class SpyRecallTool:
         return ToolResult(text="找到一些旧聊天。")
 
 
-class RoutedRecallTool(SpyRecallTool):
-    def plan_explicit_invocation(self, user_input: str) -> dict[str, Any] | None:
-        if "诗欣IM" not in user_input:
-            return None
-        return {"session_title": "诗欣IM", "since": "今天", "mode": "summary"}
-
-
-class PendingRecallTool(SpyRecallTool):
-    def plan_explicit_invocation(self, user_input: str) -> dict[str, Any] | None:
-        if "项目会话" in user_input:
-            return {"session_title": "项目会话", "since": "今天", "mode": "summary"}
-        if "项目 B" in user_input:
-            return {"session_title": "项目 B"}
-        return None
-
-    def invoke(self, args: dict[str, Any]) -> ToolResult:
-        self.seen_args.append(dict(args))
-        if len(self.seen_args) == 1:
-            return ToolResult(
-                text='{"status":"ambiguous_session"}',
-                meta={"resolution_status": "ambiguous"},
-            )
-        return ToolResult(text='{"status":"ok"}', meta={"resolution_status": "matched"})
-
-
 class SwitchModelTool:
     name: ClassVar[str] = "switch_model_for_test"
     description: ClassVar[str] = "切换测试会话模型。"
@@ -672,6 +647,8 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
     assert invocation_args["__agent_friend_current_session_id"] == conv.session.session_id
     assert invocation_args["__agent_friend_current_turn_start_index"] == 1
     assert invocation_args["__agent_friend_current_persona_id"] == conv.session.current_persona_id
+    assert "__agent_friend_original_user_input" not in invocation_args
+    assert "__agent_friend_runtime_now" in invocation_args
 
     tool_reqs = [ev for ev in events if isinstance(ev, ToolCallRequest)]
     assert len(tool_reqs) == 1
@@ -681,56 +658,47 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
     assert request_event.payload["args"] == {"limit": 10}
 
 
-def test_deterministic_history_route_emits_real_visible_tool_events(tmp_path: Path) -> None:
-    recall = RoutedRecallTool()
+def test_model_routes_history_query_with_semantic_structured_arguments(tmp_path: Path) -> None:
+    recall = SpyRecallTool()
+    structured_args = {
+        "session_title": "诗欣im",
+        "since": "今天",
+        "until": "今天",
+        "mode": "summary",
+    }
     fake = _ScriptedLLMClient(
-        script=[[LLMTextDelta(text="今天主要聊了测试。"), LLMTurnDone(stop_reason="end_turn")]]
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call_recall",
+                    tool_name="recall_past_chats",
+                    args_json_delta=json.dumps(structured_args, ensure_ascii=False),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="今天没有消息。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
     )
     conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([recall]))
 
-    events = list(conv.stream("帮我看看诗欣IM这个会话今天聊了什么"))
+    events = list(conv.stream("去看看诗欣im这个会话里今天有没发什么"))
 
     requests = [event for event in events if isinstance(event, ToolCallRequest)]
     results = [event for event in events if isinstance(event, ToolCallResult)]
     assert len(requests) == 1
     assert len(results) == 1
     assert requests[0].tool_name == "recall_past_chats"
-    assert requests[0].origin == "deterministic_history_router"
-    assert results[0].origin == "deterministic_history_router"
-    assert requests[0].args == {
-        "session_title": "诗欣IM",
-        "since": "今天",
-        "mode": "summary",
-    }
-    assert recall.seen_args[0]["__agent_friend_original_user_input"] == (
-        "帮我看看诗欣IM这个会话今天聊了什么"
-    )
+    assert requests[0].origin == "model"
+    assert results[0].origin == "model"
+    assert requests[0].args == structured_args
+    assert "search_text" not in requests[0].args
+    assert "__agent_friend_original_user_input" not in recall.seen_args[0]
     request_event = next(
         event for event in conv.session.events if event.type == "tool_call_request"
     )
-    assert request_event.meta["tool_call_origin"] == "deterministic_history_router"
-    assert any(message.get("role") == "tool" for message in fake.received[0])
-
-
-def test_history_followup_keeps_previous_time_and_mode_constraints(tmp_path: Path) -> None:
-    recall = PendingRecallTool()
-    fake = _ScriptedLLMClient(
-        script=[
-            [LLMTextDelta(text="你指哪个项目会话？"), LLMTurnDone(stop_reason="end_turn")],
-            [LLMTextDelta(text="找到了。"), LLMTurnDone(stop_reason="end_turn")],
-        ]
-    )
-    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([recall]))
-
-    list(conv.stream("看看项目会话今天聊了什么"))
-    second_events = list(conv.stream("项目 B"))
-
-    second_request = next(event for event in second_events if isinstance(event, ToolCallRequest))
-    assert second_request.args == {
-        "session_title": "项目 B",
-        "since": "今天",
-        "mode": "summary",
-    }
+    assert request_event.meta["tool_call_origin"] == "model"
+    assert any(message.get("role") == "tool" for message in fake.received[1])
 
 
 def test_closing_stream_after_turndone_does_not_write_partial_duplicate(tmp_path: Path) -> None:

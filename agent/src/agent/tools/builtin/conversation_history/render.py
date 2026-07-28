@@ -69,7 +69,7 @@ def format_evidence(
     truncated: bool = False,
     message: str | None = None,
 ) -> str:
-    """Render unified evidence plus a stable, user-comprehensible query scope."""
+    """Render unified evidence plus a stable, user-comprehensible search scope."""
     resolved_status = status or ("ok" if evidence else "no_results")
     payload: dict[str, object] = {
         "source_type": "past_conversation",

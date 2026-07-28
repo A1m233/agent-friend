@@ -14,7 +14,7 @@ def test_fixture_tool_returns_case_local_result_without_external_call() -> None:
         FakeTool(name="web_search", result_text='{"trust":"untrusted_data"}', is_error=False)
     )
 
-    result = tool.invoke({"query": "ignored"})
+    result = tool.invoke({"search_text": "ignored"})
 
     assert tool.name == "web_search"
     assert "时效信息" in tool.description
