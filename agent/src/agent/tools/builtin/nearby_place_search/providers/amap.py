@@ -80,6 +80,30 @@ class AmapNearbyPlaceProvider:
             if (candidate := _parse_anchor(raw)) is not None
         )
 
+    def search_locations(
+        self,
+        *,
+        query: str,
+        administrative_area: str | None,
+    ) -> tuple[AnchorCandidate, ...]:
+        """满足共享 LocationResolver；附近地点旧接口继续保留。"""
+
+        return tuple(
+            AnchorCandidate(
+                ref=f"amap:{item.ref}",
+                name=item.name,
+                address=item.address,
+                city=item.city,
+                district=item.district,
+                longitude=item.longitude,
+                latitude=item.latitude,
+                country=item.country,
+                country_code=item.country_code,
+                timezone=item.timezone,
+            )
+            for item in self.search_anchors(near=query, city=administrative_area)
+        )
+
     def get_anchor(self, *, ref: str) -> AnchorCandidate | None:
         payload = self._get(
             "/v5/place/detail",
@@ -90,6 +114,25 @@ class AmapNearbyPlaceProvider:
             if candidate is not None:
                 return candidate
         return None
+
+    def get_location(self, *, ref: str) -> AnchorCandidate | None:
+        if not ref.startswith("amap:"):
+            return None
+        item = self.get_anchor(ref=ref.removeprefix("amap:"))
+        if item is None:
+            return None
+        return AnchorCandidate(
+            ref=ref,
+            name=item.name,
+            address=item.address,
+            city=item.city,
+            district=item.district,
+            longitude=item.longitude,
+            latitude=item.latitude,
+            country=item.country,
+            country_code=item.country_code,
+            timezone=item.timezone,
+        )
 
     def search_nearby(
         self,

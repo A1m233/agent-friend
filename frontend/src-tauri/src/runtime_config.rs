@@ -20,6 +20,7 @@ pub enum RuntimeConfigGroup {
     Deepseek,
     Kimi,
     Tavily,
+    QWeather,
     VolcVoice,
 }
 
@@ -109,6 +110,18 @@ const SECRET_REGISTRY: &[SecretSpec] = &[
         name: "TAVILY_API_KEY",
         aliases: &[],
         group: RuntimeConfigGroup::Tavily,
+        effect: RuntimeConfigEffect::RestartBridge,
+    },
+    SecretSpec {
+        name: "QWEATHER_API_KEY",
+        aliases: &[],
+        group: RuntimeConfigGroup::QWeather,
+        effect: RuntimeConfigEffect::RestartBridge,
+    },
+    SecretSpec {
+        name: "QWEATHER_API_HOST",
+        aliases: &[],
+        group: RuntimeConfigGroup::QWeather,
         effect: RuntimeConfigEffect::RestartBridge,
     },
     SecretSpec {
@@ -672,6 +685,8 @@ mod tests {
         assert!(find_secret("DEEPSEEK_API_KEY").is_some());
         assert!(find_secret("KIMI_API_KEY").is_some());
         assert!(find_secret("TAVILY_API_KEY").is_some());
+        assert!(find_secret("QWEATHER_API_KEY").is_some());
+        assert!(find_secret("QWEATHER_API_HOST").is_some());
         assert!(find_secret("VOLC_SPEECH_API_KEY").is_some());
         assert!(find_secret("VOLC_ARK_API_KEY").is_none());
         assert!(find_secret("OPENAI_API_KEY").is_none());

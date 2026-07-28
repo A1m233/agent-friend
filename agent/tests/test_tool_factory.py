@@ -22,14 +22,21 @@ from agent.tools.builtin.nearby_place_search import (
     UnavailableNearbyPlaceProvider,
 )
 from agent.tools.builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from agent.tools.builtin.weather_query import (
+    UnavailableWeatherProvider,
+    WeatherQueryTool,
+)
+from agent.tools.builtin.weather_query.providers import QWeatherProvider
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.tools.builtin.web_search.providers.tavily import TavilyProvider
 from memory.search import MemorySearchService
 
 
 @pytest.fixture(autouse=True)
-def _isolate_map_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_tool_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AMAP_WEBSERVICE_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_HOST", raising=False)
 
 
 def test_registers_unavailable_nearby_tool_when_no_api_key(
@@ -45,10 +52,14 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
         "calculate",
         "datetime_calculate",
         "nearby_place_search",
+        "weather_query",
     }
     nearby = registry.get("nearby_place_search")
     assert isinstance(nearby, NearbyPlaceSearchTool)
     assert isinstance(nearby._provider, UnavailableNearbyPlaceProvider)
+    weather = registry.get("weather_query")
+    assert isinstance(weather, WeatherQueryTool)
+    assert isinstance(weather._provider, UnavailableWeatherProvider)
     captured = capsys.readouterr()
     assert "TAVILY_API_KEY" in captured.err
     assert "搜索能力已关闭" in captured.err
@@ -70,6 +81,7 @@ def test_silent_when_no_api_key_and_warn_disabled(
         "calculate",
         "datetime_calculate",
         "nearby_place_search",
+        "weather_query",
     }
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -83,7 +95,7 @@ def test_returns_registry_with_web_search_when_api_key_set(
     registry = make_default_registry()
 
     tools = registry.all_tools()
-    assert len(tools) == 5
+    assert len(tools) == 6
     tool = registry.get("web_search")
     assert isinstance(tool, WebSearchTool)
     assert tool.name == "web_search"
@@ -100,7 +112,7 @@ def test_explicit_tavily_key_registers_web_search_without_env(
     registry = make_default_registry(tavily_api_key="test-tavily-explicit")
 
     tools = registry.all_tools()
-    assert len(tools) == 5
+    assert len(tools) == 6
     assert isinstance(registry.get("web_search"), WebSearchTool)
 
 
@@ -117,6 +129,22 @@ def test_explicit_amap_key_registers_real_provider(
     tool = registry.get("nearby_place_search")
     assert isinstance(tool, NearbyPlaceSearchTool)
     assert isinstance(tool._provider, AmapNearbyPlaceProvider)
+
+
+def test_explicit_qweather_credentials_register_real_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    registry = make_default_registry(
+        qweather_api_key="test-qweather-explicit",
+        qweather_api_host="test-api.qweatherapi.com",
+        stderr_warn=False,
+    )
+
+    tool = registry.get("weather_query")
+    assert isinstance(tool, WeatherQueryTool)
+    assert isinstance(tool._provider, QWeatherProvider)
 
 
 # ===== 020 新增：session_store 注入 =====
@@ -145,7 +173,7 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == 4
+    assert len(tools) == 5
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
 
@@ -163,6 +191,7 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
         "web_search",
         "web_fetch",
         "nearby_place_search",
+        "weather_query",
         "recall_past_chats",
     }
 

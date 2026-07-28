@@ -27,9 +27,17 @@ from .builtin.nearby_place_search import (
     UnavailableNearbyPlaceProvider,
 )
 from .builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from .builtin.weather_query import (
+    UnavailableWeatherLocationResolver,
+    UnavailableWeatherProvider,
+    WeatherProvider,
+    WeatherQueryTool,
+)
+from .builtin.weather_query.providers import QWeatherProvider
 from .builtin.web_fetch import TavilyExtractProvider, WebFetchTool
 from .builtin.web_search import WebSearchTool
 from .builtin.web_search.providers.tavily import TavilyProvider
+from .location import CompositeLocationResolver, LocationResolver
 from .protocol import Tool
 from .registry import ToolRegistry
 
@@ -47,6 +55,8 @@ def make_default_registry(
     session_catalog: SessionCatalog | None = None,
     tavily_api_key: str | None = None,
     amap_webservice_key: str | None = None,
+    qweather_api_key: str | None = None,
+    qweather_api_host: str | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -62,6 +72,10 @@ def make_default_registry(
         amap_webservice_key: 高德 Web 服务 Key。新桌面主路径由 runtime config
             显式注入；``None`` 时保留 process env fallback。无 Key 时仍注册地点
             工具，并在调用时返回可恢复的配置提示。
+        qweather_api_key: 和风天气 API Key。与 ``qweather_api_host`` 同时可用时
+            启用天气查询；缺少任一项时保留工具表面并返回配置提示。
+        qweather_api_host: 和风天气账户专属 API Host。由 provider 严格校验，
+            不接受 scheme、path、端口或非 ``qweatherapi.com`` 子域。
         stderr_warn: 未配置 ``TAVILY_API_KEY`` 时是否往 stderr 打一行提示。
             默认开启；测试场景可传 ``False`` 关闭以避免日志噪声。
 
@@ -71,8 +85,9 @@ def make_default_registry(
         - 始终包含 ``calculate`` 与 ``datetime_calculate``
         - ``TAVILY_API_KEY`` 已配置 → 含 ``web_search`` 与 ``web_fetch``
         - 始终包含 ``nearby_place_search``；无高德 Key 时返回配置提示
+        - 始终包含 ``weather_query``；天气 Key 或 Host 不完整时返回配置提示
         - ``session_store`` 非 ``None`` → 含 :class:`ConversationHistoryTool`
-        - 网络与记忆条件都不满足 → 仍保留两个本地工具和地点工具表面
+        - 网络与记忆条件都不满足 → 仍保留两个本地工具及地点、天气工具表面
     """
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
 
@@ -96,8 +111,10 @@ def make_default_registry(
 
     amap_key = amap_webservice_key or os.environ.get("AMAP_WEBSERVICE_KEY")
     nearby_provider: NearbyPlaceProvider
+    amap_provider: AmapNearbyPlaceProvider | None = None
     if amap_key:
-        nearby_provider = AmapNearbyPlaceProvider(api_key=amap_key)
+        amap_provider = AmapNearbyPlaceProvider(api_key=amap_key)
+        nearby_provider = amap_provider
     else:
         nearby_provider = UnavailableNearbyPlaceProvider()
         if stderr_warn:
@@ -106,6 +123,28 @@ def make_default_registry(
                 file=sys.stderr,
             )
     tools.append(NearbyPlaceSearchTool(provider=nearby_provider))
+
+    weather_key = qweather_api_key or os.environ.get("QWEATHER_API_KEY")
+    weather_host = qweather_api_host or os.environ.get("QWEATHER_API_HOST")
+    weather_provider: WeatherProvider
+    weather_resolver: LocationResolver
+    if weather_key and weather_host:
+        weather_provider = QWeatherProvider(api_key=weather_key, api_host=weather_host)
+        weather_resolver = CompositeLocationResolver(weather_provider, amap_provider)
+    else:
+        weather_provider = UnavailableWeatherProvider()
+        weather_resolver = UnavailableWeatherLocationResolver()
+        if stderr_warn:
+            print(
+                "[tool] 未完整配置 QWEATHER_API_KEY / QWEATHER_API_HOST，天气查询需要先在设置页配置。",
+                file=sys.stderr,
+            )
+    tools.append(
+        WeatherQueryTool(
+            resolver=weather_resolver,
+            provider=weather_provider,
+        )
+    )
 
     if memory_search is None and session_store is not None:
         memory_search = MemorySearchService(

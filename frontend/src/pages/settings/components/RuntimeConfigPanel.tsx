@@ -43,6 +43,8 @@ const SECRET_LABELS: Record<RuntimeSecretName, string> = {
   DEEPSEEK_API_KEY: "DeepSeek API Key",
   KIMI_API_KEY: "Kimi API Key",
   TAVILY_API_KEY: "Tavily API Key",
+  QWEATHER_API_KEY: "QWeather API Key",
+  QWEATHER_API_HOST: "QWeather API Host",
   VOLC_ACCESS_KEY: "Volc Access Key",
   VOLC_SECRET_KEY: "Volc Secret Key",
   VOLC_RTC_APP_ID: "Volc RTC App ID",
@@ -311,6 +313,28 @@ export function RuntimeConfigPanel() {
         </SettingsRow>
         <RuntimeSecretList
           items={secretItems({ names: ["AMAP_WEBSERVICE_KEY"], statuses })}
+          savingName={savingName}
+          onSave={saveSecret}
+          onDelete={removeSecret}
+        />
+      </SettingsGroup>
+
+      <SettingsGroup title="天气">
+        <SettingsRow label="供应商">
+          <Select value="qweather" disabled>
+            <SelectTrigger className="min-w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="qweather">和风天气</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <RuntimeSecretList
+          items={secretItems({
+            names: ["QWEATHER_API_KEY", "QWEATHER_API_HOST"],
+            statuses,
+          })}
           savingName={savingName}
           onSave={saveSecret}
           onDelete={removeSecret}

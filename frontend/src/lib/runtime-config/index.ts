@@ -8,6 +8,7 @@ export type RuntimeConfigGroup =
   | "deepseek"
   | "kimi"
   | "tavily"
+  | "qWeather"
   | "volcVoice";
 export type RuntimeConfigKind = "secret";
 export type RuntimeConfigSource = "env" | "keyring" | "legacy-dotenv";
@@ -18,6 +19,8 @@ export type RuntimeSecretName =
   | "DEEPSEEK_API_KEY"
   | "KIMI_API_KEY"
   | "TAVILY_API_KEY"
+  | "QWEATHER_API_KEY"
+  | "QWEATHER_API_HOST"
   | "VOLC_ACCESS_KEY"
   | "VOLC_SECRET_KEY"
   | "VOLC_RTC_APP_ID"

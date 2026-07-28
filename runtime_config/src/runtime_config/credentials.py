@@ -14,6 +14,8 @@ LLM_CHAT_MODEL = "LLM_CHAT_MODEL"
 LLM_MEMORY_PROVIDER = "LLM_MEMORY_PROVIDER"
 LLM_MEMORY_MODEL = "LLM_MEMORY_MODEL"
 TAVILY_API_KEY = "TAVILY_API_KEY"
+QWEATHER_API_KEY = "QWEATHER_API_KEY"
+QWEATHER_API_HOST = "QWEATHER_API_HOST"
 VOLC_ACCESS_KEY = "VOLC_ACCESS_KEY"
 VOLC_SECRET_KEY = "VOLC_SECRET_KEY"
 VOLC_RTC_APP_ID = "VOLC_RTC_APP_ID"
@@ -41,6 +43,8 @@ ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
     DEEPSEEK_API_KEY,
     KIMI_API_KEY,
     TAVILY_API_KEY,
+    QWEATHER_API_KEY,
+    QWEATHER_API_HOST,
     VOLC_ACCESS_KEY,
     VOLC_SECRET_KEY,
     VOLC_RTC_APP_ID,
@@ -52,7 +56,9 @@ ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
 
 # The newer Volc speech APP Key is optional while the legacy App ID + Access
 # Token authentication path remains supported by voice_bridge.
-OPTIONAL_CREDENTIAL_NAMES = frozenset({AMAP_WEBSERVICE_KEY, VOLC_SPEECH_API_KEY})
+OPTIONAL_CREDENTIAL_NAMES = frozenset(
+    {AMAP_WEBSERVICE_KEY, QWEATHER_API_KEY, QWEATHER_API_HOST, VOLC_SPEECH_API_KEY}
+)
 REQUIRED_CREDENTIAL_NAMES: tuple[str, ...] = tuple(
     name for name in ALL_CREDENTIAL_NAMES if name not in OPTIONAL_CREDENTIAL_NAMES
 )
@@ -64,6 +70,7 @@ CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {
     "deepseek": (DEEPSEEK_API_KEY,),
     "kimi": (KIMI_API_KEY,),
     "tavily": (TAVILY_API_KEY,),
+    "qweather": (QWEATHER_API_KEY, QWEATHER_API_HOST),
     "volc-voice": (
         VOLC_ACCESS_KEY,
         VOLC_SECRET_KEY,
@@ -107,6 +114,8 @@ class ToolCredentials:
 
     tavily_api_key: str | None = None
     amap_webservice_key: str | None = None
+    qweather_api_key: str | None = None
+    qweather_api_host: str | None = None
 
 
 @dataclass(frozen=True)
