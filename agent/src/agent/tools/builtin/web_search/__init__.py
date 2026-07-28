@@ -15,22 +15,26 @@
 
 from .tool import (
     SearchHit,
+    SearchResponse,
     WebSearchAuthError,
     WebSearchError,
     WebSearchNetworkError,
     WebSearchProvider,
     WebSearchProviderError,
     WebSearchRateLimitError,
+    WebSearchRetryPolicy,
     WebSearchTool,
 )
 
 __all__ = [
     "SearchHit",
+    "SearchResponse",
     "WebSearchAuthError",
     "WebSearchError",
     "WebSearchNetworkError",
     "WebSearchProvider",
     "WebSearchProviderError",
     "WebSearchRateLimitError",
+    "WebSearchRetryPolicy",
     "WebSearchTool",
 ]

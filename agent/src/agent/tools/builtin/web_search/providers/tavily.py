@@ -12,6 +12,7 @@ from typing import Any, ClassVar
 
 from ..tool import (
     SearchHit,
+    SearchResponse,
     WebSearchAuthError,
     WebSearchNetworkError,
     WebSearchProviderError,
@@ -41,7 +42,14 @@ class TavilyProvider:
             raise WebSearchAuthError("TAVILY_API_KEY 为空")
         self._api_key = api_key
 
-    def search(self, query: str, max_results: int) -> list[SearchHit]:
+    def search(
+        self,
+        query: str,
+        max_results: int,
+        *,
+        timeout_seconds: float,
+    ) -> SearchResponse:
+        import requests
         from tavily import TavilyClient
         from tavily.errors import (
             BadRequestError,
@@ -52,26 +60,120 @@ class TavilyProvider:
         )
         from tavily.errors import TimeoutError as TavilyTimeoutError
 
+        last_response: requests.Response | None = None
+
+        def capture_response(
+            response: requests.Response,
+            *args: Any,
+            **kwargs: Any,
+        ) -> requests.Response:
+            del args, kwargs
+            nonlocal last_response
+            last_response = response
+            return response
+
+        session = requests.Session()
+        session.hooks["response"].append(capture_response)
         try:
-            client = TavilyClient(api_key=self._api_key)
-            resp = client.search(query=query, max_results=max_results)
+            client = TavilyClient(api_key=self._api_key, session=session)
+            resp = client.search(
+                query=query,
+                max_results=max_results,
+                timeout=timeout_seconds,
+            )
         except (InvalidAPIKeyError, MissingAPIKeyError) as e:
             raise WebSearchAuthError(str(e)) from e
-        except (UsageLimitExceededError, ForbiddenError) as e:
-            raise WebSearchRateLimitError(str(e)) from e
+        except UsageLimitExceededError as e:
+            retry_after = getattr(e, "retry_after_seconds", None) or _retry_after_seconds(
+                last_response
+            )
+            raise WebSearchRateLimitError(
+                str(e),
+                retry_after_seconds=retry_after,
+                request_id=_response_request_id(last_response),
+                exception_type=type(e).__name__,
+            ) from e
+        except ForbiddenError as e:
+            raise WebSearchRateLimitError(
+                str(e),
+                retryable=False,
+                request_id=_response_request_id(last_response),
+                exception_type=type(e).__name__,
+            ) from e
         except TavilyTimeoutError as e:
-            raise WebSearchNetworkError(str(e)) from e
+            raise WebSearchNetworkError(str(e), exception_type=type(e).__name__) from e
         except BadRequestError as e:
-            raise WebSearchProviderError(f"请求格式错: {e}") from e
+            raise WebSearchProviderError(
+                f"请求格式错: {e}",
+                status_code=400,
+                exception_type=type(e).__name__,
+            ) from e
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else None
+            retryable = status_code is not None and (status_code == 408 or status_code >= 500)
+            raise WebSearchProviderError(
+                str(e),
+                status_code=status_code,
+                request_id=_response_request_id(e.response),
+                retryable=retryable,
+                exception_type=type(e).__name__,
+            ) from e
+        except requests.exceptions.ConnectionError as e:
+            raise WebSearchNetworkError(str(e), exception_type=type(e).__name__) from e
         except Exception as e:
             # 兜底：连接错 / DNS 错 / 未预期的 SDK 异常一律走 provider error
             # （网络异常的具体类型受 tavily 内部实现影响，统一兜底更稳）
             msg = str(e).lower()
             if "timeout" in msg or "connect" in msg or "network" in msg:
-                raise WebSearchNetworkError(str(e)) from e
-            raise WebSearchProviderError(str(e)) from e
+                raise WebSearchNetworkError(str(e), exception_type=type(e).__name__) from e
+            raise WebSearchProviderError(str(e), exception_type=type(e).__name__) from e
+        finally:
+            session.close()
 
-        return _to_search_hits(resp)
+        return SearchResponse(
+            hits=_to_search_hits(resp),
+            request_id=(
+                _optional_string(resp.get("request_id") or resp.get("requestId"))
+                or _response_request_id(last_response)
+            ),
+            provider_duration_seconds=_optional_float(resp.get("response_time")),
+        )
+
+
+def _response_request_id(response: Any) -> str | None:
+    if response is None:
+        return None
+    for header in ("x-request-id", "request-id"):
+        if value := response.headers.get(header):
+            return str(value)
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    if isinstance(payload, dict):
+        return _optional_string(payload.get("request_id") or payload.get("requestId"))
+    return None
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    if response is None:
+        return None
+    raw_value = response.headers.get("retry-after")
+    if raw_value is None:
+        return None
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _optional_float(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) else None
 
 
 def _to_search_hits(resp: dict[str, Any]) -> list[SearchHit]:
