@@ -71,11 +71,17 @@ class LLMUsage:
         prompt_tokens: 输入（prompt）token 数。009 token 估算的核心锚点。
         completion_tokens: 输出（completion）token 数。
         total_tokens: 总 token 数（通常 = prompt + completion）。
+        cached_prompt_tokens: Provider 报告的缓存命中输入 token；未提供时为
+            ``None``，与明确报告 ``0`` 区分。
+        cache_miss_prompt_tokens: Provider 报告或可由输入减命中数推导的缓存未命中
+            token；缓存信息不可用时为 ``None``。
     """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cached_prompt_tokens: int | None = None
+    cache_miss_prompt_tokens: int | None = None
 
 
 @dataclass(frozen=True)

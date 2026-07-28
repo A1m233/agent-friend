@@ -346,21 +346,15 @@ class TestSystemPromptComposerDefault:
             assert isinstance(slot, StaticSection)
             assert slot.text.strip() != ""
 
-    def test_default_runtime_context_slot_renders_current_time(self, tmp_path: Path) -> None:
-        """``runtime_context`` 槽位用 :class:`RuntimeContextSection`，
-        渲染时把 ``{current_time}`` 占位符替换为实际时间。"""
-        from agent.system_prompt import RuntimeContextSection
-
+    def test_default_runtime_context_slot_contains_stable_policy(self, tmp_path: Path) -> None:
+        """基础 prompt 只保留政策，具体时钟由每 turn 的可信上下文承载。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         rc_slot = next(s for s in composer.sections if s.key == "runtime_context")
-        assert isinstance(rc_slot, RuntimeContextSection)
+        assert isinstance(rc_slot, StaticSection)
         rendered = rc_slot.render()
         assert rendered is not None
-        # 模板里的占位符已被替换（不应残留 {current_time}）
         assert "{current_time}" not in rendered
-        # 关键内容存在
-        assert "当前时间" in rendered
         assert "事实与证据" in rendered
         assert "近期和实时信息" in rendered
         assert "过去对话和历史归因" in rendered
@@ -381,7 +375,7 @@ class TestSystemPromptComposerDefault:
         assert "工具使用边界" in output
         assert "记忆矛盾回应边界" in output
         assert "输出表达约束" in output
-        assert "当前时间" in output
+        assert "事实与证据" in output
         assert "近期和实时信息" in output
 
     def test_default_text_prompt_size_baseline(self, tmp_path: Path) -> None:
@@ -391,8 +385,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 6716
-        assert estimate_tokens([Message(role="system", content=output)]) == 5037
+        assert len(output) == 6593
+        assert estimate_tokens([Message(role="system", content=output)]) == 4944
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

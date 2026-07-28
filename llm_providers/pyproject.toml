@@ -1,10 +1,11 @@
 [project]
 name = "llm-providers"
 version = "0.1.0"
-description = "agent-friend · LLM Provider 适配层（基于 LiteLLM）"
+description = "agent-friend · 统一 LLM Provider 适配层"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "litellm>=1.50.0",
+    "openai>=2.24.0",
 ]
 
 [build-system]

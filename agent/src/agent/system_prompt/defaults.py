@@ -11,7 +11,7 @@ from __future__ import annotations
 from importlib.resources import files
 
 from ..sessions import Session
-from .sections import ChannelSection, RuntimeContextSection, StaticSection
+from .sections import ChannelSection, StaticSection
 
 _RESOURCE_PACKAGE = "agent.prompt_sections"
 
@@ -58,23 +58,23 @@ def load_default_static_section(key: str) -> StaticSection:
 
 def load_default_runtime_context_section(
     key: str = "runtime_context",
-) -> RuntimeContextSection:
-    """从包资源加载 ``runtime_context.md`` 模板并构造 :class:`RuntimeContextSection`。
+) -> StaticSection:
+    """从包资源加载稳定运行时政策，不在基础 prompt 中渲染具体时钟。
 
-    模板必须含 ``{current_time}`` 占位符；其它替换语义见 :class:`RuntimeContextSection`。
+    具体时钟由 :class:`agent.tool_runtime.ToolRunContext` 每 turn 生成一次，并以
+    ephemeral turn context 注入；同一份快照也作为隐藏参数传给时间相关工具。
 
     Args:
         key: 槽位标识，默认 ``"runtime_context"``。
 
     Returns:
-        RuntimeContextSection 实例，使用默认时钟（本地当前时间）。
+        StaticSection 实例。
 
     Raises:
         KeyError: ``key`` 不是 :data:`_SECTION_KEY_TO_FILENAME` 中已知的 key。
         FileNotFoundError: 资源文件缺失。
     """
-    template = _load_section_text(key)
-    return RuntimeContextSection(key=key, template=template)
+    return StaticSection(key=key, text=_load_section_text(key))
 
 
 def load_default_channel_section(session: Session, key: str = "channel") -> ChannelSection:

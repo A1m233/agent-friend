@@ -13,12 +13,14 @@ from __future__ import annotations
 import json
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
+from zoneinfo import ZoneInfo
 
 import pytest
-from agent.tool_runtime import ToolRunPolicy
+from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.nearby_place_search import (
     AnchorCandidate,
     NearbyPlace,
@@ -176,6 +178,7 @@ class _ScriptedLLMClient:
     script: list[list[LLMStreamEvent]] = field(default_factory=list)
     turn_idx: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
+    received_overrides: list[dict[str, Any]] = field(default_factory=list)
     context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
     def complete(
@@ -191,6 +194,7 @@ class _ScriptedLLMClient:
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         self.received.append(messages)
+        self.received_overrides.append(dict(overrides))
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -206,6 +210,8 @@ def _make_conversation(
     registry: ToolRegistry | None = None,
     llm_client_factory: Any | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
+    tool_run_context_factory: Any | None = None,
+    model: str = "deepseek/deepseek-chat",
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
@@ -214,7 +220,7 @@ def _make_conversation(
     session = Session.new(
         title="t",
         persona="default",
-        model="deepseek/deepseek-chat",
+        model=model,
         persona_id=persona_id,
     )
     store.create(session)
@@ -234,7 +240,41 @@ def _make_conversation(
         catalog=catalog,
         tool_registry=registry,
         tool_run_policy=tool_run_policy,
+        tool_run_context_factory=tool_run_context_factory,
     )
+
+
+def test_kimi_turn_uses_stable_session_prompt_cache_key(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTextDelta(text="one"), LLMTurnDone(stop_reason="end_turn")],
+            [LLMTextDelta(text="two"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        model="kimi/kimi-k2.6",
+    )
+
+    list(conv.stream("first"))
+    list(conv.stream("second"))
+
+    assert [item["prompt_cache_key"] for item in fake.received_overrides] == [
+        conv.session.session_id,
+        conv.session.session_id,
+    ]
+
+
+def test_non_kimi_turn_does_not_send_prompt_cache_key(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+
+    list(conv.stream("first"))
+
+    assert "prompt_cache_key" not in fake.received_overrides[0]
 
 
 def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) -> None:
@@ -953,11 +993,73 @@ def test_datetime_tool_receives_hidden_trusted_runtime_without_persisting_it(
             [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([CaptureDateTool()]))
+    trusted = ToolRunContext.create(
+        "今天星期几",
+        now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([CaptureDateTool()]),
+        tool_run_context_factory=lambda _: trusted,
+    )
     list(conv.stream("今天星期几"))
-    assert "__agent_friend_runtime_now" in seen_args[0]
+    assert seen_args[0]["__agent_friend_runtime_now"] == trusted.trusted_now.isoformat()
+    assert seen_args[0]["__agent_friend_runtime_timezone"] == "Asia/Shanghai"
+    for request_messages in fake.received:
+        model_context = next(
+            message["content"]
+            for message in request_messages
+            if message.get("content", "").startswith("<runtime_now")
+        )
+        assert trusted.trusted_now.isoformat(timespec="seconds") in model_context
     request = next(event for event in conv.session.events if event.type == "tool_call_request")
     assert "__agent_friend_runtime_now" not in request.payload["args"]
+    assert all("<runtime_now" not in message.content for message in conv.session.messages)
+
+
+def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> None:
+    """旧回答中的 31 号不能比本轮 7 月 28 日时钟更靠近当前输入。"""
+    old_context = ToolRunContext.create(
+        "旧问题",
+        now=datetime(2026, 7, 27, 22, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    current_context = ToolRunContext.create(
+        "今天发工资",
+        now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    contexts = iter([old_context, current_context])
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTextDelta(text="自然月到 31 号。"), LLMTurnDone(stop_reason="end_turn")],
+            [LLMTextDelta(text="收到。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_run_context_factory=lambda _: next(contexts),
+    )
+
+    list(conv.stream("旧问题"))
+    list(conv.stream("我是 20 号入职，今天发工资"))
+
+    messages = fake.received[1]
+    old_answer_index = next(
+        index for index, message in enumerate(messages) if "31 号" in message.get("content", "")
+    )
+    clock_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("content", "").startswith("<runtime_now")
+    )
+    current_user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("content") == "我是 20 号入职，今天发工资"
+    )
+    assert old_answer_index < clock_index < current_user_index
+    assert "2026-07-28T22:04:13+08:00" in messages[clock_index]["content"]
 
 
 def test_repeated_identical_failures_stop_as_no_progress(tmp_path: Path) -> None:

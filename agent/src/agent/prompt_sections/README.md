@@ -16,7 +16,7 @@
 | `output_contract.md` | `output_contract` | 跨通道的默认输出表达约束（Markdown、链接、代码、清单等格式边界） |
 | `channel_voice.md` | `channel` | 语音通道下的表达约束（文字通道默认不输出） |
 | `interaction_context_contract.md` | `interaction_context_contract` | 解释宿主提供的当前回合结构化交互上下文；具体 surface 值不在基础 prompt 中 |
-| `runtime_context.md` | `runtime_context` | 当前时间、近期事实与历史归因的运行时证据边界 |
+| `runtime_context.md` | `runtime_context` | 近期事实、相对日期与历史归因的稳定证据边界；具体时钟逐 turn 注入 |
 
 ## 加载方式
 

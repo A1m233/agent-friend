@@ -94,6 +94,19 @@ class ToolRunContext:
             except ValueError:
                 continue
 
+    def render_for_model(self) -> str:
+        """Render the same trusted clock snapshot that hidden tool args receive.
+
+        The block is injected as ephemeral turn context near the current input.  Keeping
+        it on this object prevents the model-visible time and tool-visible time from
+        drifting apart during a multi-call turn.
+        """
+        current_datetime = self.trusted_now.isoformat(timespec="seconds")
+        return (
+            f'<runtime_now at="{current_datetime}" tz="{self.trusted_timezone}" />\n'
+            "本轮时间以此为准；历史日期不覆盖，勿反推。"
+        )
+
 
 def _offset_text(value: datetime) -> str:
     offset = value.utcoffset()

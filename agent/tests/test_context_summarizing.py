@@ -68,6 +68,7 @@ class _FakeLLM:
     summary_text: str = "<summary>这是压缩后的结构化摘要</summary>"
     fail: bool = False
     prompt_tokens: int | None = None
+    cached_prompt_tokens: int | None = None
     complete_calls: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     spec: Any = field(default_factory=lambda: SimpleNamespace(model="deepseek/test"))
@@ -92,6 +93,12 @@ class _FakeLLM:
                 prompt_tokens=self.prompt_tokens,
                 completion_tokens=1,
                 total_tokens=self.prompt_tokens + 1,
+                cached_prompt_tokens=self.cached_prompt_tokens,
+                cache_miss_prompt_tokens=(
+                    self.prompt_tokens - self.cached_prompt_tokens
+                    if self.cached_prompt_tokens is not None
+                    else None
+                ),
             )
             if self.prompt_tokens is not None
             else None
@@ -687,7 +694,11 @@ def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> N
 
 
 def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> None:
-    llm = _FakeLLM(context_window=100_000, prompt_tokens=12_000)
+    llm = _FakeLLM(
+        context_window=100_000,
+        prompt_tokens=12_000,
+        cached_prompt_tokens=9_000,
+    )
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -698,6 +709,8 @@ def test_usage_calibration_persists_and_restores_per_model(tmp_path: Path) -> No
     )
     usage = assistant.meta["context_usage"]
     assert usage["prompt_tokens"] == 12_000
+    assert usage["cached_prompt_tokens"] == 9_000
+    assert usage["cache_miss_prompt_tokens"] == 3_000
     assert usage["calibration_factor"] > 1.0
 
     reloaded = store.load(session.session_id)

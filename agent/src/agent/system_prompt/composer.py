@@ -211,9 +211,9 @@ class SystemPromptComposer:
           ``text`` 通道下不输出任何内容。渲染时可由本轮
           ``channel_override`` 覆盖 session 当前 channel；不传时回落到
           session 状态，与老调用方兼容）
-        - ``runtime_context``：当前会话运行时上下文（:class:`RuntimeContextSection`，
-          模板来自 ``prompt_sections/runtime_context.md``）。005 起新增，含
-          当前时间、近期事实和历史归因的运行时证据边界。
+        - ``runtime_context``：稳定的运行时证据政策（:class:`StaticSection`，
+          模板来自 ``prompt_sections/runtime_context.md``）。具体时钟由每 turn
+          的可信运行时上下文注入，不在基础 system prompt 中维护第二份真相源。
 
         Args:
             persona_id: 目标 persona 的 UUID。

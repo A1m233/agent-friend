@@ -27,6 +27,20 @@ def test_search_results_must_be_registered_by_successful_tool_result() -> None:
     assert authorization.source_call_id == "call-1"
 
 
+def test_model_context_renders_the_same_trusted_clock_snapshot() -> None:
+    context = ToolRunContext.create(
+        "今天发工资",
+        now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+    rendered = context.render_for_model()
+
+    assert 'at="2026-07-28T22:04:13+08:00"' in rendered
+    assert 'tz="Asia/Shanghai"' in rendered
+    assert "本轮时间以此为准" in rendered
+    assert "勿反推" in rendered
+
+
 def test_ledger_rejects_unsupported_schemes_and_ports() -> None:
     ledger = UrlAuthorizationLedger()
     ledger.register_user_text("file:///etc/passwd http://example.com:8080/x")

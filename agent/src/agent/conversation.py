@@ -209,6 +209,8 @@ class Conversation:
         catalog: 用于 ``switch_persona`` 时通过 id 反查 name 写双字段事件 hint。
             ``None`` 时新建一个默认的（孵化期接受）。
         memory: 可选的 :class:`memory.Memory` 实现，阶段 1 不传（占位）。
+        tool_run_context_factory: 每 turn 创建可信运行时快照的工厂；默认读取本地
+            aware 当前时间。测试可注入固定时钟，模型上下文和隐藏工具参数共用产物。
 
     Note:
         典型构造方式是用 :meth:`SessionManager.start_conversation` 装配，
@@ -233,6 +235,7 @@ class Conversation:
         tool_run_policy: ToolRunPolicy | None = None,
         post_turn_external: bool = False,
         message_renderer: MessageRenderer | None = None,
+        tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
     ):
         self._session = session
         self._store = store
@@ -251,9 +254,11 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
+        self._tool_run_context_factory = tool_run_context_factory or ToolRunContext.create
         self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
         self._tool_batch_executor = ToolBatchExecutor(self._tool_run_policy.max_parallel_read_tools)
         self._active_tool_run_state: ToolRunState | None = None
+        self._active_tool_run_context: ToolRunContext | None = None
         self._last_memory_context: MemoryContext | None = None
         # 009 M1：上下文管理的会话级运行时状态
         # ``_last_input_tokens``：上轮真实 usage.prompt_tokens 锚点（消费 LLMTurnDone.usage
@@ -521,7 +526,9 @@ class Conversation:
             if completed_parts:
                 completed_replay_text = "".join(completed_parts)
         loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = ToolRunContext.create(user_input)
+        tool_run_context = self._tool_run_context_factory(user_input)
+        previous_tool_run_context = self._active_tool_run_context
+        self._active_tool_run_context = tool_run_context
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -591,6 +598,7 @@ class Conversation:
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
+            self._active_tool_run_context = previous_tool_run_context
 
     def edit_resend_latest(
         self,
@@ -633,7 +641,9 @@ class Conversation:
         rewrite_event_appended = False
         user_event_appended = False
         loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = ToolRunContext.create(user_input)
+        tool_run_context = self._tool_run_context_factory(user_input)
+        previous_tool_run_context = self._active_tool_run_context
+        self._active_tool_run_context = tool_run_context
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -700,6 +710,7 @@ class Conversation:
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
+            self._active_tool_run_context = previous_tool_run_context
 
     def continue_after_tool_error(
         self,
@@ -717,11 +728,13 @@ class Conversation:
         previous_run_id = self._run_id_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
+        previous_tool_run_context = self._active_tool_run_context
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
+        self._active_tool_run_context = self._tool_run_context_factory("")
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -781,6 +794,7 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_tool_run_context = previous_tool_run_context
 
     # ----- 系统级触发轮（014：main loop 入口） -----
 
@@ -798,7 +812,9 @@ class Conversation:
 
         previous_run_model_snapshot = self._run_model_snapshot
         previous_run_id = self._run_id_override
+        previous_tool_run_context = self._active_tool_run_context
         self._run_model_snapshot = self._capture_run_model_snapshot()
+        self._active_tool_run_context = self._tool_run_context_factory(system_prompt_addendum)
         try:
             yield from self._dispatch_system_turn_impl(
                 source_kind=source_kind,
@@ -811,6 +827,7 @@ class Conversation:
         finally:
             self._run_model_snapshot = previous_run_model_snapshot
             self._run_id_override = previous_run_id
+            self._active_tool_run_context = previous_tool_run_context
 
     def _dispatch_system_turn_impl(
         self,
@@ -1364,25 +1381,31 @@ class Conversation:
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
         system_prompt = self._system_prompt
-        turn_context = (
-            [
+        turn_context: list[Message] = []
+        if self._active_tool_run_context is not None:
+            turn_context.append(
+                Message(
+                    role="system",
+                    content=self._active_tool_run_context.render_for_model(),
+                )
+            )
+        if self._prompt_surface_override is not None:
+            turn_context.append(
                 Message(
                     role="system",
                     content=DEFAULT_INTERACTION_CONTEXT_RENDERER.render(
                         self._prompt_surface_override
                     ),
                 )
-            ]
-            if self._prompt_surface_override is not None
-            else None
-        )
+            )
         logger.info(
             "[SurfaceContextDbg] prompt_build session_id=%s run_id=%s surface=%s "
-            "turn_context=%s system_prompt_chars=%d",
+            "turn_context=%s trusted_time=%s system_prompt_chars=%d",
             self._session.session_id,
             self._run_id_override or "none",
             self._prompt_surface_override or "none",
             "present" if turn_context else "none",
+            "present" if self._active_tool_run_context is not None else "none",
             len(system_prompt),
         )
         build = self._context_manager.build_messages(
@@ -1391,7 +1414,7 @@ class Conversation:
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
-            turn_context=turn_context,
+            turn_context=turn_context or None,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
             runtime=runtime,
@@ -1629,6 +1652,9 @@ class Conversation:
     ) -> Iterator[Any]:
         """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
         current_messages = messages
+        request_overrides = dict(overrides or {})
+        if self._uses_kimi_prompt_cache():
+            request_overrides.setdefault("prompt_cache_key", self._session.session_id)
         recovery_builder = recovery_builder or (lambda: self._assemble(tool_specs=tools))
         for recovery_attempt in range(2):
             request_accepted = False
@@ -1636,7 +1662,7 @@ class Conversation:
                 for event in self._active_llm_client().stream(
                     current_messages,
                     tools=tools,
-                    **(overrides or {}),
+                    **request_overrides,
                 ):
                     if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
                         request_accepted = True
@@ -1660,6 +1686,12 @@ class Conversation:
 
         raise AssertionError("context recovery loop should always return or raise")
 
+    def _uses_kimi_prompt_cache(self) -> bool:
+        """Whether this run targets Kimi's OpenAI-compatible chat endpoint."""
+        model_id = self._active_model_id()
+        provider_model = str(getattr(getattr(self._active_llm_client(), "spec", None), "model", ""))
+        return model_id.startswith("kimi/") or provider_model.startswith("openai/kimi-")
+
     def _consume_usage(self, ev: LLMTurnDone) -> None:
         """消费 :class:`LLMTurnDone.usage`，更新下一轮估算的真实锚点（009 M1）。
 
@@ -1679,9 +1711,30 @@ class Conversation:
             self._pending_context_usage = {
                 "model": model_id,
                 "prompt_tokens": ev.usage.prompt_tokens,
+                "cached_prompt_tokens": ev.usage.cached_prompt_tokens,
+                "cache_miss_prompt_tokens": ev.usage.cache_miss_prompt_tokens,
                 "raw_estimate": raw_estimate,
                 "calibration_factor": factor,
             }
+            cached = ev.usage.cached_prompt_tokens
+            hit_ratio = cached / ev.usage.prompt_tokens if cached is not None else None
+            logger.info(
+                "[PromptCacheDbg] session_id=%s run_id=%s model=%s "
+                "prompt_tokens=%d cached_prompt_tokens=%s cache_miss_prompt_tokens=%s "
+                "hit_ratio=%s cache_key=%s",
+                self._session.session_id,
+                self._run_id_override or "none",
+                model_id,
+                ev.usage.prompt_tokens,
+                cached if cached is not None else "unavailable",
+                (
+                    ev.usage.cache_miss_prompt_tokens
+                    if ev.usage.cache_miss_prompt_tokens is not None
+                    else "unavailable"
+                ),
+                f"{hit_ratio:.4f}" if hit_ratio is not None else "unavailable",
+                "present" if self._uses_kimi_prompt_cache() else "none",
+            )
 
     def _observe_turn(self, start_idx: int) -> None:
         """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。

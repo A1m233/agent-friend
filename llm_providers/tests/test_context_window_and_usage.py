@@ -11,8 +11,9 @@ import pytest
 from litellm.exceptions import ContentPolicyViolationError as LiteLLMContentPolicyViolationError
 from litellm.exceptions import ContextWindowExceededError as LiteLLMContextWindowExceededError
 from litellm.exceptions import Timeout as LiteLLMTimeout
-from llm_providers.client import _extract_usage, _map_exception
+from llm_providers.client import _extract_stream_usage, _extract_usage, _map_exception
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
+from openai.types.chat import ChatCompletionChunk
 
 from llm_providers import (
     LLMClient,
@@ -26,6 +27,7 @@ from llm_providers import (
     LLMRetryScheduled,
     LLMTextDelta,
     LLMTransientProviderError,
+    LLMTurnDone,
     LLMUsage,
     ProviderConfig,
     ProviderSpec,
@@ -246,6 +248,178 @@ def test_extract_usage_handles_partial_fields() -> None:
     assert usage.prompt_tokens == 99
     assert usage.completion_tokens == 0
     assert usage.total_tokens == 0
+
+
+@pytest.mark.parametrize(
+    ("provider_usage", "expected_hit", "expected_miss"),
+    [
+        (
+            SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                cached_tokens=80,
+            ),
+            80,
+            40,
+        ),
+        (
+            SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                prompt_cache_hit_tokens=70,
+                prompt_cache_miss_tokens=50,
+            ),
+            70,
+            50,
+        ),
+        (
+            SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=60),
+            ),
+            60,
+            60,
+        ),
+    ],
+)
+def test_extract_usage_normalizes_prompt_cache_counters(
+    provider_usage: Any,
+    expected_hit: int,
+    expected_miss: int,
+) -> None:
+    usage = _extract_usage(SimpleNamespace(usage=provider_usage))
+
+    assert usage is not None
+    assert usage.cached_prompt_tokens == expected_hit
+    assert usage.cache_miss_prompt_tokens == expected_miss
+
+
+def test_extract_stream_usage_reads_kimi_choice_usage() -> None:
+    chunk = ChatCompletionChunk.model_validate(
+        {
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "kimi-k2.6",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                    "usage": {
+                        "prompt_tokens": 120,
+                        "completion_tokens": 2,
+                        "total_tokens": 122,
+                        "cached_tokens": 80,
+                    },
+                }
+            ],
+        }
+    )
+
+    usage = _extract_stream_usage(chunk)
+
+    assert usage == LLMUsage(
+        prompt_tokens=120,
+        completion_tokens=2,
+        total_tokens=122,
+        cached_prompt_tokens=80,
+        cache_miss_prompt_tokens=40,
+    )
+
+
+def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Any] = {}
+
+    class FakeResponse:
+        closed = False
+
+        def __iter__(self) -> Any:
+            return iter(
+                [
+                    SimpleNamespace(
+                        usage=None,
+                        choices=[
+                            SimpleNamespace(
+                                usage={
+                                    "prompt_tokens": 120,
+                                    "completion_tokens": 2,
+                                    "total_tokens": 122,
+                                    "cached_tokens": 80,
+                                },
+                                delta=SimpleNamespace(content="ok", tool_calls=[]),
+                                finish_reason="stop",
+                            )
+                        ],
+                    )
+                ]
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = FakeResponse()
+    clients: list[Any] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> FakeResponse:
+            seen.update(kwargs)
+            return response
+
+    class FakeOpenAI:
+        closed = False
+
+        def __init__(self, **kwargs: Any) -> None:
+            seen["client"] = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+            clients.append(self)
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("llm_providers.kimi_transport.openai.OpenAI", FakeOpenAI)
+    monkeypatch.setattr(
+        _COMPLETION,
+        lambda **_kwargs: pytest.fail("Kimi stream must bypass LiteLLM"),
+    )
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.6",
+            api_base="https://api.moonshot.cn/v1",
+            defaults={"timeout": 12.5},
+        )
+    )
+
+    events = list(
+        client.stream(
+            [{"role": "user", "content": "hi"}],
+            prompt_cache_key="session-1",
+        )
+    )
+
+    done = next(event for event in events if isinstance(event, LLMTurnDone))
+    assert done.usage == LLMUsage(
+        prompt_tokens=120,
+        completion_tokens=2,
+        total_tokens=122,
+        cached_prompt_tokens=80,
+        cache_miss_prompt_tokens=40,
+    )
+    assert seen["model"] == "kimi-k2.6"
+    assert seen["prompt_cache_key"] == "session-1"
+    assert seen["stream"] is True
+    assert seen["stream_options"] == {"include_usage": True}
+    assert seen["timeout"] == 12.5
+    assert "max_retries" not in seen
+    assert response.closed is True
+    assert len(clients) == 1
+    assert clients[0].closed is True
 
 
 # ===== timeout 透传与异常映射 =====

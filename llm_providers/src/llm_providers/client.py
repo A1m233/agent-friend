@@ -1,4 +1,7 @@
-"""``LLMClient``：对 LiteLLM 的最小封装，对外暴露统一接口 + 抹平错误。
+"""``LLMClient``：统一 LLM provider 接口、流式事件与错误模型。
+
+默认 transport 使用 LiteLLM；存在已确认协议差异的 provider 可在本层接入专用
+transport，避免兼容逻辑泄漏到 Conversation 等上层模块。
 
 提供两个公开方法：
 
@@ -36,6 +39,7 @@ from .errors import (
     LLMRateLimitError,
     LLMTransientProviderError,
 )
+from .kimi_transport import open_kimi_stream, uses_kimi_stream_transport
 from .spec import ProviderSpec
 from .stream_events import (
     LLMRetryScheduled,
@@ -149,19 +153,80 @@ def _extract_usage(response: Any) -> LLMUsage | None:
     ``stream_options={"include_usage": True}`` 时的尾 chunk 上。Provider 不支持
     时该字段缺失 / 为 ``None`` → 返回 ``None``，上层退化到字符估算。
     """
-    usage = getattr(response, "usage", None)
+    return _normalize_usage(_usage_field(response, "usage"))
+
+
+def _extract_stream_usage(chunk: Any) -> LLMUsage | None:
+    """Extract top-level usage or Kimi's provider-specific choice usage."""
+    usage = _extract_usage(chunk)
+    if usage is not None:
+        return usage
+
+    choices = _usage_field(chunk, "choices") or []
+    for choice in choices:
+        choice_usage = _usage_field(choice, "usage")
+        if choice_usage is None:
+            model_dump = getattr(choice, "model_dump", None)
+            if callable(model_dump):
+                dumped = model_dump()
+                if isinstance(dumped, dict):
+                    choice_usage = dumped.get("usage")
+        usage = _normalize_usage(choice_usage)
+        if usage is not None:
+            return usage
+    return None
+
+
+def _normalize_usage(usage: Any) -> LLMUsage | None:
+    """Normalize a provider usage object or mapping into :class:`LLMUsage`."""
     if usage is None:
         return None
-    prompt = getattr(usage, "prompt_tokens", None)
-    completion = getattr(usage, "completion_tokens", None)
-    total = getattr(usage, "total_tokens", None)
+    prompt = _usage_field(usage, "prompt_tokens")
+    completion = _usage_field(usage, "completion_tokens")
+    total = _usage_field(usage, "total_tokens")
     if prompt is None and completion is None and total is None:
         return None
+    prompt_tokens = int(prompt or 0)
+    cached = _first_usage_int(
+        usage,
+        "cached_tokens",
+        "prompt_cache_hit_tokens",
+        "cache_read_input_tokens",
+        "_cache_read_input_tokens",
+    )
+    if cached is None:
+        prompt_details = _usage_field(usage, "prompt_tokens_details")
+        cached = _first_usage_int(prompt_details, "cached_tokens")
+    cache_miss = _first_usage_int(usage, "prompt_cache_miss_tokens")
+    if cache_miss is None and cached is not None:
+        cache_miss = max(0, prompt_tokens - cached)
     return LLMUsage(
-        prompt_tokens=int(prompt or 0),
+        prompt_tokens=prompt_tokens,
         completion_tokens=int(completion or 0),
         total_tokens=int(total or 0),
+        cached_prompt_tokens=cached,
+        cache_miss_prompt_tokens=cache_miss,
     )
+
+
+def _first_usage_int(value: Any, *names: str) -> int | None:
+    """Return the first non-negative provider usage counter, if present."""
+    if value is None:
+        return None
+    for name in names:
+        raw = _usage_field(value, name)
+        if isinstance(raw, bool):
+            continue
+        if isinstance(raw, (int, float)) and raw >= 0:
+            return int(raw)
+    return None
+
+
+def _usage_field(value: Any, name: str) -> Any:
+    """Read a usage field from provider objects and raw dictionaries alike."""
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 def _map_exception(e: Exception) -> LLMError:
@@ -530,14 +595,17 @@ class LLMClient:
         kwargs.setdefault("stream_options", {"include_usage": True})
 
         try:
-            response = litellm.completion(
-                model=spec.model,
-                api_key=spec.api_key,
-                api_base=spec.api_base,
-                messages=messages,
-                stream=True,
-                **kwargs,
-            )
+            if uses_kimi_stream_transport(spec):
+                response = open_kimi_stream(spec, messages, kwargs)
+            else:
+                response = litellm.completion(
+                    model=spec.model,
+                    api_key=spec.api_key,
+                    api_base=spec.api_base,
+                    messages=messages,
+                    stream=True,
+                    **kwargs,
+                )
         except Exception as e:
             raise _map_exception(e) from e
 
@@ -556,7 +624,7 @@ class LLMClient:
         try:
             for chunk in response:
                 chunk_count += 1
-                chunk_usage = _extract_usage(chunk)
+                chunk_usage = _extract_stream_usage(chunk)
                 if chunk_usage is not None:
                     usage = chunk_usage
 
