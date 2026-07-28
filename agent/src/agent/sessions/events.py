@@ -68,9 +68,9 @@ SCHEMA_VERSION: Final[int] = 1
 **不递增**（详见 009 design §6.4）。
 
 014 起新增 ``system_trigger`` / ``memory_observation`` 两类事件（main loop 系统
-触发轮 marker / silent turn 产物），同样是纯加性——老文件不出现新 type；
-``Session.messages`` 派生不识别新 type 自然忽略；故 ``SCHEMA_VERSION`` **不递增**
-（详见 014 design §6.1）。
+触发轮 marker / silent turn 产物），同样是纯加性——老文件不出现新 type；通常不
+参与 ``Session.messages``。后续仅对修复前的 Todo Reminder marker 合成只读历史状态，
+不改变原始事件 schema；故 ``SCHEMA_VERSION`` **不递增**（详见 014 design §6.1）。
 
 035 起新增 ``turn_rewrite`` 事件，用 append-only marker 标记一次"编辑并重发"
 产生的失活事件集合；原始事件不删除不改，active projection 在 ``Session`` 内派生，

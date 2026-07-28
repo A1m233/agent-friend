@@ -93,6 +93,29 @@ class ReminderDeliveryOrchestrator:
                         ),
                         now=now,
                     )
+                    try:
+                        self._append_reminder_fact(
+                            occurrence,
+                            decision.session_id,
+                            now=now,
+                            destination_kind="im",
+                            presentation="none",
+                        )
+                    except SessionNotFoundError:
+                        # 外部消息已经成功送达，不能因为会话审计事实缺失而重试并重复发送。
+                        logger.warning(
+                            "Delivered IM reminder session is missing: occurrence=%s session=%s",
+                            occurrence.id,
+                            decision.session_id,
+                        )
+                    except Exception:
+                        # occurrence 已先标 delivered；任何会话落盘错误都不能把外部副作用
+                        # 重新变成可重试发送，只损失本次上下文增强并保留错误证据。
+                        logger.exception(
+                            "Failed to persist delivered IM reminder fact: occurrence=%s session=%s",
+                            occurrence.id,
+                            decision.session_id,
+                        )
                     self._start_agent_response(
                         occurrence,
                         session_id=decision.session_id,
@@ -171,9 +194,38 @@ class ReminderDeliveryOrchestrator:
         if not self._todos.occurrence_is_deliverable(occurrence.id):
             return False
         try:
-            session = self._sessions.load(session_id)
+            self._append_reminder_fact(
+                occurrence,
+                session_id,
+                now=now,
+                destination_kind="desktop",
+                presentation="conversation",
+            )
         except SessionNotFoundError:
             return False
+
+        self._todos.update_occurrence(
+            occurrence.id,
+            DeliveryUpdate(
+                state=OccurrenceState.DELIVERED,
+                destination_kind="desktop",
+                destination_id=session_id,
+                delivery_receipt=occurrence.id,
+            ),
+            now=now,
+        )
+        return True
+
+    def _append_reminder_fact(
+        self,
+        occurrence: ReminderOccurrence,
+        session_id: str,
+        *,
+        now: datetime,
+        destination_kind: str,
+        presentation: str,
+    ) -> None:
+        session = self._sessions.load(session_id)
         if not any(
             event.type == "todo_reminder" and event.uuid == occurrence.id
             for event in session.events
@@ -196,20 +248,13 @@ class ReminderDeliveryOrchestrator:
                         "timezone": facts.timezone,
                         "recurrence": facts.recurrence,
                         "todo_status": facts.todo_status.value,
+                        "occurrence_status": "delivered",
+                        "delivered_at": now.isoformat(),
+                        "destination_kind": destination_kind,
+                        "presentation": presentation,
                     },
                 ),
             )
-        self._todos.update_occurrence(
-            occurrence.id,
-            DeliveryUpdate(
-                state=OccurrenceState.DELIVERED,
-                destination_kind="desktop",
-                destination_id=session_id,
-                delivery_receipt=occurrence.id,
-            ),
-            now=now,
-        )
-        return True
 
     def _deliver_im_fixed(
         self,

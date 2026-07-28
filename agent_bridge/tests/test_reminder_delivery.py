@@ -112,6 +112,8 @@ def test_desktop_delivery_persists_fact_before_agent_response(tmp_path: Path) ->
     loaded = session_store.load("desktop")
     assert [event.type for event in loaded.events][-1] == "todo_reminder"
     assert loaded.events[-1].uuid == occurrence.id
+    assert loaded.events[-1].payload["occurrence_status"] == "delivered"
+    assert loaded.events[-1].payload["presentation"] == "conversation"
     assert agent_runtime.submitted[0].presentation == "conversation"
     assert todo_store.get_occurrence(occurrence.id).state.value == "delivered"
 
@@ -157,9 +159,13 @@ def test_im_delivery_keeps_agent_response_out_of_desktop_conversation(tmp_path: 
     todo_store, occurrence = _claimed(tmp_path)
     agent_runtime = FakeAgentRuntime(subscribers=1)
     im_runtime = FakeIMRuntime("delivered")
+    session_store = JsonlSessionStore(tmp_path / "sessions")
+    session_store.create(
+        Session.new(title="im", persona="default", model="fake", session_id="im-session")
+    )
     orchestrator = ReminderDeliveryOrchestrator(
         todo_store=todo_store,
-        session_store=JsonlSessionStore(tmp_path / "sessions"),
+        session_store=session_store,
         agent_runtime=cast(AgentRuntime, agent_runtime),
         presence_registry=PresenceRegistry(),
         im_runtime=cast(Any, im_runtime),
@@ -168,6 +174,11 @@ def test_im_delivery_keeps_agent_response_out_of_desktop_conversation(tmp_path: 
 
     orchestrator.deliver(occurrence)
 
+    loaded = session_store.load("im-session")
+    reminder_event = next(event for event in loaded.events if event.type == "todo_reminder")
+    assert reminder_event.payload["occurrence_status"] == "delivered"
+    assert reminder_event.payload["destination_kind"] == "im"
+    assert reminder_event.payload["presentation"] == "none"
     assert agent_runtime.submitted[0].presentation == "none"
 
 
