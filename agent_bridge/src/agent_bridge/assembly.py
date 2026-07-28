@@ -309,6 +309,8 @@ def build_runtime(
         session_catalog=session_catalog,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
+        qweather_api_key=runtime_config.tool_credentials.qweather_api_key,
+        qweather_api_host=runtime_config.tool_credentials.qweather_api_host,
     )
 
     llm_client_factory = runtime_config.llm_client_factory

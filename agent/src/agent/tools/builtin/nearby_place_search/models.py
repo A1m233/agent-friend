@@ -6,21 +6,11 @@ from dataclasses import dataclass
 from typing import ClassVar, Literal, NoReturn, Protocol, runtime_checkable
 
 from ...errors import ToolError
+from ...location import LocationCandidate
+
+AnchorCandidate = LocationCandidate
 
 PlaceSort = Literal["distance", "relevance"]
-
-
-@dataclass(frozen=True)
-class AnchorCandidate:
-    """可作为附近搜索圆心的地点候选。"""
-
-    ref: str
-    name: str
-    address: str
-    city: str | None
-    district: str | None
-    longitude: float
-    latitude: float
 
 
 @dataclass(frozen=True)

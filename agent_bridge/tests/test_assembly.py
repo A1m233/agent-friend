@@ -8,6 +8,8 @@ import pytest
 from agent.tools.builtin.conversation_history import ConversationHistoryTool
 from agent.tools.builtin.nearby_place_search import NearbyPlaceSearchTool
 from agent.tools.builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from agent.tools.builtin.weather_query import WeatherQueryTool
+from agent.tools.builtin.weather_query.providers import QWeatherProvider
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import build_runtime
 from agent_bridge.errors import map_exception
@@ -33,6 +35,8 @@ def test_persistent_runtime_registers_recall_past_chats(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("AMAP_WEBSERVICE_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_HOST", raising=False)
 
     settings = BridgeSettings(
         sessions_dir=tmp_path / "sessions",
@@ -67,6 +71,8 @@ def test_memory_enabled_registers_history_and_structured_sources(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("AMAP_WEBSERVICE_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_KEY", raising=False)
+    monkeypatch.delenv("QWEATHER_API_HOST", raising=False)
     runtime = build_runtime(
         BridgeSettings(
             sessions_dir=tmp_path / "sessions",
@@ -115,6 +121,34 @@ def test_runtime_config_injects_amap_provider(
             if isinstance(tool, NearbyPlaceSearchTool)
         )
         assert isinstance(tool._provider, AmapNearbyPlaceProvider)
+    finally:
+        runtime.close()
+
+
+def test_runtime_config_injects_qweather_provider(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.setenv("QWEATHER_API_KEY", "test-qweather-key")
+    monkeypatch.setenv("QWEATHER_API_HOST", "test-api.qweatherapi.com")
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("AMAP_WEBSERVICE_KEY", raising=False)
+
+    runtime = build_runtime(
+        BridgeSettings(
+            sessions_dir=tmp_path / "sessions",
+            personas_dir=tmp_path / "personas",
+            memory_enabled=False,
+            im_enabled=False,
+        )
+    )
+
+    try:
+        tool = next(
+            tool for tool in runtime.tool_registry.all_tools() if isinstance(tool, WeatherQueryTool)
+        )
+        assert isinstance(tool._provider, QWeatherProvider)
     finally:
         runtime.close()
 

@@ -20,6 +20,8 @@ from runtime_config import (
     LLM_CHAT_PROVIDER,
     LLM_MEMORY_MODEL,
     LLM_MEMORY_PROVIDER,
+    QWEATHER_API_HOST,
+    QWEATHER_API_KEY,
     TAVILY_API_KEY,
     CredentialSource,
     ToolCredentials,
@@ -189,5 +191,7 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         tool_credentials=ToolCredentials(
             tavily_api_key=optional_secret(source, TAVILY_API_KEY),
             amap_webservice_key=optional_secret(source, AMAP_WEBSERVICE_KEY),
+            qweather_api_key=optional_secret(source, QWEATHER_API_KEY),
+            qweather_api_host=optional_secret(source, QWEATHER_API_HOST),
         ),
     )

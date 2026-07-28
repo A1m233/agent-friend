@@ -10,6 +10,8 @@ from runtime_config import (
     ALL_CREDENTIAL_NAMES,
     AMAP_WEBSERVICE_KEY,
     OPTIONAL_CREDENTIAL_NAMES,
+    QWEATHER_API_HOST,
+    QWEATHER_API_KEY,
     REQUIRED_CREDENTIAL_NAMES,
     CredentialSeedError,
     CredentialValue,
@@ -134,6 +136,13 @@ def test_amap_key_is_managed_but_optional_for_trusted_seed() -> None:
     assert AMAP_WEBSERVICE_KEY in ALL_CREDENTIAL_NAMES
     assert AMAP_WEBSERVICE_KEY in OPTIONAL_CREDENTIAL_NAMES
     assert AMAP_WEBSERVICE_KEY not in REQUIRED_CREDENTIAL_NAMES
+
+
+@pytest.mark.parametrize("name", [QWEATHER_API_KEY, QWEATHER_API_HOST])
+def test_qweather_credentials_are_managed_but_optional_for_trusted_seed(name: str) -> None:
+    assert name in ALL_CREDENTIAL_NAMES
+    assert name in OPTIONAL_CREDENTIAL_NAMES
+    assert name not in REQUIRED_CREDENTIAL_NAMES
 
 
 def test_install_seed_overwrites_complete_set() -> None:
