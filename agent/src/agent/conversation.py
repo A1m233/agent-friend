@@ -106,7 +106,6 @@ _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
-_ORIGINAL_USER_INPUT_ARG = "__agent_friend_original_user_input"
 _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
 _SESSION_CONTROL_EVENT_TYPES = frozenset({"persona_change", "model_change", "channel_change"})
 logger = logging.getLogger(__name__)
@@ -523,7 +522,6 @@ class Conversation:
                 completed_replay_text = "".join(completed_parts)
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = ToolRunContext.create(user_input)
-        planned_tool_calls = self._planned_history_tool_calls(user_input)
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -567,7 +565,6 @@ class Conversation:
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
                 cancel_check=cancel_check,
-                planned_tool_calls=planned_tool_calls,
             )
         finally:
             exc_info = sys.exc_info()
@@ -637,7 +634,6 @@ class Conversation:
         user_event_appended = False
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = ToolRunContext.create(user_input)
-        planned_tool_calls = self._planned_history_tool_calls(user_input)
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -676,7 +672,6 @@ class Conversation:
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
                 cancel_check=cancel_check,
-                planned_tool_calls=planned_tool_calls,
             )
         finally:
             exc_info = sys.exc_info()
@@ -1839,12 +1834,7 @@ class Conversation:
                 }
             )
             if tool_run_context is not None:
-                invocation_args.update(
-                    {
-                        _ORIGINAL_USER_INPUT_ARG: tool_run_context.original_user_input,
-                        _RUNTIME_NOW_ARG: tool_run_context.trusted_now.isoformat(),
-                    }
-                )
+                invocation_args[_RUNTIME_NOW_ARG] = tool_run_context.trusted_now.isoformat()
         if name in {"datetime_calculate", "todo_manage"} and tool_run_context is not None:
             invocation_args.update(
                 {
@@ -1867,65 +1857,6 @@ class Conversation:
                 }
         return invocation_args
 
-    def _planned_history_tool_calls(self, user_input: str) -> list[dict[str, Any]]:
-        """Ask the built-in history tool for a conservative deterministic invocation."""
-        if self._voice_latency_disable_tools or self._tool_registry is None:
-            return []
-        try:
-            tool = self._tool_registry.get(_RECALL_PAST_CHATS_TOOL_NAME)
-        except Exception:
-            return []
-        planner = getattr(tool, "plan_explicit_invocation", None)
-        if not callable(planner):
-            return []
-        try:
-            args = planner(user_input)
-        except Exception:
-            logger.exception("history intent router failed")
-            return []
-        pending_args = self._pending_history_query_args()
-        if isinstance(args, dict) and pending_args is not None:
-            args = {**pending_args, **args}
-        if not isinstance(args, dict):
-            return []
-        return [
-            {
-                "id": f"call_history_{uuid4().hex}",
-                "event_id": f"tool_{uuid4().hex}",
-                "name": _RECALL_PAST_CHATS_TOOL_NAME,
-                "args": args,
-                "origin": "deterministic_history_router",
-            }
-        ]
-
-    def _pending_history_query_args(self) -> dict[str, Any] | None:
-        """Return the latest unresolved history request from the immediately previous turn."""
-        events = self._session.active_events
-        last_user_index = max(
-            (index for index, event in enumerate(events) if event.type == "user_message"),
-            default=-1,
-        )
-        for result_index in range(len(events) - 1, last_user_index, -1):
-            event = events[result_index]
-            if event.type != "tool_call_result":
-                continue
-            if event.payload.get("tool_name") != _RECALL_PAST_CHATS_TOOL_NAME:
-                continue
-            extra = event.meta.get("extra")
-            status = extra.get("resolution_status") if isinstance(extra, dict) else None
-            if status not in {"ambiguous", "not_found"}:
-                return None
-            call_id = event.payload.get("tool_call_id")
-            for request in reversed(events[last_user_index:result_index]):
-                if (
-                    request.type == "tool_call_request"
-                    and request.payload.get("tool_call_id") == call_id
-                    and isinstance(request.payload.get("args"), dict)
-                ):
-                    return dict(request.payload["args"])
-            return None
-        return None
-
     def _run_tool_loop(
         self,
         *,
@@ -1939,40 +1870,10 @@ class Conversation:
         frame: _ToolLoopFrame,
         current_turn_start_idx: int,
         cancel_check: Callable[[], None] | None,
-        planned_tool_calls: list[dict[str, Any]] | None = None,
     ) -> Iterator[ConversationEvent]:
         """Run the common model/tool continuation loop for send and edit-resend."""
 
         turn_idx = 0
-        deterministic_history_completed = bool(planned_tool_calls)
-        if planned_tool_calls:
-            prepare_first_turn()
-            self._append_assistant_event(
-                "",
-                partial=False,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model=model_snapshot,
-            )
-            frame.current_text_persisted = True
-            yield from self._execute_tool_calls(
-                planned_tool_calls,
-                runtime=runtime,
-                context=context,
-                progress=progress,
-                current_turn_start_idx=current_turn_start_idx,
-                cancel_check=cancel_check,
-            )
-            if runtime.stop_reason is not None:
-                yield from self._finalize_on_tool_run_stop(
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    runtime=runtime,
-                    cancel_check=cancel_check,
-                )
-                return
-            turn_idx = 1
         while True:
             self._check_cancel(cancel_check)
             if turn_idx > 0:
@@ -2003,16 +1904,9 @@ class Conversation:
                 openai_messages = prepare_first_turn()
             else:
                 reminder = runtime.soft_reminder()
-                route_reminder = (
-                    "本轮已经完成一次显式会话历史查询。请直接依据刚取得的工具结果回答；"
-                    "除非需要改变会话、时间或主题条件，不要用相同参数重复查询。"
-                    if deterministic_history_completed and turn_idx == 1
-                    else None
-                )
-                trailing = "\n".join(item for item in (reminder, route_reminder) if item)
                 openai_messages = (
-                    self._assemble(trailing_system=trailing, tool_specs=tool_specs)
-                    if trailing
+                    self._assemble(trailing_system=reminder, tool_specs=tool_specs)
+                    if reminder
                     else self._build_openai_messages_continuation()
                 )
 

@@ -741,7 +741,9 @@ def run_history_benchmark(
     result_counts: list[int] = []
     for _ in range(iterations):
         started = time.perf_counter()
-        outcome = tool.invoke({"query": "__agent_friend_benchmark_missing_term__", "limit": 10})
+        outcome = tool.invoke(
+            {"search_text": "__agent_friend_benchmark_missing_term__", "limit": 10}
+        )
         latencies.append(_elapsed_ms(started))
         raw_count = outcome.meta.get("result_count", 0)
         result_counts.append(raw_count if isinstance(raw_count, int) else 0)

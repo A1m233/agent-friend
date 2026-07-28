@@ -2,7 +2,7 @@
 
 通过 ``_StubStore`` 注入两段会话的 in-memory events，覆盖：
 
-- happy path：query / since / until / said_by / limit 各参数组合
+- happy path：search_text / since / until / said_by / limit 各参数组合
 - 失败兜底：时间格式错 / SessionPersistError / 非法 said_by
 - limit clamp、空 store
 - _scan 的 pair 配对、跨 session 合并按时间倒序
@@ -149,24 +149,24 @@ def test_no_filters_returns_all_messages_sorted_desc() -> None:
     assert pos_b < pos_a
 
 
-def test_query_filters_substring_case_insensitive() -> None:
+def test_search_text_filters_substring_case_insensitive() -> None:
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "日语"})
+    result = tool.invoke({"search_text": "日语"})
     assert result.meta is not None
     assert result.meta["result_count"] == 1
     assert "日语" in result.text
     assert "英语" not in result.text
 
 
-def test_query_english_case_insensitive() -> None:
+def test_search_text_english_case_insensitive() -> None:
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "practice"})  # 小写
+    result = tool.invoke({"search_text": "practice"})  # 小写
     assert result.meta is not None
     assert result.meta["result_count"] == 1
     assert "Practice makes perfect" in result.text
 
 
-def test_query_multiple_terms_match_any_term() -> None:
+def test_search_text_multiple_terms_match_any_term() -> None:
     ts = _NOW - timedelta(days=1)
     session = _make_session(
         "sess-memory-inconsistency",
@@ -178,7 +178,7 @@ def test_query_multiple_terms_match_any_term() -> None:
     )
     tool = _tool(_StubStore([session]))
 
-    result = tool.invoke({"query": "想不起来 不记得"})
+    result = tool.invoke({"search_text": "想不起来 不记得"})
 
     assert result.meta is not None
     assert result.meta["result_count"] == 1
@@ -228,7 +228,7 @@ def test_until_filters_out_recent_session() -> None:
 
 def test_combined_filters() -> None:
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "学", "said_by": "you"})
+    result = tool.invoke({"search_text": "学", "said_by": "you"})
     # 两条 user 都含 "学"
     assert result.meta is not None
     assert result.meta["result_count"] == 2
@@ -356,7 +356,7 @@ def test_invalid_said_by_returns_is_error() -> None:
 def test_session_persist_error_returns_persona_fallback() -> None:
     store = _StubStore([], raise_on_list=SessionPersistError("disk error"))
     tool = _tool(store)
-    result = tool.invoke({"query": "x"})
+    result = tool.invoke({"search_text": "x"})
     assert result.is_error is True
     assert "翻不到" in result.text
     # 不暴露 IO 错误细节
@@ -368,7 +368,7 @@ def test_session_persist_error_returns_persona_fallback() -> None:
 
 def test_empty_store_returns_persona_fallback() -> None:
     tool = _tool(_StubStore([]))
-    result = tool.invoke({"query": "anything"})
+    result = tool.invoke({"search_text": "anything"})
     assert result.is_error is False
     payload = json.loads(result.text)
     assert payload["source_type"] == "past_conversation"
@@ -381,7 +381,7 @@ def test_empty_store_returns_persona_fallback() -> None:
 def test_pair_appears_in_text() -> None:
     """assistant 消息命中时，前面 user 消息作为 pair 一起渲染。"""
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "Practice"})
+    result = tool.invoke({"search_text": "Practice"})
     assert "Practice makes perfect" in result.text
     # 前面的 user "最近我学英语呢" 应作为 pair 出现
     assert "学英语" in result.text
@@ -390,7 +390,7 @@ def test_pair_appears_in_text() -> None:
 def test_no_pair_for_first_message_in_session() -> None:
     """session 的第一条对话消息（前面只有 session_meta）pair 应该为 None。"""
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "学日语"})
+    result = tool.invoke({"search_text": "学日语"})
     # session A 的第一条 user 命中——pair 应为 None（session_meta 不算对话）
     # 文本中应只有"你说"，没配对的"我说"
     # 注意 result_count = 1，且 session A 的 assistant 不该作为 pair 被搬出来
@@ -403,22 +403,22 @@ def test_no_pair_for_first_message_in_session() -> None:
 
 def test_strip_whitespace_in_string_args() -> None:
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": "  日语  "})
+    result = tool.invoke({"search_text": "  日语  "})
     assert result.meta is not None
     assert result.meta["result_count"] == 1
 
 
-def test_non_string_query_treated_as_missing() -> None:
+def test_non_string_search_text_treated_as_missing() -> None:
     """LLM 偶尔传错类型——本工具应优雅退化为 missing，不崩。"""
     tool = _tool(_two_session_store())
-    result = tool.invoke({"query": 123})
-    # query=None 视为不过滤，全部返回
+    result = tool.invoke({"search_text": 123})
+    # search_text=None 视为不过滤，全部返回
     assert result.is_error is False
     assert result.meta is not None
     assert result.meta["result_count"] == 4
 
 
-def test_display_title_scopes_results_and_original_today_is_preserved() -> None:
+def test_display_title_scopes_results_and_structured_today_is_preserved() -> None:
     store = _two_session_store()
     catalog = SessionCatalog(store)
     tool = _catalog_tool(store, catalog)
@@ -427,7 +427,8 @@ def test_display_title_scopes_results_and_original_today_is_preserved() -> None:
         {
             "session_title": "session sess-b",
             "mode": "summary",
-            "__agent_friend_original_user_input": "看看 session sess-b 这个会话今天聊了什么",
+            "since": "今天",
+            "until": "今天",
         }
     )
 
@@ -449,19 +450,6 @@ def test_ambiguous_session_title_returns_candidates_without_evidence() -> None:
     assert result.is_error is False
     assert payload["status"] == "ambiguous_session"
     assert set(payload["candidate_session_titles"]) == {"项目讨论 A", "项目讨论 B"}
-
-
-def test_planner_builds_visible_title_time_and_summary_args() -> None:
-    store = _two_session_store()
-    tool = _catalog_tool(store, SessionCatalog(store))
-
-    args = tool.plan_explicit_invocation("帮我看看 session sess-b 这个会话今天聊了什么")
-
-    assert args is not None
-    assert args["session_title"] == "session sess-b"
-    assert args["since"] == "今天"
-    assert args["until"] == "今天"
-    assert args["mode"] == "summary"
 
 
 def test_inactive_rewritten_branch_is_not_recalled() -> None:
@@ -505,20 +493,20 @@ def test_inactive_rewritten_branch_is_not_recalled() -> None:
     )
     tool = _tool(_StubStore([session]))
 
-    old_result = tool.invoke({"query": "旧分支秘密"})
-    new_result = tool.invoke({"query": "新分支内容"})
+    old_result = tool.invoke({"search_text": "旧分支秘密"})
+    new_result = tool.invoke({"search_text": "新分支内容"})
 
     assert old_result.meta["result_count"] == 0
     assert new_result.meta["result_count"] == 1
 
 
-def test_original_speaker_constraint_overrides_missing_tool_argument() -> None:
+def test_speaker_constraint_comes_from_structured_argument() -> None:
     tool = _tool(_two_session_store())
 
     result = tool.invoke(
         {
-            "query": "英语",
-            "__agent_friend_original_user_input": "我有没有跟你说过我在学英语？",
+            "search_text": "英语",
+            "said_by": "you",
         }
     )
 
@@ -528,6 +516,14 @@ def test_original_speaker_constraint_overrides_missing_tool_argument() -> None:
 
 
 # ===== schema 字眼不暴露 =====
+
+
+def test_tool_schema_uses_semantic_search_text_instead_of_raw_query() -> None:
+    properties = ConversationHistoryTool.parameters_schema["properties"]
+
+    assert "search_text" in properties
+    assert "query" not in properties
+    assert "不要把用户整句原话" in ConversationHistoryTool.description
 
 
 def test_result_text_does_not_leak_schema_words() -> None:

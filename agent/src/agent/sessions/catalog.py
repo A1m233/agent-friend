@@ -88,48 +88,6 @@ class SessionCatalog:
                 return SessionResolution("ambiguous", candidates=matches[:5])
         return SessionResolution("not_found")
 
-    def resolve_from_text(self, text: str) -> SessionResolution:
-        """Conservatively match only a full title or controlled leading alias in text."""
-        normalized_text = normalize_session_title(text)
-        matches: list[SessionDescriptor] = []
-        for item in self.list_all():
-            if any(alias and alias in normalized_text for alias in item.aliases):
-                matches.append(item)
-        if len(matches) == 1:
-            return SessionResolution("matched", matched=matches[0])
-        if len(matches) > 1:
-            matches.sort(
-                key=lambda item: (
-                    -max(
-                        (len(alias) for alias in item.aliases if alias in normalized_text),
-                        default=0,
-                    ),
-                    -item.updated_at.timestamp(),
-                    item.session_id,
-                )
-            )
-            longest = max(
-                (
-                    len(alias)
-                    for item in matches
-                    for alias in item.aliases
-                    if alias in normalized_text
-                ),
-                default=0,
-            )
-            strongest = tuple(
-                item
-                for item in matches
-                if max(
-                    (len(alias) for alias in item.aliases if alias in normalized_text), default=0
-                )
-                == longest
-            )
-            if len(strongest) == 1:
-                return SessionResolution("matched", matched=strongest[0])
-            return SessionResolution("ambiguous", candidates=tuple(matches[:5]))
-        return SessionResolution("not_found")
-
 
 def normalize_session_title(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
