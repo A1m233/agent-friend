@@ -21,6 +21,8 @@ from .schema import (
     FixtureSession,
 )
 
+_SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
+
 
 def _mapping(raw: Any, *, label: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
@@ -260,6 +262,11 @@ def _load_contract_file(path: Path) -> Contract:
         if case_id in seen_case_ids:
             raise ValueError(f"case id 重复: {case_id}")
         seen_case_ids.add(case_id)
+        surface = _optional_str(case_data, "surface")
+        if surface is not None and surface not in _SUPPORTED_SURFACES:
+            raise ValueError(
+                f"{label}.surface 不支持 {surface!r}；可选值: {sorted(_SUPPORTED_SURFACES)}"
+            )
         cases.append(
             Case(
                 id=case_id,
@@ -267,6 +274,7 @@ def _load_contract_file(path: Path) -> Contract:
                 facet=str(case_data.get("facet", "")),
                 source=str(case_data.get("source", "")),
                 runtime_now=_optional_aware_datetime(case_data, "runtime_now", label=label),
+                surface=surface,
                 forbidden_terms=_str_list(
                     case_data.get("forbidden_terms"),
                     label=f"{label}.forbidden_terms",

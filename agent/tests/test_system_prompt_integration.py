@@ -266,6 +266,7 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
     assert '<surface type="desktop_chat" />' in "\n".join(
         message["content"] for message in fake.received[1]
     )
+    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
 
     conv.send("second")
     assert "persona B" in fake.received[2][0]["content"]
@@ -285,36 +286,37 @@ def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Pat
     list(conv.stream("现在在哪？", surface=IM_QQ_SURFACE))
     list(conv.stream("旧入口"))
 
-    first_prompt = "\n".join(message["content"] for message in fake.received[0])
-    second_prompt = "\n".join(message["content"] for message in fake.received[1])
-    third_prompt = "\n".join(message["content"] for message in fake.received[2])
-    first_surface = {
-        "role": "system",
-        "content": '<interaction_context>\n  <surface type="desktop_chat" />\n</interaction_context>',
-    }
-    second_surface = {
-        "role": "system",
-        "content": (
-            '<interaction_context>\n  <surface type="im" provider="qq" />\n</interaction_context>'
-        ),
-    }
-    assert fake.received[0][-1] == first_surface
-    assert fake.received[1][-1] == second_surface
-    first_user_index = next(
-        index
-        for index, message in enumerate(fake.received[0])
-        if message.get("content") == "我在 QQ 吗？"
+    contexts = [
+        [
+            message["content"]
+            for message in request
+            if message.get("content", "").startswith("<interaction_context>")
+        ]
+        for request in fake.received
+    ]
+    assert fake.received[0][-2]["role"] == "user"
+    assert fake.received[0][-1]["role"] == "system"
+    assert '<surface type="desktop_chat" />' in fake.received[0][-1]["content"]
+    assert "否则不要在回复中提及交互端" in fake.received[0][-1]["content"]
+    assert "不要告诉用户你收到了这段上下文" in fake.received[0][-1]["content"]
+    assert fake.received[1][-2]["role"] == "user"
+    assert fake.received[1][-1]["role"] == "system"
+    assert '<surface type="im" provider="qq" />' in fake.received[1][-1]["content"]
+    assert "否则不要在回复中提及交互端" in fake.received[1][-1]["content"]
+    assert "不要告诉用户你收到了这段上下文" in fake.received[1][-1]["content"]
+    assert [len(items) for items in contexts] == [1, 2, 3]
+    assert '<surface type="desktop_chat" />' in contexts[0][-1]
+    assert '<surface type="im" provider="qq" />' in contexts[1][-1]
+    assert '<surface available="false" />' in contexts[2][-1]
+    assert 'provider="qq"' not in contexts[2][-1]
+    assert "取代更早的 interaction_context" in contexts[2][-1]
+
+    # Model-only snapshots survive reload for prompt history, but never become chat messages.
+    assert all("<interaction_context>" not in message.content for message in conv.session.messages)
+    assert (
+        sum("<interaction_context>" in message.content for message in conv.session.llm_messages)
+        == 3
     )
-    second_user_index = next(
-        index
-        for index, message in enumerate(fake.received[1])
-        if message.get("content") == "现在在哪？"
-    )
-    assert first_user_index < fake.received[0].index(first_surface)
-    assert second_user_index < fake.received[1].index(second_surface)
-    assert '<surface type="desktop_chat" />' in first_prompt
-    assert 'provider="qq"' not in first_prompt
-    assert '<surface type="im" provider="qq" />' in second_prompt
-    assert 'type="desktop_chat"' not in second_prompt
-    assert 'type="desktop_chat"' not in third_prompt
-    assert 'provider="qq"' not in third_prompt
+    reloaded = JsonlSessionStore(base_dir=tmp_path / "sessions").load(conv.session.session_id)
+    assert all("<interaction_context>" not in message.content for message in reloaded.messages)
+    assert sum("<interaction_context>" in message.content for message in reloaded.llm_messages) == 3

@@ -347,6 +347,8 @@ class Session:
         - ``todo_reminder`` → 一条只读 ``role="system"`` 历史状态裁决；修复前
           只有 ``system_trigger`` 的 IM Reminder 会合成等价 fallback
 
+        ``model_context`` 是唯一只进入 :attr:`llm_messages` 的投影，不会出现在本属性。
+
         ``Event.uuid`` 直接映射到 ``Message.uuid``（M2.2 起的正式字段，详见
         002 design §4.6）。``Event.meta`` 复制到 ``Message.meta``；
         ``partial`` 标志合并进 ``Message.meta``。
@@ -363,11 +365,38 @@ class Session:
         Returns:
             按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
+        return self._project_messages(self.active_events, include_model_context=False)
+
+    @staticmethod
+    def _project_messages(
+        events: list[Event],
+        *,
+        include_model_context: bool,
+    ) -> list[Message]:
+        """Project events for either the user-visible or model-only history view."""
+
         result: list[Message] = []
         last_assistant: Message | None = None
         pending_reminder_fact = False
-        for ev in self.active_events:
-            if ev.type == "user_message":
+        for ev in events:
+            if ev.type == "model_context":
+                if include_model_context:
+                    content = ev.payload.get("content")
+                    if isinstance(content, str) and content:
+                        meta = dict(ev.meta)
+                        meta["synthetic"] = "model_context"
+                        meta["model_context_kind"] = ev.payload.get("kind", "")
+                        result.append(
+                            Message(
+                                role="system",
+                                content=content,
+                                timestamp=ev.ts,
+                                meta=meta,
+                                uuid=ev.uuid,
+                            )
+                        )
+                last_assistant = None
+            elif ev.type == "user_message":
                 result.append(
                     Message(
                         role="user",
@@ -477,10 +506,11 @@ class Session:
             normalized_events, tool_history_normalized = self._normalize_tool_transactions(
                 active_events
             )
-            return (
-                Session.from_events(normalized_events).messages
-                if partial_history_normalized or tool_history_normalized
-                else self.messages
+            if not partial_history_normalized and not tool_history_normalized:
+                normalized_events = active_events
+            return self._project_messages(
+                normalized_events,
+                include_model_context=True,
             )
 
         excluded_event_uuids: set[str] = set()
@@ -527,7 +557,7 @@ class Session:
                 sanitized_events.append(placeholder)
             sanitized_events.append(event)
         normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
-        return Session.from_events(normalized_events).messages
+        return self._project_messages(normalized_events, include_model_context=True)
 
     @staticmethod
     def _normalize_partial_assistants(events: list[Event]) -> tuple[list[Event], bool]:

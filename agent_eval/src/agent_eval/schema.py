@@ -68,6 +68,7 @@ class Case:
     facet: str
     source: str
     runtime_now: datetime | None = None
+    surface: str | None = None
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
     current_session_messages: list[FixtureMessage] = field(default_factory=list)

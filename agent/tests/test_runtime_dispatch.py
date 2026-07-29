@@ -184,9 +184,9 @@ def test_dispatch_user_event_session_records_messages(tmp_path: Path) -> None:
     runtime._dispatch(UserEvent(session_id=conv.session.session_id, user_input="hello"))
 
     types = [ev.type for ev in conv.session.events]
-    assert types == ["session_meta", "user_message", "assistant_message"]
+    assert types == ["session_meta", "user_message", "model_context", "assistant_message"]
     assert conv.session.events[1].payload["content"] == "hello"
-    assert conv.session.events[2].payload["content"] == "hi"
+    assert conv.session.events[3].payload["content"] == "hi"
 
 
 # ===== SystemTriggerEvent user-visibility（AC-5 runtime 层） =====

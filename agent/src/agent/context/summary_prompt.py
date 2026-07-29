@@ -74,6 +74,8 @@ def render_transcript(messages: list[Message]) -> str:
     """
     lines: list[str] = []
     for m in messages:
+        if m.meta.get("synthetic") == "model_context":
+            continue
         attachment_markers = " ".join(
             f"[附件: {item.display_name} | {item.media_type}]" for item in m.attachments
         )

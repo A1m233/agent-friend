@@ -22,6 +22,7 @@ def test_loads_builtin_cases() -> None:
         ("C8", "memory-evidence-grounding", 6),
         ("C9", "unsupported-source-attribution-resistance", 3),
         ("C10", "relative-calendar-grounding", 2),
+        ("C11", "interaction-context-non-announcement", 3),
     ]
 
 
@@ -80,8 +81,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 10
-    assert meta.total_cases == 155
+    assert meta.total_contracts == 11
+    assert meta.total_cases == 158
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -93,16 +94,25 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C8": 6,
         "C9": 3,
         "C10": 2,
+        "C11": 3,
     }
     assert len(meta.digest) == 64
 
 
 def test_loads_fixed_runtime_clock_for_relative_calendar_case() -> None:
     contracts = load_contracts(CASES_DIR)
-    case = next(item for item in contracts[-1].cases if item.id == "C10-01")
+    c10 = next(contract for contract in contracts if contract.id == "C10")
+    case = next(item for item in c10.cases if item.id == "C10-01")
 
     assert case.runtime_now is not None
     assert case.runtime_now.isoformat() == "2026-07-29T01:12:32+08:00"
+
+
+def test_loads_interaction_surface_for_non_announcement_cases() -> None:
+    contracts = load_contracts(CASES_DIR)
+    c11 = next(contract for contract in contracts if contract.id == "C11")
+
+    assert {case.surface for case in c11.cases} == {"im:qq"}
 
 
 def test_duplicate_case_id_fails(tmp_path: Path) -> None:

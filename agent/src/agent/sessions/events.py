@@ -30,6 +30,7 @@ EventType = Literal[
     "turn_rewrite",
     "run_error",
     "todo_reminder",
+    "model_context",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -48,6 +49,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "turn_rewrite",
         "run_error",
         "todo_reminder",
+        "model_context",
     }
 )
 
@@ -76,10 +78,14 @@ SCHEMA_VERSION: Final[int] = 1
 产生的失活事件集合；原始事件不删除不改，active projection 在 ``Session`` 内派生，
 仍属于纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
 
-036 起新增 ``run_error`` 事件，用 append-only marker 记录一轮 assistant 运行失败
-的用户可见错误状态；它不参与 LLM history，仅供 UI 在刷新后恢复同一失败状态。
-纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
-"""
+    036 起新增 ``run_error`` 事件，用 append-only marker 记录一轮 assistant 运行失败
+    的用户可见错误状态；它不参与 LLM history，仅供 UI 在刷新后恢复同一失败状态。
+    纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
+
+    068 起新增 ``model_context`` 事件，保存只对模型可见的 append-only 运行时状态；
+    它不参与用户消息、记忆投影或前端聊天投影，只在 ``Session.llm_messages`` 中恢复。
+    同属纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
+    """
 
 
 def _ensure_utc(dt: datetime) -> datetime:
