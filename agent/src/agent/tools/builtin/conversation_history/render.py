@@ -51,6 +51,7 @@ def format_hits(hits: list[Hit], now: datetime) -> str:
         "source_type": "past_conversation",
         "trust": "untrusted_data",
         "status": "ok" if hits else "no_results",
+        "result_unit": "conversation_turn",
         "result_count": len(hits),
         "results": [_format_one(hit, now) for hit in hits],
     }
@@ -75,6 +76,7 @@ def format_evidence(
         "source_type": "past_conversation",
         "trust": "untrusted_data",
         "status": resolved_status,
+        "result_unit": "conversation_turn",
         "result_count": len(evidence),
         "results": [_format_evidence_one(candidate, now) for candidate in evidence],
     }

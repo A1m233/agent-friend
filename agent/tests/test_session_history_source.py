@@ -95,7 +95,7 @@ def test_source_honors_current_turn_boundary_and_keeps_pair_excerpt() -> None:
         )
     )
 
-    assert [item.evidence_id for item in result.evidence] == ["session:session-1#a1"]
+    assert [item.evidence_id for item in result.evidence] == ["session:session-1#turn:u1"]
     assert [excerpt.text for excerpt in result.evidence[0].excerpts] == [
         "我最近在学日语",
         "可以试试影子跟读",
@@ -151,3 +151,117 @@ def test_source_filters_tagged_other_persona_but_keeps_legacy_untagged_events() 
     )
 
     assert result.evidence == ()
+
+
+def test_summary_groups_adjacent_messages_into_non_overlapping_turns() -> None:
+    session = _session()
+    events = list(session.events[:3])
+    events.extend(
+        [
+            Event(
+                type="assistant_message",
+                uuid="a1-followup",
+                ts=_NOW - timedelta(hours=1, minutes=58),
+                payload={"content": "再补充一个跟读建议"},
+                meta={"persona_id": "p1"},
+            ),
+            Event(
+                type="user_message",
+                uuid="u2-summary",
+                ts=_NOW - timedelta(hours=1),
+                payload={"content": "第二轮用户问题"},
+                meta={"persona_id": "p1"},
+            ),
+            Event(
+                type="assistant_message",
+                uuid="a2-summary",
+                ts=_NOW - timedelta(minutes=59),
+                payload={"content": "第二轮助手回答"},
+                meta={"persona_id": "p1"},
+            ),
+        ]
+    )
+    service = MemorySearchService([SessionHistorySource(_Store(Session.from_events(events)))])
+
+    result = service.search(
+        SearchRequest(
+            text="",
+            owner_user_id="local",
+            persona_id="p1",
+            mode="explicit",
+            top_k=10,
+            retrieval_goal="summary",
+        )
+    )
+
+    assert len(result.evidence) == 2
+    assert [[excerpt.text for excerpt in item.excerpts] for item in result.evidence] == [
+        ["第二轮用户问题", "第二轮助手回答"],
+        ["我最近在学日语", "可以试试影子跟读", "再补充一个跟读建议"],
+    ]
+
+
+def test_search_returns_one_turn_when_multiple_messages_match() -> None:
+    session = _session()
+    events = list(session.events)
+    events[1] = Event(
+        type="user_message",
+        uuid="u1",
+        ts=_NOW - timedelta(hours=2),
+        payload={"content": "共同词在用户问题里"},
+        meta={"persona_id": "p1"},
+    )
+    events[2] = Event(
+        type="assistant_message",
+        uuid="a1",
+        ts=_NOW - timedelta(hours=1, minutes=59),
+        payload={"content": "共同词也在助手回答里"},
+        meta={"persona_id": "p1"},
+    )
+    service = MemorySearchService([SessionHistorySource(_Store(Session.from_events(events)))])
+
+    result = service.search(
+        SearchRequest(
+            text="共同词",
+            owner_user_id="local",
+            persona_id="p1",
+            mode="explicit",
+            top_k=10,
+        )
+    )
+
+    assert len(result.evidence) == 1
+    assert [excerpt.text for excerpt in result.evidence[0].excerpts] == [
+        "共同词在用户问题里",
+        "共同词也在助手回答里",
+    ]
+
+
+def test_user_match_does_not_pull_previous_turn_assistant() -> None:
+    session = _session()
+    events = list(session.events)
+    events.append(
+        Event(
+            type="assistant_message",
+            uuid="a2",
+            ts=_NOW,
+            payload={"content": "当前轮对应回答"},
+            meta={"persona_id": "p1"},
+        )
+    )
+    service = MemorySearchService([SessionHistorySource(_Store(Session.from_events(events)))])
+
+    result = service.search(
+        SearchRequest(
+            text="当前轮不要被召回",
+            owner_user_id="local",
+            persona_id="p1",
+            mode="explicit",
+            top_k=10,
+        )
+    )
+
+    assert [excerpt.text for excerpt in result.evidence[0].excerpts] == [
+        "当前轮不要被召回",
+        "当前轮对应回答",
+    ]

@@ -80,14 +80,17 @@ class MemorySearchService:
                 found = source.search(
                     query,
                     request=request,
-                    limit=effective_source_limit,
+                    limit=effective_source_limit + 1,
                 )
+                source_truncated = len(found) > effective_source_limit
+                found = found[:effective_source_limit]
                 candidates.extend(found)
                 source_runs.append(
                     SourceRun(
                         source_name=source.name,
                         candidate_count=len(found),
                         limit=effective_source_limit,
+                        truncated=source_truncated,
                     )
                 )
             except Exception as exc:
@@ -109,6 +112,14 @@ class MemorySearchService:
             failures=tuple(failures),
             source_runs=tuple(source_runs),
             decisions=tuple(decisions),
+            truncated=(
+                any(source_run.truncated for source_run in source_runs)
+                or any(
+                    decision.decision == "quota"
+                    and decision.reason in {"ordinary_budget", "raw_evidence_budget", "core_budget"}
+                    for decision in decisions
+                )
+            ),
         )
 
     def _ordered_sources(self) -> list[EvidenceSource]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC
 
 from memory.search import (
     AnalyzedQuery,
@@ -65,59 +65,82 @@ class SessionHistorySource:
                 and event.type in ("user_message", "assistant_message")
                 and _recall_content(event) is not None
             ]
-            for index, event in enumerate(active_conversation):
-                content = _recall_content(event)
-                assert content is not None
-                if not _in_time_range(event, time_range):
-                    continue
-                if not _belongs_to_persona(event, request.persona_id):
-                    continue
-                speaker = "user" if event.type == "user_message" else "agent"
-                if request.said_by is not None and request.said_by != speaker:
-                    continue
-                match_level, coverage = _match_quality(content, query.retrieval_text, query_terms)
-                if query_terms and match_level == 0:
+            for turn in _conversation_turns(active_conversation):
+                visible_events = tuple(
+                    event
+                    for event in turn
+                    if _in_time_range(event, time_range)
+                    and _belongs_to_persona(event, request.persona_id)
+                    and _matches_said_by(event, request.said_by)
+                )
+                if not visible_events:
                     continue
 
-                window = _conversation_window(
-                    active_conversation,
-                    index=index,
-                    persona_id=request.persona_id,
-                    time_range=time_range,
-                    match_terms=query_terms,
-                    include_following=(
-                        request.mode == "automatic" or request.retrieval_goal == "summary"
+                scored_events = [
+                    (
+                        _match_quality(
+                            _recall_content(event) or "",
+                            query.retrieval_text,
+                            query_terms,
+                        ),
+                        event,
+                    )
+                    for event in visible_events
+                ]
+                matching_events = [
+                    (score, event)
+                    for score, event in scored_events
+                    if not query_terms or score[0] > 0
+                ]
+                if not matching_events:
+                    continue
+                (match_level, coverage), matched = max(
+                    matching_events,
+                    key=lambda item: (
+                        item[0][0],
+                        item[0][1],
+                        _timestamp(item[1]),
+                        item[1].uuid,
                     ),
-                    said_by=request.said_by,
                 )
+                content = _recall_content(matched)
+                assert content is not None
+                window = _turn_excerpts(
+                    visible_events,
+                    match_terms=query_terms,
+                )
+                turn_anchor = turn[0]
                 candidate = EvidenceCandidate(
-                    evidence_id=f"session:{summary.session_id}#{event.uuid}",
+                    evidence_id=f"session:{summary.session_id}#turn:{turn_anchor.uuid}",
                     source_name=self.name,
                     kind="utterance",
                     text=content,
                     owner_user_id=request.owner_user_id,
-                    persona_id=_event_persona_id(event),
-                    occurred_at=event.ts,
+                    persona_id=_event_persona_id(matched),
+                    occurred_at=visible_events[-1].ts,
                     valid_from=None,
                     valid_until=None,
                     importance=0.5,
-                    provenance=(f"{summary.session_id}#{event.uuid}",),
+                    provenance=tuple(
+                        f"{summary.session_id}#{event.uuid}" for event in visible_events
+                    ),
                     excerpts=window,
                     session_id=summary.session_id,
                 )
-                timestamp = (
-                    event.ts if event.ts.tzinfo is not None else event.ts.replace(tzinfo=UTC)
-                )
                 ranked.append(
                     (
-                        (match_level, coverage, timestamp.timestamp(), event.uuid),
+                        (
+                            match_level,
+                            coverage,
+                            _timestamp(visible_events[-1]),
+                            turn_anchor.uuid,
+                        ),
                         candidate,
                     )
                 )
 
         ranked.sort(key=lambda item: item[0], reverse=True)
-        unique = _deduplicate_windows(ranked) if request.retrieval_goal == "summary" else ranked
-        selected = _select_with_session_coverage(unique, limit=limit, scoped=bool(target_ids))
+        selected = _select_with_session_coverage(ranked, limit=limit, scoped=bool(target_ids))
         return [
             replace(
                 candidate,
@@ -204,47 +227,49 @@ def _belongs_to_persona(event: Event, persona_id: str) -> bool:
     return event_persona_id is None or not persona_id or event_persona_id == persona_id
 
 
-def _conversation_window(
-    events: list[Event],
+def _conversation_turns(events: list[Event]) -> list[tuple[Event, ...]]:
+    """Group active conversation events into stable user-led turns.
+
+    A user message starts a new turn. Consecutive assistant messages stay with
+    that turn so tool-loop continuations do not become duplicate evidence.
+    Leading assistant-only messages form their own turn until the next user
+    message arrives.
+    """
+    turns: list[tuple[Event, ...]] = []
+    current: list[Event] = []
+    for event in events:
+        if event.type == "user_message" and current:
+            turns.append(tuple(current))
+            current = []
+        current.append(event)
+    if current:
+        turns.append(tuple(current))
+    return turns
+
+
+def _turn_excerpts(
+    events: tuple[Event, ...],
     *,
-    index: int,
-    persona_id: str,
-    time_range: TimeRange | None,
     match_terms: tuple[str, ...],
-    include_following: bool,
-    said_by: str | None,
 ) -> tuple[EvidenceExcerpt, ...]:
-    matched = events[index]
-    chosen: list[Event] = []
-    if index > 0:
-        previous = events[index - 1]
-        if (
-            _belongs_to_persona(previous, persona_id)
-            and _in_time_range(previous, time_range)
-            and _matches_said_by(previous, said_by)
-        ):
-            chosen.append(previous)
-    chosen.append(matched)
-    if include_following and matched.type == "user_message" and index + 1 < len(events):
-        following = events[index + 1]
-        if (
-            following.type == "assistant_message"
-            and _belongs_to_persona(following, persona_id)
-            and _in_time_range(following, time_range)
-            and _matches_said_by(following, said_by)
-        ):
-            chosen.append(following)
     return tuple(
         EvidenceExcerpt(
             speaker="user" if event.type == "user_message" else "agent",
             text=_match_aware_excerpt(
                 _recall_content(event) or "",
-                match_terms if event.uuid == matched.uuid else (),
+                match_terms
+                if _contains_any_term(_recall_content(event) or "", match_terms)
+                else (),
             ),
             occurred_at=event.ts,
         )
-        for event in chosen
+        for event in events
     )
+
+
+def _contains_any_term(content: str, terms: tuple[str, ...]) -> bool:
+    haystack = content.casefold()
+    return any(term in haystack for term in terms)
 
 
 def _matches_said_by(event: Event, said_by: str | None) -> bool:
@@ -269,21 +294,9 @@ def _match_aware_excerpt(text: str, terms: tuple[str, ...]) -> str:
     return f"{prefix}{cleaned[start:end]}{suffix}"
 
 
-def _deduplicate_windows(
-    ranked: list[tuple[tuple[int, int, float, str], EvidenceCandidate]],
-) -> list[tuple[tuple[int, int, float, str], EvidenceCandidate]]:
-    seen: set[tuple[str | None, tuple[tuple[str, datetime], ...]]] = set()
-    result: list[tuple[tuple[int, int, float, str], EvidenceCandidate]] = []
-    for score, candidate in ranked:
-        key = (
-            candidate.session_id,
-            tuple((excerpt.text, excerpt.occurred_at) for excerpt in candidate.excerpts),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append((score, candidate))
-    return result
+def _timestamp(event: Event) -> float:
+    timestamp = event.ts if event.ts.tzinfo is not None else event.ts.replace(tzinfo=UTC)
+    return timestamp.timestamp()
 
 
 def _select_with_session_coverage(

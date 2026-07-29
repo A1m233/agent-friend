@@ -141,6 +141,7 @@ class SourceRun:
     candidate_count: int
     limit: int
     status: Literal["ok", "failed", "skipped"] = "ok"
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,3 +163,4 @@ class SearchResult:
     failures: tuple[SourceFailure, ...] = field(default_factory=tuple)
     source_runs: tuple[SourceRun, ...] = field(default_factory=tuple)
     decisions: tuple[CandidateDecision, ...] = field(default_factory=tuple)
+    truncated: bool = False

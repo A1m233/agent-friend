@@ -13,7 +13,7 @@ LLM 通过本工具主动检索过往对话；返回结果是**纯文本日记�
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, cast
 
 from memory.search import MemorySearchService, QueryAnalyzer, SaidBy, SearchRequest, TimeRange
@@ -131,7 +131,10 @@ class ConversationHistoryTool:
             },
             "limit": {
                 "type": "integer",
-                "description": f"最多返回多少条回忆。默认 {_DEFAULT_LIMIT}，上限 {_MAX_LIMIT}。",
+                "description": (
+                    f"最多返回多少组对话轮次证据。默认 {_DEFAULT_LIMIT}，"
+                    f"上限 {_MAX_LIMIT}；一组可包含用户消息及其对应回复。"
+                ),
                 "default": _DEFAULT_LIMIT,
             },
         },
@@ -278,25 +281,32 @@ class ConversationHistoryTool:
                 },
             )
 
-        status = "ok" if result.evidence else "no_results"
+        evidence = (
+            tuple(sorted(result.evidence, key=_evidence_time))
+            if mode == "summary"
+            else result.evidence
+        )
+        status = "ok" if evidence else "no_results"
         text = format_evidence(
-            result.evidence,
+            evidence,
             now,
             status=status,
             session_title=(matched_session.display_title if matched_session is not None else None),
             mode=mode,
             time_scope=_time_scope_text(since_str, until_str),
-            truncated=len(result.evidence) >= limit,
+            truncated=result.truncated,
         )
         return ToolResult(
             text=text,
             is_error=False,
             meta={
-                "result_count": len(result.evidence),
+                "result_count": len(evidence),
+                "result_unit": "conversation_turn",
+                "truncated": result.truncated,
                 "intent": result.query.intent,
                 "source_failures": len(result.failures),
                 "resolution_status": "matched" if matched_session is not None else "unscoped",
-                "session_candidate_counts": _session_counts(result.evidence),
+                "session_candidate_counts": _session_counts(evidence),
             },
         )
 
@@ -311,6 +321,13 @@ def _runtime_now(args: dict[str, Any], clock: Callable[[], datetime]) -> datetim
         except ValueError:
             pass
     return clock()
+
+
+def _evidence_time(candidate: Any) -> datetime:
+    timestamp = getattr(candidate, "occurred_at", None) or getattr(candidate, "valid_from", None)
+    if isinstance(timestamp, datetime):
+        return timestamp
+    return datetime.min.replace(tzinfo=UTC)
 
 
 def _time_scope_text(since: str | None, until: str | None) -> str | None:
