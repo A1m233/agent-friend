@@ -24,6 +24,8 @@
 | `repo-directory-layout.mdc` | 仓库与模块的目录编排：顶层职责、模块用文件夹、单文件职责 |
 
 <!-- codex-rule-loading:start -->
+<!-- codex-adapter-format: 2 -->
+<!-- codex-adapter-source-sha256: 417b9667c036b99e25b813471b1d3bcc7695ac3beea2f4e67846bff446b3a277 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -433,10 +435,10 @@ env override `AGENT_FRIEND_DATA_DIR` / `AGENT_FRIEND_LOG_DIR` **仅供测试/rep
 
 Before starting work that matches a trigger below, read the rule file and apply its frontmatter/description scope.
 
-| 文件 | 触发条件 | 适用场景 |
-|---|---|---|
-| `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 |
-| `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 |
+| 文件 | 触发条件 | 适用场景 | 读取路径 |
+|---|---|---|---|
+| `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
+| `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
 
 <!-- codex-rule-loading:end -->
 
