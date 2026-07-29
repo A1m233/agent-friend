@@ -6,6 +6,7 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
+from agent.latency import monotonic_ms
 from agent_bridge.protocols.im.adapters.qq_streaming import QQC2CStreamSession
 from agent_bridge.protocols.im.streaming import OutboundStreamContext, StreamRelay
 
@@ -113,11 +114,15 @@ def stream_context() -> OutboundStreamContext:
         text_format="markdown",
         stream_trace="trace-secret-safe",
         run_id="run-1",
+        session_id="session-1",
+        latency_started_ms=monotonic_ms(),
     )
 
 
 @pytest.mark.asyncio
-async def test_qq_stream_reuses_id_and_increments_index_after_success() -> None:
+async def test_qq_stream_reuses_id_and_increments_index_after_success(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     api = AsyncMock()
     api.request = AsyncMock(
         side_effect=[
@@ -133,9 +138,10 @@ async def test_qq_stream_reuses_id_and_increments_index_after_success() -> None:
         msg_seq=42,
     )
 
-    await session.update("hello")
-    await session.update("hello world")
-    await session.finish("hello world!")
+    with caplog.at_level(logging.INFO):
+        await session.update("hello")
+        await session.update("hello world")
+        await session.finish("hello world!")
 
     calls = api.request.await_args_list
     assert len(calls) == 3
@@ -161,6 +167,16 @@ async def test_qq_stream_reuses_id_and_increments_index_after_success() -> None:
     assert final["content_raw"] == "hello world!"
     assert session.has_started is True
     assert session.is_completed is True
+    latency_text = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("run_latency ")
+    )
+    assert "event=im_first_delivery" in latency_text
+    assert "event=im_stream_completed" in latency_text
+    assert "run_id=run-1" in latency_text
+    assert "session_id=session-1" in latency_text
+    assert "hello" not in latency_text
 
 
 @pytest.mark.asyncio

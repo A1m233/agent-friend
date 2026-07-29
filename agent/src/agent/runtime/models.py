@@ -12,6 +12,7 @@ from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from ..latency import monotonic_ms
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
 from .cancellation import CancellationToken, CancelReason
@@ -98,6 +99,8 @@ class RunRequest:
     consumer_abandon_policy: ConsumerAbandonPolicy = ConsumerAbandonPolicy.CANCEL
     interactive_busy_policy: InteractiveBusyPolicy = InteractiveBusyPolicy.QUEUE
     control_scope: str | None = None
+    latency_started_ms: int = field(default_factory=monotonic_ms)
+    scheduler_submitted_ms: int = field(default_factory=monotonic_ms)
 
     @property
     def session_id(self) -> str:

@@ -68,7 +68,13 @@ from .conversation_events import (
     TurnDone,
 )
 from .errors import AgentError
-from .latency import VoiceLatencyContext, log_voice_latency, monotonic_ms
+from .latency import (
+    RunLatencyContext,
+    VoiceLatencyContext,
+    log_run_latency,
+    log_voice_latency,
+    monotonic_ms,
+)
 from .messages import Message, escape_internal_prompt_markers, escape_user_messages_for_llm
 from .personas import PersonaCatalog
 from .prompts import PromptBuilder
@@ -273,6 +279,7 @@ class Conversation:
         self._checkpoint_status = "none"
         self._checkpoint_invalid_reason = ""
         self._last_context_notes: dict[str, Any] = {}
+        self._run_latency_context: RunLatencyContext | None = None
         self._voice_latency_context: VoiceLatencyContext | None = None
         self._voice_latency_short_reply_hint = ""
         self._voice_latency_llm_overrides: dict[str, Any] = {}
@@ -304,6 +311,10 @@ class Conversation:
         self._voice_latency_short_reply_hint = short_reply_hint if context is not None else ""
         self._voice_latency_llm_overrides = dict(llm_overrides or {}) if context is not None else {}
         self._voice_latency_disable_tools = disable_tools if context is not None else False
+
+    def set_run_latency_context(self, context: RunLatencyContext | None) -> None:
+        """Attach the runtime-owned, content-free timeline for the active run."""
+        self._run_latency_context = context
 
     # ----- 只读视图 -----
 
@@ -1405,6 +1416,13 @@ class Conversation:
                 elapsed_ms=monotonic_ms() - memory_start_ms,
                 empty=ctx.is_empty(),
             )
+            log_run_latency(
+                logger,
+                self._run_latency_context,
+                "memory_retrieve_done",
+                duration_ms=monotonic_ms() - memory_start_ms,
+                empty=ctx.is_empty(),
+            )
             self._last_memory_context = ctx
             if not ctx.is_empty():
                 turn_context.append(
@@ -1473,6 +1491,7 @@ class Conversation:
         Returns:
             可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
         """
+        build_started_ms = monotonic_ms()
         actual_tool_specs = self._current_tool_specs() if tool_specs is _UNSET else tool_specs
         runtime = self._build_runtime_context(
             prior_summary_override=prior_summary_override,
@@ -1522,9 +1541,29 @@ class Conversation:
         )
         self._record_context_notes(build, runtime)
         if self._message_renderer is None:
-            return [message.to_openai() for message in build.messages]
-        client = self._active_llm_client()
-        return [self._message_renderer(message, client) for message in build.messages]
+            rendered_messages = [message.to_openai() for message in build.messages]
+        else:
+            client = self._active_llm_client()
+            rendered_messages = [
+                self._message_renderer(message, client) for message in build.messages
+            ]
+        context_index = (
+            self._run_latency_context.next_context_build_index()
+            if self._run_latency_context is not None
+            else None
+        )
+        log_run_latency(
+            logger,
+            self._run_latency_context,
+            "context_build_done",
+            context_index=context_index,
+            duration_ms=monotonic_ms() - build_started_ms,
+            messages=len(rendered_messages),
+            token_estimate=self._last_context_notes.get("token_estimate"),
+            compacted=bool(build.new_compaction),
+            new_user=bool(new_user_input is not None),
+        )
+        return rendered_messages
 
     def _build_runtime_context(
         self,
@@ -1781,6 +1820,144 @@ class Conversation:
                     self._context_trigger_reason = previous_reason
 
         raise AssertionError("context recovery loop should always return or raise")
+
+    def _iter_traced_model_stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        call_kind: str,
+        turn_idx: int,
+        overrides: dict[str, Any] | None = None,
+        recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+    ) -> Iterator[Any]:
+        """Wrap every provider stream with run-correlated, content-free timings."""
+        context = self._run_latency_context
+        if context is None:
+            yield from self._iter_model_stream(
+                messages,
+                tools=tools,
+                overrides=overrides,
+                recovery_builder=recovery_builder,
+            )
+            return
+
+        call_index = context.next_llm_call_index()
+        call_started_ms = monotonic_ms()
+        first_event_ms: int | None = None
+        first_text_ms: int | None = None
+        response_chars = 0
+        tool_indexes: set[int] = set()
+        retry_count = 0
+        turn_done: LLMTurnDone | None = None
+        log_run_latency(
+            logger,
+            context,
+            "llm_stream_start",
+            call_index=call_index,
+            call_kind=call_kind,
+            turn_idx=turn_idx,
+            messages=len(messages),
+            tools=len(tools or []),
+            model=self._active_model_id(),
+        )
+        try:
+            for event in self._iter_model_stream(
+                messages,
+                tools=tools,
+                overrides=overrides,
+                recovery_builder=recovery_builder,
+            ):
+                if (
+                    isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone))
+                    and first_event_ms is None
+                ):
+                    first_event_ms = monotonic_ms() - call_started_ms
+                    log_run_latency(
+                        logger,
+                        context,
+                        "llm_first_event",
+                        call_index=call_index,
+                        event_kind=event.type,
+                        call_elapsed_ms=first_event_ms,
+                    )
+                if isinstance(event, LLMTextDelta):
+                    response_chars += len(event.text)
+                    if first_text_ms is None:
+                        first_text_ms = monotonic_ms() - call_started_ms
+                        log_run_latency(
+                            logger,
+                            context,
+                            "llm_first_text_delta",
+                            call_index=call_index,
+                            call_elapsed_ms=first_text_ms,
+                            chars=len(event.text),
+                        )
+                        if context.mark_first_text():
+                            log_run_latency(
+                                logger,
+                                context,
+                                "run_first_text_delta",
+                                call_index=call_index,
+                                chars=len(event.text),
+                            )
+                elif isinstance(event, LLMToolCallDelta):
+                    tool_indexes.add(event.index)
+                elif isinstance(event, LLMRetryScheduled):
+                    retry_count += 1
+                    log_run_latency(
+                        logger,
+                        context,
+                        "llm_retry_scheduled",
+                        call_index=call_index,
+                        attempt=event.attempt,
+                        max_attempts=event.max_attempts,
+                        delay_ms=round(event.delay_seconds * 1000),
+                    )
+                elif isinstance(event, LLMTurnDone):
+                    turn_done = event
+                yield event
+        except BaseException as exc:
+            log_run_latency(
+                logger,
+                context,
+                "llm_stream_failed",
+                call_index=call_index,
+                duration_ms=monotonic_ms() - call_started_ms,
+                error_type=type(exc).__name__,
+                first_event_ms=first_event_ms,
+                first_text_ms=first_text_ms,
+                retry_count=retry_count,
+            )
+            raise
+        else:
+            usage = turn_done.usage if turn_done is not None else None
+            cached = usage.cached_prompt_tokens if usage is not None else None
+            hit_ratio = (
+                cached / usage.prompt_tokens
+                if usage is not None and cached is not None and usage.prompt_tokens > 0
+                else None
+            )
+            log_run_latency(
+                logger,
+                context,
+                "llm_stream_done",
+                call_index=call_index,
+                duration_ms=monotonic_ms() - call_started_ms,
+                first_event_ms=first_event_ms,
+                first_text_ms=first_text_ms,
+                stop_reason=turn_done.stop_reason if turn_done is not None else "missing_done",
+                response_chars=response_chars,
+                tool_calls=len(tool_indexes),
+                retry_count=retry_count,
+                prompt_tokens=usage.prompt_tokens if usage is not None else None,
+                cached_prompt_tokens=cached,
+                cache_miss_prompt_tokens=(
+                    usage.cache_miss_prompt_tokens if usage is not None else None
+                ),
+                cache_hit_ratio=f"{hit_ratio:.4f}" if hit_ratio is not None else None,
+                completion_tokens=usage.completion_tokens if usage is not None else None,
+            )
 
     def _uses_kimi_prompt_cache(self) -> bool:
         """Whether this run targets Kimi's OpenAI-compatible chat endpoint."""
@@ -2082,9 +2259,11 @@ class Conversation:
                     attempt=1,
                     max_attempts=2,
                 )
-            for event in self._iter_model_stream(
+            for event in self._iter_traced_model_stream(
                 openai_messages,
                 tools=tool_specs,
+                call_kind="initial" if turn_idx == 0 else "tool_continuation",
+                turn_idx=turn_idx,
                 overrides=self._voice_latency_llm_overrides,
             ):
                 self._check_cancel(cancel_check)
@@ -2182,20 +2361,54 @@ class Conversation:
             registry=self._tool_registry,
             force_serial=legacy_hooks is not None,
         )
-        executed = self._tool_batch_executor.execute(
-            allowed,
-            registry=self._tool_registry,
-            default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
-            invocation_args=lambda name, args: self._tool_args_with_invocation_context(
-                name,
-                args,
-                current_turn_start_idx=current_turn_start_idx,
-                tool_run_context=context,
-            ),
-            cancel_check=(lambda: self._check_cancel(cancel_check)),
-            legacy_hook_invoker=legacy_hooks,
-            pre_hook=self._tool_pre_hook,
-            post_hook=self._tool_post_hook,
+        batch_started_ms = monotonic_ms()
+        batch_index = (
+            self._run_latency_context.next_tool_batch_index(len(tool_calls))
+            if self._run_latency_context is not None
+            else None
+        )
+        log_run_latency(
+            logger,
+            self._run_latency_context,
+            "tool_batch_start",
+            batch_index=batch_index,
+            requested=len(tool_calls),
+            allowed=len(allowed),
+        )
+        try:
+            executed = self._tool_batch_executor.execute(
+                allowed,
+                registry=self._tool_registry,
+                default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
+                invocation_args=lambda name, args: self._tool_args_with_invocation_context(
+                    name,
+                    args,
+                    current_turn_start_idx=current_turn_start_idx,
+                    tool_run_context=context,
+                ),
+                cancel_check=(lambda: self._check_cancel(cancel_check)),
+                legacy_hook_invoker=legacy_hooks,
+                pre_hook=self._tool_pre_hook,
+                post_hook=self._tool_post_hook,
+            )
+        except BaseException as exc:
+            log_run_latency(
+                logger,
+                self._run_latency_context,
+                "tool_batch_failed",
+                batch_index=batch_index,
+                duration_ms=monotonic_ms() - batch_started_ms,
+                error_type=type(exc).__name__,
+            )
+            raise
+        log_run_latency(
+            logger,
+            self._run_latency_context,
+            "tool_batch_done",
+            batch_index=batch_index,
+            duration_ms=monotonic_ms() - batch_started_ms,
+            executed=len(executed),
+            errors=sum(1 for item in executed if item.result.is_error),
         )
         by_id = {item.call["id"]: item for item in executed}
         runtime.total_tool_calls += len(tool_calls)
@@ -2219,6 +2432,16 @@ class Conversation:
             context.register_tool_result(tc["name"], tc["id"], result.meta.get("source_urls"))
             no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
             self._append_tool_call_result_event(tc, result, duration)
+            log_run_latency(
+                logger,
+                self._run_latency_context,
+                "tool_call_done",
+                batch_index=batch_index,
+                tool_name=tc["name"],
+                duration_ms=round(duration * 1000),
+                is_error=result.is_error,
+                error_kind=result.meta.get("error_kind"),
+            )
             self._check_cancel(cancel_check)
             yield ToolCallResult(
                 tool_call_id=tc["id"],
@@ -2268,9 +2491,11 @@ class Conversation:
         openai_messages = self._assemble(trailing_system=extra_system, tool_specs=None)
 
         text_buf: list[str] = []
-        for ev in self._iter_model_stream(
+        for ev in self._iter_traced_model_stream(
             openai_messages,
             tools=None,
+            call_kind="tool_finalization",
+            turn_idx=runtime.model_continuations + 1,
             recovery_builder=lambda: self._assemble(
                 trailing_system=extra_system,
                 tool_specs=None,

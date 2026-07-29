@@ -8,6 +8,7 @@ import time
 from typing import Any, Literal
 from urllib.parse import quote
 
+from agent.latency import RunLatencyContext, log_run_latency
 from qqbot_agent_sdk.api_client import QQApiClient
 
 from ..streaming import OutboundStreamContext
@@ -43,6 +44,15 @@ class QQC2CStreamSession:
         self._phase: Literal["idle", "streaming", "completed", "failed"] = "idle"
         self._had_failure = False
         self._started_at = time.monotonic()
+        self._run_latency = (
+            RunLatencyContext(
+                run_id=context.run_id,
+                session_id=context.session_id,
+                started_ms=context.latency_started_ms,
+            )
+            if context.run_id is not None and context.latency_started_ms is not None
+            else None
+        )
 
     @property
     def has_started(self) -> bool:
@@ -109,6 +119,17 @@ class QQC2CStreamSession:
             )
         except Exception as exc:
             self._record_failure()
+            log_run_latency(
+                logger,
+                self._run_latency,
+                "im_delivery_failed",
+                stream_trace=self._context.stream_trace,
+                provider="qq",
+                phase=phase,
+                index=index,
+                duration_ms=_elapsed_ms(request_started),
+                error_type=type(exc).__name__,
+            )
             logger.warning(
                 "QQ stream request failed stream_trace=%s run_id=%s phase=%s index=%d "
                 "content_len=%d elapsed_ms=%d bind_ref=%s chat_ref=%s reason=%s",
@@ -127,6 +148,17 @@ class QQC2CStreamSession:
         code = response.get("code", 0) if isinstance(response, dict) else 0
         if code:
             self._record_failure()
+            log_run_latency(
+                logger,
+                self._run_latency,
+                "im_delivery_failed",
+                stream_trace=self._context.stream_trace,
+                provider="qq",
+                phase=phase,
+                index=index,
+                duration_ms=_elapsed_ms(request_started),
+                error_type=f"provider_code_{code}",
+            )
             logger.warning(
                 "QQ stream platform rejected stream_trace=%s run_id=%s phase=%s index=%d "
                 "content_len=%d elapsed_ms=%d code=%s bind_ref=%s chat_ref=%s reason=%s",
@@ -164,6 +196,7 @@ class QQC2CStreamSession:
                 return
             self._stream_msg_id = response_id
 
+        first_delivery = self._successful_updates == 0
         self._last_accepted_text = full_text
         self._successful_updates += 1
         self._next_index += 1
@@ -183,6 +216,16 @@ class QQC2CStreamSession:
             self._chat_ref,
             _safe_ref(self._stream_msg_id),
         )
+        if first_delivery:
+            log_run_latency(
+                logger,
+                self._run_latency,
+                "im_first_delivery",
+                stream_trace=self._context.stream_trace,
+                provider="qq",
+                duration_ms=_elapsed_ms(request_started),
+                chars=len(full_text),
+            )
         if terminal:
             logger.info(
                 "QQ stream completed stream_trace=%s run_id=%s update_count=%d "
@@ -193,6 +236,17 @@ class QQC2CStreamSession:
                 len(full_text),
                 _elapsed_ms(self._started_at),
                 self._had_failure,
+            )
+            log_run_latency(
+                logger,
+                self._run_latency,
+                "im_stream_completed",
+                stream_trace=self._context.stream_trace,
+                provider="qq",
+                duration_ms=_elapsed_ms(self._started_at),
+                updates=self._successful_updates,
+                response_chars=len(full_text),
+                had_failure=self._had_failure,
             )
 
     def _record_failure(self) -> None:

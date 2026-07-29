@@ -39,6 +39,7 @@ from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from agent.attachments import AttachmentRef
+from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
@@ -160,6 +161,7 @@ class IMRouter:
             exception + 回写 :data:`FALLBACK_TEXT`,**不向上抛**(IM 长连不该
             因为单轮挂掉而断开)。
         """
+        latency_started_ms = monotonic_ms()
         send_fn = _send_callback(provider_or_send)
         session_id = session_id or self.session_id_for(im_type, event)
         logger.info(
@@ -212,11 +214,29 @@ class IMRouter:
         include_menu = True
         stream_trace = uuid4().hex[:12]
         run_id = uuid4().hex if self._agent_runtime is not None else None
+        run_latency = (
+            RunLatencyContext(
+                run_id=run_id,
+                session_id=session_id,
+                started_ms=latency_started_ms,
+            )
+            if run_id is not None
+            else None
+        )
+        log_run_latency(
+            logger,
+            run_latency,
+            "im_turn_start",
+            im_type=im_type,
+            stream_trace=stream_trace,
+        )
         stream_session = self._open_stream(
             provider_or_send,
             event,
             stream_trace=stream_trace,
             run_id=run_id,
+            session_id=session_id,
+            latency_started_ms=latency_started_ms,
         )
         relay: StreamRelay | None = None
         delta_queue: asyncio.Queue[object] | None = None
@@ -254,8 +274,15 @@ class IMRouter:
                 run_id,
                 model_media_context,
                 surface,
+                latency_started_ms,
             )
         except Exception as exc:
+            log_run_latency(
+                logger,
+                run_latency,
+                "im_agent_failed",
+                error_type=type(exc).__name__,
+            )
             partial_text = await _finish_relay(delta_queue, relay_task, relay)
             logger.exception(
                 "IM turn 跑挂 (im_type=%s, session=%s, message_id=%s, content_len=%d, "
@@ -270,12 +297,25 @@ class IMRouter:
             if stream_session is not None and stream_session.has_started:
                 interrupted = (partial_text or FALLBACK_TEXT) + _STREAM_INTERRUPTED_SUFFIX
                 await stream_session.abort(interrupted, type(exc).__name__)
+                log_run_latency(
+                    logger,
+                    run_latency,
+                    "im_turn_done",
+                    outcome="failed",
+                    delivery="stream_aborted",
+                )
                 return
             agent_text = ""
             text = reply_prefix + FALLBACK_TEXT
             text_format = "plain_text"
             include_menu = False
         else:
+            log_run_latency(
+                logger,
+                run_latency,
+                "im_agent_done",
+                response_chars=len(agent_text),
+            )
             await _finish_relay(delta_queue, relay_task, relay)
             text = reply_prefix + agent_text
 
@@ -312,6 +352,14 @@ class IMRouter:
                 _text_len(text),
                 stream_session.is_completed,
                 stream_session.is_failed,
+            )
+            log_run_latency(
+                logger,
+                run_latency,
+                "im_turn_done",
+                outcome="completed" if stream_session.is_completed else "delivery_failed",
+                delivery="native_stream",
+                response_chars=_text_len(text),
             )
             if stream_session.is_completed and include_menu:
                 logger.info(
@@ -354,6 +402,14 @@ class IMRouter:
                 controls=menu_controls() if include_menu else None,
             )
         )
+        log_run_latency(
+            logger,
+            run_latency,
+            "im_turn_done",
+            outcome="completed",
+            delivery="static",
+            response_chars=_text_len(text),
+        )
 
     def _run_turn_sync(
         self,
@@ -363,6 +419,7 @@ class IMRouter:
         run_id: str | None = None,
         turn_context: str | None = None,
         surface: InteractionSurfaceId | None = None,
+        latency_started_ms: int | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -384,6 +441,7 @@ class IMRouter:
             handle = self._agent_runtime.submit(
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
                 run_id=run_id,
+                latency_started_ms=latency_started_ms,
                 channel="text",
                 surface=surface,
                 conversation_factory=lambda: self._bridge.bind_persistent(boot),
@@ -444,6 +502,8 @@ class IMRouter:
         *,
         stream_trace: str,
         run_id: str | None,
+        session_id: str,
+        latency_started_ms: int,
     ) -> IMStreamSession | None:
         if not isinstance(provider_or_send, IMTextStreamingProvider):
             return None
@@ -455,6 +515,8 @@ class IMRouter:
                 text_format="markdown",
                 stream_trace=stream_trace,
                 run_id=run_id,
+                session_id=session_id,
+                latency_started_ms=latency_started_ms,
             )
         )
 

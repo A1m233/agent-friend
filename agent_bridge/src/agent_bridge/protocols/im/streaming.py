@@ -30,6 +30,8 @@ class OutboundStreamContext:
     text_format: OutboundTextFormat
     stream_trace: str
     run_id: str | None = None
+    session_id: str = ""
+    latency_started_ms: int | None = None
 
 
 class IMStreamSession(Protocol):
