@@ -466,6 +466,8 @@ async def test_native_stream_sends_body_once_then_separate_menu(
     assert provider.sent[0].controls is not None
     assert all(item.text != "hello world" for item in provider.sent)
     assert sleep_delays[-1] == pytest.approx(0.8)
+    assert provider.contexts[0].session_id == "im:qq:OPENID-USER-A"
+    assert isinstance(provider.contexts[0].latency_started_ms, int)
 
 
 @pytest.mark.asyncio

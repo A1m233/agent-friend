@@ -33,6 +33,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from memory import Memory
 
 from ..conversation import Conversation
+from ..latency import RunLatencyContext, log_run_latency
 from ..memory_feed import project_turn
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
@@ -303,6 +304,7 @@ class AgentRuntime:
         event: AgentEvent,
         *,
         run_id: str | None = None,
+        latency_started_ms: int | None = None,
         priority: RunPriority | None = None,
         expires_at: datetime | None = None,
         dedupe_key: str | None = None,
@@ -342,6 +344,8 @@ class AgentRuntime:
         }
         if run_id is not None:
             kwargs["run_id"] = run_id
+        if latency_started_ms is not None:
+            kwargs["latency_started_ms"] = latency_started_ms
         return self._scheduler.submit(RunRequest(**kwargs))
 
     def list_run_snapshots(
@@ -535,6 +539,20 @@ class AgentRuntime:
         except BaseException:
             reset_session_mutation_context(mutation_token)
             raise
+        run_latency = RunLatencyContext(
+            run_id=request.run_id,
+            session_id=request.session_id,
+            started_ms=request.latency_started_ms,
+        )
+        conv.set_run_latency_context(run_latency)
+        log_run_latency(
+            logger,
+            run_latency,
+            "conversation_bound",
+            origin=origin or "unknown",
+            channel=request.channel or "none",
+            surface=request.surface or "none",
+        )
         session = conv.session
         turn_start_idx = len(session.events)
         outcome = RunOutcome.FAILED
@@ -595,6 +613,19 @@ class AgentRuntime:
                     reason_code=type(error).__name__ if error is not None else "",
                 )
             finally:
+                log_run_latency(
+                    logger,
+                    run_latency,
+                    "conversation_done",
+                    outcome=outcome,
+                    error_type=type(error).__name__ if error is not None else None,
+                    llm_calls=run_latency.llm_call_count,
+                    context_builds=run_latency.context_build_count,
+                    tool_batches=run_latency.tool_batch_count,
+                    tool_calls=run_latency.tool_call_count,
+                    first_text_ms=run_latency.first_text_elapsed_ms,
+                )
+                conv.set_run_latency_context(None)
                 reset_session_mutation_context(mutation_token)
 
     def _dispatch(self, ev: AgentEvent) -> None:

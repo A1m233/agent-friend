@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,7 @@ from typing import Any, ClassVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from agent.latency import RunLatencyContext, monotonic_ms
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.nearby_place_search import (
     AnchorCandidate,
@@ -54,6 +56,7 @@ from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    LLMUsage,
     ProviderSpec,
 )
 from memory import ConversationFragment, MemoryContext
@@ -514,6 +517,84 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="trace-call",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "PRIVATE_TOOL_ARG"}),
+                ),
+                LLMTurnDone(
+                    stop_reason="tool_use",
+                    usage=LLMUsage(
+                        prompt_tokens=100,
+                        completion_tokens=3,
+                        total_tokens=103,
+                        cached_prompt_tokens=80,
+                        cache_miss_prompt_tokens=20,
+                    ),
+                ),
+            ],
+            [
+                LLMTextDelta(text="PRIVATE_ANSWER"),
+                LLMTurnDone(
+                    stop_reason="end_turn",
+                    usage=LLMUsage(
+                        prompt_tokens=200,
+                        completion_tokens=4,
+                        total_tokens=204,
+                        cached_prompt_tokens=190,
+                        cache_miss_prompt_tokens=10,
+                    ),
+                ),
+            ],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+    trace = RunLatencyContext(
+        run_id="run-latency",
+        session_id=conv.session.session_id,
+        started_ms=monotonic_ms(),
+    )
+    conv.set_run_latency_context(trace)
+    caplog.set_level(logging.INFO, logger="agent.conversation")
+
+    list(conv.stream("PRIVATE_USER_TEXT", run_id="run-latency"))
+
+    latency_text = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("run_latency ")
+    )
+    assert "event=context_build_done" in latency_text
+    assert "event=llm_stream_start" in latency_text
+    assert "call_index=1 call_kind=initial" in latency_text
+    assert "event_kind=tool_call_delta" in latency_text
+    assert "event=tool_batch_done" in latency_text
+    assert "call_index=2 call_kind=tool_continuation" in latency_text
+    assert "event=run_first_text_delta" in latency_text
+    assert "cached_prompt_tokens=190" in latency_text
+    assert "cache_miss_prompt_tokens=10" in latency_text
+    assert "cache_hit_ratio=0.9500" in latency_text
+    assert trace.llm_call_count == 2
+    assert trace.tool_call_count == 1
+    assert trace.first_text_elapsed_ms is not None
+    assert "PRIVATE_USER_TEXT" not in latency_text
+    assert "PRIVATE_TOOL_ARG" not in latency_text
+    assert "PRIVATE_ANSWER" not in latency_text
 
 
 def test_nearby_place_search_uses_existing_tool_event_loop(tmp_path: Path) -> None:

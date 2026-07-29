@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from agent.latency import RunLatencyContext, log_run_latency
 from qqbot_agent_sdk.api_client import QQApiClient
 from qqbot_agent_sdk.dto import (
     InlineKeyboard,
@@ -323,6 +324,21 @@ class QQAdapter:
             context.run_id or "",
             hashlib.sha256(self.bind_id.encode("utf-8")).hexdigest()[:12],
             hashlib.sha256(context.chat_id.encode("utf-8")).hexdigest()[:12],
+        )
+        log_run_latency(
+            logger,
+            (
+                RunLatencyContext(
+                    run_id=context.run_id,
+                    session_id=context.session_id,
+                    started_ms=context.latency_started_ms,
+                )
+                if context.run_id is not None and context.latency_started_ms is not None
+                else None
+            ),
+            "im_stream_open",
+            stream_trace=context.stream_trace,
+            provider="qq",
         )
         return QQC2CStreamSession(
             api=api,

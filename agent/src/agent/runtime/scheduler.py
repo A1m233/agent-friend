@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import count
 
+from ..latency import RunLatencyContext, log_run_latency, monotonic_ms
 from .cancellation import CancelReason, RunCancelled
 from .errors import SessionBusyError
 from .models import (
@@ -451,6 +452,21 @@ class RunScheduler:
             pool.submit(self._run_one, request, handle)
 
     def _run_one(self, request: RunRequest, handle: RunHandle) -> None:
+        execution_started_ms = monotonic_ms()
+        run_latency = RunLatencyContext(
+            run_id=request.run_id,
+            session_id=request.session_id,
+            started_ms=request.latency_started_ms,
+        )
+        log_run_latency(
+            logger,
+            run_latency,
+            "scheduler_start",
+            pre_submit_ms=max(0, request.scheduler_submitted_ms - request.latency_started_ms),
+            queue_ms=max(0, execution_started_ms - request.scheduler_submitted_ms),
+            priority=int(request.priority),
+            origin=request.metadata.get("protocol", "runtime"),
+        )
         try:
             handle.token.raise_if_cancelled()
             self._execute(request, handle)
@@ -472,6 +488,15 @@ class RunScheduler:
             logger.exception("run executor failed: %s", request.run_id)
             handle.finish_once(RunOutcome.FAILED, reason_code="executor_error", error=exc)
         finally:
+            terminal = handle.terminal
+            log_run_latency(
+                logger,
+                run_latency,
+                "run_terminal",
+                outcome=terminal.outcome if terminal is not None else "unknown",
+                reason_code=terminal.reason_code if terminal is not None else "missing_terminal",
+                execution_ms=max(0, monotonic_ms() - execution_started_ms),
+            )
             with self._condition:
                 self._active.pop(request.session_id, None)
                 self._drop_run_locked(request.run_id)

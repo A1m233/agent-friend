@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -379,7 +380,10 @@ def test_listener_overflow_unregisters_slow_subscriber() -> None:
         assert runtime.listeners.subscriber_count() == 0
 
 
-def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) -> None:
+def test_submit_runs_conversation_and_correlates_session_events(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from agent.runtime import RunOutcome
 
     fake = _ScriptedLLMClient(
@@ -387,6 +391,7 @@ def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) 
     )
     conv = _make_conversation(tmp_path, fake_llm=fake)
     runtime = AgentRuntime(conversation_factory=lambda sid: conv)
+    caplog.set_level(logging.INFO)
     runtime.start()
     try:
         handle = runtime.submit(
@@ -404,6 +409,19 @@ def test_submit_runs_conversation_and_correlates_session_events(tmp_path: Path) 
         )
         assert user.meta["run_id"] == "run-045"
         assert assistant.meta["run_id"] == "run-045"
+        latency_text = "\n".join(
+            record.getMessage()
+            for record in caplog.records
+            if "run_id=run-045" in record.getMessage()
+        )
+        assert "event=scheduler_start" in latency_text
+        assert "pre_submit_ms=" in latency_text
+        assert "queue_ms=" in latency_text
+        assert "event=conversation_bound" in latency_text
+        assert "event=conversation_done" in latency_text
+        assert "event=run_terminal" in latency_text
+        assert "llm_calls=1" in latency_text
+        assert "first_text_ms=" in latency_text
     finally:
         runtime.stop()
 
