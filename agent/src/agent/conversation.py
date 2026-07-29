@@ -1277,12 +1277,12 @@ class Conversation:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
 
-        若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条 system 消息走
-        ``extra_context`` 注入（008 design §6.1）。空召回不注入任何记忆段。
+        若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条临时 system
+        消息走 ``turn_context`` 尾部注入。空召回不注入任何记忆段；召回结果不落盘。
         """
-        extra: list[Message] | None = list(extra_context) if extra_context else None
+        turn_context: list[Message] = list(extra_context) if extra_context else []
         if self._turn_context_override:
-            extra = [Message(role="system", content=self._turn_context_override), *(extra or [])]
+            turn_context.insert(0, Message(role="system", content=self._turn_context_override))
         if self._memory is not None:
             memory_start_ms = monotonic_ms()
             log_voice_latency(
@@ -1306,8 +1306,7 @@ class Conversation:
             )
             self._last_memory_context = ctx
             if not ctx.is_empty():
-                extra = [
-                    *(extra or []),
+                turn_context.append(
                     Message(
                         role="system",
                         content=(
@@ -1315,20 +1314,19 @@ class Conversation:
                             "只使用其中实际支持的事实：\n\n"
                             + _render_untrusted_context("memory_retrieval", ctx.rendered)
                         ),
-                    ),
-                ]
+                    )
+                )
         if self._voice_latency_short_reply_hint:
-            extra = [
-                *(extra or []),
-                Message(role="system", content=self._voice_latency_short_reply_hint),
-            ]
+            turn_context.append(
+                Message(role="system", content=self._voice_latency_short_reply_hint)
+            )
         assemble_start_ms = monotonic_ms()
         result = self._assemble(
             new_user_input=(
                 user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
             ),
             new_user_attachments=attachments,
-            extra_context=extra,
+            turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
             persist_compaction=persist_compaction,
@@ -1349,6 +1347,7 @@ class Conversation:
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
         history_override: list[Message] | None = None,
@@ -1360,7 +1359,7 @@ class Conversation:
 
         首轮 / 工具续轮 / 触上限兜底收尾都经此处，确保上下文管理（度量 /
         兜底截断 / 摘要压缩）覆盖每一次组装，差异只在 ``new_user_input`` /
-        ``extra_context`` / ``trailing_user`` / ``trailing_system``。``history``
+        ``extra_context`` / ``turn_context`` / ``trailing_user`` / ``trailing_system``。``history``
         一律传**原始全量** :attr:`Session.messages`（折叠在 context manager 内部
         发生，见 009 design §6.3）。
 
@@ -1382,16 +1381,16 @@ class Conversation:
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
         system_prompt = self._system_prompt
-        turn_context: list[Message] = []
+        active_turn_context: list[Message] = list(turn_context or [])
         if self._active_tool_run_context is not None:
-            turn_context.append(
+            active_turn_context.append(
                 Message(
                     role="system",
                     content=self._active_tool_run_context.render_for_model(),
                 )
             )
         if self._prompt_surface_override is not None:
-            turn_context.append(
+            active_turn_context.append(
                 Message(
                     role="system",
                     content=DEFAULT_INTERACTION_CONTEXT_RENDERER.render(
@@ -1405,7 +1404,7 @@ class Conversation:
             self._session.session_id,
             self._run_id_override or "none",
             self._prompt_surface_override or "none",
-            "present" if turn_context else "none",
+            "present" if active_turn_context else "none",
             "present" if self._active_tool_run_context is not None else "none",
             len(system_prompt),
         )
@@ -1415,7 +1414,7 @@ class Conversation:
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
-            turn_context=turn_context or None,
+            turn_context=active_turn_context or None,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
             runtime=runtime,
@@ -1771,12 +1770,12 @@ class Conversation:
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        extra_context = (
+        turn_context = (
             [Message(role="system", content=self._turn_context_override)]
             if self._turn_context_override
             else None
         )
-        return self._assemble(tool_specs=tool_specs, extra_context=extra_context)
+        return self._assemble(tool_specs=tool_specs, turn_context=turn_context)
 
     def _accumulate_tool_call_delta(
         self,

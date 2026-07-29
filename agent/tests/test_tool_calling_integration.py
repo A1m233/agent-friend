@@ -56,6 +56,7 @@ from llm_providers import (
     LLMTurnDone,
     ProviderSpec,
 )
+from memory import ConversationFragment, MemoryContext
 
 # ---- Fake tools ----
 
@@ -203,6 +204,17 @@ class _ScriptedLLMClient:
         yield from events
 
 
+class _DynamicMemory:
+    """按当前 query 返回不同记忆，验证召回只活在本轮尾部模型视图。"""
+
+    def observe(self, fragment: ConversationFragment) -> None:
+        del fragment
+
+    def retrieve(self, query: str, **kwargs: Any) -> MemoryContext:
+        del kwargs
+        return MemoryContext(rendered=f"memory-for:{query}", items=[])
+
+
 def _make_conversation(
     tmp_path: Path,
     *,
@@ -211,6 +223,7 @@ def _make_conversation(
     llm_client_factory: Any | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
     tool_run_context_factory: Any | None = None,
+    memory: Any | None = None,
     model: str = "deepseek/deepseek-chat",
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
@@ -241,7 +254,54 @@ def _make_conversation(
         tool_registry=registry,
         tool_run_policy=tool_run_policy,
         tool_run_context_factory=tool_run_context_factory,
+        memory=memory,
     )
+
+
+def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
+    tmp_path: Path,
+) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTextDelta(text="one"), LLMTurnDone(stop_reason="end_turn")],
+            [LLMTextDelta(text="two"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, memory=_DynamicMemory())
+
+    list(conv.stream("first"))
+    list(conv.stream("second"))
+
+    first_request, second_request = fake.received
+    first_user_index = next(
+        index for index, message in enumerate(first_request) if message.get("content") == "first"
+    )
+    first_memory_index = next(
+        index
+        for index, message in enumerate(first_request)
+        if "memory-for:first" in message.get("content", "")
+    )
+    first_runtime_index = next(
+        index
+        for index, message in enumerate(first_request)
+        if message.get("content", "").startswith("<runtime_now")
+    )
+    assert first_user_index < first_memory_index < first_runtime_index
+
+    second_user_index = next(
+        index for index, message in enumerate(second_request) if message.get("content") == "second"
+    )
+    second_memory_index = next(
+        index
+        for index, message in enumerate(second_request)
+        if "memory-for:second" in message.get("content", "")
+    )
+    assert second_user_index < second_memory_index
+    assert all("memory-for:first" not in message.get("content", "") for message in second_request)
+    assert [message.content for message in conv.session.messages if message.role == "user"] == [
+        "first",
+        "second",
+    ]
 
 
 def test_kimi_turn_uses_stable_session_prompt_cache_key(tmp_path: Path) -> None:
@@ -1058,7 +1118,7 @@ def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> 
         for index, message in enumerate(messages)
         if message.get("content") == "我是 20 号入职，今天发工资"
     )
-    assert old_answer_index < clock_index < current_user_index
+    assert old_answer_index < current_user_index < clock_index
     assert "2026-07-28T22:04:13+08:00" in messages[clock_index]["content"]
 
 

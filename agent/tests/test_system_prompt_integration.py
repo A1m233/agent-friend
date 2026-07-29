@@ -288,18 +288,30 @@ def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Pat
     first_prompt = "\n".join(message["content"] for message in fake.received[0])
     second_prompt = "\n".join(message["content"] for message in fake.received[1])
     third_prompt = "\n".join(message["content"] for message in fake.received[2])
-    assert fake.received[0][-2] == {
+    first_surface = {
         "role": "system",
         "content": '<interaction_context>\n  <surface type="desktop_chat" />\n</interaction_context>',
     }
-    assert fake.received[0][-1]["role"] == "user"
-    assert fake.received[1][-2] == {
+    second_surface = {
         "role": "system",
         "content": (
             '<interaction_context>\n  <surface type="im" provider="qq" />\n</interaction_context>'
         ),
     }
-    assert fake.received[1][-1]["role"] == "user"
+    assert fake.received[0][-1] == first_surface
+    assert fake.received[1][-1] == second_surface
+    first_user_index = next(
+        index
+        for index, message in enumerate(fake.received[0])
+        if message.get("content") == "我在 QQ 吗？"
+    )
+    second_user_index = next(
+        index
+        for index, message in enumerate(fake.received[1])
+        if message.get("content") == "现在在哪？"
+    )
+    assert first_user_index < fake.received[0].index(first_surface)
+    assert second_user_index < fake.received[1].index(second_surface)
     assert '<surface type="desktop_chat" />' in first_prompt
     assert 'provider="qq"' not in first_prompt
     assert '<surface type="im" provider="qq" />' in second_prompt

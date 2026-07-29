@@ -159,14 +159,16 @@ class ContextManager(Protocol):
     1. ``system_prompt`` 不为空时，必须放在 :attr:`BuildResult.messages` 的最前
     2. ``new_user_input`` **若提供**（非 ``None``），放在 ``new_user_input``/``history``
        序列的最后；续轮 / 兜底收尾传 ``None`` 表示本轮无新用户输入
-    3. ``extra_context``（memory 注入）若提供，应放在 ``system`` 之后、``history`` 之前
-    4. ``turn_context`` 若提供，作为可信、非持久化消息放在 ``history`` 之后、
-       ``new_user_input`` 之前；用于当前回合运行时事实，不参与历史摘要
+    3. ``extra_context`` 若提供，应放在 ``system`` 之后、``history`` 之前；只用于
+       确实需要成为稳定前缀的上下文，不承载每回合变化的记忆或运行时事实
+    4. ``turn_context`` 若提供，作为非持久化消息放在当前真实 user 之后；用于
+       当前回合的记忆召回、可信运行时事实和 surface，不参与历史摘要，也不截断
+       可持续增长的历史缓存前缀
     5. ``trailing_user`` 若提供，rendered 为 ``role="user"`` 消息，位置在
-       ``new_user_input`` 之后、``trailing_system`` 之前。语义：仅活在 LLM 视图、
+       ``turn_context`` 之后、``trailing_system`` 之前。语义：仅活在 LLM 视图、
        **不落盘**——主动 source（``system_trigger``）注入触发信号专用（021）。与
        ``new_user_input``（已落盘的真用户输入）语义边界明确，互不替代
-    6. ``trailing_system`` 若提供，放在**所有消息之后**（比 ``trailing_user`` 还靠后），
+    6. ``trailing_system`` 若提供，放在**所有消息之后**（比 ``turn_context`` 还靠后），
        用于工具调用循环兜底收尾的临时指令
     7. ``history`` 可能被截断 / 折叠，截断的条数记入 :attr:`BuildResult.dropped_count`
     8. ``runtime`` 为 ``None`` 时实现应退化为"不做预算判断"（:class:`NaiveContextManager`
@@ -204,7 +206,7 @@ def assemble_messages(
 ) -> list[Message]:
     """按 :class:`ContextManager` 不变量把各成分拼成消息序列（所有策略共用）。
 
-    顺序：``[system?] + extra_context? + history + turn_context? + [new_user_input?] + [trailing_user?] + [trailing_system?]``。
+    顺序：``[system?] + extra_context? + history + [new_user_input?] + turn_context? + [trailing_user?] + [trailing_system?]``。
     ``history`` 由各策略在调用前自行裁剪 / 折叠——本函数只负责拼装顺序，不做预算判断。
 
     ``trailing_user`` 与 ``new_user_input`` 都 rendered 为 ``role="user"``——前者
@@ -217,8 +219,6 @@ def assemble_messages(
     if extra_context:
         messages.extend(extra_context)
     messages.extend(history)
-    if turn_context:
-        messages.extend(turn_context)
     if new_user_input is not None:
         messages.append(
             Message(
@@ -228,6 +228,8 @@ def assemble_messages(
                 meta={"current_input": True} if new_user_attachments else {},
             )
         )
+    if turn_context:
+        messages.extend(turn_context)
     if trailing_user is not None:
         messages.append(Message(role="user", content=trailing_user))
     if trailing_system is not None:
