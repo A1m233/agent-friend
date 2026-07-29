@@ -441,6 +441,7 @@ class TestAgUiRunChannelBoundary:
         assert [event.type for event in loaded.events] == [
             "session_meta",
             "user_message",
+            "model_context",
             "run_error",
         ]
         user_events = [event for event in loaded.events if event.type == "user_message"]

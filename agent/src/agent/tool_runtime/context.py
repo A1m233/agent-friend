@@ -97,9 +97,9 @@ class ToolRunContext:
     def render_for_model(self) -> str:
         """Render the same trusted clock snapshot that hidden tool args receive.
 
-        The block is injected as ephemeral turn context near the current input.  Keeping
-        it on this object prevents the model-visible time and tool-visible time from
-        drifting apart during a multi-call turn.
+        The block becomes part of the append-only model-context snapshot near the current
+        input.  Keeping it on this object prevents the model-visible time and tool-visible
+        time from drifting apart during a multi-call turn.
         """
         current_datetime = self.trusted_now.isoformat(timespec="seconds")
         today = self.trusted_now.date()

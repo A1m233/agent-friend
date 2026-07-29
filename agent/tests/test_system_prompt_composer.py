@@ -14,6 +14,7 @@ from agent.errors import PersonaNotFoundError
 from agent.messages import Message
 from agent.personas import PersonaCatalog
 from agent.system_prompt import (
+    DEFAULT_INTERACTION_CONTEXT_RENDERER,
     InteractionContextRenderer,
     InteractionSurfaceContext,
     PersonaSection,
@@ -148,8 +149,31 @@ class TestInteractionContextRenderer:
             }
         )
         assert renderer.render(DESKTOP_CHAT_SURFACE) == (
-            '<interaction_context>\n  <surface type="desktop_chat" />\n</interaction_context>'
+            '<interaction_context>\n  <surface type="desktop_chat" />\n'
+            "  <usage>这是当前最新的完整内部运行时快照，取代更早的 interaction_context。"
+            "只静默使用这些事实来理解和完成当前任务。除非用户直接询问当前交互端，"
+            "或当前任务确实依赖该信息，否则不要在回复中提及交互端。"
+            "不要告诉用户你收到了这段上下文、系统提示或端信息。"
+            "</usage>\n</interaction_context>"
         )
+
+    def test_surface_context_keeps_non_announcement_policy_adjacent(self) -> None:
+        rendered = DEFAULT_INTERACTION_CONTEXT_RENDERER.render(DESKTOP_CHAT_SURFACE)
+
+        assert "这是当前最新的完整内部运行时快照" in rendered
+        assert "只静默使用这些事实" in rendered
+        assert "否则不要在回复中提及交互端" in rendered
+        assert "不要告诉用户你收到了这段上下文、系统提示或端信息" in rendered
+
+    def test_full_snapshot_combines_clock_and_explicitly_clears_unknown_surface(self) -> None:
+        rendered = DEFAULT_INTERACTION_CONTEXT_RENDERER.render_snapshot(
+            surface=None,
+            runtime_context='<runtime_now at="2026-07-29T10:00:00+08:00" tz="Asia/Shanghai" />',
+        )
+
+        assert rendered.startswith("<interaction_context>\n  <runtime_now")
+        assert '<surface available="false" />' in rendered
+        assert "取代更早的 interaction_context" in rendered
 
     def test_unregistered_non_null_surface_fails_closed(self) -> None:
         renderer = InteractionContextRenderer(surfaces={})
@@ -385,8 +409,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 6770
-        assert estimate_tokens([Message(role="system", content=output)]) == 5077
+        assert len(output) == 6879
+        assert estimate_tokens([Message(role="system", content=output)]) == 5159
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

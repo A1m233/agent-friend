@@ -1030,7 +1030,7 @@ def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> No
     assert "不是用户本轮提供" in result.text
 
 
-def test_datetime_tool_receives_hidden_trusted_runtime_without_persisting_it(
+def test_datetime_tool_receives_hidden_trusted_runtime_in_model_only_history(
     tmp_path: Path,
 ) -> None:
     seen_args: list[dict[str, Any]] = []
@@ -1070,12 +1070,45 @@ def test_datetime_tool_receives_hidden_trusted_runtime_without_persisting_it(
         model_context = next(
             message["content"]
             for message in request_messages
-            if message.get("content", "").startswith("<runtime_now")
+            if trusted.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
         )
         assert trusted.trusted_now.isoformat(timespec="seconds") in model_context
+    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
     request = next(event for event in conv.session.events if event.type == "tool_call_request")
     assert "__agent_friend_runtime_now" not in request.payload["args"]
     assert all("<runtime_now" not in message.content for message in conv.session.messages)
+    assert sum(event.type == "model_context" for event in conv.session.events) == 1
+    assert sum("<runtime_now" in message.content for message in conv.session.llm_messages) == 1
+
+
+def test_unchanged_model_context_snapshot_is_not_appended_twice(tmp_path: Path) -> None:
+    trusted = ToolRunContext.create(
+        "same clock",
+        now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTextDelta(text="one"), LLMTurnDone(stop_reason="end_turn")],
+            [LLMTextDelta(text="two"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_run_context_factory=lambda _: trusted,
+    )
+
+    list(conv.stream("first"))
+    list(conv.stream("second"))
+
+    assert sum(event.type == "model_context" for event in conv.session.events) == 1
+    assert (
+        sum(
+            trusted.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
+            for message in fake.received[1]
+        )
+        == 1
+    )
 
 
 def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> None:
@@ -1111,7 +1144,7 @@ def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> 
     clock_index = next(
         index
         for index, message in enumerate(messages)
-        if message.get("content", "").startswith("<runtime_now")
+        if current_context.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
     )
     current_user_index = next(
         index

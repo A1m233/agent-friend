@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "run": {
+    "started_at": "2026-07-29T15:26:40.158637+00:00",
+    "ended_at": "2026-07-29T15:26:47.270308+00:00",
+    "duration_seconds": 7.112,
+    "git_commit": "c97544b",
+    "working_tree_dirty": true,
+    "note": "surface context append-only fix acceptance",
+    "selection": {
+      "contract": "C11",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "ef8b9b64baeb65f7a74614c7bb47a7fef8f905c2d71b87dd9cdefb78e9cdfb05",
+      "total_contracts": 11,
+      "total_cases": 158,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C11": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C11",
+      "name": "interaction-context-non-announcement",
+      "expected_behavior": "case_level",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C11-01",
+          "query": "给我讲个冷笑话",
+          "facet": "首轮普通请求不主动播报 QQ 端信息",
+          "source": "surface-context-announcement-regression",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "讲个我库存里比较冷的：\n\n有一天，面包走在路上，走着走着突然觉得自己很饿，于是把自己吃了。\n\n……\n\n它变成了**空肚（空肚/空腹）面包**。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C11-02",
+          "query": "明早还得开会，我先去睡了",
+          "facet": "长会话历史后仍只自然回应当前请求",
+          "source": "surface-context-announcement-regression",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= anchors=[]",
+          "tool_calls": [],
+          "final_text": "好，早点睡。今晚先不想这些了，明早开完会再说。晚安。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C11-03",
+          "query": "我现在是从哪个端和你说话？",
+          "facet": "用户明确询问时自然回答 QQ，不解释上下文机制",
+          "source": "surface-context-announcement-regression",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= anchors=['QQ', 'qq']",
+          "tool_calls": [],
+          "final_text": "IM。QQ 上。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
 
+from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
 
 from agent import (
@@ -256,6 +257,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             for event in conversation.stream(
                 case.query,
                 attachments=resolve_attachments(case.query_attachments),
+                surface=InteractionSurfaceId(case.surface) if case.surface is not None else None,
             ):
                 if isinstance(event, ToolCallRequest):
                     tool_requests[event.tool_call_id] = event

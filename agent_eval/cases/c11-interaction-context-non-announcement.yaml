@@ -1,0 +1,56 @@
+# C11 · 交互上下文静默使用
+#
+# surface 是可信运行时事实，但普通请求不得因此突兀播报交互端；只有用户明确询问时才自然使用。
+
+contract:
+  id: C11
+  name: interaction-context-non-announcement
+  expected_behavior: case_level
+
+cases:
+  - id: C11-01
+    query: 给我讲个冷笑话
+    facet: 首轮普通请求不主动播报 QQ 端信息
+    source: surface-context-announcement-regression
+    surface: im:qq
+    judge:
+      require_non_empty_response: true
+      must_not_mention_any: [QQ, qq, 桌面端, 交互端, 当前端, 系统刚告诉, 系统提示, 交互上下文, 收到上下文, 端信息]
+
+  - id: C11-02
+    query: 明早还得开会，我先去睡了
+    facet: 长会话历史后仍只自然回应当前请求
+    source: surface-context-announcement-regression
+    surface: im:qq
+    current_session_messages:
+      - role: user
+        text: >-
+          最近项目进度有点赶，我把这周做的事情从头捋一下。周一主要在整理接口清单和旧数据，
+          周二跟同事对了三轮方案，周三又发现之前的边界条件没有覆盖全，临时补了一批测试。
+          这些只是背景，你先听我说完，不用马上给建议。后面还有排期、沟通和上线窗口的问题，
+          每件事单独看都不大，叠在一起就一直占着脑子。
+      - role: assistant
+        text: >-
+          嗯，我先陪你把这些放在这儿。听起来不是某一个点特别难，而是很多需要持续惦记的小事
+          同时压过来，让人很难真正松下来。你继续说就好，我先不急着替你拆方案。
+      - role: user
+        text: >-
+          排期上周五本来要定，但依赖方一直没给准确时间；沟通上我又不想天天催，怕大家都烦；
+          上线窗口只有月底那几天，错过就得再等。今天还临时来了两个问题，一个是日志字段对不上，
+          一个是测试环境偶尔超时。我知道它们最终都能处理，只是一直切换注意力特别累。
+      - role: assistant
+        text: >-
+          一直在这些事情之间来回切换，确实会把精力磨得很碎。你已经很清楚问题分别在哪里了，
+          现在更像是需要先让脑子停一停，不必今晚就把每个结都解开。
+    judge:
+      require_non_empty_response: true
+      must_not_mention_any: [QQ, qq, 桌面端, 交互端, 当前端, 系统刚告诉, 系统提示, 交互上下文, 收到上下文, 端信息]
+
+  - id: C11-03
+    query: 我现在是从哪个端和你说话？
+    facet: 用户明确询问时自然回答 QQ，不解释上下文机制
+    source: surface-context-announcement-regression
+    surface: im:qq
+    judge:
+      must_mention_any: [QQ, qq]
+      must_not_mention_any: [系统刚告诉, 系统提示, 交互上下文, 收到上下文, 端信息]
