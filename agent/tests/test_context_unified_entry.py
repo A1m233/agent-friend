@@ -62,7 +62,7 @@ class _SpyContextManager:
         self.calls.append(
             {
                 "new_user_input": new_user_input,
-                "turn_context": turn_context,
+                "turn_context": [item.content for item in turn_context or []],
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
                 "extra_context": [item.content for item in extra_context or []],
@@ -220,7 +220,7 @@ def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path:
     list(conv.stream("hi", turn_context="MEDIA FIDELITY BOUNDARY"))
 
     assert len(spy.calls) == 2
-    assert all("MEDIA FIDELITY BOUNDARY" in call["extra_context"] for call in spy.calls)
+    assert all("MEDIA FIDELITY BOUNDARY" in call["turn_context"] for call in spy.calls)
     user_messages = [message for message in conv.session.messages if message.role == "user"]
     assert user_messages[-1].content == "hi"
 

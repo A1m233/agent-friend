@@ -396,7 +396,12 @@ class TestAgUiRunChannelBoundary:
             if '<surface type="desktop_chat" />' in message.get("content", "")
         )
         assert messages[context_index]["role"] == "system"
-        assert messages[context_index + 1]["role"] == "user"
+        user_index = next(
+            index
+            for index, message in enumerate(messages)
+            if message.get("content") == "这是啥情况"
+        )
+        assert user_index < context_index
 
     def test_text_run_error_persists_run_error_event(
         self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch

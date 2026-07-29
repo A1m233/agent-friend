@@ -44,12 +44,13 @@ def test_escape_user_messages_for_llm_does_not_mutate_source() -> None:
 
 
 def test_assemble_full_ordering() -> None:
-    """顺序：system → extra_context → history → new_user → trailing_system。"""
+    """稳定前缀在前；当前 user 后接临时 turn context 与收尾指令。"""
     msgs = assemble_messages(
         history=_history(),
         system_prompt="SYS",
         new_user_input="hi",
         extra_context=[Message(role="system", content="MEM")],
+        turn_context=[Message(role="system", content="TURN")],
         trailing_system="WRAP",
     )
     assert [(m.role, m.content) for m in msgs] == [
@@ -58,6 +59,7 @@ def test_assemble_full_ordering() -> None:
         ("user", "u1"),
         ("assistant", "a1"),
         ("user", "hi"),
+        ("system", "TURN"),
         ("system", "WRAP"),
     ]
 
@@ -111,18 +113,20 @@ def test_assemble_trailing_after_user() -> None:
 
 
 def test_assemble_trailing_user_position() -> None:
-    """021：trailing_user rendered 为 role=user，位置在 new_user_input 之后、trailing_system 之前。"""
+    """021：主动触发的 trailing_user 保持在临时 turn context 之后。"""
     msgs = assemble_messages(
         history=_history(),
         system_prompt="SYS",
         trailing_user="ADDENDUM",
+        turn_context=[Message(role="system", content="TURN")],
     )
     # 末尾应当是 role=user 的 trailing_user
     assert msgs[-1].role == "user"
     assert msgs[-1].content == "ADDENDUM"
+    assert msgs[-2].content == "TURN"
     # history 在它之前
-    assert msgs[-2].role == "assistant"
-    assert msgs[-2].content == "a1"
+    assert msgs[-3].role == "assistant"
+    assert msgs[-3].content == "a1"
 
 
 def test_assemble_all_three_trailings_no_error() -> None:
@@ -132,6 +136,7 @@ def test_assemble_all_three_trailings_no_error() -> None:
         system_prompt="SYS",
         new_user_input="real_user",
         trailing_user="injected_user",
+        turn_context=[Message(role="system", content="turn")],
         trailing_system="wrap",
     )
     assert [(m.role, m.content) for m in msgs] == [
@@ -139,6 +144,7 @@ def test_assemble_all_three_trailings_no_error() -> None:
         ("user", "u1"),
         ("assistant", "a1"),
         ("user", "real_user"),
+        ("system", "turn"),
         ("user", "injected_user"),
         ("system", "wrap"),
     ]
