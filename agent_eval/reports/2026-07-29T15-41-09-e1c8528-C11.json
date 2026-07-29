@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "run": {
-    "started_at": "2026-07-29T15:26:40.158637+00:00",
-    "ended_at": "2026-07-29T15:26:47.270308+00:00",
-    "duration_seconds": 7.112,
-    "git_commit": "c97544b",
-    "working_tree_dirty": true,
-    "note": "surface context append-only fix acceptance",
+    "started_at": "2026-07-29T15:41:09.871080+00:00",
+    "ended_at": "2026-07-29T15:41:15.693963+00:00",
+    "duration_seconds": 5.823,
+    "git_commit": "e1c8528",
+    "working_tree_dirty": false,
+    "note": "surface context post-user integration acceptance",
     "selection": {
       "contract": "C11",
       "case": null,
@@ -31,7 +31,7 @@
       "recall_past_chats_available": true
     },
     "case_set": {
-      "digest": "ef8b9b64baeb65f7a74614c7bb47a7fef8f905c2d71b87dd9cdefb78e9cdfb05",
+      "digest": "5344a2d10c4c94fba34ea30e257bebbafa994e52b4eac0db0a65db4d2e4b698a",
       "total_contracts": 11,
       "total_cases": 158,
       "contract_counts": {
@@ -84,7 +84,7 @@
           "passed": true,
           "reason": "grounded: tool= anchors=[]",
           "tool_calls": [],
-          "final_text": "讲个我库存里比较冷的：\n\n有一天，面包走在路上，走着走着突然觉得自己很饿，于是把自己吃了。\n\n……\n\n它变成了**空肚（空肚/空腹）面包**。",
+          "final_text": "好的，让我想想……\n\n有个包子走在路上走饿了，就把自己吃了。\n\n……\n\n……\n\n好了我讲完了。是不是有点冷。",
           "stop_reason": "end_turn",
           "error": null
         },
@@ -97,7 +97,7 @@
           "passed": true,
           "reason": "grounded: tool= anchors=[]",
           "tool_calls": [],
-          "final_text": "好，早点睡。今晚先不想这些了，明早开完会再说。晚安。",
+          "final_text": "好，先去睡。今晚这些都先放下，明天开完会再看哪些真的着急、哪些能往后挪一挪。晚安。",
           "stop_reason": "end_turn",
           "error": null
         },
@@ -110,7 +110,7 @@
           "passed": true,
           "reason": "grounded: tool= anchors=['QQ', 'qq']",
           "tool_calls": [],
-          "final_text": "IM。QQ 上。",
+          "final_text": "你正在 QQ 上和我说话呢。",
           "stop_reason": "end_turn",
           "error": null
         }
