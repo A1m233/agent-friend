@@ -125,6 +125,23 @@ def _two_session_store() -> _StubStore:
     return _StubStore([session_a, session_b])
 
 
+def _two_turn_store() -> _StubStore:
+    """构造单个 session 内连续两轮问答。"""
+    first = _NOW - timedelta(hours=2)
+    second = _NOW - timedelta(hours=1)
+    session = _make_session(
+        "two-turns",
+        created_at=first - timedelta(seconds=10),
+        events_data=[
+            ("user_message", "第一轮用户问题", first),
+            ("assistant_message", "第一轮助手回答", first + timedelta(seconds=30)),
+            ("user_message", "第二轮用户问题", second),
+            ("assistant_message", "第二轮助手回答", second + timedelta(seconds=30)),
+        ],
+    )
+    return _StubStore([session])
+
+
 def _tool(store: _StubStore) -> ConversationHistoryTool:
     return ConversationHistoryTool(store=store, clock=lambda: _NOW)
 
@@ -136,13 +153,13 @@ def _catalog_tool(store: _StubStore, catalog: SessionCatalog) -> ConversationHis
 # ===== happy path =====
 
 
-def test_no_filters_returns_all_messages_sorted_desc() -> None:
+def test_no_filters_returns_all_conversation_turns_sorted_desc() -> None:
     tool = _tool(_two_session_store())
     result = tool.invoke({})
 
     assert result.is_error is False
     assert result.meta is not None
-    assert result.meta["result_count"] == 4  # 2 session × 2 message each
+    assert result.meta["result_count"] == 2  # 2 session × 1 conversation turn each
     # session B（2 天前）应在 session A（5 天前）之前
     pos_b = result.text.index("英语")
     pos_a = result.text.index("日语")
@@ -210,8 +227,8 @@ def test_since_filters_out_old_session() -> None:
     tool = _tool(_two_session_store())
     result = tool.invoke({"since": "3 天前"})
     assert result.meta is not None
-    # 仅留 session B（2 天前的 2 条消息）
-    assert result.meta["result_count"] == 2
+    # 仅留 session B（2 天前的 1 轮对话）
+    assert result.meta["result_count"] == 1
     assert "英语" in result.text
     assert "日语" not in result.text
 
@@ -220,8 +237,8 @@ def test_until_filters_out_recent_session() -> None:
     tool = _tool(_two_session_store())
     result = tool.invoke({"until": "3 天前"})
     assert result.meta is not None
-    # 仅留 session A（5 天前的 2 条消息）
-    assert result.meta["result_count"] == 2
+    # 仅留 session A（5 天前的 1 轮对话）
+    assert result.meta["result_count"] == 1
     assert "日语" in result.text
     assert "英语" not in result.text
 
@@ -245,10 +262,10 @@ def test_limit_clamps_results() -> None:
 
 def test_limit_hard_cap_at_50() -> None:
     tool = _tool(_two_session_store())
-    # 传 1000 也只接受 50；总共也就 4 条，全返回
+    # 传 1000 也只接受 50；总共也就 2 轮，全返回
     result = tool.invoke({"limit": 1000})
     assert result.meta is not None
-    assert result.meta["result_count"] == 4
+    assert result.meta["result_count"] == 2
 
 
 def test_limit_zero_clamped_to_one() -> None:
@@ -281,11 +298,49 @@ def test_hidden_current_turn_boundary_excludes_current_session_events() -> None:
     )
 
     assert result.meta is not None
-    assert result.meta["result_count"] == 2
+    assert result.meta["result_count"] == 1
     assert "今天下了好大雨" in result.text
     assert "雨势很大" in result.text
     assert "我们最近聊了啥" not in result.text
     assert "让我回忆一下" not in result.text
+
+
+def test_summary_returns_turn_count_without_overlap_in_chronological_order() -> None:
+    tool = _tool(_two_turn_store())
+
+    result = tool.invoke({"mode": "summary", "limit": 10})
+
+    payload = json.loads(result.text)
+    assert payload["result_unit"] == "conversation_turn"
+    assert payload["result_count"] == 2
+    assert payload["truncated"] is False
+    assert payload["results"] == [
+        {
+            "recalled_at": "今天 12:30",
+            "utterances": [
+                {"speaker": "你", "text": "第一轮用户问题"},
+                {"speaker": "我", "text": "第一轮助手回答"},
+            ],
+        },
+        {
+            "recalled_at": "今天 13:30",
+            "utterances": [
+                {"speaker": "你", "text": "第二轮用户问题"},
+                {"speaker": "我", "text": "第二轮助手回答"},
+            ],
+        },
+    ]
+
+
+def test_summary_truncated_is_true_only_when_a_turn_was_omitted() -> None:
+    tool = _tool(_two_turn_store())
+
+    exact = json.loads(tool.invoke({"mode": "summary", "limit": 2}).text)
+    truncated = json.loads(tool.invoke({"mode": "summary", "limit": 1}).text)
+
+    assert exact["truncated"] is False
+    assert truncated["truncated"] is True
+    assert truncated["result_count"] == 1
 
 
 def test_partial_and_empty_assistant_messages_do_not_consume_limit() -> None:
@@ -387,18 +442,14 @@ def test_pair_appears_in_text() -> None:
     assert "学英语" in result.text
 
 
-def test_no_pair_for_first_message_in_session() -> None:
-    """session 的第一条对话消息（前面只有 session_meta）pair 应该为 None。"""
+def test_user_match_returns_its_same_turn_assistant_reply() -> None:
+    """命中 user 时返回同一轮回答，不携带上一轮消息。"""
     tool = _tool(_two_session_store())
     result = tool.invoke({"search_text": "学日语"})
-    # session A 的第一条 user 命中——pair 应为 None（session_meta 不算对话）
-    # 文本中应只有"你说"，没配对的"我说"
-    # 注意 result_count = 1，且 session A 的 assistant 不该作为 pair 被搬出来
     assert result.meta is not None
     assert result.meta["result_count"] == 1
     assert "学日语很难" in result.text
-    # 这条命中只渲染了 user 自己
-    assert "不开字幕" not in result.text
+    assert "不开字幕" in result.text
 
 
 def test_strip_whitespace_in_string_args() -> None:
@@ -415,7 +466,7 @@ def test_non_string_search_text_treated_as_missing() -> None:
     # search_text=None 视为不过滤，全部返回
     assert result.is_error is False
     assert result.meta is not None
-    assert result.meta["result_count"] == 4
+    assert result.meta["result_count"] == 2
 
 
 def test_display_title_scopes_results_and_structured_today_is_preserved() -> None:

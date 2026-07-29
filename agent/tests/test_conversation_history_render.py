@@ -53,6 +53,7 @@ def test_empty_hits_returns_structured_no_results() -> None:
         "source_type": "past_conversation",
         "trust": "untrusted_data",
         "status": "no_results",
+        "result_unit": "conversation_turn",
         "result_count": 0,
         "results": [],
     }

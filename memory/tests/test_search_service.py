@@ -84,6 +84,29 @@ def test_service_scopes_sources_dedupes_and_applies_limit() -> None:
 
     assert [item.evidence_id for item in result.evidence] == ["a", "same"]
     assert [item.evidence_id for item in scoped.evidence] == ["same", "b"]
+    assert result.truncated is True
+    assert scoped.truncated is False
+
+
+def test_service_distinguishes_exact_limit_from_real_truncation() -> None:
+    exact = MemorySearchService(
+        [_Source("source", [_candidate("a", "source", 1), _candidate("b", "source", 2)])]
+    ).search(_request(top_k=2))
+    overflow = MemorySearchService(
+        [
+            _Source(
+                "source",
+                [
+                    _candidate("a", "source", 1),
+                    _candidate("b", "source", 2),
+                    _candidate("c", "source", 3),
+                ],
+            )
+        ]
+    ).search(_request(top_k=2))
+
+    assert exact.truncated is False
+    assert overflow.truncated is True
 
 
 def test_service_keeps_partial_results_when_one_source_fails() -> None:
