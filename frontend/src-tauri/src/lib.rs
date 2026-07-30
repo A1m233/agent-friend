@@ -23,6 +23,7 @@ mod push_subscriber;
 mod runtime_config;
 mod runtime_services;
 mod settings;
+mod shell_diagnostics;
 mod ui_state;
 mod window_placement;
 
@@ -895,9 +896,11 @@ pub fn run() {
         Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
     let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
     let avatar_model_manager = Arc::new(avatar_models::AvatarModelManager::new());
+    let shell_diagnostics_manager = shell_diagnostics::create_manager();
     let setup_avatar_model_manager = avatar_model_manager.clone();
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
     let setup_settings_state = settings_state.clone();
+    let setup_shell_diagnostics_manager = shell_diagnostics_manager.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
 
     let builder = tauri::Builder::default()
@@ -908,6 +911,7 @@ pub fn run() {
         .manage(VoiceLaunchState::default())
         .manage(SettingsNavigationState::default())
         .manage(window_placement::WindowPlacementState::default())
+        .manage(shell_diagnostics_manager)
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .manage(migration_coordinator)
@@ -1062,6 +1066,12 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
+            if let Some(manager) = window
+                .app_handle()
+                .try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
+            {
+                manager.record_tauri_window_event(window, event);
+            }
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 permissions::schedule_refresh(
                     window.app_handle(),
@@ -1175,6 +1185,10 @@ pub fn run() {
                     )
                     .build(),
             )?;
+
+            if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
+                log::warn!("windows shell diagnostics observer started partially: {error}");
+            }
 
             // 028 · logger attach 后再补一次 bootstrap 结果，方便 R3 路径/主题排查。
             let bootstrap_summary = settings_state
@@ -1316,6 +1330,11 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(manager) =
+                    app_handle.try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
+                {
+                    manager.shutdown();
+                }
                 for window in app_handle.webview_windows().into_values() {
                     if let Err(e) = window_placement::capture_window_placement(&window) {
                         log::warn!(

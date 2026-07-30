@@ -1,4 +1,4 @@
-use crate::{paths, runtime_config, runtime_services};
+use crate::{paths, runtime_config, runtime_services, shell_diagnostics};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -75,6 +75,7 @@ pub async fn generate_diagnostic_bundle(
     app: AppHandle,
     request: GenerateDiagnosticBundleRequest,
     services: State<'_, Arc<runtime_services::RuntimeServiceSupervisor>>,
+    shell_diagnostics_manager: State<'_, Arc<shell_diagnostics::ShellDiagnosticsManager>>,
 ) -> Result<GenerateDiagnosticBundleResult, String> {
     let description = normalize_description(request.description)?;
     let session_ids = normalize_session_ids(request.session_ids)?;
@@ -246,6 +247,35 @@ pub async fn generate_diagnostic_bundle(
     entries.extend(log_result.entries);
     failures.extend(log_result.failures);
 
+    let shell_export = shell_diagnostics_manager.export_for_bundle().await;
+    let shell_artifact_names = shell_export
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect::<Vec<_>>();
+    for artifact in shell_export.artifacts {
+        entries.push(ArchiveEntry {
+            name: artifact.name,
+            source: ArchiveEntrySource::Bytes(artifact.bytes),
+        });
+    }
+    let shell_failure_count = shell_export.failures.len();
+    failures.extend(
+        shell_export
+            .failures
+            .into_iter()
+            .map(|message| CollectionFailure {
+                collection: "windows-shell".into(),
+                item: None,
+                message,
+            }),
+    );
+    let shell_summary = json!({
+        "supported": shell_export.supported,
+        "artifacts": shell_artifact_names,
+        "failureCount": shell_failure_count,
+    });
+
     let outcome = if failures.is_empty() {
         "complete"
     } else {
@@ -270,6 +300,7 @@ pub async fn generate_diagnostic_bundle(
             "maxBytesTotal": MAX_LOG_TOTAL_BYTES
         },
         "logs": log_manifest,
+        "windowsShell": shell_summary,
         "attachments": attachment_collection.summary,
     });
     entries.push(json_entry("manifest.json", &manifest)?);
