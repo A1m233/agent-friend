@@ -3,8 +3,8 @@
 
 设计要点(详见 design.md §3.5):
 
-- **SDK 自带独立 daemon thread + 自动重连 + 心跳 + Resume**:adapter 只提供
-  callbacks,**不自己写重连**。
+- **SDK 自带独立 daemon thread + 连接后的自动重连 + 心跳 + Resume**:adapter 负责
+  首次 READY / RESUMED 前的 bootstrap 自愈；连接建立后交回 SDK 管理。
 - **Resume token 落简单 json 文件**:SDK 通过 ``WSCallbacks.get_session`` /
   ``set_session`` 读写,我们提供 ``<resume_base_dir>/qq_<bind_id_hash>.json``。
 - **错误码兜底**:``post_c2c_message`` 返回 dict 里查 ``code``,非零仅 log warning
@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -69,6 +70,10 @@ _RESUME_FILE_PREFIX = "qq_"
 
 _CAPABILITY_REPROBE_AFTER = timedelta(hours=24)
 _QQ_REUSABLE_CLICK_LIMIT = 1000
+_BOOTSTRAP_RETRY_DELAYS = (2.0, 5.0, 10.0, 30.0, 60.0)
+_BOOTSTRAP_RETRY_JITTER = 0.2
+_BOOTSTRAP_READY_TIMEOUT_SECONDS = 30.0
+_TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
 
 
 class _QQInlineKeyboard(InlineKeyboard):
@@ -132,7 +137,10 @@ class QQAdapter:
         self._api: QQApiClient | None = None
         self._http_client: httpx.AsyncClient | None = None
         self._ws: QQWebSocket | None = None
+        self._ws_generation: object | None = None
         self._startup_task: asyncio.Task[None] | None = None
+        self._startup_loop: asyncio.AbstractEventLoop | None = None
+        self._startup_signal: asyncio.Event | None = None
         self._parser = EventParser()
         self._on_inbound: Callable[[InboundEvent], Awaitable[None]] | None = None
         self._on_interaction: Callable[[InboundInteraction], Awaitable[None]] | None = None
@@ -168,44 +176,117 @@ class QQAdapter:
         )
         self._api.setup(self._http_client)
 
-        callbacks = WSCallbacks(
-            on_message_event=self._on_message,
-            on_connected=self._on_connected,
-            on_disconnected=self._on_disconnected,
-            on_fatal_error=self._on_fatal_error,
-            get_token=self._api.ensure_token_sync,
-            get_session=self._load_resume_token,
-            set_session=self._save_resume_token,
-            set_heartbeat_interval=self._set_heartbeat_interval,
-            clear_token=self._api.clear_token,
-            fail_pending=self._fail_pending,
-            get_gateway_url=self._api.get_gateway_url_sync,
-            on_interaction_event=self._on_interaction_event,
-        )
-        self._ws = QQWebSocket(callbacks=callbacks, log_tag=f"QQBot:{self.bind_id[:8]}")
-
         main_loop = asyncio.get_running_loop()
-        self._startup_task = main_loop.create_task(self._start_websocket(main_loop))
+        self._startup_loop = main_loop
+        self._set_status("degraded")
+        self._startup_task = main_loop.create_task(self._start_websocket(main_loop, self._api))
 
-    async def _start_websocket(self, main_loop: asyncio.AbstractEventLoop) -> None:
-        api = self._api
-        ws = self._ws
-        if api is None or ws is None:
-            return
+    async def _start_websocket(
+        self,
+        main_loop: asyncio.AbstractEventLoop,
+        api: QQApiClient,
+    ) -> None:
+        attempt = 0
         try:
-            gateway_url = await asyncio.to_thread(api.get_gateway_url_sync)
-            # stop() may have invalidated this generation while the blocking HTTP call ran.
-            if self._api is not api or self._ws is not ws:
-                return
-            ws.start(gateway_url, main_loop)
+            while self._api is api:
+                signal = asyncio.Event()
+                self._startup_signal = signal
+                ws: QQWebSocket | None = None
+                generation: object | None = None
+                try:
+                    gateway_url = await asyncio.to_thread(api.get_gateway_url_sync)
+                    if self._api is not api:
+                        return
+
+                    generation = object()
+                    callbacks = self._make_ws_callbacks(api, generation)
+                    ws = QQWebSocket(
+                        callbacks=callbacks,
+                        log_tag=f"QQBot:{self.bind_id[:8]}",
+                    )
+                    self._ws_generation = generation
+                    self._ws = ws
+                    ws.start(gateway_url, main_loop)
+                    await asyncio.wait_for(
+                        signal.wait(),
+                        timeout=_BOOTSTRAP_READY_TIMEOUT_SECONDS,
+                    )
+                    if (
+                        self._api is not api
+                        or self._ws is not ws
+                        or self._ws_generation is not generation
+                    ):
+                        return
+                    if self.status() in {"active", "error"}:
+                        return
+                    raise TimeoutError("QQ websocket bootstrap ended without a terminal status")
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if self._api is not api:
+                        return
+                    if _is_permanent_bootstrap_error(exc):
+                        if ws is not None and generation is not None:
+                            await self._stop_bootstrap_attempt(ws, generation)
+                        self._set_status("error")
+                        logger.error(
+                            "QQ gateway startup failed permanently (bind=%s)",
+                            self.bind_id,
+                            exc_info=True,
+                        )
+                        return
+
+                    if ws is not None and generation is not None:
+                        await self._stop_bootstrap_attempt(ws, generation)
+                    delay = _bootstrap_retry_delay(attempt)
+                    attempt += 1
+                    self._set_status("degraded")
+                    logger.warning(
+                        "QQ gateway startup transient failure; retrying "
+                        "(bind=%s, attempt=%d, retry_in=%.1fs, error=%s)",
+                        self.bind_id,
+                        attempt,
+                        delay,
+                        type(exc).__name__,
+                        exc_info=attempt == 1,
+                    )
+                    await asyncio.sleep(delay)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self._set_status("error")
-            logger.exception("QQ gateway startup failed (bind=%s)", self.bind_id)
         finally:
             if self._startup_task is asyncio.current_task():
                 self._startup_task = None
+                self._startup_signal = None
+                self._startup_loop = None
+
+    def _make_ws_callbacks(self, api: QQApiClient, generation: object) -> WSCallbacks:
+        return WSCallbacks(
+            on_message_event=self._on_message,
+            on_connected=lambda: self._on_connected(generation),
+            on_disconnected=lambda: self._on_disconnected(generation),
+            on_fatal_error=lambda code, message: self._on_fatal_error(generation, code, message),
+            get_token=api.ensure_token_sync,
+            get_session=self._load_resume_token,
+            set_session=self._save_resume_token,
+            set_heartbeat_interval=self._set_heartbeat_interval,
+            clear_token=api.clear_token,
+            fail_pending=self._fail_pending,
+            get_gateway_url=api.get_gateway_url_sync,
+            on_interaction_event=self._on_interaction_event,
+        )
+
+    async def _stop_bootstrap_attempt(self, ws: QQWebSocket, generation: object) -> None:
+        if self._ws is ws and self._ws_generation is generation:
+            self._ws = None
+            self._ws_generation = None
+        try:
+            await ws.async_stop()
+        except Exception:
+            logger.warning(
+                "QQ bootstrap websocket cleanup failed (bind=%s)",
+                self.bind_id,
+                exc_info=True,
+            )
 
     async def send(self, content: OutboundContent) -> OutboundSendResult:
         """回写一条 c2c 文本消息给 QQ 平台。
@@ -358,6 +439,7 @@ class QQAdapter:
 
         ws = self._ws
         self._ws = None
+        self._ws_generation = None
         if ws is not None:
             try:
                 await ws.async_stop()
@@ -484,17 +566,38 @@ class QQAdapter:
             )
         )
 
-    def _on_connected(self) -> None:
+    def _on_connected(self, generation: object) -> None:
+        if self._ws_generation is not generation:
+            logger.debug("stale QQ connected callback ignored (bind=%s)", self.bind_id)
+            return
         logger.info("QQ ws connected (bind=%s)", self.bind_id)
         self._set_status("active")
+        self._notify_startup_waiter()
 
-    def _on_disconnected(self) -> None:
+    def _on_disconnected(self, generation: object) -> None:
+        if self._ws_generation is not generation:
+            logger.debug("stale QQ disconnected callback ignored (bind=%s)", self.bind_id)
+            return
         logger.warning("QQ ws disconnected (bind=%s)", self.bind_id)
         self._set_status("degraded")
 
-    def _on_fatal_error(self, code: str, message: str) -> None:
+    def _on_fatal_error(self, generation: object, code: str, message: str) -> None:
+        if self._ws_generation is not generation:
+            logger.debug("stale QQ fatal callback ignored (bind=%s)", self.bind_id)
+            return
         logger.error("QQ ws fatal: %s %s (bind=%s)", code, message, self.bind_id)
         self._set_status("error")
+        self._notify_startup_waiter()
+
+    def _notify_startup_waiter(self) -> None:
+        loop = self._startup_loop
+        signal = self._startup_signal
+        if loop is None or signal is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(signal.set)
+        except RuntimeError:
+            logger.debug("QQ startup waiter loop already closed (bind=%s)", self.bind_id)
 
     def _set_heartbeat_interval(self, seconds: float) -> None:
         """SDK 协商完心跳间隔后调用;v1 我们只存值供调试,不主动驱动心跳(SDK 自管)。"""
@@ -608,6 +711,27 @@ class QQAdapter:
 
 def _text_len(value: object) -> int:
     return len(value) if isinstance(value, str) else 0
+
+
+def _bootstrap_retry_delay(attempt: int) -> float:
+    base = _BOOTSTRAP_RETRY_DELAYS[min(attempt, len(_BOOTSTRAP_RETRY_DELAYS) - 1)]
+    return base * random.uniform(
+        1.0 - _BOOTSTRAP_RETRY_JITTER,
+        1.0 + _BOOTSTRAP_RETRY_JITTER,
+    )
+
+
+def _is_permanent_bootstrap_error(exc: BaseException) -> bool:
+    """Only terminal HTTP client errors stop desired-online bootstrap retries."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError):
+            status_code = current.response.status_code
+            return 400 <= status_code < 500 and status_code not in _TRANSIENT_HTTP_STATUS_CODES
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _response_message_id(response: object) -> str:
