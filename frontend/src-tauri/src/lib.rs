@@ -622,6 +622,10 @@ fn show_and_focus(app: &tauri::AppHandle, label: &'static str) -> Result<(), Str
     Ok(())
 }
 
+fn should_focus_existing_instance(args: &[String]) -> bool {
+    !args.iter().any(|arg| arg == "--autostart")
+}
+
 #[tauri::command]
 fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
     show_and_focus(&app, "chat")
@@ -900,7 +904,22 @@ pub fn run() {
     let setup_settings_state = settings_state.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
 
-    let builder = tauri::Builder::default()
+    // Tauri requires the single-instance plugin to be registered first. This keeps a second
+    // desktop shell from borrowing the first instance's fixed runtime ports and then becoming
+    // ownerless when the original process exits.
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if should_focus_existing_instance(&args) {
+            log::info!("second instance launch received; focusing chat window");
+            if let Err(error) = show_and_focus(app, "chat") {
+                log::warn!("second instance focus failed: {error}");
+            }
+        } else {
+            log::info!("duplicate autostart launch ignored");
+        }
+    }));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .manage(bubble_window::BubbleState::default())
         .manage(PetOverlayState::default())
@@ -1344,6 +1363,22 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_second_instance_focuses_existing_chat() {
+        assert!(should_focus_existing_instance(&[
+            "agent-friend".to_string(),
+            "agent://open".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn duplicate_autostart_does_not_surface_chat() {
+        assert!(!should_focus_existing_instance(&[
+            "agent-friend".to_string(),
+            "--autostart".to_string(),
+        ]));
+    }
 
     #[test]
     fn voice_launch_state_consumes_pending_start_once() {
