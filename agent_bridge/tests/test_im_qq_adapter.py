@@ -7,6 +7,7 @@
 
 - mock QQWebSocket + QQApiClient,验证 start 调用顺序(setup → get_gateway_url_sync
   → ws.start)
+- 首次 token/gateway/READY 暂态故障退避自愈;明确 4xx 鉴权错误停止重试
 - WSCallbacks.on_connected → status active;on_disconnected → degraded;
   on_fatal_error → error
 - _on_message 调用 EventParser.parse → 仅 chat_scope=="c2c" 转发(group/guild 不转发)
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from agent_bridge.protocols.im.adapters.qq import QQAdapter
 from agent_bridge.protocols.im.content import OutboundAction, OutboundContent, OutboundControls
@@ -127,6 +129,12 @@ async def test_start_setup_and_gateway_then_ws_start(adapter: QQAdapter, resume_
     mock_api.get_gateway_url_sync.return_value = "wss://api.sgroup.qq.com/websocket"
     mock_ws = MagicMock()
 
+    def mark_connected(*_args: Any, **_kwargs: Any) -> None:
+        callbacks = ws_cls.call_args.kwargs["callbacks"]
+        callbacks.on_connected()
+
+    mock_ws.start.side_effect = mark_connected
+
     with (
         patch(
             "agent_bridge.protocols.im.adapters.qq.QQApiClient", return_value=mock_api
@@ -168,7 +176,11 @@ async def test_on_connected_sets_status_active(adapter: QQAdapter) -> None:
 
     def grab_callbacks(*_args: Any, **kwargs: Any) -> MagicMock:
         captured["callbacks"] = kwargs.get("callbacks")
-        return MagicMock()
+        mock_ws = MagicMock()
+        mock_ws.start.side_effect = lambda *_start_args, **_start_kwargs: captured[
+            "callbacks"
+        ].on_connected()
+        return mock_ws
 
     with (
         patch(
@@ -184,12 +196,124 @@ async def test_on_connected_sets_status_active(adapter: QQAdapter) -> None:
         await startup_task
 
     cbs = captured["callbacks"]
-    cbs.on_connected()
     assert adapter.status() == "active"
     cbs.on_disconnected()
     assert adapter.status() == "degraded"
     cbs.on_fatal_error("4914", "Bot is locked")
     assert adapter.status() == "error"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_retries_transient_gateway_failure_until_active(
+    adapter: QQAdapter,
+) -> None:
+    mock_api = MagicMock()
+    mock_api.get_gateway_url_sync.side_effect = [
+        httpx.ConnectError("proxy is not ready"),
+        "wss://api.sgroup.qq.com/websocket",
+    ]
+    mock_ws = MagicMock()
+
+    def make_ws(*_args: Any, **kwargs: Any) -> MagicMock:
+        callbacks = kwargs["callbacks"]
+        mock_ws.start.side_effect = lambda *_start_args, **_start_kwargs: callbacks.on_connected()
+        return mock_ws
+
+    with (
+        patch("agent_bridge.protocols.im.adapters.qq.QQApiClient", return_value=mock_api),
+        patch("agent_bridge.protocols.im.adapters.qq.QQWebSocket", side_effect=make_ws),
+        patch("agent_bridge.protocols.im.adapters.qq.httpx.AsyncClient"),
+        patch(
+            "agent_bridge.protocols.im.adapters.qq._bootstrap_retry_delay",
+            return_value=0,
+        ) as retry_delay,
+        patch("agent_bridge.protocols.im.adapters.qq.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        adapter.start(on_inbound=AsyncMock())
+        startup_task = adapter._startup_task
+        assert startup_task is not None
+        await startup_task
+
+    assert mock_api.get_gateway_url_sync.call_count == 2
+    retry_delay.assert_called_once_with(0)
+    mock_ws.start.assert_called_once()
+    assert adapter.status() == "active"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_stops_retrying_on_permanent_http_client_error(
+    adapter: QQAdapter,
+) -> None:
+    request = httpx.Request("POST", "https://bots.qq.com/app/getAppAccessToken")
+    response = httpx.Response(401, request=request)
+    status_error = httpx.HTTPStatusError(
+        "invalid credentials",
+        request=request,
+        response=response,
+    )
+    wrapped_error = RuntimeError("Failed to get QQ Bot access token")
+    wrapped_error.__cause__ = status_error
+    mock_api = MagicMock()
+    mock_api.get_gateway_url_sync.side_effect = wrapped_error
+
+    with (
+        patch("agent_bridge.protocols.im.adapters.qq.QQApiClient", return_value=mock_api),
+        patch("agent_bridge.protocols.im.adapters.qq.QQWebSocket") as ws_cls,
+        patch("agent_bridge.protocols.im.adapters.qq.httpx.AsyncClient"),
+        patch(
+            "agent_bridge.protocols.im.adapters.qq.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        adapter.start(on_inbound=AsyncMock())
+        startup_task = adapter._startup_task
+        assert startup_task is not None
+        await startup_task
+
+    mock_api.get_gateway_url_sync.assert_called_once()
+    ws_cls.assert_not_called()
+    sleep.assert_not_awaited()
+    assert adapter.status() == "error"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_rebuilds_websocket_when_first_ready_times_out(
+    adapter: QQAdapter,
+) -> None:
+    mock_api = MagicMock()
+    mock_api.get_gateway_url_sync.return_value = "wss://api.sgroup.qq.com/websocket"
+    first_ws = MagicMock()
+    first_ws.async_stop = AsyncMock()
+    second_ws = MagicMock()
+    second_ws.async_stop = AsyncMock()
+    callbacks_by_attempt: list[Any] = []
+
+    def make_ws(*_args: Any, **kwargs: Any) -> MagicMock:
+        callbacks = kwargs["callbacks"]
+        callbacks_by_attempt.append(callbacks)
+        if ws_cls.call_count == 1:
+            return first_ws
+        second_ws.start.side_effect = lambda *_start_args, **_start_kwargs: callbacks.on_connected()
+        return second_ws
+
+    with (
+        patch("agent_bridge.protocols.im.adapters.qq.QQApiClient", return_value=mock_api),
+        patch("agent_bridge.protocols.im.adapters.qq.QQWebSocket", side_effect=make_ws) as ws_cls,
+        patch("agent_bridge.protocols.im.adapters.qq.httpx.AsyncClient"),
+        patch("agent_bridge.protocols.im.adapters.qq._BOOTSTRAP_READY_TIMEOUT_SECONDS", 0.05),
+        patch("agent_bridge.protocols.im.adapters.qq._bootstrap_retry_delay", return_value=0),
+        patch("agent_bridge.protocols.im.adapters.qq.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        adapter.start(on_inbound=AsyncMock())
+        startup_task = adapter._startup_task
+        assert startup_task is not None
+        await startup_task
+
+    assert ws_cls.call_count == 2
+    first_ws.async_stop.assert_awaited_once()
+    second_ws.start.assert_called_once()
+    assert adapter.status() == "active"
+    callbacks_by_attempt[0].on_fatal_error("4914", "stale connection")
+    assert adapter.status() == "active"
 
 
 # ---------- _on_message chat_scope filter ----------
