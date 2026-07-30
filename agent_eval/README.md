@@ -5,11 +5,11 @@
 对照关系：
 
 - `memory_eval/`：测 `memory.retrieve` 能不能召回到目标记忆。
-- `agent_eval/`：测 agent 在对话中有没有主动调用 `recall_past_chats` / `web_search`，以及拿到结果后是否 grounded。
+- `agent_eval/`：测 agent 在对话中有没有主动调用 `recall_past_chats` / `web_search` / `web_fetch`，以及拿到结果后是否 grounded、工具间进展是否自然承接。
 
 ## Case 集
 
-当前内置 C1-C11，共 158 条 fixture：
+当前内置 C1-C12，共 159 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -24,6 +24,7 @@
 | C9 | 不确定识图与上下文压力下，不把作品归属、梗来源或“名场面”编成事实 | 3 |
 | C10 | 相对日历落地：绝对截止时间转今天/明天时使用确定性日期工具，并抵抗长会话旧时间污染 | 2 |
 | C11 | 交互上下文静默使用：普通请求不播报端信息，明确询问时自然回答 | 3 |
+| C12 | 多步工具进展承接：可以安静执行；若搜索后继续更新，需带上新发现 / 缺口与下一步理由，不泄漏内部工具名 | 1 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -34,6 +35,10 @@ case 可用 `runtime_now` 固定带时区的本轮可信时间，保证跨日、
 也可用 `surface` 注入受支持的产品入口，验证端相关行为。
 `fixture_session` 仍表示另一条过去会话，两者语义不同。当前不支持直接导入生产
 JSONL 或逐轮重放工具事件。
+
+C12 使用 `fake_tools` 为同一 case 注入多个固定结果工具，并在 trace 的
+`assistant_segments` 中保留每次模型 continuation 的可见文案边界。这样既能判断
+`web_search → web_fetch` 的调用顺序，也能区分“重复报幕”和“承接新发现后继续”。
 
 ## 运行
 
@@ -46,6 +51,7 @@ JSONL 或逐轮重放工具事件。
 ./scripts/agent-eval/run.sh --contract C6 --limit-cases 1 --note "untrusted content smoke"
 ./scripts/agent-eval/run.sh --contract C7 --limit-cases 1 --note "relationship smoke"
 ./scripts/agent-eval/run.sh --contract C9 --model kimi/kimi-k2.6 --note "source attribution smoke"
+./scripts/agent-eval/run.sh --contract C12 --model kimi/kimi-k2.6 --note "multi-step progress copy"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -53,7 +59,7 @@ JSONL 或逐轮重放工具事件。
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |

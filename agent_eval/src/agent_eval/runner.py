@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 from uuid import uuid4
 
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
+from agent.tools.builtin.web_fetch import WebFetchTool
+from agent.tools.builtin.web_search import WebSearchTool
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -49,22 +52,52 @@ from .schema import (
 ResolveAttachments = Callable[[list[FixtureAttachment]], list[AttachmentRef]]
 
 
+@dataclass
+class _AssistantTextTrace:
+    """Collect visible text while preserving model-continuation boundaries."""
+
+    all_chunks: list[str] = field(default_factory=list)
+    current_chunks: list[str] = field(default_factory=list)
+    segments: list[str] = field(default_factory=list)
+
+    def add(self, text: str) -> None:
+        self.all_chunks.append(text)
+        self.current_chunks.append(text)
+
+    def boundary(self) -> None:
+        segment = "".join(self.current_chunks).strip()
+        if segment:
+            self.segments.append(segment)
+        self.current_chunks.clear()
+
+    @property
+    def final_text(self) -> str:
+        return "".join(self.all_chunks)
+
+
 class _FixtureTool:
     """agent_eval case 专用固定结果工具。"""
 
-    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
-
     def __init__(self, fixture: FakeTool) -> None:
         self.name = fixture.name
-        self.description = (
-            "搜索互联网获取实时或可能变化的信息。用户要求搜索或询问时效信息时使用。"
-            if fixture.name == "web_search"
-            else "读取完成当前请求所需的数据。"
-        )
+        if fixture.name == "web_search":
+            self.description = WebSearchTool.description
+            self.parameters_schema = WebSearchTool.parameters_schema
+        elif fixture.name == "web_fetch":
+            self.description = WebFetchTool.description
+            self.parameters_schema = WebFetchTool.parameters_schema
+        else:
+            self.description = "读取完成当前请求所需的数据。"
+            self.parameters_schema = {"type": "object", "properties": {}}
         self._fixture = fixture
 
     def invoke(self, _args: dict[str, Any]) -> ToolResult:
-        return ToolResult(text=self._fixture.result_text, is_error=self._fixture.is_error)
+        meta = {"source_urls": self._fixture.source_urls} if self._fixture.source_urls else {}
+        return ToolResult(
+            text=self._fixture.result_text,
+            is_error=self._fixture.is_error,
+            meta=meta,
+        )
 
 
 def _build_manager(
@@ -72,7 +105,7 @@ def _build_manager(
     spec: ProviderSpec,
     *,
     tavily_api_key: str | None = None,
-    fake_tool: FakeTool | None = None,
+    fake_tools: list[FakeTool] | None = None,
     attachment_store: AttachmentStore | None = None,
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
@@ -91,9 +124,10 @@ def _build_manager(
         session_catalog=session_catalog,
         stderr_warn=False,
     )
-    if fake_tool is not None:
-        tools = [tool for tool in registry.all_tools() if tool.name != fake_tool.name]
-        tools.append(cast(Any, _FixtureTool(fake_tool)))
+    if fake_tools:
+        fixture_names = {fixture.name for fixture in fake_tools}
+        tools = [tool for tool in registry.all_tools() if tool.name not in fixture_names]
+        tools.extend(cast(Any, _FixtureTool(fixture)) for fixture in fake_tools)
         registry = ToolRegistry(tools)
 
     return SessionManager(
@@ -226,7 +260,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 store,
                 spec,
                 tavily_api_key=tavily_api_key,
-                fake_tool=case.fake_tool,
+                fake_tools=case.fake_tools,
                 attachment_store=attachment_store,
             )
             session = manager.create(
@@ -251,7 +285,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
 
             tool_requests: dict[str, ToolCallRequest] = {}
             tool_calls: list[ToolCallTrace] = []
-            text_buf: list[str] = []
+            assistant_text = _AssistantTextTrace()
             stop_reason = "unknown"
 
             for event in conversation.stream(
@@ -260,6 +294,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 surface=InteractionSurfaceId(case.surface) if case.surface is not None else None,
             ):
                 if isinstance(event, ToolCallRequest):
+                    assistant_text.boundary()
                     tool_requests[event.tool_call_id] = event
                 elif isinstance(event, ToolCallResult):
                     request = tool_requests.pop(event.tool_call_id, None)
@@ -273,9 +308,11 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                         )
                     )
                 elif isinstance(event, TextDelta):
-                    text_buf.append(event.text)
+                    assistant_text.add(event.text)
                 elif isinstance(event, TurnDone):
                     stop_reason = event.stop_reason
+
+            assistant_text.boundary()
 
             for request in tool_requests.values():
                 tool_calls.append(
@@ -291,8 +328,9 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             return Trace(
                 case_id=case.id,
                 tool_calls=tool_calls,
-                final_text="".join(text_buf),
+                final_text=assistant_text.final_text,
                 stop_reason=stop_reason,
+                assistant_segments=assistant_text.segments,
             )
     except Exception as exc:
         return Trace(
@@ -300,5 +338,6 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             tool_calls=[],
             final_text="",
             stop_reason="error",
+            assistant_segments=[],
             error=f"{type(exc).__name__}: {exc}",
         )

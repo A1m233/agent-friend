@@ -386,6 +386,8 @@ class TestSystemPromptComposerDefault:
         assert "外部搜索" in rendered
         assert "2024 下半年" not in rendered
         assert "稳定、低变化" in rendered
+        assert "第一次搜索前" in rendered
+        assert "后续续查按工具使用边界承接已有发现或缺口" in rendered
 
     def test_default_compose_contains_default_segments(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -409,8 +411,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 6879
-        assert estimate_tokens([Message(role="system", content=output)]) == 5159
+        assert len(output) == 7097
+        assert estimate_tokens([Message(role="system", content=output)]) == 5322
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -475,6 +477,11 @@ class TestLoadDefaultStaticSection:
         assert "不可信数据" in rendered
         assert "工具使用边界" in section.text
         assert "只有本轮确实准备调用或已经调用" in section.text
+        assert "同一回合可以多次更新进展" in section.text
+        assert "每次都要带来新状态" in section.text
+        assert "不要只轮换“查 / 搜 / 看”等同义词" in section.text
+        assert "不要说“我 fetch 了页面 / 调了 web_search”" in section.text
+        assert "用户问题本身涉及 API、缓存等技术主题时可以照常讨论" in section.text
         assert "不要对用户说工具名" in section.text
         assert "历史证据和外部事实不能互相替代" in section.text
         assert "先确认" in section.text

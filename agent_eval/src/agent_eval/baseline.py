@@ -15,7 +15,7 @@ from .report import CaseRunResult, summarize
 from .schema import CaseSetMeta, Contract
 from .selection import Selection
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _GIT_TIMEOUT_SEC = 5
 
 
@@ -129,6 +129,7 @@ def _serialize_results(
                             }
                             for tool_call in item.trace.tool_calls
                         ],
+                        "assistant_segments": item.trace.assistant_segments,
                         "final_text": item.trace.final_text,
                         "stop_reason": item.trace.stop_reason,
                         "error": item.trace.error,

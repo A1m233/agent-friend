@@ -1,0 +1,158 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T14:51:37.297973+00:00",
+    "ended_at": "2026-07-30T14:52:50.957314+00:00",
+    "duration_seconds": 73.659,
+    "git_commit": "7505c41",
+    "working_tree_dirty": true,
+    "note": "natural multi-step progress live validation",
+    "selection": {
+      "contract": "C12",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "100f612e4b6e2ca56ecf77211da76165e13a76732e6c832bfc8783e49dc6ce11",
+      "total_contracts": 12,
+      "total_cases": 159,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C12": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C12",
+      "name": "multi-step-progress-continuity",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C12-01",
+          "query": "看看 Kimi API 的 prompt cache 有效期",
+          "facet": "搜索摘要不足后打开官方原文 · 中间进展应承接缺口",
+          "source": "prod-diagnostic-20260730-generalized",
+          "surface": "im:qq",
+          "passed": false,
+          "reason": "progress continuity missing: expected intent, result-aware continuation, and final answer segments; got 1",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {
+                "query": "Kimi API prompt cache 有效期 2026"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.01600000000325963
+            },
+            {
+              "name": "web_fetch",
+              "args": {
+                "url": "https://platform.moonshot.cn/blog/posts/context-caching",
+                "focus": "prompt cache 有效期 TTL 默认时长"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n  \"final_url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"官方原文的创建示例返回 expired_at，但没有声明默认 TTL。另一段示例通过 X-Msh-Context-Cache-Reset-TTL: 3600 重置缓存有效期，示例值为 3600 秒（1 小时）。不能把这个示例值当成官方默认值。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "Kimi API context cache TTL 默认 有效时间 moonshot 2026"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "moonshot Kimi API context caching 默认有效期 官方文档"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "Kimi API Context Caching 默认缓存时间 官方文档 moonshot"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "site:platform.moonshot.cn context caching TTL expired_at 默认"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "moonshot Kimi API 上下文缓存 有效时间 多久"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"Kimi API prompt cache TTL 有效期 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"title\": \"Kimi Context Caching 官方介绍\",\n      \"url\": \"https://platform.moonshot.cn/blog/posts/context-caching\",\n      \"snippet\": \"搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我查了一下 Kimi 官方关于 Context Caching（Prompt Cache）的文档，目前**没有找到官方明确公布的默认有效期数值**。\n\n能确认的是：\n\n- 创建缓存后，接口会返回一个 `expired_at` 字段，表示该缓存的具体过期时间点。\n- 官方示例里展示了用 `X-Msh-Context-Cache-Reset-TTL: 3600` 来重置缓存有效期，这里的 3600 是秒，也就是 1 小时——但这是示例值，**不能确定这就是默认有效期**，也可能只是演示用法。\n\n如果你需要确切的默认 TTL，建议直接查看 Kimi 开放平台最新的 API 文档，或者确认一下创建缓存后返回的 `expired_at` 和当前时间的差值，那个就是实际给你的有效期。\n\n需要我帮你找找其他方面的使用细节吗？"
+          ],
+          "final_text": "我查了一下 Kimi 官方关于 Context Caching（Prompt Cache）的文档，目前**没有找到官方明确公布的默认有效期数值**。\n\n能确认的是：\n\n- 创建缓存后，接口会返回一个 `expired_at` 字段，表示该缓存的具体过期时间点。\n- 官方示例里展示了用 `X-Msh-Context-Cache-Reset-TTL: 3600` 来重置缓存有效期，这里的 3600 是秒，也就是 1 小时——但这是示例值，**不能确定这就是默认有效期**，也可能只是演示用法。\n\n如果你需要确切的默认 TTL，建议直接查看 Kimi 开放平台最新的 API 文档，或者确认一下创建缓存后返回的 `expired_at` 和当前时间的差值，那个就是实际给你的有效期。\n\n需要我帮你找找其他方面的使用细节吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

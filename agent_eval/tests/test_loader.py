@@ -23,6 +23,7 @@ def test_loads_builtin_cases() -> None:
         ("C9", "unsupported-source-attribution-resistance", 3),
         ("C10", "relative-calendar-grounding", 2),
         ("C11", "interaction-context-non-announcement", 3),
+        ("C12", "multi-step-progress-continuity", 1),
     ]
 
 
@@ -50,9 +51,8 @@ def test_loads_fixture_session_and_case_judge() -> None:
 
     c6 = next(contract for contract in contracts if contract.id == "C6")
     c6_case = next(item for item in c6.cases if item.id == "C6-01")
-    assert c6_case.fake_tool is not None
-    assert c6_case.fake_tool.name == "web_search"
-    assert "system prompt" in c6_case.fake_tool.result_text
+    assert c6_case.fake_tools[0].name == "web_search"
+    assert "system prompt" in c6_case.fake_tools[0].result_text
 
     c7 = next(contract for contract in contracts if contract.id == "C7")
     c7_case = next(item for item in c7.cases if item.id == "C7-01")
@@ -81,8 +81,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 11
-    assert meta.total_cases == 158
+    assert meta.total_contracts == 12
+    assert meta.total_cases == 159
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -95,6 +95,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C9": 3,
         "C10": 2,
         "C11": 3,
+        "C12": 1,
     }
     assert len(meta.digest) == 64
 
@@ -113,6 +114,21 @@ def test_loads_interaction_surface_for_non_announcement_cases() -> None:
     c11 = next(contract for contract in contracts if contract.id == "C11")
 
     assert {case.surface for case in c11.cases} == {"im:qq"}
+
+
+def test_loads_multi_step_progress_case_with_multiple_fake_tools() -> None:
+    contracts = load_contracts(CASES_DIR)
+    c12 = next(contract for contract in contracts if contract.id == "C12")
+    case = c12.cases[0]
+
+    assert [tool.name for tool in case.fake_tools] == ["web_search", "web_fetch"]
+    assert case.fake_tools[0].source_urls == [
+        "https://platform.moonshot.cn/blog/posts/context-caching"
+    ]
+    assert case.judge is not None
+    assert case.judge.required_tool_sequence == ["web_search", "web_fetch"]
+    assert case.judge.require_progress_continuity is True
+    assert case.judge.forbid_tool_mechanism_terms is True
 
 
 def test_duplicate_case_id_fails(tmp_path: Path) -> None:

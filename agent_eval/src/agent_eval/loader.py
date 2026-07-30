@@ -196,7 +196,27 @@ def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
         name=_required_str(data, "name", label=label),
         result_text=_required_str(data, "result_text", label=label),
         is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
+        source_urls=_str_list(data.get("source_urls"), label=f"{label}.source_urls"),
     )
+
+
+def _parse_fake_tools(raw: Any, *, legacy_raw: Any, label: str) -> list[FakeTool]:
+    if raw is not None and legacy_raw is not None:
+        raise ValueError(f"{label} 不能同时配置 fake_tool 与 fake_tools")
+    if raw is None:
+        legacy = _parse_fake_tool(legacy_raw, label=f"{label}.fake_tool")
+        return [legacy] if legacy is not None else []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{label}.fake_tools 必须是非空 list")
+    tools = [
+        _parse_fake_tool(item, label=f"{label}.fake_tools[{index}]")
+        for index, item in enumerate(raw)
+    ]
+    parsed = [tool for tool in tools if tool is not None]
+    names = [tool.name for tool in parsed]
+    if len(names) != len(set(names)):
+        raise ValueError(f"{label}.fake_tools 工具名不能重复")
+    return parsed
 
 
 def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
@@ -237,6 +257,18 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         forbid_unsupported_source_attribution=_bool(
             data.get("forbid_unsupported_source_attribution"),
             label=f"{label}.forbid_unsupported_source_attribution",
+        ),
+        required_tool_sequence=_str_list(
+            data.get("required_tool_sequence"),
+            label=f"{label}.required_tool_sequence",
+        ),
+        require_progress_continuity=_bool(
+            data.get("require_progress_continuity"),
+            label=f"{label}.require_progress_continuity",
+        ),
+        forbid_tool_mechanism_terms=_bool(
+            data.get("forbid_tool_mechanism_terms"),
+            label=f"{label}.forbid_tool_mechanism_terms",
         ),
     )
 
@@ -294,9 +326,10 @@ def _load_contract_file(path: Path) -> Contract:
                     label=f"{label}.query_attachments",
                     asset_root=asset_root,
                 ),
-                fake_tool=_parse_fake_tool(
-                    case_data.get("fake_tool"),
-                    label=f"{label}.fake_tool",
+                fake_tools=_parse_fake_tools(
+                    case_data.get("fake_tools"),
+                    legacy_raw=case_data.get("fake_tool"),
+                    label=label,
                 ),
                 judge=_parse_judge(case_data.get("judge"), label=f"{label}.judge"),
             )

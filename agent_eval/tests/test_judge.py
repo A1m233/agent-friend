@@ -27,6 +27,7 @@ def _trace(
     *,
     tool_names: list[str] | None = None,
     final_text: str = "",
+    assistant_segments: list[str] | None = None,
     error: str | None = None,
 ) -> Trace:
     calls = [
@@ -38,6 +39,7 @@ def _trace(
         tool_calls=calls,
         final_text=final_text,
         stop_reason="end_turn",
+        assistant_segments=assistant_segments or [],
         error=error,
     )
 
@@ -137,6 +139,112 @@ def test_case_level_can_forbid_follow_up_question() -> None:
     verdict = judge_case(case, contract, _trace(final_text="发生什么好事了？"))
     assert verdict.passed is False
     assert "follow-up question" in verdict.reason
+
+
+def test_multi_step_progress_requires_ordered_tools_and_result_aware_continuation() -> None:
+    case = _case(
+        CaseJudge(
+            required_tool_sequence=["web_search", "web_fetch"],
+            require_non_empty_response=True,
+            require_progress_continuity=True,
+            forbid_tool_mechanism_terms=True,
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    natural_segments = [
+        "我先看看 Kimi 官方怎么写的。",
+        "找到相关博客了，不过摘要里没有默认 TTL；我再打开原文确认一下。",
+        "看完了：官方没有声明默认 TTL，示例值是 3600 秒。",
+    ]
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["web_search", "web_fetch"],
+            final_text="".join(natural_segments),
+            assistant_segments=natural_segments,
+        ),
+    )
+
+    assert verdict.passed is True
+
+
+def test_multi_step_progress_rejects_reset_style_middle_update() -> None:
+    case = _case(
+        CaseJudge(
+            required_tool_sequence=["web_search", "web_fetch"],
+            require_progress_continuity=True,
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    stiff_segments = [
+        "我查一下 Kimi API 的 prompt cache 有效期。",
+        "我查一下 Kimi 官方文档的原文。",
+        "官方没有声明默认 TTL，示例值是 3600 秒。",
+    ]
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["web_search", "web_fetch"],
+            final_text="".join(stiff_segments),
+            assistant_segments=stiff_segments,
+        ),
+    )
+
+    assert verdict.passed is False
+    assert "does not carry prior result plus next-step reason" in verdict.reason
+
+
+def test_multi_step_progress_rejects_wrong_order_and_tool_terms() -> None:
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    sequence_case = _case(CaseJudge(required_tool_sequence=["web_search", "web_fetch"]))
+    wrong_order = judge_case(
+        sequence_case,
+        contract,
+        _trace(tool_names=["web_fetch", "web_search"], final_text="查完了。"),
+    )
+    assert wrong_order.passed is False
+    assert "missing ordered tool sequence" in wrong_order.reason
+
+    mechanism_case = _case(CaseJudge(forbid_tool_mechanism_terms=True))
+    leaked = judge_case(
+        mechanism_case,
+        contract,
+        _trace(final_text="我 fetch 了官方页面，示例是 3600 秒。"),
+    )
+    assert leaked.passed is False
+    assert "tool mechanism leak" in leaked.reason
+
+
+def test_multi_step_progress_allows_silent_or_single_preamble_tool_execution() -> None:
+    case = _case(CaseJudge(require_progress_continuity=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    silent = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="官方没有声明默认 TTL，示例值是 3600 秒。",
+            assistant_segments=["官方没有声明默认 TTL，示例值是 3600 秒。"],
+        ),
+    )
+    one_preamble = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="我先看看。官方没有声明默认 TTL，示例值是 3600 秒。",
+            assistant_segments=[
+                "我先看看。",
+                "官方没有声明默认 TTL，示例值是 3600 秒。",
+            ],
+        ),
+    )
+
+    assert silent.passed is True
+    assert one_preamble.passed is True
 
 
 def test_case_level_rejects_assertive_source_attribution_but_allows_uncertainty() -> None:

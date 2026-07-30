@@ -35,6 +35,7 @@ def _result() -> CaseRunResult:
         ],
         final_text="我没找到我们之前聊过诺兰。",
         stop_reason="end_turn",
+        assistant_segments=["我翻一下之前聊过的。", "我没找到我们之前聊过诺兰。"],
     )
     verdict = Verdict(case_id=case.id, contract_id="C4", passed=True, reason="grounded")
     return CaseRunResult(case=case, trace=trace, verdict=verdict)
@@ -77,7 +78,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert path.name.startswith("2026-06-25T08-00-00-")
     assert path.name.endswith("-C4-limit1.json")
 
@@ -100,3 +101,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert case["id"] == "C4-07"
     assert case["passed"] is True
     assert case["tool_calls"][0]["args"] == {"search_text": "诺兰"}
+    assert case["assistant_segments"] == [
+        "我翻一下之前聊过的。",
+        "我没找到我们之前聊过诺兰。",
+    ]

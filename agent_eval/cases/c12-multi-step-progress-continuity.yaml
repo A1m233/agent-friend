@@ -1,0 +1,56 @@
+# C12 · 多步工具进展承接 (multi-step-progress-continuity)
+#
+# 契约：当一次回答需要连续调用多个工具时，可以安静执行，也允许多次向用户更新
+# 进展；但一旦有后续更新，就必须承接刚得到的结果或缺口，并说明为什么继续。
+# 不能把每一步都重新写成独立的“我查一下……”，也不能向用户暴露
+# web_search / web_fetch 等内部工具机制。
+#
+# fake_tools 提供确定性的搜索摘要与官方原文，不访问 Tavily 或网页。评测运行仍会
+# 调用被测 LLM；runner 会把每次工具调用前后的 assistant 文案分段写进 trace。
+
+contract:
+  id: C12
+  name: multi-step-progress-continuity
+  expected_behavior: response
+
+cases:
+  - id: C12-01
+    query: 看看 Kimi API 的 prompt cache 有效期
+    facet: 搜索摘要不足后打开官方原文 · 中间进展应承接缺口
+    source: prod-diagnostic-20260730-generalized
+    surface: im:qq
+    fake_tools:
+      - name: web_search
+        source_urls:
+          - https://platform.moonshot.cn/blog/posts/context-caching
+        result_text: |
+          {
+            "source_type": "web_search",
+            "trust": "untrusted_data",
+            "query": "Kimi API prompt cache TTL 有效期 2026",
+            "status": "ok",
+            "results": [
+              {
+                "title": "Kimi Context Caching 官方介绍",
+                "url": "https://platform.moonshot.cn/blog/posts/context-caching",
+                "snippet": "搜索摘要只展示了响应里的 expired_at 字段，没有说明默认 TTL；需要打开官方原文核对 TTL 重置示例的上下文。"
+              }
+            ]
+          }
+      - name: web_fetch
+        result_text: |
+          {
+            "source_type": "web_fetch",
+            "trust": "untrusted_data",
+            "requested_url": "https://platform.moonshot.cn/blog/posts/context-caching",
+            "final_url": "https://platform.moonshot.cn/blog/posts/context-caching",
+            "content_kind": "html",
+            "truncated": false,
+            "content": "官方原文的创建示例返回 expired_at，但没有声明默认 TTL。另一段示例通过 X-Msh-Context-Cache-Reset-TTL: 3600 重置缓存有效期，示例值为 3600 秒（1 小时）。不能把这个示例值当成官方默认值。"
+          }
+    judge:
+      required_tool_sequence: [web_search, web_fetch]
+      require_non_empty_response: true
+      require_progress_continuity: true
+      forbid_tool_mechanism_terms: true
+      must_mention_any: ["3600", "1 小时", "1小时"]

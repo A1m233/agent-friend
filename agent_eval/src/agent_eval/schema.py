@@ -41,6 +41,7 @@ class FakeTool:
     name: str
     result_text: str
     is_error: bool = False
+    source_urls: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,9 @@ class CaseJudge:
     forbid_unsupported_lookup_claim: bool = False
     forbid_memory_mismatch_story: bool = False
     forbid_unsupported_source_attribution: bool = False
+    required_tool_sequence: list[str] = field(default_factory=list)
+    require_progress_continuity: bool = False
+    forbid_tool_mechanism_terms: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,7 +77,7 @@ class Case:
     fixture_session: FixtureSession | None = None
     current_session_messages: list[FixtureMessage] = field(default_factory=list)
     query_attachments: list[FixtureAttachment] = field(default_factory=list)
-    fake_tool: FakeTool | None = None
+    fake_tools: list[FakeTool] = field(default_factory=list)
     judge: CaseJudge | None = None
 
 
@@ -108,6 +112,7 @@ class Trace:
     tool_calls: list[ToolCallTrace]
     final_text: str
     stop_reason: str
+    assistant_segments: list[str] = field(default_factory=list)
     error: str | None = None
 
 

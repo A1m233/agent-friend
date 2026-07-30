@@ -127,6 +127,57 @@ SOURCE_DENIAL_TERMS = (
     "算不上",
 )
 
+TOOL_MECHANISM_TERMS = (
+    "web_search",
+    "web search",
+    "web_fetch",
+    "web fetch",
+    "tool_call",
+    "tool call",
+    "工具调用",
+    "调用工具",
+    "搜索工具",
+    "fetch 了",
+    "fetch了",
+    "我 fetch",
+    "我fetch",
+)
+
+PROGRESS_RESULT_CUES = (
+    "找到",
+    "搜到",
+    "看到",
+    "搜索结果",
+    "结果里",
+    "结果显示",
+    "摘要里",
+    "摘要只",
+    "摘要没有",
+    "页面里",
+    "页面上",
+    "文档里",
+    "原文里",
+)
+
+PROGRESS_TRANSITION_CUES = (
+    "但",
+    "不过",
+    "只是",
+    "还没",
+    "没有",
+    "没写",
+    "没提",
+    "未写",
+    "不够",
+    "所以",
+    "因此",
+    "再",
+    "继续",
+    "需要",
+    "确认",
+    "核对",
+)
+
 
 def judge_case(case: Case, contract: Contract, trace: Trace) -> Verdict:
     """判定单条 case 是否通过。"""
@@ -195,6 +246,18 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             f"missing tool {required_tool} (actual names: {names or 'none'})",
         )
 
+    if spec.required_tool_sequence and not _contains_ordered_subsequence(
+        names,
+        spec.required_tool_sequence,
+    ):
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"missing ordered tool sequence {spec.required_tool_sequence} "
+            f"(actual names: {names or 'none'})",
+        )
+
     if spec.require_non_empty_response and not trace.final_text.strip():
         return Verdict(
             case.id,
@@ -212,6 +275,26 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
         )
 
     text_lc = trace.final_text.lower()
+
+    if spec.forbid_tool_mechanism_terms:
+        mechanism_hit = [term for term in TOOL_MECHANISM_TERMS if term in text_lc]
+        if mechanism_hit:
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                f"tool mechanism leak: {mechanism_hit}",
+            )
+
+    if spec.require_progress_continuity:
+        progress_error = _progress_continuity_error(trace.assistant_segments)
+        if progress_error is not None:
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                progress_error,
+            )
 
     anchor_hit: list[str] = []
     if spec.must_mention_any:
@@ -277,8 +360,38 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
         case.id,
         contract.id,
         True,
-        f"grounded: tool={required_tool} anchors={anchor_hit}",
+        f"grounded: tool={required_tool} sequence={spec.required_tool_sequence} "
+        f"anchors={anchor_hit}",
     )
+
+
+def _contains_ordered_subsequence(actual: list[str], expected: list[str]) -> bool:
+    if not expected:
+        return True
+    next_index = 0
+    for name in actual:
+        if name == expected[next_index]:
+            next_index += 1
+            if next_index == len(expected):
+                return True
+    return False
+
+
+def _progress_continuity_error(assistant_segments: list[str]) -> str | None:
+    segments = [segment.strip() for segment in assistant_segments if segment.strip()]
+    if len(segments) <= 2:
+        return None
+
+    for index, segment in enumerate(segments[1:-1], start=2):
+        result_cues = [cue for cue in PROGRESS_RESULT_CUES if cue in segment]
+        transition_cues = [cue for cue in PROGRESS_TRANSITION_CUES if cue in segment]
+        if not result_cues or not transition_cues:
+            return (
+                f"progress segment {index} does not carry prior result plus next-step reason: "
+                f"result_cues={result_cues}, transition_cues={transition_cues}, "
+                f"text={segment!r}"
+            )
+    return None
 
 
 def _unsupported_lookup_claims(final_text: str, tool_names: list[str]) -> list[str]:

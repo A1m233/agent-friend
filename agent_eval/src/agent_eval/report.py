@@ -56,6 +56,12 @@ def render_failure_details(
         console.print(f"  reason: {item.verdict.reason}")
         names = [tool_call.name for tool_call in item.trace.tool_calls] or "(none)"
         console.print(f"  tool_calls: {names}")
+        if item.trace.assistant_segments:
+            console.print("  assistant_segments:")
+            for index, segment in enumerate(item.trace.assistant_segments, start=1):
+                head = segment[:180].replace("\n", " ")
+                tail = "…" if len(segment) > 180 else ""
+                console.print(f"    {index}. {head}{tail}")
         if item.trace.final_text:
             head = item.trace.final_text[:240].replace("\n", " ")
             tail = "…" if len(item.trace.final_text) > 240 else ""

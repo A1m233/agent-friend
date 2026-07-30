@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_eval.runner import (
+    _AssistantTextTrace,
     _FixtureTool,
     _import_fixture_attachment,
     _inject_current_session_messages,
@@ -28,9 +29,44 @@ def test_fixture_tool_returns_case_local_result_without_external_call() -> None:
     result = tool.invoke({"search_text": "ignored"})
 
     assert tool.name == "web_search"
-    assert "时效信息" in tool.description
+    assert "时效性信息" in tool.description
     assert result.text == '{"trust":"untrusted_data"}'
     assert result.is_error is False
+
+
+def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> None:
+    search = _FixtureTool(
+        FakeTool(
+            name="web_search",
+            result_text="search result",
+            source_urls=["https://example.com/docs"],
+        )
+    )
+    fetch = _FixtureTool(FakeTool(name="web_fetch", result_text="page body"))
+
+    assert search.parameters_schema["required"] == ["query"]
+    assert search.invoke({"query": "q"}).meta["source_urls"] == ["https://example.com/docs"]
+    assert fetch.parameters_schema["required"] == ["url"]
+    assert "官方原文" in fetch.description
+
+
+def test_assistant_text_trace_preserves_tool_continuation_segments() -> None:
+    trace = _AssistantTextTrace()
+
+    trace.add("我先看看")
+    trace.boundary()
+    trace.add("找到官方博客了，")
+    trace.add("不过摘要没写默认值，我再打开原文确认。")
+    trace.boundary()
+    trace.add("原文没有声明默认 TTL，示例值是 3600 秒。")
+    trace.boundary()
+
+    assert trace.segments == [
+        "我先看看",
+        "找到官方博客了，不过摘要没写默认值，我再打开原文确认。",
+        "原文没有声明默认 TTL，示例值是 3600 秒。",
+    ]
+    assert trace.final_text == "".join(trace.segments)
 
 
 def test_inject_current_session_messages_populates_active_session_without_llm(
