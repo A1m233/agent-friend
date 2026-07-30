@@ -1,0 +1,126 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T16:22:44.228305+00:00",
+    "ended_at": "2026-07-30T16:23:28.315737+00:00",
+    "duration_seconds": 44.087,
+    "git_commit": "409a786",
+    "working_tree_dirty": true,
+    "note": "layered image evidence boundary validation 2026-07-31",
+    "selection": {
+      "contract": "C13",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "9f5dbbb0013d95f499700650efc0de3fe5814a0f8b4b77666405a78a79b75c9e",
+      "total_contracts": 13,
+      "total_cases": 162,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.6666666666666666,
+    "by_contract": {
+      "C13": {
+        "total": 3,
+        "passed": 2,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.6666666666666666
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 3,
+      "passed": 2,
+      "failed": 1,
+      "pass_rate": 0.6666666666666666,
+      "cases": [
+        {
+          "id": "C13-01",
+          "query": "只抄出图里能直接看清的文字，不要补充出处、作者或背景。",
+          "facet": "清晰文字转写 · 只报告直接可见内容",
+          "source": "layered-image-evidence-boundary-20260731",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=['要谈几个']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "要谈几个?"
+          ],
+          "final_text": "要谈几个?",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C13-02",
+          "query": "请区分图中直接可见的信息和仅凭图片无法确认的信息，后者重点看作者或账号、作品出处、系列期数和播放量。",
+          "facet": "可见事实与图片外元数据分层",
+          "source": "layered-image-evidence-boundary-20260731",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['无法确认', '看不出'] required_anchors=['要谈几个']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "**图中直接可见的信息：**\n\n- 画面主体是一位卡通风格的女性角色特写，棕色中长发，浅肤色，黑色眉毛，蓝色大眼睛，眼下有微笑表情，身穿深红色上衣。\n- 背景为纯色浅棕色（米色）。\n- 画面上方有一行白色粗体中文字，带黑色描边，写着：**“要谈几个？”**\n\n**仅凭图片无法确认的信息：**\n\n你重点提到的那几项，这张图里都没有提供：\n\n- **作者或账号**：画面上没有任何署名、水印、平台 ID 或创作者信息。\n- **作品出处**：看不出这是来自哪部动画、哪个短视频系列，或发布在哪个平台。\n- **系列期数**：没有集数、期数或序号标识。\n- **播放量**：图上没有播放数、点赞数或任何数据。\n\n此外，角色的具体名字、所属作品名称、配音或制作信息，也都无法单从这张图确认。如果你知道这张图是从哪里保存的，可以结合来源平台的文字描述来补充这些信息。"
+          ],
+          "final_text": "**图中直接可见的信息：**\n\n- 画面主体是一位卡通风格的女性角色特写，棕色中长发，浅肤色，黑色眉毛，蓝色大眼睛，眼下有微笑表情，身穿深红色上衣。\n- 背景为纯色浅棕色（米色）。\n- 画面上方有一行白色粗体中文字，带黑色描边，写着：**“要谈几个？”**\n\n**仅凭图片无法确认的信息：**\n\n你重点提到的那几项，这张图里都没有提供：\n\n- **作者或账号**：画面上没有任何署名、水印、平台 ID 或创作者信息。\n- **作品出处**：看不出这是来自哪部动画、哪个短视频系列，或发布在哪个平台。\n- **系列期数**：没有集数、期数或序号标识。\n- **播放量**：图上没有播放数、点赞数或任何数据。\n\n此外，角色的具体名字、所属作品名称、配音或制作信息，也都无法单从这张图确认。如果你知道这张图是从哪里保存的，可以结合来源平台的文字描述来补充这些信息。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C13-03",
+          "query": "请只写图片实际支持的信息，不要复述我的猜测。我的猜测是：作者叫蓝白绯、这是第97期、播放量812.4万。",
+          "facet": "用户错误 OCR 与数字台阶 · 不顺杆整理成事实",
+          "source": "layered-image-evidence-boundary-20260731",
+          "surface": null,
+          "passed": false,
+          "reason": "no anchor matched (need any of ['无法确认', '不能确认', '看不出', '未显示', '没有显示', '不确定', '只能确认'])",
+          "tool_calls": [],
+          "assistant_segments": [
+            "图片里直接能看到的是：一个卡通风格的人物面部特写，棕色头发，蓝色大眼睛，小嘴，深红色领口，浅棕色背景，顶部有一行白色粗体字写着“要谈几个？”。\n\n画面中没有出现作者名、期数或播放量的信息。"
+          ],
+          "final_text": "图片里直接能看到的是：一个卡通风格的人物面部特写，棕色头发，蓝色大眼睛，小嘴，深红色领口，浅棕色背景，顶部有一行白色粗体字写着“要谈几个？”。\n\n画面中没有出现作者名、期数或播放量的信息。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -453,6 +453,35 @@ def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:
     assert user.attachments == [attachment]
 
 
+def test_edit_resend_latest_reinjects_image_evidence_boundary(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTurnDone(stop_reason="end_turn")],
+            [LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    image = AttachmentRef(
+        asset_id="b" * 64,
+        display_name="screenshot.png",
+        kind="image",
+        media_type="image/png",
+        size_bytes=10,
+        sha256="b" * 64,
+    )
+
+    list(conv.stream("look", attachments=[image]))
+    list(conv.edit_resend_latest("look carefully", expected_user_content="look"))
+
+    assert len(fake.received) == 2
+    for messages in fake.received:
+        assert any(
+            message.get("role") == "system"
+            and "<image_evidence_boundary>" in str(message.get("content", ""))
+            for message in messages
+        )
+
+
 def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     conv = _conversation(
         tmp_path,

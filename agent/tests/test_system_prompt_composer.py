@@ -380,6 +380,11 @@ class TestSystemPromptComposerDefault:
         assert rendered is not None
         assert "{current_time}" not in rendered
         assert "事实与证据" in rendered
+        assert "图片理解与证据边界" in rendered
+        assert "图片是可能被误读的证据" in rendered
+        assert "区分图片中直接可见的内容与基于画面的推断" in rendered
+        assert "作者或账号归属、系列性质、流行程度" in rendered
+        assert "不猜测缺失字符" in rendered
         assert "近期和实时信息" in rendered
         assert "过去对话和历史归因" in rendered
         assert "历史对话工具取得片段" in rendered
@@ -402,6 +407,7 @@ class TestSystemPromptComposerDefault:
         assert "记忆矛盾回应边界" in output
         assert "输出表达约束" in output
         assert "事实与证据" in output
+        assert "图片理解与证据边界" in output
         assert "近期和实时信息" in output
 
     def test_default_text_prompt_size_baseline(self, tmp_path: Path) -> None:
@@ -411,8 +417,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 7289
-        assert estimate_tokens([Message(role="system", content=output)]) == 5466
+        assert len(output) == 7407
+        assert estimate_tokens([Message(role="system", content=output)]) == 5555
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

@@ -53,6 +53,7 @@ class CaseJudge:
     require_non_empty_response: bool = False
     forbid_question: bool = False
     must_mention_any: list[str] = field(default_factory=list)
+    must_mention_all: list[str] = field(default_factory=list)
     must_not_mention_any: list[str] = field(default_factory=list)
     forbid_memory_mechanism_terms: bool = False
     forbid_unsupported_lookup_claim: bool = False

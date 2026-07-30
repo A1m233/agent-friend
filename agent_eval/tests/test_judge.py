@@ -101,6 +101,32 @@ def test_case_level_anchor_and_forbidden_terms() -> None:
     assert "fabrication suspect" in forbidden_hit.reason
 
 
+def test_case_level_requires_all_ground_truth_anchors() -> None:
+    case = _case(CaseJudge(must_mention_all=["要谈几个", "无法确认"]))
+    contract = _contract()
+
+    passed = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="图里能看清‘要谈几个’，作者信息无法确认。",
+        ),
+    )
+    assert passed.passed is True
+
+    missing = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text="图里能看清‘要谈几个’。",
+        ),
+    )
+    assert missing.passed is False
+    assert "required anchors missing" in missing.reason
+
+
 def test_case_level_forbidden_tool_call() -> None:
     case = _case(CaseJudge(must_not_call_any=["web_search"]))
     verdict = judge_case(

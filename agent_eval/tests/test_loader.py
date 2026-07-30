@@ -24,6 +24,7 @@ def test_loads_builtin_cases() -> None:
         ("C10", "relative-calendar-grounding", 2),
         ("C11", "interaction-context-non-announcement", 3),
         ("C12", "multi-step-progress-continuity", 1),
+        ("C13", "image-evidence-calibration", 3),
     ]
 
 
@@ -76,13 +77,20 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert multimodal_case.judge is not None
     assert multimodal_case.judge.forbid_unsupported_source_attribution is True
 
+    c13 = next(contract for contract in contracts if contract.id == "C13")
+    calibration_case = next(item for item in c13.cases if item.id == "C13-03")
+    assert calibration_case.query_attachments[0].path.is_file()
+    assert calibration_case.judge is not None
+    assert calibration_case.judge.must_mention_all == ["要谈几个"]
+    assert calibration_case.judge.must_not_mention_any == ["蓝白绯", "第97期", "812.4万"]
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 12
-    assert meta.total_cases == 159
+    assert meta.total_contracts == 13
+    assert meta.total_cases == 162
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -96,6 +104,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C10": 2,
         "C11": 3,
         "C12": 1,
+        "C13": 3,
     }
     assert len(meta.digest) == 64
 

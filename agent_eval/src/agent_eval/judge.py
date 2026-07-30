@@ -307,6 +307,16 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 f"no anchor matched (need any of {spec.must_mention_any})",
             )
 
+    required_anchor_hits = [kw for kw in spec.must_mention_all if kw.lower() in text_lc]
+    missing_required_anchors = [kw for kw in spec.must_mention_all if kw.lower() not in text_lc]
+    if missing_required_anchors:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"required anchors missing: {missing_required_anchors}",
+        )
+
     forbidden_hit = [kw for kw in spec.must_not_mention_any if kw.lower() in text_lc]
     if forbidden_hit:
         return Verdict(
@@ -361,7 +371,7 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
         contract.id,
         True,
         f"grounded: tool={required_tool} sequence={spec.required_tool_sequence} "
-        f"anchors={anchor_hit}",
+        f"anchors={anchor_hit} required_anchors={required_anchor_hits}",
     )
 
 

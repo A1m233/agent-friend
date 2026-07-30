@@ -21,6 +21,7 @@ from agent.tool_runtime import ToolRunPolicy
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AttachmentRef,
     BuildResult,
     Conversation,
     JsonlSessionStore,
@@ -223,6 +224,69 @@ def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path:
     assert all("MEDIA FIDELITY BOUNDARY" in call["turn_context"] for call in spy.calls)
     user_messages = [message for message in conv.session.messages if message.role == "user"]
     assert user_messages[-1].content == "hi"
+
+
+def test_image_evidence_boundary_is_merged_and_repeated_for_tool_continuations(
+    tmp_path: Path,
+) -> None:
+    spy = _SpyContextManager()
+    fake = _UsageLLM(
+        script=[
+            _tool_use_turn(),
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        context_manager=spy,
+        registry=ToolRegistry([_LoopTool()]),
+    )
+    image = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="sample.png",
+        kind="image",
+        media_type="image/png",
+        size_bytes=42,
+        sha256="a" * 64,
+    )
+
+    list(
+        conv.stream(
+            "看图回答",
+            attachments=[image],
+            turn_context="MEDIA FIDELITY BOUNDARY",
+        )
+    )
+
+    assert len(spy.calls) == 2
+    for call in spy.calls:
+        rendered = "\n".join(call["turn_context"])
+        assert "MEDIA FIDELITY BOUNDARY" in rendered
+        assert "<image_evidence_boundary>" in rendered
+        assert "直接可见且能够看清" in rendered
+        assert "需要图片外证据的事实" in rendered
+    user_messages = [message for message in conv.session.messages if message.role == "user"]
+    assert user_messages[-1].attachments == [image]
+
+
+def test_document_attachment_does_not_inject_image_evidence_boundary(tmp_path: Path) -> None:
+    spy = _SpyContextManager()
+    fake = _UsageLLM(script=[[LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")]])
+    conv = _make_conversation(tmp_path, fake_llm=fake, context_manager=spy)
+    document = AttachmentRef(
+        asset_id="b" * 64,
+        display_name="sample.pdf",
+        kind="document",
+        media_type="application/pdf",
+        size_bytes=42,
+        sha256="b" * 64,
+    )
+
+    list(conv.stream("读文档", attachments=[document]))
+
+    assert len(spy.calls) == 1
+    assert all("<image_evidence_boundary>" not in item for item in spy.calls[0]["turn_context"])
 
 
 def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:

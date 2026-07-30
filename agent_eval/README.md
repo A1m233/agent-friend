@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C12，共 159 条 fixture：
+当前内置 C1-C13，共 162 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -25,6 +25,7 @@
 | C10 | 相对日历落地：绝对截止时间转今天/明天时使用确定性日期工具，并抵抗长会话旧时间污染 | 2 |
 | C11 | 交互上下文静默使用：普通请求不播报端信息，明确询问时自然回答 | 3 |
 | C12 | 多步工具进展承接：可以安静执行；若搜索后继续更新，需带上新发现 / 缺口与下一步理由，不泄漏内部工具名 | 1 |
+| C13 | 图片证据校准：区分直接可见内容、画面推断与图片外元数据，不顺着错误 OCR / 数字台阶补事实 | 3 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -40,6 +41,9 @@ C12 使用 `fake_tools` 为同一 case 注入多个固定结果工具，并在 t
 `assistant_segments` 中保留每次模型 continuation 的可见文案边界。这样既能判断
 `web_search → web_fetch` 的调用顺序，也能区分“重复报幕”和“承接新发现后继续”。
 
+C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片内可见内容、图片外
+元数据和错误 OCR / 数字台阶，避免把不同根因合并成同一个 judge。
+
 ## 运行
 
 > 运行真实 eval 会触发所选模型对应 provider 的主对话调用；跑 C2 时还可能触发 Tavily 搜索。按项目 `llm-api-confirm` 规则，每次运行前必须获得用户明确授权。凭据默认从 runtime_config 凭证中心读取；如需读取存量 `.env`，设置 `AGENT_FRIEND_CONFIG_MODE=legacy-dotenv`。
@@ -52,6 +56,7 @@ C12 使用 `fake_tools` 为同一 case 注入多个固定结果工具，并在 t
 ./scripts/agent-eval/run.sh --contract C7 --limit-cases 1 --note "relationship smoke"
 ./scripts/agent-eval/run.sh --contract C9 --model kimi/kimi-k2.6 --note "source attribution smoke"
 ./scripts/agent-eval/run.sh --contract C12 --model kimi/kimi-k2.6 --note "multi-step progress copy"
+./scripts/agent-eval/run.sh --contract C13 --model kimi/kimi-k2.6 --note "image evidence calibration"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -59,7 +64,7 @@ C12 使用 `fake_tools` 为同一 case 注入多个固定结果工具，并在 t
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |
