@@ -1,4 +1,4 @@
-use crate::{paths, runtime_config, runtime_services};
+use crate::{paths, runtime_config, runtime_services, shell_diagnostics};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +13,8 @@ use std::{
 };
 use tauri::{AppHandle, Manager, State};
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+mod contract;
 
 const MAX_DESCRIPTION_CHARS: usize = 20_000;
 const MAX_SESSIONS: usize = 20;
@@ -75,6 +77,7 @@ pub async fn generate_diagnostic_bundle(
     app: AppHandle,
     request: GenerateDiagnosticBundleRequest,
     services: State<'_, Arc<runtime_services::RuntimeServiceSupervisor>>,
+    shell_diagnostics_manager: State<'_, Arc<shell_diagnostics::ShellDiagnosticsManager>>,
 ) -> Result<GenerateDiagnosticBundleResult, String> {
     let description = normalize_description(request.description)?;
     let session_ids = normalize_session_ids(request.session_ids)?;
@@ -246,33 +249,57 @@ pub async fn generate_diagnostic_bundle(
     entries.extend(log_result.entries);
     failures.extend(log_result.failures);
 
+    let shell_export = shell_diagnostics_manager.export_for_bundle().await;
+    let shell_artifact_names = shell_export
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.name.clone())
+        .collect::<Vec<_>>();
+    for artifact in shell_export.artifacts {
+        entries.push(ArchiveEntry {
+            name: artifact.name,
+            source: ArchiveEntrySource::Bytes(artifact.bytes),
+        });
+    }
+    let shell_failure_count = shell_export.failures.len();
+    failures.extend(
+        shell_export
+            .failures
+            .into_iter()
+            .map(|message| CollectionFailure {
+                collection: "windows-shell".into(),
+                item: None,
+                message,
+            }),
+    );
+    let shell_summary = json!({
+        "supported": shell_export.supported,
+        "artifacts": shell_artifact_names,
+        "failureCount": shell_failure_count,
+    });
+
     let outcome = if failures.is_empty() {
         "complete"
     } else {
         "partial"
     };
-    let manifest = json!({
-        "formatVersion": 1,
-        "generatedAt": generated_at.to_rfc3339(),
-        "outcome": outcome,
-        "requestedSessionIds": session_ids,
-        "includedSessionIds": included_session_ids,
-        "failures": failures,
-        "excluded": [
-            "memory database",
-            "persona assets",
-            "raw settings",
-            "full environment",
-            "unselected sessions"
-        ],
-        "logLimits": {
-            "maxBytesPerFile": MAX_LOG_FILE_BYTES,
-            "maxBytesTotal": MAX_LOG_TOTAL_BYTES
+    let bundle_contract = contract::BundleContract::load()?;
+    let generated_at_rfc3339 = generated_at.to_rfc3339();
+    let manifest = build_bundle_manifest(
+        &bundle_contract,
+        BundleManifestInput {
+            generated_at: &generated_at_rfc3339,
+            outcome,
+            requested_session_ids: &session_ids,
+            included_session_ids: &included_session_ids,
+            failures: &failures,
+            logs: &log_manifest,
+            windows_shell: &shell_summary,
+            attachments: &attachment_collection.summary,
         },
-        "logs": log_manifest,
-        "attachments": attachment_collection.summary,
-    });
+    );
     entries.push(json_entry("manifest.json", &manifest)?);
+    bundle_contract.validate_bundle(&manifest, entries.iter().map(|entry| entry.name.as_str()))?;
 
     let output_dir = app
         .path()
@@ -558,6 +585,47 @@ struct LogManifestItem {
     included_bytes: usize,
 }
 
+struct BundleManifestInput<'a> {
+    generated_at: &'a str,
+    outcome: &'a str,
+    requested_session_ids: &'a [String],
+    included_session_ids: &'a [String],
+    failures: &'a [CollectionFailure],
+    logs: &'a [LogManifestItem],
+    windows_shell: &'a Value,
+    attachments: &'a Value,
+}
+
+fn build_bundle_manifest(
+    contract: &contract::BundleContract,
+    input: BundleManifestInput<'_>,
+) -> Value {
+    json!({
+        "formatVersion": contract.format_version(),
+        "schemaRevision": contract.schema_revision(),
+        "capabilities": contract.capability_ids(),
+        "generatedAt": input.generated_at,
+        "outcome": input.outcome,
+        "requestedSessionIds": input.requested_session_ids,
+        "includedSessionIds": input.included_session_ids,
+        "failures": input.failures,
+        "excluded": [
+            "memory database",
+            "persona assets",
+            "raw settings",
+            "full environment",
+            "unselected sessions"
+        ],
+        "logLimits": {
+            "maxBytesPerFile": MAX_LOG_FILE_BYTES,
+            "maxBytesTotal": MAX_LOG_TOTAL_BYTES
+        },
+        "logs": input.logs,
+        "windowsShell": input.windows_shell,
+        "attachments": input.attachments,
+    })
+}
+
 fn collect_logs(
     log_dir: &Path,
     credentials: &[String],
@@ -838,6 +906,49 @@ fn write_archive_atomically(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_bundle_manifest_matches_machine_contract() {
+        let contract = contract::BundleContract::load().expect("load bundle contract");
+        let requested_session_ids = Vec::new();
+        let included_session_ids = Vec::new();
+        let failures = Vec::new();
+        let logs = Vec::new();
+        let windows_shell = json!({
+            "supported": true,
+            "artifacts": ["diagnostics/windows-shell/current.json"],
+            "failureCount": 0,
+        });
+        let attachments = json!({"itemCount": 0});
+        let manifest = build_bundle_manifest(
+            &contract,
+            BundleManifestInput {
+                generated_at: "2026-08-01T00:00:00+00:00",
+                outcome: "complete",
+                requested_session_ids: &requested_session_ids,
+                included_session_ids: &included_session_ids,
+                failures: &failures,
+                logs: &logs,
+                windows_shell: &windows_shell,
+                attachments: &attachments,
+            },
+        );
+
+        contract
+            .validate_bundle(
+                &manifest,
+                [
+                    "manifest.json",
+                    "diagnostics/application.json",
+                    "diagnostics/environment.json",
+                    "diagnostics/runtime-services.json",
+                    "diagnostics/runtime-config.json",
+                    "diagnostics/attachments.json",
+                    "diagnostics/windows-shell/current.json",
+                ],
+            )
+            .expect("current manifest should satisfy bundle contract");
+    }
 
     #[test]
     fn normalizes_and_limits_session_ids() {

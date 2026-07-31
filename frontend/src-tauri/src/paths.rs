@@ -16,6 +16,7 @@ pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
 pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
 pub const MIGRATION_DIR: &str = "migration";
 pub const MIGRATION_BACKUPS_DIR: &str = "migration-backups";
+pub const SHELL_DIAGNOSTICS_DIR: &str = "windows-shell";
 
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
@@ -130,6 +131,13 @@ pub fn log_dir() -> PathBuf {
                 .join(".local/state/agent-friend/log")
         }
     }
+}
+
+/// Windows Shell 事件与窗口状态的有界滚动诊断目录。
+///
+/// 它与普通 `tauri.log` 独立轮转，但仍归属于统一日志根目录。
+pub fn shell_diagnostics_dir() -> PathBuf {
+    log_dir().join(SHELL_DIAGNOSTICS_DIR)
 }
 
 #[cfg(test)]
