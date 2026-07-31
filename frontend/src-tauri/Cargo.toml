@@ -48,6 +48,9 @@ notify-debouncer-full = "0.3.1"
 tar = "0.4"
 tauri-plugin-dialog = "2"
 
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 # auto-launch 0.5 writes an unquoted Run command; normalize the public Run
 # value after the plugin updates Windows' autostart state.
