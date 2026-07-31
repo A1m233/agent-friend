@@ -1,0 +1,39 @@
+---
+description: agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束
+globs: ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"]
+alwaysApply: false
+codexLoad: preflight
+---
+
+# 诊断包生产者与解析消费者同步
+
+本规则只约束 agent-friend 诊断包的生产结构和项目级解析 Skill，不负责一般 bug 诊断或修复。
+
+## 唯一责任源
+
+- `frontend/src-tauri/src/diagnostics/bundle-contract-v1.json` 是当前生产者允许的 manifest 字段、archive entry family、必需 entry、schema revision 和 capability 列表的机器事实源。
+- `frontend/src-tauri/src/diagnostics/` 与相关 collector 负责按该契约生产、在写 ZIP 前校验实际输出。
+- `.cursor/skills/inspect-agent-friend-diagnostics/` 负责安全解析、证据语义、隐私边界和面向 Agent 的使用流程；不得另建一份竞争性的结构契约。
+
+## 改生产内容时
+
+只要新增、删除、重命名或改变 manifest 字段、archive entry、JSON/JSONL 结构、限制、隐私边界或证据语义，就必须在同一 changeset 中：
+
+1. 更新 producer-owned machine contract；破坏兼容性才升级 `formatVersion`，兼容性新增升级 `schemaRevision`。
+2. 为新增或实质变化的证据族新增 capability，或升级其 `-vN` 后缀；不要把有新消费语义的变化悄悄塞进旧 capability。
+3. 更新 `inspect_bundle.py` 的真实 handler、`bundle-format-vN.md` 的语义说明和相应 consumer contract 测试。
+4. 保持旧 bundle 可读；旧 v1 缺少较新的 `schemaRevision`、`capabilities` 或可选 entry 时，不得误报为损坏。
+
+不能只更新 Skill 文案，也不能只让解析器忽略未知字段。当前生产者 capability 与解析器 handler 集合不一致时，项目检查必须失败；运行时遇到未知 capability 时，解析器必须报告 `unhandledCapabilities`。
+
+## 改解析 Skill 时
+
+- 先核对 machine contract、当前 producer、已有格式参考和 recorded build commit 语义，避免让当前 checkout 覆盖旧包事实。
+- 结构检查保持确定性且不输出私密正文；会话、日志、附件和 Shell journal 只汇总必要元数据，再按最小相关切片读取。
+- 详细结构和语义放在直接引用的 reference；`SKILL.md` 只保留工作流、边界和路由。
+
+## 验证
+
+- Rust 测试必须证明实际 manifest builder 与 machine contract 一致，且未声明的字段/entry 会被拒绝。
+- Python consumer contract 测试必须通过真实 `inspect_bundle.py` 读取代表性 ZIP，并覆盖 capability handler 对齐、未知 capability 告警和新增证据摘要。
+- 修改本规则或项目 Skill 后，通过项目 adapter 脚本执行 `sync` 与 `doctor`；不要手工编辑生成的 `AGENTS.md` 或 `.Codex/skills`。

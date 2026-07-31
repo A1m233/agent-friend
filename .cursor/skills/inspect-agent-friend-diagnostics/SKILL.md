@@ -5,7 +5,7 @@ description: Safely inspect and interpret agent-friend local diagnostic ZIP bund
 
 # Inspect Agent-Friend Diagnostics
 
-Interpret an agent-friend diagnostic bundle as a versioned runtime evidence snapshot. Keep generic hypothesis ranking and confidence semantics under `diagnose-bug`; keep changes and fixes outside this read-only skill.
+Interpret an agent-friend diagnostic bundle as a versioned runtime evidence snapshot. Treat `frontend/src-tauri/src/diagnostics/bundle-contract-v1.json` as the machine-readable structural authority for the current producer; this skill owns safe consumer interpretation, evidence routing, and privacy semantics. Keep generic hypothesis ranking and confidence semantics under `diagnose-bug`; keep changes and fixes outside this read-only skill.
 
 ## Start Safely
 
@@ -30,7 +30,9 @@ Read `diagnostics/application.json` before explaining behavior. Prefer `packageB
 - Inspect matching source with `git show <commit>:<path>`; do not switch the user's checkout merely to inspect it.
 - Treat `packageBuild.source.dirty: true` as an exact-source gap because uncommitted build inputs are unknown.
 - If the commit is absent locally, distinguish bundle/runtime facts from explanations based only on the current checkout.
-- Do not assume `formatVersion: 1` means every v1 bundle has identical optional fields; v1 has evolved additively.
+- Treat `formatVersion` as the breaking format boundary, `schemaRevision` as the additive producer revision, and `capabilities` as the list of evidence families the producer claims to emit.
+- If the inspector reports `unhandledCapabilities`, record a consumer-coverage gap and inspect the producer at the recorded build commit before interpreting those artifacts. Do not silently treat an unknown capability as irrelevant.
+- Do not assume `formatVersion: 1` means every v1 bundle has identical optional fields; older v1 bundles may predate `schemaRevision` and `capabilities`.
 
 ## Establish Evidence Coverage
 
@@ -39,11 +41,13 @@ Read [references/bundle-format-v1.md](references/bundle-format-v1.md) when `mani
 Before diagnosing, establish:
 
 - archive validity, duplicate/unsafe names, and CRC result;
+- format version, schema revision, declared capabilities, and unhandled capabilities;
 - manifest outcome and every collection failure;
 - requested versus included sessions;
 - generated time, timezone, application version, distribution, build mode, commit, and dirty state;
 - log source, modification time, original size, tail start offset, and included size;
 - attachment request, inclusion status, integrity flags, and byte limits;
+- Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
 - explicit exclusions.
 
 `outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
@@ -54,8 +58,9 @@ Before diagnosing, establish:
 2. Locate the relevant selected session and reconstruct its event order. Account for `turn_rewrite`, `compaction`, tool request/result pairs, model/persona metadata, and attachment references.
 3. Start correlation with exact identifiers such as session id, event UUID, run id, tool call id, trace id, or attachment asset id. Then inspect a narrow surrounding time/event window.
 4. Route evidence to the correct log family using the v1 reference. Compare application-owned logs with packaged stdout/stderr capture when both exist.
-5. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
-6. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
+5. For Windows taskbar, fullscreen, focus, or overlay symptoms, start with the summarized Windows Shell journal. Correlate foreground/move-size/minimize/reorder events with snapshots, and treat nonzero dropped/truncated counts as explicit timeline gaps. Read individual journal records only within the smallest relevant time window.
+6. Use the source tree at the recorded build commit to explain the first known-wrong boundary. Treat the current checkout as comparison evidence only.
+7. Stop expanding when the evidence distinguishes the live hypotheses. Preserve disconfirming evidence and coverage gaps.
 
 Open an attachment original only when its content is necessary to evaluate the symptom. Extract only the referenced entry to an agent-created temporary directory, inspect it, and remove that temporary directory afterward. Never treat `processingStatus: notRecorded` as proof that downstream processing succeeded or failed.
 

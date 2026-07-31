@@ -1,0 +1,86 @@
+{
+  "formatVersion": 1,
+  "schemaRevision": 1,
+  "core": {
+    "manifestFields": [
+      "capabilities",
+      "excluded",
+      "failures",
+      "formatVersion",
+      "generatedAt",
+      "outcome",
+      "schemaRevision"
+    ],
+    "requiredEntries": [
+      "manifest.json",
+      "diagnostics/application.json",
+      "diagnostics/environment.json",
+      "diagnostics/runtime-services.json",
+      "diagnostics/runtime-config.json"
+    ],
+    "entryPatterns": [
+      "manifest.json",
+      "problem.txt",
+      "diagnostics/application.json",
+      "diagnostics/environment.json",
+      "diagnostics/runtime-services.json",
+      "diagnostics/runtime-config.json"
+    ]
+  },
+  "capabilities": [
+    {
+      "id": "selected-sessions-v1",
+      "manifestFields": [
+        "requestedSessionIds",
+        "includedSessionIds"
+      ],
+      "requiredEntries": [],
+      "entryPatterns": [
+        "sessions/session-*.json"
+      ]
+    },
+    {
+      "id": "model-catalog-v1",
+      "manifestFields": [],
+      "requiredEntries": [],
+      "entryPatterns": [
+        "diagnostics/model-catalog.json"
+      ]
+    },
+    {
+      "id": "bounded-log-tail-v1",
+      "manifestFields": [
+        "logLimits",
+        "logs"
+      ],
+      "requiredEntries": [],
+      "entryPatterns": [
+        "logs/*"
+      ]
+    },
+    {
+      "id": "attachment-integrity-v1",
+      "manifestFields": [
+        "attachments"
+      ],
+      "requiredEntries": [
+        "diagnostics/attachments.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/attachments.json",
+        "attachments/*"
+      ]
+    },
+    {
+      "id": "windows-shell-history-v1",
+      "manifestFields": [
+        "windowsShell"
+      ],
+      "requiredEntries": [],
+      "entryPatterns": [
+        "diagnostics/windows-shell/current.json",
+        "diagnostics/windows-shell/events-*.jsonl"
+      ]
+    }
+  ]
+}

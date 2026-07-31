@@ -18,6 +18,7 @@
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
 | `desktop-startup-default.mdc` | agent-friend 项目启动运行态默认值：coding agent 启动前端或项目时默认使用 Tauri 桌面端，除非用户或当前 skill / 流程明确要求 web。 |
 | `dev-workflow.mdc` | agent-friend 项目需求与修复交付流程：需求走 feature 分支，修复按影响范围选择 main 或 fix 分支 |
+| `diagnostic-bundle-contract.mdc` | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 |
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
 | `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 |
 | `frontend-visual-verification.mdc` | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 |
@@ -25,7 +26,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 417b9667c036b99e25b813471b1d3bcc7695ac3beea2f4e67846bff446b3a277 -->
+<!-- codex-adapter-source-sha256: 758bbfcaee99f4537e173201b5ba391df99248cc64dd59caa571f2f2ac07972b -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -437,6 +438,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 
 | 文件 | 触发条件 | 适用场景 | 读取路径 |
 |---|---|---|---|
+| `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
 

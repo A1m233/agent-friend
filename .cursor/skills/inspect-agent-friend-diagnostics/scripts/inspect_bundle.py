@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 MAX_JSON_BYTES = 64 * 1024 * 1024
+MAX_JSONL_LINE_BYTES = 4 * 1024 * 1024
 CORE_ENTRIES = (
     "manifest.json",
     "diagnostics/application.json",
@@ -19,6 +20,13 @@ CORE_ENTRIES = (
     "diagnostics/runtime-services.json",
     "diagnostics/runtime-config.json",
 )
+CAPABILITY_HANDLERS = {
+    "selected-sessions-v1": "sessions",
+    "model-catalog-v1": "modelCatalog",
+    "bounded-log-tail-v1": "logs",
+    "attachment-integrity-v1": "attachments",
+    "windows-shell-history-v1": "windowsShell",
+}
 
 
 class BundleError(Exception):
@@ -69,6 +77,149 @@ def optional_json(archive: zipfile.ZipFile, name: str, warnings: list[str]) -> A
     except BundleError as error:
         warnings.append(str(error))
         return None
+
+
+def summarize_model_catalog(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"error": "model catalog root is not an object"}
+    providers = value.get("providers")
+    provider_items = (
+        [provider for provider in providers if isinstance(provider, dict)]
+        if isinstance(providers, list)
+        else []
+    )
+    return {
+        "schemaVersion": value.get("schemaVersion"),
+        "catalogRevision": value.get("catalogRevision"),
+        "providerCount": len(provider_items),
+        "modelCount": sum(
+            len(provider.get("models", []))
+            for provider in provider_items
+            if isinstance(provider.get("models"), list)
+        ),
+    }
+
+
+def summarize_shell_snapshot(value: Any, entry: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"entry": entry, "error": "shell snapshot root is not an object"}
+    windows = value.get("windows")
+    window_items = (
+        [window for window in windows if isinstance(window, dict)]
+        if isinstance(windows, list)
+        else []
+    )
+    role_counts: Counter[str] = Counter()
+    for window in window_items:
+        roles = window.get("roles")
+        if isinstance(roles, list):
+            role_counts.update(str(role) for role in roles if isinstance(role, str))
+    probe_errors = value.get("probeErrors")
+    return {
+        "entry": entry,
+        "schemaVersion": value.get("schemaVersion"),
+        "capturedAt": value.get("capturedAt"),
+        "capability": value.get("capability"),
+        "windowCount": len(window_items),
+        "roleCounts": dict(sorted(role_counts.items())),
+        "fullscreenCandidateCount": sum(
+            1 for window in window_items if window.get("fullscreenGeometryCandidate") is True
+        ),
+        "taskbarAutoHide": value.get("taskbarAutoHide"),
+        "taskbarAlwaysOnTop": value.get("taskbarAlwaysOnTop"),
+        "taskbarAboveForegroundFullscreen": value.get("taskbarAboveForegroundFullscreen"),
+        "probeErrorCount": len(probe_errors) if isinstance(probe_errors, list) else 0,
+    }
+
+
+def summarize_shell_journals(
+    archive: zipfile.ZipFile,
+    entries: list[str],
+    warnings: list[str],
+) -> dict[str, Any]:
+    record_count = 0
+    malformed_record_count = 0
+    event_count = 0
+    event_kinds: Counter[str] = Counter()
+    dropped_event_count = 0
+    truncated_event_count = 0
+    process_sessions: set[str] = set()
+    recorded_times: list[str] = []
+    snapshots_with_taskbar_above_fullscreen = 0
+    snapshot_probe_error_count = 0
+
+    for entry in entries:
+        info = archive.getinfo(entry)
+        if info.file_size > MAX_JSON_BYTES:
+            warnings.append(f"shell journal entry exceeds {MAX_JSON_BYTES} bytes: {entry}")
+            continue
+        with archive.open(info, "r") as stream:
+            for line_number, raw_line in enumerate(stream, start=1):
+                if not raw_line.strip():
+                    continue
+                if len(raw_line) > MAX_JSONL_LINE_BYTES:
+                    malformed_record_count += 1
+                    warnings.append(
+                        f"shell journal line exceeds {MAX_JSONL_LINE_BYTES} bytes: "
+                        f"{entry}:{line_number}"
+                    )
+                    continue
+                try:
+                    record = json.loads(raw_line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    malformed_record_count += 1
+                    warnings.append(f"invalid shell journal record {entry}:{line_number}: {error}")
+                    continue
+                if not isinstance(record, dict):
+                    malformed_record_count += 1
+                    continue
+
+                record_count += 1
+                events = record.get("events")
+                if isinstance(events, list):
+                    event_items = [event for event in events if isinstance(event, dict)]
+                    event_count += len(event_items)
+                    event_kinds.update(str(event.get("kind", "<missing>")) for event in event_items)
+                dropped_event_count += (
+                    record.get("droppedEventCount")
+                    if isinstance(record.get("droppedEventCount"), int)
+                    else 0
+                )
+                truncated_event_count += (
+                    record.get("truncatedEventCount")
+                    if isinstance(record.get("truncatedEventCount"), int)
+                    else 0
+                )
+                process_session_id = record.get("processSessionId")
+                if isinstance(process_session_id, str):
+                    process_sessions.add(process_session_id)
+                recorded_at = record.get("recordedAt")
+                if isinstance(recorded_at, str):
+                    recorded_times.append(recorded_at)
+                snapshot = record.get("snapshot")
+                if isinstance(snapshot, dict):
+                    if snapshot.get("taskbarAboveForegroundFullscreen") is True:
+                        snapshots_with_taskbar_above_fullscreen += 1
+                    probe_errors = snapshot.get("probeErrors")
+                    if isinstance(probe_errors, list):
+                        snapshot_probe_error_count += len(probe_errors)
+
+    return {
+        "segmentCount": len(entries),
+        "recordCount": record_count,
+        "malformedRecordCount": malformed_record_count,
+        "eventCount": event_count,
+        "eventKinds": dict(sorted(event_kinds.items())),
+        "droppedEventCount": dropped_event_count,
+        "truncatedEventCount": truncated_event_count,
+        "processSessionCount": len(process_sessions),
+        "firstRecordedAt": min(recorded_times) if recorded_times else None,
+        "lastRecordedAt": max(recorded_times) if recorded_times else None,
+        "snapshotsWithTaskbarAboveFullscreen": snapshots_with_taskbar_above_fullscreen,
+        "snapshotProbeErrorCount": snapshot_probe_error_count,
+    }
 
 
 def summarize_session(value: Any, entry: str) -> dict[str, Any]:
@@ -141,12 +292,68 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
         format_version = manifest.get("formatVersion")
         if format_version != 1:
             warnings.append(f"unknown diagnostic formatVersion: {format_version!r}")
+        schema_revision = manifest.get("schemaRevision")
+        raw_capabilities = manifest.get("capabilities")
+        capabilities = (
+            [capability for capability in raw_capabilities if isinstance(capability, str)]
+            if isinstance(raw_capabilities, list)
+            else []
+        )
+        if raw_capabilities is not None and not isinstance(raw_capabilities, list):
+            warnings.append("manifest capabilities is not an array")
+        elif isinstance(raw_capabilities, list) and len(capabilities) != len(raw_capabilities):
+            warnings.append("manifest capabilities contains non-string values")
+        unhandled_capabilities = sorted(set(capabilities).difference(CAPABILITY_HANDLERS))
+        if unhandled_capabilities:
+            warnings.append(
+                "unhandled diagnostic capabilities: " + ", ".join(unhandled_capabilities)
+            )
 
         application = optional_json(archive, "diagnostics/application.json", warnings)
         environment = optional_json(archive, "diagnostics/environment.json", warnings)
         runtime_services = optional_json(archive, "diagnostics/runtime-services.json", warnings)
         runtime_config = optional_json(archive, "diagnostics/runtime-config.json", warnings)
+        model_catalog = optional_json(archive, "diagnostics/model-catalog.json", warnings)
         attachments = optional_json(archive, "diagnostics/attachments.json", warnings)
+
+        shell_manifest = (
+            manifest.get("windowsShell") if isinstance(manifest.get("windowsShell"), dict) else {}
+        )
+        shell_entries = sorted(
+            name for name in names if name.startswith("diagnostics/windows-shell/")
+        )
+        referenced_shell_entries = (
+            [entry for entry in shell_manifest.get("artifacts", []) if isinstance(entry, str)]
+            if isinstance(shell_manifest.get("artifacts"), list)
+            else []
+        )
+        missing_shell_entries = sorted(set(referenced_shell_entries).difference(names))
+        unlisted_shell_entries = sorted(set(shell_entries).difference(referenced_shell_entries))
+        if missing_shell_entries:
+            warnings.append(
+                "manifest references missing Windows Shell artifacts: "
+                + ", ".join(missing_shell_entries)
+            )
+        if shell_manifest and unlisted_shell_entries:
+            warnings.append(
+                "Windows Shell artifacts are absent from manifest summary: "
+                + ", ".join(unlisted_shell_entries)
+            )
+        shell_current = None
+        shell_current_entry = "diagnostics/windows-shell/current.json"
+        if shell_current_entry in names:
+            try:
+                shell_current = summarize_shell_snapshot(
+                    read_json(archive, shell_current_entry), shell_current_entry
+                )
+            except BundleError as error:
+                warnings.append(str(error))
+        shell_journal_entries = [
+            name
+            for name in shell_entries
+            if name.startswith("diagnostics/windows-shell/events-") and name.endswith(".jsonl")
+        ]
+        shell_journal = summarize_shell_journals(archive, shell_journal_entries, warnings)
 
         sessions: list[dict[str, Any]] = []
         for name in sorted(
@@ -224,6 +431,9 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             },
             "manifest": {
                 "formatVersion": format_version,
+                "schemaRevision": schema_revision,
+                "capabilities": capabilities,
+                "unhandledCapabilities": unhandled_capabilities,
                 "generatedAt": manifest.get("generatedAt"),
                 "outcome": manifest.get("outcome"),
                 "failures": manifest.get("failures", []),
@@ -245,6 +455,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "environment": environment,
             },
             "runtimeServices": runtime_services,
+            "modelCatalog": summarize_model_catalog(model_catalog),
             "runtimeConfig": {
                 "itemCount": len(config_items),
                 "configuredCount": configured_count,
@@ -262,6 +473,20 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "integrity": attachment_integrity,
                 "originalEntryCount": sum(1 for name in names if name.startswith("attachments/")),
             },
+            "windowsShell": {
+                "manifest": {
+                    "supported": shell_manifest.get("supported"),
+                    "artifacts": referenced_shell_entries,
+                    "failureCount": shell_manifest.get("failureCount"),
+                }
+                if shell_manifest
+                else None,
+                "entryCount": len(shell_entries),
+                "missingReferencedEntries": missing_shell_entries,
+                "unlistedEntries": unlisted_shell_entries,
+                "current": shell_current,
+                "journal": shell_journal,
+            },
             "warnings": warnings,
         }
 
@@ -278,8 +503,14 @@ def print_human(summary: dict[str, Any]) -> None:
         f"{archive['uncompressedBytes']} uncompressed bytes"
     )
     print(
-        f"Manifest: format={manifest['formatVersion']} outcome={manifest['outcome']} "
+        f"Manifest: format={manifest['formatVersion']} revision={manifest['schemaRevision']} "
+        f"outcome={manifest['outcome']} "
         f"generatedAt={manifest['generatedAt']} failures={len(manifest['failures'])}"
+    )
+    print(
+        "Capabilities: "
+        f"declared={len(manifest['capabilities'])} "
+        f"unhandled={json.dumps(manifest['unhandledCapabilities'], ensure_ascii=False)}"
     )
     print(
         f"Runtime: {identity['product']} {identity['version']} "
@@ -310,6 +541,18 @@ def print_human(summary: dict[str, Any]) -> None:
         f"Attachments: originals={attachments['originalEntryCount']} "
         f"statuses={json.dumps(attachments['statuses'], ensure_ascii=False, sort_keys=True)} "
         f"integrity={json.dumps(attachments['integrity'], ensure_ascii=False, sort_keys=True)}"
+    )
+    shell = summary["windowsShell"]
+    shell_manifest = shell["manifest"] or {}
+    shell_current = shell["current"] or {}
+    shell_journal = shell["journal"]
+    print(
+        "Windows Shell: "
+        f"supported={shell_manifest.get('supported')} entries={shell['entryCount']} "
+        f"currentWindows={shell_current.get('windowCount')} "
+        f"journalRecords={shell_journal['recordCount']} "
+        f"events={shell_journal['eventCount']} dropped={shell_journal['droppedEventCount']} "
+        f"truncated={shell_journal['truncatedEventCount']}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "
