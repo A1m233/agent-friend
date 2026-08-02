@@ -163,8 +163,18 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         }
 
     @router.get("/sessions/{session_id}")
-    def get_session(session_id: str) -> dict[str, Any]:
-        """单个 session 的 ``events`` 列表（调试用，纯 REST 不走协议）。"""
+    def get_session(
+        session_id: str,
+        view: Literal["full", "active"] = Query(
+            "full",
+            description="full 保留原始事件；active 只返回当前有效事件",
+        ),
+    ) -> dict[str, Any]:
+        """返回单个 session 的事件列表（纯 REST 不走协议）。
+
+        ``full`` 是向后兼容的默认响应；桌面聊天只需要 ``active`` 投影视图，
+        可避免把原始事件与有效事件同时传到前端。
+        """
         try:
             revision_before = mgr.current_revision(session_id)
             session = mgr.open(session_id)
@@ -174,14 +184,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 revision = mgr.current_revision(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        return {
+        active_events = [_dataclass_to_dict(ev) for ev in session.active_events]
+        detail = {
             "session_id": session.session_id,
             "title": session.initial_title,
             "persona": session.current_persona,
             "model": session.current_model,
-            "events": [_dataclass_to_dict(ev) for ev in session.events],
-            "active_events": [_dataclass_to_dict(ev) for ev in session.active_events],
             "revision": revision,
+        }
+        if view == "active":
+            return {**detail, "active_events": active_events}
+        return {
+            **detail,
+            "events": [_dataclass_to_dict(ev) for ev in session.events],
+            "active_events": active_events,
         }
 
     @router.patch("/sessions/{session_id}")

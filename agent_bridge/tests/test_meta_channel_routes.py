@@ -132,6 +132,74 @@ class TestCreateSessionEndpoint:
         assert resp.status_code == 400
 
 
+# ===== GET /v1/sessions/{id} =====
+
+
+class TestGetSessionEndpoint:
+    def test_full_view_remains_backward_compatible(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.get(f"/v1/sessions/{sid}", headers={"accept-encoding": "identity"})
+
+        assert resp.status_code == 200
+        detail = resp.json()
+        assert detail["session_id"] == sid
+        assert detail["events"]
+        assert detail["active_events"] == detail["events"]
+
+    def test_active_view_omits_raw_events(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.get(
+            f"/v1/sessions/{sid}?view=active",
+            headers={"accept-encoding": "identity"},
+        )
+
+        assert resp.status_code == 200
+        detail = resp.json()
+        assert detail["session_id"] == sid
+        assert detail["active_events"]
+        assert "events" not in detail
+
+    def test_unknown_view_returns_422(self, client: TestClient) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        resp = client.get(f"/v1/sessions/{sid}?view=unknown")
+
+        assert resp.status_code == 422
+
+    def test_large_json_response_supports_gzip(
+        self,
+        client: TestClient,
+        runtime: BridgeRuntime,
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="assistant_message",
+                uuid="large-assistant-message",
+                ts=datetime.now(UTC),
+                payload={"content": "可压缩的长会话内容" * 1000, "partial": False},
+            ),
+        )
+
+        compressed = client.get(
+            f"/v1/sessions/{sid}?view=active",
+            headers={"accept-encoding": "gzip"},
+        )
+        identity = client.get(
+            f"/v1/sessions/{sid}?view=active",
+            headers={"accept-encoding": "identity"},
+        )
+
+        assert compressed.status_code == 200
+        assert compressed.headers["content-encoding"] == "gzip"
+        assert "Accept-Encoding" in compressed.headers["vary"]
+        assert "content-encoding" not in identity.headers
+        assert compressed.json() == identity.json()
+
+
 # ===== DELETE /v1/sessions/{id} =====
 
 
@@ -261,6 +329,7 @@ class TestEditResendLatestEndpoint:
             body = "".join(resp.iter_text())
 
         assert resp.status_code == 200
+        assert "content-encoding" not in resp.headers
         assert "new answer" in body
         assert "edit-client-run" in body
 

@@ -26,13 +26,17 @@ export interface SessionEvent {
   meta?: Record<string, unknown>;
 }
 
-/** ``GET /v1/sessions/{id}`` 返回。 */
-export interface SessionDetail {
+interface SessionDetailBase {
   session_id: string;
   title: string;
   persona: string;
   model: string;
-  events: SessionEvent[];
-  active_events?: SessionEvent[];
   revision?: number;
 }
+
+/** ``GET /v1/sessions/{id}`` 返回；至少包含原始或 active 事件中的一种。 */
+export type SessionDetail = SessionDetailBase &
+  (
+    | { events: SessionEvent[]; active_events?: SessionEvent[] }
+    | { events?: never; active_events: SessionEvent[] }
+  );

@@ -26,6 +26,7 @@ from logging.handlers import RotatingFileHandler
 from agent.paths import log_dir
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from runtime_config import (
     config_mode_from_env,
@@ -57,6 +58,8 @@ TAURI_PRODUCTION_ORIGINS = [
     "http://tauri.localhost",
     "https://tauri.localhost",
 ]
+JSON_COMPRESSION_MINIMUM_SIZE = 1024
+JSON_COMPRESSION_LEVEL = 5
 
 
 def _add_tauri_production_cors(app: FastAPI) -> None:
@@ -119,6 +122,11 @@ def create_app_with_runtime(
         lifespan=_make_lifespan(runtime),
     )
     _add_tauri_production_cors(app)
+    app.add_middleware(
+        GZipMiddleware,
+        minimum_size=JSON_COMPRESSION_MINIMUM_SIZE,
+        compresslevel=JSON_COMPRESSION_LEVEL,
+    )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

@@ -457,6 +457,27 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(firstText()).toBe("新问题");
   });
 
+  it("打开历史会话时支持 active-only 详情响应", async () => {
+    mockGet.mockResolvedValue({
+      session_id: "sid-active-only",
+      title: "sid-active-only",
+      persona: "default",
+      model: "test",
+      active_events: [
+        {
+          type: "assistant_message",
+          uuid: "active-assistant",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "只返回有效事件", partial: false },
+        },
+      ],
+    });
+
+    await useConversationStore.getState().openSession("sid-active-only");
+
+    expect(firstText()).toBe("只返回有效事件");
+  });
+
   it("编辑重发最后一条 user 后按 active projection rehydrate", async () => {
     mockGet
       .mockResolvedValueOnce({

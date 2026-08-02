@@ -44,9 +44,11 @@ export const sessionsApi = {
     return http.get<unknown, SessionSummary[]>(`/v1/sessions${sessionQuery(options)}`);
   },
 
-  /** 单个会话详情含事件流（GET /v1/sessions/{id}）。 */
+  /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */
   get(sessionId: string): Promise<SessionDetail> {
-    return http.get<unknown, SessionDetail>(`/v1/sessions/${sessionId}`);
+    return http.get<unknown, SessionDetail>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}?view=active`,
+    );
   },
 
   switchModel(sessionId: string, model: string): Promise<{ session_id: string; model: string }> {

@@ -21,6 +21,7 @@ import {
 } from "@/services";
 import type { AttachmentDraft, FriendlyError } from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
+import type { SessionDetail } from "@/types/meta";
 import type { PushEvent } from "@/types/push";
 import type { RunSnapshot } from "@/types/run";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
@@ -174,8 +175,10 @@ function messageText(message: ChatMessage): string {
     .join("\n\n");
 }
 
-function projectSessionDetail(detail: { events: Parameters<typeof projectSessionEvents>[0]; active_events?: Parameters<typeof projectSessionEvents>[0] }) {
-  return projectSessionEvents(detail.active_events ?? detail.events);
+function projectSessionDetail(detail: SessionDetail) {
+  const events = detail.active_events ?? detail.events;
+  if (!events) throw new Error("session detail is missing events");
+  return projectSessionEvents(events);
 }
 
 function hasErrorMessage(messages: ChatMessage[], error: string): boolean {
