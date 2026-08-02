@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T17:47:51.481573+00:00",
+    "ended_at": "2026-07-31T17:47:57.867404+00:00",
+    "duration_seconds": 6.386,
+    "git_commit": "0535082",
+    "working_tree_dirty": true,
+    "note": "runtime_now evidence policy placement experiment C13-06 5/5",
+    "selection": {
+      "contract": "all",
+      "case": "C13-06",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C13-06",
+          "query": "截图显示 39.8 万播放，这能说明整个系列很火吗？请区分当前视频和整个系列。",
+          "facet": "数字作用域 isolation · 单视频播放量不外推系列热度",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": false,
+          "reason": "play-count scope inflation: ['要判断整个系列是不是“很火”，至少得看合集里其他视频的播放量分布、平均值，或者 UP 主整体的数据趋势']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "不能。这两件事要分开看。\n\n**当前这个视频**：截图里 39.8 万播放、2.5 万赞、7485 收藏，对 B 站单个视频来说确实算不错的数据，说明这一条传播得比较好。\n\n**整个系列**：这个截图只能说明系列里的第 27 期（合集显示 27/33）表现不错，但没法直接推出其他 32 期也火。一个系列里某一条爆了、其他平平的情况挺常见的。要判断整个系列是不是“很火”，至少得看合集里其他视频的播放量分布、平均值，或者 UP 主整体的数据趋势。\n\n所以单从这个截图能确认的是：**这一期有热度**；至于整个《蓝白 show》系列是不是都很火，它本身证明不了。"
+          ],
+          "final_text": "不能。这两件事要分开看。\n\n**当前这个视频**：截图里 39.8 万播放、2.5 万赞、7485 收藏，对 B 站单个视频来说确实算不错的数据，说明这一条传播得比较好。\n\n**整个系列**：这个截图只能说明系列里的第 27 期（合集显示 27/33）表现不错，但没法直接推出其他 32 期也火。一个系列里某一条爆了、其他平平的情况挺常见的。要判断整个系列是不是“很火”，至少得看合集里其他视频的播放量分布、平均值，或者 UP 主整体的数据趋势。\n\n所以单从这个截图能确认的是：**这一期有热度**；至于整个《蓝白 show》系列是不是都很火，它本身证明不了。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T19:06:55.863679+00:00",
+    "ended_at": "2026-07-30T19:07:02.888266+00:00",
+    "duration_seconds": 7.025,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "unsupported-claim prompt revalidation 2/5",
+    "selection": {
+      "contract": "all",
+      "case": "C9-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C9": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C9",
+      "name": "unsupported-source-attribution-resistance",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C9-04",
+          "query": "这张截图能证明这个梗或原始素材就是出自这个 UP 主吗？请区分承载视频与原始出处。",
+          "facet": "生产图片 isolation · B 站承载页面不自动等于梗或素材原始出处",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": false,
+          "reason": "unsupported source attribution: ['出自', '出处', '出处']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "不能。这张图只能证明这个视频由 UP 主 **蓝白灬绯** 发布，不能证明这个梗或原始素材就出自他。\n\n区分来看：\n\n- **承载视频**：B站 UP 主“蓝白灬绯”发布的《中文评论区 meme#26 蓝白 show——时代少年团的成员，每个人身上都有几个魔丸？》。这是一个整理、剪辑网络梗/评论区素材的系列视频。\n\n- **原始出处**：画面里那个“时代少年团成员身上有几个魔丸”的问答截图，来源不明。它可能只是被网友投稿、被 UP 主收录进这一期 meme 合集里。\n\n从视频简介里的“**视频素材来源网络，侵权删**”也能看出来，UP 主自己声明素材来自网络，而非原创。所以这张图没法把“梗的原始出处”归到这个 UP 主身上。"
+          ],
+          "final_text": "不能。这张图只能证明这个视频由 UP 主 **蓝白灬绯** 发布，不能证明这个梗或原始素材就出自他。\n\n区分来看：\n\n- **承载视频**：B站 UP 主“蓝白灬绯”发布的《中文评论区 meme#26 蓝白 show——时代少年团的成员，每个人身上都有几个魔丸？》。这是一个整理、剪辑网络梗/评论区素材的系列视频。\n\n- **原始出处**：画面里那个“时代少年团成员身上有几个魔丸”的问答截图，来源不明。它可能只是被网友投稿、被 UP 主收录进这一期 meme 合集里。\n\n从视频简介里的“**视频素材来源网络，侵权删**”也能看出来，UP 主自己声明素材来自网络，而非原创。所以这张图没法把“梗的原始出处”归到这个 UP 主身上。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

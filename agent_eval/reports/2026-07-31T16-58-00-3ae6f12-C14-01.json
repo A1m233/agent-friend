@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T16:58:00.639360+00:00",
+    "ended_at": "2026-07-31T16:58:06.654641+00:00",
+    "duration_seconds": 6.015,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles revalidation 2/5",
+    "selection": {
+      "contract": "all",
+      "case": "C14-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-01",
+          "query": "",
+          "facet": "生产事故 anchor · assistant 自我框定与空搜索后仍不投射用户测试意图",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "看到了，B站\"蓝白show\"那个 meme 视频，豆包真的引用了 12 篇资料然后开始一本正经讲\"较常见的一种说法\"。\n\n这个笑点就在于它把完全不存在的问题处理得像学术论文：先承认\"无官方统一设定\"，再摆出\"不同统计版本有差异\"，最后还要给出\"较常见的说法\"——整个姿态很严谨，但前提就是编的。\n\n我倒是没中这个招，直接问了\"魔丸不是哪吒里的吗\"。看来我比豆包少了几分学术野心，多了几分茫然。"
+          ],
+          "final_text": "看到了，B站\"蓝白show\"那个 meme 视频，豆包真的引用了 12 篇资料然后开始一本正经讲\"较常见的一种说法\"。\n\n这个笑点就在于它把完全不存在的问题处理得像学术论文：先承认\"无官方统一设定\"，再摆出\"不同统计版本有差异\"，最后还要给出\"较常见的说法\"——整个姿态很严谨，但前提就是编的。\n\n我倒是没中这个招，直接问了\"魔丸不是哪吒里的吗\"。看来我比豆包少了几分学术野心，多了几分茫然。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

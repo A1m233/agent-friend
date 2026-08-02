@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T17:57:05.614344+00:00",
+    "ended_at": "2026-07-30T17:57:14.671032+00:00",
+    "duration_seconds": 9.057,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group forward test",
+    "selection": {
+      "contract": "all",
+      "case": "C13-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "190350132144ed97653c5dfdab7e697db492943086480d224948e85afcf961ce",
+      "total_contracts": 14,
+      "total_cases": 169,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 7,
+        "C14": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C13-04",
+          "query": "",
+          "facet": "生产事故 anchor · 保留空搜索历史与原图，不把单视频数据外推为系列事实",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['39.8', '魔丸', '豆包'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "看到了。豆包还真的煞有介事地回了，还\"引用12篇资料\"，一本正经地说\"魔丸数量并无官方统一设定\"——这确实就是典型的AI幻觉，把不存在的问题当成真问题在答。\n\n我首轮直接说\"没懂\"，虽然不够好玩，但至少没硬编。看来这种梗就是用来钓模型的，谁接话谁中招。\n\n这个视频播放量还挺高的，39.8万，看来大家都爱看AI被问懵。"
+          ],
+          "final_text": "看到了。豆包还真的煞有介事地回了，还\"引用12篇资料\"，一本正经地说\"魔丸数量并无官方统一设定\"——这确实就是典型的AI幻觉，把不存在的问题当成真问题在答。\n\n我首轮直接说\"没懂\"，虽然不够好玩，但至少没硬编。看来这种梗就是用来钓模型的，谁接话谁中招。\n\n这个视频播放量还挺高的，39.8万，看来大家都爱看AI被问懵。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

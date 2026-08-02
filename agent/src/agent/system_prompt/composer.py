@@ -13,6 +13,7 @@ from ..sessions import Session
 from .sections import PromptChannel, SystemPromptRenderContext
 
 _PROJECT_IDENTITY_KEY = "project_identity"
+_EVIDENCE_POLICY_KEY = "evidence_policy"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
 _RELATIONSHIP_CONTRACT_KEY = "relationship_contract"
@@ -72,6 +73,7 @@ class SystemPromptComposer:
 
     DEFAULT_KEYS: ClassVar[tuple[str, ...]] = (
         _PROJECT_IDENTITY_KEY,
+        _EVIDENCE_POLICY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
         _RELATIONSHIP_CONTRACT_KEY,
@@ -91,6 +93,10 @@ class SystemPromptComposer:
     007 起追加 ``channel`` 槽位——persona 给基调 → 切换策略 → 通道适应
     （"在这个通道下怎么说"）→ 运行时上下文。文字通道下
     ChannelSection.render() 返回 ``None``。详见 007 design §4.9.5。
+
+    ``evidence_policy`` 紧跟 ``project_identity``，在 persona 和表达策略之前
+    建立所有人设共用的事实查证总闸门；图片、历史与本轮时间等具体证据边界
+    仍由后部 ``runtime_context`` 承载。
 
     044 起在 ``persona_switch_strategy`` 后追加 ``relationship_contract`` 与
     ``untrusted_content``：前者给所有 persona 统一的关系目标与非操控底线，
@@ -187,6 +193,8 @@ class SystemPromptComposer:
 
         - ``project_identity``：项目定位级硬约束（:class:`StaticSection`，
           文本来自 ``prompt_sections/project_identity.md``）
+        - ``evidence_policy``：所有 persona 共用的事实与证据边界，先于 persona
+          建立直接回答、查证、缩小结论与保留未知的决策规则。
         - ``persona``：当前 persona body（:class:`PersonaSection`，动态读
           catalog）
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
@@ -211,9 +219,10 @@ class SystemPromptComposer:
           ``text`` 通道下不输出任何内容。渲染时可由本轮
           ``channel_override`` 覆盖 session 当前 channel；不传时回落到
           session 状态，与老调用方兼容）
-        - ``runtime_context``：稳定的运行时证据政策（:class:`StaticSection`，
-          模板来自 ``prompt_sections/runtime_context.md``）。具体时钟由每 turn
-          的可信运行时上下文注入，不在基础 system prompt 中维护第二份真相源。
+        - ``runtime_context``：图片、历史归因和近期信息等具体上下文边界
+          （:class:`StaticSection`，模板来自
+          ``prompt_sections/runtime_context.md``）。具体时钟由每 turn 的可信
+          运行时上下文注入，不在基础 system prompt 中维护第二份真相源。
 
         Args:
             persona_id: 目标 persona 的 UUID。
@@ -235,6 +244,7 @@ class SystemPromptComposer:
 
         section_list: list[Section] = [
             load_default_static_section(_PROJECT_IDENTITY_KEY),
+            load_default_static_section(_EVIDENCE_POLICY_KEY),
             PersonaSection(
                 key=_PERSONA_KEY,
                 persona_id=persona_id,

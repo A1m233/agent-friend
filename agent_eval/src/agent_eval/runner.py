@@ -43,8 +43,11 @@ from .schema import (
     Case,
     FakeTool,
     FixtureAttachment,
+    FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
+    FixtureToolCallRequest,
+    FixtureToolCallResult,
     ToolCallTrace,
     Trace,
 )
@@ -197,14 +200,54 @@ def _inject_current_session_messages(
     resolve_attachments: ResolveAttachments | None = None,
 ) -> None:
     """把前置轮次注入当前被测会话，不触发 LLM。"""
+    _inject_current_session_events(
+        store,
+        session,
+        list(messages),
+        resolve_attachments=resolve_attachments,
+    )
+
+
+def _inject_current_session_events(
+    store: JsonlSessionStore,
+    session: Session,
+    events: list[FixtureCurrentEvent],
+    *,
+    resolve_attachments: ResolveAttachments | None = None,
+) -> None:
+    """Inject completed message/tool history into the active session without an LLM call."""
     now = datetime.now(UTC)
-    for index, msg in enumerate(messages):
-        event_type: EventType = "user_message" if msg.role == "user" else "assistant_message"
+    for index, item in enumerate(events):
+        payload: dict[str, Any]
+        if isinstance(item, FixtureMessage):
+            event_type: EventType = "user_message" if item.role == "user" else "assistant_message"
+            payload = _event_payload(item, resolve_attachments)
+            if event_type == "assistant_message":
+                payload["partial"] = False
+        elif isinstance(item, FixtureToolCallRequest):
+            event_type = "tool_call_request"
+            payload = {
+                "tool_call_id": item.tool_call_id,
+                "event_tool_call_id": item.tool_call_id,
+                "tool_name": item.tool_name,
+                "args": dict(item.args),
+            }
+        elif isinstance(item, FixtureToolCallResult):
+            event_type = "tool_call_result"
+            payload = {
+                "tool_call_id": item.tool_call_id,
+                "event_tool_call_id": item.tool_call_id,
+                "tool_name": item.tool_name,
+                "content": item.content,
+                "is_error": item.is_error,
+            }
+        else:  # pragma: no cover - closed union, defensive for hand-built cases
+            raise TypeError(f"unsupported current-session fixture event: {type(item).__name__}")
         event = Event(
             type=event_type,
             uuid=str(uuid4()),
             ts=now + timedelta(milliseconds=index),
-            payload=_event_payload(msg, resolve_attachments),
+            payload=payload,
             meta={},
         )
         session.append(event)
@@ -272,6 +315,12 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 store,
                 session,
                 case.current_session_messages,
+                resolve_attachments=resolve_attachments,
+            )
+            _inject_current_session_events(
+                store,
+                session,
+                case.current_session_events,
                 resolve_attachments=resolve_attachments,
             )
 

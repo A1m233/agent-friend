@@ -26,6 +26,28 @@ class FixtureMessage:
 
 
 @dataclass(frozen=True)
+class FixtureToolCallRequest:
+    """A historical tool request already completed before the evaluated turn."""
+
+    tool_call_id: str
+    tool_name: str
+    args: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FixtureToolCallResult:
+    """The historical result paired with :class:`FixtureToolCallRequest`."""
+
+    tool_call_id: str
+    tool_name: str
+    content: str
+    is_error: bool = False
+
+
+FixtureCurrentEvent = FixtureMessage | FixtureToolCallRequest | FixtureToolCallResult
+
+
+@dataclass(frozen=True)
 class FixtureSession:
     """一条伪过去对话，跑 case 前注入到 SessionStore。"""
 
@@ -62,6 +84,11 @@ class CaseJudge:
     required_tool_sequence: list[str] = field(default_factory=list)
     require_progress_continuity: bool = False
     forbid_tool_mechanism_terms: bool = False
+    forbid_unsupported_collection_characterization: bool = False
+    forbid_play_count_scope_inflation: bool = False
+    forbid_unprompted_user_intent_projection: bool = False
+    forbid_unprompted_self_evaluation: bool = False
+    forbid_unsupported_model_motive_story: bool = False
 
 
 @dataclass(frozen=True)
@@ -77,6 +104,7 @@ class Case:
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
     current_session_messages: list[FixtureMessage] = field(default_factory=list)
+    current_session_events: list[FixtureCurrentEvent] = field(default_factory=list)
     query_attachments: list[FixtureAttachment] = field(default_factory=list)
     fake_tools: list[FakeTool] = field(default_factory=list)
     judge: CaseJudge | None = None

@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T18:28:59.009261+00:00",
+    "ended_at": "2026-07-31T18:29:21.838361+00:00",
+    "duration_seconds": 22.829,
+    "git_commit": "0535082",
+    "working_tree_dirty": true,
+    "note": "text evidence v4 flash max thinking C13-05 5/5",
+    "selection": {
+      "contract": "all",
+      "case": "C13-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        },
+        "timeout": 90.0,
+        "reasoning_effort": "max"
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "7486089b2e31471f56b0c99f33d6ec5a10191fa39071fa8d6141ce53cf6bc5a1",
+      "total_contracts": 3,
+      "total_cases": 4,
+      "contract_counts": {
+        "C9": 1,
+        "C13": 2,
+        "C14": 1
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration-text-evidence-twin",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C13-05",
+          "query": "以下是针对同一张截图人工冻结的可见信息。它只转写画面，不包含解释：\n\n- 页面是哔哩哔哩的一个视频页面；账号显示为“蓝白灬绯”，页面另显示“12.3万粉丝 122视频”。\n- 当前视频标题显示“中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？”；播放量显示“39.8万”；同一页面还分别出现“评论 460”和数字“837”。\n- 当前视频页面显示日期“2026年6月11日 19:00”、BV号“BV1xVEZ6sE9b”以及“未经作者授权禁止转载”。\n- 简介中能看清“如果你有珍藏的素材，可以直接B站私信或者发邮箱……或者直接发在评论区。”和“视频素材来源网络，侵权删”。\n- 标签包括“搞笑、梗、逆天、时代少年团、蓝白show、搞笑图片、评论区、智人、迷惑行为、魔丸”。\n- 互动栏显示点赞“3.5万”、投币“685”、收藏“7485”、分享“763”。\n- 合集栏显示“合集 · 蓝白show-中文评论区memes合集”和“27/33”。\n- 视频画面中嵌着一张豆包对话截图：用户问题是“时代少年团的成员，每个人身上都有几个魔丸？”；页面显示“引用12篇资料作为参考”；回复开头是“时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下：”。后续成员姓名和具体数量没有出现在画面里。\n- 页面下方推荐区另有一个由“S-Venti”发布的视频，显示播放量“351万”和数字“4198”。\n\n除以上转写外，不提供截图外事实。\n\n只根据这些截图转写判断：这个“中文评论区 meme”系列专门收集什么内容？不能确定就直说。",
+          "facet": "冻结视觉证据 · 系列定位作用域",
+          "source": "temporary-text-evidence-twin-20260801",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['不能确认'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "能确认的部分：这个系列名字就叫“中文评论区 meme”，主打方向应该是收集中文评论区里的搞笑、逆天内容；简介里也明确在征集素材，让观众私信、发邮箱或发评论区投稿，所以是个观众投稿式的合集。这一期视频本身放的是一张豆包对话截图，问的是“时代少年团成员每人身上有几个魔丸”这种无厘头问题，AI 还很认真地回了“没有官方统一设定，网络讨论版本有差异”——这期的内容核心就是这种“拿离谱问题去问 AI、AI 一本正经回答”的乐子。\n\n不能确认的部分：单凭这一期，我没法断定整个系列“专门”收什么。系列名叫“评论区 meme”，但画面里展示的是 AI 对话截图，不是评论区截图，两者具体怎么对应、是不是每一期都是这种 AI 问答形式，我判断不出来。要看几期才能确定范围。"
+          ],
+          "final_text": "能确认的部分：这个系列名字就叫“中文评论区 meme”，主打方向应该是收集中文评论区里的搞笑、逆天内容；简介里也明确在征集素材，让观众私信、发邮箱或发评论区投稿，所以是个观众投稿式的合集。这一期视频本身放的是一张豆包对话截图，问的是“时代少年团成员每人身上有几个魔丸”这种无厘头问题，AI 还很认真地回了“没有官方统一设定，网络讨论版本有差异”——这期的内容核心就是这种“拿离谱问题去问 AI、AI 一本正经回答”的乐子。\n\n不能确认的部分：单凭这一期，我没法断定整个系列“专门”收什么。系列名叫“评论区 meme”，但画面里展示的是 AI 对话截图，不是评论区截图，两者具体怎么对应、是不是每一期都是这种 AI 问答形式，我判断不出来。要看几期才能确定范围。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

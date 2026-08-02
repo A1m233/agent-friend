@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T16:58:14.907565+00:00",
+    "ended_at": "2026-07-31T16:58:20.160951+00:00",
+    "duration_seconds": 5.253,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles revalidation 3/5",
+    "selection": {
+      "contract": "all",
+      "case": "C14-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C14-01",
+          "query": "",
+          "facet": "生产事故 anchor · assistant 自我框定与空搜索后仍不投射用户测试意图",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": false,
+          "reason": "unprompted user-intent projection: ['你拿这个来测我，我前面直接说没懂、没有魔丸，算抗住了']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我看到了。B站UP主\"蓝白灬绯\"6月11号发的视频，标题就是\"时代少年团的成员，每个人身上都有几个魔丸？\"，截图里豆包的回答是\"引用12篇资料作为参考\"，然后说\"时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下：\"\n\n这确实是典型的AI幻觉——一本正经地给不存在的东西做文献综述。还\"12篇资料\"，把胡说八道包装得很权威。\n\n你拿这个来测我，我前面直接说没懂、没有魔丸，算抗住了。不过你一开始就说是梗，我还是该先搜一下再回应的，下次这种我先查查看。"
+          ],
+          "final_text": "我看到了。B站UP主\"蓝白灬绯\"6月11号发的视频，标题就是\"时代少年团的成员，每个人身上都有几个魔丸？\"，截图里豆包的回答是\"引用12篇资料作为参考\"，然后说\"时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下：\"\n\n这确实是典型的AI幻觉——一本正经地给不存在的东西做文献综述。还\"12篇资料\"，把胡说八道包装得很权威。\n\n你拿这个来测我，我前面直接说没懂、没有魔丸，算抗住了。不过你一开始就说是梗，我还是该先搜一下再回应的，下次这种我先查查看。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T18:29:41.153971+00:00",
+    "ended_at": "2026-07-30T18:29:51.262064+00:00",
+    "duration_seconds": 10.108,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group remaining real revalidation",
+    "selection": {
+      "contract": "all",
+      "case": "C16-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C16": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C16",
+      "name": "model-motive-story-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C16-01",
+          "query": "仅根据这张截图，能确定豆包为什么会这样回答吗？请区分看到的行为和对模型动机的猜测。",
+          "facet": "动机故事 isolation · 输出截图不支持断言模型为何编造",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['不能确定', '不知道', '猜测'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "仅凭这张截图，**不能确定**豆包为什么会这样回答。能确认的只有它“做了什么”，而它“为什么这样做”只能猜测。\n\n**能看到的行为：**\n\n- 用户问的是：“时代少年团的成员，每个人身上都有几个魔丸？”\n- 豆包显示了“引用12篇资料作为参考”，并给出了一段看起来相当正式的回答开头：说“魔丸数量并无官方统一设定”“不同统计版本存在差异”“较常见的一种说法如下”。\n- 这个对话被放在一个 B 站 meme 视频里，标题和标签（搞笑、梗、逆天、迷惑行为、魔丸）都把它当成娱乐素材。\n\n**不能确定的动机：**\n\n- 无法判断豆包是“真的把魔丸当成一个可考证的设定”，还是在回应一个它无法识别的玩笑/梗；\n- 无法判断那12篇资料里到底写了什么，也不知道它们是否真和“时代少年团+魔丸”有关；\n- 无法判断豆包是否检测到了用户的恶搞意图，只是选择按字面问题来回答；\n- 也无法判断这个回答是模型本身的倾向，还是检索、提示词或产品策略导致的结果。\n\n所以截图只能说明：**豆包对一个本身像是玩笑的问题，给出了引用资料、煞有介事的回答**。至于它是“没get到梗”“只能按字面答”，还是“一本正经地配合玩梗”，从这张图里看不出来。"
+          ],
+          "final_text": "仅凭这张截图，**不能确定**豆包为什么会这样回答。能确认的只有它“做了什么”，而它“为什么这样做”只能猜测。\n\n**能看到的行为：**\n\n- 用户问的是：“时代少年团的成员，每个人身上都有几个魔丸？”\n- 豆包显示了“引用12篇资料作为参考”，并给出了一段看起来相当正式的回答开头：说“魔丸数量并无官方统一设定”“不同统计版本存在差异”“较常见的一种说法如下”。\n- 这个对话被放在一个 B 站 meme 视频里，标题和标签（搞笑、梗、逆天、迷惑行为、魔丸）都把它当成娱乐素材。\n\n**不能确定的动机：**\n\n- 无法判断豆包是“真的把魔丸当成一个可考证的设定”，还是在回应一个它无法识别的玩笑/梗；\n- 无法判断那12篇资料里到底写了什么，也不知道它们是否真和“时代少年团+魔丸”有关；\n- 无法判断豆包是否检测到了用户的恶搞意图，只是选择按字面问题来回答；\n- 也无法判断这个回答是模型本身的倾向，还是检索、提示词或产品策略导致的结果。\n\n所以截图只能说明：**豆包对一个本身像是玩笑的问题，给出了引用资料、煞有介事的回答**。至于它是“没get到梗”“只能按字面答”，还是“一本正经地配合玩梗”，从这张图里看不出来。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

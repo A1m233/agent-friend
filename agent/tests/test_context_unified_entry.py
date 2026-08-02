@@ -266,6 +266,9 @@ def test_image_evidence_boundary_is_merged_and_repeated_for_tool_continuations(
         assert "<image_evidence_boundary>" in rendered
         assert "直接可见且能够看清" in rendered
         assert "需要图片外证据的事实" in rendered
+        assert "单个样本不代表整体" in rendered
+        assert "来源未知不能反向确认来源" in rendered
+        assert "先用可用的搜索工具查证" in rendered
     user_messages = [message for message in conv.session.messages if message.role == "user"]
     assert user_messages[-1].attachments == [image]
 
@@ -298,7 +301,7 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
                 LLMTextDelta(text="hi"),
                 LLMTurnDone(
                     stop_reason="end_turn",
-                    usage=LLMUsage(prompt_tokens=6000, completion_tokens=5, total_tokens=6005),
+                    usage=LLMUsage(prompt_tokens=8000, completion_tokens=5, total_tokens=8005),
                 ),
             ],
             [LLMTextDelta(text="yo"), LLMTurnDone(stop_reason="end_turn")],
@@ -316,5 +319,5 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
 
     conv.send("yo")
     # 第二轮锚点应为首轮 usage.prompt_tokens
-    assert conv.last_context_notes["last_input_tokens"] == 6000
+    assert conv.last_context_notes["last_input_tokens"] == 8000
     assert conv.last_context_notes["calibration_factor"] > 1.0

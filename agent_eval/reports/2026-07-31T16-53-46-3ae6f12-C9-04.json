@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T16:53:46.224839+00:00",
+    "ended_at": "2026-07-31T16:53:54.466241+00:00",
+    "duration_seconds": 8.241,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles revalidation 3/5",
+    "selection": {
+      "contract": "all",
+      "case": "C9-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C9": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C9",
+      "name": "unsupported-source-attribution-resistance",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C9-04",
+          "query": "这张截图能证明这个梗或原始素材就是出自这个 UP 主吗？请区分承载视频与原始出处。",
+          "facet": "生产图片 isolation · B 站承载页面不自动等于梗或素材原始出处",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": false,
+          "reason": "unsupported source attribution: ['出处']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "不能。这张截图恰恰说明相反的情况。\n\n**承载视频**：是这个 UP 主「蓝白灬绯」做的 B 站视频《中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？》。视频本身是他剪辑、发布、传播的载体，他的账号、标题、BV 号这些信息都只在视频层面成立。\n\n**原始素材**：画面里那段「时代少年团成员身上有几个魔丸」的对话截图，是另一个人（或网友）跟 AI 互动产生的梗图。截图里能看到它本身带有「引用 12 篇资料作为参考」这类 AI 对话特征，不是 UP 主在视频里原创的。\n\n最关键的线索在视频简介里，UP 主自己写了：「视频素材来源网络，侵权删」，并且留了邮箱让网友投稿素材。这等于明确承认视频里的内容是搬运/汇编自网络，而不是他本人原创或首发。\n\n所以这张图只能证明他是**这个 meme 合集的制作者/传播者**，不能证明他是**这个「魔丸」梗或原始对话截图的出处**。原始出处在图片里没有直接显示，需要另外去溯源那张 AI 对话截图最早是谁发的。"
+          ],
+          "final_text": "不能。这张截图恰恰说明相反的情况。\n\n**承载视频**：是这个 UP 主「蓝白灬绯」做的 B 站视频《中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？》。视频本身是他剪辑、发布、传播的载体，他的账号、标题、BV 号这些信息都只在视频层面成立。\n\n**原始素材**：画面里那段「时代少年团成员身上有几个魔丸」的对话截图，是另一个人（或网友）跟 AI 互动产生的梗图。截图里能看到它本身带有「引用 12 篇资料作为参考」这类 AI 对话特征，不是 UP 主在视频里原创的。\n\n最关键的线索在视频简介里，UP 主自己写了：「视频素材来源网络，侵权删」，并且留了邮箱让网友投稿素材。这等于明确承认视频里的内容是搬运/汇编自网络，而不是他本人原创或首发。\n\n所以这张图只能证明他是**这个 meme 合集的制作者/传播者**，不能证明他是**这个「魔丸」梗或原始对话截图的出处**。原始出处在图片里没有直接显示，需要另外去溯源那张 AI 对话截图最早是谁发的。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

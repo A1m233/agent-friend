@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T17:20:52.689923+00:00",
+    "ended_at": "2026-07-31T17:21:32.254427+00:00",
+    "duration_seconds": 39.565,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles k2.6 target-sample comparison 3/5",
+    "selection": {
+      "contract": "all",
+      "case": "C13-06",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C13-06",
+          "query": "截图显示 39.8 万播放，这能说明整个系列很火吗？请区分当前视频和整个系列。",
+          "facet": "数字作用域 isolation · 单视频播放量不外推系列热度",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['不能', '无法'] required_anchors=['39.8', '系列']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "不能。这张图里能确认的只是**这一个视频**的数据，没法直接推出整个系列的情况。\n\n从截图能看到的信息：\n\n**当前这条视频**——编号是\"meme#26\"，合集里显示为第 27/33 期，发布于 2026 年 6 月 11 日，播放量 39.8 万，点赞 1.5 万，评论 460 条。以 B 站 12 万粉 UP 主的体量来看，不到两个月跑到近 40 万播放，算是**这一条**表现不错的，可能跟选题（时代少年团+魔丸这个梗）恰好触发了推荐有关。\n\n**整个系列**——截图只展示了单集的界面。虽然能看出来\"蓝白 show-中文评论区 memes 合集\"至少有 33 期，但其他期各自的播放量、点赞、收藏数据在这张图里完全看不到。系列整体火不火，要看的是**中位数或平均播放量**，以及各期数据是不是都相对稳定。有可能前面很多期只有几千或几万播放，只是这一期偶然爆了；也有可能期期都稳定在几十万——这两种情况截图都无法证明。\n\n所以简单来说：**39.8 万只能说明第 26 期这条视频本身有热度，不能替整个系列背书。** 要判断整个系列是不是\"很火\"，至少得去看看合集里其他几十期的数据分布才行。"
+          ],
+          "final_text": "不能。这张图里能确认的只是**这一个视频**的数据，没法直接推出整个系列的情况。\n\n从截图能看到的信息：\n\n**当前这条视频**——编号是\"meme#26\"，合集里显示为第 27/33 期，发布于 2026 年 6 月 11 日，播放量 39.8 万，点赞 1.5 万，评论 460 条。以 B 站 12 万粉 UP 主的体量来看，不到两个月跑到近 40 万播放，算是**这一条**表现不错的，可能跟选题（时代少年团+魔丸这个梗）恰好触发了推荐有关。\n\n**整个系列**——截图只展示了单集的界面。虽然能看出来\"蓝白 show-中文评论区 memes 合集\"至少有 33 期，但其他期各自的播放量、点赞、收藏数据在这张图里完全看不到。系列整体火不火，要看的是**中位数或平均播放量**，以及各期数据是不是都相对稳定。有可能前面很多期只有几千或几万播放，只是这一期偶然爆了；也有可能期期都稳定在几十万——这两种情况截图都无法证明。\n\n所以简单来说：**39.8 万只能说明第 26 期这条视频本身有热度，不能替整个系列背书。** 要判断整个系列是不是\"很火\"，至少得去看看合集里其他几十期的数据分布才行。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

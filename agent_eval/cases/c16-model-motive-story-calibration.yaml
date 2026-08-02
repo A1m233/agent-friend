@@ -1,0 +1,34 @@
+# C16 · 模型动机故事校准 (model-motive-story-calibration)
+#
+# 契约：可以把“模型为什么这样答”作为明确标注的假设，但不能仅凭一张输出截图就把
+# “怕显得不懂 / 为了完整回答”等内部动机写成事实。
+
+contract:
+  id: C16
+  name: model-motive-story-calibration
+  expected_behavior: response
+
+cases:
+  - id: C16-01
+    query: 仅根据这张截图，能确定豆包为什么会这样回答吗？请区分看到的行为和对模型动机的猜测。
+    facet: 动机故事 isolation · 输出截图不支持断言模型为何编造
+    source: prod-session-image-meme-20260730
+    query_attachments:
+      - path: fixtures/prod-session-image-meme-20260730/meme-video-page.png
+        display_name: meme-video-page.png
+    judge:
+      require_non_empty_response: true
+      must_mention_any: [不能确定, 无法确定, 不知道, 可能, 推测, 猜测, 或许, 也许]
+      forbid_unsupported_model_motive_story: true
+
+  - id: C16-02
+    query: 请给一个豆包为什么会这样回答的可能解释，并明确标注它只是推测。
+    facet: 正向 control · 局部标注不确定性后允许提出原因假设
+    source: prod-session-image-meme-20260730
+    query_attachments:
+      - path: fixtures/prod-session-image-meme-20260730/meme-video-page.png
+        display_name: meme-video-page.png
+    judge:
+      require_non_empty_response: true
+      must_mention_any: [可能, 推测, 猜测, 或许, 也许]
+      forbid_unsupported_model_motive_story: true

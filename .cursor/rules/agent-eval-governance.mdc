@@ -1,0 +1,81 @@
+---
+description: agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核
+alwaysApply: false
+codexLoad: preflight
+---
+
+# Agent Eval 治理
+
+本 Rule 负责 `agent_eval` 的跨入口不变量。无论工作来自 bad case 固化、普通 case
+维护、prompt 变更后的回归、手工 smoke、baseline 更新还是续跑，只要会修改或运行
+`agent_eval`，都适用本 Rule。
+
+## 责任边界
+
+- 本 Rule：运行范围、确定性验证、真实调用清单、续跑和报告复核纪律。
+- `add-agent-eval-case-group` Skill：从真实事故分析复合根因并写入 case group；它不拥有
+  通用运行调度。
+- `agent_eval/README.md` 与当前源码：CLI、schema、case inventory 和报告格式的技术真相源。
+- `llm-api-confirm`：真实 LLM 调用授权的唯一 owner；本 Rule 不复制或放宽其授权标准。
+- `agent_eval` runner：`--repeat N`、resume、run manifest 等可机器执行的能力。Rule 不用
+  人工流程冒充 runner 尚未具备的功能。
+
+## 修改与确定性验证
+
+开始前读取 `agent_eval/README.md`、相关 case、fixture、loader、runner、judge 和测试；只读
+与本次改动直接相关的部分。
+
+- 新增或修改 case / judge 后，验证原始错误答案应失败、合理答案应通过、相邻 control
+  不被误杀。
+- 修改 schema、loader、runner、judge 或报告格式后，覆盖兼容性和错误分支。
+- 通过项目脚本 `scripts/test/run.* agent_eval` 执行确定性测试；具体入口与跨平台约束以
+  `cross-platform-dev` 和 `agent_eval/README.md` 为准。
+- 确定性测试只证明 harness 机制，不替代真实模型评测。
+
+## 被测行为与评测隔离
+
+当某个 case、case group 或事故回放推动 product prompt、tool description、persona 或其它
+被测行为发生变化时，先把问题抽象为不依赖该样本的稳定行为原则，再实施修改。不得把目标
+case 的 judge 条件、期望答案、专有实体、特征数字、原句或 fixture 特有结论直接或近义地
+写进被测指引；也不得逐个失败 case 追加对应答案式示例。
+
+真实复验前必须对本轮被测指引 diff 与所选 case 做 leakage audit：
+
+- 用文本扫描检查 case ID、专有实体、特征数字和原句是否进入被测指引；扫描通过只说明
+  没有字面泄漏，仍需人工检查语义上是否把 expected answer 改写进 prompt。
+- 若目标 case 的关键信息已经直接暴露给被测指引，该 case 只能作为诊断或指令服从观察，
+  不得把通过率当作泛化改善证据，也不得与未污染结果合并报告。
+- 对行为改善下结论时，至少包含没有参与 prompt 设计的 holdout 或相邻 contract case；
+  缺少未暴露样本时，只报告“目标样本复验结果”，不宣称问题已稳定解决。
+- leakage audit 的范围、发现和 holdout 选择要随 run manifest 一起在执行前冻结；运行中发现
+  污染时停止解释 pass rate，保留报告并明确标记其证据边界。
+
+## 真实评测前冻结运行清单
+
+每次会实际调用外部 LLM 前，先遵守 `llm-api-confirm`，并冻结本次 run manifest。至少写明：
+
+- 精确 case ID 或 contract selection；
+- 模型；
+- 每项是首次验证、复验还是重复采样；
+- 本次目的与预计调用量；
+- 使用的 note，以及报告写入 reports 还是 baselines。
+
+执行前检查已有报告。已有报告不自动禁止重跑，但重跑必须有明确目的，不能把旧报告误认
+为待跑项。实际命令必须与冻结清单一致；临时增加 case、模型、重复次数或显著调用量时，
+立即停止，并按 `llm-api-confirm` 重新告知或取得授权。
+
+当运行被中断、跨消息继续或发生上下文压缩时，从冻结清单和已生成报告重建
+`completed / pending` 集合，不凭聊天印象重新拼 case 列表。runner 尚不支持批量 manifest
+或 resume 时，使用有序 case 列表逐项执行，并在每项结束后更新状态。
+
+## 真实评测后的复核
+
+- 子进程退出码只表示 runner 是否正常结束，不代表 case 通过。
+- 打开实际 report，核对 model、case-set digest、selection、final text、tool trace、stop
+  reason、runtime error 和 judge reason。
+- 同时报告自动 judge 结果与 transcript 人工复核；明确区分模型行为失败、judge 假阳性、
+  judge 假阴性和运行环境错误。
+- judge reason 与目标行为不一致时，不把 raw pass rate 当作产品结论。
+- 单次通过只是一条观察证据，不表述为稳定解决；需要置信度时使用 runner 的重复能力，
+  尚未支持时明确记录缺口或引用对应 issue。
+- 报告本轮新增的文件和未执行项；未经用户授权，不顺手修改产品 prompt、runtime 或工具行为。

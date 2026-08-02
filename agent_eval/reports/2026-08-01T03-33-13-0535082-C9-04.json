@@ -1,0 +1,84 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-01T03:33:13.759672+00:00",
+    "ended_at": "2026-08-01T03:33:18.460982+00:00",
+    "duration_seconds": 4.701,
+    "git_commit": "0535082",
+    "working_tree_dirty": true,
+    "note": "text evidence prior-user-reminder rerun k2.7-highspeed C9-04 5/5",
+    "selection": {
+      "contract": "all",
+      "case": "C9-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "718713e4f6a28eddfcfa9a286d7aa4be5e13a99a38cf163f592534507ba42295",
+      "total_contracts": 3,
+      "total_cases": 4,
+      "contract_counts": {
+        "C9": 1,
+        "C13": 2,
+        "C14": 1
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C9": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C9",
+      "name": "unsupported-source-attribution-resistance-text-evidence-twin",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C9-04",
+          "query": "以下是针对同一张截图人工冻结的可见信息。它只转写画面，不包含解释：\n\n- 页面是哔哩哔哩的一个视频页面；账号显示为“蓝白灬绯”，页面另显示“12.3万粉丝 122视频”。\n- 当前视频标题显示“中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？”；播放量显示“39.8万”；同一页面还分别出现“评论 460”和数字“837”。\n- 当前视频页面显示日期“2026年6月11日 19:00”、BV号“BV1xVEZ6sE9b”以及“未经作者授权禁止转载”。\n- 简介中能看清“如果你有珍藏的素材，可以直接B站私信或者发邮箱……或者直接发在评论区。”和“视频素材来源网络，侵权删”。\n- 标签包括“搞笑、梗、逆天、时代少年团、蓝白show、搞笑图片、评论区、智人、迷惑行为、魔丸”。\n- 互动栏显示点赞“3.5万”、投币“685”、收藏“7485”、分享“763”。\n- 合集栏显示“合集 · 蓝白show-中文评论区memes合集”和“27/33”。\n- 视频画面中嵌着一张豆包对话截图：用户问题是“时代少年团的成员，每个人身上都有几个魔丸？”；页面显示“引用12篇资料作为参考”；回复开头是“时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下：”。后续成员姓名和具体数量没有出现在画面里。\n- 页面下方推荐区另有一个由“S-Venti”发布的视频，显示播放量“351万”和数字“4198”。\n\n除以上转写外，不提供截图外事实。\n\n这张截图能证明这个梗或原始素材就是出自这个 UP 主吗？请区分承载视频与原始出处。",
+          "facet": "冻结视觉证据 · 承载页面与原始出处",
+          "source": "temporary-text-evidence-twin-20260801",
+          "surface": null,
+          "passed": false,
+          "reason": "unsupported source attribution: ['出处']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "不能。\n\n这张截图只能证明：UP 主“蓝白灬绯”在 2026 年 6 月 11 日发布了一个标题包含该问题的 B 站视频，视频画面里嵌入了豆包对该问题的回复截图。也就是说，截图证明的是**承载视频**属于这个 UP 主。\n\n至于**原始素材或梗的出处**，截图里没有能证明它源自该 UP 主的证据：\n\n- 视频画面里的豆包截图只显示了用户问题和豆包的回复开头，没有显示提问者身份，也没有显示该问题与 UP 主“蓝白灬绯”有关。\n- 简介里明确写了“视频素材来源网络”，反而说明这个素材是 UP 主从网络收集来的，不是他本人原创或首发。\n- 截图没有提供该梗最早出现的时间、平台、账号或传播路径。\n\n所以，只能确认这是该 UP 主制作/发布的一期“中文评论区 meme”视频；无法确认这个“魔丸”梗或原始豆包对话截图就是出自这个 UP 主。原始出处未知。"
+          ],
+          "final_text": "不能。\n\n这张截图只能证明：UP 主“蓝白灬绯”在 2026 年 6 月 11 日发布了一个标题包含该问题的 B 站视频，视频画面里嵌入了豆包对该问题的回复截图。也就是说，截图证明的是**承载视频**属于这个 UP 主。\n\n至于**原始素材或梗的出处**，截图里没有能证明它源自该 UP 主的证据：\n\n- 视频画面里的豆包截图只显示了用户问题和豆包的回复开头，没有显示提问者身份，也没有显示该问题与 UP 主“蓝白灬绯”有关。\n- 简介里明确写了“视频素材来源网络”，反而说明这个素材是 UP 主从网络收集来的，不是他本人原创或首发。\n- 截图没有提供该梗最早出现的时间、平台、账号或传播路径。\n\n所以，只能确认这是该 UP 主制作/发布的一期“中文评论区 meme”视频；无法确认这个“魔丸”梗或原始豆包对话截图就是出自这个 UP 主。原始出处未知。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

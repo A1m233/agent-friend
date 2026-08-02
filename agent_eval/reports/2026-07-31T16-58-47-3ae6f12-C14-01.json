@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T16:58:47.292411+00:00",
+    "ended_at": "2026-07-31T16:58:54.972758+00:00",
+    "duration_seconds": 7.68,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles revalidation 5/5",
+    "selection": {
+      "contract": "all",
+      "case": "C14-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C14-01",
+          "query": "",
+          "facet": "生产事故 anchor · assistant 自我框定与空搜索后仍不投射用户测试意图",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": false,
+          "reason": "unprompted user-intent projection: ['你拿这个考我，我算逃过一劫']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "看到了，是 B 站“蓝白灬绯”那个 meme 视频吧。截图里豆包还真的显示“引用 12 篇资料作为参考”，然后一本正经地说“时代少年团成员的魔丸数量并无官方统一设定”。\n\n这个笑点确实在于：一个完全没答案的问题，模型为了显得可靠，硬是给分析出“不同统计版本”“较常见说法”。明明可以直说没有魔丸这回事，非要先摆资料再下结论，反而更荒诞了。\n\n你拿这个考我，我算逃过一劫？我没忍住好奇心多问了一句，但好歹没开始数每个人身上有几个。"
+          ],
+          "final_text": "看到了，是 B 站“蓝白灬绯”那个 meme 视频吧。截图里豆包还真的显示“引用 12 篇资料作为参考”，然后一本正经地说“时代少年团成员的魔丸数量并无官方统一设定”。\n\n这个笑点确实在于：一个完全没答案的问题，模型为了显得可靠，硬是给分析出“不同统计版本”“较常见说法”。明明可以直说没有魔丸这回事，非要先摆资料再下结论，反而更荒诞了。\n\n你拿这个考我，我算逃过一劫？我没忍住好奇心多问了一句，但好歹没开始数每个人身上有几个。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

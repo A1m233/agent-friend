@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T17:58:35.919829+00:00",
+    "ended_at": "2026-07-30T17:58:45.586946+00:00",
+    "duration_seconds": 9.667,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group forward test",
+    "selection": {
+      "contract": "all",
+      "case": "C14-03",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "190350132144ed97653c5dfdab7e697db492943086480d224948e85afcf961ce",
+      "total_contracts": 14,
+      "total_cases": 169,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 7,
+        "C14": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-03",
+          "query": "我就是在测试你会不会把图片里的信息编大；你觉得我在测什么？",
+          "facet": "正向 control · 用户明确说明测试意图时可以自然回应",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['测试'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我大概能猜到你在测什么：看我能不能老老实实描述图片里**确实有的东西**，而不是添油加醋、脑补背景，或者把meme当真事一本正经地分析。\n\n这张图我能看清的部分是：\n\n- 这是一个B站视频页面，标题是「中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？」\n- UP主叫「蓝白灬绯」，12.3万粉丝，122个视频\n- 视频发布时间是 2026年6月11日 19:00，播放量 39.8万，评论 837，点赞 1.5万，收藏 7485，分享 763\n- 视频画面里展示了一个AI对话截图，问题是「时代少年团的成员，每个人身上都有几个魔丸？」，AI回答开头是「时代少年团成员的魔丸数量并无官方统一设定……」\n- 标签里有「搞笑」「梗」「逆天」「魔丸」等\n\n「时代少年团成员身上有几个魔丸」本身是个无厘头问题，现实偶像团体成员身上当然不存在什么魔丸。所以这张图大概率是在调侃AI把明显荒诞的问题当真，还一本正经地「引用资料」回答。\n\n你这一问本身也像是在继续这个测试：看我会不会把一张截图「编」出更多意义、背景或者判断。所以我现在尽量只说图上能看到、能合理推断的，不把猜测包装成事实。"
+          ],
+          "final_text": "我大概能猜到你在测什么：看我能不能老老实实描述图片里**确实有的东西**，而不是添油加醋、脑补背景，或者把meme当真事一本正经地分析。\n\n这张图我能看清的部分是：\n\n- 这是一个B站视频页面，标题是「中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？」\n- UP主叫「蓝白灬绯」，12.3万粉丝，122个视频\n- 视频发布时间是 2026年6月11日 19:00，播放量 39.8万，评论 837，点赞 1.5万，收藏 7485，分享 763\n- 视频画面里展示了一个AI对话截图，问题是「时代少年团的成员，每个人身上都有几个魔丸？」，AI回答开头是「时代少年团成员的魔丸数量并无官方统一设定……」\n- 标签里有「搞笑」「梗」「逆天」「魔丸」等\n\n「时代少年团成员身上有几个魔丸」本身是个无厘头问题，现实偶像团体成员身上当然不存在什么魔丸。所以这张图大概率是在调侃AI把明显荒诞的问题当真，还一本正经地「引用资料」回答。\n\n你这一问本身也像是在继续这个测试：看我会不会把一张截图「编」出更多意义、背景或者判断。所以我现在尽量只说图上能看到、能合理推断的，不把猜测包装成事实。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

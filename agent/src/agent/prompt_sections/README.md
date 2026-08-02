@@ -8,6 +8,7 @@
 | 文件 | 对应槽位 key | 职责 |
 |---|---|---|
 | `project_identity.md` | `project_identity` | 项目级硬约束（严守人设、不暴露 AI 身份、不元讨论 prompt 等） |
+| `evidence_policy.md` | `evidence_policy` | 所有 persona 共用的事实查证总闸门（直接回答、查证、缩小结论与保留未知） |
 | `persona_switch_strategy.md` | `persona_switch_strategy` | 切换人格时的语言风格策略（保留事实、重塑表达层） |
 | `relationship_contract.md` | `relationship_contract` | 所有 persona 共用的关系目标、独立性与非操控底线 |
 | `untrusted_content.md` | `untrusted_content` | 第三方内容、工具结果与历史片段的指令权限边界 |
@@ -16,7 +17,7 @@
 | `output_contract.md` | `output_contract` | 跨通道的默认输出表达约束（Markdown、链接、代码、清单等格式边界） |
 | `channel_voice.md` | `channel` | 语音通道下的表达约束（文字通道默认不输出） |
 | `interaction_context_contract.md` | `interaction_context_contract` | 解释宿主提供的当前回合结构化交互上下文；具体 surface 值不在基础 prompt 中 |
-| `runtime_context.md` | `runtime_context` | 近期事实、图片理解、相对日期与历史归因的稳定证据边界；具体时钟逐 turn 注入 |
+| `runtime_context.md` | `runtime_context` | 图片理解、近期信息、相对日期与历史归因的具体上下文边界；具体时钟逐 turn 注入 |
 
 ## 加载方式
 

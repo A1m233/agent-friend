@@ -1,0 +1,4 @@
+interface:
+  display_name: "固化 Agent Eval Case Group"
+  short_description: "把真实 bad case 闭环写入 agent_eval"
+  default_prompt: "Use $add-agent-eval-case-group to turn this agent-friend bad case into a validated agent_eval case group."
