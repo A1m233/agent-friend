@@ -24,7 +24,7 @@ const dotVariants = cva("inline-block shrink-0 rounded-full", {
       false: "",
     },
   },
-  defaultVariants: { tone: "muted", size: "sm", pulse: false },
+  defaultVariants: { tone: "muted", size: "md", pulse: false },
 });
 
 export interface StatusDotProps

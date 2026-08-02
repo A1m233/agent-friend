@@ -130,9 +130,23 @@ export function Composer({
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
   const voiceInputDisabled = disabled || streaming;
   const attachmentsDisabled = disabled || streaming || !capabilities?.attachments;
+  const composerControlDisabledReason = disabled
+    ? disabledReason ?? "暂时不可用"
+    : streaming
+      ? "请等待当前回复完成"
+      : undefined;
   const availableAttachmentSlots = capabilities?.attachments
     ? Math.max(0, capabilities.maxAttachmentsPerTurn - draftAttachments.length)
     : 0;
+  const attachmentDisabledReason = composerControlDisabledReason
+    ?? (!catalog
+      ? "模型能力尚未就绪，请稍后再添加附件"
+      : !capabilities?.attachments
+        ? `当前模型 ${selectedModel} 不支持图片或文档`
+        : availableAttachmentSlots <= 0
+          ? `单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`
+          : undefined);
+  const attachmentActionDisabled = Boolean(attachmentDisabledReason);
   const dropzoneAccept = useMemo(
     () => capabilities?.attachments
       ? dropzoneAcceptFromMediaTypes(capabilities.acceptedMediaTypes)
@@ -195,16 +209,8 @@ export function Composer({
   }, [attachmentCompatibility]);
 
   const explainAttachmentUnavailable = useCallback(() => {
-    if (disabled) {
-      toast.error(disabledReason ?? "暂时不能添加附件");
-    } else if (streaming) {
-      toast.error("请等待当前回复完成后再添加附件");
-    } else if (!catalog) {
-      toast.error("模型能力尚未就绪，请稍后再添加附件");
-    } else {
-      toast.error(`当前模型 ${selectedModel} 不支持图片或文档`);
-    }
-  }, [catalog, disabled, disabledReason, selectedModel, streaming]);
+    toast.error(attachmentDisabledReason ?? "暂时不能添加附件");
+  }, [attachmentDisabledReason]);
 
   const addFiles = useCallback(async (files: File[]) => {
     if (disabled || streaming) {
@@ -622,14 +628,11 @@ export function Composer({
                 <div className="flex min-w-0 items-center gap-1">
                   <TooltipButton
                     type="button"
-                    disabled={disabled || streaming}
+                    disabled={attachmentActionDisabled}
                     aria-label="添加附件"
-                    tooltip="添加附件"
+                    tooltip={attachmentDisabledReason ?? "添加附件"}
                     icon={<Plus className="size-4" />}
-                    className={cn(
-                      "rounded-full",
-                      !capabilities?.attachments && "cursor-not-allowed text-muted",
-                    )}
+                    className="rounded-full"
                     onClick={() => {
                       if (attachmentsDisabled) {
                         explainAttachmentUnavailable();
@@ -641,7 +644,7 @@ export function Composer({
                   <ConversationModelSelector
                     selectedModel={selectedModel}
                     disabled={disabled || streaming}
-                    disabledReason={disabledReason ?? (streaming ? "请等待当前回复完成" : undefined)}
+                    disabledReason={composerControlDisabledReason}
                   />
                 </div>
                 <VoiceInputAction
@@ -649,6 +652,7 @@ export function Composer({
                   volumeLevel={voiceInputVolume}
                   error={voiceInputError}
                   disabled={voiceInputDisabled}
+                  disabledReason={composerControlDisabledReason}
                   onToggle={toggleVoiceInput}
                 />
               </TooltipProvider>

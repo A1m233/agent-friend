@@ -17,6 +17,7 @@ interface VoiceInputActionProps {
   volumeLevel: number;
   error: string | null;
   disabled?: boolean;
+  disabledReason?: string;
   onToggle: () => void;
 }
 
@@ -25,6 +26,7 @@ export function VoiceInputAction({
   volumeLevel,
   error,
   disabled = false,
+  disabledReason,
   onToggle,
 }: VoiceInputActionProps) {
   const live = isVoiceInputLive(phase);
@@ -32,7 +34,9 @@ export function VoiceInputAction({
   const busy =
     phase === "connecting" || phase === "waiting_permission_flow" || phase === "stopping";
   const receivingVoice = phase === "recording" && hasMicActivity(volumeLevel);
-  const tooltip = error ?? (live ? voiceInputStatusLabel(phase, volumeLevel) : voiceInputActionLabel(phase));
+  const tooltip = disabled
+    ? disabledReason ?? "暂时不可用"
+    : error ?? (live ? voiceInputStatusLabel(phase, volumeLevel) : voiceInputActionLabel(phase));
   const ariaLabel = live ? "停止语音输入" : "开始语音输入";
 
   return (

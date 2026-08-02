@@ -54,12 +54,19 @@ export function TooltipButton({
   variant = "ghost",
   ...buttonProps
 }: TooltipButtonProps) {
+  const triggerDisabled = Boolean(buttonProps.disabled || buttonProps.loading);
+  const button = (
+    <Button size={size} variant={variant} {...buttonProps}>
+      {icon}
+    </Button>
+  );
+
   return (
     <Tooltip delayDuration={tooltipDelayMs}>
       <TooltipTrigger asChild>
-        <Button size={size} variant={variant} {...buttonProps}>
-          {icon}
-        </Button>
+        {triggerDisabled ? (
+          <span className="inline-flex cursor-not-allowed">{button}</span>
+        ) : button}
       </TooltipTrigger>
       <TooltipContent {...tooltipContentProps} side={tooltipSide}>
         {tooltip}

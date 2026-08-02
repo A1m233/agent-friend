@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isTextOverflowing, observeTextOverflow } from "./overflow";
+import { isTextOverflowing, observeTextOverflow, resolveTooltipOpen } from "./overflow";
 
 type ResizeCallback = ConstructorParameters<typeof ResizeObserver>[0];
 
@@ -49,5 +49,16 @@ describe("TextEllipsis overflow measurement", () => {
 
     disconnect();
     expect(ResizeObserverStub.latest?.disconnect).toHaveBeenCalledOnce();
+  });
+});
+
+describe("TextEllipsis tooltip state", () => {
+  it("does not retain an open request while text is not overflowing", () => {
+    expect(resolveTooltipOpen(true, false)).toBe(false);
+  });
+
+  it("opens only while text is overflowing and always accepts a close request", () => {
+    expect(resolveTooltipOpen(true, true)).toBe(true);
+    expect(resolveTooltipOpen(false, true)).toBe(false);
   });
 });

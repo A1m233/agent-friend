@@ -8,21 +8,28 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { observeTextOverflow } from "./overflow";
+import { observeTextOverflow, resolveTooltipOpen } from "./overflow";
 
 interface TextEllipsisProps extends React.ComponentProps<"span"> {
   children: string;
   showTooltip?: boolean;
+  tooltipContentClassName?: string;
+  tooltipDelayMs?: number;
+  tooltipSide?: React.ComponentProps<typeof TooltipContent>["side"];
 }
 
 function TextEllipsis({
   children,
   className,
   showTooltip = true,
+  tooltipContentClassName,
+  tooltipDelayMs = 0,
+  tooltipSide = "top",
   ...props
 }: TextEllipsisProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const [isOverflow, setIsOverflow] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -30,6 +37,12 @@ function TextEllipsis({
 
     return observeTextOverflow(el, setIsOverflow);
   }, [children]);
+
+  useLayoutEffect(() => {
+    if (!showTooltip || !isOverflow) {
+      setTooltipOpen(false);
+    }
+  }, [isOverflow, showTooltip]);
 
   const text = (
     <span
@@ -46,13 +59,22 @@ function TextEllipsis({
   }
 
   return (
-    <TooltipProvider delayDuration={0}>
-      <Tooltip>
+    <TooltipProvider delayDuration={tooltipDelayMs} skipDelayDuration={0}>
+      <Tooltip
+        disableHoverableContent
+        open={tooltipOpen}
+        onOpenChange={(requestedOpen) =>
+          setTooltipOpen(resolveTooltipOpen(requestedOpen, isOverflow))
+        }
+      >
         <TooltipTrigger asChild>
           {text}
         </TooltipTrigger>
         {isOverflow ? (
-          <TooltipContent side="top">
+          <TooltipContent
+            className={cn("pointer-events-none", tooltipContentClassName)}
+            side={tooltipSide}
+          >
             {children}
           </TooltipContent>
         ) : null}

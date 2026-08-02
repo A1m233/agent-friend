@@ -47,8 +47,22 @@ afterEach(() => {
 });
 
 describe("attachBubbleWindowSync", () => {
+  it("挂载时初始 idle 主动隐藏可能残留的原生窗口", () => {
+    unsubscribe = attachBubbleWindowSync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("hide_bubble");
+  });
+
+  it("挂载时初始 showing 主动显示原生窗口", () => {
+    usePetBubbleStore.setState({ phase: "showing", current: itemA });
+    unsubscribe = attachBubbleWindowSync();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("show_bubble");
+  });
+
   it("idle → showing 触发一次 show_bubble", () => {
     unsubscribe = attachBubbleWindowSync();
+    invokeMock.mockClear();
     usePetBubbleStore.setState({ phase: "showing", current: itemA });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith("show_bubble");

@@ -104,9 +104,20 @@ export async function startPetBubbleSubscriber(): Promise<() => void> {
  */
 export function attachBubbleWindowSync(): () => void {
   if (!isTauri()) return () => {};
-  // 初值用 store 当前 phase，避免错过启动那一刻已经非 idle 的边界情况
-  // （实际上 bubble entry 启动时 store 必定是 idle 初始态，但守一下不亏）
+
+  const requestWindowVisibility = (phase: BubblePhase) => {
+    const command = phase === "idle" ? "hide_bubble" : "show_bubble";
+    void invoke(command).catch((e: unknown) => {
+      console.warn(`${command} invoke failed:`, e);
+    });
+  };
+
+  // 挂载时先让原生窗口向当前 store 状态收敛。只记录初值而不发 IPC 会在 HMR / WebView
+  // reload 后留下幽灵窗口：前端 store 重置为 idle，但 Rust 侧仍保留 reload 前的 visible=true，
+  // 后续又没有 phase 边沿可触发 hide_bubble。
   let lastPhase: BubblePhase = usePetBubbleStore.getState().phase;
+  requestWindowVisibility(lastPhase);
+
   const unsubscribe = usePetBubbleStore.subscribe((state) => {
     const next = state.phase;
     if (next === lastPhase) return;
@@ -114,13 +125,9 @@ export function attachBubbleWindowSync(): () => void {
     const becameHidden = lastPhase !== "idle" && next === "idle";
     lastPhase = next;
     if (becameVisible) {
-      void invoke("show_bubble").catch((e: unknown) => {
-        console.warn("show_bubble invoke failed:", e);
-      });
+      requestWindowVisibility(next);
     } else if (becameHidden) {
-      void invoke("hide_bubble").catch((e: unknown) => {
-        console.warn("hide_bubble invoke failed:", e);
-      });
+      requestWindowVisibility(next);
     }
   });
   return unsubscribe;

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Circle, CircleAlert, Clock3, MoreVertical, Pencil, SquarePen } from "lucide-react";
+import { Circle, CircleAlert, Clock3, MoreVertical, SquarePen } from "lucide-react";
 import {
   Badge,
   ConfirmDialog,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuTrigger,
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
   Sidebar,
@@ -36,6 +38,11 @@ import {
 } from "@/stores";
 import type { RunSnapshot } from "@/types/run";
 import { isTauri } from "@/utils/tauri";
+import {
+  createSessionMenuActions,
+  SessionContextMenuItems,
+  SessionDropdownMenuItems,
+} from "./SessionActionMenuItems";
 
 const WINDOW_SHOWN_EVENT = "window://shown";
 const MINUTE_MS = 60 * 1000;
@@ -53,6 +60,23 @@ interface MissingCurrentSessionResetInput {
 
 export type SessionRunIndicator = "queued" | "running" | "completed" | "failed" | null;
 
+type SessionActionMenuSurface = "context" | "dropdown";
+
+export interface OpenSessionActionMenu {
+  sessionId: string;
+  surface: SessionActionMenuSurface;
+}
+
+export function resolveOpenSessionActionMenu(
+  current: OpenSessionActionMenu | null,
+  sessionId: string,
+  surface: SessionActionMenuSurface,
+  open: boolean,
+): OpenSessionActionMenu | null {
+  if (open) return { sessionId, surface };
+  return current?.sessionId === sessionId && current.surface === surface ? null : current;
+}
+
 export function sessionRunIndicator(
   activeRun: RunSnapshot | undefined,
   unreadOutcome: "completed" | "failed" | undefined,
@@ -60,6 +84,10 @@ export function sessionRunIndicator(
   if (activeRun?.status === "queued") return "queued";
   if (activeRun?.status === "running") return "running";
   return unreadOutcome ?? null;
+}
+
+export function shouldClearSessionActionFocusOnOpen(clickDetail: number): boolean {
+  return clickDetail > 0;
 }
 
 export function shouldResetMissingCurrentSession({
@@ -136,8 +164,9 @@ export function HistorySidebar() {
   const [focusedActionSessionId, setFocusedActionSessionId] = useState<string | null>(
     null,
   );
-  const [openActionSessionId, setOpenActionSessionId] = useState<string | null>(null);
+  const [openActionMenu, setOpenActionMenu] = useState<OpenSessionActionMenu | null>(null);
   const suppressNextActionFocusRef = useRef(false);
+  const pointerContextMenuSessionRef = useRef<string | null>(null);
   const [persistedSessionId, setPersistedSessionId] = useState<
     string | null | undefined
   >();
@@ -166,6 +195,15 @@ export function HistorySidebar() {
     setRenamingSession({ sessionId, title });
     setRenameText(title);
   }, []);
+
+  const handleSessionActionMenuOpenChange = useCallback(
+    (sessionId: string, surface: SessionActionMenuSurface, open: boolean) => {
+      setOpenActionMenu((current) => {
+        return resolveOpenSessionActionMenu(current, sessionId, surface, open);
+      });
+    },
+    [],
+  );
 
   const handleConfirmRename = useCallback(() => {
     const target = renamingSession;
@@ -310,6 +348,8 @@ export function HistorySidebar() {
     );
   }, [currentSessionId, list, openSession, persistedSessionId, sessionsLoaded]);
 
+  const openActionSessionId = openActionMenu?.sessionId ?? null;
+
   return (
     <Sidebar collapsible="none" className="border-r border-border gap-1">
       <SidebarHeader>
@@ -340,6 +380,18 @@ export function HistorySidebar() {
                   const runIndicator = sessionRunIndicator(activeRun, unreadOutcome);
                   const draft = draftWorkspaces[s.session_id];
                   const hasDraft = Boolean(draft?.text || draft?.attachments.length);
+                  const sessionActionContext = {
+                    sessionId: s.session_id,
+                    title,
+                    hasActiveRun: Boolean(activeRun),
+                    hasDraft,
+                  };
+                  const sessionActions = createSessionMenuActions(sessionActionContext, {
+                    rename: ({ sessionId, title: sessionTitle }) =>
+                      handleOpenRename(sessionId, sessionTitle),
+                    archive: ({ sessionId, title: sessionTitle }) =>
+                      setArchivingSession({ sessionId, title: sessionTitle }),
+                  });
                   const actionVisible =
                     openActionSessionId === s.session_id ||
                     (!openActionSessionId &&
@@ -368,53 +420,112 @@ export function HistorySidebar() {
                         );
                       }}
                     >
-                      <SidebarMenuButton
-                        isActive={s.session_id === currentSessionId}
-                        className="px-2 text-sm font-normal data-[active=true]:bg-bg transition-none"
-                        onClick={() => handleOpenSession(s.session_id)}
+                      <ContextMenu
+                        open={
+                          openActionMenu?.sessionId === s.session_id &&
+                          openActionMenu.surface === "context"
+                        }
+                        onOpenChange={(open) =>
+                          handleSessionActionMenuOpenChange(s.session_id, "context", open)
+                        }
                       >
-                        <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                          <span className="flex min-w-0 flex-1 items-center gap-2">
-                            <TextEllipsis className="min-w-0">{title}</TextEllipsis>
-                            {boundIMTypes.map((imType) => (
-                              <Badge
-                                key={imType}
-                                variant="secondary"
-                                className="px-1.5 py-0 font-normal text-muted"
-                              >
-                                IM · {labelOfIMType(imType)}
-                              </Badge>
-                            ))}
-                          </span>
-                          {!actionVisible && runIndicator === "running" ? (
-                            <span title="正在处理" aria-label="正在处理">
-                              <Spinner className="size-3 text-accent" />
-                            </span>
-                          ) : null}
-                          {!actionVisible && runIndicator === "queued" ? (
-                            <Clock3 className="size-3 shrink-0 text-muted" aria-label="等待处理" />
-                          ) : null}
-                          {!actionVisible && runIndicator === "failed" ? (
-                            <CircleAlert className="size-3 shrink-0 text-danger" aria-label="处理失败" />
-                          ) : null}
-                          {!actionVisible && runIndicator === "completed" ? (
-                            <Circle className="size-2 shrink-0 fill-accent text-accent" aria-label="有新回复" />
-                          ) : null}
-                          {!actionVisible && ageText ? (
-                            <span
-                              className="shrink-0 tabular-nums text-xs text-muted"
-                              title={ageText}
-                            >
-                              {ageText}
-                            </span>
-                          ) : null}
-                        </div>
-                      </SidebarMenuButton>
+                        <ContextMenuTrigger asChild>
+                          <SidebarMenuButton
+                            isActive={s.session_id === currentSessionId}
+                            className="px-2 text-sm font-normal data-[active=true]:bg-bg transition-none"
+                            onContextMenu={(event) => {
+                              pointerContextMenuSessionRef.current =
+                                event.button === 2 ? s.session_id : null;
+                            }}
+                            onClick={(event) => {
+                              if (shouldClearSessionActionFocusOnOpen(event.detail)) {
+                                setFocusedActionSessionId((current) =>
+                                  current === s.session_id ? null : current,
+                                );
+                              }
+                              handleOpenSession(s.session_id);
+                            }}
+                          >
+                            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                              <span className="flex min-w-0 flex-1 items-center gap-2">
+                                <TextEllipsis
+                                  className="min-w-0 flex-1"
+                                  tooltipContentClassName="translate-x-2"
+                                  tooltipDelayMs={500}
+                                  tooltipSide="right"
+                                >
+                                  {title}
+                                </TextEllipsis>
+                                {boundIMTypes.map((imType) => (
+                                  <Badge
+                                    key={imType}
+                                    variant="secondary"
+                                    className="px-1.5 py-0 font-normal text-muted"
+                                  >
+                                    IM · {labelOfIMType(imType)}
+                                  </Badge>
+                                ))}
+                              </span>
+                              {!actionVisible && runIndicator === "running" ? (
+                                <span title="正在处理" aria-label="正在处理">
+                                  <Spinner className="size-3 text-accent" />
+                                </span>
+                              ) : null}
+                              {!actionVisible && runIndicator === "queued" ? (
+                                <Clock3
+                                  className="size-3 shrink-0 text-muted"
+                                  aria-label="等待处理"
+                                />
+                              ) : null}
+                              {!actionVisible && runIndicator === "failed" ? (
+                                <CircleAlert
+                                  className="size-3 shrink-0 text-danger"
+                                  aria-label="处理失败"
+                                />
+                              ) : null}
+                              {!actionVisible && runIndicator === "completed" ? (
+                                <Circle
+                                  className="size-2 shrink-0 fill-accent text-accent"
+                                  aria-label="有新回复"
+                                />
+                              ) : null}
+                              {!actionVisible && ageText ? (
+                                <span
+                                  className="shrink-0 tabular-nums text-xs text-muted"
+                                  title={ageText}
+                                >
+                                  {ageText}
+                                </span>
+                              ) : null}
+                            </div>
+                          </SidebarMenuButton>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent
+                          onCloseAutoFocus={(event) => {
+                            if (pointerContextMenuSessionRef.current !== s.session_id) return;
+                            pointerContextMenuSessionRef.current = null;
+                            event.preventDefault();
+                            setFocusedActionSessionId((current) =>
+                              current === s.session_id ? null : current,
+                            );
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <SessionContextMenuItems actions={sessionActions} />
+                        </ContextMenuContent>
+                      </ContextMenu>
                       {actionVisible ? (
                         <DropdownMenu
-                          open={openActionSessionId === s.session_id}
+                          open={
+                            openActionMenu?.sessionId === s.session_id &&
+                            openActionMenu.surface === "dropdown"
+                          }
                           onOpenChange={(open) => {
-                            setOpenActionSessionId(open ? s.session_id : null);
+                            handleSessionActionMenuOpenChange(
+                              s.session_id,
+                              "dropdown",
+                              open,
+                            );
                             if (!open) {
                               setFocusedActionSessionId((current) =>
                                 current === s.session_id ? null : current,
@@ -451,25 +562,7 @@ export function HistorySidebar() {
                             }}
                             onClick={(event) => event.stopPropagation()}
                           >
-                            <DropdownMenuItem
-                              onSelect={() => handleOpenRename(s.session_id, title)}
-                            >
-                              <Pencil />
-                              重命名
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={Boolean(activeRun) || hasDraft}
-                              onSelect={() =>
-                                setArchivingSession({ sessionId: s.session_id, title })
-                              }
-                            >
-                              <Archive />
-                              {activeRun
-                                ? "运行中，暂不能归档"
-                                : hasDraft
-                                  ? "有未发送草稿，暂不能归档"
-                                  : "归档"}
-                            </DropdownMenuItem>
+                            <SessionDropdownMenuItems actions={sessionActions} />
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : null}
