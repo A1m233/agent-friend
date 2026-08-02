@@ -35,11 +35,20 @@ class WebContentResourceLimitError(WebContentError):
 
 
 @dataclass(frozen=True)
+class ExtractedLink:
+    url: str
+    label: str | None = None
+
+
+@dataclass(frozen=True)
 class ExtractedContent:
     requested_url: str
     final_url: str
     text: str
     content_kind: str = "html"
+    links: tuple[ExtractedLink, ...] = ()
+    link_total: int = 0
+    links_truncated: bool = False
 
 
 class WebContentProvider(Protocol):

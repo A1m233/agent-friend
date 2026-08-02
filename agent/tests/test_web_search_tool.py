@@ -99,11 +99,10 @@ def test_happy_path_returns_formatted_text() -> None:
     assert payload["source_type"] == "web_search"
     assert payload["trust"] == "untrusted_data"
     assert payload["query"] == "今天的新闻"
-    assert payload["results"][0] == {
-        "title": "标题 A",
-        "url": "https://a.example/",
-        "snippet": "摘要 A 内容",
-    }
+    assert payload["results"][0]["title"] == "标题 A"
+    assert payload["results"][0]["url"] == "https://a.example/"
+    assert payload["results"][0]["snippet"] == "摘要 A 内容"
+    assert payload["results"][0]["evidence_ref"].startswith("evidence_ref_")
     assert payload["results"][1]["title"] == "标题 B"
     assert "请基于以上信息用自己的话回答用户" not in result.text
     # provider 收到正确的参数

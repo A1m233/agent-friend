@@ -35,3 +35,30 @@ def test_no_progress_counts_only_repeated_errors_or_empty_results() -> None:
     assert tracker.observe("web_search", args, failed) is False
     assert tracker.observe("web_search", args, failed) is True
     assert tracker.observe("web_search", args, ToolResult("useful result")) is False
+
+
+def test_no_progress_uses_evidence_delta_and_keeps_intents_independent() -> None:
+    tracker = NoProgressTracker(2)
+    first = ToolResult("page", meta={"evidence_keys": ["https://example.com/a"]})
+    repeated = ToolResult("same page", meta={"evidence_keys": ["https://example.com/a"]})
+
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, first) is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated) is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "b"}, repeated) is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated) is True
+    assert tracker.new_evidence_count == 1
+    assert tracker.reused_evidence_count == 3
+    assert tracker.last_intent_signature is not None
+
+
+def test_new_evidence_resets_no_progress_for_same_intent() -> None:
+    tracker = NoProgressTracker(2)
+    args = {"query": "creator"}
+    first = ToolResult("first", meta={"evidence_keys": ["creator:1"]})
+    repeated = ToolResult("repeat", meta={"evidence_keys": ["creator:1"]})
+    expanded = ToolResult("expanded", meta={"evidence_keys": ["creator:1", "video:2"]})
+
+    assert tracker.observe("social_search", args, first) is False
+    assert tracker.observe("social_search", args, repeated) is False
+    assert tracker.observe("social_search", args, expanded) is False
+    assert tracker.observe("social_search", args, repeated) is False

@@ -3,38 +3,29 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import Literal
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
+
+from .evidence import (
+    EvidenceSource,
+    PublicEvidence,
+    PublicEvidenceLedger,
+    is_persistable_public_url,
+    make_public_evidence,
+    normalize_url,
+)
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"'，。；：！？、）】》」』]+", re.IGNORECASE)
 _TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
 
 
-def normalize_url(url: str) -> str:
-    parsed = urlsplit(url.strip())
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("URL 必须是绝对 http/https 地址")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("URL 不能包含 userinfo")
-    host = parsed.hostname.encode("idna").decode("ascii").lower()
-    port = parsed.port
-    if port is not None and port not in {80, 443}:
-        raise ValueError("URL 只允许 80/443 端口")
-    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
-    netloc = host if port is None or default_port else f"{host}:{port}"
-    path = parsed.path or "/"
-    return urlunsplit((scheme, netloc, path, parsed.query, ""))
-
-
 @dataclass(frozen=True)
 class UrlAuthorization:
     normalized_url: str
-    source: Literal["user_input", "web_search_result"]
+    source: EvidenceSource
     source_call_id: str | None = None
+    evidence_ref: str | None = None
 
 
 @dataclass
@@ -44,11 +35,14 @@ class UrlAuthorizationLedger:
     def register(
         self,
         url: str,
-        source: Literal["user_input", "web_search_result"],
+        source: EvidenceSource,
         source_call_id: str | None = None,
+        evidence_ref: str | None = None,
     ) -> None:
         normalized = normalize_url(url)
-        self._entries[normalized] = UrlAuthorization(normalized, source, source_call_id)
+        self._entries[normalized] = UrlAuthorization(
+            normalized, source, source_call_id, evidence_ref
+        )
 
     def register_user_text(self, text: str) -> None:
         for match in _URL_PATTERN.findall(text):
@@ -77,6 +71,7 @@ class ToolRunContext:
     trusted_now: datetime
     trusted_timezone: str
     url_authorizations: UrlAuthorizationLedger = field(default_factory=UrlAuthorizationLedger)
+    public_evidence: PublicEvidenceLedger = field(default_factory=PublicEvidenceLedger)
 
     @classmethod
     def create(cls, user_input: str, *, now: datetime | None = None) -> ToolRunContext:
@@ -84,20 +79,111 @@ class ToolRunContext:
         if trusted_now.tzinfo is None:
             raise ValueError("trusted now must be timezone-aware")
         zone = getattr(trusted_now.tzinfo, "key", None) or _offset_text(trusted_now)
-        ledger = UrlAuthorizationLedger()
-        ledger.register_user_text(user_input)
-        return cls(f"toolrun_{uuid4().hex}", trusted_now, str(zone), ledger)
+        context = cls(f"toolrun_{uuid4().hex}", trusted_now, str(zone))
+        context.register_user_text_evidence(user_input, persistable_only=False)
+        return context
 
-    def register_tool_result(self, name: str, call_id: str, source_urls: object) -> None:
-        if name != "web_search" or not isinstance(source_urls, list):
+    def register_user_text_evidence(
+        self,
+        text: str,
+        *,
+        source_event_uuid: str | None = None,
+        persistable_only: bool = True,
+    ) -> None:
+        ledger = UrlAuthorizationLedger()
+        ledger.register_user_text(text)
+        for authorization in ledger.authorizations():
+            if persistable_only and not is_persistable_public_url(authorization.normalized_url):
+                continue
+            existing = self.public_evidence.find_url(authorization.normalized_url)
+            if existing is not None:
+                continue
+            evidence = make_public_evidence(
+                authorization.normalized_url,
+                source="user_input",
+            )
+            if source_event_uuid is not None:
+                evidence = replace(evidence, source_event_uuid=source_event_uuid)
+            self.public_evidence.register(evidence)
+            self.url_authorizations.register(
+                evidence.normalized_url,
+                evidence.source,
+                evidence_ref=evidence.evidence_ref,
+            )
+
+    def register_tool_result(
+        self,
+        name: str,
+        call_id: str,
+        source_urls: object,
+        public_evidence: object = None,
+        ephemeral_evidence: object = None,
+    ) -> None:
+        for raw_value, require_persistable in (
+            (public_evidence, True),
+            (ephemeral_evidence, False),
+        ):
+            raw_items = (
+                raw_value.get("items")
+                if isinstance(raw_value, dict) and raw_value.get("version") == 1
+                else None
+            )
+            if not isinstance(raw_items, list):
+                continue
+            for value in raw_items:
+                evidence = PublicEvidence.from_meta(
+                    value,
+                    require_persistable=require_persistable,
+                )
+                if evidence is None:
+                    continue
+                self.register_evidence(evidence)
+        if name == "web_search" and isinstance(source_urls, list):
+            for url in source_urls:
+                if not isinstance(url, str):
+                    continue
+                try:
+                    existing = self.public_evidence.find_url(url)
+                    evidence = existing or make_public_evidence(
+                        url,
+                        source="web_search_result",
+                        source_call_id=call_id,
+                    )
+                    self.register_evidence(evidence)
+                except ValueError:
+                    continue
+
+    def register_persisted_evidence(
+        self, value: object, *, source_event_uuid: str | None = None
+    ) -> None:
+        if not isinstance(value, dict) or value.get("version") != 1:
             return
-        for url in source_urls:
-            if not isinstance(url, str):
-                continue
-            try:
-                self.url_authorizations.register(url, "web_search_result", call_id)
-            except ValueError:
-                continue
+        items = value.get("items")
+        if not isinstance(items, list):
+            return
+        for item in items:
+            evidence = PublicEvidence.from_meta(item, source_event_uuid=source_event_uuid)
+            if evidence is not None:
+                self.register_evidence(evidence)
+
+    def register_evidence(self, evidence: PublicEvidence) -> None:
+        self.public_evidence.register(evidence)
+        self.url_authorizations.register(
+            evidence.normalized_url,
+            evidence.source,
+            evidence.source_call_id,
+            evidence.evidence_ref,
+        )
+
+    def resolve_evidence(self, evidence_ref: str) -> PublicEvidence | None:
+        return self.public_evidence.resolve(evidence_ref)
+
+    def persistable_evidence(self) -> tuple[PublicEvidence, ...]:
+        return tuple(
+            item
+            for item in self.public_evidence.entries()
+            if is_persistable_public_url(item.normalized_url)
+        )
 
     def render_for_model(self) -> str:
         """Render the same trusted clock snapshot that hidden tool args receive.

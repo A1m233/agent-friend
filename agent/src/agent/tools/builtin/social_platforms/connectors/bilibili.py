@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import re
 import threading
 from collections.abc import Coroutine, Mapping
@@ -27,6 +28,11 @@ from ..models import (
     SocialConnectorIncompatibleError,
     SocialContentNotFoundError,
     SocialContentType,
+    SocialCreatorWork,
+    SocialCreatorWorkRelationship,
+    SocialCreatorWorksResponse,
+    SocialCreatorWorksScope,
+    SocialCreatorWorksSort,
     SocialEvidence,
     SocialNetworkError,
     SocialPlatform,
@@ -44,6 +50,7 @@ from ..models import (
 _VIDEO_URL = "https://www.bilibili.com/video/{identifier}"
 _ARTICLE_URL = "https://www.bilibili.com/read/cv{cvid}"
 _OPUS_URL = "https://www.bilibili.com/opus/{opus_id}"
+_CREATOR_URL = "https://space.bilibili.com/{uid}"
 _TAG_RE = re.compile(r"<[^>]*>")
 _AUTH_CODES = {-101, -102, -111}
 _ACCESS_CODES = {-412, -403, -352, 403, 412}
@@ -77,6 +84,17 @@ class BilibiliOpusLocator:
     content_type: SocialContentType = field(init=False, default="article")
 
 
+@dataclass(frozen=True)
+class BilibiliCreatorLocator:
+    uid: int
+    platform: SocialPlatform = field(init=False, default="bilibili")
+    content_type: SocialContentType = field(init=False, default="creator")
+
+    def __post_init__(self) -> None:
+        if self.uid <= 0:
+            raise ValueError("Bilibili creator locator requires a positive UID")
+
+
 class BilibiliApi(Protocol):
     """Narrow SDK seam used by the connector and fake tests."""
 
@@ -105,6 +123,21 @@ class BilibiliApi(Protocol):
     def article_detail(self, locator: BilibiliArticleLocator) -> Mapping[str, Any]: ...
 
     def opus_detail(self, locator: BilibiliOpusLocator) -> tuple[Mapping[str, Any], str]: ...
+
+    def creator_profile(self, locator: BilibiliCreatorLocator) -> Mapping[str, Any]: ...
+
+    def creator_works(
+        self,
+        locator: BilibiliCreatorLocator,
+        *,
+        sort: SocialCreatorWorksSort,
+        page: int,
+        page_size: int,
+    ) -> Mapping[str, Any]: ...
+
+    def creator_masterpieces(
+        self, locator: BilibiliCreatorLocator
+    ) -> tuple[Mapping[str, Any], ...]: ...
 
     def close(self) -> None: ...
 
@@ -155,6 +188,9 @@ class BilibiliSdkApi:
                 "latest": search.OrderArticle.PUBDATE,
                 "popular": search.OrderArticle.CLICK,
             }[sort]
+        elif content_type == "creator":
+            search_type = search.SearchObjectType.USER
+            order_type = search.OrderUser.FANS if sort == "popular" else None
         else:
             raise SocialConnectorIncompatibleError(
                 "Bilibili SDK adapter received an unsupported content type"
@@ -164,8 +200,8 @@ class BilibiliSdkApi:
                 keyword=query,
                 search_type=search_type,
                 order_type=order_type,
-                time_start=published_after,
-                time_end=published_before,
+                time_start=published_after if content_type != "creator" else None,
+                time_end=published_before if content_type != "creator" else None,
                 page=1,
                 page_size=limit,
             )
@@ -226,6 +262,39 @@ class BilibiliSdkApi:
             raise SocialConnectorIncompatibleError("Bilibili SDK returned non-text opus content")
         return _mapping(info), markdown
 
+    def creator_profile(self, locator: BilibiliCreatorLocator) -> Mapping[str, Any]:
+        from bilibili_api import user
+
+        resource = user.User(uid=locator.uid, credential=self._credential_snapshot())
+        return _mapping(_run_async(resource.get_user_info()))
+
+    def creator_works(
+        self,
+        locator: BilibiliCreatorLocator,
+        *,
+        sort: SocialCreatorWorksSort,
+        page: int,
+        page_size: int,
+    ) -> Mapping[str, Any]:
+        from bilibili_api import user
+
+        resource = user.User(uid=locator.uid, credential=self._credential_snapshot())
+        order = user.VideoOrder.VIEW if sort == "popular" else user.VideoOrder.PUBDATE
+        return _mapping(_run_async(resource.get_videos(pn=page, ps=page_size, order=order)))
+
+    def creator_masterpieces(
+        self, locator: BilibiliCreatorLocator
+    ) -> tuple[Mapping[str, Any], ...]:
+        from bilibili_api import user
+
+        resource = user.User(uid=locator.uid, credential=self._credential_snapshot())
+        result = _run_async(resource.get_masterpiece())
+        if not isinstance(result, list):
+            raise SocialConnectorIncompatibleError(
+                "Bilibili SDK returned a non-list masterpiece response"
+            )
+        return tuple(_mapping(item) for item in result)
+
     def close(self) -> None:
         return None
 
@@ -266,7 +335,7 @@ class BilibiliConnector:
             before = None
 
         for content_type in request.content_types:
-            if content_type not in {"video", "article"}:
+            if content_type not in {"video", "article", "creator"}:
                 raise SocialConnectorIncompatibleError(
                     "Bilibili connector received an unsupported content type"
                 )
@@ -283,12 +352,17 @@ class BilibiliConnector:
                 raise
             except BaseException as exc:
                 raise _translate_exception(exc, authenticated=self._api.authenticated) from exc
-            rows = raw.get("result", ()) or ()
+            raw_rows = raw.get("result")
+            rows = [] if raw_rows is None and raw.get("numResults") == 0 else raw_rows
             if not isinstance(rows, list):
                 raise SocialConnectorIncompatibleError(
                     "Bilibili search response does not contain a result list"
                 )
-            parser = _video_candidate if content_type == "video" else _article_candidate
+            parser = {
+                "video": _video_candidate,
+                "article": _article_candidate,
+                "creator": _creator_candidate,
+            }[content_type]
             for row in rows[: request.limit]:
                 if not isinstance(row, Mapping):
                     continue
@@ -311,10 +385,20 @@ class BilibiliConnector:
         if parsed.scheme.lower() not in {"http", "https"} or host not in {
             "bilibili.com",
             "m.bilibili.com",
+            "space.bilibili.com",
             "www.bilibili.com",
         }:
             return None
         path = parsed.path.rstrip("/")
+        creator_match = re.fullmatch(r"/([0-9]+)", path)
+        if host == "space.bilibili.com" and creator_match is not None:
+            uid = int(creator_match.group(1))
+            return SocialResolvedUrl(
+                platform=self.platform,
+                content_type="creator",
+                canonical_url=_CREATOR_URL.format(uid=uid),
+                locator=BilibiliCreatorLocator(uid=uid),
+            )
         video_match = re.fullmatch(r"/video/(BV[0-9A-Za-z]+|av[0-9]+)", path)
         if video_match is not None:
             identifier = video_match.group(1)
@@ -360,10 +444,165 @@ class BilibiliConnector:
             return self._read_article(locator)
         if isinstance(locator, BilibiliOpusLocator):
             return self._read_opus(locator)
+        if isinstance(locator, BilibiliCreatorLocator):
+            return self._read_creator(locator)
         raise SocialConnectorIncompatibleError("unknown Bilibili resource locator")
 
     def close(self) -> None:
         self._api.close()
+
+    def creator_works(
+        self,
+        locator: SocialResourceLocator,
+        *,
+        sort: SocialCreatorWorksSort,
+        page: int,
+        page_size: int,
+    ) -> SocialCreatorWorksResponse:
+        if not isinstance(locator, BilibiliCreatorLocator):
+            raise SocialConnectorIncompatibleError("creator works requires a creator locator")
+        try:
+            raw = self._api.creator_works(
+                locator,
+                sort=sort,
+                page=page,
+                page_size=page_size,
+            )
+        except BaseException as exc:
+            translated = _translate_exception(exc, authenticated=self._api.authenticated)
+            if (
+                sort == "popular"
+                and page == 1
+                and translated.status
+                in {
+                    "network_error",
+                    "access_restricted",
+                    "connector_incompatible",
+                }
+            ):
+                return self._creator_masterpieces(locator, page_size=page_size)
+            raise translated from exc
+        listing = raw.get("list")
+        rows = listing.get("vlist", ()) if isinstance(listing, Mapping) else ()
+        if not isinstance(rows, list):
+            if sort == "popular" and page == 1:
+                return self._creator_masterpieces(locator, page_size=page_size)
+            raise SocialConnectorIncompatibleError("Bilibili creator works lacks a video list")
+        associated_rows = [
+            (row, relationship)
+            for row in rows
+            if isinstance(row, Mapping)
+            and (relationship := _creator_row_relationship(row, locator.uid)) is not None
+        ]
+        if rows and not associated_rows:
+            if sort == "popular" and page == 1:
+                return self._creator_masterpieces(locator, page_size=page_size)
+            raise SocialConnectorIncompatibleError(
+                "Bilibili creator works contains no verifiable target resources"
+            )
+        works = tuple(
+            work
+            for row, relationship in associated_rows[:page_size]
+            if (work := _creator_work(row, relationship=relationship)) is not None
+        )
+        page_info = raw.get("page")
+        count = _optional_int(page_info.get("count")) if isinstance(page_info, Mapping) else None
+        has_more = page * page_size < count if count is not None else len(rows) >= page_size
+        expected_page_size = (
+            min(page_size, max(count - (page - 1) * page_size, 0))
+            if count is not None
+            else len(rows)
+        )
+        listing_scope: SocialCreatorWorksScope = (
+            "all_public_works"
+            if len(rows) >= expected_page_size and len(works) == len(rows)
+            else "curated_subset"
+        )
+        creator_name = ""
+        for row, relationship in associated_rows:
+            if relationship == "direct_upload":
+                creator_name = _text(row.get("author") or row.get("uname"))
+                break
+        return SocialCreatorWorksResponse(
+            creator_name=creator_name,
+            creator_url=_CREATOR_URL.format(uid=locator.uid),
+            works=works,
+            sort=sort,
+            page=page,
+            has_more=has_more,
+            listing_scope=listing_scope,
+        )
+
+    def _creator_masterpieces(
+        self,
+        locator: BilibiliCreatorLocator,
+        *,
+        page_size: int,
+    ) -> SocialCreatorWorksResponse:
+        try:
+            rows = self._api.creator_masterpieces(locator)
+        except BaseException as exc:
+            raise _translate_exception(exc, authenticated=self._api.authenticated) from exc
+        associated_rows = tuple(
+            (row, relationship)
+            for row in rows
+            if (relationship := _creator_row_relationship(row, locator.uid)) is not None
+        )
+        if rows and not associated_rows:
+            raise SocialConnectorIncompatibleError(
+                "Bilibili creator masterpieces contains no verifiable target resources"
+            )
+        works = tuple(
+            work
+            for row, relationship in associated_rows[:page_size]
+            if (work := _creator_work(row, relationship=relationship)) is not None
+        )
+        creator_name = ""
+        for row, relationship in associated_rows:
+            if relationship == "direct_upload":
+                owner = row.get("owner")
+                if isinstance(owner, Mapping):
+                    creator_name = _text(owner.get("name"))
+                break
+        return SocialCreatorWorksResponse(
+            creator_name=creator_name,
+            creator_url=_CREATOR_URL.format(uid=locator.uid),
+            works=works,
+            sort="popular",
+            page=1,
+            has_more=False,
+            listing_scope="curated_subset",
+        )
+
+    def _read_creator(self, locator: BilibiliCreatorLocator) -> SocialReadResponse:
+        try:
+            info = self._api.creator_profile(locator)
+        except SocialPlatformError:
+            raise
+        except BaseException as exc:
+            raise _translate_exception(exc, authenticated=self._api.authenticated) from exc
+        actual_uid = _optional_int(info.get("mid"))
+        if actual_uid is not None and actual_uid != locator.uid:
+            raise SocialConnectorIncompatibleError("Bilibili creator identity changed")
+        name = _text(info.get("name"))
+        profile = {
+            "uid": locator.uid,
+            "name": name,
+            "signature": _text(info.get("sign")),
+            "level": _optional_int(info.get("level")),
+        }
+        return SocialReadResponse(
+            title=name,
+            author=name,
+            canonical_url=_CREATOR_URL.format(uid=locator.uid),
+            evidence=(
+                SocialEvidence(
+                    kind="creator_profile",
+                    text=json.dumps(profile, ensure_ascii=False, sort_keys=True),
+                ),
+            ),
+            metrics=_integer_metrics(info),
+        )
 
     def _read_video(self, locator: BilibiliVideoLocator) -> SocialReadResponse:
         try:
@@ -541,6 +780,75 @@ def _article_candidate(row: Mapping[str, Any]) -> SocialSearchCandidate | None:
     )
 
 
+def _creator_candidate(row: Mapping[str, Any]) -> SocialSearchCandidate | None:
+    uid = _optional_int(row.get("mid") or row.get("uid"))
+    if uid is None or uid <= 0:
+        return None
+    name = _strip_markup(row.get("uname") or row.get("name"))
+    identity: dict[str, str | int] = {"uid": uid}
+    avatar = _optional_text(row.get("upic") or row.get("face"))
+    if avatar:
+        identity["avatar_url"] = avatar
+    return SocialSearchCandidate(
+        locator=BilibiliCreatorLocator(uid=uid),
+        title=name,
+        author=name,
+        canonical_url=_CREATOR_URL.format(uid=uid),
+        summary=_strip_markup(row.get("usign") or row.get("sign")),
+        metrics=_integer_metrics(row),
+        identity=identity,
+    )
+
+
+def _creator_work(
+    row: Mapping[str, Any], *, relationship: SocialCreatorWorkRelationship
+) -> SocialCreatorWork | None:
+    bvid = _optional_text(row.get("bvid"))
+    aid = _optional_int(row.get("aid"))
+    if not bvid and aid is None:
+        return None
+    identifier = bvid or f"av{aid}"
+    metrics = _integer_metrics(row)
+    nested_stats = row.get("stat")
+    if isinstance(nested_stats, Mapping):
+        metrics.update(_integer_metrics(nested_stats))
+    owner = row.get("owner")
+    uploader = _text(
+        row.get("author")
+        or row.get("uname")
+        or (owner.get("name") if isinstance(owner, Mapping) else None)
+    )
+    return SocialCreatorWork(
+        locator=BilibiliVideoLocator(bvid=bvid, aid=aid),
+        title=_strip_markup(row.get("title")),
+        canonical_url=_VIDEO_URL.format(identifier=identifier),
+        published_at=_timestamp(row.get("created") or row.get("pubdate")),
+        metrics=metrics,
+        duration_seconds=_duration_seconds(row.get("length") or row.get("duration")),
+        uploader=uploader,
+        relationship=relationship,
+    )
+
+
+def _creator_row_uid(row: Mapping[str, Any]) -> int | None:
+    owner = row.get("owner")
+    return _optional_int(
+        row.get("mid")
+        or row.get("uid")
+        or (owner.get("mid") if isinstance(owner, Mapping) else None)
+    )
+
+
+def _creator_row_relationship(
+    row: Mapping[str, Any], creator_uid: int
+) -> SocialCreatorWorkRelationship | None:
+    if _creator_row_uid(row) == creator_uid:
+        return "direct_upload"
+    if _optional_int(row.get("is_union_video")) == 1:
+        return "collaboration"
+    return None
+
+
 def _opus_markdown_content(value: str) -> tuple[str, str]:
     text = value.strip()
     if text.startswith("---\n"):
@@ -572,7 +880,19 @@ def _opus_author(value: object) -> tuple[str, str | None]:
 def _integer_metrics(value: object) -> dict[str, int]:
     if not isinstance(value, Mapping):
         return {}
-    allowed = {"view", "play", "danmaku", "favorites", "favorite", "like", "reply"}
+    allowed = {
+        "comment",
+        "danmaku",
+        "fans",
+        "favorite",
+        "favorites",
+        "level",
+        "like",
+        "play",
+        "reply",
+        "videos",
+        "view",
+    }
     metrics: dict[str, int] = {}
     for key, item in value.items():
         if (
@@ -583,6 +903,20 @@ def _integer_metrics(value: object) -> dict[str, int]:
         ):
             metrics[key] = item
     return metrics
+
+
+def _duration_seconds(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value if value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if not 1 <= len(parts) <= 3 or any(not part.isdigit() for part in parts):
+        return None
+    total = 0
+    for part in parts:
+        total = total * 60 + int(part)
+    return total
 
 
 def _subtitle_preference(item: Mapping[str, Any]) -> tuple[int, str]:

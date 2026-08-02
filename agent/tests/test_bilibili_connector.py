@@ -11,12 +11,14 @@ from agent.tools.builtin.social_platforms import (
     SocialAuthRequiredError,
     SocialContentNotFoundError,
     SocialContentType,
+    SocialNetworkError,
     SocialRateLimitedError,
     SocialSearchRequest,
 )
 from agent.tools.builtin.social_platforms.connectors import (
     BilibiliArticleLocator,
     BilibiliConnector,
+    BilibiliCreatorLocator,
     BilibiliOpusLocator,
     BilibiliVideoLocator,
 )
@@ -33,7 +35,10 @@ class _FakeApi:
         self.authenticated = False
         self.search_calls: list[dict[str, object]] = []
         self.search_error: BaseException | None = None
+        self.search_response: Mapping[str, Any] | None = None
         self.closed = False
+        self.creator_works_error: BaseException | None = None
+        self.creator_works_response: Mapping[str, Any] | None = None
         self.video = {
             "bvid": "BV1abc",
             "title": "视频标题",
@@ -101,6 +106,8 @@ class _FakeApi:
         )
         if self.search_error is not None:
             raise self.search_error
+        if self.search_response is not None:
+            return self.search_response
         if content_type == "video":
             return {
                 "result": [
@@ -113,6 +120,19 @@ class _FakeApi:
                         "pubdate": 1_700_000_000,
                         "play": 100,
                         "like": 9,
+                    }
+                ]
+            }
+        if content_type == "creator":
+            return {
+                "result": [
+                    {
+                        "mid": 8741868,
+                        "uname": '<em class="keyword">开战斗机的虾米</em>',
+                        "usign": "飞行模拟创作者",
+                        "fans": 12345,
+                        "videos": 88,
+                        "upic": "https://i0.hdslb.com/avatar.jpg",
                     }
                 ]
             }
@@ -153,6 +173,68 @@ class _FakeApi:
     def opus_detail(self, locator: BilibiliOpusLocator) -> tuple[Mapping[str, Any], str]:
         assert locator == BilibiliOpusLocator(opus_id=1201845223737524246)
         return self.opus_info, self.opus_markdown
+
+    def creator_profile(self, locator: BilibiliCreatorLocator) -> Mapping[str, Any]:
+        assert locator == BilibiliCreatorLocator(uid=8741868)
+        return {
+            "mid": 8741868,
+            "name": "开战斗机的虾米",
+            "sign": "飞行模拟创作者",
+            "level": 6,
+        }
+
+    def creator_works(
+        self,
+        locator: BilibiliCreatorLocator,
+        *,
+        sort: str,
+        page: int,
+        page_size: int,
+    ) -> Mapping[str, Any]:
+        assert locator == BilibiliCreatorLocator(uid=8741868)
+        assert sort in {"popular", "latest"}
+        assert page_size == 20
+        if self.creator_works_error is not None:
+            raise self.creator_works_error
+        if self.creator_works_response is not None:
+            return self.creator_works_response
+        start = (page - 1) * page_size + 1
+        stop = min(start + page_size, 22)
+        return {
+            "list": {
+                "vlist": [
+                    {
+                        "bvid": f"BVcreator{index}",
+                        "aid": 8700 + index,
+                        "mid": 8741868,
+                        "title": f"代表作 {index}",
+                        "author": "开战斗机的虾米",
+                        "created": 1_700_000_000 + index,
+                        "play": 1000 - index,
+                        "favorites": 100,
+                        "length": "12:34",
+                    }
+                    for index in range(start, stop)
+                ]
+            },
+            "page": {"count": 21, "pn": page, "ps": page_size},
+        }
+
+    def creator_masterpieces(
+        self, locator: BilibiliCreatorLocator
+    ) -> tuple[Mapping[str, Any], ...]:
+        assert locator == BilibiliCreatorLocator(uid=8741868)
+        return (
+            {
+                "bvid": "BVmast1",
+                "aid": 9001,
+                "title": "平台代表作",
+                "owner": {"mid": 8741868, "name": "开战斗机的虾米"},
+                "pubdate": 1_700_000_100,
+                "stat": {"view": 9999, "like": 99},
+                "duration": 321,
+            },
+        )
 
     def close(self) -> None:
         self.closed = True
@@ -208,6 +290,185 @@ def test_search_reports_one_sided_date_as_unsupported() -> None:
 
     assert result.unsupported_filters == ("published_after",)
     assert api.search_calls[0]["published_after"] is None
+
+
+def test_search_creator_uses_user_identity_instead_of_video_keywords() -> None:
+    result = BilibiliConnector(_FakeApi()).search(_request(content_types=("creator",)))
+
+    candidate = result.candidates[0]
+    assert candidate.locator == BilibiliCreatorLocator(uid=8741868)
+    assert candidate.title == "开战斗机的虾米"
+    assert candidate.canonical_url == "https://space.bilibili.com/8741868"
+    assert candidate.identity == {
+        "uid": 8741868,
+        "avatar_url": "https://i0.hdslb.com/avatar.jpg",
+    }
+    assert candidate.metrics == {"fans": 12345, "videos": 88}
+
+
+def test_search_treats_explicit_zero_results_without_result_key_as_empty() -> None:
+    api = _FakeApi()
+    api.search_response = {"numResults": 0, "page": 1, "pagesize": 10}
+
+    result = BilibiliConnector(api).search(_request(content_types=("creator",)))
+
+    assert result.candidates == ()
+
+
+def test_creator_profile_and_popular_works_keep_uid_ownership() -> None:
+    connector = BilibiliConnector(_FakeApi())
+
+    profile = connector.read(BilibiliCreatorLocator(uid=8741868))
+    works = connector.creator_works(
+        BilibiliCreatorLocator(uid=8741868),
+        sort="popular",
+        page=1,
+        page_size=20,
+    )
+
+    assert profile.title == "开战斗机的虾米"
+    assert profile.evidence[0].kind == "creator_profile"
+    assert '"uid": 8741868' in profile.evidence[0].text
+    assert works.creator_url == "https://space.bilibili.com/8741868"
+    assert works.works[0].canonical_url == "https://www.bilibili.com/video/BVcreator1"
+    assert works.works[0].duration_seconds == 754
+    assert works.works[0].uploader == "开战斗机的虾米"
+    assert works.works[0].relationship == "direct_upload"
+    assert works.has_more is True
+    assert works.listing_scope == "all_public_works"
+
+
+def test_popular_first_page_falls_back_to_sdk_masterpieces_on_space_failure() -> None:
+    api = _FakeApi()
+    api.creator_works_error = SocialNetworkError("space page rejected w_webid")
+
+    works = BilibiliConnector(api).creator_works(
+        BilibiliCreatorLocator(uid=8741868),
+        sort="popular",
+        page=1,
+        page_size=20,
+    )
+
+    assert works.creator_name == "开战斗机的虾米"
+    assert works.works[0].canonical_url == "https://www.bilibili.com/video/BVmast1"
+    assert works.works[0].metrics == {"view": 9999, "like": 99}
+    assert works.works[0].duration_seconds == 321
+    assert works.has_more is False
+    assert works.listing_scope == "curated_subset"
+
+
+def test_latest_works_does_not_replace_failed_listing_with_masterpieces() -> None:
+    api = _FakeApi()
+    api.creator_works_error = SocialNetworkError("space page rejected w_webid")
+
+    with pytest.raises(SocialNetworkError):
+        BilibiliConnector(api).creator_works(
+            BilibiliCreatorLocator(uid=8741868),
+            sort="latest",
+            page=1,
+            page_size=20,
+        )
+
+
+def test_popular_first_page_falls_back_when_listing_shape_is_missing() -> None:
+    api = _FakeApi()
+    api.creator_works_response = {"page": {"count": 0}}
+
+    works = BilibiliConnector(api).creator_works(
+        BilibiliCreatorLocator(uid=8741868),
+        sort="popular",
+        page=1,
+        page_size=20,
+    )
+
+    assert [item.canonical_url for item in works.works] == [
+        "https://www.bilibili.com/video/BVmast1"
+    ]
+
+
+def test_creator_works_keeps_four_direct_and_three_union_videos() -> None:
+    api = _FakeApi()
+    rows = [
+        {
+            "bvid": f"BVdirect{index}",
+            "mid": 8741868,
+            "title": f"直接投稿 {index}",
+            "author": "开战斗机的虾米",
+            "is_union_video": 0,
+        }
+        for index in range(4)
+    ]
+    rows.extend(
+        {
+            "bvid": f"BVunion{index}",
+            "mid": 16520572,
+            "title": f"联合投稿 {index}",
+            "author": "联合投稿主",
+            "is_union_video": 1,
+        }
+        for index in range(3)
+    )
+    api.creator_works_response = {
+        "list": {"vlist": rows},
+        "page": {"count": 7},
+    }
+
+    works = BilibiliConnector(api).creator_works(
+        BilibiliCreatorLocator(uid=8741868),
+        sort="popular",
+        page=1,
+        page_size=20,
+    )
+
+    assert len(works.works) == 7
+    assert [item.relationship for item in works.works] == [
+        "direct_upload",
+        "direct_upload",
+        "direct_upload",
+        "direct_upload",
+        "collaboration",
+        "collaboration",
+        "collaboration",
+    ]
+    assert works.works[-1].uploader == "联合投稿主"
+    assert works.has_more is False
+    assert works.listing_scope == "all_public_works"
+
+
+def test_creator_works_marks_partial_result_when_unverified_rows_are_dropped() -> None:
+    api = _FakeApi()
+    api.creator_works_response = {
+        "list": {
+            "vlist": [
+                {
+                    "bvid": "BVtarget",
+                    "mid": 8741868,
+                    "title": "目标投稿",
+                    "author": "开战斗机的虾米",
+                },
+                {
+                    "bvid": "BVforeign",
+                    "mid": 16520572,
+                    "title": "未标记联合投稿的外来视频",
+                    "author": "另一位作者",
+                    "is_union_video": 0,
+                },
+            ]
+        },
+        "page": {"count": 2},
+    }
+
+    works = BilibiliConnector(api).creator_works(
+        BilibiliCreatorLocator(uid=8741868),
+        sort="popular",
+        page=1,
+        page_size=20,
+    )
+
+    assert [item.canonical_url for item in works.works] == [
+        "https://www.bilibili.com/video/BVtarget"
+    ]
+    assert works.listing_scope == "curated_subset"
 
 
 def test_video_read_prefers_chinese_subtitle_and_keeps_description() -> None:
@@ -274,6 +535,11 @@ def test_article_read_turns_html_into_plain_evidence() -> None:
             "https://www.bilibili.com/opus/1201845223737524246?spm_id_from=333.1369.0.0",
             BilibiliOpusLocator(opus_id=1201845223737524246),
             "https://www.bilibili.com/opus/1201845223737524246",
+        ),
+        (
+            "https://space.bilibili.com/8741868?spm_id_from=333.337.0.0",
+            BilibiliCreatorLocator(uid=8741868),
+            "https://space.bilibili.com/8741868",
         ),
     ],
 )

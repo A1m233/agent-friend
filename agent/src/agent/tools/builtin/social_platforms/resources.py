@@ -31,6 +31,20 @@ class SocialResourceEntry:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class SocialContinuationEntry:
+    continuation_ref: str
+    session_id: str
+    platform: SocialPlatform
+    content_type: SocialContentType
+    canonical_url: str
+    locator: SocialResourceLocator
+    connector_version: str
+    sort: str
+    page: int
+    expires_at: float
+
+
 class SocialResourceStore:
     """Bounded volatile store; connector tokens never enter session history."""
 
@@ -127,3 +141,70 @@ class SocialResourceStore:
             self._expired.pop(key, None)
         while len(self._expired) > self._max_total:
             self._expired.popitem(last=False)
+
+
+class SocialContinuationStore:
+    """Bounded, session-scoped cursors whose opaque refs may enter model context."""
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = 30 * 60,
+        max_total: int = 1000,
+        clock: Callable[[], float] = time.monotonic,
+        make_ref: Callable[[], str] | None = None,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._max_total = max_total
+        self._clock = clock
+        self._make_ref = make_ref or (lambda: f"continuation_ref_{secrets.token_hex(16)}")
+        self._entries: OrderedDict[tuple[str, str], SocialContinuationEntry] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def put(
+        self,
+        *,
+        session_id: str,
+        platform: SocialPlatform,
+        content_type: SocialContentType,
+        canonical_url: str,
+        locator: SocialResourceLocator,
+        connector_version: str,
+        sort: str,
+        page: int,
+    ) -> SocialContinuationEntry:
+        if not session_id or page < 1:
+            raise ValueError("invalid continuation identity")
+        now = self._clock()
+        entry = SocialContinuationEntry(
+            continuation_ref=self._make_ref(),
+            session_id=session_id,
+            platform=platform,
+            content_type=content_type,
+            canonical_url=canonical_url,
+            locator=locator,
+            connector_version=connector_version,
+            sort=sort,
+            page=page,
+            expires_at=now + self._ttl_seconds,
+        )
+        with self._lock:
+            self._prune(now)
+            self._entries[(session_id, entry.continuation_ref)] = entry
+            while len(self._entries) > self._max_total:
+                self._entries.popitem(last=False)
+        return entry
+
+    def get(self, *, session_id: str, continuation_ref: str) -> SocialContinuationEntry:
+        now = self._clock()
+        key = (session_id, continuation_ref)
+        with self._lock:
+            self._prune(now)
+            entry = self._entries.get(key)
+        if entry is None:
+            raise SocialResourceNotFoundError("social continuation reference not found")
+        return entry
+
+    def _prune(self, now: float) -> None:
+        for key in [key for key, entry in self._entries.items() if entry.expires_at <= now]:
+            self._entries.pop(key, None)

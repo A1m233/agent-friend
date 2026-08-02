@@ -193,6 +193,7 @@ def _smoke(
     queries: list[str],
     requested_content_types: list[str],
     read_first: bool,
+    read_works: bool,
     allow_platform_network: bool,
 ) -> dict[str, object]:
     if not allow_platform_network:
@@ -206,15 +207,24 @@ def _smoke(
         content_types: tuple[SocialContentType, ...] = ("note",)
     else:
         if requested_content_types:
-            if any(value not in {"video", "article"} for value in requested_content_types):
-                raise RuntimeError("Bilibili smoke only accepts video or article")
+            if any(
+                value not in {"video", "article", "creator"} for value in requested_content_types
+            ):
+                raise RuntimeError("Bilibili smoke only accepts video, article, or creator")
             content_types = tuple(
                 cast(SocialContentType, value) for value in requested_content_types
             )
         else:
             content_types = ("video", "article")
+    if read_works and (platform != "bilibili" or content_types != ("creator",)):
+        raise RuntimeError("--read-works requires Bilibili --content-type creator")
     counts: list[int] = []
     read_status = "not_requested"
+    works_count = 0
+    works_relationship_counts = {"direct_upload": 0, "collaboration": 0}
+    works_listing_scope: str | None = None
+    failure_stage = "search"
+    creator_uids: set[int] = set()
     connector_name = (
         XiaohongshuConnector.name if platform == "xiaohongshu" else BilibiliConnector.name
     )
@@ -232,9 +242,14 @@ def _smoke(
             )
             connector_name = result.connector_name
             counts.append(len(result.items))
+            for item in result.items:
+                uid = item.identity.get("uid") if item.content_type == "creator" else None
+                if isinstance(uid, int):
+                    creator_uids.add(uid)
             if first_ref is None and result.items:
                 first_ref = result.items[0].resource_ref
         if read_first:
+            failure_stage = "read_first"
             if first_ref is None:
                 read_status = "no_candidate"
             else:
@@ -245,6 +260,20 @@ def _smoke(
                 read_status = (
                     "partial" if detail.unavailable_parts or detail.unavailable_reasons else "ok"
                 )
+        if read_works:
+            failure_stage = "read_works"
+            if first_ref is None:
+                read_status = "no_candidate"
+            else:
+                works = service.creator_works(
+                    session_id="social-platform-connector-smoke",
+                    resource_ref=first_ref,
+                    sort="popular",
+                )
+                works_count = len(works.works)
+                works_listing_scope = works.listing_scope
+                for item in works.works:
+                    works_relationship_counts[item.relationship] += 1
     except SocialPlatformError as exc:
         return {
             "status": exc.status,
@@ -252,6 +281,11 @@ def _smoke(
             "query_count": len(queries),
             "result_counts": counts,
             "read_status": read_status,
+            "works_count": works_count,
+            "works_relationship_counts": works_relationship_counts,
+            "works_listing_scope": works_listing_scope,
+            "creator_uids": sorted(creator_uids),
+            "failure_stage": failure_stage,
         }
     finally:
         service.close()
@@ -261,6 +295,11 @@ def _smoke(
         "query_count": len(queries),
         "result_counts": counts,
         "read_status": read_status,
+        "works_count": works_count,
+        "works_relationship_counts": works_relationship_counts,
+        "works_listing_scope": works_listing_scope,
+        "creator_uids": sorted(creator_uids),
+        "failure_stage": None,
     }
 
 
@@ -279,6 +318,7 @@ def _parse_args() -> argparse.Namespace:
     smoke.add_argument("--query", action="append", default=[])
     smoke.add_argument("--content-type", action="append", default=[])
     smoke.add_argument("--read-first", action="store_true")
+    smoke.add_argument("--read-works", action="store_true")
     smoke.add_argument("--allow-platform-network", action="store_true")
     return parser.parse_args()
 
@@ -300,6 +340,7 @@ def main() -> int:
             queries=args.query,
             requested_content_types=args.content_type,
             read_first=args.read_first,
+            read_works=args.read_works,
             allow_platform_network=args.allow_platform_network,
         )
     print(json.dumps(result, ensure_ascii=False, indent=2))

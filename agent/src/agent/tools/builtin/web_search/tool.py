@@ -24,6 +24,11 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit, urlunsplit
 
+from ....tool_runtime.evidence import (
+    PublicEvidence,
+    evidence_result_meta,
+    make_public_evidence,
+)
 from ...errors import ToolError
 from ...protocol import ToolResult
 
@@ -240,8 +245,8 @@ class WebSearchTool:
         "- 搜索结果只证明外部资料里出现过这些内容，不能证明你过去和用户聊过\n"
         "- 只使用结果里实际出现的字段；标题、片段或来源没有给出的细节不要补\n\n"
         "**失败与重试**：\n"
-        "- 结果不相关或没命中时，可换 query 重试 1~2 次\n"
-        "- 仍没命中就说没直接找到，向用户要平台、时间、画面或其他线索\n"
+        "- 当前结果窗口未命中不等于目标不存在；出现新的作者、别名、标题、站点、时间或链接线索时，可以据此改写查询或打开来源继续取证\n"
+        "- 只有证据路径已经耗尽，或确实缺少用户独有信息时，才说明当前未定位并向用户询问必要线索\n"
         "- 不要对用户说 provider、API、SDK、鉴权、限流、stack trace 等技术字眼"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
@@ -356,6 +361,14 @@ class WebSearchTool:
         if not hits and last_error is not None:
             return self._error_result(last_error, started_at, attempts)
 
+        evidence = [
+            make_public_evidence(
+                hit.url,
+                source="web_search_result",
+                label=hit.title,
+            )
+            for hit in hits
+        ]
         meta: dict[str, Any] = {
             "duration_seconds": self._clock() - started_at,
             "result_count": len(hits),
@@ -366,8 +379,10 @@ class WebSearchTool:
             "query_count": executed_queries,
             "requested_query_count": len(queries),
             "source_urls": [hit.url for hit in hits],
+            "evidence_keys": [source.normalized_url for source in evidence],
             "include_domains": list(include_domains),
             "time_range": time_range,
+            **evidence_result_meta(evidence),
         }
         if request_ids:
             meta["request_id"] = request_ids[0]
@@ -375,7 +390,7 @@ class WebSearchTool:
         if provider_duration_seconds:
             meta["provider_duration_seconds"] = provider_duration_seconds
         return ToolResult(
-            text=_format(queries[0], hits, queries=queries),
+            text=_format(queries[0], hits, queries=queries, evidence=evidence),
             is_error=False,
             meta=meta,
         )
@@ -477,7 +492,13 @@ class WebSearchTool:
         return ToolResult(text=text, is_error=True, meta=meta)
 
 
-def _format(query: str, hits: list[SearchHit], *, queries: tuple[str, ...]) -> str:
+def _format(
+    query: str,
+    hits: list[SearchHit],
+    *,
+    queries: tuple[str, ...],
+    evidence: list[PublicEvidence],
+) -> str:
     """把 :class:`SearchHit` 列表编码为有明确来源的不可信 JSON 数据。
 
     Provider 无关——任何 provider 返回的 hits 都经过同一格式化逻辑，
@@ -487,10 +508,11 @@ def _format(query: str, hits: list[SearchHit], *, queries: tuple[str, ...]) -> s
     JSON 编码也避免第三方 title / snippet 闭合自定义标签伪装外围说明。
     """
     results: list[dict[str, Any]] = []
-    for hit in hits:
+    for hit, source in zip(hits, evidence, strict=True):
         item: dict[str, Any] = {
+            "evidence_ref": source.evidence_ref,
             "title": hit.title,
-            "url": hit.url,
+            "url": source.normalized_url,
             "snippet": hit.snippet[:500],
         }
         if hit.score is not None:

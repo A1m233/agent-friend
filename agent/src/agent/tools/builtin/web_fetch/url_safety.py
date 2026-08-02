@@ -6,7 +6,7 @@ import ipaddress
 import socket
 from urllib.parse import urljoin
 
-from ....tool_runtime.context import normalize_url
+from ....tool_runtime.evidence import normalize_url
 
 
 class UnsafeUrlError(ValueError):
