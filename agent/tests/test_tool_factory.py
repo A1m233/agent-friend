@@ -22,6 +22,12 @@ from agent.tools.builtin.nearby_place_search import (
     UnavailableNearbyPlaceProvider,
 )
 from agent.tools.builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from agent.tools.builtin.social_platforms import (
+    RequestSocialAuthTool,
+    SocialPlatformService,
+    SocialReadTool,
+    SocialSearchTool,
+)
 from agent.tools.builtin.weather_query import (
     UnavailableWeatherProvider,
     WeatherQueryTool,
@@ -53,6 +59,9 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
         "datetime_calculate",
         "nearby_place_search",
         "weather_query",
+        "social_search",
+        "social_read",
+        "request_social_auth",
     }
     nearby = registry.get("nearby_place_search")
     assert isinstance(nearby, NearbyPlaceSearchTool)
@@ -82,6 +91,9 @@ def test_silent_when_no_api_key_and_warn_disabled(
         "datetime_calculate",
         "nearby_place_search",
         "weather_query",
+        "social_search",
+        "social_read",
+        "request_social_auth",
     }
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -95,7 +107,7 @@ def test_returns_registry_with_web_search_when_api_key_set(
     registry = make_default_registry()
 
     tools = registry.all_tools()
-    assert len(tools) == 6
+    assert len(tools) == 9
     tool = registry.get("web_search")
     assert isinstance(tool, WebSearchTool)
     assert tool.name == "web_search"
@@ -112,7 +124,7 @@ def test_explicit_tavily_key_registers_web_search_without_env(
     registry = make_default_registry(tavily_api_key="test-tavily-explicit")
 
     tools = registry.all_tools()
-    assert len(tools) == 6
+    assert len(tools) == 9
     assert isinstance(registry.get("web_search"), WebSearchTool)
 
 
@@ -173,7 +185,7 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == 5
+    assert len(tools) == 8
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
 
@@ -193,6 +205,9 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
         "nearby_place_search",
         "weather_query",
         "recall_past_chats",
+        "social_search",
+        "social_read",
+        "request_social_auth",
     }
 
 
@@ -215,3 +230,22 @@ def test_todo_service_registers_todo_manage(tmp_path: Path) -> None:
         stderr_warn=False,
     )
     assert "todo_manage" in registry
+
+
+def test_social_tools_share_explicit_service() -> None:
+    service = SocialPlatformService(())
+
+    registry = make_default_registry(
+        social_platform_service=service,
+        stderr_warn=False,
+    )
+
+    search = registry.get("social_search")
+    read = registry.get("social_read")
+    auth = registry.get("request_social_auth")
+    assert isinstance(search, SocialSearchTool)
+    assert isinstance(read, SocialReadTool)
+    assert isinstance(auth, RequestSocialAuthTool)
+    assert search._service is service
+    assert read._service is service
+    assert auth._service is service

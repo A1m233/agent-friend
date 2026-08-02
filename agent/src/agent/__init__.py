@@ -114,10 +114,12 @@ from .tools import (
     Tool,
     ToolDuplicateError,
     ToolError,
+    ToolId,
     ToolNotFoundError,
     ToolRegistry,
     ToolResult,
     make_default_registry,
+    make_default_social_platform_service,
 )
 
 __version__ = "0.1.0"
@@ -206,6 +208,7 @@ __all__ = [
     "ToolCallResult",
     "ToolDuplicateError",
     "ToolError",
+    "ToolId",
     "ToolNotFoundError",
     "ToolRegistry",
     "ToolResult",
@@ -217,6 +220,7 @@ __all__ = [
     "extract_persona_display_name",
     "log_dir",
     "make_default_registry",
+    "make_default_social_platform_service",
     "memory_db_path",
     "personas_dir",
     "random_fallback",

@@ -17,6 +17,17 @@ def test_user_urls_are_normalized_and_scoped_to_one_context() -> None:
     assert context.trusted_timezone == "Asia/Shanghai"
 
 
+def test_user_platform_url_stops_before_adjacent_chinese_prose() -> None:
+    url = "https://www.bilibili.com/opus/1201845223737524246?spm_id_from=333.1369.0.0"
+    context = ToolRunContext.create(f"{url}，来学习其中一只鬼的知识吧")
+
+    authorizations = context.url_authorizations.authorizations()
+    assert len(authorizations) == 1
+    assert authorizations[0].normalized_url == url
+    assert context.url_authorizations.authorize(url) == authorizations[0]
+    assert context.url_authorizations.authorize(f"{url}，来学习其中一只鬼的知识吧") is None
+
+
 def test_search_results_must_be_registered_by_successful_tool_result() -> None:
     context = ToolRunContext.create("no urls")
     assert context.url_authorizations.authorize("https://example.com/result") is None

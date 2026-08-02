@@ -21,8 +21,9 @@ import {
 } from "@/services";
 import type { AttachmentDraft, FriendlyError } from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
+import type { PushEvent } from "@/types/push";
 import type { RunSnapshot } from "@/types/run";
-import { applyAguiEvent } from "./conversationReducer";
+import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
 import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
@@ -77,6 +78,7 @@ interface ConversationState {
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
+  applyRunEvents: (sessionId: string, runId: string, events: PushEvent[]) => void;
   applyRunSnapshot: (snapshot: RunSnapshot) => void;
   calibrateRuns: () => Promise<void>;
   markSessionViewed: (sessionId: string) => void;
@@ -397,6 +399,45 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   invalidateBackgroundRefreshes() {
     detailRefreshSeq += 1;
+  },
+
+  applyRunEvents(sessionId, runId, events) {
+    if (events.length === 0) return;
+    set((state) => {
+      const activeRunId = state.activeRunIdBySession[sessionId];
+      if (activeRunId && activeRunId !== runId) return state;
+
+      const isCurrent = state.currentSessionId === sessionId;
+      const existingView = state.sessionViews[sessionId];
+      const view = existingView ?? (isCurrent ? currentViewSnapshot(state) : undefined);
+      if (!view) return state;
+
+      const assistantId = `proactive:${runId}`;
+      const existingIndex = view.messages.findIndex((message) => message.id === assistantId);
+      const assistant: ChatMessage = existingIndex >= 0
+        ? view.messages[existingIndex]
+        : {
+            id: assistantId,
+            role: "assistant",
+            createdAt: new Date().toISOString(),
+            blocks: [],
+            status: "streaming",
+          };
+      const nextAssistant = events.reduce(
+        (message, event) => applyPushConversationEvent(message, event, runId),
+        assistant,
+      );
+      const messages = [...view.messages];
+      if (existingIndex >= 0) messages[existingIndex] = nextAssistant;
+      else messages.push(nextAssistant);
+      const nextView: SessionConversationView = { ...view, messages, streaming: true };
+
+      return {
+        sessionViews: { ...state.sessionViews, [sessionId]: nextView },
+        activeRunIdBySession: { ...state.activeRunIdBySession, [sessionId]: runId },
+        ...(isCurrent ? { messages, streaming: true } : {}),
+      };
+    });
   },
 
   applyRunSnapshot(snapshot) {

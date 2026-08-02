@@ -27,8 +27,8 @@ export interface PushEvent {
 }
 
 export interface PushEnvelope {
-  /** "user_turn" / "agent_turn" / "heartbeat"。pet 订阅端 (kinds=agent_turn) 主要看 agent_turn。 */
-  kind: "user_turn" | "agent_turn" | "session_changed" | "run_changed" | "heartbeat";
+  /** run_event 是桌面对话主动续跑的实时增量；agent_turn 仍供 pet/bubble 消费完整 turn。 */
+  kind: "user_turn" | "agent_turn" | "run_event" | "session_changed" | "run_changed" | "heartbeat";
   session_id: string;
   /** subscriber 视角下的单调递增序号；store 用 `${session_id}:${seq}` 作 BubbleItem id。 */
   seq: number;
@@ -38,6 +38,10 @@ export interface PushEnvelope {
   presentation?: "conversation" | "ambient" | "none" | null;
   /** 序列化后的 ConversationEvent 列表（**不是** SessionEvent；schema 见模块顶部注释）；heartbeat 时为空。 */
   events: PushEvent[];
+  /** Runtime run correlation；run_event / terminal agent_turn 会携带。 */
+  run_id?: string | null;
+  outcome?: string | null;
+  reason_code?: string;
   revision?: number | null;
   change_kind?: string | null;
   origin?: string | null;

@@ -110,6 +110,7 @@ MAX_TOOL_TURNS_DEFAULT = 5
 
 _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
+_CURRENT_URL_AUTHORIZATIONS_ARG = "__agent_friend_url_authorizations"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
@@ -286,6 +287,7 @@ class Conversation:
         self._voice_latency_disable_tools = False
         self._prompt_channel_override: PromptChannel | None = None
         self._prompt_surface_override: InteractionSurfaceId | None = None
+        self._interaction_destination_id_override: str | None = None
         self._run_id_override: str | None = None
         self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
@@ -439,6 +441,7 @@ class Conversation:
         user_event_id: str | None = None,
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
+        interaction_destination_id: str | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
         turn_context: str | None = None,
@@ -492,12 +495,14 @@ class Conversation:
         """
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
+        previous_interaction_destination_id = self._interaction_destination_id_override
         previous_run_id = self._run_id_override
         previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
+        self._interaction_destination_id_override = interaction_destination_id
         self._run_id_override = run_id
         self._turn_context_override = (turn_context or "").strip()
         self._turn_prompt_builder = self._snapshot_prompt_builder()
@@ -614,6 +619,7 @@ class Conversation:
                     self._observe_turn(turn_start_idx)
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
+            self._interaction_destination_id_override = previous_interaction_destination_id
             self._run_id_override = previous_run_id
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
@@ -829,6 +835,108 @@ class Conversation:
             self._run_id_override = previous_run_id
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_tool_run_context = previous_tool_run_context
+
+    def continue_after_external_action(
+        self,
+        *,
+        source_kind: str,
+        system_prompt_addendum: str,
+        presentation: Literal["conversation", "none"],
+        channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
+        interaction_destination_id: str | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Iterator[ConversationEvent]:
+        """Continue one trusted external action with the normal Agent tool loop.
+
+        This is intentionally separate from :meth:`dispatch_system_turn`: ordinary
+        system triggers keep ``tools=None``. The caller must already have completed
+        the user-approved external action and supplies its frozen origin surface.
+        """
+
+        previous_prompt_channel = self._prompt_channel_override
+        previous_prompt_surface = self._prompt_surface_override
+        previous_interaction_destination_id = self._interaction_destination_id_override
+        previous_run_id = self._run_id_override
+        previous_turn_prompt_builder = self._turn_prompt_builder
+        previous_run_model_snapshot = self._run_model_snapshot
+        previous_tool_run_context = self._active_tool_run_context
+        self._prompt_channel_override = channel
+        self._prompt_surface_override = surface
+        self._interaction_destination_id_override = interaction_destination_id
+        self._run_id_override = run_id
+        self._turn_prompt_builder = self._snapshot_prompt_builder()
+        self._run_model_snapshot = self._capture_run_model_snapshot()
+
+        persona_name = self._session.current_persona_name
+        persona_id = self._session.current_persona_id
+        model_snapshot = self._active_model_id()
+        loop_frame = _ToolLoopFrame(current_text_buf=[])
+        tool_run_context = self._tool_run_context_factory(system_prompt_addendum)
+        self._active_tool_run_context = tool_run_context
+        model_context_event = self._build_model_context_event()
+        tool_run_state = ToolRunState(self._tool_run_policy)
+        self._active_tool_run_state = tool_run_state
+        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
+        turn_start_idx = len(self._session.events)
+        trigger_appended = False
+
+        def prepare_first_turn() -> list[dict[str, Any]]:
+            nonlocal trigger_appended
+            tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
+            messages = self._assemble(
+                trailing_user=system_prompt_addendum,
+                tool_specs=tool_specs,
+            )
+            if not trigger_appended:
+                self._append_system_trigger_event(
+                    source_kind=source_kind,
+                    system_prompt_addendum=system_prompt_addendum,
+                    output_visibility="user",
+                    presentation=presentation,
+                )
+                trigger_appended = True
+            if model_context_event is not None:
+                self._append_model_context_event(model_context_event)
+            return messages
+
+        try:
+            self._check_cancel(cancel_check)
+            yield from self._run_tool_loop(
+                prepare_first_turn=prepare_first_turn,
+                persona_name=persona_name,
+                persona_id=persona_id,
+                model_snapshot=model_snapshot,
+                runtime=tool_run_state,
+                context=tool_run_context,
+                progress=no_progress,
+                frame=loop_frame,
+                current_turn_start_idx=turn_start_idx,
+                cancel_check=cancel_check,
+            )
+        finally:
+            interrupted = sys.exc_info()[0] is not None
+            if interrupted:
+                self._on_interrupt(
+                    user_input="",
+                    user_event_appended=False,
+                    current_text_buf=loop_frame.current_text_buf,
+                    current_text_persisted=loop_frame.current_text_persisted,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model_snapshot=model_snapshot,
+                )
+            elif not self._post_turn_external:
+                self._observe_turn(turn_start_idx)
+            self._prompt_channel_override = previous_prompt_channel
+            self._prompt_surface_override = previous_prompt_surface
+            self._interaction_destination_id_override = previous_interaction_destination_id
+            self._run_id_override = previous_run_id
+            self._turn_prompt_builder = previous_turn_prompt_builder
+            self._run_model_snapshot = previous_run_model_snapshot
+            self._active_tool_run_state = None
             self._active_tool_run_context = previous_tool_run_context
 
     # ----- 系统级触发轮（014：main loop 入口） -----
@@ -1493,9 +1601,10 @@ class Conversation:
         """
         build_started_ms = monotonic_ms()
         actual_tool_specs = self._current_tool_specs() if tool_specs is _UNSET else tool_specs
+        typed_tool_specs = cast(list[dict[str, Any]] | None, actual_tool_specs)
         runtime = self._build_runtime_context(
             prior_summary_override=prior_summary_override,
-            tool_specs=cast(list[dict[str, Any]] | None, actual_tool_specs),
+            tool_specs=typed_tool_specs,
         )
         raw_history = self._session.llm_messages if history_override is None else history_override
         history_for_llm = escape_user_messages_for_llm(raw_history)
@@ -1503,6 +1612,17 @@ class Conversation:
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
         system_prompt = self._system_prompt
+        if typed_tool_specs and self._tool_registry is not None:
+            callable_names = {
+                str(spec.get("function", {}).get("name", ""))
+                for spec in typed_tool_specs
+                if isinstance(spec, dict) and isinstance(spec.get("function"), dict)
+            }
+            capability_catalog = self._tool_registry.render_capability_catalog(
+                callable_names=callable_names
+            )
+            if capability_catalog:
+                system_prompt = f"{system_prompt}\n\n{capability_catalog}"
         active_turn_context: list[Message] = list(turn_context or [])
         if model_context_update is not None:
             active_turn_context.append(model_context_update)
@@ -2175,6 +2295,28 @@ class Conversation:
             )
         if name == "todo_manage":
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
+        if name in {"social_search", "social_read"}:
+            invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
+        if name == "social_read":
+            invocation_args[_CURRENT_URL_AUTHORIZATIONS_ARG] = [
+                authorization.normalized_url
+                for authorization in (
+                    tool_run_context.url_authorizations.authorizations()
+                    if tool_run_context is not None
+                    else ()
+                )
+            ]
+        if name == "request_social_auth":
+            invocation_args.update(
+                {
+                    _CURRENT_SESSION_ID_ARG: self._session.session_id,
+                    "__agent_friend_interaction_surface": str(self._prompt_surface_override or ""),
+                }
+            )
+            if self._interaction_destination_id_override:
+                invocation_args["__agent_friend_interaction_destination_id"] = (
+                    self._interaction_destination_id_override
+                )
         if name == "web_fetch" and tool_run_context is not None:
             url = args.get("url")
             authorization = (

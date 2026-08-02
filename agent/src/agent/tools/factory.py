@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import atexit
 import os
 import sys
 from typing import TYPE_CHECKING
@@ -27,6 +28,24 @@ from .builtin.nearby_place_search import (
     UnavailableNearbyPlaceProvider,
 )
 from .builtin.nearby_place_search.providers import AmapNearbyPlaceProvider
+from .builtin.social_platforms import (
+    RequestSocialAuthTool,
+    SocialAuthManager,
+    SocialPlatformService,
+    SocialReadTool,
+    SocialSearchTool,
+)
+from .builtin.social_platforms.connectors import (
+    XIAOHONGSHU_DEFAULT_SEARCH_MCP_TIMEOUT_SECONDS,
+    BilibiliAuthHandler,
+    BilibiliConnector,
+    BilibiliSdkApi,
+    OfficialMcpTransport,
+    XiaohongshuAuthHandler,
+    XiaohongshuConnector,
+    XiaohongshuMcpApi,
+    XiaohongshuProcess,
+)
 from .builtin.weather_query import (
     UnavailableWeatherLocationResolver,
     UnavailableWeatherProvider,
@@ -57,6 +76,7 @@ def make_default_registry(
     amap_webservice_key: str | None = None,
     qweather_api_key: str | None = None,
     qweather_api_host: str | None = None,
+    social_platform_service: SocialPlatformService | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -90,6 +110,17 @@ def make_default_registry(
         - 网络与记忆条件都不满足 → 仍保留两个本地工具及地点、天气工具表面
     """
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
+
+    social_service = social_platform_service or make_default_social_platform_service()
+    if social_platform_service is None:
+        atexit.register(social_service.close)
+    tools.extend(
+        (
+            SocialSearchTool(social_service),
+            SocialReadTool(social_service),
+            RequestSocialAuthTool(social_service),
+        )
+    )
 
     if todo_service is not None:
         from .builtin.todo_manage import TodoManageTool
@@ -160,3 +191,37 @@ def make_default_registry(
         )
 
     return ToolRegistry(tools)
+
+
+def make_default_social_platform_service(
+    *, xiaohongshu_search_timeout_seconds: float | None = None
+) -> SocialPlatformService:
+    """Build local-only platform connectors without starting processes or network calls."""
+    xiaohongshu_process = XiaohongshuProcess()
+    xiaohongshu_api = XiaohongshuMcpApi(
+        process=xiaohongshu_process,
+        transport=OfficialMcpTransport(
+            search_timeout_seconds=(
+                xiaohongshu_search_timeout_seconds
+                if xiaohongshu_search_timeout_seconds is not None
+                else XIAOHONGSHU_DEFAULT_SEARCH_MCP_TIMEOUT_SECONDS
+            ),
+        ),
+    )
+    bilibili_api = BilibiliSdkApi()
+    auth = SocialAuthManager(
+        (
+            XiaohongshuAuthHandler(
+                xiaohongshu_process,
+                verify_login=xiaohongshu_api.check_login,
+            ),
+            BilibiliAuthHandler(bilibili_api),
+        )
+    )
+    return SocialPlatformService(
+        (
+            XiaohongshuConnector(xiaohongshu_api),
+            BilibiliConnector(bilibili_api),
+        ),
+        auth=auth,
+    )

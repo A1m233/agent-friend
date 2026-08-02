@@ -56,6 +56,9 @@ def test_persistent_runtime_registers_recall_past_chats(
         assert "recall_past_chats" in tool_names
         assert "nearby_place_search" in tool_names
         assert "todo_manage" in tool_names
+        assert "social_search" in tool_names
+        assert "social_read" in tool_names
+        assert runtime.social_platform_service is not None
         assert runtime.todo_store is not None
         assert runtime.todo_store.path == tmp_path / "todos" / "todos.db"
         assert manager_registry is runtime.tool_registry

@@ -24,9 +24,7 @@ export class TapReactionSource implements ParamSource {
   fire(): void {
     if (this.active) return;
     this.startTs = performance.now();
-    if (import.meta.env.DEV) {
-      console.info("[tap] fire");
-    }
+    console.info("[pet][breadcrumb] tap-parameters-started");
   }
 
   apply(sprite: Live2DSprite): void {

@@ -565,6 +565,11 @@ class AgentRuntime:
                     request.event.user_input,
                     channel=request.channel,
                     surface=request.surface,
+                    interaction_destination_id=(
+                        str(request.metadata["interaction_destination_id"])
+                        if request.metadata.get("interaction_destination_id")
+                        else None
+                    ),
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )

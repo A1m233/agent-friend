@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 EnvelopeKind = Literal[
     "user_turn",
     "agent_turn",
+    "run_event",
     "session_changed",
     "run_changed",
     "heartbeat",
@@ -137,6 +138,10 @@ class ListenerRegistry:
         """每个 :class:`ConversationEvent` 调一次；累积到 :class:`TurnDone`
         时打包一次性推送给订阅者。
 
+        桌面对话内的主动 run 还会额外逐事件发送 ``run_event``。这个增量通道
+        只覆盖 ``presentation=conversation`` 的 SystemTriggerEvent；最终的
+        ``agent_turn`` 仍保留为桌宠/气泡消费者的完整 turn envelope。
+
         silent turn（``output_visibility="memory_only"``）的
         :meth:`Conversation.dispatch_system_turn` **不 yield 任何 event**——
         本方法因此自然不会被调，silent turn 对订阅者完全不可见。
@@ -155,6 +160,25 @@ class ListenerRegistry:
 
         with self._lock:
             for sub in list(self._subs.values()):
+                if (
+                    run_id is not None
+                    and isinstance(agent_event, SystemTriggerEvent)
+                    and agent_event.presentation == "conversation"
+                    and "run_event" in sub.accept_kinds
+                ):
+                    self._seq[sub.id] += 1
+                    self._safe_push(
+                        sub,
+                        PushEnvelope(
+                            kind="run_event",
+                            session_id=agent_event.session_id,
+                            seq=self._seq[sub.id],
+                            source_kind=source_kind,
+                            events=[serialized],
+                            run_id=run_id,
+                            presentation=agent_event.presentation,
+                        ),
+                    )
                 if kind not in sub.accept_kinds:
                     continue
                 key = (sub.id, agent_event.session_id, run_id)

@@ -18,6 +18,11 @@ export type { AttachmentDraft, AttachmentRef } from "./attachments";
 export { sessionsApi } from "./api/sessions";
 export { modelsApi } from "./api/models";
 export { runsApi } from "./api/runs";
+export { socialAuthApi } from "./api/socialAuth";
+export type {
+  SocialAuthRequestSnapshot,
+  SocialAuthRequestStatus,
+} from "./api/socialAuth";
 export type { ModelValidationResult } from "./api/models";
 export { generateDiagnosticBundle } from "./diagnostics";
 export type {

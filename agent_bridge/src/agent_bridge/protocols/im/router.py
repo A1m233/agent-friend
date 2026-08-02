@@ -266,6 +266,12 @@ class IMRouter:
             )
         try:
             surface = _surface_for_im(im_type)
+            origin_destination_id = _origin_destination_id(
+                provider_or_send,
+                im_type=im_type,
+                event=event,
+                session_id=session_id,
+            )
             agent_text = await asyncio.to_thread(
                 self._run_turn_sync,
                 boot,
@@ -275,6 +281,7 @@ class IMRouter:
                 model_media_context,
                 surface,
                 latency_started_ms,
+                origin_destination_id,
             )
         except Exception as exc:
             log_run_latency(
@@ -420,6 +427,7 @@ class IMRouter:
         turn_context: str | None = None,
         surface: InteractionSurfaceId | None = None,
         latency_started_ms: int | None = None,
+        interaction_destination_id: str | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -450,12 +458,20 @@ class IMRouter:
                     attachments=list(attachments),
                     channel=request.channel,
                     surface=request.surface,
+                    interaction_destination_id=(
+                        str(request.metadata["interaction_destination_id"])
+                        if request.metadata.get("interaction_destination_id")
+                        else None
+                    ),
                     run_id=request.run_id,
                     cancel_check=token.raise_if_cancelled,
                     turn_context=turn_context,
                 ),
                 error_callback=self._persist_run_error,
-                metadata={"protocol": "im"},
+                metadata={
+                    "protocol": "im",
+                    "interaction_destination_id": interaction_destination_id,
+                },
             )
             for ev in handle.events():
                 if isinstance(ev, TextDelta):
@@ -480,6 +496,7 @@ class IMRouter:
                     channel="text",
                     turn_context=turn_context,
                     surface=surface,
+                    interaction_destination_id=interaction_destination_id,
                 ):
                     if isinstance(ev, TextDelta):
                         buf.append(ev.text)
@@ -549,6 +566,22 @@ def _text_len(value: object) -> int:
 def _attachment_count(event: InboundEvent) -> int:
     attachments = getattr(event, "attachments", None)
     return len(attachments) if isinstance(attachments, list) else 0
+
+
+def _origin_destination_id(
+    provider_or_send: IMOutboundProvider | SendCallback,
+    *,
+    im_type: str,
+    event: InboundEvent,
+    session_id: str,
+) -> str | None:
+    bind_id = getattr(provider_or_send, "bind_id", None)
+    provider_type = getattr(provider_or_send, "type", None)
+    if not isinstance(bind_id, str) or not bind_id:
+        return None
+    if provider_type != im_type:
+        return None
+    return "|".join((im_type, bind_id, event.chat_scope, event.chat_id, session_id))
 
 
 def _send_callback(provider_or_send: IMOutboundProvider | SendCallback) -> SendCallback:

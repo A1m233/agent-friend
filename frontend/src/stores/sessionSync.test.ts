@@ -22,6 +22,7 @@ import { sessionsApi } from "@/services";
 import { useConversationStore } from "./conversation";
 import {
   handlePushReconnectedForSync,
+  handleRunEventForSync,
   handleRunChangedForSync,
   handleSessionChangedForSync,
   resetSessionSyncForTests,
@@ -128,5 +129,79 @@ describe("sessionSync", () => {
     const state = useConversationStore.getState();
     expect(state.activeRunIdBySession.background).toBe("run-b");
     expect(state.streaming).toBe(false);
+  });
+
+  it("coalesces conversation run_event deltas and flushes before terminal refresh", async () => {
+    handleRunChangedForSync({
+      kind: "run_changed",
+      session_id: "s1",
+      seq: 1,
+      source_kind: null,
+      events: [],
+      run: {
+        run_id: "run-social",
+        session_id: "s1",
+        status: "running",
+        outcome: null,
+        reason_code: "",
+        channel: "text",
+        origin: "system",
+        control_scope: "desktop_text",
+        created_at: "2026-08-02T00:00:00Z",
+        started_at: "2026-08-02T00:00:01Z",
+        finished_at: null,
+        version: 1,
+      },
+    });
+    for (const [seq, text] of [[2, "正在"], [3, "继续"]] as const) {
+      handleRunEventForSync({
+        kind: "run_event",
+        session_id: "s1",
+        seq,
+        source_kind: "social_auth_completed",
+        presentation: "conversation",
+        run_id: "run-social",
+        events: [{ type: "text_delta", text }],
+      });
+    }
+    expect(useConversationStore.getState().messages).toEqual([]);
+    await vi.advanceTimersByTimeAsync(33);
+    expect(useConversationStore.getState().messages.at(-1)).toMatchObject({
+      id: "proactive:run-social",
+      status: "streaming",
+      blocks: [{ kind: "text", text: "正在继续" }],
+    });
+
+    handleRunEventForSync({
+      kind: "run_event",
+      session_id: "s1",
+      seq: 4,
+      source_kind: "social_auth_completed",
+      presentation: "conversation",
+      run_id: "run-social",
+      events: [{ type: "done" }],
+    });
+    handleRunChangedForSync({
+      kind: "run_changed",
+      session_id: "s1",
+      seq: 5,
+      source_kind: null,
+      events: [],
+      run: {
+        run_id: "run-social",
+        session_id: "s1",
+        status: "terminal",
+        outcome: "completed",
+        reason_code: "",
+        channel: "text",
+        origin: "system",
+        control_scope: "desktop_text",
+        created_at: "2026-08-02T00:00:00Z",
+        started_at: "2026-08-02T00:00:01Z",
+        finished_at: "2026-08-02T00:00:02Z",
+        version: 2,
+      },
+    });
+    expect(useConversationStore.getState().messages.at(-1)?.status).toBe("complete");
   });
 });

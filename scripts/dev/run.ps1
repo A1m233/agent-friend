@@ -73,6 +73,8 @@ if ([string]::IsNullOrWhiteSpace($env:AGENT_FRIEND_LOG_DIR)) {
 New-Item -ItemType Directory -Force -Path $env:AGENT_FRIEND_LOG_DIR | Out-Null
 $devBridgeLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-bridge.log"
 $devVoiceLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "dev-voice.log"
+$devTauriLog = Join-Path $env:AGENT_FRIEND_LOG_DIR "tauri.log.dev"
+$foregroundLogPath = Join-Path $root "scripts\dev\foreground_log.py"
 Write-Host "===> 日志目录：$env:AGENT_FRIEND_LOG_DIR"
 $runtimeGuardPath = Join-Path $root "scripts\dev\runtime_guard.py"
 $runtimeLeaseAcquired = $false
@@ -597,7 +599,10 @@ if ($mode -eq "tauri") {
     Write-Host "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     Write-Host "===> 配置模式：${env:AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
     Set-Location (Join-Path $root "frontend")
-    & node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
+    & uv run python $foregroundLogPath `
+        --log $devTauriLog `
+        --cwd (Join-Path $root "frontend") `
+        -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
     $frontendExitCode = $LASTEXITCODE
     if ($frontendExitCode -ne 0) {
         Write-Error "Tauri dev 命令退出，exit code=$frontendExitCode。已进入收尾清理。"
@@ -663,7 +668,10 @@ else {
     }
     else {
         Write-Host "===> 前端模式：tauri（桌面，含双窗口；首次编译 Rust 较慢）"
-        & node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
+        & uv run python $foregroundLogPath `
+            --log $devTauriLog `
+            --cwd (Join-Path $root "frontend") `
+            -- node (Join-Path $root "frontend\node_modules\@tauri-apps\cli\tauri.js") dev @rest
         $frontendExitCode = $LASTEXITCODE
     }
     if ($frontendExitCode -ne 0) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EventType, type BaseEvent } from "@ag-ui/core";
-import { applyAguiEvent } from "./conversationReducer";
+import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import type { ChatMessage, TextBlock, ToolBlock } from "@/types/chat";
 
 const base: ChatMessage = {
@@ -105,5 +105,70 @@ describe("applyAguiEvent", () => {
     expect(out.blocks.map((b) => b.kind)).toEqual(["text", "tool", "text"]);
     expect((out.blocks[0] as TextBlock).text).toBe("前段");
     expect((out.blocks[2] as TextBlock).text).toBe("后段");
+  });
+});
+
+describe("applyPushConversationEvent", () => {
+  it("projects proactive text/tool/text deltas incrementally", () => {
+    const events = [
+      { type: "text_delta", text: "先搜索" },
+      {
+        type: "tool_call_request",
+        tool_call_id: "provider-id",
+        event_tool_call_id: "event-id",
+        tool_name: "social_search",
+        args: { platform: "xiaohongshu", query: "AI Agent" },
+      },
+      {
+        type: "tool_call_result",
+        tool_call_id: "provider-id",
+        event_tool_call_id: "event-id",
+        tool_name: "social_search",
+        text: "找到 10 条",
+        is_error: false,
+      },
+      { type: "text_delta", text: "再总结" },
+      { type: "done" },
+    ];
+    const out = events.reduce(
+      (message, event) => applyPushConversationEvent(message, event, "run-1"),
+      base,
+    );
+
+    expect(out.blocks.map((block) => block.kind)).toEqual(["text", "tool", "text"]);
+    expect((out.blocks[0] as TextBlock).text).toBe("先搜索");
+    expect(out.blocks[0]).toMatchObject({ mid: "run-1:text:0" });
+    expect(out.blocks[1]).toMatchObject({
+      toolCallId: "event-id",
+      name: "social_search",
+      status: "done",
+      result: "找到 10 条",
+    });
+    expect((out.blocks[2] as TextBlock).text).toBe("再总结");
+    expect(out.status).toBe("complete");
+  });
+
+  it("projects model response status and clears it on text", () => {
+    const waiting = applyPushConversationEvent(
+      base,
+      {
+        type: "model_response_status",
+        phase: "retrying",
+        after_tool: true,
+        attempt: 2,
+        max_attempts: 3,
+      },
+      "run-1",
+    );
+    expect(waiting.runStatus).toEqual({
+      phase: "retrying",
+      afterTool: true,
+      attempt: 2,
+      maxAttempts: 3,
+    });
+    expect(
+      applyPushConversationEvent(waiting, { type: "text_delta", text: "恢复" }, "run-1")
+        .runStatus,
+    ).toBeUndefined();
   });
 });

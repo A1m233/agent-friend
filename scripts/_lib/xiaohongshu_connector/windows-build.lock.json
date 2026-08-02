@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "build_id": "xiaohongshu-mcp-v2.2.7-windows-amd64-no-leakless-v2",
+  "target": {
+    "os": "windows",
+    "arch": "amd64"
+  },
+  "inputs": {
+    "go": {
+      "version": "go1.26.5",
+      "url": "https://go.dev/dl/go1.26.5.windows-amd64.zip",
+      "filename": "go1.26.5.windows-amd64.zip",
+      "size": 74927386,
+      "sha256": "97e6b2a833b6d89f9ff17d25419ac0a7e3b482a044e9ab18cdef834bd834fd38",
+      "archive_root": "go"
+    },
+    "xiaohongshu_mcp": {
+      "version": "v2.2.7",
+      "commit": "3aacfb3583482424c0170e86e05725df940dd35e",
+      "url": "https://codeload.github.com/xpzouying/xiaohongshu-mcp/zip/3aacfb3583482424c0170e86e05725df940dd35e",
+      "filename": "xiaohongshu-mcp-3aacfb3583482424c0170e86e05725df940dd35e.zip",
+      "size": 80868445,
+      "sha256": "c48ae2468cde214327a8ba584d6ed65eef36ed355d5306198d25eb2fb202cfd6",
+      "archive_root": "xiaohongshu-mcp-3aacfb3583482424c0170e86e05725df940dd35e"
+    },
+    "headless_browser": {
+      "version": "v0.4.0",
+      "commit": "d28e37c7448672550580fca8ff26404aed09a21f",
+      "url": "https://codeload.github.com/xpzouying/headless_browser/zip/d28e37c7448672550580fca8ff26404aed09a21f",
+      "filename": "headless-browser-d28e37c7448672550580fca8ff26404aed09a21f.zip",
+      "size": 12152,
+      "sha256": "6af4b00e95fdc0476e5eac81391b2e2fd47c0ace32de4ba6aff05fcba5a8fae1",
+      "archive_root": "headless_browser-d28e37c7448672550580fca8ff26404aed09a21f"
+    }
+  },
+  "patch": {
+    "filename": "windows-disable-leakless.patch",
+    "sha256": "b4ee4d875505f1d7e83792faac8a140978a3e4be4a3d10e40301b0530c5f5d8c"
+  },
+  "outputs": [
+    {
+      "role": "server",
+      "filename": "xiaohongshu-mcp-windows-amd64.exe",
+      "size": 21488128,
+      "sha256": "099a27a7fbd718aa47af91fac555606b91fc69b4a4a669c2adb581ea3e3393a4"
+    },
+    {
+      "role": "login",
+      "filename": "xiaohongshu-login-windows-amd64.exe",
+      "size": 14947840,
+      "sha256": "8913c8deadd3373648a43ad86c7760e7b03318d8cf0bdf6b350d7a4d82a4bb4d"
+    }
+  ]
+}

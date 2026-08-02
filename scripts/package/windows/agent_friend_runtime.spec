@@ -13,7 +13,9 @@ hiddenimports = []
 for package in (
     "agent",
     "agent_bridge",
+    "bilibili_api",
     "llm_providers",
+    "mcp",
     "memory",
     "runtime_config",
     "voice_bridge",

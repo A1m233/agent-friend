@@ -21,6 +21,7 @@ mod power_policy;
 mod presence;
 mod push_subscriber;
 mod runtime_config;
+mod runtime_observability;
 mod runtime_services;
 mod settings;
 mod shell_diagnostics;
@@ -890,6 +891,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let context = tauri::generate_context!();
+    let runtime_observer = runtime_observability::RuntimeObserver::start(paths::log_dir());
+    runtime_observability::install_panic_hook(runtime_observer.clone());
     let resource_dir =
         tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default()).ok();
     // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
@@ -905,7 +908,9 @@ pub fn run() {
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
     let setup_settings_state = settings_state.clone();
     let setup_shell_diagnostics_manager = shell_diagnostics_manager.clone();
+    let setup_runtime_observer = runtime_observer.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
+    let exit_runtime_observer = runtime_observer.clone();
 
     // Tauri requires the single-instance plugin to be registered first. This keeps a second
     // desktop shell from borrowing the first instance's fixed runtime ports and then becoming
@@ -1172,7 +1177,7 @@ pub fn run() {
                     ])
                     .level(log::LevelFilter::Info)
                     .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                     .max_file_size(10_000_000)
                     .format(
                         |out: tauri_plugin_log::fern::FormatCallback,
@@ -1204,6 +1209,12 @@ pub fn run() {
                     )
                     .build(),
             )?;
+
+            setup_runtime_observer.record("lifecycle", "logger-attached", serde_json::json!({}));
+            log::info!(
+                "desktop lifecycle: logger attached; process_session_id={}",
+                setup_runtime_observer.process_session_id()
+            );
 
             if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
                 log::warn!("windows shell diagnostics observer started partially: {error}");
@@ -1337,6 +1348,13 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { code, .. } = &event {
+                exit_runtime_observer.record(
+                    "lifecycle",
+                    "exit-requested",
+                    serde_json::json!({"code": code}),
+                );
+            }
             if matches!(event, tauri::RunEvent::Resumed) {
                 permissions::schedule_refresh(
                     app_handle,
@@ -1349,6 +1367,11 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                exit_runtime_observer.record(
+                    "lifecycle",
+                    "process-exit-started",
+                    serde_json::json!({}),
+                );
                 if let Some(manager) =
                     app_handle.try_state::<Arc<shell_diagnostics::ShellDiagnosticsManager>>()
                 {
@@ -1375,6 +1398,11 @@ pub fn run() {
                         .cleanup_owned_children()
                         .await;
                 });
+                exit_runtime_observer.record(
+                    "lifecycle",
+                    "process-exit-completed",
+                    serde_json::json!({}),
+                );
             }
         });
 }
