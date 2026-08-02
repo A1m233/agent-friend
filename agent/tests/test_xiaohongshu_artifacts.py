@@ -62,3 +62,13 @@ def test_artifact_directory_override_is_explicit(
     monkeypatch.setenv(XIAOHONGSHU_ARTIFACT_DIR_ENV, str(tmp_path))
 
     assert default_xiaohongshu_artifact_dir() == tmp_path
+
+
+def test_locked_compatibility_patch_has_lf_checkout_policy() -> None:
+    repository_root = Path(__file__).parents[2]
+    attributes = (repository_root / ".gitattributes").read_text(encoding="utf-8")
+
+    assert (
+        "scripts/_lib/xiaohongshu_connector/windows-disable-leakless.patch text eol=lf"
+        in attributes.splitlines()
+    )

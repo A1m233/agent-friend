@@ -3,3 +3,6 @@ frontend/src-tauri/Cargo.toml text eol=lf
 
 # Shell scripts must stay LF even when Windows core.autocrlf is enabled.
 scripts/dev/run.sh text eol=lf
+
+# Checksummed source patches must keep byte-identical LF content on Windows.
+scripts/_lib/xiaohongshu_connector/windows-disable-leakless.patch text eol=lf
