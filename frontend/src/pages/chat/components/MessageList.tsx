@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChatMessage as TdChatMessage } from "@tdesign-react/chat";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
@@ -25,6 +26,13 @@ import { toMarkdownContent } from "../projection";
 import { EditMessageSender } from "./EditMessageSender";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
+import {
+  getMessageVirtualItemKey,
+  MESSAGE_VIRTUALIZER_ESTIMATED_SIZE_PX,
+  MESSAGE_VIRTUALIZER_GAP_PX,
+  MESSAGE_VIRTUALIZER_OVERSCAN,
+  MESSAGE_VIRTUALIZER_PADDING_START_PX,
+} from "./messageVirtualization";
 import { ReminderCard } from "./ReminderCard";
 import { ToolCard } from "./ToolCard";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
@@ -32,7 +40,6 @@ import { useExternalLinkOpener } from "./useExternalLinkOpener";
 
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
-const HISTORY_SCROLL_SETTLE_MS = 1200;
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
@@ -458,16 +465,12 @@ export function MessageTimeline({
   onEditingChange,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
   const stickyRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const scrollRafRef = useRef(0);
-  const historySettleCleanupRef = useRef<(() => void) | null>(null);
-  const historySettlingRef = useRef(false);
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
-  const readingAnchorRef = useRef<{ id: string; offset: number } | null>(null);
   const [isSticky, setIsSticky] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const updateEditingMessage = useCallback((messageId: string | null) => {
@@ -480,28 +483,38 @@ export function MessageTimeline({
   const scrollButtonBottom = composerInset + SCROLL_BUTTON_GAP_PX;
   const lastUserMessageId = [...messages].reverse().find((m) => m.role === "user")?.id ?? null;
   const handleExternalLinkClick = useExternalLinkOpener();
+  const getItemKey = useCallback(
+    (index: number) => getMessageVirtualItemKey(messages, index),
+    [messages],
+  );
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => MESSAGE_VIRTUALIZER_ESTIMATED_SIZE_PX,
+    getItemKey,
+    overscan: MESSAGE_VIRTUALIZER_OVERSCAN,
+    gap: MESSAGE_VIRTUALIZER_GAP_PX,
+    paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX,
+    paddingEnd: composerInset,
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: BOTTOM_THRESHOLD_PX,
+  });
+  const virtualItems = virtualizer.getVirtualItems();
 
   const setSticky = useCallback((next: boolean) => {
     stickyRef.current = next;
     setIsSticky(next);
   }, []);
 
-  const stopHistoryScrollSettle = useCallback(() => {
-    historySettlingRef.current = false;
-    const cleanup = historySettleCleanupRef.current;
-    historySettleCleanupRef.current = null;
-    cleanup?.();
-  }, []);
-
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = "auto") => {
-      const el = scrollRef.current;
-      if (!el) return;
+      if (!scrollRef.current) return;
       programmaticScrollRef.current = behavior === "smooth";
       setSticky(true);
-      el.scrollTo({ top: el.scrollHeight, behavior });
+      virtualizer.scrollToEnd({ behavior });
     },
-    [setSticky],
+    [setSticky, virtualizer],
   );
 
   const scheduleScrollToBottom = useCallback((options: { force?: boolean } = {}) => {
@@ -513,73 +526,23 @@ export function MessageTimeline({
     });
   }, [scrollToBottom]);
 
-  const startHistoryScrollSettle = useCallback(() => {
-    const viewport = scrollRef.current;
-    const content = contentRef.current;
-    if (!viewport || !content) return;
-
-    stopHistoryScrollSettle();
-    historySettlingRef.current = true;
-    setSticky(true);
-
-    let raf = 0;
-    const queueScrollToBottom = () => {
-      if (!historySettlingRef.current) return;
-      if (raf) window.cancelAnimationFrame(raf);
-      raf = window.requestAnimationFrame(() => {
-        if (!historySettlingRef.current) return;
-        viewport.scrollTop = viewport.scrollHeight;
-        setSticky(true);
-      });
-    };
-
-    const observer = new ResizeObserver(queueScrollToBottom);
-    const timeout = window.setTimeout(stopHistoryScrollSettle, HISTORY_SCROLL_SETTLE_MS);
-    historySettleCleanupRef.current = () => {
-      if (raf) window.cancelAnimationFrame(raf);
-      window.clearTimeout(timeout);
-      observer.disconnect();
-    };
-
-    observer.observe(content);
-    queueScrollToBottom();
-  }, [setSticky, stopHistoryScrollSettle]);
-
   const handleViewportScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
       const atBottom = isNearBottom(e.currentTarget);
       if (programmaticScrollRef.current && !atBottom) return;
       programmaticScrollRef.current = false;
       setSticky(atBottom);
-      if (!atBottom) {
-        const viewportTop = e.currentTarget.getBoundingClientRect().top;
-        const items = Array.from(
-          e.currentTarget.querySelectorAll<HTMLElement>("[data-message-id]"),
-        );
-        const firstVisible = items.find(
-          (item) => item.getBoundingClientRect().bottom > viewportTop,
-        );
-        if (firstVisible?.dataset.messageId) {
-          readingAnchorRef.current = {
-            id: firstVisible.dataset.messageId,
-            offset: firstVisible.getBoundingClientRect().top - viewportTop,
-          };
-        }
-      } else {
-        readingAnchorRef.current = null;
-      }
     },
     [setSticky],
   );
 
   const handleUserScrollIntent = useCallback(
     () => {
-      stopHistoryScrollSettle();
       programmaticScrollRef.current = false;
       const el = scrollRef.current;
       if (el) setSticky(isNearBottom(el));
     },
-    [setSticky, stopHistoryScrollSettle],
+    [setSticky],
   );
 
   useLayoutEffect(() => {
@@ -592,7 +555,6 @@ export function MessageTimeline({
       console.debug("[session-sync][scroll] background messages applied", {
         syncRefreshSeq,
         sticky: stickyRef.current,
-        anchor: readingAnchorRef.current,
         addedMessages: addedMessages.length,
       });
     }
@@ -621,42 +583,14 @@ export function MessageTimeline({
     if (historyLoadSeq === 0 || historyLoadSeq === handledHistoryLoadSeqRef.current) return;
     handledHistoryLoadSeqRef.current = historyLoadSeq;
     if (historyLoading || messages.length === 0) return;
-    startHistoryScrollSettle();
-  }, [historyLoadSeq, historyLoading, messages.length, startHistoryScrollSettle]);
-
-  useLayoutEffect(() => {
-    if (syncRefreshSeq === 0 || stickyRef.current) return;
-    const viewport = scrollRef.current;
-    const anchor = readingAnchorRef.current;
-    if (!viewport || !anchor) return;
-    const target = viewport.querySelector<HTMLElement>(
-      `[data-message-id="${CSS.escape(anchor.id)}"]`,
-    );
-    if (!target) {
-      if (import.meta.env.DEV) {
-        console.debug("[session-sync][scroll] anchor missing", { syncRefreshSeq, anchor });
-      }
-      return;
-    }
-    const viewportTop = viewport.getBoundingClientRect().top;
-    const adjustment = target.getBoundingClientRect().top - viewportTop - anchor.offset;
-    viewport.scrollTop += adjustment;
-    if (import.meta.env.DEV) {
-      console.debug("[session-sync][scroll] anchor restored", {
-        syncRefreshSeq,
-        anchor,
-        adjustment,
-        scrollTop: viewport.scrollTop,
-      });
-    }
-  }, [syncRefreshSeq]);
+    scheduleScrollToBottom({ force: true });
+  }, [historyLoadSeq, historyLoading, messages.length, scheduleScrollToBottom]);
 
   useEffect(
     () => () => {
       if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
-      stopHistoryScrollSettle();
     },
-    [stopHistoryScrollSettle],
+    [],
   );
 
   useEffect(() => {
@@ -691,13 +625,14 @@ export function MessageTimeline({
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
         <div
-          ref={contentRef}
           onClickCapture={handleExternalLinkClick}
-          className={`${CHAT_CONTENT_CONTAINER_CLASS} space-y-4 pt-4`}
-          style={{ paddingBottom: composerInset }}
+          className="relative w-full"
+          style={{ height: virtualizer.getTotalSize() }}
         >
-          {messages.map((m, index) => {
-            const renderKey = `${m.id}:${index}`;
+          {virtualItems.map((virtualItem) => {
+            const index = virtualItem.index;
+            const m = messages[index];
+            if (!m) return null;
             const editing = editingMessageId === m.id;
             const editDisabled = streaming || historyLoading;
             const canEdit =
@@ -714,22 +649,31 @@ export function MessageTimeline({
               m.blocks.some((block) => block.kind === "tool" && block.status === "done") &&
               !editDisabled;
             return (
-              <MessageItem
-                key={renderKey}
-                message={m}
-                canEdit={canEdit}
-                editing={editing}
-                editDisabled={editDisabled}
-                onEdit={() => updateEditingMessage(m.id)}
-                onCancelEdit={() => updateEditingMessage(null)}
-                onSubmitEdit={(text) => {
-                  updateEditingMessage(null);
-                  void onEditLatestUserMessage?.(m.id, text);
-                }}
-                onContinueToolResult={canContinueToolResult
-                  ? () => void onContinueToolResult?.(m.id)
-                  : undefined}
-              />
+              <div
+                key={virtualItem.key}
+                ref={virtualizer.measureElement}
+                data-index={virtualItem.index}
+                className="absolute left-0 top-0 w-full"
+                style={{ transform: `translateY(${virtualItem.start}px)` }}
+              >
+                <div className={CHAT_CONTENT_CONTAINER_CLASS}>
+                  <MessageItem
+                    message={m}
+                    canEdit={canEdit}
+                    editing={editing}
+                    editDisabled={editDisabled}
+                    onEdit={() => updateEditingMessage(m.id)}
+                    onCancelEdit={() => updateEditingMessage(null)}
+                    onSubmitEdit={(text) => {
+                      updateEditingMessage(null);
+                      void onEditLatestUserMessage?.(m.id, text);
+                    }}
+                    onContinueToolResult={canContinueToolResult
+                      ? () => void onContinueToolResult?.(m.id)
+                      : undefined}
+                  />
+                </div>
+              </div>
             );
           })}
         </div>
