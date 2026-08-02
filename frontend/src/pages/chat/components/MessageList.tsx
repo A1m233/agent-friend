@@ -1,11 +1,15 @@
 import {
+  type KeyboardEvent,
+  type PointerEvent,
   type UIEvent,
+  type WheelEvent,
   memo,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useId,
   useState,
   type ComponentProps,
   type ReactNode,
@@ -33,6 +37,11 @@ import {
   MESSAGE_VIRTUALIZER_OVERSCAN,
   MESSAGE_VIRTUALIZER_PADDING_START_PX,
 } from "./messageVirtualization";
+import {
+  reduceMessageScrollFollowing,
+  shouldFollowAfterTotalSizeChange,
+  type MessageScrollFollowEvent,
+} from "./messageScrollFollow";
 import { ReminderCard } from "./ReminderCard";
 import { ToolCard } from "./ToolCard";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
@@ -42,9 +51,67 @@ type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
+const USER_SCROLL_IDLE_MS = 160;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 const SLOW_MODEL_RESPONSE_MS = 10_000;
+const GOLDEN_SECTION = (Math.sqrt(5) - 1) / 2;
+const SCROLL_ACTIVITY_ARC_FRACTION = GOLDEN_SECTION / 2;
+const SCROLL_ACTIVITY_ARC_DEGREES = 180 * GOLDEN_SECTION;
+const SCROLL_ACTIVITY_RING_CENTER = 18;
+const SCROLL_ACTIVITY_RING_RADIUS = 17;
+const SCROLL_ACTIVITY_RING_CIRCUMFERENCE = 2 * Math.PI * SCROLL_ACTIVITY_RING_RADIUS;
+const SCROLL_ACTIVITY_ARC_LENGTH =
+  SCROLL_ACTIVITY_RING_CIRCUMFERENCE * SCROLL_ACTIVITY_ARC_FRACTION;
+const SCROLL_ACTIVITY_ARC_GAP =
+  SCROLL_ACTIVITY_RING_CIRCUMFERENCE - SCROLL_ACTIVITY_ARC_LENGTH;
+const SCROLL_ACTIVITY_ARC_START_DEGREES = -90 - SCROLL_ACTIVITY_ARC_DEGREES / 2;
+const SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET =
+  SCROLL_ACTIVITY_RING_RADIUS
+  * Math.sin((SCROLL_ACTIVITY_ARC_DEGREES / 2) * (Math.PI / 180));
+
+function ScrollActivityRing() {
+  const gradientId = `scroll-activity-${useId().replaceAll(":", "")}`;
+  const gradientStart = SCROLL_ACTIVITY_RING_CENTER - SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET;
+  const gradientEnd = SCROLL_ACTIVITY_RING_CENTER + SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET;
+
+  return (
+    <svg
+      aria-hidden
+      className="pointer-events-none absolute -inset-1 size-10 animate-spin text-accent motion-reduce:animate-none"
+      viewBox="0 0 36 36"
+    >
+      <defs>
+        <linearGradient
+          id={gradientId}
+          gradientUnits="userSpaceOnUse"
+          x1={gradientStart}
+          y1={SCROLL_ACTIVITY_RING_CENTER}
+          x2={gradientEnd}
+          y2={SCROLL_ACTIVITY_RING_CENTER}
+        >
+          <stop offset="0" stopColor="currentColor" stopOpacity="0" />
+          <stop offset="0.22" stopColor="currentColor" stopOpacity="0.55" />
+          <stop offset="0.4" stopColor="currentColor" stopOpacity="1" />
+          <stop offset="0.6" stopColor="currentColor" stopOpacity="1" />
+          <stop offset="0.78" stopColor="currentColor" stopOpacity="0.55" />
+          <stop offset="1" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <circle
+        cx={SCROLL_ACTIVITY_RING_CENTER}
+        cy={SCROLL_ACTIVITY_RING_CENTER}
+        r={SCROLL_ACTIVITY_RING_RADIUS}
+        fill="none"
+        stroke={`url(#${gradientId})`}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeDasharray={`${SCROLL_ACTIVITY_ARC_LENGTH} ${SCROLL_ACTIVITY_ARC_GAP}`}
+        transform={`rotate(${SCROLL_ACTIVITY_ARC_START_DEGREES} ${SCROLL_ACTIVITY_RING_CENTER} ${SCROLL_ACTIVITY_RING_CENTER})`}
+      />
+    </svg>
+  );
+}
 
 function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
   const [slow, setSlow] = useState(false);
@@ -465,13 +532,16 @@ export function MessageTimeline({
   onEditingChange,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const stickyRef = useRef(true);
-  const programmaticScrollRef = useRef(false);
+  const followingRef = useRef(true);
+  const userScrollSessionRef = useRef(false);
+  const pointerScrollActiveRef = useRef(false);
+  const userScrollIdleTimerRef = useRef(0);
   const scrollRafRef = useRef(0);
+  const previousVirtualTotalSizeRef = useRef<number | null>(null);
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
-  const [isSticky, setIsSticky] = useState(true);
+  const [isFollowing, setIsFollowing] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const updateEditingMessage = useCallback((messageId: string | null) => {
     setEditingMessageId(messageId);
@@ -497,53 +567,131 @@ export function MessageTimeline({
     paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX,
     paddingEnd: composerInset,
     anchorTo: "end",
-    followOnAppend: true,
+    followOnAppend: false,
     scrollEndThreshold: BOTTOM_THRESHOLD_PX,
   });
   const virtualItems = virtualizer.getVirtualItems();
+  const virtualTotalSize = virtualizer.getTotalSize();
 
-  const setSticky = useCallback((next: boolean) => {
-    stickyRef.current = next;
-    setIsSticky(next);
+  const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
+    const next = reduceMessageScrollFollowing(followingRef.current, event);
+    if (next === followingRef.current) return;
+    followingRef.current = next;
+    setIsFollowing(next);
   }, []);
 
-  const scrollToBottom = useCallback(
-    (behavior: ScrollBehavior = "auto") => {
-      if (!scrollRef.current) return;
-      programmaticScrollRef.current = behavior === "smooth";
-      setSticky(true);
-      virtualizer.scrollToEnd({ behavior });
-    },
-    [setSticky, virtualizer],
-  );
+  const endUserScrollSession = useCallback(() => {
+    userScrollSessionRef.current = false;
+    if (userScrollIdleTimerRef.current) {
+      window.clearTimeout(userScrollIdleTimerRef.current);
+      userScrollIdleTimerRef.current = 0;
+    }
+  }, []);
 
-  const scheduleScrollToBottom = useCallback((options: { force?: boolean } = {}) => {
-    if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
-    scrollRafRef.current = window.requestAnimationFrame(() => {
-      scrollRafRef.current = 0;
-      if (!options.force && !stickyRef.current) return;
-      scrollToBottom();
-    });
-  }, [scrollToBottom]);
+  const scheduleUserScrollSessionEnd = useCallback(() => {
+    if (userScrollIdleTimerRef.current) {
+      window.clearTimeout(userScrollIdleTimerRef.current);
+    }
+    userScrollIdleTimerRef.current = window.setTimeout(() => {
+      userScrollIdleTimerRef.current = 0;
+      userScrollSessionRef.current = false;
+    }, USER_SCROLL_IDLE_MS);
+  }, []);
+
+  const beginUserScrollSession = useCallback(() => {
+    userScrollSessionRef.current = true;
+    if (userScrollIdleTimerRef.current) {
+      window.clearTimeout(userScrollIdleTimerRef.current);
+      userScrollIdleTimerRef.current = 0;
+    }
+  }, []);
+
+  const scheduleScrollToBottom = useCallback(
+    (options: { force?: boolean; behavior?: ScrollBehavior } = {}) => {
+      if (options.force) {
+        endUserScrollSession();
+        applyFollowEvent({ type: "follow-requested" });
+      }
+      if (!followingRef.current) return;
+
+      if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = 0;
+        if (!followingRef.current || !scrollRef.current) return;
+        virtualizer.scrollToEnd({ behavior: options.behavior ?? "auto" });
+      });
+    },
+    [applyFollowEvent, endUserScrollSession, virtualizer],
+  );
 
   const handleViewportScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
       const atBottom = isNearBottom(e.currentTarget);
-      if (programmaticScrollRef.current && !atBottom) return;
-      programmaticScrollRef.current = false;
-      setSticky(atBottom);
+      const source = userScrollSessionRef.current ? "user" : "automatic";
+      applyFollowEvent({ type: "viewport-scrolled", atBottom, source });
+
+      if (source === "user" && !pointerScrollActiveRef.current) {
+        if (atBottom) endUserScrollSession();
+        else scheduleUserScrollSessionEnd();
+      }
     },
-    [setSticky],
+    [applyFollowEvent, endUserScrollSession, scheduleUserScrollSessionEnd],
   );
 
-  const handleUserScrollIntent = useCallback(
-    () => {
-      programmaticScrollRef.current = false;
-      const el = scrollRef.current;
-      if (el) setSticky(isNearBottom(el));
-    },
-    [setSticky],
-  );
+  const handleWheelCapture = useCallback((event: WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY === 0) return;
+    beginUserScrollSession();
+    scheduleUserScrollSessionEnd();
+    if (event.deltaY < 0) {
+      applyFollowEvent({ type: "viewport-scrolled", atBottom: false, source: "user" });
+    }
+  }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
+
+  const handlePointerDownCapture = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const target = event.target;
+    const startedOnScrollbar = target instanceof Element
+      && Boolean(target.closest('[data-slot="scroll-area-scrollbar"]'));
+    if (event.pointerType !== "touch" && !startedOnScrollbar) return;
+
+    pointerScrollActiveRef.current = true;
+    beginUserScrollSession();
+  }, [beginUserScrollSession]);
+
+  const handlePointerScrollEnd = useCallback(() => {
+    if (!pointerScrollActiveRef.current) return;
+    pointerScrollActiveRef.current = false;
+    scheduleUserScrollSessionEnd();
+  }, [scheduleUserScrollSessionEnd]);
+
+  const handleKeyDownCapture = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    const scrollsAway = event.key === "ArrowUp"
+      || event.key === "PageUp"
+      || event.key === "Home"
+      || (event.key === " " && event.shiftKey);
+    const scrollsTowardEnd = event.key === "ArrowDown"
+      || event.key === "PageDown"
+      || event.key === "End"
+      || (event.key === " " && !event.shiftKey);
+    if (!scrollsAway && !scrollsTowardEnd) return;
+
+    beginUserScrollSession();
+    scheduleUserScrollSessionEnd();
+    if (scrollsAway) {
+      applyFollowEvent({ type: "viewport-scrolled", atBottom: false, source: "user" });
+    }
+  }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
+
+  useLayoutEffect(() => {
+    const previousTotalSize = previousVirtualTotalSizeRef.current;
+    previousVirtualTotalSizeRef.current = virtualTotalSize;
+    if (shouldFollowAfterTotalSizeChange(
+      followingRef.current,
+      previousTotalSize,
+      virtualTotalSize,
+    )) {
+      scheduleScrollToBottom();
+    }
+  }, [scheduleScrollToBottom, virtualTotalSize]);
 
   useLayoutEffect(() => {
     const prevMessages = prevMessagesRef.current;
@@ -554,19 +702,19 @@ export function MessageTimeline({
     if (import.meta.env.DEV && isBackgroundSync) {
       console.debug("[session-sync][scroll] background messages applied", {
         syncRefreshSeq,
-        sticky: stickyRef.current,
+        sticky: followingRef.current,
         addedMessages: addedMessages.length,
       });
     }
 
     if (isBackgroundSync) {
       prevSyncRefreshSeqRef.current = syncRefreshSeq;
-      if (stickyRef.current) {
+      if (followingRef.current) {
         scheduleScrollToBottom();
       }
     } else if (userSentMessage) {
       scheduleScrollToBottom({ force: true });
-    } else if (stickyRef.current) {
+    } else if (followingRef.current) {
       scheduleScrollToBottom();
     }
 
@@ -574,7 +722,7 @@ export function MessageTimeline({
   }, [messages, scheduleScrollToBottom, syncRefreshSeq]);
 
   useLayoutEffect(() => {
-    if (stickyRef.current) {
+    if (followingRef.current) {
       scheduleScrollToBottom();
     }
   }, [composerInset, scheduleScrollToBottom]);
@@ -587,10 +735,17 @@ export function MessageTimeline({
   }, [historyLoadSeq, historyLoading, messages.length, scheduleScrollToBottom]);
 
   useEffect(
-    () => () => {
-      if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+    () => {
+      window.addEventListener("pointerup", handlePointerScrollEnd);
+      window.addEventListener("pointercancel", handlePointerScrollEnd);
+      return () => {
+        window.removeEventListener("pointerup", handlePointerScrollEnd);
+        window.removeEventListener("pointercancel", handlePointerScrollEnd);
+        if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+        if (userScrollIdleTimerRef.current) window.clearTimeout(userScrollIdleTimerRef.current);
+      };
     },
-    [],
+    [handlePointerScrollEnd],
   );
 
   useEffect(() => {
@@ -619,15 +774,18 @@ export function MessageTimeline({
       <ScrollArea
         viewportRef={scrollRef}
         onViewportScroll={handleViewportScroll}
-        onWheelCapture={handleUserScrollIntent}
-        onPointerDownCapture={handleUserScrollIntent}
+        onWheelCapture={handleWheelCapture}
+        onPointerDownCapture={handlePointerDownCapture}
+        onPointerUpCapture={handlePointerScrollEnd}
+        onPointerCancelCapture={handlePointerScrollEnd}
+        onKeyDownCapture={handleKeyDownCapture}
         className="h-full"
         viewportClassName={CHAT_SCROLL_VIEWPORT_CLASS}
       >
         <div
           onClickCapture={handleExternalLinkClick}
           className="relative w-full"
-          style={{ height: virtualizer.getTotalSize() }}
+          style={{ height: virtualTotalSize }}
         >
           {virtualItems.map((virtualItem) => {
             const index = virtualItem.index;
@@ -678,16 +836,18 @@ export function MessageTimeline({
           })}
         </div>
       </ScrollArea>
-      {!isSticky && (
+      {!isFollowing && (
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          className="absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-bg/80 text-muted shadow-md hover:bg-surface hover:text-fg"
+          className="chat-scroll-to-bottom absolute left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-bg/80 text-muted shadow-md hover:bg-surface hover:text-fg"
           style={{ bottom: scrollButtonBottom }}
           aria-label="滚到底部"
-          onClick={() => scrollToBottom("smooth")}
+          aria-busy={streaming || undefined}
+          onClick={() => scheduleScrollToBottom({ force: true, behavior: "smooth" })}
         >
+          {streaming && <ScrollActivityRing />}
           <ArrowDown className="size-4" />
         </Button>
       )}
