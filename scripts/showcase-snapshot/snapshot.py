@@ -99,6 +99,7 @@ SCRIPT_DIR_ALLOWLIST = {
 }
 
 DENY_PATTERNS = (
+    "INTERVIEW.md",
     ".git/**",
     ".env",
     ".env.*",
