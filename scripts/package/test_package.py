@@ -89,6 +89,18 @@ def test_cloudflared_lock_has_pinned_version_and_hash() -> None:
     assert lock["url"].endswith("cloudflared-windows-amd64.exe")
 
 
+def test_xiaohongshu_license_is_pinned_to_the_source_commit() -> None:
+    package = _load("package_run_xiaohongshu_license", PACKAGE_DIR / "run.py")
+
+    assert package.XIAOHONGSHU_LICENSE_URL.endswith(
+        "/3aacfb3583482424c0170e86e05725df940dd35e/LICENSE"
+    )
+    assert (
+        package.XIAOHONGSHU_LICENSE_SHA256
+        == "9d8b162d4b4822b793666e2a8cb6c94df7ecdb8204f23a20e6042f93e691cb0d"
+    )
+
+
 def test_xiaohongshu_windows_build_lock_matches_runtime_manifest() -> None:
     builder = _load("xiaohongshu_windows_build_lock", XHS_BUILDER)
     from agent.tools.builtin.social_platforms.connectors.xiaohongshu_artifacts import (
