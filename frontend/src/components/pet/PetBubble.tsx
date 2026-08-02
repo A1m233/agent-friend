@@ -5,6 +5,10 @@ import { Button } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { isTauri } from "@/utils/tauri";
 import { usePetBubbleStore } from "@/stores/petBubble";
+import {
+  calculateBubbleWindowSize,
+  parseCssPixels,
+} from "./bubbleWindowSize";
 
 /**
  * 015 + 016 · 桌宠气泡组件（独立 bubble webview 内的唯一内容）。
@@ -18,9 +22,10 @@ import { usePetBubbleStore } from "@/stores/petBubble";
  *   480×460）；016 把气泡搬到独立 bubble webview，pet 主窗回 240×320 只放形象。
  * - **位置**：组件不再管屏幕位置——bubble window 由 Rust `bubble_window.rs::run_follow_loop`
  *   每 50ms 用 `outer_position` 跟随 pet 主窗 + 翻转判定（贴屏顶时翻 pet 下方）。
- * - **尺寸**：用 `ResizeObserver` 监测 root 元素 contentRect → debounce 一帧 →
- *   invoke `set_bubble_size`；Rust 端 clamp 到 (MIN_W..MAX_W, MIN_H..MAX_H) 再
- *   `window.set_size`。组件不再写死 `w-[280px]`，改 `w-fit max-w-[360px]` 内容驱动。
+ * - **尺寸**：用 `ResizeObserver` 监测 root 元素 → debounce 一帧 → 上报气泡
+ *   border box 与透明外壳 padding 的总尺寸 → invoke `set_bubble_size`；Rust 端 clamp 到
+ *   (MIN_W..MAX_W, MIN_H..MAX_H) 再 `window.set_size`。组件不再写死
+ *   `w-[280px]`，改 `w-fit max-w-[360px]` 内容驱动。
  * - **去除**：`flipBelow` state + `getBoundingClientRect` 翻转 useEffect（翻转由 Rust 算）；
  *   `absolute left-1/2 -translate-x-1/2 top-[200px]/bottom-[200px] z-10` 这些定位
  *   类（bubble window 在屏幕上的物理位置承担）。
@@ -40,21 +45,35 @@ export function PetBubble() {
   const dismiss = usePetBubbleStore((s) => s.dismiss);
   const ref = useRef<HTMLDivElement>(null);
 
-  // 016 · size 上报：ResizeObserver 监测 contentRect → debounce 一帧 → invoke set_bubble_size
+  // 016 · size 上报：ResizeObserver 监测 border box → 加上透明外壳 padding → invoke set_bubble_size
   // - debounce 用 requestAnimationFrame：合并同一帧内的多次 resize 抖动
+  // - 不能上报 contentRect：它不含气泡自身 padding / border，也不含外壳为阴影预留的 padding，
+  //   会让原生 viewport 小于实际占位并使 document 与气泡同时出现滚动条
   // - 非 Tauri 环境（vitest jsdom / 浏览器调试）退化为 no-op
   // - deps [phase, current?.id]：新气泡显示时（DOM 元素是新 div）重新 observe
   useEffect(() => {
     if (ref.current === null || !isTauri()) return;
     let raf = 0;
-    const ro = new ResizeObserver((entries) => {
+    const ro = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const r = entries[0]?.contentRect;
-        if (r === undefined) return;
+        const bubble = ref.current;
+        if (bubble === null) return;
+        const frameStyle = bubble.parentElement
+          ? getComputedStyle(bubble.parentElement)
+          : null;
+        const size = calculateBubbleWindowSize(
+          { width: bubble.offsetWidth, height: bubble.offsetHeight },
+          {
+            top: parseCssPixels(frameStyle?.paddingTop ?? ""),
+            right: parseCssPixels(frameStyle?.paddingRight ?? ""),
+            bottom: parseCssPixels(frameStyle?.paddingBottom ?? ""),
+            left: parseCssPixels(frameStyle?.paddingLeft ?? ""),
+          },
+        );
         void invoke("set_bubble_size", {
-          width: Math.ceil(r.width),
-          height: Math.ceil(r.height),
+          width: size.width,
+          height: size.height,
         }).catch((e: unknown) => {
           // 防御性 log；invoke 失败不影响 store / UI（位置同步在 Rust 端继续按上次 size 跑）
           console.warn("set_bubble_size invoke failed:", e);
@@ -84,7 +103,7 @@ export function PetBubble() {
       className={cn(
         "relative w-fit max-w-[360px] max-h-[440px] overflow-y-auto rounded-2xl border border-border bg-surface px-3 py-2 pr-8 text-fg shadow-lg",
         "animate-in fade-in-0 zoom-in-95 duration-200",
-        truncated && "cursor-pointer hover:bg-accent/10",
+        truncated && "cursor-pointer hover:bg-surface-hover",
       )}
     >
       <div className="text-sm whitespace-pre-wrap break-words">{displayText}</div>

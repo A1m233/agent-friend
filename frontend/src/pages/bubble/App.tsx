@@ -34,7 +34,7 @@ export function BubbleApp() {
   }, []);
 
   return (
-    <div className="flex h-full w-full items-start justify-center bg-transparent p-1">
+    <div className="flex h-full w-full items-start justify-center overflow-hidden bg-transparent p-1">
       <PetBubble />
     </div>
   );
