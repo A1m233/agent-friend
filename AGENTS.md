@@ -16,7 +16,7 @@
 |---|---|
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
-| `desktop-startup-default.mdc` | agent-friend 项目启动运行态默认值：coding agent 启动前端或项目时默认使用 Tauri 桌面端，除非用户或当前 skill / 流程明确要求 web。 |
+| `desktop-startup-default.mdc` | agent-friend 项目桌面开发运行态规范：coding agent 启动前端或项目时默认使用 Tauri 桌面端，并确认运行实例身份和任务结束后的生命周期；除非用户或当前 skill… |
 | `dev-workflow.mdc` | agent-friend 项目需求与修复交付流程：需求走 feature 分支，修复按影响范围选择 main 或 fix 分支 |
 | `diagnostic-bundle-contract.mdc` | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 |
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
@@ -26,7 +26,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 758bbfcaee99f4537e173201b5ba391df99248cc64dd59caa571f2f2ac07972b -->
+<!-- codex-adapter-source-sha256: 57037255acf16f6247472df91b93f2fc0d6a48bc9d6faf1e102b313492208f9a -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -182,7 +182,7 @@ Python 脚本实现跨平台逻辑时：
 <codex-rule source=".cursor/rules/desktop-startup-default.mdc" load="inline">
 # 桌面端启动默认值
 
-本规则只约束 coding agent 在本项目中选择"启动哪个运行态"。视觉验收是否足够、截图 / DOM 结论怎么标注，仍由 `frontend-visual-verification` 和 `desktop-visual-inspection` 负责。
+本规则约束 coding agent 在本项目中选择、识别和收尾开发运行态。视觉验收是否足够、截图 / DOM / 交互结论怎么标注，仍由 `frontend-visual-verification` 和 `desktop-visual-inspection` 负责。
 
 ## 默认行为
 
@@ -191,6 +191,25 @@ Python 脚本实现跨平台逻辑时：
 - 默认使用 `scripts/dev/run.*` 的 Tauri 桌面端模式，不主动加 `--web`。
 - Windows 默认入口是 `.\scripts\dev\run.ps1`；mac/linux 默认入口是 `./scripts/dev/run.sh`。
 - 如果需要真实桌面窗口截图或 WebView DOM，优先使用 `scripts/desktop-visual/run.* start`，它会透传到桌面端启动流程。
+
+## 运行实例身份
+
+启动或复用开发运行态时，使用 `scripts/dev/run.* status` 或启动脚本输出核对 runtime lease。需要基于该运行态做功能、交互或视觉结论时，至少确认：
+
+- `worktree` 对应当前任务的项目根；
+- `branch` / 构建来源与本次待验证代码一致；
+- `mode` 是本次需要的 Tauri 或 web 运行态；
+- 实际端口与后续连接的 bridge、Vite、voice 和 CDP endpoint 一致。
+
+不能只因为窗口标题正确、端口可连接或页面能打开，就假定它来自当前 worktree。已有 runtime 的 lease 与当前任务不一致时，不得用它为本次代码下结论；按任务边界决定保留、停止或显式 takeover。归属不明或可能是用户正在使用的运行态，不自动停止。
+
+一个 Tauri runtime 可以暴露多个窗口或 WebView target。runtime 身份由本规则负责；具体选择哪个窗口、页面和交互表面，由当前验收 skill 按目标核对。
+
+## 生命周期
+
+- coding agent 为本次检查启动的 dev runtime，在任务结束且用户没有要求继续观察时，使用 `scripts/dev/run.* stop` 清理，再用 `scripts/dev/run.* status` 确认 lease 已释放、开发端口已空闲。
+- 复用任务开始前已经存在且身份匹配的 runtime 时，默认不在收尾时停止；除非用户明确要求，或当前流程本来就拥有该 runtime 的生命周期。
+- 为方便用户继续手验而保留 runtime 时，在回报中说明它仍在运行、对应 worktree / mode，以及后续停止入口。
 
 ## 允许使用 web 的情况
 
@@ -457,7 +476,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `add-issue` | 在 agent-friend 仓库的 docs/issues/ 下登记一个"已知但暂不修复"的问题（bug、体感瑕疵、技术债、设计弱点）。当用户说"记一个 issue"、"登记问题"、"先记… |
 | `add-shadcn-component` | 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当按 frontend-ui-conv… |
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |
-| `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证前端视觉/DOM 的标准流程。Use only when 用户明确要求真实桌面端视觉验收 / 截图 / DOM / Playwright /… |
+| `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本，并构建受治理的 Windows 安装包。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查当前/最新版本”“设置… |

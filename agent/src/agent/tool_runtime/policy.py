@@ -52,6 +52,9 @@ class ToolRunState:
     timeout_count: int = 0
     blocked_count: int = 0
     parallel_batch_count: int = 0
+    new_evidence_count: int = 0
+    reused_evidence_count: int = 0
+    last_intent_signature: str | None = None
 
     @property
     def elapsed_seconds(self) -> float:
@@ -120,34 +123,55 @@ class ToolRunState:
             "timeout_count": self.timeout_count,
             "blocked_count": self.blocked_count,
             "parallel_batch_count": self.parallel_batch_count,
+            "new_evidence_count": self.new_evidence_count,
+            "reused_evidence_count": self.reused_evidence_count,
+            "last_intent_signature": self.last_intent_signature,
         }
 
 
 class NoProgressTracker:
     def __init__(self, limit: int) -> None:
         self._limit = limit
-        self._last_signature: str | None = None
-        self._count = 0
+        self._counts: dict[str, int] = {}
+        self._seen_evidence: set[str] = set()
+        self.new_evidence_count = 0
+        self.reused_evidence_count = 0
+        self.last_intent_signature: str | None = None
 
     def observe(self, name: str, args: dict[str, Any], result: ToolResult) -> bool:
-        error_kind = str(result.meta.get("error_kind", ""))
-        empty = not result.text.strip() or error_kind in {"empty_content", "no_results"}
-        if not result.is_error and not empty:
-            self._last_signature = None
-            self._count = 0
-            return False
-        normalized_text = " ".join(result.text.lower().split())[:256]
         public_args = {key: value for key, value in args.items() if not key.startswith("__")}
-        payload = json.dumps(
-            [name, public_args, error_kind, normalized_text],
+        intent_payload = json.dumps(
+            [name, public_args],
             ensure_ascii=False,
             sort_keys=True,
             default=str,
         )
-        signature = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        if signature == self._last_signature:
-            self._count += 1
-        else:
-            self._last_signature = signature
-            self._count = 1
-        return self._count >= self._limit
+        signature = hashlib.sha256(intent_payload.encode("utf-8")).hexdigest()
+        self.last_intent_signature = signature
+
+        raw_keys = result.meta.get("evidence_keys")
+        evidence_keys = (
+            {value[:4096] for value in raw_keys[:100] if isinstance(value, str) and value}
+            if isinstance(raw_keys, list)
+            else set()
+        )
+        delta = evidence_keys - self._seen_evidence
+        reused = evidence_keys & self._seen_evidence
+        self.new_evidence_count += len(delta)
+        self.reused_evidence_count += len(reused)
+        if delta:
+            self._seen_evidence.update(delta)
+            self._counts[signature] = 0
+            return False
+
+        error_kind = str(result.meta.get("error_kind", ""))
+        empty = (
+            not result.text.strip()
+            or error_kind in {"empty_content", "no_results"}
+            or result.meta.get("result_count") == 0
+        )
+        if not result.is_error and not empty and not evidence_keys:
+            self._counts[signature] = 0
+            return False
+        self._counts[signature] = self._counts.get(signature, 0) + 1
+        return self._counts[signature] >= self._limit

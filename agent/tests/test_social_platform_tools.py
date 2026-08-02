@@ -194,7 +194,8 @@ def test_search_uses_fixed_platform_limits_without_exposing_them_to_the_model() 
         "absence_not_conclusive": True,
     }
     assert "完全相同的参数重复搜索" in SocialSearchTool.description
-    assert "最多再调用一次不同的精炼查询" in SocialSearchTool.description
+    assert "只要出现新的标题" in SocialSearchTool.description
+    assert "证据路径耗尽" in SocialSearchTool.description
 
 
 def test_read_resolves_reference_only_within_the_same_session() -> None:
@@ -275,6 +276,8 @@ def test_read_rejects_untrusted_or_ambiguous_url_before_connector_read() -> None
     assert SocialReadTool.parameters_schema["oneOf"] == [
         {"required": ["resource_ref"]},
         {"required": ["url"]},
+        {"required": ["evidence_ref"]},
+        {"required": ["continuation_ref"]},
     ]
     assert "直链时改用 social_read" in SocialSearchTool.description
     assert "不要把 web_fetch 描述成" in SocialReadTool.description

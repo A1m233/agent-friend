@@ -3,6 +3,7 @@
 from .bilibili import (
     BilibiliArticleLocator,
     BilibiliConnector,
+    BilibiliCreatorLocator,
     BilibiliOpusLocator,
     BilibiliSdkApi,
     BilibiliVideoLocator,
@@ -31,6 +32,7 @@ __all__ = [
     "BilibiliArticleLocator",
     "BilibiliAuthHandler",
     "BilibiliConnector",
+    "BilibiliCreatorLocator",
     "BilibiliCredentialStore",
     "BilibiliOpusLocator",
     "BilibiliQrLoginClient",

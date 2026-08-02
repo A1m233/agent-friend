@@ -9,14 +9,19 @@ from typing import ClassVar, Literal, Protocol, runtime_checkable
 from ...errors import ToolError
 
 SocialPlatform = Literal["xiaohongshu", "bilibili"]
-SocialContentType = Literal["note", "video", "article"]
+SocialContentType = Literal["note", "video", "article", "creator"]
 SocialSort = Literal["relevance", "latest", "popular"]
+SocialCreatorWorksSort = Literal["popular", "latest"]
+SocialCreatorWorkRelationship = Literal["direct_upload", "collaboration"]
+SocialCreatorWorksScope = Literal["all_public_works", "curated_subset"]
+SocialReadView = Literal["detail", "works"]
 EvidenceKind = Literal[
     "search_summary",
     "note_body",
     "video_description",
     "video_subtitle",
     "article_body",
+    "creator_profile",
 ]
 
 
@@ -51,6 +56,7 @@ class SocialSearchCandidate:
     summary: str = ""
     published_at: str | None = None
     metrics: dict[str, int] = field(default_factory=dict)
+    identity: dict[str, str | int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,29 @@ class SocialReadResponse:
     unavailable_reasons: dict[str, str] = field(default_factory=dict)
     published_at: str | None = None
     metrics: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SocialCreatorWork:
+    locator: SocialResourceLocator
+    title: str
+    canonical_url: str
+    published_at: str | None = None
+    metrics: dict[str, int] = field(default_factory=dict)
+    duration_seconds: int | None = None
+    uploader: str = ""
+    relationship: SocialCreatorWorkRelationship = "direct_upload"
+
+
+@dataclass(frozen=True)
+class SocialCreatorWorksResponse:
+    creator_name: str
+    creator_url: str
+    works: tuple[SocialCreatorWork, ...]
+    sort: SocialCreatorWorksSort
+    page: int
+    has_more: bool
+    listing_scope: SocialCreatorWorksScope = "all_public_works"
 
 
 class SocialPlatformError(ToolError):
@@ -163,3 +192,15 @@ class SocialPlatformConnector(Protocol):
     def read(self, locator: SocialResourceLocator) -> SocialReadResponse: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class SocialCreatorWorksConnector(Protocol):
+    def creator_works(
+        self,
+        locator: SocialResourceLocator,
+        *,
+        sort: SocialCreatorWorksSort,
+        page: int,
+        page_size: int,
+    ) -> SocialCreatorWorksResponse: ...

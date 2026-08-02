@@ -53,7 +53,7 @@ from .builtin.weather_query import (
     WeatherQueryTool,
 )
 from .builtin.weather_query.providers import QWeatherProvider
-from .builtin.web_fetch import TavilyExtractProvider, WebFetchTool
+from .builtin.web_fetch import SafeHtmlReader, TavilyExtractProvider, WebFetchTool
 from .builtin.web_search import WebSearchTool
 from .builtin.web_search.providers.tavily import TavilyProvider
 from .location import CompositeLocationResolver, LocationResolver
@@ -103,7 +103,8 @@ def make_default_registry(
         :class:`ToolRegistry`：
 
         - 始终包含 ``calculate`` 与 ``datetime_calculate``
-        - ``TAVILY_API_KEY`` 已配置 → 含 ``web_search`` 与 ``web_fetch``
+        - 始终包含本地静态页 ``web_fetch``；Tavily 已配置时附加远端正文回退
+        - ``TAVILY_API_KEY`` 已配置 → 额外包含 ``web_search``
         - 始终包含 ``nearby_place_search``；无高德 Key 时返回配置提示
         - 始终包含 ``weather_query``；天气 Key 或 Host 不完整时返回配置提示
         - ``session_store`` 非 ``None`` → 含 :class:`ConversationHistoryTool`
@@ -131,14 +132,22 @@ def make_default_registry(
     if api_key:
         provider = TavilyProvider(api_key=api_key)
         tools.append(WebSearchTool(provider=provider))
-        tools.append(WebFetchTool(provider=TavilyExtractProvider(api_key=api_key)))
+        tools.append(
+            WebFetchTool(
+                provider=TavilyExtractProvider(api_key=api_key),
+                html_reader=SafeHtmlReader(),
+            )
+        )
     elif stderr_warn:
         print(
-            "[tool] 未配置 TAVILY_API_KEY，搜索能力已关闭。"
+            "[tool] 未配置 TAVILY_API_KEY，网页搜索和远端正文回退已关闭；"
+            "用户提供或已有证据中的静态页面仍可本地读取。"
             "如需启用，请运行 scripts/credentials/run.* set-bundle tavily；"
             "存量脚本可显式使用 legacy-dotenv。",
             file=sys.stderr,
         )
+    if not api_key:
+        tools.append(WebFetchTool(html_reader=SafeHtmlReader()))
 
     amap_key = amap_webservice_key or os.environ.get("AMAP_WEBSERVICE_KEY")
     nearby_provider: NearbyPlaceProvider

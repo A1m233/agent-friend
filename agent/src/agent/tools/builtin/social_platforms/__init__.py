@@ -26,6 +26,8 @@ from .models import (
     SocialConnectorUnavailableError,
     SocialContentNotFoundError,
     SocialContentType,
+    SocialCreatorWork,
+    SocialCreatorWorksResponse,
     SocialEvidence,
     SocialNetworkError,
     SocialPlatform,
@@ -44,7 +46,12 @@ from .models import (
     SocialUrlNotAuthorizedError,
     SocialUrlUnsupportedError,
 )
-from .resources import SocialResourceEntry, SocialResourceStore
+from .resources import (
+    SocialContinuationEntry,
+    SocialContinuationStore,
+    SocialResourceEntry,
+    SocialResourceStore,
+)
 from .service import SocialAuthChallengeNotFoundError, SocialPlatformService
 from .tool import (
     CURRENT_DESTINATION_ID_ARG,
@@ -83,6 +90,10 @@ __all__ = [
     "SocialConnectorUnavailableError",
     "SocialContentNotFoundError",
     "SocialContentType",
+    "SocialContinuationEntry",
+    "SocialContinuationStore",
+    "SocialCreatorWork",
+    "SocialCreatorWorksResponse",
     "SocialEvidence",
     "SocialMissingCapability",
     "SocialNetworkError",

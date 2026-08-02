@@ -24,6 +24,7 @@ import pytest
 from agent.latency import RunLatencyContext, monotonic_ms
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
+from agent.tool_runtime.evidence import evidence_result_meta, make_public_evidence
 from agent.tools.builtin.nearby_place_search import (
     AnchorCandidate,
     NearbyPlace,
@@ -1363,6 +1364,149 @@ def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: 
     assert "source_urls" not in search_event.meta.get("extra", {})
 
 
+def test_public_evidence_survives_conversation_restart_for_next_open(tmp_path: Path) -> None:
+    target = "https://example.com/persisted-source"
+    evidence = make_public_evidence(target, source="web_search_result", label="source")
+
+    class SearchTool:
+        name: ClassVar[str] = "web_search"
+        description: ClassVar[str] = "test search"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(
+                json.dumps({"results": [{"evidence_ref": evidence.evidence_ref, "url": target}]}),
+                meta={
+                    "evidence_keys": [target],
+                    **evidence_result_meta([evidence]),
+                },
+            )
+
+    class FetchProvider:
+        name: ClassVar[str] = "fake"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def extract(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            self.calls.append(url)
+            return ExtractedContent(url, url, "persisted evidence opened")
+
+    provider = FetchProvider()
+    first_llm = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "search-1", "web_search", '{"query":"x"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="found"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    registry = ToolRegistry([SearchTool(), WebFetchTool(provider)])
+    first = _make_conversation(tmp_path, fake_llm=first_llm, registry=registry)
+    list(first.stream("find source"))
+
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    loaded = store.load(first.session.session_id)
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    builder = MarkdownPromptBuilder(persona_id=BUILTIN_DEFAULT_PERSONA_ID, catalog=catalog)
+    second_llm = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    0,
+                    "fetch-1",
+                    "web_fetch",
+                    json.dumps({"evidence_ref": evidence.evidence_ref}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="opened"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    restarted = Conversation(
+        session=loaded,
+        store=store,
+        llm_client=cast(LLMClient, second_llm),
+        context_manager=NaiveContextManager(),
+        prompt_builder=builder,
+        prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+            persona_id=persona_id, catalog=catalog
+        ),
+        catalog=catalog,
+        tool_registry=registry,
+    )
+    results = [
+        event
+        for event in restarted.stream("open the saved source")
+        if isinstance(event, ToolCallResult)
+    ]
+
+    assert provider.calls == [target]
+    assert results[0].is_error is False
+
+
+def test_edit_resend_does_not_restore_evidence_from_rewritten_branch(tmp_path: Path) -> None:
+    target = "https://example.com/inactive-branch"
+    evidence = make_public_evidence(target, source="web_search_result")
+
+    class SearchTool:
+        name: ClassVar[str] = "web_search"
+        description: ClassVar[str] = "test search"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(
+                "found",
+                meta={
+                    "evidence_keys": [target],
+                    **evidence_result_meta([evidence]),
+                },
+            )
+
+    class FetchProvider:
+        name: ClassVar[str] = "fake"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            self.calls += 1
+            return ExtractedContent(url, url, "should not open")
+
+    provider = FetchProvider()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "search-1", "web_search", '{"query":"old"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="old answer"), LLMTurnDone(stop_reason="end_turn")],
+            [
+                LLMToolCallDelta(
+                    0,
+                    "fetch-1",
+                    "web_fetch",
+                    json.dumps({"evidence_ref": evidence.evidence_ref}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="new answer"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([SearchTool(), WebFetchTool(provider)]),
+    )
+    list(conv.stream("old question"))
+    events = list(conv.edit_resend_latest("new question", expected_user_content="old question"))
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+
+    assert result.is_error is True
+    assert provider.calls == 0
+
+
 def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> None:
     class FetchProvider:
         name: ClassVar[str] = "fake"
@@ -1388,7 +1532,7 @@ def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> No
     events = list(_make_conversation(tmp_path, fake_llm=fake, registry=registry).stream("check"))
     result = next(event for event in events if isinstance(event, ToolCallResult))
     assert result.is_error
-    assert "不是用户本轮提供" in result.text
+    assert "不在已有可信证据" in result.text
 
 
 def test_datetime_tool_receives_hidden_trusted_runtime_in_model_only_history(

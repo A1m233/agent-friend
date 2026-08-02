@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from agent.tool_runtime import ToolRunContext, UrlAuthorizationLedger
+from agent.tool_runtime.evidence import evidence_result_meta, make_public_evidence
 
 
 def test_user_urls_are_normalized_and_scoped_to_one_context() -> None:
@@ -60,3 +61,33 @@ def test_ledger_rejects_unsupported_schemes_and_ports() -> None:
     ledger.register_user_text("file:///etc/passwd http://example.com:8080/x")
     assert ledger.authorize("file:///etc/passwd") is None
     assert ledger.authorize("http://example.com:8080/x") is None
+
+
+def test_sensitive_url_evidence_is_runtime_only_and_not_restart_restored() -> None:
+    evidence = make_public_evidence(
+        "https://example.com/callback?access_token=secret",
+        source="web_fetch_link",
+    )
+    meta = evidence_result_meta([evidence])
+
+    assert "public_evidence" not in meta
+    assert "ephemeral_evidence" in meta
+
+    restored = ToolRunContext.create("continue")
+    restored.register_persisted_evidence(meta.get("public_evidence"))
+    assert restored.resolve_evidence(evidence.evidence_ref) is None
+
+
+def test_public_url_in_active_user_history_becomes_restart_safe_evidence() -> None:
+    context = ToolRunContext.create("continue")
+    context.register_user_text_evidence(
+        "之前给过 https://example.com/public-page",
+        source_event_uuid="event-1",
+    )
+
+    authorization = context.url_authorizations.authorize("https://example.com/public-page")
+    assert authorization is not None
+    assert authorization.evidence_ref is not None
+    evidence = context.resolve_evidence(authorization.evidence_ref)
+    assert evidence is not None
+    assert evidence.source_event_uuid == "event-1"

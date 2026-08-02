@@ -46,7 +46,10 @@ def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> Non
 
     assert search.parameters_schema["required"] == ["query"]
     assert search.invoke({"query": "q"}).meta["source_urls"] == ["https://example.com/docs"]
-    assert fetch.parameters_schema["required"] == ["url"]
+    assert fetch.parameters_schema["oneOf"] == [
+        {"required": ["url"]},
+        {"required": ["evidence_ref"]},
+    ]
     assert "官方原文" in fetch.description
 
 

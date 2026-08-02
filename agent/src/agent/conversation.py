@@ -542,7 +542,7 @@ class Conversation:
             if completed_parts:
                 completed_replay_text = "".join(completed_parts)
         loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._tool_run_context_factory(user_input)
+        tool_run_context = self._make_tool_run_context(user_input)
         previous_tool_run_context = self._active_tool_run_context
         self._active_tool_run_context = tool_run_context
         model_context_event = self._build_model_context_event()
@@ -668,7 +668,7 @@ class Conversation:
         rewrite_event_appended = False
         user_event_appended = False
         loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._tool_run_context_factory(user_input)
+        tool_run_context = self._make_tool_run_context(user_input, events=plan.prefix_events)
         previous_tool_run_context = self._active_tool_run_context
         self._active_tool_run_context = tool_run_context
         model_context_event = self._build_model_context_event()
@@ -767,7 +767,7 @@ class Conversation:
         self._run_id_override = run_id
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
-        self._active_tool_run_context = self._tool_run_context_factory("")
+        self._active_tool_run_context = self._make_tool_run_context("")
         model_context_event = self._build_model_context_event()
 
         persona_name = self._session.current_persona_name
@@ -874,7 +874,7 @@ class Conversation:
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
         loop_frame = _ToolLoopFrame(current_text_buf=[])
-        tool_run_context = self._tool_run_context_factory(system_prompt_addendum)
+        tool_run_context = self._make_tool_run_context(system_prompt_addendum)
         self._active_tool_run_context = tool_run_context
         model_context_event = self._build_model_context_event()
         tool_run_state = ToolRunState(self._tool_run_policy)
@@ -957,7 +957,7 @@ class Conversation:
         previous_run_id = self._run_id_override
         previous_tool_run_context = self._active_tool_run_context
         self._run_model_snapshot = self._capture_run_model_snapshot()
-        self._active_tool_run_context = self._tool_run_context_factory(system_prompt_addendum)
+        self._active_tool_run_context = self._make_tool_run_context(system_prompt_addendum)
         try:
             yield from self._dispatch_system_turn_impl(
                 source_kind=source_kind,
@@ -2266,6 +2266,36 @@ class Conversation:
             return self._tool_hook_invoker(name, args, _default_invoke)
         return _default_invoke()
 
+    def _make_tool_run_context(
+        self,
+        user_input: str,
+        *,
+        events: list[Event] | None = None,
+    ) -> ToolRunContext:
+        """Create a turn context and restore only typed public evidence from active history."""
+
+        context = self._tool_run_context_factory(user_input)
+        source_events = self._session.active_events if events is None else events
+        for event in source_events:
+            if event.type == "user_message":
+                content = event.payload.get("content")
+                if isinstance(content, str):
+                    context.register_user_text_evidence(
+                        content,
+                        source_event_uuid=event.uuid,
+                    )
+                continue
+            if event.type != "tool_call_result":
+                continue
+            extra = event.meta.get("extra")
+            if not isinstance(extra, dict):
+                continue
+            context.register_persisted_evidence(
+                extra.get("public_evidence"),
+                source_event_uuid=event.uuid,
+            )
+        return context
+
     def _tool_args_with_invocation_context(
         self,
         name: str,
@@ -2306,6 +2336,13 @@ class Conversation:
                     else ()
                 )
             ]
+            evidence_ref = args.get("evidence_ref")
+            if tool_run_context is not None and isinstance(evidence_ref, str):
+                evidence = tool_run_context.resolve_evidence(evidence_ref)
+                if evidence is not None:
+                    invocation_args["__agent_friend_resolved_evidence_url"] = (
+                        evidence.normalized_url
+                    )
         if name == "request_social_auth":
             invocation_args.update(
                 {
@@ -2322,11 +2359,20 @@ class Conversation:
             authorization = (
                 tool_run_context.url_authorizations.authorize(url) if isinstance(url, str) else None
             )
+            evidence_ref = args.get("evidence_ref")
+            if authorization is None and isinstance(evidence_ref, str):
+                evidence = tool_run_context.resolve_evidence(evidence_ref)
+                if evidence is not None:
+                    authorization = tool_run_context.url_authorizations.authorize(
+                        evidence.normalized_url
+                    )
+                    invocation_args["__agent_friend_resolved_url"] = evidence.normalized_url
             if authorization is not None:
                 invocation_args["__agent_friend_url_authorization"] = {
                     "normalized_url": authorization.normalized_url,
                     "source": authorization.source,
                     "source_call_id": authorization.source_call_id,
+                    "evidence_ref": authorization.evidence_ref,
                 }
         return invocation_args
 
@@ -2571,8 +2617,17 @@ class Conversation:
                 runtime.timeout_count += 1
             if result.meta.get("error_kind") == "blocked":
                 runtime.blocked_count += 1
-            context.register_tool_result(tc["name"], tc["id"], result.meta.get("source_urls"))
+            context.register_tool_result(
+                tc["name"],
+                tc["id"],
+                result.meta.get("source_urls"),
+                result.meta.get("public_evidence"),
+                result.meta.get("ephemeral_evidence"),
+            )
             no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
+            runtime.new_evidence_count = progress.new_evidence_count
+            runtime.reused_evidence_count = progress.reused_evidence_count
+            runtime.last_intent_signature = progress.last_intent_signature
             self._append_tool_call_result_event(tc, result, duration)
             log_run_latency(
                 logger,
@@ -2727,7 +2782,9 @@ class Conversation:
         )
         if result.meta:
             diagnostic_extra = {
-                key: value for key, value in result.meta.items() if key != "source_urls"
+                key: value
+                for key, value in result.meta.items()
+                if key not in {"source_urls", "ephemeral_evidence"}
             }
             if diagnostic_extra:
                 meta["extra"] = diagnostic_extra

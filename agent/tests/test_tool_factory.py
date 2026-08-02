@@ -62,6 +62,7 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
         "social_search",
         "social_read",
         "request_social_auth",
+        "web_fetch",
     }
     nearby = registry.get("nearby_place_search")
     assert isinstance(nearby, NearbyPlaceSearchTool)
@@ -71,7 +72,7 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
     assert isinstance(weather._provider, UnavailableWeatherProvider)
     captured = capsys.readouterr()
     assert "TAVILY_API_KEY" in captured.err
-    assert "搜索能力已关闭" in captured.err
+    assert "网页搜索和远端正文回退已关闭" in captured.err
     assert "AMAP_WEBSERVICE_KEY" in captured.err
 
     result = nearby.invoke({"query": "药店", "near": "福民银行"})
@@ -94,6 +95,7 @@ def test_silent_when_no_api_key_and_warn_disabled(
         "social_search",
         "social_read",
         "request_social_auth",
+        "web_fetch",
     }
     captured = capsys.readouterr()
     assert captured.err == ""
@@ -185,7 +187,7 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == 8
+    assert len(tools) == 9
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
 
