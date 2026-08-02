@@ -4,6 +4,10 @@ function isTextOverflowing(element: OverflowMeasurable): boolean {
   return element.scrollWidth - element.clientWidth > 1;
 }
 
+function resolveTooltipOpen(requestedOpen: boolean, isOverflowing: boolean): boolean {
+  return requestedOpen && isOverflowing;
+}
+
 function observeTextOverflow(
   element: HTMLElement,
   onChange: (isOverflowing: boolean) => void,
@@ -17,4 +21,4 @@ function observeTextOverflow(
   return () => observer.disconnect();
 }
 
-export { isTextOverflowing, observeTextOverflow };
+export { isTextOverflowing, observeTextOverflow, resolveTooltipOpen };

@@ -62,6 +62,10 @@ export function sessionRunIndicator(
   return unreadOutcome ?? null;
 }
 
+export function shouldClearSessionActionFocusOnOpen(clickDetail: number): boolean {
+  return clickDetail > 0;
+}
+
 export function shouldResetMissingCurrentSession({
   sessionsLoaded,
   currentSessionId,
@@ -371,11 +375,25 @@ export function HistorySidebar() {
                       <SidebarMenuButton
                         isActive={s.session_id === currentSessionId}
                         className="px-2 text-sm font-normal data-[active=true]:bg-bg transition-none"
-                        onClick={() => handleOpenSession(s.session_id)}
+                        onClick={(event) => {
+                          if (shouldClearSessionActionFocusOnOpen(event.detail)) {
+                            setFocusedActionSessionId((current) =>
+                              current === s.session_id ? null : current,
+                            );
+                          }
+                          handleOpenSession(s.session_id);
+                        }}
                       >
                         <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
                           <span className="flex min-w-0 flex-1 items-center gap-2">
-                            <TextEllipsis className="min-w-0">{title}</TextEllipsis>
+                            <TextEllipsis
+                              className="min-w-0 flex-1"
+                              tooltipContentClassName="translate-x-2"
+                              tooltipDelayMs={500}
+                              tooltipSide="right"
+                            >
+                              {title}
+                            </TextEllipsis>
                             {boundIMTypes.map((imType) => (
                               <Badge
                                 key={imType}

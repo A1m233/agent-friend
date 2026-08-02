@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sessionRunIndicator, shouldResetMissingCurrentSession } from "./HistorySidebar";
+import {
+  sessionRunIndicator,
+  shouldClearSessionActionFocusOnOpen,
+  shouldResetMissingCurrentSession,
+} from "./HistorySidebar";
 
 const queuedRun = {
   run_id: "run-1",
@@ -91,5 +95,15 @@ describe("HistorySidebar run indicator", () => {
     expect(sessionRunIndicator(undefined, "completed")).toBe("completed");
     expect(sessionRunIndicator(undefined, "failed")).toBe("failed");
     expect(sessionRunIndicator(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("HistorySidebar session action focus", () => {
+  it("clears persistent focus visibility after a pointer click", () => {
+    expect(shouldClearSessionActionFocusOnOpen(1)).toBe(true);
+  });
+
+  it("keeps keyboard focus visibility after Enter or Space activation", () => {
+    expect(shouldClearSessionActionFocusOnOpen(0)).toBe(false);
   });
 });
