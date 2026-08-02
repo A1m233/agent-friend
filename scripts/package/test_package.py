@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +21,7 @@ from runtime_config import (
 )
 
 PACKAGE_DIR = Path(__file__).resolve().parent
+XHS_BUILDER = PACKAGE_DIR.parent / "_lib" / "xiaohongshu_connector" / "build.py"
 if str(PACKAGE_DIR) not in sys.path:
     sys.path.insert(0, str(PACKAGE_DIR))
 
@@ -84,6 +87,117 @@ def test_cloudflared_lock_has_pinned_version_and_hash() -> None:
     assert lock["version"] != "latest"
     assert len(lock["sha256"]) == 64
     assert lock["url"].endswith("cloudflared-windows-amd64.exe")
+
+
+def test_xiaohongshu_windows_build_lock_matches_runtime_manifest() -> None:
+    builder = _load("xiaohongshu_windows_build_lock", XHS_BUILDER)
+    from agent.tools.builtin.social_platforms.connectors.xiaohongshu_artifacts import (
+        current_xiaohongshu_artifacts,
+    )
+
+    lock = builder.load_windows_build_lock()
+    outputs = {item["role"]: item for item in lock["outputs"]}
+    artifacts = current_xiaohongshu_artifacts(system="windows", machine="amd64")
+
+    assert lock["inputs"]["xiaohongshu_mcp"]["commit"] == "3aacfb3583482424c0170e86e05725df940dd35e"
+    assert lock["inputs"]["headless_browser"]["version"] == "v0.4.0"
+    assert lock["inputs"]["go"]["version"] == "go1.26.5"
+    for artifact in artifacts:
+        output = outputs[artifact.role]
+        assert artifact.source == "source-build"
+        assert output["filename"] == artifact.filename
+        assert output["size"] == artifact.size
+        assert output["sha256"] == artifact.sha256
+
+
+def test_xiaohongshu_windows_builder_uses_verified_offline_artifact_cache(tmp_path) -> None:
+    builder = _load("xiaohongshu_windows_offline_cache", XHS_BUILDER)
+    server = b"locked-server"
+    login = b"locked-login"
+    patch_sha = hashlib.sha256(builder.PATCH_PATH.read_bytes()).hexdigest()
+    lock = {
+        "schema_version": 1,
+        "build_id": "test-build",
+        "target": {"os": "windows", "arch": "amd64"},
+        "inputs": {name: {} for name in ("go", "xiaohongshu_mcp", "headless_browser")},
+        "patch": {"filename": builder.PATCH_PATH.name, "sha256": patch_sha},
+        "outputs": [
+            {
+                "role": "server",
+                "filename": "server.exe",
+                "size": len(server),
+                "sha256": hashlib.sha256(server).hexdigest(),
+            },
+            {
+                "role": "login",
+                "filename": "login.exe",
+                "size": len(login),
+                "sha256": hashlib.sha256(login).hexdigest(),
+            },
+        ],
+    }
+    lock_path = tmp_path / "lock.json"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    cache = tmp_path / "cache"
+    artifacts = cache / "artifacts" / "test-build"
+    artifacts.mkdir(parents=True)
+    (artifacts / "server.exe").write_bytes(server)
+    (artifacts / "login.exe").write_bytes(login)
+
+    paths = builder.ensure_windows_xiaohongshu_artifacts(
+        tmp_path / "destination",
+        cache_dir=cache,
+        offline=True,
+        lock_path=lock_path,
+    )
+
+    assert [path.read_bytes() for path in paths] == [server, login]
+
+
+def test_xiaohongshu_windows_patch_isolated_from_ignored_parent_repo(tmp_path) -> None:
+    builder = _load("xiaohongshu_windows_patch_isolation", XHS_BUILDER)
+    parent = tmp_path / "parent"
+    workspace = parent / "ignored" / "workspace"
+    headless = workspace / "headless_browser" / "headless_browser.go"
+    go_mod = workspace / "xiaohongshu-mcp" / "go.mod"
+    headless.parent.mkdir(parents=True)
+    go_mod.parent.mkdir(parents=True)
+    headless.write_text(
+        """func New(options ...Option) *Browser {
+	for _, option := range options {
+		option(cfg)
+	}
+
+	l := launcher.New().
+		Headless(cfg.Headless).
+		Set("--no-sandbox")
+
+	return nil
+}
+""",
+        encoding="utf-8",
+    )
+    go_mod.write_text(
+        """module github.com/xpzouying/xiaohongshu-mcp
+
+go 1.24.0
+
+require (
+	github.com/avast/retry-go/v4 v4.7.0
+	github.com/gin-gonic/gin v1.10.1
+	github.com/xpzouying/headless_browser v0.4.0
+)
+""",
+        encoding="utf-8",
+    )
+    parent.mkdir(exist_ok=True)
+    (parent / ".gitignore").write_text("ignored/\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=parent, check=True)
+
+    builder._apply_patch(workspace)
+
+    assert "Leakless(false)" in headless.read_text(encoding="utf-8")
+    assert "replace github.com/xpzouying/headless_browser" in go_mod.read_text(encoding="utf-8")
 
 
 def test_nsis_upgrade_preserves_and_normalizes_the_fixed_autostart_entry() -> None:

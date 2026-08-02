@@ -7,6 +7,7 @@ import {
   type StatusDotProps,
 } from "@/components/ui";
 import type { ToolBlock, ToolStatus } from "@/types/chat";
+import { SocialAuthCard } from "./SocialAuthCard";
 
 /**
  * 工具调用卡片（自写，AC-M3.2）。
@@ -35,6 +36,9 @@ function prettyArgs(args: string): string {
 }
 
 export function ToolCard({ block }: { block: ToolBlock }) {
+  if (block.name === "request_social_auth" && block.status === "done") {
+    return <SocialAuthCard block={block} />;
+  }
   const meta = STATUS_META[block.status];
   const args = prettyArgs(block.args);
   const hasDetails = Boolean(args || block.result);

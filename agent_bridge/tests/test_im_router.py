@@ -77,6 +77,17 @@ class StubStreamingProvider:
         return self.stream
 
 
+class StubBoundProvider:
+    type = "qq"
+    bind_id = "BOUND-ACCOUNT"
+
+    def __init__(self) -> None:
+        self.sent: list[OutboundContent] = []
+
+    async def send(self, content: OutboundContent) -> None:
+        self.sent.append(content)
+
+
 # ---------- fixtures ----------
 
 
@@ -204,7 +215,31 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
         channel="text",
         turn_context=None,
         surface=IM_QQ_SURFACE,
+        interaction_destination_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_bound_provider_freezes_exact_im_destination_for_agent_tools(
+    router: IMRouter,
+    session_bridge: MagicMock,
+) -> None:
+    conv = _make_conv([TextDelta(text="请回电脑端授权。"), TurnDone()])
+    session_bridge.bind_persistent.return_value = conv
+    provider = StubBoundProvider()
+    event = _make_event(chat_id="OPENID-USER-A", chat_scope="c2c")
+
+    await router.handle_inbound("qq", event, provider)
+
+    conv.stream.assert_called_once_with(
+        "你好",
+        attachments=[],
+        channel="text",
+        turn_context=None,
+        surface=IM_QQ_SURFACE,
+        interaction_destination_id=("qq|BOUND-ACCOUNT|c2c|OPENID-USER-A|im:qq:OPENID-USER-A"),
+    )
+    assert provider.sent[0].text == "请回电脑端授权。"
 
 
 @pytest.mark.asyncio

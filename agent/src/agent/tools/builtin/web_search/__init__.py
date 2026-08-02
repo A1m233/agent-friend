@@ -22,6 +22,7 @@ from .tool import (
     WebSearchProvider,
     WebSearchProviderError,
     WebSearchRateLimitError,
+    WebSearchRequest,
     WebSearchRetryPolicy,
     WebSearchTool,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "WebSearchProvider",
     "WebSearchProviderError",
     "WebSearchRateLimitError",
+    "WebSearchRequest",
     "WebSearchRetryPolicy",
     "WebSearchTool",
 ]

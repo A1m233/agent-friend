@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 from agent.system_prompt import DESKTOP_CHAT_SURFACE, IM_QQ_SURFACE
+from agent.tools.builtin.calculate import CalculateTool
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -76,6 +77,7 @@ def _make_conversation(
     persona_id: str,
     catalog: PersonaCatalog,
     fake_llm: _FakeLLMClient,
+    tool_registry: ToolRegistry | None = None,
 ) -> Conversation:
     """组装一个完整 Conversation（注入 fake LLM、真 catalog、内存内 session store）。"""
     store = JsonlSessionStore(base_dir=tmp_path / "sessions")
@@ -99,6 +101,7 @@ def _make_conversation(
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
+        tool_registry=tool_registry,
     )
 
 
@@ -121,6 +124,26 @@ def test_default_system_prompt_contains_three_segments(tmp_path: Path) -> None:
     assert "项目元规则" in content
     assert "Echo" in content
     assert "关于过往对话的语言风格" in content
+
+
+def test_registered_tool_namespace_catalog_is_visible_without_changing_wire_name(
+    tmp_path: Path,
+) -> None:
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    fake = _FakeLLMClient(reply="ok")
+    conv = _make_conversation(
+        tmp_path,
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        catalog=catalog,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([CalculateTool()]),
+    )
+
+    conv.send("1+1 是多少？")
+
+    content = fake.received[0][0]["content"]
+    assert '<namespace path="calculate">' in content
+    assert '<tool name="calculate" callable_as="calculate" />' in content
 
 
 # ===== AC-4：切 persona 后下一轮 system_prompt 仍含切换策略段 =====

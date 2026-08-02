@@ -1,8 +1,9 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { PushEnvelope } from "@/types/push";
+import type { PushEnvelope, PushEvent } from "@/types/push";
 import { isTauri } from "@/utils/tauri";
 import { useConversationStore } from "./conversation";
 import { useArchivedSessionsStore, useSessionsStore } from "./sessions";
+import { createStreamUpdateScheduler, type StreamUpdateScheduler } from "./streamUpdateScheduler";
 
 const LIST_DEBOUNCE_MS = 120;
 const DETAIL_DEBOUNCE_MS = 80;
@@ -12,6 +13,25 @@ let highestRevision = new Map<string, number>();
 let pendingDetail = new Map<string, number>();
 let listTimer: ReturnType<typeof setTimeout> | null = null;
 let detailTimer: ReturnType<typeof setTimeout> | null = null;
+const runEventSchedulers = new Map<string, StreamUpdateScheduler<PushEvent>>();
+
+function runEventKey(sessionId: string, runId: string): string {
+  return `${sessionId}:${runId}`;
+}
+
+function flushRunEvents(sessionId: string, runId: string): void {
+  const key = runEventKey(sessionId, runId);
+  const scheduler = runEventSchedulers.get(key);
+  if (!scheduler) return;
+  scheduler.flush();
+  scheduler.dispose();
+  runEventSchedulers.delete(key);
+}
+
+function disposeRunEventSchedulers(): void {
+  for (const scheduler of runEventSchedulers.values()) scheduler.dispose();
+  runEventSchedulers.clear();
+}
 
 function scheduleListRefresh(activeGeneration: number): void {
   if (listTimer !== null) clearTimeout(listTimer);
@@ -78,10 +98,33 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
 
 export function handleRunChangedForSync(env: PushEnvelope): void {
   if (env.kind !== "run_changed" || !env.run) return;
+  if (env.run.status === "terminal") flushRunEvents(env.run.session_id, env.run.run_id);
   useConversationStore.getState().applyRunSnapshot(env.run);
 }
 
+export function handleRunEventForSync(env: PushEnvelope): void {
+  if (
+    env.kind !== "run_event"
+    || env.presentation !== "conversation"
+    || !env.session_id
+    || !env.run_id
+    || env.events.length === 0
+  ) return;
+  const key = runEventKey(env.session_id, env.run_id);
+  let scheduler = runEventSchedulers.get(key);
+  if (!scheduler) {
+    const sessionId = env.session_id;
+    const runId = env.run_id;
+    scheduler = createStreamUpdateScheduler<PushEvent>((events) => {
+      useConversationStore.getState().applyRunEvents(sessionId, runId, events);
+    });
+    runEventSchedulers.set(key, scheduler);
+  }
+  for (const event of env.events) scheduler.enqueue(event);
+}
+
 export function handlePushReconnectedForSync(activeGeneration = generation): void {
+  disposeRunEventSchedulers();
   if (import.meta.env.DEV) {
     console.debug("[session-sync] push reconnected; scheduling calibration", {
       activeGeneration,
@@ -121,6 +164,12 @@ export function startSessionSyncSubscriber(): () => void {
       if (stopped) unlisten();
       else unlisteners.push(unlisten);
     });
+    void listen<PushEnvelope>("session://run-event", (event) => {
+      if (!stopped) handleRunEventForSync(event.payload);
+    }).then((unlisten) => {
+      if (stopped) unlisten();
+      else unlisteners.push(unlisten);
+    });
   }
 
   const unsubscribeConversation = useConversationStore.subscribe((state, previous) => {
@@ -147,6 +196,7 @@ export function startSessionSyncSubscriber(): () => void {
     listTimer = null;
     detailTimer = null;
     pendingDetail.clear();
+    disposeRunEventSchedulers();
     useConversationStore.getState().invalidateBackgroundRefreshes();
   };
 }
@@ -159,4 +209,5 @@ export function resetSessionSyncForTests(): void {
   if (detailTimer !== null) clearTimeout(detailTimer);
   listTimer = null;
   detailTimer = null;
+  disposeRunEventSchedulers();
 }

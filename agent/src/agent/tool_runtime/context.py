@@ -9,7 +9,7 @@ from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
-_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"https?://[^\s<>\"'，。；：！？、）】》」』]+", re.IGNORECASE)
 _TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
 
 
@@ -64,6 +64,11 @@ class UrlAuthorizationLedger:
         except ValueError:
             return None
         return self._entries.get(normalized)
+
+    def authorizations(self) -> tuple[UrlAuthorization, ...]:
+        """Return the trusted URLs registered for this tool-running turn."""
+
+        return tuple(self._entries.values())
 
 
 @dataclass

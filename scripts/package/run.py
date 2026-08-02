@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
@@ -16,8 +17,14 @@ import urllib.request
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+from agent.tools.builtin.social_platforms.connectors.xiaohongshu_artifacts import (
+    XIAOHONGSHU_COMMIT,
+    XIAOHONGSHU_VERSION,
+    current_xiaohongshu_artifacts,
+)
 from paths import (
     BuildPaths,
     PackageRoots,
@@ -76,6 +83,25 @@ SECRET_NAMES = {
     "VOICE_BRIDGE_VOLC_SPEECH_API_KEY",
 }
 PACKAGE_METADATA_RESOURCE = "package-build.json"
+XIAOHONGSHU_LICENSE_SHA256 = "739259a30251c4bb96b60b0f75a701b8ec31dc37eb61167744060c2cd7a88b80"
+XIAOHONGSHU_LICENSE_URL = (
+    f"https://raw.githubusercontent.com/xpzouying/xiaohongshu-mcp/{XIAOHONGSHU_COMMIT}/LICENSE"
+)
+XIAOHONGSHU_BUILDER_PATH = REPO_ROOT / "scripts" / "_lib" / "xiaohongshu_connector" / "build.py"
+
+
+def _load_xiaohongshu_builder() -> ModuleType:
+    name = "agent_friend_package_xiaohongshu_connector_builder"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(name, XIAOHONGSHU_BUILDER_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load the Xiaohongshu Windows connector builder")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 @contextmanager
@@ -411,12 +437,47 @@ def _stage_runtime(build_paths: BuildPaths, *, dist_dir: Path, offline: bool) ->
     )
     shutil.copy2(cloudflared_license, vendor_dir / "LICENSE-cloudflared.txt")
 
+    xhs_dir = stage_dir / "connectors" / "xiaohongshu"
+    xhs_dir.mkdir(parents=True)
+    xhs_artifacts = current_xiaohongshu_artifacts(system="windows", machine="amd64")
+    if {artifact.source for artifact in xhs_artifacts} == {"source-build"}:
+        builder = _load_xiaohongshu_builder()
+        builder.ensure_windows_xiaohongshu_artifacts(
+            xhs_dir,
+            cache_dir=cache_dir / "xiaohongshu-windows-source-build",
+            offline=offline,
+        )
+        shutil.copy2(builder.LOCK_PATH, xhs_dir / "BUILD-LOCK.json")
+        shutil.copy2(builder.PATCH_PATH, xhs_dir / "COMPATIBILITY.patch")
+    else:
+        for artifact in xhs_artifacts:
+            cached = _download(
+                url=artifact.url,
+                expected_sha256=artifact.sha256,
+                destination=cache_dir / f"{XIAOHONGSHU_VERSION}-{artifact.filename}",
+                offline=offline,
+            )
+            shutil.copy2(cached, xhs_dir / artifact.filename)
+    xhs_license = _download(
+        url=XIAOHONGSHU_LICENSE_URL,
+        expected_sha256=XIAOHONGSHU_LICENSE_SHA256,
+        destination=cache_dir / f"xiaohongshu-mcp-{XIAOHONGSHU_VERSION}-LICENSE",
+        offline=offline,
+    )
+    shutil.copy2(xhs_license, xhs_dir / "LICENSE.txt")
+
     _install_memory_model(stage_dir / MODEL_RELATIVE_DIR, cache_dir=cache_dir)
     (stage_dir / "THIRD-PARTY-NOTICES.txt").write_text(
         "cloudflared\n"
         f"Version: {cloudflared_lock['version']}\n"
         f"Source: {cloudflared_lock['source']}\n"
-        "License: Apache License 2.0 (see vendor/LICENSE-cloudflared.txt)\n",
+        "License: Apache License 2.0 (see vendor/LICENSE-cloudflared.txt)\n\n"
+        "xiaohongshu-mcp\n"
+        f"Version: {XIAOHONGSHU_VERSION}\n"
+        "Source: https://github.com/xpzouying/xiaohongshu-mcp\n"
+        "Windows compatibility: reproducible source build; see "
+        "connectors/xiaohongshu/BUILD-LOCK.json and COMPATIBILITY.patch\n"
+        "License: Apache License 2.0 (see connectors/xiaohongshu/LICENSE.txt)\n",
         encoding="utf-8",
     )
 
@@ -704,7 +765,20 @@ def _smoke_installed_runtime(
     launcher = runtime_dir / "python" / "agent-friend-runtime.exe"
     inventory = runtime_dir / "runtime-inventory.json"
     model_dir = runtime_dir / MODEL_RELATIVE_DIR
-    missing = [path for path in (main_binary, launcher, inventory, model_dir) if not path.exists()]
+    xhs_dir = runtime_dir / "connectors" / "xiaohongshu"
+    xhs_artifacts = current_xiaohongshu_artifacts(system="windows", machine="amd64")
+    required = (
+        main_binary,
+        launcher,
+        inventory,
+        model_dir,
+        xhs_dir / xhs_artifacts[0].filename,
+        xhs_dir / xhs_artifacts[1].filename,
+        xhs_dir / "LICENSE.txt",
+        xhs_dir / "BUILD-LOCK.json",
+        xhs_dir / "COMPATIBILITY.patch",
+    )
+    missing = [path for path in required if not path.exists()]
     if missing:
         formatted = ", ".join(str(path) for path in missing)
         raise RuntimeError(f"installed runtime is incomplete: {formatted}")

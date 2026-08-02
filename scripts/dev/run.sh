@@ -79,6 +79,8 @@ fi
 mkdir -p "$AGENT_FRIEND_LOG_DIR"
 DEV_BRIDGE_LOG="$AGENT_FRIEND_LOG_DIR/dev-bridge.log"
 DEV_VOICE_LOG="$AGENT_FRIEND_LOG_DIR/dev-voice.log"
+DEV_TAURI_LOG="$AGENT_FRIEND_LOG_DIR/tauri.log.dev"
+FOREGROUND_LOG="$ROOT/scripts/dev/foreground_log.py"
 echo "===> 日志目录：$AGENT_FRIEND_LOG_DIR"
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -349,7 +351,11 @@ if [ "$MODE" = "tauri" ]; then
     fi
     echo "===> 服务所有权：Tauri Core（bridge / voice_bridge）"
     echo "===> 配置模式：${AGENT_FRIEND_CONFIG_MODE}（默认 desktop 不读取仓库 .env）"
-    (cd "$ROOT/frontend" && node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
+    uv run python "$FOREGROUND_LOG" \
+        --log "$DEV_TAURI_LOG" \
+        --cwd "$ROOT/frontend" \
+        --prefix "[app] " \
+        -- node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"} &
     wait
     exit $?
 fi
@@ -406,7 +412,11 @@ if [ "$MODE" = "web" ]; then
     (cd "$ROOT/frontend" && pnpm dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[web] " &
 else
     echo "===> 前端模式：tauri（桌面，含双窗口；首次编译 Rust 较慢）"
-    (cd "$ROOT/frontend" && node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"}) 2>&1 | prefix "[app] " &
+    uv run python "$FOREGROUND_LOG" \
+        --log "$DEV_TAURI_LOG" \
+        --cwd "$ROOT/frontend" \
+        --prefix "[app] " \
+        -- node node_modules/@tauri-apps/cli/tauri.js dev ${ARGS[@]+"${ARGS[@]}"} &
 fi
 
 if [ "$VOICE_MODE" = "off" ]; then

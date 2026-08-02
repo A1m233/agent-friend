@@ -74,6 +74,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   // tool_call_id → 已落入某条消息的工具块引用，待 result 事件回填（同一对象，回填即生效）。
   const toolBlocks = new Map<string, ToolBlock>();
+  const hiddenRunIds = new Set<string>();
   let currentAssistant: ChatMessage | null = null;
   // 015 R-4.5.1 · 见模块顶部注释：紧跟 user-visible system_trigger 的 assistant_message 是
   // 主动轮的"用户可见"输出，应被 chat 窗 MessageList 跳过（出口是 pet 气泡，不在 chat 窗）。
@@ -91,6 +92,11 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
 
   for (const ev of events) {
     const p = ev.payload ?? {};
+    const runId = asString(ev.meta?.run_id);
+
+    if (ev.type !== "system_trigger" && runId && hiddenRunIds.has(runId)) {
+      continue;
+    }
 
     if (ev.type === "system_trigger") {
       // user-visible 触发会紧跟一条 assistant_message——置 flag 让下一条跳过
@@ -99,6 +105,11 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       const sourceKind = asString(p.source_kind);
       const hasReminderCard = sourceKind === "todo_reminder" && pendingReminderCard;
       pendingReminderCard = false;
+      if (presentation === "none" && runId) {
+        hiddenRunIds.add(runId);
+        currentAssistant = null;
+        continue;
+      }
       if (
         visibility === "user" &&
         (presentation !== "conversation" || (sourceKind === "todo_reminder" && !hasReminderCard))

@@ -28,6 +28,7 @@ import type {
   ThinkingBlock,
   ToolBlock,
 } from "@/types/chat";
+import type { PushEvent } from "@/types/push";
 
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
@@ -120,6 +121,91 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       // RUN_STARTED / TEXT_MESSAGE_END / TOOL_CALL_END / THINKING_* 边界事件等无需改状态。
       return msg;
   }
+}
+
+/**
+ * 把 Runtime 主动续跑的原始 ConversationEvent 应用到 assistant 消息。
+ *
+ * 普通用户轮继续走 AG-UI；这里只在 Tauri push 的 ``run_event`` 通道使用。
+ * 映射语义与 bridge 的 AG-UI encoder 保持一致，但文本块 id 由 run + 块序号
+ * 稳定生成，因为原始 TextDelta 本身没有 message id。
+ */
+export function applyPushConversationEvent(
+  msg: ChatMessage,
+  evt: PushEvent,
+  runId: string,
+): ChatMessage {
+  switch (evt.type) {
+    case "text_delta": {
+      const text = typeof evt.text === "string" ? evt.text : "";
+      if (!text) return msg;
+      const last = msg.blocks.at(-1);
+      if (last?.kind === "text") {
+        const blocks = [...msg.blocks];
+        blocks[blocks.length - 1] = { ...last, text: last.text + text };
+        return { ...msg, status: "streaming", runStatus: undefined, blocks };
+      }
+      const textIndex = msg.blocks.filter((block) => block.kind === "text").length;
+      return {
+        ...msg,
+        status: "streaming",
+        runStatus: undefined,
+        blocks: [
+          ...msg.blocks,
+          { kind: "text", mid: `${runId}:text:${textIndex}`, text } satisfies TextBlock,
+        ],
+      };
+    }
+
+    case "tool_call_request": {
+      const toolCallId = pushString(evt.event_tool_call_id) || pushString(evt.tool_call_id);
+      if (!toolCallId) return msg;
+      if (msg.blocks.some((block) => block.kind === "tool" && block.toolCallId === toolCallId)) {
+        return msg;
+      }
+      const block: ToolBlock = {
+        kind: "tool",
+        toolCallId,
+        name: pushString(evt.tool_name) || "tool",
+        args: evt.args === undefined ? "" : JSON.stringify(evt.args),
+        status: "running",
+      };
+      return { ...msg, status: "streaming", runStatus: undefined, blocks: [...msg.blocks, block] };
+    }
+
+    case "tool_call_result": {
+      const toolCallId = pushString(evt.event_tool_call_id) || pushString(evt.tool_call_id);
+      if (!toolCallId) return msg;
+      return {
+        ...msg,
+        blocks: patchTool(msg.blocks, toolCallId, (tool) => ({
+          ...tool,
+          result: pushString(evt.text),
+          status: evt.is_error === true ? "error" : "done",
+        })),
+      };
+    }
+
+    case "model_response_status": {
+      const runStatus = parseRunStatus({
+        phase: evt.phase,
+        afterTool: evt.after_tool,
+        attempt: evt.attempt,
+        maxAttempts: evt.max_attempts,
+      });
+      return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+    }
+
+    case "done":
+      return { ...msg, status: "complete", runStatus: undefined };
+
+    default:
+      return msg;
+  }
+}
+
+function pushString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function parseRunStatus(value: unknown): ModelResponseProgress | null {

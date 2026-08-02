@@ -47,6 +47,7 @@ from agent import (
     SessionStore,
     default_context_manager,
     make_default_registry,
+    make_default_social_platform_service,
 )
 from llm_providers import LLMClient, MultimodalInputAdapter
 from memory import Memory, MemorySearchService, build_memory
@@ -60,8 +61,11 @@ from .runtime_config import BridgeRuntimeConfig, DeferredLLMClient, resolve_brid
 from .session_models import SessionModelService
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
+from .social_auth import SocialAuthOrchestrator
 
 if TYPE_CHECKING:
+    from agent.tools.builtin.social_platforms import SocialPlatformService
+
     from .protocols.im import IMRuntime, OnboardSessionRegistry
 
 
@@ -168,6 +172,10 @@ class BridgeRuntime:
     """070：桌面/IM 活跃信号和最近路由诊断。"""
     reminder_scheduler: ReminderScheduler | None = None
     """070：Bridge lifespan 内运行的可恢复 Reminder scheduler。"""
+    social_platform_service: SocialPlatformService | None = None
+    """072：共享的本地只读平台 connector 与 opaque resource 生命周期。"""
+    social_auth_orchestrator: SocialAuthOrchestrator | None = None
+    """072：桌面批准登录、Agent continuation 与原 surface 投递编排。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -188,6 +196,10 @@ class BridgeRuntime:
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.social_auth_orchestrator is not None:
+            self.social_auth_orchestrator.close()
+        if self.social_platform_service is not None:
+            self.social_platform_service.close()
         if self.memory is not None:
             self.memory.close()
 
@@ -301,6 +313,7 @@ def build_runtime(
     todo_store = TodoStore(settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db")
     todo_service = TodoService(todo_store)
     presence_registry = PresenceRegistry()
+    social_platform_service = make_default_social_platform_service()
 
     # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
     tool_registry = make_default_registry(
@@ -311,6 +324,7 @@ def build_runtime(
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
         qweather_api_key=runtime_config.tool_credentials.qweather_api_key,
         qweather_api_host=runtime_config.tool_credentials.qweather_api_host,
+        social_platform_service=social_platform_service,
     )
 
     llm_client_factory = runtime_config.llm_client_factory
@@ -404,6 +418,7 @@ def build_runtime(
             todo_store=todo_store,
             todo_service=todo_service,
             presence_registry=presence_registry,
+            social_platform_service=social_platform_service,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -445,6 +460,11 @@ def build_runtime(
             session_exists=session_bridge.session_exists,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
+        social_auth_orchestrator = SocialAuthOrchestrator(
+            service=social_platform_service,
+            agent_runtime=agent_runtime,
+            im_runtime=im_runtime,
+        )
         reminder_delivery = ReminderDeliveryOrchestrator(
             todo_store=todo_store,
             session_store=persistent_store,
@@ -460,6 +480,7 @@ def build_runtime(
             im_runtime=im_runtime,
             im_onboard_registry=im_onboard_registry,
             reminder_scheduler=reminder_scheduler,
+            social_auth_orchestrator=social_auth_orchestrator,
         )
 
     reminder_delivery = ReminderDeliveryOrchestrator(
@@ -470,6 +491,10 @@ def build_runtime(
     )
     reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver)
     todo_service.add_wake_listener(reminder_scheduler.wake)
+    social_auth_orchestrator = SocialAuthOrchestrator(
+        service=social_platform_service,
+        agent_runtime=agent_runtime,
+    )
     return BridgeRuntime(
         settings=settings,
         persistent_store=persistent_store,
@@ -494,4 +519,6 @@ def build_runtime(
         todo_service=todo_service,
         presence_registry=presence_registry,
         reminder_scheduler=reminder_scheduler,
+        social_platform_service=social_platform_service,
+        social_auth_orchestrator=social_auth_orchestrator,
     )

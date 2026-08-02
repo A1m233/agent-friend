@@ -1,0 +1,27 @@
+diff --git a/headless_browser/headless_browser.go b/headless_browser/headless_browser.go
+--- a/headless_browser/headless_browser.go
++++ b/headless_browser/headless_browser.go
+@@ -182,7 +182,10 @@ func New(options ...Option) *Browser {
+ 		option(cfg)
+ 	}
+ 
+-	l := launcher.New().
++	// Windows Defender can quarantine Rod's embedded leakless helper. Browser
++	// callers close explicitly, and agent-friend owns the connector process.
++	l := launcher.New().
++		Leakless(false).
+ 		Headless(cfg.Headless).
+ 		Set("--no-sandbox")
+ 
+diff --git a/xiaohongshu-mcp/go.mod b/xiaohongshu-mcp/go.mod
+--- a/xiaohongshu-mcp/go.mod
++++ b/xiaohongshu-mcp/go.mod
+@@ -2,6 +2,8 @@ module github.com/xpzouying/xiaohongshu-mcp
+ 
+ go 1.24.0
+ 
++replace github.com/xpzouying/headless_browser => ../headless_browser
++
+ require (
+ 	github.com/avast/retry-go/v4 v4.7.0
+ 	github.com/gin-gonic/gin v1.10.1

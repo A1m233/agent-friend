@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from urllib.parse import urlsplit, urlunsplit
 
 from ...errors import ToolError
 from ...protocol import ToolResult
@@ -115,6 +117,21 @@ class SearchHit:
     title: str
     url: str
     snippet: str
+    score: float | None = None
+    published_at: str | None = None
+
+
+WebSearchTimeRange = Literal["day", "week", "month", "year"]
+
+
+@dataclass(frozen=True)
+class WebSearchRequest:
+    """Provider-neutral request for one bounded search query."""
+
+    query: str
+    max_results: int
+    include_domains: tuple[str, ...] = ()
+    time_range: WebSearchTimeRange | None = None
 
 
 @dataclass(frozen=True)
@@ -160,16 +177,14 @@ class WebSearchProvider(Protocol):
 
     def search(
         self,
-        query: str,
-        max_results: int,
+        request: WebSearchRequest,
         *,
         timeout_seconds: float,
     ) -> SearchResponse:
         """同步发起搜索请求。
 
         Args:
-            query: 搜索查询字符串。
-            max_results: 期望返回的最大结果数；provider 实际返回数可少于此值。
+            request: provider-neutral 查询、结果上限和结构化过滤。
 
         Returns:
             Provider-neutral response。无结果时 ``hits`` 为空列表。
@@ -219,7 +234,9 @@ class WebSearchTool:
         "- 当前对话里已经有用户提供的事实，且用户只是让你基于这些信息整理或推理\n\n"
         "**参数来源与证据边界**：\n"
         "- query 用清晰自然语言描述要找的信息，关键词 2~5 个，不超过一句话\n"
-        "- query 必须包含正确的当前年份（参见 system prompt 中『当前时间』），不要默认用训练数据时期的年份\n"
+        "- 只有用户明确要求某个时间范围，或问题确实依赖最新状态时才加入年份/日期；寻找既有帖子时不要自行附加当前年份\n"
+        "- 用户明确指定站点时优先使用 include_domains，而不是只把平台名拼进 query\n"
+        "- 只有不同标题片段、作者、主题或时间线索能提供互补召回时，才给 alternate_queries；最多 2 条\n"
         "- 搜索结果只证明外部资料里出现过这些内容，不能证明你过去和用户聊过\n"
         "- 只使用结果里实际出现的字段；标题、片段或来源没有给出的细节不要补\n\n"
         "**失败与重试**：\n"
@@ -233,12 +250,30 @@ class WebSearchTool:
             "query": {
                 "type": "string",
                 "description": (
-                    "搜索查询。用清晰的自然语言描述要找的信息，"
-                    "**必须包含正确的当前年份**（参见 system prompt 中『当前时间』）。"
+                    "主要搜索查询。用清晰自然语言描述要找的信息；只有真实时间意图存在时"
+                    "才加入年份或日期，寻找既有内容时不要自行附加当前年份。"
                 ),
+            },
+            "alternate_queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 2,
+                "description": "可选的互补查询，最多 2 条；不要只做同义重复。",
+            },
+            "include_domains": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": 3,
+                "description": "可选站点 hostname，例如 xiaohongshu.com；不要传 URL 或路径。",
+            },
+            "time_range": {
+                "type": "string",
+                "enum": ["day", "week", "month", "year"],
+                "description": "可选时间范围；没有真实时间约束时省略。",
             },
         },
         "required": ["query"],
+        "additionalProperties": False,
     }
 
     def __init__(
@@ -259,11 +294,100 @@ class WebSearchTool:
         self._jitter = _jitter
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
-        query = args["query"]
+        try:
+            queries, include_domains, time_range = _parse_args(args)
+        except ValueError as exc:
+            return ToolResult(
+                text="搜索失败：参数无效",
+                is_error=True,
+                meta={
+                    "provider": self._provider.name,
+                    "error_kind": "input",
+                    "exception_type": type(exc).__name__,
+                    "retryable": False,
+                },
+            )
+
         started_at = self._clock()
         deadline = started_at + self._retry_policy.deadline_seconds
         attempts: list[dict[str, Any]] = []
+        hits: list[SearchHit] = []
+        seen_urls: set[str] = set()
+        request_ids: list[str] = []
+        provider_duration_seconds = 0.0
+        executed_queries = 0
+        last_error: WebSearchError | None = None
 
+        for query_index, query in enumerate(queries):
+            if deadline - self._clock() < self._retry_policy.minimum_attempt_seconds:
+                break
+            executed_queries += 1
+            response, error = self._search_one(
+                WebSearchRequest(
+                    query=query,
+                    max_results=self._max_results,
+                    include_domains=include_domains,
+                    time_range=time_range,
+                ),
+                query_index=query_index,
+                deadline=deadline,
+                attempts=attempts,
+            )
+            if response is None:
+                last_error = error
+                if isinstance(error, (WebSearchAuthError, WebSearchRateLimitError)):
+                    break
+                continue
+            if response.request_id:
+                request_ids.append(response.request_id)
+            if response.provider_duration_seconds is not None:
+                provider_duration_seconds += response.provider_duration_seconds
+            for hit in response.hits:
+                dedupe_key = _normalized_result_url(hit.url)
+                if dedupe_key in seen_urls:
+                    continue
+                seen_urls.add(dedupe_key)
+                hits.append(hit)
+                if len(hits) >= 10:
+                    break
+            if len(hits) >= 10:
+                break
+
+        if not hits and last_error is not None:
+            return self._error_result(last_error, started_at, attempts)
+
+        meta: dict[str, Any] = {
+            "duration_seconds": self._clock() - started_at,
+            "result_count": len(hits),
+            "provider": self._provider.name,
+            "attempt_count": len(attempts),
+            "retries_taken": max(0, len(attempts) - executed_queries),
+            "attempts": attempts,
+            "query_count": executed_queries,
+            "requested_query_count": len(queries),
+            "source_urls": [hit.url for hit in hits],
+            "include_domains": list(include_domains),
+            "time_range": time_range,
+        }
+        if request_ids:
+            meta["request_id"] = request_ids[0]
+            meta["request_ids"] = request_ids
+        if provider_duration_seconds:
+            meta["provider_duration_seconds"] = provider_duration_seconds
+        return ToolResult(
+            text=_format(queries[0], hits, queries=queries),
+            is_error=False,
+            meta=meta,
+        )
+
+    def _search_one(
+        self,
+        request: WebSearchRequest,
+        *,
+        query_index: int,
+        deadline: float,
+        attempts: list[dict[str, Any]],
+    ) -> tuple[SearchResponse | None, WebSearchError | None]:
         for attempt in range(1, self._retry_policy.max_attempts + 1):
             remaining = deadline - self._clock()
             if remaining < self._retry_policy.minimum_attempt_seconds:
@@ -271,13 +395,10 @@ class WebSearchTool:
             timeout = min(self._retry_policy.attempt_timeout_seconds, remaining)
             attempt_started_at = self._clock()
             try:
-                response = self._provider.search(
-                    query,
-                    self._max_results,
-                    timeout_seconds=timeout,
-                )
+                response = self._provider.search(request, timeout_seconds=timeout)
             except WebSearchError as exc:
                 attempt_meta = {
+                    "query_index": query_index,
                     "attempt": attempt,
                     "duration_seconds": self._clock() - attempt_started_at,
                     "outcome": "error",
@@ -293,40 +414,29 @@ class WebSearchTool:
                     >= delay + self._retry_policy.minimum_attempt_seconds
                 )
                 if not can_retry:
-                    return self._error_result(exc, started_at, attempts)
+                    return None, exc
                 assert delay is not None
                 attempt_meta["retry_delay_seconds"] = delay
                 self._sleep(delay)
                 continue
 
-            hits = response.hits
             attempts.append(
                 {
+                    "query_index": query_index,
                     "attempt": attempt,
                     "duration_seconds": self._clock() - attempt_started_at,
                     "outcome": "success",
                 }
             )
-            meta: dict[str, Any] = {
-                "duration_seconds": self._clock() - started_at,
-                "result_count": len(hits),
-                "provider": self._provider.name,
-                "attempt_count": attempt,
-                "retries_taken": attempt - 1,
-                "attempts": attempts,
-                "source_urls": [hit.url for hit in hits],
-            }
-            if response.request_id:
-                meta["request_id"] = response.request_id
-            if response.provider_duration_seconds is not None:
-                meta["provider_duration_seconds"] = response.provider_duration_seconds
-            return ToolResult(text=_format(query, hits), is_error=False, meta=meta)
+            return response, None
 
-        deadline_error = WebSearchNetworkError(
-            "web search deadline exhausted",
-            exception_type="WebSearchDeadlineError",
+        return (
+            None,
+            WebSearchNetworkError(
+                "web search deadline exhausted",
+                exception_type="WebSearchDeadlineError",
+            ),
         )
-        return self._error_result(deadline_error, started_at, attempts)
 
     def _retry_delay(self, exc: WebSearchError, attempt: int) -> float | None:
         retry_after = exc.retry_after_seconds
@@ -367,7 +477,7 @@ class WebSearchTool:
         return ToolResult(text=text, is_error=True, meta=meta)
 
 
-def _format(query: str, hits: list[SearchHit]) -> str:
+def _format(query: str, hits: list[SearchHit], *, queries: tuple[str, ...]) -> str:
     """把 :class:`SearchHit` 列表编码为有明确来源的不可信 JSON 数据。
 
     Provider 无关——任何 provider 返回的 hits 都经过同一格式化逻辑，
@@ -376,13 +486,100 @@ def _format(query: str, hits: list[SearchHit]) -> str:
     回答规则属于 system prompt / tool description，不混入无指令权的结果正文。
     JSON 编码也避免第三方 title / snippet 闭合自定义标签伪装外围说明。
     """
-    payload = {
+    results: list[dict[str, Any]] = []
+    for hit in hits:
+        item: dict[str, Any] = {
+            "title": hit.title,
+            "url": hit.url,
+            "snippet": hit.snippet[:500],
+        }
+        if hit.score is not None:
+            item["score"] = hit.score
+        if hit.published_at is not None:
+            item["published_at"] = hit.published_at
+        results.append(item)
+
+    payload: dict[str, Any] = {
         "source_type": "web_search",
         "trust": "untrusted_data",
         "query": query,
         "status": "ok" if hits else "no_results",
-        "results": [
-            {"title": hit.title, "url": hit.url, "snippet": hit.snippet[:500]} for hit in hits
-        ],
+        "results": results,
     }
+    if len(queries) > 1:
+        payload["queries"] = list(queries)
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+_HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_TIME_RANGES: set[str] = {"day", "week", "month", "year"}
+
+
+def _parse_args(
+    args: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...], WebSearchTimeRange | None]:
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    primary = query.strip()
+
+    raw_alternates = args.get("alternate_queries", [])
+    if not isinstance(raw_alternates, list) or len(raw_alternates) > 2:
+        raise ValueError("alternate_queries must contain at most two strings")
+    queries: list[str] = [primary]
+    seen_queries = {primary.casefold()}
+    for candidate in raw_alternates:
+        if not isinstance(candidate, str) or not candidate.strip():
+            raise ValueError("alternate query must be a non-empty string")
+        normalized = candidate.strip()
+        if normalized.casefold() not in seen_queries:
+            seen_queries.add(normalized.casefold())
+            queries.append(normalized)
+
+    raw_domains = args.get("include_domains", [])
+    if not isinstance(raw_domains, list) or len(raw_domains) > 3:
+        raise ValueError("include_domains must contain at most three hostnames")
+    domains: list[str] = []
+    seen_domains: set[str] = set()
+    for value in raw_domains:
+        domain = _normalize_domain(value)
+        if domain not in seen_domains:
+            seen_domains.add(domain)
+            domains.append(domain)
+
+    raw_time_range = args.get("time_range")
+    if raw_time_range is not None and raw_time_range not in _TIME_RANGES:
+        raise ValueError("unsupported time_range")
+    time_range = raw_time_range
+    return tuple(queries), tuple(domains), time_range
+
+
+def _normalize_domain(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("domain must be a non-empty string")
+    raw = value.strip().rstrip(".")
+    if "://" in raw or any(char in raw for char in "/?#@:"):
+        raise ValueError("domain must be a hostname, not a URL")
+    try:
+        domain = raw.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ValueError("domain is not valid IDNA") from exc
+    labels = domain.split(".")
+    if len(labels) < 2 or any(not _HOST_LABEL.fullmatch(label) for label in labels):
+        raise ValueError("domain must be a public hostname")
+    return domain
+
+
+def _normalized_result_url(url: str) -> str:
+    try:
+        parsed = urlsplit(url.strip())
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").encode("idna").decode("ascii").lower()
+        if scheme not in {"http", "https"} or not host:
+            raise ValueError
+        port = parsed.port
+        default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+        netloc = host if port is None or default_port else f"{host}:{port}"
+        return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
+    except (UnicodeError, ValueError):
+        return url.strip()

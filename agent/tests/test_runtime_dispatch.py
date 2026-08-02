@@ -45,6 +45,8 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
+    TextDelta,
+    TurnDone,
 )
 from llm_providers import (
     LLMClient,
@@ -471,6 +473,67 @@ def test_session_changed_is_published_without_turn_buffer() -> None:
         assert env.events == []
         assert env.origin == "openai"
         assert env.channel == "voice"
+        runtime.listeners.unregister(sub.id)
+
+    asyncio.run(scenario())
+
+
+def test_conversation_system_run_streams_events_before_terminal_agent_turn() -> None:
+    runtime = AgentRuntime(conversation_factory=lambda _sid: cast(Conversation, None))
+
+    async def scenario() -> None:
+        sub = Subscriber(
+            loop=asyncio.get_running_loop(),
+            accept_kinds=frozenset({"run_event", "agent_turn"}),
+        )
+        runtime.listeners.register(sub)
+        trigger = SystemTriggerEvent(
+            session_id="s1",
+            source_kind="social_auth_completed",
+            system_prompt_addendum="continue",
+            presentation="conversation",
+        )
+
+        runtime.listeners.fan_out_event(trigger, TextDelta(text="正在"), run_id="r1")
+        first = await asyncio.wait_for(sub.queue.get(), timeout=1)
+        assert first.kind == "run_event"
+        assert first.run_id == "r1"
+        assert first.events == [{"text": "正在", "type": "text_delta"}]
+
+        runtime.listeners.fan_out_event(
+            trigger,
+            TurnDone(stop_reason="end_turn", total_tool_calls=0),
+            run_id="r1",
+        )
+        second = await asyncio.wait_for(sub.queue.get(), timeout=1)
+        assert second.kind == "run_event"
+        assert second.events[0]["type"] == "done"
+
+        runtime.listeners.finish_run(trigger, run_id="r1", outcome="completed")
+        terminal = await asyncio.wait_for(sub.queue.get(), timeout=1)
+        assert terminal.kind == "agent_turn"
+        assert [event["type"] for event in terminal.events] == ["text_delta", "done"]
+        runtime.listeners.unregister(sub.id)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("presentation", ["ambient", "none"])
+def test_non_conversation_system_run_does_not_publish_run_event(presentation: str) -> None:
+    runtime = AgentRuntime(conversation_factory=lambda _sid: cast(Conversation, None))
+
+    async def scenario() -> None:
+        sub = Subscriber(loop=asyncio.get_running_loop(), accept_kinds=frozenset({"run_event"}))
+        runtime.listeners.register(sub)
+        trigger = SystemTriggerEvent(
+            session_id="s1",
+            source_kind="social_auth_completed",
+            system_prompt_addendum="continue",
+            presentation=cast(Any, presentation),
+        )
+        runtime.listeners.fan_out_event(trigger, TextDelta(text="hidden"), run_id="r1")
+        await asyncio.sleep(0)
+        assert sub.queue.empty()
         runtime.listeners.unregister(sub.id)
 
     asyncio.run(scenario())

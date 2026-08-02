@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import { projectSessionEvents } from "./sessionProjection";
 import type { SessionEvent } from "@/types/meta";
 
-function ev(type: string, payload?: Record<string, unknown>): SessionEvent {
-  return { type, uuid: `${type}-${Math.random()}`, ts: "2026-06-10T00:00:00Z", payload };
+function ev(
+  type: string,
+  payload?: Record<string, unknown>,
+  meta?: Record<string, unknown>,
+): SessionEvent {
+  return { type, uuid: `${type}-${Math.random()}`, ts: "2026-06-10T00:00:00Z", payload, meta };
 }
 
 describe("projectSessionEvents", () => {
@@ -353,6 +357,36 @@ describe("projectSessionEvents", () => {
     expect(out).toHaveLength(2);
     expect(out[1].blocks).toEqual([
       expect.objectContaining({ kind: "text", text: "可以直接问 HR。" }),
+    ]);
+  });
+
+  it("IM 授权 continuation 的整个 run 都不泄漏到桌面对话", () => {
+    const hiddenMeta = { run_id: "social-auth-run" };
+    const out = projectSessionEvents([
+      ev("user_message", { content: "在 QQ 里读取这篇笔记" }),
+      ev("assistant_message", { content: "需要回电脑端授权。" }),
+      ev("system_trigger", {
+        source_kind: "social_auth_completed",
+        output_visibility: "user",
+        presentation: "none",
+      }, hiddenMeta),
+      ev("assistant_message", { content: "我重新搜索一下。" }, hiddenMeta),
+      ev("tool_call_request", {
+        tool_call_id: "search-after-auth",
+        tool_name: "social_search",
+        args: { platform: "xiaohongshu", query: "关键词" },
+      }, hiddenMeta),
+      ev("tool_call_result", {
+        tool_call_id: "search-after-auth",
+        content: "result",
+      }, hiddenMeta),
+      ev("assistant_message", { content: "这是最终结果。" }, hiddenMeta),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ role: "user" });
+    expect(out[1].blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "需要回电脑端授权。" }),
     ]);
   });
 

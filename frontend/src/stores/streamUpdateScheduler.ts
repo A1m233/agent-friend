@@ -8,8 +8,8 @@ interface StreamUpdateSchedulerOptions {
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
 }
 
-export interface StreamUpdateScheduler {
-  enqueue: (event: BaseEvent) => void;
+export interface StreamUpdateScheduler<TEvent = BaseEvent> {
+  enqueue: (event: TEvent) => void;
   flush: () => void;
   dispose: () => void;
 }
@@ -22,15 +22,15 @@ export interface StreamUpdateScheduler {
  * the growing answer. This scheduler keeps the stream responsive while capping
  * UI update frequency to a predictable cadence.
  */
-export function createStreamUpdateScheduler(
-  onFlush: (events: BaseEvent[]) => void,
+export function createStreamUpdateScheduler<TEvent = BaseEvent>(
+  onFlush: (events: TEvent[]) => void,
   options: StreamUpdateSchedulerOptions = {},
-): StreamUpdateScheduler {
+): StreamUpdateScheduler<TEvent> {
   const flushDelayMs = options.flushDelayMs ?? DEFAULT_STREAM_FLUSH_MS;
   const setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
   const clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
 
-  let pending: BaseEvent[] = [];
+  let pending: TEvent[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const clearScheduledFlush = () => {

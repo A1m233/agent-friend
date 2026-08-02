@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from ..tool import (
     SearchHit,
@@ -17,6 +18,7 @@ from ..tool import (
     WebSearchNetworkError,
     WebSearchProviderError,
     WebSearchRateLimitError,
+    WebSearchRequest,
 )
 
 
@@ -44,8 +46,7 @@ class TavilyProvider:
 
     def search(
         self,
-        query: str,
-        max_results: int,
+        request: WebSearchRequest,
         *,
         timeout_seconds: float,
     ) -> SearchResponse:
@@ -76,11 +77,16 @@ class TavilyProvider:
         session.hooks["response"].append(capture_response)
         try:
             client = TavilyClient(api_key=self._api_key, session=session)
-            resp = client.search(
-                query=query,
-                max_results=max_results,
-                timeout=timeout_seconds,
-            )
+            kwargs: dict[str, Any] = {
+                "query": request.query,
+                "max_results": request.max_results,
+                "timeout": timeout_seconds,
+            }
+            if request.include_domains:
+                kwargs["include_domains"] = list(request.include_domains)
+            if request.time_range is not None:
+                kwargs["time_range"] = request.time_range
+            resp = client.search(**kwargs)
         except (InvalidAPIKeyError, MissingAPIKeyError) as e:
             raise WebSearchAuthError(str(e)) from e
         except UsageLimitExceededError as e:
@@ -130,8 +136,13 @@ class TavilyProvider:
         finally:
             session.close()
 
+        hits = _to_search_hits(resp)
+        if request.include_domains:
+            hits = [
+                hit for hit in hits if _url_matches_any_domain(hit.url, request.include_domains)
+            ]
         return SearchResponse(
-            hits=_to_search_hits(resp),
+            hits=hits,
             request_id=(
                 _optional_string(resp.get("request_id") or resp.get("requestId"))
                 or _response_request_id(last_response)
@@ -176,6 +187,14 @@ def _optional_float(value: Any) -> float | None:
     return float(value) if isinstance(value, int | float) else None
 
 
+def _url_matches_any_domain(url: str, domains: tuple[str, ...]) -> bool:
+    try:
+        hostname = (urlsplit(url).hostname or "").encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError):
+        return False
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
+
+
 def _to_search_hits(resp: dict[str, Any]) -> list[SearchHit]:
     """把 Tavily 原生响应规范化为 :class:`SearchHit` 列表。
 
@@ -188,6 +207,8 @@ def _to_search_hits(resp: dict[str, Any]) -> list[SearchHit]:
             title=r.get("title", "") or "",
             url=r.get("url", "") or "",
             snippet=r.get("content", "") or "",
+            score=_optional_float(r.get("score")),
+            published_at=_optional_string(r.get("published_date") or r.get("published_at")),
         )
         for r in resp.get("results", [])
     ]

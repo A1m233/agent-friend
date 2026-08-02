@@ -45,6 +45,11 @@ class Tool(Protocol):
             遵循 OpenAI tool calling spec 中 ``function.parameters`` 的格式。
 
     Note:
+        Tool 实现不手写 namespace。注册时 :class:`ToolRegistry` 根据实现类相对于
+        ``agent.tools.builtin`` 的 package 路径自动生成一等 ``ToolId``，并把当前
+        registry 的可信 capability catalog 投影给模型；provider wire name 仍使用
+        ``name``，保持现有函数调用兼容。
+
         本期同步接口（不是 ``async``），与 0002 §3.4 选定的"同步优先"基调一致。
         未来若引入异步工具（如长任务、流式日志输出），通过新增可选方法
         ``async_invoke`` 扩展，**不破坏现有同步实现**。

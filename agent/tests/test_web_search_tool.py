@@ -20,6 +20,7 @@ from agent.tools.builtin.web_search import (
     WebSearchNetworkError,
     WebSearchProviderError,
     WebSearchRateLimitError,
+    WebSearchRequest,
     WebSearchRetryPolicy,
     WebSearchTool,
 )
@@ -45,16 +46,15 @@ class _StubProvider:
         self._raises = raises
         self._outcomes = list(outcomes or [])
         self._clock = clock
-        self.calls: list[tuple[str, int, float]] = []
+        self.calls: list[tuple[WebSearchRequest, float]] = []
 
     def search(
         self,
-        query: str,
-        max_results: int,
+        request: WebSearchRequest,
         *,
         timeout_seconds: float,
     ) -> SearchResponse:
-        self.calls.append((query, max_results, timeout_seconds))
+        self.calls.append((request, timeout_seconds))
         if self._clock is not None:
             self._clock.advance(min(1.0, timeout_seconds))
         if self._outcomes:
@@ -107,7 +107,7 @@ def test_happy_path_returns_formatted_text() -> None:
     assert payload["results"][1]["title"] == "标题 B"
     assert "请基于以上信息用自己的话回答用户" not in result.text
     # provider 收到正确的参数
-    assert provider.calls == [("今天的新闻", 5, 12.0)]
+    assert provider.calls == [(WebSearchRequest(query="今天的新闻", max_results=5), 12.0)]
     # meta 字段齐全
     assert result.meta is not None
     assert result.meta["result_count"] == 2
@@ -183,7 +183,7 @@ def test_max_results_passed_through() -> None:
 
     tool.invoke({"query": "y"})
 
-    assert provider.calls == [("y", 3, 12.0)]
+    assert provider.calls == [(WebSearchRequest(query="y", max_results=3), 12.0)]
 
 
 def test_third_party_prompt_like_text_is_json_encoded_as_data() -> None:
@@ -285,12 +285,11 @@ def test_attempt_timeout_is_trimmed_by_remaining_deadline() -> None:
     class _TimeoutProvider(_StubProvider):
         def search(
             self,
-            query: str,
-            max_results: int,
+            request: WebSearchRequest,
             *,
             timeout_seconds: float,
         ) -> SearchResponse:
-            self.calls.append((query, max_results, timeout_seconds))
+            self.calls.append((request, timeout_seconds))
             assert self._clock is not None
             self._clock.advance(timeout_seconds)
             raise WebSearchNetworkError("timeout")
@@ -307,6 +306,92 @@ def test_attempt_timeout_is_trimmed_by_remaining_deadline() -> None:
     result = tool.invoke({"query": "x"})
 
     assert result.is_error is True
-    assert [call[2] for call in provider.calls] == [12.0, 12.0, 4.0]
+    assert [call[1] for call in provider.calls] == [12.0, 12.0, 4.0]
     assert result.meta is not None
     assert result.meta["attempt_count"] == 3
+
+
+def test_structured_filters_and_alternate_queries_are_bounded_and_deduplicated() -> None:
+    provider = _StubProvider(
+        outcomes=[
+            SearchResponse(hits=[SearchHit("A", "https://Example.test/a#fragment", "one")]),
+            SearchResponse(
+                hits=[
+                    SearchHit("A duplicate", "https://example.test/a", "duplicate"),
+                    SearchHit("B", "https://example.test/b", "two"),
+                ]
+            ),
+        ]
+    )
+    tool = WebSearchTool(provider=provider, retry_policy=NO_RETRY)
+
+    result = tool.invoke(
+        {
+            "query": "primary",
+            "alternate_queries": ["alternate", "PRIMARY"],
+            "include_domains": ["XIAOHONGSHU.COM", "xiaohongshu.com"],
+            "time_range": "month",
+        }
+    )
+
+    assert result.is_error is False
+    payload = json.loads(result.text)
+    assert payload["queries"] == ["primary", "alternate"]
+    assert [item["title"] for item in payload["results"]] == ["A", "B"]
+    assert [call[0] for call in provider.calls] == [
+        WebSearchRequest(
+            query="primary",
+            max_results=5,
+            include_domains=("xiaohongshu.com",),
+            time_range="month",
+        ),
+        WebSearchRequest(
+            query="alternate",
+            max_results=5,
+            include_domains=("xiaohongshu.com",),
+            time_range="month",
+        ),
+    ]
+    assert result.meta["query_count"] == 2
+    assert result.meta["requested_query_count"] == 2
+
+
+def test_invalid_domain_is_rejected_before_provider_call() -> None:
+    provider = _StubProvider()
+
+    result = WebSearchTool(provider=provider).invoke(
+        {"query": "x", "include_domains": ["https://example.com/path"]}
+    )
+
+    assert result.is_error is True
+    assert result.meta["error_kind"] == "input"
+    assert provider.calls == []
+
+
+def test_alternate_queries_share_the_original_deadline() -> None:
+    clock = _FakeClock()
+    provider = _StubProvider(
+        outcomes=[
+            SearchResponse(hits=[SearchHit("A", "https://example.test/a", "one")]),
+            SearchResponse(hits=[SearchHit("B", "https://example.test/b", "two")]),
+        ],
+        clock=clock,
+    )
+    tool = WebSearchTool(
+        provider,
+        retry_policy=WebSearchRetryPolicy(
+            max_attempts=1,
+            deadline_seconds=1.5,
+            attempt_timeout_seconds=1.0,
+            minimum_attempt_seconds=1.0,
+        ),
+        _clock=clock,
+        _sleep=clock.sleep,
+    )
+
+    result = tool.invoke({"query": "one", "alternate_queries": ["two"]})
+
+    assert result.is_error is False
+    assert len(provider.calls) == 1
+    assert result.meta["query_count"] == 1
+    assert result.meta["requested_query_count"] == 2

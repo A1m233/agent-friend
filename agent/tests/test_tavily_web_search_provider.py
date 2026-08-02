@@ -9,6 +9,7 @@ import requests
 from agent.tools.builtin.web_search import (
     WebSearchProviderError,
     WebSearchRateLimitError,
+    WebSearchRequest,
 )
 from agent.tools.builtin.web_search.providers.tavily import TavilyProvider
 from tavily import TavilyClient
@@ -41,16 +42,42 @@ def test_success_forwards_timeout_and_preserves_diagnostics(
         return {
             "request_id": "body-request",
             "response_time": 0.25,
-            "results": [{"title": "A", "url": "https://example.test/", "content": "snippet"}],
+            "results": [
+                {
+                    "title": "A",
+                    "url": "https://www.xiaohongshu.com/explore/example",
+                    "content": "snippet",
+                },
+                {
+                    "title": "out-of-domain",
+                    "url": "https://example.test/",
+                    "content": "must be filtered",
+                },
+            ],
         }
 
     monkeypatch.setattr(TavilyClient, "search", fake_search)
 
-    result = TavilyProvider("test-key").search("query", 5, timeout_seconds=7.5)
+    result = TavilyProvider("test-key").search(
+        WebSearchRequest(
+            query="query",
+            max_results=5,
+            include_domains=("xiaohongshu.com",),
+            time_range="month",
+        ),
+        timeout_seconds=7.5,
+    )
 
-    assert captured == {"query": "query", "max_results": 5, "timeout": 7.5}
+    assert captured == {
+        "query": "query",
+        "max_results": 5,
+        "timeout": 7.5,
+        "include_domains": ["xiaohongshu.com"],
+        "time_range": "month",
+    }
     assert result.request_id == "body-request"
     assert result.provider_duration_seconds == 0.25
+    assert len(result.hits) == 1
     assert result.hits[0].title == "A"
 
 
@@ -69,7 +96,9 @@ def test_rate_limit_preserves_retry_after_and_request_id(
     monkeypatch.setattr(TavilyClient, "search", fake_search)
 
     with pytest.raises(WebSearchRateLimitError) as caught:
-        TavilyProvider("test-key").search("query", 5, timeout_seconds=7.5)
+        TavilyProvider("test-key").search(
+            WebSearchRequest(query="query", max_results=5), timeout_seconds=7.5
+        )
 
     assert caught.value.retry_after_seconds == 2.5
     assert caught.value.request_id == "rate-request"
@@ -89,7 +118,9 @@ def test_http_503_is_structured_as_retryable_provider_error(
     monkeypatch.setattr(TavilyClient, "search", fake_search)
 
     with pytest.raises(WebSearchProviderError) as caught:
-        TavilyProvider("test-key").search("query", 5, timeout_seconds=7.5)
+        TavilyProvider("test-key").search(
+            WebSearchRequest(query="query", max_results=5), timeout_seconds=7.5
+        )
 
     assert caught.value.status_code == 503
     assert caught.value.request_id == "unavailable-request"

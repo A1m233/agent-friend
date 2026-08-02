@@ -22,12 +22,24 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from agent.latency import RunLatencyContext, monotonic_ms
+from agent.system_prompt import IM_QQ_SURFACE
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.nearby_place_search import (
     AnchorCandidate,
     NearbyPlace,
     NearbyPlaceSearchTool,
     PlaceSort,
+)
+from agent.tools.builtin.social_platforms import (
+    SocialContentType,
+    SocialEvidence,
+    SocialPlatform,
+    SocialPlatformService,
+    SocialReadResponse,
+    SocialReadTool,
+    SocialResolvedUrl,
+    SocialSearchRequest,
+    SocialSearchResponse,
 )
 from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
 from litellm.exceptions import Timeout as LiteLLMTimeout
@@ -113,6 +125,95 @@ class SpyRecallTool:
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         self.seen_args.append(dict(args))
         return ToolResult(text="找到一些旧聊天。")
+
+
+class SpySocialSearchTool:
+    """记录 social_search 的真实入参，验证 session id 只在执行期注入。"""
+
+    name: ClassVar[str] = "social_search"
+    description: ClassVar[str] = "搜索平台内容。"
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "platform": {"type": "string"},
+            "query": {"type": "string"},
+        },
+        "required": ["platform", "query"],
+    }
+
+    def __init__(self) -> None:
+        self.seen_args: list[dict[str, Any]] = []
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        self.seen_args.append(dict(args))
+        return ToolResult(text='{"status":"no_results"}')
+
+
+@dataclass(frozen=True)
+class _DirectBilibiliLocator:
+    platform: SocialPlatform = "bilibili"
+    content_type: SocialContentType = "article"
+    opus_id: int = 1201845223737524246
+
+
+class _DirectBilibiliConnector:
+    platform: ClassVar[SocialPlatform] = "bilibili"
+    name: ClassVar[str] = "direct-bilibili-fixture"
+    version: ClassVar[str] = "1"
+    canonical_url: ClassVar[str] = "https://www.bilibili.com/opus/1201845223737524246"
+
+    def __init__(self) -> None:
+        self.read_calls = 0
+
+    def search(self, request: SocialSearchRequest) -> SocialSearchResponse:
+        del request
+        raise AssertionError("direct URL must not fall back to broad platform search")
+
+    def resolve_url(self, url: str) -> SocialResolvedUrl | None:
+        if url.split("?", 1)[0].rstrip("/") != self.canonical_url:
+            return None
+        return SocialResolvedUrl(
+            platform=self.platform,
+            content_type="article",
+            canonical_url=self.canonical_url,
+            locator=_DirectBilibiliLocator(),
+        )
+
+    def read(self, locator: object) -> SocialReadResponse:
+        assert locator == _DirectBilibiliLocator()
+        self.read_calls += 1
+        return SocialReadResponse(
+            title="受控 Opus",
+            author="fixture-author",
+            canonical_url=self.canonical_url,
+            evidence=(SocialEvidence(kind="article_body", text="受控 Opus 正文"),),
+        )
+
+    def close(self) -> None:
+        pass
+
+
+class SpySocialAuthRequestTool:
+    """记录授权请求的可信 origin 注入，不执行任何登录动作。"""
+
+    name: ClassVar[str] = "request_social_auth"
+    description: ClassVar[str] = "创建等待电脑端确认的登录请求。"
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "platform": {"type": "string"},
+            "missing_capabilities": {"type": "array", "items": {"type": "string"}},
+            "reason": {"type": "string"},
+        },
+        "required": ["platform", "missing_capabilities", "reason"],
+    }
+
+    def __init__(self) -> None:
+        self.seen_args: list[dict[str, Any]] = []
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        self.seen_args.append(dict(args))
+        return ToolResult(text='{"status":"pending_user_authorization"}')
 
 
 class SwitchModelTool:
@@ -837,6 +938,185 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
 
     request_event = next(ev for ev in conv.session.events if ev.type == "tool_call_request")
     assert request_event.payload["args"] == {"limit": 10}
+
+
+def test_social_tool_receives_hidden_session_without_persisting_it(tmp_path: Path) -> None:
+    social = SpySocialSearchTool()
+    registry = ToolRegistry([social])
+    public_args = {"platform": "xiaohongshu", "query": "关键词"}
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-social",
+                    tool_name="social_search",
+                    args_json_delta=json.dumps(public_args),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="没有找到。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, registry=registry)
+
+    list(conv.stream("去小红书搜一下"))
+
+    assert social.seen_args == [
+        {**public_args, "__agent_friend_current_session_id": conv.session.session_id}
+    ]
+    request_event = next(ev for ev in conv.session.events if ev.type == "tool_call_request")
+    assert request_event.payload["args"] == public_args
+
+
+def test_bilibili_opus_direct_url_uses_current_turn_authorization(tmp_path: Path) -> None:
+    connector = _DirectBilibiliConnector()
+    service = SocialPlatformService((connector,))
+    public_url = connector.canonical_url
+    provided_url = f"{public_url}?spm_id_from=333.1369.0.0"
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-opus",
+                    tool_name="social_read",
+                    args_json_delta=json.dumps({"url": public_url}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="已根据 Opus 正文完成回答。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([SocialReadTool(service)]),
+    )
+
+    events = list(conv.stream(f"{provided_url}，来学习其中一只鬼的知识吧"))
+
+    assert connector.read_calls == 1
+    request = next(event for event in events if isinstance(event, ToolCallRequest))
+    assert request.tool_name == "social_read"
+    assert request.args == {"url": public_url}
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert not result.is_error
+    payload = json.loads(result.text)
+    assert payload["status"] == "ok"
+    assert payload["url"] == public_url
+    persisted_request = next(
+        event for event in conv.session.events if event.type == "tool_call_request"
+    )
+    assert persisted_request.payload["args"] == {"url": public_url}
+    assert all(
+        event.tool_name not in {"web_fetch", "social_search"}
+        for event in events
+        if isinstance(event, ToolCallRequest)
+    )
+    service.close()
+
+
+def test_social_auth_request_receives_frozen_im_origin_and_continuation_replans(
+    tmp_path: Path,
+) -> None:
+    auth = SpySocialAuthRequestTool()
+    social = SpySocialSearchTool()
+    public_auth_args = {
+        "platform": "xiaohongshu",
+        "missing_capabilities": ["note_body"],
+        "reason": "需要笔记正文才能回答",
+    }
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-auth",
+                    tool_name="request_social_auth",
+                    args_json_delta=json.dumps(public_auth_args, ensure_ascii=False),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="请到电脑端完成登录。"), LLMTurnDone(stop_reason="end_turn")],
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-search-after-auth",
+                    tool_name="social_search",
+                    args_json_delta=json.dumps(
+                        {"platform": "xiaohongshu", "query": "关键词"},
+                        ensure_ascii=False,
+                    ),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="登录后已完成原目标。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([auth, social]),
+    )
+    destination = "qq|bind|c2c|chat|im:qq:chat"
+
+    list(
+        conv.stream(
+            "读取这篇小红书正文",
+            surface=IM_QQ_SURFACE,
+            interaction_destination_id=destination,
+            run_id="initial-run",
+        )
+    )
+    continuation_events = list(
+        conv.continue_after_external_action(
+            source_kind="social_auth_completed",
+            system_prompt_addendum="本地登录已完成，请重新规划。",
+            presentation="none",
+            surface=IM_QQ_SURFACE,
+            interaction_destination_id=destination,
+            run_id="continuation-run",
+        )
+    )
+
+    assert auth.seen_args == [
+        {
+            **public_auth_args,
+            "__agent_friend_current_session_id": conv.session.session_id,
+            "__agent_friend_interaction_surface": "im:qq",
+            "__agent_friend_interaction_destination_id": destination,
+        }
+    ]
+    auth_request_event = next(
+        event
+        for event in conv.session.events
+        if event.type == "tool_call_request" and event.payload["tool_name"] == "request_social_auth"
+    )
+    assert auth_request_event.payload["args"] == public_auth_args
+    assert social.seen_args == [
+        {
+            "platform": "xiaohongshu",
+            "query": "关键词",
+            "__agent_friend_current_session_id": conv.session.session_id,
+        }
+    ]
+    assert [event.type for event in conv.session.events].count("user_message") == 1
+    system_trigger = next(
+        event
+        for event in conv.session.events
+        if event.type == "system_trigger"
+        and event.payload["source_kind"] == "social_auth_completed"
+    )
+    assert system_trigger.payload["presentation"] == "none"
+    assert system_trigger.meta["run_id"] == "continuation-run"
+    assert any(
+        isinstance(event, TextDelta) and event.text == "登录后已完成原目标。"
+        for event in continuation_events
+    )
+    assert any(
+        message.get("content") == "本地登录已完成，请重新规划。" for message in fake.received[2]
+    )
 
 
 def test_model_routes_history_query_with_semantic_structured_arguments(tmp_path: Path) -> None:

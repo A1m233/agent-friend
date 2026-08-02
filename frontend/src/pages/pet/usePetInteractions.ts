@@ -94,13 +94,32 @@ export function usePetInteractions(
 
   const triggerTapFeedback = useCallback((): "played" | "skipped_by_phase" => {
       const phase = usePetStateStore.getState().phase;
-      if (phase === "speaking") return "skipped_by_phase"; // speaking 抢镜
-      tap.fire();
-      void spriteRef.current?.startMotion({
-        group: PET_LIVE2D_CONFIG.motionGroups.tap ?? "Idle",
-        no: PET_LIVE2D_CONFIG.motionNo.tap ?? 0,
-        priority: Priority.Normal,
+      console.info("[pet][breadcrumb] tap-feedback-requested", {
+        phase,
+        spriteReady: Boolean(spriteRef.current),
       });
+      if (phase === "speaking") {
+        console.info("[pet][breadcrumb] tap-feedback-skipped", { reason: "speaking" });
+        return "skipped_by_phase"; // speaking 抢镜
+      }
+      tap.fire();
+      const sprite = spriteRef.current;
+      if (!sprite) {
+        console.info("[pet][breadcrumb] tap-motion-skipped", { reason: "sprite-unavailable" });
+        return "played";
+      }
+      try {
+        void sprite
+          .startMotion({
+            group: PET_LIVE2D_CONFIG.motionGroups.tap ?? "Idle",
+            no: PET_LIVE2D_CONFIG.motionNo.tap ?? 0,
+            priority: Priority.Normal,
+          })
+          .then(() => console.info("[pet][breadcrumb] tap-motion-completed"))
+          .catch((error) => console.warn("[pet][breadcrumb] tap-motion-failed", error));
+      } catch (error) {
+        console.warn("[pet][breadcrumb] tap-motion-threw", error);
+      }
       return "played";
     },
     [spriteRef, tap],
@@ -115,6 +134,7 @@ export function usePetInteractions(
 
   const onSlotClick = useCallback(
     (_e: PIXI.FederatedPointerEvent) => {
+      console.info("[pet][breadcrumb] slot-click-classified");
       triggerTapFeedback();
     },
     [triggerTapFeedback],

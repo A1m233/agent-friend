@@ -1,8 +1,7 @@
 // 015 · push channel SSE subscriber（Rust 侧）。
 //
-// 持有 `agent_bridge` `/push/subscribe?kinds=agent_turn` 的长 SSE 连接，把解码后的
-// envelope 通过 `tauri::Emitter::emit_to("bubble", "agent://push", env)` 透传到 bubble
-// webview；user_turn 在服务端按 `kinds` 参数已过滤掉，本期 pet 窗只接 agent_turn。
+// 持有 `agent_bridge` `/push/subscribe` 的长 SSE 连接：完整 agent_turn 透传给
+// bubble/pet，session/run 变化与桌面对话 run_event 增量只透传给 chat。
 //
 // 详见 015 design §3 / §4。
 //
@@ -30,6 +29,12 @@ pub struct PushEnvelope {
     #[serde(default)]
     pub presentation: Option<String>,
     pub events: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub outcome: Option<String>,
+    #[serde(default)]
+    pub reason_code: String,
     #[serde(default)]
     pub revision: Option<u64>,
     #[serde(default)]
@@ -105,7 +110,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,session_changed,run_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -169,6 +174,11 @@ async fn run_connection(
                 Some(env) if env.kind == "run_changed" => {
                     if let Err(e) = app.emit_to("chat", "session://run-changed", env) {
                         log::warn!("emit_to(chat, run changed) failed: {e}");
+                    }
+                }
+                Some(env) if env.kind == "run_event" => {
+                    if let Err(e) = app.emit_to("chat", "session://run-event", env) {
+                        log::warn!("emit_to(chat, run event) failed: {e}");
                     }
                 }
                 Some(env) => {
@@ -359,6 +369,9 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             source_kind: Some("idle_reflection".into()),
             presentation: Some("ambient".into()),
             events: vec![serde_json::json!({"type": "memory_observation"})],
+            run_id: Some("r1".into()),
+            outcome: Some("completed".into()),
+            reason_code: String::new(),
             revision: None,
             change_kind: None,
             origin: None,
@@ -372,6 +385,8 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(parsed.seq, original.seq);
         assert_eq!(parsed.source_kind, original.source_kind);
         assert_eq!(parsed.presentation, original.presentation);
+        assert_eq!(parsed.run_id, original.run_id);
+        assert_eq!(parsed.outcome, original.outcome);
         assert_eq!(parsed.events.len(), 1);
     }
 
@@ -394,6 +409,16 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(run.run_id, "r1");
         assert_eq!(run.status, "running");
         assert_eq!(run.version, 2);
+    }
+
+    #[test]
+    fn parse_run_event_envelope() {
+        let frame = br#"data: {"kind":"run_event","session_id":"s1","seq":6,"source_kind":"social_auth_completed","presentation":"conversation","events":[{"type":"text_delta","text":"streaming"}],"run_id":"r1"}"#;
+        let env = parse_envelope_frame(frame).unwrap();
+        assert_eq!(env.kind, "run_event");
+        assert_eq!(env.run_id.as_deref(), Some("r1"));
+        assert_eq!(env.presentation.as_deref(), Some("conversation"));
+        assert_eq!(env.events.len(), 1);
     }
 
     #[test]
