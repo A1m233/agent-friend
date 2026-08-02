@@ -19,6 +19,7 @@ import {
 import { openSettings } from "@/lib/settings/navigation";
 import { useModelCatalogStore } from "@/lib/model-config";
 import { useConversationStore } from "@/stores/conversation";
+import { cn } from "@/utils/cn";
 
 interface ConversationModelSelectorProps {
   selectedModel: string;
@@ -47,17 +48,17 @@ export function ConversationModelSelector({
   const unavailable = disabled || !catalog || modelSwitching || streaming || historyLoading || Boolean(editingMessageId);
   const reason = modelSwitching
     ? `正在切换到 ${modelSwitchTarget ?? "目标模型"}`
-    : streaming
-      ? "请等待当前回复完成"
-      : historyLoading
-        ? "正在加载会话历史"
-        : editingMessageId
-          ? "请先完成或取消编辑"
-    : !catalog
-      ? "模型列表尚未就绪"
-      : disabled
-        ? disabledReason
-        : undefined;
+    : disabled
+      ? disabledReason ?? "暂时不可用"
+      : streaming
+        ? "请等待当前回复完成"
+        : historyLoading
+          ? "正在加载会话历史"
+          : editingMessageId
+            ? "请先完成或取消编辑"
+            : !catalog
+              ? "模型列表尚未就绪"
+              : undefined;
 
   const handleSelect = async (modelId: string) => {
     if (modelId === selectedModel || modelSwitching) return;
@@ -88,7 +89,7 @@ export function ConversationModelSelector({
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="inline-flex min-w-0">
+            <span className={cn("inline-flex min-w-0", unavailable && "cursor-not-allowed")}>
               <DropdownMenuTrigger asChild>
                 <Button
                   type="button"
