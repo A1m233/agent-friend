@@ -126,6 +126,7 @@ _IMAGE_EVIDENCE_TURN_CONTEXT = """<image_evidence_boundary>
 证据按原有范围和方向使用：单个样本不代表整体，来源未知不能反向确认来源，结果不能证明原因、机制或动机。只保留证据完整支持的部分，不用“大概率”“可能”保留无依据内容。问题确实需要图片外的来源、身份、系列情况、传播范围、时间背景或因果关系时，先用可用的搜索工具查证；没有直接结果就停在图片能确认和不能确认的边界。只有用户明确要求提出假设时，才给少量假设并就地标明依据和不确定性。
 </image_evidence_boundary>"""
 
+
 def _compose_turn_context(
     turn_context: str | None,
     attachments: list[AttachmentRef],
