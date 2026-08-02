@@ -8,6 +8,7 @@ export * from "./carousel";
 export * from "./checkbox";
 export * from "./collapsible";
 export * from "./confirm-dialog";
+export * from "./context-menu";
 export * from "./dialog";
 export * from "./dropdown-menu";
 export * from "./status-dot";

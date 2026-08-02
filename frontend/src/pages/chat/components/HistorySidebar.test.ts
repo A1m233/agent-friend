@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveOpenSessionActionMenu,
   sessionRunIndicator,
   shouldClearSessionActionFocusOnOpen,
   shouldResetMissingCurrentSession,
@@ -95,6 +96,22 @@ describe("HistorySidebar run indicator", () => {
     expect(sessionRunIndicator(undefined, "completed")).toBe("completed");
     expect(sessionRunIndicator(undefined, "failed")).toBe("failed");
     expect(sessionRunIndicator(undefined, undefined)).toBeNull();
+  });
+});
+
+describe("HistorySidebar session action menu", () => {
+  it("keeps only the most recently opened menu surface", () => {
+    const dropdown = resolveOpenSessionActionMenu(null, "session-1", "dropdown", true);
+    const context = resolveOpenSessionActionMenu(dropdown, "session-2", "context", true);
+
+    expect(context).toEqual({ sessionId: "session-2", surface: "context" });
+  });
+
+  it("ignores a stale close event from another surface", () => {
+    const context = { sessionId: "session-1", surface: "context" } as const;
+
+    expect(resolveOpenSessionActionMenu(context, "session-1", "dropdown", false)).toBe(context);
+    expect(resolveOpenSessionActionMenu(context, "session-1", "context", false)).toBeNull();
   });
 });
 
