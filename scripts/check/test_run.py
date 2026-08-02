@@ -30,3 +30,17 @@ def test_codex_can_run_each_bounded_stage() -> None:
 
 def test_codex_full_gate_requires_explicit_override() -> None:
     assert resolve_stages("all", is_codex=True, allow_long_running=True) == STAGES
+
+
+def test_frontend_stage_fails_closed_without_dependencies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        MODULE._run_frontend()
+
+    assert exc_info.value.code == 2
+    assert "frontend dependencies are not installed" in capsys.readouterr().err
