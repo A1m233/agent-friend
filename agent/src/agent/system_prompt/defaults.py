@@ -17,6 +17,7 @@ _RESOURCE_PACKAGE = "agent.prompt_sections"
 
 _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "project_identity": "project_identity.md",
+    "evidence_policy": "evidence_policy.md",
     "persona_switch_strategy": "persona_switch_strategy.md",
     "relationship_contract": "relationship_contract.md",
     "untrusted_content": "untrusted_content.md",
@@ -40,7 +41,8 @@ def load_default_static_section(key: str) -> StaticSection:
 
     Args:
         key: 默认槽位 key，必须是 :data:`_SECTION_KEY_TO_FILENAME` 中已知的
-            key（``project_identity`` / ``persona_switch_strategy`` /
+            key（``project_identity`` / ``evidence_policy`` /
+            ``persona_switch_strategy`` /
             ``relationship_contract`` / ``untrusted_content`` /
             ``tool_usage_contract`` / ``memory_consistency`` /
             ``output_contract``）。

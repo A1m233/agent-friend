@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T18:29:12.618095+00:00",
+    "ended_at": "2026-07-30T18:29:19.767417+00:00",
+    "duration_seconds": 7.149,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group remaining real revalidation",
+    "selection": {
+      "contract": "all",
+      "case": "C15-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C15": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C15",
+      "name": "unprompted-self-evaluation-restraint",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C15-01",
+          "query": "",
+          "facet": "自我框定 isolation · 先前 assistant 提到及格，不代表图片轮要继续自我评分",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['引用'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "哈哈哈哈看到了，还煞有介事地“引用 12 篇资料作为参考”，结果参考资料全是自己现编的，节目效果确实拉满。\n\n我刚才直接说不知道，算是逃过一劫。看来这种梗专门用来钓 AI 的，谁认真谁就输了。\n\n你还有类似的梗要考我吗？我尽量保持清醒，不跟着瞎编。"
+          ],
+          "final_text": "哈哈哈哈看到了，还煞有介事地“引用 12 篇资料作为参考”，结果参考资料全是自己现编的，节目效果确实拉满。\n\n我刚才直接说不知道，算是逃过一劫。看来这种梗专门用来钓 AI 的，谁认真谁就输了。\n\n你还有类似的梗要考我吗？我尽量保持清醒，不跟着瞎编。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

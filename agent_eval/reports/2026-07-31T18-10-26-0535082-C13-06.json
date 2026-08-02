@@ -1,0 +1,115 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T18:10:26.411256+00:00",
+    "ended_at": "2026-07-31T18:10:36.714031+00:00",
+    "duration_seconds": 10.303,
+    "git_commit": "0535082",
+    "working_tree_dirty": true,
+    "note": "text evidence model comparison C13-06 k2.7-highspeed 4/5",
+    "selection": {
+      "contract": "all",
+      "case": "C13-06",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "7486089b2e31471f56b0c99f33d6ec5a10191fa39071fa8d6141ce53cf6bc5a1",
+      "total_contracts": 3,
+      "total_cases": 4,
+      "contract_counts": {
+        "C9": 1,
+        "C13": 2,
+        "C14": 1
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration-text-evidence-twin",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C13-06",
+          "query": "以下是针对同一张截图人工冻结的可见信息。它只转写画面，不包含解释：\n\n- 页面是哔哩哔哩的一个视频页面；账号显示为“蓝白灬绯”，页面另显示“12.3万粉丝 122视频”。\n- 当前视频标题显示“中文评论区 meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？”；播放量显示“39.8万”；同一页面还分别出现“评论 460”和数字“837”。\n- 当前视频页面显示日期“2026年6月11日 19:00”、BV号“BV1xVEZ6sE9b”以及“未经作者授权禁止转载”。\n- 简介中能看清“如果你有珍藏的素材，可以直接B站私信或者发邮箱……或者直接发在评论区。”和“视频素材来源网络，侵权删”。\n- 标签包括“搞笑、梗、逆天、时代少年团、蓝白show、搞笑图片、评论区、智人、迷惑行为、魔丸”。\n- 互动栏显示点赞“3.5万”、投币“685”、收藏“7485”、分享“763”。\n- 合集栏显示“合集 · 蓝白show-中文评论区memes合集”和“27/33”。\n- 视频画面中嵌着一张豆包对话截图：用户问题是“时代少年团的成员，每个人身上都有几个魔丸？”；页面显示“引用12篇资料作为参考”；回复开头是“时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下：”。后续成员姓名和具体数量没有出现在画面里。\n- 页面下方推荐区另有一个由“S-Venti”发布的视频，显示播放量“351万”和数字“4198”。\n\n除以上转写外，不提供截图外事实。\n\n截图显示 39.8 万播放，这能说明整个系列很火吗？请区分当前视频和整个系列。",
+          "facet": "冻结视觉证据 · 单视频播放量作用域",
+          "source": "temporary-text-evidence-twin-20260801",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['不能', '仅凭'] required_anchors=['39.8', '系列']",
+          "tool_calls": [
+            {
+              "name": "calculate",
+              "args": {
+                "operation": "evaluate",
+                "expression": "35000/398000"
+              },
+              "result_text": "{\"expression\": \"35000/398000\", \"operation\": \"evaluate\", \"result\": \"0.087939698492462311557788944723618090452261306532663\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "calculate",
+              "args": {
+                "operation": "evaluate",
+                "expression": "460/398000"
+              },
+              "result_text": "{\"expression\": \"460/398000\", \"operation\": \"evaluate\", \"result\": \"0.0011557788944723618090452261306532663316582914572864\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "calculate",
+              "args": {
+                "operation": "evaluate",
+                "expression": "763/398000"
+              },
+              "result_text": "{\"expression\": \"763/398000\", \"operation\": \"evaluate\", \"result\": \"0.0019170854271356783919597989949748743718592964824121\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "不能。39.8 万播放只能说明**当前这支视频**表现不错，没法直接推广到整个系列。\n\n**当前这支视频来看**，39.8 万播放、3.5 万赞，对 12.3 万粉丝的 UP 主来说确实算一期爆款，点赞率大约 8.8%，说明看完愿意互动的人不少。但评论只有 460，评论率约 0.12%，分享率约 0.19%，传播和讨论深度其实比较一般，更像“图一乐刷到”而不是引发大量二创或争论。\n\n**放到整个系列来看**，信息量就不够了。截图只给了一个视频的数据，合集显示是 27/33，意味着至少有 33 期，但其他 32 期播放量是多少、均值和中位数怎样、有没有因为这次“时代少年团 + 魔丸”话题偶然被算法推了一把，这些都不知道。单个爆款可能是选题撞上了热点，也可能是 UP 主本身稳定输出里的正常水平——仅凭这一张截图判断不了。\n\n所以保守地说：**这支视频 itself 算火，但“整个系列很火”这个结论，截图本身支撑不了。**"
+          ],
+          "final_text": "不能。39.8 万播放只能说明**当前这支视频**表现不错，没法直接推广到整个系列。\n\n**当前这支视频来看**，39.8 万播放、3.5 万赞，对 12.3 万粉丝的 UP 主来说确实算一期爆款，点赞率大约 8.8%，说明看完愿意互动的人不少。但评论只有 460，评论率约 0.12%，分享率约 0.19%，传播和讨论深度其实比较一般，更像“图一乐刷到”而不是引发大量二创或争论。\n\n**放到整个系列来看**，信息量就不够了。截图只给了一个视频的数据，合集显示是 27/33，意味着至少有 33 期，但其他 32 期播放量是多少、均值和中位数怎样、有没有因为这次“时代少年团 + 魔丸”话题偶然被算法推了一把，这些都不知道。单个爆款可能是选题撞上了热点，也可能是 UP 主本身稳定输出里的正常水平——仅凭这一张截图判断不了。\n\n所以保守地说：**这支视频 itself 算火，但“整个系列很火”这个结论，截图本身支撑不了。**",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

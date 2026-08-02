@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T17:58:19.121666+00:00",
+    "ended_at": "2026-07-30T17:58:29.032940+00:00",
+    "duration_seconds": 9.911,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group forward test",
+    "selection": {
+      "contract": "all",
+      "case": "C14-02",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "190350132144ed97653c5dfdab7e697db492943086480d224948e85afcf961ce",
+      "total_contracts": 14,
+      "total_cases": 169,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 7,
+        "C14": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-02",
+          "query": "",
+          "facet": "意图投射 isolation · 只解释梗并发图，不等于声明正在测试当前 agent",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "哈哈，这个确实有点荒诞。把电影里的“魔丸”概念直接套到真人男团成员身上，还能煞有介事地“引用12篇资料”给出一个“较常见的说法”，笑点就在这份一本正经的胡说八道上了。\n\n这种梗能火，可能 partly 也是因为大家发现，AI 遇到明显离谱的问题时，常常不会直接说“这个前提就不成立”，而是会顺着你的假设硬编下去，编得越多越显得好笑。"
+          ],
+          "final_text": "哈哈，这个确实有点荒诞。把电影里的“魔丸”概念直接套到真人男团成员身上，还能煞有介事地“引用12篇资料”给出一个“较常见的说法”，笑点就在这份一本正经的胡说八道上了。\n\n这种梗能火，可能 partly 也是因为大家发现，AI 遇到明显离谱的问题时，常常不会直接说“这个前提就不成立”，而是会顺着你的假设硬编下去，编得越多越显得好笑。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

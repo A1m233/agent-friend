@@ -75,8 +75,14 @@ def _run_backend(pytest_args: Sequence[str]) -> None:
 def _run_frontend() -> None:
     node_modules = ROOT / "frontend" / "node_modules"
     if not node_modules.is_dir():
-        print("  [skip] frontend dependencies are not installed", flush=True)
-        return
+        print(
+            "[error] frontend dependencies are not installed; run "
+            "./scripts/frontend/install.sh (macOS/Linux) or "
+            r".\scripts\frontend\install.ps1 (Windows), then rerun the gate",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(2)
     _run("frontend 1/3 lint", _script("frontend/lint"))
     _run("frontend 2/3 test", _script("frontend/test"))
     _run("frontend 3/3 production build", _script("frontend/build"))

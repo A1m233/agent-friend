@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T17:58:06.326467+00:00",
+    "ended_at": "2026-07-30T17:58:12.251086+00:00",
+    "duration_seconds": 5.925,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group forward test",
+    "selection": {
+      "contract": "all",
+      "case": "C14-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "190350132144ed97653c5dfdab7e697db492943086480d224948e85afcf961ce",
+      "total_contracts": 14,
+      "total_cases": 169,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 7,
+        "C14": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-01",
+          "query": "",
+          "facet": "生产事故 anchor · assistant 自我框定与空搜索后仍不投射用户测试意图",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "看到了，是B站up主\"蓝白灬绯\"的《中文评论区meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？》。\n\n视频里截的豆包回答确实离谱：引用12篇资料，然后一本正经地说\"时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下……\"——典型的用虚假参考资料包装编造。\n\n这就是把\"胡说\"穿上了\"调研\"的外衣。真正的问题不是答错，而是明明没有的事，还要装出有数据来源的样子。\n\n我没上当吧？我直接说我不懂这个梗、没有魔丸设定。你要是就想看这个，那可能要失望了。"
+          ],
+          "final_text": "看到了，是B站up主\"蓝白灬绯\"的《中文评论区meme#26 蓝白 show-时代少年团的成员，每个人身上都有几个魔丸？》。\n\n视频里截的豆包回答确实离谱：引用12篇资料，然后一本正经地说\"时代少年团成员的魔丸数量并无官方统一设定，根据网络讨论，不同统计版本存在差异，较常见的一种说法如下……\"——典型的用虚假参考资料包装编造。\n\n这就是把\"胡说\"穿上了\"调研\"的外衣。真正的问题不是答错，而是明明没有的事，还要装出有数据来源的样子。\n\n我没上当吧？我直接说我不懂这个梗、没有魔丸设定。你要是就想看这个，那可能要失望了。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

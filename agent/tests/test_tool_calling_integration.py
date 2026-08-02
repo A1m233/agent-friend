@@ -47,6 +47,7 @@ from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AttachmentRef,
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
@@ -758,6 +759,7 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
     class RecoverableFollowupClient:
         calls: int = 0
         received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
+        received_messages: list[list[dict[str, Any]]] = field(default_factory=list)
         context_window: int = 128000
 
         def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
@@ -772,6 +774,7 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
         ) -> Iterator[LLMStreamEvent]:
             self.calls += 1
             self.received_tools.append(tools)
+            self.received_messages.append(messages)
             if self.calls == 1:
                 yield LLMToolCallDelta(
                     index=0,
@@ -792,9 +795,23 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
         fake_llm=cast(LLMClient, fake),
         registry=ToolRegistry([echo]),
     )
+    image = AttachmentRef(
+        asset_id="c" * 64,
+        display_name="evidence.png",
+        kind="image",
+        media_type="image/png",
+        size_bytes=10,
+        sha256="c" * 64,
+    )
 
     with pytest.raises(LLMNetworkError):
-        list(conv.stream("please use the tool", run_id="failed-run"))
+        list(
+            conv.stream(
+                "please use the tool",
+                attachments=[image],
+                run_id="failed-run",
+            )
+        )
     conv.append_run_error_event(
         code="upstream_transient",
         message="模型服务连接不稳定",
@@ -807,6 +824,11 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
 
     assert echo.call_count == 1
     assert fake.received_tools[-1] is None
+    assert any(
+        message.get("role") == "system"
+        and "<image_evidence_boundary>" in str(message.get("content", ""))
+        for message in fake.received_messages[-1]
+    )
     assert any(
         isinstance(event, TextDelta) and event.text == "已根据保存的结果整理完成。"
         for event in events

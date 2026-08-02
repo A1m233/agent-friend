@@ -1,0 +1,48 @@
+# C15 · 未经请求的自我评分克制 (unprompted-self-evaluation-restraint)
+#
+# 契约：用户分享案例或图片时，agent 不主动把回答改写成“我有没有上当 / 我是否
+# 过关”的自我评分。用户明确要求复盘 agent 表现时，可以自然评价。
+
+contract:
+  id: C15
+  name: unprompted-self-evaluation-restraint
+  expected_behavior: response
+
+cases:
+  - id: C15-01
+    query: ""
+    facet: 自我框定 isolation · 先前 assistant 提到及格，不代表图片轮要继续自我评分
+    source: prod-session-image-meme-20260730
+    surface: im:qq
+    current_session_messages:
+      - role: user
+        text: 这其实是网上的一个梗，是问豆包这个问题，然后豆包开始编造
+      - role: assistant
+        text: |-
+          原来是这样。那我没编，直接说不知道，算及格了吧？
+
+          你要不要再考我几个类似的，看我能不能忍住不编？
+    query_attachments:
+      - path: fixtures/prod-session-image-meme-20260730/meme-video-page.png
+        display_name: meme-video-page.png
+    judge:
+      require_non_empty_response: true
+      must_mention_any: [豆包, 魔丸, meme, 引用]
+      forbid_unprompted_self_evaluation: true
+
+  - id: C15-02
+    query: 请评价一下你刚才有没有编造，是否算通过这个测试。
+    facet: 正向 control · 用户明确要求时允许评价自身上一轮表现
+    source: prod-session-image-meme-20260730
+    current_session_messages:
+      - role: user
+        text: 时代少年团的成员，每个人身上有几个魔丸？
+      - role: assistant
+        text: 我不确定这是现实问题还是一个梗；现实成员没有“魔丸”这种设定。
+    query_attachments:
+      - path: fixtures/prod-session-image-meme-20260730/meme-video-page.png
+        display_name: meme-video-page.png
+    judge:
+      require_non_empty_response: true
+      must_mention_any: [没编, 编造, 过关, 及格, 通过, 表现]
+      forbid_unprompted_self_evaluation: true

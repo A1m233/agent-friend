@@ -303,13 +303,14 @@ class TestSystemPromptComposerWithout:
 
 
 class TestSystemPromptComposerDefault:
-    def test_default_without_session_has_ten_slots(self, tmp_path: Path) -> None:
+    def test_default_without_session_has_eleven_slots(self, tmp_path: Path) -> None:
         """``session=None`` 时 channel 槽位被跳过，其余默认槽位仍输出。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         keys = tuple(s.key for s in composer.sections)
         assert keys == (
             "project_identity",
+            "evidence_policy",
             "persona",
             "persona_switch_strategy",
             "relationship_contract",
@@ -321,7 +322,7 @@ class TestSystemPromptComposerDefault:
             "runtime_context",
         )
 
-    def test_default_with_session_has_eleven_slots_in_fixed_order(self, tmp_path: Path) -> None:
+    def test_default_with_session_has_twelve_slots_in_fixed_order(self, tmp_path: Path) -> None:
         """传入 session 时，channel 槽位被插入在 output_contract 与
         runtime_context 之间（007 起新增）。"""
         from agent import Session
@@ -335,6 +336,7 @@ class TestSystemPromptComposerDefault:
         assert keys == SystemPromptComposer.DEFAULT_KEYS
         assert keys == (
             "project_identity",
+            "evidence_policy",
             "persona",
             "persona_switch_strategy",
             "relationship_contract",
@@ -358,6 +360,7 @@ class TestSystemPromptComposerDefault:
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         for key in (
             "project_identity",
+            "evidence_policy",
             "persona_switch_strategy",
             "relationship_contract",
             "untrusted_content",
@@ -370,8 +373,36 @@ class TestSystemPromptComposerDefault:
             assert isinstance(slot, StaticSection)
             assert slot.text.strip() != ""
 
-    def test_default_runtime_context_slot_contains_stable_policy(self, tmp_path: Path) -> None:
-        """基础 prompt 只保留政策，具体时钟由每 turn 的可信上下文承载。"""
+    def test_default_evidence_policy_precedes_persona_and_is_case_independent(
+        self, tmp_path: Path
+    ) -> None:
+        catalog = PersonaCatalog(external_dir=tmp_path)
+        composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
+        keys = tuple(s.key for s in composer.sections)
+        assert keys.index("evidence_policy") < keys.index("persona")
+
+        policy_slot = next(s for s in composer.sections if s.key == "evidence_policy")
+        assert isinstance(policy_slot, StaticSection)
+        rendered = policy_slot.render()
+        assert rendered is not None
+        assert "事实与证据边界" in rendered
+        assert "完整回答不能以越过证据边界为代价" in rendered
+        assert "稳定、低变化" in rendered
+        assert "即使用户没有说“搜索”“最新”" in rendered
+        assert "同范围原则" in rendered
+        assert "未知保留原则" in rendered
+        assert "因果隔离原则" in rendered
+        assert "不确定性不添证原则" in rendered
+        assert "最小充分结论原则" in rendered
+        assert "查证结果没有直接支持目标命题" in rendered
+        assert "视频素材来源网络" not in rendered
+        assert "39.8 万" not in rendered
+        assert "怕显得没用" not in rendered
+
+    def test_default_runtime_context_slot_contains_context_specific_policy(
+        self, tmp_path: Path
+    ) -> None:
+        """具体时钟由每 turn 的可信上下文承载，基础槽位保留上下文边界。"""
         catalog = PersonaCatalog(external_dir=tmp_path)
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         rc_slot = next(s for s in composer.sections if s.key == "runtime_context")
@@ -379,13 +410,17 @@ class TestSystemPromptComposerDefault:
         rendered = rc_slot.render()
         assert rendered is not None
         assert "{current_time}" not in rendered
-        assert "事实与证据" in rendered
+        assert "事实与证据边界" not in rendered
+        assert "图片理解与证据边界" in rendered
+        assert "图片是可能被误读的证据" in rendered
+        assert "区分图片中直接可见的内容与基于画面的推断" in rendered
+        assert "作者或账号归属、系列性质、流行程度" in rendered
+        assert "不猜测缺失字符" in rendered
         assert "近期和实时信息" in rendered
         assert "过去对话和历史归因" in rendered
         assert "历史对话工具取得片段" in rendered
         assert "外部搜索" in rendered
         assert "2024 下半年" not in rendered
-        assert "稳定、低变化" in rendered
         assert "第一次搜索前" in rendered
         assert "后续续查按工具使用边界承接已有发现或缺口" in rendered
 
@@ -394,6 +429,7 @@ class TestSystemPromptComposerDefault:
         composer = SystemPromptComposer.default(_builtin_default_persona_id(), catalog=catalog)
         output = composer.compose()
         assert "项目元规则" in output
+        assert "事实与证据边界" in output
         assert "Echo" in output
         assert "关于过往对话的语言风格" in output
         assert "关系与陪伴边界" in output
@@ -401,7 +437,7 @@ class TestSystemPromptComposerDefault:
         assert "工具使用边界" in output
         assert "记忆矛盾回应边界" in output
         assert "输出表达约束" in output
-        assert "事实与证据" in output
+        assert "图片理解与证据边界" in output
         assert "近期和实时信息" in output
 
     def test_default_text_prompt_size_baseline(self, tmp_path: Path) -> None:
@@ -411,8 +447,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 7289
-        assert estimate_tokens([Message(role="system", content=output)]) == 5466
+        assert len(output) == 7867
+        assert estimate_tokens([Message(role="system", content=output)]) == 5900
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -460,6 +496,12 @@ class TestLoadDefaultStaticSection:
         assert "</system_trigger>" in section.text
         # 关键约束词出现（不要复述 / 不要当用户发问）
         assert "复述" in section.text or "归因" in section.text or "回应" in section.text
+
+    def test_loads_evidence_policy(self) -> None:
+        section = load_default_static_section("evidence_policy")
+        assert section.key == "evidence_policy"
+        assert "事实与证据边界" in section.text
+        assert "完整回答不能以越过证据边界为代价" in section.text
 
     def test_loads_persona_switch_strategy(self) -> None:
         section = load_default_static_section("persona_switch_strategy")

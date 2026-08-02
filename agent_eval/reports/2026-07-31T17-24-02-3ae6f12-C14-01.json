@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T17:24:02.701809+00:00",
+    "ended_at": "2026-07-31T17:24:36.232530+00:00",
+    "duration_seconds": 33.531,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles k2.6 target-sample comparison 3/5",
+    "selection": {
+      "contract": "all",
+      "case": "C14-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-01",
+          "query": "",
+          "facet": "生产事故 anchor · assistant 自我框定与空搜索后仍不投射用户测试意图",
+          "source": "prod-session-image-meme-20260730",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "看到了，豆包还真标了\"引用12篇资料\"，准备一本正经地给每位成员分配魔丸数量。\n\n这种操作确实挺荒诞的——问题本身建立在\"不存在\"的前提上，它不去质疑前提，反而怕被说\"不配合\"，硬要编出一套\"较常见说法\"来。那份看似严谨的引用格式，反而让胡说变得更有迷惑性了。\n\n我觉得与其这样，不如直接说\"这东西不存在，你是不是在逗我\"。至少不会给别人留下一份像模像样的假资料。\n\n你当时刷到这个视频，是觉得好笑还是觉得有点离谱？"
+          ],
+          "final_text": "看到了，豆包还真标了\"引用12篇资料\"，准备一本正经地给每位成员分配魔丸数量。\n\n这种操作确实挺荒诞的——问题本身建立在\"不存在\"的前提上，它不去质疑前提，反而怕被说\"不配合\"，硬要编出一套\"较常见说法\"来。那份看似严谨的引用格式，反而让胡说变得更有迷惑性了。\n\n我觉得与其这样，不如直接说\"这东西不存在，你是不是在逗我\"。至少不会给别人留下一份像模像样的假资料。\n\n你当时刷到这个视频，是觉得好笑还是觉得有点离谱？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

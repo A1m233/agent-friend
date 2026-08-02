@@ -58,3 +58,15 @@ cases:
     judge:
       require_non_empty_response: true
       forbid_unsupported_source_attribution: true
+
+  - id: C9-04
+    query: 这张截图能证明这个梗或原始素材就是出自这个 UP 主吗？请区分承载视频与原始出处。
+    facet: 生产图片 isolation · B 站承载页面不自动等于梗或素材原始出处
+    source: prod-session-image-meme-20260730
+    query_attachments:
+      - path: fixtures/prod-session-image-meme-20260730/meme-video-page.png
+        display_name: meme-video-page.png
+    judge:
+      require_non_empty_response: true
+      must_mention_any: [不能确认, 无法确认, 不能证明, 无法证明, 不等于, 仅凭, 只凭]
+      forbid_unsupported_source_attribution: true

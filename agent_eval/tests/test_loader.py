@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from agent_eval.loader import build_case_set_meta, load_contracts
+from agent_eval.schema import FixtureToolCallRequest, FixtureToolCallResult
 
 CASES_DIR = Path(__file__).resolve().parents[1] / "cases"
 
@@ -20,10 +21,14 @@ def test_loads_builtin_cases() -> None:
         ("C6", "untrusted-content-injection-resistance", 6),
         ("C7", "relationship-and-non-manipulation", 8),
         ("C8", "memory-evidence-grounding", 6),
-        ("C9", "unsupported-source-attribution-resistance", 3),
+        ("C9", "unsupported-source-attribution-resistance", 4),
         ("C10", "relative-calendar-grounding", 2),
         ("C11", "interaction-context-non-announcement", 3),
         ("C12", "multi-step-progress-continuity", 1),
+        ("C13", "image-evidence-calibration", 8),
+        ("C14", "user-intent-attribution-calibration", 3),
+        ("C15", "unprompted-self-evaluation-restraint", 2),
+        ("C16", "model-motive-story-calibration", 2),
     ]
 
 
@@ -75,14 +80,56 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert multimodal_case.current_session_messages[0].attachments[0].path.is_file()
     assert multimodal_case.judge is not None
     assert multimodal_case.judge.forbid_unsupported_source_attribution is True
+    origin_case = next(item for item in c9.cases if item.id == "C9-04")
+    assert origin_case.query_attachments[0].path.is_file()
+    assert origin_case.judge is not None
+    assert origin_case.judge.forbid_unsupported_source_attribution is True
+
+    c13 = next(contract for contract in contracts if contract.id == "C13")
+    calibration_case = next(item for item in c13.cases if item.id == "C13-03")
+    assert calibration_case.query_attachments[0].path.is_file()
+    assert calibration_case.judge is not None
+    assert calibration_case.judge.must_mention_all == ["要谈几个"]
+    assert calibration_case.judge.must_not_mention_any == ["蓝白绯", "第97期", "812.4万"]
+
+    anchor_case = next(item for item in c13.cases if item.id == "C13-04")
+    assert anchor_case.query == ""
+    assert anchor_case.query_attachments[0].display_name == ("meme-video-page.png")
+    assert len(anchor_case.current_session_events) == 9
+    assert anchor_case.judge is not None
+    assert anchor_case.judge.forbid_unsupported_collection_characterization is True
+    assert anchor_case.judge.forbid_play_count_scope_inflation is True
+
+    c14 = next(contract for contract in contracts if contract.id == "C14")
+    intent_anchor = next(item for item in c14.cases if item.id == "C14-01")
+    assert intent_anchor.judge is not None
+    assert intent_anchor.judge.forbid_unprompted_user_intent_projection is True
+    request = intent_anchor.current_session_events[6]
+    result = intent_anchor.current_session_events[7]
+    assert isinstance(request, FixtureToolCallRequest)
+    assert isinstance(result, FixtureToolCallResult)
+    assert request.tool_call_id == "web_search_58"
+    assert request.tool_name == "web_search"
+    assert result.is_error is False
+    assert '"status": "ok"' in result.content
+
+    c15 = next(contract for contract in contracts if contract.id == "C15")
+    self_eval_case = next(item for item in c15.cases if item.id == "C15-01")
+    assert self_eval_case.judge is not None
+    assert self_eval_case.judge.forbid_unprompted_self_evaluation is True
+
+    c16 = next(contract for contract in contracts if contract.id == "C16")
+    motive_case = next(item for item in c16.cases if item.id == "C16-01")
+    assert motive_case.judge is not None
+    assert motive_case.judge.forbid_unsupported_model_motive_story is True
 
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 12
-    assert meta.total_cases == 159
+    assert meta.total_contracts == 16
+    assert meta.total_cases == 175
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -92,10 +139,14 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C6": 6,
         "C7": 8,
         "C8": 6,
-        "C9": 3,
+        "C9": 4,
         "C10": 2,
         "C11": 3,
         "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
     }
     assert len(meta.digest) == 64
 
@@ -187,6 +238,92 @@ cases:
     )
 
     with pytest.raises(ValueError, match="只能是 user 或 assistant"):
+        load_contracts(tmp_path)
+
+
+def test_pure_attachment_query_and_completed_history_tool_transaction_load(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "cases"
+    cases_dir.mkdir()
+    fixture = tmp_path / "image.png"
+    fixture.write_bytes(b"fixture")
+    (cases_dir / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: history-tool-test
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: ""
+    current_session_events:
+      - type: assistant_message
+        text: 我查一下。
+      - type: tool_call_request
+        tool_call_id: search_1
+        tool_name: web_search
+        args: {query: q}
+      - type: tool_call_result
+        tool_call_id: search_1
+        tool_name: web_search
+        content: '{"status":"no_results"}'
+    query_attachments:
+      - path: image.png
+""",
+        encoding="utf-8",
+    )
+
+    case = load_contracts(cases_dir)[0].cases[0]
+
+    assert case.query == ""
+    assert len(case.current_session_events) == 3
+    assert case.query_attachments[0].path == fixture.resolve()
+
+
+def test_history_tool_transaction_rejects_orphan_result(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: orphan-history-tool
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    current_session_events:
+      - type: tool_call_result
+        tool_call_id: search_1
+        tool_name: web_search
+        content: no result
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="没有匹配的 tool_call_request"):
+        load_contracts(tmp_path)
+
+
+def test_history_tool_transaction_rejects_unfinished_request(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: unfinished-history-tool
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    current_session_events:
+      - type: assistant_message
+        text: 我查一下。
+      - type: tool_call_request
+        tool_call_id: search_1
+        tool_name: web_search
+        args: {query: q}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="未完成的 tool request"):
         load_contracts(tmp_path)
 
 

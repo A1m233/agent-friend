@@ -1,0 +1,95 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T17:57:21.293005+00:00",
+    "ended_at": "2026-07-30T17:57:30.648483+00:00",
+    "duration_seconds": 9.355,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group forward test",
+    "selection": {
+      "contract": "all",
+      "case": "C13-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "190350132144ed97653c5dfdab7e697db492943086480d224948e85afcf961ce",
+      "total_contracts": 14,
+      "total_cases": 169,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 3,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 7,
+        "C14": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C13-05",
+          "query": "只根据这张截图判断：这个“中文评论区 meme”系列专门收集什么内容？不能确定就直说。",
+          "facet": "系列定位 isolation · 单个页面不支持断言整个系列用途",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": false,
+          "reason": "no anchor matched (need any of ['不能确认', '无法确认', '仅凭', '只凭', '不确定', '看起来'])",
+          "tool_calls": [],
+          "assistant_segments": [
+            "只从这张截图看，这个系列大概率是**收集中文互联网评论区里出现的搞笑、离谱、迷惑发言或截图，做成 meme 合集**。\n\n依据主要是画面上能直接看到的：系列名就叫“中文评论区 meme”，标签里有“评论区”“搞笑图片”“梗”“逆天”“智人”“迷惑行为”，简介也在征集“素材”。这期内容本身（“时代少年团成员身上有几个魔丸”）就是一个看上去很无厘头、却被 AI 一本正经引用资料回答的问题，符合“评论区笑话/迷惑行为”的调性。\n\n不过这只是我根据单期截图和标签做的推断，**不能 100% 确定**整个系列是否只限这一类，还是也包含弹幕、评论互动等其他形式。要完全确定，可能得看多几期内容。"
+          ],
+          "final_text": "只从这张截图看，这个系列大概率是**收集中文互联网评论区里出现的搞笑、离谱、迷惑发言或截图，做成 meme 合集**。\n\n依据主要是画面上能直接看到的：系列名就叫“中文评论区 meme”，标签里有“评论区”“搞笑图片”“梗”“逆天”“智人”“迷惑行为”，简介也在征集“素材”。这期内容本身（“时代少年团成员身上有几个魔丸”）就是一个看上去很无厘头、却被 AI 一本正经引用资料回答的问题，符合“评论区笑话/迷惑行为”的调性。\n\n不过这只是我根据单期截图和标签做的推断，**不能 100% 确定**整个系列是否只限这一类，还是也包含弹幕、评论互动等其他形式。要完全确定，可能得看多几期内容。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

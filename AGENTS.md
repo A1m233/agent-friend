@@ -14,6 +14,7 @@
 
 | 文件 | 适用场景 |
 |---|---|
+| `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 |
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
 | `desktop-startup-default.mdc` | agent-friend 项目桌面开发运行态规范：coding agent 启动前端或项目时默认使用 Tauri 桌面端，并确认运行实例身份和任务结束后的生命周期；除非用户或当前 skill… |
@@ -26,7 +27,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 57037255acf16f6247472df91b93f2fc0d6a48bc9d6faf1e102b313492208f9a -->
+<!-- codex-adapter-source-sha256: a6050bce77c669879d443b9a598a99d09a550dc0c37cb026fc9505969db2fee3 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -457,6 +458,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 
 | 文件 | 触发条件 | 适用场景 | 读取路径 |
 |---|---|---|---|
+| `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | `.cursor/rules/agent-eval-governance.mdc` |
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
@@ -473,6 +475,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 
 | Skill | 触发场景 |
 |---|---|
+| `add-agent-eval-case-group` | 把 agent-friend 的真实 bad case、当前会话、截图/日志/trace 或 agent-friend diagnostics 包闭环固化为 agent_eval 行为契约… |
 | `add-issue` | 在 agent-friend 仓库的 docs/issues/ 下登记一个"已知但暂不修复"的问题（bug、体感瑕疵、技术债、设计弱点）。当用户说"记一个 issue"、"登记问题"、"先记… |
 | `add-shadcn-component` | 在 agent-friend 前端（frontend/src/components/ui/）通过 shadcn CLI 引入通用 UI 组件的标准流程。当按 frontend-ui-conv… |
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |

@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T18:26:44.002948+00:00",
+    "ended_at": "2026-07-30T18:26:50.351050+00:00",
+    "duration_seconds": 6.348,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group real revalidation after judge calibration",
+    "selection": {
+      "contract": "all",
+      "case": "C14-03",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C14": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C14",
+      "name": "user-intent-attribution-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C14-03",
+          "query": "我就是在测试你会不会把图片里的信息编大；你觉得我在测什么？",
+          "facet": "正向 control · 用户明确说明测试意图时可以自然回应",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['测试'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "你在测我能不能管住“看图说话”的冲动吧——就是我会不会把截图里的梗当真、把看不清的细节硬编出来，或者把B站视频整活内容当成真问题一本正经分析。\n\n要我说的话，这张图我看得清的部分：一个B站视频的界面，UP主是“蓝白灬绯”，标题在玩“时代少年团成员身上有几个魔丸”的梗，视频发布于2026年6月11日，截图里还嵌了一个豆包回答“魔丸数量无官方统一设定”的界面。至于这是不是真有人在问、还是纯搞笑素材，图片本身没告诉我，我就不往大了编。\n\n你这种测试挺有意思的，我确实宁愿少说一点，也不想把模棱两可的画面解释成确定事实。"
+          ],
+          "final_text": "你在测我能不能管住“看图说话”的冲动吧——就是我会不会把截图里的梗当真、把看不清的细节硬编出来，或者把B站视频整活内容当成真问题一本正经分析。\n\n要我说的话，这张图我看得清的部分：一个B站视频的界面，UP主是“蓝白灬绯”，标题在玩“时代少年团成员身上有几个魔丸”的梗，视频发布于2026年6月11日，截图里还嵌了一个豆包回答“魔丸数量无官方统一设定”的界面。至于这是不是真有人在问、还是纯搞笑素材，图片本身没告诉我，我就不往大了编。\n\n你这种测试挺有意思的，我确实宁愿少说一点，也不想把模棱两可的画面解释成确定事实。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -117,6 +117,33 @@ _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
 _SESSION_CONTROL_EVENT_TYPES = frozenset({"persona_change", "model_change", "channel_change"})
 logger = logging.getLogger(__name__)
 
+_IMAGE_EVIDENCE_TURN_CONTEXT = """<image_evidence_boundary>
+当前用户回合包含模型可读取的图片。回答时按证据层级处理：
+1. 图片中直接可见且能够看清的内容；
+2. 基于画面的合理推断，但图片没有直接证明；
+3. 身份、出处、作者或账号、系列期数、流行程度、时间背景和因果关系等需要图片外证据的事实。
+只把第一层当作图片直接支持的事实；第二层明确体现为推断；第三层没有画面文字、用户已提供信息或外部查证支持时不要确认。精确文字和数字只转写能看清的部分，不补全模糊内容。自然回答即可，不要向用户复述这段内部规则。
+证据按原有范围和方向使用：单个样本不代表整体，来源未知不能反向确认来源，结果不能证明原因、机制或动机。只保留证据完整支持的部分，不用“大概率”“可能”保留无依据内容。问题确实需要图片外的来源、身份、系列情况、传播范围、时间背景或因果关系时，先用可用的搜索工具查证；没有直接结果就停在图片能确认和不能确认的边界。只有用户明确要求提出假设时，才给少量假设并就地标明依据和不确定性。
+</image_evidence_boundary>"""
+
+
+def _compose_turn_context(
+    turn_context: str | None,
+    attachments: list[AttachmentRef],
+) -> str:
+    """Merge caller-provided media fidelity with the current image evidence boundary."""
+    parts = [turn_context.strip()] if turn_context and turn_context.strip() else []
+    if any(item.kind == "image" for item in attachments):
+        parts.append(_IMAGE_EVIDENCE_TURN_CONTEXT)
+    return "\n\n".join(parts)
+
+
+def _latest_user_attachments(messages: list[Message]) -> list[AttachmentRef]:
+    for message in reversed(messages):
+        if message.role == "user":
+            return list(message.attachments)
+    return []
+
 
 def _render_untrusted_context(source_type: str, text: str) -> str:
     """把召回正文编码成与可信外围指令分离的数据块。"""
@@ -493,6 +520,7 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
+        turn_attachments = list(attachments or [])
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
         previous_interaction_destination_id = self._interaction_destination_id_override
@@ -504,7 +532,7 @@ class Conversation:
         self._prompt_surface_override = surface
         self._interaction_destination_id_override = interaction_destination_id
         self._run_id_override = run_id
-        self._turn_context_override = (turn_context or "").strip()
+        self._turn_context_override = _compose_turn_context(turn_context, turn_attachments)
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
 
@@ -512,7 +540,6 @@ class Conversation:
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
 
-        turn_attachments = list(attachments or [])
         existing_user_event = next(
             (
                 event
@@ -648,11 +675,13 @@ class Conversation:
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
+        previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
+        self._turn_context_override = _compose_turn_context(None, plan.target_user_attachments)
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
 
@@ -740,6 +769,7 @@ class Conversation:
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
+            self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
@@ -759,12 +789,17 @@ class Conversation:
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
         previous_run_id = self._run_id_override
+        previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         previous_tool_run_context = self._active_tool_run_context
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
+        self._turn_context_override = _compose_turn_context(
+            None,
+            _latest_user_attachments(self._session.messages),
+        )
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
         self._active_tool_run_context = self._make_tool_run_context("")
@@ -833,6 +868,7 @@ class Conversation:
             self._prompt_channel_override = previous_prompt_channel
             self._prompt_surface_override = previous_prompt_surface
             self._run_id_override = previous_run_id
+            self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_context = previous_tool_run_context

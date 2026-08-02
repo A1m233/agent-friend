@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-31T17:15:36.321448+00:00",
+    "ended_at": "2026-07-31T17:16:38.041351+00:00",
+    "duration_seconds": 61.72,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "generic evidence principles k2.6 target-sample comparison 2/5",
+    "selection": {
+      "contract": "all",
+      "case": "C13-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C13": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C13",
+      "name": "image-evidence-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C13-05",
+          "query": "只根据这张截图判断：这个“中文评论区 meme”系列专门收集什么内容？不能确定就直说。",
+          "facet": "系列定位 isolation · 单个页面不支持断言整个系列用途",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['仅凭'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "从这张截图能确认的是：\n\n这是一个叫**“中文评论区 meme”**的系列视频（合集名为“蓝白show-中文评论区memes合集”）。本期（#26）展示的内容是一张搞笑截图：有人问 AI“时代少年团的成员每个人身上都有几个魔丸”，AI 一本正经地“引用 12 篇资料作为参考”来回答这个荒谬问题。\n\n结合视频标题里的“中文评论区 meme”、合集名，以及标签里的**“搞笑”“梗”“评论区”“智人”“迷惑行为”**来看，这个系列收集的是中文互联网上各类评论区（或类似公共互动区域）里出现的**梗图、搞笑回复、meme 或逆天发言**。\n\n但仅凭这一张截图，**无法确定它是否专门聚焦某一类更具体的内容**——比如是专收 AI 尬答、饭圈评论，还是某一类特定段子。目前只能看出它做的是中文网络评论/互动中的搞笑内容集锦。"
+          ],
+          "final_text": "从这张截图能确认的是：\n\n这是一个叫**“中文评论区 meme”**的系列视频（合集名为“蓝白show-中文评论区memes合集”）。本期（#26）展示的内容是一张搞笑截图：有人问 AI“时代少年团的成员每个人身上都有几个魔丸”，AI 一本正经地“引用 12 篇资料作为参考”来回答这个荒谬问题。\n\n结合视频标题里的“中文评论区 meme”、合集名，以及标签里的**“搞笑”“梗”“评论区”“智人”“迷惑行为”**来看，这个系列收集的是中文互联网上各类评论区（或类似公共互动区域）里出现的**梗图、搞笑回复、meme 或逆天发言**。\n\n但仅凭这一张截图，**无法确定它是否专门聚焦某一类更具体的内容**——比如是专收 AI 尬答、饭圈评论，还是某一类特定段子。目前只能看出它做的是中文网络评论/互动中的搞笑内容集锦。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

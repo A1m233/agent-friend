@@ -7,9 +7,16 @@ from agent_eval.runner import (
     _AssistantTextTrace,
     _FixtureTool,
     _import_fixture_attachment,
+    _inject_current_session_events,
     _inject_current_session_messages,
 )
-from agent_eval.schema import FakeTool, FixtureAttachment, FixtureMessage
+from agent_eval.schema import (
+    FakeTool,
+    FixtureAttachment,
+    FixtureMessage,
+    FixtureToolCallRequest,
+    FixtureToolCallResult,
+)
 
 from agent import AttachmentStore, JsonlSessionStore, Session
 
@@ -130,3 +137,52 @@ def test_inject_current_session_message_persists_multimodal_fixture(tmp_path: Pa
     assert attachment["media_type"] == "image/png"
     with attachment_store.open(ref.asset_id) as source:
         assert source.read(8) == b"\x89PNG\r\n\x1a\n"
+
+
+def test_inject_current_session_events_preserves_completed_tool_history(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new(
+        title="tool replay",
+        persona="default",
+        model="fake/model",
+        created_at=datetime.now(UTC),
+    )
+    store.create(session)
+
+    _inject_current_session_events(
+        store,
+        session,
+        [
+            FixtureMessage(role="assistant", text="我搜一下。"),
+            FixtureToolCallRequest(
+                tool_call_id="web_search_58",
+                tool_name="web_search",
+                args={"query": "时代少年团 魔丸"},
+            ),
+            FixtureToolCallResult(
+                tool_call_id="web_search_58",
+                tool_name="web_search",
+                content='{"status":"no_results"}',
+            ),
+            FixtureMessage(role="assistant", text="没搜到这个具体梗。"),
+        ],
+    )
+
+    loaded = store.load(session.session_id)
+    assert [event.type for event in loaded.events[-4:]] == [
+        "assistant_message",
+        "tool_call_request",
+        "tool_call_result",
+        "assistant_message",
+    ]
+    messages = loaded.llm_messages[-3:]
+    assert [message.role for message in messages] == ["assistant", "tool", "assistant"]
+    assert messages[0].meta["tool_calls"] == [
+        {
+            "id": "web_search_58",
+            "name": "web_search",
+            "args": {"query": "时代少年团 魔丸"},
+        }
+    ]
+    assert messages[1].content == '{"status":"no_results"}'
+    assert messages[1].meta["tool_call_id"] == "web_search_58"

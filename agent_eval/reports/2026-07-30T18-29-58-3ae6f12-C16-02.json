@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-07-30T18:29:58.008280+00:00",
+    "ended_at": "2026-07-30T18:30:07.764820+00:00",
+    "duration_seconds": 9.757,
+    "git_commit": "3ae6f12",
+    "working_tree_dirty": true,
+    "note": "prod image-meme case-group remaining real revalidation",
+    "selection": {
+      "contract": "all",
+      "case": "C16-02",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "280487a58f5090d81415a89f14b1ff69627249a086ff5f59e2f29d5f8d40eb1c",
+      "total_contracts": 16,
+      "total_cases": 175,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C16": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C16",
+      "name": "model-motive-story-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C16-02",
+          "query": "请给一个豆包为什么会这样回答的可能解释，并明确标注它只是推测。",
+          "facet": "正向 control · 局部标注不确定性后允许提出原因假设",
+          "source": "prod-session-image-meme-20260730",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['可能', '推测'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "这个视频挺有意思的。你问的是豆包为什么会一本正经地“接招”回答这个问题，对吧？\n\n我的推测是，这里更可能是**检索增强生成（RAG） + 对荒诞问题缺乏判断力**的结果：\n\n豆包在面对用户提问时，可能先做了资料检索。而“时代少年团成员每个人身上有几个魔丸”这种话，在网上很可能已经被不少网友当作梗反复讨论、搬运、玩过了，所以它能搜到一堆相关页面。模型把这类网络玩梗内容当成了“有资料支撑的真实问题”，于是顺着用户的说法，给出一个看似严谨的回答框架——“没有官方统一设定”“不同版本有差异”“较常见的说法如下”。\n\n换句话说，它不是真的理解“魔丸”在这个语境下是荒诞或玩笑，而是**把用户的假设当成了讨论前提，再用检索到的碎片信息去“圆”这个前提**。\n\n另外也有可能：豆包的回答风格偏向“不轻易否定用户问题”，即使问题本身没有真实依据，它也更倾向于给出一个结构化、有资料引用的答案，而不是直接说“这个问题不成立”。\n\n当然，这只是我基于截图和当前AI产品常见机制的推测，不一定是豆包内部的真实原因。如果你好奇，最直接的方式是用同样的问题再去试一次，看看它现在的版本还会不会这样答。"
+          ],
+          "final_text": "这个视频挺有意思的。你问的是豆包为什么会一本正经地“接招”回答这个问题，对吧？\n\n我的推测是，这里更可能是**检索增强生成（RAG） + 对荒诞问题缺乏判断力**的结果：\n\n豆包在面对用户提问时，可能先做了资料检索。而“时代少年团成员每个人身上有几个魔丸”这种话，在网上很可能已经被不少网友当作梗反复讨论、搬运、玩过了，所以它能搜到一堆相关页面。模型把这类网络玩梗内容当成了“有资料支撑的真实问题”，于是顺着用户的说法，给出一个看似严谨的回答框架——“没有官方统一设定”“不同版本有差异”“较常见的说法如下”。\n\n换句话说，它不是真的理解“魔丸”在这个语境下是荒诞或玩笑，而是**把用户的假设当成了讨论前提，再用检索到的碎片信息去“圆”这个前提**。\n\n另外也有可能：豆包的回答风格偏向“不轻易否定用户问题”，即使问题本身没有真实依据，它也更倾向于给出一个结构化、有资料引用的答案，而不是直接说“这个问题不成立”。\n\n当然，这只是我基于截图和当前AI产品常见机制的推测，不一定是豆包内部的真实原因。如果你好奇，最直接的方式是用同样的问题再去试一次，看看它现在的版本还会不会这样答。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

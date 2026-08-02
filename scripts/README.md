@@ -45,7 +45,7 @@
 | `lint/` | lint 检查（`ruff check` + `ruff format --check`；任一子检查失败即返回非零退出码） | `./scripts/lint/run.sh` | `.\scripts\lint\run.ps1` |
 | `fix/` | 自动修复（`ruff check --fix` + `ruff format`） | `./scripts/fix/run.sh` | `.\scripts\fix\run.ps1` |
 | `typecheck/` | mypy 类型检查 | `./scripts/typecheck/run.sh` | `.\scripts\typecheck\run.ps1` |
-| `check/` | 一键全绿门禁：串联 backend → frontend → rust，失败即停并打印阶段耗时（合入 main 前三阶段都必须通过；pytest 参数透传给 backend）。普通终端默认全跑；Codex 为避免命令超时和孤儿构建，必须分别执行 `--stage backend\|frontend\|rust` | `./scripts/check/run.sh [--stage backend\|frontend\|rust] [pytest 参数]` | `.\scripts\check\run.ps1 [--stage backend\|frontend\|rust] [pytest 参数]` |
+| `check/` | 一键全绿门禁：串联 backend → frontend → rust，失败即停并打印阶段耗时（合入 main 前三阶段都必须通过；frontend 依赖未安装时 fail-closed 并提示先运行 `frontend/install`；pytest 参数透传给 backend）。普通终端默认全跑；Codex 为避免命令超时和孤儿构建，必须分别执行 `--stage backend\|frontend\|rust` | `./scripts/check/run.sh [--stage backend\|frontend\|rust] [pytest 参数]` | `.\scripts\check\run.ps1 [--stage backend\|frontend\|rust] [pytest 参数]` |
 | `frontend/install` | 安装前端依赖（检查 node 22+ / pnpm → `pnpm install` @ frontend/） | `./scripts/frontend/install.sh` | `.\scripts\frontend\install.ps1` |
 | `frontend/dev` | 启动桌面端开发（`pnpm tauri dev`，含桌宠 / 对话双窗口） | `./scripts/frontend/dev.sh` | `.\scripts\frontend\dev.ps1` |
 | `frontend/web` | 仅启动前端 web dev server（浏览器调试，不编译 Rust；访问 /pet.html、/chat.html） | `./scripts/frontend/web.sh` | `.\scripts\frontend\web.ps1` |

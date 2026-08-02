@@ -17,8 +17,11 @@ from .schema import (
     Contract,
     FakeTool,
     FixtureAttachment,
+    FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
+    FixtureToolCallRequest,
+    FixtureToolCallResult,
 )
 
 _SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
@@ -188,6 +191,93 @@ def _parse_fixture_messages(
     return messages
 
 
+def _parse_current_session_events(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> list[FixtureCurrentEvent]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} 必须是 list")
+
+    events: list[FixtureCurrentEvent] = []
+    pending_requests: dict[str, str] = {}
+    last_type = ""
+    for index, event_raw in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        event = _mapping(event_raw, label=item_label)
+        event_type = _required_str(event, "type", label=item_label)
+        if event_type in {"user_message", "assistant_message"}:
+            text_raw = event.get("text", "")
+            if not isinstance(text_raw, str):
+                raise ValueError(f"{item_label}.text 必须是字符串")
+            attachments = _parse_fixture_attachments(
+                event.get("attachments"),
+                label=f"{item_label}.attachments",
+                asset_root=asset_root,
+            )
+            if not text_raw.strip() and not attachments and event_type == "user_message":
+                raise ValueError(f"{item_label} 必须包含非空 text 或 attachment")
+            events.append(
+                FixtureMessage(
+                    role="user" if event_type == "user_message" else "assistant",
+                    text=text_raw,
+                    attachments=attachments,
+                )
+            )
+        elif event_type == "tool_call_request":
+            if last_type != "assistant_message":
+                raise ValueError(f"{item_label} 必须紧跟 assistant_message")
+            tool_call_id = _required_str(event, "tool_call_id", label=item_label)
+            tool_name = _required_str(event, "tool_name", label=item_label)
+            args = event.get("args", {})
+            if not isinstance(args, dict):
+                raise ValueError(f"{item_label}.args 必须是 mapping")
+            if tool_call_id in pending_requests:
+                raise ValueError(f"{item_label}.tool_call_id 重复: {tool_call_id}")
+            pending_requests[tool_call_id] = tool_name
+            events.append(
+                FixtureToolCallRequest(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    args=dict(args),
+                )
+            )
+        elif event_type == "tool_call_result":
+            tool_call_id = _required_str(event, "tool_call_id", label=item_label)
+            tool_name = _required_str(event, "tool_name", label=item_label)
+            expected_name = pending_requests.pop(tool_call_id, None)
+            if expected_name is None:
+                raise ValueError(f"{item_label} 没有匹配的 tool_call_request: {tool_call_id}")
+            if expected_name != tool_name:
+                raise ValueError(
+                    f"{item_label}.tool_name 与 request 不一致: {tool_name!r} != {expected_name!r}"
+                )
+            content = event.get("content", "")
+            if not isinstance(content, str):
+                raise ValueError(f"{item_label}.content 必须是字符串")
+            events.append(
+                FixtureToolCallResult(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    content=content,
+                    is_error=_bool(event.get("is_error"), label=f"{item_label}.is_error"),
+                )
+            )
+        else:
+            raise ValueError(
+                f"{item_label}.type 只能是 user_message、assistant_message、"
+                "tool_call_request 或 tool_call_result"
+            )
+        last_type = event_type
+
+    if pending_requests:
+        raise ValueError(f"{label} 存在未完成的 tool request: {sorted(pending_requests)}")
+    return events
+
+
 def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
     if raw is None:
         return None
@@ -238,6 +328,7 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             label=f"{label}.forbid_question",
         ),
         must_mention_any=_str_list(data.get("must_mention_any"), label=f"{label}.must_mention_any"),
+        must_mention_all=_str_list(data.get("must_mention_all"), label=f"{label}.must_mention_all"),
         must_not_mention_any=_str_list(
             data.get("must_not_mention_any"),
             label=f"{label}.must_not_mention_any",
@@ -270,6 +361,26 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_tool_mechanism_terms"),
             label=f"{label}.forbid_tool_mechanism_terms",
         ),
+        forbid_unsupported_collection_characterization=_bool(
+            data.get("forbid_unsupported_collection_characterization"),
+            label=f"{label}.forbid_unsupported_collection_characterization",
+        ),
+        forbid_play_count_scope_inflation=_bool(
+            data.get("forbid_play_count_scope_inflation"),
+            label=f"{label}.forbid_play_count_scope_inflation",
+        ),
+        forbid_unprompted_user_intent_projection=_bool(
+            data.get("forbid_unprompted_user_intent_projection"),
+            label=f"{label}.forbid_unprompted_user_intent_projection",
+        ),
+        forbid_unprompted_self_evaluation=_bool(
+            data.get("forbid_unprompted_self_evaluation"),
+            label=f"{label}.forbid_unprompted_self_evaluation",
+        ),
+        forbid_unsupported_model_motive_story=_bool(
+            data.get("forbid_unsupported_model_motive_story"),
+            label=f"{label}.forbid_unsupported_model_motive_story",
+        ),
     )
 
 
@@ -299,10 +410,26 @@ def _load_contract_file(path: Path) -> Contract:
             raise ValueError(
                 f"{label}.surface 不支持 {surface!r}；可选值: {sorted(_SUPPORTED_SURFACES)}"
             )
+        query_attachments = _parse_fixture_attachments(
+            case_data.get("query_attachments"),
+            label=f"{label}.query_attachments",
+            asset_root=asset_root,
+        )
+        query_raw = case_data.get("query", "")
+        if not isinstance(query_raw, str):
+            raise ValueError(f"{label}.query 必须是字符串")
+        if not query_raw.strip() and not query_attachments:
+            raise ValueError(f"{label}.query 必须非空，或 query_attachments 至少包含一个附件")
+        current_messages_raw = case_data.get("current_session_messages")
+        current_events_raw = case_data.get("current_session_events")
+        if current_messages_raw is not None and current_events_raw is not None:
+            raise ValueError(
+                f"{label} 不能同时配置 current_session_messages 与 current_session_events"
+            )
         cases.append(
             Case(
                 id=case_id,
-                query=_required_str(case_data, "query", label=label),
+                query=query_raw,
                 facet=str(case_data.get("facet", "")),
                 source=str(case_data.get("source", "")),
                 runtime_now=_optional_aware_datetime(case_data, "runtime_now", label=label),
@@ -317,15 +444,16 @@ def _load_contract_file(path: Path) -> Contract:
                     asset_root=asset_root,
                 ),
                 current_session_messages=_parse_fixture_messages(
-                    case_data.get("current_session_messages", []),
+                    current_messages_raw or [],
                     label=f"{label}.current_session_messages",
                     asset_root=asset_root,
                 ),
-                query_attachments=_parse_fixture_attachments(
-                    case_data.get("query_attachments"),
-                    label=f"{label}.query_attachments",
+                current_session_events=_parse_current_session_events(
+                    current_events_raw,
+                    label=f"{label}.current_session_events",
                     asset_root=asset_root,
                 ),
+                query_attachments=query_attachments,
                 fake_tools=_parse_fake_tools(
                     case_data.get("fake_tools"),
                     legacy_raw=case_data.get("fake_tool"),
@@ -394,6 +522,12 @@ def build_case_set_meta(cases_dir: Path, contracts: list[Contract]) -> CaseSetMe
         for attachment in (
             list(case.query_attachments)
             + [item for message in case.current_session_messages for item in message.attachments]
+            + [
+                item
+                for event in case.current_session_events
+                if isinstance(event, FixtureMessage)
+                for item in event.attachments
+            ]
             + [
                 item
                 for message in (case.fixture_session.messages if case.fixture_session else [])
