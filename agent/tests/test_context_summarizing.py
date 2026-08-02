@@ -559,9 +559,9 @@ def test_ac34_35_compaction_persisted_and_reused(
     caplog: Any,
 ) -> None:
     """AC-3.4/3.5：超阈值触发即落 compaction 事件；下一轮复用 prior_summary 不重摘。"""
-    # window 8000 → threshold 6400；system prompt(~1359) + 折叠后 summary + tail 远低于阈值，
-    # 故第二轮复用折叠不再触发；首轮 seed 大量历史越过阈值触发一次。
-    llm = _FakeLLM(context_window=8000)
+    # window 9000 → threshold 7200；折叠后的 summary + tail 低于阈值，
+    # 故第二轮复用折叠不再触发；首轮 seed 大量历史仍会越过阈值触发一次。
+    llm = _FakeLLM(context_window=9000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
