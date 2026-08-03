@@ -316,27 +316,46 @@ pub fn update_sprite_pos(
 #[cfg(debug_assertions)]
 #[tauri::command]
 pub fn inject_test_envelope(app: AppHandle, text: String) -> Result<(), String> {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    emit_test_envelope(&app, text, "cron:bedtime")
+}
+
+/// 070 · dev-only：注入一条 Reminder 气泡，用于连续点击验证 Sonner 堆叠与溢出队列。
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn inject_test_reminder_envelope(app: AppHandle, text: String) -> Result<(), String> {
+    emit_test_envelope(&app, text, "todo_reminder")
+}
+
+#[cfg(debug_assertions)]
+fn emit_test_envelope(app: &AppHandle, text: String, source_kind: &str) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tauri::Emitter;
 
-    let seq = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let envelope = serde_json::json!({
-        "kind": "agent_turn",
-        "session_id": "dev-test",
-        "seq": seq,
-        "source_kind": "cron:bedtime",
-        "events": [
-            { "type": "text_delta", "text": text }
-        ]
-    });
+    static NEXT_DEV_ENVELOPE_SEQ: AtomicU64 = AtomicU64::new(1);
+    let seq = NEXT_DEV_ENVELOPE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let envelope = build_test_envelope(&text, source_kind, seq);
+
     // emit_to bubble webview —— 与真 push channel（push_subscriber.rs）走同一通道
     app.emit_to(BUBBLE_LABEL, "agent://push", envelope)
         .map_err(|e| format!("emit_to failed: {e}"))?;
-    log::info!("inject_test_envelope: emit_to bubble {} bytes", text.len());
+    log::info!(
+        "inject_test_envelope: source_kind={source_kind} seq={seq} emit_to bubble {} bytes",
+        text.len()
+    );
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn build_test_envelope(text: &str, source_kind: &str, seq: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "agent_turn",
+        "session_id": "dev-test",
+        "seq": seq,
+        "source_kind": source_kind,
+        "events": [
+            { "type": "text_delta", "text": text }
+        ]
+    })
 }
 
 /// 计算 bubble window 应在的左上角屏幕坐标。
@@ -451,6 +470,16 @@ pub fn spawn_follow_loop(app: AppHandle, state: BubbleState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reminder_test_envelope_uses_queue_source_and_stable_sequence() {
+        let envelope = build_test_envelope("提醒队列测试", "todo_reminder", 42);
+
+        assert_eq!(envelope["session_id"], "dev-test");
+        assert_eq!(envelope["seq"], 42);
+        assert_eq!(envelope["source_kind"], "todo_reminder");
+        assert_eq!(envelope["events"][0]["text"], "提醒队列测试");
+    }
 
     /// 标准屏幕：1920×1080，原点 (0, 0)。
     const SCREEN: Screen = Screen {

@@ -69,11 +69,10 @@ def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:
     assert weather.parameters_schema["required"] == ["location"]
     assert "不会后台自动重试" in weather.description
     assert todo.parameters_schema["required"] == ["operation"]
-    assert todo.parameters_schema["properties"]["reminders"]["items"]["oneOf"][0]["required"] == [
-        "kind",
-        "local_datetime",
-        "timezone",
-    ]
+    reminder = todo.parameters_schema["properties"]["reminders"]["items"]
+    assert reminder["required"] == ["kind", "timezone"]
+    assert reminder["properties"]["kind"]["enum"] == ["once", "recurring"]
+    assert reminder["properties"]["relative_delay"]["required"] == ["amount", "unit"]
     assert "不能只在对话里口头答应" in todo.description
 
 

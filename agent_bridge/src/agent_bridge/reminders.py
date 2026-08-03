@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from agent.conversation_events import TextDelta
 from agent.runtime import AgentRuntime, RunOutcome, SystemTriggerEvent
 from agent.sessions.store import SessionStore
+from agent.system_prompt import DESKTOP_CHAT_SURFACE, InteractionSurfaceId
 from agent.todos import (
     AgentResponseStatus,
     DeliveryUpdate,
@@ -22,7 +25,7 @@ from agent.todos import (
 
 from agent import Event, SessionNotFoundError
 
-from .presence import DestinationPolicy, PresenceRegistry
+from .presence import DestinationPolicy, PresenceRegistry, PresenceState
 
 if TYPE_CHECKING:
     from agent.runtime.models import RunHandle
@@ -31,6 +34,14 @@ if TYPE_CHECKING:
     from .protocols.im.runtime import IMRuntime
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _AgentResponseTarget:
+    session_id: str
+    destination_kind: str
+    destination_id: str
+    interaction_surface: InteractionSurfaceId
 
 
 class ReminderDeliveryOrchestrator:
@@ -54,33 +65,74 @@ class ReminderDeliveryOrchestrator:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     def deliver(self, occurrence: ReminderOccurrence) -> None:
-        now = self._now()
-        if not self._todos.occurrence_is_deliverable(occurrence.id):
+        """兼容单 occurrence 调用方；单条提醒仍走统一批协议。"""
+        self.deliver_batch((occurrence,))
+
+    def deliver_batch(self, occurrences: tuple[ReminderOccurrence, ...]) -> None:
+        if not occurrences:
             return
+        now = self._now()
         if self._im_runtime is not None:
             self._presence.replace_im(self._im_runtime.presence_snapshots())
         state = self._presence.snapshot(
             now=now,
             pet_available=self._agent_runtime.listeners.subscriber_count() > 0,
         )
+        batch_id = _batch_id(tuple(occurrence.id for occurrence in occurrences))
+        response_groups: dict[_AgentResponseTarget, list[ReminderOccurrence]] = {}
+        for occurrence in occurrences:
+            try:
+                target = self._deliver_fixed(occurrence, state=state, now=now)
+            except Exception:
+                logger.exception("Reminder occurrence delivery failed: %s", occurrence.id)
+                self._mark_delivery_failed(occurrence, now=now)
+                continue
+            if target is not None:
+                response_groups.setdefault(target, []).append(occurrence)
+
+        for target, grouped in response_groups.items():
+            try:
+                self._start_agent_response(tuple(grouped), target=target, batch_id=batch_id)
+            except Exception:
+                logger.exception(
+                    "Failed to start reminder Agent response group: session=%s destination=%s",
+                    target.session_id,
+                    target.destination_id,
+                )
+                for occurrence in grouped:
+                    self._todos.update_agent_response_status(
+                        occurrence.id, AgentResponseStatus.FAILED, now=self._now()
+                    )
+
+    def _deliver_fixed(
+        self,
+        occurrence: ReminderOccurrence,
+        *,
+        state: PresenceState,
+        now: datetime,
+    ) -> _AgentResponseTarget | None:
+        if not self._todos.occurrence_is_deliverable(occurrence.id):
+            return None
         remaining = state
         for _ in range(4):
             decision = self._policy.decide(remaining)
             self._presence.record_decision(decision)
             if decision.kind == "desktop" and decision.session_id:
                 if self._deliver_desktop(occurrence, decision.session_id, now=now):
-                    self._start_agent_response(
-                        occurrence,
+                    return _AgentResponseTarget(
                         session_id=decision.session_id,
                         destination_kind="desktop",
                         destination_id=decision.destination_id or decision.session_id,
+                        interaction_surface=DESKTOP_CHAT_SURFACE,
                     )
-                    return
                 remaining = replace(remaining, desktop=None)
                 continue
             if decision.kind == "im" and decision.destination_id and decision.session_id:
                 if not self._todos.occurrence_is_deliverable(occurrence.id):
-                    return
+                    return None
+                interaction_surface = _interaction_surface_for_im(
+                    remaining, decision.destination_id
+                )
                 result = self._deliver_im_fixed(occurrence, decision.destination_id)
                 if result.outcome == "delivered":
                     self._todos.update_occurrence(
@@ -108,6 +160,10 @@ class ReminderDeliveryOrchestrator:
                             occurrence.id,
                             decision.session_id,
                         )
+                        self._todos.update_agent_response_status(
+                            occurrence.id, AgentResponseStatus.FAILED, now=now
+                        )
+                        return None
                     except Exception:
                         # occurrence 已先标 delivered；任何会话落盘错误都不能把外部副作用
                         # 重新变成可重试发送，只损失本次上下文增强并保留错误证据。
@@ -116,13 +172,16 @@ class ReminderDeliveryOrchestrator:
                             occurrence.id,
                             decision.session_id,
                         )
-                    self._start_agent_response(
-                        occurrence,
+                        self._todos.update_agent_response_status(
+                            occurrence.id, AgentResponseStatus.FAILED, now=now
+                        )
+                        return None
+                    return _AgentResponseTarget(
                         session_id=decision.session_id,
                         destination_kind="im",
                         destination_id=decision.destination_id,
+                        interaction_surface=interaction_surface,
                     )
-                    return
                 if result.outcome == "unknown":
                     self._todos.update_occurrence(
                         occurrence.id,
@@ -135,7 +194,7 @@ class ReminderDeliveryOrchestrator:
                         ),
                         now=now,
                     )
-                    return
+                    return None
                 remaining = replace(
                     remaining,
                     im_bindings=tuple(
@@ -147,7 +206,7 @@ class ReminderDeliveryOrchestrator:
                 continue
             if decision.kind == "pet":
                 if not self._todos.occurrence_is_deliverable(occurrence.id):
-                    return
+                    return None
                 self._agent_runtime.listeners.publish_fixed_ambient(
                     source_kind="todo_reminder",
                     text=_fixed_text(occurrence),
@@ -164,7 +223,7 @@ class ReminderDeliveryOrchestrator:
                     ),
                     now=now,
                 )
-                return
+                return None
             self._todos.update_occurrence(
                 occurrence.id,
                 DeliveryUpdate(
@@ -174,6 +233,24 @@ class ReminderDeliveryOrchestrator:
                 ),
                 now=now,
             )
+            return None
+        self._todos.update_occurrence(
+            occurrence.id,
+            DeliveryUpdate(
+                state=OccurrenceState.FAILED,
+                next_attempt_at=now + timedelta(minutes=1),
+            ),
+            now=now,
+        )
+        return None
+
+    def _mark_delivery_failed(
+        self,
+        occurrence: ReminderOccurrence,
+        *,
+        now: datetime,
+    ) -> None:
+        if not self._todos.occurrence_is_deliverable(occurrence.id):
             return
         self._todos.update_occurrence(
             occurrence.id,
@@ -269,52 +346,70 @@ class ReminderDeliveryOrchestrator:
 
     def _start_agent_response(
         self,
-        occurrence: ReminderOccurrence,
+        occurrences: tuple[ReminderOccurrence, ...],
         *,
-        session_id: str,
-        destination_kind: str,
-        destination_id: str,
+        target: _AgentResponseTarget,
+        batch_id: str,
     ) -> None:
         now = self._now()
-        self._todos.update_agent_response_status(
-            occurrence.id, AgentResponseStatus.RUNNING, now=now
-        )
+        occurrence_ids = tuple(occurrence.id for occurrence in occurrences)
+        for occurrence_id in occurrence_ids:
+            self._todos.update_agent_response_status(
+                occurrence_id, AgentResponseStatus.RUNNING, now=now
+            )
         try:
             handle = self._agent_runtime.submit(
                 SystemTriggerEvent(
-                    session_id=session_id,
+                    session_id=target.session_id,
                     source_kind="todo_reminder",
-                    system_prompt_addendum=_agent_prompt(occurrence),
+                    system_prompt_addendum=_structured_events(occurrences),
                     output_visibility="user",
+                    tool_mode="normal",
                     # IM 的固定事实已经投递到唯一目标出口；Agent 回应仍借目标
                     # session 生成，但不能因此再次出现在桌面对话里。
-                    presentation="conversation" if destination_kind == "desktop" else "none",
-                    event_metadata={"occurrence_id": occurrence.id},
+                    presentation=(
+                        "conversation" if target.destination_kind == "desktop" else "none"
+                    ),
+                    event_metadata={
+                        "batch_id": batch_id,
+                        "occurrence_ids": list(occurrence_ids),
+                    },
                 ),
-                dedupe_key=f"todo-reminder-response:{occurrence.id}",
-                metadata={"protocol": "todo_reminder", "occurrence_id": occurrence.id},
+                dedupe_key=(
+                    f"todo-reminder-response:{batch_id}:"
+                    f"{target.destination_kind}:{target.destination_id}"
+                ),
+                channel="text",
+                surface=target.interaction_surface,
+                metadata={
+                    "protocol": "todo_reminder",
+                    "batch_id": batch_id,
+                    "occurrence_ids": list(occurrence_ids),
+                    "interaction_destination_id": target.destination_id,
+                },
             )
         except Exception:
-            logger.exception("Failed to submit reminder Agent response: %s", occurrence.id)
-            self._todos.update_agent_response_status(
-                occurrence.id, AgentResponseStatus.FAILED, now=self._now()
-            )
+            logger.exception("Failed to submit reminder Agent response batch: %s", batch_id)
+            for occurrence_id in occurrence_ids:
+                self._todos.update_agent_response_status(
+                    occurrence_id, AgentResponseStatus.FAILED, now=self._now()
+                )
             return
 
         thread = threading.Thread(
             target=self._watch_agent_response,
-            args=(occurrence.id, handle, destination_kind, destination_id),
+            args=(occurrence_ids, handle, target, batch_id),
             daemon=True,
-            name=f"ReminderAgentResponse-{occurrence.id[:8]}",
+            name=f"ReminderAgentResponse-{batch_id[:8]}",
         )
         thread.start()
 
     def _watch_agent_response(
         self,
-        occurrence_id: str,
+        occurrence_ids: tuple[str, ...],
         handle: RunHandle,
-        destination_kind: str,
-        destination_id: str,
+        target: _AgentResponseTarget,
+        batch_id: str,
     ) -> None:
         text_parts: list[str] = []
         try:
@@ -322,20 +417,24 @@ class ReminderDeliveryOrchestrator:
                 if isinstance(event, TextDelta):
                     text_parts.append(event.text)
             terminal = handle.terminal
-            success = terminal is not None and terminal.outcome is RunOutcome.COMPLETED
-            if success and destination_kind == "im":
-                text = "".join(text_parts).strip()
-                if not text or self._im_runtime is None:
+            text = "".join(text_parts).strip()
+            success = (
+                terminal is not None and terminal.outcome is RunOutcome.COMPLETED and bool(text)
+            )
+            if success and target.destination_kind == "im":
+                if self._im_runtime is None:
                     success = False
                 else:
                     success = (
-                        self._im_runtime.send_proactive(destination_id, text).outcome == "delivered"
+                        self._im_runtime.send_proactive(target.destination_id, text).outcome
+                        == "delivered"
                     )
             status = AgentResponseStatus.COMPLETED if success else AgentResponseStatus.FAILED
         except Exception:
-            logger.exception("Reminder Agent response watcher failed: %s", occurrence_id)
+            logger.exception("Reminder Agent response watcher failed: %s", batch_id)
             status = AgentResponseStatus.FAILED
-        self._todos.update_agent_response_status(occurrence_id, status, now=self._now())
+        for occurrence_id in occurrence_ids:
+            self._todos.update_agent_response_status(occurrence_id, status, now=self._now())
 
     def _now(self) -> datetime:
         value = self._clock()
@@ -355,19 +454,47 @@ def _fixed_text(occurrence: ReminderOccurrence) -> str:
     return "\n".join(lines)
 
 
-def _agent_prompt(occurrence: ReminderOccurrence) -> str:
-    facts = occurrence.facts
-    return (
-        "<system_trigger>\n"
-        "一条 Todo Reminder 的固定事实已经先展示给用户。请结合当前会话和 persona，"
-        "用简短自然的一两句话回应。不要重复伪造时间，不要改写以下事实，不要声称用户已完成，"
-        "不要调用工具。\n"
-        f"Todo: {facts.title}\n"
-        f"说明: {facts.description or '无'}\n"
-        f"计划时间: {facts.scheduled_local.isoformat()} [{facts.timezone}]\n"
-        f"周期: {facts.recurrence}\n"
-        "</system_trigger>"
+def _structured_events(occurrences: tuple[ReminderOccurrence, ...]) -> str:
+    events = []
+    for occurrence in occurrences:
+        facts = occurrence.facts
+        events.append(
+            {
+                "type": "todo_reminder",
+                "payload": {
+                    "occurrence_id": occurrence.id,
+                    "todo_id": facts.todo_id,
+                    "reminder_id": facts.reminder_id,
+                    "title": facts.title,
+                    "description": facts.description,
+                    "scheduled_at_utc": facts.scheduled_at_utc.isoformat(),
+                    "scheduled_local": facts.scheduled_local.isoformat(),
+                    "timezone": facts.timezone,
+                    "recurrence": facts.recurrence,
+                    "todo_status": facts.todo_status.value,
+                },
+            }
+        )
+    payload = json.dumps(events, ensure_ascii=False, separators=(",", ":"))
+    return f"<system_events>\n{payload}\n</system_events>"
+
+
+def _batch_id(occurrence_ids: tuple[str, ...]) -> str:
+    source = "\n".join(occurrence_ids).encode("utf-8")
+    return hashlib.sha256(source).hexdigest()[:32]
+
+
+def _interaction_surface_for_im(
+    state: PresenceState,
+    destination_id: str,
+) -> InteractionSurfaceId:
+    binding = next(
+        (item for item in state.im_bindings if item.destination_id == destination_id),
+        None,
     )
+    if binding is None:
+        raise RuntimeError(f"IM presence binding missing for destination: {destination_id}")
+    return InteractionSurfaceId(f"im:{binding.im_type}")
 
 
 __all__ = ["ReminderDeliveryOrchestrator"]

@@ -494,7 +494,6 @@ def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     assert [ev.type for ev in conv.session.events] == [
         "session_meta",
         "user_message",
-        "model_context",
     ]
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "question before failure"),
@@ -532,7 +531,6 @@ def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
         "assistant_message",
         "turn_rewrite",
         "user_message",
-        "model_context",
     ]
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "new question"),

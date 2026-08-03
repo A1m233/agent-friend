@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Bell,
   Brain,
   ChevronDown,
   ChevronLeft,
@@ -82,6 +83,7 @@ interface Props {
   onOpenLive2DDebugger: () => void;
   onInjectShort: () => void;
   onInjectLong: () => void;
+  onInjectReminder: () => void;
 }
 
 // 容器尺寸常量（design §2.4.3）—— 改这里就能调每页容量与视觉密度
@@ -121,6 +123,7 @@ export function ActionBar({
   onOpenLive2DDebugger,
   onInjectShort,
   onInjectLong,
+  onInjectReminder,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttons: BtnDef[] = [
@@ -148,6 +151,7 @@ export function ActionBar({
       { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
       { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
       { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },
+      { icon: <Bell />, tooltip: "加入提醒队列", onClick: onInjectReminder },
     );
   }
 

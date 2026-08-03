@@ -577,7 +577,6 @@ class Conversation:
         tool_run_context = self._make_tool_run_context(user_input)
         previous_tool_run_context = self._active_tool_run_context
         self._active_tool_run_context = tool_run_context
-        model_context_event = self._build_model_context_event()
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -586,18 +585,11 @@ class Conversation:
         def prepare_first_turn() -> list[dict[str, Any]]:
             nonlocal user_event_appended
             messages = (
-                self._build_openai_messages_continuation(
-                    model_context_update=self._model_context_message(model_context_event)
-                    if model_context_event is not None
-                    else None
-                )
+                self._build_openai_messages_continuation()
                 if user_event_appended
                 else self._build_openai_messages_first_turn(
                     user_input,
                     attachments=turn_attachments,
-                    model_context_update=self._model_context_message(model_context_event)
-                    if model_context_event is not None
-                    else None,
                 )
             )
             # Persist only after local context assembly has accepted the request.
@@ -608,8 +600,6 @@ class Conversation:
                     event_id=user_event_id,
                 )
                 user_event_appended = True
-            if model_context_event is not None:
-                self._append_model_context_event(model_context_event)
             return messages
 
         try:
@@ -705,7 +695,6 @@ class Conversation:
         tool_run_context = self._make_tool_run_context(user_input, events=plan.prefix_events)
         previous_tool_run_context = self._active_tool_run_context
         self._active_tool_run_context = tool_run_context
-        model_context_event = self._build_model_context_event()
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -719,9 +708,6 @@ class Conversation:
                 history_override=prefix_history,
                 prior_summary_override=prefix_prior_summary,
                 persist_compaction=False,
-                model_context_update=self._model_context_message(model_context_event)
-                if model_context_event is not None
-                else None,
             )
             if not rewrite_event_appended:
                 self._append_turn_rewrite_event(plan, replacement_text=user_input)
@@ -732,8 +718,6 @@ class Conversation:
                     attachments=plan.target_user_attachments,
                 )
                 user_event_appended = True
-            if model_context_event is not None:
-                self._append_model_context_event(model_context_event)
             return messages
 
         try:
@@ -808,7 +792,6 @@ class Conversation:
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
         self._active_tool_run_context = self._make_tool_run_context("")
-        model_context_event = self._build_model_context_event()
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -819,14 +802,7 @@ class Conversation:
 
         try:
             self._check_cancel(cancel_check)
-            openai_messages = self._build_openai_messages_continuation(
-                tool_specs=None,
-                model_context_update=self._model_context_message(model_context_event)
-                if model_context_event is not None
-                else None,
-            )
-            if model_context_event is not None:
-                self._append_model_context_event(model_context_event)
+            openai_messages = self._build_openai_messages_continuation(tool_specs=None)
             yield ModelResponseStatus(
                 phase="waiting",
                 after_tool=True,
@@ -887,15 +863,38 @@ class Conversation:
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
         interaction_destination_id: str | None = None,
+        event_metadata: dict[str, Any] | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
-        """Continue one trusted external action with the normal Agent tool loop.
+        """Continue one trusted external action with the normal Agent tool loop."""
 
-        This is intentionally separate from :meth:`dispatch_system_turn`: ordinary
-        system triggers keep ``tools=None``. The caller must already have completed
-        the user-approved external action and supplies its frozen origin surface.
-        """
+        yield from self._dispatch_tool_enabled_system_turn(
+            source_kind=source_kind,
+            system_prompt_addendum=system_prompt_addendum,
+            presentation=presentation,
+            channel=channel,
+            surface=surface,
+            interaction_destination_id=interaction_destination_id,
+            event_metadata=event_metadata,
+            run_id=run_id,
+            cancel_check=cancel_check,
+        )
+
+    def _dispatch_tool_enabled_system_turn(
+        self,
+        *,
+        source_kind: str,
+        system_prompt_addendum: str,
+        presentation: Literal["conversation", "none"],
+        channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
+        interaction_destination_id: str | None = None,
+        event_metadata: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        cancel_check: Callable[[], None] | None = None,
+    ) -> Iterator[ConversationEvent]:
+        """Run a user-visible system turn through the normal Agent tool loop."""
 
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
@@ -917,7 +916,6 @@ class Conversation:
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = self._make_tool_run_context(system_prompt_addendum)
         self._active_tool_run_context = tool_run_context
-        model_context_event = self._build_model_context_event()
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
@@ -937,10 +935,9 @@ class Conversation:
                     system_prompt_addendum=system_prompt_addendum,
                     output_visibility="user",
                     presentation=presentation,
+                    event_metadata=event_metadata,
                 )
                 trigger_appended = True
-            if model_context_event is not None:
-                self._append_model_context_event(model_context_event)
             return messages
 
         try:
@@ -989,10 +986,33 @@ class Conversation:
         system_prompt_addendum: str,
         output_visibility: Literal["user", "memory_only"] = "user",
         presentation: Literal["conversation", "ambient", "none"] = "ambient",
+        tool_mode: Literal["disabled", "normal"] = "disabled",
+        channel: PromptChannel | None = None,
+        surface: InteractionSurfaceId | None = None,
+        interaction_destination_id: str | None = None,
+        event_metadata: dict[str, Any] | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
         """Run a system-triggered turn with a frozen model/client snapshot."""
+
+        if tool_mode == "normal":
+            if output_visibility != "user":
+                raise ValueError("tool-enabled system turns must be user-visible")
+            if presentation == "ambient":
+                raise ValueError("tool-enabled system turns require conversation or none")
+            yield from self._dispatch_tool_enabled_system_turn(
+                source_kind=source_kind,
+                system_prompt_addendum=system_prompt_addendum,
+                presentation=presentation,
+                channel=channel,
+                surface=surface,
+                interaction_destination_id=interaction_destination_id,
+                event_metadata=event_metadata,
+                run_id=run_id,
+                cancel_check=cancel_check,
+            )
+            return
 
         previous_run_model_snapshot = self._run_model_snapshot
         previous_run_id = self._run_id_override
@@ -1005,6 +1025,7 @@ class Conversation:
                 system_prompt_addendum=system_prompt_addendum,
                 output_visibility=output_visibility,
                 presentation=presentation,
+                event_metadata=event_metadata,
                 run_id=run_id,
                 cancel_check=cancel_check,
             )
@@ -1020,6 +1041,7 @@ class Conversation:
         system_prompt_addendum: str,
         output_visibility: Literal["user", "memory_only"] = "user",
         presentation: Literal["conversation", "ambient", "none"] = "ambient",
+        event_metadata: dict[str, Any] | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
@@ -1046,8 +1068,8 @@ class Conversation:
             :class:`TurnDone`；``output_visibility="memory_only"`` 时：什么都不 yield。
 
         Note:
-            本期 silent / system 触发轮**不开 tool**（``tools=None``），避免意外
-            副作用 / 长耗时——主动陪伴场景的 tool 调用留下个需求扩展。
+            本实现只承载 ``tool_mode="disabled"`` 路径；显式选择 ``normal`` 的
+            user-visible system turn 会在外层复用普通对话工具循环。
         """
         previous_run_id = self._run_id_override
         self._run_id_override = run_id
@@ -1063,6 +1085,7 @@ class Conversation:
             system_prompt_addendum=system_prompt_addendum,
             output_visibility=output_visibility,
             presentation=presentation,
+            event_metadata=event_metadata,
         )
 
         # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
@@ -1393,37 +1416,13 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
-    def _build_model_context_event(self) -> Event | None:
-        """Capture one append-only, model-only runtime snapshot for this run.
-
-        The event is built before context assembly but persisted only after assembly has
-        accepted the request.  Its exact rendered content then occupies the same history
-        position for tool continuations and resumed sessions, preserving cache prefixes.
-        """
-
+    def _ephemeral_model_context_message(self) -> Message | None:
+        """Build one fresh, non-persistent context packet for the next inference."""
         context = self._active_tool_run_context
         if context is None:
             return None
-        runtime_now = context.trusted_now.isoformat(timespec="seconds")
-        snapshot: dict[str, str | None] = {
-            "runtime_now": runtime_now,
-            "timezone": context.trusted_timezone,
-            "surface": str(self._prompt_surface_override)
-            if self._prompt_surface_override is not None
-            else None,
-        }
-        previous_snapshot: dict[str, Any] | None = None
-        for existing in reversed(self._session.active_events):
-            if existing.type != "model_context":
-                continue
-            candidate = existing.payload.get("snapshot")
-            if isinstance(candidate, dict):
-                previous_snapshot = candidate
-            if candidate == snapshot:
-                return None
-            break
-        previous_surface = previous_snapshot.get("surface") if previous_snapshot else None
-        if self._prompt_surface_override is None and not isinstance(previous_surface, str):
+        context.refresh_time()
+        if self._prompt_surface_override is None:
             kind = "runtime_context"
             content = context.render_for_model()
         else:
@@ -1432,37 +1431,17 @@ class Conversation:
                 surface=self._prompt_surface_override,
                 runtime_context=context.render_for_model(),
             )
-        return Event(
-            type="model_context",
-            uuid=str(uuid4()),
-            ts=datetime.now(UTC),
-            payload={
-                "kind": kind,
-                "snapshot": snapshot,
-                "content": content,
-            },
-            meta=self._run_event_meta({"model": self._session.current_model}),
-        )
-
-    @staticmethod
-    def _model_context_message(event: Event | None) -> Message | None:
-        if event is None:
-            return None
         return Message(
             role="system",
-            content=str(event.payload.get("content", "")),
-            timestamp=event.ts,
+            content=content,
+            timestamp=context.trusted_now,
             meta={
-                **event.meta,
-                "synthetic": "model_context",
-                "model_context_kind": event.payload.get("kind", ""),
+                **self._run_event_meta({"model": self._session.current_model}),
+                "synthetic": "transient_model_context",
+                "model_context_kind": kind,
             },
-            uuid=event.uuid,
+            uuid=f"runtime_{uuid4().hex}",
         )
-
-    def _append_model_context_event(self, event: Event) -> None:
-        self._store.append_event(self._session.session_id, event)
-        self._session.append(event)
 
     def _append_assistant_event(
         self,
@@ -1533,7 +1512,6 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
-        model_context_update: Message | None = None,
     ) -> list[dict[str, Any]]:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
@@ -1598,7 +1576,6 @@ class Conversation:
             history_override=history_override,
             prior_summary_override=prior_summary_override,
             persist_compaction=persist_compaction,
-            model_context_update=model_context_update,
         )
         log_voice_latency(
             logger,
@@ -1623,7 +1600,6 @@ class Conversation:
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
-        model_context_update: Message | None = None,
     ) -> list[dict[str, Any]]:
         """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
 
@@ -1665,22 +1641,16 @@ class Conversation:
             if capability_catalog:
                 system_prompt = f"{system_prompt}\n\n{capability_catalog}"
         active_turn_context: list[Message] = list(turn_context or [])
-        if model_context_update is not None:
-            active_turn_context.append(model_context_update)
-        model_context_state = (
-            "update"
-            if model_context_update is not None
-            else "retained"
-            if any(event.type == "model_context" for event in self._session.active_events)
-            else "none"
-        )
+        model_context = self._ephemeral_model_context_message()
+        if model_context is not None:
+            active_turn_context.append(model_context)
         logger.info(
             "[SurfaceContextDbg] prompt_build session_id=%s run_id=%s surface=%s "
-            "model_context_update=%s trusted_time=%s system_prompt_chars=%d",
+            "transient_model_context=%s trusted_time=%s system_prompt_chars=%d",
             self._session.session_id,
             self._run_id_override or "none",
             self._prompt_surface_override or "none",
-            model_context_state,
+            "present" if model_context is not None else "none",
             "present" if self._active_tool_run_context is not None else "none",
             len(system_prompt),
         )
@@ -2475,7 +2445,6 @@ class Conversation:
         self,
         *,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
-        model_context_update: Message | None = None,
     ) -> list[dict[str, Any]]:
         """工具调用循环第 N>0 轮：经统一入口 :meth:`_assemble` 组装（009 R-0.3）。
 
@@ -2491,7 +2460,6 @@ class Conversation:
         return self._assemble(
             tool_specs=tool_specs,
             turn_context=turn_context,
-            model_context_update=model_context_update,
         )
 
     def _accumulate_tool_call_delta(
@@ -3130,6 +3098,7 @@ class Conversation:
         system_prompt_addendum: str,
         output_visibility: str,
         presentation: str,
+        event_metadata: dict[str, Any] | None = None,
     ) -> None:
         """落 ``system_trigger`` 事件（014）：non-user 触发轮的 marker。
 
@@ -3137,6 +3106,9 @@ class Conversation:
         历史；仅修复前缺少 ``todo_reminder`` 固定事件的 IM Reminder 会被
         :class:`Session` 合成只读已投递状态。session 文件始终可回放审计。
         """
+        meta = self._run_event_meta()
+        if event_metadata:
+            meta.update(event_metadata)
         event = Event(
             type="system_trigger",
             uuid=str(uuid4()),
@@ -3147,7 +3119,7 @@ class Conversation:
                 "output_visibility": output_visibility,
                 "presentation": presentation,
             },
-            meta=self._run_event_meta(),
+            meta=meta,
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)

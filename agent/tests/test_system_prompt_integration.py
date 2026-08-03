@@ -289,7 +289,24 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
     assert '<surface type="desktop_chat" />' in "\n".join(
         message["content"] for message in fake.received[1]
     )
-    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
+    first_stable = [
+        message
+        for message in fake.received[0]
+        if not message.get("content", "").startswith("<interaction_context>")
+    ]
+    continuation_stable = [
+        message
+        for message in fake.received[1]
+        if not message.get("content", "").startswith("<interaction_context>")
+    ]
+    assert continuation_stable[: len(first_stable)] == first_stable
+    assert (
+        sum(
+            message.get("content", "").startswith("<interaction_context>")
+            for message in fake.received[1]
+        )
+        == 1
+    )
 
     conv.send("second")
     assert "persona B" in fake.received[2][0]["content"]
@@ -327,19 +344,22 @@ def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Pat
     assert '<surface type="im" provider="qq" />' in fake.received[1][-1]["content"]
     assert "否则不要在回复中提及交互端" in fake.received[1][-1]["content"]
     assert "不要告诉用户你收到了这段上下文" in fake.received[1][-1]["content"]
-    assert [len(items) for items in contexts] == [1, 2, 3]
+    assert [len(items) for items in contexts] == [1, 1, 0]
     assert '<surface type="desktop_chat" />' in contexts[0][-1]
     assert '<surface type="im" provider="qq" />' in contexts[1][-1]
-    assert '<surface available="false" />' in contexts[2][-1]
-    assert 'provider="qq"' not in contexts[2][-1]
-    assert "取代更早的 interaction_context" in contexts[2][-1]
-
-    # Model-only snapshots survive reload for prompt history, but never become chat messages.
-    assert all("<interaction_context>" not in message.content for message in conv.session.messages)
-    assert (
-        sum("<interaction_context>" in message.content for message in conv.session.llm_messages)
-        == 3
+    assert all(
+        '<surface type="desktop_chat" />' not in message.get("content", "")
+        for message in fake.received[1]
     )
+    assert all('provider="qq"' not in message.get("content", "") for message in fake.received[2])
+    assert fake.received[2][-1]["content"].startswith("<runtime_now")
+
+    # Dynamic snapshots are inference-only and never survive in either message projection.
+    assert all("<interaction_context>" not in message.content for message in conv.session.messages)
+    assert all(
+        "<interaction_context>" not in message.content for message in conv.session.llm_messages
+    )
+    assert all(event.type != "model_context" for event in conv.session.events)
     reloaded = JsonlSessionStore(base_dir=tmp_path / "sessions").load(conv.session.session_id)
     assert all("<interaction_context>" not in message.content for message in reloaded.messages)
-    assert sum("<interaction_context>" in message.content for message in reloaded.llm_messages) == 3
+    assert all("<interaction_context>" not in message.content for message in reloaded.llm_messages)

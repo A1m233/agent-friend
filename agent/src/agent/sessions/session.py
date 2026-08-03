@@ -347,7 +347,9 @@ class Session:
         - ``todo_reminder`` → 一条只读 ``role="system"`` 历史状态裁决；修复前
           只有 ``system_trigger`` 的 IM Reminder 会合成等价 fallback
 
-        ``model_context`` 是唯一只进入 :attr:`llm_messages` 的投影，不会出现在本属性。
+        历史版本写入的 ``model_context`` 只保留在原始事件流中供审计，既不进入
+        本属性，也不进入 :attr:`llm_messages`；当前运行时上下文由 Conversation
+        在每次模型调用前临时注入。
 
         ``Event.uuid`` 直接映射到 ``Message.uuid``（M2.2 起的正式字段，详见
         002 design §4.6）。``Event.meta`` 复制到 ``Message.meta``；
@@ -365,36 +367,21 @@ class Session:
         Returns:
             按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
-        return self._project_messages(self.active_events, include_model_context=False)
+        return self._project_messages(self.active_events)
 
     @staticmethod
     def _project_messages(
         events: list[Event],
-        *,
-        include_model_context: bool,
     ) -> list[Message]:
-        """Project events for either the user-visible or model-only history view."""
+        """Project persistent conversation events into message history."""
 
         result: list[Message] = []
         last_assistant: Message | None = None
         pending_reminder_fact = False
         for ev in events:
             if ev.type == "model_context":
-                if include_model_context:
-                    content = ev.payload.get("content")
-                    if isinstance(content, str) and content:
-                        meta = dict(ev.meta)
-                        meta["synthetic"] = "model_context"
-                        meta["model_context_kind"] = ev.payload.get("kind", "")
-                        result.append(
-                            Message(
-                                role="system",
-                                content=content,
-                                timestamp=ev.ts,
-                                meta=meta,
-                                uuid=ev.uuid,
-                            )
-                        )
+                # 068 的早期实现曾把动态运行时快照写入 append-only 事件流。
+                # 保留原始事件以兼容旧 session，但永远不再投影给模型。
                 last_assistant = None
             elif ev.type == "user_message":
                 result.append(
@@ -459,14 +446,13 @@ class Session:
                     result.append(reminder_message)
                     pending_reminder_fact = True
                 last_assistant = None
-            elif ev.type == "system_trigger":
-                if ev.payload.get("source_kind") == "todo_reminder":
-                    if not pending_reminder_fact:
-                        reminder_message = _reminder_history_message(ev, legacy_trigger=True)
-                        if reminder_message is not None:
-                            result.append(reminder_message)
-                    pending_reminder_fact = False
-                    last_assistant = None
+            elif ev.type == "system_trigger" and ev.payload.get("source_kind") == "todo_reminder":
+                if not pending_reminder_fact:
+                    reminder_message = _reminder_history_message(ev, legacy_trigger=True)
+                    if reminder_message is not None:
+                        result.append(reminder_message)
+                pending_reminder_fact = False
+                last_assistant = None
         return result
 
     @property
@@ -508,10 +494,7 @@ class Session:
             )
             if not partial_history_normalized and not tool_history_normalized:
                 normalized_events = active_events
-            return self._project_messages(
-                normalized_events,
-                include_model_context=True,
-            )
+            return self._project_messages(normalized_events)
 
         excluded_event_uuids: set[str] = set()
         placeholders: dict[str, Event] = {}
@@ -557,7 +540,7 @@ class Session:
                 sanitized_events.append(placeholder)
             sanitized_events.append(event)
         normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
-        return self._project_messages(normalized_events, include_model_context=True)
+        return self._project_messages(normalized_events)
 
     @staticmethod
     def _normalize_partial_assistants(events: list[Event]) -> tuple[list[Event], bool]:

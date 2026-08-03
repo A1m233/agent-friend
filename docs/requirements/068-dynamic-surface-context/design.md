@@ -16,13 +16,13 @@ CONFIRMED
 
 初版实现曾把 surface 作为动态 section 拼入首条基础 system prompt。自动化能证明值已传入，但真实 6.7 万 token 长会话回放中，模型仍沿用了历史里的旧回答。这说明 surface 是“当前回合运行时事实”，不应埋在长历史最前面的基础 prompt 中。
 
-参考成熟 Agent harness 的分层方式：稳定行为留在 system/developer instructions；当前目录、时间、权限、入口等易变事实使用结构化、靠近当前输入的 turn context。068 因此采用独立的非持久化 turn-context 插槽。
+参考成熟 Agent harness 的分层方式：稳定行为留在 system/developer instructions；当前目录、时间、权限、入口等易变事实使用结构化、靠近当前输入的 turn context。068 因此采用独立的非持久化 turn-context 插槽。后续实现一度为了复用历史前缀把动态快照写成 `model_context` 事件，导致长会话累积旧时间；本次恢复非持久化边界，并把精确时钟纳入逐次上下文。
 
 ## 3. 设计原则
 
 1. **通道与产品端分离**：`voice/text` 是媒介维度；`desktop_chat/voice_call/im:qq` 是产品入口维度。
 2. **稳定规则与动态事实分离**：基础 prompt 只解释 turn context 的语义；具体 surface 值逐次模型调用注入。
-3. **每轮事实不持久化**：surface 不写 session event、历史、摘要、记忆或 run snapshot。
+3. **动态事实不持久化**：surface 与可信时钟不写 session event、历史、摘要、记忆或 run snapshot。
 4. **只接受可信稳定 ID**：外部请求不能提交 prompt 正文；入口只选择工程内注册的 surface。
 5. **已支持 IM 必须完整登记**：新增 adapter 必须登记 provider 映射；漏配显式失败。
 6. **保留局部扩展点**：通过数据驱动 renderer 扩展新 surface，不引入通用插件框架。
@@ -83,18 +83,18 @@ turn_context: list[Message] | None = None
 [base system]
 + [memory context]
 + [folded/full history]
-+ [current turn context]
 + [current user input]
++ [current inference context]
 + [temporary trailing messages]
 ```
 
-turn context 是宿主生成的可信 `role="system"` 消息，只存在于本次模型视图：
+current inference context 是宿主生成的可信 `role="system"` 消息，只存在于本次模型视图：
 
 - 不进入 `Session.messages`；
 - 不成为 compaction 输入；
 - FIFO 截断历史时仍保留；
-- prior summary 折叠后仍位于当前用户输入之前；
-- 工具 continuation 每次重新生成同一个当前 run context。
+- prior summary 折叠后仍邻近当前输入；
+- 工具 continuation 每次重新生成：surface 沿用当前 run 的可信入口，时钟重新读取。
 
 `NaiveContextManager`、`FifoContextManager` 和 `SummarizingContextManager` 使用同一 `assemble_messages()` 顺序，避免入口之间产生差异。
 
@@ -114,8 +114,8 @@ flowchart LR
 
 - `RunRequest` 和 `AgentRuntime.submit()` 携带可选 surface。
 - `Conversation.stream()`、`edit_resend_latest()`、`continue_after_tool_error()` 在 run 期间 save/set/finally restore surface override。
-- `_assemble()` 每次模型调用都根据当前 override 生成 turn context。
-- `dispatch_system_turn()` 不携带 surface；它没有“用户当前所在端”的语义。
+- `_assemble()` 每次模型调用都根据当前 override 和刷新后的可信时钟生成 turn context。
+- `dispatch_system_turn()` 不凭空声明 surface；它没有“用户当前所在端”的语义，但仍获得当前时钟。
 
 ### 4.5 入口映射
 
@@ -129,9 +129,22 @@ flowchart LR
 
 IM mapping 缺失代表受支持 adapter 装配不完整：在进入 LLM 前失败，并复用现有 IM 用户兜底。
 
-### 4.6 不持久化与安全边界
+### 4.6 可信时钟与工具一致性
 
-surface 不写入 `session_meta`、`channel_change`、user/assistant message、compaction、memory 或 `RunSnapshot`。用户文本中的内部标签会沿用现有 untrusted marker 转义边界，不能改变由入口选择的受信 turn context。
+`ToolRunContext` 持有可刷新可信 clock。每次 `_assemble()` 恰好刷新一次并渲染：
+
+```xml
+<runtime_now at="2026-08-04T09:00:00+08:00" tz="Asia/Shanghai"
+             yesterday="2026-08-03" today="2026-08-04" tomorrow="2026-08-05" />
+```
+
+该快照同时成为随后工具调用的隐藏 `runtime_now` / timezone；一个模型响应中的多个工具调用不再重新取时。下一次模型 continuation 再刷新，使长工具轮不沿用旧钟点。显式注入固定 clock 的测试保持确定性。
+
+当前时间直接存在于每次推理上下文，不新增 `datetime_calculate.current` 或同类主动查询操作；未来若确需查询运行时状态，应作为独立能力设计。
+
+### 4.7 不持久化、旧数据兼容与安全边界
+
+surface 与时钟不写入 `session_meta`、`channel_change`、user/assistant message、compaction、memory 或 `RunSnapshot`。历史 session 中已经存在的 `model_context` 事件仍是合法原始事件，供诊断和审计读取；`Session.messages` 与 `Session.llm_messages` 都跳过它，不做破坏性迁移。用户文本中的内部标签会沿用现有 untrusted marker 转义边界，不能改变由入口选择的受信 turn context。
 
 动态上下文只表达产品入口，不推导操作系统、设备、窗口状态、附件能力或账号控制权。
 
@@ -144,6 +157,8 @@ surface 不写入 `session_meta`、`channel_change`、user/assistant message、c
 | `agent/system_prompt/composer.py` | 静态合同槽位；不再渲染具体 surface |
 | `agent/context/` | 新增并保全 `turn_context` 消息插槽 |
 | `agent/conversation.py` | per-run surface 管理、逐次生成 turn context、诊断日志 |
+| `agent/tool_runtime/context.py` | 每次推理刷新可信时钟、渲染日历锚点并与隐藏工具参数共享快照 |
+| `agent/sessions/session.py` | 兼容保留旧 `model_context` 原始事件，但从所有消息投影中过滤 |
 | `agent/runtime/` | `RunRequest.surface` 与 runner 透传 |
 | `agent_bridge` AG-UI/meta/OpenAI/IM 路由 | 可信入口映射及 fallback 透传 |
 | `agent/tests`、`agent_bridge/tests` | renderer、顺序、压缩、runtime 和入口集成回归 |
@@ -158,6 +173,8 @@ surface 不写入 `session_meta`、`channel_change`、user/assistant message、c
 - 当前 turn context 必须是当前用户输入前一条 system 消息。
 - 同一 Conversation 跨 desktop、QQ、无 surface 三轮切换不串端。
 - 工具 continuation、编辑重发、继续工具结果保持本 run surface。
+- 普通首轮、工具 continuation 和 system-trigger 每次只有一份新鲜 runtime clock；同一推理的多工具调用共享该快照。
+- 新会话不再写 `model_context`；旧 session 的该事件不进入新模型请求、摘要或记忆。
 - FIFO、prior summary 和新 compaction 都保留 turn context，但摘要正文不包含它。
 - voice channel 行为只出现一次；普通 OpenAI 文字请求无动态 surface packet。
 - 新 IM adapter 漏登记时不得进入 LLM。
@@ -177,6 +194,8 @@ surface 不写入 `session_meta`、`channel_change`、user/assistant message、c
 | 风险 | 对策 |
 |------|------|
 | turn context 被错误持久化或摘要 | 只由 `_assemble()` 生成；测试检查 session 与 summary |
+| 工具续轮时间过期或模型/工具时间漂移 | 每次 `_assemble()` 刷新一次；同一推理结束前不再次刷新 |
+| 旧 session 已含多个动态快照 | 保留事件审计，统一从 model-visible projection 过滤 |
 | context manager 某策略遗漏新插槽 | 三种策略共享 `assemble_messages()`，全量 backend 门禁覆盖 |
 | 动态事实离当前输入过远 | 固定放在裁剪/折叠后的 history 与当前 user 之间 |
 | voice 身份与表达规则重复 | surface 只传结构化身份，channel 专管表达行为 |
@@ -193,3 +212,4 @@ surface 不写入 `session_meta`、`channel_change`、user/assistant message、c
 |------|----------|
 | 2026-07-27 | 首次确认 channel/surface 分离、per-run 传递和支持 IM 强制登记 |
 | 2026-07-28 | 真实长会话发现首条基础 system prompt 中的动态 section 会被旧历史压制；确认改为结构化、非持久化、邻近当前输入的 turn context |
+| 2026-08-04 | 修复动态快照被持久化后的长会话旧时钟累积；将精确时间逐次刷新并与同推理工具隐藏参数共享，旧 `model_context` 仅保留审计 |

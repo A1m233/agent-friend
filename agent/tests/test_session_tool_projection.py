@@ -45,6 +45,28 @@ def test_llm_messages_replaces_unclosed_tool_only_assistant() -> None:
     ]
 
 
+def test_llm_messages_ignores_legacy_persisted_model_context() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.append(_event("user_message", "u", {"content": "hello"}))
+    session.append(
+        _event(
+            "model_context",
+            "legacy-clock",
+            {
+                "kind": "runtime_context",
+                "content": '<runtime_now at="2026-07-28T22:04:13+08:00" />',
+            },
+        )
+    )
+    session.append(_event("assistant_message", "a", {"content": "hi", "partial": False}))
+
+    assert [(message.role, message.content) for message in session.llm_messages] == [
+        ("user", "hello"),
+        ("assistant", "hi"),
+    ]
+    assert any(event.type == "model_context" for event in session.events)
+
+
 def test_llm_messages_keeps_closed_sibling_and_removes_unmatched_request() -> None:
     session = Session.new(title="t", persona="default", model="m")
     session.append(_event("user_message", "u", {"content": "hello"}))

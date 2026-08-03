@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { calculateBubbleWindowSize, parseCssPixels } from "./bubbleWindowSize";
+import {
+  calculateBubbleStackWindowSize,
+  calculateBubbleWindowSize,
+  parseCssPixels,
+} from "./bubbleWindowSize";
 
 describe("calculateBubbleWindowSize", () => {
   it("includes the bubble border box and all frame padding", () => {
@@ -18,6 +22,21 @@ describe("calculateBubbleWindowSize", () => {
         { top: 4, right: 4, bottom: 4, left: 4 },
       ),
     ).toEqual({ width: 225, height: 146 });
+  });
+});
+
+describe("calculateBubbleStackWindowSize", () => {
+  it("uses the furthest Sonner target offset and reserves a 16px shadow frame", () => {
+    expect(
+      calculateBubbleStackWindowSize([
+        { height: 68, offset: 0 },
+        { height: 76, offset: 82 },
+      ]),
+    ).toEqual({ width: 360, height: 190 });
+  });
+
+  it("returns the native window width even before a toast contributes height", () => {
+    expect(calculateBubbleStackWindowSize([])).toEqual({ width: 360, height: 32 });
   });
 });
 

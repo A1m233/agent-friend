@@ -12,14 +12,14 @@ from .store import TodoStore
 
 logger = logging.getLogger(__name__)
 
-OccurrenceHandler = Callable[[ReminderOccurrence], None]
+OccurrenceBatchHandler = Callable[[tuple[ReminderOccurrence, ...]], None]
 
 
 class ReminderScheduler:
     def __init__(
         self,
         store: TodoStore,
-        handler: OccurrenceHandler,
+        handler: OccurrenceBatchHandler,
         *,
         clock: Callable[[], datetime] | None = None,
         idle_poll_seconds: float = 30.0,
@@ -68,11 +68,19 @@ class ReminderScheduler:
         now = self._now()
         self._store.create_due_occurrences(now)
         claimed = self._store.claim_pending(now)
-        for occurrence in claimed:
-            try:
-                self._handler(occurrence)
-            except Exception:
-                logger.exception("Reminder occurrence delivery failed: %s", occurrence.id)
+        if not claimed:
+            return 0
+        batch = tuple(claimed)
+        try:
+            self._handler(batch)
+        except Exception:
+            logger.exception(
+                "Reminder occurrence batch delivery failed: %s",
+                ",".join(occurrence.id for occurrence in batch),
+            )
+            for occurrence in batch:
+                if not self._store.occurrence_is_deliverable(occurrence.id):
+                    continue
                 try:
                     self._store.update_occurrence(
                         occurrence.id,

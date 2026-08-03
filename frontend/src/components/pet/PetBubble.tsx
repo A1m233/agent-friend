@@ -1,127 +1,150 @@
 import { useEffect, useRef } from "react";
-import { X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button } from "@/components/ui";
-import { cn } from "@/utils/cn";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui";
 import { isTauri } from "@/utils/tauri";
 import { usePetBubbleStore } from "@/stores/petBubble";
 import {
-  calculateBubbleWindowSize,
+  BUBBLE_FRAME_PADDING,
+  BUBBLE_VISIBLE_TOASTS,
+  calculateBubbleStackWindowSize,
   parseCssPixels,
 } from "./bubbleWindowSize";
 
 /**
- * 015 + 016 · 桌宠气泡组件（独立 bubble webview 内的唯一内容）。
+ * 015 + 016 + 070 · 独立 bubble webview 内的桌宠短气泡栈。
  *
- * 数据源：`usePetBubbleStore`（由 `startPetBubbleSubscriber` 桥接 Rust 侧 push
- * channel）。本组件不直接订阅 tauri event——subscriber 启动由 `bubble/App.tsx`
- * useEffect 管。
- *
- * 016 改造（M16.6）相对 015 的变化：
- * - **承载层**：原 015 用 `absolute` 贴 pet 主窗内（pet 主窗为此被 hot-fix 加大到
- *   480×460）；016 把气泡搬到独立 bubble webview，pet 主窗回 240×320 只放形象。
- * - **位置**：组件不再管屏幕位置——bubble window 由 Rust `bubble_window.rs::run_follow_loop`
- *   每 50ms 用 `outer_position` 跟随 pet 主窗 + 翻转判定（贴屏顶时翻 pet 下方）。
- * - **尺寸**：用 `ResizeObserver` 监测 root 元素 → debounce 一帧 → 上报气泡
- *   border box 与透明外壳 padding 的总尺寸 → invoke `set_bubble_size`；Rust 端 clamp 到
- *   (MIN_W..MAX_W, MIN_H..MAX_H) 再 `window.set_size`。组件不再写死
- *   `w-[280px]`，改 `w-fit max-w-[360px]` 内容驱动。
- * - **去除**：`flipBelow` state + `getBoundingClientRect` 翻转 useEffect（翻转由 Rust 算）；
- *   `absolute left-1/2 -translate-x-1/2 top-[200px]/bottom-[200px] z-10` 这些定位
- *   类（bubble window 在屏幕上的物理位置承担）。
- *
- * 保留（015 行为不变）：
- * - 长文本：超 120 字截断 + "点击展开"；展开后渲染全文（**不**导向 chat 窗，R-4.6.1）
- * - 透明区穿透：DOM 标 `data-hit`，`usePetPassthrough` 据此判定（注：本组件挂在 bubble
- *   webview 内，bubble 窗整窗都是 `data-hit` 实心区，穿透只在透明背景边缘有意义）
- * - **常驻直到关闭**（M15.8 决策）：右上角 X 按钮手动关；也会被新主动轮 envelope 替换
+ * Sonner 只负责 toast 生命周期、堆叠和逐条关闭；Zustand store 仍是 push 去重、Reminder
+ * 保留和普通主动轮替换语义的真相源。透明 Tauri window 不会自动跟随 fixed toast 子树
+ * 变高，因此本组件还会测量 Sonner 的目标布局并调用 `set_bubble_size`，同时在四周为阴影
+ * 和关闭按钮预留透明边距。
  */
 const TRUNCATE_LEN = 120;
+const TOASTER_ID = "pet-bubble";
 
 export function PetBubble() {
-  const phase = usePetBubbleStore((s) => s.phase);
-  const current = usePetBubbleStore((s) => s.current);
-  const expand = usePetBubbleStore((s) => s.expand);
-  const dismiss = usePetBubbleStore((s) => s.dismiss);
-  const ref = useRef<HTMLDivElement>(null);
+  const items = usePetBubbleStore((state) => state.items);
+  const expand = usePetBubbleStore((state) => state.expand);
+  const dismiss = usePetBubbleStore((state) => state.dismiss);
+  const renderedIds = useRef<Set<string>>(new Set());
 
-  // 016 · size 上报：ResizeObserver 监测 border box → 加上透明外壳 padding → invoke set_bubble_size
-  // - debounce 用 requestAnimationFrame：合并同一帧内的多次 resize 抖动
-  // - 不能上报 contentRect：它不含气泡自身 padding / border，也不含外壳为阴影预留的 padding，
-  //   会让原生 viewport 小于实际占位并使 document 与气泡同时出现滚动条
-  // - 非 Tauri 环境（vitest jsdom / 浏览器调试）退化为 no-op
-  // - deps [phase, current?.id]：新气泡显示时（DOM 元素是新 div）重新 observe
   useEffect(() => {
-    if (ref.current === null || !isTauri()) return;
-    let raf = 0;
-    const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const bubble = ref.current;
-        if (bubble === null) return;
-        const frameStyle = bubble.parentElement
-          ? getComputedStyle(bubble.parentElement)
-          : null;
-        const size = calculateBubbleWindowSize(
-          { width: bubble.offsetWidth, height: bubble.offsetHeight },
-          {
-            top: parseCssPixels(frameStyle?.paddingTop ?? ""),
-            right: parseCssPixels(frameStyle?.paddingRight ?? ""),
-            bottom: parseCssPixels(frameStyle?.paddingBottom ?? ""),
-            left: parseCssPixels(frameStyle?.paddingLeft ?? ""),
-          },
-        );
-        void invoke("set_bubble_size", {
-          width: size.width,
-          height: size.height,
-        }).catch((e: unknown) => {
-          // 防御性 log；invoke 失败不影响 store / UI（位置同步在 Rust 端继续按上次 size 跑）
-          console.warn("set_bubble_size invoke failed:", e);
-        });
+    const nextIds = new Set(items.map((item) => item.id));
+    for (const id of renderedIds.current) {
+      if (!nextIds.has(id)) toast.dismiss(id);
+    }
+
+    for (const item of items) {
+      const truncated = item.text.length > TRUNCATE_LEN && !item.expanded;
+      const displayText = truncated
+        ? `${item.text.slice(0, TRUNCATE_LEN)}…`
+        : item.text;
+      toast(displayText, {
+        id: item.id,
+        toasterId: TOASTER_ID,
+        duration: Infinity,
+        onDismiss: () => dismiss(item.id),
+        action: truncated
+          ? {
+              label: "展开",
+              onClick: (event) => {
+                event.preventDefault();
+                expand(item.id);
+              },
+            }
+          : undefined,
       });
+    }
+    renderedIds.current = nextIds;
+  }, [dismiss, expand, items]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let raf = 0;
+    const observed = new Set<Element>();
+    const resizeObserver = new ResizeObserver(() => scheduleMeasure());
+
+    const refreshObservedToasts = () => {
+      const current = new Set(document.querySelectorAll("[data-sonner-toast]"));
+      for (const element of observed) {
+        if (!current.has(element)) {
+          resizeObserver.unobserve(element);
+          observed.delete(element);
+        }
+      }
+      for (const element of current) {
+        if (!observed.has(element)) {
+          resizeObserver.observe(element);
+          observed.add(element);
+        }
+      }
+    };
+
+    const measure = () => {
+      refreshObservedToasts();
+      const layout = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-sonner-toast][data-visible="true"]:not([data-removed="true"])',
+        ),
+        (element) => ({
+          height: element.offsetHeight,
+          offset: parseCssPixels(element.style.getPropertyValue("--offset")),
+        }),
+      );
+      if (layout.length === 0) return;
+
+      const size = calculateBubbleStackWindowSize(layout);
+      void invoke("set_bubble_size", {
+        width: size.width,
+        height: size.height,
+      }).catch((error: unknown) => {
+        console.warn("set_bubble_size invoke failed:", error);
+      });
+    };
+
+    function scheduleMeasure() {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    }
+
+    const mutationObserver = new MutationObserver(() => {
+      refreshObservedToasts();
+      scheduleMeasure();
     });
-    ro.observe(ref.current);
+    mutationObserver.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["style", "data-mounted", "data-removed", "data-visible"],
+    });
+    scheduleMeasure();
+
     return () => {
       cancelAnimationFrame(raf);
-      ro.disconnect();
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
     };
-  }, [phase, current?.id]);
-
-  if (phase === "idle" || current === null) return null;
-
-  const isExpanded = phase === "expanded";
-  const truncated = current.text.length > TRUNCATE_LEN && !isExpanded;
-  const displayText = truncated
-    ? current.text.slice(0, TRUNCATE_LEN) + "…"
-    : current.text;
+  }, []);
 
   return (
-    <div
-      ref={ref}
-      data-hit
-      onClick={truncated ? expand : undefined}
-      className={cn(
-        "relative w-fit max-w-[360px] max-h-[440px] overflow-y-auto rounded-2xl border border-border bg-surface px-3 py-2 pr-8 text-fg shadow-lg",
-        "animate-in fade-in-0 zoom-in-95 duration-200",
-        truncated && "cursor-pointer hover:bg-surface-hover",
-      )}
-    >
-      <div className="text-sm whitespace-pre-wrap break-words">{displayText}</div>
-      {truncated && <div className="mt-1 text-xs text-muted">点击展开</div>}
-      {/* 右上角关闭按钮：常驻直到用户主动关（M15.8 决策） */}
-      <Button
-        data-hit
-        variant="ghost"
-        size="icon-sm"
-        className="absolute right-1 top-1 size-6 text-muted hover:text-fg"
-        onClick={(e) => {
-          e.stopPropagation();
-          dismiss();
-        }}
-        aria-label="关闭气泡"
-      >
-        <X className="size-3" />
-      </Button>
-    </div>
+    <Toaster
+      id={TOASTER_ID}
+      position="top-center"
+      expand
+      visibleToasts={BUBBLE_VISIBLE_TOASTS}
+      closeButton
+      duration={Infinity}
+      offset={BUBBLE_FRAME_PADDING}
+      mobileOffset={BUBBLE_FRAME_PADDING}
+      containerAriaLabel="桌宠提醒"
+      toastOptions={{
+        classNames: {
+          toast: "items-start",
+          title: "whitespace-pre-wrap break-words leading-snug",
+          actionButton: "self-center",
+        },
+      }}
+    />
   );
 }

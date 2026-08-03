@@ -43,6 +43,8 @@ class SystemTriggerEvent:
         output_visibility: ``"user"`` = 与 :meth:`Conversation.stream` 同形 yield 事件
             可被 push subscriber 看到；``"memory_only"`` = silent turn，输出仅入
             memory，不冒泡到 bridge stream（避免污染 session.messages 派生）。
+        tool_mode: ``"disabled"`` 保持既有 system turn 无工具语义；``"normal"``
+            复用普通对话的完整工具循环与全局权限策略。
         event_metadata: 旁路元数据（如 idle 触发时的累计 idle 分钟），供
             observability / 调试，**不参与 dispatch 行为决策**。
     """
@@ -52,6 +54,7 @@ class SystemTriggerEvent:
     system_prompt_addendum: str
     output_visibility: Literal["user", "memory_only"] = "user"
     presentation: Literal["conversation", "ambient", "none"] = "ambient"
+    tool_mode: Literal["disabled", "normal"] = "disabled"
     event_metadata: dict[str, Any] = field(default_factory=dict)
     type: Literal["system_trigger"] = "system_trigger"
 

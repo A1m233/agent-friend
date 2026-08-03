@@ -956,8 +956,8 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.plugin(tauri_nspanel::init());
 
-    // 016 M16.9 · dev build 多注册一个 `inject_test_envelope` 命令，
-    // 让 pet 操作栏的"inject 测试气泡"按钮跑通——release build 整个 fn 不存在。
+    // 016 + 070 · dev build 注册普通气泡与 Reminder 队列注入命令；
+    // release build 中两个 fn 都不存在。
     // 028 · settings command 注册到 app 级 invoke_handler，不走路径 plugin 权限文件。
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -1024,6 +1024,7 @@ pub fn run() {
         bubble_window::set_bubble_size,
         bubble_window::update_sprite_pos,
         bubble_window::inject_test_envelope,
+        bubble_window::inject_test_reminder_envelope,
     ]);
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![

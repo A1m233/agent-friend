@@ -53,20 +53,20 @@ def _state(
     return PresenceState(desktop, tuple(im), pet, NOW)
 
 
-def test_desktop_idle_boundary_29_30_31_seconds() -> None:
+def test_idle_duration_does_not_disqualify_a_fresh_focused_desktop() -> None:
     policy = DestinationPolicy()
     assert policy.decide(_state(_desktop(idle_ms=29_000))).kind == "desktop"
     assert policy.decide(_state(_desktop(idle_ms=30_000))).kind == "desktop"
-    assert policy.decide(_state(_desktop(idle_ms=31_000))).kind == "pet"
+    assert policy.decide(_state(_desktop(idle_ms=31_000))).kind == "desktop"
+    assert policy.decide(_state(_desktop(idle_ms=None))).kind == "desktop"
 
 
-def test_focus_minimize_lock_stale_and_unknown_are_ineligible() -> None:
+def test_focus_minimize_lock_and_stale_snapshots_are_ineligible() -> None:
     policy = DestinationPolicy()
     cases = (
         _desktop(idle_ms=1, window_focused=False),
         _desktop(idle_ms=1, window_minimized=True),
         _desktop(idle_ms=1, session_state="locked"),
-        _desktop(idle_ms=None),
         _desktop(idle_ms=1, observed_at=NOW - timedelta(seconds=16)),
     )
     assert all(policy.decide(_state(item)).kind == "pet" for item in cases)
@@ -96,18 +96,18 @@ def test_no_destination_remains_pending() -> None:
     assert decision.destination_id is None
 
 
-def test_diagnostics_explain_idle_and_stale_fail_closed_reasons() -> None:
+def test_diagnostics_keep_idle_as_telemetry_without_rejecting_desktop() -> None:
     registry = PresenceRegistry()
     registry.update_desktop(_desktop(idle_ms=31_000))
     diagnostics = registry.diagnostics(now=NOW, pet_available=True)
     assert diagnostics["desktopSignal"] == {
         "fresh": True,
         "ageMs": 0,
-        "eligible": False,
+        "eligible": True,
         "idleBucket": "30s-2m",
-        "reason": "idle_over_30s",
+        "reason": "eligible",
     }
-    assert diagnostics["previewDecision"]["kind"] == "pet"  # type: ignore[index]
+    assert diagnostics["previewDecision"]["kind"] == "desktop"  # type: ignore[index]
 
     stale = registry.diagnostics(now=NOW + timedelta(seconds=16), pet_available=False)
     assert stale["desktopSignal"]["reason"] == "stale_snapshot"  # type: ignore[index]

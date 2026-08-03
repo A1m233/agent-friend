@@ -82,9 +82,10 @@ SCHEMA_VERSION: Final[int] = 1
     的用户可见错误状态；它不参与 LLM history，仅供 UI 在刷新后恢复同一失败状态。
     纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
 
-    068 起新增 ``model_context`` 事件，保存只对模型可见的 append-only 运行时状态；
-    它不参与用户消息、记忆投影或前端聊天投影，只在 ``Session.llm_messages`` 中恢复。
-    同属纯加性变更，故 ``SCHEMA_VERSION`` **不递增**。
+    068 的早期实现曾新增 ``model_context`` 事件。该类型继续允许读取，以兼容并
+    审计已经落盘的旧 session，但不再投影到任何消息历史；当前动态运行时上下文
+    只在每次模型调用前临时组装。事件 schema 没有破坏性变化，故
+    ``SCHEMA_VERSION`` **不递增**。
     """
 
 
