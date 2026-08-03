@@ -60,6 +60,22 @@ def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> Non
     assert "官方原文" in fetch.description
 
 
+def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:
+    weather = _FixtureTool(
+        FakeTool(name="weather_query", result_text='{"status":"temporary_failure"}')
+    )
+    todo = _FixtureTool(FakeTool(name="todo_manage", result_text='{"status":"success"}'))
+
+    assert weather.parameters_schema["required"] == ["location"]
+    assert "不会后台自动重试" in weather.description
+    assert todo.parameters_schema["required"] == ["operation"]
+    reminder = todo.parameters_schema["properties"]["reminders"]["items"]
+    assert reminder["required"] == ["kind", "timezone"]
+    assert reminder["properties"]["kind"]["enum"] == ["once", "recurring"]
+    assert reminder["properties"]["relative_delay"]["required"] == ["amount", "unit"]
+    assert "不能只在对话里口头答应" in todo.description
+
+
 def test_assistant_text_trace_preserves_tool_continuation_segments() -> None:
     trace = _AssistantTextTrace()
 

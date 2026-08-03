@@ -132,6 +132,7 @@ class TodoManageTool:
         "用户要求记待办、列待办、修改、完成、取消、重新打开或设置提醒时必须使用；"
         "不能只在对话里口头答应。Todo 不提供时间时不要擅自添加 Reminder。"
         "新建 Todo 时用户已经给出提醒时间，必须在同一次 create 的 reminders 中一起提交；"
+        "不能只创建无 Reminder 的 Todo 就声称提醒已设置。"
         "add_reminder 只用于给已经存在的 Todo 后补提醒。"
         "用户给出“几分钟/小时/天/周后”时，一次性提醒直接使用 relative_delay，"
         "不要自行猜测当前钟点或拆成第二次调用。"

@@ -29,6 +29,7 @@ def test_loads_builtin_cases() -> None:
         ("C14", "user-intent-attribution-calibration", 3),
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
+        ("C17", "future-action-commitment-grounding", 3),
     ]
 
 
@@ -123,13 +124,24 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert motive_case.judge is not None
     assert motive_case.judge.forbid_unsupported_model_motive_story is True
 
+    c17 = next(contract for contract in contracts if contract.id == "C17")
+    commitment_anchor = next(item for item in c17.cases if item.id == "C17-01")
+    assert commitment_anchor.runtime_now is not None
+    assert commitment_anchor.surface == "im:qq"
+    assert commitment_anchor.fake_tools[0].name == "weather_query"
+    assert commitment_anchor.judge is not None
+    assert commitment_anchor.judge.forbid_unsupported_future_action_commitment is True
+
+    commitment_control = next(item for item in c17.cases if item.id == "C17-03")
+    assert commitment_control.fake_tools[0].name == "todo_manage"
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 16
-    assert meta.total_cases == 175
+    assert meta.total_contracts == 17
+    assert meta.total_cases == 178
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -147,6 +159,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C14": 3,
         "C15": 2,
         "C16": 2,
+        "C17": 3,
     }
     assert len(meta.digest) == 64
 

@@ -447,8 +447,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 7848
-        assert estimate_tokens([Message(role="system", content=output)]) == 5886
+        assert len(output) == 8029
+        assert estimate_tokens([Message(role="system", content=output)]) == 6021
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -483,6 +483,8 @@ class TestLoadDefaultStaticSection:
         assert section.key == "project_identity"
         assert "项目元规则" in section.text
         assert "暴露 AI" in section.text
+        assert "不要把当前失败说成自己之后还会自动行动" in section.text
+        assert "确实存在对应的后续执行载体" in section.text
 
     def test_project_identity_has_system_trigger_rule(self) -> None:
         """021：project_identity.md 含 <system_trigger> tag 识别元规则。
@@ -526,6 +528,9 @@ class TestLoadDefaultStaticSection:
         assert "用户问题本身涉及 API、缓存等技术主题时可以照常讨论" in section.text
         assert "不要对用户说工具名" in section.text
         assert "历史证据和外部事实不能互相替代" in section.text
+        assert "对动作进度与后续结果的承诺必须有执行依据" in section.text
+        assert "明确把再次发起的动作交给用户" in section.text
+        assert "不得为了让口头承诺成立而擅自创建" in section.text
         assert "先确认" in section.text
 
     def test_loads_relationship_contract(self) -> None:

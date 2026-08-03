@@ -29,6 +29,7 @@ class KimiStream:
 
     response: Any
     client: openai.OpenAI
+    request_id: str | None = None
     _closed: bool = field(default=False, init=False)
 
     def __iter__(self) -> Iterator[Any]:
@@ -63,13 +64,18 @@ def open_kimi_stream(
         max_retries=0,
     )
     try:
-        response = client.chat.completions.create(
+        raw_response = client.chat.completions.with_raw_response.create(
             model=spec.model.removeprefix("openai/"),
             messages=messages,  # type: ignore[arg-type]
             stream=True,
             **options,
         )
+        response = raw_response.parse()
     except Exception:
         client.close()
         raise
-    return KimiStream(response=response, client=client)
+    return KimiStream(
+        response=response,
+        client=client,
+        request_id=getattr(raw_response, "request_id", None),
+    )

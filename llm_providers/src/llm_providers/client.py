@@ -14,13 +14,14 @@ docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.5。
 
 from __future__ import annotations
 
+import json
 import logging
 import ssl
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Any, cast
 
 import litellm
 import openai
@@ -42,10 +43,12 @@ from .errors import (
 from .kimi_transport import open_kimi_stream, uses_kimi_stream_transport
 from .spec import ProviderSpec
 from .stream_events import (
+    LLMResponseDiagnostics,
     LLMRetryScheduled,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
+    LLMTransportDiagnostic,
     LLMTurnDone,
     LLMUsage,
 )
@@ -153,7 +156,7 @@ def _extract_usage(response: Any) -> LLMUsage | None:
     ``stream_options={"include_usage": True}`` 时的尾 chunk 上。Provider 不支持
     时该字段缺失 / 为 ``None`` → 返回 ``None``，上层退化到字符估算。
     """
-    return _normalize_usage(_usage_field(response, "usage"))
+    return _normalize_usage(_usage_field(response, "usage"), usage_source="top_level")
 
 
 def _extract_stream_usage(chunk: Any) -> LLMUsage | None:
@@ -171,13 +174,13 @@ def _extract_stream_usage(chunk: Any) -> LLMUsage | None:
                 dumped = model_dump()
                 if isinstance(dumped, dict):
                     choice_usage = dumped.get("usage")
-        usage = _normalize_usage(choice_usage)
+        usage = _normalize_usage(choice_usage, usage_source="choice")
         if usage is not None:
             return usage
     return None
 
 
-def _normalize_usage(usage: Any) -> LLMUsage | None:
+def _normalize_usage(usage: Any, *, usage_source: str | None = None) -> LLMUsage | None:
     """Normalize a provider usage object or mapping into :class:`LLMUsage`."""
     if usage is None:
         return None
@@ -187,7 +190,7 @@ def _normalize_usage(usage: Any) -> LLMUsage | None:
     if prompt is None and completion is None and total is None:
         return None
     prompt_tokens = int(prompt or 0)
-    cached = _first_usage_int(
+    cached, cached_source = _first_usage_int_with_source(
         usage,
         "cached_tokens",
         "prompt_cache_hit_tokens",
@@ -196,30 +199,39 @@ def _normalize_usage(usage: Any) -> LLMUsage | None:
     )
     if cached is None:
         prompt_details = _usage_field(usage, "prompt_tokens_details")
-        cached = _first_usage_int(prompt_details, "cached_tokens")
-    cache_miss = _first_usage_int(usage, "prompt_cache_miss_tokens")
+        cached, detail_source = _first_usage_int_with_source(prompt_details, "cached_tokens")
+        if detail_source is not None:
+            cached_source = f"prompt_tokens_details.{detail_source}"
+    cache_miss, cache_miss_source = _first_usage_int_with_source(usage, "prompt_cache_miss_tokens")
+    cache_miss_derived = False
     if cache_miss is None and cached is not None:
         cache_miss = max(0, prompt_tokens - cached)
+        cache_miss_source = "derived_prompt_minus_cached"
+        cache_miss_derived = True
     return LLMUsage(
         prompt_tokens=prompt_tokens,
         completion_tokens=int(completion or 0),
         total_tokens=int(total or 0),
         cached_prompt_tokens=cached,
         cache_miss_prompt_tokens=cache_miss,
+        usage_source=usage_source,
+        cached_prompt_tokens_source=cached_source,
+        cache_miss_prompt_tokens_source=cache_miss_source,
+        cache_miss_prompt_tokens_derived=cache_miss_derived,
     )
 
 
-def _first_usage_int(value: Any, *names: str) -> int | None:
-    """Return the first non-negative provider usage counter, if present."""
+def _first_usage_int_with_source(value: Any, *names: str) -> tuple[int | None, str | None]:
+    """Return the first non-negative provider counter and its source field."""
     if value is None:
-        return None
+        return None, None
     for name in names:
         raw = _usage_field(value, name)
         if isinstance(raw, bool):
             continue
         if isinstance(raw, (int, float)) and raw >= 0:
-            return int(raw)
-    return None
+            return int(raw), name
+    return None, None
 
 
 def _usage_field(value: Any, name: str) -> Any:
@@ -227,6 +239,59 @@ def _usage_field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _response_text_field(value: Any, name: str) -> str | None:
+    raw = _usage_field(value, name)
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
+
+def _request_size_bytes(
+    spec: ProviderSpec,
+    messages: list[dict[str, Any]],
+    kwargs: dict[str, Any],
+) -> int:
+    """Estimate the model request JSON size without retaining or logging its content."""
+    payload: dict[str, Any] = {
+        "model": spec.model.removeprefix("openai/"),
+        "messages": messages,
+        "stream": True,
+    }
+    for key in (
+        "extra_body",
+        "max_tokens",
+        "response_format",
+        "stream_options",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p",
+    ):
+        if key in kwargs:
+            payload[key] = kwargs[key]
+    rendered = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return len(rendered.encode("utf-8"))
+
+
+def _emit_transport_diagnostic(
+    callback: Callable[[LLMTransportDiagnostic], None] | None,
+    event: LLMTransportDiagnostic,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception:
+        logger.warning("LLM transport diagnostic callback failed", exc_info=True)
 
 
 def _map_exception(e: Exception) -> LLMError:
@@ -455,10 +520,15 @@ class LLMClient:
         Raises:
             同 :meth:`complete`，异常可能在初始化或迭代中任一时机抛出。
         """
+        diagnostic_callback = cast(
+            Callable[[LLMTransportDiagnostic], None] | None,
+            overrides.pop("_diagnostic_callback", None),
+        )
         return self._stream_with_network_retries(
             self.spec,
             messages,
             tools=tools,
+            diagnostic_callback=diagnostic_callback,
             **overrides,
         )
 
@@ -468,13 +538,21 @@ class LLMClient:
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None = None,
+        diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
         for attempt in range(self._network_retries + 1):
             emitted = False
             should_retry = False
-            upstream = self._stream_once(spec, messages, tools=tools, **overrides)
+            upstream = self._stream_once(
+                spec,
+                messages,
+                tools=tools,
+                diagnostic_callback=diagnostic_callback,
+                diagnostic_attempt=attempt + 1,
+                **overrides,
+            )
             try:
                 for event in upstream:
                     emitted = True
@@ -554,6 +632,8 @@ class LLMClient:
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None = None,
+        diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
+        diagnostic_attempt: int = 1,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """单次流式调用 LiteLLM（generator function）。
@@ -593,6 +673,19 @@ class LLMClient:
             kwargs["tools"] = tools
         # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖
         kwargs.setdefault("stream_options", {"include_usage": True})
+        transport = "kimi_direct" if uses_kimi_stream_transport(spec) else "litellm"
+        request_bytes = _request_size_bytes(spec, messages, kwargs)
+        attempt_started = time.perf_counter()
+        _emit_transport_diagnostic(
+            diagnostic_callback,
+            LLMTransportDiagnostic(
+                phase="request_started",
+                attempt=diagnostic_attempt,
+                attempt_elapsed_ms=0,
+                transport=transport,
+                request_bytes=request_bytes,
+            ),
+        )
 
         try:
             if uses_kimi_stream_transport(spec):
@@ -607,7 +700,30 @@ class LLMClient:
                     **kwargs,
                 )
         except Exception as e:
+            _emit_transport_diagnostic(
+                diagnostic_callback,
+                LLMTransportDiagnostic(
+                    phase="request_open_failed",
+                    attempt=diagnostic_attempt,
+                    attempt_elapsed_ms=round((time.perf_counter() - attempt_started) * 1000),
+                    transport=transport,
+                    request_bytes=request_bytes,
+                ),
+            )
             raise _map_exception(e) from e
+        stream_open_ms = round((time.perf_counter() - attempt_started) * 1000)
+        provider_request_id = _response_text_field(response, "request_id")
+        _emit_transport_diagnostic(
+            diagnostic_callback,
+            LLMTransportDiagnostic(
+                phase="stream_opened",
+                attempt=diagnostic_attempt,
+                attempt_elapsed_ms=stream_open_ms,
+                transport=transport,
+                request_bytes=request_bytes,
+                provider_request_id=provider_request_id,
+            ),
+        )
 
         stop_reason = "end_turn"
         usage: LLMUsage | None = None
@@ -621,9 +737,38 @@ class LLMClient:
         reasoning_chars = 0
         finish_reason_raw = ""
         delta_fields: set[str] = set()
+        first_chunk_ms: int | None = None
+        first_reasoning_delta_ms: int | None = None
+        response_id: str | None = None
+        response_model: str | None = None
+        system_fingerprint: str | None = None
+        service_tier: str | None = None
         try:
             for chunk in response:
                 chunk_count += 1
+                response_id = response_id or _response_text_field(chunk, "id")
+                response_model = response_model or _response_text_field(chunk, "model")
+                system_fingerprint = system_fingerprint or _response_text_field(
+                    chunk, "system_fingerprint"
+                )
+                service_tier = service_tier or _response_text_field(chunk, "service_tier")
+                if first_chunk_ms is None:
+                    first_chunk_ms = round((time.perf_counter() - attempt_started) * 1000)
+                    _emit_transport_diagnostic(
+                        diagnostic_callback,
+                        LLMTransportDiagnostic(
+                            phase="first_chunk",
+                            attempt=diagnostic_attempt,
+                            attempt_elapsed_ms=first_chunk_ms,
+                            transport=transport,
+                            request_bytes=request_bytes,
+                            provider_request_id=provider_request_id,
+                            response_id=response_id,
+                            response_model=response_model,
+                            system_fingerprint=system_fingerprint,
+                            service_tier=service_tier,
+                        ),
+                    )
                 chunk_usage = _extract_stream_usage(chunk)
                 if chunk_usage is not None:
                     usage = chunk_usage
@@ -648,6 +793,25 @@ class LLMClient:
                 if reasoning:
                     reasoning_delta_count += 1
                     reasoning_chars += len(reasoning)
+                    if first_reasoning_delta_ms is None:
+                        first_reasoning_delta_ms = round(
+                            (time.perf_counter() - attempt_started) * 1000
+                        )
+                        _emit_transport_diagnostic(
+                            diagnostic_callback,
+                            LLMTransportDiagnostic(
+                                phase="first_reasoning_delta",
+                                attempt=diagnostic_attempt,
+                                attempt_elapsed_ms=first_reasoning_delta_ms,
+                                transport=transport,
+                                request_bytes=request_bytes,
+                                provider_request_id=provider_request_id,
+                                response_id=response_id,
+                                response_model=response_model,
+                                system_fingerprint=system_fingerprint,
+                                service_tier=service_tier,
+                            ),
+                        )
 
                 tool_calls = getattr(delta, "tool_calls", None) or []
                 for tc in tool_calls:
@@ -706,4 +870,19 @@ class LLMClient:
                 )
             raise LLMEmptyResponseError("模型未返回可见正文或工具调用。")
 
-        yield LLMTurnDone(stop_reason=stop_reason, usage=usage)
+        yield LLMTurnDone(
+            stop_reason=stop_reason,
+            usage=usage,
+            diagnostics=LLMResponseDiagnostics(
+                transport=transport,
+                request_bytes=request_bytes,
+                stream_open_ms=stream_open_ms,
+                first_chunk_ms=first_chunk_ms,
+                first_reasoning_delta_ms=first_reasoning_delta_ms,
+                provider_request_id=provider_request_id,
+                response_id=response_id,
+                response_model=response_model,
+                system_fingerprint=system_fingerprint,
+                service_tier=service_tier,
+            ),
+        )

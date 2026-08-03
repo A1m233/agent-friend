@@ -9,7 +9,10 @@ from typing import Any
 
 import httpx
 import pytest
-from agent.tools.builtin.weather_query import WeatherAuthenticationError
+from agent.tools.builtin.weather_query import (
+    WeatherAuthenticationError,
+    WeatherTemporaryError,
+)
 from agent.tools.builtin.weather_query.providers import QWeatherProvider
 from agent.tools.location import LocationCandidate
 
@@ -281,3 +284,108 @@ def test_alert_empty_response_without_zero_result_is_failed_not_no_active() -> N
 
     assert check.status == "failed"
     assert "未能核实" in (check.message or "")
+
+
+def test_transient_timeout_retries_once_then_recovers() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("sensitive upstream detail", request=request)
+        return _response(
+            request,
+            {
+                "code": "200",
+                "location": [
+                    {
+                        "name": "深圳市",
+                        "id": "101280601",
+                        "lat": "22.55",
+                        "lon": "114.05",
+                        "adm2": "深圳市",
+                        "adm1": "广东省",
+                        "country": "中国",
+                        "tz": "Asia/Shanghai",
+                    }
+                ],
+            },
+        )
+
+    with _client(handler) as client:
+        candidates = QWeatherProvider(
+            api_key="secret",
+            api_host="abc.qweatherapi.com",
+            client=client,
+            retry_delay_seconds=0.25,
+            sleep=delays.append,
+        ).search_locations(query="深圳", administrative_area=None)
+
+    assert calls == 2
+    assert delays == [0.25]
+    assert candidates[0].name == "深圳市"
+
+
+def test_final_timeout_exposes_only_safe_structured_diagnostics() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectTimeout(
+            "secret=leak-me host=abc.qweatherapi.com query=深圳",
+            request=request,
+        )
+
+    with _client(handler) as client:
+        provider = QWeatherProvider(
+            api_key="secret",
+            api_host="abc.qweatherapi.com",
+            client=client,
+            retry_delay_seconds=0,
+            sleep=lambda _delay: None,
+        )
+        with pytest.raises(WeatherTemporaryError) as captured:
+            provider.search_locations(query="深圳", administrative_area=None)
+
+    meta = captured.value.diagnostic_meta()
+    assert calls == 2
+    assert meta["provider_operation"] == "location_lookup"
+    assert meta["error_kind"] == "timeout"
+    assert meta["exception_type"] == "ConnectTimeout"
+    assert meta["retryable"] is True
+    assert meta["attempt_count"] == 2
+    assert meta["retries_taken"] == 1
+    assert [item["attempt"] for item in meta["attempts"]] == [1, 2]
+    serialized = json.dumps(meta, ensure_ascii=False)
+    assert "leak-me" not in serialized
+    assert "abc.qweatherapi.com" not in serialized
+    assert "深圳" not in serialized
+
+
+def test_authentication_failure_is_not_retried_and_keeps_status_diagnostic() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _response(request, {"code": "401"}, status=401)
+
+    with _client(handler) as client:
+        provider = QWeatherProvider(
+            api_key="secret",
+            api_host="abc.qweatherapi.com",
+            client=client,
+            sleep=lambda _delay: pytest.fail("auth failure must not retry"),
+        )
+        with pytest.raises(WeatherAuthenticationError) as captured:
+            provider.search_locations(query="深圳", administrative_area=None)
+
+    meta = captured.value.diagnostic_meta()
+    assert calls == 1
+    assert meta["error_kind"] == "auth"
+    assert meta["status_code"] == 401
+    assert meta["attempt_count"] == 1
+    assert meta["retries_taken"] == 0

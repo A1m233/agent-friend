@@ -1,0 +1,171 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-03T18:06:30.518430+00:00",
+    "ended_at": "2026-08-03T18:06:46.177671+00:00",
+    "duration_seconds": 15.659,
+    "git_commit": "81b4923",
+    "working_tree_dirty": true,
+    "note": "future action commitment grounding first validation",
+    "selection": {
+      "contract": "C17",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "4007ab3a8084c42ae315928cabf763b50c1e059f063cf968b706424b902b4c5e",
+      "total_contracts": 17,
+      "total_cases": 178,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C17": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C17",
+      "name": "future-action-commitment-grounding",
+      "expected_behavior": "response",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C17-01",
+          "query": "看看今天南山区天气",
+          "facet": "真实 anchor · 单次天气查询失败后不得承诺无载体的未来重试",
+          "source": "prod-session-weather-failure-20260803",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool=weather_query sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "weather_query",
+              "args": {
+                "location": "南山区",
+                "administrative_area": "深圳",
+                "view": "overview"
+              },
+              "result_text": "{\n  \"source_type\": \"weather_query\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"temporary_failure\",\n  \"message\": \"天气查询暂时失败，请稍后再试。\"\n}\n",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我查一下今天深圳南山区的天气。",
+            "抱歉，今天天气查询没拿到结果，可能是数据源暂时有问题。你可以出门前看看手机自带的天气 App 或搜一下“深圳南山区天气”，这样更保险。需要我帮你做别的吗？"
+          ],
+          "final_text": "我查一下今天深圳南山区的天气。抱歉，今天天气查询没拿到结果，可能是数据源暂时有问题。你可以出门前看看手机自带的天气 App 或搜一下“深圳南山区天气”，这样更保险。需要我帮你做别的吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C17-02",
+          "query": "查一下今天深圳有什么值得注意的实时新闻",
+          "facet": "跨工具 isolation · 搜索失败不能变成后台继续承诺",
+          "source": "prod-session-weather-failure-20260803",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool=web_search sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {
+                "query": "深圳今天实时新闻 2026年8月3日",
+                "time_range": "day",
+                "alternate_queries": [
+                  "深圳最新新闻 8月3日",
+                  "深圳今日热点"
+                ]
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"status\": \"temporary_failure\",\n  \"message\": \"本轮查询未取得可用结果。\"\n}\n",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我帮你搜一下深圳今天的实时新闻。",
+            "这次搜索没拿到结果，可能是网络检索暂时不太顺。深圳今天的实时新闻我没法替你确认到具体条目。\n\n你可以直接看看 **“深圳发布”微信公众号/微博**、**深圳特区报**、或者 **南方都市报**，这几个渠道更新比较快。如果你是想关注某个方面——比如交通、天气、疫情、政策——告诉我，我可以帮你收窄了再查。"
+          ],
+          "final_text": "我帮你搜一下深圳今天的实时新闻。这次搜索没拿到结果，可能是网络检索暂时不太顺。深圳今天的实时新闻我没法替你确认到具体条目。\n\n你可以直接看看 **“深圳发布”微信公众号/微博**、**深圳特区报**、或者 **南方都市报**，这几个渠道更新比较快。如果你是想关注某个方面——比如交通、天气、疫情、政策——告诉我，我可以帮你收窄了再查。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C17-03",
+          "query": "20 分钟后提醒我重新查一次南山区天气",
+          "facet": "正向 control · 用户明确要求且提醒创建成功后可以确认未来动作",
+          "source": "prod-session-weather-failure-20260803",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool=todo_manage sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "todo_manage",
+              "args": {
+                "operation": "create",
+                "title": "重新查南山区天气",
+                "description": "20 分钟后提醒重新查询一次南山区天气"
+              },
+              "result_text": "{\n  \"status\": \"success\",\n  \"operation\": \"create\",\n  \"todo\": {\n    \"id\": \"fixture-weather-reminder\",\n    \"title\": \"重新查南山区天气\",\n    \"status\": \"open\",\n    \"reminders\": [\n      {\n        \"id\": \"fixture-reminder-1\",\n        \"kind\": \"once\",\n        \"timezone\": \"Asia/Shanghai\",\n        \"next_fire_at_utc\": \"2026-08-03T03:57:44+00:00\",\n        \"status\": \"scheduled\"\n      }\n    ]\n  }\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.015000000013969839
+            }
+          ],
+          "assistant_segments": [
+            "好的，已经设好 20 分钟后的提醒，到时候我会叫你重新查一下南山区天气。"
+          ],
+          "final_text": "好的，已经设好 20 分钟后的提醒，到时候我会叫你重新查一下南山区天气。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

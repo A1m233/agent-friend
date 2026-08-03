@@ -752,6 +752,7 @@ def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
     )
     assert "event=context_build_done" in latency_text
     assert "event=llm_stream_start" in latency_text
+    assert "event=llm_request_start" in latency_text
     assert "call_index=1 call_kind=initial" in latency_text
     assert "event_kind=tool_call_delta" in latency_text
     assert "event=tool_batch_done" in latency_text
@@ -760,12 +761,25 @@ def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
     assert "cached_prompt_tokens=190" in latency_text
     assert "cache_miss_prompt_tokens=10" in latency_text
     assert "cache_hit_ratio=0.9500" in latency_text
+    assert "cache_reporting_state=reported_nonzero" in latency_text
+    # 工具续轮会刷新逐次可信时间，因此上一轮完整 request prefix 不再保持不变。
+    assert "previous_request_prefix_preserved=false" in latency_text
+    assert "tool_result_chars=" in latency_text
     assert trace.llm_call_count == 2
     assert trace.tool_call_count == 1
     assert trace.first_text_elapsed_ms is not None
     assert "PRIVATE_USER_TEXT" not in latency_text
     assert "PRIVATE_TOOL_ARG" not in latency_text
     assert "PRIVATE_ANSWER" not in latency_text
+    assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
+    cache_diagnostics = [
+        event.meta.get("context_usage", {}).get("cache_diagnostics", {})
+        for event in assistant_events
+    ]
+    assert cache_diagnostics[0]["cache_lineage"] == "new"
+    assert cache_diagnostics[1]["previous_request_prefix_preserved"] is False
+    assert cache_diagnostics[1]["cache_state"] == "reported_nonzero"
+    assert "PRIVATE_USER_TEXT" not in json.dumps(cache_diagnostics, ensure_ascii=False)
 
 
 def test_nearby_place_search_uses_existing_tool_event_loop(tmp_path: Path) -> None:

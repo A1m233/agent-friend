@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import ClassVar, Literal, NoReturn, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, NoReturn, Protocol, runtime_checkable
 
 from ...errors import ToolError
 from ...location import LocationCandidate
@@ -99,27 +99,101 @@ class AlertCheck:
 
 
 class WeatherError(ToolError):
-    """天气 provider 错误基类。"""
+    """天气 provider 错误基类，携带可安全持久化的结构化诊断。"""
+
+    error_kind: ClassVar[str] = "provider"
+    retryable: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        provider_operation: str | None = None,
+        status_code: int | None = None,
+        provider_code: str | None = None,
+        request_id: str | None = None,
+        exception_type: str | None = None,
+        error_kind: str | None = None,
+        retryable: bool | None = None,
+        attempts: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.provider_operation = provider_operation
+        self.status_code = status_code
+        self.provider_code = provider_code
+        self.request_id = request_id
+        self.exception_type = exception_type
+        self.resolved_error_kind = error_kind or self.error_kind
+        self.is_retryable = self.retryable if retryable is None else retryable
+        self.attempts = tuple(dict(item) for item in attempts)
+
+    def diagnostic_meta(self) -> dict[str, Any]:
+        """返回不含 URL、查询参数、凭据和 provider 原始消息的诊断字段。"""
+
+        meta: dict[str, Any] = {
+            "error_kind": self.resolved_error_kind,
+            "exception_type": self.exception_type or type(self).__name__,
+            "retryable": self.is_retryable,
+        }
+        if self.provider_operation:
+            meta["provider_operation"] = self.provider_operation
+        if self.status_code is not None:
+            meta["status_code"] = self.status_code
+        if self.provider_code:
+            meta["provider_code"] = self.provider_code
+        if self.request_id:
+            meta["request_id"] = self.request_id
+        if self.attempts:
+            meta["attempt_count"] = len(self.attempts)
+            meta["retries_taken"] = max(0, len(self.attempts) - 1)
+            meta["attempts"] = [dict(item) for item in self.attempts]
+        return meta
+
+    def with_attempts(self, attempts: tuple[dict[str, Any], ...]) -> WeatherError:
+        """复制当前错误并附加 provider 已执行的安全 attempt 摘要。"""
+
+        return self.__class__(
+            str(self),
+            provider_operation=self.provider_operation,
+            status_code=self.status_code,
+            provider_code=self.provider_code,
+            request_id=self.request_id,
+            exception_type=self.exception_type,
+            error_kind=self.resolved_error_kind,
+            retryable=self.is_retryable,
+            attempts=attempts,
+        )
 
 
 class WeatherAuthenticationError(WeatherError):
     """凭据缺失、无效、Host 非法或服务权限不足。"""
 
+    error_kind = "auth"
+
 
 class WeatherQuotaError(WeatherError):
     """调用额度耗尽。"""
+
+    error_kind = "quota"
 
 
 class WeatherRateLimitError(WeatherError):
     """请求频率受限。"""
 
+    error_kind = "rate_limit"
+
 
 class WeatherInvalidRequestError(WeatherError):
     """参数或地点被 provider 拒绝。"""
 
+    error_kind = "invalid_request"
+
 
 class WeatherTemporaryError(WeatherError):
     """网络、上游服务或响应结构临时异常。"""
+
+    error_kind = "temporary"
+    retryable = True
 
 
 @runtime_checkable

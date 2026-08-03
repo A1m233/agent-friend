@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C16，共 175 条 fixture：
+当前内置 C1-C17，共 178 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -29,6 +29,7 @@
 | C14 | 用户意图归因校准：不把 assistant 自我框定升级成用户未说明的测试意图，明确意图可自然回应 | 3 |
 | C15 | 未经请求的自我评分克制：用户分享内容时不抢成“我是否过关”，明确要求复盘时可评价 | 2 |
 | C16 | 模型动机故事校准：输出截图只支持观察行为，内部动机只能作为明确标注的假设 | 2 |
+| C17 | 未来动作承诺落地：本轮失败不冒充后台继续；只有真实执行中或持久任务创建成功后才承诺后续动作 | 3 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -67,6 +68,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 ./scripts/agent-eval/run.sh --case C14-01 --model kimi/kimi-k2.7-code-highspeed --note "production image-meme intent anchor"
 ./scripts/agent-eval/run.sh --case C15-01 --model kimi/kimi-k2.7-code-highspeed --note "unprompted self-evaluation isolation"
 ./scripts/agent-eval/run.sh --case C16-01 --model kimi/kimi-k2.7-code-highspeed --note "model motive calibration"
+./scripts/agent-eval/run.sh --case C17-01 --model kimi/kimi-k2.7-code-highspeed --note "future action commitment anchor"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -74,7 +76,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |

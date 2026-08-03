@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import re
+import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -22,11 +24,14 @@ from ..models import (
     UnitSystem,
     WeatherAlert,
     WeatherAuthenticationError,
+    WeatherError,
     WeatherInvalidRequestError,
     WeatherQuotaError,
     WeatherRateLimitError,
     WeatherTemporaryError,
 )
+
+logger = logging.getLogger(__name__)
 
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
@@ -173,17 +178,31 @@ class QWeatherProvider:
         api_key: str,
         api_host: str,
         client: httpx.Client | None = None,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 5.0,
+        max_attempts: int = 2,
+        retry_delay_seconds: float = 0.25,
         clock: Callable[[], datetime] | None = None,
+        monotonic: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         if not api_key.strip():
             raise WeatherAuthenticationError("QWEATHER_API_KEY 为空")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds 必须大于 0")
+        if max_attempts < 1:
+            raise ValueError("max_attempts 必须至少为 1")
+        if retry_delay_seconds < 0:
+            raise ValueError("retry_delay_seconds 不能小于 0")
         host = _validate_api_host(api_host)
         self._api_key = api_key.strip()
         self._base_url = f"https://{host}"
         self._client = client
         self._timeout_seconds = timeout_seconds
+        self._max_attempts = max_attempts
+        self._retry_delay_seconds = retry_delay_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._monotonic = monotonic or time.monotonic
+        self._sleep = sleep or time.sleep
 
     def search_locations(
         self,
@@ -198,7 +217,11 @@ class QWeatherProvider:
             "lang": language,
             **_city_scope(administrative_area),
         }
-        payload = self._get("/geo/v2/city/lookup", params=params)
+        payload = self._get(
+            "/geo/v2/city/lookup",
+            params=params,
+            operation="location_lookup",
+        )
         candidates = _parse_locations(payload, kind="city")
         if candidates:
             return candidates
@@ -210,7 +233,14 @@ class QWeatherProvider:
         }
         if administrative_area and not _country_code(administrative_area):
             poi_params["city"] = administrative_area
-        return _parse_locations(self._get("/geo/v2/poi/lookup", params=poi_params), kind="poi")
+        return _parse_locations(
+            self._get(
+                "/geo/v2/poi/lookup",
+                params=poi_params,
+                operation="poi_lookup",
+            ),
+            kind="poi",
+        )
 
     def get_location(self, *, ref: str) -> LocationCandidate | None:
         if ref.startswith("qweather-city:"):
@@ -225,19 +255,27 @@ class QWeatherProvider:
             return None
         if not location_id:
             return None
-        candidates = _parse_locations(self._get(path, params=params), kind=kind)
+        candidates = _parse_locations(
+            self._get(path, params=params, operation=f"{kind}_by_ref"),
+            kind=kind,
+        )
         return candidates[0] if candidates else None
 
     def get_current(self, location: LocationCandidate, *, units: UnitSystem) -> CurrentWeather:
         payload = self._get(
             "/v7/weather/now",
             params={"location": _coordinate(location), "lang": "zh", "unit": _unit(units)},
+            operation="current",
         )
         raw = _mapping(payload.get("now"))
         observed_at = _datetime(raw.get("obsTime"))
         condition = _text(raw.get("text"))
         if observed_at is None or not condition:
-            raise WeatherTemporaryError("当前天气缺少必要字段")
+            raise WeatherTemporaryError(
+                "当前天气缺少必要字段",
+                provider_operation="current",
+                error_kind="invalid_response",
+            )
         return CurrentWeather(
             observed_at=observed_at,
             condition_text=condition,
@@ -258,8 +296,9 @@ class QWeatherProvider:
         payload = self._get(
             f"/v7/weather/{horizon}h",
             params={"location": _coordinate(location), "lang": "zh", "unit": _unit(units)},
+            operation="hourly",
         )
-        updated_at = _required_update_time(payload)
+        updated_at = _required_update_time(payload, operation="hourly")
         items: list[HourlyForecast] = []
         for raw in _items(payload, "hourly"):
             forecast_at = _datetime(raw.get("fxTime"))
@@ -280,7 +319,11 @@ class QWeatherProvider:
                 )
             )
         if not items:
-            raise WeatherTemporaryError("小时预报没有可用条目")
+            raise WeatherTemporaryError(
+                "小时预报没有可用条目",
+                provider_operation="hourly",
+                error_kind="invalid_response",
+            )
         return HourlyForecastResult(updated_at=updated_at, items=tuple(items[:hours]))
 
     def get_daily(
@@ -290,8 +333,9 @@ class QWeatherProvider:
         payload = self._get(
             f"/v7/weather/{horizon}d",
             params={"location": _coordinate(location), "lang": "zh", "unit": _unit(units)},
+            operation="daily",
         )
-        updated_at = _required_update_time(payload)
+        updated_at = _required_update_time(payload, operation="daily")
         items: list[DailyForecast] = []
         for raw in _items(payload, "daily"):
             local_date = _date(raw.get("fxDate"))
@@ -314,7 +358,11 @@ class QWeatherProvider:
                 )
             )
         if not items:
-            raise WeatherTemporaryError("多日预报没有可用条目")
+            raise WeatherTemporaryError(
+                "多日预报没有可用条目",
+                provider_operation="daily",
+                error_kind="invalid_response",
+            )
         return DailyForecastResult(updated_at=updated_at, items=tuple(items[:days]))
 
     def get_alerts(self, location: LocationCandidate) -> AlertCheck:
@@ -337,6 +385,7 @@ class QWeatherProvider:
         payload = self._get(
             f"/weatheralert/v1/current/{location.latitude:.2f}/{location.longitude:.2f}",
             params={"localTime": "true", "lang": "zh"},
+            operation="alerts",
             expect_qweather_code=False,
         )
         alerts = tuple(
@@ -359,32 +408,151 @@ class QWeatherProvider:
         path: str,
         *,
         params: Mapping[str, Any],
+        operation: str,
         expect_qweather_code: bool = True,
+    ) -> dict[str, Any]:
+        if self._client is not None:
+            return self._get_with_client(
+                self._client,
+                path,
+                params=params,
+                operation=operation,
+                expect_qweather_code=expect_qweather_code,
+            )
+        with httpx.Client(
+            timeout=self._timeout_seconds,
+            follow_redirects=False,
+        ) as client:
+            return self._get_with_client(
+                client,
+                path,
+                params=params,
+                operation=operation,
+                expect_qweather_code=expect_qweather_code,
+            )
+
+    def _get_with_client(
+        self,
+        client: httpx.Client,
+        path: str,
+        *,
+        params: Mapping[str, Any],
+        operation: str,
+        expect_qweather_code: bool,
     ) -> dict[str, Any]:
         url = f"{self._base_url}{path}"
         headers = {"X-QW-Api-Key": self._api_key, "Accept-Encoding": "gzip"}
-        try:
-            if self._client is not None:
-                response = self._client.get(url, params=params, headers=headers)
-            else:
-                with httpx.Client(
+        attempts: list[dict[str, Any]] = []
+
+        for attempt in range(1, self._max_attempts + 1):
+            attempt_started = self._monotonic()
+            response: httpx.Response | None = None
+            error: WeatherError | None = None
+            try:
+                response = client.get(
+                    url,
+                    params=params,
+                    headers=headers,
                     timeout=self._timeout_seconds,
-                    follow_redirects=False,
-                ) as client:
-                    response = client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.TimeoutException, httpx.RequestError) as exc:
-            raise WeatherTemporaryError("天气服务网络请求失败") from exc
-        except httpx.HTTPStatusError as exc:
-            _raise_http_error(exc)
-        except ValueError as exc:
-            raise WeatherTemporaryError("天气服务返回无法解析的数据") from exc
-        if not isinstance(payload, dict):
-            raise WeatherTemporaryError("天气服务返回结构异常")
-        if expect_qweather_code:
-            _raise_qweather_code(payload)
-        return payload
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except httpx.TimeoutException as exc:
+                error = WeatherTemporaryError(
+                    "天气服务网络请求超时",
+                    provider_operation=operation,
+                    exception_type=type(exc).__name__,
+                    error_kind="timeout",
+                )
+            except (httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+                error = WeatherTemporaryError(
+                    "天气服务网络请求失败",
+                    provider_operation=operation,
+                    exception_type=type(exc).__name__,
+                    error_kind=(
+                        "protocol" if isinstance(exc, httpx.RemoteProtocolError) else "network"
+                    ),
+                )
+            except httpx.RequestError as exc:
+                error = WeatherTemporaryError(
+                    "天气服务请求失败",
+                    provider_operation=operation,
+                    exception_type=type(exc).__name__,
+                    error_kind="request",
+                    retryable=False,
+                )
+            except httpx.HTTPStatusError as exc:
+                error = _http_error(exc, operation=operation)
+            except ValueError as exc:
+                error = WeatherTemporaryError(
+                    "天气服务返回无法解析的数据",
+                    provider_operation=operation,
+                    exception_type=type(exc).__name__,
+                    error_kind="invalid_response",
+                )
+            else:
+                assert response is not None
+                request_id = _request_id(response)
+                if not isinstance(payload, dict):
+                    error = WeatherTemporaryError(
+                        "天气服务返回结构异常",
+                        provider_operation=operation,
+                        request_id=request_id,
+                        error_kind="invalid_response",
+                    )
+                elif expect_qweather_code:
+                    error = _qweather_error(
+                        payload,
+                        operation=operation,
+                        request_id=request_id,
+                    )
+                if error is None:
+                    if attempts:
+                        logger.info(
+                            "weather_provider_recovered provider=qweather operation=%s attempt=%d",
+                            operation,
+                            attempt,
+                        )
+                    return cast(dict[str, Any], payload)
+
+            duration = self._monotonic() - attempt_started
+            assert error is not None
+            attempt_meta: dict[str, Any] = {
+                "attempt": attempt,
+                "duration_seconds": duration,
+                "outcome": "error",
+                "error_kind": error.resolved_error_kind,
+                "exception_type": error.exception_type or type(error).__name__,
+            }
+            attempts.append(attempt_meta)
+            can_retry = error.is_retryable and attempt < self._max_attempts
+            if can_retry:
+                attempt_meta["retry_delay_seconds"] = self._retry_delay_seconds
+                logger.warning(
+                    "weather_provider_retry provider=qweather operation=%s error_kind=%s "
+                    "exception_type=%s attempt=%d max_attempts=%d delay_ms=%d",
+                    operation,
+                    error.resolved_error_kind,
+                    error.exception_type or type(error).__name__,
+                    attempt,
+                    self._max_attempts,
+                    round(self._retry_delay_seconds * 1000),
+                )
+                self._sleep(self._retry_delay_seconds)
+                continue
+
+            final_error = error.with_attempts(tuple(attempts))
+            logger.warning(
+                "weather_provider_failure provider=qweather operation=%s error_kind=%s "
+                "exception_type=%s attempts=%d",
+                operation,
+                final_error.resolved_error_kind,
+                final_error.exception_type or type(final_error).__name__,
+                len(attempts),
+            )
+            raise final_error
+
+        raise AssertionError("QWeather retry loop exited unexpectedly")
 
 
 def _validate_api_host(value: str) -> str:
@@ -512,40 +680,72 @@ def _parse_alert(raw: Mapping[str, Any]) -> WeatherAlert | None:
     )
 
 
-def _raise_http_error(exc: httpx.HTTPStatusError) -> None:
+def _http_error(exc: httpx.HTTPStatusError, *, operation: str) -> WeatherError:
     status = exc.response.status_code
+    common: dict[str, Any] = {
+        "provider_operation": operation,
+        "status_code": status,
+        "request_id": _request_id(exc.response),
+        "exception_type": type(exc).__name__,
+    }
     if status in {401, 403}:
-        raise WeatherAuthenticationError("天气服务拒绝凭据") from exc
+        return WeatherAuthenticationError("天气服务拒绝凭据", **common)
     if status == 402:
-        raise WeatherQuotaError("天气服务额度已耗尽") from exc
+        return WeatherQuotaError("天气服务额度已耗尽", **common)
     if status == 429:
-        raise WeatherRateLimitError("天气服务请求过于频繁") from exc
+        return WeatherRateLimitError("天气服务请求过于频繁", **common)
     if status in {400, 404}:
-        raise WeatherInvalidRequestError("天气服务拒绝查询参数") from exc
-    raise WeatherTemporaryError("天气服务 HTTP 错误") from exc
+        return WeatherInvalidRequestError("天气服务拒绝查询参数", **common)
+    return WeatherTemporaryError("天气服务 HTTP 错误", error_kind="http", **common)
 
 
-def _raise_qweather_code(payload: Mapping[str, Any]) -> None:
+def _qweather_error(
+    payload: Mapping[str, Any],
+    *,
+    operation: str,
+    request_id: str | None,
+) -> WeatherError | None:
     code = _text(payload.get("code"))
     if code == "200":
-        return
+        return None
     if code == "204":
-        return
+        return None
+    common: dict[str, Any] = {
+        "provider_operation": operation,
+        "provider_code": code or None,
+        "request_id": request_id,
+    }
     if code in {"401", "403"}:
-        raise WeatherAuthenticationError("天气服务凭据无效或无权限")
+        return WeatherAuthenticationError("天气服务凭据无效或无权限", **common)
     if code == "402":
-        raise WeatherQuotaError("天气服务额度已耗尽")
+        return WeatherQuotaError("天气服务额度已耗尽", **common)
     if code == "429":
-        raise WeatherRateLimitError("天气服务请求过于频繁")
+        return WeatherRateLimitError("天气服务请求过于频繁", **common)
     if code in {"400", "404"}:
-        raise WeatherInvalidRequestError("天气服务拒绝查询参数")
-    raise WeatherTemporaryError("天气服务返回未分类错误")
+        return WeatherInvalidRequestError("天气服务拒绝查询参数", **common)
+    return WeatherTemporaryError(
+        "天气服务返回未分类错误",
+        error_kind="provider",
+        **common,
+    )
 
 
-def _required_update_time(payload: Mapping[str, Any]) -> datetime:
+def _request_id(response: httpx.Response) -> str | None:
+    for name in ("x-request-id", "x-qw-request-id", "x-trace-id"):
+        value = str(response.headers.get(name, "")).strip()
+        if value:
+            return value[:200]
+    return None
+
+
+def _required_update_time(payload: Mapping[str, Any], *, operation: str) -> datetime:
     value = _datetime(payload.get("updateTime"))
     if value is None:
-        raise WeatherTemporaryError("天气预报缺少更新时间")
+        raise WeatherTemporaryError(
+            "天气预报缺少更新时间",
+            provider_operation=operation,
+            error_kind="invalid_response",
+        )
     return value
 
 

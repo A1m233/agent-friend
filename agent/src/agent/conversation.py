@@ -45,6 +45,7 @@ from llm_providers import (
     LLMRetryScheduled,
     LLMTextDelta,
     LLMToolCallDelta,
+    LLMTransportDiagnostic,
     LLMTurnDone,
 )
 from memory import ConversationFragment, Memory, MemoryContext, Utterance
@@ -77,6 +78,7 @@ from .latency import (
 )
 from .messages import Message, escape_internal_prompt_markers, escape_user_messages_for_llm
 from .personas import PersonaCatalog
+from .prompt_cache_trace import PromptCacheTraceTracker, PromptRequestTrace
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 from .system_prompt.sections import PromptChannel
@@ -301,6 +303,9 @@ class Conversation:
         self._last_input_tokens: int | None = None
         self._calibration_by_model: dict[str, float] = {}
         self._pending_context_usage: dict[str, Any] | None = None
+        self._prompt_cache_trace_tracker = PromptCacheTraceTracker()
+        self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
+        self._unscoped_llm_call_index = 0
         self._pending_compaction: CompactionRecord | None = None
         self._context_emergency_ratio = 1.0
         self._context_trigger_reason = "budget"
@@ -1878,6 +1883,10 @@ class Conversation:
             usage = event.meta.get("context_usage")
             if not isinstance(usage, dict):
                 continue
+            self._prompt_cache_trace_tracker.restore(
+                usage.get("cache_diagnostics"),
+                finished_at_unix_ms=round(event.ts.timestamp() * 1000),
+            )
             model = usage.get("model")
             factor = usage.get("calibration_factor")
             prompt_tokens = usage.get("prompt_tokens")
@@ -1910,6 +1919,8 @@ class Conversation:
         tools: list[dict[str, Any]] | None,
         overrides: dict[str, Any] | None = None,
         recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+        diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
+        request_observer: Callable[[list[dict[str, Any]], int, dict[str, Any]], None] | None = None,
     ) -> Iterator[Any]:
         """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
         current_messages = messages
@@ -1919,12 +1930,21 @@ class Conversation:
         recovery_builder = recovery_builder or (lambda: self._assemble(tool_specs=tools))
         for recovery_attempt in range(2):
             request_accepted = False
+            if request_observer is not None:
+                request_observer(current_messages, recovery_attempt, request_overrides)
             try:
-                for event in self._active_llm_client().stream(
-                    current_messages,
-                    tools=tools,
-                    **request_overrides,
-                ):
+                client = self._active_llm_client()
+                stream = (
+                    client.stream(
+                        current_messages,
+                        tools=tools,
+                        _diagnostic_callback=diagnostic_callback,
+                        **request_overrides,
+                    )
+                    if isinstance(client, LLMClient)
+                    else client.stream(current_messages, tools=tools, **request_overrides)
+                )
+                for event in stream:
                     if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
                         request_accepted = True
                         self._commit_pending_compaction()
@@ -1959,16 +1979,11 @@ class Conversation:
     ) -> Iterator[Any]:
         """Wrap every provider stream with run-correlated, content-free timings."""
         context = self._run_latency_context
-        if context is None:
-            yield from self._iter_model_stream(
-                messages,
-                tools=tools,
-                overrides=overrides,
-                recovery_builder=recovery_builder,
-            )
-            return
-
-        call_index = context.next_llm_call_index()
+        if context is not None:
+            call_index = context.next_llm_call_index()
+        else:
+            self._unscoped_llm_call_index += 1
+            call_index = self._unscoped_llm_call_index
         call_started_ms = monotonic_ms()
         first_event_ms: int | None = None
         first_text_ms: int | None = None
@@ -1976,6 +1991,123 @@ class Conversation:
         tool_indexes: set[int] = set()
         retry_count = 0
         turn_done: LLMTurnDone | None = None
+        request_trace: PromptRequestTrace | None = None
+        client = self._active_llm_client()
+        spec = getattr(client, "spec", None)
+        provider_model = str(getattr(spec, "model", self._active_model_id()))
+        api_base = getattr(spec, "api_base", None)
+
+        def observe_request(
+            current_messages: list[dict[str, Any]],
+            recovery_attempt: int,
+            request_overrides: dict[str, Any],
+        ) -> None:
+            nonlocal request_trace
+            raw_cache_key = request_overrides.get("prompt_cache_key")
+            cache_key = str(raw_cache_key) if raw_cache_key is not None else None
+            request_trace = self._prompt_cache_trace_tracker.begin(
+                messages=current_messages,
+                tools=tools,
+                provider_model=provider_model,
+                api_base=str(api_base) if api_base is not None else None,
+                prompt_cache_key=cache_key,
+            )
+            fields = request_trace.log_fields()
+            log_run_latency(
+                logger,
+                context,
+                "llm_request_start",
+                call_index=call_index,
+                recovery_attempt=recovery_attempt,
+                call_kind=call_kind,
+                turn_idx=turn_idx,
+                messages=len(current_messages),
+                tools=len(tools or []),
+                model=self._active_model_id(),
+                provider_model=provider_model,
+                context_strategy=self._last_context_notes.get("final_strategy"),
+                checkpoint_status=self._last_context_notes.get("checkpoint_status"),
+                checkpoint_version=self._last_context_notes.get("checkpoint_version"),
+                dropped_count=self._last_context_notes.get("dropped_count"),
+                request_overhead_tokens=self._last_context_notes.get("request_overhead_tokens"),
+                **fields,
+            )
+            logger.info(
+                "[PromptCacheDbg] request session_id=%s run_id=%s call_index=%d "
+                "recovery_attempt=%d model=%s provider_model=%s cache_namespace=%s "
+                "process_instance_id=%s prompt_fingerprint=%s system_fingerprint=%s "
+                "tool_schema_fingerprint=%s cache_lineage=%s cache_idle_ms=%s "
+                "previous_cache_state=%s previous_request_prefix_preserved=%s "
+                "common_prefix_messages=%s common_prefix_estimated_tokens=%s "
+                "first_divergence_index=%s first_divergence_role=%s "
+                "tool_schema_preserved=%s prompt_payload_bytes=%d message_chars=%d "
+                "tool_result_count=%d tool_result_chars=%d max_tool_result_chars=%d",
+                self._session.session_id,
+                self._run_id_override or "none",
+                call_index,
+                recovery_attempt,
+                self._active_model_id(),
+                provider_model,
+                request_trace.namespace,
+                request_trace.process_instance_id,
+                request_trace.prompt_fingerprint,
+                request_trace.system_fingerprint,
+                request_trace.tool_schema_fingerprint,
+                request_trace.lineage_state,
+                request_trace.cache_idle_ms if request_trace.cache_idle_ms is not None else "none",
+                request_trace.previous_cache_state or "none",
+                (
+                    request_trace.previous_request_prefix_preserved
+                    if request_trace.previous_request_prefix_preserved is not None
+                    else "unavailable"
+                ),
+                (
+                    request_trace.common_prefix_messages
+                    if request_trace.common_prefix_messages is not None
+                    else "unavailable"
+                ),
+                (
+                    request_trace.common_prefix_estimated_tokens
+                    if request_trace.common_prefix_estimated_tokens is not None
+                    else "unavailable"
+                ),
+                (
+                    request_trace.first_divergence_index
+                    if request_trace.first_divergence_index is not None
+                    else "none"
+                ),
+                request_trace.first_divergence_role or "none",
+                (
+                    request_trace.tool_schema_preserved
+                    if request_trace.tool_schema_preserved is not None
+                    else "unavailable"
+                ),
+                request_trace.prompt_payload_bytes,
+                request_trace.total_message_chars,
+                request_trace.tool_result_count,
+                request_trace.tool_result_chars,
+                request_trace.max_tool_result_chars,
+            )
+
+        def observe_transport(event: LLMTransportDiagnostic) -> None:
+            log_run_latency(
+                logger,
+                context,
+                "llm_transport",
+                call_index=call_index,
+                phase=event.phase,
+                attempt=event.attempt,
+                attempt_elapsed_ms=event.attempt_elapsed_ms,
+                call_elapsed_ms=monotonic_ms() - call_started_ms,
+                transport=event.transport,
+                request_bytes=event.request_bytes,
+                provider_request_id=event.provider_request_id,
+                response_id=event.response_id,
+                response_model=event.response_model,
+                system_fingerprint=event.system_fingerprint,
+                service_tier=event.service_tier,
+            )
+
         log_run_latency(
             logger,
             context,
@@ -1993,6 +2125,8 @@ class Conversation:
                 tools=tools,
                 overrides=overrides,
                 recovery_builder=recovery_builder,
+                diagnostic_callback=observe_transport,
+                request_observer=observe_request,
             ):
                 if (
                     isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone))
@@ -2019,7 +2153,7 @@ class Conversation:
                             call_elapsed_ms=first_text_ms,
                             chars=len(event.text),
                         )
-                        if context.mark_first_text():
+                        if context is not None and context.mark_first_text():
                             log_run_latency(
                                 logger,
                                 context,
@@ -2042,6 +2176,51 @@ class Conversation:
                     )
                 elif isinstance(event, LLMTurnDone):
                     turn_done = event
+                    cache_state = (
+                        event.usage.cache_reporting_state
+                        if event.usage is not None
+                        else "unavailable"
+                    )
+                    if request_trace is not None:
+                        durable = self._prompt_cache_trace_tracker.finish(
+                            request_trace,
+                            cache_state=cache_state,
+                        )
+                        if event.usage is not None:
+                            durable.update(
+                                {
+                                    "usage_source": event.usage.usage_source,
+                                    "cached_prompt_tokens_source": (
+                                        event.usage.cached_prompt_tokens_source
+                                    ),
+                                    "cache_miss_prompt_tokens_source": (
+                                        event.usage.cache_miss_prompt_tokens_source
+                                    ),
+                                    "cache_miss_prompt_tokens_derived": (
+                                        event.usage.cache_miss_prompt_tokens_derived
+                                    ),
+                                }
+                            )
+                        if event.diagnostics is not None:
+                            durable.update(
+                                {
+                                    "transport": event.diagnostics.transport,
+                                    "request_bytes": event.diagnostics.request_bytes,
+                                    "stream_open_ms": event.diagnostics.stream_open_ms,
+                                    "first_chunk_ms": event.diagnostics.first_chunk_ms,
+                                    "first_reasoning_delta_ms": (
+                                        event.diagnostics.first_reasoning_delta_ms
+                                    ),
+                                    "provider_request_id": (event.diagnostics.provider_request_id),
+                                    "response_id": event.diagnostics.response_id,
+                                    "response_model": event.diagnostics.response_model,
+                                    "provider_system_fingerprint": (
+                                        event.diagnostics.system_fingerprint
+                                    ),
+                                    "service_tier": event.diagnostics.service_tier,
+                                }
+                            )
+                        self._last_prompt_cache_diagnostics = durable
                 yield event
         except BaseException as exc:
             log_run_latency(
@@ -2081,8 +2260,61 @@ class Conversation:
                 cache_miss_prompt_tokens=(
                     usage.cache_miss_prompt_tokens if usage is not None else None
                 ),
+                cache_reporting_state=(
+                    usage.cache_reporting_state if usage is not None else "unavailable"
+                ),
+                usage_source=usage.usage_source if usage is not None else None,
+                cached_prompt_tokens_source=(
+                    usage.cached_prompt_tokens_source if usage is not None else None
+                ),
+                cache_miss_prompt_tokens_source=(
+                    usage.cache_miss_prompt_tokens_source if usage is not None else None
+                ),
+                cache_miss_prompt_tokens_derived=(
+                    usage.cache_miss_prompt_tokens_derived if usage is not None else None
+                ),
                 cache_hit_ratio=f"{hit_ratio:.4f}" if hit_ratio is not None else None,
                 completion_tokens=usage.completion_tokens if usage is not None else None,
+                transport=(
+                    turn_done.diagnostics.transport
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                request_bytes=(
+                    turn_done.diagnostics.request_bytes
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                stream_open_ms=(
+                    turn_done.diagnostics.stream_open_ms
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                first_chunk_ms=(
+                    turn_done.diagnostics.first_chunk_ms
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                first_reasoning_delta_ms=(
+                    turn_done.diagnostics.first_reasoning_delta_ms
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                provider_request_id=(
+                    turn_done.diagnostics.provider_request_id
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                response_id=(
+                    turn_done.diagnostics.response_id
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
+                response_model=(
+                    turn_done.diagnostics.response_model
+                    if turn_done is not None and turn_done.diagnostics is not None
+                    else None
+                ),
             )
 
     def _uses_kimi_prompt_cache(self) -> bool:
@@ -2096,44 +2328,95 @@ class Conversation:
 
         provider 不透出 usage（``None``）时保留上次锚点，下轮估算退化到纯字符。
         """
+        model_id = self._active_model_id()
+        raw_estimate = int(self._last_context_notes.get("raw_request_tokens") or 0)
+        factor = self._calibration_by_model.get(model_id, 1.0)
         if ev.usage is not None and ev.usage.prompt_tokens > 0:
             self._last_input_tokens = ev.usage.prompt_tokens
-            model_id = self._active_model_id()
-            raw_estimate = int(self._last_context_notes.get("raw_request_tokens") or 0)
-            previous = self._calibration_by_model.get(model_id, 1.0)
+            previous = factor
             if raw_estimate > 0:
                 observed = ev.usage.prompt_tokens / raw_estimate
                 factor = min(4.0, max(1.0, 0.75 * previous + 0.25 * observed))
-            else:
-                factor = previous
             self._calibration_by_model[model_id] = factor
-            self._pending_context_usage = {
-                "model": model_id,
-                "prompt_tokens": ev.usage.prompt_tokens,
-                "cached_prompt_tokens": ev.usage.cached_prompt_tokens,
-                "cache_miss_prompt_tokens": ev.usage.cache_miss_prompt_tokens,
-                "raw_estimate": raw_estimate,
-                "calibration_factor": factor,
-            }
-            cached = ev.usage.cached_prompt_tokens
-            hit_ratio = cached / ev.usage.prompt_tokens if cached is not None else None
-            logger.info(
-                "[PromptCacheDbg] session_id=%s run_id=%s model=%s "
-                "prompt_tokens=%d cached_prompt_tokens=%s cache_miss_prompt_tokens=%s "
-                "hit_ratio=%s cache_key=%s",
-                self._session.session_id,
-                self._run_id_override or "none",
-                model_id,
-                ev.usage.prompt_tokens,
-                cached if cached is not None else "unavailable",
-                (
-                    ev.usage.cache_miss_prompt_tokens
-                    if ev.usage.cache_miss_prompt_tokens is not None
-                    else "unavailable"
-                ),
-                f"{hit_ratio:.4f}" if hit_ratio is not None else "unavailable",
-                "present" if self._uses_kimi_prompt_cache() else "none",
+        pending_usage: dict[str, Any] = {"model": model_id}
+        if ev.usage is not None:
+            pending_usage.update(
+                {
+                    "prompt_tokens": ev.usage.prompt_tokens,
+                    "cached_prompt_tokens": ev.usage.cached_prompt_tokens,
+                    "cache_miss_prompt_tokens": ev.usage.cache_miss_prompt_tokens,
+                    "usage_source": ev.usage.usage_source,
+                    "cached_prompt_tokens_source": ev.usage.cached_prompt_tokens_source,
+                    "cache_miss_prompt_tokens_source": ev.usage.cache_miss_prompt_tokens_source,
+                    "cache_miss_prompt_tokens_derived": (ev.usage.cache_miss_prompt_tokens_derived),
+                    "raw_estimate": raw_estimate,
+                    "calibration_factor": factor,
+                }
             )
+        if self._last_prompt_cache_diagnostics is not None:
+            pending_usage["cache_diagnostics"] = dict(self._last_prompt_cache_diagnostics)
+            self._last_prompt_cache_diagnostics = None
+        if len(pending_usage) > 1:
+            self._pending_context_usage = pending_usage
+
+        usage = ev.usage
+        cached = usage.cached_prompt_tokens if usage is not None else None
+        hit_ratio = (
+            cached / usage.prompt_tokens
+            if usage is not None and cached is not None and usage.prompt_tokens > 0
+            else None
+        )
+        cache_diagnostics = pending_usage.get("cache_diagnostics")
+        if not isinstance(cache_diagnostics, dict):
+            cache_diagnostics = {}
+        logger.info(
+            "[PromptCacheDbg] completion session_id=%s run_id=%s model=%s "
+            "prompt_tokens=%s cached_prompt_tokens=%s cache_miss_prompt_tokens=%s "
+            "hit_ratio=%s cache_reporting_state=%s usage_source=%s "
+            "cached_prompt_tokens_source=%s cache_miss_prompt_tokens_source=%s "
+            "cache_miss_prompt_tokens_derived=%s cache_key=%s cache_namespace=%s "
+            "cache_lineage=%s cache_idle_ms=%s previous_request_prefix_preserved=%s "
+            "transport=%s request_bytes=%s stream_open_ms=%s first_chunk_ms=%s "
+            "first_reasoning_delta_ms=%s provider_request_id=%s response_id=%s "
+            "response_model=%s",
+            self._session.session_id,
+            self._run_id_override or "none",
+            model_id,
+            usage.prompt_tokens if usage is not None else "unavailable",
+            cached if cached is not None else "unavailable",
+            (
+                usage.cache_miss_prompt_tokens
+                if usage is not None and usage.cache_miss_prompt_tokens is not None
+                else "unavailable"
+            ),
+            f"{hit_ratio:.4f}" if hit_ratio is not None else "unavailable",
+            usage.cache_reporting_state if usage is not None else "unavailable",
+            usage.usage_source if usage is not None and usage.usage_source else "unavailable",
+            (
+                usage.cached_prompt_tokens_source
+                if usage is not None and usage.cached_prompt_tokens_source
+                else "unavailable"
+            ),
+            (
+                usage.cache_miss_prompt_tokens_source
+                if usage is not None and usage.cache_miss_prompt_tokens_source
+                else "unavailable"
+            ),
+            usage.cache_miss_prompt_tokens_derived if usage is not None else False,
+            "present" if self._uses_kimi_prompt_cache() else "none",
+            cache_diagnostics.get("cache_namespace", "unavailable"),
+            cache_diagnostics.get("cache_lineage", "unavailable"),
+            cache_diagnostics.get("cache_idle_ms", "unavailable"),
+            cache_diagnostics.get("previous_request_prefix_preserved", "unavailable"),
+            cache_diagnostics.get("transport", "unavailable"),
+            cache_diagnostics.get("request_bytes", "unavailable"),
+            cache_diagnostics.get("stream_open_ms", "unavailable"),
+            cache_diagnostics.get("first_chunk_ms", "unavailable"),
+            cache_diagnostics.get("first_reasoning_delta_ms", "unavailable"),
+            cache_diagnostics.get("provider_request_id", "unavailable"),
+            cache_diagnostics.get("response_id", "unavailable"),
+            cache_diagnostics.get("response_model", "unavailable"),
+        )
 
     def _observe_turn(self, start_idx: int) -> None:
         """本轮成功结束后，把这一轮新增的事件投影成 fragment 交给 memory 抽取。

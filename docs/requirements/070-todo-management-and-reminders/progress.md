@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED — 用户已验收当前范围；关闭动画观感问题转 issue 040 后继续交付
+COMPLETED — 用户已验收当前范围；关闭动画观感问题转 issue 041 后继续交付
 
 ## 任务列表
 
@@ -32,7 +32,7 @@ COMPLETED — 用户已验收当前范围；关闭动画观感问题转 issue 04
 - [x] 移除 30 秒系统 idle 的桌面对话资格硬门槛，保留心跳 stale 与窗口/锁屏条件
 - [x] 桌宠 Reminder 使用 Sonner 独立堆叠/排队，并按整个栈调整透明窗口尺寸
 - [x] 在重启后的真实桌面会话复验“创建两个两分钟后提醒的 Todo”
-- [x] 在真实 bubble window 复验多 Reminder 栈与逐条关闭；关闭跳变和动画观感转 issue 040
+- [x] 在真实 bubble window 复验多 Reminder 栈与逐条关闭；关闭跳变和动画观感转 issue 041
 
 ## AC 验证
 
@@ -90,10 +90,10 @@ COMPLETED — 用户已验收当前范围；关闭动画观感问题转 issue 04
 | 2026-08-04 | 修正桌面 presence 与桌宠短气泡 | desktop eligibility 不再由 30 秒 idle 否决；Reminder 气泡改用现有 Sonner 独立堆叠/排队，普通 ambient 仍替换，透明窗口按可见栈动态调整并预留 16px 阴影 frame |
 | 2026-08-04 | 完成本轮三段门禁 | backend：ruff + mypy + 1466 passed / 2 skipped；frontend：488 passed + production build；Rust：155 passed / 1 ignored + release check。未启动真实桌面视觉验收，等待用户确认或自行复验 |
 | 2026-08-04 | 完成真实 Agent 创建契约复核 | 只读核对最近真实 session：同一轮两次 `todo_manage.create` 均直接携带 `reminders[].relative_delay = 2 minute`，没有后续 `add_reminder`；不新增真实 LLM 调用 |
-| 2026-08-04 | 完成多 Reminder 气泡用户验收并登记残余问题 | 用户在真实 bubble window 观察多条提醒和逐条关闭，确认关闭过程存在跳变且动画观感待优化；不影响队列语义，已登记 issue 040 延后处理 |
-| 2026-08-04 | 最终三段门禁通过并完成当前范围验收 | backend：ruff + mypy + 1466 passed / 2 skipped；frontend：488 passed + production build；Rust：156 passed / 1 ignored + release check。用户明确要求在已知动画瑕疵转 issue 后继续合入主干 |
+| 2026-08-04 | 完成多 Reminder 气泡用户验收并登记残余问题 | 用户在真实 bubble window 观察多条提醒和逐条关闭，确认关闭过程存在跳变且动画观感待优化；不影响队列语义，已登记 issue 041 延后处理 |
+| 2026-08-04 | 最终三段门禁通过并完成当前范围验收 | 同步最新 main 并处理契约冲突后，backend：ruff + mypy + 1481 passed / 2 skipped；frontend：488 passed + production build；Rust：156 passed / 1 ignored + release check。用户明确要求在已知动画瑕疵转 issue 后继续合入主干 |
 
 ## 平台验收边界
 
-- 2026-07-28 的 Windows 实测覆盖完整投递链路；本轮移除 30 秒 idle 门槛由 presence 确定性测试覆盖，Sonner 多提醒栈由用户在真实 bubble window 验收。关闭动画体感瑕疵不阻塞本期，跟踪于 issue 040。
+- 2026-07-28 的 Windows 实测覆盖完整投递链路；本轮移除 30 秒 idle 门槛由 presence 确定性测试覆盖，Sonner 多提醒栈由用户在真实 bubble window 验收。关闭动画体感瑕疵不阻塞本期，跟踪于 issue 041。
 - 用户明确将本期真实平台验收范围收窄为 Windows；macOS 与 Linux 不再作为本期验收或交付门槛，现有兼容实现保持不变。

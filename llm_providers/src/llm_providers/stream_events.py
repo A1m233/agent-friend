@@ -15,7 +15,7 @@ discriminated union（按 ``type`` 字段分派）。本期承载 3 类事件：
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -82,6 +82,51 @@ class LLMUsage:
     total_tokens: int = 0
     cached_prompt_tokens: int | None = None
     cache_miss_prompt_tokens: int | None = None
+    usage_source: str | None = field(default=None, compare=False)
+    cached_prompt_tokens_source: str | None = field(default=None, compare=False)
+    cache_miss_prompt_tokens_source: str | None = field(default=None, compare=False)
+    cache_miss_prompt_tokens_derived: bool = field(default=False, compare=False)
+
+    @property
+    def cache_reporting_state(self) -> str:
+        """Keep an unavailable cache counter distinct from an explicit zero."""
+        if self.cached_prompt_tokens is None:
+            return "unavailable"
+        if self.cached_prompt_tokens == 0:
+            return "reported_zero"
+        return "reported_nonzero"
+
+
+@dataclass(frozen=True)
+class LLMResponseDiagnostics:
+    """Content-free provider response metadata and transport milestones."""
+
+    transport: str = "unknown"
+    request_bytes: int | None = None
+    stream_open_ms: int | None = None
+    first_chunk_ms: int | None = None
+    first_reasoning_delta_ms: int | None = None
+    provider_request_id: str | None = None
+    response_id: str | None = None
+    response_model: str | None = None
+    system_fingerprint: str | None = None
+    service_tier: str | None = None
+
+
+@dataclass(frozen=True)
+class LLMTransportDiagnostic:
+    """One content-free milestone emitted through the optional trace callback."""
+
+    phase: str
+    attempt: int
+    attempt_elapsed_ms: int
+    transport: str
+    request_bytes: int | None = None
+    provider_request_id: str | None = None
+    response_id: str | None = None
+    response_model: str | None = None
+    system_fingerprint: str | None = None
+    service_tier: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +148,7 @@ class LLMTurnDone:
 
     stop_reason: str = ""
     usage: LLMUsage | None = None
+    diagnostics: LLMResponseDiagnostics | None = None
     type: Literal["done"] = "done"
 
 
