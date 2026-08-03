@@ -298,6 +298,27 @@ def test_extract_usage_normalizes_prompt_cache_counters(
     assert usage.cache_miss_prompt_tokens == expected_miss
 
 
+def test_extract_usage_preserves_cache_counter_provenance_and_zero_state() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            )
+        )
+    )
+
+    assert usage is not None
+    assert usage.cache_reporting_state == "reported_zero"
+    assert usage.usage_source == "top_level"
+    assert usage.cached_prompt_tokens_source == "prompt_tokens_details.cached_tokens"
+    assert usage.cache_miss_prompt_tokens == 120
+    assert usage.cache_miss_prompt_tokens_source == "derived_prompt_minus_cached"
+    assert usage.cache_miss_prompt_tokens_derived is True
+
+
 def test_extract_stream_usage_reads_kimi_choice_usage() -> None:
     chunk = ChatCompletionChunk.model_validate(
         {
@@ -336,6 +357,7 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Any] = {}
+    transport_events: list[Any] = []
 
     class FakeResponse:
         closed = False
@@ -344,6 +366,10 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
             return iter(
                 [
                     SimpleNamespace(
+                        id="chatcmpl-kimi-trace",
+                        model="kimi-k2.6",
+                        system_fingerprint="route-a",
+                        service_tier="default",
                         usage=None,
                         choices=[
                             SimpleNamespace(
@@ -353,7 +379,11 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
                                     "total_tokens": 122,
                                     "cached_tokens": 80,
                                 },
-                                delta=SimpleNamespace(content="ok", tool_calls=[]),
+                                delta=SimpleNamespace(
+                                    content="ok",
+                                    reasoning_content="private reasoning",
+                                    tool_calls=[],
+                                ),
                                 finish_reason="stop",
                             )
                         ],
@@ -367,10 +397,20 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     response = FakeResponse()
     clients: list[Any] = []
 
-    class FakeCompletions:
-        def create(self, **kwargs: Any) -> FakeResponse:
-            seen.update(kwargs)
+    class FakeRawResponse:
+        request_id = "request-kimi-trace"
+
+        def parse(self) -> FakeResponse:
             return response
+
+    class FakeRawCompletions:
+        def create(self, **kwargs: Any) -> FakeRawResponse:
+            seen.update(kwargs)
+            return FakeRawResponse()
+
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.with_raw_response = FakeRawCompletions()
 
     class FakeOpenAI:
         closed = False
@@ -400,6 +440,7 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
         client.stream(
             [{"role": "user", "content": "hi"}],
             prompt_cache_key="session-1",
+            _diagnostic_callback=transport_events.append,
         )
     )
 
@@ -411,6 +452,27 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
         cached_prompt_tokens=80,
         cache_miss_prompt_tokens=40,
     )
+    assert done.usage is not None
+    assert done.usage.usage_source == "choice"
+    assert done.usage.cached_prompt_tokens_source == "cached_tokens"
+    assert done.usage.cache_miss_prompt_tokens_source == "derived_prompt_minus_cached"
+    assert done.diagnostics is not None
+    assert done.diagnostics.transport == "kimi_direct"
+    assert done.diagnostics.request_bytes is not None and done.diagnostics.request_bytes > 0
+    assert done.diagnostics.stream_open_ms is not None
+    assert done.diagnostics.first_chunk_ms is not None
+    assert done.diagnostics.first_reasoning_delta_ms is not None
+    assert done.diagnostics.provider_request_id == "request-kimi-trace"
+    assert done.diagnostics.response_id == "chatcmpl-kimi-trace"
+    assert done.diagnostics.response_model == "kimi-k2.6"
+    assert done.diagnostics.system_fingerprint == "route-a"
+    assert done.diagnostics.service_tier == "default"
+    assert [event.phase for event in transport_events] == [
+        "request_started",
+        "stream_opened",
+        "first_chunk",
+        "first_reasoning_delta",
+    ]
     assert seen["model"] == "kimi-k2.6"
     assert seen["prompt_cache_key"] == "session-1"
     assert seen["stream"] is True
