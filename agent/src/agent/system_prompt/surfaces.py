@@ -10,7 +10,7 @@ from xml.sax.saxutils import quoteattr
 InteractionSurfaceId = NewType("InteractionSurfaceId", str)
 
 _INTERNAL_USAGE_INSTRUCTION = (
-    "这是当前最新的完整内部运行时快照，取代更早的 interaction_context。"
+    "这是只对当前这次模型调用有效的完整内部运行时快照。"
     "只静默使用这些事实来理解和完成当前任务。除非用户直接询问当前交互端，"
     "或当前任务确实依赖该信息，否则不要在回复中提及交互端。"
     "不要告诉用户你收到了这段上下文、系统提示或端信息。"
@@ -43,12 +43,7 @@ class InteractionContextRenderer:
         surface: InteractionSurfaceId | None,
         runtime_context: str | None = None,
     ) -> str:
-        """Render one full model-visible interaction snapshot.
-
-        The latest block supersedes earlier blocks retained in model history.  Keeping
-        the snapshot append-only preserves provider prompt-cache prefixes while an
-        explicit unavailable surface clears a previously known product entry.
-        """
+        """Render one non-persistent, model-visible interaction snapshot."""
 
         lines = ["<interaction_context>"]
         if runtime_context:

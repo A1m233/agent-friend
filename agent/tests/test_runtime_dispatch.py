@@ -21,7 +21,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from agent.runtime import (
@@ -46,12 +46,17 @@ from agent import (
     PromptBuilder,
     Session,
     TextDelta,
+    ToolCallRequest,
+    ToolCallResult,
+    ToolRegistry,
+    ToolResult,
     TurnDone,
 )
 from llm_providers import (
     LLMClient,
     LLMStreamEvent,
     LLMTextDelta,
+    LLMToolCallDelta,
     LLMTurnDone,
 )
 
@@ -86,6 +91,7 @@ def _make_conversation(
     tmp_path: Path,
     *,
     fake_llm: _ScriptedLLMClient,
+    tool_registry: ToolRegistry | None = None,
 ) -> Conversation:
     """与 AgentRuntime 装配的 Conversation 一致：post_turn_external=True，
     避免 finally 块重复跑 _observe_turn。"""
@@ -112,6 +118,7 @@ def _make_conversation(
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
+        tool_registry=tool_registry,
         post_turn_external=True,
     )
 
@@ -187,9 +194,9 @@ def test_dispatch_user_event_session_records_messages(tmp_path: Path) -> None:
     runtime._dispatch(UserEvent(session_id=conv.session.session_id, user_input="hello"))
 
     types = [ev.type for ev in conv.session.events]
-    assert types == ["session_meta", "user_message", "model_context", "assistant_message"]
+    assert types == ["session_meta", "user_message", "assistant_message"]
     assert conv.session.events[1].payload["content"] == "hello"
-    assert conv.session.events[3].payload["content"] == "hi"
+    assert conv.session.events[2].payload["content"] == "hi"
 
 
 # ===== SystemTriggerEvent user-visibility（AC-5 runtime 层） =====
@@ -446,6 +453,70 @@ def test_submit_forwards_surface_to_default_user_runner(tmp_path: Path) -> None:
             for message in fake.received[-1]
         )
         assert handle.request.surface == IM_QQ_SURFACE
+    finally:
+        runtime.stop()
+
+
+def test_submit_forwards_normal_system_turn_tool_context(tmp_path: Path) -> None:
+    class EchoTool:
+        name: ClassVar[str] = "echo"
+        description: ClassVar[str] = "echo"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
+        }
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            self.calls.append(args)
+            return ToolResult(text="echoed")
+
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "echo-1", "echo", '{"message":"reminder"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([echo]),
+    )
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            SystemTriggerEvent(
+                session_id=conv.session.session_id,
+                source_kind="todo_reminder",
+                system_prompt_addendum='<system_events>\n[{"type":"todo_reminder"}]\n</system_events>',
+                presentation="none",
+                tool_mode="normal",
+                event_metadata={"batch_id": "batch-1", "occurrence_ids": ["occ-1"]},
+            ),
+            channel="text",
+            surface=IM_QQ_SURFACE,
+            metadata={"interaction_destination_id": "qq|bind|c2c|chat|session"},
+        )
+        events = list(handle.events())
+
+        assert echo.calls == [{"message": "reminder"}]
+        assert any(isinstance(event, ToolCallRequest) for event in events)
+        assert any(isinstance(event, ToolCallResult) for event in events)
+        marker = next(event for event in conv.session.events if event.type == "system_trigger")
+        assert marker.meta["batch_id"] == "batch-1"
+        assert marker.meta["occurrence_ids"] == ["occ-1"]
+        assert any(
+            '<surface type="im" provider="qq" />' in message.get("content", "")
+            for message in fake.received[0]
+        )
     finally:
         runtime.stop()
 

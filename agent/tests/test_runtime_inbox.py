@@ -27,6 +27,7 @@ def test_system_trigger_event_defaults_visibility_user() -> None:
         system_prompt_addendum="该睡了",
     )
     assert ev.output_visibility == "user"
+    assert ev.tool_mode == "disabled"
     assert ev.event_metadata == {}
     assert ev.type == "system_trigger"
 

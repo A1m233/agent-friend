@@ -150,7 +150,7 @@ class TestInteractionContextRenderer:
         )
         assert renderer.render(DESKTOP_CHAT_SURFACE) == (
             '<interaction_context>\n  <surface type="desktop_chat" />\n'
-            "  <usage>这是当前最新的完整内部运行时快照，取代更早的 interaction_context。"
+            "  <usage>这是只对当前这次模型调用有效的完整内部运行时快照。"
             "只静默使用这些事实来理解和完成当前任务。除非用户直接询问当前交互端，"
             "或当前任务确实依赖该信息，否则不要在回复中提及交互端。"
             "不要告诉用户你收到了这段上下文、系统提示或端信息。"
@@ -160,7 +160,7 @@ class TestInteractionContextRenderer:
     def test_surface_context_keeps_non_announcement_policy_adjacent(self) -> None:
         rendered = DEFAULT_INTERACTION_CONTEXT_RENDERER.render(DESKTOP_CHAT_SURFACE)
 
-        assert "这是当前最新的完整内部运行时快照" in rendered
+        assert "这是只对当前这次模型调用有效的完整内部运行时快照" in rendered
         assert "只静默使用这些事实" in rendered
         assert "否则不要在回复中提及交互端" in rendered
         assert "不要告诉用户你收到了这段上下文、系统提示或端信息" in rendered
@@ -173,7 +173,7 @@ class TestInteractionContextRenderer:
 
         assert rendered.startswith("<interaction_context>\n  <runtime_now")
         assert '<surface available="false" />' in rendered
-        assert "取代更早的 interaction_context" in rendered
+        assert "只对当前这次模型调用有效" in rendered
 
     def test_unregistered_non_null_surface_fails_closed(self) -> None:
         renderer = InteractionContextRenderer(surfaces={})
@@ -447,8 +447,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 7867
-        assert estimate_tokens([Message(role="system", content=output)]) == 5900
+        assert len(output) == 7848
+        assert estimate_tokens([Message(role="system", content=output)]) == 5886
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)

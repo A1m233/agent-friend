@@ -286,6 +286,7 @@ class _ScriptedLLMClient:
     turn_idx: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     received_overrides: list[dict[str, Any]] = field(default_factory=list)
+    received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
     context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
     def complete(
@@ -302,6 +303,7 @@ class _ScriptedLLMClient:
     ) -> Iterator[LLMStreamEvent]:
         self.received.append(messages)
         self.received_overrides.append(dict(overrides))
+        self.received_tools.append(tools)
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -620,6 +622,72 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_normal_system_turn_reuses_full_tool_loop(tmp_path: Path) -> None:
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="reminder-tool",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "reminder"}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="处理完成"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+
+    events = list(
+        conv.dispatch_system_turn(
+            source_kind="todo_reminder",
+            system_prompt_addendum='<system_events>\n[{"type":"todo_reminder"}]\n</system_events>',
+            presentation="conversation",
+            tool_mode="normal",
+            channel="text",
+            surface=IM_QQ_SURFACE,
+            interaction_destination_id="qq|bind|c2c|chat|session",
+        )
+    )
+
+    assert echo.call_count == 1
+    assert any(isinstance(event, ToolCallRequest) for event in events)
+    assert any(isinstance(event, ToolCallResult) for event in events)
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.total_tool_calls == 1
+    assert [event.type for event in conv.session.events].count("system_trigger") == 1
+    assert all(event.type != "user_message" for event in conv.session.events)
+    assert fake.received_tools[0] is not None
+
+
+def test_default_system_turn_keeps_tools_disabled(tmp_path: Path) -> None:
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="普通主动回应"), LLMTurnDone(stop_reason="end_turn")]]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+
+    list(
+        conv.dispatch_system_turn(
+            source_kind="cron:bedtime",
+            system_prompt_addendum="该休息了",
+        )
+    )
+
+    assert echo.call_count == 0
+    assert fake.received_tools == [None]
 
 
 def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
@@ -1557,13 +1625,13 @@ def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> No
     assert "不在已有可信证据" in result.text
 
 
-def test_datetime_tool_receives_hidden_trusted_runtime_in_model_only_history(
+def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
     tmp_path: Path,
 ) -> None:
     seen_args: list[dict[str, Any]] = []
 
-    class CaptureDateTool:
-        name: ClassVar[str] = "datetime_calculate"
+    class CaptureTodoTool:
+        name: ClassVar[str] = "todo_manage"
         description: ClassVar[str] = "capture runtime"
         parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
 
@@ -1574,41 +1642,61 @@ def test_datetime_tool_receives_hidden_trusted_runtime_in_model_only_history(
     fake = _ScriptedLLMClient(
         script=[
             [
-                LLMToolCallDelta(0, "date-1", "datetime_calculate", '{"date":"$today"}'),
+                LLMToolCallDelta(0, "todo-1", "todo_manage", '{"operation":"create"}'),
+                LLMToolCallDelta(1, "todo-2", "todo_manage", '{"operation":"create"}'),
                 LLMTurnDone(stop_reason="tool_use"),
             ],
             [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
         ]
     )
+    initial = datetime(2026, 7, 28, 22, 4, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    first_inference = datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai"))
+    continuation = datetime(2026, 7, 28, 22, 6, 40, tzinfo=ZoneInfo("Asia/Shanghai"))
+    moments = iter([initial, first_inference, continuation])
     trusted = ToolRunContext.create(
         "今天星期几",
-        now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+        clock=lambda: next(moments),
     )
     conv = _make_conversation(
         tmp_path,
         fake_llm=fake,
-        registry=ToolRegistry([CaptureDateTool()]),
+        registry=ToolRegistry([CaptureTodoTool()]),
         tool_run_context_factory=lambda _: trusted,
     )
     list(conv.stream("今天星期几"))
-    assert seen_args[0]["__agent_friend_runtime_now"] == trusted.trusted_now.isoformat()
-    assert seen_args[0]["__agent_friend_runtime_timezone"] == "Asia/Shanghai"
-    for request_messages in fake.received:
-        model_context = next(
-            message["content"]
-            for message in request_messages
-            if trusted.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
+    assert len(seen_args) == 2
+    assert {args["__agent_friend_runtime_now"] for args in seen_args} == {
+        first_inference.isoformat()
+    }
+    assert {args["__agent_friend_runtime_timezone"] for args in seen_args} == {"Asia/Shanghai"}
+    assert (
+        sum(
+            first_inference.isoformat(timespec="seconds") in message.get("content", "")
+            for message in fake.received[0]
         )
-        assert trusted.trusted_now.isoformat(timespec="seconds") in model_context
-    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
+        == 1
+    )
+    assert (
+        sum(
+            continuation.isoformat(timespec="seconds") in message.get("content", "")
+            for message in fake.received[1]
+        )
+        == 1
+    )
+    assert all(
+        first_inference.isoformat(timespec="seconds") not in message.get("content", "")
+        for message in fake.received[1]
+    )
     request = next(event for event in conv.session.events if event.type == "tool_call_request")
     assert "__agent_friend_runtime_now" not in request.payload["args"]
     assert all("<runtime_now" not in message.content for message in conv.session.messages)
-    assert sum(event.type == "model_context" for event in conv.session.events) == 1
-    assert sum("<runtime_now" in message.content for message in conv.session.llm_messages) == 1
+    assert all(event.type != "model_context" for event in conv.session.events)
+    assert all("<runtime_now" not in message.content for message in conv.session.llm_messages)
 
 
-def test_unchanged_model_context_snapshot_is_not_appended_twice(tmp_path: Path) -> None:
+def test_repeated_turns_each_get_one_transient_context_without_persistence(
+    tmp_path: Path,
+) -> None:
     trusted = ToolRunContext.create(
         "same clock",
         now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -1628,7 +1716,7 @@ def test_unchanged_model_context_snapshot_is_not_appended_twice(tmp_path: Path) 
     list(conv.stream("first"))
     list(conv.stream("second"))
 
-    assert sum(event.type == "model_context" for event in conv.session.events) == 1
+    assert all(event.type != "model_context" for event in conv.session.events)
     assert (
         sum(
             trusted.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
@@ -1680,6 +1768,10 @@ def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> 
     )
     assert old_answer_index < current_user_index < clock_index
     assert "2026-07-28T22:04:13+08:00" in messages[clock_index]["content"]
+    assert all(
+        old_context.trusted_now.isoformat(timespec="seconds") not in message.get("content", "")
+        for message in messages
+    )
 
 
 def test_repeated_identical_failures_stop_as_no_progress(tmp_path: Path) -> None:

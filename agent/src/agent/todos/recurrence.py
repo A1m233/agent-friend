@@ -130,7 +130,14 @@ def schedule_from_dict(value: dict[str, Any]) -> ReminderSchedule:
         else:
             raise KeyError("kind")
     except (KeyError, TypeError, ValueError) as exc:
-        raise TodoError("invalid_recurrence", "Reminder schedule 格式无效") from exc
+        raise TodoError(
+            "invalid_recurrence",
+            (
+                "Reminder schedule 格式无效：一次性提醒需要 kind=once、local_datetime "
+                "和 timezone；周期提醒需要 kind=recurring、frequency、local_time、"
+                "timezone 和 starts_on"
+            ),
+        ) from exc
     validate_schedule(schedule)
     return schedule
 

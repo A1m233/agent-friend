@@ -965,6 +965,12 @@ export function PetApp() {
       "结尾标记 ✅";
     void invoke("inject_test_envelope", { text: long });
   };
+  const injectReminder = () => {
+    if (!isTauri()) return;
+    void invoke("inject_test_reminder_envelope", {
+      text: `提醒队列测试 · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`,
+    });
+  };
 
   return (
     <>
@@ -1025,6 +1031,7 @@ export function PetApp() {
             onOpenLive2DDebugger={openLive2DDebugger}
             onInjectShort={injectShort}
             onInjectLong={injectLong}
+            onInjectReminder={injectReminder}
           />
         )}
     </>

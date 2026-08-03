@@ -14,11 +14,10 @@ import { startPetBubbleSubscriber, attachBubbleWindowSync } from "@/stores/petBu
  *   （015 已有逻辑，搬位置不改实现）
  * - `attachBubbleWindowSync()` —— phase 变化 → invoke `show_bubble` / `hide_bubble`，
  *   让 Rust 侧 bubble window 显隐与 store 状态严格同步
- * - 渲染 `<PetBubble />` —— 015 已有组件，M16.6 改造去掉了窗内 absolute 定位
+ * - 渲染 `<PetBubble />` —— 070 起由 Sonner 承载多条短气泡并动态上报整个栈的尺寸
  *
  * 透明背景：bubble webview 整窗 transparent，CSS root 也透明 —— 让 bubble 实心区
- * 由 PetBubble 自己用 `bg-surface` 等语义 token 上色，气泡之外的窗体保持透明，
- * 视觉上只看到一张气泡。
+ * 由 Sonner 的项目适配层使用语义 token 上色，toast 栈之外保持透明。
  */
 export function BubbleApp() {
   useEffect(() => {
@@ -34,7 +33,7 @@ export function BubbleApp() {
   }, []);
 
   return (
-    <div className="flex h-full w-full items-start justify-center overflow-hidden bg-transparent p-1">
+    <div className="h-full w-full overflow-hidden bg-transparent">
       <PetBubble />
     </div>
   );

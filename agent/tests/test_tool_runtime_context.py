@@ -39,7 +39,7 @@ def test_search_results_must_be_registered_by_successful_tool_result() -> None:
     assert authorization.source_call_id == "call-1"
 
 
-def test_model_context_renders_the_same_trusted_clock_snapshot() -> None:
+def test_transient_context_renders_the_same_trusted_clock_snapshot() -> None:
     context = ToolRunContext.create(
         "今天发工资",
         now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -54,6 +54,21 @@ def test_model_context_renders_the_same_trusted_clock_snapshot() -> None:
     assert 'tomorrow="2026-07-29"' in rendered
     assert "本轮时间以此为准" in rendered
     assert "勿反推" in rendered
+
+
+def test_refresh_time_uses_a_fresh_snapshot_for_the_next_inference() -> None:
+    moments = iter(
+        [
+            datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
+            datetime(2026, 7, 28, 22, 6, 40, tzinfo=ZoneInfo("Asia/Shanghai")),
+        ]
+    )
+    context = ToolRunContext.create("继续", clock=lambda: next(moments))
+
+    context.refresh_time()
+
+    assert context.trusted_now.isoformat() == "2026-07-28T22:06:40+08:00"
+    assert 'at="2026-07-28T22:06:40+08:00"' in context.render_for_model()
 
 
 def test_ledger_rejects_unsupported_schemes_and_ports() -> None:

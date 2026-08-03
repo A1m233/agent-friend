@@ -181,27 +181,27 @@ def test_over_threshold_drops_oldest_until_within_budget() -> None:
     assert _first_history_role(result.messages) == "user"
 
 
-def test_fifo_keeps_model_context_with_the_user_turn_it_follows() -> None:
-    hidden_context = Message(
+def test_fifo_keeps_transient_context_outside_persistent_history() -> None:
+    transient_context = Message(
         role="system",
         content="<interaction_context>latest</interaction_context>",
-        meta={"synthetic": "model_context"},
+        meta={"synthetic": "transient_model_context"},
     )
-    latest_turn = [
+    history = [
+        *_turn(0, 200),
         Message(role="user", content="u1" + "x" * 200),
-        hidden_context,
         Message(role="assistant", content="a1" + "x" * 200),
     ]
-    history = [*_turn(0, 200), *latest_turn]
 
     result = FifoContextManager().build_messages(
         history=history,
         system_prompt="sys",
+        turn_context=[transient_context],
         runtime=_runtime(window=650),
     )
 
-    assert result.dropped_count == 2
-    assert hidden_context in result.messages
+    assert result.dropped_count > 0
+    assert transient_context in result.messages
     assert any(message.content.startswith("u1") for message in result.messages)
 
 

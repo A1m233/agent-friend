@@ -121,10 +121,8 @@ class DestinationPolicy:
     def __init__(
         self,
         *,
-        desktop_idle_threshold: timedelta = timedelta(seconds=30),
         desktop_stale_after: timedelta = timedelta(seconds=15),
     ) -> None:
-        self._idle_threshold = desktop_idle_threshold
         self._stale_after = desktop_stale_after
 
     def decide(self, state: PresenceState) -> DestinationDecision:
@@ -132,7 +130,6 @@ class DestinationPolicy:
         desktop_eligible = _desktop_eligible(
             desktop,
             now=state.evaluated_at,
-            idle_threshold=self._idle_threshold,
             stale_after=self._stale_after,
         )
         online = [item for item in state.im_bindings if item.online]
@@ -190,7 +187,6 @@ def _desktop_eligible(
     snapshot: DesktopPresenceSnapshot | None,
     *,
     now: datetime,
-    idle_threshold: timedelta,
     stale_after: timedelta,
 ) -> bool:
     if snapshot is None or snapshot.current_session_id is None:
@@ -199,11 +195,7 @@ def _desktop_eligible(
         return False
     if snapshot.session_state != "active":
         return False
-    if not snapshot.window_visible or not snapshot.window_focused or snapshot.window_minimized:
-        return False
-    return snapshot.os_idle_ms is not None and snapshot.os_idle_ms <= int(
-        idle_threshold.total_seconds() * 1000
-    )
+    return snapshot.window_visible and snapshot.window_focused and not snapshot.window_minimized
 
 
 def _desktop_diagnostics(
@@ -246,10 +238,6 @@ def _desktop_diagnostics(
         reason = "window_minimized"
     elif not snapshot.window_focused:
         reason = "window_unfocused"
-    elif idle_ms is None:
-        reason = "idle_unknown"
-    elif idle_ms > 30_000:
-        reason = "idle_over_30s"
     return {
         "fresh": fresh,
         "ageMs": age_ms,

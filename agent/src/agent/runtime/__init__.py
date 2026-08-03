@@ -579,6 +579,15 @@ class AgentRuntime:
                     system_prompt_addendum=request.event.system_prompt_addendum,
                     output_visibility=request.event.output_visibility,
                     presentation=request.event.presentation,
+                    tool_mode=request.event.tool_mode,
+                    channel=request.channel,
+                    surface=request.surface,
+                    interaction_destination_id=(
+                        str(request.metadata["interaction_destination_id"])
+                        if request.metadata.get("interaction_destination_id")
+                        else None
+                    ),
+                    event_metadata=request.event.event_metadata,
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )
@@ -652,6 +661,8 @@ class AgentRuntime:
                 system_prompt_addendum=ev.system_prompt_addendum,
                 output_visibility=ev.output_visibility,
                 presentation=ev.presentation,
+                tool_mode=ev.tool_mode,
+                event_metadata=ev.event_metadata,
             )
 
         for cev in events_iter:

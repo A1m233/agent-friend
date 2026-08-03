@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -18,6 +19,10 @@ from .evidence import (
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"'，。；：！？、）】》」』]+", re.IGNORECASE)
 _TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
+
+
+def _system_now() -> datetime:
+    return datetime.now().astimezone()
 
 
 @dataclass(frozen=True)
@@ -72,16 +77,38 @@ class ToolRunContext:
     trusted_timezone: str
     url_authorizations: UrlAuthorizationLedger = field(default_factory=UrlAuthorizationLedger)
     public_evidence: PublicEvidenceLedger = field(default_factory=PublicEvidenceLedger)
+    _clock: Callable[[], datetime] = field(default=_system_now, repr=False)
 
     @classmethod
-    def create(cls, user_input: str, *, now: datetime | None = None) -> ToolRunContext:
-        trusted_now = now or datetime.now().astimezone()
-        if trusted_now.tzinfo is None:
-            raise ValueError("trusted now must be timezone-aware")
-        zone = getattr(trusted_now.tzinfo, "key", None) or _offset_text(trusted_now)
-        context = cls(f"toolrun_{uuid4().hex}", trusted_now, str(zone))
+    def create(
+        cls,
+        user_input: str,
+        *,
+        now: datetime | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> ToolRunContext:
+        if now is not None and clock is not None:
+            raise ValueError("now and clock cannot be provided together")
+        effective_clock = (lambda: now) if now is not None else clock or _system_now
+        trusted_now, trusted_timezone = _read_trusted_clock(effective_clock)
+        context = cls(
+            f"toolrun_{uuid4().hex}",
+            trusted_now,
+            trusted_timezone,
+            _clock=effective_clock,
+        )
         context.register_user_text_evidence(user_input, persistable_only=False)
         return context
+
+    def refresh_time(self) -> None:
+        """Refresh the trusted clock immediately before one model inference.
+
+        Tool calls emitted by that inference continue using this exact snapshot.  The
+        next model continuation refreshes it again, so long-running tool loops do not
+        inherit stale wall-clock time.
+        """
+
+        self.trusted_now, self.trusted_timezone = _read_trusted_clock(self._clock)
 
     def register_user_text_evidence(
         self,
@@ -188,9 +215,9 @@ class ToolRunContext:
     def render_for_model(self) -> str:
         """Render the same trusted clock snapshot that hidden tool args receive.
 
-        The block becomes part of the append-only model-context snapshot near the current
-        input.  Keeping it on this object prevents the model-visible time and tool-visible
-        time from drifting apart during a multi-call turn.
+        The block is transient input for one inference and is never persisted in session
+        history. Keeping it on this object prevents model-visible and tool-visible time
+        from drifting apart for tool calls emitted by the same inference.
         """
         current_datetime = self.trusted_now.isoformat(timespec="seconds")
         today = self.trusted_now.date()
@@ -200,6 +227,14 @@ class ToolRunContext:
             f'tomorrow="{today + timedelta(days=1)}" />\n'
             "本轮时间以此为准；日历锚点同样可信，历史日期不覆盖，勿反推。"
         )
+
+
+def _read_trusted_clock(clock: Callable[[], datetime]) -> tuple[datetime, str]:
+    trusted_now = clock()
+    if trusted_now.tzinfo is None:
+        raise ValueError("trusted now must be timezone-aware")
+    zone = getattr(trusted_now.tzinfo, "key", None) or _offset_text(trusted_now)
+    return trusted_now, str(zone)
 
 
 def _offset_text(value: datetime) -> str:

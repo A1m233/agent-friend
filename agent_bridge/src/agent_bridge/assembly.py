@@ -472,7 +472,7 @@ def build_runtime(
             presence_registry=presence_registry,
             im_runtime=im_runtime,
         )
-        reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver)
+        reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver_batch)
         todo_service.add_wake_listener(reminder_scheduler.wake)
         # final BridgeRuntime = pre_runtime + IM 字段
         return dataclasses.replace(
@@ -489,7 +489,7 @@ def build_runtime(
         agent_runtime=agent_runtime,
         presence_registry=presence_registry,
     )
-    reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver)
+    reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver_batch)
     todo_service.add_wake_listener(reminder_scheduler.wake)
     social_auth_orchestrator = SocialAuthOrchestrator(
         service=social_platform_service,

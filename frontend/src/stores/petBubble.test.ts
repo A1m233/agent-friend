@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  resetPolicy,
-  setPolicy,
-  usePetBubbleStore,
-} from "./petBubble";
+import { resetPolicy, setPolicy, usePetBubbleStore } from "./petBubble";
 import type { PushEnvelope } from "@/types/push";
 
-function agentEnv(seq: number, content = "晚安"): PushEnvelope {
+function agentEnv(
+  seq: number,
+  content = "晚安",
+  sourceKind: string | null = "cron:bedtime",
+): PushEnvelope {
   return {
     kind: "agent_turn",
     session_id: "s1",
     seq,
-    source_kind: "cron:bedtime",
+    source_kind: sourceKind,
     events: [
       { type: "text_delta", text: content },
       { type: "done", stop_reason: "end_turn", total_tool_calls: 0 },
@@ -33,99 +33,89 @@ function userEnv(seq: number): PushEnvelope {
 }
 
 beforeEach(() => {
-  usePetBubbleStore.setState({ phase: "idle", current: null });
+  usePetBubbleStore.setState({ items: [] });
   resetPolicy();
 });
 
 describe("usePetBubbleStore", () => {
-  it("ingest 命中 policy → phase=showing + current 设上", () => {
+  it("ingest 命中 policy 后新增一个常驻条目", () => {
     usePetBubbleStore.getState().ingest(agentEnv(1));
-    const s = usePetBubbleStore.getState();
-    expect(s.phase).toBe("showing");
-    expect(s.current).toEqual({
-      id: "s1:1",
-      text: "晚安",
-      sourceKind: "cron:bedtime",
-    });
+    expect(usePetBubbleStore.getState().items).toEqual([
+      {
+        id: "s1:1",
+        text: "晚安",
+        sourceKind: "cron:bedtime",
+        expanded: false,
+      },
+    ]);
   });
 
-  it("气泡常驻：ingest 后无自动消失（M15.8 决策；只能 dismiss 或被替换）", () => {
+  it("没有自动消失 timer，反复读取仍保留条目", () => {
     usePetBubbleStore.getState().ingest(agentEnv(1));
-    expect(usePetBubbleStore.getState().phase).toBe("showing");
-    // 这里不引 fakeTimers——store 本身就不应该有 setTimeout 自动 idle
-    // 反复读 state 应一直是 showing
-    expect(usePetBubbleStore.getState().phase).toBe("showing");
-    expect(usePetBubbleStore.getState().current?.id).toBe("s1:1");
+    expect(usePetBubbleStore.getState().items).toHaveLength(1);
+    expect(usePetBubbleStore.getState().items[0]?.id).toBe("s1:1");
   });
 
-  it("setPolicy 替换后能让 user_turn 也进气泡（AC-3 可替换扩展点）", () => {
-    // 默认 policy：user_turn → null，气泡不冒
+  it("setPolicy 替换后能让 user_turn 也进气泡", () => {
     usePetBubbleStore.getState().ingest(userEnv(1));
-    expect(usePetBubbleStore.getState().phase).toBe("idle");
+    expect(usePetBubbleStore.getState().items).toEqual([]);
 
-    // 替换 policy：把任意 envelope 都映射成 BubbleItem
     setPolicy((env) => ({
       id: `${env.session_id}:${env.seq}`,
       text: "all in",
       sourceKind: env.source_kind,
     }));
     usePetBubbleStore.getState().ingest(userEnv(2));
-    expect(usePetBubbleStore.getState().phase).toBe("showing");
-    expect(usePetBubbleStore.getState().current?.text).toBe("all in");
+    expect(usePetBubbleStore.getState().items[0]?.text).toBe("all in");
   });
 
-  it("新 envelope（seq+1）替换 current", () => {
+  it("普通主动轮继续替换上一条普通主动轮", () => {
     usePetBubbleStore.getState().ingest(agentEnv(1, "第一条"));
-    expect(usePetBubbleStore.getState().current?.id).toBe("s1:1");
-
     usePetBubbleStore.getState().ingest(agentEnv(2, "第二条"));
-    expect(usePetBubbleStore.getState().current?.id).toBe("s1:2");
-    expect(usePetBubbleStore.getState().current?.text).toBe("第二条");
-    expect(usePetBubbleStore.getState().phase).toBe("showing");
+    expect(usePetBubbleStore.getState().items.map((item) => item.id)).toEqual(["s1:2"]);
+    expect(usePetBubbleStore.getState().items[0]?.text).toBe("第二条");
   });
 
-  it("ingest 同 id（envelope 重发）不更新 current（防御性兜底）", () => {
-    usePetBubbleStore.getState().ingest(agentEnv(1, "原文"));
-    const original = usePetBubbleStore.getState().current;
-
-    // 同 session_id+seq 再 ingest 一次（极端兜底）
-    usePetBubbleStore.getState().ingest(agentEnv(1, "篡改"));
-    // current 应保持原对象（按 id 命中早 return）
-    expect(usePetBubbleStore.getState().current).toBe(original);
+  it("同时到达的 Reminder 独立保留，不互相覆盖", () => {
+    usePetBubbleStore.getState().ingest(agentEnv(1, "提醒一", "todo_reminder"));
+    usePetBubbleStore.getState().ingest(agentEnv(2, "提醒二", "todo_reminder"));
+    expect(usePetBubbleStore.getState().items.map((item) => item.text)).toEqual([
+      "提醒一",
+      "提醒二",
+    ]);
   });
 
-  it("expand 切到 expanded（无 timer 副作用、气泡仍常驻）", () => {
-    usePetBubbleStore.getState().ingest(agentEnv(1));
-    usePetBubbleStore.getState().expand();
-    expect(usePetBubbleStore.getState().phase).toBe("expanded");
-    expect(usePetBubbleStore.getState().current).not.toBeNull();
+  it("普通主动轮替换不会冲掉尚未关闭的 Reminder", () => {
+    usePetBubbleStore.getState().ingest(agentEnv(1, "提醒", "todo_reminder"));
+    usePetBubbleStore.getState().ingest(agentEnv(2, "主动一"));
+    usePetBubbleStore.getState().ingest(agentEnv(3, "主动二"));
+    expect(usePetBubbleStore.getState().items.map((item) => item.text)).toEqual([
+      "提醒",
+      "主动二",
+    ]);
   });
 
-  it("expand 仅对 showing 生效，idle / expanded 状态下是 no-op", () => {
-    // idle → expand 不变
-    usePetBubbleStore.getState().expand();
-    expect(usePetBubbleStore.getState().phase).toBe("idle");
-
-    // 进 expanded 后再 expand 一次：仍 expanded（不会"再 expand"破坏状态）
-    usePetBubbleStore.getState().ingest(agentEnv(1));
-    usePetBubbleStore.getState().expand();
-    usePetBubbleStore.getState().expand();
-    expect(usePetBubbleStore.getState().phase).toBe("expanded");
+  it("ingest 同 id 的 envelope 重发时保持原条目", () => {
+    usePetBubbleStore.getState().ingest(agentEnv(1, "原文", "todo_reminder"));
+    const original = usePetBubbleStore.getState().items[0];
+    usePetBubbleStore.getState().ingest(agentEnv(1, "篡改", "todo_reminder"));
+    expect(usePetBubbleStore.getState().items[0]).toBe(original);
   });
 
-  it("dismiss 强制切回 idle 并清 current", () => {
-    usePetBubbleStore.getState().ingest(agentEnv(1));
-    usePetBubbleStore.getState().dismiss();
-    const s = usePetBubbleStore.getState();
-    expect(s.phase).toBe("idle");
-    expect(s.current).toBeNull();
+  it("expand 只展开指定条目", () => {
+    usePetBubbleStore.getState().ingest(agentEnv(1, "提醒一", "todo_reminder"));
+    usePetBubbleStore.getState().ingest(agentEnv(2, "提醒二", "todo_reminder"));
+    usePetBubbleStore.getState().expand("s1:2");
+    expect(usePetBubbleStore.getState().items.map((item) => item.expanded)).toEqual([
+      false,
+      true,
+    ]);
   });
 
-  it("从 expanded 也能 dismiss", () => {
-    usePetBubbleStore.getState().ingest(agentEnv(1));
-    usePetBubbleStore.getState().expand();
-    usePetBubbleStore.getState().dismiss();
-    expect(usePetBubbleStore.getState().phase).toBe("idle");
-    expect(usePetBubbleStore.getState().current).toBeNull();
+  it("dismiss 只移除指定条目", () => {
+    usePetBubbleStore.getState().ingest(agentEnv(1, "提醒一", "todo_reminder"));
+    usePetBubbleStore.getState().ingest(agentEnv(2, "提醒二", "todo_reminder"));
+    usePetBubbleStore.getState().dismiss("s1:1");
+    expect(usePetBubbleStore.getState().items.map((item) => item.id)).toEqual(["s1:2"]);
   });
 });
