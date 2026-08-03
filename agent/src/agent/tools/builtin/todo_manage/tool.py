@@ -20,6 +20,61 @@ from agent.todos import (
 from ...protocol import ToolResult
 
 _RUNTIME_SESSION_ID = "__agent_friend_current_session_id"
+_REMINDER_SCHEDULE_SCHEMA: dict[str, Any] = {
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"const": "once"},
+                "local_datetime": {
+                    "type": "string",
+                    "pattern": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$",
+                    "description": (
+                        "无歧义的本地日期时间，YYYY-MM-DDTHH:MM:SS 格式；"
+                        "不得带 Z 或 UTC offset，时区只放 timezone。"
+                    ),
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone，例如 Asia/Shanghai。",
+                },
+                "fold": {"type": "integer", "enum": [0, 1], "default": 0},
+            },
+            "required": ["kind", "local_datetime", "timezone"],
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "properties": {
+                "kind": {"const": "recurring"},
+                "frequency": {"type": "string", "enum": ["daily", "weekly", "monthly"]},
+                "interval": {"type": "integer", "minimum": 1, "default": 1},
+                "local_time": {
+                    "type": "string",
+                    "description": "本地时间，HH:MM:SS 格式。",
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone，例如 Asia/Shanghai。",
+                },
+                "starts_on": {"type": "string", "format": "date"},
+                "weekdays": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1, "maximum": 7},
+                },
+                "month_days": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 1, "maximum": 31},
+                },
+                "until_local": {"type": ["string", "null"]},
+                "max_occurrences": {"type": ["integer", "null"], "minimum": 1},
+                "fold": {"type": "integer", "enum": [0, 1], "default": 0},
+            },
+            "required": ["kind", "frequency", "local_time", "timezone", "starts_on"],
+            "additionalProperties": False,
+        },
+    ]
+}
 
 
 class TodoManageTool:
@@ -30,6 +85,8 @@ class TodoManageTool:
         "创建、查询和管理用户的持久 Todo，以及一次性或基础周期 Reminder。"
         "用户要求记待办、列待办、修改、完成、取消、重新打开或设置提醒时必须使用；"
         "不能只在对话里口头答应。Todo 不提供时间时不要擅自添加 Reminder。"
+        "创建带提醒的新 Todo 时，必须在同一次 create 的 reminders 中提供 schedule；"
+        "不能只创建无 Reminder 的 Todo 就声称提醒已设置。"
         "更新必须使用 list/get 返回的稳定 id 和 revision，目标不唯一时先澄清。"
         "Reminder 必须提供明确 IANA timezone 和无歧义本地时间；工具返回失败时不得声称成功。"
     )
@@ -62,8 +119,8 @@ class TodoManageTool:
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             "offset": {"type": "integer", "minimum": 0},
-            "reminder": {"type": "object"},
-            "reminders": {"type": "array", "items": {"type": "object"}},
+            "reminder": _REMINDER_SCHEDULE_SCHEMA,
+            "reminders": {"type": "array", "items": _REMINDER_SCHEDULE_SCHEMA},
             "enabled": {"type": "boolean"},
         },
         "required": ["operation"],

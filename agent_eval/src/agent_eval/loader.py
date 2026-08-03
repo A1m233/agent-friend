@@ -381,6 +381,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_unsupported_model_motive_story"),
             label=f"{label}.forbid_unsupported_model_motive_story",
         ),
+        forbid_unsupported_future_action_commitment=_bool(
+            data.get("forbid_unsupported_future_action_commitment"),
+            label=f"{label}.forbid_unsupported_future_action_commitment",
+        ),
     )
 
 

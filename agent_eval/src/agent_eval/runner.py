@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
+from agent.tools.builtin.todo_manage import TodoManageTool
+from agent.tools.builtin.weather_query import WeatherQueryTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
 
@@ -89,6 +91,12 @@ class _FixtureTool:
         elif fixture.name == "web_fetch":
             self.description = WebFetchTool.description
             self.parameters_schema = WebFetchTool.parameters_schema
+        elif fixture.name == "weather_query":
+            self.description = WeatherQueryTool.description
+            self.parameters_schema = WeatherQueryTool.parameters_schema
+        elif fixture.name == "todo_manage":
+            self.description = TodoManageTool.description
+            self.parameters_schema = TodoManageTool.parameters_schema
         else:
             self.description = "读取完成当前请求所需的数据。"
             self.parameters_schema = {"type": "object", "properties": {}}

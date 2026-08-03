@@ -67,3 +67,20 @@ def test_error_is_structured(tmp_path: Path) -> None:
     assert result.is_error
     assert result.meta["error_kind"] == "not_found"
     assert json.loads(result.text)["status"] == "error"
+
+
+def test_schema_exposes_once_reminder_shape_for_create() -> None:
+    reminders = TodoManageTool.parameters_schema["properties"]["reminders"]
+    once = reminders["items"]["oneOf"][0]
+
+    assert once["properties"]["kind"] == {"const": "once"}
+    assert once["required"] == ["kind", "local_datetime", "timezone"]
+    assert "不得带 Z 或 UTC offset" in once["properties"]["local_datetime"]["description"]
+    recurring = reminders["items"]["oneOf"][1]
+    assert recurring["properties"]["weekdays"]["items"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 7,
+    }
+    assert "同一次 create 的 reminders" in TodoManageTool.description
+    assert "不能只创建无 Reminder 的 Todo 就声称提醒已设置" in TodoManageTool.description

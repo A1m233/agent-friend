@@ -41,10 +41,12 @@ from .errors import (
 from .multimodal import MultimodalInputAdapter
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
+    LLMResponseDiagnostics,
     LLMRetryScheduled,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
+    LLMTransportDiagnostic,
     LLMTurnDone,
     LLMUsage,
 )
@@ -68,11 +70,13 @@ __all__ = [
     "LLMOutputBudgetExhaustedError",
     "LLMProviderError",
     "LLMRateLimitError",
+    "LLMResponseDiagnostics",
     "LLMRetryScheduled",
     "LLMStreamEvent",
     "LLMTextDelta",
     "LLMToolCallDelta",
     "LLMTransientProviderError",
+    "LLMTransportDiagnostic",
     "LLMTurnDone",
     "LLMUsage",
     "ModelPurpose",

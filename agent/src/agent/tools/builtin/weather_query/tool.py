@@ -23,6 +23,7 @@ from .models import (
     UnitSystem,
     WeatherAlert,
     WeatherAuthenticationError,
+    WeatherError,
     WeatherInvalidRequestError,
     WeatherProvider,
     WeatherQuotaError,
@@ -35,6 +36,22 @@ _CURRENT_STALE_AFTER = timedelta(hours=2)
 _FORECAST_STALE_AFTER = timedelta(hours=12)
 _MAX_CANDIDATES = 5
 _MAX_ALERTS = 10
+_ADMIN_DIVISION_MARKERS = (
+    "特别行政区",
+    "维吾尔自治区",
+    "壮族自治区",
+    "回族自治区",
+    "自治区",
+    "自治州",
+    "地区",
+    "新区",
+    "省",
+    "市",
+    "区",
+    "县",
+    "旗",
+    "盟",
+)
 
 
 class WeatherQueryTool:
@@ -52,7 +69,9 @@ class WeatherQueryTool:
         "所有普通天气 view 都已同步检查官方预警；一次普通天气调用已足够，不要再并行或追加 alerts 调用。\n"
         "**证据边界**：alert_check 为 failed、unsupported 或 stale 时，不能说『没有预警』；"
         "预报显示风险不等于气象部门已发布预警。web_search 可补充新闻或公告原文，但不能替代天气数值、"
-        "降雨时序或官方预警状态。不要暴露 provider、API、鉴权、限流或内部错误码。"
+        "降雨时序或官方预警状态。status=temporary_failure 或 rate_limited 表示本轮已结束且不会后台自动重试；"
+        "不得把本轮失败表述成之后会自动继续执行，如仍需要天气结果，应明确需要用户重新发起。"
+        "不要暴露 provider、API、鉴权、限流或内部错误码。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -106,7 +125,11 @@ class WeatherQueryTool:
         try:
             location = self._resolve_location(location_text, area, ref)
         except ToolError as exc:
-            return _provider_failure(exc)
+            return _provider_failure(
+                exc,
+                provider=self._provider.name,
+                stage="location_resolution",
+            )
         if isinstance(location, ToolResult):
             return location
 
@@ -187,7 +210,12 @@ class WeatherQueryTool:
         alerts_answered = view == "alerts" and normalized.status != "failed"
         if usable_weather == 0 and not alerts_answered:
             if failures:
-                return _provider_failure(next(iter(failures.values())))
+                return _provider_failure(
+                    next(iter(failures.values())),
+                    provider=self._provider.name,
+                    stage="weather_segments",
+                    failures=failures,
+                )
             return _failure(
                 "stale_data",
                 "天气数据时间不可信，当前不能作为最新天气回答。",
@@ -214,6 +242,7 @@ class WeatherQueryTool:
                 "requested_segments": sorted(tasks),
                 "weather_segment_count": usable_weather,
                 "alert_status": normalized.status,
+                **({"segment_failures": _failure_diagnostics(failures)} if failures else {}),
             },
         )
 
@@ -246,7 +275,11 @@ class WeatherQueryTool:
             query=query,
             administrative_area=area,
         )
-        selected = _unique_location(query, candidates)
+        selected = _unique_location(
+            query,
+            candidates,
+            administrative_area=area,
+        )
         if selected is not None:
             return selected
         if not candidates:
@@ -300,7 +333,10 @@ def _requested_segments(view: WeatherView) -> tuple[str, ...]:
 
 
 def _unique_location(
-    query: str, candidates: tuple[LocationCandidate, ...]
+    query: str,
+    candidates: tuple[LocationCandidate, ...],
+    *,
+    administrative_area: str | None = None,
 ) -> LocationCandidate | None:
     if len(candidates) == 1:
         return candidates[0]
@@ -310,11 +346,37 @@ def _unique_location(
         for item in candidates
         if normalized in {_normalize(item.name), _normalize(item.address)}
     ]
-    return exact[0] if len(exact) == 1 else None
+    if len(exact) == 1:
+        return exact[0]
+
+    scoped_query = f"{administrative_area or ''}{query}"
+    scoped_key = _administrative_key(scoped_query)
+    if len(scoped_key) < 4:
+        return None
+    hierarchical = [
+        item
+        for item in candidates
+        if scoped_key == _candidate_locality_key(item)
+        or _administrative_key(item.address).endswith(scoped_key)
+    ]
+    return hierarchical[0] if len(hierarchical) == 1 else None
 
 
 def _normalize(value: str) -> str:
     return "".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _administrative_key(value: str) -> str:
+    key = _normalize(value)
+    for marker in _ADMIN_DIVISION_MARKERS:
+        key = key.replace(marker, "")
+    return key
+
+
+def _candidate_locality_key(item: LocationCandidate) -> str:
+    locality = item.district or item.name
+    components = (item.city, locality)
+    return _administrative_key("".join(dict.fromkeys(part for part in components if part)))
 
 
 def _clarification(
@@ -453,33 +515,95 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def _provider_failure(exc: ToolError) -> ToolResult:
+def _provider_failure(
+    exc: ToolError,
+    *,
+    provider: str,
+    stage: str,
+    failures: dict[str, ToolError] | None = None,
+) -> ToolResult:
+    meta: dict[str, Any] = {
+        "provider": provider,
+        "failure_stage": stage,
+        **_failure_diagnostic(exc),
+    }
+    if failures:
+        meta["segment_failures"] = _failure_diagnostics(failures)
     if isinstance(exc, WeatherAuthenticationError):
         return _failure(
             "configuration_required",
             "天气查询暂不可用：请在设置页配置天气服务凭据。",
+            meta=meta,
         )
     if isinstance(exc, WeatherQuotaError):
-        return _failure("quota_exhausted", "天气查询额度已用完，当前无法可靠查询天气。")
+        return _failure(
+            "quota_exhausted",
+            "天气查询额度已用完，当前无法可靠查询天气。",
+            meta=meta,
+        )
     if isinstance(exc, WeatherRateLimitError):
-        return _failure("rate_limited", "天气查询请求过于频繁，请稍后再试。")
+        return _failure(
+            "rate_limited",
+            "本轮天气查询因请求频率受限，未取得可用结果。",
+            retry_mode="user_trigger_required",
+            meta=meta,
+        )
     if isinstance(exc, WeatherInvalidRequestError):
-        return _failure("invalid_request", "天气服务无法处理这次查询，请换更明确的地点或时间。")
+        return _failure(
+            "invalid_request",
+            "天气服务无法处理这次查询，请换更明确的地点或时间。",
+            meta=meta,
+        )
     if isinstance(exc, (WeatherTemporaryError, ToolError)):
-        return _failure("temporary_failure", "天气查询暂时失败，请稍后再试。")
-    return _failure("temporary_failure", "天气查询暂时失败，请稍后再试。")
-
-
-def _failure(status: str, message: str) -> ToolResult:
-    return _json_result(
-        {
-            "source_type": "weather_query",
-            "trust": "untrusted_data",
-            "status": status,
-            "message": message,
-        },
-        is_error=True,
+        return _failure(
+            "temporary_failure",
+            "本轮天气查询未取得可用结果。",
+            retry_mode="user_trigger_required",
+            meta=meta,
+        )
+    return _failure(
+        "temporary_failure",
+        "本轮天气查询未取得可用结果。",
+        retry_mode="user_trigger_required",
+        meta=meta,
     )
+
+
+def _failure(
+    status: str,
+    message: str,
+    *,
+    retry_mode: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> ToolResult:
+    payload: dict[str, Any] = {
+        "source_type": "weather_query",
+        "trust": "untrusted_data",
+        "status": status,
+        "message": message,
+    }
+    if retry_mode is not None:
+        payload["retry_mode"] = retry_mode
+        payload["next_action"] = "如仍需要天气结果，由用户稍后重新发起查询。"
+    return _json_result(
+        payload,
+        is_error=True,
+        meta=meta,
+    )
+
+
+def _failure_diagnostic(exc: ToolError) -> dict[str, Any]:
+    if isinstance(exc, WeatherError):
+        return exc.diagnostic_meta()
+    return {
+        "error_kind": "tool",
+        "exception_type": type(exc).__name__,
+        "retryable": False,
+    }
+
+
+def _failure_diagnostics(failures: dict[str, ToolError]) -> dict[str, dict[str, Any]]:
+    return {name: _failure_diagnostic(failures[name]) for name in sorted(failures)}
 
 
 def _json_result(

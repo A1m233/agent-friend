@@ -89,6 +89,7 @@ class CaseJudge:
     forbid_unprompted_user_intent_projection: bool = False
     forbid_unprompted_self_evaluation: bool = False
     forbid_unsupported_model_motive_story: bool = False
+    forbid_unsupported_future_action_commitment: bool = False
 
 
 @dataclass(frozen=True)
