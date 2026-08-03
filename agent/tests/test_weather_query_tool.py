@@ -6,6 +6,7 @@ import json
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, ClassVar, cast
 
+import pytest
 from agent.tools.builtin.weather_query import (
     AlertCheck,
     CurrentWeather,
@@ -50,6 +51,39 @@ class _Resolver:
 
     def get_location(self, *, ref: str) -> LocationCandidate | None:
         return next((item for item in self.candidates if item.ref == ref), None)
+
+
+class _FailingResolver:
+    name: ClassVar[str] = "failing"
+
+    def search_locations(
+        self, *, query: str, administrative_area: str | None
+    ) -> tuple[LocationCandidate, ...]:
+        raise WeatherTemporaryError(
+            "secret upstream detail",
+            provider_operation="location_lookup",
+            exception_type="ReadTimeout",
+            error_kind="timeout",
+            attempts=(
+                {
+                    "attempt": 1,
+                    "duration_seconds": 5.0,
+                    "outcome": "error",
+                    "error_kind": "timeout",
+                    "exception_type": "ReadTimeout",
+                },
+                {
+                    "attempt": 2,
+                    "duration_seconds": 5.0,
+                    "outcome": "error",
+                    "error_kind": "timeout",
+                    "exception_type": "ReadTimeout",
+                },
+            ),
+        )
+
+    def get_location(self, *, ref: str) -> LocationCandidate | None:
+        return None
 
 
 class _Provider:
@@ -144,6 +178,99 @@ def test_ambiguous_location_requires_clarification_without_weather_calls() -> No
     assert provider.calls == []
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"location": "深圳南山区", "view": "current"},
+        {
+            "location": "南山区",
+            "administrative_area": "深圳市",
+            "view": "current",
+        },
+    ],
+)
+def test_unique_administrative_hierarchy_selects_matching_district(
+    args: dict[str, object],
+) -> None:
+    shenzhen = LocationCandidate(
+        ref="qweather-city:101280604",
+        name="南山",
+        address="中国 广东省 深圳 南山",
+        city="深圳",
+        district="南山",
+        longitude=113.93,
+        latitude=22.53,
+        country="中国",
+        country_code="cn",
+        timezone="Asia/Shanghai",
+    )
+    hegang = LocationCandidate(
+        ref="qweather-city:101051104",
+        name="南山",
+        address="中国 黑龙江省 鹤岗 南山",
+        city="鹤岗",
+        district="南山",
+        longitude=130.28,
+        latitude=47.31,
+        country="中国",
+        country_code="cn",
+        timezone="Asia/Shanghai",
+    )
+    provider = _Provider()
+    result = WeatherQueryTool(
+        resolver=_Resolver((shenzhen, hegang)),
+        provider=provider,
+        clock=lambda: NOW,
+    ).invoke(args)
+
+    payload = json.loads(result.text)
+    assert payload["status"] == "success"
+    assert payload["location"]["name"] == "南山"
+    assert payload["location"]["city"] == "深圳"
+    assert set(provider.calls) == {"current", "alerts"}
+
+
+def test_district_without_hierarchy_still_requires_clarification() -> None:
+    candidates = (
+        LocationCandidate(
+            "shenzhen-nanshan",
+            "南山",
+            "中国 广东省 深圳 南山",
+            "深圳",
+            "南山",
+            113.93,
+            22.53,
+            "中国",
+            "cn",
+            "Asia/Shanghai",
+        ),
+        LocationCandidate(
+            "hegang-nanshan",
+            "南山",
+            "中国 黑龙江省 鹤岗 南山",
+            "鹤岗",
+            "南山",
+            130.28,
+            47.31,
+            "中国",
+            "cn",
+            "Asia/Shanghai",
+        ),
+    )
+    provider = _Provider()
+    payload = _payload(
+        WeatherQueryTool(
+            resolver=_Resolver(candidates),
+            provider=provider,
+            clock=lambda: NOW,
+        ),
+        {"location": "南山区", "view": "current"},
+    )
+
+    assert payload["status"] == "needs_clarification"
+    assert provider.calls == []
+
+
 def test_alert_failure_is_partial_and_never_no_alerts() -> None:
     provider = _Provider(alert_error=True)
     result = WeatherQueryTool(
@@ -156,6 +283,33 @@ def test_alert_failure_is_partial_and_never_no_alerts() -> None:
     assert payload["alert_check"]["status"] == "failed"
     assert "不能据此判断为没有预警" in payload["alert_check"]["message"]
     assert "secret upstream detail" not in result.text
+    assert result.meta["segment_failures"]["alerts"] == {
+        "error_kind": "temporary",
+        "exception_type": "WeatherTemporaryError",
+        "retryable": True,
+    }
+    assert "secret upstream detail" not in json.dumps(result.meta, ensure_ascii=False)
+
+
+def test_location_failure_persists_safe_retry_diagnostics_in_tool_meta() -> None:
+    result = WeatherQueryTool(
+        resolver=_FailingResolver(),
+        provider=_Provider(),
+        clock=lambda: NOW,
+    ).invoke({"location": "深圳南山区", "view": "overview"})
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert payload["status"] == "temporary_failure"
+    assert result.meta["provider"] == "fake-weather"
+    assert result.meta["failure_stage"] == "location_resolution"
+    assert result.meta["provider_operation"] == "location_lookup"
+    assert result.meta["error_kind"] == "timeout"
+    assert result.meta["exception_type"] == "ReadTimeout"
+    assert result.meta["attempt_count"] == 2
+    assert result.meta["retries_taken"] == 1
+    assert "secret upstream detail" not in result.text
+    assert "secret upstream detail" not in json.dumps(result.meta, ensure_ascii=False)
 
 
 def test_cancel_and_expired_alerts_are_not_reported_active() -> None:
