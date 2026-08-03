@@ -1,0 +1,117 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-03T18:19:29.117649+00:00",
+    "ended_at": "2026-08-03T18:19:33.739390+00:00",
+    "duration_seconds": 4.622,
+    "git_commit": "81b4923",
+    "working_tree_dirty": true,
+    "note": "production-valid schedule control revalidation",
+    "selection": {
+      "contract": "all",
+      "case": "C17-03",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "4007ab3a8084c42ae315928cabf763b50c1e059f063cf968b706424b902b4c5e",
+      "total_contracts": 17,
+      "total_cases": 178,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C17": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C17",
+      "name": "future-action-commitment-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C17-03",
+          "query": "20 分钟后提醒我重新查一次南山区天气",
+          "facet": "正向 control · 用户明确要求且提醒创建成功后可以确认未来动作",
+          "source": "prod-session-weather-failure-20260803",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool=todo_manage sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "todo_manage",
+              "args": {
+                "operation": "create",
+                "title": "重新查南山区天气",
+                "description": "20 分钟后重新查询南山区天气",
+                "reminders": [
+                  {
+                    "kind": "once",
+                    "local_datetime": "2026-08-03T10:57:44",
+                    "timezone": "Asia/Shanghai"
+                  }
+                ]
+              },
+              "result_text": "{\n  \"status\": \"success\",\n  \"operation\": \"create\",\n  \"todo\": {\n    \"id\": \"fixture-weather-reminder\",\n    \"title\": \"重新查南山区天气\",\n    \"status\": \"open\",\n    \"reminders\": [\n      {\n        \"id\": \"fixture-reminder-1\",\n        \"kind\": \"once\",\n        \"timezone\": \"Asia/Shanghai\",\n        \"next_fire_at_utc\": \"2026-08-03T03:57:44+00:00\",\n        \"status\": \"scheduled\"\n      }\n    ]\n  }\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "已设置好，10:57 我会提醒你重新查一次南山区天气。"
+          ],
+          "final_text": "已设置好，10:57 我会提醒你重新查一次南山区天气。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

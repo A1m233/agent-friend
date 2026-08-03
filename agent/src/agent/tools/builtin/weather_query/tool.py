@@ -69,7 +69,9 @@ class WeatherQueryTool:
         "所有普通天气 view 都已同步检查官方预警；一次普通天气调用已足够，不要再并行或追加 alerts 调用。\n"
         "**证据边界**：alert_check 为 failed、unsupported 或 stale 时，不能说『没有预警』；"
         "预报显示风险不等于气象部门已发布预警。web_search 可补充新闻或公告原文，但不能替代天气数值、"
-        "降雨时序或官方预警状态。不要暴露 provider、API、鉴权、限流或内部错误码。"
+        "降雨时序或官方预警状态。status=temporary_failure 或 rate_limited 表示本轮已结束且不会后台自动重试；"
+        "不得把本轮失败表述成之后会自动继续执行，如仍需要天气结果，应明确需要用户重新发起。"
+        "不要暴露 provider、API、鉴权、限流或内部错误码。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -542,7 +544,8 @@ def _provider_failure(
     if isinstance(exc, WeatherRateLimitError):
         return _failure(
             "rate_limited",
-            "天气查询请求过于频繁，请稍后再试。",
+            "本轮天气查询因请求频率受限，未取得可用结果。",
+            retry_mode="user_trigger_required",
             meta=meta,
         )
     if isinstance(exc, WeatherInvalidRequestError):
@@ -554,12 +557,14 @@ def _provider_failure(
     if isinstance(exc, (WeatherTemporaryError, ToolError)):
         return _failure(
             "temporary_failure",
-            "天气查询暂时失败，请稍后再试。",
+            "本轮天气查询未取得可用结果。",
+            retry_mode="user_trigger_required",
             meta=meta,
         )
     return _failure(
         "temporary_failure",
-        "天气查询暂时失败，请稍后再试。",
+        "本轮天气查询未取得可用结果。",
+        retry_mode="user_trigger_required",
         meta=meta,
     )
 
@@ -568,15 +573,20 @@ def _failure(
     status: str,
     message: str,
     *,
+    retry_mode: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> ToolResult:
+    payload: dict[str, Any] = {
+        "source_type": "weather_query",
+        "trust": "untrusted_data",
+        "status": status,
+        "message": message,
+    }
+    if retry_mode is not None:
+        payload["retry_mode"] = retry_mode
+        payload["next_action"] = "如仍需要天气结果，由用户稍后重新发起查询。"
     return _json_result(
-        {
-            "source_type": "weather_query",
-            "trust": "untrusted_data",
-            "status": status,
-            "message": message,
-        },
+        payload,
         is_error=True,
         meta=meta,
     )

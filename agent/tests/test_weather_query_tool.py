@@ -16,6 +16,7 @@ from agent.tools.builtin.weather_query import (
     HourlyForecastResult,
     WeatherAlert,
     WeatherQueryTool,
+    WeatherRateLimitError,
     WeatherTemporaryError,
 )
 from agent.tools.location import LocationCandidate
@@ -81,6 +82,18 @@ class _FailingResolver:
                 },
             ),
         )
+
+    def get_location(self, *, ref: str) -> LocationCandidate | None:
+        return None
+
+
+class _RateLimitedResolver:
+    name: ClassVar[str] = "rate-limited"
+
+    def search_locations(
+        self, *, query: str, administrative_area: str | None
+    ) -> tuple[LocationCandidate, ...]:
+        raise WeatherRateLimitError("secret upstream rate detail")
 
     def get_location(self, *, ref: str) -> LocationCandidate | None:
         return None
@@ -301,6 +314,9 @@ def test_location_failure_persists_safe_retry_diagnostics_in_tool_meta() -> None
     payload = json.loads(result.text)
     assert result.is_error is True
     assert payload["status"] == "temporary_failure"
+    assert payload["retry_mode"] == "user_trigger_required"
+    assert "由用户稍后重新发起查询" in payload["next_action"]
+    assert "请稍后再试" not in payload["message"]
     assert result.meta["provider"] == "fake-weather"
     assert result.meta["failure_stage"] == "location_resolution"
     assert result.meta["provider_operation"] == "location_lookup"
@@ -310,6 +326,22 @@ def test_location_failure_persists_safe_retry_diagnostics_in_tool_meta() -> None
     assert result.meta["retries_taken"] == 1
     assert "secret upstream detail" not in result.text
     assert "secret upstream detail" not in json.dumps(result.meta, ensure_ascii=False)
+
+
+def test_rate_limit_failure_requires_user_to_retrigger_without_retry_promise() -> None:
+    result = WeatherQueryTool(
+        resolver=_RateLimitedResolver(),
+        provider=_Provider(),
+        clock=lambda: NOW,
+    ).invoke({"location": "深圳南山区", "view": "overview"})
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert payload["status"] == "rate_limited"
+    assert payload["retry_mode"] == "user_trigger_required"
+    assert "由用户稍后重新发起查询" in payload["next_action"]
+    assert "请稍后再试" not in payload["message"]
+    assert "secret upstream rate detail" not in result.text
 
 
 def test_cancel_and_expired_alerts_are_not_reported_active() -> None:
@@ -347,5 +379,7 @@ def test_description_forbids_location_guess_and_web_fallback() -> None:
     assert "不能说『没有预警』" in description
     assert "web_search" in description
     assert "不要再并行或追加 alerts 调用" in description
+    assert "不会后台自动重试" in description
+    assert "需要用户重新发起" in description
     assert WeatherQueryTool.execution_kind == "parallel_read"
     assert WeatherQueryTool.timeout_seconds == 30.0
