@@ -101,6 +101,51 @@ def test_timeout_returns_error_and_discards_late_result() -> None:
     assert result.result.meta["error_kind"] == "timeout"
 
 
+def test_parallel_completed_result_survives_wait_for_earlier_call() -> None:
+    registry = ToolRegistry(
+        cast(
+            list[Tool],
+            [
+                _SleepTool("slow_first", 0.12, timeout_seconds=0.5),
+                _SleepTool("fast_second", 0.01, timeout_seconds=0.05),
+            ],
+        )
+    )
+    results = ToolBatchExecutor(max_workers=2).execute(
+        [_call("slow_first", "slow"), _call("fast_second", "fast")],
+        registry=registry,
+        default_timeout_seconds=1,
+        invocation_args=lambda _name, args: args,
+    )
+    assert [item.result.text for item in results] == ["slow", "fast"]
+    assert not results[1].result.is_error
+    assert results[1].duration_seconds < 0.05
+
+
+def test_parallel_late_result_still_times_out_when_observed_after_earlier_call() -> None:
+    registry = ToolRegistry(
+        cast(
+            list[Tool],
+            [
+                _SleepTool("slow_first", 0.12, timeout_seconds=0.5),
+                _SleepTool("late_second", 0.06, timeout_seconds=0.02),
+            ],
+        )
+    )
+    results = ToolBatchExecutor(max_workers=2).execute(
+        [_call("slow_first", "slow"), _call("late_second", "late")],
+        registry=registry,
+        default_timeout_seconds=1,
+        invocation_args=lambda _name, args: args,
+    )
+    assert results[1].result.is_error
+    assert results[1].result.meta == {
+        "error_kind": "timeout",
+        "underlying_cancelled": False,
+    }
+    assert results[1].duration_seconds == pytest.approx(0.02)
+
+
 def test_cancel_check_interrupts_waiting_for_a_tool() -> None:
     registry = ToolRegistry(cast(list[Tool], [_SleepTool("slow", 0.15)]))
     checks = 0

@@ -121,9 +121,16 @@ class SocialPlatformError(ToolError):
     status: ClassVar[str] = "provider_error"
     retryable: ClassVar[bool] = False
 
-    def __init__(self, message: str = "", *, retryable: bool | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        retryable: bool | None = None,
+        diagnostic_stage: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.is_retryable = self.retryable if retryable is None else retryable
+        self.diagnostic_stage = diagnostic_stage
 
 
 class SocialConnectorUnavailableError(SocialPlatformError):

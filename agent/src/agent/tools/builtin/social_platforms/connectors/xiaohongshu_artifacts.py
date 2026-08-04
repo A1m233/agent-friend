@@ -88,8 +88,8 @@ _ARTIFACTS = (
         system="windows",
         machine="amd64",
         filename="xiaohongshu-mcp-windows-amd64.exe",
-        size=21_488_128,
-        sha256="099a27a7fbd718aa47af91fac555606b91fc69b4a4a669c2adb581ea3e3393a4",
+        size=21_492_736,
+        sha256="ef9a26382dbaf3bdc8d39a9c5d390f87e725366fcd9fea1749d7c37aeb7564ff",
         source="source-build",
     ),
 )
