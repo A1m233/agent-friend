@@ -28,6 +28,7 @@ from agent.tools.builtin.social_platforms import (
     SocialReadTool,
     SocialSearchTool,
 )
+from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 from agent.tools.builtin.weather_query import (
     UnavailableWeatherProvider,
     WeatherQueryTool,
@@ -187,9 +188,11 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == 9
+    assert len(tools) == 10
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
+    recovery = registry.get("recover_tool_result")
+    assert isinstance(recovery, ToolResultRecoveryTool)
 
 
 def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -210,6 +213,7 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
         "social_search",
         "social_read",
         "request_social_auth",
+        "recover_tool_result",
     }
 
 

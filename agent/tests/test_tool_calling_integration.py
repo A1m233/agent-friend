@@ -1045,6 +1045,106 @@ def test_recall_tool_receives_hidden_current_turn_context(tmp_path: Path) -> Non
     assert request_event.payload["args"] == {"limit": 10}
 
 
+def test_recovery_tool_receives_hidden_current_session_without_persisting_it(
+    tmp_path: Path,
+) -> None:
+    class SpyRecoveryTool:
+        name: ClassVar[str] = "recover_tool_result"
+        description: ClassVar[str] = "recover a prior result"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {"result_ref": {"type": "string"}},
+            "required": ["result_ref"],
+        }
+
+        def __init__(self) -> None:
+            self.seen_args: list[dict[str, Any]] = []
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            self.seen_args.append(dict(args))
+            return ToolResult("recovered")
+
+    recovery = SpyRecoveryTool()
+    public_args = {"result_ref": "result-1"}
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-recover",
+                    tool_name="recover_tool_result",
+                    args_json_delta=json.dumps(public_args),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="找到了。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([recovery]),
+    )
+
+    list(conv.stream("继续之前的结果"))
+
+    assert recovery.seen_args == [
+        {**public_args, "__agent_friend_current_session_id": conv.session.session_id}
+    ]
+    request_event = next(ev for ev in conv.session.events if ev.type == "tool_call_request")
+    assert request_event.payload["args"] == public_args
+
+
+def test_recoverable_result_is_pinned_unless_recovery_tool_is_registered(
+    tmp_path: Path,
+) -> None:
+    class ReadTool:
+        name: ClassVar[str] = "read_test"
+        result_context_retention: ClassVar[str] = "recoverable"
+        description: ClassVar[str] = "read"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult("large read result")
+
+    class RecoverySurface:
+        name: ClassVar[str] = "recover_tool_result"
+        description: ClassVar[str] = "recover"
+        parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult("unused")
+
+    script: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(0, "call-read", "read_test", "{}"),
+            LLMTurnDone(stop_reason="tool_use"),
+        ],
+        [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+    ]
+    without_recovery = _make_conversation(
+        tmp_path,
+        fake_llm=_ScriptedLLMClient(script=script),
+        registry=ToolRegistry([ReadTool()]),
+    )
+    list(without_recovery.stream("read"))
+    pinned = next(
+        event for event in without_recovery.session.events if event.type == "tool_call_result"
+    )
+    assert pinned.meta["extra"]["context_retention"] == "pinned"
+
+    with_recovery = _make_conversation(
+        tmp_path,
+        fake_llm=_ScriptedLLMClient(script=script),
+        registry=ToolRegistry([ReadTool(), RecoverySurface()]),
+    )
+    list(with_recovery.stream("read"))
+    recoverable = next(
+        event for event in with_recovery.session.events if event.type == "tool_call_result"
+    )
+    assert recoverable.meta["extra"]["context_retention"] == "recoverable"
+
+
 def test_social_tool_receives_hidden_session_without_persisting_it(tmp_path: Path) -> None:
     social = SpySocialSearchTool()
     registry = ToolRegistry([social])

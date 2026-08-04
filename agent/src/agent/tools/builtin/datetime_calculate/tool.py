@@ -24,6 +24,7 @@ class _DateTimeInputError(ValueError):
 
 class DateTimeCalculateTool:
     name: ClassVar[str] = "datetime_calculate"
+    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 5.0
     description: ClassVar[str] = (

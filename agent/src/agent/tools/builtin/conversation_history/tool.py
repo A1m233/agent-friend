@@ -54,6 +54,7 @@ class ConversationHistoryTool:
     """
 
     name: ClassVar[str] = "recall_past_chats"
+    result_context_retention: ClassVar[str] = "recoverable"
     description: ClassVar[str] = (
         "回忆过去和这位用户聊过的事。\n\n"
         "**何时使用**：\n"

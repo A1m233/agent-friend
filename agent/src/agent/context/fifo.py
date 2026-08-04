@@ -60,7 +60,11 @@ class FifoContextManager:
             return BuildResult(messages=full)
 
         threshold = runtime.budget.trigger_threshold
-        projected_history, projection = project_tool_results(history, runtime)
+        projected_history, projection = project_tool_results(
+            history,
+            runtime,
+            protect_last_history_turn=new_user_input is None,
+        )
         full = assemble_messages(
             history=projected_history,
             system_prompt=system_prompt,
@@ -75,11 +79,14 @@ class FifoContextManager:
         if full_estimate <= threshold:
             return BuildResult(
                 messages=full,
+                new_tool_context_edit=projection.new_edit,
                 notes={
                     "context_strategy": "fifo",
                     "token_estimate": full_estimate,
                     "tool_results_truncated": projection.truncated,
                     "tool_results_omitted": 0,
+                    "tool_results_cleared": projection.cleared,
+                    "tool_result_cleared_tokens": projection.cleared_tokens,
                     "final_strategy": "full",
                 },
             )
@@ -139,6 +146,7 @@ class FifoContextManager:
         return BuildResult(
             messages=chosen_messages,
             dropped_count=chosen_start,
+            new_tool_context_edit=projection.new_edit,
             notes={
                 "context_strategy": "fifo",
                 "fifo_truncated": chosen_start > 0,
@@ -146,6 +154,8 @@ class FifoContextManager:
                 "over_budget_after_truncation": False,
                 "tool_results_truncated": projection.truncated,
                 "tool_results_omitted": emergency_projection.omitted,
+                "tool_results_cleared": projection.cleared,
+                "tool_result_cleared_tokens": projection.cleared_tokens,
                 "final_strategy": "fifo",
             },
         )

@@ -35,6 +35,7 @@ from .protocol import (
     ContextManager,
     PriorSummary,
     RuntimeContext,
+    ToolContextEditRecord,
     assemble_messages,
 )
 from .summary_prompt import (
@@ -44,7 +45,7 @@ from .summary_prompt import (
     render_transcript,
     strip_analysis,
 )
-from .tool_projection import project_tool_results
+from .tool_projection import ToolProjectionStats, project_tool_results
 from .turns import recent_turn_start_candidates
 
 MAX_CONSECUTIVE_FAILURES = 3
@@ -152,25 +153,48 @@ class SummarizingContextManager:
                     "附件内容超过当前模型的上下文容量，请减少附件后重试。",
                 )
 
-        # 平时：用 prior_summary 折叠展示，估算未超阈值则直接返回
-        projected_history, projection = project_tool_results(history, runtime)
-        folded_msgs = parts.assemble(self._fold_with_prior(projected_history, prior))
+        # 先折叠已摘要的旧段，再对仍活跃的 tool result 做低水位投影；避免重复处理
+        # 已经被 summary 覆盖的巨大结果。
+        active_history = self._fold_with_prior(history, prior)
+        projected_history, projection = project_tool_results(
+            active_history,
+            runtime,
+            protect_last_history_turn=new_user_input is None,
+        )
+        folded_msgs = parts.assemble(projected_history)
         est = estimate_request_tokens(folded_msgs, runtime)
         if est <= threshold:
             return BuildResult(
                 messages=folded_msgs,
+                new_tool_context_edit=projection.new_edit,
                 notes={
                     "context_strategy": "summarizing",
                     "folded": prior is not None,
                     "token_estimate": est,
                     "tool_results_truncated": projection.truncated,
                     "tool_results_omitted": 0,
+                    "tool_results_cleared": projection.cleared,
+                    "tool_result_cleared_tokens": projection.cleared_tokens,
                     "final_strategy": "summary" if prior is not None else "full",
                 },
             )
 
         # 超阈值：重新蒸馏较旧部分
-        return self._compact(projected_history, parts, runtime, threshold, projection.truncated)
+        full_projected_history, full_projection = project_tool_results(
+            history,
+            runtime,
+            protect_last_history_turn=new_user_input is None,
+            allow_new_edit=False,
+            additional_cleared_result_uuids=projection.effective_cleared_result_uuids,
+        )
+        return self._compact(
+            full_projected_history,
+            parts,
+            runtime,
+            threshold,
+            full_projection,
+            projection.new_edit,
+        )
 
     # ----- 触发摘要 -----
 
@@ -180,7 +204,8 @@ class SummarizingContextManager:
         parts: _AssembleParts,
         runtime: RuntimeContext,
         threshold: int,
-        tool_results_truncated: int,
+        projection: ToolProjectionStats,
+        new_tool_context_edit: ToolContextEditRecord | None,
     ) -> BuildResult:
         summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
         cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
@@ -249,11 +274,12 @@ class SummarizingContextManager:
             calibration_factor=runtime.calibration_factor,
             trigger_reason=runtime.trigger_reason,
             summary_attempts=attempts,
-            tool_results_truncated=tool_results_truncated,
+            tool_results_truncated=projection.truncated,
         )
         return BuildResult(
             messages=msgs,
             new_compaction=record,
+            new_tool_context_edit=new_tool_context_edit,
             notes={
                 "context_strategy": "summarizing",
                 "compacted": True,
@@ -267,8 +293,10 @@ class SummarizingContextManager:
                     ]
                 ),
                 "summary_input_budget": runtime.budget.trigger_threshold,
-                "tool_results_truncated": tool_results_truncated,
+                "tool_results_truncated": projection.truncated,
                 "tool_results_omitted": 0,
+                "tool_results_cleared": projection.cleared,
+                "tool_result_cleared_tokens": projection.cleared_tokens,
                 "final_strategy": "summary",
             },
         )

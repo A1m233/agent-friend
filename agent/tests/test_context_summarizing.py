@@ -38,6 +38,7 @@ from agent.context.summary_prompt import (
 )
 from agent.messages import Message
 from agent.system_prompt import IM_QQ_SURFACE
+from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -48,6 +49,7 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
+    ToolRegistry,
 )
 from llm_providers import (
     LLMContextWindowError,
@@ -523,8 +525,77 @@ def _seed_turns(session: Session, store: JsonlSessionStore, n: int, size: int) -
             session.append(ev)
 
 
+def _seed_large_tool_results(
+    session: Session,
+    store: JsonlSessionStore,
+    *,
+    count: int = 9,
+    size: int = 20_000,
+) -> list[str]:
+    result_refs: list[str] = []
+    for i in range(count):
+        assistant_uuid = str(uuid4())
+        call_id = f"call-{i}"
+        result_uuid = f"large-result-{i}"
+        events = (
+            Event(
+                type="user_message",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={"content": f"search request {i}"},
+            ),
+            Event(
+                type="assistant_message",
+                uuid=assistant_uuid,
+                ts=datetime.now(UTC),
+                payload={"content": "", "partial": False},
+                meta={"persona": "default", "model": "deepseek/test"},
+            ),
+            Event(
+                type="tool_call_request",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={
+                    "tool_call_id": call_id,
+                    "event_tool_call_id": f"event-{call_id}",
+                    "tool_name": "web_search",
+                    "args": {"query": f"query {i}"},
+                },
+            ),
+            Event(
+                type="tool_call_result",
+                uuid=result_uuid,
+                ts=datetime.now(UTC),
+                payload={
+                    "tool_call_id": call_id,
+                    "event_tool_call_id": f"event-{call_id}",
+                    "tool_name": "web_search",
+                    "content": f"large-{i}-" + "x" * size,
+                    "is_error": False,
+                },
+                meta={"extra": {"context_retention": "recoverable"}},
+            ),
+            Event(
+                type="assistant_message",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={"content": f"answer {i}", "partial": False},
+                meta={"persona": "default", "model": "deepseek/test"},
+            ),
+        )
+        for event in events:
+            store.append_event(session.session_id, event)
+            session.append(event)
+        result_refs.append(result_uuid)
+    return result_refs
+
+
 def _make_conversation(
-    tmp_path: Path, *, fake_llm: Any, context_manager: Any
+    tmp_path: Path,
+    *,
+    fake_llm: Any,
+    context_manager: Any,
+    with_recovery_tool: bool = False,
 ) -> tuple[Conversation, Session, JsonlSessionStore]:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -546,12 +617,86 @@ def _make_conversation(
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
+        tool_registry=(
+            ToolRegistry([ToolResultRecoveryTool(store)]) if with_recovery_tool else None
+        ),
     )
     return conv, session, store
 
 
 def _count_compactions(session: Session) -> int:
     return sum(1 for ev in session.events if ev.type == "compaction")
+
+
+def _count_tool_context_edits(session: Session) -> int:
+    return sum(1 for ev in session.events if ev.type == "tool_context_edit")
+
+
+def test_tool_context_edit_is_committed_and_reused_after_restart(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=300_000)
+    conv, session, store = _make_conversation(
+        tmp_path,
+        fake_llm=llm,
+        context_manager=SummarizingContextManager(),
+        with_recovery_tool=True,
+    )
+    result_refs = _seed_large_tool_results(session, store)
+
+    assert conv.send("触发低水位清理") == "ok"
+    assert _count_tool_context_edits(session) == 1
+    checkpoint = session.latest_tool_context_edit()
+    assert checkpoint is not None
+    assert checkpoint.payload["newly_cleared_result_uuids"] == result_refs[:5]
+    assert any(
+        f"result_ref={result_refs[0]}" in str(message.get("content", ""))
+        for message in llm.received[-1]
+    )
+    raw_result = next(event for event in session.events if event.uuid == result_refs[0])
+    assert str(raw_result.payload["content"]).startswith("large-0-")
+
+    reloaded = store.load(session.session_id)
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    builder = MarkdownPromptBuilder(
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        catalog=catalog,
+    )
+    restarted = Conversation(
+        session=reloaded,
+        store=store,
+        llm_client=cast(Any, llm),
+        context_manager=SummarizingContextManager(),
+        prompt_builder=builder,
+        prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+            persona_id=persona_id,
+            catalog=catalog,
+        ),
+        catalog=catalog,
+        tool_registry=ToolRegistry([ToolResultRecoveryTool(store)]),
+    )
+
+    assert restarted.send("重启后继续") == "ok"
+    assert _count_tool_context_edits(reloaded) == 1
+    assert any(
+        f"result_ref={result_refs[0]}" in str(message.get("content", ""))
+        for message in llm.received[-1]
+    )
+
+
+def test_provider_rejection_discards_tool_edit_candidate_before_retry(tmp_path: Path) -> None:
+    llm = _ContextRejectOnceLLM(context_window=300_000)
+    conv, session, store = _make_conversation(
+        tmp_path,
+        fake_llm=llm,
+        context_manager=SummarizingContextManager(),
+        with_recovery_tool=True,
+    )
+    _seed_large_tool_results(session, store)
+
+    assert conv.send("provider 拒绝后重建") == "ok"
+
+    assert llm.stream_calls == 2
+    assert _count_tool_context_edits(session) == 1
+    assert conv.last_context_notes["trigger_reason"] == "provider_context_exceeded"
 
 
 def test_ac34_35_compaction_persisted_and_reused(

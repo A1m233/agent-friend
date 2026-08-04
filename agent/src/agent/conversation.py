@@ -56,7 +56,9 @@ from .context import (
     CompactionRecord,
     ContextManager,
     PriorSummary,
+    PriorToolContextEdit,
     RuntimeContext,
+    ToolContextEditRecord,
     estimate_tool_schema_tokens,
     make_budget_snapshot,
 )
@@ -111,6 +113,7 @@ MAX_TOOL_TURNS_DEFAULT = 5
 """Deprecated legacy constant; the default :class:`ToolRunPolicy` does not use it."""
 
 _RECALL_PAST_CHATS_TOOL_NAME = "recall_past_chats"
+_RECOVER_TOOL_RESULT_TOOL_NAME = "recover_tool_result"
 _CURRENT_SESSION_ID_ARG = "__agent_friend_current_session_id"
 _CURRENT_URL_AUTHORIZATIONS_ARG = "__agent_friend_url_authorizations"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
@@ -307,10 +310,13 @@ class Conversation:
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
         self._unscoped_llm_call_index = 0
         self._pending_compaction: CompactionRecord | None = None
+        self._pending_tool_context_edit: ToolContextEditRecord | None = None
         self._context_emergency_ratio = 1.0
         self._context_trigger_reason = "budget"
         self._checkpoint_status = "none"
         self._checkpoint_invalid_reason = ""
+        self._tool_context_checkpoint_status = "none"
+        self._tool_context_checkpoint_invalid_reason = ""
         self._last_context_notes: dict[str, Any] = {}
         self._run_latency_context: RunLatencyContext | None = None
         self._voice_latency_context: VoiceLatencyContext | None = None
@@ -1670,6 +1676,11 @@ class Conversation:
             if persist_compaction and build.new_compaction is not None
             else None
         )
+        self._pending_tool_context_edit = (
+            build.new_tool_context_edit
+            if persist_compaction and build.new_tool_context_edit is not None
+            else None
+        )
         self._record_context_notes(build, runtime)
         if self._message_renderer is None:
             rendered_messages = [message.to_openai() for message in build.messages]
@@ -1721,7 +1732,14 @@ class Conversation:
             prior_summary=self._derive_prior_summary()
             if prior_summary_override is _UNSET
             else cast(PriorSummary | None, prior_summary_override),
+            prior_tool_context_edit=self._derive_prior_tool_context_edit(),
             request_overhead_tokens=estimate_tool_schema_tokens(tool_specs),
+            tool_result_recovery_available=any(
+                isinstance(spec, dict)
+                and isinstance(spec.get("function"), dict)
+                and spec["function"].get("name") == _RECOVER_TOOL_RESULT_TOOL_NAME
+                for spec in tool_specs or []
+            ),
             calibration_factor=self._calibration_by_model.get(model_id, 1.0),
             trigger_reason=self._context_trigger_reason,
         )
@@ -1781,6 +1799,29 @@ class Conversation:
             omitted_before_count=int(comp.payload.get("omitted_before_count", 0)),
         )
 
+    def _derive_prior_tool_context_edit(self) -> PriorToolContextEdit | None:
+        """从最近一条 ``tool_context_edit`` 派生稳定的低水位投影。"""
+        checkpoint = self._session.latest_tool_context_edit()
+        if checkpoint is None:
+            self._tool_context_checkpoint_status = "none"
+            self._tool_context_checkpoint_invalid_reason = ""
+            return None
+        raw_ids = checkpoint.payload.get("cleared_result_uuids")
+        if not isinstance(raw_ids, list) or any(not isinstance(item, str) for item in raw_ids):
+            self._tool_context_checkpoint_status = "invalid"
+            self._tool_context_checkpoint_invalid_reason = "invalid_cleared_result_uuids"
+            return None
+        active_result_ids = {
+            event.uuid for event in self._session.active_events if event.type == "tool_call_result"
+        }
+        filtered_ids = tuple(dict.fromkeys(item for item in raw_ids if item in active_result_ids))
+        self._tool_context_checkpoint_status = "valid"
+        self._tool_context_checkpoint_invalid_reason = ""
+        return PriorToolContextEdit(
+            cleared_result_uuids=filtered_ids,
+            policy_version=int(checkpoint.payload.get("policy_version", 1)),
+        )
+
     def _append_compaction_event(self, record: CompactionRecord) -> None:
         """把本轮新生成的摘要落为 ``compaction`` 事件（append-only，不动原始消息）。
 
@@ -1814,6 +1855,27 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+    def _append_tool_context_edit_event(self, record: ToolContextEditRecord) -> None:
+        """追加 tool result 低水位投影 checkpoint；原始结果保持不变。"""
+        event = Event(
+            type="tool_context_edit",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "cleared_result_uuids": list(record.cleared_result_uuids),
+                "newly_cleared_result_uuids": list(record.newly_cleared_result_uuids),
+                "tokens_before": record.tokens_before,
+                "tokens_after": record.tokens_after,
+                "cleared_tokens": record.cleared_tokens,
+                "high_water_tokens": record.high_water_tokens,
+                "low_water_tokens": record.low_water_tokens,
+                "policy_version": record.policy_version,
+            },
+            meta=self._run_event_meta(),
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
     def _record_context_notes(self, build: BuildResult, runtime: RuntimeContext) -> None:
         """把本轮组装的度量观测刷进 :attr:`last_context_notes`（AC-1.3）。"""
         from .context import estimate_tokens
@@ -1830,10 +1892,16 @@ class Conversation:
             "trigger_reason": runtime.trigger_reason,
             "checkpoint_status": self._checkpoint_status,
             "checkpoint_invalid_reason": self._checkpoint_invalid_reason,
+            "tool_context_checkpoint_status": self._tool_context_checkpoint_status,
+            "tool_context_checkpoint_invalid_reason": (
+                self._tool_context_checkpoint_invalid_reason
+            ),
         }
         notes.update(build.notes)
         if build.new_compaction is not None:
             notes["checkpoint_status"] = "candidate"
+        if build.new_tool_context_edit is not None:
+            notes["tool_context_checkpoint_status"] = "candidate"
         self._last_context_notes = notes
         prior = runtime.prior_summary
         compaction = build.new_compaction
@@ -1905,12 +1973,16 @@ class Conversation:
             ):
                 self._last_input_tokens = prompt_tokens
 
-    def _commit_pending_compaction(self) -> None:
-        """幂等提交本次被 provider 接受的 compaction candidate。"""
-        record = self._pending_compaction
+    def _commit_pending_context_checkpoints(self) -> None:
+        """幂等提交本次被 provider 接受的上下文投影候选。"""
+        compaction = self._pending_compaction
+        tool_context_edit = self._pending_tool_context_edit
         self._pending_compaction = None
-        if record is not None:
-            self._append_compaction_event(record)
+        self._pending_tool_context_edit = None
+        if compaction is not None:
+            self._append_compaction_event(compaction)
+        if tool_context_edit is not None:
+            self._append_tool_context_edit_event(tool_context_edit)
 
     def _iter_model_stream(
         self,
@@ -1947,12 +2019,13 @@ class Conversation:
                 for event in stream:
                     if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
                         request_accepted = True
-                        self._commit_pending_compaction()
+                        self._commit_pending_context_checkpoints()
                     yield event
-                self._commit_pending_compaction()
+                self._commit_pending_context_checkpoints()
                 return
             except LLMContextWindowError:
                 self._pending_compaction = None
+                self._pending_tool_context_edit = None
                 if request_accepted or recovery_attempt > 0:
                     raise
                 previous_ratio = self._context_emergency_ratio
@@ -2612,6 +2685,8 @@ class Conversation:
             )
         if name == "todo_manage":
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
+        if name == _RECOVER_TOOL_RESULT_TOOL_NAME:
+            invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name in {"social_search", "social_read"}:
             invocation_args[_CURRENT_SESSION_ID_ARG] = self._session.session_id
         if name == "social_read":
@@ -3067,6 +3142,13 @@ class Conversation:
                 "tool_call_origin": tc.get("origin", "model"),
             }
         )
+        context_retention = "pinned"
+        recovery_available = False
+        if self._tool_registry is not None:
+            recovery_available = _RECOVER_TOOL_RESULT_TOOL_NAME in self._tool_registry
+            context_retention = self._tool_registry.result_context_retention(tc["name"])
+            if not recovery_available:
+                context_retention = "pinned"
         if result.meta:
             diagnostic_extra = {
                 key: value
@@ -3075,6 +3157,14 @@ class Conversation:
             }
             if diagnostic_extra:
                 meta["extra"] = diagnostic_extra
+        extra = meta.setdefault("extra", {})
+        if isinstance(extra, dict):
+            override = extra.get("context_retention")
+            if override == "pinned":
+                context_retention = "pinned"
+            elif override == "recoverable" and recovery_available:
+                context_retention = "recoverable"
+            extra["context_retention"] = context_retention
         event = Event(
             type="tool_call_result",
             uuid=str(uuid4()),
