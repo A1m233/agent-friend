@@ -72,3 +72,16 @@ def test_revision_publish_failure_does_not_undo_business_write(tmp_path: Path) -
     session = _session()
     store.create(session)
     assert store.load(session.session_id).session_id == session.session_id
+
+
+def test_revision_store_reads_multiple_sessions_in_one_snapshot(tmp_path: Path) -> None:
+    revisions = SessionRevisionStore(tmp_path / "revisions.json")
+    revisions.next_revision("s1")
+    revisions.next_revision("s1")
+    revisions.next_revision("s2")
+
+    assert revisions.current_revisions(["s1", "s2", "missing", "s1"]) == {
+        "s1": 2,
+        "s2": 1,
+        "missing": 0,
+    }

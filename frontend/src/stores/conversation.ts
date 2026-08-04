@@ -24,6 +24,7 @@ import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import type { SessionDetail } from "@/types/meta";
 import type { PushEvent } from "@/types/push";
 import type { RunSnapshot } from "@/types/run";
+import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
@@ -45,14 +46,19 @@ const MAX_RUN_SNAPSHOTS = 512;
 let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let modelMutationSeq = 0;
+let searchNavigationToken = 0;
 
-type OpenSessionFailureMode = "message" | "home";
+type OpenSessionFailureMode = "message" | "home" | "previous";
 
 interface OpenSessionOptions {
   /** 自动恢复失败时用 home，手动打开失败时沿用 message。 */
   failureMode?: OpenSessionFailureMode;
   /** 自动恢复读取的是已有持久化指针，不需要重复写入。 */
   remember?: boolean;
+  /** 归档搜索结果允许作为不在普通侧栏列表中的当前会话查看。 */
+  detached?: boolean;
+  /** 搜索跳转在历史加载期间就保持可见，用于抑制首次自动滚底。 */
+  searchTarget?: SearchNavigationTarget;
 }
 
 interface ConversationState {
@@ -73,10 +79,14 @@ interface ConversationState {
   viewAccessedAt: Record<string, number>;
   activeRunIdBySession: Record<string, string>;
   unreadRunOutcomeBySession: Record<string, "completed" | "failed">;
+  detachedSessionId: string | null;
+  searchTarget: SearchNavigationTarget | null;
   /** 开一个新会话（清空当前视图；session 在首次 send 时由 bridge 自动创建）。 */
   newSession: () => void;
   /** 切换到历史会话并加载其上下文。 */
   openSession: (sessionId: string, options?: OpenSessionOptions) => Promise<boolean>;
+  openSearchResult: (result: SessionSearchResult, query: string) => Promise<boolean>;
+  clearSearchTarget: (token: number) => void;
   refreshCurrentSession: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   invalidateBackgroundRefreshes: () => void;
   applyRunEvents: (sessionId: string, runId: string, events: PushEvent[]) => void;
@@ -250,11 +260,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   viewAccessedAt: {},
   activeRunIdBySession: {},
   unreadRunOutcomeBySession: {},
+  detachedSessionId: null,
+  searchTarget: null,
 
   newSession() {
     openSessionToken += 1;
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
+    searchNavigationToken += 1;
     rememberLastChatSession(null);
     set((state) => {
       const previousKey = sessionViewKey(state.currentSessionId);
@@ -265,6 +278,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         modelSwitching: false,
         modelSwitchTarget: null,
         editingMessageId: null,
+        detachedSessionId: null,
+        searchTarget: null,
         sessionViews: {
           ...state.sessionViews,
           [previousKey]: currentViewSnapshot(state),
@@ -278,6 +293,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   async openSession(sessionId, options) {
     const failureMode = options?.failureMode ?? "message";
     const remember = options?.remember ?? true;
+    const detached = options?.detached ?? false;
+    const previousSessionId = get().currentSessionId;
+    const previousDetachedSessionId = get().detachedSessionId;
     const token = openSessionToken + 1;
     openSessionToken = token;
     detailRefreshSeq += 1;
@@ -296,6 +314,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       modelSwitching: false,
       modelSwitchTarget: null,
       editingMessageId: null,
+      detachedSessionId: detached ? sessionId : null,
+      searchTarget: options?.searchTarget ?? null,
       sessionViews: {
         ...state.sessionViews,
         [sessionViewKey(state.currentSessionId)]: currentViewSnapshot(state),
@@ -339,6 +359,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             modelSwitching: false,
             modelSwitchTarget: null,
             editingMessageId: null,
+            detachedSessionId: null,
+            searchTarget: null,
+            historyLoadSeq: s.historyLoadSeq + 1,
+          };
+        });
+        return false;
+      }
+      if (failureMode === "previous") {
+        if (remember) rememberLastChatSession(previousSessionId);
+        set((s) => {
+          const previous = s.sessionViews[sessionViewKey(previousSessionId)] ?? emptyView();
+          return {
+            ...viewFields(previous),
+            currentSessionId: previousSessionId,
+            detachedSessionId: previousDetachedSessionId,
+            searchTarget: null,
+            modelSwitching: false,
+            modelSwitchTarget: null,
+            editingMessageId: null,
             historyLoadSeq: s.historyLoadSeq + 1,
           };
         });
@@ -360,6 +399,59 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }));
       return false;
     }
+  },
+
+  async openSearchResult(result, query) {
+    searchNavigationToken += 1;
+    const targetToken = searchNavigationToken;
+    const isCurrentSession = get().currentSessionId === result.session_id;
+
+    if (result.kind === "title") {
+      if (isCurrentSession) {
+        set({
+          detachedSessionId: result.archived ? result.session_id : null,
+          searchTarget: null,
+        });
+        if (!result.archived) rememberLastChatSession(result.session_id);
+        return true;
+      }
+      return get().openSession(result.session_id, {
+        detached: result.archived,
+        failureMode: "previous",
+        remember: !result.archived,
+      });
+    }
+
+    const navigationTarget: SearchNavigationTarget = {
+      token: targetToken,
+      sessionId: result.session_id,
+      anchorEventUuid: result.anchor_event_uuid,
+      query,
+    };
+
+    if (!isCurrentSession) {
+      const opened = await get().openSession(result.session_id, {
+        detached: result.archived,
+        failureMode: "previous",
+        remember: !result.archived,
+        searchTarget: navigationTarget,
+      });
+      if (!opened || targetToken !== searchNavigationToken) return false;
+    } else {
+      set({
+        detachedSessionId: result.archived ? result.session_id : null,
+        searchTarget: navigationTarget,
+      });
+    }
+
+    if (get().currentSessionId !== result.session_id || targetToken !== searchNavigationToken) {
+      return false;
+    }
+    return true;
+  },
+
+  clearSearchTarget(token) {
+    set((state) => (state.searchTarget?.token === token ? { searchTarget: null } : state));
   },
 
   async refreshCurrentSession(sessionId) {

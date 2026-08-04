@@ -43,6 +43,7 @@ import {
   sessionsApi,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
+import type { SessionMessageSearchResult } from "@/types/search";
 import { useConversationStore, type SendStartResult } from "./conversation";
 import { useDraftStore } from "./drafts";
 
@@ -135,6 +136,8 @@ beforeEach(() => {
     viewAccessedAt: {},
     activeRunIdBySession: {},
     unreadRunOutcomeBySession: {},
+    detachedSessionId: null,
+    searchTarget: null,
   });
   useDraftStore.setState({ workspaces: {}, submissions: {} });
   mockSetLastChatSessionId.mockClear();
@@ -215,6 +218,59 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     useConversationStore.getState().newSession();
 
     expect(mockSetLastChatSessionId).toHaveBeenLastCalledWith(null);
+  });
+
+  it("从归档搜索结果打开消息时保持 detached，并提交稳定事件锚点", async () => {
+    mockGet.mockResolvedValue(sessionDetail("sid-archived", "归档历史"));
+    const result: SessionMessageSearchResult = {
+      result_id: "message:sid-archived:a-anchor",
+      kind: "message",
+      session_id: "sid-archived",
+      session_title: "归档对话",
+      archived: true,
+      role: "assistant",
+      occurred_at: "2026-08-05T00:00:00Z",
+      anchor_event_uuid: "a-anchor",
+      matched_field: "content",
+      segments: [{ text: "关键词", matched: true }],
+    };
+
+    const opened = await useConversationStore.getState().openSearchResult(result, "关键词");
+
+    expect(opened).toBe(true);
+    expect(useConversationStore.getState().currentSessionId).toBe("sid-archived");
+    expect(useConversationStore.getState().detachedSessionId).toBe("sid-archived");
+    expect(useConversationStore.getState().searchTarget).toMatchObject({
+      sessionId: "sid-archived",
+      anchorEventUuid: "a-anchor",
+      query: "关键词",
+    });
+    expect(mockSetLastChatSessionId).not.toHaveBeenCalled();
+  });
+
+  it("搜索结果在打开失败时恢复此前会话，不用错误页覆盖它", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-current", "当前历史"));
+    await useConversationStore.getState().openSession("sid-current");
+    mockGet.mockRejectedValueOnce(new Error("deleted"));
+    const result: SessionMessageSearchResult = {
+      result_id: "message:sid-deleted:u-1",
+      kind: "message",
+      session_id: "sid-deleted",
+      session_title: "已删除",
+      archived: false,
+      role: "user",
+      occurred_at: "2026-08-05T00:00:00Z",
+      anchor_event_uuid: "u-1",
+      matched_field: "content",
+      segments: [{ text: "needle", matched: true }],
+    };
+
+    const opened = await useConversationStore.getState().openSearchResult(result, "needle");
+
+    expect(opened).toBe(false);
+    expect(useConversationStore.getState().currentSessionId).toBe("sid-current");
+    expect(firstText()).toBe("当前历史");
+    expect(useConversationStore.getState().searchTarget).toBeNull();
   });
 
   it("历史会话加载期间暴露 loading，完成后复位并渲染历史消息", async () => {

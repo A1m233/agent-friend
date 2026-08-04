@@ -31,6 +31,7 @@ describe("HistorySidebar missing current session guard", () => {
         streaming: true,
         historyLoading: false,
         messageCount: 2,
+        detachedSessionId: null,
       }),
     ).toBe(false);
 
@@ -42,6 +43,7 @@ describe("HistorySidebar missing current session guard", () => {
         streaming: false,
         historyLoading: false,
         messageCount: 2,
+        detachedSessionId: null,
       }),
     ).toBe(false);
   });
@@ -55,6 +57,7 @@ describe("HistorySidebar missing current session guard", () => {
         streaming: false,
         historyLoading: false,
         messageCount: 0,
+        detachedSessionId: null,
       }),
     ).toBe(true);
   });
@@ -68,6 +71,7 @@ describe("HistorySidebar missing current session guard", () => {
         streaming: false,
         historyLoading: false,
         messageCount: 0,
+        detachedSessionId: null,
       }),
     ).toBe(false);
 
@@ -79,6 +83,21 @@ describe("HistorySidebar missing current session guard", () => {
         streaming: false,
         historyLoading: true,
         messageCount: 0,
+        detachedSessionId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps an explicitly detached archived search result open", () => {
+    expect(
+      shouldResetMissingCurrentSession({
+        sessionsLoaded: true,
+        currentSessionId: "archived-session",
+        sessionIds: ["normal-session"],
+        streaming: false,
+        historyLoading: false,
+        messageCount: 0,
+        detachedSessionId: "archived-session",
       }),
     ).toBe(false);
   });

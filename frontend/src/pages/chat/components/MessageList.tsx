@@ -17,10 +17,13 @@ import {
 import { ChatMessage as TdChatMessage } from "@tdesign-react/chat";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
+import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
 import { isAttachmentAssetAvailable } from "@/services";
 import type { ChatAttachment, ChatMessage, ModelResponseProgress } from "@/types/chat";
+import type { SearchNavigationTarget } from "@/types/search";
+import { cn } from "@/utils/cn";
 import {
   CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   CHAT_CONTENT_CONTAINER_CLASS,
@@ -46,6 +49,11 @@ import { ReminderCard } from "./ReminderCard";
 import { ToolCard } from "./ToolCard";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
+import {
+  findSearchAnchor,
+  findSearchMessageIndex,
+  installSearchTextHighlight,
+} from "./searchNavigation";
 
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const BOTTOM_THRESHOLD_PX = 16;
@@ -55,6 +63,8 @@ const USER_SCROLL_IDLE_MS = 160;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 const SLOW_MODEL_RESPONSE_MS = 10_000;
+const SEARCH_FEEDBACK_MS = 2400;
+const SEARCH_ANCHOR_MOUNT_ATTEMPTS = 8;
 const GOLDEN_SECTION = (Math.sqrt(5) - 1) / 2;
 const SCROLL_ACTIVITY_ARC_FRACTION = GOLDEN_SECTION / 2;
 const SCROLL_ACTIVITY_ARC_DEGREES = 180 * GOLDEN_SECTION;
@@ -186,11 +196,13 @@ const TextBubble = memo(function TextBubble({
   text,
   actionBar,
   attachments = EMPTY_CHAT_ATTACHMENTS,
+  searchAnchor,
 }: {
   role: "user" | "assistant";
   text: string;
   actionBar?: ReactNode;
   attachments?: ChatAttachment[];
+  searchAnchor?: string;
 }) {
   const [unavailableAssets, setUnavailableAssets] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -220,7 +232,7 @@ const TextBubble = memo(function TextBubble({
       : [];
     return [...attachmentContent, ...(text ? toMarkdownContent(text) : [])] as TdContentProp;
   }, [attachments.length, text]);
-  return (
+  const bubble = (
     <TdChatMessage
       role={role}
       placement={role === "user" ? "right" : "left"}
@@ -243,6 +255,9 @@ const TextBubble = memo(function TextBubble({
       )}
     </TdChatMessage>
   );
+  return searchAnchor ? (
+    <div data-search-anchor={searchAnchor}>{bubble}</div>
+  ) : bubble;
 });
 
 const StreamingMarkdownBubble = memo(function StreamingMarkdownBubble({ text }: { text: string }) {
@@ -294,6 +309,7 @@ function MessageContent({
   onCancelEdit,
   onSubmitEdit,
   onContinueToolResult,
+  searchAnchorEventUuid,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
@@ -302,6 +318,7 @@ function MessageContent({
   onCancelEdit?: () => void;
   onSubmitEdit?: (text: string) => void;
   onContinueToolResult?: () => void;
+  searchAnchorEventUuid?: string;
 }) {
   if (message.role === "user") {
     const text = message.blocks
@@ -329,6 +346,7 @@ function MessageContent({
         text={text}
         attachments={message.attachments}
         actionBar={actionBar}
+        searchAnchor={message.id === searchAnchorEventUuid ? message.id : undefined}
       />
     );
   }
@@ -348,6 +366,7 @@ function MessageContent({
               role="assistant"
               text={b.text}
               actionBar={i === actionBarBlockIndex ? actionBar : undefined}
+              searchAnchor={b.mid === searchAnchorEventUuid ? b.mid : undefined}
             />
           )
         );
@@ -409,6 +428,7 @@ const MessageItem = memo(function MessageItem({
   onCancelEdit,
   onSubmitEdit,
   onContinueToolResult,
+  searchAnchorEventUuid,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -418,6 +438,7 @@ const MessageItem = memo(function MessageItem({
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
   onContinueToolResult?: () => void;
+  searchAnchorEventUuid?: string;
 }) {
   const actionBar =
     message.status === "streaming" || editing ? null : (
@@ -431,7 +452,13 @@ const MessageItem = memo(function MessageItem({
     );
 
   return (
-    <div data-message-id={message.id}>
+    <div
+      data-message-id={message.id}
+      className={cn(
+        "rounded-xl transition-colors",
+        searchAnchorEventUuid && "bg-search-target",
+      )}
+    >
       <MessageContent
         message={message}
         actionBar={actionBar}
@@ -440,6 +467,7 @@ const MessageItem = memo(function MessageItem({
         onCancelEdit={onCancelEdit}
         onSubmitEdit={onSubmitEdit}
         onContinueToolResult={onContinueToolResult}
+        searchAnchorEventUuid={searchAnchorEventUuid}
       />
     </div>
   );
@@ -452,6 +480,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
     prev.editing === next.editing &&
     prev.editDisabled === next.editDisabled
     && prev.onContinueToolResult === next.onContinueToolResult
+    && prev.searchAnchorEventUuid === next.searchAnchorEventUuid
   );
 }
 
@@ -464,6 +493,7 @@ interface MessageItemProps {
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
   onContinueToolResult?: () => void;
+  searchAnchorEventUuid?: string;
 }
 
 function HistoryLoadingState() {
@@ -512,6 +542,8 @@ interface MessageTimelineProps {
   onEditLatestUserMessage?: (messageId: string, text: string) => void | Promise<void>;
   onContinueToolResult?: (messageId: string) => void | Promise<void>;
   onEditingChange?: (messageId: string | null) => void;
+  searchTarget?: SearchNavigationTarget | null;
+  onSearchTargetHandled?: (token: number, found: boolean) => void;
 }
 
 /**
@@ -530,6 +562,8 @@ export function MessageTimeline({
   onEditLatestUserMessage,
   onContinueToolResult,
   onEditingChange,
+  searchTarget = null,
+  onSearchTargetHandled,
 }: MessageTimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -537,12 +571,20 @@ export function MessageTimeline({
   const pointerScrollActiveRef = useRef(false);
   const userScrollIdleTimerRef = useRef(0);
   const scrollRafRef = useRef(0);
+  const searchScrollRafRef = useRef(0);
+  const searchFeedbackTimerRef = useRef(0);
+  const searchHighlightCleanupRef = useRef<(() => void) | null>(null);
+  const handledSearchTargetTokenRef = useRef(0);
+  const processingSearchTargetTokenRef = useRef(0);
+  const searchTargetRef = useRef(searchTarget);
+  searchTargetRef.current = searchTarget;
   const previousVirtualTotalSizeRef = useRef<number | null>(null);
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
   const [isFollowing, setIsFollowing] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [activeSearchAnchor, setActiveSearchAnchor] = useState<string | null>(null);
   const updateEditingMessage = useCallback((messageId: string | null) => {
     setEditingMessageId(messageId);
     onEditingChange?.(messageId);
@@ -572,6 +614,20 @@ export function MessageTimeline({
   });
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTotalSize = virtualizer.getTotalSize();
+
+  const clearSearchFeedback = useCallback(() => {
+    if (searchScrollRafRef.current) {
+      window.cancelAnimationFrame(searchScrollRafRef.current);
+      searchScrollRafRef.current = 0;
+    }
+    if (searchFeedbackTimerRef.current) {
+      window.clearTimeout(searchFeedbackTimerRef.current);
+      searchFeedbackTimerRef.current = 0;
+    }
+    searchHighlightCleanupRef.current?.();
+    searchHighlightCleanupRef.current = null;
+    setActiveSearchAnchor(null);
+  }, []);
 
   const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
     const next = reduceMessageScrollFollowing(followingRef.current, event);
@@ -682,6 +738,7 @@ export function MessageTimeline({
   }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
 
   useLayoutEffect(() => {
+    if (searchTargetRef.current) return;
     const previousTotalSize = previousVirtualTotalSizeRef.current;
     previousVirtualTotalSizeRef.current = virtualTotalSize;
     if (shouldFollowAfterTotalSizeChange(
@@ -707,7 +764,9 @@ export function MessageTimeline({
       });
     }
 
-    if (isBackgroundSync) {
+    if (searchTargetRef.current) {
+      prevSyncRefreshSeqRef.current = syncRefreshSeq;
+    } else if (isBackgroundSync) {
       prevSyncRefreshSeqRef.current = syncRefreshSeq;
       if (followingRef.current) {
         scheduleScrollToBottom();
@@ -722,6 +781,7 @@ export function MessageTimeline({
   }, [messages, scheduleScrollToBottom, syncRefreshSeq]);
 
   useLayoutEffect(() => {
+    if (searchTargetRef.current) return;
     if (followingRef.current) {
       scheduleScrollToBottom();
     }
@@ -731,8 +791,90 @@ export function MessageTimeline({
     if (historyLoadSeq === 0 || historyLoadSeq === handledHistoryLoadSeqRef.current) return;
     handledHistoryLoadSeqRef.current = historyLoadSeq;
     if (historyLoading || messages.length === 0) return;
+    if (searchTargetRef.current) return;
     scheduleScrollToBottom({ force: true });
   }, [historyLoadSeq, historyLoading, messages.length, scheduleScrollToBottom]);
+
+  useLayoutEffect(() => {
+    if (
+      !searchTarget ||
+      historyLoading ||
+      handledSearchTargetTokenRef.current === searchTarget.token ||
+      processingSearchTargetTokenRef.current === searchTarget.token
+    ) {
+      return;
+    }
+    processingSearchTargetTokenRef.current = searchTarget.token;
+    const messageIndex = findSearchMessageIndex(messages, searchTarget.anchorEventUuid);
+    if (messageIndex < 0) {
+      processingSearchTargetTokenRef.current = 0;
+      handledSearchTargetTokenRef.current = searchTarget.token;
+      onSearchTargetHandled?.(searchTarget.token, false);
+      return;
+    }
+
+    clearSearchFeedback();
+    applyFollowEvent({ type: "viewport-scrolled", atBottom: false, source: "user" });
+    setActiveSearchAnchor(searchTarget.anchorEventUuid);
+    virtualizer.scrollToIndex(messageIndex, { align: "center" });
+
+    let attempts = 0;
+    const finishPositioning = () => {
+      searchScrollRafRef.current = 0;
+      const viewport = scrollRef.current;
+      const anchor = viewport
+        ? findSearchAnchor(viewport, searchTarget.anchorEventUuid)
+        : null;
+      if (!viewport || !anchor) {
+        attempts += 1;
+        if (attempts < SEARCH_ANCHOR_MOUNT_ATTEMPTS) {
+          searchScrollRafRef.current = window.requestAnimationFrame(finishPositioning);
+          return;
+        }
+        clearSearchFeedback();
+        processingSearchTargetTokenRef.current = 0;
+        handledSearchTargetTokenRef.current = searchTarget.token;
+        onSearchTargetHandled?.(searchTarget.token, false);
+        return;
+      }
+
+      const viewportRect = viewport.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      const offset =
+        anchorRect.top + anchorRect.height / 2 -
+        (viewportRect.top + viewportRect.height / 2);
+      viewport.scrollBy({ top: offset, behavior: "auto" });
+      searchHighlightCleanupRef.current = installSearchTextHighlight(anchor, searchTarget.query);
+      searchFeedbackTimerRef.current = window.setTimeout(() => {
+        searchFeedbackTimerRef.current = 0;
+        searchHighlightCleanupRef.current?.();
+        searchHighlightCleanupRef.current = null;
+        setActiveSearchAnchor(null);
+      }, SEARCH_FEEDBACK_MS);
+      processingSearchTargetTokenRef.current = 0;
+      handledSearchTargetTokenRef.current = searchTarget.token;
+      onSearchTargetHandled?.(searchTarget.token, true);
+    };
+    searchScrollRafRef.current = window.requestAnimationFrame(finishPositioning);
+
+    return () => {
+      if (searchScrollRafRef.current) {
+        window.cancelAnimationFrame(searchScrollRafRef.current);
+        searchScrollRafRef.current = 0;
+      }
+      if (processingSearchTargetTokenRef.current === searchTarget.token) {
+        processingSearchTargetTokenRef.current = 0;
+      }
+    };
+  }, [
+    applyFollowEvent,
+    clearSearchFeedback,
+    historyLoading,
+    messages,
+    onSearchTargetHandled,
+    searchTarget,
+    virtualizer,
+  ]);
 
   useEffect(
     () => {
@@ -742,10 +884,11 @@ export function MessageTimeline({
         window.removeEventListener("pointerup", handlePointerScrollEnd);
         window.removeEventListener("pointercancel", handlePointerScrollEnd);
         if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+        clearSearchFeedback();
         if (userScrollIdleTimerRef.current) window.clearTimeout(userScrollIdleTimerRef.current);
       };
     },
-    [handlePointerScrollEnd],
+    [clearSearchFeedback, handlePointerScrollEnd],
   );
 
   useEffect(() => {
@@ -806,6 +949,12 @@ export function MessageTimeline({
               ["upstream_transient", "rate_limit"].includes(m.errorCode ?? "") &&
               m.blocks.some((block) => block.kind === "tool" && block.status === "done") &&
               !editDisabled;
+            const searchAnchorEventUuid = findSearchMessageIndex(
+              [m],
+              activeSearchAnchor ?? "",
+            ) === 0
+              ? activeSearchAnchor ?? undefined
+              : undefined;
             return (
               <div
                 key={virtualItem.key}
@@ -829,6 +978,7 @@ export function MessageTimeline({
                     onContinueToolResult={canContinueToolResult
                       ? () => void onContinueToolResult?.(m.id)
                       : undefined}
+                    searchAnchorEventUuid={searchAnchorEventUuid}
                   />
                 </div>
               </div>
@@ -871,6 +1021,23 @@ export function MessageList({
   const editResendLatest = useConversationStore((s) => s.editResendLatest);
   const continueToolResult = useConversationStore((s) => s.continueToolResult);
   const setEditingMessage = useConversationStore((s) => s.setEditingMessage);
+  const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const searchTarget = useConversationStore((s) => s.searchTarget);
+  const clearSearchTarget = useConversationStore((s) => s.clearSearchTarget);
+  const handleSearchTarget = useCallback(
+    (token: number, found: boolean) => {
+      clearSearchTarget(token);
+      if (!found) {
+        toast.error("没有找到这条消息的位置", {
+          description: "对话内容可能刚刚发生了变化，请重新搜索。",
+        });
+      }
+    },
+    [clearSearchTarget],
+  );
+  const currentSearchTarget = searchTarget?.sessionId === currentSessionId
+    ? searchTarget
+    : null;
 
   return (
     <MessageTimeline
@@ -883,6 +1050,8 @@ export function MessageList({
       onEditLatestUserMessage={editResendLatest}
       onContinueToolResult={continueToolResult}
       onEditingChange={setEditingMessage}
+      searchTarget={currentSearchTarget}
+      onSearchTargetHandled={handleSearchTarget}
     />
   );
 }

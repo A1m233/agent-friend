@@ -5,6 +5,7 @@
 
 import { http } from "../http";
 import type { SessionDetail, SessionSummary } from "@/types/meta";
+import type { SessionSearchResponse } from "@/types/search";
 
 interface ListSessionsOptions {
   archived?: boolean;
@@ -13,6 +14,11 @@ interface ListSessionsOptions {
 
 interface DeleteArchivedSessionsOptions {
   q?: string;
+}
+
+interface SearchSessionsOptions {
+  messageLimit?: number;
+  titleLimit?: number;
 }
 
 function sessionQuery(options?: ListSessionsOptions | DeleteArchivedSessionsOptions): string {
@@ -42,6 +48,19 @@ export const sessionsApi = {
   /** 列出历史会话（GET /v1/sessions）。 */
   list(options?: ListSessionsOptions): Promise<SessionSummary[]> {
     return http.get<unknown, SessionSummary[]>(`/v1/sessions${sessionQuery(options)}`);
+  },
+
+  search(query: string, options?: SearchSessionsOptions): Promise<SessionSearchResponse> {
+    const params = new URLSearchParams({ q: query.trim() });
+    if (options?.messageLimit !== undefined) {
+      params.set("message_limit", String(options.messageLimit));
+    }
+    if (options?.titleLimit !== undefined) {
+      params.set("title_limit", String(options.titleLimit));
+    }
+    return http.get<unknown, SessionSearchResponse>(
+      `/v1/sessions/search?${params.toString()}`,
+    );
   },
 
   /** 单个会话详情只取当前有效事件，避免重复传输原始事件流。 */

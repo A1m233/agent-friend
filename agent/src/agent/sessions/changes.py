@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
@@ -98,13 +98,23 @@ class SessionRevisionStore:
 
     def current_revision(self, session_id: str) -> int:
         """Read the durable per-session revision without mutating it."""
+        return self.current_revisions((session_id,)).get(session_id, 0)
+
+    def current_revisions(self, session_ids: Iterable[str]) -> dict[str, int]:
+        """Read multiple durable revisions under one sidecar lock."""
+        requested = tuple(dict.fromkeys(session_ids))
+        if not requested:
+            return {}
         if not self._path.exists():
-            return 0
+            return {session_id: 0 for session_id in requested}
         try:
             with portalocker.Lock(self._lock_path, "a", encoding="utf-8", timeout=10.0):
                 payload = self._read_unlocked()
-                current = payload.get("sessions", {}).get(session_id, {})
-                return int(current.get("revision", 0))
+                sessions = payload.get("sessions", {})
+                return {
+                    session_id: int(sessions.get(session_id, {}).get("revision", 0))
+                    for session_id in requested
+                }
         except LockException as exc:
             raise SessionPersistError(
                 f"获取 session revision 文件锁超时: {self._path}: {exc}"
@@ -145,6 +155,9 @@ class SessionChangeBroker:
 
     def current_revision(self, session_id: str) -> int:
         return self._revision_store.current_revision(session_id)
+
+    def current_revisions(self, session_ids: Iterable[str]) -> dict[str, int]:
+        return self._revision_store.current_revisions(session_ids)
 
     def record_change(
         self,

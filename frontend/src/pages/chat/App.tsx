@@ -19,6 +19,7 @@ import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
+import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 import { openFeedback } from "@/lib/settings/navigation";
 import { useModelCatalogStore } from "@/lib/model-config";
@@ -94,8 +95,9 @@ export function ChatApp() {
       className="h-screen bg-bg text-fg"
       style={{ "--sidebar-width": "15rem" } as CSSProperties}
     >
-      <HistorySidebar />
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <GlobalConversationSearchProvider>
+        <HistorySidebar />
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
           <Button
             size="sm"
@@ -136,7 +138,8 @@ export function ChatApp() {
             />
           </>
         )}
-      </div>
+        </div>
+      </GlobalConversationSearchProvider>
     </SidebarProvider>
   );
 }

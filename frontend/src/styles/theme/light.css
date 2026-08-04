@@ -16,6 +16,8 @@ html[theme="light"] {
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;
+  --search-hit: #fde68a;
+  --search-target: #eef2ff;
 
   /* 阴影（值 = Tailwind v4 默认 light，保证视觉零变化） */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);

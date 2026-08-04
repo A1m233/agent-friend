@@ -22,3 +22,17 @@ describe("sessionsApi.get", () => {
     );
   });
 });
+
+describe("sessionsApi.search", () => {
+  beforeEach(() => {
+    vi.mocked(http.get).mockReset();
+  });
+
+  it("encodes the query and bounded result limits", () => {
+    sessionsApi.search("  中文 & Needle  ", { messageLimit: 12, titleLimit: 4 });
+
+    expect(http.get).toHaveBeenCalledWith(
+      "/v1/sessions/search?q=%E4%B8%AD%E6%96%87+%26+Needle&message_limit=12&title_limit=4",
+    );
+  });
+});

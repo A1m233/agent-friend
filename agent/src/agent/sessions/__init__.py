@@ -34,6 +34,13 @@ from .manager import (
     TitleGenerator,
 )
 from .metadata import SessionMetadata, SessionMetadataStore
+from .search import (
+    SearchTextSegment,
+    SessionMessageSearchResult,
+    SessionSearchResponse,
+    SessionSearchService,
+    SessionTitleSearchResult,
+)
 from .session import Session
 from .store import (
     JsonlSessionStore,
@@ -53,6 +60,7 @@ __all__ = [
     "NotifyingSessionStore",
     "NullSessionStore",
     "PromptBuilderFactory",
+    "SearchTextSegment",
     "Session",
     "SessionCatalog",
     "SessionChange",
@@ -61,6 +69,7 @@ __all__ = [
     "SessionDescriptor",
     "SessionError",
     "SessionManager",
+    "SessionMessageSearchResult",
     "SessionMetadata",
     "SessionMetadataStore",
     "SessionMutationContext",
@@ -68,8 +77,11 @@ __all__ = [
     "SessionPersistError",
     "SessionResolution",
     "SessionRevisionStore",
+    "SessionSearchResponse",
+    "SessionSearchService",
     "SessionStore",
     "SessionSummary",
+    "SessionTitleSearchResult",
     "TitleGenerator",
     "current_session_mutation_context",
     "normalize_session_title",
