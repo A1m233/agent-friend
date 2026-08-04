@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Circle, CircleAlert, Clock3, MoreVertical, SquarePen } from "lucide-react";
+import { Circle, CircleAlert, Clock3, MoreVertical, Search, SquarePen } from "lucide-react";
+import { useKBar } from "kbar";
 import {
   Badge,
   ConfirmDialog,
@@ -56,6 +57,7 @@ interface MissingCurrentSessionResetInput {
   streaming: boolean;
   historyLoading: boolean;
   messageCount: number;
+  detachedSessionId: string | null;
 }
 
 export type SessionRunIndicator = "queued" | "running" | "completed" | "failed" | null;
@@ -97,9 +99,11 @@ export function shouldResetMissingCurrentSession({
   streaming,
   historyLoading,
   messageCount,
+  detachedSessionId,
 }: MissingCurrentSessionResetInput): boolean {
   if (!sessionsLoaded || !currentSessionId) return false;
   if (sessionIds.includes(currentSessionId)) return false;
+  if (detachedSessionId === currentSessionId) return false;
   if (streaming || historyLoading) return false;
   return messageCount === 0;
 }
@@ -141,6 +145,7 @@ export function HistorySidebar() {
   const streaming = useConversationStore((s) => s.streaming);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const messageCount = useConversationStore((s) => s.messages.length);
+  const detachedSessionId = useConversationStore((s) => s.detachedSessionId);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
   const activeRunIdBySession = useConversationStore((s) => s.activeRunIdBySession);
@@ -173,6 +178,10 @@ export function HistorySidebar() {
   const [now, setNow] = useState(() => Date.now());
   const restoreAttemptedRef = useRef(false);
   const restoreBlockedRef = useRef(false);
+  const { query: searchPalette } = useKBar();
+  const searchShortcutLabel = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+    ? "⌘ F"
+    : "Ctrl F";
 
   const blockAutoRestore = useCallback(() => {
     restoreBlockedRef.current = true;
@@ -289,6 +298,7 @@ export function HistorySidebar() {
       streaming,
       historyLoading,
       messageCount,
+      detachedSessionId,
     });
     if (!shouldReset) return;
     blockAutoRestore();
@@ -296,6 +306,7 @@ export function HistorySidebar() {
   }, [
     blockAutoRestore,
     currentSessionId,
+    detachedSessionId,
     historyLoading,
     list,
     messageCount,
@@ -354,6 +365,20 @@ export function HistorySidebar() {
     <Sidebar collapsible="none" className="border-r border-border gap-1">
       <SidebarHeader>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              className="border border-border bg-bg text-muted shadow-sm hover:bg-surface hover:text-fg"
+              onClick={() => searchPalette.toggle()}
+            >
+              <Search />
+              <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                <span className="truncate">搜索全部对话</span>
+                <kbd className="shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-xs text-muted">
+                  {searchShortcutLabel}
+                </kbd>
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton onClick={handleNewSession}>
               <SquarePen />

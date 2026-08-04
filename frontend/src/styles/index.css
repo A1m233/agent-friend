@@ -28,6 +28,8 @@
   --color-success: var(--success);
   --color-danger: var(--danger);
   --color-warning: var(--warning);
+  --color-search-hit: var(--search-hit);
+  --color-search-target: var(--search-target);
 
   /* shadcn Sidebar 的 token：复用项目语义 token（随 html[theme] 换肤），不另起一套颜色。 */
   --color-sidebar: var(--surface);
@@ -97,4 +99,8 @@ body {
 html[data-transparent-window],
 html[data-transparent-window] body {
   background: transparent;
+}
+
+::highlight(agent-friend-search-hit) {
+  background-color: var(--search-hit);
 }

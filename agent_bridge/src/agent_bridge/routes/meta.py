@@ -3,6 +3,7 @@
 | Endpoint                          | 用途                                   | 等价 CLI 命令      |
 | --------------------------------- | -------------------------------------- | ------------------ |
 | ``GET /v1/sessions``              | 列出 sessions                          | ``/sessions``      |
+| ``GET /v1/sessions/search``       | 搜索全部用户可见会话内容               | （内部）           |
 | ``POST /v1/sessions``             | 显式创建 session（007 起；voice_bridge 用） | （内部）       |
 | ``GET /v1/sessions/{id}``         | 单个 session 的 events（调试用）       | （内部）           |
 | ``POST /v1/sessions/{id}/edit-resend-latest`` | 编辑并重发最后一条 user 输入 | （内部） |
@@ -161,6 +162,28 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": session.current_model,
             "channel": session.current_channel,
         }
+
+    @router.get("/sessions/search")
+    def search_sessions(
+        q: str = Query(..., min_length=1, max_length=200, description="连续文本关键词"),
+        message_limit: int = Query(50, ge=1, le=50),
+        title_limit: int = Query(10, ge=1, le=10),
+    ) -> dict[str, Any]:
+        """搜索普通和归档会话的标题与用户可见消息。"""
+        service = runtime.session_search_service
+        if service is None:
+            raise HTTPException(status_code=503, detail="全局会话搜索服务未装配")
+        try:
+            result = service.search(
+                q,
+                message_limit=message_limit,
+                title_limit=title_limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except SessionPersistError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _dataclass_to_dict(result)
 
     @router.get("/sessions/{session_id}")
     def get_session(

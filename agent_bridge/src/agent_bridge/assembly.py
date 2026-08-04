@@ -44,6 +44,7 @@ from agent import (
     SessionManager,
     SessionMetadataStore,
     SessionRevisionStore,
+    SessionSearchService,
     SessionStore,
     default_context_manager,
     make_default_registry,
@@ -146,6 +147,8 @@ class BridgeRuntime:
     """
     session_model_service: SessionModelService | None = None
     """Shared model mutation path used by desktop REST and IM controls."""
+    session_search_service: SessionSearchService | None = None
+    """074：进程级全局会话搜索派生索引；None 只用于旧测试 fixture。"""
     im_runtime: IMRuntime | None = None
     """022 起新增:进程级 :class:`agent_bridge.protocols.im.IMRuntime`,
     管理 IM 长连(QQ / 未来飞书 / TG)。``None`` 表示本进程未启用 IM 通道
@@ -272,6 +275,11 @@ def build_runtime(
     persistent_store = NotifyingSessionStore(base_persistent_store, session_change_broker)
     session_metadata_store = SessionMetadataStore(settings.sessions_dir / "metadata.json")
     session_catalog = SessionCatalog(persistent_store, session_metadata_store)
+    session_search_service = SessionSearchService(
+        persistent_store,
+        session_catalog,
+        session_change_broker,
+    )
     transient_store = NullSessionStore()
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     persona_store = EffectivePersonaStore(
@@ -412,6 +420,7 @@ def build_runtime(
             turn_coordinator=turn_coordinator,
             agent_runtime=agent_runtime,
             session_model_service=session_model_service,
+            session_search_service=session_search_service,
             persona_store=persona_store,
             persona_editor_session_manager=persona_editor_session_manager,
             persona_editor_workspace=persona_editor_workspace,
@@ -512,6 +521,7 @@ def build_runtime(
         turn_coordinator=turn_coordinator,
         agent_runtime=agent_runtime,
         session_model_service=session_model_service,
+        session_search_service=session_search_service,
         persona_store=persona_store,
         persona_editor_session_manager=persona_editor_session_manager,
         persona_editor_workspace=persona_editor_workspace,
