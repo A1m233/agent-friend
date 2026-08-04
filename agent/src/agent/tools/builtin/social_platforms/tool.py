@@ -802,6 +802,7 @@ def _platform_failure(
         retryable=exc.is_retryable,
         platform=platform,
         missing_capabilities=missing_capabilities,
+        diagnostic_stage=exc.diagnostic_stage,
     )
 
 
@@ -812,6 +813,7 @@ def _failure(
     retryable: bool = False,
     platform: SocialPlatform | None = None,
     missing_capabilities: tuple[SocialMissingCapability, ...] = (),
+    diagnostic_stage: str | None = None,
 ) -> ToolResult:
     can_request_auth = bool(missing_capabilities) and status in {
         "auth_required",
@@ -856,7 +858,11 @@ def _failure(
             indent=2,
         ),
         is_error=True,
-        meta={"error_kind": status, "retryable": retryable},
+        meta={
+            "error_kind": status,
+            "retryable": retryable,
+            **({"diagnostic_stage": diagnostic_stage} if diagnostic_stage else {}),
+        },
     )
 
 

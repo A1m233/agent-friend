@@ -370,6 +370,7 @@ def test_nested_mcp_timeout_is_retryable_network_error() -> None:
         api.search_feeds(keyword="关键词", filters={})
 
     assert caught.value.is_retryable is True
+    assert caught.value.diagnostic_stage == "search_request"
 
 
 def test_official_transport_can_extend_search_timeout_only() -> None:
@@ -407,7 +408,10 @@ def test_upstream_page_deadline_is_retryable_network_error() -> None:
             if name == "check_login_status":
                 return super().call_tool(endpoint, name, arguments)
             return McpCallResult(
-                text=("工具 search_feeds 执行时发生内部错误: context deadline exceeded"),
+                text=(
+                    "工具 search_feeds 执行时发生内部错误: "
+                    "search_results_wait_failed: context deadline exceeded"
+                ),
                 is_error=True,
             )
 
@@ -418,6 +422,30 @@ def test_upstream_page_deadline_is_retryable_network_error() -> None:
         api.search_feeds(keyword="关键词", filters={})
 
     assert caught.value.is_retryable is True
+    assert caught.value.diagnostic_stage == "search_results_wait"
+
+
+def test_search_failure_exposes_only_safe_diagnostic_stage() -> None:
+    api = _FakeApi()
+    api.search_error = SocialNetworkError(
+        "raw upstream timeout details",
+        diagnostic_stage="search_results_wait",
+    )
+    result = SocialSearchTool(SocialPlatformService((XiaohongshuConnector(api),))).invoke(
+        {
+            "platform": "xiaohongshu",
+            "query": "关键词",
+            CURRENT_SESSION_ID_ARG: "session-a",
+        }
+    )
+
+    assert result.is_error is True
+    assert result.meta == {
+        "error_kind": "network_error",
+        "retryable": True,
+        "diagnostic_stage": "search_results_wait",
+    }
+    assert "raw upstream timeout details" not in result.text
 
 
 class _FakeChild:

@@ -25,3 +25,31 @@ diff --git a/xiaohongshu-mcp/go.mod b/xiaohongshu-mcp/go.mod
  require (
  	github.com/avast/retry-go/v4 v4.7.0
  	github.com/gin-gonic/gin v1.10.1
+
+diff --git a/xiaohongshu-mcp/xiaohongshu/search.go b/xiaohongshu-mcp/xiaohongshu/search.go
+--- a/xiaohongshu-mcp/xiaohongshu/search.go
++++ b/xiaohongshu-mcp/xiaohongshu/search.go
+@@ -100,3 +100,20 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
+-	page.MustNavigate(searchURL)
+-	page.MustWaitStable()
+-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
++	if err := rod.Try(func() {
++		page.MustNavigate(searchURL)
++	}); err != nil {
++		return nil, fmt.Errorf("search_navigate_failed: %w", err)
++	}
++	// The search page keeps background requests and DOM updates alive after its
++	// result state is usable. Waiting for whole-page stability can therefore
++	// consume the 60s page deadline even though the feeds are already available.
++	// Wait only for the state consumed below; an empty array is a valid result.
++	if err := rod.Try(func() {
++		page.MustWait(`() => {
++			const feeds = window.__INITIAL_STATE__?.search?.feeds;
++			const value = feeds
++				? (feeds.value !== undefined ? feeds.value : feeds._value)
++				: null;
++			return Array.isArray(value);
++		}`)
++	}); err != nil {
++		return nil, fmt.Errorf("search_results_wait_failed: %w", err)
++	}

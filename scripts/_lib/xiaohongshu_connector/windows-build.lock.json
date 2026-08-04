@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "build_id": "xiaohongshu-mcp-v2.2.7-windows-amd64-no-leakless-v2",
+  "build_id": "xiaohongshu-mcp-v2.2.7-windows-amd64-targeted-search-wait-v1",
   "target": {
     "os": "windows",
     "arch": "amd64"
@@ -35,14 +35,14 @@
   },
   "patch": {
     "filename": "windows-disable-leakless.patch",
-    "sha256": "b4ee4d875505f1d7e83792faac8a140978a3e4be4a3d10e40301b0530c5f5d8c"
+    "sha256": "5bfe0a3ba01818d56c1ea71e87c98817da68f8bbcbc4ac9f54659c36696322b3"
   },
   "outputs": [
     {
       "role": "server",
       "filename": "xiaohongshu-mcp-windows-amd64.exe",
-      "size": 21488128,
-      "sha256": "099a27a7fbd718aa47af91fac555606b91fc69b4a4a669c2adb581ea3e3393a4"
+      "size": 21492736,
+      "sha256": "ef9a26382dbaf3bdc8d39a9c5d390f87e725366fcd9fea1749d7c37aeb7564ff"
     },
     {
       "role": "login",

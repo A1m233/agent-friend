@@ -381,11 +381,15 @@ class XiaohongshuMcpApi:
                 result = self._transport.call_tool(endpoint, operation.value, arguments)
             except BaseException as exc:
                 raise _translate_xhs_exception(
-                    exc, has_login_material=self.has_login_material
+                    exc,
+                    has_login_material=self.has_login_material,
+                    operation=operation,
                 ) from exc
             if result.is_error:
                 raise _translate_xhs_call_error(
-                    result.text, has_login_material=self.has_login_material
+                    result.text,
+                    has_login_material=self.has_login_material,
+                    operation=operation,
                 )
             if not result.text:
                 raise SocialConnectorIncompatibleError("Xiaohongshu MCP returned no textual result")
@@ -700,7 +704,12 @@ def _json_object(value: str) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], parsed)
 
 
-def _translate_xhs_call_error(value: str, *, has_login_material: bool) -> SocialPlatformError:
+def _translate_xhs_call_error(
+    value: str,
+    *,
+    has_login_material: bool,
+    operation: _XhsOperation | None = None,
+) -> SocialPlatformError:
     normalized = value.lower()
     if any(marker.lower() in normalized for marker in _ACCESS_MARKERS):
         return SocialAccessRestrictedError("Xiaohongshu restricted the request")
@@ -720,12 +729,19 @@ def _translate_xhs_call_error(value: str, *, has_login_material: bool) -> Social
             "context cancelled",
         )
     ):
-        return SocialNetworkError("Xiaohongshu MCP call timed out", retryable=True)
+        return SocialNetworkError(
+            "Xiaohongshu MCP call timed out",
+            retryable=True,
+            diagnostic_stage=_xhs_diagnostic_stage(normalized, operation),
+        )
     return SocialProviderError("Xiaohongshu MCP call failed")
 
 
 def _translate_xhs_exception(
-    exc: BaseException, *, has_login_material: bool
+    exc: BaseException,
+    *,
+    has_login_material: bool,
+    operation: _XhsOperation | None = None,
 ) -> SocialPlatformError:
     leaves = tuple(_exception_leaves(exc))
     for leaf in leaves:
@@ -739,15 +755,41 @@ def _translate_xhs_exception(
             if status == 404:
                 return SocialContentNotFoundError("Xiaohongshu note was not found")
             if status >= 500:
-                return SocialNetworkError("Xiaohongshu MCP transport failed", retryable=True)
+                return SocialNetworkError(
+                    "Xiaohongshu MCP transport failed",
+                    retryable=True,
+                    diagnostic_stage=_xhs_diagnostic_stage("", operation),
+                )
     for leaf in leaves:
         normalized = f"{type(leaf).__name__} {leaf}".lower()
         if isinstance(leaf, (httpx.ConnectError, httpx.TimeoutException, OSError)) or any(
             marker in normalized for marker in ("timeout", "timed out", "connect")
         ):
-            return SocialNetworkError("Xiaohongshu MCP transport failed", retryable=True)
+            return SocialNetworkError(
+                "Xiaohongshu MCP transport failed",
+                retryable=True,
+                diagnostic_stage=_xhs_diagnostic_stage(normalized, operation),
+            )
     combined = " ".join(str(leaf) for leaf in leaves)
-    return _translate_xhs_call_error(combined, has_login_material=has_login_material)
+    return _translate_xhs_call_error(
+        combined,
+        has_login_material=has_login_material,
+        operation=operation,
+    )
+
+
+def _xhs_diagnostic_stage(value: str, operation: _XhsOperation | None) -> str | None:
+    if "search_navigate_failed" in value:
+        return "search_navigation"
+    if "search_results_wait_failed" in value:
+        return "search_results_wait"
+    if operation is _XhsOperation.CHECK_LOGIN_STATUS:
+        return "login_check"
+    if operation is _XhsOperation.SEARCH_FEEDS:
+        return "search_request"
+    if operation is _XhsOperation.GET_FEED_DETAIL:
+        return "detail_request"
+    return None
 
 
 def _exception_leaves(exc: BaseException) -> list[BaseException]:

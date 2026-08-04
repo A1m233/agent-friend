@@ -22,6 +22,7 @@ _DOWNLOAD_KEYS = ("go", "xiaohongshu_mcp", "headless_browser")
 _SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
 _HEADLESS_REPLACEMENT = "replace github.com/xpzouying/headless_browser => ../headless_browser"
 _LEAKLESS_OVERRIDE = "\t\tLeakless(false)."
+_SEARCH_RESULTS_WAIT_MARKER = 'fmt.Errorf("search_results_wait_failed: %w", err)'
 
 
 def load_windows_build_lock(path: Path = LOCK_PATH) -> Mapping[str, Any]:
@@ -208,7 +209,9 @@ def _apply_patch(workspace: Path) -> None:
         detail = (initialized.stderr or initialized.stdout).strip()[-4000:]
         raise RuntimeError(f"cannot isolate Xiaohongshu patch workspace: {detail}")
     for check_only in (True, False):
-        command = [git, "apply"]
+        # The search hunk is intentionally zero-context so the patch file itself
+        # remains free of context-line trailing whitespace under git diff --check.
+        command = [git, "apply", "--unidiff-zero"]
         if check_only:
             command.append("--check")
         command.append(str(PATCH_PATH))
@@ -229,6 +232,7 @@ def _apply_patch(workspace: Path) -> None:
 def _verify_patched_sources(workspace: Path) -> None:
     headless = workspace / "headless_browser" / "headless_browser.go"
     go_mod = workspace / "xiaohongshu-mcp" / "go.mod"
+    search = workspace / "xiaohongshu-mcp" / "xiaohongshu" / "search.go"
     if (
         not headless.is_file()
         or headless.read_text(encoding="utf-8").count(_LEAKLESS_OVERRIDE) != 1
@@ -236,6 +240,15 @@ def _verify_patched_sources(workspace: Path) -> None:
         raise RuntimeError("Xiaohongshu compatibility patch did not disable Rod leakless")
     if not go_mod.is_file() or go_mod.read_text(encoding="utf-8").count(_HEADLESS_REPLACEMENT) != 1:
         raise RuntimeError("Xiaohongshu compatibility patch did not replace headless_browser")
+    if not search.is_file():
+        raise RuntimeError("Xiaohongshu compatibility patch did not include search source")
+    search_source = search.read_text(encoding="utf-8")
+    if (
+        search_source.count(_SEARCH_RESULTS_WAIT_MARKER) != 1
+        or "page.MustWaitStable()" in search_source
+        or "return Array.isArray(value);" not in search_source
+    ):
+        raise RuntimeError("Xiaohongshu compatibility patch did not narrow the search wait")
 
 
 def _go_environment(cache_dir: Path) -> dict[str, str]:

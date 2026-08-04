@@ -29,11 +29,17 @@ class ExecutedToolCall:
     duration_seconds: float
 
 
+@dataclass(frozen=True)
+class _Completed:
+    result: ToolResult
+    completed_at: float
+
+
 @dataclass
 class _Pending:
     call: dict[str, Any]
     public_args: dict[str, Any]
-    future: Future[ToolResult] | None
+    future: Future[_Completed] | None
     started_at: float
     timeout_seconds: float
     immediate_result: ToolResult | None = None
@@ -91,7 +97,8 @@ class ToolBatchExecutor:
                 if item.immediate_result is None:
                     assert item.invoke is not None
                     item.started_at = time.monotonic()
-                    item.future = self._pool.submit(item.invoke)
+                    invoke = item.invoke
+                    item.future = self._pool.submit(self._invoke_completed, invoke)
                     item.invoke = None
             for item in pending:
                 result = self._finish(item, cancel_check)
@@ -161,21 +168,44 @@ class ToolBatchExecutor:
                 cancel_check()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                pending.future.cancel()
-                result = ToolResult(
-                    text="工具在限定时间内没有返回，未取得可用证据。",
-                    is_error=True,
-                    meta={
-                        "error_kind": "timeout",
-                        "underlying_cancelled": pending.future.cancelled(),
-                    },
-                )
-                return ExecutedToolCall(pending.call, result, time.monotonic() - pending.started_at)
+                if pending.future.done():
+                    completed = pending.future.result()
+                    if completed.completed_at <= deadline:
+                        return ExecutedToolCall(
+                            pending.call,
+                            completed.result,
+                            completed.completed_at - pending.started_at,
+                        )
+                return self._timeout_result(pending)
             try:
-                result = pending.future.result(timeout=min(remaining, 0.05))
-                return ExecutedToolCall(pending.call, result, time.monotonic() - pending.started_at)
+                completed = pending.future.result(timeout=min(remaining, 0.05))
+                if completed.completed_at > deadline:
+                    return self._timeout_result(pending)
+                return ExecutedToolCall(
+                    pending.call,
+                    completed.result,
+                    completed.completed_at - pending.started_at,
+                )
             except TimeoutError:
                 continue
+
+    @staticmethod
+    def _timeout_result(pending: _Pending) -> ExecutedToolCall:
+        assert pending.future is not None
+        pending.future.cancel()
+        result = ToolResult(
+            text="工具在限定时间内没有返回，未取得可用证据。",
+            is_error=True,
+            meta={
+                "error_kind": "timeout",
+                "underlying_cancelled": pending.future.cancelled(),
+            },
+        )
+        return ExecutedToolCall(pending.call, result, pending.timeout_seconds)
+
+    @staticmethod
+    def _invoke_completed(invoke: Callable[[], ToolResult]) -> _Completed:
+        return _Completed(invoke(), time.monotonic())
 
     @staticmethod
     def _batches(

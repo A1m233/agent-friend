@@ -172,8 +172,10 @@ def test_xiaohongshu_windows_patch_isolated_from_ignored_parent_repo(tmp_path) -
     workspace = parent / "ignored" / "workspace"
     headless = workspace / "headless_browser" / "headless_browser.go"
     go_mod = workspace / "xiaohongshu-mcp" / "go.mod"
+    search = workspace / "xiaohongshu-mcp" / "xiaohongshu" / "search.go"
     headless.parent.mkdir(parents=True)
     go_mod.parent.mkdir(parents=True)
+    search.parent.mkdir(parents=True)
     headless.write_text(
         """func New(options ...Option) *Browser {
 	for _, option := range options {
@@ -202,6 +204,16 @@ require (
 """,
         encoding="utf-8",
     )
+    search.write_text(
+        "\n" * 98
+        + """func (s *SearchAction) Search() {
+	page.MustNavigate(searchURL)
+	page.MustWaitStable()
+	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
+}
+""",
+        encoding="utf-8",
+    )
     parent.mkdir(exist_ok=True)
     (parent / ".gitignore").write_text("ignored/\n", encoding="utf-8")
     subprocess.run(["git", "init", "--quiet"], cwd=parent, check=True)
@@ -210,6 +222,10 @@ require (
 
     assert "Leakless(false)" in headless.read_text(encoding="utf-8")
     assert "replace github.com/xpzouying/headless_browser" in go_mod.read_text(encoding="utf-8")
+    patched_search = search.read_text(encoding="utf-8")
+    assert "page.MustWaitStable()" not in patched_search
+    assert "return Array.isArray(value);" in patched_search
+    assert "search_results_wait_failed" in patched_search
 
 
 def test_nsis_upgrade_preserves_and_normalizes_the_fixed_autostart_entry() -> None:
