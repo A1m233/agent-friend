@@ -34,7 +34,9 @@ from .protocol import (
     CompactionRecord,
     ContextManager,
     PriorSummary,
+    PriorToolContextEdit,
     RuntimeContext,
+    ToolContextEditRecord,
     assemble_messages,
 )
 from .summarizing import (
@@ -70,8 +72,10 @@ __all__ = [
     "FifoContextManager",
     "NaiveContextManager",
     "PriorSummary",
+    "PriorToolContextEdit",
     "RuntimeContext",
     "SummarizingContextManager",
+    "ToolContextEditRecord",
     "assemble_messages",
     "default_context_manager",
     "estimate_request_tokens",

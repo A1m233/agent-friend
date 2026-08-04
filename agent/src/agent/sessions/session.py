@@ -364,6 +364,9 @@ class Session:
             内部（用 :meth:`latest_compaction` 派生的 summary）。本属性始终返回
             **原始全量**，memory 抽取不受折叠影响（009 design §6.4）。
 
+            040 起的 ``tool_context_edit`` 同样只作为模型视图 checkpoint，不参与
+            本投影；原始 tool result 始终可供恢复工具、审计和 memory 读取。
+
         Returns:
             按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
@@ -667,6 +670,13 @@ class Session:
         """
         for ev in reversed(self.active_events):
             if ev.type == "compaction":
+                return ev
+        return None
+
+    def latest_tool_context_edit(self) -> Event | None:
+        """最近一次 tool result 模型视图清理点；无则 ``None``。"""
+        for ev in reversed(self.active_events):
+            if ev.type == "tool_context_edit":
                 return ev
         return None
 

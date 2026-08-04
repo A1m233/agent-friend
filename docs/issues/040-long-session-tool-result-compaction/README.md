@@ -1,6 +1,6 @@
 # 040 · 长会话缺少独立的旧工具结果压缩机制
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-03
 - **关联需求**：009-engine-context-management、063-context-compaction-reliability、065-trustworthy-read-tools-and-tool-runtime
@@ -31,3 +31,7 @@
 4. 原始 session event 保持不变；为证据型结果提供按稳定引用从本地事件恢复或重新读取的能力。
 5. 用真实长会话做 baseline/candidate 对比，同时评估 prompt tokens、冷缓存首包延迟、旧结果追问正确性和摘要稳定性，再决定预算、保留窗口和单批最小清理量。
 6. 不采用定时 keepalive 或预热请求替代本地上下文治理；该方案增加费用，也不能保证上游缓存驻留。
+
+---
+
+已在 commit `TBD` 修复。

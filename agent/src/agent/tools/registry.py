@@ -61,6 +61,12 @@ class ToolRegistry:
         """Return identities in the same deterministic order as :meth:`all_tools`."""
         return list(self._tool_ids.values())
 
+    def result_context_retention(self, name: str) -> str:
+        """返回工具结果的上下文保留策略；未知或未声明工具默认 pinned。"""
+        tool = self._tools.get(name)
+        policy = getattr(tool, "result_context_retention", "pinned")
+        return policy if policy in {"recoverable", "pinned"} else "pinned"
+
     def render_capability_catalog(
         self,
         *,

@@ -25,6 +25,7 @@ EventType = Literal[
     "tool_call_request",
     "tool_call_result",
     "compaction",
+    "tool_context_edit",
     "system_trigger",
     "memory_observation",
     "turn_rewrite",
@@ -44,6 +45,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "tool_call_request",
         "tool_call_result",
         "compaction",
+        "tool_context_edit",
         "system_trigger",
         "memory_observation",
         "turn_rewrite",
@@ -68,6 +70,10 @@ SCHEMA_VERSION: Final[int] = 1
 009 起新增 ``compaction`` 事件（上下文摘要折叠点 marker），同样是纯加性——原始
 消息事件一条不删不改，老文件无该事件时自然退化为全量。故 ``SCHEMA_VERSION``
 **不递增**（详见 009 design §6.4）。
+
+040 起新增 ``tool_context_edit`` 事件，记录模型视图中已被短占位替换的 tool
+result uuid；原始 ``tool_call_result`` 仍完整保留，同样是纯加性变更，故
+``SCHEMA_VERSION`` **不递增**。
 
 014 起新增 ``system_trigger`` / ``memory_observation`` 两类事件（main loop 系统
 触发轮 marker / silent turn 产物），同样是纯加性——老文件不出现新 type；通常不

@@ -10,6 +10,7 @@
 - :class:`BudgetSnapshot` —— 本轮预算快照（窗口 / 锚点 / 阈值），M2/M3 共享
 - :class:`PriorSummary` —— 已落盘的最近折叠点（摘要 + 覆盖范围），平时折叠展示用
 - :class:`CompactionRecord` —— 本轮新生成、待 ``Conversation`` 落盘的摘要记录
+- :class:`ToolContextEditRecord` —— 本轮新生成、待落盘的 tool result 清理记录
 - :class:`RuntimeContext` —— 运行时依赖载体（预算 / llm_client / 已有 summary）
 
 详见 docs/requirements/009-engine-context-management/design.md §3、§4、§6。
@@ -106,6 +107,28 @@ class CompactionRecord:
     tool_results_omitted: int = 0
 
 
+@dataclass(frozen=True)
+class PriorToolContextEdit:
+    """已落盘的最近一次 tool result 模型视图清理点。"""
+
+    cleared_result_uuids: tuple[str, ...]
+    policy_version: int = 1
+
+
+@dataclass(frozen=True)
+class ToolContextEditRecord:
+    """待落盘为 ``tool_context_edit`` 事件的低水位清理候选。"""
+
+    cleared_result_uuids: tuple[str, ...]
+    newly_cleared_result_uuids: tuple[str, ...]
+    tokens_before: int
+    tokens_after: int
+    cleared_tokens: int
+    high_water_tokens: int
+    low_water_tokens: int
+    policy_version: int = 1
+
+
 @dataclass
 class RuntimeContext:
     """``build_messages`` 的运行时依赖载体（009 design §4.2）。
@@ -125,7 +148,9 @@ class RuntimeContext:
     budget: BudgetSnapshot
     llm_client: LLMClient
     prior_summary: PriorSummary | None = None
+    prior_tool_context_edit: PriorToolContextEdit | None = None
     request_overhead_tokens: int = 0
+    tool_result_recovery_available: bool = False
     calibration_factor: float = 1.0
     trigger_reason: str = "budget"
 
@@ -141,6 +166,8 @@ class BuildResult:
         dropped_count: 截掉的历史消息条数。:class:`NaiveContextManager` 永远是 0。
         new_compaction: 本轮新生成、待 ``Conversation`` 落盘的摘要记录（009 M3）；
             未触发压缩时为 ``None``。
+        new_tool_context_edit: 本轮新生成、待 ``Conversation`` 落盘的 tool result
+            清理记录；未触发时为 ``None``。
         notes: 扩展用 observability 字段（如 ``token_estimate`` / ``trigger_threshold``
             / ``compacted`` / ``fell_back``）。
     """
@@ -148,6 +175,7 @@ class BuildResult:
     messages: list[Message]
     dropped_count: int = 0
     new_compaction: CompactionRecord | None = None
+    new_tool_context_edit: ToolContextEditRecord | None = None
     notes: dict[str, Any] = field(default_factory=dict)
 
 

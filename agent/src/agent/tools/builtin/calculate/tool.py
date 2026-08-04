@@ -153,6 +153,7 @@ class CalculateTool:
     """Exact decimal calculations without arbitrary code execution."""
 
     name: ClassVar[str] = "calculate"
+    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 5.0
     description: ClassVar[str] = (
