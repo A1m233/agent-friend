@@ -511,8 +511,8 @@ catalog state；它没有跨请求服务端历史，“不重复追加”只在�
 
 未来通用本地文件能力必须自行完成路径授权、敏感目录、符号链接、内容体积、审批和审计；
 Skill service 只提供已选 package 的身份信息，不替公共工具绕过权限判断。对应公共能力由
-[issue 043](../../issues/043-agent-general-filesystem-mutation-tools/) 跟踪，命令与脚本运行时由
-[issue 044](../../issues/044-governed-command-and-skill-script-runtime/) 跟踪。
+[issue 044](../../issues/044-agent-general-filesystem-mutation-tools/) 跟踪，命令与脚本运行时由
+[issue 045](../../issues/045-governed-command-and-skill-script-runtime/) 跟踪。
 
 ### 诊断与日志
 
@@ -615,7 +615,7 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 - **无状态 OpenAI 缓存语义不同**：服务端无法保存客户端请求之间的隐藏 Skill event；文档和测试
   明确它是每 request transient session，避免把持久会话承诺错误外推。
 - **能力声明失真**：`skill-creator` 的上游工作流包含读写和脚本步骤。runtime capability envelope、
-  无私有 tool 回归和 issue 043/044 共同保证模型不能把建议说成已经落盘或执行。
+  无私有 tool 回归和 issue 044/045 共同保证模型不能把建议说成已经落盘或执行。
 
 ## 变更记录
 

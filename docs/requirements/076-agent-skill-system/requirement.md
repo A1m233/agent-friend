@@ -86,8 +86,8 @@ agent-friend 当前通过固定 system prompt、工具说明和代码逻辑提�
 
 - `skill-creator` 作为 builtin Skill 提供 Skill 规划、目录约定、`SKILL.md` 编写、配套资源组织和验证方式等官方工作流指引。
 - `skill-creator` 与其它 Skill 共用 catalog、加载、上下文和资源读取机制，不新增 `SkillAuthoringService`、私有 authoring tool 或只能由 builtin 调用的写入旁路。
-- 当前 Agent 缺少通用本地文件读写能力时，`skill-creator` 可以基于已加载的 `SKILL.md` 完成分析和内容建议，但不能声称已经读取附加文件、创建目录、写入或编辑文件；该公共能力缺口由 [issue 043](../../issues/043-agent-general-filesystem-mutation-tools/) 跟踪。
-- 当前 Agent 缺少通用命令执行能力时，`skill-creator` 不能运行其配套初始化、元数据生成或校验脚本；该公共能力缺口由 [issue 044](../../issues/044-governed-command-and-skill-script-runtime/) 跟踪。
+- 当前 Agent 缺少通用本地文件读写能力时，`skill-creator` 可以基于已加载的 `SKILL.md` 完成分析和内容建议，但不能声称已经读取附加文件、创建目录、写入或编辑文件；该公共能力缺口由 [issue 044](../../issues/044-agent-general-filesystem-mutation-tools/) 跟踪。
+- 当前 Agent 缺少通用命令执行能力时，`skill-creator` 不能运行其配套初始化、元数据生成或校验脚本；该公共能力缺口由 [issue 045](../../issues/045-governed-command-and-skill-script-runtime/) 跟踪。
 
 #### 脚本与运行时能力边界
 
@@ -143,8 +143,8 @@ agent-friend 当前通过固定 system prompt、工具说明和代码逻辑提�
 
 - Agent Skills 目录规范：[agentskills.io/specification](https://agentskills.io/specification)。
 - 首期 builtin `skill-creator` 的官方上游：[openai/codex · skill-creator](https://github.com/openai/codex/tree/main/codex-rs/skills/src/assets/samples/skill-creator)。
-- 通用本地文件读写能力由 [issue 043](../../issues/043-agent-general-filesystem-mutation-tools/) 跟踪。
-- 受治理的命令与 Skill 脚本运行时由 [issue 044](../../issues/044-governed-command-and-skill-script-runtime/) 跟踪。
+- 通用本地文件读写能力由 [issue 044](../../issues/044-agent-general-filesystem-mutation-tools/) 跟踪。
+- 受治理的命令与 Skill 脚本运行时由 [issue 045](../../issues/045-governed-command-and-skill-script-runtime/) 跟踪。
 
 ## 验收条件
 
@@ -169,5 +169,6 @@ agent-friend 当前通过固定 system prompt、工具说明和代码逻辑提�
 | 日期 | 变更内容 | 影响范围 |
 | --- | --- | --- |
 | 2026-08-06 | 首次确认：采用专属与共享双个人根、标准渐进式加载、Codex 对齐的上下文语义、当前会话 catalog 热更新，并将任意脚本执行排除在首期范围外。 | 新需求 |
-| 2026-08-06 | 回溯确认：新增 builtin 来源与官方 `skill-creator`；激活收紧为调用方结构化精确选择，不解析用户 query；文件变更和命令执行作为公共 Agent 能力分别转入 issue 043、044，不提供 Skill 私有旁路。 | builtin、激活、来源冲突、运行时边界与验收条件 |
-| 2026-08-06 | 方案前校正：确认 agent-friend 当前也缺少通用本地文件读取能力；本期只自动加载完整 `SKILL.md`，不为 `references/`、`assets/` 新增 Skill 私有读取旁路，统一由 issue 043 跟踪未来公共文件读写能力。 | 渐进式加载、资源边界、issue 043 与 AC-6/AC-13 |
+| 2026-08-06 | 回溯确认：新增 builtin 来源与官方 `skill-creator`；激活收紧为调用方结构化精确选择，不解析用户 query；文件变更和命令执行作为公共 Agent 能力分别转入 issue 044、045，不提供 Skill 私有旁路。 | builtin、激活、来源冲突、运行时边界与验收条件 |
+| 2026-08-06 | 方案前校正：确认 agent-friend 当前也缺少通用本地文件读取能力；本期只自动加载完整 `SKILL.md`，不为 `references/`、`assets/` 新增 Skill 私有读取旁路，统一由 issue 044 跟踪未来公共文件读写能力。 | 渐进式加载、资源边界、issue 044 与 AC-6/AC-13 |
+| 2026-08-06 | 合入最新主干时发现 issue 043 已被占用，将本需求的两个延期问题顺延为 issue 044、045。 | 仅修正文档编号与引用，不改变需求或实现语义。 |
