@@ -447,8 +447,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 8029
-        assert estimate_tokens([Message(role="system", content=output)]) == 6021
+        assert len(output) == 8160
+        assert estimate_tokens([Message(role="system", content=output)]) == 6120
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -531,6 +531,8 @@ class TestLoadDefaultStaticSection:
         assert "对动作进度与后续结果的承诺必须有执行依据" in section.text
         assert "明确把再次发起的动作交给用户" in section.text
         assert "不得为了让口头承诺成立而擅自创建" in section.text
+        assert "本轮到此结束，不得同时执行该写操作" in section.text
+        assert "直接用确定语气说明并行动" in section.text
         assert "先确认" in section.text
 
     def test_loads_relationship_contract(self) -> None:

@@ -475,7 +475,9 @@ def test_ac23_tool_loop_continuation_truncates(tmp_path: Path) -> None:
             ],
             [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
         ],
-        context_window=8000,
+        # Keep the fixture above the default prompt + tool schema baseline so the
+        # assertion stays about continuation FIFO trimming, not fixed-cost overflow.
+        context_window=9000,
     )
     rec = _RecordingFifo()
     conv, session, store = _make_conversation(
