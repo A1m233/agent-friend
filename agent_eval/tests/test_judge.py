@@ -676,6 +676,163 @@ def test_future_action_commitment_allows_real_continuation_and_scheduled_control
     assert "unsupported future-action commitment" in missing_schedule.reason
 
 
+def test_clarification_action_consistency_calibrates_anchor_and_controls() -> None:
+    contracts = load_contracts(CASES_DIR)
+    contract = next(item for item in contracts if item.id == "C18")
+    anchor = next(item for item in contract.cases if item.id == "C18-01")
+    wait_control = next(item for item in contract.cases if item.id == "C18-02")
+    explicit_control = next(item for item in contract.cases if item.id == "C18-03")
+
+    original_bad = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "create",
+                    "title": "排查完成 todo 指令首次执行失败",
+                },
+                result_text=(
+                    '{"operation":"create","status":"success","todo":'
+                    '{"id":"fixture-investigation-todo","reminders":[]}}'
+                ),
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "add_reminder",
+                    "todo_id": "fixture-investigation-todo",
+                    "reminder": {
+                        "kind": "once",
+                        "local_datetime": "2026-08-05T22:30:00",
+                        "timezone": "Asia/Shanghai",
+                    },
+                },
+                result_text=(
+                    '{"operation":"add_reminder","status":"success","reminder":'
+                    '{"id":"fixture-investigation-reminder"}}'
+                ),
+                is_error=False,
+            ),
+        ],
+        final_text=(
+            "好，顺手加一条 todo。按老时间今晚 22:30？"
+            "要加今晚 22:30 的提醒吗？还是先不加？"
+            "搞定，今晚 22:30 提醒排查。"
+        ),
+        stop_reason="end_turn",
+        assistant_segments=[
+            "好，顺手加一条 todo。按老时间今晚 22:30？",
+            "要加今晚 22:30 的提醒吗？还是先不加？",
+            "搞定，今晚 22:30 提醒排查。",
+        ],
+    )
+    original_verdict = judge_case(anchor, contract, original_bad)
+    assert original_verdict.passed is False
+    assert "follow-up question while scheduling" in original_verdict.reason
+
+    grounded = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "create",
+                    "title": "排查完成 todo 指令首次执行失败",
+                    "reminders": [
+                        {
+                            "kind": "once",
+                            "local_datetime": "2026-08-05T22:30:00",
+                            "timezone": "Asia/Shanghai",
+                        }
+                    ],
+                },
+                result_text=anchor.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="好，按之前的安排，今晚 22:30 加上。",
+        stop_reason="end_turn",
+        assistant_segments=["好，按之前的安排，今晚 22:30 加上。"],
+    )
+    assert judge_case(anchor, contract, grounded).passed is True
+
+    clarifies_without_scheduling = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "create",
+                    "title": "排查完成 todo 指令首次执行失败",
+                },
+                # The fixed fixture result alone must not turn an omitted reminder
+                # argument into a successfully scheduled action.
+                result_text=anchor.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="排查 Todo 已经建好。之前的 22:30 也要用于这条吗？",
+        stop_reason="end_turn",
+        assistant_segments=["排查 Todo 已经建好。之前的 22:30 也要用于这条吗？"],
+    )
+    assert judge_case(anchor, contract, clarifies_without_scheduling).passed is True
+
+    waits_for_user = _trace(final_text="你想设在几点？", assistant_segments=["你想设在几点？"])
+    assert judge_case(wait_control, contract, waits_for_user).passed is True
+
+    premature_write = Trace(
+        case_id=wait_control.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "add_reminder",
+                    "todo_id": "fixture-existing-todo",
+                    "reminder": {
+                        "kind": "once",
+                        "local_datetime": "2026-08-05T22:30:00",
+                        "timezone": "Asia/Shanghai",
+                    },
+                },
+                result_text=wait_control.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="要设在今晚 22:30 吗？",
+        stop_reason="end_turn",
+        assistant_segments=["要设在今晚 22:30 吗？"],
+    )
+    premature_verdict = judge_case(wait_control, contract, premature_write)
+    assert premature_verdict.passed is False
+    assert "forbidden tool calls" in premature_verdict.reason
+
+    explicit_write = Trace(
+        case_id=explicit_control.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="todo_manage",
+                args={
+                    "operation": "add_reminder",
+                    "todo_id": "fixture-existing-todo",
+                    "reminder": {
+                        "kind": "once",
+                        "local_datetime": "2026-08-05T22:30:00",
+                        "timezone": "Asia/Shanghai",
+                    },
+                },
+                result_text=explicit_control.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="好，今晚 22:30 提醒你。",
+        stop_reason="end_turn",
+        assistant_segments=["好，今晚 22:30 提醒你。"],
+    )
+    assert judge_case(explicit_control, contract, explicit_write).passed is True
+
+
 def test_collection_characterization_accepts_locally_calibrated_probability() -> None:
     contract = _contract(expected_behavior="response", expected_tool=None)
     case = _case(CaseJudge(forbid_unsupported_collection_characterization=True))

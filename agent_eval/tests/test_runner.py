@@ -74,6 +74,12 @@ def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:
     assert reminder["properties"]["kind"]["enum"] == ["once", "recurring"]
     assert reminder["properties"]["relative_delay"]["required"] == ["amount", "unit"]
     assert "不能只在对话里口头答应" in todo.description
+    assert "本轮不得创建或修改 Reminder" in todo.description
+    assert (
+        "reminders 就是本次调用的必填参数"
+        in todo.parameters_schema["properties"]["operation"]["description"]
+    )
+    assert "不得省略" in todo.parameters_schema["properties"]["reminders"]["description"]
 
 
 def test_assistant_text_trace_preserves_tool_continuation_segments() -> None:

@@ -410,6 +410,18 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             "response should not ask a follow-up question",
         )
 
+    if (
+        spec.forbid_question_with_scheduled_action
+        and any(mark in trace.final_text for mark in ("?", "？"))
+        and _has_successful_scheduled_action(trace.tool_calls)
+    ):
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "response should not ask a follow-up question while scheduling the action",
+        )
+
     text_lc = trace.final_text.lower()
 
     if spec.forbid_tool_mechanism_terms:

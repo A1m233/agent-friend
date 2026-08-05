@@ -327,6 +327,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_question"),
             label=f"{label}.forbid_question",
         ),
+        forbid_question_with_scheduled_action=_bool(
+            data.get("forbid_question_with_scheduled_action"),
+            label=f"{label}.forbid_question_with_scheduled_action",
+        ),
         must_mention_any=_str_list(data.get("must_mention_any"), label=f"{label}.must_mention_any"),
         must_mention_all=_str_list(data.get("must_mention_all"), label=f"{label}.must_mention_all"),
         must_not_mention_any=_str_list(
