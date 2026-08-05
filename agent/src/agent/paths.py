@@ -76,6 +76,11 @@ def attachments_dir() -> Path:
     return user_data_dir() / "attachments"
 
 
+def skills_dir() -> Path:
+    """agent-friend personal skills: ``<user_data_dir>/skills``."""
+    return user_data_dir() / "skills"
+
+
 def editable_persona_path() -> Path:
     """唯一可编辑人格正文：``<personas_dir>/default/persona.md``。"""
     return personas_dir() / "default" / "persona.md"
@@ -116,6 +121,7 @@ __all__ = [
     "persona_internal_dir",
     "personas_dir",
     "sessions_dir",
+    "skills_dir",
     "todos_db_path",
     "user_data_dir",
 ]

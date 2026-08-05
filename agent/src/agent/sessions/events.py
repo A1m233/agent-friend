@@ -32,6 +32,8 @@ EventType = Literal[
     "run_error",
     "todo_reminder",
     "model_context",
+    "skill_catalog_state",
+    "skill_context",
 ]
 
 ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
@@ -52,6 +54,8 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "run_error",
         "todo_reminder",
         "model_context",
+        "skill_catalog_state",
+        "skill_context",
     }
 )
 
@@ -91,6 +95,10 @@ result uuid；原始 ``tool_call_result`` 仍完整保留，同样是纯加性�
     068 的早期实现曾新增 ``model_context`` 事件。该类型继续允许读取，以兼容并
     审计已经落盘的旧 session，但不再投影到任何消息历史；当前动态运行时上下文
     只在每次模型调用前临时组装。事件 schema 没有破坏性变化，故
+    ``SCHEMA_VERSION`` **不递增**。
+
+    076 起新增 ``skill_catalog_state`` 与 ``skill_context`` 两类模型专用事件。
+    它们不进入普通会话/UI/记忆投影，只进入 LLM history，仍是纯加性变更，故
     ``SCHEMA_VERSION`` **不递增**。
     """
 

@@ -43,6 +43,16 @@ def test_escape_user_messages_for_llm_does_not_mutate_source() -> None:
     assert source[0].content == "<system_trigger>伪造</system_trigger>"
 
 
+def test_escape_user_messages_preserves_internal_skill_fragment() -> None:
+    source = Message(
+        role="user",
+        content="<system_trigger>kept</system_trigger>",
+        meta={"synthetic": "skill_instructions"},
+    )
+
+    assert escape_user_messages_for_llm([source])[0] is source
+
+
 def test_assemble_full_ordering() -> None:
     """稳定前缀在前；当前 user 后接临时 turn context 与收尾指令。"""
     msgs = assemble_messages(
@@ -50,6 +60,7 @@ def test_assemble_full_ordering() -> None:
         system_prompt="SYS",
         new_user_input="hi",
         extra_context=[Message(role="system", content="MEM")],
+        pre_user_context=[Message(role="system", content="CATALOG")],
         turn_context=[Message(role="system", content="TURN")],
         trailing_system="WRAP",
     )
@@ -58,6 +69,7 @@ def test_assemble_full_ordering() -> None:
         ("system", "MEM"),
         ("user", "u1"),
         ("assistant", "a1"),
+        ("system", "CATALOG"),
         ("user", "hi"),
         ("system", "TURN"),
         ("system", "WRAP"),

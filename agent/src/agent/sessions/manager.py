@@ -38,6 +38,7 @@ if TYPE_CHECKING:
         ToolHookInvoker,
     )
     from ..prompts import PromptBuilder
+    from ..skills import SkillCatalogService
     from ..tool_runtime import ToolRunContext, ToolRunPolicy
     from ..tools import ToolRegistry
 
@@ -91,6 +92,7 @@ class SessionManager:
         metadata_store: SessionMetadataStore | None = None,
         session_change_broker: SessionChangeBroker | None = None,
         message_renderer: MessageRenderer | None = None,
+        skill_service: SkillCatalogService | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -102,6 +104,7 @@ class SessionManager:
         self._metadata_store = metadata_store
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
+        self._skill_service = skill_service
 
     # ----- 会话 CRUD -----
 
@@ -398,4 +401,5 @@ class SessionManager:
             tool_run_context_factory=tool_run_context_factory,
             post_turn_external=post_turn_external,
             message_renderer=self._message_renderer,
+            skill_service=self._skill_service,
         )

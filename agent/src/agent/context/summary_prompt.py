@@ -60,6 +60,8 @@ SUMMARY_SYSTEM_PROMPT = """\
 - "用户原话关键片段"必须逐字，其余段落可凝练但不得篡改事实或捏造。
 - 遇到带明确生命周期的结构化状态时，以最新状态为准：已 delivered / exhausted 的
   Reminder 是已履约历史，不得重新列为未来承诺或未决事项；旧承诺只作历史背景。
+- 标记为“该用户轮选择的历史 Skill 指令”的内容只属于当时那一轮，不得概括成当前
+  常驻规则；只保留它对已完成任务仍然成立的结果或约束。Skill catalog 不进入摘要。
 - 用中文。"""
 
 _SUMMARY_CONTEXT_PREFIX = "[此前对话的压缩摘要——你应当像记得这些一样自然地继续对话]\n"
@@ -74,13 +76,17 @@ def render_transcript(messages: list[Message]) -> str:
     """
     lines: list[str] = []
     for m in messages:
-        if m.meta.get("synthetic") == "model_context":
+        synthetic = m.meta.get("synthetic")
+        if synthetic in {"model_context", "skill_catalog_state"}:
             continue
         attachment_markers = " ".join(
             f"[附件: {item.display_name} | {item.media_type}]" for item in m.attachments
         )
         if m.role == "user":
-            lines.append(f"用户: {m.content} {attachment_markers}".rstrip())
+            label = (
+                "[该用户轮选择的历史 Skill 指令]" if synthetic == "skill_instructions" else "用户"
+            )
+            lines.append(f"{label}: {m.content} {attachment_markers}".rstrip())
         elif m.role == "assistant":
             if m.content:
                 lines.append(f"AI: {m.content}")

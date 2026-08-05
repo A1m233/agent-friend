@@ -47,6 +47,7 @@ dependencies = [
     { name = "tavily-python" },
     { name = "trafilatura" },
     { name = "tzdata" },
+    { name = "watchfiles" },
 ]
 
 [package.metadata]
@@ -65,6 +66,7 @@ requires-dist = [
     { name = "tavily-python", specifier = ">=0.7.24" },
     { name = "trafilatura", specifier = "==2.1.0" },
     { name = "tzdata", specifier = ">=2025.2" },
+    { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 
 [[package]]

@@ -47,6 +47,7 @@ from .paths import (
     memory_db_path,
     personas_dir,
     sessions_dir,
+    skills_dir,
     todos_db_path,
     user_data_dir,
 )
@@ -91,6 +92,7 @@ from .sessions import (
     SessionSummary,
     session_mutation_context,
 )
+from .skills import SkillCatalogService, SkillSelection
 from .system_prompt import (
     ChannelSection,
     PersonaSection,
@@ -196,6 +198,8 @@ __all__ = [
     "SessionSearchService",
     "SessionStore",
     "SessionSummary",
+    "SkillCatalogService",
+    "SkillSelection",
     "StaticSection",
     "SummarizingContextManager",
     "SystemPromptComposer",
@@ -230,6 +234,7 @@ __all__ = [
     "random_fallback",
     "session_mutation_context",
     "sessions_dir",
+    "skills_dir",
     "todos_db_path",
     "user_data_dir",
 ]

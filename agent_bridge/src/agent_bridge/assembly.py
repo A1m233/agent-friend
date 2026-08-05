@@ -46,6 +46,7 @@ from agent import (
     SessionRevisionStore,
     SessionSearchService,
     SessionStore,
+    SkillCatalogService,
     default_context_manager,
     make_default_registry,
     make_default_social_platform_service,
@@ -136,6 +137,7 @@ class BridgeRuntime:
     llm_client_factory: Callable[[str], LLMClient] | None = None
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
+    skill_service: SkillCatalogService | None = None
     turn_coordinator: SessionTurnCoordinator = field(default_factory=SessionTurnCoordinator)
     """Per-session turn coordinator for persistent mutating channels."""
     agent_runtime: AgentRuntime | None = None
@@ -195,10 +197,13 @@ class BridgeRuntime:
             prompt_builder_factory=self.prompt_builder_factory,
             context_manager_factory=default_context_manager,
             tool_registry=self.tool_registry,
+            skill_service=self.skill_service,
         )
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.skill_service is not None:
+            self.skill_service.stop()
         if self.social_auth_orchestrator is not None:
             self.social_auth_orchestrator.close()
         if self.social_platform_service is not None:
@@ -216,6 +221,7 @@ def _make_persistent_session_manager(
     metadata_store: SessionMetadataStore | None = None,
     session_change_broker: SessionChangeBroker | None = None,
     multimodal_adapter: MultimodalInputAdapter | None = None,
+    skill_service: SkillCatalogService | None = None,
 ) -> SessionManager:
     return SessionManager(
         store=store,
@@ -227,6 +233,7 @@ def _make_persistent_session_manager(
         metadata_store=metadata_store,
         session_change_broker=session_change_broker,
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
+        skill_service=skill_service,
     )
 
 
@@ -298,6 +305,10 @@ def build_runtime(
         )
     default_persona = catalog.find_by_name("default").name
     default_model = runtime_config.default_model
+    skill_service = SkillCatalogService(
+        personal_root=settings.sessions_dir.parent / "skills",
+    )
+    skill_service.initialize()
 
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
@@ -355,6 +366,7 @@ def build_runtime(
         session_metadata_store,
         session_change_broker,
         multimodal_adapter,
+        skill_service,
     )
 
     turn_coordinator = SessionTurnCoordinator()
@@ -417,6 +429,7 @@ def build_runtime(
             attachment_store=attachment_store,
             memory=memory,
             recall_buffer=recall_buffer,
+            skill_service=skill_service,
             turn_coordinator=turn_coordinator,
             agent_runtime=agent_runtime,
             session_model_service=session_model_service,
@@ -518,6 +531,7 @@ def build_runtime(
         attachment_store=attachment_store,
         memory=memory,
         recall_buffer=recall_buffer,
+        skill_service=skill_service,
         turn_coordinator=turn_coordinator,
         agent_runtime=agent_runtime,
         session_model_service=session_model_service,

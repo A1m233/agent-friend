@@ -46,7 +46,7 @@ from .summary_prompt import (
     strip_analysis,
 )
 from .tool_projection import ToolProjectionStats, project_tool_results
-from .turns import recent_turn_start_candidates
+from .turns import preserve_latest_skill_catalog, recent_turn_start_candidates
 
 MAX_CONSECUTIVE_FAILURES = 3
 """摘要连续失败多少次后跳闸退化到 FIFO（design §6.1 / Q-6）。"""
@@ -69,6 +69,7 @@ class _AssembleParts:
     new_user_input: str | None
     new_user_attachments: list[AttachmentRef] | None
     extra_context: list[Message] | None
+    pre_user_context: list[Message] | None
     turn_context: list[Message] | None
     trailing_user: str | None
     trailing_system: str | None
@@ -80,6 +81,7 @@ class _AssembleParts:
             new_user_input=self.new_user_input,
             new_user_attachments=self.new_user_attachments,
             extra_context=self.extra_context,
+            pre_user_context=self.pre_user_context,
             turn_context=self.turn_context,
             trailing_user=self.trailing_user,
             trailing_system=self.trailing_system,
@@ -115,6 +117,7 @@ class SummarizingContextManager:
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        pre_user_context: list[Message] | None = None,
         turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -125,6 +128,7 @@ class SummarizingContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            pre_user_context=pre_user_context,
             turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -250,7 +254,8 @@ class SummarizingContextManager:
         # 摘要成功
         self._consecutive_failures = 0
         summary_msg = Message(role="system", content=render_summary_as_context(summary))
-        msgs = parts.assemble([summary_msg, *tail])
+        retained_tail = preserve_latest_skill_catalog(history, tail)
+        msgs = parts.assemble([summary_msg, *retained_tail])
         tokens_after = estimate_request_tokens(msgs, runtime)
         if tokens_after > threshold:
             return self._fallback_result(
@@ -330,6 +335,7 @@ class SummarizingContextManager:
             new_user_input=parts.new_user_input,
             new_user_attachments=parts.new_user_attachments,
             extra_context=parts.extra_context,
+            pre_user_context=parts.pre_user_context,
             turn_context=parts.turn_context,
             trailing_user=parts.trailing_user,
             trailing_system=parts.trailing_system,
@@ -354,7 +360,10 @@ class SummarizingContextManager:
         if idx is None:
             return list(history)
         summary_msg = Message(role="system", content=render_summary_as_context(prior.summary))
-        return [summary_msg, *history[idx + 1 :]]
+        return [
+            summary_msg,
+            *preserve_latest_skill_catalog(history, history[idx + 1 :]),
+        ]
 
     def _bounded_summary_source(
         self,

@@ -27,6 +27,7 @@ from ag_ui.core import (
     TextInputContent,
     UserMessage,
 )
+from agent.skills import SkillSelection, decode_skill_selections
 
 from llm_providers import all_model_ids, model_belongs_to_provider, normalize_provider_id
 
@@ -53,6 +54,7 @@ class DecodedRequest:
     user_message_id: str
     draft_attachments: tuple[DecodedDraftAttachment, ...] = ()
     requested_model: str | None = None
+    skills: tuple[SkillSelection, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,13 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         raise DecodeError("messages 最后一条 user content 不能为空")
     if len({item.draft_id for item in drafts}) != len(drafts):
         raise DecodeError("同一个附件草稿不能重复发送")
+    forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
+    try:
+        skills = decode_skill_selections(
+            forwarded_props.get("skills") if isinstance(forwarded_props, dict) else None
+        )
+    except ValueError as exc:
+        raise DecodeError(f"forwarded_props.{exc}") from exc
     return DecodedRequest(
         thread_id=payload.thread_id,
         run_id=payload.run_id,
@@ -159,4 +168,5 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         user_message_id=last.id,
         draft_attachments=tuple(drafts),
         requested_model=resolve_requested_model(payload),
+        skills=skills,
     )

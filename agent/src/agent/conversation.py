@@ -83,6 +83,13 @@ from .personas import PersonaCatalog
 from .prompt_cache_trace import PromptCacheTraceTracker, PromptRequestTrace
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
+from .skills import (
+    SkillCatalogService,
+    SkillSelection,
+    SkillTurnSnapshot,
+    render_activated_skill,
+    render_activation_issue,
+)
 from .system_prompt.sections import PromptChannel
 from .system_prompt.surfaces import (
     DEFAULT_INTERACTION_CONTEXT_RENDERER,
@@ -275,6 +282,7 @@ class Conversation:
         post_turn_external: bool = False,
         message_renderer: MessageRenderer | None = None,
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
+        skill_service: SkillCatalogService | None = None,
     ):
         self._session = session
         self._store = store
@@ -294,6 +302,9 @@ class Conversation:
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
         self._tool_run_context_factory = tool_run_context_factory or ToolRunContext.create
+        self._skill_service = skill_service
+        self._active_skill_turn_snapshot: SkillTurnSnapshot | None = None
+        self._active_skill_selections: tuple[SkillSelection, ...] = ()
         self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
         self._tool_batch_executor = ToolBatchExecutor(self._tool_run_policy.max_parallel_read_tools)
         self._active_tool_run_state: ToolRunState | None = None
@@ -482,6 +493,7 @@ class Conversation:
         interaction_destination_id: str | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
+        skill_selections: tuple[SkillSelection, ...] = (),
         turn_context: str | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
@@ -539,6 +551,8 @@ class Conversation:
         previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
+        previous_skill_turn_snapshot = self._active_skill_turn_snapshot
+        previous_skill_selections = self._active_skill_selections
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._interaction_destination_id_override = interaction_destination_id
@@ -567,6 +581,10 @@ class Conversation:
                 or existing_attachments != requested_attachments
             ):
                 raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
+            if self._persisted_skill_selections(existing_user_event) != self._normalize_selections(
+                skill_selections
+            ):
+                raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。")
         user_event_appended = existing_user_event is not None
         completed_replay_text: str | None = None
         if existing_user_event is not None:
@@ -579,6 +597,15 @@ class Conversation:
                     completed_parts.append(str(event.payload.get("content", "")))
             if completed_parts:
                 completed_replay_text = "".join(completed_parts)
+        self._active_skill_selections = self._normalize_selections(skill_selections)
+        self._active_skill_turn_snapshot = (
+            self._skill_service.begin_turn(
+                self._active_skill_selections,
+                model_window=self._active_llm_client().context_window,
+            )
+            if existing_user_event is None and self._skill_service is not None
+            else None
+        )
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = self._make_tool_run_context(user_input)
         previous_tool_run_context = self._active_tool_run_context
@@ -600,11 +627,13 @@ class Conversation:
             )
             # Persist only after local context assembly has accepted the request.
             if not user_event_appended:
-                self._append_user_event(
+                self._append_skill_catalog_state_event()
+                appended_user_id = self._append_user_event(
                     user_input,
                     attachments=turn_attachments,
                     event_id=user_event_id,
                 )
+                self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
             return messages
 
@@ -652,6 +681,8 @@ class Conversation:
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_skill_turn_snapshot = previous_skill_turn_snapshot
+            self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
             self._active_tool_run_context = previous_tool_run_context
 
@@ -664,6 +695,7 @@ class Conversation:
         surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
+        skill_selections: tuple[SkillSelection, ...] = (),
     ) -> Iterator[ConversationEvent]:
         """编辑并重发最后一条 active user 消息。
 
@@ -679,6 +711,8 @@ class Conversation:
         previous_turn_context = self._turn_context_override
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
+        previous_skill_turn_snapshot = self._active_skill_turn_snapshot
+        previous_skill_selections = self._active_skill_selections
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
@@ -689,6 +723,15 @@ class Conversation:
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
+        self._active_skill_selections = self._normalize_selections(skill_selections)
+        self._active_skill_turn_snapshot = (
+            self._skill_service.begin_turn(
+                self._active_skill_selections,
+                model_window=self._active_llm_client().context_window,
+            )
+            if self._skill_service is not None
+            else None
+        )
 
         self._invalidate_rewrite_memory(plan.inactive_event_uuids)
 
@@ -719,10 +762,12 @@ class Conversation:
                 self._append_turn_rewrite_event(plan, replacement_text=user_input)
                 rewrite_event_appended = True
             if not user_event_appended:
-                self._append_user_event(
+                self._append_skill_catalog_state_event()
+                appended_user_id = self._append_user_event(
                     user_input,
                     attachments=plan.target_user_attachments,
                 )
+                self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
             return messages
 
@@ -767,6 +812,8 @@ class Conversation:
             self._turn_context_override = previous_turn_context
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
+            self._active_skill_turn_snapshot = previous_skill_turn_snapshot
+            self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
             self._active_tool_run_context = previous_tool_run_context
 
@@ -1296,6 +1343,137 @@ class Conversation:
             meta["run_id"] = self._run_id_override
         return meta
 
+    @staticmethod
+    def _normalize_selections(
+        selections: tuple[SkillSelection, ...],
+    ) -> tuple[SkillSelection, ...]:
+        seen: set[str] = set()
+        normalized: list[SkillSelection] = []
+        for selection in selections:
+            if selection.id in seen:
+                continue
+            seen.add(selection.id)
+            normalized.append(selection)
+        return tuple(normalized)
+
+    def _persisted_skill_selections(self, user_event: Event) -> tuple[SkillSelection, ...]:
+        start = self._session.events.index(user_event) + 1
+        selections: list[SkillSelection] = []
+        for event in self._session.events[start:]:
+            if event.type != "skill_context":
+                break
+            raw_id = event.payload.get("selection_id")
+            raw_version = event.payload.get("expected_version")
+            if isinstance(raw_id, str):
+                selections.append(
+                    SkillSelection(
+                        id=raw_id,
+                        expected_version=raw_version if isinstance(raw_version, str) else None,
+                    )
+                )
+        return tuple(selections)
+
+    def _skill_catalog_message(self) -> Message | None:
+        snapshot = self._active_skill_turn_snapshot
+        if snapshot is None:
+            return None
+        latest = self._session.latest_skill_catalog_state
+        if (
+            latest is not None
+            and latest.payload.get("render_fingerprint") == snapshot.rendered_catalog.fingerprint
+        ):
+            return None
+        return Message(
+            role="system",
+            content=snapshot.rendered_catalog.content,
+            meta={"synthetic": "skill_catalog_state"},
+        )
+
+    def _skill_context_payloads(self) -> list[dict[str, Any]]:
+        snapshot = self._active_skill_turn_snapshot
+        if snapshot is None:
+            return []
+        activations = {item.record.id: item for item in snapshot.activations}
+        issues = {item.skill_id: item for item in snapshot.activation_issues}
+        payloads: list[dict[str, Any]] = []
+        for order, selection in enumerate(self._active_skill_selections):
+            activation = activations.get(selection.id)
+            if activation is not None:
+                payloads.append(
+                    {
+                        "status": "activated",
+                        "selection_id": selection.id,
+                        "expected_version": selection.expected_version,
+                        "order": order,
+                        "skill_id": activation.record.id,
+                        "name": activation.record.name,
+                        "source": activation.record.source,
+                        "path": str(activation.record.entry_path),
+                        "version": activation.version,
+                        "contents": activation.contents,
+                        "rendered": render_activated_skill(activation),
+                    }
+                )
+                continue
+            issue = issues.get(selection.id)
+            if issue is not None:
+                payloads.append(
+                    {
+                        "status": "error",
+                        "selection_id": selection.id,
+                        "expected_version": selection.expected_version,
+                        "order": order,
+                        "skill_id": issue.skill_id,
+                        "error_code": issue.code,
+                        "error_message": issue.message,
+                        "rendered": render_activation_issue(issue),
+                    }
+                )
+        return payloads
+
+    def _skill_context_messages(self) -> list[Message]:
+        return [
+            Message(
+                role="user",
+                content=str(payload["rendered"]),
+                meta={"synthetic": "skill_instructions"},
+            )
+            for payload in self._skill_context_payloads()
+        ]
+
+    def _append_skill_catalog_state_event(self) -> None:
+        snapshot = self._active_skill_turn_snapshot
+        message = self._skill_catalog_message()
+        if snapshot is None or message is None:
+            return
+        event = Event(
+            type="skill_catalog_state",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "generation": snapshot.catalog.generation,
+                "render_fingerprint": snapshot.rendered_catalog.fingerprint,
+                "catalog_fingerprint": snapshot.catalog.fingerprint,
+                "budget_profile": snapshot.rendered_catalog.budget_profile,
+                "content": snapshot.rendered_catalog.content,
+            },
+            meta={"model": self._session.current_model},
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_skill_context_events(self, user_event_id: str) -> None:
+        for payload in self._skill_context_payloads():
+            event = Event(
+                type="skill_context",
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={**payload, "user_event_id": user_event_id},
+                meta=self._run_event_meta({"model": self._session.current_model}),
+            )
+            self._store.append_event(self._session.session_id, event)
+            self._session.append(event)
+
     def _latest_active_user_rewrite_plan(
         self,
         *,
@@ -1408,7 +1586,7 @@ class Conversation:
         *,
         attachments: list[AttachmentRef] | None = None,
         event_id: str | None = None,
-    ) -> None:
+    ) -> str:
         payload: dict[str, Any] = {"content": content}
         if attachments:
             payload["attachments"] = [item.to_dict() for item in attachments]
@@ -1421,6 +1599,7 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        return event.uuid
 
     def _ephemeral_model_context_message(self) -> Message | None:
         """Build one fresh, non-persistent context packet for the next inference."""
@@ -1525,9 +1704,11 @@ class Conversation:
         若注入了 memory，先 ``retrieve`` 召回相关记忆，渲染成单条临时 system
         消息走 ``turn_context`` 尾部注入。空召回不注入任何记忆段；召回结果不落盘。
         """
-        turn_context: list[Message] = list(extra_context) if extra_context else []
+        turn_context = self._skill_context_messages()
         if self._turn_context_override:
-            turn_context.insert(0, Message(role="system", content=self._turn_context_override))
+            turn_context.append(Message(role="system", content=self._turn_context_override))
+        if extra_context:
+            turn_context.extend(extra_context)
         if self._memory is not None:
             memory_start_ms = monotonic_ms()
             log_voice_latency(
@@ -1578,6 +1759,9 @@ class Conversation:
                 user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
             ),
             new_user_attachments=attachments,
+            pre_user_context=(
+                [catalog_message] if (catalog_message := self._skill_catalog_message()) else None
+            ),
             turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
@@ -1599,6 +1783,7 @@ class Conversation:
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        pre_user_context: list[Message] | None = None,
         turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -1666,6 +1851,7 @@ class Conversation:
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            pre_user_context=pre_user_context,
             turn_context=active_turn_context or None,
             trailing_user=trailing_user,
             trailing_system=trailing_system,

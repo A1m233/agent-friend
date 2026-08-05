@@ -23,7 +23,7 @@ from .budget import estimate_request_tokens
 from .errors import ContextBaseOverBudgetError, ContextInputTooLargeError
 from .protocol import BuildResult, RuntimeContext, assemble_messages
 from .tool_projection import project_tool_results
-from .turns import recent_turn_start_candidates
+from .turns import preserve_latest_skill_catalog, recent_turn_start_candidates
 
 RECENT_PROTECT_TURNS = 2
 """旧调用方兼容常量；063 起保留轮数完全由 token 预算决定。"""
@@ -39,6 +39,7 @@ class FifoContextManager:
         new_user_input: str | None = None,
         new_user_attachments: list[AttachmentRef] | None = None,
         extra_context: list[Message] | None = None,
+        pre_user_context: list[Message] | None = None,
         turn_context: list[Message] | None = None,
         trailing_user: str | None = None,
         trailing_system: str | None = None,
@@ -50,6 +51,7 @@ class FifoContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            pre_user_context=pre_user_context,
             turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -71,6 +73,7 @@ class FifoContextManager:
             new_user_input=new_user_input,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
+            pre_user_context=pre_user_context,
             turn_context=turn_context,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -102,13 +105,14 @@ class FifoContextManager:
         if not has_ephemeral_current and candidates and candidates[-1] == len(projected_history):
             candidates = candidates[:-1]
         for start in candidates:
-            truncated = projected_history[start:]
+            truncated = preserve_latest_skill_catalog(projected_history, projected_history[start:])
             messages = assemble_messages(
                 history=truncated,
                 system_prompt=system_prompt,
                 new_user_input=new_user_input,
                 new_user_attachments=new_user_attachments,
                 extra_context=extra_context,
+                pre_user_context=pre_user_context,
                 turn_context=turn_context,
                 trailing_user=trailing_user,
                 trailing_system=trailing_system,
@@ -128,9 +132,10 @@ class FifoContextManager:
         chosen_estimate = estimate_request_tokens(chosen_messages, runtime)
         if chosen_estimate > threshold:
             fixed_messages = assemble_messages(
-                history=[],
+                history=preserve_latest_skill_catalog(projected_history, []),
                 system_prompt=system_prompt,
                 extra_context=extra_context,
+                pre_user_context=pre_user_context,
                 turn_context=turn_context,
                 trailing_system=trailing_system,
             )
