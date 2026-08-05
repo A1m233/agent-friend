@@ -646,7 +646,7 @@ def test_tool_context_edit_is_committed_and_reused_after_restart(tmp_path: Path)
     assert _count_tool_context_edits(session) == 1
     checkpoint = session.latest_tool_context_edit()
     assert checkpoint is not None
-    assert checkpoint.payload["newly_cleared_result_uuids"] == result_refs[:5]
+    assert checkpoint.payload["newly_cleared_result_uuids"] == result_refs[:6]
     assert any(
         f"result_ref={result_refs[0]}" in str(message.get("content", ""))
         for message in llm.received[-1]
