@@ -33,7 +33,7 @@ from portalocker.exceptions import LockException
 
 from ...presence import IMPresenceSnapshot
 from .adapters.qq import QQAdapter
-from .content import OutboundContent
+from .content import OutboundContent, OutboundTextFormat
 from .coordinator import IMBindingCoordinator
 from .credentials import CredentialStore, ImCredential
 from .dedupe import RecentMessageDeduper
@@ -233,6 +233,7 @@ class IMRuntime:
         destination_id: str,
         text: str,
         *,
+        text_format: OutboundTextFormat = "plain_text",
         timeout: float = 20.0,
     ) -> OutboundSendResult:
         parts = destination_id.split("|", 4)
@@ -257,6 +258,7 @@ class IMRuntime:
                     chat_scope=chat_scope,
                     text=text,
                     reply_to_message_id=None,
+                    text_format=text_format,
                 )
             ),
             loop,
