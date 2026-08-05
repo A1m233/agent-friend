@@ -42,3 +42,4 @@ COMPLETED
 | 2026-08-06 | 补齐热修改、轮内 snapshot、stale version、资源与脚本边界及 wheel 资源验证。 | Skill/上下文定向回归 133 通过、1 条 Windows 符号链接权限条件跳过；wheel 内确认 10 个 builtin resource entries。 |
 | 2026-08-06 | 完成项目完整门禁，等待用户验收。 | 后端全量按 testpaths 有界分片：1534 通过、3 条平台/环境条件跳过；最终 Agent 重跑 730 通过、1 跳过，Skill Bridge 定向 16 通过；Ruff、mypy 471 files、前端 495 tests + production build、Rust 156 tests（1 ignored）+ release check 全通过。完整 backend/rust 首次串行调用都因 120 秒工具窗口在冷运行时超时，随后按仓库支持的有界分片或增量同命令取得正式通过结论。 |
 | 2026-08-06 | 用户确认验收并授权一路推进到合入主干、推送远端及构建可信本地测试包；需求交付状态改为 `COMPLETED`。 | 全部任务、AC 与项目门禁证据齐备。 |
+| 2026-08-06 | 同步最新主干后补齐冻结运行时打包契约。 | `watchfiles` 纳入直接依赖审查；frozen doctor 在隔离目录验证 builtin `skill-creator` package data、真实 watcher 热更新与按版本激活，不访问用户数据、网络或 LLM。package 定向 38 项通过；合入前完整门禁复验：后端 1551 通过、3 跳过，前端 495 项与 production build 通过，Rust 165 项（1 ignored）与 release check 通过。 |

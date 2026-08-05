@@ -75,6 +75,10 @@ def test_frozen_runtime_dependencies_have_explicit_packaging_review() -> None:
 
     policy.validate_frozen_runtime_dependency_policy(PACKAGE_DIR.parent.parent)
     assert policy.REVIEWED_DIRECT_DEPENDENCIES["trafilatura"] == "project-hook"
+    assert (
+        policy.REVIEWED_DIRECT_DEPENDENCIES["watchfiles"]
+        == "agent-collect-all-module-graph-native-extension"
+    )
 
 
 def test_unreviewed_frozen_runtime_dependency_fails_closed(monkeypatch) -> None:
@@ -333,6 +337,11 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     assert runtime_entry._doctor() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
+    skill_check = payload["checks"]["capability:skill_catalog_hot_reload"]
+    assert skill_check["ok"] is True
+    assert skill_check["builtin"] == "skill-creator"
+    assert skill_check["watcher_status"] == "healthy"
+    assert skill_check["activated"] == "frozen-watcher-smoke"
 
 
 def test_doctor_fails_closed_when_static_html_extraction_is_broken(monkeypatch, capsys) -> None:
@@ -354,6 +363,24 @@ def test_doctor_fails_closed_when_static_html_extraction_is_broken(monkeypatch, 
         "ok": False,
         "error_type": "RuntimeError",
         "error": "missing packaged HTML extractor resource",
+    }
+
+
+def test_doctor_fails_closed_when_packaged_skill_runtime_is_broken(monkeypatch, capsys) -> None:
+    runtime_entry = _load("runtime_entry_broken_skill", PACKAGE_DIR / "runtime_entry.py")
+    monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
+
+    def fail_skill_smoke() -> dict[str, object]:
+        raise RuntimeError("missing packaged builtin Skill resource")
+
+    monkeypatch.setattr(runtime_entry, "_smoke_skill_catalog", fail_skill_smoke)
+
+    assert runtime_entry._doctor() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]["capability:skill_catalog_hot_reload"] == {
+        "ok": False,
+        "error_type": "RuntimeError",
+        "error": "missing packaged builtin Skill resource",
     }
 
 
