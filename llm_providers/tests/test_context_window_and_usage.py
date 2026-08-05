@@ -7,6 +7,8 @@ import ssl
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+import openai
 import pytest
 from litellm.exceptions import ContentPolicyViolationError as LiteLLMContentPolicyViolationError
 from litellm.exceptions import ContextWindowExceededError as LiteLLMContextWindowExceededError
@@ -24,6 +26,7 @@ from llm_providers import (
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
+    LLMRateLimitError,
     LLMRetryScheduled,
     LLMTextDelta,
     LLMTransientProviderError,
@@ -774,6 +777,73 @@ def test_stream_retries_provider_503_before_first_event(
 
 def test_provider_503_maps_to_transient_provider_error() -> None:
     assert isinstance(_map_exception(_StatusError(503)), LLMTransientProviderError)
+
+
+def _openai_rate_limit_error(error_type: str) -> openai.RateLimitError:
+    request = httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions")
+    response = httpx.Response(429, request=request)
+    return openai.RateLimitError(
+        "provider returned HTTP 429",
+        response=response,
+        body={"error": {"message": "busy", "type": error_type}},
+    )
+
+
+def test_kimi_engine_overload_429_maps_to_transient_provider_error() -> None:
+    mapped = _map_exception(_openai_rate_limit_error("engine_overloaded_error"))
+
+    assert isinstance(mapped, LLMTransientProviderError)
+
+
+def test_generic_429_remains_rate_limit_error() -> None:
+    mapped = _map_exception(_openai_rate_limit_error("rate_limit_error"))
+
+    assert isinstance(mapped, LLMRateLimitError)
+
+
+def test_kimi_direct_stream_retries_engine_overload_before_first_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_open_kimi_stream(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _openai_rate_limit_error("engine_overloaded_error")
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr(
+        _COMPLETION,
+        lambda **_kwargs: pytest.fail("Kimi retry must stay on the direct transport"),
+    )
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.7-code-highspeed",
+            api_base="https://api.moonshot.cn/v1",
+        ),
+        network_retries=1,
+        network_retry_backoff_seconds=0,
+    )
+
+    events = list(client.stream([{"role": "user", "content": "hi"}]))
+
+    assert calls == 2
+    assert len([event for event in events if isinstance(event, LLMRetryScheduled)]) == 1
+    assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
 
 
 def test_stream_does_not_retry_permanent_provider_error(

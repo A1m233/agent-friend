@@ -17,6 +17,7 @@ from agent_bridge.presence import (
     IMPresenceSnapshot,
     PresenceRegistry,
 )
+from agent_bridge.protocols.im.content import OutboundTextFormat
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.reminders import ReminderDeliveryOrchestrator
 
@@ -66,6 +67,7 @@ class FakeIMRuntime:
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
         self.sent: list[str] = []
+        self.sent_formats: list[OutboundTextFormat] = []
         self.response_sent = threading.Event()
         self.presence = IMPresenceSnapshot(
             im_type="qq",
@@ -80,8 +82,15 @@ class FakeIMRuntime:
     def presence_snapshots(self):  # type: ignore[no-untyped-def]
         return (self.presence,)
 
-    def send_proactive(self, _destination_id: str, text: str) -> OutboundSendResult:
+    def send_proactive(
+        self,
+        _destination_id: str,
+        text: str,
+        *,
+        text_format: OutboundTextFormat = "plain_text",
+    ) -> OutboundSendResult:
         self.sent.append(text)
+        self.sent_formats.append(text_format)
         if len(self.sent) >= 3:
             self.response_sent.set()
         return OutboundSendResult(cast(Any, self.outcome), error_kind="test")
@@ -343,6 +352,7 @@ def test_im_batch_sends_each_fixed_fact_then_one_agent_response(tmp_path: Path) 
     assert str(agent_runtime.submit_kwargs[0]["surface"]) == "im:qq"
     assert len(im_runtime.sent) == 3
     assert im_runtime.sent[-1] == "已提醒。"
+    assert im_runtime.sent_formats == ["plain_text", "plain_text", "markdown"]
     deadline = time.monotonic() + 1
     statuses: list[str] = []
     while time.monotonic() < deadline:

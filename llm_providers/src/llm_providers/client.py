@@ -62,6 +62,9 @@ DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
 DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
 """聊天流单次等待上游事件的最大秒数；两次总尝试约束在 90 秒内。"""
 
+_TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
+"""Provider 用非 5xx 状态码表达的、可安全有限重试的明确瞬时错误。"""
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,10 +144,23 @@ def _is_network_exception(error: Exception) -> bool:
 
 
 def _is_transient_provider_exception(error: Exception) -> bool:
-    """识别明确的 Provider 5xx，避免把认证、限流或参数错误纳入重试。"""
+    """识别明确的瞬时 Provider 故障，避免把普通限流或参数错误纳入重试。"""
     for item in _exception_chain(error):
         status_code = getattr(item, "status_code", None)
         if isinstance(status_code, int) and 500 <= status_code <= 599:
+            return True
+        body = getattr(item, "body", None)
+        if not isinstance(body, dict):
+            continue
+        payload = body.get("error", body)
+        if not isinstance(payload, dict):
+            continue
+        error_type = payload.get("type")
+        if (
+            status_code == 429
+            and isinstance(error_type, str)
+            and error_type.casefold() in _TRANSIENT_PROVIDER_ERROR_TYPES
+        ):
             return True
     return False
 
@@ -305,6 +321,8 @@ def _map_exception(e: Exception) -> LLMError:
     if any(isinstance(item, openai.AuthenticationError) for item in chain):
         return LLMAuthError(str(e))
     if any(isinstance(item, openai.RateLimitError) for item in chain):
+        if _is_transient_provider_exception(e):
+            return LLMTransientProviderError(str(e))
         return LLMRateLimitError(str(e))
     if _is_network_exception(e):
         return LLMNetworkError(str(e))

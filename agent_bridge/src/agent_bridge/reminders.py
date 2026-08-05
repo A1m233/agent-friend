@@ -426,7 +426,11 @@ class ReminderDeliveryOrchestrator:
                     success = False
                 else:
                     success = (
-                        self._im_runtime.send_proactive(target.destination_id, text).outcome
+                        self._im_runtime.send_proactive(
+                            target.destination_id,
+                            text,
+                            text_format="markdown",
+                        ).outcome
                         == "delivered"
                     )
             status = AgentResponseStatus.COMPLETED if success else AgentResponseStatus.FAILED

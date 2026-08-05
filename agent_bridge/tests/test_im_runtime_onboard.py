@@ -33,6 +33,7 @@ from agent_bridge.protocols.im.onboard import (
     OnboardSessionRegistry,
     OnboardStatus,
 )
+from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.protocols.im.runtime import IMProviderAlreadyRegisteredError, IMRuntime
 from agent_bridge.protocols.im.state import IMBindingKey, IMStateStore
 
@@ -344,6 +345,40 @@ async def test_bind_session_persists_primary_c2c_route(
     key = IMBindingKey("qq", "OPENID-A", "c2c", "OPENID-A")
     assert state.get_binding(key).session_id == "SESSION-1"  # type: ignore[union-attr]
     assert info.binding_status == "bound"
+
+
+@pytest.mark.asyncio
+async def test_send_proactive_propagates_markdown_format(
+    credentials: CredentialStore,
+    router: MagicMock,
+    tmp_path: Path,
+) -> None:
+    state = IMStateStore(tmp_path / "im_state.json")
+    runtime = IMRuntime(
+        router=router,
+        credentials=credentials,
+        resume_base_dir=tmp_path / "im_resume",
+        state_store=state,
+    )
+    provider = _StubProvider(bind_id="OPENID-A", _status="active")
+    provider.send = AsyncMock(return_value=OutboundSendResult("delivered"))  # type: ignore[method-assign]
+    runtime._providers[("qq", "OPENID-A")] = provider
+    runtime._event_loop = asyncio.get_running_loop()
+    key = IMBindingKey("qq", "OPENID-A", "c2c", "OPENID-A")
+    state.set_binding(key, "SESSION-1")
+
+    result = await asyncio.to_thread(
+        runtime.send_proactive,
+        "qq|OPENID-A|c2c|OPENID-A|SESSION-1",
+        "**hello**",
+        text_format="markdown",
+    )
+
+    assert result.outcome == "delivered"
+    content = provider.send.await_args.args[0]  # type: ignore[union-attr]
+    assert content.text == "**hello**"
+    assert content.text_format == "markdown"
+    assert content.reply_to_message_id is None
 
 
 @pytest.mark.asyncio
