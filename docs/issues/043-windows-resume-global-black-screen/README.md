@@ -33,8 +33,8 @@
 | E-007 | WebView2Feedback #3191；2026-08-06 复核 | WebView2 偶发白屏后仍可执行导航，但不再呈现；重建实例后恢复 | renderer / presentation 区分价值 `directional`；`active` |
 | E-008 | WebView2Feedback #4623；2026-08-06 复核 | RenderProcessUnresponsive 可在重启应用和清理缓存后继续出现 | “重启必然修复”已被该案例反驳；`directional` / `active` |
 | E-009 | Tauri #12975；2026-08-06 复核 | 特定 Windows Insider 与 Wry 版本组合出现空白无响应窗口，并与 browser feature flag 变化相关 | 低相关框架线索；`retained` |
-| E-010 | 未来取证候选；分支 `fix/webview2-resume-diagnostics` | 截至 2026-08-06，历史 provenance 是基准 commit `b45ff3f8406cd16ad7c600765d1c0e12961ec8ed` 加未提交 overlay；尚无可声称为历史运行身份的候选 commit | 采集机制 `code-supported`；事故归因仍 `unconfirmed`；`active` |
-| E-011 | Windows 真实桌面端 smoke；2026-08-06，E-010 未提交 overlay | 设置页手动采集和“一次性等待”状态机均生成完整 WebView2/物理桌面成对截图，截图尺寸一致、无采集错误；诊断包截图导出默认未勾选 | 采集可用性 `desktop-smoke-confirmed`；物理息屏触发与事故复现仍 `unconfirmed`；`active` |
+| E-010 | 取证能力交付；commit `92bd95f4d1f9680a5c7b8580acb5ae42fcb5967c`，schema revision 3 | 在基准 commit `b45ff3f8406cd16ad7c600765d1c0e12961ec8ed` 上增加被动 WebView2 进程/图形证据和用户主动启用的成对渲染证据；通过 merge commit `93c84ed` 合入 `main` | 采集机制 `merged`；事故归因仍 `unconfirmed`；`active` |
+| E-011 | Windows 真实桌面端 smoke；2026-08-06，E-010 当时的未提交 overlay（后固化为 `92bd95f`） | 设置页手动采集和“一次性等待”状态机均生成完整 WebView2/物理桌面成对截图，截图尺寸一致、无采集错误；诊断包截图导出默认未勾选 | 采集可用性 `desktop-smoke-confirmed`；物理息屏触发与事故复现仍 `unconfirmed`；`active` |
 
 ### 原始诊断包覆盖与局限
 
@@ -160,9 +160,11 @@ workaround。
   `complete=true`、`errorCount=0`，采集后一次性开关自动复位。诊断包截图导出选项默认未勾选。
   本次没有让物理显示器实际息屏，也未复现全局黑屏，因此尚未证明 Windows 恢复显示一定会向 pet 页
   派发目标 DOM 可见性事件；这些结果证明采集与手动兜底可用，不证明原问题已修复。
+- **2026-08-06**：E-010 以 commit `92bd95f4d1f9680a5c7b8580acb5ae42fcb5967c` 固化为
+  schema revision 3，并通过 merge commit `93c84ed` 合入 `main`。该版本只增加取证能力，issue 保持
+  `open`，等待下一次自然反馈区分 H-1 至 H-4。
 
-E-010 产生稳定 commit 后，需要把其 commit、构建身份和诊断 schema revision 回填到本记录；不得把
-未来 commit 倒写成 2026-08-05 事故或 2026-08-06 未提交验证实际运行过的版本。
+上述 commit 只标识 2026-08-06 之后可用的取证版本，不得倒写成 2026-08-05 事故实际运行过的版本。
 
 ## 关闭标准
 
