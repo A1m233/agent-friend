@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 
 repo_root = Path(SPECPATH).parents[2]
 entry = repo_root / "scripts" / "package" / "runtime_entry.py"
+hooks_dir = repo_root / "scripts" / "package" / "windows" / "hooks"
 
 datas = []
 binaries = []
@@ -66,7 +67,7 @@ analysis = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=sorted(set(hiddenimports)),
-    hookspath=[],
+    hookspath=[str(hooks_dir)],
     runtime_hooks=[],
     excludes=[
         "agent_eval",

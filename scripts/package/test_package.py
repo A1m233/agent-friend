@@ -70,6 +70,38 @@ def test_frozen_smoke_uses_an_explicit_non_secret_provider_placeholder() -> None
     assert '"DEEPSEEK_API_KEY"] = "package-smoke-not-a-real-credential"' in source
 
 
+def test_frozen_runtime_dependencies_have_explicit_packaging_review() -> None:
+    policy = _load("package_dependency_policy", PACKAGE_DIR / "dependency_policy.py")
+
+    policy.validate_frozen_runtime_dependency_policy(PACKAGE_DIR.parent.parent)
+    assert policy.REVIEWED_DIRECT_DEPENDENCIES["trafilatura"] == "project-hook"
+
+
+def test_unreviewed_frozen_runtime_dependency_fails_closed(monkeypatch) -> None:
+    policy = _load("package_dependency_policy_drift", PACKAGE_DIR / "dependency_policy.py")
+    dependencies = {*policy.REVIEWED_DIRECT_DEPENDENCIES, "new-data-bearing-package"}
+    monkeypatch.setattr(policy, "frozen_runtime_direct_dependencies", lambda _root: dependencies)
+
+    try:
+        policy.validate_frozen_runtime_dependency_policy(PACKAGE_DIR.parent.parent)
+    except RuntimeError as exc:
+        assert "unreviewed=new-data-bearing-package" in str(exc)
+        assert "package data, hidden imports, native libraries" in str(exc)
+    else:
+        raise AssertionError("an unreviewed frozen-runtime dependency must fail closed")
+
+
+def test_static_html_dependencies_use_project_hooks_for_package_data() -> None:
+    spec_source = (PACKAGE_DIR / "windows" / "agent_friend_runtime.spec").read_text("utf-8")
+    hooks_dir = PACKAGE_DIR / "windows" / "hooks"
+    trafilatura_hook = (hooks_dir / "hook-trafilatura.py").read_text("utf-8")
+    justext_hook = (hooks_dir / "hook-justext.py").read_text("utf-8")
+
+    assert "hookspath=[str(hooks_dir)]" in spec_source
+    assert 'collect_data_files("trafilatura")' in trafilatura_hook
+    assert 'collect_data_files("justext")' in justext_hook
+
+
 def test_installed_smoke_requires_complete_packaged_runtime(tmp_path) -> None:
     package = _load("package_run_installed_smoke", PACKAGE_DIR / "run.py")
 
@@ -294,11 +326,35 @@ def test_runtime_entry_parser_requires_explicit_subcommand() -> None:
     assert status.require_operational is True
 
 
-def test_doctor_without_configured_model_remains_an_import_smoke(monkeypatch) -> None:
+def test_doctor_without_configured_model_checks_static_html_extraction(monkeypatch, capsys) -> None:
     runtime_entry = _load("runtime_entry_without_model", PACKAGE_DIR / "runtime_entry.py")
     monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
 
     assert runtime_entry._doctor() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
+
+
+def test_doctor_fails_closed_when_static_html_extraction_is_broken(monkeypatch, capsys) -> None:
+    from agent.tools.builtin.web_fetch import html as web_fetch_html
+
+    runtime_entry = _load("runtime_entry_broken_html", PACKAGE_DIR / "runtime_entry.py")
+    monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
+
+    def fail_extract(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("missing packaged HTML extractor resource")
+
+    monkeypatch.setattr(web_fetch_html, "extract_static_html", fail_extract)
+
+    assert runtime_entry._doctor() == 1
+    payload = json.loads(capsys.readouterr().out)
+    check = payload["checks"]["capability:web_fetch_static_html"]
+    assert check == {
+        "ok": False,
+        "error_type": "RuntimeError",
+        "error": "missing packaged HTML extractor resource",
+    }
 
 
 class _FakeCredentialStore:

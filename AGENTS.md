@@ -23,11 +23,12 @@
 | `docs-structure.mdc` | agent-friend 项目 docs/ 目录结构（项目特有） |
 | `frontend-ui-conventions.mdc` | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 |
 | `frontend-visual-verification.mdc` | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 |
+| `frozen-runtime-packaging.mdc` | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… |
 | `repo-directory-layout.mdc` | 仓库与模块的目录编排：顶层职责、模块用文件夹、单文件职责 |
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: a6050bce77c669879d443b9a598a99d09a550dc0c37cb026fc9505969db2fee3 -->
+<!-- codex-adapter-source-sha256: 3c7ce9cf4e1fa09e0ec75bc4b20b596d1d17e2c57fe31b26ee9e2d6c398bd11a -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -462,6 +463,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |
+| `frozen-runtime-packaging.mdc` | ["agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"] | agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package… | `.cursor/rules/frozen-runtime-packaging.mdc` |
 
 <!-- codex-rule-loading:end -->
 

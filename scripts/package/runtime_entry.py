@@ -81,6 +81,37 @@ def _doctor() -> int:
         else:
             checks[f"resource:{name}"] = {"ok": bool(content.strip())}
 
+    try:
+        from agent.tools.builtin.web_fetch.html import extract_static_html
+
+        page = extract_static_html(
+            """
+            <html><body>
+              <main><p>agent-friend frozen HTML extraction smoke</p></main>
+              <a href="/evidence">Evidence link</a>
+            </body></html>
+            """,
+            requested_url="https://example.com/start",
+            final_url="https://example.com/start",
+        )
+        html_ok = (
+            "frozen HTML extraction smoke" in page.text
+            and len(page.links) == 1
+            and page.links[0].url == "https://example.com/evidence"
+        )
+    except Exception as exc:
+        checks["capability:web_fetch_static_html"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:web_fetch_static_html"] = {
+            "ok": html_ok,
+            "content_chars": len(page.text),
+            "link_count": len(page.links),
+        }
+
     model_dir = os.environ.get("AGENT_FRIEND_MEMORY_MODEL_DIR", "").strip()
     if model_dir:
         model_path = Path(model_dir)
