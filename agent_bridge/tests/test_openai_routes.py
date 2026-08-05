@@ -21,6 +21,7 @@ from agent import (
     NullSessionStore,
     PersonaCatalog,
     SessionManager,
+    SkillCatalogService,
     make_default_registry,
 )
 from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
@@ -64,6 +65,7 @@ def _build_runtime(
     tmp_path: Path,
     *,
     llm_script: list[list[ScriptedLLMItem]],
+    skill_service: SkillCatalogService | None = None,
 ) -> tuple[BridgeRuntime, LLMClientFactory]:
     _ScriptedLLMClient.seen_messages = []
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
@@ -85,6 +87,7 @@ def _build_runtime(
         prompt_builder_factory=_prompt_factory,
         context_manager_factory=NaiveContextManager,
         tool_registry=tool_registry,
+        skill_service=skill_service,
     )
 
     return (
@@ -98,6 +101,7 @@ def _build_runtime(
             prompt_builder_factory=_prompt_factory,
             default_persona=catalog.find_by_name("default").name,
             default_model="deepseek/deepseek-chat",
+            skill_service=skill_service,
         ),
         _llm_factory,
     )
@@ -126,6 +130,44 @@ def _openai_payload(user_text: str) -> dict[str, Any]:
         "stream": False,
         "messages": [{"role": "user", "content": user_text}],
     }
+
+
+def test_structured_skill_selection_reaches_openai_model_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "skills" / "route-skill"
+    package.mkdir(parents=True)
+    (package / "SKILL.md").write_text(
+        "---\nname: route-skill\ndescription: Route integration test\n---\n\n"
+        "OPENAI ROUTE SKILL BODY\n",
+        encoding="utf-8",
+    )
+    skill_service = SkillCatalogService(
+        personal_root=tmp_path / "skills",
+        shared_root=tmp_path / "shared",
+        watcher_enabled=False,
+    )
+    snapshot = skill_service.initialize()
+    selected = next(item for item in snapshot.entries if item.name == "route-skill")
+    runtime, fake_llm_factory = _build_runtime(
+        tmp_path,
+        llm_script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="end_turn")]],
+        skill_service=skill_service,
+    )
+    monkeypatch.setattr(assembly, "_llm_factory", fake_llm_factory)
+    test_client = TestClient(create_app_with_runtime(runtime))
+    payload = _openai_payload("use the selected workflow")
+    payload["agent_friend"] = {
+        "skills": [{"id": selected.id, "expected_version": selected.version}]
+    }
+
+    response = test_client.post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 200
+    assert any(
+        "OPENAI ROUTE SKILL BODY" in item["content"] for item in _ScriptedLLMClient.seen_messages[0]
+    )
 
 
 class TestSessionIdHeader:

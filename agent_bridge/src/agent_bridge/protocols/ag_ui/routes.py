@@ -179,6 +179,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     surface=run_request.surface,
                     run_id=run_request.run_id,
                     cancel_check=token.raise_if_cancelled,
+                    skill_selections=decoded.skills,
                 ),
                 error_callback=_persist_error,
             )
@@ -202,6 +203,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     channel="text",
                     surface=DESKTOP_CHAT_SURFACE,
                     run_id=decoded.run_id,
+                    skill_selections=decoded.skills,
                 ),
             ),
             media_type=EventEncoder(accept=accept).get_content_type(),

@@ -370,11 +370,13 @@ class Session:
         Returns:
             按时间顺序排列的 Message 列表，可直接喂给 :class:`ContextManager`。
         """
-        return self._project_messages(self.active_events)
+        return self._project_messages(self.active_events, include_model_only=False)
 
     @staticmethod
     def _project_messages(
         events: list[Event],
+        *,
+        include_model_only: bool,
     ) -> list[Message]:
         """Project persistent conversation events into message history."""
 
@@ -385,6 +387,30 @@ class Session:
             if ev.type == "model_context":
                 # 068 的早期实现曾把动态运行时快照写入 append-only 事件流。
                 # 保留原始事件以兼容旧 session，但永远不再投影给模型。
+                last_assistant = None
+            elif ev.type == "skill_catalog_state":
+                if include_model_only:
+                    result.append(
+                        Message(
+                            role="system",
+                            content=str(ev.payload.get("content", "")),
+                            timestamp=ev.ts,
+                            meta={**ev.meta, "synthetic": "skill_catalog_state"},
+                            uuid=ev.uuid,
+                        )
+                    )
+                last_assistant = None
+            elif ev.type == "skill_context":
+                if include_model_only:
+                    result.append(
+                        Message(
+                            role="user",
+                            content=str(ev.payload.get("rendered", "")),
+                            timestamp=ev.ts,
+                            meta={**ev.meta, "synthetic": "skill_instructions"},
+                            uuid=ev.uuid,
+                        )
+                    )
                 last_assistant = None
             elif ev.type == "user_message":
                 result.append(
@@ -497,7 +523,7 @@ class Session:
             )
             if not partial_history_normalized and not tool_history_normalized:
                 normalized_events = active_events
-            return self._project_messages(normalized_events)
+            return self._project_messages(normalized_events, include_model_only=True)
 
         excluded_event_uuids: set[str] = set()
         placeholders: dict[str, Event] = {}
@@ -543,7 +569,15 @@ class Session:
                 sanitized_events.append(placeholder)
             sanitized_events.append(event)
         normalized_events, _ = self._normalize_tool_transactions(sanitized_events)
-        return self._project_messages(normalized_events)
+        return self._project_messages(normalized_events, include_model_only=True)
+
+    @property
+    def latest_skill_catalog_state(self) -> Event | None:
+        """Return the newest active append-only Skill catalog world-state event."""
+        for event in reversed(self.active_events):
+            if event.type == "skill_catalog_state":
+                return event
+        return None
 
     @staticmethod
     def _normalize_partial_assistants(events: list[Event]) -> tuple[list[Event], bool]:

@@ -173,6 +173,13 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 surface=surface,
                 conversation_factory=lambda: conv,
                 metadata={"protocol": "openai", "persistent": bool(session_id_hint)},
+                conversation_runner=lambda active_conv, run_request, token: active_conv.stream(
+                    decoded.latest_user_input,
+                    channel=run_request.channel,
+                    surface=run_request.surface,
+                    cancel_check=token.raise_if_cancelled,
+                    skill_selections=decoded.skills,
+                ),
                 error_callback=_persist_error,
             )
 
@@ -187,6 +194,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     channel=channel,
                     surface=surface,
                     run_handle=handle,
+                    skill_selections=decoded.skills,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -204,6 +212,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 channel=channel,
                 surface=surface,
                 run_handle=handle,
+                skill_selections=decoded.skills,
             )
         except Exception as exc:
             logger.exception("OpenAI 非流式编码失败")

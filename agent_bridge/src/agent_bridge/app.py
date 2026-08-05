@@ -49,6 +49,7 @@ from .routes.models import register_routes as register_model_routes
 from .routes.persona import register_routes as register_persona_routes
 from .routes.presence import register_routes as register_presence_routes
 from .routes.runs import register_routes as register_run_routes
+from .routes.skills import register_routes as register_skill_routes
 from .routes.social_auth import register_routes as register_social_auth_routes
 from .routes.todos import register_routes as register_todo_routes
 from .runtime_config import resolve_bridge_runtime_config
@@ -143,6 +144,7 @@ def create_app_with_runtime(
     register_todo_routes(app, runtime)
     register_presence_routes(app, runtime)
     register_social_auth_routes(app, runtime)
+    register_skill_routes(app, runtime)
     register_push_routes(app, runtime)
     if runtime.im_onboard_registry is not None:
         register_im_routes(app, runtime, runtime.im_onboard_registry)
@@ -171,6 +173,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         reconcile_attachments(runtime)
+        if runtime.skill_service is not None:
+            runtime.skill_service.start()
         if runtime.agent_runtime is not None:
             runtime.agent_runtime.start()
         if runtime.im_runtime is not None:

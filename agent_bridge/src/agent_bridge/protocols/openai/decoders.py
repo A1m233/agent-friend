@@ -24,6 +24,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from agent.skills import SkillSelection, decode_skill_selections
+
 from agent import Message
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,7 @@ class DecodedRequest:
     latest_user_input: str
     model: str | None
     stream: bool
+    skills: tuple[SkillSelection, ...] = ()
 
 
 def decode_chat_completion_request(body: dict[str, Any]) -> DecodedRequest:
@@ -96,11 +99,19 @@ def decode_chat_completion_request(body: dict[str, Any]) -> DecodedRequest:
     latest = kept.pop()
     if not latest.content.strip():
         raise DecodeError("messages 最后一条 user content 不能为空")
+    vendor = body.get("agent_friend")
+    if vendor is not None and not isinstance(vendor, dict):
+        raise DecodeError("agent_friend 必须是对象")
+    try:
+        skills = decode_skill_selections(vendor.get("skills") if vendor else None)
+    except ValueError as exc:
+        raise DecodeError(f"agent_friend.{exc}") from exc
     return DecodedRequest(
         history=kept,
         latest_user_input=latest.content,
         model=_extract_model(body.get("model")),
         stream=bool(body.get("stream", False)),
+        skills=skills,
     )
 
 

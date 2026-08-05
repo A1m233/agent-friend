@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "content_fingerprint": {
+    "algorithm": "sha256",
+    "value": "installed immutable bundle directory name"
+  },
+  "upstream": {
+    "repository": "https://github.com/openai/codex",
+    "commit": "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c",
+    "path": "codex-rs/skills/src/assets/samples/skill-creator",
+    "retrieved_at": "2026-08-06"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "file": "skill-creator/license.txt"
+  },
+  "compatibility_patches": [
+    "Added a runtime capability notice to SKILL.md.",
+    "Reused the SVG icon for icon_large; the optional raster PNG is not bundled.",
+    "Removed one redundant f-string prefix to satisfy the host repository lint gate.",
+    "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
+    "Applied the host repository's deterministic Ruff formatting to bundled Python scripts.",
+    "Trimmed trailing blank lines to satisfy the host repository whitespace gate."
+  ]
+}

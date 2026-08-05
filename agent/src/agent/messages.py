@@ -155,7 +155,7 @@ def escape_user_messages_for_llm(messages: list[Message]) -> list[Message]:
     """
     return [
         replace(message, content=escape_internal_prompt_markers(message.content))
-        if message.role == "user"
+        if message.role == "user" and message.meta.get("synthetic") != "skill_instructions"
         else message
         for message in messages
     ]

@@ -53,6 +53,7 @@ REVIEWED_DIRECT_DEPENDENCIES = {
     "trafilatura": "project-hook",
     "tzdata": "pyinstaller-hook",
     "uvicorn": "spec-collect-all",
+    "watchfiles": "agent-collect-all-module-graph-native-extension",
     "websockets": "module-graph",
 }
 

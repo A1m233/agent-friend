@@ -20,7 +20,7 @@ class ContextTurn:
 
 def split_complete_turns(history: list[Message]) -> tuple[list[Message], list[ContextTurn]]:
     """返回首个 user 之前的异常前缀与按 user 边界切出的完整轮。"""
-    user_indices = [index for index, message in enumerate(history) if message.role == "user"]
+    user_indices = [index for index, message in enumerate(history) if is_real_user_message(message)]
     if not user_indices:
         return list(history), []
 
@@ -42,6 +42,28 @@ def split_complete_turns(history: list[Message]) -> tuple[list[Message], list[Co
 
 def recent_turn_start_candidates(history: list[Message]) -> list[int]:
     """返回从旧到新的合法连续后缀起点，最后包含空历史起点。"""
-    return [index for index, message in enumerate(history) if message.role == "user"] + [
+    return [index for index, message in enumerate(history) if is_real_user_message(message)] + [
         len(history)
     ]
+
+
+def is_real_user_message(message: Message) -> bool:
+    """Synthetic Skill instructions share user priority but never open a new turn."""
+    return message.role == "user" and message.meta.get("synthetic") != "skill_instructions"
+
+
+def preserve_latest_skill_catalog(
+    original: list[Message], retained: list[Message]
+) -> list[Message]:
+    """Keep the latest catalog world state when a context strategy drops older history."""
+    latest = next(
+        (
+            message
+            for message in reversed(original)
+            if message.meta.get("synthetic") == "skill_catalog_state"
+        ),
+        None,
+    )
+    if latest is None or any(message.uuid == latest.uuid for message in retained):
+        return list(retained)
+    return [latest, *retained]
