@@ -16,8 +16,8 @@ TOOL_EDIT_LOW_WATER_RATIO = 0.15
 TOOL_EDIT_HIGH_WATER_MAX_TOKENS = 64_000
 TOOL_EDIT_LOW_WATER_MAX_TOKENS = 32_000
 TOOL_EDIT_MIN_BATCH_TOKENS = 16_000
-TOOL_EDIT_RECENT_RESULT_COUNT = 4
-TOOL_CONTEXT_EDIT_POLICY_VERSION = 1
+TOOL_EDIT_RECENT_HISTORY_BATCH_COUNT = 3
+TOOL_CONTEXT_EDIT_POLICY_VERSION = 2
 
 # 040 上线前的事件没有 ``context_retention`` 元数据。只为已知只读、可重放工具
 # 提供兼容判定；新事件以工具实现声明并落盘的元数据为准。未知工具默认 pinned。
@@ -98,6 +98,54 @@ def _result_retention(message: Message, *, recovery_available: bool) -> str:
 
 def _tool_result_tokens(messages: list[Message]) -> int:
     return sum(estimate_tokens([message]) for message in messages if message.role == "tool")
+
+
+def _tool_result_batches(messages: list[Message]) -> list[tuple[int, ...]]:
+    """按发起工具调用的 assistant 消息聚合结果，无法关联时单条成批。"""
+    call_batch_by_id: dict[str, int] = {}
+    batches: dict[tuple[str, int], list[int]] = {}
+    for index, message in enumerate(messages):
+        if message.role == "assistant":
+            tool_calls = message.meta.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                call_id = tool_call.get("id")
+                if isinstance(call_id, str) and call_id:
+                    call_batch_by_id[call_id] = index
+            continue
+        if message.role != "tool":
+            continue
+
+        call_id = message.meta.get("tool_call_id")
+        assistant_index = (
+            call_batch_by_id.get(call_id) if isinstance(call_id, str) and call_id else None
+        )
+        key = (
+            ("assistant", assistant_index)
+            if assistant_index is not None
+            else ("unmatched_tool", index)
+        )
+        batches.setdefault(key, []).append(index)
+    return [tuple(indices) for indices in batches.values()]
+
+
+def _recent_historical_tool_indices(
+    messages: list[Message], current_turn_indices: set[int]
+) -> set[int]:
+    """保护当前轮之外最近若干个完整工具批次。"""
+    historical_batches = [
+        tuple(index for index in batch if index not in current_turn_indices)
+        for batch in _tool_result_batches(messages)
+    ]
+    historical_batches = [batch for batch in historical_batches if batch]
+    return {
+        index
+        for batch in historical_batches[-TOOL_EDIT_RECENT_HISTORY_BATCH_COUNT:]
+        for index in batch
+    }
 
 
 def _apply_cleared_results(
@@ -195,17 +243,21 @@ def project_tool_results(
         )
         tokens_before = _tool_result_tokens(projected)
         if tokens_before > high_water:
-            protected_indices: set[int] = set()
             tool_indices = [
                 index for index, message in enumerate(projected) if message.role == "tool"
             ]
-            protected_indices.update(tool_indices[-TOOL_EDIT_RECENT_RESULT_COUNT:])
+            current_turn_indices: set[int] = set()
             if protect_last_history_turn:
                 last_user_index = max(
                     (index for index, message in enumerate(projected) if message.role == "user"),
                     default=len(projected),
                 )
-                protected_indices.update(index for index in tool_indices if index > last_user_index)
+                current_turn_indices.update(
+                    index for index in tool_indices if index > last_user_index
+                )
+            protected_indices = current_turn_indices.union(
+                _recent_historical_tool_indices(projected, current_turn_indices)
+            )
 
             newly_cleared: list[str] = []
             candidate_ids = set(prior_ids)

@@ -3,7 +3,7 @@
 - **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-03
-- **关联需求**：009-engine-context-management、063-context-compaction-reliability、065-trustworthy-read-tools-and-tool-runtime
+- **关联需求**：009-engine-context-management、063-context-compaction-reliability、065-trustworthy-read-tools-and-tool-runtime、075-tool-result-context-retention
 
 ## 现象
 
@@ -34,4 +34,4 @@
 
 ---
 
-已在 commit `TBD` 修复。
+已由[需求 075](../../requirements/075-tool-result-context-retention/requirement.md)收口并继续演进。
