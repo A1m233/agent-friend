@@ -1,0 +1,42 @@
+---
+description: agent-friend 冻结 Python runtime 的打包影响分类与验证纪律：约束运行时依赖、资源读取、动态导入、PyInstaller spec/hooks 和 package runtime 变更
+globs: ["agent/src/**", "agent/pyproject.toml", "agent_bridge/src/**", "agent_bridge/pyproject.toml", "llm_providers/src/**", "llm_providers/pyproject.toml", "memory/src/**", "memory/pyproject.toml", "runtime_config/src/**", "runtime_config/pyproject.toml", "voice_bridge/src/**", "voice_bridge/pyproject.toml", "uv.lock", "scripts/package/**"]
+alwaysApply: false
+codexLoad: preflight
+---
+
+# 冻结 Runtime 打包纪律
+
+本 Rule 负责 coding agent 在修改会进入 Windows 冻结 Python runtime 的代码、依赖和打包配置时，提前识别打包风险并留下可执行验证。它不负责版本、正式制品、trusted-beta 或发布；这些仍由 `package-release` Skill 负责。
+
+可执行事实以 `scripts/package/run.*`、`scripts/package/dependency_policy.py`、`scripts/package/windows/agent_friend_runtime.spec`、`scripts/package/windows/hooks/` 和 `scripts/package/runtime_entry.py` 为准。Rule 不复制这些文件中的依赖名单或收集算法。
+
+## 先做影响分类
+
+命中 glob 只表示必须检查，不表示每次都要构建冻结 runtime。先检查本次 diff；只有出现以下任一事实才算“打包敏感变更”：
+
+- 冻结 runtime 项目的直接依赖新增、删除、替换或版本约束变化；
+- `uv.lock` 变化影响这些项目的运行时依赖闭包；
+- 新增或改变 package data、相对包路径文件读取、`importlib.resources`、动态导入、entry point、插件发现或原生库加载；
+- 修改 PyInstaller spec、hook、runtime supplement、staging 或 frozen doctor；
+- 新增或改变一项必须在安装包内工作的用户可见能力，且现有 frozen capability smoke 未覆盖其高风险路径。
+
+纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，不要求运行 PyInstaller，也不要求构建 local-test runtime。不要因为本 Rule 被加载就扩大验证范围。
+
+## 打包敏感变更的处理
+
+1. 说明变更进入冻结 runtime 的调用路径，并检查 package data、隐藏导入、传递依赖和原生二进制影响。
+2. 新增直接依赖时，必须更新 `dependency_policy.py` 中的审查分类；分类只是审查记录，不是“已正确打包”的证据，不得只改分类就宣称完成。
+3. 优先复用依赖已有的 PyInstaller hook；需要项目 hook 时放在 `scripts/package/windows/hooks/`，只收集实际需要的数据或子模块。不得仅为“以后可能需要”而默认 `collect_all()` 整个依赖。
+4. 用户可见能力依赖运行时资源、动态导入或原生库时，在 frozen doctor 中增加 capability-level smoke。Smoke 必须实际执行高风险路径，不能只检查 import 或文件存在；应使用本地确定性输入，不访问网络，不调用真实 LLM、语音或第三方 provider API。
+5. 同步维护受影响的 package tests 和 `scripts/README.md`；脚本入口仍服从 `cross-platform-dev` Rule。
+
+## 验证门禁
+
+打包敏感的代码或配置发生实质变化时：
+
+1. 运行 `scripts/check/run.* --stage backend`。
+2. 在 Windows x64 环境运行 `scripts/package/run.ps1 runtime --local-test`，以 staging 后 doctor 和 frozen capability smoke 的结果为准。该验证只构建 runtime，不要求构建完整 installer。
+3. 只有用户明确要求安装包、发布、版本操作或 trusted-beta 时，才进入 `package-release` Skill 的完整 installer 工作流。
+
+非 Windows 环境无法执行冻结 runtime 验证时，应明确记录 `verification gap`，不得把 source-env 单测、import smoke 或未 staging 的裸 PyInstaller 目录表述为冻结验证通过。打包或 doctor 失败时保留 fail-closed 原因并修正实际收集/能力覆盖，不得绕过门禁。
