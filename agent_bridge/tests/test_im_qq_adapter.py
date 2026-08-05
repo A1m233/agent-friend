@@ -429,6 +429,33 @@ async def test_send_markdown_calls_post_c2c_with_markdown_message(
 
 
 @pytest.mark.asyncio
+async def test_send_proactive_markdown_uses_markdown_message_without_reply_id(
+    adapter: QQAdapter,
+) -> None:
+    mock_api = MagicMock()
+    mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})
+    adapter._api = mock_api
+    adapter._next_msg_seq_value = 102
+
+    await adapter.send(
+        OutboundContent(
+            chat_id="OPENID-DEST",
+            chat_scope="c2c",
+            text="**hello**",
+            text_format="markdown",
+        )
+    )
+
+    msg_arg = mock_api.post_c2c_message.await_args.args[1]
+    assert msg_arg.content == ""
+    assert msg_arg.markdown is not None
+    assert msg_arg.markdown.content == "**hello**"
+    assert msg_arg.msg_type == QQMessageType.MARKDOWN
+    assert msg_arg.msg_id == ""
+    assert msg_arg.msg_seq == 102
+
+
+@pytest.mark.asyncio
 async def test_send_msg_seq_increments(adapter: QQAdapter) -> None:
     mock_api = MagicMock()
     mock_api.post_c2c_message = AsyncMock(return_value={"code": 0})

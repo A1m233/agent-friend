@@ -48,6 +48,7 @@ Before diagnosing, establish:
 - log source, modification time, original size, tail start offset, and included size;
 - attachment request, inclusion status, integrity flags, and byte limits;
 - Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
+- WebView2 render-evidence consent, capture trigger/time delta, internal-versus-desktop pixel metrics, included/missing screenshot artifacts, and capture errors;
 - explicit exclusions.
 
 `outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.

@@ -26,6 +26,7 @@ mod runtime_services;
 mod settings;
 mod shell_diagnostics;
 mod ui_state;
+mod webview_diagnostics;
 mod window_placement;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
@@ -904,10 +905,12 @@ pub fn run() {
     let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
     let avatar_model_manager = Arc::new(avatar_models::AvatarModelManager::new());
     let shell_diagnostics_manager = shell_diagnostics::create_manager();
+    let webview_diagnostics_manager = webview_diagnostics::create_manager(runtime_observer.clone());
     let setup_avatar_model_manager = avatar_model_manager.clone();
     let setup_runtime_service_supervisor = runtime_service_supervisor.clone();
     let setup_settings_state = settings_state.clone();
     let setup_shell_diagnostics_manager = shell_diagnostics_manager.clone();
+    let setup_webview_diagnostics_manager = webview_diagnostics_manager.clone();
     let setup_runtime_observer = runtime_observer.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
     let exit_runtime_observer = runtime_observer.clone();
@@ -936,6 +939,7 @@ pub fn run() {
         .manage(SettingsNavigationState::default())
         .manage(window_placement::WindowPlacementState::default())
         .manage(shell_diagnostics_manager)
+        .manage(webview_diagnostics_manager)
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
         .manage(migration_coordinator)
@@ -966,6 +970,11 @@ pub fn run() {
         consume_pending_settings_navigation,
         open_persona_target,
         diagnostics::generate_diagnostic_bundle,
+        webview_diagnostics::get_webview_render_evidence_status,
+        webview_diagnostics::set_webview_render_evidence_armed,
+        webview_diagnostics::capture_webview_render_evidence_now,
+        webview_diagnostics::clear_webview_render_evidence,
+        webview_diagnostics::record_pet_webview_visibility,
         data_migration::coordinator::get_migration_inventory,
         data_migration::coordinator::export_migration_package,
         data_migration::coordinator::preflight_migration_package,
@@ -1042,6 +1051,11 @@ pub fn run() {
         data_migration::coordinator::clear_last_migration_result,
         open_persona_target,
         diagnostics::generate_diagnostic_bundle,
+        webview_diagnostics::get_webview_render_evidence_status,
+        webview_diagnostics::set_webview_render_evidence_armed,
+        webview_diagnostics::capture_webview_render_evidence_now,
+        webview_diagnostics::clear_webview_render_evidence,
+        webview_diagnostics::record_pet_webview_visibility,
         open_im_connect,
         open_voice_call,
         open_voice_call_with_start,
@@ -1220,6 +1234,10 @@ pub fn run() {
             if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
                 log::warn!("windows shell diagnostics observer started partially: {error}");
             }
+            webview_diagnostics::install_existing_windows(
+                app.handle(),
+                &setup_webview_diagnostics_manager,
+            );
 
             // 028 · logger attach 后再补一次 bootstrap 结果，方便 R3 路径/主题排查。
             let bootstrap_summary = settings_state
@@ -1344,6 +1362,11 @@ pub fn run() {
             permissions::spawn_platform_probe(app.handle().clone());
             // 016 · M16.3 透明窗 workaround + M16.4 跟随轮询 spawn；M16.5 内部对 bubble 窗也调 apply_floating_window_level
             bubble_window::init(app.handle())?;
+            // Catch any dev-only windows created during setup. Registration is idempotent.
+            webview_diagnostics::install_existing_windows(
+                app.handle(),
+                &setup_webview_diagnostics_manager,
+            );
             Ok(())
         })
         .build(context)

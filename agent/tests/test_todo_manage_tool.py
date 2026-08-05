@@ -34,11 +34,16 @@ def _relative_schedule(amount: int = 2, unit: str = "minute") -> dict[str, Any]:
 def test_schema_exposes_create_with_reminders_and_operation_requirements() -> None:
     schema = TodoManageTool.parameters_schema
     assert "同一次 create" in TodoManageTool.description
+    assert "相关上下文指代" in TodoManageTool.description
+    assert "本轮不得创建或修改 Reminder" in TodoManageTool.description
     assert "不能只创建无 Reminder 的 Todo 就声称提醒已设置" in TodoManageTool.description
     assert "oneOf" not in schema
-    assert "不要先创建 Todo 再调用 add_reminder" in cast(
-        str, schema["properties"]["reminders"]["description"]
-    )
+    operation_description = cast(str, schema["properties"]["operation"]["description"])
+    assert "reminders 就是本次调用的必填参数" in operation_description
+    reminders_description = cast(str, schema["properties"]["reminders"]["description"])
+    assert "相关上下文" in reminders_description
+    assert "不得省略" in reminders_description
+    assert "不要先创建 Todo 再调用 add_reminder" in reminders_description
     assert "create 时必填" in schema["properties"]["title"]["description"]
     assert "add_reminder 不需要 revision" in schema["properties"]["revision"]["description"]
     assert "add_reminder 或 update_reminder" in schema["properties"]["reminder"]["description"]

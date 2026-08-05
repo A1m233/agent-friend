@@ -25,6 +25,7 @@ from agent.tools.builtin.social_platforms.connectors.xiaohongshu_artifacts impor
     XIAOHONGSHU_VERSION,
     current_xiaohongshu_artifacts,
 )
+from dependency_policy import validate_frozen_runtime_dependency_policy
 from paths import (
     BuildPaths,
     PackageRoots,
@@ -383,6 +384,7 @@ def _install_memory_model(destination: Path, *, cache_dir: Path) -> None:
 
 
 def _build_runtime(build_paths: BuildPaths, *, offline: bool, reuse_frozen: bool) -> None:
+    validate_frozen_runtime_dependency_policy(REPO_ROOT)
     work_dir = build_paths.pyinstaller_dir
     dist_dir = work_dir / "dist"
     frozen_launcher = dist_dir / "agent-friend-runtime" / "agent-friend-runtime.exe"

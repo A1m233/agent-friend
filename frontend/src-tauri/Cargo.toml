@@ -57,15 +57,21 @@ tauri-plugin-single-instance = "2"
 winreg = "0.10.1"
 # 053 · WebView2 profile permission inspection + passive OS microphone access probe.
 webview2-com = "0.38.2"
+png = "0.17"
 windows = { version = "0.61.3", features = [
     "Devices_Enumeration",
     "Security_Authorization_AppCapabilityAccess",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Power",
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",

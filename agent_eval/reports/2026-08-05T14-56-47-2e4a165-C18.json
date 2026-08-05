@@ -1,0 +1,160 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-05T14:56:47.760470+00:00",
+    "ended_at": "2026-08-05T14:57:00.584926+00:00",
+    "duration_seconds": 12.824,
+    "git_commit": "2e4a165",
+    "working_tree_dirty": true,
+    "note": "clarification action consistency first validation",
+    "selection": {
+      "contract": "C18",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "14f3609273bfb6439583b7b6cfc804b98964b03845772e30117b3fef822652bb",
+      "total_contracts": 18,
+      "total_cases": 181,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.6666666666666666,
+    "by_contract": {
+      "C18": {
+        "total": 3,
+        "passed": 2,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.6666666666666666
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C18",
+      "name": "clarification-action-consistency",
+      "expected_behavior": "response",
+      "total": 3,
+      "passed": 2,
+      "failed": 1,
+      "pass_rate": 0.6666666666666666,
+      "cases": [
+        {
+          "id": "C18-01",
+          "query": "顺手把排查这个加上",
+          "facet": "真实 anchor · 上下文已确定沿用时间时直接创建，不自问自答",
+          "source": "prod-session-todo-self-confirmation-20260805",
+          "surface": "im:qq",
+          "passed": false,
+          "reason": "unsupported future-action commitment: ['已加上，今晚 22:30 提醒排查 todo 指令首次失败的问题']",
+          "tool_calls": [
+            {
+              "name": "todo_manage",
+              "args": {
+                "operation": "create",
+                "title": "排查 todo 指令首次执行失败问题",
+                "description": "第一次完成 todo 指令时失败，第二次才成功，需要排查原因"
+              },
+              "result_text": "{\"operation\":\"create\",\"status\":\"success\",\"todo\":{\"id\":\"fixture-investigation-todo\",\"title\":\"排查完成 todo 指令首次执行失败\",\"description\":\"排查同一指令首次失败、重试成功的问题\",\"status\":\"open\",\"revision\":1,\"reminders\":[{\"id\":\"fixture-investigation-reminder\",\"todo_id\":\"fixture-investigation-todo\",\"kind\":\"once\",\"status\":\"active\",\"timezone\":\"Asia/Shanghai\",\"schedule\":{\"kind\":\"once\",\"local_datetime\":\"2026-08-05T22:30:00\",\"timezone\":\"Asia/Shanghai\"}}]}}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "好，老时间。",
+            "已加上，今晚 22:30 提醒排查 todo 指令首次失败的问题。"
+          ],
+          "final_text": "好，老时间。已加上，今晚 22:30 提醒排查 todo 指令首次失败的问题。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C18-02",
+          "query": "给刚才那条加个提醒",
+          "facet": "缺少提醒时间 · 应询问并等待，不得同轮写入",
+          "source": "prod-session-todo-self-confirmation-20260805",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['什么时候'] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "可以啊，你想什么时候提醒？比如“明天上午10点”或者“10分钟后”都可以。"
+          ],
+          "final_text": "可以啊，你想什么时候提醒？比如“明天上午10点”或者“10分钟后”都可以。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C18-03",
+          "query": "给刚才那条加个提醒，今晚 22:30",
+          "facet": "时间明确 control · 应直接执行并确定确认",
+          "source": "prod-session-todo-self-confirmation-20260805",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool=todo_manage sequence=[] anchors=['22:30'] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "todo_manage",
+              "args": {
+                "operation": "add_reminder",
+                "todo_id": "fixture-existing-todo",
+                "reminder": {
+                  "kind": "once",
+                  "local_datetime": "2026-08-05T22:30:00",
+                  "timezone": "Asia/Shanghai"
+                }
+              },
+              "result_text": "{\"operation\":\"add_reminder\",\"status\":\"success\",\"reminder\":{\"id\":\"fixture-existing-reminder\",\"todo_id\":\"fixture-existing-todo\",\"kind\":\"once\",\"status\":\"active\",\"timezone\":\"Asia/Shanghai\",\"schedule\":{\"kind\":\"once\",\"local_datetime\":\"2026-08-05T22:30:00\",\"timezone\":\"Asia/Shanghai\"}}}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "好，今晚 22:30 我会提醒你排查接口失败那件事。"
+          ],
+          "final_text": "好，今晚 22:30 我会提醒你排查接口失败那件事。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

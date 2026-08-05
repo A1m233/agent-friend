@@ -30,6 +30,7 @@ def test_loads_builtin_cases() -> None:
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
         ("C17", "future-action-commitment-grounding", 3),
+        ("C18", "clarification-action-consistency", 3),
     ]
 
 
@@ -135,13 +136,26 @@ def test_loads_fixture_session_and_case_judge() -> None:
     commitment_control = next(item for item in c17.cases if item.id == "C17-03")
     assert commitment_control.fake_tools[0].name == "todo_manage"
 
+    c18 = next(contract for contract in contracts if contract.id == "C18")
+    clarification_anchor = next(item for item in c18.cases if item.id == "C18-01")
+    assert clarification_anchor.runtime_now is not None
+    assert clarification_anchor.surface == "im:qq"
+    assert len(clarification_anchor.current_session_events) == 10
+    assert clarification_anchor.judge is not None
+    assert clarification_anchor.judge.must_call == "todo_manage"
+    assert clarification_anchor.judge.forbid_question is False
+    assert clarification_anchor.judge.forbid_question_with_scheduled_action is True
+    wait_control = next(item for item in c18.cases if item.id == "C18-02")
+    assert wait_control.judge is not None
+    assert wait_control.judge.must_not_call_any == ["todo_manage"]
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 17
-    assert meta.total_cases == 178
+    assert meta.total_contracts == 18
+    assert meta.total_cases == 181
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -160,6 +174,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C15": 2,
         "C16": 2,
         "C17": 3,
+        "C18": 3,
     }
     assert len(meta.digest) == 64
 

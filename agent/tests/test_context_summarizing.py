@@ -755,7 +755,8 @@ def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
 
 
 def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: Path) -> None:
-    llm = _FakeLLM(context_window=8000)
+    # Leave enough fixed-prompt headroom for the post-compaction summary + recent tail.
+    llm = _FakeLLM(context_window=9000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -811,7 +812,8 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
 
 
 def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> None:
-    llm = _FakeLLM(context_window=8000)
+    # Leave enough fixed-prompt headroom for rebuilding a valid checkpoint.
+    llm = _FakeLLM(context_window=9000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )

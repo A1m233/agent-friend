@@ -130,8 +130,10 @@ class TodoManageTool:
     description: ClassVar[str] = (
         "创建、查询和管理用户的持久 Todo，以及一次性或基础周期 Reminder。"
         "用户要求记待办、列待办、修改、完成、取消、重新打开或设置提醒时必须使用；"
-        "不能只在对话里口头答应。Todo 不提供时间时不要擅自添加 Reminder。"
-        "新建 Todo 时用户已经给出提醒时间，必须在同一次 create 的 reminders 中一起提交；"
+        "不能只在对话里口头答应。Reminder 时间可以来自当前请求，也可以来自能够唯一"
+        "解析的相关上下文指代；能唯一确定时直接执行并用确定语气说明，不再追问。"
+        "无法唯一确定而需要询问提醒时间时，本轮不得创建或修改 Reminder，等用户回答后"
+        "再执行。新建 Todo 时提醒时间已经确定，必须在同一次 create 的 reminders 中一起提交；"
         "不能只创建无 Reminder 的 Todo 就声称提醒已设置。"
         "add_reminder 只用于给已经存在的 Todo 后补提醒。"
         "用户给出“几分钟/小时/天/周后”时，一次性提醒直接使用 relative_delay，"
@@ -146,7 +148,8 @@ class TodoManageTool:
                 "type": "string",
                 "description": (
                     "要执行的 Todo 或 Reminder 操作；各 operation 的必填字段由对应字段说明"
-                    "定义，运行时会做二次校验。"
+                    "定义，运行时会做二次校验。选择 create 时，如果当前请求或可唯一解析的"
+                    "上下文已经确定提醒时间，reminders 就是本次调用的必填参数。"
                 ),
                 "enum": [
                     "create",
@@ -201,8 +204,9 @@ class TodoManageTool:
                 "items": _REMINDER_SCHEDULE_SCHEMA,
                 "minItems": 1,
                 "description": (
-                    "create 时可直接携带的一条或多条提醒。用户在新建事项时已经给出提醒时间，"
-                    "就在同一次 create 调用中传入，不要先创建 Todo 再调用 add_reminder。"
+                    "create 时携带的一条或多条提醒。提醒时间无论来自当前请求，还是来自能够"
+                    "唯一解析的相关上下文，只要已经确定，就必须在同一次 create 调用中传入"
+                    "本字段；不得省略，也不要先创建 Todo 再调用 add_reminder。"
                 ),
             },
             "enabled": {"type": "boolean"},

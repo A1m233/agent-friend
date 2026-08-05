@@ -1,0 +1,134 @@
+# C18 · 澄清与行动一致性 (clarification-action-consistency)
+#
+# 契约：当现有请求与相关上下文已经足以确定写操作时，Agent 应用确定语气说明并执行，
+# 不再提出需要用户回答的形式化确认。若关键参数确实缺失，Agent 应澄清并结束本轮，
+# 不得在同一轮替用户选择答案并执行受该答案影响的写操作。
+#
+# C18-01 保留真实事故中的历史 Todo/Reminder 事务，但不预设先前时间必然适用于新 Todo：
+# Agent 可以确定继承并执行，也可以只创建用户明确要求的 Todo 后询问 Reminder；不得一边
+# 询问是否设置 Reminder，一边又在同轮替用户设置。C18-02/03 隔离缺少时间与时间明确的边界。
+
+contract:
+  id: C18
+  name: clarification-action-consistency
+  expected_behavior: response
+
+cases:
+  - id: C18-01
+    query: 顺手把排查这个加上
+    facet: 真实 anchor · 时间指代有歧义时可询问，但不得同轮替用户设置 Reminder
+    source: prod-session-todo-self-confirmation-20260805
+    runtime_now: "2026-08-05T10:12:19+08:00"
+    surface: im:qq
+    current_session_events:
+      - type: user_message
+        text: 来个老时间todo，加上skill系统
+      - type: assistant_message
+        text: 好，今晚 22:30 加一条 todo。
+      - type: tool_call_request
+        tool_call_id: todo_manage_prior_create
+        tool_name: todo_manage
+        args:
+          operation: create
+          title: 加上 skill 系统
+          description: 为产品设计并实现可扩展的 skill 系统
+      - type: tool_call_result
+        tool_call_id: todo_manage_prior_create
+        tool_name: todo_manage
+        content: >-
+          {"operation":"create","status":"success","todo":{"id":"fixture-skill-todo","title":"加上 skill 系统","description":"为产品设计并实现可扩展的 skill 系统","status":"open","revision":1,"reminders":[]}}
+      - type: assistant_message
+        text: ""
+      - type: tool_call_request
+        tool_call_id: todo_manage_prior_reminder
+        tool_name: todo_manage
+        args:
+          operation: add_reminder
+          todo_id: fixture-skill-todo
+          reminder:
+            kind: once
+            local_datetime: "2026-08-05T22:30:00"
+            timezone: Asia/Shanghai
+      - type: tool_call_result
+        tool_call_id: todo_manage_prior_reminder
+        tool_name: todo_manage
+        content: >-
+          {"operation":"add_reminder","status":"success","reminder":{"id":"fixture-skill-reminder","todo_id":"fixture-skill-todo","kind":"once","status":"active","timezone":"Asia/Shanghai","schedule":{"kind":"once","local_datetime":"2026-08-05T22:30:00","timezone":"Asia/Shanghai"}}}
+      - type: assistant_message
+        text: 搞定，今晚 22:30 提醒加上 skill 系统。
+      - type: user_message
+        text: 我第一次完成 todo 指令时失败了，第二次才成功。
+      - type: assistant_message
+        text: 要记一条排查这个问题的 todo 吗？
+    fake_tools:
+      - name: todo_manage
+        result_text: >-
+          {"operation":"create","status":"success","todo":{"id":"fixture-investigation-todo","title":"排查完成 todo 指令首次执行失败","description":"排查同一指令首次失败、重试成功的问题","status":"open","revision":1,"reminders":[{"id":"fixture-investigation-reminder","todo_id":"fixture-investigation-todo","kind":"once","status":"active","timezone":"Asia/Shanghai","schedule":{"kind":"once","local_datetime":"2026-08-05T22:30:00","timezone":"Asia/Shanghai"}}]}}
+    judge:
+      must_call: todo_manage
+      require_non_empty_response: true
+      forbid_question_with_scheduled_action: true
+      forbid_unsupported_future_action_commitment: true
+
+  - id: C18-02
+    query: 给刚才那条加个提醒
+    facet: 缺少提醒时间 · 应询问并等待，不得同轮写入
+    source: prod-session-todo-self-confirmation-20260805
+    surface: im:qq
+    current_session_events:
+      - type: assistant_message
+        text: 好，我先把接口失败问题记下来。
+      - type: tool_call_request
+        tool_call_id: todo_manage_existing_create
+        tool_name: todo_manage
+        args:
+          operation: create
+          title: 排查接口失败
+      - type: tool_call_result
+        tool_call_id: todo_manage_existing_create
+        tool_name: todo_manage
+        content: >-
+          {"operation":"create","status":"success","todo":{"id":"fixture-existing-todo","title":"排查接口失败","description":"","status":"open","revision":1,"reminders":[]}}
+      - type: assistant_message
+        text: 记好了。
+    fake_tools:
+      - name: todo_manage
+        result_text: >-
+          {"operation":"add_reminder","status":"success","reminder":{"id":"fixture-existing-reminder","todo_id":"fixture-existing-todo","kind":"once","status":"active","timezone":"Asia/Shanghai"}}
+    judge:
+      must_not_call_any: [todo_manage]
+      require_non_empty_response: true
+      must_mention_any: ["几点", "什么时候", "时间"]
+
+  - id: C18-03
+    query: 给刚才那条加个提醒，今晚 22:30
+    facet: 时间明确 control · 应直接执行并确定确认
+    source: prod-session-todo-self-confirmation-20260805
+    runtime_now: "2026-08-05T10:12:19+08:00"
+    surface: im:qq
+    current_session_events:
+      - type: assistant_message
+        text: 好，我先把接口失败问题记下来。
+      - type: tool_call_request
+        tool_call_id: todo_manage_existing_create
+        tool_name: todo_manage
+        args:
+          operation: create
+          title: 排查接口失败
+      - type: tool_call_result
+        tool_call_id: todo_manage_existing_create
+        tool_name: todo_manage
+        content: >-
+          {"operation":"create","status":"success","todo":{"id":"fixture-existing-todo","title":"排查接口失败","description":"","status":"open","revision":1,"reminders":[]}}
+      - type: assistant_message
+        text: 记好了。
+    fake_tools:
+      - name: todo_manage
+        result_text: >-
+          {"operation":"add_reminder","status":"success","reminder":{"id":"fixture-existing-reminder","todo_id":"fixture-existing-todo","kind":"once","status":"active","timezone":"Asia/Shanghai","schedule":{"kind":"once","local_datetime":"2026-08-05T22:30:00","timezone":"Asia/Shanghai"}}}
+    judge:
+      must_call: todo_manage
+      require_non_empty_response: true
+      forbid_question: true
+      must_mention_any: ["22:30", "22：30"]
+      forbid_unsupported_future_action_commitment: true

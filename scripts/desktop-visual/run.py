@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import hashlib
 import json
 import os
 import platform
@@ -391,6 +393,219 @@ def default_screenshot_path() -> Path:
     return Path(tempfile.gettempdir()) / f"agent-friend-desktop-{stamp}.png"
 
 
+def default_pair_capture_dir() -> Path:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return Path(tempfile.gettempdir()) / f"agent-friend-webview2-pair-{stamp}"
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def windows_virtual_screen_bounds() -> dict[str, int]:
+    user32 = ctypes.windll.user32
+    return {
+        "x": int(user32.GetSystemMetrics(76)),
+        "y": int(user32.GetSystemMetrics(77)),
+        "width": int(user32.GetSystemMetrics(78)),
+        "height": int(user32.GetSystemMetrics(79)),
+    }
+
+
+def capture_windows_desktop(output: Path) -> dict[str, object]:
+    from PIL import ImageGrab
+
+    started_ms = int(time.time() * 1000)
+    image = ImageGrab.grab(include_layered_windows=True, all_screens=True)
+    image.save(output, "PNG")
+    completed_ms = int(time.time() * 1000)
+    return {
+        "screenshot": str(output.resolve()),
+        "captureStartedUnixMs": started_ms,
+        "captureCompletedUnixMs": completed_ms,
+        "imageSize": {"width": image.width, "height": image.height},
+        "virtualScreenBounds": windows_virtual_screen_bounds(),
+        "sha256": file_sha256(output),
+    }
+
+
+def parse_cdp_pair_result(stdout: str) -> dict[str, object]:
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("CDP pair probe returned no JSON result")
+    value = json.loads(lines[-1])
+    if not isinstance(value, dict) or value.get("status") != "captured":
+        raise ValueError("CDP pair probe returned an invalid result")
+    return value
+
+
+def wait_for_probe_ready(
+    ready_file: Path,
+    probe: subprocess.Popen[str],
+    deadline_unix_ms: int,
+) -> bool:
+    while int(time.time() * 1000) < deadline_unix_ms:
+        if ready_file.is_file():
+            return True
+        if probe.poll() is not None:
+            return False
+        time.sleep(0.02)
+    return ready_file.is_file()
+
+
+def cmd_pair_capture(args: argparse.Namespace) -> int:
+    if platform.system() != "Windows":
+        print(
+            "pair-capture is Windows-only because it compares WebView2 CDP with the Windows desktop compositor."
+        )
+        return 2
+    if not cdp_endpoint_ok(args.cdp):
+        print(f"WebView2 CDP endpoint is unavailable: {args.cdp}", file=sys.stderr)
+        return 2
+    if not has_command("node"):
+        print("node is required. Run .\\scripts\\setup\\run.ps1 first.", file=sys.stderr)
+        return 2
+    if not (ROOT / "frontend/node_modules/playwright").exists():
+        print(
+            "frontend Playwright dependency is missing. Run .\\scripts\\frontend\\install.ps1 first.",
+            file=sys.stderr,
+        )
+        return 2
+
+    output_dir = (
+        Path(args.output_dir).expanduser() if args.output_dir else default_pair_capture_dir()
+    )
+    output_dir.mkdir(parents=True, exist_ok=False)
+    cdp_screenshot = output_dir / "webview2-cdp.png"
+    desktop_screenshot = output_dir / "windows-desktop.png"
+    metadata_path = output_dir / "capture.json"
+    ready_file = output_dir / ".cdp-ready.json"
+    trigger_at_ms = int(time.time() * 1000) + args.lead_ms
+    node_script = ROOT / "scripts/desktop-visual/cdp-pair-probe.mjs"
+    command = [
+        command_path("node"),
+        str(node_script),
+        "--cdp",
+        args.cdp,
+        "--screenshot",
+        str(cdp_screenshot),
+        "--ready-file",
+        str(ready_file),
+        "--trigger-at-ms",
+        str(trigger_at_ms),
+    ]
+    if args.title_contains:
+        command.extend(["--title-contains", args.title_contains])
+    if args.url_contains:
+        command.extend(["--url-contains", args.url_contains])
+
+    print(f"===> pair capture directory: {output_dir.resolve()}")
+    print("[PRIVACY] windows-desktop.png contains the full visible desktop across all monitors.")
+    probe = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    ready_deadline_ms = trigger_at_ms - 100
+    probe_ready = wait_for_probe_ready(ready_file, probe, ready_deadline_ms)
+    if not probe_ready:
+        if probe.poll() is None:
+            probe.kill()
+        stdout, stderr = probe.communicate()
+        error = stderr.strip() or stdout.strip() or "CDP probe was not ready before capture target"
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "captureKind": "webview2-cdp-vs-windows-desktop",
+                    "triggerAtUnixMs": trigger_at_ms,
+                    "cdpEndpoint": args.cdp,
+                    "cdp": None,
+                    "desktop": None,
+                    "errors": [error],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        ready_file.unlink(missing_ok=True)
+        print(f"[WARN] {error}", file=sys.stderr)
+        print(f"===> pair capture metadata: {metadata_path.resolve()}")
+        return 1
+
+    delay_seconds = max(0.0, (trigger_at_ms - int(time.time() * 1000)) / 1000)
+    if delay_seconds:
+        time.sleep(delay_seconds)
+
+    desktop_result: dict[str, object] | None = None
+    desktop_error: str | None = None
+    try:
+        desktop_result = capture_windows_desktop(desktop_screenshot)
+    except Exception as error:
+        desktop_error = str(error)
+
+    try:
+        stdout, stderr = probe.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        probe.kill()
+        stdout, stderr = probe.communicate()
+        stderr = (stderr + "\nCDP pair probe timed out after 20 seconds").strip()
+
+    cdp_result: dict[str, object] | None = None
+    cdp_error: str | None = None
+    if probe.returncode == 0:
+        try:
+            cdp_result = parse_cdp_pair_result(stdout)
+            cdp_result["sha256"] = file_sha256(cdp_screenshot)
+        except (json.JSONDecodeError, OSError, ValueError) as error:
+            cdp_error = str(error)
+    else:
+        cdp_error = stderr.strip() or stdout.strip() or f"CDP pair probe exited {probe.returncode}"
+
+    start_delta_ms = None
+    if desktop_result and cdp_result:
+        start_delta_ms = abs(
+            int(desktop_result["captureStartedUnixMs"]) - int(cdp_result["captureStartedUnixMs"])
+        )
+    metadata = {
+        "schemaVersion": 1,
+        "captureKind": "webview2-cdp-vs-windows-desktop",
+        "triggerAtUnixMs": trigger_at_ms,
+        "startDeltaMs": start_delta_ms,
+        "cdpEndpoint": args.cdp,
+        "selection": {
+            "titleContains": args.title_contains,
+            "urlContains": args.url_contains,
+        },
+        "cdp": cdp_result,
+        "desktop": desktop_result,
+        "errors": [error for error in (cdp_error, desktop_error) if error],
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    ready_file.unlink(missing_ok=True)
+    print(f"===> pair capture metadata: {metadata_path.resolve()}")
+    if cdp_result:
+        print(f"===> CDP screenshot: {cdp_screenshot.resolve()}")
+    if desktop_result:
+        print(f"===> desktop screenshot: {desktop_screenshot.resolve()}")
+    if start_delta_ms is not None:
+        print(f"===> capture start delta: {start_delta_ms} ms")
+    for error in metadata["errors"]:
+        print(f"[WARN] {error}", file=sys.stderr)
+    return 0 if not metadata["errors"] else 1
+
+
 def write_metadata(path: str | None, payload: dict[str, object]) -> None:
     if not path:
         return
@@ -611,6 +826,28 @@ def build_parser() -> argparse.ArgumentParser:
     dom.add_argument("--output", help="Write JSON summary to this path.")
     dom.add_argument("--html-output", help="Write full outerHTML to this path.")
     dom.add_argument("--screenshot", help="Write a Playwright screenshot to this path.")
+
+    pair = sub.add_parser(
+        "pair-capture",
+        help="Capture WebView2 via CDP and the full Windows desktop at the same target time.",
+    )
+    pair.add_argument(
+        "--cdp",
+        default=DEFAULT_CDP_ENDPOINT,
+        help=f"CDP endpoint. Defaults to {DEFAULT_CDP_ENDPOINT}",
+    )
+    pair.add_argument("--title-contains", help="Select a page whose title contains this text.")
+    pair.add_argument("--url-contains", help="Select a page whose URL contains this text.")
+    pair.add_argument(
+        "--output-dir",
+        help="Create this directory for both PNGs and capture.json; defaults to system temp.",
+    )
+    pair.add_argument(
+        "--lead-ms",
+        type=int,
+        default=2000,
+        help="Future target time used to align both captures. Defaults to 2000 ms.",
+    )
     return parser
 
 
@@ -631,6 +868,10 @@ def main(argv: list[str]) -> int:
         return cmd_screenshot(args)
     if args.command == "dom":
         return cmd_dom(args)
+    if args.command == "pair-capture":
+        if args.lead_ms < 250 or args.lead_ms > 10_000:
+            parser.error("--lead-ms must be between 250 and 10000")
+        return cmd_pair_capture(args)
     parser.error(f"unknown command: {args.command}")
     return 2
 

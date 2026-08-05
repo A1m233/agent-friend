@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Copy, FileArchive, FolderOpen, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FileArchive,
+  FolderOpen,
+  MonitorCog,
+  Trash2,
+  TriangleAlert,
+} from "lucide-react";
 import dayjs from "dayjs";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 
 import { Button, Checkbox, ScrollArea, Textarea } from "@/components/ui";
 import {
+  captureRenderEvidenceNow,
+  clearRenderEvidence,
   generateDiagnosticBundle,
+  getRenderEvidenceStatus,
+  setRenderEvidenceArmed,
   type GenerateDiagnosticBundleResult,
+  type RenderEvidenceStatus,
 } from "@/services";
 import { useArchivedSessionsStore, useSessionsStore } from "@/stores";
 import type { SessionSummary } from "@/types/meta";
@@ -34,12 +47,31 @@ export function FeedbackDiagnosticsPanel({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [generating, setGenerating] = useState(false);
   const [includeAttachmentOriginals, setIncludeAttachmentOriginals] = useState(false);
+  const [includeRenderEvidence, setIncludeRenderEvidence] = useState(false);
+  const [renderEvidenceStatus, setRenderEvidenceStatus] =
+    useState<RenderEvidenceStatus | null>(null);
+  const [renderEvidenceUpdating, setRenderEvidenceUpdating] = useState(false);
   const [result, setResult] = useState<GenerateDiagnosticBundleResult | null>(null);
   const appliedPrefillRequestId = useRef(0);
 
   useEffect(() => {
     void Promise.all([refreshSessions(), refreshArchived()]);
   }, [refreshArchived, refreshSessions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getRenderEvidenceStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setRenderEvidenceStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setRenderEvidenceStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const combinedSessions = useMemo(() => {
     const byId = new Map<string, SessionSummary>();
@@ -90,6 +122,7 @@ export function FeedbackDiagnosticsPanel({
         description: description.trim() || undefined,
         sessionIds: [...selectedIds],
         includeAttachmentOriginals,
+        includeRenderEvidence,
       });
       setResult(next);
       const partial = next.outcome === "partial";
@@ -105,6 +138,57 @@ export function FeedbackDiagnosticsPanel({
       toast.error("无法生成诊断包", { description: message });
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const updateRenderEvidenceArmed = async (armed: boolean) => {
+    setRenderEvidenceUpdating(true);
+    try {
+      const status = await setRenderEvidenceArmed(armed);
+      setRenderEvidenceStatus(status);
+      toast.success(armed ? "已等待下一次息屏恢复" : "已取消一次性渲染取证");
+    } catch (error) {
+      toast.error("无法更新渲染取证状态", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setRenderEvidenceUpdating(false);
+    }
+  };
+
+  const captureRenderEvidence = async () => {
+    setRenderEvidenceUpdating(true);
+    try {
+      const status = await captureRenderEvidenceNow();
+      setRenderEvidenceStatus(status);
+      setIncludeRenderEvidence(false);
+      if (status.pending?.complete) {
+        toast.success("渲染证据已保存在本机");
+      } else {
+        toast.warning("渲染证据已保存，但部分内容采集失败");
+      }
+    } catch (error) {
+      toast.error("无法采集渲染证据", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setRenderEvidenceUpdating(false);
+    }
+  };
+
+  const clearPendingRenderEvidence = async () => {
+    setRenderEvidenceUpdating(true);
+    try {
+      const status = await clearRenderEvidence();
+      setRenderEvidenceStatus(status);
+      setIncludeRenderEvidence(false);
+      toast.success("已清除本机渲染证据");
+    } catch (error) {
+      toast.error("无法清除渲染证据", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setRenderEvidenceUpdating(false);
     }
   };
 
@@ -186,6 +270,119 @@ export function FeedbackDiagnosticsPanel({
       </SettingsGroup>
 
       <SettingsGroup title="生成本地诊断包">
+        {renderEvidenceStatus?.supported ? (
+          <div className="flex flex-col gap-3 rounded-md border border-warning/40 bg-warning/10 p-3">
+            <div className="flex items-start gap-3">
+              <MonitorCog className="mt-0.5 size-4 shrink-0 text-warning" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-fg">息屏黑屏一次性取证</p>
+                <p className="mt-1 text-xs text-muted">
+                  开启后，桌宠下一次从隐藏恢复时，会自动同时保存桌宠 WebView2
+                  内部画面和完整 Windows 桌面截图。完整桌面可能包含其他应用和私人内容；只保留最近一次、本机保存、不会自动上传，采集后自动关闭。
+                </p>
+              </div>
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-bg p-3">
+              <Checkbox
+                className="mt-0.5"
+                checked={renderEvidenceStatus.armed}
+                disabled={renderEvidenceUpdating || renderEvidenceStatus.captureInProgress}
+                onCheckedChange={(checked) =>
+                  void updateRenderEvidenceArmed(checked === true)
+                }
+                aria-label="等待下一次息屏恢复时采集渲染证据"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-fg">
+                  等待下一次息屏恢复时采集
+                </span>
+                <span className="mt-1 block text-xs text-muted">
+                  {renderEvidenceStatus.waitingForVisibleAfterHidden
+                    ? "已观察到页面隐藏，正在等待恢复。"
+                    : renderEvidenceStatus.armed
+                      ? "已开启一次性等待；保持 agent-friend 运行即可。"
+                      : "默认关闭；只有你明确开启后才会读取桌面像素。"}
+                </span>
+              </span>
+            </label>
+
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted">
+                也可以立即采集一次，用于确认当前设备上的取证链路可用。
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={
+                  renderEvidenceUpdating || renderEvidenceStatus.captureInProgress
+                }
+                onClick={() => void captureRenderEvidence()}
+              >
+                立即采集
+              </Button>
+            </div>
+
+            {renderEvidenceStatus.pending ? (
+              <div className="flex flex-col gap-3 rounded-md border border-border bg-bg p-3">
+                <div className="flex items-start gap-2">
+                  {renderEvidenceStatus.pending.complete ? (
+                    <Check className="mt-0.5 size-4 shrink-0 text-success" />
+                  ) : (
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-fg">最近一次渲染证据已保存</p>
+                    <p className="mt-1 text-xs text-muted">
+                      {dayjs(renderEvidenceStatus.pending.capturedAt).format(
+                        "YYYY-MM-DD HH:mm:ss",
+                      )}
+                      {renderEvidenceStatus.pending.complete
+                        ? " · 两侧画面完整"
+                        : ` · ${renderEvidenceStatus.pending.errorCount} 项采集失败`}
+                    </p>
+                  </div>
+                </div>
+                <label className="flex cursor-pointer items-start gap-3">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={includeRenderEvidence}
+                    onCheckedChange={(checked) =>
+                      setIncludeRenderEvidence(checked === true)
+                    }
+                    aria-label="在诊断包中包含最近一次渲染证据"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-fg">
+                      在本次 ZIP 中包含渲染截图
+                    </span>
+                    <span className="mt-1 block text-xs text-muted">
+                      再次确认：ZIP 将包含完整桌面截图和桌宠 WebView2 内部截图，发送前请按私人文件检查。
+                    </span>
+                  </span>
+                </label>
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={renderEvidenceUpdating}
+                    onClick={() => void clearPendingRenderEvidence()}
+                  >
+                    <Trash2 className="size-4" />
+                    清除本机证据
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {renderEvidenceStatus.storageError ? (
+              <p className="text-xs text-danger">
+                本机渲染证据状态不可读：{renderEvidenceStatus.storageError}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {selectedIds.size > 0 ? (
           <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border p-3">
             <Checkbox

@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 1,
+  "schemaRevision": 3,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -80,6 +80,29 @@
       "entryPatterns": [
         "diagnostics/windows-shell/current.json",
         "diagnostics/windows-shell/events-*.jsonl"
+      ]
+    },
+    {
+      "id": "webview2-process-health-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "diagnostics/webview2.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/webview2.json"
+      ]
+    },
+    {
+      "id": "webview2-render-evidence-v1",
+      "manifestFields": [
+        "renderEvidence"
+      ],
+      "requiredEntries": [
+        "diagnostics/webview2-render-evidence.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/webview2-render-evidence.json",
+        "render-evidence/*.png"
       ]
     }
   ]
