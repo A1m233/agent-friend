@@ -11,10 +11,12 @@ The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` comma
 3. derives attachment candidates from selected-session `user_message` events;
 4. validates attachment metadata, blob size, and SHA-256 before optionally including originals;
 5. collects allowlisted logs from `paths::log_dir()`;
-6. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
-7. redacts managed credentials and replaces the user home path;
-8. validates the manifest and every archive entry against the producer-owned bundle contract;
-9. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
+6. snapshots the bounded WebView2 process/lifecycle buffer, runtime identity, and Windows graphics-adapter inventory;
+7. describes the latest one-shot render capture and, only when the user confirms inclusion, verifies and adds its WebView2/internal and full-desktop PNGs;
+8. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
+9. redacts managed credentials and replaces the user home path;
+10. validates the manifest and every archive entry against the producer-owned bundle contract;
+11. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
 
 The generator does not upload the bundle or intentionally call an external provider.
 
@@ -28,6 +30,10 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/environment.json` | OS, architecture, locale, timezone | No hostname or full environment dump |
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
+| `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included and no automatic recovery action is implied |
+| `diagnostics/webview2-render-evidence.json` | Consent/inclusion state plus capture trigger, timestamps, graphics/window state, pixel metrics, integrity hashes, and capture failures | Always present in newer v1 bundles; detailed capture data is present only when the user confirms ZIP inclusion |
+| `render-evidence/webview2-pet.png` | WebView2 `CapturePreview` of the pet WebView | Optional sensitive artifact; requires prior one-shot capture and explicit bundle inclusion |
+| `render-evidence/windows-desktop.png` | GDI `BitBlt` capture of the complete Windows virtual desktop using `CAPTUREBLT` | Optional highly sensitive artifact; can include every visible monitor and other applications |
 | `diagnostics/model-catalog.json` | Public model/provider catalog used by the runtime | Optional when the local bridge cannot provide it |
 | `diagnostics/attachments.json` | Attachment references, integrity checks, and original inclusion status | Candidates come only from included sessions |
 | `diagnostics/windows-shell/current.json` | Current Windows foreground, taskbar, selected window, geometry, style, and Z-order snapshot | `capability: unsupported` on non-Windows; may be absent after a collector failure |
@@ -50,6 +56,8 @@ The generator does not upload the bundle or intentionally call an external provi
 - `logs[].includedBytes` is measured after text decoding/redaction and may differ from the raw byte span.
 - Attachment summary reports requested originals, item count, estimated/included/skipped/failed bytes, and the 200 MiB cap.
 - `windowsShell.supported` distinguishes platform support; `artifacts` names the shell entries expected in the archive; `failureCount` reports collection/export failures.
+- `diagnostics/webview2.json` records up to 128 `ProcessFailed`, `BrowserProcessExited`, and pet page-visibility events. A nonzero `droppedEventCount` means earlier events were evicted. Empty events prove only that registered handlers observed no failure; inspect `registeredWindows` and `registrationFailures` before treating the absence as evidence.
+- `renderEvidence.includeRequested` is the user's second consent boundary at bundle generation. `pendingCapture` means a local one-shot capture existed; `artifacts` lists only screenshots actually included. Missing referenced screenshots, hash/size mismatch, partial capture errors, or a large `startDeltaMs` are explicit evidence gaps.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
 
@@ -108,8 +116,29 @@ The current snapshot and each journal snapshot may contain:
 
 Use `recordedAt` and event `receivedAt` to narrow the incident window. Treat `droppedEventCount`, `truncatedEventCount`, malformed journal records, missing referenced artifacts, or snapshot `probeErrors` as explicit coverage gaps. A geometry candidate is evidence about window bounds, not proof that Windows internally classified the window as fullscreen.
 
+## WebView2 Process Evidence
+
+`webview2-process-health-v1` is a passive Windows-only observer. Each registered WebView contributes `ProcessFailed`; one shared environment contributes `BrowserProcessExited`. The pet WebView also reports `page-visibility` transitions so an armed one-shot capture can trigger after a real hidden interval. The producer records runtime version, whether a failure-report folder is available, metadata for up to 16 recent `.dmp` files (name, size, modified time; never dump contents), registered window labels, registration failures, DXGI adapter/driver identity, DWM composition state, and a bounded oldest-evicted event list. The same events are also written as `source: webview2` records in the bounded `tauri.log.runtime*` journal, so a bundle generated after restarting the desktop shell can still retain the prior process failure. A shared process failure can appear once per affected window; correlate by process session, timestamp, kind, reason, exit code, and a nearby failure-report timestamp instead of counting matching window events as independent crashes.
+
+Interpret `gpu-process-exited` as an observed GPU process failure, not proof that the GPU caused the original symptom; WebView2 normally recreates that process. `render-process-exited` and `browser-process-exited` are stronger evidence of renderer/browser failure, but recovery behavior still depends on the application. Absence of events cannot rule out DirectComposition/host-HWND presentation failures because the WebView2 processes may remain healthy while Windows shows stale or black pixels.
+
+## WebView2 Render Evidence
+
+`webview2-render-evidence-v1` closes the installed-user gap without enabling remote debugging. The user must first arm a one-shot capture in Settings. After the pet page has been hidden for at least 500 ms and becomes visible again, the desktop shell concurrently requests WebView2 `CapturePreview` and captures the complete Windows virtual desktop. The capture is persisted under the bounded log directory, survives an app restart, replaces the previous capture, and is not added to a ZIP until the user explicitly checks the inclusion control.
+
+Use `startDeltaMs` to judge pairing quality, and compare `webView2Image` with `desktopImage` together with process events:
+
+| Evidence | Strongest next direction |
+| --- | --- |
+| WebView2 image has visible pet pixels; desktop is black | Host HWND / DirectComposition / Windows presentation path |
+| Both images are black and a GPU/renderer failure is present | WebView2 renderer or shared GPU-process recovery |
+| Both captured images look normal but the user physically saw black | Downstream DWM/display-driver/scan-out path; correlate adapter/driver and external app crashes |
+| Only one image exists, capture errors are nonzero, or pairing delta is large | Insufficient paired evidence; do not force a root cause |
+
+The pixel metrics intentionally treat alpha below 16 as transparent, so a transparent pet background is not mislabeled as opaque black. Metrics are triage aids; inspect the actual PNGs only when necessary and authorized. `CapturePreview` requires WebView2 `ContentLoading` to have fired and can otherwise fail or return the previous page, so preserve its capture error and timing rather than substituting another screenshot.
+
 ## Redaction and Privacy Boundary
 
 The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
 
-This is credential protection, not general content review. Selected sessions, problem text, tool arguments/results, log messages, filenames, and attachment originals may still contain private or unknown-sensitive data. Read and report only the slice required by the task.
+This is credential protection, not general content review. Selected sessions, problem text, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.

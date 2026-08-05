@@ -1,4 +1,4 @@
-use crate::{paths, runtime_config, runtime_services, shell_diagnostics};
+use crate::{paths, runtime_config, runtime_services, shell_diagnostics, webview_diagnostics};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -32,6 +32,8 @@ pub struct GenerateDiagnosticBundleRequest {
     timezone: Option<String>,
     #[serde(default)]
     include_attachment_originals: bool,
+    #[serde(default)]
+    include_render_evidence: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -78,6 +80,7 @@ pub async fn generate_diagnostic_bundle(
     request: GenerateDiagnosticBundleRequest,
     services: State<'_, Arc<runtime_services::RuntimeServiceSupervisor>>,
     shell_diagnostics_manager: State<'_, Arc<shell_diagnostics::ShellDiagnosticsManager>>,
+    webview_diagnostics_manager: State<'_, Arc<webview_diagnostics::WebViewDiagnosticsManager>>,
 ) -> Result<GenerateDiagnosticBundleResult, String> {
     let description = normalize_description(request.description)?;
     let session_ids = normalize_session_ids(request.session_ids)?;
@@ -182,17 +185,43 @@ pub async fn generate_diagnostic_bundle(
         "timezone": request.timezone,
     });
     let runtime_services = json!({"bridge": bridge_snapshot, "voice": voice_snapshot});
+    let webview2_diagnostics = serde_json::to_value(webview_diagnostics_manager.snapshot())
+        .map_err(|error| format!("serialize WebView2 diagnostics failed: {error}"))?;
+    let mut render_evidence_export = webview_diagnostics_manager
+        .export_render_evidence_for_bundle(request.include_render_evidence);
+    let render_evidence_metadata = render_evidence_export.metadata;
 
     for (name, mut value) in [
         ("diagnostics/application.json", app_info),
         ("diagnostics/environment.json", environment),
         ("diagnostics/runtime-services.json", runtime_services),
         ("diagnostics/runtime-config.json", runtime_config),
+        ("diagnostics/webview2.json", webview2_diagnostics),
+        (
+            "diagnostics/webview2-render-evidence.json",
+            render_evidence_metadata,
+        ),
     ] {
         let mut count = 0;
         redact_json(&mut value, &credentials, home.as_deref(), &mut count);
         entries.push(json_entry(name, &value)?);
     }
+    for artifact in render_evidence_export.artifacts.drain(..) {
+        entries.push(ArchiveEntry {
+            name: artifact.entry_name,
+            source: ArchiveEntrySource::Bytes(artifact.bytes),
+        });
+    }
+    failures.extend(
+        render_evidence_export
+            .failures
+            .drain(..)
+            .map(|message| CollectionFailure {
+                collection: "webview2-render-evidence".into(),
+                item: None,
+                message: redact_text(&message, &credentials, home.as_deref()).0,
+            }),
+    );
 
     match model_catalog_result {
         Ok(mut value) => {
@@ -296,6 +325,7 @@ pub async fn generate_diagnostic_bundle(
             logs: &log_manifest,
             windows_shell: &shell_summary,
             attachments: &attachment_collection.summary,
+            render_evidence: &render_evidence_export.summary,
         },
     );
     entries.push(json_entry("manifest.json", &manifest)?);
@@ -594,6 +624,7 @@ struct BundleManifestInput<'a> {
     logs: &'a [LogManifestItem],
     windows_shell: &'a Value,
     attachments: &'a Value,
+    render_evidence: &'a Value,
 }
 
 fn build_bundle_manifest(
@@ -623,6 +654,7 @@ fn build_bundle_manifest(
         "logs": input.logs,
         "windowsShell": input.windows_shell,
         "attachments": input.attachments,
+        "renderEvidence": input.render_evidence,
     })
 }
 
@@ -920,6 +952,13 @@ mod tests {
             "failureCount": 0,
         });
         let attachments = json!({"itemCount": 0});
+        let render_evidence = json!({
+            "supported": true,
+            "includeRequested": false,
+            "pendingCapture": null,
+            "artifacts": [],
+            "failureCount": 0,
+        });
         let manifest = build_bundle_manifest(
             &contract,
             BundleManifestInput {
@@ -931,6 +970,7 @@ mod tests {
                 logs: &logs,
                 windows_shell: &windows_shell,
                 attachments: &attachments,
+                render_evidence: &render_evidence,
             },
         );
 
@@ -943,6 +983,8 @@ mod tests {
                     "diagnostics/environment.json",
                     "diagnostics/runtime-services.json",
                     "diagnostics/runtime-config.json",
+                    "diagnostics/webview2.json",
+                    "diagnostics/webview2-render-evidence.json",
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/current.json",
                 ],

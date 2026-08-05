@@ -24,11 +24,20 @@ export type {
   SocialAuthRequestStatus,
 } from "./api/socialAuth";
 export type { ModelValidationResult } from "./api/models";
-export { generateDiagnosticBundle } from "./diagnostics";
+export {
+  captureRenderEvidenceNow,
+  clearRenderEvidence,
+  generateDiagnosticBundle,
+  getRenderEvidenceStatus,
+  recordPetWebviewVisibility,
+  setRenderEvidenceArmed,
+} from "./diagnostics";
 export type {
   DiagnosticCollectionFailure,
   GenerateDiagnosticBundleInput,
   GenerateDiagnosticBundleResult,
+  RenderEvidencePendingSummary,
+  RenderEvidenceStatus,
 } from "./diagnostics";
 export { imApi } from "./api/im";
 export type {

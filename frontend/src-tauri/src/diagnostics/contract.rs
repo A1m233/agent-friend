@@ -245,6 +245,7 @@ mod tests {
             "logs": [],
             "windowsShell": {},
             "attachments": {},
+            "renderEvidence": {},
         })
     }
 
@@ -261,8 +262,12 @@ mod tests {
                     "diagnostics/environment.json",
                     "diagnostics/runtime-services.json",
                     "diagnostics/runtime-config.json",
+                    "diagnostics/webview2.json",
+                    "diagnostics/webview2-render-evidence.json",
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/events-001.jsonl",
+                    "render-evidence/webview2-pet.png",
+                    "render-evidence/windows-desktop.png",
                 ],
             )
             .expect("validate representative bundle");
@@ -291,6 +296,8 @@ mod tests {
                     "diagnostics/environment.json",
                     "diagnostics/runtime-services.json",
                     "diagnostics/runtime-config.json",
+                    "diagnostics/webview2.json",
+                    "diagnostics/webview2-render-evidence.json",
                     "diagnostics/attachments.json",
                     "unexpected/private.txt",
                 ],

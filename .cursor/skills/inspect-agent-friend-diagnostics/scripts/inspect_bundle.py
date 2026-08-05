@@ -26,6 +26,8 @@ CAPABILITY_HANDLERS = {
     "bounded-log-tail-v1": "logs",
     "attachment-integrity-v1": "attachments",
     "windows-shell-history-v1": "windowsShell",
+    "webview2-process-health-v1": "webView2",
+    "webview2-render-evidence-v1": "webView2RenderEvidence",
 }
 
 
@@ -99,6 +101,146 @@ def summarize_model_catalog(value: Any) -> dict[str, Any] | None:
             for provider in provider_items
             if isinstance(provider.get("models"), list)
         ),
+    }
+
+
+def summarize_webview2(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"error": "WebView2 diagnostics root is not an object"}
+    runtime = value.get("runtime") if isinstance(value.get("runtime"), dict) else {}
+    graphics = value.get("graphics") if isinstance(value.get("graphics"), dict) else {}
+    events = value.get("events") if isinstance(value.get("events"), list) else []
+    event_items = [event for event in events if isinstance(event, dict)]
+    registration_failures = (
+        value.get("registrationFailures")
+        if isinstance(value.get("registrationFailures"), list)
+        else []
+    )
+    failure_reports = (
+        [report for report in value.get("failureReports", []) if isinstance(report, dict)]
+        if isinstance(value.get("failureReports"), list)
+        else []
+    )
+    registered_windows = (
+        [label for label in value.get("registeredWindows", []) if isinstance(label, str)]
+        if isinstance(value.get("registeredWindows"), list)
+        else []
+    )
+    return {
+        "schemaVersion": value.get("schemaVersion"),
+        "supported": value.get("supported"),
+        "runtimeVersion": runtime.get("browserVersion"),
+        "failureReportFolderAvailable": bool(runtime.get("failureReportFolderPath")),
+        "failureReportCount": len(failure_reports),
+        "newestFailureReportUnixSeconds": max(
+            (
+                report["modifiedAtUnixSeconds"]
+                for report in failure_reports
+                if isinstance(report.get("modifiedAtUnixSeconds"), int)
+            ),
+            default=None,
+        ),
+        "failureReportScanError": value.get("failureReportScanError"),
+        "environmentRegistrationWindow": runtime.get("environmentRegistrationWindow"),
+        "graphicsAdapterCount": len(graphics.get("adapters", []))
+        if isinstance(graphics.get("adapters"), list)
+        else 0,
+        "dwmCompositionEnabled": graphics.get("dwmCompositionEnabled"),
+        "remoteSession": graphics.get("remoteSession"),
+        "registeredWindows": registered_windows,
+        "registrationFailureCount": len(registration_failures),
+        "eventBufferLimit": value.get("eventBufferLimit"),
+        "droppedEventCount": value.get("droppedEventCount"),
+        "eventCount": len(event_items),
+        "eventKinds": dict(
+            sorted(
+                Counter(str(event.get("eventType", "<missing>")) for event in event_items).items()
+            )
+        ),
+        "processFailureKinds": dict(
+            sorted(
+                Counter(
+                    str(event["processFailedKind"])
+                    for event in event_items
+                    if isinstance(event.get("processFailedKind"), str)
+                ).items()
+            )
+        ),
+        "processFailureReasons": dict(
+            sorted(
+                Counter(
+                    str(event["reason"])
+                    for event in event_items
+                    if isinstance(event.get("reason"), str)
+                ).items()
+            )
+        ),
+    }
+
+
+def summarize_webview2_render_evidence(
+    value: Any,
+    archive_names: set[str],
+) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"error": "WebView2 render evidence root is not an object"}
+    status = value.get("status") if isinstance(value.get("status"), dict) else {}
+    pending = status.get("pending") if isinstance(status.get("pending"), dict) else None
+    capture = value.get("capture") if isinstance(value.get("capture"), dict) else None
+    included_artifacts = (
+        [entry for entry in value.get("includedArtifacts", []) if isinstance(entry, str)]
+        if isinstance(value.get("includedArtifacts"), list)
+        else []
+    )
+    missing_artifacts = [entry for entry in included_artifacts if entry not in archive_names]
+
+    def image_summary(image: Any) -> dict[str, Any] | None:
+        if not isinstance(image, dict):
+            return None
+        metrics = image.get("pixelMetrics") if isinstance(image.get("pixelMetrics"), dict) else {}
+        return {
+            "width": image.get("width"),
+            "height": image.get("height"),
+            "bytes": image.get("bytes"),
+            "sha256": image.get("sha256"),
+            "captureStartedUnixMs": image.get("captureStartedUnixMs"),
+            "captureCompletedUnixMs": image.get("captureCompletedUnixMs"),
+            "transparentPixelCount": metrics.get("transparentPixelCount"),
+            "opaquePixelCount": metrics.get("opaquePixelCount"),
+            "nearBlackOpaqueRatio": metrics.get("nearBlackOpaqueRatio"),
+            "averageOpaqueLuma": metrics.get("averageOpaqueLuma"),
+        }
+
+    errors = capture.get("errors") if capture and isinstance(capture.get("errors"), list) else []
+    graphics = (
+        capture.get("graphics") if capture and isinstance(capture.get("graphics"), dict) else {}
+    )
+    return {
+        "schemaVersion": value.get("schemaVersion"),
+        "supported": value.get("supported"),
+        "includeRequested": value.get("includeRequested"),
+        "armed": status.get("armed"),
+        "captureInProgress": status.get("captureInProgress"),
+        "pending": pending,
+        "captureId": capture.get("captureId") if capture else None,
+        "capturedAt": capture.get("captureCompletedAt") if capture else None,
+        "trigger": capture.get("trigger") if capture else None,
+        "hiddenDurationMs": capture.get("hiddenDurationMs") if capture else None,
+        "startDeltaMs": capture.get("startDeltaMs") if capture else None,
+        "webView2Image": image_summary(capture.get("webview2")) if capture else None,
+        "desktopImage": image_summary(capture.get("desktop")) if capture else None,
+        "graphicsAdapterCount": len(graphics.get("adapters", []))
+        if isinstance(graphics.get("adapters"), list)
+        else 0,
+        "dwmCompositionEnabled": graphics.get("dwmCompositionEnabled"),
+        "remoteSession": graphics.get("remoteSession"),
+        "captureErrorCount": len(errors),
+        "includedArtifacts": included_artifacts,
+        "missingArtifacts": missing_artifacts,
     }
 
 
@@ -315,6 +457,30 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
         runtime_config = optional_json(archive, "diagnostics/runtime-config.json", warnings)
         model_catalog = optional_json(archive, "diagnostics/model-catalog.json", warnings)
         attachments = optional_json(archive, "diagnostics/attachments.json", warnings)
+        webview2 = (
+            optional_json(archive, "diagnostics/webview2.json", warnings)
+            if "webview2-process-health-v1" in capabilities or "diagnostics/webview2.json" in names
+            else None
+        )
+        webview2_render_evidence = (
+            optional_json(
+                archive,
+                "diagnostics/webview2-render-evidence.json",
+                warnings,
+            )
+            if "webview2-render-evidence-v1" in capabilities
+            or "diagnostics/webview2-render-evidence.json" in names
+            else None
+        )
+        render_evidence_summary = summarize_webview2_render_evidence(
+            webview2_render_evidence,
+            set(names),
+        )
+        if render_evidence_summary and render_evidence_summary.get("missingArtifacts"):
+            warnings.append(
+                "render evidence metadata references missing artifacts: "
+                + ", ".join(render_evidence_summary["missingArtifacts"])
+            )
 
         shell_manifest = (
             manifest.get("windowsShell") if isinstance(manifest.get("windowsShell"), dict) else {}
@@ -442,6 +608,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "excluded": manifest.get("excluded", []),
                 "logLimits": manifest.get("logLimits"),
                 "attachmentSummary": manifest.get("attachments"),
+                "renderEvidenceSummary": manifest.get("renderEvidence"),
             },
             "runtimeIdentity": {
                 "product": app.get("product"),
@@ -487,6 +654,8 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 "current": shell_current,
                 "journal": shell_journal,
             },
+            "webView2": summarize_webview2(webview2),
+            "webView2RenderEvidence": render_evidence_summary,
             "warnings": warnings,
         }
 
@@ -553,6 +722,25 @@ def print_human(summary: dict[str, Any]) -> None:
         f"journalRecords={shell_journal['recordCount']} "
         f"events={shell_journal['eventCount']} dropped={shell_journal['droppedEventCount']} "
         f"truncated={shell_journal['truncatedEventCount']}"
+    )
+    webview2 = summary["webView2"] or {}
+    print(
+        "WebView2: "
+        f"supported={webview2.get('supported')} runtime={webview2.get('runtimeVersion')} "
+        f"registered={len(webview2.get('registeredWindows', []))} "
+        f"failureReports={webview2.get('failureReportCount')} "
+        f"events={webview2.get('eventCount')} dropped={webview2.get('droppedEventCount')} "
+        f"kinds={json.dumps(webview2.get('processFailureKinds', {}), ensure_ascii=False, sort_keys=True)}"
+    )
+    render_evidence = summary["webView2RenderEvidence"] or {}
+    print(
+        "WebView2 render evidence: "
+        f"requested={render_evidence.get('includeRequested')} "
+        f"capture={render_evidence.get('captureId')} "
+        f"trigger={render_evidence.get('trigger')} "
+        f"deltaMs={render_evidence.get('startDeltaMs')} "
+        f"artifacts={len(render_evidence.get('includedArtifacts', []))} "
+        f"missing={len(render_evidence.get('missingArtifacts', []))}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "

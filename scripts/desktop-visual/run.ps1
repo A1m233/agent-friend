@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+# pair-capture is Windows-only because it compares WebView2 CDP with desktop-compositor pixels.
 Set-Location (Join-Path $PSScriptRoot "..\..")
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
