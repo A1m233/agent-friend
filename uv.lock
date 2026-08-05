@@ -147,6 +147,7 @@ dependencies = [
 dev = [
     { name = "httpx" },
     { name = "mypy" },
+    { name = "pillow" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "respx" },
@@ -183,6 +184,7 @@ requires-dist = [
 dev = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mypy", specifier = ">=1.10.0" },
+    { name = "pillow", specifier = ">=12.2.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "respx", specifier = ">=0.23.1" },

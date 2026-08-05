@@ -153,6 +153,25 @@ def _build_bundle(
             "failureCount": 0,
         },
         "attachments": attachment_summary,
+        "renderEvidence": {
+            "supported": True,
+            "includeRequested": True,
+            "pendingCapture": {
+                "captureId": "capture-1",
+                "capturedAt": "2026-08-01T00:00:02+00:00",
+                "trigger": "pet-page-visible-after-hidden",
+                "complete": True,
+                "webview2Available": True,
+                "desktopAvailable": True,
+                "errorCount": 0,
+            },
+            "artifacts": [
+                "render-evidence/webview2-pet.png",
+                "render-evidence/windows-desktop.png",
+            ],
+            "failureCount": 0,
+            "maxTotalBytes": 64 * 1024 * 1024,
+        },
     }
     assert set(manifest) == _contract_manifest_fields(contract)
 
@@ -176,6 +195,125 @@ def _build_bundle(
         },
         "diagnostics/runtime-services.json": {},
         "diagnostics/runtime-config.json": {"items": []},
+        "diagnostics/webview2.json": {
+            "schemaVersion": 1,
+            "supported": True,
+            "runtime": {
+                "browserVersion": "147.0.0.0",
+                "failureReportFolderPath": "<USER_HOME>/WebView2/Crashpad/reports",
+                "environmentRegistrationWindow": "pet",
+            },
+            "failureReports": [
+                {
+                    "fileName": "fixture.dmp",
+                    "bytes": 4096,
+                    "modifiedAtUnixSeconds": 1785523202,
+                }
+            ],
+            "failureReportScanError": None,
+            "graphics": {
+                "supported": True,
+                "dwmCompositionEnabled": True,
+                "remoteSession": False,
+                "adapters": [{"description": "Fixture GPU"}],
+                "errors": [],
+            },
+            "registeredWindows": ["pet", "chat"],
+            "registrationFailures": [],
+            "eventBufferLimit": 128,
+            "droppedEventCount": 1,
+            "events": [
+                {
+                    "sequence": 2,
+                    "capturedAt": "2026-08-01T00:00:02+00:00",
+                    "eventType": "process-failed",
+                    "windowLabel": "pet",
+                    "processFailedKind": "gpu-process-exited",
+                    "reason": "crashed",
+                    "exitCode": -1,
+                    "processDescription": None,
+                    "browserProcessExitKind": None,
+                    "browserProcessId": None,
+                    "visibilityState": None,
+                }
+            ],
+        },
+        "diagnostics/webview2-render-evidence.json": {
+            "schemaVersion": 1,
+            "supported": True,
+            "includeRequested": True,
+            "status": {
+                "supported": True,
+                "armed": False,
+                "waitingForVisibleAfterHidden": False,
+                "captureInProgress": False,
+                "pending": {
+                    "captureId": "capture-1",
+                    "capturedAt": "2026-08-01T00:00:02+00:00",
+                    "trigger": "pet-page-visible-after-hidden",
+                    "complete": True,
+                    "webview2Available": True,
+                    "desktopAvailable": True,
+                    "errorCount": 0,
+                },
+                "storageError": None,
+            },
+            "capture": {
+                "schemaVersion": 1,
+                "captureId": "capture-1",
+                "trigger": "pet-page-visible-after-hidden",
+                "hiddenDurationMs": 30000,
+                "captureStartedAt": "2026-08-01T00:00:01+00:00",
+                "captureCompletedAt": "2026-08-01T00:00:02+00:00",
+                "startDeltaMs": 12,
+                "targetWindow": {"label": "pet"},
+                "graphics": {
+                    "dwmCompositionEnabled": True,
+                    "remoteSession": False,
+                    "adapters": [{"description": "Fixture GPU"}],
+                },
+                "windowsShellSnapshot": {"capability": "supported"},
+                "webview2": {
+                    "fileName": "webview2-pet.png",
+                    "captureStartedUnixMs": 1000,
+                    "captureCompletedUnixMs": 1100,
+                    "width": 800,
+                    "height": 600,
+                    "bytes": 3,
+                    "sha256": "a" * 64,
+                    "pixelMetrics": {
+                        "totalPixels": 480000,
+                        "transparentPixelCount": 400000,
+                        "opaquePixelCount": 80000,
+                        "nearBlackOpaquePixelCount": 100,
+                        "nearBlackOpaqueRatio": 0.00125,
+                        "averageOpaqueLuma": 120.0,
+                    },
+                },
+                "desktop": {
+                    "fileName": "windows-desktop.png",
+                    "captureStartedUnixMs": 1012,
+                    "captureCompletedUnixMs": 1200,
+                    "width": 1920,
+                    "height": 1080,
+                    "bytes": 3,
+                    "sha256": "b" * 64,
+                    "pixelMetrics": {
+                        "totalPixels": 2073600,
+                        "transparentPixelCount": 0,
+                        "opaquePixelCount": 2073600,
+                        "nearBlackOpaquePixelCount": 2000000,
+                        "nearBlackOpaqueRatio": 0.9645,
+                        "averageOpaqueLuma": 3.0,
+                    },
+                },
+                "errors": [],
+            },
+            "includedArtifacts": [
+                "render-evidence/webview2-pet.png",
+                "render-evidence/windows-desktop.png",
+            ],
+        },
         "diagnostics/model-catalog.json": {
             "schemaVersion": 1,
             "catalogRevision": "fixture",
@@ -196,7 +334,11 @@ def _build_bundle(
         "diagnostics/windows-shell/events-001.jsonl": json.dumps(shell_journal) + "\n",
         "logs/tauri.log": "safe",
     }
-    entry_names = {*json_entries, *text_entries}
+    binary_entries = {
+        "render-evidence/webview2-pet.png": b"png",
+        "render-evidence/windows-desktop.png": b"png",
+    }
+    entry_names = {*json_entries, *text_entries, *binary_entries}
     patterns = _contract_entry_patterns(contract)
     assert all(
         any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns) for name in entry_names
@@ -206,6 +348,8 @@ def _build_bundle(
         for name, value in json_entries.items():
             archive.writestr(name, json.dumps(value, ensure_ascii=False))
         for name, value in text_entries.items():
+            archive.writestr(name, value)
+        for name, value in binary_entries.items():
             archive.writestr(name, value)
 
 
@@ -232,6 +376,44 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["windowsShell"]["journal"]["eventCount"] == 2
     assert summary["windowsShell"]["journal"]["droppedEventCount"] == 3
     assert summary["windowsShell"]["journal"]["truncatedEventCount"] == 2
+    assert summary["webView2"]["runtimeVersion"] == "147.0.0.0"
+    assert summary["webView2"]["failureReportCount"] == 1
+    assert summary["webView2"]["newestFailureReportUnixSeconds"] == 1785523202
+    assert summary["webView2"]["eventCount"] == 1
+    assert summary["webView2"]["eventKinds"] == {"process-failed": 1}
+    assert summary["webView2"]["processFailureKinds"] == {"gpu-process-exited": 1}
+    assert summary["webView2"]["droppedEventCount"] == 1
+    assert summary["webView2RenderEvidence"]["captureId"] == "capture-1"
+    assert summary["webView2RenderEvidence"]["startDeltaMs"] == 12
+    assert summary["webView2RenderEvidence"]["webView2Image"]["nearBlackOpaqueRatio"] == 0.00125
+    assert summary["webView2RenderEvidence"]["desktopImage"]["nearBlackOpaqueRatio"] == 0.9645
+    assert summary["webView2RenderEvidence"]["missingArtifacts"] == []
+    assert summary["manifest"]["renderEvidenceSummary"]["artifacts"] == [
+        "render-evidence/webview2-pet.png",
+        "render-evidence/windows-desktop.png",
+    ]
+
+
+def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:
+    contract = _load_contract()
+    complete_bundle = tmp_path / "complete.zip"
+    missing_bundle = tmp_path / "missing-render-artifact.zip"
+    _build_bundle(complete_bundle, contract)
+
+    with (
+        zipfile.ZipFile(complete_bundle, "r") as source,
+        zipfile.ZipFile(missing_bundle, "w", compression=zipfile.ZIP_DEFLATED) as target,
+    ):
+        for info in source.infolist():
+            if info.filename != "render-evidence/windows-desktop.png":
+                target.writestr(info, source.read(info.filename))
+
+    summary = INSPECTOR.inspect_bundle(missing_bundle, verify_crc=True)
+
+    assert summary["webView2RenderEvidence"]["missingArtifacts"] == [
+        "render-evidence/windows-desktop.png"
+    ]
+    assert any("missing artifacts" in warning for warning in summary["warnings"])
 
 
 def test_inspector_warns_when_bundle_declares_an_unhandled_capability(tmp_path: Path) -> None:
@@ -254,3 +436,71 @@ def test_inspector_reports_malformed_capability_list_without_crashing(tmp_path: 
 
     assert summary["manifest"]["capabilities"] == []
     assert "manifest capabilities is not an array" in summary["warnings"]
+
+
+def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) -> None:
+    contract = _load_contract()
+    current_bundle = tmp_path / "current.zip"
+    older_bundle = tmp_path / "older-v1.zip"
+    _build_bundle(current_bundle, contract)
+
+    with (
+        zipfile.ZipFile(current_bundle, "r") as source,
+        zipfile.ZipFile(older_bundle, "w", compression=zipfile.ZIP_DEFLATED) as target,
+    ):
+        for info in source.infolist():
+            if info.filename == "diagnostics/webview2.json" or info.filename.startswith(
+                ("diagnostics/webview2-render-evidence.json", "render-evidence/")
+            ):
+                continue
+            data = source.read(info.filename)
+            if info.filename == "manifest.json":
+                manifest = json.loads(data)
+                manifest["schemaRevision"] = 1
+                manifest["capabilities"].remove("webview2-process-health-v1")
+                manifest["capabilities"].remove("webview2-render-evidence-v1")
+                manifest.pop("renderEvidence")
+                data = json.dumps(manifest).encode()
+            target.writestr(info.filename, data)
+
+    summary = INSPECTOR.inspect_bundle(older_bundle, verify_crc=True)
+
+    assert summary["manifest"]["schemaRevision"] == 1
+    assert summary["webView2"] is None
+    assert summary["webView2RenderEvidence"] is None
+    assert not any("webview2" in warning.lower() for warning in summary["warnings"])
+
+
+def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> None:
+    contract = _load_contract()
+    current_bundle = tmp_path / "current.zip"
+    schema_v2_bundle = tmp_path / "schema-v2.zip"
+    _build_bundle(current_bundle, contract)
+
+    with (
+        zipfile.ZipFile(current_bundle, "r") as source,
+        zipfile.ZipFile(schema_v2_bundle, "w", compression=zipfile.ZIP_DEFLATED) as target,
+    ):
+        for info in source.infolist():
+            if (
+                info.filename == "diagnostics/webview2-render-evidence.json"
+                or info.filename.startswith("render-evidence/")
+            ):
+                continue
+            data = source.read(info.filename)
+            if info.filename == "manifest.json":
+                manifest = json.loads(data)
+                manifest["schemaRevision"] = 2
+                manifest["capabilities"].remove("webview2-render-evidence-v1")
+                manifest.pop("renderEvidence")
+                data = json.dumps(manifest).encode()
+            target.writestr(info.filename, data)
+
+    summary = INSPECTOR.inspect_bundle(schema_v2_bundle, verify_crc=True)
+
+    assert summary["manifest"]["schemaRevision"] == 2
+    assert summary["webView2"]["runtimeVersion"] == "147.0.0.0"
+    assert summary["webView2"]["failureReportCount"] == 1
+    assert summary["webView2"]["newestFailureReportUnixSeconds"] == 1785523202
+    assert summary["webView2RenderEvidence"] is None
+    assert not any("render evidence" in warning.lower() for warning in summary["warnings"])

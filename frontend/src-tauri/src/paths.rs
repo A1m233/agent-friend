@@ -17,6 +17,7 @@ pub const PERSONA_EDITABLE_FILE: &str = "persona.md";
 pub const MIGRATION_DIR: &str = "migration";
 pub const MIGRATION_BACKUPS_DIR: &str = "migration-backups";
 pub const SHELL_DIAGNOSTICS_DIR: &str = "windows-shell";
+pub const WEBVIEW_RENDER_EVIDENCE_DIR: &str = "webview-render-evidence";
 
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
@@ -140,6 +141,14 @@ pub fn shell_diagnostics_dir() -> PathBuf {
     log_dir().join(SHELL_DIAGNOSTICS_DIR)
 }
 
+/// 用户显式授权后采集的最近一份 WebView2 / Windows 呈现对照证据。
+///
+/// 原始截图属于诊断日志而不是用户资产；目录始终位于统一日志根下，且采集器只保留
+/// 一份 `latest`，避免隐私内容和磁盘占用无界增长。
+pub fn webview_render_evidence_dir() -> PathBuf {
+    log_dir().join(WEBVIEW_RENDER_EVIDENCE_DIR)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +215,24 @@ mod tests {
             std::env::set_var(DATA_DIR_ENV, value);
         } else {
             std::env::remove_var(DATA_DIR_ENV);
+        }
+    }
+
+    #[test]
+    fn webview_render_evidence_uses_the_log_directory() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let previous = std::env::var_os(LOG_DIR_ENV);
+        std::env::set_var(LOG_DIR_ENV, "agent-friend-logs");
+
+        assert_eq!(
+            webview_render_evidence_dir(),
+            PathBuf::from("agent-friend-logs").join(WEBVIEW_RENDER_EVIDENCE_DIR)
+        );
+
+        if let Some(value) = previous {
+            std::env::set_var(LOG_DIR_ENV, value);
+        } else {
+            std::env::remove_var(LOG_DIR_ENV);
         }
     }
 

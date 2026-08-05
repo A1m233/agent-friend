@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Menu } from "@tauri-apps/api/menu";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "@/utils/tauri";
+import { recordPetWebviewVisibility } from "@/services";
 import {
   openFeedback as openFeedbackWindow,
   openSettings as openSettingsWindow,
@@ -208,6 +209,19 @@ export function PetApp() {
     installedAvatarModels,
     avatarModelId,
   );
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const reportVisibility = () => {
+      const visibilityState = document.visibilityState === "hidden" ? "hidden" : "visible";
+      void recordPetWebviewVisibility(visibilityState).catch((error) => {
+        console.warn("[pet][render-evidence] visibility report failed", error);
+      });
+    };
+    reportVisibility();
+    document.addEventListener("visibilitychange", reportVisibility);
+    return () => document.removeEventListener("visibilitychange", reportVisibility);
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;

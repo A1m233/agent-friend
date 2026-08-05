@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# scripts/desktop-visual/run.sh - desktop visual/DOM inspection harness (mac/linux)
+# scripts/desktop-visual/run.sh - desktop visual/DOM inspection harness (mac/linux).
+# pair-capture remains Windows-only because macOS does not use WebView2.
 # See scripts/README.md.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
