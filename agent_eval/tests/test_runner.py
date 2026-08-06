@@ -12,6 +12,7 @@ from agent_eval.runner import (
 )
 from agent_eval.schema import (
     FakeTool,
+    FakeToolResponse,
     FixtureAttachment,
     FixtureMessage,
     FixtureToolCallRequest,
@@ -30,14 +31,14 @@ FIXTURE_IMAGE = (
 
 def test_fixture_tool_returns_case_local_result_without_external_call() -> None:
     tool = _FixtureTool(
-        FakeTool(name="web_search", result_text='{"trust":"untrusted_data"}', is_error=False)
+        FakeTool(name="web_search", result_text='{"source_type":"web_search"}', is_error=False)
     )
 
     result = tool.invoke({"search_text": "ignored"})
 
     assert tool.name == "web_search"
     assert "时效性信息" in tool.description
-    assert result.text == '{"trust":"untrusted_data"}'
+    assert result.text == '{"source_type":"web_search"}'
     assert result.is_error is False
 
 
@@ -58,6 +59,82 @@ def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> Non
         {"required": ["evidence_ref"]},
     ]
     assert "官方原文" in fetch.description
+
+
+def test_fixture_tool_selects_response_by_argument_subset() -> None:
+    tool = _FixtureTool(
+        FakeTool(
+            name="web_fetch",
+            responses=[
+                FakeToolResponse(
+                    match_args={"evidence_ref": "first_ref"},
+                    result_text="first page",
+                ),
+                FakeToolResponse(
+                    match_args={"evidence_ref": "target_ref"},
+                    result_text="target page",
+                ),
+            ],
+        )
+    )
+
+    result = tool.invoke(
+        {
+            "evidence_ref": "target_ref",
+            "focus": "核对正文",
+            "__agent_friend_url_authorization": {"source": "fixture"},
+        }
+    )
+
+    assert result.text == "target page"
+    assert result.is_error is False
+
+
+def test_fixture_tool_rejects_unmatched_or_ambiguous_arguments() -> None:
+    unmatched = _FixtureTool(
+        FakeTool(
+            name="web_fetch",
+            responses=[
+                FakeToolResponse(
+                    match_args={"evidence_ref": "target_ref"},
+                    result_text="target page",
+                )
+            ],
+        )
+    ).invoke({"evidence_ref": "other_ref"})
+    assert unmatched.is_error is True
+    assert unmatched.meta["error_kind"] == "fixture_no_match"
+
+    ambiguous = _FixtureTool(
+        FakeTool(
+            name="web_fetch",
+            responses=[
+                FakeToolResponse(
+                    match_args={"evidence_ref": "target_ref"},
+                    result_text="broad",
+                ),
+                FakeToolResponse(
+                    match_args={"evidence_ref": "target_ref", "focus": "名单"},
+                    result_text="specific",
+                ),
+            ],
+        )
+    ).invoke({"evidence_ref": "target_ref", "focus": "名单"})
+    assert ambiguous.is_error is True
+    assert ambiguous.meta["error_kind"] == "fixture_ambiguous_match"
+
+
+def test_fixture_social_tools_keep_production_specs() -> None:
+    search = _FixtureTool(FakeTool(name="social_search", result_text="search result"))
+    read = _FixtureTool(FakeTool(name="social_read", result_text="detail"))
+
+    assert search.parameters_schema["required"] == ["platform", "query"]
+    assert read.parameters_schema["oneOf"] == [
+        {"required": ["resource_ref"]},
+        {"required": ["url"]},
+        {"required": ["evidence_ref"]},
+        {"required": ["continuation_ref"]},
+    ]
 
 
 def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:

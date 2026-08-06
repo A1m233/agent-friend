@@ -160,7 +160,7 @@ def _latest_user_attachments(messages: list[Message]) -> list[AttachmentRef]:
 def _render_untrusted_context(source_type: str, text: str) -> str:
     """把召回正文编码成与可信外围指令分离的数据块。"""
     return json.dumps(
-        {"source_type": source_type, "trust": "untrusted_data", "content": text},
+        {"source_type": source_type, "content": text},
         ensure_ascii=False,
         indent=2,
     )

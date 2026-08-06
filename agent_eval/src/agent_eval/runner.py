@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
+from agent.tools.builtin.social_platforms import SocialReadTool, SocialSearchTool
 from agent.tools.builtin.todo_manage import TodoManageTool
 from agent.tools.builtin.weather_query import WeatherQueryTool
 from agent.tools.builtin.web_fetch import WebFetchTool
@@ -44,6 +45,7 @@ from llm_providers import LLMClient, MultimodalInputAdapter, ProviderSpec
 from .schema import (
     Case,
     FakeTool,
+    FakeToolResponse,
     FixtureAttachment,
     FixtureCurrentEvent,
     FixtureMessage,
@@ -91,6 +93,12 @@ class _FixtureTool:
         elif fixture.name == "web_fetch":
             self.description = WebFetchTool.description
             self.parameters_schema = WebFetchTool.parameters_schema
+        elif fixture.name == "social_search":
+            self.description = SocialSearchTool.description
+            self.parameters_schema = SocialSearchTool.parameters_schema
+        elif fixture.name == "social_read":
+            self.description = SocialReadTool.description
+            self.parameters_schema = SocialReadTool.parameters_schema
         elif fixture.name == "weather_query":
             self.description = WeatherQueryTool.description
             self.parameters_schema = WeatherQueryTool.parameters_schema
@@ -102,13 +110,36 @@ class _FixtureTool:
             self.parameters_schema = {"type": "object", "properties": {}}
         self._fixture = fixture
 
-    def invoke(self, _args: dict[str, Any]) -> ToolResult:
-        meta = {"source_urls": self._fixture.source_urls} if self._fixture.source_urls else {}
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        selected: FakeTool | FakeToolResponse = self._fixture
+        if self._fixture.responses:
+            matches = [
+                response
+                for response in self._fixture.responses
+                if _value_contains(args, response.match_args)
+            ]
+            if len(matches) != 1:
+                kind = "fixture_no_match" if not matches else "fixture_ambiguous_match"
+                return ToolResult(
+                    text=(f"评测 fixture 没有唯一匹配本次 {self.name} 调用参数的固定结果。"),
+                    is_error=True,
+                    meta={"error_kind": kind, "matching_response_count": len(matches)},
+                )
+            selected = matches[0]
+        meta = {"source_urls": selected.source_urls} if selected.source_urls else {}
         return ToolResult(
-            text=self._fixture.result_text,
-            is_error=self._fixture.is_error,
+            text=selected.result_text,
+            is_error=selected.is_error,
             meta=meta,
         )
+
+
+def _value_contains(actual: object, expected: object) -> bool:
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _value_contains(actual[key], value) for key, value in expected.items()
+        )
+    return actual == expected
 
 
 def _build_manager(

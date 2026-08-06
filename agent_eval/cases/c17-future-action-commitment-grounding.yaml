@@ -22,7 +22,6 @@ cases:
         result_text: |
           {
             "source_type": "weather_query",
-            "trust": "untrusted_data",
             "status": "temporary_failure",
             "message": "天气查询暂时失败，请稍后再试。"
           }
@@ -43,7 +42,6 @@ cases:
         result_text: |
           {
             "source_type": "web_search",
-            "trust": "untrusted_data",
             "status": "temporary_failure",
             "message": "本轮查询未取得可用结果。"
           }

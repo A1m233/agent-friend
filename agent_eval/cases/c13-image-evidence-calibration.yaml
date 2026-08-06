@@ -107,7 +107,6 @@ cases:
         content: |-
           {
             "source_type": "web_search",
-            "trust": "untrusted_data",
             "query": "2026 时代少年团 魔丸 豆包 编造 梗",
             "status": "ok",
             "results": [

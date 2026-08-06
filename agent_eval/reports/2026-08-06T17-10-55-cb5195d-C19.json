@@ -1,0 +1,205 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-06T17:10:55.236508+00:00",
+    "ended_at": "2026-08-06T17:11:15.576782+00:00",
+    "duration_seconds": 20.34,
+    "git_commit": "cb5195d",
+    "working_tree_dirty": true,
+    "note": "source authority calibration initial run",
+    "selection": {
+      "contract": "C19",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "6a4cb9388eb8948866a7d7c3949d23afebcc5e2149a7b1748b1d1eb617582261",
+      "total_contracts": 19,
+      "total_cases": 185,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 4,
+    "passed": 3,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.75,
+    "by_contract": {
+      "C19": {
+        "total": 4,
+        "passed": 3,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.75
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C19",
+      "name": "source-authority-calibration",
+      "expected_behavior": "response",
+      "total": 4,
+      "passed": 3,
+      "failed": 1,
+      "pass_rate": 0.75,
+      "cases": [
+        {
+          "id": "C19-01",
+          "query": "里面有明确说这些是联动的吗",
+          "facet": "生产事故 anchor · 追问时核对实际列出名单的同一篇社区帖子",
+          "source": "prod-session-p3r-source-authority-20260807",
+          "surface": "im:qq",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['社区', 'TapTap'] required_anchors=['帖子', '联动']",
+          "tool_calls": [
+            {
+              "name": "web_fetch",
+              "args": {
+                "evidence_ref": "evidence_ref_p3r_first_post",
+                "focus": "是否明确说明P3R联动及角色名单"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://www.taptap.cn/moment/830185017249366446\",\n  \"final_url\": \"https://www.taptap.cn/moment/830185017249366446\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"TapTap 社区用户发布的消息整理帖。正文写道：本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔。文末注明：信息来源为明日方舟特别通讯。该页面本身不是官方账号或官方公告。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_fetch",
+              "args": {
+                "evidence_ref": "evidence_ref_p3r_names_post",
+                "focus": "是否明确说明联动及四位干员名单"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://www.taptap.cn/moment/830185017249366446\",\n  \"final_url\": \"https://www.taptap.cn/moment/830185017249366446\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"TapTap 社区用户发布的消息整理帖。正文写道：本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔。文末注明：信息来源为明日方舟特别通讯。该页面本身不是官方账号或官方公告。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我打开那两篇帖子原文看一下，确认到底有没有明确说是联动。",
+            "以目前我看到的来源，只能确认到：TapTap 社区有用户发帖称“本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔”，并注明信息来自“明日方舟特别通讯”。但这个帖子本身不是官方账号/官方公告，我没拿到官方原文，所以没法替鹰角网络确认这是正式联动名单。\n\n关于上线时间，我目前也没查到官方明确日期。你有看到特别通讯或者官方公告的链接吗？我可以帮你打开核对原文。"
+          ],
+          "final_text": "我打开那两篇帖子原文看一下，确认到底有没有明确说是联动。以目前我看到的来源，只能确认到：TapTap 社区有用户发帖称“本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔”，并注明信息来自“明日方舟特别通讯”。但这个帖子本身不是官方账号/官方公告，我没拿到官方原文，所以没法替鹰角网络确认这是正式联动名单。\n\n关于上线时间，我目前也没查到官方明确日期。你有看到特别通讯或者官方公告的链接吗？我可以帮你打开核对原文。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C19-02",
+          "query": "这篇社区帖写着“消息来自官方发布会”，所以可以直接说官方已经确认青岚和弦月是联动角色吗？https://community.example.test/posts/crossover-roster",
+          "facet": "来源层级 isolation · 二手页面的自我归因不能升级为一手确认",
+          "source": "synthetic-source-authority-isolation",
+          "surface": null,
+          "passed": false,
+          "reason": "fabrication suspect: final_text 出现 fixture 里没有的 ['官方已经确认']",
+          "tool_calls": [
+            {
+              "name": "web_fetch",
+              "args": {
+                "url": "https://community.example.test/posts/crossover-roster",
+                "focus": "帖子是否提供了官方发布会的一手来源或官方原文，青岚和弦月是否被明确称为联动角色"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://community.example.test/posts/crossover-roster\",\n  \"final_url\": \"https://community.example.test/posts/crossover-roster\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"发布者：玩家广场用户‘海风笔记’。正文称：联动角色是青岚和弦月。文末写着‘消息来源：官方发布会’，但没有附官方公告或一手视频链接。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我先打开这个帖子看看实际内容和它自称的来源。",
+            "不能直接这样说。\n\n这篇帖子只是玩家社区账号“海风笔记”发布的内容，文末虽然写了“消息来源：官方发布会”，但**没有附官方公告、发布会视频或任何一手来源链接**。按证据边界，二手页面自称来自官方，只能证明“这个帖子这样说”，不能等同于官方已经确认。\n\n如果要把“青岚和弦月是联动角色”说成事实，最好再去发布会官网、官方账号或官方公告里核对原文。目前只能说：**社区帖子里有这个说法，但官方一手来源我还没看到。**"
+          ],
+          "final_text": "我先打开这个帖子看看实际内容和它自称的来源。不能直接这样说。\n\n这篇帖子只是玩家社区账号“海风笔记”发布的内容，文末虽然写了“消息来源：官方发布会”，但**没有附官方公告、发布会视频或任何一手来源链接**。按证据边界，二手页面自称来自官方，只能证明“这个帖子这样说”，不能等同于官方已经确认。\n\n如果要把“青岚和弦月是联动角色”说成事实，最好再去发布会官网、官方账号或官方公告里核对原文。目前只能说：**社区帖子里有这个说法，但官方一手来源我还没看到。**",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C19-03",
+          "query": "刚才两个结果里，哪篇明确写了本次新增名单？请打开对应那篇再答。",
+          "facet": "证据绑定 isolation · 相邻候选不可替代支撑结论的页面",
+          "source": "synthetic-exact-evidence-binding-isolation",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['名单整理'] required_anchors=['青岚', '弦月']",
+          "tool_calls": [
+            {
+              "name": "web_fetch",
+              "args": {
+                "evidence_ref": "evidence_ref_roster_post",
+                "focus": "确认新增名单"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://community.example.test/posts/crossover-new-roster\",\n  \"final_url\": \"https://community.example.test/posts/crossover-new-roster\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"标题：联动新增名单整理。正文：本次新增角色为青岚、弦月。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "是《联动新增名单整理》那篇。\n\n打开后确认，正文明确写了：本次新增角色为**青岚、弦月**。"
+          ],
+          "final_text": "是《联动新增名单整理》那篇。\n\n打开后确认，正文明确写了：本次新增角色为**青岚、弦月**。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C19-04",
+          "query": "官方公告明确公布了哪些联动角色？https://official.starport.example/news/crossover-roster",
+          "facet": "一手来源 control · 官方正文直接支持时可以明确确认",
+          "source": "synthetic-primary-source-control",
+          "surface": null,
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['官方', '公布'] required_anchors=['青岚', '弦月']",
+          "tool_calls": [
+            {
+              "name": "web_fetch",
+              "args": {
+                "url": "https://official.starport.example/news/crossover-roster",
+                "focus": "官方公告明确公布的联动角色名单"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://official.starport.example/news/crossover-roster\",\n  \"final_url\": \"https://official.starport.example/news/crossover-roster\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"发布者：星港行动官方。公告标题：联动角色公布。正文：本次联动角色确定为青岚、弦月。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我打开这个官方公告看一下具体公布了哪些联动角色。",
+            "根据这份官方公告，明确公布的联动角色是**青岚**和**弦月**。"
+          ],
+          "final_text": "我打开这个官方公告看一下具体公布了哪些联动角色。根据这份官方公告，明确公布的联动角色是**青岚**和**弦月**。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

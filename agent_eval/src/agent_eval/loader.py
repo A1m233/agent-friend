@@ -16,12 +16,14 @@ from .schema import (
     CaseSetMeta,
     Contract,
     FakeTool,
+    FakeToolResponse,
     FixtureAttachment,
     FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
     FixtureToolCallRequest,
     FixtureToolCallResult,
+    RequiredSuccessfulToolCall,
 )
 
 _SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
@@ -278,12 +280,42 @@ def _parse_current_session_events(
     return events
 
 
+def _parse_fake_tool_response(raw: Any, *, label: str) -> FakeToolResponse:
+    data = _mapping(raw, label=label)
+    match_args = data.get("match_args")
+    if not isinstance(match_args, dict) or not match_args:
+        raise ValueError(f"{label}.match_args 必须是非空 mapping")
+    return FakeToolResponse(
+        match_args=dict(match_args),
+        result_text=_required_str(data, "result_text", label=label),
+        is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
+        source_urls=_str_list(data.get("source_urls"), label=f"{label}.source_urls"),
+    )
+
+
 def _parse_fake_tool(raw: Any, *, label: str) -> FakeTool | None:
     if raw is None:
         return None
     data = _mapping(raw, label=label)
+    name = _required_str(data, "name", label=label)
+    if "responses" in data:
+        if any(key in data for key in ("result_text", "is_error", "source_urls")):
+            raise ValueError(
+                f"{label} 配置 responses 时不能同时配置 result_text/is_error/source_urls"
+            )
+        responses_raw = data.get("responses")
+        if not isinstance(responses_raw, list) or not responses_raw:
+            raise ValueError(f"{label}.responses 必须是非空 list")
+        responses = [
+            _parse_fake_tool_response(item, label=f"{label}.responses[{index}]")
+            for index, item in enumerate(responses_raw)
+        ]
+        for index, response in enumerate(responses):
+            if any(response.match_args == previous.match_args for previous in responses[:index]):
+                raise ValueError(f"{label}.responses.match_args 不能重复")
+        return FakeTool(name=name, responses=responses)
     return FakeTool(
-        name=_required_str(data, "name", label=label),
+        name=name,
         result_text=_required_str(data, "result_text", label=label),
         is_error=_bool(data.get("is_error"), label=f"{label}.is_error"),
         source_urls=_str_list(data.get("source_urls"), label=f"{label}.source_urls"),
@@ -307,6 +339,32 @@ def _parse_fake_tools(raw: Any, *, legacy_raw: Any, label: str) -> list[FakeTool
     if len(names) != len(set(names)):
         raise ValueError(f"{label}.fake_tools 工具名不能重复")
     return parsed
+
+
+def _parse_required_successful_tool_calls(
+    raw: Any,
+    *,
+    label: str,
+) -> list[RequiredSuccessfulToolCall]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} 必须是 list")
+
+    requirements: list[RequiredSuccessfulToolCall] = []
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        data = _mapping(item, label=item_label)
+        args = data.get("args", {})
+        if not isinstance(args, dict):
+            raise ValueError(f"{item_label}.args 必须是 mapping")
+        requirements.append(
+            RequiredSuccessfulToolCall(
+                name=_required_str(data, "name", label=item_label),
+                args=dict(args),
+            )
+        )
+    return requirements
 
 
 def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
@@ -356,6 +414,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         required_tool_sequence=_str_list(
             data.get("required_tool_sequence"),
             label=f"{label}.required_tool_sequence",
+        ),
+        required_successful_tool_calls=_parse_required_successful_tool_calls(
+            data.get("required_successful_tool_calls"),
+            label=f"{label}.required_successful_tool_calls",
         ),
         require_progress_continuity=_bool(
             data.get("require_progress_continuity"),

@@ -142,7 +142,7 @@ def test_kimi_expired_cached_image_is_reuploaded(
         "openai/kimi-k2.7-code-highspeed",
     ),
 )
-def test_kimi_document_extract_is_wrapped_as_untrusted_content(
+def test_kimi_document_extract_keeps_attachment_source_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     model: str,
@@ -158,7 +158,8 @@ def test_kimi_document_extract_is_wrapped_as_untrusted_content(
     rendered = adapter.render_message(message, _client(model))
 
     block = rendered["content"][1]["text"]
-    assert '"trust": "untrusted_data"' in block
+    assert '"source_type": "attachment"' in block
+    assert '"trust"' not in block
     assert "extracted document" in block
     assert files.purposes == ["file-extract"]
 

@@ -332,7 +332,6 @@ def _json_result(
 ) -> ToolResult:
     body = {
         "source_type": "nearby_place_search",
-        "trust": "untrusted_data",
         **payload,
     }
     return ToolResult(

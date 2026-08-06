@@ -31,6 +31,7 @@ def test_loads_builtin_cases() -> None:
         ("C16", "model-motive-story-calibration", 2),
         ("C17", "future-action-commitment-grounding", 3),
         ("C18", "clarification-action-consistency", 3),
+        ("C19", "source-authority-calibration", 5),
     ]
 
 
@@ -149,13 +150,42 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert wait_control.judge is not None
     assert wait_control.judge.must_not_call_any == ["todo_manage"]
 
+    c19 = next(contract for contract in contracts if contract.id == "C19")
+    source_anchor = next(item for item in c19.cases if item.id == "C19-01")
+    assert source_anchor.judge is not None
+    assert len(source_anchor.judge.required_successful_tool_calls) == 1
+    fetch_requirement = source_anchor.judge.required_successful_tool_calls[0]
+    assert fetch_requirement.name == "web_fetch"
+    assert fetch_requirement.args == {"evidence_ref": "evidence_ref_p3r_names_post"}
+    assert [response.match_args for response in source_anchor.fake_tools[0].responses] == [
+        {"evidence_ref": "evidence_ref_p3r_first_post"},
+        {"evidence_ref": "evidence_ref_p3r_names_post"},
+    ]
+
+    direct_replay = next(item for item in c19.cases if item.id == "C19-05")
+    assert direct_replay.query == "明日方舟p3r联动什么时候上线"
+    assert direct_replay.runtime_now is not None
+    assert direct_replay.runtime_now.isoformat() == "2026-08-06T21:43:09+08:00"
+    assert direct_replay.surface == "desktop_chat"
+    assert [tool.name for tool in direct_replay.fake_tools] == [
+        "web_search",
+        "social_search",
+        "web_fetch",
+        "social_read",
+    ]
+    assert len(direct_replay.fake_tools[2].responses) == 3
+    assert len(direct_replay.fake_tools[3].responses) == 3
+    assert direct_replay.judge is not None
+    assert direct_replay.judge.must_call == "web_search"
+    assert direct_replay.judge.must_mention_all == ["9月", "官方"]
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 18
-    assert meta.total_cases == 181
+    assert meta.total_contracts == 19
+    assert meta.total_cases == 186
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -175,6 +205,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C16": 2,
         "C17": 3,
         "C18": 3,
+        "C19": 5,
     }
     assert len(meta.digest) == 64
 
@@ -377,3 +408,101 @@ cases:
 
     with pytest.raises(ValueError, match="不能逃逸"):
         load_contracts(cases_dir)
+
+
+def test_required_successful_tool_call_args_must_be_mapping(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-tool-call-requirement
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args: evidence_ref_p3r_names_post
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="args 必须是 mapping"):
+        load_contracts(tmp_path)
+
+
+def test_fake_tool_responses_cannot_mix_with_legacy_result(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-fake-tool-responses
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fake_tool:
+      name: web_fetch
+      result_text: legacy
+      responses:
+        - match_args: {evidence_ref: ref-1}
+          result_text: page one
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="不能同时配置 result_text"):
+        load_contracts(tmp_path)
+
+
+@pytest.mark.parametrize("match_args", ["ref-1", {}])
+def test_fake_tool_response_match_args_must_be_non_empty_mapping(
+    tmp_path: Path,
+    match_args: object,
+) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        f"""
+contract:
+  id: C1
+  name: invalid-fake-tool-response-match
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fake_tool:
+      name: web_fetch
+      responses:
+        - match_args: {match_args!r}
+          result_text: page one
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="match_args 必须是非空 mapping"):
+        load_contracts(tmp_path)
+
+
+def test_fake_tool_response_rejects_duplicate_match_args(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: duplicate-fake-tool-response-match
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fake_tool:
+      name: web_fetch
+      responses:
+        - match_args: {evidence_ref: ref-1}
+          result_text: page one
+        - match_args: {evidence_ref: ref-1}
+          result_text: page one again
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="match_args 不能重复"):
+        load_contracts(tmp_path)

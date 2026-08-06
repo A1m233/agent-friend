@@ -159,7 +159,6 @@ class WeatherQueryTool:
         now = _aware_utc(self._clock())
         payload: dict[str, Any] = {
             "source_type": "weather_query",
-            "trust": "untrusted_data",
             "location": _location_payload(location),
             "unit_system": units,
             "requested_view": view,
@@ -265,7 +264,6 @@ class WeatherQueryTool:
                 return _json_result(
                     {
                         "source_type": "weather_query",
-                        "trust": "untrusted_data",
                         "status": "no_location_results",
                         "reason": "之前选择的地点已失效，且当前没有新的可靠候选。",
                         "next_action": "请用户补充国家、城市、区县或更完整的地点。",
@@ -287,7 +285,6 @@ class WeatherQueryTool:
             return _json_result(
                 {
                     "source_type": "weather_query",
-                    "trust": "untrusted_data",
                     "status": "no_location_results",
                     "location": query,
                     "next_action": "请用户补充国家、城市、区县或更完整的地点。",
@@ -389,7 +386,6 @@ def _clarification(
 ) -> ToolResult:
     payload: dict[str, Any] = {
         "source_type": "weather_query",
-        "trust": "untrusted_data",
         "status": "needs_clarification",
         "location": query,
         "administrative_area": area,
@@ -579,7 +575,6 @@ def _failure(
 ) -> ToolResult:
     payload: dict[str, Any] = {
         "source_type": "weather_query",
-        "trust": "untrusted_data",
         "status": status,
         "message": message,
     }

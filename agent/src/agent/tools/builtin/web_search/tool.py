@@ -524,7 +524,6 @@ def _format(
 
     payload: dict[str, Any] = {
         "source_type": "web_search",
-        "trust": "untrusted_data",
         "query": query,
         "status": "ok" if hits else "no_results",
         "results": results,

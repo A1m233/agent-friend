@@ -394,6 +394,27 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             f"(actual names: {names or 'none'})",
         )
 
+    for requirement in spec.required_successful_tool_calls:
+        if any(
+            call.name == requirement.name
+            and not call.is_error
+            and _value_contains(call.args, requirement.args)
+            for call in trace.tool_calls
+        ):
+            continue
+        actual = [
+            {"args": call.args, "is_error": call.is_error}
+            for call in trace.tool_calls
+            if call.name == requirement.name
+        ]
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"missing successful tool call {requirement.name} with args containing "
+            f"{requirement.args!r} (actual: {actual or 'none'})",
+        )
+
     if spec.require_non_empty_response and not trace.final_text.strip():
         return Verdict(
             case.id,
@@ -593,6 +614,16 @@ def _contains_ordered_subsequence(actual: list[str], expected: list[str]) -> boo
             if next_index == len(expected):
                 return True
     return False
+
+
+def _value_contains(actual: object, expected: object) -> bool:
+    """Match expected mappings as recursive subsets; compare other values exactly."""
+
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _value_contains(actual[key], value) for key, value in expected.items()
+        )
+    return actual == expected
 
 
 def _progress_continuity_error(assistant_segments: list[str]) -> str | None:
