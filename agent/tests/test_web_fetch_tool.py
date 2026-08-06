@@ -45,7 +45,7 @@ def test_fetch_requires_runtime_url_authorization() -> None:
     assert provider.calls == []
 
 
-def test_fetch_returns_untrusted_source_bounded_payload() -> None:
+def test_fetch_returns_source_bounded_payload() -> None:
     provider = _FakeProvider("official body")
     result = WebFetchTool(provider).invoke(
         {
@@ -56,7 +56,7 @@ def test_fetch_returns_untrusted_source_bounded_payload() -> None:
     )
     assert not result.is_error
     payload = json.loads(result.text)
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert payload["content"] == "official body"
     assert provider.calls == [("https://example.com/page", "release date")]
 
@@ -115,7 +115,7 @@ def test_long_untrusted_page_is_bounded_without_interpreting_embedded_instructio
         }
     )
     payload = json.loads(result.text)
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert payload["truncated"] is True
     assert embedded in payload["content"]
     assert len(payload["content"]) == 120_000

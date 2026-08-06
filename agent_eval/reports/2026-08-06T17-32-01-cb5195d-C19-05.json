@@ -1,0 +1,139 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-06T17:32:01.077665+00:00",
+    "ended_at": "2026-08-06T17:32:10.145598+00:00",
+    "duration_seconds": 9.068,
+    "git_commit": "cb5195d",
+    "working_tree_dirty": true,
+    "note": "source authority original query cold replay",
+    "selection": {
+      "contract": "all",
+      "case": "C19-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "810f8219fd4ca4c63261362347501a2952c9f4472f5043a0b1c40a9520a4d2d2",
+      "total_contracts": 19,
+      "total_cases": 186,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C19": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C19",
+      "name": "source-authority-calibration",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C19-05",
+          "query": "明日方舟p3r联动什么时候上线",
+          "facet": "生产事故原始首问 · 冷启动时直接校准上线时间与来源层级",
+          "source": "prod-session-p3r-source-authority-20260807",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool=web_search sequence=[] anchors=['社区'] required_anchors=['9月', '官方']",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {
+                "query": "明日方舟 P3R 联动 上线时间"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"明日方舟 P3R 联动 上线时间 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"evidence_ref\": \"evidence_ref_046a78ad91c0751e64b2429cf006d8ef\",\n      \"title\": \"方舟联动P3R官宣！福利、剧情、关卡梳理 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830419557351951057\",\n      \"snippet\": \"TapTap 社区帖称联动预计9月正式开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_aa89ae76b561af456cedaca5fa9982e1\",\n      \"title\": \"宣布将与女神异闻录3 Reload联动，预计9月初上线\",\n      \"url\": \"https://www.sina.cn/news/detail/5324681475525023.html\",\n      \"snippet\": \"新浪页面转述：明日方舟在夏日嘉年华特别通讯中宣布联动，预计9月初上线。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_699d82527eef6aa937d6f9a654e9bbdf\",\n      \"title\": \"【快讯】明日方舟与女神异闻录3 Reload联动 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830185017249366446\",\n      \"snippet\": \"TapTap 社区帖称联动将实装予愿安洁莉娜、珊比、时隙、嘉辛塔，同时写明具体上线时间有待官方后续公布。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "明日方舟 P3R 联动 官方公告 上线时间 site:ak.hypergryph.com"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"明日方舟 P3R 联动 上线时间 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"evidence_ref\": \"evidence_ref_046a78ad91c0751e64b2429cf006d8ef\",\n      \"title\": \"方舟联动P3R官宣！福利、剧情、关卡梳理 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830419557351951057\",\n      \"snippet\": \"TapTap 社区帖称联动预计9月正式开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_aa89ae76b561af456cedaca5fa9982e1\",\n      \"title\": \"宣布将与女神异闻录3 Reload联动，预计9月初上线\",\n      \"url\": \"https://www.sina.cn/news/detail/5324681475525023.html\",\n      \"snippet\": \"新浪页面转述：明日方舟在夏日嘉年华特别通讯中宣布联动，预计9月初上线。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_699d82527eef6aa937d6f9a654e9bbdf\",\n      \"title\": \"【快讯】明日方舟与女神异闻录3 Reload联动 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830185017249366446\",\n      \"snippet\": \"TapTap 社区帖称联动将实装予愿安洁莉娜、珊比、时隙、嘉辛塔，同时写明具体上线时间有待官方后续公布。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_fetch",
+              "args": {
+                "evidence_ref": "evidence_ref_046a78ad91c0751e64b2429cf006d8ef"
+              },
+              "result_text": "{\n  \"source_type\": \"web_fetch\",\n  \"trust\": \"untrusted_data\",\n  \"requested_url\": \"https://www.taptap.cn/moment/830419557351951057\",\n  \"final_url\": \"https://www.taptap.cn/moment/830419557351951057\",\n  \"content_kind\": \"html\",\n  \"truncated\": false,\n  \"content\": \"TapTap 社区帖称联动预计9月开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。该页面不是官方账号或官方公告。\"\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "明日方舟 夏日嘉年华 特别通讯 P3R 联动 2026"
+              },
+              "result_text": "{\n  \"source_type\": \"web_search\",\n  \"trust\": \"untrusted_data\",\n  \"query\": \"明日方舟 P3R 联动 上线时间 2026\",\n  \"status\": \"ok\",\n  \"results\": [\n    {\n      \"evidence_ref\": \"evidence_ref_046a78ad91c0751e64b2429cf006d8ef\",\n      \"title\": \"方舟联动P3R官宣！福利、剧情、关卡梳理 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830419557351951057\",\n      \"snippet\": \"TapTap 社区帖称联动预计9月正式开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_aa89ae76b561af456cedaca5fa9982e1\",\n      \"title\": \"宣布将与女神异闻录3 Reload联动，预计9月初上线\",\n      \"url\": \"https://www.sina.cn/news/detail/5324681475525023.html\",\n      \"snippet\": \"新浪页面转述：明日方舟在夏日嘉年华特别通讯中宣布联动，预计9月初上线。\"\n    },\n    {\n      \"evidence_ref\": \"evidence_ref_699d82527eef6aa937d6f9a654e9bbdf\",\n      \"title\": \"【快讯】明日方舟与女神异闻录3 Reload联动 - TapTap 明日方舟论坛\",\n      \"url\": \"https://www.taptap.cn/moment/830185017249366446\",\n      \"snippet\": \"TapTap 社区帖称联动将实装予愿安洁莉娜、珊比、时隙、嘉辛塔，同时写明具体上线时间有待官方后续公布。\"\n    }\n  ]\n}\n",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我查一下这个联动的最新官方消息。",
+            "目前能看到的消息是：明日方舟和《女神异闻录3 Reload》的联动预计在 **2026 年 9 月**上线，有社区帖提到“9月初”。不过具体日期还没有官方正式公布。\n\n我再看看鹰角官方的夏日嘉年华通讯有没有更精确的时间。",
+            "目前关于这次联动的官方说法还只到“预计 9 月初上线”这个大致窗口，具体开服日期、卡池排期这些细节都还没正式公布。\n\n如果你是想提前规划抽卡或者资源，可以等 8 月下旬的官方详细公告；通常这种联动会在活动前一两周放出 PV 和具体日期。"
+          ],
+          "final_text": "我查一下这个联动的最新官方消息。目前能看到的消息是：明日方舟和《女神异闻录3 Reload》的联动预计在 **2026 年 9 月**上线，有社区帖提到“9月初”。不过具体日期还没有官方正式公布。\n\n我再看看鹰角官方的夏日嘉年华通讯有没有更精确的时间。目前关于这次联动的官方说法还只到“预计 9 月初上线”这个大致窗口，具体开服日期、卡池排期这些细节都还没正式公布。\n\n如果你是想提前规划抽卡或者资源，可以等 8 月下旬的官方详细公告；通常这种联动会在活动前一两周放出 PV 和具体日期。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

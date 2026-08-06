@@ -315,7 +315,6 @@ class RequestSocialAuthTool:
             return _failure("invalid_arguments", str(exc))
         payload = {
             "source_type": "social_auth_request",
-            "trust": "trusted_runtime",
             "status": "pending_user_authorization",
             "request_id": request.request_id,
             "platform": request.platform,
@@ -545,7 +544,6 @@ def _search_result(result: SocialSearchResult, *, query: str, started: float) ->
     ]
     payload = {
         "source_type": "social_search",
-        "trust": "untrusted_data",
         "platform": result.platform,
         "status": "ok" if result.items else "no_results",
         "evidence_kind": "search_summary",
@@ -636,7 +634,6 @@ def _read_result(
     ]
     payload = {
         "source_type": "social_read",
-        "trust": "untrusted_data",
         "platform": result.platform,
         "content_type": result.content_type,
         "status": status,
@@ -714,7 +711,6 @@ def _creator_works_result(result: SocialCreatorWorksResult, *, started: float) -
     ]
     payload = {
         "source_type": "social_read",
-        "trust": "untrusted_data",
         "platform": result.platform,
         "content_type": "creator",
         "view": "works",
@@ -823,7 +819,6 @@ def _failure(
         text=json.dumps(
             {
                 "source_type": "social_platform",
-                "trust": "untrusted_data",
                 "status": status,
                 "message": message,
                 "platform": platform,

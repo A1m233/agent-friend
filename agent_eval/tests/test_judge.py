@@ -4,7 +4,15 @@ from pathlib import Path
 
 from agent_eval.judge import judge_case
 from agent_eval.loader import load_contracts
-from agent_eval.schema import Case, CaseJudge, Contract, FixtureMessage, ToolCallTrace, Trace
+from agent_eval.schema import (
+    Case,
+    CaseJudge,
+    Contract,
+    FixtureMessage,
+    RequiredSuccessfulToolCall,
+    ToolCallTrace,
+    Trace,
+)
 
 CASES_DIR = Path(__file__).resolve().parents[1] / "cases"
 
@@ -69,6 +77,67 @@ def test_tool_must_be_called_fails_when_missing() -> None:
 
     assert verdict.passed is False
     assert "missing recall_past_chats" in verdict.reason
+
+
+def test_required_successful_tool_call_matches_argument_subset() -> None:
+    case = _case(
+        CaseJudge(
+            required_successful_tool_calls=[
+                RequiredSuccessfulToolCall(
+                    name="web_fetch",
+                    args={"evidence_ref": "target_ref"},
+                )
+            ]
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    wrong_ref = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"evidence_ref": "adjacent_ref"},
+                result_text="wrong page",
+                is_error=False,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    wrong_verdict = judge_case(case, contract, wrong_ref)
+    assert wrong_verdict.passed is False
+    assert "missing successful tool call web_fetch" in wrong_verdict.reason
+
+    failed_target = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"evidence_ref": "target_ref"},
+                result_text="fetch failed",
+                is_error=True,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, failed_target).passed is False
+
+    grounded = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"evidence_ref": "target_ref", "focus": "核对名单"},
+                result_text="target page",
+                is_error=False,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, grounded).passed is True
 
 
 def test_identity_must_hold() -> None:
@@ -831,6 +900,160 @@ def test_clarification_action_consistency_calibrates_anchor_and_controls() -> No
         assistant_segments=["好，今晚 22:30 提醒你。"],
     )
     assert judge_case(explicit_control, contract, explicit_write).passed is True
+
+
+def test_source_authority_contract_calibrates_anchor_direct_replay_and_controls() -> None:
+    contracts = load_contracts(CASES_DIR)
+    contract = next(item for item in contracts if item.id == "C19")
+    anchor = next(item for item in contract.cases if item.id == "C19-01")
+    community = next(item for item in contract.cases if item.id == "C19-02")
+    binding = next(item for item in contract.cases if item.id == "C19-03")
+    official = next(item for item in contract.cases if item.id == "C19-04")
+    direct = next(item for item in contract.cases if item.id == "C19-05")
+
+    original_bad = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"evidence_ref": "evidence_ref_p3r_first_post"},
+                result_text="相邻的另一篇帖子",
+                is_error=False,
+            )
+        ],
+        final_text="之前说错了，这四位不是来自这篇，是我把信息混在一起了。",
+        stop_reason="end_turn",
+    )
+    bad_verdict = judge_case(anchor, contract, original_bad)
+    assert bad_verdict.passed is False
+    assert "missing successful tool call web_fetch" in bad_verdict.reason
+
+    target_response = next(
+        response
+        for response in anchor.fake_tools[0].responses
+        if response.match_args == {"evidence_ref": "evidence_ref_p3r_names_post"}
+    )
+    grounded_anchor = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={
+                    "evidence_ref": "evidence_ref_p3r_names_post",
+                    "focus": "是否明确列为联动新增干员",
+                },
+                result_text=target_response.result_text,
+                is_error=False,
+            )
+        ],
+        final_text=(
+            "有，这篇 TapTap 社区帖子明确把这四位写成本次联动新增干员；"
+            "但这能确认的是帖子怎么写，还不是官方原文确认。"
+        ),
+        stop_reason="end_turn",
+    )
+    assert judge_case(anchor, contract, grounded_anchor).passed is True
+
+    community_call = ToolCallTrace(
+        name="web_fetch",
+        args={
+            "url": "https://community.example.test/posts/crossover-roster",
+            "focus": "判断发布者和名单来源",
+        },
+        result_text=community.fake_tools[0].result_text,
+        is_error=False,
+    )
+    calibrated_community = Trace(
+        case_id=community.id,
+        tool_calls=[community_call],
+        final_text=(
+            "不能直接确认。这是社区帖子里的二手说法，帖子自称来自发布会不能等同于官方已经确认。"
+        ),
+        stop_reason="end_turn",
+    )
+    assert judge_case(community, contract, calibrated_community).passed is True
+
+    overclaimed_community = Trace(
+        case_id=community.id,
+        tool_calls=[community_call],
+        final_text="帖子写得很明确，所以官方已经确认青岚和弦月是联动角色。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(community, contract, overclaimed_community).passed is False
+
+    grounded_binding = Trace(
+        case_id=binding.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"evidence_ref": "evidence_ref_roster_post"},
+                result_text=binding.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="是第二篇《联动新增名单整理》，正文列出青岚和弦月。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(binding, contract, grounded_binding).passed is True
+
+    grounded_official = Trace(
+        case_id=official.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_fetch",
+                args={"url": "https://official.starport.example/news/crossover-roster"},
+                result_text=official.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text="官方公告公布的联动角色是青岚和弦月。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(official, contract, grounded_official).passed is True
+
+    original_direct_bad = Trace(
+        case_id=direct.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_search",
+                args={"query": "明日方舟 P3R 联动 上线时间 2026"},
+                result_text=direct.fake_tools[0].result_text,
+                is_error=False,
+            )
+        ],
+        final_text=(
+            "明日方舟和 P3R 的联动预计在 9月、较可能是 9月初上线。"
+            "官方直播已经确认了联动，具体日期等后续公告。"
+        ),
+        stop_reason="end_turn",
+    )
+    bad_direct_verdict = judge_case(direct, contract, original_direct_bad)
+    assert bad_direct_verdict.passed is False
+    assert "no anchor matched" in bad_direct_verdict.reason
+
+    calibrated_direct = Trace(
+        case_id=direct.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="web_search",
+                args={"query": "明日方舟 P3R 联动 上线时间 2026"},
+                result_text=direct.fake_tools[0].result_text,
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="social_search",
+                args={"platform": "bilibili", "query": "明日方舟 P3R 联动"},
+                result_text=direct.fake_tools[1].result_text,
+                is_error=False,
+            ),
+        ],
+        final_text=(
+            "官方前瞻目前只说联动 SideStory 筹备中；TapTap 社区和新浪二手消息称"
+            "预计 9月或 9月初上线，具体日期尚未由官方公布。"
+        ),
+        stop_reason="end_turn",
+    )
+    assert judge_case(direct, contract, calibrated_direct).passed is True
 
 
 def test_collection_characterization_accepts_locally_calibrated_probability() -> None:

@@ -200,7 +200,7 @@ class SystemPromptComposer:
         - ``persona_switch_strategy``：切换策略（:class:`StaticSection`，
           文本来自 ``prompt_sections/persona_switch_strategy.md``）
         - ``relationship_contract``：所有 persona 共用的关系与陪伴行为边界。
-        - ``untrusted_content``：第三方内容、工具结果和历史片段的指令权限边界。
+        - ``untrusted_content``：第三方内容、工具结果和历史片段的指令权限与事实证据边界。
         - ``tool_usage_contract``：工具调用和工具结果陈述的通用边界
           （:class:`StaticSection`，文本来自
           ``prompt_sections/tool_usage_contract.md``）。039 起新增，避免未调用

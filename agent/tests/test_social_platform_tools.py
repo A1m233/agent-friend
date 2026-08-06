@@ -157,7 +157,7 @@ def test_search_returns_opaque_reference_without_connector_secrets() -> None:
     assert result.is_error is False
     payload = json.loads(result.text)
     assert payload["source_type"] == "social_search"
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert payload["status"] == "ok"
     assert payload["results"][0]["resource_ref"].startswith("social_ref_")
     assert payload["results"][0]["url"].startswith("https://www.xiaohongshu.com/")
@@ -399,6 +399,7 @@ def test_auth_request_tool_creates_pending_desktop_request_without_starting_logi
 
     assert result.is_error is False
     payload = json.loads(result.text)
+    assert "trust" not in payload
     assert payload["status"] == "pending_user_authorization"
     assert payload["authorization_surface"] == "desktop"
     request = service.auth_request(payload["request_id"])

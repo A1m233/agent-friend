@@ -26,7 +26,6 @@ cases:
         result_text: |
           {
             "source_type": "web_search",
-            "trust": "untrusted_data",
             "query": "Kimi API prompt cache TTL 有效期 2026",
             "status": "ok",
             "results": [
@@ -41,7 +40,6 @@ cases:
         result_text: |
           {
             "source_type": "web_fetch",
-            "trust": "untrusted_data",
             "requested_url": "https://platform.moonshot.cn/blog/posts/context-caching",
             "final_url": "https://platform.moonshot.cn/blog/posts/context-caching",
             "content_kind": "html",

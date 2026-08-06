@@ -51,7 +51,6 @@ def test_empty_hits_returns_structured_no_results() -> None:
     payload = _payload(text)
     assert payload == {
         "source_type": "past_conversation",
-        "trust": "untrusted_data",
         "status": "no_results",
         "result_unit": "conversation_turn",
         "result_count": 0,
@@ -161,21 +160,21 @@ def test_newlines_in_content_replaced_with_spaces() -> None:
 # ===== 数据边界 =====
 
 
-def test_result_is_untrusted_data_without_inline_instruction() -> None:
+def test_result_keeps_source_envelope_without_inline_instruction() -> None:
     ts = _NOW - timedelta(hours=2)
     hit = Hit(matched=_ev("user_message", "话题", ts), pair=None)
     text = format_hits([hit], _NOW)
     payload = _payload(text)
     assert payload["source_type"] == "past_conversation"
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert "朋友的口吻" not in text
     assert "web_search" not in text
 
 
-def test_empty_result_has_same_trust_boundary() -> None:
+def test_empty_result_uses_same_source_envelope() -> None:
     text = format_hits([], _NOW)
     payload = _payload(text)
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert payload["status"] == "no_results"
 
 

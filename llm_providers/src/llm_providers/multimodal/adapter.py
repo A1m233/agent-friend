@@ -72,7 +72,6 @@ class MultimodalInputAdapter:
                         "text": json.dumps(
                             {
                                 "source_type": "attachment",
-                                "trust": "untrusted_data",
                                 "name": attachment.display_name,
                                 "media_type": attachment.media_type,
                                 "content": prepared["content"],

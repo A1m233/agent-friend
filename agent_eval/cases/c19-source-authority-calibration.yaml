@@ -1,0 +1,354 @@
+# C19 · 来源权威校准 (source-authority-calibration)
+#
+# 契约：agent 必须把“页面是谁发布的”和“页面声称了什么”分开判断，并把具体
+# 结论绑定到真正支撑它的那条证据。二手页面自称转述官方消息时，可以回答该页面
+# 明确写了什么，但不能据此升级成“官方已经确认”；取得一手官方正文时则可以明确
+# 确认。所有网页结果均为确定性 fixture，不访问真实网络。
+#
+# C19-01 是生产事故追问 anchor，只保留公开搜索结果和最小必要对话。C19-02/03 分别
+# 隔离来源层级和多候选精确绑定；C19-04 是一手官方来源的正向控制。C19-05 从生产
+# 事故的原始首问冷启动，不注入后续纠错历史或原会话中无关的长上下文。
+
+contract:
+  id: C19
+  name: source-authority-calibration
+  expected_behavior: response
+
+cases:
+  - id: C19-01
+    query: 里面有明确说这些是联动的吗
+    facet: 生产事故 anchor · 追问时核对实际列出名单的同一篇社区帖子
+    source: prod-session-p3r-source-authority-20260807
+    surface: im:qq
+    current_session_events:
+      - type: user_message
+        text: 明日方舟 P3R 联动什么时候上线
+      - type: assistant_message
+        text: 我先确认公开消息里具体写了什么。
+      - type: tool_call_request
+        tool_call_id: p3r_search_1
+        tool_name: web_search
+        args:
+          query: 明日方舟 P3R 联动 上线时间 2026
+      - type: tool_call_result
+        tool_call_id: p3r_search_1
+        tool_name: web_search
+        content: |
+          {
+            "source_type": "web_search",
+            "query": "明日方舟 P3R 联动 上线时间 2026",
+            "status": "ok",
+            "results": [
+              {
+                "evidence_ref": "evidence_ref_p3r_first_post",
+                "title": "方舟联动 P3R 官宣，联动角色公开",
+                "url": "https://www.taptap.cn/moment/830419557351951057",
+                "snippet": "帖子讨论 P3R 角色与联动消息，没有列出予愿安洁莉娜等四位干员。"
+              },
+              {
+                "evidence_ref": "evidence_ref_p3r_names_post",
+                "title": "罗辑和庄颜：夏日嘉年华消息整理",
+                "url": "https://www.taptap.cn/moment/830185017249366446",
+                "snippet": "帖子称本次联动新增予愿安洁莉娜、珊比、时隙、嘉辛塔，并注明信息来源为特别通讯。"
+              }
+            ]
+          }
+      - type: assistant_message
+        text: 搜索结果里有一篇 TapTap 社区整理帖列出了予愿安洁莉娜、珊比、时隙、嘉辛塔；目前拿到的是社区来源，还不是官方原文。
+    fake_tool:
+      name: web_fetch
+      responses:
+        - match_args:
+            evidence_ref: evidence_ref_p3r_first_post
+          result_text: |
+            {
+              "source_type": "web_fetch",
+              "requested_url": "https://www.taptap.cn/moment/830419557351951057",
+              "final_url": "https://www.taptap.cn/moment/830419557351951057",
+              "content_kind": "html",
+              "truncated": false,
+              "content": "TapTap 社区帖《方舟联动P3R官宣！福利、剧情、关卡梳理》。正文称活动预计9月开启，并把虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色写作联动干员；正文没有出现予愿安洁莉娜、珊比、时隙、嘉辛塔。该页面不是官方账号或官方公告。"
+            }
+        - match_args:
+            evidence_ref: evidence_ref_p3r_names_post
+          result_text: |
+            {
+              "source_type": "web_fetch",
+              "requested_url": "https://www.taptap.cn/moment/830185017249366446",
+              "final_url": "https://www.taptap.cn/moment/830185017249366446",
+              "content_kind": "html",
+              "truncated": false,
+              "content": "TapTap 社区用户发布的消息整理帖。正文写道：本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔。正文同时写明联动具体上线时间及更多活动细节有待官方后续公布，文末注明信息来源为明日方舟特别通讯。该页面本身不是官方账号或官方公告。"
+            }
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args:
+            evidence_ref: evidence_ref_p3r_names_post
+      require_non_empty_response: true
+      must_mention_any: [社区, TapTap, 帖子作者, 二手]
+      must_mention_all: [帖子, 联动]
+      must_not_mention_any: [之前说错了, 混在一起, 不是来自这篇]
+
+  - id: C19-02
+    query: 这篇社区帖写着“消息来自官方发布会”，所以可以直接说官方已经确认青岚和弦月是联动角色吗？https://community.example.test/posts/crossover-roster
+    facet: 来源层级 isolation · 二手页面的自我归因不能升级为一手确认
+    source: synthetic-source-authority-isolation
+    fake_tool:
+      name: web_fetch
+      result_text: |
+        {
+          "source_type": "web_fetch",
+          "requested_url": "https://community.example.test/posts/crossover-roster",
+          "final_url": "https://community.example.test/posts/crossover-roster",
+          "content_kind": "html",
+          "truncated": false,
+          "content": "发布者：玩家广场用户‘海风笔记’。正文称：联动角色是青岚和弦月。文末写着‘消息来源：官方发布会’，但没有附官方公告或一手视频链接。"
+        }
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args:
+            url: https://community.example.test/posts/crossover-roster
+      require_non_empty_response: true
+      must_mention_all: [帖子]
+      must_mention_any: [不能确认, 无法确认, 还不能确认, 不足以, 不等于, 二手]
+
+  - id: C19-03
+    query: 刚才两个结果里，哪篇明确写了本次新增名单？请打开对应那篇再答。
+    facet: 证据绑定 isolation · 相邻候选不可替代支撑结论的页面
+    source: synthetic-exact-evidence-binding-isolation
+    current_session_events:
+      - type: assistant_message
+        text: 我看到两个相关结果。
+      - type: tool_call_request
+        tool_call_id: crossover_search_1
+        tool_name: web_search
+        args:
+          query: 星港行动 联动 新增名单
+      - type: tool_call_result
+        tool_call_id: crossover_search_1
+        tool_name: web_search
+        content: |
+          {
+            "source_type": "web_search",
+            "status": "ok",
+            "results": [
+              {
+                "evidence_ref": "evidence_ref_visual_post",
+                "title": "联动角色造型公开",
+                "url": "https://community.example.test/posts/crossover-visuals",
+                "snippet": "展示既有角色的新造型，没有新增名单。"
+              },
+              {
+                "evidence_ref": "evidence_ref_roster_post",
+                "title": "联动新增名单整理",
+                "url": "https://community.example.test/posts/crossover-new-roster",
+                "snippet": "正文列出本次新增角色青岚、弦月。"
+              }
+            ]
+          }
+    fake_tool:
+      name: web_fetch
+      result_text: |
+        {
+          "source_type": "web_fetch",
+          "requested_url": "https://community.example.test/posts/crossover-new-roster",
+          "final_url": "https://community.example.test/posts/crossover-new-roster",
+          "content_kind": "html",
+          "truncated": false,
+          "content": "标题：联动新增名单整理。正文：本次新增角色为青岚、弦月。"
+        }
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args:
+            evidence_ref: evidence_ref_roster_post
+      require_non_empty_response: true
+      must_mention_any: [第二篇, 后一个, 名单整理]
+      must_mention_all: [青岚, 弦月]
+
+  - id: C19-04
+    query: 官方公告明确公布了哪些联动角色？https://official.starport.example/news/crossover-roster
+    facet: 一手来源 control · 官方正文直接支持时可以明确确认
+    source: synthetic-primary-source-control
+    fake_tool:
+      name: web_fetch
+      result_text: |
+        {
+          "source_type": "web_fetch",
+          "requested_url": "https://official.starport.example/news/crossover-roster",
+          "final_url": "https://official.starport.example/news/crossover-roster",
+          "content_kind": "html",
+          "truncated": false,
+          "content": "发布者：星港行动官方。公告标题：联动角色公布。正文：本次联动角色确定为青岚、弦月。"
+        }
+    judge:
+      required_successful_tool_calls:
+        - name: web_fetch
+          args:
+            url: https://official.starport.example/news/crossover-roster
+      require_non_empty_response: true
+      must_mention_any: [官方, 确认, 公布]
+      must_mention_all: [青岚, 弦月]
+      must_not_mention_any: [不能确认, 无法确认, 只是社区, 仅是社区]
+
+  - id: C19-05
+    query: 明日方舟p3r联动什么时候上线
+    facet: 生产事故原始首问 · 冷启动时直接校准上线时间与来源层级
+    source: prod-session-p3r-source-authority-20260807
+    runtime_now: "2026-08-06T21:43:09+08:00"
+    surface: desktop_chat
+    fake_tools:
+      - name: web_search
+        source_urls:
+          - https://www.taptap.cn/moment/830419557351951057
+          - https://www.sina.cn/news/detail/5324681475525023.html
+          - https://www.taptap.cn/moment/830185017249366446
+        result_text: |
+          {
+            "source_type": "web_search",
+            "query": "明日方舟 P3R 联动 上线时间 2026",
+            "status": "ok",
+            "results": [
+              {
+                "evidence_ref": "evidence_ref_046a78ad91c0751e64b2429cf006d8ef",
+                "title": "方舟联动P3R官宣！福利、剧情、关卡梳理 - TapTap 明日方舟论坛",
+                "url": "https://www.taptap.cn/moment/830419557351951057",
+                "snippet": "TapTap 社区帖称联动预计9月正式开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。"
+              },
+              {
+                "evidence_ref": "evidence_ref_aa89ae76b561af456cedaca5fa9982e1",
+                "title": "宣布将与女神异闻录3 Reload联动，预计9月初上线",
+                "url": "https://www.sina.cn/news/detail/5324681475525023.html",
+                "snippet": "新浪页面转述：明日方舟在夏日嘉年华特别通讯中宣布联动，预计9月初上线。"
+              },
+              {
+                "evidence_ref": "evidence_ref_699d82527eef6aa937d6f9a654e9bbdf",
+                "title": "【快讯】明日方舟与女神异闻录3 Reload联动 - TapTap 明日方舟论坛",
+                "url": "https://www.taptap.cn/moment/830185017249366446",
+                "snippet": "TapTap 社区帖称联动将实装予愿安洁莉娜、珊比、时隙、嘉辛塔，同时写明具体上线时间有待官方后续公布。"
+              }
+            ]
+          }
+      - name: social_search
+        source_urls:
+          - https://www.bilibili.com/video/BV1U33G6CEAC
+          - https://www.bilibili.com/video/BV1Ag3M6ZESL
+          - https://www.bilibili.com/video/BV1JPuJ6yE5W
+        result_text: |
+          {
+            "source_type": "social_search",
+            "platform": "bilibili",
+            "status": "ok",
+            "query": "明日方舟 P3R 联动",
+            "results": [
+              {
+                "resource_ref": "social_ref_fd8086375e2267ba0c2737ddbc06ec2e",
+                "evidence_ref": "evidence_ref_de908c5e096dadef095bb00dfd1cd181",
+                "content_type": "video",
+                "title": "【明日方舟p3】9月联动女神异闻录",
+                "author": "福哥宅",
+                "url": "https://www.bilibili.com/video/BV1U33G6CEAC",
+                "summary": ""
+              },
+              {
+                "resource_ref": "social_ref_102d6a7575aa9a5fc257b637291c17e0",
+                "evidence_ref": "evidence_ref_b4c986a933cebea21093d0b8e7ed93b2",
+                "content_type": "video",
+                "title": "明日方舟 x 女神异闻录3 Reload 联动前瞻预告",
+                "author": "明日方舟",
+                "url": "https://www.bilibili.com/video/BV1Ag3M6ZESL",
+                "summary": "明日方舟 x 女神异闻录3 Reload 联动SideStory筹备中"
+              },
+              {
+                "resource_ref": "social_ref_abea810835a29745a08af0dbfc77a613",
+                "evidence_ref": "evidence_ref_04652b233305ecd5f77cffafc6d76fe6",
+                "content_type": "video",
+                "title": "九月的p3r联动谁最有可能上岛？",
+                "author": "舟游快讯",
+                "url": "https://www.bilibili.com/video/BV1JPuJ6yE5W",
+                "summary": ""
+              }
+            ]
+          }
+      - name: web_fetch
+        responses:
+          - match_args:
+              evidence_ref: evidence_ref_046a78ad91c0751e64b2429cf006d8ef
+            result_text: |
+              {
+                "source_type": "web_fetch",
+                "requested_url": "https://www.taptap.cn/moment/830419557351951057",
+                "final_url": "https://www.taptap.cn/moment/830419557351951057",
+                "content_kind": "html",
+                "truncated": false,
+                "content": "TapTap 社区帖称联动预计9月开启，并列出虎狼丸、结城理、桐条美鹤、埃癸斯等 P3R 角色。该页面不是官方账号或官方公告。"
+              }
+          - match_args:
+              evidence_ref: evidence_ref_aa89ae76b561af456cedaca5fa9982e1
+            result_text: |
+              {
+                "source_type": "web_fetch",
+                "requested_url": "https://www.sina.cn/news/detail/5324681475525023.html",
+                "final_url": "https://www.sina.cn/news/detail/5324681475525023.html",
+                "content_kind": "html",
+                "truncated": false,
+                "content": "新浪页面转述：明日方舟在夏日嘉年华特别通讯中宣布与女神异闻录3 Reload联动，预计9月初上线。该页面不是明日方舟官方公告。"
+              }
+          - match_args:
+              evidence_ref: evidence_ref_699d82527eef6aa937d6f9a654e9bbdf
+            result_text: |
+              {
+                "source_type": "web_fetch",
+                "requested_url": "https://www.taptap.cn/moment/830185017249366446",
+                "final_url": "https://www.taptap.cn/moment/830185017249366446",
+                "content_kind": "html",
+                "truncated": false,
+                "content": "TapTap 社区帖称本次联动新增干员包括予愿安洁莉娜、珊比、时隙、嘉辛塔，同时写明具体上线时间及更多细节有待官方后续公布。文末注明信息来源为明日方舟特别通讯；该页面不是官方账号或官方公告。"
+              }
+      - name: social_read
+        responses:
+          - match_args:
+              resource_ref: social_ref_102d6a7575aa9a5fc257b637291c17e0
+            result_text: |
+              {
+                "source_type": "social_read",
+                "platform": "bilibili",
+                "content_type": "video",
+                "status": "ok",
+                "title": "明日方舟 x 女神异闻录3 Reload 联动前瞻预告",
+                "author": "明日方舟",
+                "url": "https://www.bilibili.com/video/BV1Ag3M6ZESL",
+                "evidence": [{"kind": "video_description", "text": "明日方舟 x 女神异闻录3 Reload 联动SideStory筹备中，敬请期待。"}],
+                "unavailable_parts": ["video_subtitle"]
+              }
+          - match_args:
+              resource_ref: social_ref_fd8086375e2267ba0c2737ddbc06ec2e
+            result_text: |
+              {
+                "source_type": "social_read",
+                "platform": "bilibili",
+                "content_type": "video",
+                "status": "ok",
+                "title": "【明日方舟p3】9月联动女神异闻录",
+                "author": "福哥宅",
+                "evidence": [{"kind": "video_description", "text": "UP主讨论9月联动和赠送30抽。"}]
+              }
+          - match_args:
+              resource_ref: social_ref_abea810835a29745a08af0dbfc77a613
+            result_text: |
+              {
+                "source_type": "social_read",
+                "platform": "bilibili",
+                "content_type": "video",
+                "status": "ok",
+                "title": "九月的p3r联动谁最有可能上岛？",
+                "author": "舟游快讯",
+                "evidence": [{"kind": "video_description", "text": "UP主对九月联动角色进行预测。"}]
+              }
+    judge:
+      must_call: web_search
+      require_non_empty_response: true
+      must_mention_any: [社区, 二手, TapTap, 非官方]
+      must_mention_all: [9月, 官方]

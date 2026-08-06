@@ -223,7 +223,6 @@ def _render_content(
         text = text[:_MAX_HTML_CHARS]
     payload = {
         "source_type": "web_fetch",
-        "trust": "untrusted_data",
         "requested_url": content.requested_url,
         "final_url": content.final_url,
         "source_evidence_ref": page_evidence.evidence_ref,

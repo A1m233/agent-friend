@@ -57,13 +57,32 @@ class FixtureSession:
 
 
 @dataclass(frozen=True)
+class FakeToolResponse:
+    """One deterministic fixture response selected by a subset of call arguments."""
+
+    match_args: dict[str, Any]
+    result_text: str
+    is_error: bool = False
+    source_urls: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class FakeTool:
     """case 专用的固定结果工具，不访问真实外部服务。"""
 
     name: str
-    result_text: str
+    result_text: str = ""
     is_error: bool = False
     source_urls: list[str] = field(default_factory=list)
+    responses: list[FakeToolResponse] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RequiredSuccessfulToolCall:
+    """A successful tool call whose public arguments must contain ``args``."""
+
+    name: str
+    args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -83,6 +102,7 @@ class CaseJudge:
     forbid_memory_mismatch_story: bool = False
     forbid_unsupported_source_attribution: bool = False
     required_tool_sequence: list[str] = field(default_factory=list)
+    required_successful_tool_calls: list[RequiredSuccessfulToolCall] = field(default_factory=list)
     require_progress_continuity: bool = False
     forbid_tool_mechanism_terms: bool = False
     forbid_unsupported_collection_characterization: bool = False

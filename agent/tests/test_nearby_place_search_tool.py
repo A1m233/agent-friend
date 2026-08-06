@@ -109,7 +109,7 @@ def test_single_anchor_returns_range_and_only_available_fields() -> None:
     assert result.is_error is False
     payload = json.loads(result.text)
     assert payload["status"] == "success"
-    assert payload["trust"] == "untrusted_data"
+    assert "trust" not in payload
     assert payload["search_area"] == {
         "center_name": "福民银行",
         "center_address": "广东省深圳市福田区福民路1号",
