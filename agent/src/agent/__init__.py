@@ -22,6 +22,7 @@ from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
     ConversationEvent,
     ModelResponseStatus,
+    SkillActivationStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -198,6 +199,7 @@ __all__ = [
     "SessionSearchService",
     "SessionStore",
     "SessionSummary",
+    "SkillActivationStatus",
     "SkillCatalogService",
     "SkillSelection",
     "StaticSection",

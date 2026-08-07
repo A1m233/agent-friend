@@ -11,7 +11,14 @@ from agent.runtime import RunHandle, RunOutcome, RunRequest, UserEvent
 from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
-from agent import Conversation, ConversationEvent, ModelResponseStatus, TextDelta, TurnDone
+from agent import (
+    Conversation,
+    ConversationEvent,
+    ModelResponseStatus,
+    SkillActivationStatus,
+    TextDelta,
+    TurnDone,
+)
 from llm_providers import LLMContentPolicyError
 
 
@@ -145,6 +152,33 @@ def test_encode_stream_maps_model_response_status_to_custom_event() -> None:
     assert b"agent_friend.run_status" in body
     assert b'"afterTool":true' in body
     assert b'"attempt":2' in body
+
+
+def test_encode_stream_maps_skill_activation_to_custom_event() -> None:
+    class SkillConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield SkillActivationStatus(
+                status="activated",
+                skill_id="skill_123",
+                name="context7-mcp",
+                source="personal",
+                reason="由调用方为当前用户轮选择",
+            )
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, SkillConversation()),
+            "hello",
+            thread_id="session-a",
+            run_id="run-a",
+            accept="text/event-stream",
+        )
+    )
+
+    assert b"agent_friend.skill_activation" in body
+    assert b'"status":"activated"' in body
+    assert b'"skillId":"skill_123"' in body
 
 
 def test_encode_stream_maps_runtime_failure_from_terminal_error() -> None:

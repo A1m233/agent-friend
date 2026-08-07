@@ -1,0 +1,167 @@
+# C20 · Skill 语义激活真实性 (skill-semantic-activation)
+#
+# 契约：模型应基于 catalog 的 name / description 与当前会话语义，决定是否读取 Skill。
+# 直接名称或当前列表序号、可唯一消歧的上下文指代、隐式任务匹配分别使用 named、
+# referenced、implicit；allow_implicit_invocation=false 只禁止隐式选择。只有成功的
+# skill_read 才能声称 Skill 已加载/激活，失败或未调用时不得虚构成功。
+#
+# C20-01 是生产长会话事故的最小 anchor：assistant 刚列完两个 Skill，用户说“用一下2”，
+# 旧实现既没有语义选择/读取工具，却回答已经激活。其余 case 分别隔离名称、指代、隐式
+# 匹配、policy、无关请求与读取失败边界。fixture Skill 由生产 loader/service/tool 加载。
+
+contract:
+  id: C20
+  name: skill-semantic-activation
+  expected_behavior: response
+
+cases:
+  - id: C20-01
+    query: 你用一下2试试
+    facet: 生产长会话 anchor · 当前列表序号应由模型语义解析并真实读取
+    source: prod-long-session-skill-ordinal-no-activation-20260807
+    surface: desktop_chat
+    current_session_messages:
+      - role: user
+        text: 你现在有几个skill，分别是什么
+      - role: assistant
+        text: |
+          现在有两个 Skill：
+          1. skill-creator：创建或更新 Skill。
+          2. context7-mcp：查询库、框架、SDK 和 API 文档。
+    fixture_skills:
+      - name: context7-mcp
+        description: Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.
+        instructions: |
+          Follow this Skill for library and API documentation work. In this fixture, briefly confirm
+          that the Skill instructions were loaded; do not invent any external lookup.
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>context7-mcp</name>
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-02
+    query: 请用 context7-mcp 帮我梳理这个 API 问题
+    facet: 直接名称 isolation · 明确点名应读取
+    source: synthetic-skill-direct-name
+    surface: desktop_chat
+    fixture_skills:
+      - name: context7-mcp
+        description: Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.
+        instructions: |
+          Follow this Skill for API documentation work. Keep the answer concise in this fixture.
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          args: {invocation_kind: named}
+          result_contains: <name>context7-mcp</name>
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-03
+    query: 那就用那个skill，给我一个最小实验步骤
+    facet: 上下文指代 isolation · “那个实验的 skill”应唯一消歧后读取
+    source: synthetic-skill-context-reference
+    surface: desktop_chat
+    current_session_messages:
+      - role: user
+        text: 写作辅助和实验评审这两个 skill，哪个适合做 baseline/candidate 对照？
+      - role: assistant
+        text: 实验评审的 skill 更适合，它专门约束 baseline/candidate 与盲审证据。
+    fixture_skills:
+      - name: writing-helper
+        description: Use when polishing prose, rewriting paragraphs, or improving writing style.
+        instructions: Improve prose while preserving meaning.
+      - name: experiment-review
+        description: Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.
+        instructions: Provide a minimal reproducible baseline/candidate experiment with a blind comparison.
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>experiment-review</name>
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-04
+    query: 帮我设计一次 baseline/candidate 的盲审实验，要能复查证据
+    facet: description 隐式匹配 isolation · 未点名但任务明确匹配时应读取
+    source: synthetic-skill-implicit-description-match
+    surface: desktop_chat
+    fixture_skills:
+      - name: experiment-review
+        description: Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.
+        instructions: Provide a minimal reproducible baseline/candidate experiment with a blind comparison.
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          args: {invocation_kind: implicit}
+          result_contains: <name>experiment-review</name>
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-05
+    query: 检查一个本地测试安装包的版本、哈希和 manifest 是否一致
+    facet: implicit policy control · 禁止隐式调用时不得仅按 description 读取
+    source: synthetic-skill-implicit-disabled
+    surface: desktop_chat
+    fixture_skills:
+      - name: private-release-check
+        description: Use when checking a local test installer version, hash, and manifest consistency.
+        instructions: Check the package metadata and report any inconsistency.
+        allow_implicit_invocation: false
+    judge:
+      must_not_succeed_any: [skill_read]
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-06
+    query: 请直接用 private-release-check 检查这个安装包
+    facet: explicit policy control · 禁止隐式不影响直接名称调用
+    source: synthetic-skill-explicit-over-implicit-policy
+    surface: desktop_chat
+    fixture_skills:
+      - name: private-release-check
+        description: Use when checking a local test installer version, hash, and manifest consistency.
+        instructions: Explain what package evidence is still needed; do not pretend files were inspected.
+        allow_implicit_invocation: false
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          args: {invocation_kind: named}
+          result_contains: <name>private-release-check</name>
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-07
+    query: 帮我把这句话改得更自然：今天天气不错
+    facet: 无关请求 control · catalog 中存在 Skill 不代表每轮都要读取
+    source: synthetic-skill-no-match-control
+    surface: desktop_chat
+    fixture_skills:
+      - name: context7-mcp
+        description: Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.
+        instructions: Follow this Skill for library and API documentation work.
+    judge:
+      must_not_call_any: [skill_read]
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-08
+    query: 请用 context7-mcp 处理这个 API 问题
+    facet: 读取失败 control · 调用失败必须诚实说明未激活
+    source: synthetic-skill-read-failure
+    surface: desktop_chat
+    fixture_skills:
+      - name: context7-mcp
+        description: Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.
+        instructions: Follow this Skill for API documentation work.
+    fake_tools:
+      - name: skill_read
+        result_text: Skill 读取失败：fixture 模拟文件在读取前发生变化，未激活。
+        is_error: true
+    judge:
+      must_call: skill_read
+      require_non_empty_response: true
+      must_mention_any: [失败, 未激活, 没能, 无法]
+      forbid_unsupported_skill_activation_claim: true

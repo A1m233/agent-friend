@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Literal
 
 SkillSource = Literal["builtin", "personal", "shared"]
+SkillInvocationKind = Literal["caller", "named", "referenced", "implicit"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class SkillRecord:
     package_root: Path
     version: str
     frontmatter: Mapping[str, object]
+    allow_implicit_invocation: bool = True
     aliases: tuple[SkillAlias, ...] = ()
 
     def __post_init__(self) -> None:
@@ -80,6 +82,7 @@ class SkillRecord:
             "description": self.description,
             "source": self.source,
             "version": self.version,
+            "allow_implicit_invocation": self.allow_implicit_invocation,
             "path": str(self.entry_path),
             "aliases": [
                 {"source": alias.source, "path": str(alias.entry_path)} for alias in self.aliases

@@ -64,6 +64,7 @@ from .registry import ToolRegistry
 if TYPE_CHECKING:
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
+    from ..skills import SkillCatalogService
     from ..todos import TodoService
 
 
@@ -78,6 +79,7 @@ def make_default_registry(
     qweather_api_key: str | None = None,
     qweather_api_host: str | None = None,
     social_platform_service: SocialPlatformService | None = None,
+    skill_service: SkillCatalogService | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -112,6 +114,11 @@ def make_default_registry(
         - 网络与记忆条件都不满足 → 仍保留两个本地工具及地点、天气工具表面
     """
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
+
+    if skill_service is not None:
+        from .builtin.skills import SkillReadTool
+
+        tools.append(SkillReadTool(skill_service))
 
     social_service = social_platform_service or make_default_social_platform_service()
     if social_platform_service is None:

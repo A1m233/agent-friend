@@ -55,6 +55,7 @@ from agent import (
     Conversation,
     ConversationEvent,
     ModelResponseStatus,
+    SkillActivationStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -226,6 +227,25 @@ def encode_stream(
                                 "afterTool": ev.after_tool,
                                 "attempt": ev.attempt,
                                 "maxAttempts": ev.max_attempts,
+                            },
+                        )
+                    )
+
+                elif isinstance(ev, SkillActivationStatus):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.skill_activation",
+                            value={
+                                "status": ev.status,
+                                "skillId": ev.skill_id,
+                                "name": ev.name,
+                                "source": ev.source,
+                                "invocationKind": ev.invocation_kind,
+                                "reason": ev.reason,
+                                "errorCode": ev.error_code,
+                                "errorMessage": ev.error_message,
+                                "order": ev.order,
                             },
                         )
                     )

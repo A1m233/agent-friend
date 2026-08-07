@@ -57,6 +57,16 @@ class FixtureSession:
 
 
 @dataclass(frozen=True)
+class FixtureSkill:
+    """A minimal case-local Skill package discovered by the production loader."""
+
+    name: str
+    description: str
+    instructions: str
+    allow_implicit_invocation: bool = True
+
+
+@dataclass(frozen=True)
 class FakeToolResponse:
     """One deterministic fixture response selected by a subset of call arguments."""
 
@@ -79,10 +89,11 @@ class FakeTool:
 
 @dataclass(frozen=True)
 class RequiredSuccessfulToolCall:
-    """A successful tool call whose public arguments must contain ``args``."""
+    """A successful tool call matching public args and optional result evidence."""
 
     name: str
     args: dict[str, Any] = field(default_factory=dict)
+    result_contains: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +102,7 @@ class CaseJudge:
 
     must_call: str | None = None
     must_not_call_any: list[str] = field(default_factory=list)
+    must_not_succeed_any: list[str] = field(default_factory=list)
     require_non_empty_response: bool = False
     forbid_question: bool = False
     forbid_question_with_scheduled_action: bool = False
@@ -111,6 +123,7 @@ class CaseJudge:
     forbid_unprompted_self_evaluation: bool = False
     forbid_unsupported_model_motive_story: bool = False
     forbid_unsupported_future_action_commitment: bool = False
+    forbid_unsupported_skill_activation_claim: bool = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +138,7 @@ class Case:
     surface: str | None = None
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
+    fixture_skills: list[FixtureSkill] = field(default_factory=list)
     current_session_messages: list[FixtureMessage] = field(default_factory=list)
     current_session_events: list[FixtureCurrentEvent] = field(default_factory=list)
     query_attachments: list[FixtureAttachment] = field(default_factory=list)

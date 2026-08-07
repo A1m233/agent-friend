@@ -51,6 +51,31 @@ def test_loader_isolates_invalid_skill(tmp_path: Path) -> None:
     assert any(issue.code == "missing_frontmatter" for issue in snapshot.issues)
 
 
+def test_loader_reads_openai_implicit_policy_and_fails_safe(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    explicit_entry = _write_skill(root, "explicit-skill")
+    explicit_agents = explicit_entry.parent / "agents"
+    explicit_agents.mkdir()
+    (explicit_agents / "openai.yaml").write_text(
+        "policy:\n  allow_implicit_invocation: false\n",
+        encoding="utf-8",
+    )
+    invalid_entry = _write_skill(root, "invalid-policy")
+    invalid_agents = invalid_entry.parent / "agents"
+    invalid_agents.mkdir()
+    (invalid_agents / "openai.yaml").write_text(
+        "policy:\n  allow_implicit_invocation: nope\n",
+        encoding="utf-8",
+    )
+
+    snapshot = SkillLoader().load((SkillRoot("personal", root),))
+    by_name = {item.name: item for item in snapshot.entries}
+
+    assert by_name["explicit-skill"].allow_implicit_invocation is False
+    assert by_name["invalid-policy"].allow_implicit_invocation is False
+    assert any(issue.code == "invalid_openai_policy" for issue in snapshot.issues)
+
+
 def test_loader_rejects_name_directory_mismatch_and_large_file(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     mismatch = root / "directory-name"

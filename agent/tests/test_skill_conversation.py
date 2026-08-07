@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 from agent.skills import SkillCatalogService, SkillSelection
+from agent.tools import ToolRegistry
+from agent.tools.builtin.skills import SkillReadTool
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -17,8 +20,16 @@ from agent import (
     PersonaCatalog,
     PromptBuilder,
     Session,
+    SkillActivationStatus,
+    ToolId,
 )
-from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LLMClient,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMToolCallDelta,
+    LLMTurnDone,
+)
 
 
 @dataclass
@@ -79,6 +90,8 @@ def _conversation(
     def builder_factory(persona_id: str) -> PromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id, catalog=persona_catalog)
 
+    registry = ToolRegistry([SkillReadTool(skill_service)])
+    assert registry.identity("skill_read") == ToolId(namespace="skills", name="skill_read")
     conversation = Conversation(
         session=session,
         store=store,
@@ -88,6 +101,7 @@ def _conversation(
         prompt_builder_factory=builder_factory,
         catalog=persona_catalog,
         skill_service=skill_service,
+        tool_registry=registry,
     )
     return conversation, llm, skill_service, SkillSelection(skill.id, skill.version)
 
@@ -114,6 +128,7 @@ def _reopen_conversation(
         prompt_builder_factory=builder_factory,
         catalog=persona_catalog,
         skill_service=skill_service,
+        tool_registry=ToolRegistry([SkillReadTool(skill_service)]),
     )
     return conversation, llm
 
@@ -121,7 +136,7 @@ def _reopen_conversation(
 def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) -> None:
     conversation, llm, _, selection = _conversation(tmp_path)
 
-    list(
+    events = list(
         conversation.stream(
             "hello",
             user_event_id="user-1",
@@ -154,6 +169,15 @@ def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) 
         message.meta.get("synthetic") == "skill_instructions"
         for message in conversation.session.llm_messages
     )
+    assert [event for event in events if isinstance(event, SkillActivationStatus)] == [
+        SkillActivationStatus(
+            status="activated",
+            skill_id=selection.id,
+            name="test-skill",
+            source="personal",
+            reason="由调用方为当前用户轮选择",
+        )
+    ]
 
 
 def test_plain_query_does_not_activate_and_unchanged_catalog_is_not_appended(
@@ -171,6 +195,99 @@ def test_plain_query_does_not_activate_and_unchanged_catalog_is_not_appended(
         if item["content"] == "please use $test-skill"
     )
     assert all("<skill>" not in item["content"] for item in llm.received[-1][current_index + 1 :])
+
+
+@dataclass
+class _SkillCallingLLM:
+    skill_id: str
+    context_window: int = 128_000
+    received: list[list[dict[str, Any]]] = field(default_factory=list)
+    received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
+
+    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
+        return ""
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
+        self.received.append(messages)
+        self.received_tools.append(tools)
+        if len(self.received) == 1:
+            yield LLMTextDelta("我会使用 test-skill，因为你指的是列表中的第 2 个 Skill。")
+            yield LLMToolCallDelta(
+                index=0,
+                tool_call_id="skill-call-1",
+                tool_name="skill_read",
+                args_json_delta=json.dumps(
+                    {
+                        "id": self.skill_id,
+                        "invocation_kind": "named",
+                        "reason": "用户指的是当前列表中的第 2 个 Skill",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            yield LLMTurnDone(stop_reason="tool_use")
+            return
+        assert any(
+            item.get("role") == "tool" and "FIRST VERSION" in item.get("content", "")
+            for item in messages
+        )
+        yield LLMTextDelta("test-skill 已成功加载，我会按它的说明继续。")
+        yield LLMTurnDone(stop_reason="end_turn")
+
+
+def test_model_can_semantically_select_and_read_skill_in_tool_loop(tmp_path: Path) -> None:
+    personal = tmp_path / "skills"
+    _write_skill(personal, "test-skill", "FIRST VERSION")
+    skill_service = SkillCatalogService(
+        personal_root=personal,
+        shared_root=tmp_path / "shared",
+        watcher_enabled=False,
+    )
+    snapshot = skill_service.initialize()
+    skill = next(item for item in snapshot.entries if item.name == "test-skill")
+    persona_catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store = JsonlSessionStore(tmp_path / "sessions")
+    store.create(session)
+    llm = _SkillCallingLLM(skill.id)
+
+    def builder_factory(persona_id: str) -> PromptBuilder:
+        return MarkdownPromptBuilder(persona_id=persona_id, catalog=persona_catalog)
+
+    conversation = Conversation(
+        session=session,
+        store=store,
+        llm_client=cast(LLMClient, llm),
+        context_manager=NaiveContextManager(),
+        prompt_builder=builder_factory(BUILTIN_DEFAULT_PERSONA_ID),
+        prompt_builder_factory=builder_factory,
+        catalog=persona_catalog,
+        skill_service=skill_service,
+        tool_registry=ToolRegistry([SkillReadTool(skill_service)]),
+    )
+
+    events = list(conversation.stream("你用一下 2 试试"))
+
+    assert len(llm.received) == 2
+    assert llm.received_tools[0] is not None
+    assert any(spec["function"]["name"] == "skill_read" for spec in llm.received_tools[0] or [])
+    result_event = next(
+        event for event in conversation.session.events if event.type == "tool_call_result"
+    )
+    assert result_event.payload["is_error"] is False
+    assert result_event.meta["extra"]["skill_activation"]["status"] == "activated"
+    assert any(getattr(event, "type", "") == "tool_call_result" for event in events)
 
 
 def test_reactivation_reads_current_version_and_idempotency_checks_selection(
@@ -201,13 +318,17 @@ def test_reactivation_reads_current_version_and_idempotency_checks_selection(
 def test_unknown_structured_selection_becomes_model_visible_load_error(tmp_path: Path) -> None:
     conversation, llm, _, _ = _conversation(tmp_path)
 
-    list(conversation.stream("continue", skill_selections=(SkillSelection("missing"),)))
+    events = list(conversation.stream("continue", skill_selections=(SkillSelection("missing"),)))
 
     assert any("<skill_load_error>" in item["content"] for item in llm.received[0])
     skill_event = next(
         event for event in conversation.session.events if event.type == "skill_context"
     )
     assert skill_event.payload["error_code"] == "skill_not_found"
+    status = next(event for event in events if isinstance(event, SkillActivationStatus))
+    assert status.status == "error"
+    assert status.skill_id == "missing"
+    assert status.error_code == "skill_not_found"
 
 
 def test_restart_replays_frozen_skill_context_without_reactivation(tmp_path: Path) -> None:

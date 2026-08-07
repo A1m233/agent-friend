@@ -92,6 +92,36 @@ describe("applyAguiEvent", () => {
     expect(content.runStatus).toBeUndefined();
   });
 
+  it("把调用方 Skill 激活状态投影成紧凑工具块", () => {
+    const out = applyAguiEvent(
+      base,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.skill_activation",
+        value: {
+          status: "activated",
+          skillId: "skill_2",
+          name: "context7-mcp",
+          source: "personal",
+          invocationKind: "caller",
+          reason: "由调用方为当前用户轮选择",
+          order: 0,
+        },
+      }),
+    );
+    expect(out.blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "skill_read",
+      status: "done",
+      result: "Skill 已加载",
+    });
+    expect(JSON.parse((out.blocks[0] as ToolBlock).args)).toMatchObject({
+      id: "skill_2",
+      name: "context7-mcp",
+      invocation_kind: "caller",
+    });
+  });
+
   it("文本被工具调用打断 → 形成两个独立文本块", () => {
     const out = reduce(base, [
       { type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant" },
@@ -170,5 +200,28 @@ describe("applyPushConversationEvent", () => {
       applyPushConversationEvent(waiting, { type: "text_delta", text: "恢复" }, "run-1")
         .runStatus,
     ).toBeUndefined();
+  });
+
+  it("projects pushed caller Skill failures truthfully", () => {
+    const out = applyPushConversationEvent(
+      base,
+      {
+        type: "skill_activation_status",
+        status: "error",
+        skill_id: "missing",
+        invocation_kind: "caller",
+        reason: "由调用方为当前用户轮选择",
+        error_code: "skill_not_found",
+        error_message: "Skill 不存在，未激活",
+        order: 0,
+      },
+      "run-1",
+    );
+    expect(out.blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "skill_read",
+      status: "error",
+      result: "Skill 不存在，未激活",
+    });
   });
 });

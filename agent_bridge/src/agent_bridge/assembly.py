@@ -344,6 +344,7 @@ def build_runtime(
         qweather_api_key=runtime_config.tool_credentials.qweather_api_key,
         qweather_api_host=runtime_config.tool_credentials.qweather_api_host,
         social_platform_service=social_platform_service,
+        skill_service=skill_service,
     )
 
     llm_client_factory = runtime_config.llm_client_factory

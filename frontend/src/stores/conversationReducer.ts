@@ -97,9 +97,15 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
 
     case EventType.CUSTOM: {
       const e = evt as CustomEvent;
-      if (e.name !== "agent_friend.run_status") return msg;
-      const runStatus = parseRunStatus(e.value);
-      return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+      if (e.name === "agent_friend.run_status") {
+        const runStatus = parseRunStatus(e.value);
+        return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+      }
+      if (e.name === "agent_friend.skill_activation") {
+        const block = skillActivationBlock(e.value, "caller-skill");
+        return block ? appendUniqueTool(msg, block) : msg;
+      }
+      return msg;
     }
 
     case EventType.RUN_FINISHED:
@@ -196,6 +202,21 @@ export function applyPushConversationEvent(
       return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
     }
 
+    case "skill_activation_status": {
+      const block = skillActivationBlock({
+        status: evt.status,
+        skillId: evt.skill_id,
+        name: evt.name,
+        source: evt.source,
+        invocationKind: evt.invocation_kind,
+        reason: evt.reason,
+        errorCode: evt.error_code,
+        errorMessage: evt.error_message,
+        order: evt.order,
+      }, `${runId}:caller-skill`);
+      return block ? appendUniqueTool(msg, block) : msg;
+    }
+
     case "done":
       return { ...msg, status: "complete", runStatus: undefined };
 
@@ -222,6 +243,38 @@ function parseRunStatus(value: unknown): ModelResponseProgress | null {
     || typeof maxAttempts !== "number"
   ) return null;
   return { phase, afterTool, attempt, maxAttempts };
+}
+
+function skillActivationBlock(value: unknown, idPrefix: string): ToolBlock | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const status = candidate.status;
+  const skillId = pushString(candidate.skillId);
+  if ((status !== "activated" && status !== "error") || !skillId) return null;
+  const order = typeof candidate.order === "number" ? candidate.order : 0;
+  const args = {
+    id: skillId,
+    name: pushString(candidate.name),
+    source: pushString(candidate.source),
+    invocation_kind: pushString(candidate.invocationKind) || "caller",
+    reason: pushString(candidate.reason),
+  };
+  const errorMessage = pushString(candidate.errorMessage);
+  return {
+    kind: "tool",
+    toolCallId: `${idPrefix}:${skillId}:${order}`,
+    name: "skill_read",
+    args: JSON.stringify(args),
+    result: status === "activated" ? "Skill 已加载" : errorMessage || "Skill 加载失败",
+    status: status === "activated" ? "done" : "error",
+  };
+}
+
+function appendUniqueTool(msg: ChatMessage, block: ToolBlock): ChatMessage {
+  if (msg.blocks.some((item) => item.kind === "tool" && item.toolCallId === block.toolCallId)) {
+    return msg;
+  }
+  return { ...msg, status: "streaming", blocks: [...msg.blocks, block] };
 }
 
 function appendText(blocks: MessageBlock[], mid: string, delta: string): MessageBlock[] {

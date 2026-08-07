@@ -204,6 +204,52 @@ def test_stale_expected_version_is_rejected_without_fallback(tmp_path: Path) -> 
     assert [issue.code for issue in turn.activation_issues] == ["skill_version_mismatch"]
 
 
+def test_model_activation_respects_implicit_policy_and_frozen_snapshot(tmp_path: Path) -> None:
+    personal = tmp_path / "personal"
+    entry = _write_skill(personal, "explicit-skill", "ORIGINAL BODY")
+    agents = entry.parent / "agents"
+    agents.mkdir()
+    (agents / "openai.yaml").write_text(
+        "policy:\n  allow_implicit_invocation: false\n",
+        encoding="utf-8",
+    )
+    service = SkillCatalogService(
+        personal_root=personal,
+        shared_root=tmp_path / "shared",
+        watcher_enabled=False,
+    )
+    snapshot = service.initialize()
+    record = next(item for item in snapshot.entries if item.name == "explicit-skill")
+
+    activation, issue = service.activate_from_snapshot(
+        snapshot,
+        SkillSelection(record.id),
+        invocation_kind="implicit",
+    )
+    assert activation is None
+    assert issue is not None and issue.code == "implicit_invocation_disabled"
+
+    activation, issue = service.activate_from_snapshot(
+        snapshot,
+        SkillSelection(record.id),
+        invocation_kind="named",
+    )
+    assert issue is None
+    assert activation is not None and "ORIGINAL BODY" in activation.contents
+
+    entry.write_text(
+        "---\nname: explicit-skill\ndescription: Changed\n---\n\nNEW BODY\n",
+        encoding="utf-8",
+    )
+    activation, issue = service.activate_from_snapshot(
+        snapshot,
+        SkillSelection(record.id),
+        invocation_kind="referenced",
+    )
+    assert activation is None
+    assert issue is not None and issue.code == "skill_changed_during_turn"
+
+
 def _wait_until(predicate: object, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

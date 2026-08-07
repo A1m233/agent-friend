@@ -172,6 +172,29 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       continue;
     }
 
+    if (ev.type === "skill_context") {
+      const skillId = asString(p.skill_id) || asString(p.selection_id);
+      const status = p.status === "activated" ? "done" : "error";
+      const block: ToolBlock = {
+        kind: "tool",
+        toolCallId: `caller-skill:${ev.uuid}`,
+        name: "skill_read",
+        args: JSON.stringify({
+          id: skillId,
+          name: asString(p.name),
+          source: asString(p.source),
+          invocation_kind: "caller",
+          reason: "由调用方为当前用户轮选择",
+        }),
+        result: status === "done"
+          ? "Skill 已加载"
+          : asString(p.error_message) || "Skill 加载失败",
+        status,
+      };
+      ensureAssistant(ev.uuid, ev.ts).blocks.push(block);
+      continue;
+    }
+
     if (ev.type === "run_error") {
       if (pendingSkipAssistant) {
         pendingSkipAssistant = false;

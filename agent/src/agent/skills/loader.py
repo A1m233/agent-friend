@@ -23,6 +23,7 @@ MAX_DEPTH = 6
 MAX_DIRECTORIES = 2_000
 MAX_ENTRIES = 20_000
 MAX_SKILL_BYTES = 256 * 1024
+MAX_OPENAI_YAML_BYTES = 64 * 1024
 _NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SOURCE_RANK = {"builtin": 0, "personal": 1, "shared": 2}
 
@@ -96,7 +97,8 @@ class SkillLoader:
         )
         fingerprint = hashlib.sha256(
             "\n".join(
-                f"{record.id}\0{record.version}\0{record.name}\0{record.description}"
+                f"{record.id}\0{record.version}\0{record.name}\0{record.description}\0"
+                f"{record.allow_implicit_invocation}"
                 for record in ordered
             ).encode("utf-8")
         ).hexdigest()
@@ -283,6 +285,11 @@ class SkillLoader:
             if root.source == "builtin" and name == "skill-creator"
             else skill_id_for_path(canonical)
         )
+        allow_implicit_invocation = self._load_implicit_invocation_policy(
+            canonical.parent,
+            root,
+            issues,
+        )
         return SkillRecord(
             id=record_id,
             source=root.source,
@@ -293,7 +300,77 @@ class SkillLoader:
             package_root=canonical.parent,
             version=version,
             frontmatter=frontmatter,
+            allow_implicit_invocation=allow_implicit_invocation,
         )
+
+    @staticmethod
+    def _load_implicit_invocation_policy(
+        package_root: Path,
+        root: SkillRoot,
+        issues: list[SkillLoadIssue],
+    ) -> bool:
+        path = package_root / "agents" / "openai.yaml"
+        if not path.exists():
+            return True
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            issues.append(SkillLoader._issue("invalid_openai_policy", path, root, exc))
+            return False
+        if len(raw) > MAX_OPENAI_YAML_BYTES:
+            issues.append(
+                SkillLoadIssue(
+                    code="invalid_openai_policy",
+                    message=f"agents/openai.yaml 超过 {MAX_OPENAI_YAML_BYTES} bytes。",
+                    path=path,
+                    source=root.source,
+                )
+            )
+            return False
+        try:
+            parsed = yaml.safe_load(raw.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
+            issues.append(SkillLoader._issue("invalid_openai_policy", path, root, exc))
+            return False
+        if parsed is None:
+            return True
+        if not isinstance(parsed, dict):
+            issues.append(
+                SkillLoadIssue(
+                    code="invalid_openai_policy",
+                    message="agents/openai.yaml 顶层必须是 mapping。",
+                    path=path,
+                    source=root.source,
+                )
+            )
+            return False
+        policy = parsed.get("policy")
+        if policy is None:
+            return True
+        if not isinstance(policy, dict):
+            issues.append(
+                SkillLoadIssue(
+                    code="invalid_openai_policy",
+                    message="agents/openai.yaml.policy 必须是 mapping。",
+                    path=path,
+                    source=root.source,
+                )
+            )
+            return False
+        value = policy.get("allow_implicit_invocation")
+        if value is None:
+            return True
+        if isinstance(value, bool):
+            return value
+        issues.append(
+            SkillLoadIssue(
+                code="invalid_openai_policy",
+                message="policy.allow_implicit_invocation 必须是 boolean。",
+                path=path,
+                source=root.source,
+            )
+        )
+        return False
 
     @staticmethod
     def _frontmatter(

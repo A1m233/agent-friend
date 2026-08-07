@@ -23,33 +23,40 @@ prompt 后依次是稳定 `extra_context`、历史、当前真实 user、当轮 
 复用已废弃且永不投影的 `model_context` 兼容事件。
 
 上下文压缩当前以真实 `role="user"` 作为轮边界，并会把较旧历史折叠成 summary。
-Skill 正文同样使用 `role="user"` 才能保持与普通用户指令相同的逻辑优先级，但它不是一轮
-新的真实用户输入；catalog 又属于需要保留最新值的 world state。两者都要求上下文管理器
-认识对应的 `meta.synthetic`，否则 FIFO 可能留下 Skill 正文却丢掉触发它的用户输入，摘要
-也可能把旧 catalog 当成关系事实。
+调用方预选的 Skill 正文继续以 synthetic `role="user"` 进入首轮；Agent 自主选择的 Skill
+正文则作为 `skill_read` 的 `role="tool"` 成功结果进入工具续轮。两者都不是新的真实用户输入，
+catalog 又属于需要保留最新值的 world state。上下文管理器必须同时识别 synthetic Skill
+fragment 和 Skill 工具结果，否则 FIFO 或摘要可能丢掉当前轮指令，或把历史 Skill 当成
+关系事实和后续轮常驻规则。
 
 现有 `agent.paths` 集中管理用户数据目录，Python package 资源通过
 `importlib.resources` 打包，BridgeRuntime 负责进程级共享组件及 FastAPI lifespan。
 `watchfiles` 已在依赖锁文件中出现，但不是 `agent` 的直接依赖；本需求若直接使用，必须
 提升为显式依赖，不能依赖其它包偶然传递安装。
 
-当前 ToolRegistry 没有通用目录枚举、本地文件读取、文件变更或命令执行能力。本期只允许
-Skill 子系统自身读取 catalog 所需的 `SKILL.md`，不暴露 Skill 私有资源读取 tool；
-`references/`、`assets/`、文件创建编辑和 `scripts/` 执行均等待公共 Agent 能力补齐。
+当前 ToolRegistry 没有通用目录枚举、本地文件读取、文件变更或命令执行能力。现有 076
+又只允许调用方在模型请求前选好 Skill，模型虽然看得到 catalog，却没有任何结构化入口把
+自己的语义判断兑现成完整指令。这正是“声称 Skill 已激活、实际只调用普通工具”能够发生的
+缺口。本次增加的 `skill_read` 只能按 catalog 稳定 ID 读取入口 `SKILL.md`；它不是任意文件
+工具，也不读取 `references/`、`assets/`，不创建文件、不执行 `scripts/`。
 
 ## 方案设计
 
 ### 设计不变量
 
 1. `SkillCatalogService` 是进程内 Skill 状态的唯一真相源；所有对话入口使用同一实例。
-2. catalog 只提供有界元数据，不从名称、描述或用户原文自动激活 Skill。
-3. 只有调用方传入的结构化 `SkillSelection` 能触发完整 `SKILL.md` 加载。
-4. 每轮在首次模型组装前冻结 catalog、选择结果和正文 bytes；文件变化只影响后续轮。
+2. Agent 基于 catalog、当前用户输入和有效对话指代完成语义选择；后端不通过正则、关键词表
+   或固定相似度规则解析用户 query。
+3. Agent 的选择必须调用结构化 `skill_read` 才能成为真实激活；调用方仍可传入结构化
+   `SkillSelection`，两条路径共用同一个 ID 解析、版本校验和正文读取实现。
+4. 每轮在首次模型组装前冻结 catalog；调用方选择的正文同时冻结，Agent 后续调用
+   `skill_read` 也只能在该 catalog snapshot 中解析，文件变化不把本轮静默切到新版本。
 5. catalog 初次出现或模型可见内容变化时才追加新状态；无变化不追加、不改 system prompt。
-6. Skill 正文追加在触发它的真实 user 后，以 `role="user"` 进入模型历史；它不会成为后续轮
-   自动生效的常驻规则。
-7. catalog 与 Skill 正文不进入 UI 消息、长期记忆或关系事实抽取，但服从模型历史的预算、
-   FIFO 和摘要压缩。
+6. Skill 正文追加在触发它的真实 user 后：调用方选择使用 synthetic `role="user"`，Agent
+   选择使用正常 `assistant tool_call -> role="tool"` 事务；两者都不会成为后续轮自动生效的
+   常驻规则。
+7. catalog 与 Skill 正文不进入长期记忆或关系事实抽取；UI 只显示结构化激活状态，不把
+   完整 `SKILL.md` 当聊天正文展示。模型历史仍服从既有预算、FIFO 和摘要压缩。
 8. builtin、agent-friend 个人和共享个人 Skill 使用同一 parser、loader、catalog 与激活路径。
 9. Skill 不授予工具权限；`allowed-tools` 只作为未执行的兼容元数据保留。
 10. watcher 事件只做失效通知；每次刷新都重新构造完整 immutable snapshot 后原子替换。
@@ -67,13 +74,19 @@ flowchart TB
     L --> CS
     CS --> SNAP["Immutable SkillCatalogSnapshot"]
     SNAP --> API["GET /v1/skills"]
-    SNAP --> T["Turn snapshot"]
-    SEL["Structured SkillSelection"] --> T
+    SNAP --> T["Frozen turn catalog"]
+    CALLER["Caller SkillSelection"] --> R["Shared activation resolver"]
     T --> CAT["skill_catalog_state before user"]
-    T --> BODY["skill_context after user"]
-    CAT --> C["Conversation / ContextManager"]
+    T --> C["Conversation / ContextManager"]
+    CAT --> C
+    C --> M["LLM sees catalog + skill_read"]
+    M -->|"named / referenced / implicit"| TOOL["skills namespace · skill_read"]
+    TOOL --> R
+    R -->|"success"| BODY["Full SKILL.md in current turn"]
+    R -->|"failure"| ERR["Structured not-activated result"]
     BODY --> C
-    C --> M["LLM provider"]
+    ERR --> C
+    C --> UI["Visible Skill status"]
 ```
 
 ### 涉及文件
@@ -83,15 +96,17 @@ flowchart TB
 | `agent/pyproject.toml` | 修改 | 把 `watchfiles` 提升为 Agent 的显式跨平台依赖 |
 | `agent/src/agent/paths.py` | 修改 | 新增 agent-friend 个人 Skill 根 `skills_dir()` |
 | `agent/src/agent/skills/__init__.py` | 新增 | 导出 Skill 领域公共类型与 service |
-| `agent/src/agent/skills/models.py` | 新增 | 来源、身份、记录、诊断、snapshot、selection 与 activation 类型 |
-| `agent/src/agent/skills/loader.py` | 新增 | 有界扫描、frontmatter 校验、链接处理、去重和版本摘要 |
-| `agent/src/agent/skills/catalog.py` | 新增 | immutable catalog、稳定排序、预算渲染和精确选择 |
+| `agent/src/agent/skills/models.py` | 修改 | 增加隐式调用策略和 Agent 调用来源类型 |
+| `agent/src/agent/skills/loader.py` | 修改 | 在既有发现基础上读取、校验 `agents/openai.yaml` 的调用策略 |
+| `agent/src/agent/skills/catalog.py` | 修改 | catalog 暴露调用策略并写入 Codex 对齐的模型使用协议 |
 | `agent/src/agent/skills/builtin.py` | 新增 | 内置资源 fingerprint、并发安全物化与 provenance |
 | `agent/src/agent/skills/watcher.py` | 新增 | `watchfiles` 生命周期、去抖、重挂与周期 reconcile |
-| `agent/src/agent/skills/service.py` | 新增 | 初始加载、原子刷新、订阅、turn snapshot 与同步重验 |
+| `agent/src/agent/skills/service.py` | 修改 | 抽出调用方和模型工具共用的 snapshot activation resolver |
 | `agent/src/agent/skills/builtin_assets/` | 新增 | `skill-creator`、许可证、资源及上游 provenance manifest |
-| `agent/src/agent/sessions/events.py` | 修改 | 新增 `skill_catalog_state`、`skill_context` 事件类型 |
-| `agent/src/agent/sessions/session.py` | 修改 | 分离 UI/general 与 LLM-only Skill 事件投影，提供最近 catalog 状态 |
+| `agent/src/agent/tools/builtin/skills/tool.py` | 新增 | 模型可调用的 catalog-scoped `skill_read` 工具 |
+| `agent/src/agent/tools/factory.py` | 修改 | 在存在 Skill service 时注册 `skill_read` |
+| `agent/src/agent/conversation_events.py` | 修改 | 增加调用方预选的轻量激活状态事件 |
+| `agent/src/agent/sessions/session.py` | 修改 | 保持模型专用正文投影，并为 UI 提供不含正文的状态投影 |
 | `agent/src/agent/messages.py` | 修改 | 保留内部生成的 Skill user fragment，不按真实用户文本转义 |
 | `agent/src/agent/context/protocol.py` | 修改 | 增加位于 history 与当前 user 之间的 `pre_user_context` |
 | `agent/src/agent/context/naive.py` | 修改 | 透传新的上下文组成部分 |
@@ -99,7 +114,7 @@ flowchart TB
 | `agent/src/agent/context/summarizing.py` | 修改 | 排除 catalog 摘要、保留最新状态，并正确处理历史 Skill fragment |
 | `agent/src/agent/context/summary_prompt.py` | 修改 | 区分真实用户、历史 Skill 指令与 catalog 状态，禁止把 Skill 当长期事实 |
 | `agent/src/agent/context/turns.py` | 修改 | synthetic Skill user 不作为完整 turn 起点 |
-| `agent/src/agent/conversation.py` | 修改 | 冻结 turn snapshot、统一装配、按顺序持久化与幂等校验 |
+| `agent/src/agent/conversation.py` | 修改 | 向工具隐藏注入本轮 catalog snapshot，统一激活、状态和持久化语义 |
 | `agent/src/agent/sessions/manager.py` | 修改 | 向正式与临时 Conversation 注入同一个 Skill service |
 | `agent_bridge/src/agent_bridge/assembly.py` | 修改 | 进程级构造和关闭 Skill service/watcher，加入 BridgeRuntime |
 | `agent_bridge/src/agent_bridge/app.py` | 修改 | 在 lifespan 中启动/停止 watcher，并注册 Skill catalog 路由 |
@@ -108,7 +123,14 @@ flowchart TB
 | `agent_bridge/src/agent_bridge/protocols/openai/decoders.py` | 修改 | 从 `agent_friend.skills` 解码结构化选择 |
 | `agent_bridge/src/agent_bridge/protocols/openai/routes.py` | 修改 | 持久与无状态分支统一传递选择 |
 | `agent_bridge/src/agent_bridge/protocols/openai/encoders.py` | 修改 | 直连 Conversation 时透传选择 |
+| `agent_bridge/src/agent_bridge/protocols/ag_ui/encoders.py` | 修改 | 把调用方预选状态编码为轻量 custom event |
 | `agent_bridge/src/agent_bridge/routes/skills.py` | 新增 | 提供只读完整 catalog 与当前 generation |
+| `frontend/src/types/chat.ts` | 修改 | 增加 Skill 状态块或等价的领域字段 |
+| `frontend/src/stores/conversationReducer.ts` | 修改 | 投影实时 Skill 状态 |
+| `frontend/src/stores/sessionProjection.ts` | 修改 | 从历史 `skill_context` / Skill 工具结果恢复同一状态 |
+| `frontend/src/pages/chat/components/ToolCard.tsx` | 修改 | 复用现有卡片呈现紧凑 Skill 加载状态，不展示完整正文 |
+| `agent_eval/src/agent_eval/{schema,loader,runner,judge}.py` | 修改 | 支持 fixture Skill 和激活真实性 deterministic judge |
+| `agent_eval/cases/C20-*.yaml` | 新增 | 真实 bad case、语义选择隔离项与控制项 |
 | `agent/tests/test_skill_*.py` | 新增 | loader、catalog、watcher、builtin、上下文与会话回归 |
 | `agent_bridge/tests/test_skills_*.py` | 新增 | 协议解码、入口一致性和 catalog route 回归 |
 | `scripts/package/windows/agent_friend_runtime.spec` | 核对/按需修改 | 确保 builtin Skill package data 进入安装态 runtime |
@@ -128,6 +150,7 @@ class SkillRecord:
     canonical_entry_path: Path
     package_root: Path
     version: str
+    allow_implicit_invocation: bool
     frontmatter: Mapping[str, object]
     aliases: tuple[SkillAlias, ...]
 
@@ -143,6 +166,8 @@ class SkillCatalogSnapshot:
 class SkillSelection:
     id: str
     expected_version: str | None = None
+
+SkillInvocationKind = Literal["caller", "named", "referenced", "implicit"]
 
 @dataclass(frozen=True)
 class ActivatedSkill:
@@ -227,6 +252,18 @@ frontmatter 校验遵循以下口径：
 - 未识别的可选字段保留在 `frontmatter` 供诊断，但不获得运行时语义；
 - `allowed-tools` 不改变 ToolRegistry、审批或权限。
 
+Skill package 若包含 `agents/openai.yaml`，loader 只额外读取
+`policy.allow_implicit_invocation`：
+
+- 文件不存在或 `policy` 未声明该字段时默认为 `true`；
+- 字段必须是 boolean；合法的 `false` 写入 `SkillRecord.allow_implicit_invocation`；
+- YAML、顶层形态或字段类型无效时保留 Skill 的显式可用性，但以 fail-safe 的 `false` 参加
+  catalog，并记录 `invalid_openai_policy` 诊断，避免配置错误意外扩大隐式调用；
+- `agents/openai.yaml` 的其它 interface/dependency 字段本期仍只作兼容资源，不获得运行时权限。
+
+这个读取属于 Skill catalog 元数据解析，不向模型开放包内任意文件路径。watcher 已监测整个
+package，policy 文件变化会触发完整 rescan；该 boolean 纳入 catalog fingerprint。
+
 目录符号链接、Windows directory junction/reparse point 和文件链接均通过解析后的 canonical
 路径参与身份判断。遍历维护已访问 canonical 目录集合，遇到循环、失效链接、权限错误或
 超过边界时只生成 `SkillLoadIssue`，继续处理其它候选。链接指向来源根之外是允许的共享
@@ -251,7 +288,8 @@ metadata 中合法，也最多贡献 1,024 字符。
 每条 model-visible entry 至少包含：
 
 ```text
-- name: description (source=personal, id=skill_..., version=abc123..., path=.../SKILL.md)
+- name: description (source=personal, id=skill_..., version=abc123...,
+  allow_implicit_invocation=true, path=.../SKILL.md)
 ```
 
 渲染器先计算每条 entry 不含描述时的最小成本，再在能保留的 entry 间轮转分配描述预算，
@@ -260,8 +298,14 @@ metadata 中合法，也最多贡献 1,024 字符。
 
 catalog 外层使用内部生成的 `<skills_catalog>` envelope，并明确：
 
-- catalog 元数据仅用于了解可用能力，不自行激活任何 Skill；
-- 只有当前用户轮的结构化选择会产生 `<skill>` fragment；
+- 用户直接说出 Skill 名称或当前列表序号、通过有效上下文指代某个 Skill，或任务与
+  `description` 匹配时，Agent 必须自行完成语义选择，不等待后端解析 query；
+- 语义选择后必须调用 `skill_read` 并传精确 ID；成功结果才表示激活，失败结果表示未激活；
+- `allow_implicit_invocation=false` 禁止仅因任务匹配而调用，但不阻止直接点名、明确指代或
+  调用方结构化选择；
+- 同时匹配多个 Skill 时只选择完成任务所需的最小集合，并按需要逐个读取；
+- 使用前简短说明将使用哪个 Skill 及原因；读取失败时说明未激活事实并合理降级；
+- 不得把 catalog 出现、历史正文或任意普通工具调用说成 Skill 已激活；
 - 历史 Skill fragment 不表示当前轮自动继续启用；
 - `allowed-tools` 和 Skill 文本不能扩大 Agent 权限；
 - 当前 snapshot 替代更早的 catalog snapshot。
@@ -327,10 +371,10 @@ parse issue；下一次 rename/write 事件会重新加入。系统不保留一�
 ```
 
 该接口不读取完整 Skill 正文，也不激活 Skill。service 内部保留 snapshot-changed subscriber
-接口，后续桌面 Skill 选择 UI 可以接入现有 push channel；本期没有 UI consumer，因此不
-新增一套未被使用的前端状态。
+接口，后续桌面 Skill 管理或选择 UI 可以接入现有 push channel；本期只消费每轮真实激活
+状态，不实现 catalog 管理、启停或选择界面。
 
-### 结构化选择协议
+### 调用方结构化选择与 Agent 语义选择
 
 协议层只接受以下领域结构，不接受名称或路径作为选择依据：
 
@@ -341,7 +385,7 @@ parse issue；下一次 rename/write 事件会重新加入。系统不保留一�
 - AG-UI 从 `forwarded_props.skills` 读取数组；
 - OpenAI-compatible 从 vendor namespace `agent_friend.skills` 读取数组；
 - 两者都解码为 `tuple[SkillSelection, ...]` 后传给 `Conversation.stream()`；
-- 空数组与字段缺失都表示本轮不激活 Skill；
+- 空数组与字段缺失都表示调用方不预先激活 Skill，Agent 仍可在本轮自行语义选择；
 - 重复 ID 保留第一次出现的顺序并去重；
 - 形态错误、空 ID、未知字段类型属于协议错误，模型调用前返回 HTTP 400；
 - catalog 中不存在、已失效或 `expected_version` 不匹配属于运行时 activation issue，不把
@@ -351,13 +395,42 @@ activation issue 会作为当前用户后的模型专用 `<skill_load_error>` fr
 Agent 简短说明缺口并在不依赖该 Skill 时继续。它与成功 activation 一样持久化，保证失败
 重试和会话恢复看到相同事实。
 
-后端不检查用户文本中的 `$name`、普通 Skill 名称、链接或 description 相似度，也不提供
-name-to-id 的隐式 fallback。`skill-creator` 同样必须由调用方结构化选择。
+调用方选择是可选的确定性入口，不取代 Agent 自主选择。没有调用方 selection 时，模型从
+catalog 和对话语义判断；后端不检查 `$name`、普通 Skill 名称、序号、指代或 description
+相似度，也不提供 name-to-id fallback。本期不实现 `$skill-name` 命令语法。
+
+模型选择通过普通 ToolRegistry 中的 `skill_read` 兑现。实现位于
+`agent.tools.builtin.skills`，因此模型可见 capability catalog 将其归入可信 `skills`
+namespace；受 OpenAI-compatible function name 约束，wire callable 保持扁平的
+`skill_read`：
+
+```json
+{
+  "id": "skill_...",
+  "invocation_kind": "named | referenced | implicit",
+  "reason": "一句简短的选择理由"
+}
+```
+
+- `named` 表示用户直接说出名称或当前可见列表序号；`referenced` 表示“那个 Skill”或
+  “实验的 Skill”等能由有效对话上下文唯一消歧的指代；其余 description 匹配使用
+  `implicit`；
+- `id` 必须来自本轮 catalog，工具不接受名称、序号、路径或任意文件 URI；
+- `reason` 只用于用户可见状态和诊断，限制为短文本，不参与 ID 解析；
+- `allow_implicit_invocation=false` 时，工具对 `implicit` 返回结构化失败；named/referenced
+  由 Agent 负责语义分类，并由行为评测约束不得借错误分类绕过 policy；
+- 成功结果包含完整、带身份和当前轮作用域 envelope 的 `SKILL.md`；失败结果包含稳定错误码
+  和“未激活”事实。ToolResult meta 同时写入不含正文的 activation 摘要，供日志和 UI 使用；
+- 工具不接受 `expected_version`。它直接使用本轮冻结 record 的 version，避免要求模型抄写
+  64 位摘要；调用方协议仍保留 `expected_version` 做并发控制。
+
+tool description 与 catalog protocol 都要求：需要 Skill 时先调用，成功后再按完整指令行动；
+工具未调用或失败时禁止声称已激活，也禁止把 `web_search` 等普通工具的结果归因于 Skill。
 
 ### Turn snapshot 与激活竞态
 
 `Conversation.stream()` 开始后、创建 `ToolRunContext` 前调用
-`SkillCatalogService.begin_turn(selections, model_window)`：
+`SkillCatalogService.begin_turn(selections, model_window, semantic_activation_available)`：
 
 1. 读取当前 immutable catalog 引用并渲染该模型的 catalog；
 2. 按 ID 在该 snapshot 中精确解析 selections；
@@ -370,14 +443,29 @@ name-to-id 的隐式 fallback。`skill-creator` 同样必须由调用方结构�
 中的旧身份与磁盘新正文拼成一个不一致 snapshot。文件在第 6 步之后改变只会触发后台刷新，
 当前 `ActivatedSkill.contents` 不变。
 
-多 Skill activation 按调用方顺序注入。完整正文不设置另一个独立字符截断上限；超过
+`SkillCatalogService.activate_from_snapshot()` 承担上面第 2-6 步的共享实现。调用方 selection
+在首次 provider 调用前使用它；`skill_read` 则由 `Conversation` 通过隐藏 invocation context
+取得同一 `SkillCatalogSnapshot` 后调用它。隐藏值是 Python 领域对象，不出现在模型参数、
+tool_call event 或 wire schema 中。
+
+Agent 的工具调用发生在首次 provider 响应之后。此时如果目标文件 bytes 与冻结 record.version
+不一致，工具返回 `skill_changed_during_turn`，不刷新为新 catalog 后偷偷重试；下一用户轮自然
+取得 watcher 已发布的新 snapshot。成功正文在正常 `assistant tool_call -> role="tool"` 事务中
+回喂模型，并设置 `context_retention="pinned"`，不能被 recoverable tool-result 低水位提前清空。
+
+语音实验若显式关闭全部工具，`semantic_activation_available=false` 会让 catalog 说明本轮不能
+自主读取；调用方结构化选择仍可在 provider 前加载。Agent 不应在没有工具 surface 的入口声称
+完成语义激活。是否在低延迟语音路径保留本地 `skill_read` 作为唯一工具留给后续独立性能验证，
+本需求不绕过现有实验开关。
+
+多 Skill activation 按调用方顺序或模型 tool_call 顺序进入历史。完整正文不设置另一个独立字符截断上限；超过
 loader 的 256 KiB 候选上限时它本来就不会成为有效 Skill。最终是否能装入当前模型窗口仍
 服从已有 context manager，过大时返回明确 `ContextInputTooLargeError`，不能静默裁掉 Skill
 正文后继续。
 
 ### 会话事件与模型投影
 
-新增两个 append-only event type：
+现有两个 append-only Skill event type 继续保持兼容：
 
 #### `skill_catalog_state`
 
@@ -425,10 +513,33 @@ description: ...
 </skill>
 ```
 
-对应 `Message` 使用 `role="user"`、`meta.synthetic="skill_instructions"`。它不进入
-`Session.messages`，所以 UI 不显示、memory.observe 不抽取、会话标题和搜索正文也不把
-Skill 指令当成用户原话。`escape_user_messages_for_llm()` 仅对真实 user 文本转义内部标记，
-不能改写已冻结的 Skill 正文；envelope 自有字段在渲染前单独转义。
+对应 `Message` 使用 `role="user"`、`meta.synthetic="skill_instructions"`。完整正文不进入
+`Session.messages`，所以 memory.observe、会话标题和搜索正文不把 Skill 指令当成用户原话。
+前端历史投影只从 payload 取得 `status`、`skill_id`、`name`、`source` 和错误摘要，绝不把
+`contents` / `rendered` 投影成聊天文本。`escape_user_messages_for_llm()` 仅对真实 user 文本
+转义内部标记，不能改写已冻结的 Skill 正文；envelope 自有字段在渲染前单独转义。
+
+Agent 自主选择不新增另一种持久化正文 event。`skill_read` 的 request/result 使用现有
+`tool_call_request` / `tool_call_result`，成功正文自然以 `role="tool"` 恢复；result meta 的
+`extra.skill_activation` 保存状态、ID、名称、来源、版本和 invocation kind，不复制正文。
+失败 result 使用 `is_error=true` 和稳定 `error_kind`。旧 session 中没有这些 meta 时按普通
+tool result 兼容读取。
+
+为让调用方预选在实时桌面也可见，`Conversation` 在本地组装和 `skill_context` 持久化成功后、
+首次 provider 调用前 yield 轻量 `SkillActivationStatus`。AG-UI encoder 把它编码为
+`agent_friend.skill_activation` custom event；AgentRuntime push 透传同一领域事件。这个瞬态
+事件不再单独落盘，因为 `skill_context` 已是恢复真相源。
+
+前端把两条来源统一呈现为现有 assistant block 流中的紧凑 Skill 状态卡：
+
+- `loading` / `activated` / `error` 使用现有 `StatusDot`、边框、surface 和折叠组件；
+- 标题显示 `Skill · <name>`，正文只显示选择原因、来源和成功/失败摘要；
+- 不展示完整 `SKILL.md`，也不把 status card 内容加入消息复制文本；
+- 模型 `skill_read` 直接复用工具实时事件，`ToolCard` 对该工具做领域化标题和结果摘要；
+- 历史 `skill_context` 与带 activation meta 的 tool result 恢复后必须得到同一最终状态。
+
+这只是运行状态可视化，不提供 Skill 列表管理、选择器、启停或编辑交互。实现后按用户授权仅用
+不抢占键鼠的真实 WebView/CDP DOM 与截图路径验收，不执行前台坐标点击或键盘输入。
 
 ### 首轮组装与持久化顺序
 
@@ -458,6 +569,12 @@ Skill 指令当成用户原话。`escape_user_messages_for_llm()` 仅对真实 u
 落盘后工具续轮和 context-window recovery 都从 `Session.llm_messages` 重建，因此不会重新读
 Skill 文件，也不会重复注入正文。
 
+没有调用方 selection 时，首轮只装配 catalog。模型若判断某个 Skill 适用，正常产生
+`skill_read` tool call；工具结果落盘并回喂后才进入下一次模型 continuation。Agent 在 tool
+call 前输出的简短使用说明可以作为普通 assistant segment 保留，但不能提前使用“已激活”这类
+完成态措辞。工具失败时 continuation 必须基于 error result 明确说明未激活，而不是继续模拟
+Skill 已执行。
+
 相同 `user_event_id` 重试时，Conversation 读取该 user 紧邻的 `skill_context`：请求 selection
 ID、顺序和 expected version 必须与已落盘 snapshot 一致，否则返回
 `user_event_id_conflict`。已完成回复继续走现有 idempotent replay；未完成回复从已落盘
@@ -465,7 +582,8 @@ Skill context 继续，不重新解析当前磁盘版本。
 
 `edit_resend_latest()` 增加 selections 参数。旧 user 之后的 Skill context 随现有
 `turn_rewrite` 一起失活；位于 user 之前的 catalog state 是会话 world state，不因编辑一条
-消息失活。新分支按调用方本次 selections 重新冻结，未传即不激活旧 Skill。
+消息失活。新分支按调用方本次 selections 重新冻结；未传只表示不预激活旧 Skill，Agent 仍须
+按编辑后的用户输入重新判断是否调用 `skill_read`。
 
 ### 上下文裁剪、摘要与缓存
 
@@ -486,14 +604,16 @@ catalog 不直接拼进每轮重建的基础 system prompt。首次 catalog stat
 - 最新状态已在 recent tail 中时不重复；
 - 这次移动只发生在上下文本来就因压缩改变前缀的时刻。
 
-`render_transcript()` 将历史 Skill 标记为“该用户轮选择的工作流指令”，不渲染成“用户原话”；
-summary prompt 明确要求只保留其对已完成任务仍有用的结果或约束，不把旧 Skill 继续描述为
-当前常驻规则。原始 `skill_context` event 永远不改，之后再次结构化激活仍从当前磁盘读取
-新版本。
+`render_transcript()` 将历史 synthetic Skill fragment 和 `skill_read` tool result 都标记为
+“该用户轮选择的工作流指令”，不渲染成“用户原话”或普通外部检索证据；summary prompt
+明确要求只保留其对已完成任务仍有用的结果或约束，不复制长正文，也不把旧 Skill 继续描述为
+当前常驻规则。原始 `skill_context` 和 tool result event 永远不改，之后再次选择仍经当前轮
+snapshot 读取当前版本。
 
 最新 compaction checkpoint 的 `covered_through_uuid` 继续指向原始历史消息；catalog
 world-state 的重新投影不改变 checkpoint schema。FIFO emergency base 预算必须包含最新
-catalog 和当前 Skill fragments，放不下时明确失败，不通过删除它们伪造成功。
+catalog，以及当前轮 synthetic Skill fragment 或 `skill_read` pinned result；放不下时明确
+失败，不通过删除它们伪造成功。
 
 OpenAI 无状态请求每次都会构造新的 transient session，因此每个 HTTP 请求各有一条初始
 catalog state；它没有跨请求服务端历史，“不重复追加”只在同一个持久 session 内成立。
@@ -522,12 +642,12 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 - `broken_link`、`link_cycle`、`canonicalize_failed`；
 - `skill_too_large`、`invalid_utf8`、`missing_frontmatter`、`invalid_yaml`；
 - `invalid_name`、`name_directory_mismatch`、`invalid_description`、
-  `invalid_optional_metadata`；
+  `invalid_optional_metadata`、`invalid_openai_policy`；
 - `canonical_duplicate`、`duplicate_name`；
 - `watcher_degraded`、`watch_target_rebound`；
 - `catalog_description_truncated`、`catalog_entries_omitted`；
 - `skill_not_found`、`skill_version_mismatch`、`skill_changed_during_activation`、
-  `skill_read_failed`；
+  `skill_changed_during_turn`、`skill_read_failed`、`implicit_invocation_disabled`；
 - `filesystem_capability_unavailable`、`command_capability_unavailable`。
 
 日志和 route diagnostics 可以包含本地路径；普通 assistant 回复只需说明用户能行动的原因，
@@ -539,6 +659,7 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 #### Loader 与 builtin
 
 - 三类来源、固定排序、标准和可选 frontmatter；
+- `agents/openai.yaml` 缺省 true、显式 false、无效 policy fail-safe 和热修改；
 - 名称/目录不匹配、UTF-8、超大文件、无效 YAML、单个错误隔离；
 - 同名不同路径保留、canonical link 去重、broken/cycle/junction 行为；
 - 外部 symlink target 加入 watch roots；
@@ -548,7 +669,7 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 
 #### Catalog 与 watcher
 
-- 2% token/8,000 char fallback、描述公平截断、entry 省略和稳定 fingerprint；
+- 2% token/8,000 char fallback、描述公平截断、entry 省略、policy 标记和稳定 fingerprint；
 - 只改非 model-visible 资源时 generation 变化但 rendered fingerprint 不变；
 - add/change/delete/rename、编辑器原子保存和短时间批量事件只触发一次稳定 rescan；
 - shared 根从不存在到创建、根删除重建、外部 symlink target 修改；
@@ -557,31 +678,60 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 
 #### 激活与会话
 
-- 两协议入口解码为同一 `SkillSelection`；普通 `$name` 和相似 query 不激活；
-- unknown、stale version、读取竞态、重复选择和多 Skill 顺序；
+- 两协议入口仍解码为同一 `SkillSelection`，模型工具与调用方选择共用 activation resolver；
+- catalog protocol 明确覆盖名称/序号、上下文指代、隐式 description 匹配、最小 Skill 集合、
+  成功前不得声称激活和失败降级；后端没有 query parser 或 `$skill-name` 语法；
+- `skill_read` 只接受稳定 ID、调用来源和短理由，不接受名称/路径；unknown、policy disabled、
+  stale version、轮中修改、读取失败、重复选择和多 Skill 顺序均有确定性测试；
 - catalog state 在 user 前、Skill context 在 user 后，工具续轮不重复读取；
 - 同一 `user_event_id` replay/冲突，首轮失败清理，edit-resend 失活；
-- `Session.messages`、UI、memory、标题和搜索不包含 Skill 内容；
+- `Session.messages`、memory、标题和搜索不包含 Skill 正文；实时与历史 UI 只显示同口径状态；
 - `Session.llm_messages`、重启恢复和 provider recovery 保留正确上下文；
-- synthetic Skill user 不形成独立 turn；FIFO 和 summary 保留最新 catalog；
+- synthetic Skill user 不形成独立 turn；`skill_read` result pinned；FIFO 和 summary 保留最新
+  catalog、保护当前轮正文并把历史正文排除出常驻规则；
 - catalog 未变化不追加，变化后只追加新 state，并用 prompt cache trace 验证共同前缀；
 - 压缩后再次激活读取当前版本，而不是历史正文。
 
 #### 运行时边界
 
-- catalog/activation 不读取附加资源、不运行脚本、不注册文件或命令 tool；
+- `skill_read` 只能读取 catalog 中的入口文件；catalog/activation 不读取附加资源、不运行
+  脚本、不注册任意文件或命令 tool；
 - fake model 请求 references、写文件或运行脚本时只能得到 capability gap；
 - `allowed-tools` 不改变实际 tool specs；
 - 测试全部使用临时目录和 fake/mock provider，不调用真实 LLM。
 
+#### Agent eval C20
+
+eval schema 增加最小 `fixture_skills`：每项只描述 `name`、`description`、`instructions` 和
+`allow_implicit_invocation`。runner 在 case 临时目录创建标准 Skill package，启动禁用 watcher
+的真实 `SkillCatalogService`，并把同一 service 同时注入 SessionManager 和 ToolRegistry。
+它不是生产 session 导入器，也不新增 eval-only 激活捷径。
+
+C20 至少包含：
+
+1. 真实长会话锚点：历史中列出两个 Skill，query 为“你用一下 2 试试”；必须成功调用
+   `skill_read`，原始“已激活”但无调用的坏回答失败；
+2. 直接名称与“那个 Skill”“实验的 Skill”等可消歧指代；
+3. 未点名但 description 明确匹配的隐式任务；
+4. `allow_implicit_invocation=false` 的隐式负例和直接点名正例；
+5. 无匹配普通请求，不得为了展示能力滥用 Skill；
+6. `skill_read` 失败时允许诚实说明未激活，禁止继续宣称使用成功或把普通工具结果归因于 Skill。
+
+judge 增加 `forbid_unsupported_skill_activation_claim`：最终文本或中间 assistant segment 出现
+“已激活/已加载/通过某 Skill 查到”等完成态归因时，trace 中必须存在同一轮成功的
+`skill_read`，失败调用不算证据。fixture 单测固定原始 bad、真实成功、诚实失败和普通对照
+四个校准点。case 集完成 deterministic loader/judge/runner 测试后，再按 LLM API 授权规则
+单独取得许可运行首次真实 C20；报告需复核每个 case 的 trace、工具参数、结果和 verdict。
+
 ### 实施顺序
 
-1. 建立领域模型、路径、parser/loader、builtin 资源与确定性 catalog 测试。
-2. 建立 service、watcher、BridgeRuntime 生命周期和只读 catalog route。
-3. 接入两类协议 selection，并让 SessionManager/Conversation 共享 service。
-4. 增加模型专用事件、`pre_user_context`、首轮持久化和幂等语义。
-5. 修正 FIFO、摘要、失败清理与 edit-resend 的 Skill/world-state 投影。
-6. 补 builtin 安装态资源验证、入口一致性和完整回归门禁。
+1. 在现有 loader/model/catalog 上加入 `allow_implicit_invocation` 与新的模型使用协议。
+2. 抽出 snapshot activation resolver，新增并注册 `skill_read`，接入 Conversation 隐藏 turn
+   snapshot、持久工具事务和失败状态。
+3. 扩展摘要/裁剪对 Skill tool result 的分类，并回归调用方 selection、恢复、重发与缓存。
+4. 接入实时和历史 Skill 状态卡；补前端投影与组件测试。
+5. 按 add-agent-eval case-group 流程加入 C20 fixture、judge、runner 支持和校准测试。
+6. 运行定向测试、项目完整门禁、获准后的真实 C20，以及不抢键鼠的 desktop DOM/截图验收。
 
 ## 影响分析
 
@@ -591,17 +741,24 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
   state，因此 `SCHEMA_VERSION` 不递增。
 - `ContextManager` protocol 新增参数，Naive、FIFO、Summarizing 及测试 fake 实现必须同步；
   这是本需求最广的内部接口影响。
-- ToolRegistry 的工具集合和权限语义不变，Skill 只改变模型上下文，不改变可执行能力。
+- ToolRegistry 在绑定 Skill service 的生产路径新增一个本地只读 `skill_read`；它不扩大任意文件、
+  命令、网络或其它 Skill 资源权限。没有 service 的测试/工具装配保持原工具集合。
 - BridgeRuntime 新增一个需要显式关闭的线程型组件；测试 fixture 可注入 disabled/noop watcher。
 - OpenAI-compatible 仍接受标准 ChatCompletion body；Skill 选择只存在于可选 vendor namespace。
 - session JSONL 会保存完整已激活正文，重复激活大型 Skill 会增加本地历史体积；模型窗口仍由现有
   压缩控制，但原始审计历史不会物理缩小。
-- frontend 本期没有 Skill UI 变化，只获得未来可消费的 catalog route 和稳定协议字段。
+- frontend 增加运行状态卡，但没有 Skill 管理、选择或编辑 UI；状态卡复用既有消息 block、
+  ToolCard、StatusDot、Collapsible 和主题 token，不引入新组件库。
 
 ### 风险点
 
-- **Prompt 注入面扩大**：个人 Skill 本质上是调用方显式选择的用户级指令。catalog 元数据按
-  数据转义、正文保持 user role、builtin 不提升 system 权限，避免把本地文件天然当可信系统规则。
+- **Prompt 注入面扩大**：个人 Skill 是用户安装、由调用方或 Agent 按语义选择的工作流指令。
+  catalog 元数据按数据转义，正文只在结构化读取成功后进入当前轮，builtin 不提升 system 权限，
+  避免 catalog description 或任意本地路径天然获得完整指令权。
+- **模型绕过激活真实性**：prompt/tool description、结构化成功状态、用户可见卡片和 C20 judge
+  四层共同约束；运行时不能从自由文本完全阻止谎称，因此必须保留行为 eval，而不能只测 tool。
+- **隐式调用误触发**：catalog 提供精准 description 与 policy 标记，Agent 选择最小集合；
+  `implicit=false` 在工具层拒绝声明为 implicit 的调用，语义分类偏差由正反 eval 校准。
 - **缓存与状态冲突**：直接重建 system prompt 会破坏前缀；append-only catalog state 与“仅
   body fingerprint 变化才追加”共同控制。压缩发生时前缀本来已经变化，再提升最新 world state。
 - **synthetic user 破坏轮边界**：所有 turn helper、FIFO、摘要、edit-resend 和失败清理都必须
@@ -622,3 +779,4 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 | 日期 | 变更内容 | 是否需要重新实现 |
 | --- | --- | --- |
 | 2026-08-06 | 首次确认：三类来源共用进程级 catalog；builtin fingerprint 物化；`watchfiles` 事件驱动刷新；catalog 作为 append-only world state，Skill 正文作为 user fragment；仅接受结构化 ID 选择；不新增 Skill 私有文件/命令能力。 | 是 |
+| 2026-08-07 | 需求回溯后重新确认：对齐 Codex 的 catalog 语义选择 + 模型结构化读取路径；新增 `skill_read`、`allow_implicit_invocation`、真实可见状态与 C20 长会话回归，同时保持无 `$skill-name` 后端解析、无任意文件/命令旁路和稳定上下文前缀。 | 是，重新实现选择、激活、状态、摘要和 eval。 |

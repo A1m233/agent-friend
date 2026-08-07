@@ -12,6 +12,14 @@ COMPLETED
 - [x] 接入会话事件、Conversation 首轮装配、持久化与幂等语义
 - [x] 修正上下文轮边界、FIFO、摘要、失败清理与 edit-resend 投影
 - [x] 补齐打包资源、确定性测试和项目完整检查门禁
+- [x] 解析 `allow_implicit_invocation` 并更新 model-visible catalog 使用协议
+- [x] 增加 `skill_read`、共享 snapshot activation resolver 与真实失败状态
+- [x] 接入 Skill 工具结果的历史、摘要、缓存和调用方预选状态语义
+- [x] 在桌面对话实时与历史投影中显示紧凑 Skill 状态
+- [x] 建立 C20 真实 bad case、隔离项、controls 与 deterministic judge
+- [x] 完成定向测试、项目门禁、获准后的真实 C20 和无键鼠桌面验收
+- [x] 用户确认验收，需求状态转为 `COMPLETED`
+- [ ] 合入主干、推送远端并构建/安装/启动本地测试包
 
 ## AC 验证
 
@@ -21,7 +29,7 @@ COMPLETED
 - [x] AC-4 同名与链接处理
 - [x] AC-5 有界 catalog 与入口一致性
 - [x] AC-6 结构化激活与渐进式加载
-- [x] AC-7 不解析 query
+- [x] AC-7 Agent 语义选择与激活真实性
 - [x] AC-8 上下文顺序与跨轮语义
 - [x] AC-9 历史与再次激活
 - [x] AC-10 新增热更新
@@ -43,3 +51,14 @@ COMPLETED
 | 2026-08-06 | 完成项目完整门禁，等待用户验收。 | 后端全量按 testpaths 有界分片：1534 通过、3 条平台/环境条件跳过；最终 Agent 重跑 730 通过、1 跳过，Skill Bridge 定向 16 通过；Ruff、mypy 471 files、前端 495 tests + production build、Rust 156 tests（1 ignored）+ release check 全通过。完整 backend/rust 首次串行调用都因 120 秒工具窗口在冷运行时超时，随后按仓库支持的有界分片或增量同命令取得正式通过结论。 |
 | 2026-08-06 | 用户确认验收并授权一路推进到合入主干、推送远端及构建可信本地测试包；需求交付状态改为 `COMPLETED`。 | 全部任务、AC 与项目门禁证据齐备。 |
 | 2026-08-06 | 同步最新主干后补齐冻结运行时打包契约。 | `watchfiles` 纳入直接依赖审查；frozen doctor 在隔离目录验证 builtin `skill-creator` package data、真实 watcher 热更新与按版本激活，不访问用户数据、网络或 LLM。package 定向 38 项通过；合入前完整门禁复验：后端 1551 通过、3 跳过，前端 495 项与 production build 通过，Rust 165 项（1 ignored）与 release check 通过。 |
+| 2026-08-07 | 用户纠正原激活边界并重新打开需求：Agent 必须基于 catalog 对点名、序号、上下文指代和隐式匹配做语义选择，再通过结构化入口真实激活。 | `requirement.md` 已重新确认；原技术方案改回 `DRAFT`，AC-6、AC-7、AC-15 重新打开，等待阶段 2 方案确认后重做实现。 |
+| 2026-08-07 | 用户确认 Codex 对齐方案并明确授权开始实现。 | 进入阶段 3；真实 C20 模型调用仍按 `llm-api-confirm` 在执行前单独取得授权，桌面验收仅使用不抢键鼠的 CDP/截图路径。 |
+| 2026-08-07 | 完成 Agent 语义选择执行面：catalog 使用协议、`allow_implicit_invocation`、`skill_read`、轮内冻结 snapshot 和成功/失败状态。 | Skill/Conversation/AG-UI 定向 29 通过、1 条平台条件跳过；后端不解析用户 query，模型通过 catalog 与工具 schema 选择。 |
+| 2026-08-07 | 完成调用方与模型两条激活路径的实时/历史紧凑 Skill 卡片。 | 前端 reducer 与 session projection 定向 30 项通过；卡片不渲染完整 `SKILL.md`。 |
+| 2026-08-07 | 新增 C20 Skill 语义激活真实性契约 8 项，并扩展 case-local Skill fixture 与 deterministic judge。 | agent_eval loader/judge/runner 69 项通过；真实模型尚未运行，等待按逐次授权规则执行。 |
+| 2026-08-07 | 完成项目三阶段正式门禁。 | 后端 Ruff + mypy 473 files + pytest 1573 通过/3 跳过；前端 498 tests + production build；Rust 165 tests/1 ignored + release check。 |
+| 2026-08-07 | 按用户授权尝试无键鼠真实桌面验收。 | `desktop-visual doctor` 能力就绪，但现有已安装 runtime 占用 18800/18900，且不属于当前 worktree；安全守卫拒绝启动并未终止该进程。当前桌面视觉状态为 `not verified`，需用户允许停止/替换现有 runtime 后重试。 |
+| 2026-08-07 | 按逐次授权完成 C20 真实模型运行。 | 原始报告 `agent_eval/reports/2026-08-07T15-23-04-34b2e91-C20.json` 留存 8 条完整 trace；首次旧 judge 为 4/8。逐条复核确认四项均为评测口径误伤：`named`/`referenced` 遥测边界过严、隐式策略拒绝被当作“调用即失败”、否定句“没能成功加载”命中成功子串。未再次调用模型；校准后的 judge 由 71 项确定性测试覆盖，并对同一批原始 trace 离线重判 8/8。 |
+| 2026-08-07 | 按用户授权停止并替换已安装 runtime，完成无键鼠桌面验收。 | 精确关闭 `D:\agent-friend\agent-friend.exe` 及残留 runtime/connector 子进程；随后以隔离 `AGENT_FRIEND_DATA_DIR` 启动当前 `feature/076-agent-skill-system` Tauri runtime。通过 CDP/DOM 与截图确认成功卡片为绿色“已加载”、失败卡片为红色“加载失败”，名称、来源和失败原因可见，完整 Skill 正文标记不出现在 UI。证据位于 `C:\Users\example-user\.codex\visualizations\2026\08\05\019fd24a-ac2f-70e0-a7d4-dd441a32b294\076-skill-status\skill-status.png`、`dom.json`、`chat.html`；验收后 dev runtime 已停止且端口已释放。 |
+| 2026-08-07 | 完成实现后最终三阶段项目门禁。 | backend：Ruff、mypy 473 files、pytest 1575 通过/3 跳过；frontend：eslint/token guards/typecheck、498 tests、production build；Rust：165 tests/1 ignored、release check。 |
+| 2026-08-08 | 用户确认验收通过，需求状态转为 `COMPLETED`。 | 进入提交、合入 `main`、推送远端与本地测试包交付。 |
