@@ -65,6 +65,7 @@ from .context import (
 from .conversation_events import (
     ConversationEvent,
     ModelResponseStatus,
+    SkillActivationStatus,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -103,6 +104,7 @@ from .tool_runtime import (
     ToolRunState,
 )
 from .tools import ToolRegistry, ToolResult
+from .tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SKILL_READ_TOOL_NAME
 
 if TYPE_CHECKING:
     LLMClientFactory = Callable[[str], LLMClient]
@@ -602,6 +604,7 @@ class Conversation:
             self._skill_service.begin_turn(
                 self._active_skill_selections,
                 model_window=self._active_llm_client().context_window,
+                semantic_activation_available=self._skill_read_available(),
             )
             if existing_user_event is None and self._skill_service is not None
             else None
@@ -646,6 +649,7 @@ class Conversation:
                 return
             yield from self._run_tool_loop(
                 prepare_first_turn=prepare_first_turn,
+                first_turn_prelude=self._skill_activation_status_events,
                 persona_name=persona_name,
                 persona_id=persona_id,
                 model_snapshot=model_snapshot,
@@ -728,6 +732,7 @@ class Conversation:
             self._skill_service.begin_turn(
                 self._active_skill_selections,
                 model_window=self._active_llm_client().context_window,
+                semantic_activation_available=self._skill_read_available(),
             )
             if self._skill_service is not None
             else None
@@ -775,6 +780,7 @@ class Conversation:
             self._check_cancel(cancel_check)
             yield from self._run_tool_loop(
                 prepare_first_turn=prepare_first_turn,
+                first_turn_prelude=self._skill_activation_status_events,
                 persona_name=persona_name,
                 persona_id=persona_id,
                 model_snapshot=model_snapshot,
@@ -1356,6 +1362,13 @@ class Conversation:
             normalized.append(selection)
         return tuple(normalized)
 
+    def _skill_read_available(self) -> bool:
+        return (
+            not self._voice_latency_disable_tools
+            and self._tool_registry is not None
+            and SKILL_READ_TOOL_NAME in self._tool_registry
+        )
+
     def _persisted_skill_selections(self, user_event: Event) -> tuple[SkillSelection, ...]:
         start = self._session.events.index(user_event) + 1
         selections: list[SkillSelection] = []
@@ -1440,6 +1453,24 @@ class Conversation:
             )
             for payload in self._skill_context_payloads()
         ]
+
+    def _skill_activation_status_events(self) -> Iterator[ConversationEvent]:
+        """Expose caller-selected Skill activation truth without leaking instructions."""
+
+        for payload in self._skill_context_payloads():
+            status = payload.get("status")
+            if status not in {"activated", "error"}:
+                continue
+            yield SkillActivationStatus(
+                status=cast(Literal["activated", "error"], status),
+                skill_id=str(payload.get("skill_id", "")),
+                name=str(payload.get("name", "")),
+                source=str(payload.get("source", "")),
+                reason="由调用方为当前用户轮选择",
+                error_code=str(payload.get("error_code", "")),
+                error_message=str(payload.get("error_message", "")),
+                order=int(payload.get("order", 0)),
+            )
 
     def _append_skill_catalog_state_event(self) -> None:
         snapshot = self._active_skill_turn_snapshot
@@ -2855,6 +2886,8 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name == SKILL_READ_TOOL_NAME and self._active_skill_turn_snapshot is not None:
+            invocation_args[SKILL_CATALOG_SNAPSHOT_ARG] = self._active_skill_turn_snapshot.catalog
         if name == _RECALL_PAST_CHATS_TOOL_NAME and current_turn_start_idx is not None:
             invocation_args.update(
                 {
@@ -2931,6 +2964,7 @@ class Conversation:
         self,
         *,
         prepare_first_turn: Callable[[], list[dict[str, Any]]],
+        first_turn_prelude: Callable[[], Iterator[ConversationEvent]] | None = None,
         persona_name: str,
         persona_id: str | None,
         model_snapshot: str,
@@ -2972,6 +3006,8 @@ class Conversation:
             )
             if turn_idx == 0:
                 openai_messages = prepare_first_turn()
+                if first_turn_prelude is not None:
+                    yield from first_turn_prelude()
             else:
                 reminder = runtime.soft_reminder()
                 openai_messages = (

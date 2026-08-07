@@ -32,6 +32,7 @@ def test_loads_builtin_cases() -> None:
         ("C17", "future-action-commitment-grounding", 3),
         ("C18", "clarification-action-consistency", 3),
         ("C19", "source-authority-calibration", 5),
+        ("C20", "skill-semantic-activation", 8),
     ]
 
 
@@ -179,13 +180,34 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert direct_replay.judge.must_call == "web_search"
     assert direct_replay.judge.must_mention_all == ["9月", "官方"]
 
+    c20 = next(contract for contract in contracts if contract.id == "C20")
+    skill_anchor = next(item for item in c20.cases if item.id == "C20-01")
+    assert skill_anchor.fixture_skills[0].name == "context7-mcp"
+    assert skill_anchor.fixture_skills[0].allow_implicit_invocation is True
+    assert skill_anchor.judge is not None
+    assert skill_anchor.judge.required_successful_tool_calls[0].name == "skill_read"
+    assert skill_anchor.judge.required_successful_tool_calls[0].args == {}
+    assert (
+        skill_anchor.judge.required_successful_tool_calls[0].result_contains
+        == "<name>context7-mcp</name>"
+    )
+    implicit_disabled = next(item for item in c20.cases if item.id == "C20-05")
+    assert implicit_disabled.fixture_skills[0].allow_implicit_invocation is False
+    assert implicit_disabled.judge is not None
+    assert implicit_disabled.judge.must_not_succeed_any == ["skill_read"]
+    failure_control = next(item for item in c20.cases if item.id == "C20-08")
+    assert failure_control.fake_tools[0].name == "skill_read"
+    assert failure_control.fake_tools[0].is_error is True
+    assert failure_control.judge is not None
+    assert failure_control.judge.forbid_unsupported_skill_activation_claim is True
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 19
-    assert meta.total_cases == 186
+    assert meta.total_contracts == 20
+    assert meta.total_cases == 194
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -206,6 +228,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C17": 3,
         "C18": 3,
         "C19": 5,
+        "C20": 8,
     }
     assert len(meta.digest) == 64
 
@@ -429,6 +452,29 @@ cases:
     )
 
     with pytest.raises(ValueError, match="args 必须是 mapping"):
+        load_contracts(tmp_path)
+
+
+def test_fixture_skill_name_and_policy_are_validated(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-fixture-skill
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fixture_skills:
+      - name: Invalid_Name
+        description: desc
+        instructions: body
+        allow_implicit_invocation: yes
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="合法 Skill 名称"):
         load_contracts(tmp_path)
 
 

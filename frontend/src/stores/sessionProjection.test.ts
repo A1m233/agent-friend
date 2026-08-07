@@ -135,6 +135,30 @@ describe("projectSessionEvents", () => {
     }
   });
 
+  it("从 skill_context 恢复 Skill 状态但不暴露完整指令", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "用一下 2" }),
+      ev("skill_context", {
+        status: "activated",
+        skill_id: "skill_2",
+        name: "context7-mcp",
+        source: "personal",
+        contents: "SECRET SKILL BODY",
+        rendered: "<skill>SECRET SKILL BODY</skill>",
+      }),
+      ev("assistant_message", { content: "开始处理", partial: false }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "skill_read",
+      status: "done",
+      result: "Skill 已加载",
+    });
+    expect(JSON.stringify(out)).not.toContain("SECRET SKILL BODY");
+  });
+
   it("provider call id 重复时按 event_tool_call_id 分别关联结果", () => {
     const out = projectSessionEvents([
       ev("tool_call_request", { tool_call_id: "web_search_1", event_tool_call_id: "event-a", tool_name: "web_search", args: { query: "a" } }),

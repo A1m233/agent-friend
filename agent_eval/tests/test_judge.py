@@ -79,6 +79,95 @@ def test_tool_must_be_called_fails_when_missing() -> None:
     assert "missing recall_past_chats" in verdict.reason
 
 
+def test_skill_activation_claim_requires_successful_skill_read() -> None:
+    case = _case(CaseJudge(forbid_unsupported_skill_activation_claim=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    missing = judge_case(
+        case,
+        contract,
+        _trace(final_text="context7-mcp 已激活，我继续处理。"),
+    )
+    assert missing.passed is False
+    assert "unsupported Skill activation claim" in missing.reason
+
+    failed = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="skill_read",
+                    args={"invocation_kind": "named"},
+                    result_text="读取失败，未激活",
+                    is_error=True,
+                )
+            ],
+            final_text="Skill 已加载。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert failed.passed is False
+
+    honest_failure = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="skill_read",
+                    args={"invocation_kind": "named"},
+                    result_text="读取失败，未激活",
+                    is_error=True,
+                )
+            ],
+            final_text="Skill 读取失败，这次没有成功启用。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert honest_failure.passed is True
+
+    exact_failure_wording = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="skill_read",
+                    args={"invocation_kind": "named"},
+                    result_text="读取失败，未激活",
+                    is_error=True,
+                )
+            ],
+            final_text="这次没能成功加载 context7-mcp。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert exact_failure_wording.passed is True
+
+    success = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="skill_read",
+                    args={"invocation_kind": "named"},
+                    result_text="<skill>...</skill>",
+                    is_error=False,
+                )
+            ],
+            final_text="Skill 已激活。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert success.passed is True
+
+
 def test_required_successful_tool_call_matches_argument_subset() -> None:
     case = _case(
         CaseJudge(
@@ -138,6 +227,50 @@ def test_required_successful_tool_call_matches_argument_subset() -> None:
         stop_reason="end_turn",
     )
     assert judge_case(case, contract, grounded).passed is True
+
+
+def test_required_successful_tool_call_can_match_result_evidence() -> None:
+    case = _case(
+        CaseJudge(
+            required_successful_tool_calls=[
+                RequiredSuccessfulToolCall(
+                    name="skill_read",
+                    result_contains="<name>experiment-review</name>",
+                )
+            ]
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    wrong_skill = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={"invocation_kind": "referenced"},
+                result_text="<name>writing-helper</name>",
+                is_error=False,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, wrong_skill).passed is False
+
+    selected_skill = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={"invocation_kind": "named"},
+                result_text="<name>experiment-review</name>",
+                is_error=False,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, selected_skill).passed is True
 
 
 def test_identity_must_hold() -> None:
@@ -228,6 +361,43 @@ def test_case_level_can_override_contract_required_tool_with_forbidden_tool() ->
 
     verdict = judge_case(case, contract, _trace(final_text="这是稳定概念。"))
     assert verdict.passed is True
+
+
+def test_case_level_can_forbid_only_successful_tool_calls() -> None:
+    case = _case(CaseJudge(must_not_succeed_any=["skill_read"]))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    rejected_by_tool = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={"invocation_kind": "implicit"},
+                result_text="implicit invocation disabled",
+                is_error=True,
+            )
+        ],
+        final_text="无法隐式启用。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, rejected_by_tool).passed is True
+
+    policy_bypass = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={"invocation_kind": "named"},
+                result_text="<name>private-release-check</name>",
+                is_error=False,
+            )
+        ],
+        final_text="done",
+        stop_reason="end_turn",
+    )
+    verdict = judge_case(case, contract, policy_bypass)
+    assert verdict.passed is False
+    assert "forbidden successful tool calls" in verdict.reason
 
 
 def test_case_level_requires_non_empty_response() -> None:

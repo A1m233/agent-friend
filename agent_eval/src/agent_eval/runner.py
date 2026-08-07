@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from uuid import uuid4
 
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
+from agent.tools.builtin.skills import SkillReadTool
 from agent.tools.builtin.social_platforms import SocialReadTool, SocialSearchTool
 from agent.tools.builtin.todo_manage import TodoManageTool
 from agent.tools.builtin.weather_query import WeatherQueryTool
@@ -31,6 +33,7 @@ from agent import (
     SessionCatalog,
     SessionManager,
     SessionMetadataStore,
+    SkillCatalogService,
     TextDelta,
     ToolCallRequest,
     ToolCallResult,
@@ -50,6 +53,7 @@ from .schema import (
     FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
+    FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
     ToolCallTrace,
@@ -105,6 +109,9 @@ class _FixtureTool:
         elif fixture.name == "todo_manage":
             self.description = TodoManageTool.description
             self.parameters_schema = TodoManageTool.parameters_schema
+        elif fixture.name == "skill_read":
+            self.description = SkillReadTool.description
+            self.parameters_schema = SkillReadTool.parameters_schema
         else:
             self.description = "读取完成当前请求所需的数据。"
             self.parameters_schema = {"type": "object", "properties": {}}
@@ -148,6 +155,7 @@ def _build_manager(
     *,
     tavily_api_key: str | None = None,
     fake_tools: list[FakeTool] | None = None,
+    fixture_skills: list[FixtureSkill] | None = None,
     attachment_store: AttachmentStore | None = None,
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
@@ -160,11 +168,17 @@ def _build_manager(
 
     metadata_store = SessionMetadataStore(store.base_dir / "metadata.json")
     session_catalog = SessionCatalog(store, metadata_store)
+    skill_service = (
+        _build_fixture_skill_service(store.base_dir / "fixture-skills", fixture_skills)
+        if fixture_skills
+        else None
+    )
     registry = make_default_registry(
         tavily_api_key=tavily_api_key,
         session_store=store,
         session_catalog=session_catalog,
         stderr_warn=False,
+        skill_service=skill_service,
     )
     if fake_tools:
         fixture_names = {fixture.name for fixture in fake_tools}
@@ -187,7 +201,40 @@ def _build_manager(
             if attachment_store is not None
             else None
         ),
+        skill_service=skill_service,
     )
+
+
+def _build_fixture_skill_service(root: Path, fixtures: list[FixtureSkill]) -> SkillCatalogService:
+    """Materialize case-local packages, then let the production service discover them."""
+
+    personal_root = root / "personal"
+    for fixture in fixtures:
+        package = personal_root / fixture.name
+        package.mkdir(parents=True, exist_ok=False)
+        package.joinpath("SKILL.md").write_text(
+            "---\n"
+            f"name: {json.dumps(fixture.name, ensure_ascii=False)}\n"
+            f"description: {json.dumps(fixture.description, ensure_ascii=False)}\n"
+            "---\n\n"
+            f"{fixture.instructions.rstrip()}\n",
+            encoding="utf-8",
+        )
+        agents_dir = package / "agents"
+        agents_dir.mkdir()
+        agents_dir.joinpath("openai.yaml").write_text(
+            "policy:\n"
+            "  allow_implicit_invocation: "
+            f"{'true' if fixture.allow_implicit_invocation else 'false'}\n",
+            encoding="utf-8",
+        )
+    service = SkillCatalogService(
+        personal_root=personal_root,
+        shared_root=root / "shared",
+        watcher_enabled=False,
+    )
+    service.initialize()
+    return service
 
 
 def _event_payload(msg: FixtureMessage, resolve: ResolveAttachments | None) -> dict[str, Any]:
@@ -343,6 +390,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 spec,
                 tavily_api_key=tavily_api_key,
                 fake_tools=case.fake_tools,
+                fixture_skills=case.fixture_skills,
                 attachment_store=attachment_store,
             )
             session = manager.create(

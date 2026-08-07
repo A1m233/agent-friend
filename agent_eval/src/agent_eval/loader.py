@@ -21,12 +21,14 @@ from .schema import (
     FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
+    FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
     RequiredSuccessfulToolCall,
 )
 
 _SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 def _mapping(raw: Any, *, label: str) -> dict[str, Any]:
@@ -155,6 +157,42 @@ def _parse_fixture_session(
             raise ValueError(f"{label}.title 必须是非空字符串")
         title = title_raw.strip()
     return FixtureSession(days_ago=days_ago, messages=messages, title=title)
+
+
+def _parse_fixture_skills(raw: Any, *, label: str) -> list[FixtureSkill]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{label} 必须是非空 list")
+    skills: list[FixtureSkill] = []
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        data = _mapping(item, label=item_label)
+        name = _required_str(data, "name", label=item_label)
+        if len(name) > 64 or not _SKILL_NAME_RE.fullmatch(name):
+            raise ValueError(f"{item_label}.name 必须是合法 Skill 名称")
+        description = _required_str(data, "description", label=item_label)
+        if len(description) > 1_024:
+            raise ValueError(f"{item_label}.description 不能超过 1024 字符")
+        skills.append(
+            FixtureSkill(
+                name=name,
+                description=description,
+                instructions=_required_str(data, "instructions", label=item_label),
+                allow_implicit_invocation=(
+                    True
+                    if "allow_implicit_invocation" not in data
+                    else _bool(
+                        data.get("allow_implicit_invocation"),
+                        label=f"{item_label}.allow_implicit_invocation",
+                    )
+                ),
+            )
+        )
+    names = [skill.name for skill in skills]
+    if len(names) != len(set(names)):
+        raise ValueError(f"{label}.name 不能重复")
+    return skills
 
 
 def _parse_fixture_messages(
@@ -358,10 +396,14 @@ def _parse_required_successful_tool_calls(
         args = data.get("args", {})
         if not isinstance(args, dict):
             raise ValueError(f"{item_label}.args 必须是 mapping")
+        result_contains = _optional_str(data, "result_contains")
+        if result_contains is not None and not result_contains.strip():
+            raise ValueError(f"{item_label}.result_contains 必须是非空字符串或 null")
         requirements.append(
             RequiredSuccessfulToolCall(
                 name=_required_str(data, "name", label=item_label),
                 args=dict(args),
+                result_contains=result_contains,
             )
         )
     return requirements
@@ -376,6 +418,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         must_not_call_any=_str_list(
             data.get("must_not_call_any"),
             label=f"{label}.must_not_call_any",
+        ),
+        must_not_succeed_any=_str_list(
+            data.get("must_not_succeed_any"),
+            label=f"{label}.must_not_succeed_any",
         ),
         require_non_empty_response=_bool(
             data.get("require_non_empty_response"),
@@ -451,6 +497,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_unsupported_future_action_commitment"),
             label=f"{label}.forbid_unsupported_future_action_commitment",
         ),
+        forbid_unsupported_skill_activation_claim=_bool(
+            data.get("forbid_unsupported_skill_activation_claim"),
+            label=f"{label}.forbid_unsupported_skill_activation_claim",
+        ),
     )
 
 
@@ -512,6 +562,10 @@ def _load_contract_file(path: Path) -> Contract:
                     case_data.get("fixture_session"),
                     label=f"{label}.fixture_session",
                     asset_root=asset_root,
+                ),
+                fixture_skills=_parse_fixture_skills(
+                    case_data.get("fixture_skills"),
+                    label=f"{label}.fixture_skills",
                 ),
                 current_session_messages=_parse_fixture_messages(
                     current_messages_raw or [],

@@ -35,9 +35,68 @@ function prettyArgs(args: string): string {
   }
 }
 
+interface SkillCardDetails {
+  name: string;
+  source: string;
+  reason: string;
+}
+
+function skillCardDetails(block: ToolBlock): SkillCardDetails {
+  let id = "";
+  let name = "";
+  let source = "";
+  let reason = "";
+  try {
+    const args = JSON.parse(block.args) as Record<string, unknown>;
+    id = typeof args.id === "string" ? args.id : "";
+    name = typeof args.name === "string" ? args.name : "";
+    source = typeof args.source === "string" ? args.source : "";
+    reason = typeof args.reason === "string" ? args.reason : "";
+  } catch {
+    // The tool card remains useful even when a provider emitted malformed args.
+  }
+  if (!name && block.result) {
+    name = block.result.match(/<name>([^<]+)<\/name>/)?.[1] ?? "";
+  }
+  if (!source && block.result) {
+    source = block.result.match(/<source>([^<]+)<\/source>/)?.[1] ?? "";
+  }
+  return { name: name || id || "未知 Skill", source, reason };
+}
+
+function SkillStatusCard({ block }: { block: ToolBlock }) {
+  const baseMeta = STATUS_META[block.status];
+  const meta = block.status === "running"
+    ? { ...baseMeta, label: "加载中" }
+    : block.status === "done"
+      ? { ...baseMeta, label: "已加载" }
+      : { ...baseMeta, label: "加载失败" };
+  const details = skillCardDetails(block);
+
+  return (
+    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+      <div className="flex items-center gap-2">
+        <StatusDot tone={meta.tone} pulse={meta.pulse} />
+        <span className="font-medium text-fg">Skill · {details.name}</span>
+        <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
+      </div>
+      {(details.reason || details.source || block.status === "error") && (
+        <div className="mt-1.5 space-y-1 text-muted">
+          {details.reason && <p>{details.reason}</p>}
+          {details.source && <p>来源：{details.source}</p>}
+          {block.status === "error" && block.result && <p className="text-danger">{block.result}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ToolCard({ block }: { block: ToolBlock }) {
   if (block.name === "request_social_auth" && block.status === "done") {
     return <SocialAuthCard block={block} />;
+  }
+  if (block.name === "skill_read") {
+    return <SkillStatusCard block={block} />;
   }
   const meta = STATUS_META[block.status];
   const args = prettyArgs(block.args);

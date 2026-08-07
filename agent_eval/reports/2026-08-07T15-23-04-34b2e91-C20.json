@@ -1,0 +1,302 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-07T15:23:04.361362+00:00",
+    "ended_at": "2026-08-07T15:23:56.868778+00:00",
+    "duration_seconds": 52.507,
+    "git_commit": "34b2e91",
+    "working_tree_dirty": true,
+    "note": "requirement 076 skill semantic activation acceptance",
+    "selection": {
+      "contract": "C20",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "c24cb62601a03d903ce2d4030e9a0648323c1e4b4e8bc1dc6f62cddc2d4949d8",
+      "total_contracts": 20,
+      "total_cases": 194,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 8,
+    "passed": 4,
+    "failed": 4,
+    "runtime_errors": 0,
+    "pass_rate": 0.5,
+    "by_contract": {
+      "C20": {
+        "total": 8,
+        "passed": 4,
+        "failed": 4,
+        "runtime_errors": 0,
+        "pass_rate": 0.5
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 8,
+      "passed": 4,
+      "failed": 4,
+      "pass_rate": 0.5,
+      "cases": [
+        {
+          "id": "C20-01",
+          "query": "你用一下2试试",
+          "facet": "生产长会话 anchor · 当前列表序号应由模型语义解析并真实读取",
+          "source": "prod-long-session-skill-ordinal-no-activation-20260807",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "missing successful tool call skill_read with args containing {'invocation_kind': 'named'} (actual: [{'args': {'id': 'skill_8832c934805b14a08b56544d22a3ccc20e8fb247011c40c0dfc1ddbfe4132fb0', 'invocation_kind': 'referenced', 'reason': '用户通过列表序号指向第 2 个 Skill，想让我试用它，它是处理库/框架/API 文档查询的 Skill。'}, 'is_error': False}])",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_8832c934805b14a08b56544d22a3ccc20e8fb247011c40c0dfc1ddbfe4132fb0",
+                "invocation_kind": "referenced",
+                "reason": "用户通过列表序号指向第 2 个 Skill，想让我试用它，它是处理库/框架/API 文档查询的 Skill。"
+              },
+              "result_text": "<skill>\n<name>context7-mcp</name>\n<id>skill_8832c934805b14a08b56544d22a3ccc20e8fb247011c40c0dfc1ddbfe4132fb0</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-1zenbvga\\sessions\\fixture-skills\\personal\\context7-mcp\\SKILL.md</path>\n<version>fb44165e0e90217ac725dbac779aee028e244008800e5cd54dd15bdd0282ba6e</version>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n---\r\nname: \"context7-mcp\"\r\ndescription: \"Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.\"\r\n---\r\n\r\nFollow this Skill for library and API documentation work. In this fixture, briefly confirm\r\nthat the Skill instructions were loaded; do not invent any external lookup.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "好，那我加载第 2 个 Skill：**context7-mcp**，它适合查询库、框架、SDK 和 API 文档。我先把它读出来。",
+            "已经加载了 context7-mcp。这个 Skill 是用来处理库、框架、SDK、API 和文档相关问题的。\n\n它现在对我说只有一条很简短的指示：确认 Skill 已加载，不要虚构外部查询。所以我现在就确认一下：Skill 已经可用。\n\n你现在有什么关于库、框架、SDK 或 API 文档的问题想问我吗？"
+          ],
+          "final_text": "好，那我加载第 2 个 Skill：**context7-mcp**，它适合查询库、框架、SDK 和 API 文档。我先把它读出来。已经加载了 context7-mcp。这个 Skill 是用来处理库、框架、SDK、API 和文档相关问题的。\n\n它现在对我说只有一条很简短的指示：确认 Skill 已加载，不要虚构外部查询。所以我现在就确认一下：Skill 已经可用。\n\n你现在有什么关于库、框架、SDK 或 API 文档的问题想问我吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-02",
+          "query": "请用 context7-mcp 帮我梳理这个 API 问题",
+          "facet": "直接名称 isolation · 明确点名应读取",
+          "source": "synthetic-skill-direct-name",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_c84d242c0157a81bc7c5987da404d7de9f83fcc4c166bac445b64a8bdfe4da1e",
+                "invocation_kind": "named",
+                "reason": "用户明确要求使用 context7-mcp 梳理 API 问题，需要激活该 Skill 的能力。"
+              },
+              "result_text": "<skill>\n<name>context7-mcp</name>\n<id>skill_c84d242c0157a81bc7c5987da404d7de9f83fcc4c166bac445b64a8bdfe4da1e</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-hy4g7fto\\sessions\\fixture-skills\\personal\\context7-mcp\\SKILL.md</path>\n<version>4de4f9b921859572a44d141fe63fbb9cd4fefc422e280d85799b73121f141889</version>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n---\r\nname: \"context7-mcp\"\r\ndescription: \"Use when the user asks about libraries, frameworks, SDKs, APIs, or documentation.\"\r\n---\r\n\r\nFollow this Skill for API documentation work. Keep the answer concise in this fixture.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我来加载 context7-mcp 这个 Skill，它正好适合处理库、框架、SDK 和 API 相关的问题。",
+            "好的，我已经切换到 context7-mcp 的模式来处理 API 文档相关的问题。\n\n不过你还没有告诉我具体是**哪个 API 问题**——是某个库的调用报错、接口参数不理解、文档里找不到某个功能，还是别的？\n\n把问题细节给我，我帮你梳理。"
+          ],
+          "final_text": "我来加载 context7-mcp 这个 Skill，它正好适合处理库、框架、SDK 和 API 相关的问题。好的，我已经切换到 context7-mcp 的模式来处理 API 文档相关的问题。\n\n不过你还没有告诉我具体是**哪个 API 问题**——是某个库的调用报错、接口参数不理解、文档里找不到某个功能，还是别的？\n\n把问题细节给我，我帮你梳理。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-03",
+          "query": "那就用那个skill，给我一个最小实验步骤",
+          "facet": "上下文指代 isolation · “那个实验的 skill”应唯一消歧后读取",
+          "source": "synthetic-skill-context-reference",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "missing successful tool call skill_read with args containing {'invocation_kind': 'referenced'} (actual: [{'args': {'id': 'skill_a1a5de7684fb9db03a7d9642db86624639c2112463588a0000a6ab2500aefc5a', 'invocation_kind': 'named', 'reason': '用户明确要求使用实验评审 skill 给出最小实验步骤，需要先读取其完整指南。'}, 'is_error': False}])",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_a1a5de7684fb9db03a7d9642db86624639c2112463588a0000a6ab2500aefc5a",
+                "invocation_kind": "named",
+                "reason": "用户明确要求使用实验评审 skill 给出最小实验步骤，需要先读取其完整指南。"
+              },
+              "result_text": "<skill>\n<name>experiment-review</name>\n<id>skill_a1a5de7684fb9db03a7d9642db86624639c2112463588a0000a6ab2500aefc5a</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-xlza7l4i\\sessions\\fixture-skills\\personal\\experiment-review\\SKILL.md</path>\n<version>f2b608fd880ec4a6be4fbff73fae16adaaf83119dfd4f09a8d34a87265ef3d2e</version>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n---\r\nname: \"experiment-review\"\r\ndescription: \"Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.\"\r\n---\r\n\r\nProvide a minimal reproducible baseline/candidate experiment with a blind comparison.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "按 experiment-review 的思路，一个最小可复现的 baseline/candidate 对照实验可以这么做：\n\n1. **定义一个可观察的任务**  \n   比如：把一段 300 字的中文说明改写成更口语化的版本；或评审同一段实验设计。\n\n2. **准备输入样本**  \n   选 5–10 个有代表性的样本，覆盖不同难度/场景。把它们编号，但不要提前告诉别人编号对应的条件。\n\n3. **设定两个条件**  \n   - Baseline：当前默认方法（比如不加任何 skill，直接让模型完成）。  \n   - Candidate：你要测试的新方法（比如调用 writing-helper 或 experiment-review）。\n\n4. **盲法输出**  \n   同一批样本分别跑两种条件，把输出随机打乱，隐去是来自 baseline 还是 candidate。最好找第三方按编号独立评分。\n\n5. **用一个简单量表打分**  \n   比如 1–5 分，维度只选最关键的 1–3 个，例如：准确性、可读性、是否遵循要求。减少维度反而更稳定。\n\n6. **统计对比**  \n   算每组平均分/中位数，看差异；样本量小的话，至少把优胜次数列出来。\n\n7. **记录并固化 prompt/参数**  \n   把任务描述、样本、调用方式、评分标准都保存下来，方便别人复现或你下周再跑一遍。\n\n如果你愿意，我可以直接帮你搭一个具体例子——比如用 writing-helper 当 candidate，不加 skill 当 baseline，挑一段文本开始。"
+          ],
+          "final_text": "按 experiment-review 的思路，一个最小可复现的 baseline/candidate 对照实验可以这么做：\n\n1. **定义一个可观察的任务**  \n   比如：把一段 300 字的中文说明改写成更口语化的版本；或评审同一段实验设计。\n\n2. **准备输入样本**  \n   选 5–10 个有代表性的样本，覆盖不同难度/场景。把它们编号，但不要提前告诉别人编号对应的条件。\n\n3. **设定两个条件**  \n   - Baseline：当前默认方法（比如不加任何 skill，直接让模型完成）。  \n   - Candidate：你要测试的新方法（比如调用 writing-helper 或 experiment-review）。\n\n4. **盲法输出**  \n   同一批样本分别跑两种条件，把输出随机打乱，隐去是来自 baseline 还是 candidate。最好找第三方按编号独立评分。\n\n5. **用一个简单量表打分**  \n   比如 1–5 分，维度只选最关键的 1–3 个，例如：准确性、可读性、是否遵循要求。减少维度反而更稳定。\n\n6. **统计对比**  \n   算每组平均分/中位数，看差异；样本量小的话，至少把优胜次数列出来。\n\n7. **记录并固化 prompt/参数**  \n   把任务描述、样本、调用方式、评分标准都保存下来，方便别人复现或你下周再跑一遍。\n\n如果你愿意，我可以直接帮你搭一个具体例子——比如用 writing-helper 当 candidate，不加 skill 当 baseline，挑一段文本开始。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-04",
+          "query": "帮我设计一次 baseline/candidate 的盲审实验，要能复查证据",
+          "facet": "description 隐式匹配 isolation · 未点名但任务明确匹配时应读取",
+          "source": "synthetic-skill-implicit-description-match",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_d8307b85011fc48567cd0b23f93afb68743f9722ee6c7fcdfed7b8473061a646",
+                "invocation_kind": "implicit",
+                "reason": "用户要求设计 baseline/candidate 盲审实验并复查证据，与该 Skill 描述的实验设计、盲审和证据评估完全匹配。"
+              },
+              "result_text": "<skill>\n<name>experiment-review</name>\n<id>skill_d8307b85011fc48567cd0b23f93afb68743f9722ee6c7fcdfed7b8473061a646</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-rovpimy5\\sessions\\fixture-skills\\personal\\experiment-review\\SKILL.md</path>\n<version>f2b608fd880ec4a6be4fbff73fae16adaaf83119dfd4f09a8d34a87265ef3d2e</version>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n---\r\nname: \"experiment-review\"\r\ndescription: \"Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.\"\r\n---\r\n\r\nProvide a minimal reproducible baseline/candidate experiment with a blind comparison.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "这个需求正好对应一个关于 baseline/candidate 实验设计和盲审评估的 Skill，我先把它读出来。",
+            "好的，我按可复现、可复查的原则给你搭一个 baseline/candidate 盲审实验框架。你可以把它套用到具体的任务上（比如模型、策略、产品方案、内容生成等）。\n\n---\n\n## 1. 实验目标与假设\n\n- **研究问题**：candidate 是否在某项关键指标上优于 baseline？\n- **零假设 H₀**：candidate 与 baseline 无显著差异。\n- **备择假设 H₁**：candidate 优于 baseline（或双侧：两者有差异）。\n\n**证据要求**：目标、假设、指标必须在实验开始前文档化，不能事后改指标。\n\n---\n\n## 2. 系统定义\n\n| 组件 | 说明 |\n|---|---|\n| **Baseline** | 当前使用的系统 / 方法 / 策略，作为对照。 |\n| **Candidate** | 待评估的新系统 / 方法 / 策略。 |\n| **任务单元** | 一次对比的最小输入-输出样本（例如一条查询、一个病例、一个设计需求）。 |\n\n**证据要求**：两者版本号、代码 commit、配置、超参数都要冻结并记录。任何改动都要重新跑实验。\n\n---\n\n## 3. 盲审设计\n\n盲审的核心是：**评估者在打分时不知道输出来自 baseline 还是 candidate**。\n\n### 3.1 匿名化\n- 把每个任务单元的两个输出随机标记为 **A / B**。\n- 标记规则由独立脚本生成，**不与评估者共享**。\n- 评估者只能看到：任务输入 + 输出 A + 输出 B。\n\n### 3.2 随机化\n- 任务单元顺序随机打乱。\n- A/B 标签在每条样本上独立随机分配（即 baseline 不一定总是 A）。\n- 使用固定随机种子，确保结果可复现。\n\n### 3.3 评估者\n- 至少两名独立评估者，彼此不见对方分数。\n- 评估者不能与实现 baseline/candidate 的人员完全重叠。\n- 如有利益相关，应披露并尽量回避。\n\n---\n\n## 4. 评估协议\n\n### 4.1 指标\n- **主要指标**：1–2 个，决定实验结论（例如质量分、准确性、用户满意度）。\n- **次要指标**：可辅助解释，但不用于正式结论。\n- **可接受效应量**：提前定义 candidate 需要提升多少才算“有意义”。\n\n### 4.2 评分方式\n- 每条样本让评估者选择：**A 更好 / B 更好 / 平局 / 无法判断**。\n- 或按 Likert 量表分别给 A、B 打分。\n- 提供清晰的评分指南和示例，减少主观漂移。\n\n### 4.3 样本量\n- 提前用功效分析（power analysis）估算所需样本量。\n- 如果做不到，至少约定一个最小样本量并说明理由。\n\n---\n\n## 5. 证据链与可复查性\n\n所有以下文件都应打包存档，并附版本与生成时间：\n\n| 文件 | 内容 |\n|---|---|\n| `experiment_plan.md` | 目标、假设、指标、样本量、盲审规则。 |\n| `data/samples.jsonl` | 任务单元、baseline 输出、candidate 输出、A/B 标签映射。 |\n| `code/anonymize.py` | 匿名化与随机化脚本，含随机种子。 |\n| `code/eval_form.md` | 评估指南与评分表。 |\n| `raw_scores/` | 各评估者的原始打分（仍保持匿名）。 |\n| `code/decode.py` | 将 A/B 标签映射回 baseline/candidate 的脚本。 |\n| `results/report.md` | 统计分析、假设检验、结论、局限性。 |\n\n**关键原则**：后人拿到这套文件，能在不联系任何当事人的情况下复现随机化、解码打分、重算统计结果。\n\n---\n\n## 6. 分析计划\n\n1. **解码**：用 `decode.py` 把 A/B 分数转回 baseline/candidate。\n2. **统计检验**：\n   - 成对比较：McNemar 检验（胜负平）或配对 t 检验 / Wilcoxon（连续分数）。\n   - 报告 p 值、效应量、置信区间。\n3. **评估者一致性**：计算 Fleiss’ Kappa 或 Cohen’s Kappa。\n4. **敏感性分析**：排除“无法判断”样本后重算。\n5. **结论**：是否拒绝 H₀，是否达到预设效应量。\n\n---\n\n## 7. 一个最小可运行的示例流程\n\n```\n1. 准备 200 个任务单元，分别用 baseline 和 candidate 生成输出。\n2. 用 anonymize.py 随机分配 A/B，seed=42，保存 mapping.csv。\n3. 请 2 位评估者对 200 条样本做 A/B 盲审打分。\n4. 用 decode.py 还原 baseline/candidate 身份。\n5. 跑 McNemar 检验，计算胜率、平局率、显著性。\n6. 将 plan / code / data / scores / report 一并归档。\n```\n\n---\n\n如果你告诉我这是用在哪个具体场景（大模型回复质量、搜索排序、医疗影像、推荐策略等），我可以把这套框架改成更贴合的指标、评分表和统计方法。"
+          ],
+          "final_text": "这个需求正好对应一个关于 baseline/candidate 实验设计和盲审评估的 Skill，我先把它读出来。好的，我按可复现、可复查的原则给你搭一个 baseline/candidate 盲审实验框架。你可以把它套用到具体的任务上（比如模型、策略、产品方案、内容生成等）。\n\n---\n\n## 1. 实验目标与假设\n\n- **研究问题**：candidate 是否在某项关键指标上优于 baseline？\n- **零假设 H₀**：candidate 与 baseline 无显著差异。\n- **备择假设 H₁**：candidate 优于 baseline（或双侧：两者有差异）。\n\n**证据要求**：目标、假设、指标必须在实验开始前文档化，不能事后改指标。\n\n---\n\n## 2. 系统定义\n\n| 组件 | 说明 |\n|---|---|\n| **Baseline** | 当前使用的系统 / 方法 / 策略，作为对照。 |\n| **Candidate** | 待评估的新系统 / 方法 / 策略。 |\n| **任务单元** | 一次对比的最小输入-输出样本（例如一条查询、一个病例、一个设计需求）。 |\n\n**证据要求**：两者版本号、代码 commit、配置、超参数都要冻结并记录。任何改动都要重新跑实验。\n\n---\n\n## 3. 盲审设计\n\n盲审的核心是：**评估者在打分时不知道输出来自 baseline 还是 candidate**。\n\n### 3.1 匿名化\n- 把每个任务单元的两个输出随机标记为 **A / B**。\n- 标记规则由独立脚本生成，**不与评估者共享**。\n- 评估者只能看到：任务输入 + 输出 A + 输出 B。\n\n### 3.2 随机化\n- 任务单元顺序随机打乱。\n- A/B 标签在每条样本上独立随机分配（即 baseline 不一定总是 A）。\n- 使用固定随机种子，确保结果可复现。\n\n### 3.3 评估者\n- 至少两名独立评估者，彼此不见对方分数。\n- 评估者不能与实现 baseline/candidate 的人员完全重叠。\n- 如有利益相关，应披露并尽量回避。\n\n---\n\n## 4. 评估协议\n\n### 4.1 指标\n- **主要指标**：1–2 个，决定实验结论（例如质量分、准确性、用户满意度）。\n- **次要指标**：可辅助解释，但不用于正式结论。\n- **可接受效应量**：提前定义 candidate 需要提升多少才算“有意义”。\n\n### 4.2 评分方式\n- 每条样本让评估者选择：**A 更好 / B 更好 / 平局 / 无法判断**。\n- 或按 Likert 量表分别给 A、B 打分。\n- 提供清晰的评分指南和示例，减少主观漂移。\n\n### 4.3 样本量\n- 提前用功效分析（power analysis）估算所需样本量。\n- 如果做不到，至少约定一个最小样本量并说明理由。\n\n---\n\n## 5. 证据链与可复查性\n\n所有以下文件都应打包存档，并附版本与生成时间：\n\n| 文件 | 内容 |\n|---|---|\n| `experiment_plan.md` | 目标、假设、指标、样本量、盲审规则。 |\n| `data/samples.jsonl` | 任务单元、baseline 输出、candidate 输出、A/B 标签映射。 |\n| `code/anonymize.py` | 匿名化与随机化脚本，含随机种子。 |\n| `code/eval_form.md` | 评估指南与评分表。 |\n| `raw_scores/` | 各评估者的原始打分（仍保持匿名）。 |\n| `code/decode.py` | 将 A/B 标签映射回 baseline/candidate 的脚本。 |\n| `results/report.md` | 统计分析、假设检验、结论、局限性。 |\n\n**关键原则**：后人拿到这套文件，能在不联系任何当事人的情况下复现随机化、解码打分、重算统计结果。\n\n---\n\n## 6. 分析计划\n\n1. **解码**：用 `decode.py` 把 A/B 分数转回 baseline/candidate。\n2. **统计检验**：\n   - 成对比较：McNemar 检验（胜负平）或配对 t 检验 / Wilcoxon（连续分数）。\n   - 报告 p 值、效应量、置信区间。\n3. **评估者一致性**：计算 Fleiss’ Kappa 或 Cohen’s Kappa。\n4. **敏感性分析**：排除“无法判断”样本后重算。\n5. **结论**：是否拒绝 H₀，是否达到预设效应量。\n\n---\n\n## 7. 一个最小可运行的示例流程\n\n```\n1. 准备 200 个任务单元，分别用 baseline 和 candidate 生成输出。\n2. 用 anonymize.py 随机分配 A/B，seed=42，保存 mapping.csv。\n3. 请 2 位评估者对 200 条样本做 A/B 盲审打分。\n4. 用 decode.py 还原 baseline/candidate 身份。\n5. 跑 McNemar 检验，计算胜率、平局率、显著性。\n6. 将 plan / code / data / scores / report 一并归档。\n```\n\n---\n\n如果你告诉我这是用在哪个具体场景（大模型回复质量、搜索排序、医疗影像、推荐策略等），我可以把这套框架改成更贴合的指标、评分表和统计方法。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-05",
+          "query": "检查一个本地测试安装包的版本、哈希和 manifest 是否一致",
+          "facet": "implicit policy control · 禁止隐式调用时不得仅按 description 读取",
+          "source": "synthetic-skill-implicit-disabled",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "forbidden tool calls: ['skill_read']",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_1b54391b587e0295ba1e50bee4c36463a662833204df5b7bc01fcbb79a96cf79",
+                "invocation_kind": "implicit",
+                "reason": "用户要检查本地测试安装包的版本、哈希和 manifest 一致性，该 Skill 专门处理此任务。"
+              },
+              "result_text": "<skill_load_error>\n<id>skill_1b54391b587e0295ba1e50bee4c36463a662833204df5b7bc01fcbb79a96cf79</id>\n<code>implicit_invocation_disabled</code>\n<message>该 Skill 已禁止隐式调用，未激活。</message>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n</skill_load_error>",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我来调用本地安装包一致性检查的 Skill 处理这个任务。",
+            "这个 Skill 被设置成必须显式调用，没法自动启用。而且即使激活了，我目前也没有直接读取你本地文件或执行命令的能力，所以没法实际跑版本、哈希和 manifest 的比对。\n\n如果你只是想要一个检查思路，我可以给你写一段 Python/Shell 脚本，按 manifest 逐项校验文件哈希和版本号。你那边方便提供安装包路径，或者 manifest 的格式吗？"
+          ],
+          "final_text": "我来调用本地安装包一致性检查的 Skill 处理这个任务。这个 Skill 被设置成必须显式调用，没法自动启用。而且即使激活了，我目前也没有直接读取你本地文件或执行命令的能力，所以没法实际跑版本、哈希和 manifest 的比对。\n\n如果你只是想要一个检查思路，我可以给你写一段 Python/Shell 脚本，按 manifest 逐项校验文件哈希和版本号。你那边方便提供安装包路径，或者 manifest 的格式吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-06",
+          "query": "请直接用 private-release-check 检查这个安装包",
+          "facet": "explicit policy control · 禁止隐式不影响直接名称调用",
+          "source": "synthetic-skill-explicit-over-implicit-policy",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_fccb260cdd8577ed3ae7f08fa64546009fc9b34cfa9f6e918febffa4b261c840",
+                "invocation_kind": "named",
+                "reason": "用户明确要求用 private-release-check 检查安装包版本、哈希与清单一致性。"
+              },
+              "result_text": "<skill>\n<name>private-release-check</name>\n<id>skill_fccb260cdd8577ed3ae7f08fa64546009fc9b34cfa9f6e918febffa4b261c840</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-adun5vyy\\sessions\\fixture-skills\\personal\\private-release-check\\SKILL.md</path>\n<version>964f19292294896d908e6cd43faf40a9fa4b64c305a74dcbb2aaf7c2ca1bdd16</version>\n<runtime_capabilities>This Agent currently has no general local file read/write or command execution capability. A Skill cannot expand permissions. Do not claim to have read bundled references, changed files, or run scripts unless a future public tool actually performed that action.</runtime_capabilities>\n---\r\nname: \"private-release-check\"\r\ndescription: \"Use when checking a local test installer version, hash, and manifest consistency.\"\r\n---\r\n\r\nExplain what package evidence is still needed; do not pretend files were inspected.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我加载了 private-release-check，但当前环境没有本地文件读取或命令执行权限，所以我没法直接打开或校验你电脑上的安装包。\n\n要帮你检查，我还需要这些信息：\n\n1. **安装包路径或文件名**（例如 `C:\\...\\setup.exe`）\n2. **期望版本号**（如果有的话）\n3. **对应的 manifest / release metadata**（内容贴上来，或者说明它在哪里）\n4. **期望的哈希值**（SHA-256 / MD5 等，如果有）\n5. 你希望校验哪些方面：版本字符串、文件哈希、manifest 一致性，还是全部？\n\n你把其中能提供的部分给我，我就能按这个 Skill 的流程帮你逐项核对。"
+          ],
+          "final_text": "我加载了 private-release-check，但当前环境没有本地文件读取或命令执行权限，所以我没法直接打开或校验你电脑上的安装包。\n\n要帮你检查，我还需要这些信息：\n\n1. **安装包路径或文件名**（例如 `C:\\...\\setup.exe`）\n2. **期望版本号**（如果有的话）\n3. **对应的 manifest / release metadata**（内容贴上来，或者说明它在哪里）\n4. **期望的哈希值**（SHA-256 / MD5 等，如果有）\n5. 你希望校验哪些方面：版本字符串、文件哈希、manifest 一致性，还是全部？\n\n你把其中能提供的部分给我，我就能按这个 Skill 的流程帮你逐项核对。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-07",
+          "query": "帮我把这句话改得更自然：今天天气不错",
+          "facet": "无关请求 control · catalog 中存在 Skill 不代表每轮都要读取",
+          "source": "synthetic-skill-no-match-control",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "可以改成这些更口语的版本，看你想表达什么感觉：\n\n- “今天天气挺好的。”\n- “今天天气蛮好的。”\n- “今天天气真不错。”\n- “今儿天气不错。”（更随意）\n\n如果是想开启话题，也可以直接说：“今天天气挺好，适合出去走走。”"
+          ],
+          "final_text": "可以改成这些更口语的版本，看你想表达什么感觉：\n\n- “今天天气挺好的。”\n- “今天天气蛮好的。”\n- “今天天气真不错。”\n- “今儿天气不错。”（更随意）\n\n如果是想开启话题，也可以直接说：“今天天气挺好，适合出去走走。”",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C20-08",
+          "query": "请用 context7-mcp 处理这个 API 问题",
+          "facet": "读取失败 control · 调用失败必须诚实说明未激活",
+          "source": "synthetic-skill-read-failure",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "unsupported Skill activation claim without successful skill_read: ['成功加载']",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_b93d9de79f0b5dc6849032f675569b79e21dc98f37be758a58286f90ce5d5513",
+                "invocation_kind": "named",
+                "reason": "用户明确要求用 context7-mcp 处理 API 问题，该 Skill 专门用于库、框架、SDK、API 和文档查询。"
+              },
+              "result_text": "Skill 读取失败：fixture 模拟文件在读取前发生变化，未激活。",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我先激活 `context7-mcp` 这个 Skill，它正好适合处理 API、SDK 和文档相关的问题。",
+            "抱歉，我这边没能成功加载 `context7-mcp` 这个 Skill（文件状态有变化）。不过你的 API 问题我可以直接帮你处理——你把具体问题发给我吧，比如：\n\n- 是哪个库 / 框架 / API？\n- 遇到了什么报错或疑惑？\n- 需要查文档、写示例，还是排查问题？\n\n你把背景给我，我尽量帮你解决。"
+          ],
+          "final_text": "我先激活 `context7-mcp` 这个 Skill，它正好适合处理 API、SDK 和文档相关的问题。抱歉，我这边没能成功加载 `context7-mcp` 这个 Skill（文件状态有变化）。不过你的 API 问题我可以直接帮你处理——你把具体问题发给我吧，比如：\n\n- 是哪个库 / 框架 / API？\n- 遇到了什么报错或疑惑？\n- 需要查文档、写示例，还是排查问题？\n\n你把背景给我，我尽量帮你解决。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

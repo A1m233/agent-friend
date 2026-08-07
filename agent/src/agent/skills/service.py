@@ -18,6 +18,8 @@ from .models import (
     ActivatedSkill,
     SkillActivationIssue,
     SkillCatalogSnapshot,
+    SkillInvocationKind,
+    SkillRecord,
     SkillRoot,
     SkillSelection,
     SkillTurnSnapshot,
@@ -150,6 +152,7 @@ class SkillCatalogService:
         selections: tuple[SkillSelection, ...] = (),
         *,
         model_window: int | None = None,
+        semantic_activation_available: bool = True,
     ) -> SkillTurnSnapshot:
         snapshot = self.snapshot
         activations, issues, needs_refresh = self._activate(snapshot, selections)
@@ -158,10 +161,32 @@ class SkillCatalogService:
             activations, issues, _ = self._activate(snapshot, selections, final_attempt=True)
         return SkillTurnSnapshot(
             catalog=snapshot,
-            rendered_catalog=render_catalog(snapshot, model_window=model_window),
+            rendered_catalog=render_catalog(
+                snapshot,
+                model_window=model_window,
+                semantic_activation_available=semantic_activation_available,
+            ),
             activations=activations,
             activation_issues=issues,
         )
+
+    def activate_from_snapshot(
+        self,
+        snapshot: SkillCatalogSnapshot,
+        selection: SkillSelection,
+        *,
+        invocation_kind: SkillInvocationKind,
+    ) -> tuple[ActivatedSkill | None, SkillActivationIssue | None]:
+        """Resolve one model- or caller-selected Skill without changing the turn snapshot."""
+
+        activation, issue, _ = self._activate_one(
+            snapshot,
+            selection,
+            invocation_kind=invocation_kind,
+            final_attempt=True,
+            changed_code="skill_changed_during_turn",
+        )
+        return activation, issue
 
     def catalog_payload(self) -> dict[str, object]:
         snapshot = self.snapshot
@@ -189,59 +214,102 @@ class SkillCatalogService:
             if selection.id in seen:
                 continue
             seen.add(selection.id)
-            record = records.get(selection.id)
-            if record is None:
-                issues.append(
-                    SkillActivationIssue(
-                        code="skill_not_found",
-                        message="所选 Skill 当前不存在或已失效。",
-                        skill_id=selection.id,
-                        expected_version=selection.expected_version,
-                    )
-                )
-                continue
-            if selection.expected_version and selection.expected_version != record.version:
-                issues.append(
-                    SkillActivationIssue(
-                        code="skill_version_mismatch",
-                        message="所选 Skill 版本已变化，请刷新 catalog 后重新选择。",
-                        skill_id=selection.id,
-                        expected_version=selection.expected_version,
-                    )
-                )
-                continue
-            try:
-                raw = record.canonical_entry_path.read_bytes()
-                version = hashlib.sha256(raw).hexdigest()
-                contents = raw.decode("utf-8")
-            except (OSError, UnicodeDecodeError):
-                if not final_attempt:
-                    needs_refresh = True
-                    continue
-                issues.append(
-                    SkillActivationIssue(
-                        code="skill_read_failed",
-                        message="所选 Skill 当前不可读。",
-                        skill_id=selection.id,
-                        expected_version=selection.expected_version,
-                    )
-                )
-                continue
-            if version != record.version:
-                if not final_attempt:
-                    needs_refresh = True
-                    continue
-                issues.append(
-                    SkillActivationIssue(
-                        code="skill_changed_during_activation",
-                        message="所选 Skill 在激活期间再次变化，请重试。",
-                        skill_id=selection.id,
-                        expected_version=selection.expected_version,
-                    )
-                )
-                continue
-            activations.append(ActivatedSkill(record=record, contents=contents, version=version))
+            activation, issue, refresh = self._activate_one(
+                snapshot,
+                selection,
+                invocation_kind="caller",
+                final_attempt=final_attempt,
+                changed_code="skill_changed_during_activation",
+                records=records,
+            )
+            needs_refresh = needs_refresh or refresh
+            if activation is not None:
+                activations.append(activation)
+            if issue is not None:
+                issues.append(issue)
         return tuple(activations), tuple(issues), needs_refresh
+
+    @staticmethod
+    def _activate_one(
+        snapshot: SkillCatalogSnapshot,
+        selection: SkillSelection,
+        *,
+        invocation_kind: SkillInvocationKind,
+        final_attempt: bool,
+        changed_code: str,
+        records: dict[str, SkillRecord] | None = None,
+    ) -> tuple[ActivatedSkill | None, SkillActivationIssue | None, bool]:
+        by_id = snapshot.by_id() if records is None else records
+        record = by_id.get(selection.id)
+        if record is None:
+            return (
+                None,
+                SkillActivationIssue(
+                    code="skill_not_found",
+                    message="所选 Skill 当前不存在或已失效，未激活。",
+                    skill_id=selection.id,
+                    expected_version=selection.expected_version,
+                ),
+                False,
+            )
+        if invocation_kind == "implicit" and not record.allow_implicit_invocation:
+            return (
+                None,
+                SkillActivationIssue(
+                    code="implicit_invocation_disabled",
+                    message="该 Skill 已禁止隐式调用，未激活。",
+                    skill_id=selection.id,
+                    expected_version=selection.expected_version,
+                ),
+                False,
+            )
+        if selection.expected_version and selection.expected_version != record.version:
+            return (
+                None,
+                SkillActivationIssue(
+                    code="skill_version_mismatch",
+                    message="所选 Skill 版本已变化，未激活；请刷新 catalog 后重新选择。",
+                    skill_id=selection.id,
+                    expected_version=selection.expected_version,
+                ),
+                False,
+            )
+        try:
+            raw = record.canonical_entry_path.read_bytes()
+            version = hashlib.sha256(raw).hexdigest()
+            contents = raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            if not final_attempt:
+                return None, None, True
+            return (
+                None,
+                SkillActivationIssue(
+                    code="skill_read_failed",
+                    message="所选 Skill 当前不可读，未激活。",
+                    skill_id=selection.id,
+                    expected_version=selection.expected_version,
+                ),
+                False,
+            )
+        if version != record.version:
+            if not final_attempt:
+                return None, None, True
+            message = (
+                "所选 Skill 在本轮开始后发生变化，未激活；请在下一轮重试。"
+                if changed_code == "skill_changed_during_turn"
+                else "所选 Skill 在激活期间再次变化，未激活；请重试。"
+            )
+            return (
+                None,
+                SkillActivationIssue(
+                    code=changed_code,
+                    message=message,
+                    skill_id=selection.id,
+                    expected_version=selection.expected_version,
+                ),
+                False,
+            )
+        return ActivatedSkill(record=record, contents=contents, version=version), None, False
 
     def _set_watcher_state(self, state: SkillWatcherState) -> None:
         with self._lock:

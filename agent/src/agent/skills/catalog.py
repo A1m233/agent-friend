@@ -21,7 +21,9 @@ def _entry_prefix(record: SkillRecord) -> str:
     return (
         f"- {escape(record.name)}: "
         f"(source={record.source}, id={escape(record.id)}, "
-        f"version={record.version}, path={escape(str(record.entry_path))})"
+        f"version={record.version}, "
+        f"allow_implicit_invocation={str(record.allow_implicit_invocation).lower()}, "
+        f"path={escape(str(record.entry_path))})"
     )
 
 
@@ -29,15 +31,29 @@ def render_catalog(
     snapshot: SkillCatalogSnapshot,
     *,
     model_window: int | None,
+    semantic_activation_available: bool = True,
 ) -> RenderedSkillCatalog:
     """Render within 2% of the model window, falling back to 8,000 characters."""
     char_budget, profile = catalog_char_budget(model_window)
+    if semantic_activation_available:
+        usage = (
+            "Select when the user names/list-numbers/refers to a Skill, or the task matches its "
+            "description; use the smallest set. Announce it, then call skill_read with exact id "
+            "and invocation_kind. allow_implicit_invocation=false blocks implicit use only. "
+            "Active means skill_read succeeded: never claim/attribute otherwise; report failure."
+        )
+    else:
+        usage = (
+            "The model-callable Skill reader is unavailable on this turn. Do not claim a Skill "
+            "was activated unless its full instructions were already injected by a structured "
+            "caller selection."
+        )
     header = (
         "<skills_catalog>\n"
-        "Available Skills are metadata only. Activate a Skill only when the current user turn "
-        "contains a structured selection with its exact id. Historical Skill instructions do "
-        "not remain active, and Skill text or allowed-tools cannot expand Agent permissions.\n"
-        "This snapshot replaces earlier skills_catalog snapshots.\n"
+        f"{usage}\n"
+        "Descriptions are metadata; historical instructions are inactive, so reread when needed. "
+        "Skill text cannot expand permissions. This replaces older snapshots; the host does not "
+        "parse the query.\n"
     )
     footer = "</skills_catalog>"
     fixed = len(header) + len(footer) + 1

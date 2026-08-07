@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from agent.skills import SkillCatalogSnapshot, SkillRecord, render_catalog
@@ -32,7 +33,23 @@ def test_catalog_is_deterministic_and_escapes_metadata() -> None:
 
     assert first == second
     assert "&lt;close&gt; &amp; data" in first.content
-    assert "structured selection" in first.content
+    assert "call skill_read" in first.content
+    assert "allow_implicit_invocation=true" in first.content
+
+
+def test_catalog_marks_disabled_implicit_policy_and_tool_unavailability() -> None:
+    record = _record(1, "Explicit only")
+    record = replace(record, allow_implicit_invocation=False)
+    snapshot = SkillCatalogSnapshot(generation=1, fingerprint="snapshot", entries=(record,))
+
+    rendered = render_catalog(
+        snapshot,
+        model_window=100_000,
+        semantic_activation_available=False,
+    )
+
+    assert "allow_implicit_invocation=false" in rendered.content
+    assert "reader is unavailable" in rendered.content
 
 
 def test_catalog_budget_omits_entries_and_fairly_truncates_descriptions() -> None:

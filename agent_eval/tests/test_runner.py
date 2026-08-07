@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from agent.tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SkillReadTool
 from agent_eval.runner import (
     _AssistantTextTrace,
+    _build_fixture_skill_service,
     _FixtureTool,
     _import_fixture_attachment,
     _inject_current_session_events,
@@ -15,6 +17,7 @@ from agent_eval.schema import (
     FakeToolResponse,
     FixtureAttachment,
     FixtureMessage,
+    FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
 )
@@ -157,6 +160,46 @@ def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:
         in todo.parameters_schema["properties"]["operation"]["description"]
     )
     assert "不得省略" in todo.parameters_schema["properties"]["reminders"]["description"]
+
+
+def test_fixture_skills_use_production_catalog_and_reader(tmp_path: Path) -> None:
+    service = _build_fixture_skill_service(
+        tmp_path,
+        [
+            FixtureSkill(
+                name="experiment-review",
+                description="Use for baseline/candidate experiments.",
+                instructions="Always compare baseline and candidate blindly.",
+                allow_implicit_invocation=False,
+            )
+        ],
+    )
+    record = next(item for item in service.snapshot.entries if item.name == "experiment-review")
+    assert record.allow_implicit_invocation is False
+
+    turn = service.begin_turn()
+    result = SkillReadTool(service).invoke(
+        {
+            "id": record.id,
+            "invocation_kind": "named",
+            "reason": "fixture direct-name test",
+            SKILL_CATALOG_SNAPSHOT_ARG: turn.catalog,
+        }
+    )
+
+    assert result.is_error is False
+    assert "Always compare baseline and candidate blindly." in result.text
+    assert result.meta["skill_activation"]["status"] == "activated"
+
+
+def test_fixture_skill_read_failure_keeps_production_tool_spec() -> None:
+    tool = _FixtureTool(
+        FakeTool(name="skill_read", result_text="Skill 读取失败，未激活。", is_error=True)
+    )
+
+    assert tool.parameters_schema["required"] == ["id", "invocation_kind", "reason"]
+    assert "成功结果才代表 Skill 已激活" in tool.description
+    assert tool.invoke({"id": "skill_1"}).is_error is True
 
 
 def test_assistant_text_trace_preserves_tool_continuation_segments() -> None:

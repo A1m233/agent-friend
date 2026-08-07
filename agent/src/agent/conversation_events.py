@@ -1,10 +1,11 @@
 """``ConversationEvent``：:meth:`Conversation.stream` 的流式输出协议。
 
-discriminated union（按 ``type`` 字段分派）。本期承载 4 类事件：
+discriminated union（按 ``type`` 字段分派）。
 
 - :class:`TextDelta` — assistant 文本增量
 - :class:`ToolCallRequest` — assistant 决定调用某工具（已经累积出完整 tool_call）
 - :class:`ToolCallResult` — 工具执行完毕
+- :class:`SkillActivationStatus` — 调用方预选 Skill 的加载结果
 - :class:`TurnDone` — 本轮（含可能的多轮 tool 调用）正常结束
 
 未来扩展（语音 / 表情 / 状态信号等）通过新增 dataclass + 加进 :data:`ConversationEvent`
@@ -97,6 +98,26 @@ class ModelResponseStatus:
 
 
 @dataclass(frozen=True)
+class SkillActivationStatus:
+    """调用方为当前用户轮预选 Skill 后产生的瞬态加载状态。
+
+    模型自主激活走正常的 ``skill_read`` 工具事件；这个事件只补齐调用方预选
+    路径的可见性。成功读取前不得发 ``activated``，失败也必须原样可见。
+    """
+
+    status: Literal["activated", "error"] = "error"
+    skill_id: str = ""
+    name: str = ""
+    source: str = ""
+    invocation_kind: Literal["caller"] = "caller"
+    reason: str = ""
+    error_code: str = ""
+    error_message: str = ""
+    order: int = 0
+    type: Literal["skill_activation_status"] = "skill_activation_status"
+
+
+@dataclass(frozen=True)
 class TurnDone:
     """本轮对话正常结束。
 
@@ -117,7 +138,14 @@ class TurnDone:
     type: Literal["done"] = "done"
 
 
-ConversationEvent = TextDelta | ToolCallRequest | ToolCallResult | ModelResponseStatus | TurnDone
+ConversationEvent = (
+    TextDelta
+    | ToolCallRequest
+    | ToolCallResult
+    | ModelResponseStatus
+    | SkillActivationStatus
+    | TurnDone
+)
 """所有 :meth:`Conversation.stream` 可能 yield 的事件类型并集。
 
 形态承诺：**只增不减**——新增子类型不算破坏；删除/重命名既有子类型才算破坏。
