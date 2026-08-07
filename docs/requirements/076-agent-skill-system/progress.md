@@ -19,7 +19,7 @@ COMPLETED
 - [x] 建立 C20 真实 bad case、隔离项、controls 与 deterministic judge
 - [x] 完成定向测试、项目门禁、获准后的真实 C20 和无键鼠桌面验收
 - [x] 用户确认验收，需求状态转为 `COMPLETED`
-- [ ] 合入主干、推送远端并构建/安装/启动本地测试包
+- [x] 合入主干、推送远端并构建/安装/启动本地测试包
 
 ## AC 验证
 
@@ -62,3 +62,4 @@ COMPLETED
 | 2026-08-07 | 按用户授权停止并替换已安装 runtime，完成无键鼠桌面验收。 | 精确关闭 `D:\agent-friend\agent-friend.exe` 及残留 runtime/connector 子进程；随后以隔离 `AGENT_FRIEND_DATA_DIR` 启动当前 `feature/076-agent-skill-system` Tauri runtime。通过 CDP/DOM 与截图确认成功卡片为绿色“已加载”、失败卡片为红色“加载失败”，名称、来源和失败原因可见，完整 Skill 正文标记不出现在 UI。证据位于 `C:\Users\example-user\.codex\visualizations\2026\08\05\019fd24a-ac2f-70e0-a7d4-dd441a32b294\076-skill-status\skill-status.png`、`dom.json`、`chat.html`；验收后 dev runtime 已停止且端口已释放。 |
 | 2026-08-07 | 完成实现后最终三阶段项目门禁。 | backend：Ruff、mypy 473 files、pytest 1575 通过/3 跳过；frontend：eslint/token guards/typecheck、498 tests、production build；Rust：165 tests/1 ignored、release check。 |
 | 2026-08-08 | 用户确认验收通过，需求状态转为 `COMPLETED`。 | 进入提交、合入 `main`、推送远端与本地测试包交付。 |
+| 2026-08-08 | 完成主干与安装态交付。 | feature commit `08112fd`、merge commit `ab94679` 已推送；基于干净 `ab94679` 构建 `0.1.7` trusted-beta sensitive local-test，build ID `20260807T160900Z-ab946797fe88-27174496`，installer SHA-256 `aeb4c31f38cd32a0d4754e9857f05487ef979d3683d516c857a7ed752522b36a`。安装态 frozen runtime、builtin Skill 热更新、ONNX/sqlite-vec、bridge/voice readiness 与必需凭据检查均通过，应用已安装并启动。 |
