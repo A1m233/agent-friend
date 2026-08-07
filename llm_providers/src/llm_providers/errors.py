@@ -45,7 +45,26 @@ class LLMProviderError(LLMError):
 
 
 class LLMTransientProviderError(LLMProviderError):
-    """Provider 临时不可用（典型为 HTTP 5xx），可在未产出结果时有限重试。"""
+    """Provider 临时不可用，可在未产出结果时有限重试。
+
+    ``engine_overloaded_error`` 等 Provider 专有错误需要把退避提示和请求标识
+    带到统一重试层；这些字段只承载无内容诊断信息，不保存响应正文。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider_error_type: str | None = None,
+        status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.provider_error_type = provider_error_type
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+        self.provider_request_id = provider_request_id
 
 
 class LLMEmptyResponseError(LLMProviderError):

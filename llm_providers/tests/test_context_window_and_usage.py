@@ -779,9 +779,13 @@ def test_provider_503_maps_to_transient_provider_error() -> None:
     assert isinstance(_map_exception(_StatusError(503)), LLMTransientProviderError)
 
 
-def _openai_rate_limit_error(error_type: str) -> openai.RateLimitError:
+def _openai_rate_limit_error(
+    error_type: str,
+    *,
+    headers: dict[str, str] | None = None,
+) -> openai.RateLimitError:
     request = httpx.Request("POST", "https://api.moonshot.cn/v1/chat/completions")
-    response = httpx.Response(429, request=request)
+    response = httpx.Response(429, request=request, headers=headers)
     return openai.RateLimitError(
         "provider returned HTTP 429",
         response=response,
@@ -790,9 +794,18 @@ def _openai_rate_limit_error(error_type: str) -> openai.RateLimitError:
 
 
 def test_kimi_engine_overload_429_maps_to_transient_provider_error() -> None:
-    mapped = _map_exception(_openai_rate_limit_error("engine_overloaded_error"))
+    mapped = _map_exception(
+        _openai_rate_limit_error(
+            "engine_overloaded_error",
+            headers={"Retry-After": "3.5", "x-request-id": "request-overload-1"},
+        )
+    )
 
     assert isinstance(mapped, LLMTransientProviderError)
+    assert mapped.provider_error_type == "engine_overloaded_error"
+    assert mapped.status_code == 429
+    assert mapped.retry_after_seconds == 3.5
+    assert mapped.provider_request_id == "request-overload-1"
 
 
 def test_generic_429_remains_rate_limit_error() -> None:
@@ -805,11 +818,12 @@ def test_kimi_direct_stream_retries_engine_overload_before_first_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
+    sleeps: list[float] = []
 
     def fake_open_kimi_stream(*_args: Any, **_kwargs: Any) -> Any:
         nonlocal calls
         calls += 1
-        if calls == 1:
+        if calls < 3:
             raise _openai_rate_limit_error("engine_overloaded_error")
         return iter(
             [
@@ -826,6 +840,8 @@ def test_kimi_direct_stream_retries_engine_overload_before_first_event(
         )
 
     monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr("llm_providers.client.random.uniform", lambda _low, high: high)
+    monkeypatch.setattr("llm_providers.client.time.sleep", sleeps.append)
     monkeypatch.setattr(
         _COMPLETION,
         lambda **_kwargs: pytest.fail("Kimi retry must stay on the direct transport"),
@@ -835,15 +851,104 @@ def test_kimi_direct_stream_retries_engine_overload_before_first_event(
             model="openai/kimi-k2.7-code-highspeed",
             api_base="https://api.moonshot.cn/v1",
         ),
-        network_retries=1,
+        network_retries=0,
         network_retry_backoff_seconds=0,
+        engine_overload_retries=2,
+        engine_overload_retry_backoff_seconds=2,
+        engine_overload_retry_jitter_ratio=0.25,
     )
 
     events = list(client.stream([{"role": "user", "content": "hi"}]))
 
-    assert calls == 2
-    assert len([event for event in events if isinstance(event, LLMRetryScheduled)]) == 1
+    assert calls == 3
+    retries = [event for event in events if isinstance(event, LLMRetryScheduled)]
+    assert len(retries) == 2
+    assert [event.max_attempts for event in retries] == [3, 3]
+    assert [event.delay_seconds for event in retries] == [2.5, 5.0]
+    assert sleeps == [2.5, 5.0]
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
+
+
+def test_kimi_engine_overload_honors_retry_after_and_emits_failure_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    sleeps: list[float] = []
+    diagnostics: list[Any] = []
+
+    def fake_open_kimi_stream(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise _openai_rate_limit_error(
+                "engine_overloaded_error",
+                headers={"Retry-After": "3.5", "x-request-id": "request-overload-1"},
+            )
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="ok", tool_calls=[]),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+            ]
+        )
+
+    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    monkeypatch.setattr("llm_providers.client.time.sleep", sleeps.append)
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.7-code-highspeed",
+            api_base="https://api.moonshot.cn/v1",
+        ),
+        engine_overload_retries=1,
+        engine_overload_retry_backoff_seconds=20,
+    )
+
+    events = list(
+        client.stream(
+            [{"role": "user", "content": "hi"}],
+            _diagnostic_callback=diagnostics.append,
+        )
+    )
+
+    retry = next(event for event in events if isinstance(event, LLMRetryScheduled))
+    assert retry.delay_seconds == 3.5
+    assert sleeps == [3.5]
+    failed = next(event for event in diagnostics if event.phase == "request_open_failed")
+    assert failed.provider_error_type == "engine_overloaded_error"
+    assert failed.status_code == 429
+    assert failed.retry_after_seconds == 3.5
+    assert failed.provider_request_id == "request-overload-1"
+
+
+def test_kimi_generic_429_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_open_kimi_stream(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        raise _openai_rate_limit_error("rate_limit_reached_error")
+
+    monkeypatch.setattr("llm_providers.client.open_kimi_stream", fake_open_kimi_stream)
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.7-code-highspeed",
+            api_base="https://api.moonshot.cn/v1",
+        ),
+        network_retries=2,
+        network_retry_backoff_seconds=0,
+        engine_overload_retries=2,
+        engine_overload_retry_backoff_seconds=0,
+    )
+
+    with pytest.raises(LLMRateLimitError):
+        list(client.stream([{"role": "user", "content": "hi"}]))
+    assert calls == 1
 
 
 def test_stream_does_not_retry_permanent_provider_error(

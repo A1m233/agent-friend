@@ -40,6 +40,7 @@ from llm_providers import (
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMTransientProviderError,
 )
 from runtime_config import CredentialMissingError
 
@@ -139,11 +140,21 @@ def map_exception(exc: BaseException) -> ProtocolError:
             message="模型没有返回可见回答，这轮未完成。请稍后重试。",
             recoverable=True,
         )
+    if (
+        isinstance(exc, LLMTransientProviderError)
+        and exc.provider_error_type == "engine_overloaded_error"
+    ):
+        return ProtocolError(
+            http_status=503,
+            code="upstream_transient",
+            message="模型服务暂时过载，这次没能生成回答。稍后再试一下。",
+            recoverable=True,
+        )
     if isinstance(exc, LLMRateLimitError):
         return ProtocolError(
             http_status=429,
             code="rate_limit",
-            message="模型服务这会儿过载了，这轮没有生成完整回答。稍后可以重试。",
+            message="模型服务暂时限制了请求频率，这次没能生成回答。请稍后再试。",
             recoverable=True,
         )
     if isinstance(exc, (LLMNetworkError, LLMProviderError)):

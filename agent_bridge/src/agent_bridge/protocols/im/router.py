@@ -19,9 +19,10 @@
    跑到线程池,把整轮聚合后的文本回写到 outbound。
 
 4. **错误兜底**(channel 层 fallback):
-   ``Conversation.stream`` 跑挂时回固定文案 :data:`FALLBACK_TEXT` —— 不走 persona
-   渲染(语义不该过 persona 层),不影响 IM 长连本身。43xxx/11xxx 等 QQ 平台
-   错误码在 adapter 层兜底,Router 不感知。
+   ``Conversation.stream`` 跑挂时通过共享错误映射返回安全、可理解的原因文案；
+   未识别错误和空输出才使用 :data:`FALLBACK_TEXT`。文案不走 persona 渲染
+   (语义不该过 persona 层),也不影响 IM 长连本身。43xxx/11xxx 等 QQ 平台错误码
+   在 adapter 层兜底,Router 不感知。
 
 5. **跨通道"同一个它"是 free 的**(不需要 Router 显式干预):
    IM session 跟桌宠 session 共享 ``owner_user_id=DEFAULT_OWNER_USER_ID``,
@@ -65,8 +66,8 @@ __all__ = ["FALLBACK_TEXT", "IMRouter"]
 logger = logging.getLogger(__name__)
 
 
-FALLBACK_TEXT = "我现在有点问题，稍后再试"
-"""``Conversation.stream`` 抛错时 IM 回写的兜底文案。
+FALLBACK_TEXT = "这轮回答中断了，没有生成完整回复。请稍后重试。"
+"""未识别异常或空输出时 IM 回写的兜底文案。
 
 固定文案,不走 persona 渲染 —— 这是 channel 层 fallback,语义不该过 persona 层
 (persona 是 agent 主链路的概念,channel 出问题时连主链路都跑不起来)。
@@ -158,8 +159,8 @@ class IMRouter:
 
         异常策略:
             ``Conversation.stream`` / ``bind_persistent`` 抛任何异常 → log
-            exception + 回写 :data:`FALLBACK_TEXT`,**不向上抛**(IM 长连不该
-            因为单轮挂掉而断开)。
+            exception + 回写共享错误映射产生的安全文案,**不向上抛**(IM 长连
+            不该因为单轮挂掉而断开)。
         """
         latency_started_ms = monotonic_ms()
         send_fn = _send_callback(provider_or_send)
@@ -284,6 +285,7 @@ class IMRouter:
                 origin_destination_id,
             )
         except Exception as exc:
+            fallback_text = map_exception(exc).message
             log_run_latency(
                 logger,
                 run_latency,
@@ -302,7 +304,7 @@ class IMRouter:
                 stream_session.has_started if stream_session is not None else False,
             )
             if stream_session is not None and stream_session.has_started:
-                interrupted = (partial_text or FALLBACK_TEXT) + _STREAM_INTERRUPTED_SUFFIX
+                interrupted = (partial_text or fallback_text) + _STREAM_INTERRUPTED_SUFFIX
                 await stream_session.abort(interrupted, type(exc).__name__)
                 log_run_latency(
                     logger,
@@ -312,8 +314,8 @@ class IMRouter:
                     delivery="stream_aborted",
                 )
                 return
-            agent_text = ""
-            text = reply_prefix + FALLBACK_TEXT
+            agent_text = fallback_text
+            text = reply_prefix + fallback_text
             text_format = "plain_text"
             include_menu = False
         else:

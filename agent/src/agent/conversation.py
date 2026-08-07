@@ -2365,6 +2365,9 @@ class Conversation:
                 response_model=event.response_model,
                 system_fingerprint=event.system_fingerprint,
                 service_tier=event.service_tier,
+                provider_error_type=event.provider_error_type,
+                status_code=event.status_code,
+                retry_after_seconds=event.retry_after_seconds,
             )
 
         log_run_latency(

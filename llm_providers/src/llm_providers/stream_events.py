@@ -51,7 +51,7 @@ class LLMToolCallDelta:
 
 @dataclass(frozen=True)
 class LLMRetryScheduled:
-    """模型流在尚未产出业务事件时安排了一次网络重试。"""
+    """模型流在尚未产出业务事件时安排了一次瞬时故障重试。"""
 
     attempt: int = 1
     max_attempts: int = 1
@@ -127,6 +127,9 @@ class LLMTransportDiagnostic:
     response_model: str | None = None
     system_fingerprint: str | None = None
     service_tier: str | None = None
+    provider_error_type: str | None = None
+    status_code: int | None = None
+    retry_after_seconds: float | None = None
 
 
 @dataclass(frozen=True)

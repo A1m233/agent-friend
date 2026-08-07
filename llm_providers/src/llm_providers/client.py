@@ -16,10 +16,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
 import ssl
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from functools import cached_property
 from typing import Any, cast
 
@@ -59,8 +63,20 @@ DEFAULT_NETWORK_RETRIES = 1
 DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS = 0.5
 """网络重试的初始退避秒数；后续重试按 2 倍递增。"""
 
+DEFAULT_ENGINE_OVERLOAD_RETRIES = 2
+"""引擎过载在未产出结果时的默认重试次数。"""
+
+DEFAULT_ENGINE_OVERLOAD_RETRY_BACKOFF_SECONDS = 2.0
+"""Provider 未给 ``Retry-After`` 时，引擎过载的初始退避秒数。"""
+
+DEFAULT_ENGINE_OVERLOAD_RETRY_JITTER_RATIO = 0.25
+"""引擎过载指数退避附加的随机抖动上限比例。"""
+
+MAX_ENGINE_OVERLOAD_RETRY_DELAY_SECONDS = 30.0
+"""交互请求单次过载退避的上限，避免异常响应让一轮会话长期挂起。"""
+
 DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
-"""聊天流单次等待上游事件的最大秒数；两次总尝试约束在 90 秒内。"""
+"""聊天流单次等待上游事件的最大秒数；总耗时还取决于错误对应的重试策略。"""
 
 _TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
 """Provider 用非 5xx 状态码表达的、可安全有限重试的明确瞬时错误。"""
@@ -74,6 +90,16 @@ class ResolvedModelLimits:
 
     context_window: int
     context_window_source: str
+
+
+@dataclass(frozen=True)
+class _ProviderErrorMetadata:
+    """从 Provider 异常中抽取的无内容诊断信息。"""
+
+    error_type: str | None = None
+    status_code: int | None = None
+    retry_after_seconds: float | None = None
+    request_id: str | None = None
 
 
 def _present_delta_field_names(delta: Any) -> set[str]:
@@ -143,26 +169,97 @@ def _is_network_exception(error: Exception) -> bool:
     )
 
 
+def _parse_retry_after_seconds(value: object) -> float | None:
+    """解析 RFC ``Retry-After`` 的秒数或 HTTP-date 形态。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        seconds = float(text)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(text)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        seconds = (retry_at - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
+
+
+def _header_text(headers: object, *names: str) -> str | None:
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    for name in names:
+        try:
+            value = getter(name)
+        except Exception:
+            continue
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _provider_error_metadata(error: Exception) -> _ProviderErrorMetadata:
+    """抽取错误类型、状态码、退避提示和请求 ID，不记录响应正文。"""
+    error_type: str | None = None
+    status_code: int | None = None
+    retry_after_seconds: float | None = None
+    request_id: str | None = None
+
+    for item in _exception_chain(error):
+        item_status = getattr(item, "status_code", None)
+        if status_code is None and isinstance(item_status, int):
+            status_code = item_status
+
+        body = getattr(item, "body", None)
+        if isinstance(body, dict):
+            payload = body.get("error", body)
+            if isinstance(payload, dict):
+                item_error_type = payload.get("type")
+                if error_type is None and isinstance(item_error_type, str):
+                    error_type = item_error_type.casefold()
+
+        item_request_id = getattr(item, "request_id", None)
+        if request_id is None and isinstance(item_request_id, str) and item_request_id:
+            request_id = item_request_id
+
+        response = getattr(item, "response", None)
+        if response is None:
+            continue
+        response_status = getattr(response, "status_code", None)
+        if status_code is None and isinstance(response_status, int):
+            status_code = response_status
+        headers = getattr(response, "headers", None)
+        if request_id is None:
+            request_id = _header_text(
+                headers,
+                "x-request-id",
+                "x-moonshot-request-id",
+                "request-id",
+            )
+        if retry_after_seconds is None:
+            retry_after_seconds = _parse_retry_after_seconds(_header_text(headers, "retry-after"))
+
+    return _ProviderErrorMetadata(
+        error_type=error_type,
+        status_code=status_code,
+        retry_after_seconds=retry_after_seconds,
+        request_id=request_id,
+    )
+
+
 def _is_transient_provider_exception(error: Exception) -> bool:
     """识别明确的瞬时 Provider 故障，避免把普通限流或参数错误纳入重试。"""
-    for item in _exception_chain(error):
-        status_code = getattr(item, "status_code", None)
-        if isinstance(status_code, int) and 500 <= status_code <= 599:
-            return True
-        body = getattr(item, "body", None)
-        if not isinstance(body, dict):
-            continue
-        payload = body.get("error", body)
-        if not isinstance(payload, dict):
-            continue
-        error_type = payload.get("type")
-        if (
-            status_code == 429
-            and isinstance(error_type, str)
-            and error_type.casefold() in _TRANSIENT_PROVIDER_ERROR_TYPES
-        ):
-            return True
-    return False
+    metadata = _provider_error_metadata(error)
+    if metadata.status_code is not None and 500 <= metadata.status_code <= 599:
+        return True
+    return metadata.status_code == 429 and metadata.error_type in _TRANSIENT_PROVIDER_ERROR_TYPES
 
 
 def _extract_usage(response: Any) -> LLMUsage | None:
@@ -318,11 +415,22 @@ def _map_exception(e: Exception) -> LLMError:
     不需要 import LiteLLM 或 openai。
     """
     chain = tuple(_exception_chain(e))
+    provider_metadata = _provider_error_metadata(e)
+
+    def transient_provider_error() -> LLMTransientProviderError:
+        return LLMTransientProviderError(
+            str(e),
+            provider_error_type=provider_metadata.error_type,
+            status_code=provider_metadata.status_code,
+            retry_after_seconds=provider_metadata.retry_after_seconds,
+            provider_request_id=provider_metadata.request_id,
+        )
+
     if any(isinstance(item, openai.AuthenticationError) for item in chain):
         return LLMAuthError(str(e))
     if any(isinstance(item, openai.RateLimitError) for item in chain):
         if _is_transient_provider_exception(e):
-            return LLMTransientProviderError(str(e))
+            return transient_provider_error()
         return LLMRateLimitError(str(e))
     if _is_network_exception(e):
         return LLMNetworkError(str(e))
@@ -333,7 +441,7 @@ def _map_exception(e: Exception) -> LLMError:
     if any(isinstance(item, openai.BadRequestError) for item in chain):
         return LLMBadRequestError(str(e))
     if _is_transient_provider_exception(e):
-        return LLMTransientProviderError(str(e))
+        return transient_provider_error()
     if isinstance(e, openai.APIError):
         return LLMProviderError(str(e))
     return LLMProviderError(f"未预料的错误: {e}")
@@ -411,17 +519,35 @@ class LLMClient:
         *,
         network_retries: int = DEFAULT_NETWORK_RETRIES,
         network_retry_backoff_seconds: float = DEFAULT_NETWORK_RETRY_BACKOFF_SECONDS,
+        engine_overload_retries: int = DEFAULT_ENGINE_OVERLOAD_RETRIES,
+        engine_overload_retry_backoff_seconds: float = (
+            DEFAULT_ENGINE_OVERLOAD_RETRY_BACKOFF_SECONDS
+        ),
+        engine_overload_retry_jitter_ratio: float = (DEFAULT_ENGINE_OVERLOAD_RETRY_JITTER_RATIO),
+        engine_overload_max_retry_delay_seconds: float = (MAX_ENGINE_OVERLOAD_RETRY_DELAY_SECONDS),
         stream_timeout_seconds: float = DEFAULT_STREAM_TIMEOUT_SECONDS,
     ):
         if network_retries < 0:
             raise ValueError("network_retries 不能小于 0")
         if network_retry_backoff_seconds < 0:
             raise ValueError("network_retry_backoff_seconds 不能小于 0")
+        if engine_overload_retries < 0:
+            raise ValueError("engine_overload_retries 不能小于 0")
+        if engine_overload_retry_backoff_seconds < 0:
+            raise ValueError("engine_overload_retry_backoff_seconds 不能小于 0")
+        if engine_overload_retry_jitter_ratio < 0:
+            raise ValueError("engine_overload_retry_jitter_ratio 不能小于 0")
+        if engine_overload_max_retry_delay_seconds <= 0:
+            raise ValueError("engine_overload_max_retry_delay_seconds 必须大于 0")
         if stream_timeout_seconds <= 0:
             raise ValueError("stream_timeout_seconds 必须大于 0")
         self.spec = spec
         self._network_retries = network_retries
         self._network_retry_backoff_seconds = network_retry_backoff_seconds
+        self._engine_overload_retries = engine_overload_retries
+        self._engine_overload_retry_backoff_seconds = engine_overload_retry_backoff_seconds
+        self._engine_overload_retry_jitter_ratio = engine_overload_retry_jitter_ratio
+        self._engine_overload_max_retry_delay_seconds = engine_overload_max_retry_delay_seconds
         self._stream_timeout_seconds = stream_timeout_seconds
 
     @property
@@ -495,13 +621,16 @@ class LLMClient:
             本方法**不支持工具调用**——仅做单次同步问答。如需工具调用走
             :meth:`stream`（``Conversation.send`` 内部走 stream 拼接得到完整文本）。
         """
-        for attempt in range(self._network_retries + 1):
+        max_retries = max(self._network_retries, self._engine_overload_retries)
+        for attempt in range(max_retries + 1):
             try:
                 return self._call_once(self.spec, messages, **overrides)
-            except (LLMNetworkError, LLMTransientProviderError):
-                if attempt >= self._network_retries:
+            except (LLMNetworkError, LLMTransientProviderError) as exc:
+                retry_limit = self._retry_limit(exc)
+                if attempt >= retry_limit:
                     raise
-                self._wait_before_network_retry(attempt)
+                delay = self._retry_delay(exc, attempt)
+                self._wait_before_retry(exc, attempt, retry_limit, delay)
         raise AssertionError("transient retry loop should always return or raise")
 
     def stream(
@@ -560,9 +689,12 @@ class LLMClient:
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
-        for attempt in range(self._network_retries + 1):
+        max_retries = max(self._network_retries, self._engine_overload_retries)
+        for attempt in range(max_retries + 1):
             emitted = False
             should_retry = False
+            retry_error: LLMNetworkError | LLMTransientProviderError | None = None
+            retry_limit = 0
             upstream = self._stream_once(
                 spec,
                 messages,
@@ -576,35 +708,80 @@ class LLMClient:
                     emitted = True
                     yield event
                 return
-            except (LLMNetworkError, LLMTransientProviderError):
-                if emitted or attempt >= self._network_retries:
+            except (LLMNetworkError, LLMTransientProviderError) as exc:
+                retry_limit = self._retry_limit(exc)
+                if emitted or attempt >= retry_limit:
                     raise
                 should_retry = True
+                retry_error = exc
             finally:
                 close = getattr(upstream, "close", None)
                 if callable(close):
                     close()
             if should_retry:
-                delay = self._network_retry_delay(attempt)
+                assert retry_error is not None
+                delay = self._retry_delay(retry_error, attempt)
                 yield LLMRetryScheduled(
                     attempt=attempt + 2,
-                    max_attempts=self._network_retries + 1,
+                    max_attempts=retry_limit + 1,
                     delay_seconds=delay,
                 )
-                self._wait_before_network_retry(attempt)
+                self._wait_before_retry(retry_error, attempt, retry_limit, delay)
 
     def _network_retry_delay(self, attempt: int) -> float:
         return self._network_retry_backoff_seconds * (2**attempt)
 
-    def _wait_before_network_retry(self, attempt: int) -> None:
-        delay = self._network_retry_delay(attempt)
+    @staticmethod
+    def _is_engine_overload(error: LLMError) -> bool:
+        return (
+            isinstance(error, LLMTransientProviderError)
+            and error.provider_error_type == "engine_overloaded_error"
+        )
+
+    def _retry_limit(self, error: LLMError) -> int:
+        if self._is_engine_overload(error):
+            return self._engine_overload_retries
+        return self._network_retries
+
+    def _retry_delay(self, error: LLMError, attempt: int) -> float:
+        if not self._is_engine_overload(error):
+            return self._network_retry_delay(attempt)
+
+        assert isinstance(error, LLMTransientProviderError)
+        if error.retry_after_seconds is not None:
+            return min(
+                error.retry_after_seconds,
+                self._engine_overload_max_retry_delay_seconds,
+            )
+        base_delay = self._engine_overload_retry_backoff_seconds * (2**attempt)
+        jitter = random.uniform(
+            0.0,
+            base_delay * self._engine_overload_retry_jitter_ratio,
+        )
+        return min(
+            base_delay + jitter,
+            self._engine_overload_max_retry_delay_seconds,
+        )
+
+    def _wait_before_retry(
+        self,
+        error: LLMError,
+        attempt: int,
+        retry_limit: int,
+        delay: float,
+    ) -> None:
         logger.warning(
-            "LLM transient request failed before first event; retrying model=%s retry=%d/%d "
-            "delay_seconds=%.3f",
+            "LLM transient request failed before usable output; retrying model=%s "
+            "retry=%d/%d delay_seconds=%.3f provider_error_type=%s "
+            "status_code=%s retry_after_seconds=%s provider_request_id=%s",
             self.spec.model,
             attempt + 1,
-            self._network_retries,
+            retry_limit,
             delay,
+            getattr(error, "provider_error_type", None),
+            getattr(error, "status_code", None),
+            getattr(error, "retry_after_seconds", None),
+            getattr(error, "provider_request_id", None),
         )
         if delay > 0:
             time.sleep(delay)
@@ -718,6 +895,7 @@ class LLMClient:
                     **kwargs,
                 )
         except Exception as e:
+            mapped_error = _map_exception(e)
             _emit_transport_diagnostic(
                 diagnostic_callback,
                 LLMTransportDiagnostic(
@@ -726,9 +904,25 @@ class LLMClient:
                     attempt_elapsed_ms=round((time.perf_counter() - attempt_started) * 1000),
                     transport=transport,
                     request_bytes=request_bytes,
+                    provider_request_id=getattr(
+                        mapped_error,
+                        "provider_request_id",
+                        None,
+                    ),
+                    provider_error_type=getattr(
+                        mapped_error,
+                        "provider_error_type",
+                        None,
+                    ),
+                    status_code=getattr(mapped_error, "status_code", None),
+                    retry_after_seconds=getattr(
+                        mapped_error,
+                        "retry_after_seconds",
+                        None,
+                    ),
                 ),
             )
-            raise _map_exception(e) from e
+            raise mapped_error from e
         stream_open_ms = round((time.perf_counter() - attempt_started) * 1000)
         provider_request_id = _response_text_field(response, "request_id")
         _emit_transport_diagnostic(

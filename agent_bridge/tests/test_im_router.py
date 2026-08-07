@@ -28,6 +28,7 @@ from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
 
 from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
+from llm_providers import LLMTransientProviderError
 
 
 class StubStreamSession:
@@ -132,7 +133,7 @@ def _make_conv(events: list[Any] | Exception) -> MagicMock:
     conv = MagicMock()
     if isinstance(events, Exception):
 
-        def _raise(_user_input: str) -> Any:
+        def _raise(_user_input: str, **_kwargs: Any) -> Any:
             raise events
 
         conv.stream.side_effect = _raise
@@ -322,7 +323,7 @@ async def test_text_aggregated_until_generator_exhausts(
 
 
 def test_fallback_text_is_plain_without_robot_emoji() -> None:
-    assert FALLBACK_TEXT == "我现在有点问题，稍后再试"
+    assert FALLBACK_TEXT == "这轮回答中断了，没有生成完整回复。请稍后重试。"
 
 
 @pytest.mark.asyncio
@@ -343,6 +344,40 @@ async def test_stream_exception_falls_back(router: IMRouter, session_bridge: Mag
         code="internal_error",
         message="这轮回答中断了，没有生成完整回复。请稍后重试。",
         recoverable=False,
+        source="im",
+        run_id=None,
+        sanitize_failed_model_call=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_engine_overload_uses_specific_fallback(
+    router: IMRouter,
+    session_bridge: MagicMock,
+) -> None:
+    conv = _make_conv(
+        LLMTransientProviderError(
+            "provider busy",
+            provider_error_type="engine_overloaded_error",
+            status_code=429,
+            provider_request_id="request-overload-1",
+        )
+    )
+    session_bridge.bind_persistent.return_value = conv
+    captured: list[OutboundContent] = []
+
+    async def send(content: OutboundContent) -> None:
+        captured.append(content)
+
+    await router.handle_inbound("qq", _make_event(), send)
+
+    expected = "模型服务暂时过载，这次没能生成回答。稍后再试一下。"
+    assert captured[0].text == expected
+    assert captured[0].text_format == "plain_text"
+    conv.append_run_error_event.assert_called_once_with(
+        code="upstream_transient",
+        message=expected,
+        recoverable=True,
         source="im",
         run_id=None,
         sanitize_failed_model_call=False,
