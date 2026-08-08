@@ -1,6 +1,6 @@
 ---
 name: package-release
-description: 在 agent-friend 项目中查询或设置桌面产品版本，并构建受治理的 Windows 安装包。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查当前/最新版本”“设置/升级版本”“package/release build”，或要求 ordinary、trusted-beta、local-test 安装包时使用；不要因单纯 commit、merge、push 或已完成验收而触发。
+description: 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查当前/最新版本”“设置/升级版本”“package/release build”“查看/清理打包缓存或工作区”，或要求 ordinary、trusted-beta、local-test 安装包时使用；不要因单纯 commit、merge、push 或已完成验收而触发。
 ---
 
 # Package Release
@@ -13,6 +13,8 @@ Windows 使用：
 
 ```powershell
 .\scripts\package\run.ps1 version-status
+.\scripts\package\run.ps1 workspace-status
+.\scripts\package\run.ps1 workspace-gc [--apply]
 .\scripts\package\run.ps1 version-set <semver>
 .\scripts\package\run.ps1 trusted-beta-configure <next-stable-semver>
 .\scripts\package\run.ps1 installer-contract
@@ -35,6 +37,15 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
    - 安装器语言发生变化时，`installer-contract` 必须报告交互式 selector 为 `always`。可见 UI 验收同时覆盖无历史语言与已保存 English 的身份；仅在全新隔离身份看到一次 selector，不能证明真实产品升级仍允许选语言。
 5. 调用脚本完成目标构建；installer-sensitive production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；自动变化的 trusted-beta 预发布版本不由 Agent 自行判定是否复用矩阵，仍只接受脚本对 `packageInputSha256` 和报告契约的验证。凭据变化只执行目标构建的凭据专项门禁，凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
 6. 构建开始时核对脚本输出的 `package_version`、`release_channel` 和可选 `target_release_version`；回报绝对安装包路径、build ID、精确版本、模式、敏感标识和 SHA/manifest 核验结果。不得把同版本包描述为升级包，不得用 build ID 判断版本先后。失败时原样保留脚本的 fail-closed 原因，不绕过门禁。
+
+## 打包工作区治理
+
+- 所有 worktree 的 package build 使用仓库级互斥锁；锁冲突时报告占用，不绕过或手工删除 lock。
+- `workspace-status` 只读输出全部 worktree 的 build-id、共享增量 cache、注册状态、保留策略和预计可回收字节。
+- `workspace-gc` 默认 dry-run；只有用户明确要求执行清理后才加 `--apply`。默认回收超过 48 小时的 build-id，以及超过 7 天未使用的 per-worktree Cargo/PyInstaller cache。
+- GC 只处理脚本解析出的 `%LOCALAPPDATA%/agent-friend/packaging/work/<repo>/<worktree>/`；不删除 source worktree、正式或 local-test release、下载 cache、用户数据、设置或日志。
+- `runtime` 必须保留 build-id 供显式 `installer --reuse-build-id` 使用；成功完成 installer/all 后自动删除该 build-id。installer smoke 的 baseline/candidate 保留到 smoke 成功，之后自动回收。
+- package build 在创建工作区前要求 state 所在卷至少有 40 GiB 可用空间。空间不足时先运行 status/GC，或显式把 `--state-dir` 指向容量足够的其它卷；不得降低门禁伪造通过。
 
 ## 模式边界
 
