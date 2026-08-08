@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -174,6 +175,13 @@ def test_payload_relative_path_is_build_scoped() -> None:
 
 
 def _verification_repository(tmp_path: Path) -> set[str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "core.autocrlf", "true"],
+        cwd=tmp_path,
+        check=True,
+    )
     paths = set(INSTALLER_VERIFICATION_REQUIRED_FILES)
     for relative in paths:
         path = tmp_path / relative
@@ -240,3 +248,59 @@ def test_installer_verification_fingerprint_ignores_docs_but_binds_code_and_envi
         build_environment={"rustc": "rustc 2", "pnpm": "10"},
     )
     assert environment_changed.package_input_sha256 != code_changed.package_input_sha256
+
+
+def test_installer_verification_fingerprint_normalizes_utf8_checkout_line_endings(
+    tmp_path: Path,
+) -> None:
+    lf_root = tmp_path / "lf-worktree"
+    crlf_root = tmp_path / "crlf-worktree"
+    lf_paths = _verification_repository(lf_root)
+    crlf_paths = _verification_repository(crlf_root)
+    lf_code = lf_root / "scripts" / "package" / "run.py"
+    crlf_code = crlf_root / "scripts" / "package" / "run.py"
+    environment = {"rustc": "rustc 1", "pnpm": "10"}
+
+    lf_code.write_bytes(b"first\nsecond\n")
+    crlf_code.write_bytes(b"first\r\nsecond\r\n")
+    lf = build_installer_verification_inputs(
+        lf_root,
+        repository_paths=lf_paths,
+        build_environment=environment,
+    )
+    crlf = build_installer_verification_inputs(
+        crlf_root,
+        repository_paths=crlf_paths,
+        build_environment=environment,
+    )
+    assert crlf == lf
+
+    crlf_code.write_bytes(b"first\r\nchanged\r\n")
+    changed = build_installer_verification_inputs(
+        crlf_root,
+        repository_paths=crlf_paths,
+        build_environment=environment,
+    )
+    assert changed.package_input_sha256 != lf.package_input_sha256
+
+
+def test_installer_verification_fingerprint_keeps_binary_line_endings_exact(
+    tmp_path: Path,
+) -> None:
+    paths = _verification_repository(tmp_path)
+    code = tmp_path / "scripts" / "package" / "run.py"
+    environment = {"rustc": "rustc 1", "pnpm": "10"}
+
+    code.write_bytes(b"\x00first\r\nsecond")
+    crlf = build_installer_verification_inputs(
+        tmp_path,
+        repository_paths=paths,
+        build_environment=environment,
+    )
+    code.write_bytes(b"\x00first\nsecond")
+    lf = build_installer_verification_inputs(
+        tmp_path,
+        repository_paths=paths,
+        build_environment=environment,
+    )
+    assert lf.package_input_sha256 != crlf.package_input_sha256

@@ -342,6 +342,7 @@ def _installer_verification_inputs() -> InstallerVerificationInputs:
             "platform_release": platform.release(),
             "platform_version": platform.version(),
             "platform_machine": platform.machine(),
+            "source_content_identity": "git-clean-filter-v1",
         }
     )
     return build_installer_verification_inputs(

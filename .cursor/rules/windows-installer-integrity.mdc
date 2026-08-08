@@ -13,7 +13,7 @@ codexLoad: preflight
 
 凡会改变已安装版本判定、安装根选择或迁移、安装时写入、active payload 选择、shell/runtime build identity、readiness identity、产品进程关闭/回收、安装失败恢复、安装器语言或 install-integrity diagnostics 的 diff，均按 installer-sensitive 处理。开始构建前运行 `scripts/package/run.* installer-contract`，使用其 `impact.classification` 和路径清单，不凭文件存在或主观判断降级。
 
-完整 `sourceTreeSha256` 只负责制品来源追溯；是否需要重跑隔离矩阵只认脚本输出的 `verificationInputs.packageInputSha256`。文档、Rule、Skill、adapter、进度证据或测试等明确不进入安装行为的变化可以保持该指纹不变；未知路径默认进入指纹并按 installer-sensitive 处理。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
+完整 `sourceTreeSha256` 只负责制品来源追溯；是否需要重跑隔离矩阵只认脚本输出的 `verificationInputs.packageInputSha256`。文档、Rule、Skill、adapter、进度证据或测试等明确不进入安装行为的变化可以保持该指纹不变；未知路径默认进入指纹并按 installer-sensitive 处理。指纹中的源码内容身份必须经过 Git clean filter 规范化，因此同一 Git 内容不能因 worktree 绝对路径、`core.autocrlf` 或 LF/CRLF checkout 差异而变化；二进制与真实内容变化仍必须失效。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
 
 ## 不得削弱的边界
 

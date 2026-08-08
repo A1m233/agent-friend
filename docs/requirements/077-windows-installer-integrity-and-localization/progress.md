@@ -85,6 +85,7 @@ COMPLETED
 | 2026-08-08 | 完成 stable、trusted-beta、local-test 版本渠道治理。 | stable release 必须显式 `--release`；trusted-beta 每周期只配置下一稳定版本，包版本自动派生为 `<target>-beta.<UTC date>.<sequence>`；local-test 不可分发。裸 `all`、Agent 自选 major/minor/patch、手写 beta、以 build ID 冒充版本和 dirty 可分发构建均 fail closed。临时 release 根实测目标 `0.1.8` 得到 `0.1.8-beta.20260808.1`。 |
 | 2026-08-08 | 版本渠道改动后的全量门禁与隔离矩阵通过。 | package focused 68 passed；backend 1608 passed / 3 skipped；frontend 498 passed；Rust core 170 passed / 1 ignored、helper 5 passed。最终 candidate `20260808T085256Z-d474f058f416-b976370d` 的 12/12 场景通过，`packageInputSha256=004d8e20e1bc4f819f68c9e6ca44ab0a53c42cdb34752141ad23c1988089ae25`，installer SHA-256 `ca539e02c3d4485e6ee57e9b2fa636d7cb94a4dc21c9429d8dba57d83189550e`，二次验证通过。 |
 | 2026-08-08 | 完成正式可信内测包构建与真实用户验收。 | 基于干净 commit `14766fe2018f` 构建 `0.1.8-beta.20260808.1`，build ID `20260808T094201Z-14766fe2018f-36652253`，installer SHA-256 `f92878740fa6fd9b042ff4e18654cbc6e28b511b61167913c46d5715ebed9b9f`；manifest、实际文件和 SHA 文件一致，临时 seed/key 已清理。用户确认语言选择、真实覆盖升级和维护交互验收通过，需求状态转为 `COMPLETED`。 |
+| 2026-08-08 | 修复相同 Git 树跨 worktree 的指纹误失效，并收紧合入阶段打包触发边界。 | 合入前复核发现 Windows `core.autocrlf` 会让 LF/CRLF 工作区字节不同，旧算法因此拒绝同一 Git 内容的候选报告。指纹改用 Git clean filter 后的 blob identity，并显式记录 identity 模式；回归测试覆盖跨 worktree LF/CRLF 等价、真实文本变化失效和二进制差异失效。项目 Rule/Skill 同时明确 commit/merge/push 不触发重新打包。 |
 
 ## 构建与 Smoke 证据
 

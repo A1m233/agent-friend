@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -172,7 +173,13 @@ INSTALLER_VERIFICATION_REQUIRED_FILES = {
 
 def _canonical_repository_path(value: str) -> str:
     normalized = value.replace("\\", "/").strip("/")
-    if not normalized or normalized.startswith("../") or "/../" in normalized:
+    if (
+        not normalized
+        or normalized.startswith("../")
+        or "/../" in normalized
+        or "\n" in normalized
+        or "\r" in normalized
+    ):
         raise RuntimeError(f"invalid repository path for installer verification: {value!r}")
     return normalized
 
@@ -288,7 +295,8 @@ def build_installer_verification_inputs(
     environment = {str(key): str(value) for key, value in sorted(build_environment.items())}
     if not environment or any(not key or not value for key, value in environment.items()):
         raise RuntimeError("installer verification build environment is incomplete")
-    files: list[dict[str, Any]] = []
+    resolved_files: dict[str, Path] = {}
+    missing_files: set[str] = set()
     for relative in included_paths:
         path = (root / Path(relative)).resolve(strict=False)
         try:
@@ -298,20 +306,25 @@ def build_installer_verification_inputs(
                 f"installer verification input escaped repository root: {relative}"
             ) from error
         if not path.exists():
-            files.append({"path": relative, "missing": True})
+            missing_files.add(relative)
             continue
         if not path.is_file():
             raise RuntimeError(f"installer verification input is not a file: {relative}")
-        files.append(
-            {
-                "path": relative,
-                "size": path.stat().st_size,
-                "sha256": sha256_file(path),
-            }
-        )
+        resolved_files[relative] = path
+    git_object_format, blob_oids = _git_filtered_blob_oids(
+        root,
+        tuple(resolved_files),
+    )
+    files = [
+        {"path": relative, "missing": True}
+        if relative in missing_files
+        else {"path": relative, "gitBlobOid": blob_oids[relative]}
+        for relative in included_paths
+    ]
     manifest = {
         "schemaVersion": INSTALLER_VERIFICATION_SCHEMA_VERSION,
         "scope": INSTALLER_VERIFICATION_SCOPE,
+        "gitObjectFormat": git_object_format,
         "buildEnvironment": environment,
         "files": files,
     }
@@ -322,6 +335,44 @@ def build_installer_verification_inputs(
         file_count=len(files),
         build_environment=tuple(environment.items()),
     )
+
+
+def _git_filtered_blob_oids(
+    root: Path,
+    relative_paths: tuple[str, ...],
+) -> tuple[str, dict[str, str]]:
+    """Hash working files after Git clean filters, independent of checkout line endings."""
+
+    object_format_process = subprocess.run(
+        ["git", "rev-parse", "--show-object-format"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    object_format = object_format_process.stdout.strip()
+    if object_format not in {"sha1", "sha256"}:
+        raise RuntimeError(f"unsupported Git object format: {object_format!r}")
+    if not relative_paths:
+        return object_format, {}
+    process = subprocess.run(
+        ["git", "hash-object", "--stdin-paths"],
+        cwd=root,
+        input="".join(f"{relative}\n" for relative in relative_paths),
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    object_ids = process.stdout.splitlines()
+    expected_length = 40 if object_format == "sha1" else 64
+    if len(object_ids) != len(relative_paths) or any(
+        re.fullmatch(rf"[0-9a-f]{{{expected_length}}}", object_id) is None
+        for object_id in object_ids
+    ):
+        raise RuntimeError("Git returned invalid installer verification blob identities")
+    return object_format, dict(zip(relative_paths, object_ids, strict=True))
 
 
 def _semver_key(value: str) -> tuple[int, int, int, tuple[tuple[int, int | str], ...]]:

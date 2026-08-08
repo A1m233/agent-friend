@@ -29,7 +29,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 3b47cc3c75c83f9f00f739b27c822d1730a6286c1a94786f3ba7cdbc70fd6b3d -->
+<!-- codex-adapter-source-sha256: 15298c379d9cefc959aa58917a7a1572bea19ec71db6d018f57b0b1b9c90a759 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -261,6 +261,8 @@ Python 脚本实现跨平台逻辑时：
 - `./scripts/check` 全绿（lint + typecheck + test）——任一未过不得合入；
 - 用户明确确认验收完成；
 - 已 rebase / merge 最新 main，无遗留冲突。
+
+提交、合入和推送是版本控制操作，本身不构成重新构建安装包、重跑 installer smoke 或重新执行真实安装验收的理由。安装器相关需求已经用某一精确 feature head 完成机器验证和用户验收时，只要合入结果在安装行为输入上与该 head 相同，保留原证据关联即可；用 Git diff 核对合入树，不得为了“在 main 再确认一次”主动打包。只有用户明确要求生成新安装包，或后续确实改变了安装行为输入 / 验证契约并准备构建新包时，才进入对应打包门禁。若相同 Git 内容因 worktree 路径、换行符或 checkout 表现得到不同验证指纹，应停止并报告门禁缺陷，不得用重新打包掩盖误判。
 
 合入时保留 merge commit，便于后续从历史看到"哪些 commit 属于哪个需求"。
 

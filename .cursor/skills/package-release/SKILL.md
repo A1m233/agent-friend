@@ -1,6 +1,6 @@
 ---
 name: package-release
-description: 在 agent-friend 项目中查询或设置桌面产品版本，并构建受治理的 Windows 安装包。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查当前/最新版本”“设置/升级版本”“package/release build”，或要求 ordinary、trusted-beta、local-test 安装包时使用。
+description: 在 agent-friend 项目中查询或设置桌面产品版本，并构建受治理的 Windows 安装包。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查当前/最新版本”“设置/升级版本”“package/release build”，或要求 ordinary、trusted-beta、local-test 安装包时使用；不要因单纯 commit、merge、push 或已完成验收而触发。
 ---
 
 # Package Release
