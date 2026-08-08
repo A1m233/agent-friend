@@ -28,7 +28,7 @@ def _is_within(path: Path, parent: Path) -> bool:
     return True
 
 
-def _identity(value: Path) -> str:
+def path_identity(value: Path) -> str:
     normalized = os.path.normcase(str(_resolved(value)))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
@@ -109,8 +109,8 @@ def resolve_package_roots(
         if common_git_dir
         else _git_path(repo, "rev-parse", "--git-common-dir")
     )
-    repo_id = _identity(common)
-    worktree_id = _identity(repo)
+    repo_id = path_identity(common)
+    worktree_id = path_identity(repo)
     work_root = state / "work" / repo_id / worktree_id
     return PackageRoots(
         repo_root=repo,

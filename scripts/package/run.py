@@ -17,7 +17,7 @@ import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -81,6 +81,15 @@ from versioning import (
     read_trusted_beta_channel,
     set_project_version,
     trusted_beta_channel_path,
+)
+from workspace_gc import (
+    apply_workspace_gc,
+    cleanup_build_after_success,
+    cleanup_smoke_builds_after_success,
+    ensure_package_disk_headroom,
+    mark_workspace_used,
+    package_workspace_lock_path,
+    workspace_inventory,
 )
 
 from runtime_config import (
@@ -1560,6 +1569,7 @@ def _child_smoke_build(roots: PackageRoots, *, offline: bool) -> tuple[str, Path
         str(Path(__file__).resolve()),
         "all",
         "--local-test",
+        "--retain-build-workspace",
         "--install-profile",
         "installer-smoke",
         "--state-dir",
@@ -1714,6 +1724,8 @@ def _parse_args() -> argparse.Namespace:
             "installer-smoke",
             "installer-smoke-verify",
             "installed-smoke",
+            "workspace-status",
+            "workspace-gc",
             "version-status",
             "version-set",
             "trusted-beta-configure",
@@ -1797,6 +1809,28 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--state-dir", type=Path, help="override package cache/work root")
     parser.add_argument("--releases-dir", type=Path, help="override package releases root")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="apply workspace-gc; without this flag cleanup is a dry-run",
+    )
+    parser.add_argument(
+        "--build-max-age-hours",
+        type=float,
+        default=48.0,
+        help="workspace-gc retention for build-id directories (default: 48)",
+    )
+    parser.add_argument(
+        "--cache-max-age-days",
+        type=float,
+        default=7.0,
+        help="workspace-gc retention for inactive per-worktree caches (default: 7)",
+    )
+    parser.add_argument(
+        "--retain-build-workspace",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -1901,6 +1935,49 @@ def main() -> int:
             "installer-smoke-verify"
         )
     roots = _resolve_roots(args)
+    if args.apply and args.step != "workspace-gc":
+        raise RuntimeError("--apply is only valid for workspace-gc")
+    if args.step not in {"workspace-status", "workspace-gc"} and (
+        args.build_max_age_hours != 48.0 or args.cache_max_age_days != 7.0
+    ):
+        raise RuntimeError("workspace retention options require workspace-status or workspace-gc")
+    if args.build_max_age_hours <= 0 or args.cache_max_age_days <= 0:
+        raise RuntimeError("workspace retention values must be positive")
+    if args.retain_build_workspace and not (
+        args.step == "all" and args.local_test and profile.profile_id == "installer-smoke"
+    ):
+        raise RuntimeError("--retain-build-workspace is reserved for installer-smoke child builds")
+    if args.step in {"workspace-status", "workspace-gc"}:
+        if (
+            args.local_test
+            or args.trusted_beta
+            or args.release
+            or args.reuse_build_id
+            or args.reuse_frozen
+            or args.retain_build_workspace
+            or profile.profile_id != "production"
+        ):
+            raise RuntimeError(f"{args.step} does not accept package build mode options")
+        build_max_age = timedelta(hours=args.build_max_age_hours)
+        cache_max_age = timedelta(days=args.cache_max_age_days)
+        if args.step == "workspace-status" or not args.apply:
+            report = workspace_inventory(
+                roots,
+                build_max_age=build_max_age,
+                cache_max_age=cache_max_age,
+            )
+            report["mode"] = "status" if args.step == "workspace-status" else "dry-run"
+            print(json.dumps(report, indent=2))
+            return 0
+        with _package_build_lock(package_workspace_lock_path(roots)):
+            report = workspace_inventory(
+                roots,
+                build_max_age=build_max_age,
+                cache_max_age=cache_max_age,
+            )
+            result = apply_workspace_gc(roots, report)
+        print(json.dumps({"plan": report, "result": result, "mode": "applied"}, indent=2))
+        return 0
     if args.step == "version-status":
         if (
             args.local_test
@@ -1943,13 +2020,21 @@ def main() -> int:
         if args.smoke_build_report is None:
             raise RuntimeError("installer-smoke requires --smoke-build-report")
         verification_inputs = _installer_verification_inputs()
-        report = run_installer_smoke(
-            roots,
-            build_report_path=args.smoke_build_report,
-            installed_smoke=_smoke_installed_runtime,
-            expected_verification_inputs=verification_inputs,
-        )
+        with _package_build_lock(package_workspace_lock_path(roots)):
+            report = run_installer_smoke(
+                roots,
+                build_report_path=args.smoke_build_report,
+                installed_smoke=_smoke_installed_runtime,
+                expected_verification_inputs=verification_inputs,
+            )
+            try:
+                deleted_builds = cleanup_smoke_builds_after_success(roots, args.smoke_build_report)
+            except (OSError, RuntimeError) as error:
+                deleted_builds = []
+                print(f"warning: installer smoke workspace cleanup failed: {error}")
         print(f"installer_smoke_report: {report}")
+        if deleted_builds:
+            print("package_workspaces_removed: " + ",".join(deleted_builds))
         return 0
     if args.step == "installer-smoke-verify":
         if args.local_test or args.trusted_beta or args.release or args.reuse_build_id:
@@ -1998,7 +2083,6 @@ def main() -> int:
         raise RuntimeError("--reuse-frozen was replaced by --reuse-build-id")
     if args.step == "installer" and not args.reuse_build_id:
         raise RuntimeError("installer requires --reuse-build-id from a previous runtime build")
-
     verification_inputs = (
         _installer_verification_inputs() if args.step in {"installer", "all"} else None
     )
@@ -2024,12 +2108,14 @@ def main() -> int:
     project = read_project_version(REPO_ROOT)
     source = _source_metadata()
     distribution = "trusted-beta" if args.trusted_beta else "ordinary"
-    lock_path = (
-        roots.work_root / "package-build.lock"
-        if args.local_test
-        else roots.state_root / "locks" / roots.repo_id / "formal-package-build.lock"
-    )
-    with _package_build_lock(lock_path):
+    with _package_build_lock(package_workspace_lock_path(roots)):
+        disk = ensure_package_disk_headroom(roots)
+        mark_workspace_used(roots)
+        print(
+            "package_disk_headroom: "
+            f"available={disk['availableBytes']} required={disk['requiredBytes']} "
+            f"state={disk['statePath']}"
+        )
         package_version = project.version
         target_release_version: SemVer | None = None
         if not args.local_test and args.trusted_beta:
@@ -2099,6 +2185,12 @@ def main() -> int:
                 offline=args.offline,
             )
             print(f"installer: {setup}")
+            if not args.retain_build_workspace:
+                try:
+                    cleanup_build_after_success(roots, build_paths.build_id)
+                    print(f"package_workspace_removed: {build_paths.build_dir}")
+                except (OSError, RuntimeError) as error:
+                    print(f"warning: package workspace cleanup failed: {error}")
     return 0
 
 
