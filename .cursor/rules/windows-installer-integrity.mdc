@@ -7,13 +7,22 @@ codexLoad: preflight
 
 # Windows Installer Integrity
 
-本 Rule 负责识别安装器敏感变更并约束 Coding Agent 的最低机器门禁。具体 profile、路径、manifest、scenario、report 和 hash 算法只以 `scripts/package/run.*` 的输出为准，不在 Rule 中复制。
+本 Rule 负责区分“是否必须产生验证包”和“已经决定打包后最低走哪一级”，并约束 Coding Agent 的机器门禁。具体路径分类、profile、manifest、scenario、report 和 hash 算法只以 `scripts/package/run.* installer-contract` 的输出为准，不在 Rule 中复制。
 
-## 安装器敏感变更
+## 两个独立判定
 
-凡会改变已安装版本判定、安装根选择或迁移、安装时写入、active payload 选择、shell/runtime build identity、readiness identity、产品进程关闭/回收、安装失败恢复、安装器语言或 install-integrity diagnostics 的 diff，均按 installer-sensitive 处理。开始构建前运行 `scripts/package/run.* installer-contract`，使用其 `impact.classification` 和路径清单，不凭文件存在或主观判断降级。
+1. **是否产包**：一级普通产品改动默认不强制；用户要求测试包、AC 要求真实安装、准备交付用户或 release 时才产包。二级/三级代码改动即使用户没有索要分发包，也必须在合入前产生对应验证 candidate。
+2. **最低验证等级**：代码和发布事件给出 floor；用户可以用标准参数升档，不能降档。用户可以暂停产包或发布，但不能把未达到 floor 的制品标为可信或正式。
 
-完整 `sourceTreeSha256` 只负责制品来源追溯；是否需要重跑隔离矩阵只认脚本输出的 `verificationInputs.packageInputSha256`。文档、Rule、Skill、adapter、进度证据或测试等明确不进入安装行为的变化可以保持该指纹不变；未知路径默认进入指纹并按 installer-sensitive 处理。指纹中的源码内容身份必须经过 Git clean filter 规范化，因此同一 Git 内容不能因 worktree 绝对路径、`core.autocrlf` 或 LF/CRLF checkout 差异而变化；二进制与真实内容变化仍必须失效。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
+脚本输出三个最低等级：
+
+- `standard`（一级）：普通业务、UI、日志和诊断采集等不改变冻结内容或安装协议的代码。默认不强制打包；一旦用户或验收决定产包，必须走标准完整构建，不能用裸 executable 代替可信包。
+- `package-sensitive`（二级）：冻结 runtime 依赖、PyInstaller spec/hook、必须入包的资源或 runtime entry 等会改变包内内容和启动能力的变化。合入前至少构建一次真实 frozen candidate，并通过 doctor/capability smoke；不跑无关的升级、降级或迁移矩阵。
+- `full-matrix`（三级）：改变已安装版本判定、安装根选择或迁移、安装时写入、active payload/receipt/identity、产品旧进程关闭与文件占用、安装失败恢复、安装器语言或矩阵契约的变化。合入前必须通过完整隔离矩阵。stable release 作为发布事件无条件升到三级；重要 RC 或用户要求也可显式升档。
+
+开始验证前读取 `impact.packageRequired`、`impact.minimumVerificationLevel` 和分级路径。语义上新增动态导入、package data 或原生库但路径分类仍为一级时，Coding Agent 必须通过 `--verification-level package-sensitive` 升档；涉及安装状态转换时升到 `full-matrix`。不得主观降级脚本给出的 floor。
+
+完整 `sourceTreeSha256` 只负责制品来源追溯；验证证据复用只认脚本输出的 `verificationInputs.packageInputSha256` 以及报告绑定的 candidate build/hash。指纹中的源码内容身份必须经过 Git clean filter 规范化，因此同一 Git 内容不能因 worktree 绝对路径、`core.autocrlf` 或 LF/CRLF checkout 差异而变化；二进制与真实内容变化仍必须失效。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
 
 ## 不得削弱的边界
 
@@ -31,11 +40,12 @@ codexLoad: preflight
 ## 最低门禁
 
 - contract/纯模型改动：`installer-contract`、对应单测和受影响项目检查。语言门禁必须检查渲染后模板包含始终显示交互式 selector 的契约；仅检查 `displayLanguageSelector=true`、语言资源存在或全新隔离身份首次启动不构成充分证据。
-- installer-sensitive 实现：上项之外，必须取得一个由标准脚本确认 `packageInputSha256` 匹配的通过报告。没有匹配报告时，构建 `installer-smoke` profile 的真实 local-test installer，运行 `installer-smoke`，再用候选 build ID 与 installer 文件执行 `installer-smoke-verify`；已有匹配报告时可由 production `installer|all --smoke-report <PATH>` 显式复用，不重跑矩阵。smoke 必须在任何安装 mutation 前按真实 baseline/candidate 制品执行磁盘空间预检；不得在容量不足时继续并把截断写入误归因为产品逻辑。
+- 二级实现：运行受影响源码检查，并用标准 package runner 构建真实 frozen candidate；以 staging 后 doctor 和 capability smoke 为证据。只有用户明确需要完整安装包时才继续构建 installer。
+- 三级实现或 stable release：必须取得由标准脚本确认 `packageInputSha256` 匹配的完整矩阵报告。没有匹配报告时，构建一次 `installer-smoke` candidate，运行 `installer-smoke`，再用候选 build ID 与 installer 文件执行 `installer-smoke-verify`；显式提供已验证 baseline build ID 时允许复用，否则同一 candidate 提供受校验 fixture，不得为形式默认重复构建当前源码。已有匹配报告时可由 production `installer|all --smoke-report <PATH>` 显式复用，不重跑矩阵。smoke 必须在任何安装 mutation 前执行磁盘空间预检。
 - 诊断结构变化：同时更新 producer contract、Rust producer、inspect Skill、格式 reference 与 consumer fixture；旧 bundle 必须保持可读。
 - frozen runtime 变化继续服从 `frozen-runtime-packaging` Rule 的 runtime build 与 capability smoke。
 
-report 缺失或旧 schema、`packageInputSha256`、candidate build/hash、candidate release manifest、必需 scenario 任一不匹配，或验证未执行时，只能记录 verification gap；不得声称安装问题已解决、升级已验证或可以发布。Coding Agent 不得自行比较 commit/full-tree hash、猜测最近报告或手工声明输入等价；复用决定必须来自构建脚本的成功结果。
+三级 report 缺失或旧 schema、`packageInputSha256`、candidate build/hash、candidate release manifest、必需 scenario 任一不匹配，或验证未执行时，只能记录 verification gap；不得声称安装问题已解决、升级已验证或可以发布。Coding Agent 不得自行比较 commit/full-tree hash、猜测最近报告或手工声明输入等价；复用决定必须来自构建脚本的成功结果。
 
 ## 真实 production 覆盖升级
 

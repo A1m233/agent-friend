@@ -13,7 +13,7 @@ codexLoad: preflight
 
 ## 先做影响分类
 
-命中 glob 只表示必须检查，不表示每次都要构建冻结 runtime。先检查本次 diff；只有出现以下任一事实才算“打包敏感变更”：
+命中 glob 只表示必须检查，不表示每次都要构建冻结 runtime。先检查本次 diff；只有出现以下任一事实才算二级 `package-sensitive`：
 
 - 冻结 runtime 项目的直接依赖新增、删除、替换或版本约束变化；
 - `uv.lock` 变化影响这些项目的运行时依赖闭包；
@@ -21,7 +21,7 @@ codexLoad: preflight
 - 修改 PyInstaller spec、hook、runtime supplement、staging 或 frozen doctor；
 - 新增或改变一项必须在安装包内工作的用户可见能力，且现有 frozen capability smoke 未覆盖其高风险路径。
 
-纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，不要求运行 PyInstaller，也不要求构建 local-test runtime。不要因为本 Rule 被加载就扩大验证范围。
+纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，保持一级 `standard`，不要求运行 PyInstaller，也不要求构建 local-test runtime。不要因为本 Rule 被加载就扩大验证范围。若语义上命中上述事实但机器路径分类仍为一级，使用标准 runner 的 `--verification-level package-sensitive` 主动升档。
 
 ## 打包敏感变更的处理
 
@@ -36,7 +36,7 @@ codexLoad: preflight
 打包敏感的代码或配置发生实质变化时：
 
 1. 运行 `scripts/check/run.* --stage backend`。
-2. 在 Windows x64 环境运行 `scripts/package/run.ps1 runtime --local-test`，以 staging 后 doctor 和 frozen capability smoke 的结果为准。该验证只构建 runtime，不要求构建完整 installer。
+2. 在 Windows x64 环境运行 `scripts/package/run.ps1 runtime --local-test --verification-level package-sensitive`，以 staging 后 doctor 和 frozen capability smoke 的结果为准。该验证只构建 runtime，不要求构建完整 installer。
 3. 只有用户明确要求安装包、发布、版本操作或 trusted-beta 时，才进入 `package-release` Skill 的完整 installer 工作流。
 
 非 Windows 环境无法执行冻结 runtime 验证时，应明确记录 `verification gap`，不得把 source-env 单测、import smoke 或未 staging 的裸 PyInstaller 目录表述为冻结验证通过。打包或 doctor 失败时保留 fail-closed 原因并修正实际收集/能力覆盖，不得绕过门禁。
