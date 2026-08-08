@@ -30,10 +30,12 @@ from install_contract import (
     BuildIdentity,
     InstallerVerificationInputs,
     InstallProfile,
+    PackageVerificationLevel,
     build_identity,
     build_installer_verification_inputs,
     canonical_json_bytes,
     classify_installer_impact,
+    max_package_verification_level,
     payload_install_relative_path,
     read_build_identity,
     read_payload_manifest,
@@ -1618,8 +1620,11 @@ def _build_installer_smoke_pair(
     offline: bool,
     baseline_build_id: str | None = None,
 ) -> Path:
+    candidate_build_id: str | None = None
+    candidate_installer: Path | None = None
     if baseline_build_id is None:
-        baseline_build_id, _ = _child_smoke_build(roots, offline=offline)
+        candidate_build_id, candidate_installer = _child_smoke_build(roots, offline=offline)
+        baseline_build_id = candidate_build_id
         baseline_paths = create_build_paths(roots, build_id=baseline_build_id)
         shared_shell = (
             baseline_paths.cargo_target_dir
@@ -1627,6 +1632,7 @@ def _build_installer_smoke_pair(
             / (f"{resolve_install_profile('installer-smoke').main_binary_name}.exe")
         )
         baseline_shell = baseline_paths.build_dir / "smoke-baseline-shell.exe"
+        baseline_paths.build_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(shared_shell, baseline_shell)
     else:
         baseline_paths = create_build_paths(roots, build_id=baseline_build_id)
@@ -1643,7 +1649,9 @@ def _build_installer_smoke_pair(
         ):
             raise RuntimeError("reused installer smoke baseline is incomplete or mismatched")
     _validate_desktop_shell_role(baseline_shell)
-    candidate_build_id, candidate_installer = _child_smoke_build(roots, offline=offline)
+    if candidate_build_id is None:
+        candidate_build_id, candidate_installer = _child_smoke_build(roots, offline=offline)
+    assert candidate_installer is not None
     project = read_project_version(REPO_ROOT)
     return write_installer_smoke_build_report(
         roots,
@@ -1654,12 +1662,35 @@ def _build_installer_smoke_pair(
     )
 
 
+def _effective_package_verification_level(
+    impact: dict[str, Any],
+    *,
+    requested: str | None,
+    release: bool,
+    smoke_report: Path | None,
+) -> PackageVerificationLevel:
+    minimum = PackageVerificationLevel(
+        str(impact.get("minimumVerificationLevel", PackageVerificationLevel.STANDARD.value))
+    )
+    requested_level = (
+        PackageVerificationLevel(requested)
+        if requested is not None
+        else PackageVerificationLevel.STANDARD
+    )
+    event_level = (
+        PackageVerificationLevel.FULL_MATRIX
+        if release or smoke_report is not None
+        else PackageVerificationLevel.STANDARD
+    )
+    return max_package_verification_level(minimum, requested_level, event_level)
+
+
 def _verify_installer_smoke_gate(
     roots: PackageRoots,
     *,
     step: str,
     profile: InstallProfile,
-    impact: dict[str, Any],
+    effective_level: PackageVerificationLevel,
     smoke_report: Path | None,
     verification_inputs: InstallerVerificationInputs | None,
 ) -> dict[str, Any] | None:
@@ -1673,9 +1704,9 @@ def _verify_installer_smoke_gate(
         return None
     if verification_inputs is None:
         raise RuntimeError("production installer verification inputs are missing")
-    if impact.get("classification") == "installer-sensitive" and smoke_report is None:
+    if effective_level == PackageVerificationLevel.FULL_MATRIX and smoke_report is None:
         raise RuntimeError(
-            "installer-sensitive production builds require an explicit --smoke-report "
+            "full-matrix production builds require an explicit --smoke-report "
             "whose package input fingerprint matches the current build"
         )
     if smoke_report is None:
@@ -1767,6 +1798,14 @@ def _parse_args() -> argparse.Namespace:
         "--release",
         action="store_true",
         help="explicitly build the stable ordinary release at the synchronized project version",
+    )
+    parser.add_argument(
+        "--verification-level",
+        choices=tuple(level.value for level in PackageVerificationLevel),
+        help=(
+            "upgrade package verification above the code-derived minimum; lower requests never "
+            "downgrade the enforced level"
+        ),
     )
     parser.add_argument(
         "--expect-trusted-credentials",
@@ -1870,6 +1909,8 @@ def main() -> int:
     args = _parse_args()
     validate_profile_isolation()
     profile = resolve_install_profile(args.install_profile)
+    if args.verification_level is not None and args.step not in {"runtime", "installer", "all"}:
+        raise RuntimeError("--verification-level is only valid for package build steps")
     if args.step == "version-set":
         if args.version is None:
             raise RuntimeError("version-set requires an explicit SemVer")
@@ -2087,11 +2128,20 @@ def main() -> int:
         _installer_verification_inputs() if args.step in {"installer", "all"} else None
     )
     impact = classify_installer_impact(_changed_repository_paths())
+    effective_level = _effective_package_verification_level(
+        impact,
+        requested=args.verification_level,
+        release=args.release,
+        smoke_report=args.smoke_report,
+    )
+    print(f"package_required_by_code: {str(bool(impact['packageRequired'])).lower()}")
+    print(f"minimum_verification_level: {impact['minimumVerificationLevel']}")
+    print(f"effective_verification_level: {effective_level.value}")
     verified = _verify_installer_smoke_gate(
         roots,
         step=args.step,
         profile=profile,
-        impact=impact,
+        effective_level=effective_level,
         smoke_report=args.smoke_report,
         verification_inputs=verification_inputs,
     )

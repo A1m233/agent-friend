@@ -171,6 +171,61 @@ def test_installer_smoke_build_reuses_only_a_complete_validated_baseline(
         raise AssertionError("a tampered installer-smoke baseline must be rejected")
 
 
+def test_installer_smoke_build_uses_one_candidate_build_for_default_fixture(
+    tmp_path, monkeypatch
+) -> None:
+    package = _load("package_run_single_smoke_candidate", PACKAGE_DIR / "run.py")
+    roots = package.PackageRoots(
+        repo_root=tmp_path / "repo",
+        state_root=tmp_path / "state",
+        cache_dir=tmp_path / "state" / "cache",
+        work_root=tmp_path / "state" / "work" / "repo" / "worktree",
+        releases_root=tmp_path / "releases",
+        repo_id="repo",
+        worktree_id="worktree",
+    )
+    candidate_id = "candidate-build"
+    candidate_paths = package.create_build_paths(roots, build_id=candidate_id)
+    shared_shell = (
+        candidate_paths.cargo_target_dir
+        / "release"
+        / f"{package.resolve_install_profile('installer-smoke').main_binary_name}.exe"
+    )
+    shared_shell.parent.mkdir(parents=True)
+    shared_shell.write_bytes(package.DESKTOP_SHELL_ROLE_MARKER + b"-candidate-shell")
+    candidate_installer = tmp_path / "candidate.exe"
+    candidate_installer.write_bytes(b"candidate")
+    child_calls = 0
+
+    def fake_child_build(_roots, *, offline):
+        nonlocal child_calls
+        child_calls += 1
+        return candidate_id, candidate_installer
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(package, "_child_smoke_build", fake_child_build)
+    monkeypatch.setattr(
+        package,
+        "read_project_version",
+        lambda _root: type("Project", (), {"version": "1.2.3"})(),
+    )
+    monkeypatch.setattr(
+        package,
+        "write_installer_smoke_build_report",
+        lambda _roots, **kwargs: captured.update(kwargs) or tmp_path / "build-report.json",
+    )
+
+    report = package._build_installer_smoke_pair(roots, offline=True)
+
+    assert report == tmp_path / "build-report.json"
+    assert child_calls == 1
+    assert captured["baseline_build_id"] == candidate_id
+    assert captured["candidate_build_id"] == candidate_id
+    assert (
+        candidate_paths.build_dir / "smoke-baseline-shell.exe"
+    ).read_bytes() == shared_shell.read_bytes()
+
+
 def test_production_installer_gate_requires_explicit_matching_smoke_report(
     tmp_path, monkeypatch
 ) -> None:
@@ -196,21 +251,21 @@ def test_production_installer_gate_requires_explicit_matching_smoke_report(
             roots,
             step="all",
             profile=package.resolve_install_profile("production"),
-            impact={"classification": "installer-sensitive"},
+            effective_level=package.PackageVerificationLevel.FULL_MATRIX,
             smoke_report=None,
             verification_inputs=inputs,
         )
     except RuntimeError as exc:
         assert "require an explicit --smoke-report" in str(exc)
     else:
-        raise AssertionError("installer-sensitive production build accepted no smoke report")
+        raise AssertionError("full-matrix production build accepted no smoke report")
 
     assert (
         package._verify_installer_smoke_gate(
             roots,
             step="all",
             profile=package.resolve_install_profile("production"),
-            impact={"classification": "standard"},
+            effective_level=package.PackageVerificationLevel.STANDARD,
             smoke_report=None,
             verification_inputs=inputs,
         )
@@ -229,11 +284,55 @@ def test_production_installer_gate_requires_explicit_matching_smoke_report(
             roots,
             step="all",
             profile=package.resolve_install_profile("production"),
-            impact={"classification": "installer-sensitive"},
+            effective_level=package.PackageVerificationLevel.FULL_MATRIX,
             smoke_report=report,
             verification_inputs=inputs,
         )
         == expected
+    )
+
+
+def test_effective_package_verification_level_can_upgrade_but_not_downgrade(tmp_path) -> None:
+    package = _load("package_run_verification_level", PACKAGE_DIR / "run.py")
+    level_two = {
+        "minimumVerificationLevel": package.PackageVerificationLevel.PACKAGE_SENSITIVE.value
+    }
+
+    assert (
+        package._effective_package_verification_level(
+            level_two,
+            requested=package.PackageVerificationLevel.STANDARD.value,
+            release=False,
+            smoke_report=None,
+        )
+        == package.PackageVerificationLevel.PACKAGE_SENSITIVE
+    )
+    assert (
+        package._effective_package_verification_level(
+            level_two,
+            requested=package.PackageVerificationLevel.FULL_MATRIX.value,
+            release=False,
+            smoke_report=None,
+        )
+        == package.PackageVerificationLevel.FULL_MATRIX
+    )
+    assert (
+        package._effective_package_verification_level(
+            {"minimumVerificationLevel": package.PackageVerificationLevel.STANDARD.value},
+            requested=None,
+            release=True,
+            smoke_report=None,
+        )
+        == package.PackageVerificationLevel.FULL_MATRIX
+    )
+    assert (
+        package._effective_package_verification_level(
+            {"minimumVerificationLevel": package.PackageVerificationLevel.STANDARD.value},
+            requested=None,
+            release=False,
+            smoke_report=tmp_path / "smoke.json",
+        )
+        == package.PackageVerificationLevel.FULL_MATRIX
     )
 
 

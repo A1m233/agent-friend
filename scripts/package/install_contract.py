@@ -46,6 +46,21 @@ class InstallRootTransition(StrEnum):
     EXPLICIT_MOVE = "explicit-move"
 
 
+class PackageVerificationLevel(StrEnum):
+    """Minimum package evidence required by the current code change."""
+
+    STANDARD = "standard"
+    PACKAGE_SENSITIVE = "package-sensitive"
+    FULL_MATRIX = "full-matrix"
+
+
+PACKAGE_VERIFICATION_LEVEL_ORDER = {
+    PackageVerificationLevel.STANDARD: 1,
+    PackageVerificationLevel.PACKAGE_SENSITIVE: 2,
+    PackageVerificationLevel.FULL_MATRIX: 3,
+}
+
+
 @dataclass(frozen=True)
 class InstallProfile:
     schema_version: int
@@ -170,6 +185,55 @@ INSTALLER_VERIFICATION_REQUIRED_FILES = {
     "uv.lock",
 }
 
+# Level 3 changes can alter an existing installation's state transition. They require the full
+# isolated upgrade/repair/migration matrix before a production installer can be distributed.
+FULL_MATRIX_FILES = {
+    "agent_bridge/src/agent_bridge/lifecycle.py",
+    "frontend/src-tauri/src/bin/agent-friend-installer-helper.rs",
+    "frontend/src-tauri/src/install_contract.rs",
+    "frontend/src-tauri/src/runtime_services/supervisor.rs",
+    "runtime_config/src/runtime_config/build_identity.py",
+    "scripts/package/install_contract.py",
+    "scripts/package/installer_smoke.py",
+    "scripts/package/releases.py",
+    "scripts/package/run.py",
+    "scripts/package/versioning.py",
+    "scripts/package/windows/nsis-hooks.nsh",
+    "scripts/package/windows/tauri.package.conf.json",
+    "voice_bridge/src/voice_bridge/lifecycle.py",
+}
+FULL_MATRIX_PREFIXES = ("scripts/package/windows/installer-",)
+
+# Level 2 changes can alter frozen contents or package bootability without changing how an
+# existing installation transitions. They require a real frozen candidate, not the installer
+# upgrade matrix.
+PACKAGE_SENSITIVE_FILES = {
+    "agent/pyproject.toml",
+    "agent_bridge/pyproject.toml",
+    "llm_providers/pyproject.toml",
+    "memory/pyproject.toml",
+    "runtime_config/pyproject.toml",
+    "scripts/package/dependency_policy.py",
+    "scripts/package/run.ps1",
+    "scripts/package/run.sh",
+    "scripts/package/runtime_entry.py",
+    "scripts/package/windows/agent_friend_runtime.spec",
+    "uv.lock",
+    "voice_bridge/pyproject.toml",
+}
+PACKAGE_SENSITIVE_PREFIXES = (
+    "scripts/package/vendor/",
+    "scripts/package/windows/hooks/",
+)
+FROZEN_RUNTIME_SOURCE_PREFIXES = (
+    "agent/src/",
+    "agent_bridge/src/",
+    "llm_providers/src/",
+    "memory/src/",
+    "runtime_config/src/",
+    "voice_bridge/src/",
+)
+
 
 def _canonical_repository_path(value: str) -> str:
     normalized = value.replace("\\", "/").strip("/")
@@ -209,15 +273,65 @@ def is_installer_verification_input(path: str) -> bool:
     )
 
 
+def package_verification_level_for_path(path: str) -> PackageVerificationLevel:
+    """Classify a changed path without conflating ordinary product code with packaging risk."""
+
+    normalized = _canonical_repository_path(path).casefold()
+    if not is_installer_verification_input(normalized):
+        return PackageVerificationLevel.STANDARD
+    if normalized in FULL_MATRIX_FILES or any(
+        normalized.startswith(prefix) for prefix in FULL_MATRIX_PREFIXES
+    ):
+        return PackageVerificationLevel.FULL_MATRIX
+    if normalized in PACKAGE_SENSITIVE_FILES or any(
+        normalized.startswith(prefix) for prefix in PACKAGE_SENSITIVE_PREFIXES
+    ):
+        return PackageVerificationLevel.PACKAGE_SENSITIVE
+    if normalized.startswith(FROZEN_RUNTIME_SOURCE_PREFIXES):
+        suffix = Path(normalized).suffix
+        if suffix not in {".py", ".pyi"}:
+            return PackageVerificationLevel.PACKAGE_SENSITIVE
+    return PackageVerificationLevel.STANDARD
+
+
+def max_package_verification_level(
+    *levels: PackageVerificationLevel | str,
+) -> PackageVerificationLevel:
+    parsed = [PackageVerificationLevel(level) for level in levels]
+    if not parsed:
+        return PackageVerificationLevel.STANDARD
+    return max(parsed, key=PACKAGE_VERIFICATION_LEVEL_ORDER.__getitem__)
+
+
 def classify_installer_impact(paths: set[str]) -> dict[str, Any]:
+    """Return the independent package trigger and minimum verification level.
+
+    The legacy function name remains the public import used by the package runner. Its machine
+    result now models the two decisions separately: ordinary product changes do not force a
+    package, while package-sensitive and installer-protocol changes do.
+    """
+
     normalized = sorted({_canonical_repository_path(path) for path in paths})
-    behavior_inputs = [path for path in normalized if is_installer_verification_input(path)]
-    evidence_only = [path for path in normalized if not is_installer_verification_input(path)]
+    by_level = {
+        level: [path for path in normalized if package_verification_level_for_path(path) == level]
+        for level in PackageVerificationLevel
+    }
+    minimum = max_package_verification_level(
+        *(package_verification_level_for_path(path) for path in normalized)
+    )
     return {
-        "classification": "installer-sensitive" if behavior_inputs else "standard",
+        "classification": minimum.value,
+        "minimumVerificationLevel": minimum.value,
+        "packageRequired": minimum != PackageVerificationLevel.STANDARD,
         "changedPaths": normalized,
-        "installerSensitivePaths": behavior_inputs,
-        "verificationExcludedPaths": evidence_only,
+        "standardPaths": by_level[PackageVerificationLevel.STANDARD],
+        "packageSensitivePaths": by_level[PackageVerificationLevel.PACKAGE_SENSITIVE],
+        "fullMatrixPaths": by_level[PackageVerificationLevel.FULL_MATRIX],
+        # Compatibility fields for report consumers while they migrate to the explicit levels.
+        "installerSensitivePaths": by_level[PackageVerificationLevel.FULL_MATRIX],
+        "verificationExcludedPaths": [
+            path for path in normalized if not is_installer_verification_input(path)
+        ],
     }
 
 

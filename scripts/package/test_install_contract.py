@@ -20,6 +20,7 @@ from install_contract import (  # noqa: E402
     WINDOWS_INSTALLER_MANUFACTURER,
     InstalledVersionState,
     InstallRootTransition,
+    PackageVerificationLevel,
     PayloadFile,
     PayloadManifest,
     build_identity,
@@ -190,9 +191,7 @@ def _verification_repository(tmp_path: Path) -> set[str]:
     return paths
 
 
-def test_installer_impact_excludes_guidance_and_evidence_but_defaults_unknown_to_sensitive() -> (
-    None
-):
+def test_package_impact_separates_package_trigger_from_verification_level() -> None:
     impact = classify_installer_impact(
         {
             "docs/requirements/077/example/progress.md",
@@ -203,11 +202,41 @@ def test_installer_impact_excludes_guidance_and_evidence_but_defaults_unknown_to
         }
     )
     assert impact["classification"] == "standard"
+    assert impact["minimumVerificationLevel"] == "standard"
+    assert impact["packageRequired"] is False
     assert impact["installerSensitivePaths"] == []
 
     unknown = classify_installer_impact({"new_product_area/feature.py"})
-    assert unknown["classification"] == "installer-sensitive"
-    assert unknown["installerSensitivePaths"] == ["new_product_area/feature.py"]
+    assert unknown["classification"] == "standard"
+    assert unknown["packageRequired"] is False
+
+    diagnostics = classify_installer_impact(
+        {"frontend/src-tauri/src/webview_diagnostics/windows_display_power.rs"}
+    )
+    assert diagnostics["minimumVerificationLevel"] == "standard"
+    assert diagnostics["packageRequired"] is False
+
+    frozen = classify_installer_impact(
+        {
+            "agent/pyproject.toml",
+            "agent/src/agent/prompts/default.txt",
+            "agent/src/agent/session_context.py",
+        }
+    )
+    assert frozen["minimumVerificationLevel"] == "package-sensitive"
+    assert frozen["packageRequired"] is True
+    assert frozen["packageSensitivePaths"] == [
+        "agent/pyproject.toml",
+        "agent/src/agent/prompts/default.txt",
+    ]
+    assert frozen["standardPaths"] == ["agent/src/agent/session_context.py"]
+
+    installer = classify_installer_impact(
+        {"scripts/package/windows/nsis-hooks.nsh", "frontend/src/app.tsx"}
+    )
+    assert installer["minimumVerificationLevel"] == PackageVerificationLevel.FULL_MATRIX
+    assert installer["packageRequired"] is True
+    assert installer["fullMatrixPaths"] == ["scripts/package/windows/nsis-hooks.nsh"]
 
 
 def test_installer_verification_fingerprint_ignores_docs_but_binds_code_and_environment(
