@@ -5,6 +5,7 @@ description = "A Tauri App"
 authors = ["you"]
 license = ""
 repository = ""
+default-run = "app"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -62,6 +63,7 @@ windows = { version = "0.61.3", features = [
     "Devices_Enumeration",
     "Security_Authorization_AppCapabilityAccess",
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
@@ -70,8 +72,11 @@ windows = { version = "0.61.3", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
+    "Win32_System_JobObjects",
+    "Win32_System_RestartManager",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Power",
     "Win32_System_StationsAndDesktops",
     "Win32_System_SystemInformation",

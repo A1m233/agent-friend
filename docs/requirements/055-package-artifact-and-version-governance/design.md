@@ -175,7 +175,7 @@ class PackagePaths:
 
 ### 5.1 产品版本真相与镜像
 
-延续 051 的产品语义：`frontend/src-tauri/tauri.conf.json` 是产品版本真相源，以下字段是构建工具需要保持一致的镜像：
+延续 051 的产品语义：`frontend/src-tauri/tauri.conf.json` 是 stable 产品版本真相源，以下字段是构建工具需要保持一致的镜像：
 
 - `frontend/package.json > version`
 - `frontend/src-tauri/Cargo.toml > package.version`
@@ -231,6 +231,12 @@ class SemVer:
 
 该操作只修改版本字段，不格式化整个 JSON/TOML 文件。Cargo.lock 中当前 crate package version 如由 Cargo 后续构建更新，则通过项目正常构建流程处理；本命令不手工编辑 lockfile 中同名依赖条目。
 
+### 5.5 Trusted-beta 派生版本
+
+`trusted-beta-configure <next-stable-semver>` 把用户明确选择的下一稳定版本原子写入制品根 `channels/trusted-beta.json`。目标必须是不带 prerelease/build metadata、且高于当前/latest stable 的 SemVer；该命令不改源码版本，也不构建安装包。
+
+可分发 `--trusted-beta` 在 repo 级正式构建锁内扫描通过 manifest/hash 校验的 trusted-beta 制品，派生 `<target>-beta.<UTC YYYYMMDD>.<sequence>`。日期回退、同目标存在非治理格式、候选不高于最新正式制品或目标已过期时拒绝。生成版本写入 Tauri/NSIS、build identity、manifest 和应用编译期产品版本；build ID 不参与 SemVer precedence。
+
 ## 6. 制品与 manifest
 
 ### 6.1 正式制品 key
@@ -246,7 +252,7 @@ class SemVer:
 - `ordinary`
 - `trusted-beta`
 
-同一版本可以同时存在 ordinary 与 trusted-beta；同一 key 一旦发布即不可变。
+历史上同一版本可以同时存在 ordinary 与 trusted-beta；新增可信内测流程默认使用独立预发布版本。无论渠道，同一 key 一旦发布即不可变。
 
 ### 6.2 local-test
 
@@ -405,14 +411,16 @@ CARGO_TARGET_DIR=<build-dir>/cargo-target
 
 行为：
 
-- `version-status`：只读；输出项目版本、一致性、本机最新有效正式版本、当前 commit/dirty、正式 ordinary/trusted-beta key 是否可发布和默认目录。
+- `version-status`：只读；输出 stable 项目版本、一致性、本机最新有效正式版本、当前 commit/dirty、stable release 状态，以及 trusted-beta target/下一自动版本和默认目录。
 - `version-set <version>`：只改三个产品版本字段并复核，不自动构建、不联网。
+- `trusted-beta-configure <next-stable-semver>`：每个开发周期显式配置一次 trusted-beta 目标，不自动选择 major/minor/patch。
 - `runtime`：创建独立 build context 并输出 build ID；如果后续分步执行 installer，调用者用 `--reuse-build-id` 明确选择。
 - `installer`：要求已有可复用 build ID，避免跨进程猜测“最近一次”中间产物。
-- `all`：同一 build context 内完成 runtime + installer，是推荐正式入口。
+- `all --release`：同一 build context 内完成 stable runtime + installer；只有显式 release 意图才允许正式公开制品。
 - `installed-smoke`：保持现有显式 `--install-dir` 语义，不依赖制品根。
 - `--local-test`：切换本机测试制品治理模式，不改变 Rust 编译 profile。
-- `--trusted-beta`：保持现有显式敏感模式，与 formal/local-test 正交。
+- `--trusted-beta`：不与 `--local-test` 组合时表示可分发敏感预发布渠道并自动分配 beta 版本；组合时只验证不可分发敏感 local-test。
+- 裸 `all`：缺少渠道意图，fail closed。
 
 为兼容现有调用，`installer` 在迁移期可以识别旧 `--reuse-frozen` 并给出明确迁移错误，不再从 worktree 隐式复用；`all --reuse-frozen` 改用 `--reuse-build-id`。不长期维护两套复用语义。
 
@@ -442,10 +450,10 @@ CARGO_TARGET_DIR=<build-dir>/cargo-target
 Skill 的核心流程：
 
 1. 运行 `version-status`，展示脚本返回的事实；
-2. 用户未给明确版本变更时，不自行 bump；
-3. 根据用户意图选择 formal 或 `--local-test`，dirty 时不得把 formal 静默降级为 local-test；
-4. trusted-beta 保留敏感制品警告和显式授权；
-5. 调用标准 `all`；
+2. 用户未给 stable 或下一 trusted-beta target 时，不自行决定 major/minor/patch；已配置 target 后接受脚本自动 beta 序号；
+3. 根据用户意图选择 `--release`、`--trusted-beta` 或 `--local-test`，dirty 时不得把可分发构建静默降级为 local-test；
+4. trusted-beta 保留敏感制品警告和显式授权，分发时不得组合 `--local-test`；
+5. 调用带显式渠道的标准 `all`；
 6. 核验脚本返回的 manifest/SHA 结果并报告绝对制品路径；
 7. 不自行拼路径、不自行比较版本、不运行裸 `pnpm tauri build`。
 

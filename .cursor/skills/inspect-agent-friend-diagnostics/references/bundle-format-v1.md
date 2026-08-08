@@ -13,10 +13,11 @@ The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` comma
 5. collects allowlisted logs from `paths::log_dir()`;
 6. snapshots the bounded WebView2 process/lifecycle buffer, runtime identity, and Windows graphics-adapter inventory;
 7. describes the latest one-shot render capture and, only when the user confirms inclusion, verifies and adds its WebView2/internal and full-desktop PNGs;
-8. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
-9. redacts managed credentials and replaces the user home path;
-10. validates the manifest and every archive entry against the producer-owned bundle contract;
-11. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
+8. snapshots shell, active receipt, payload hashes, observed runtime readiness, Job Object assignment, legacy layout, and incomplete installer transactions;
+9. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
+10. redacts managed credentials and replaces the user home path;
+11. validates the manifest and every archive entry against the producer-owned bundle contract;
+12. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
 
 The generator does not upload the bundle or intentionally call an external provider.
 
@@ -30,6 +31,7 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/environment.json` | OS, architecture, locale, timezone | No hostname or full environment dump |
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
+| `install/integrity.json` | Embedded shell identity, active receipt, verified payload/runtime hashes, observed readiness identity, Job Object state, and installer residue | Present when `install-integrity-v1` is declared; uses relative paths and stable error codes, never credential values |
 | `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included and no automatic recovery action is implied |
 | `diagnostics/webview2-render-evidence.json` | Consent/inclusion state plus capture trigger, timestamps, graphics/window state, pixel metrics, integrity hashes, and capture failures | Always present in newer v1 bundles; detailed capture data is present only when the user confirms ZIP inclusion |
 | `render-evidence/webview2-pet.png` | WebView2 `CapturePreview` of the pet WebView | Optional sensitive artifact; requires prior one-shot capture and explicit bundle inclusion |
@@ -58,6 +60,7 @@ The generator does not upload the bundle or intentionally call an external provi
 - `windowsShell.supported` distinguishes platform support; `artifacts` names the shell entries expected in the archive; `failureCount` reports collection/export failures.
 - `diagnostics/webview2.json` records up to 128 `ProcessFailed`, `BrowserProcessExited`, and pet page-visibility events. A nonzero `droppedEventCount` means earlier events were evicted. Empty events prove only that registered handlers observed no failure; inspect `registeredWindows` and `registrationFailures` before treating the absence as evidence.
 - `renderEvidence.includeRequested` is the user's second consent boundary at bundle generation. `pendingCapture` means a local one-shot capture existed; `artifacts` lists only screenshots actually included. Missing referenced screenshots, hash/size mismatch, partial capture errors, or a large `startDeltaMs` are explicit evidence gaps.
+- `install-integrity-v1` means `install/integrity.json` was collected. Older bundles without the capability remain valid; the inspector reports `evidence: not-collected` and must not infer either consistency or corruption.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
 
@@ -116,6 +119,21 @@ The current snapshot and each journal snapshot may contain:
 
 Use `recordedAt` and event `receivedAt` to narrow the incident window. Treat `droppedEventCount`, `truncatedEventCount`, malformed journal records, missing referenced artifacts, or snapshot `probeErrors` as explicit coverage gaps. A geometry candidate is evidence about window bounds, not proof that Windows internally classified the window as fullscreen.
 
+## Install Integrity Evidence
+
+`install-integrity-v1` cross-checks independently embedded and installed identities instead of treating file existence as proof of a complete upgrade. Its top-level `status` is one of:
+
+- `consistent`: shell identity, active receipt, payload manifest and every manifest-listed file agree; any recorded readiness identities also agree;
+- `incomplete_install`: the receipt, payload, manifest or transaction state is missing, unreadable, invalid, unsafe, or otherwise incomplete;
+- `shell_receipt_mismatch`: the newly running shell does not match the active receipt selected on disk;
+- `payload_hash_mismatch`: payload identity, manifest identity, required capabilities, or a file hash does not agree;
+- `runtime_identity_mismatch`: a service answered readiness with a build/profile/hash different from the shell's expected identity;
+- `unavailable`: source/dev builds have no embedded package identity, or the collector could not classify the evidence.
+
+The `shell`, `activeInstall`, and `payload` objects expose build/profile identity hashes and only the receipt's relative payload path. `payload.runtimeExecutableSha256` is the expected frozen runtime hash from the validated manifest. `runtime.observedReadiness` is the most recent authenticated readiness body observed by the supervisor, not a historical process inventory. `runtime.jobObject` records whether packaged supervision created a Job Object and how many product children were assigned. `residue` reports the legacy fixed runtime and incomplete transaction count; residue can be pending cleanup even when the active version is otherwise consistent.
+
+An absent observed readiness value means the service had not produced a successful HTTP readiness body during the current shell process. It does not mean the runtime executable was absent. Conversely, `consistent` establishes current disk and observed identity consistency; it does not reconstruct a previous failed install that left no transaction or log evidence.
+
 ## WebView2 Process Evidence
 
 `webview2-process-health-v1` is a passive Windows-only observer. Each registered WebView contributes `ProcessFailed`; one shared environment contributes `BrowserProcessExited`. The pet WebView also reports `page-visibility` transitions so an armed one-shot capture can trigger after a real hidden interval. The producer records runtime version, whether a failure-report folder is available, metadata for up to 16 recent `.dmp` files (name, size, modified time; never dump contents), registered window labels, registration failures, DXGI adapter/driver identity, DWM composition state, and a bounded oldest-evicted event list. The same events are also written as `source: webview2` records in the bounded `tauri.log.runtime*` journal, so a bundle generated after restarting the desktop shell can still retain the prior process failure. A shared process failure can appear once per affected window; correlate by process session, timestamp, kind, reason, exit code, and a nearby failure-report timestamp instead of counting matching window events as independent crashes.
@@ -139,6 +157,6 @@ The pixel metrics intentionally treat alpha below 16 as transparent, so a transp
 
 ## Redaction and Privacy Boundary
 
-The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
+The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Install-integrity evidence emits stable identity hashes, relative paths, counts, and status codes rather than install-root paths or process command lines. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
 
 This is credential protection, not general content review. Selected sessions, problem text, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.

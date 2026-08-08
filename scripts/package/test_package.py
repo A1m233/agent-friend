@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
+
+import brotli
 
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
@@ -65,6 +69,174 @@ def test_packaging_environment_removes_credentials(monkeypatch) -> None:
     assert env["AGENT_FRIEND_CONFIG_MODE"] == "env-only"
 
 
+def test_child_build_output_is_safe_for_non_utf8_windows_console() -> None:
+    package = _load("package_run_console", PACKAGE_DIR / "run.py")
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="gbk")
+
+    package._write_console_text("build complete \u2713\n", stream=stream)
+
+    assert raw.getvalue().decode("gbk").splitlines() == ["build complete ?"]
+
+
+def test_tauri_package_explicitly_selects_the_desktop_shell_binary() -> None:
+    cargo = tomllib.loads(
+        (PACKAGE_DIR.parent.parent / "frontend" / "src-tauri" / "Cargo.toml").read_text("utf-8")
+    )
+    main_source = (
+        PACKAGE_DIR.parent.parent / "frontend" / "src-tauri" / "src" / "main.rs"
+    ).read_text("utf-8")
+
+    assert cargo["package"]["default-run"] == "app"
+    assert "agent-friend-executable-role:desktop-shell-v1" in main_source
+
+
+def test_installer_smoke_build_reuses_only_a_complete_validated_baseline(
+    tmp_path, monkeypatch
+) -> None:
+    package = _load("package_run_reused_smoke_baseline", PACKAGE_DIR / "run.py")
+    roots = package.PackageRoots(
+        repo_root=tmp_path / "repo",
+        state_root=tmp_path / "state",
+        cache_dir=tmp_path / "state" / "cache",
+        work_root=tmp_path / "state" / "work" / "repo" / "worktree",
+        releases_root=tmp_path / "releases",
+        repo_id="repo",
+        worktree_id="worktree",
+    )
+    baseline_id = "baseline-build"
+    baseline = package.create_build_paths(roots, build_id=baseline_id)
+    baseline.payload_stage.mkdir(parents=True)
+    baseline.runtime_stage.mkdir(parents=True)
+    baseline_shell = baseline.build_dir / "smoke-baseline-shell.exe"
+    baseline_shell.write_bytes(package.DESKTOP_SHELL_ROLE_MARKER + b"-baseline-shell")
+    identity = package.build_identity(
+        product_version="1.2.3",
+        build_id=baseline_id,
+        source={"commit": "a" * 40, "dirty": True, "tree_sha256": "b" * 64},
+        local_test=True,
+        trusted_beta=False,
+        profile=package.resolve_install_profile("installer-smoke"),
+    )
+    runtime = baseline.payload_stage / "runtime" / "agent-friend-runtime.exe"
+    runtime.parent.mkdir(parents=True)
+    runtime.write_bytes(b"baseline-runtime")
+    package.write_payload_manifest(baseline.payload_stage, identity)
+
+    candidate_installer = tmp_path / "candidate.exe"
+    candidate_installer.write_bytes(b"candidate")
+    child_calls = 0
+
+    def fake_child_build(_roots, *, offline):
+        nonlocal child_calls
+        child_calls += 1
+        assert offline is True
+        return "candidate-build", candidate_installer
+
+    captured: dict[str, object] = {}
+
+    def fake_write_report(_roots, **kwargs):
+        captured.update(kwargs)
+        return tmp_path / "build-report.json"
+
+    monkeypatch.setattr(package, "_child_smoke_build", fake_child_build)
+    monkeypatch.setattr(
+        package,
+        "read_project_version",
+        lambda _root: type("Project", (), {"version": "1.2.3"})(),
+    )
+    monkeypatch.setattr(package, "write_installer_smoke_build_report", fake_write_report)
+
+    report = package._build_installer_smoke_pair(
+        roots,
+        offline=True,
+        baseline_build_id=baseline_id,
+    )
+
+    assert report == tmp_path / "build-report.json"
+    assert child_calls == 1
+    assert captured["baseline_build_id"] == baseline_id
+    assert captured["candidate_build_id"] == "candidate-build"
+
+    runtime.write_bytes(b"tampered-runtime")
+    try:
+        package._build_installer_smoke_pair(
+            roots,
+            offline=True,
+            baseline_build_id=baseline_id,
+        )
+    except RuntimeError as exc:
+        assert "payload file" in str(exc)
+    else:
+        raise AssertionError("a tampered installer-smoke baseline must be rejected")
+
+
+def test_production_installer_gate_requires_explicit_matching_smoke_report(
+    tmp_path, monkeypatch
+) -> None:
+    package = _load("package_run_smoke_reuse_gate", PACKAGE_DIR / "run.py")
+    roots = package.PackageRoots(
+        repo_root=tmp_path / "repo",
+        state_root=tmp_path / "state",
+        cache_dir=tmp_path / "state" / "cache",
+        work_root=tmp_path / "state" / "work",
+        releases_root=tmp_path / "releases",
+        repo_id="repo",
+        worktree_id="worktree",
+    )
+    inputs = package.InstallerVerificationInputs(
+        schema_version=1,
+        scope="windows-installer-shared-behavior-v1",
+        package_input_sha256="d" * 64,
+        file_count=10,
+        build_environment=(("rustc", "rustc 1"),),
+    )
+    try:
+        package._verify_installer_smoke_gate(
+            roots,
+            step="all",
+            profile=package.resolve_install_profile("production"),
+            impact={"classification": "installer-sensitive"},
+            smoke_report=None,
+            verification_inputs=inputs,
+        )
+    except RuntimeError as exc:
+        assert "require an explicit --smoke-report" in str(exc)
+    else:
+        raise AssertionError("installer-sensitive production build accepted no smoke report")
+
+    assert (
+        package._verify_installer_smoke_gate(
+            roots,
+            step="all",
+            profile=package.resolve_install_profile("production"),
+            impact={"classification": "standard"},
+            smoke_report=None,
+            verification_inputs=inputs,
+        )
+        is None
+    )
+
+    report = tmp_path / "smoke.json"
+    expected = {"candidate": {"buildId": "candidate-build"}}
+    monkeypatch.setattr(
+        package,
+        "verify_smoke_report_for_reuse",
+        lambda path, *, roots, expected_verification_inputs: expected,
+    )
+    assert (
+        package._verify_installer_smoke_gate(
+            roots,
+            step="all",
+            profile=package.resolve_install_profile("production"),
+            impact={"classification": "installer-sensitive"},
+            smoke_report=report,
+            verification_inputs=inputs,
+        )
+        == expected
+    )
+
+
 def test_frozen_smoke_uses_an_explicit_non_secret_provider_placeholder() -> None:
     source = (PACKAGE_DIR / "run.py").read_text("utf-8")
     assert '"DEEPSEEK_API_KEY"] = "package-smoke-not-a-real-credential"' in source
@@ -113,7 +285,7 @@ def test_installed_smoke_requires_complete_packaged_runtime(tmp_path) -> None:
         package._smoke_installed_runtime(tmp_path)
     except RuntimeError as exc:
         assert "installed runtime is incomplete" in str(exc)
-        assert "agent-friend-runtime.exe" in str(exc)
+        assert "active-install.json" in str(exc)
     else:
         raise AssertionError("incomplete installed runtime must fail closed")
 
@@ -127,9 +299,13 @@ def test_cloudflared_lock_has_pinned_version_and_hash() -> None:
 
 def test_xiaohongshu_license_is_pinned_to_the_source_commit() -> None:
     package = _load("package_run_xiaohongshu_license", PACKAGE_DIR / "run.py")
+    _, version, commit, filenames = package._windows_xiaohongshu_contract()
 
-    assert package.XIAOHONGSHU_LICENSE_URL.endswith(
-        "/3aacfb3583482424c0170e86e05725df940dd35e/LICENSE"
+    assert version == "v2.2.7"
+    assert commit == "3aacfb3583482424c0170e86e05725df940dd35e"
+    assert filenames == (
+        "xiaohongshu-mcp-windows-amd64.exe",
+        "xiaohongshu-login-windows-amd64.exe",
     )
     assert (
         package.XIAOHONGSHU_LICENSE_SHA256
@@ -280,7 +456,8 @@ def test_nsis_upgrade_preserves_and_normalizes_the_fixed_autostart_entry() -> No
     assert "MUI_CUSTOMFUNCTION_GUIINIT AgentFriendCaptureAutostart" in hooks
     assert "AgentFriendAutostartCaptured" in hooks
     assert "NSIS_HOOK_POSTINSTALL" in hooks
-    assert '"agent-friend" "$\\"$INSTDIR\\${MAINBINARYNAME}.exe$\\" --autostart"' in hooks
+    assert '"${AGENT_FRIEND_AUTOSTART_VALUE}"' in hooks
+    assert "$(AgentFriendIntegrityFailed)" in hooks
 
 
 def test_nsis_uninstall_uses_tauri_cleanup_without_touching_private_startup_state() -> None:
@@ -292,25 +469,113 @@ def test_nsis_uninstall_uses_tauri_cleanup_without_touching_private_startup_stat
 
 
 def test_tauri_cli_is_pinned_for_the_verified_nsis_template() -> None:
+    package = _load("package_run_nsis_overlay", PACKAGE_DIR / "run.py")
     package_json = json.loads(
         (PACKAGE_DIR.parent.parent / "frontend" / "package.json").read_text("utf-8")
     )
     assert package_json["devDependencies"]["@tauri-apps/cli"] == "2.11.2"
+    assert package.TAURI_NSIS_TEMPLATE_SHA256 == (
+        "ee84148e405adc4d736a46456dd8345a644751bd1f28a335dd7fd833a32d7c3e"
+    )
 
 
-def test_nsis_install_uninstall_refuse_to_kill_a_running_app() -> None:
+def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state() -> None:
+    package = _load("package_run_nsis_overlay_contract", PACKAGE_DIR / "run.py")
+    source = (
+        '{{#if installer_hooks}}\n!include "{{installer_hooks}}"\n{{/if}}\n'
+        '  !if "${DISPLAYLANGUAGESELECTOR}" == "true"\n'
+        "    !insertmacro MUI_LANGDLL_DISPLAY\n"
+        "  !endif\n"
+        '  nsis_tauri_utils::SemverCompare "${VERSION}" $R0\n'
+        "  Pop $R0\n"
+        '    StrCpy $R2 "$(addOrReinstall)"\n'
+        '      MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"\n'
+        "      Abort\n"
+        "    ${EndIf}\n"
+        "  reinst_done:\n"
+        "!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive\n"
+        "!insertmacro MUI_PAGE_DIRECTORY\n"
+        "Section Install\n"
+        "  SetOutPath $INSTDIR\n"
+        "  !ifmacrodef NSIS_HOOK_PREUNINSTALL\n"
+        "    !insertmacro NSIS_HOOK_PREUNINSTALL\n"
+        "  !endif\n\n"
+        '  !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"\n'
+    )
+    identity = package.build_identity(
+        product_version="1.2.3",
+        build_id="build-123",
+        source={"commit": "a" * 40, "dirty": False, "tree_sha256": "b" * 64},
+        local_test=True,
+        trusted_beta=False,
+        profile=package.resolve_install_profile("installer-smoke"),
+    )
+
+    generated = package._apply_nsis_template_overlay(
+        source,
+        helper_path=PACKAGE_DIR / "helper.exe",
+        identity=identity,
+        profile=package.resolve_install_profile("installer-smoke"),
+        trusted_resources=None,
+    )
+
+    assert "StrCpy $LANGUAGE ${LANG_SIMPCHINESE}" in generated
+    assert "ReadRegStr $R9 HKCU" in generated
+    assert "ReadRegDWORD $R9 HKCU" not in generated
+    assert "!define MUI_LANGDLL_ALWAYSSHOW" in generated
+    assert generated.index("!define MUI_LANGDLL_ALWAYSSHOW") < generated.index(
+        "!insertmacro MUI_LANGDLL_DISPLAY"
+    )
+    assert "${AndIf} $WixMode != 1" in generated
+    assert "AgentFriendDowngradeBlocked" in generated
+    assert "AgentFriendRepairOrReinstall" in generated
+    assert "AgentFriendConfirmInstallRoot" in generated
+    assert "Same-version uninstall is a terminal maintenance action" in generated
+    assert '!define AGENT_FRIEND_PROFILE_ID "installer-smoke"' in generated
+    assert "!insertmacro AGENT_FRIEND_RESOLVE_INSTALL_ROOT_INTENT" in generated
+    assert 'SetOutPath "$PLUGINSDIR"' in generated
+    assert "File /oname=agent-friend-installer-helper.exe" in generated
+    assert 'SetOutPath "$INSTDIR"' in generated
+    assert "agent-friend requires its fail-closed uninstall guard" in generated
+
+
+def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> None:
     hooks = (PACKAGE_DIR / "windows" / "nsis-hooks.nsh").read_text("utf-8")
 
     assert "NSIS_HOOK_PREINSTALL" in hooks
     assert "NSIS_HOOK_PREUNINSTALL" in hooks
     assert 'FindProcessCurrentUser "${executableName}"' in hooks
-    assert 'ReadRegStr $R4 SHCTX "${UNINSTKEY}" "MainBinaryName"' in hooks
-    assert "IfSilent app_closed_noninteractive_" in hooks
-    assert "${If} $PassiveMode = 1" in hooks
-    assert "SetErrorLevel 32" in hooks
+    assert "${AGENT_FRIEND_INSTALLER_HELPER}" in hooks
+    assert "preinstall --install-root" in hooks
+    assert "verify --install-root" in hooks
+    assert "activate --install-root" in hooks
+    assert "retire-source --install-root" in hooks
+    assert "commit --install-root" in hooks
+    assert "rollback --install-root" in hooks
+    assert "--registered-root" in hooks
+    assert "--move-intent" in hooks
     assert "!macroundef CheckIfAppIsRunning" in hooks
     assert "!macro CheckIfAppIsRunning executableName productName" in hooks
+    assert "MUI_CUSTOMFUNCTION_ABORT AgentFriendUserAbort" in hooks
+    assert "Function .onUserAbort" not in hooks
     assert "KillProcess" not in hooks
+
+
+def test_nsis_custom_messages_have_chinese_and_english_pairs() -> None:
+    hooks = (PACKAGE_DIR / "windows" / "nsis-hooks.nsh").read_text("utf-8")
+    pairs: dict[str, set[str]] = {}
+    for line in hooks.splitlines():
+        if not line.startswith("LangString "):
+            continue
+        _, key, language, _text = line.split(" ", 3)
+        pairs.setdefault(key, set()).add(language)
+
+    assert pairs
+    assert all(languages == {"2052", "1033"} for languages in pairs.values())
+    assert (
+        'LangString AgentFriendDowngradeBlocked 2052 "当前已安装的 agent-friend 是更新的版本，此安装包无法继续"'
+        in hooks
+    )
 
 
 def test_runtime_entry_parser_requires_explicit_subcommand() -> None:
@@ -453,9 +718,10 @@ def test_nsis_postinstall_imports_and_deletes_trusted_seed() -> None:
     assert "NSIS_HOOK_POSTINSTALL" in hooks
     assert "trusted-credential-seed.bin" in hooks
     assert "trusted-credential-seed.key" in hooks
-    assert 'seed-credentials --payload "$R1" --key-file "$R2"' in hooks
-    assert 'Delete "$R1"' in hooks
-    assert 'Delete "$R2"' in hooks
+    assert "seed-credentials --payload" in hooks
+    assert "$PLUGINSDIR\\trusted-credential-seed.bin" in hooks
+    assert 'Delete "$PLUGINSDIR\\trusted-credential-seed.bin"' in hooks
+    assert 'Delete "$PLUGINSDIR\\trusted-credential-seed.key"' in hooks
     assert "SetErrorLevel 33" in hooks
 
 
@@ -487,22 +753,33 @@ def test_trusted_resources_use_keyring_and_never_write_plaintext(tmp_path, monke
         for index, name in enumerate(REQUIRED_CREDENTIAL_NAMES)
     }
     store.values.update(credentials)
+    identity = package.build_identity(
+        product_version="1.2.3",
+        build_id=build_paths.build_id,
+        source={"commit": "a" * 40, "dirty": True, "tree_sha256": "b" * 64},
+        local_test=True,
+        trusted_beta=True,
+        profile=package.resolve_install_profile("production"),
+    )
+    nsis_template = tmp_path / "installer.nsi"
+    nsis_template.write_text("template", encoding="utf-8")
+    package._prepare_trusted_resources(build_paths, credential_store=store)
 
     config_path = package._write_package_config(
         build_paths,
-        local_test=True,
-        source={"commit": "a" * 40, "dirty": True},
+        identity=identity,
+        profile=package.resolve_install_profile("production"),
         trusted_beta=True,
-        credential_store=store,
+        nsis_template=nsis_template,
     )
     payload, key = package._trusted_resource_paths(build_paths)
     assert payload.is_file()
     assert key.is_file()
     config = json.loads(config_path.read_text("utf-8"))
     resources = config["bundle"]["resources"]
-    assert resources[payload.as_posix()] == "trusted-credential-seed.bin"
-    assert resources[key.as_posix()] == "trusted-credential-seed.key"
-    assert resources[build_paths.runtime_stage.as_posix() + "/"] == "runtime"
+    assert payload.as_posix() not in resources
+    assert key.as_posix() not in resources
+    assert resources[build_paths.payload_stage.as_posix() + "/"] == "packages/trusted-test"
     metadata_path = package._package_metadata_path(build_paths)
     assert resources[metadata_path.as_posix()] == "package-build.json"
     metadata = json.loads(metadata_path.read_text("utf-8"))
@@ -669,6 +946,134 @@ def test_semver_validation_and_precedence() -> None:
             raise AssertionError(f"invalid SemVer was accepted: {invalid}")
 
 
+def test_package_build_intent_requires_an_explicit_governed_channel() -> None:
+    package = _load("package_run_build_intent", PACKAGE_DIR / "run.py")
+    production = package.resolve_install_profile("production")
+    installer_smoke = package.resolve_install_profile("installer-smoke")
+
+    for intent in (
+        {"local_test": True, "trusted_beta": False, "release": False},
+        {"local_test": False, "trusted_beta": True, "release": False},
+        {"local_test": False, "trusted_beta": False, "release": True},
+    ):
+        package._validate_package_build_intent(
+            step="all",
+            profile=production,
+            **intent,
+        )
+    package._validate_package_build_intent(
+        step="all",
+        profile=installer_smoke,
+        local_test=True,
+        trusted_beta=False,
+        release=False,
+    )
+
+    invalid = (
+        (
+            {"step": "all", "profile": production},
+            {"local_test": False, "trusted_beta": False, "release": False},
+            "package intent is required",
+        ),
+        (
+            {"step": "all", "profile": production},
+            {"local_test": True, "trusted_beta": False, "release": True},
+            "cannot be combined",
+        ),
+        (
+            {"step": "all", "profile": installer_smoke},
+            {"local_test": False, "trusted_beta": False, "release": False},
+            "requires --local-test",
+        ),
+        (
+            {"step": "all", "profile": installer_smoke},
+            {"local_test": True, "trusted_beta": False, "release": True},
+            "cannot be combined",
+        ),
+        (
+            {"step": "runtime", "profile": production},
+            {"local_test": False, "trusted_beta": True, "release": False},
+            "requires the installer or all step",
+        ),
+    )
+    for context, intent, message in invalid:
+        try:
+            package._validate_package_build_intent(**context, **intent)
+        except RuntimeError as error:
+            assert message in str(error)
+        else:
+            raise AssertionError(f"invalid package intent was accepted: {context} {intent}")
+
+
+def test_trusted_beta_channel_allocates_monotonic_daily_prerelease_versions(tmp_path) -> None:
+    versioning = _load("package_versioning_trusted_beta", PACKAGE_DIR / "versioning.py")
+    channel = versioning.configure_trusted_beta_channel(
+        tmp_path,
+        "1.3.0",
+        minimum_release_version=versioning.SemVer.parse("1.2.3"),
+    )
+
+    first = versioning.next_trusted_beta_version(
+        channel,
+        [],
+        now=datetime(2026, 8, 8, tzinfo=UTC),
+    )
+    third = versioning.next_trusted_beta_version(
+        channel,
+        [first, versioning.SemVer.parse("1.3.0-beta.20260808.2")],
+        now=datetime(2026, 8, 8, tzinfo=UTC),
+    )
+    next_day = versioning.next_trusted_beta_version(
+        channel,
+        [third],
+        now=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+    assert str(first) == "1.3.0-beta.20260808.1"
+    assert str(third) == "1.3.0-beta.20260808.3"
+    assert str(next_day) == "1.3.0-beta.20260809.1"
+    assert first > versioning.SemVer.parse("1.2.3")
+    assert next_day < versioning.SemVer.parse("1.3.0")
+    assert versioning.read_trusted_beta_channel(tmp_path) == channel
+
+
+def test_trusted_beta_channel_rejects_unstable_or_non_increasing_targets(tmp_path) -> None:
+    versioning = _load("package_versioning_trusted_beta_guard", PACKAGE_DIR / "versioning.py")
+    minimum = versioning.SemVer.parse("1.2.3")
+
+    for value in ("1.2.3", "1.3.0-beta.1", "1.3.0+build"):
+        try:
+            versioning.configure_trusted_beta_channel(
+                tmp_path,
+                value,
+                minimum_release_version=minimum,
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f"invalid trusted-beta target was accepted: {value}")
+
+
+def test_trusted_beta_channel_fails_closed_on_clock_rollback(tmp_path) -> None:
+    versioning = _load("package_versioning_trusted_beta_clock", PACKAGE_DIR / "versioning.py")
+    channel = versioning.configure_trusted_beta_channel(
+        tmp_path,
+        "1.3.0",
+        minimum_release_version=versioning.SemVer.parse("1.2.3"),
+    )
+
+    try:
+        versioning.next_trusted_beta_version(
+            channel,
+            [versioning.SemVer.parse("1.3.0-beta.20260809.1")],
+            now=datetime(2026, 8, 8, tzinfo=UTC),
+        )
+    except RuntimeError as error:
+        assert "system UTC date" in str(error)
+    else:
+        raise AssertionError("clock rollback produced a non-monotonic trusted-beta version")
+
+
 def test_project_version_set_updates_all_product_metadata(tmp_path) -> None:
     versioning = _load("package_versioning_update", PACKAGE_DIR / "versioning.py")
     _write_version_fixture(tmp_path)
@@ -788,8 +1193,8 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
         common_git_dir=common_git,
     )
     build_paths = package.create_build_paths(roots, build_id="external-build")
-    build_paths.runtime_stage.mkdir(parents=True)
-    (build_paths.runtime_stage / "runtime-inventory.json").write_text("{}", encoding="utf-8")
+    build_paths.payload_stage.mkdir(parents=True)
+    (build_paths.payload_stage / "payload-manifest.json").write_text("{}", encoding="utf-8")
     build_paths.cargo_target_dir.mkdir(parents=True)
     stale_marker = build_paths.cargo_target_dir / "stale-frontend-embedding"
     stale_marker.write_text("must be removed", encoding="utf-8")
@@ -810,11 +1215,22 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     monkeypatch.setattr(package, "TAURI_CONFIG", base_config)
     monkeypatch.setattr(package.shutil, "which", lambda _: "pnpm")
     monkeypatch.setattr(package, "_toolchain_versions", lambda _: {"tauri_cli": "2.11.2"})
+    generated_template = tmp_path / "installer.generated.nsi"
+    generated_template.write_text("template", encoding="utf-8")
+    helper = tmp_path / "agent-friend-installer-helper.exe"
+    helper.write_bytes(b"helper")
+    monkeypatch.setattr(package, "_build_installer_helper", lambda _paths, *, env: helper)
+    monkeypatch.setattr(
+        package,
+        "_generate_nsis_template",
+        lambda _build_paths, **_kwargs: generated_template,
+    )
     published: dict[str, object] = {}
 
     def fake_run(command, *, cwd=package.REPO_ROOT, env=None) -> None:
         assert env is not None
         if command[1:3] == ["run", "build"]:
+            assert env["AGENT_FRIEND_PRODUCT_VERSION"] == "1.2.3"
             assert env["CARGO_TARGET_DIR"] == str(build_paths.cargo_target_dir)
             assert command[3] == "--outDir"
             build_paths.frontend_dist.mkdir(parents=True)
@@ -826,13 +1242,15 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
             assert "app" in command
             assert stale_marker.exists()
             return
+        assert env["AGENT_FRIEND_PRODUCT_VERSION"] == "1.2.3"
         assert stale_marker.exists()
         config_path = Path(command[command.index("--config") + 1])
         config = json.loads(config_path.read_text("utf-8"))
+        assert config["version"] == "1.2.3"
         resources = config["bundle"]["resources"]
         assert "package-runtime/runtime/" not in resources
-        runtime_resource = build_paths.runtime_stage.as_posix() + "/"
-        assert resources[runtime_resource] == "runtime"
+        payload_resource = build_paths.payload_stage.as_posix() + "/"
+        assert resources[payload_resource] == "packages/external-build"
         assert config["build"]["beforeBuildCommand"] == ""
         assert config["build"]["frontendDist"] == package._tauri_relative_path(
             build_paths.frontend_dist
@@ -841,9 +1259,21 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
         bundle.mkdir(parents=True)
         (bundle / "candidate.exe").write_bytes(b"candidate")
         executable = build_paths.cargo_target_dir / "release" / "agent-friend.exe"
-        executable.write_bytes(
-            b"\0".join(name.encode("utf-8") for name in package.REQUIRED_FRONTEND_ENTRYPOINTS)
+        codegen = (
+            build_paths.cargo_target_dir
+            / "release"
+            / "build"
+            / "app-fake"
+            / "out"
+            / "tauri-codegen-assets"
         )
+        codegen.mkdir(parents=True)
+        for index, path in enumerate(sorted(build_paths.frontend_dist.rglob("*"))):
+            if path.is_file():
+                (codegen / f"{index:064x}{path.suffix}").write_bytes(
+                    brotli.compress(path.read_bytes())
+                )
+        executable.write_bytes(package.DESKTOP_SHELL_ROLE_MARKER + b"-with-compressed-assets")
 
     def fake_publish(candidate, *, releases_root, manifest, local_test):
         published.update(
@@ -857,10 +1287,26 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     monkeypatch.setattr(package, "_run", fake_run)
     monkeypatch.setattr(package, "publish_installer", fake_publish)
 
+    identity = package.build_identity(
+        product_version="1.2.3",
+        build_id=build_paths.build_id,
+        source={"commit": "a" * 40, "dirty": True, "tree_sha256": "b" * 64},
+        local_test=True,
+        trusted_beta=False,
+        profile=package.resolve_install_profile("production"),
+    )
     result = package._build_installer(
         "1.2.3",
         build_paths=build_paths,
-        source={"commit": "a" * 40, "dirty": True},
+        identity=identity,
+        profile=package.resolve_install_profile("production"),
+        verification_inputs=package.InstallerVerificationInputs(
+            schema_version=1,
+            scope="windows-installer-shared-behavior-v1",
+            package_input_sha256="c" * 64,
+            file_count=10,
+            build_environment=(("rustc", "rustc 1"),),
+        ),
         local_test=True,
     )
 
@@ -870,7 +1316,9 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     manifest = published["manifest"]
     assert isinstance(manifest, dict)
     assert manifest["build_mode"] == "local-test"
+    assert manifest["release_channel"] == "local-test"
     assert manifest["publishable"] is False
+    assert manifest["installer_verification"]["packageInputSha256"] == "c" * 64
     metadata = json.loads(package._package_metadata_path(build_paths).read_text("utf-8"))
     assert metadata["distribution"] == "ordinary"
 
@@ -893,19 +1341,63 @@ def test_frontend_dist_validation_rejects_missing_product_entrypoints(tmp_path) 
 
 def test_embedded_frontend_validation_rejects_stale_tauri_executable(tmp_path) -> None:
     package = _load("package_run_embedded_frontend_guard", PACKAGE_DIR / "run.py")
+    frontend_dist = tmp_path / "frontend-dist"
+    frontend_dist.mkdir()
+    for name in ("index.html", "chat.html", "pet.html"):
+        (frontend_dist / name).write_text(name, encoding="utf-8")
+    cargo_target = tmp_path / "target"
+    codegen = cargo_target / "release" / "build" / "app-fake" / "out" / "tauri-codegen-assets"
+    codegen.mkdir(parents=True)
+    for index, name in enumerate(("index.html", "chat.html")):
+        (codegen / f"{index:064x}.html").write_bytes(
+            brotli.compress((frontend_dist / name).read_bytes())
+        )
     executable = tmp_path / "agent-friend.exe"
-    executable.write_bytes(b"index.html\0chat.html")
+    executable.write_bytes(package.DESKTOP_SHELL_ROLE_MARKER + b"-with-stale-assets")
 
     try:
         package._validate_embedded_frontend(
             executable,
+            frontend_dist,
             ["index.html", "chat.html", "pet.html"],
+            cargo_target,
         )
     except RuntimeError as error:
-        assert "does not contain the complete frontend" in str(error)
+        assert "Brotli codegen assets" in str(error)
         assert "pet.html" in str(error)
     else:
         raise AssertionError("stale Tauri executable must be rejected")
+
+
+def test_embedded_frontend_validation_rejects_a_helper_binary(tmp_path) -> None:
+    package = _load("package_run_shell_role_guard", PACKAGE_DIR / "run.py")
+    frontend_dist = tmp_path / "frontend-dist"
+    frontend_dist.mkdir()
+    entrypoints = ["index.html", "chat.html", "pet.html"]
+    for name in entrypoints:
+        (frontend_dist / name).write_text(name, encoding="utf-8")
+    cargo_target = tmp_path / "target"
+    codegen = cargo_target / "release" / "build" / "app-fake" / "out" / "tauri-codegen-assets"
+    codegen.mkdir(parents=True)
+    for index, name in enumerate(entrypoints):
+        (codegen / f"{index:064x}.html").write_bytes(
+            brotli.compress((frontend_dist / name).read_bytes())
+        )
+    executable = tmp_path / "agent-friend.exe"
+    executable.write_bytes(b"agent-friend-installer-helper")
+
+    try:
+        package._validate_embedded_frontend(
+            executable,
+            frontend_dist,
+            entrypoints,
+            cargo_target,
+        )
+    except RuntimeError as error:
+        assert "executable role mismatch" in str(error)
+        assert "Cargo default-run" in str(error)
+    else:
+        raise AssertionError("an installer helper must not pass as the desktop shell")
 
 
 def test_formal_build_rejects_dirty_source(tmp_path) -> None:
@@ -930,7 +1422,7 @@ def test_formal_build_rejects_dirty_source(tmp_path) -> None:
     try:
         package._validate_formal_build(
             roots,
-            project,
+            project.version,
             source={"commit": "a" * 40, "dirty": True},
             distribution="ordinary",
         )

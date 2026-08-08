@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 3,
+  "schemaRevision": 4,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -103,6 +103,16 @@
       "entryPatterns": [
         "diagnostics/webview2-render-evidence.json",
         "render-evidence/*.png"
+      ]
+    },
+    {
+      "id": "install-integrity-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "install/integrity.json"
+      ],
+      "entryPatterns": [
+        "install/integrity.json"
       ]
     }
   ]

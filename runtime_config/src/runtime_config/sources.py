@@ -27,6 +27,8 @@ from .credentials import (
 DEFAULT_KEYRING_SERVICE = "agent-friend"
 SETTINGS_BUNDLE_ID = "com.agentfriend.desktop"
 SETTINGS_STORE_FILE = "settings.json"
+KEYRING_SERVICE_ENV = "AGENT_FRIEND_KEYRING_SERVICE"
+SETTINGS_BUNDLE_ID_ENV = "AGENT_FRIEND_SETTINGS_BUNDLE_ID"
 
 SETTINGS_NAME_MAP: dict[str, str] = {
     DEEPSEEK_MODEL: "deepseekModel",
@@ -171,10 +173,12 @@ class KeyringSource:
     def __init__(
         self,
         *,
-        service_name: str = DEFAULT_KEYRING_SERVICE,
+        service_name: str | None = None,
         backend: Any | None = None,
     ) -> None:
-        self._service_name = service_name
+        self._service_name = service_name or os.environ.get(
+            KEYRING_SERVICE_ENV, DEFAULT_KEYRING_SERVICE
+        )
         self._backend = backend
 
     def _keyring(self) -> Any:
@@ -237,7 +241,8 @@ def default_settings_path() -> Path:
         base = str(Path.home() / "Library" / "Application Support")
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / SETTINGS_BUNDLE_ID / SETTINGS_STORE_FILE
+    bundle_id = os.environ.get(SETTINGS_BUNDLE_ID_ENV, SETTINGS_BUNDLE_ID)
+    return Path(base) / bundle_id / SETTINGS_STORE_FILE
 
 
 class SettingsFileSource:

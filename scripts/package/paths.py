@@ -66,6 +66,7 @@ class BuildPaths:
     pyinstaller_dir: Path
     pyinstaller_cache_dir: Path
     runtime_stage: Path
+    payload_stage: Path
     frontend_dist: Path
     cargo_target_dir: Path
     generated_config_dir: Path
@@ -142,6 +143,7 @@ def create_build_paths(roots: PackageRoots, *, build_id: str) -> BuildPaths:
         pyinstaller_dir=build_dir / "pyinstaller",
         pyinstaller_cache_dir=roots.work_root / "build-cache" / "pyinstaller",
         runtime_stage=build_dir / "runtime-stage",
+        payload_stage=build_dir / "payload-stage",
         frontend_dist=build_dir / "frontend-dist",
         cargo_target_dir=roots.work_root / "build-cache" / "cargo-target",
         generated_config_dir=build_dir / "config",

@@ -19,7 +19,7 @@ use std::{
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::paths;
+use crate::{install_contract, paths};
 
 const BUILTIN_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const BUILTIN_BUNDLE_VERSION: &str = "040-2026-06-30";
@@ -212,6 +212,17 @@ fn dev_public_dir(relative: &str) -> PathBuf {
 }
 
 fn resolve_seed_dir(app: &tauri::AppHandle, resource_rel: &str, dev_public_rel: &str) -> PathBuf {
+    if let Ok(resource_root) = app.path().resource_dir() {
+        if let Ok(Some(active)) = install_contract::discover_active_payload(Some(&resource_root)) {
+            let path = active
+                .payload_root
+                .join(RESOURCE_SEED_ROOT)
+                .join(resource_rel);
+            if path.is_dir() {
+                return path;
+            }
+        }
+    }
     let resource = app
         .path()
         .resolve(

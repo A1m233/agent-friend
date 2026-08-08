@@ -1,0 +1,42 @@
+---
+description: agent-friend Windows 安装器完整性、版本化 payload、运行时身份、进程生命周期、本地化和真实覆盖升级的 Coding Agent 门禁
+globs: ["scripts/package/**", "frontend/src-tauri/src/install_contract.rs", "frontend/src-tauri/src/bin/agent-friend-installer-helper.rs", "frontend/src-tauri/src/runtime_services/**", "frontend/src-tauri/src/diagnostics/**", "agent_bridge/src/agent_bridge/lifecycle.py", "voice_bridge/src/voice_bridge/lifecycle.py", "runtime_config/src/runtime_config/build_identity.py"]
+alwaysApply: false
+codexLoad: preflight
+---
+
+# Windows Installer Integrity
+
+本 Rule 负责识别安装器敏感变更并约束 Coding Agent 的最低机器门禁。具体 profile、路径、manifest、scenario、report 和 hash 算法只以 `scripts/package/run.*` 的输出为准，不在 Rule 中复制。
+
+## 安装器敏感变更
+
+凡会改变已安装版本判定、安装根选择或迁移、安装时写入、active payload 选择、shell/runtime build identity、readiness identity、产品进程关闭/回收、安装失败恢复、安装器语言或 install-integrity diagnostics 的 diff，均按 installer-sensitive 处理。开始构建前运行 `scripts/package/run.* installer-contract`，使用其 `impact.classification` 和路径清单，不凭文件存在或主观判断降级。
+
+完整 `sourceTreeSha256` 只负责制品来源追溯；是否需要重跑隔离矩阵只认脚本输出的 `verificationInputs.packageInputSha256`。文档、Rule、Skill、adapter、进度证据或测试等明确不进入安装行为的变化可以保持该指纹不变；未知路径默认进入指纹并按 installer-sensitive 处理。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
+
+## 不得削弱的边界
+
+- active payload 必须经 versioned path、active receipt、manifest hash 和 build identity 选择；不得原地覆盖当前 active runtime，也不得回退到旧固定 runtime。
+- 只允许依据精确安装路径、active manifest 和 Restart Manager blocker 证据关闭产品自有进程；不得按进程名强杀，也不得影响 production 之外的同名进程。
+- packaged runtime 必须比较 shell 期望与实际 readiness 的 service/profile/build/hash，并使用受治理的 Windows Job Object；校验或 assign 失败时 fail closed。
+- 安装失败、中止或断电恢复必须保留可重试 transaction；不得把不完整 candidate 写成 active，也不得用 Ignore 跳过核心文件完整性。
+- 已安装版本高于 candidate 时，必须在停止进程、创建 transaction 或修改文件/注册表之前拒绝降级；不得提供覆盖、迁移或卸载绕路。
+- 安装器新旧关系只由 SemVer 产品版本决定，build ID 只用于精确构建追溯与完整性。稳定正式包必须显式使用 release 意图；不得把裸构建或同版本新 build 描述成升级。
+- 分发给可信测试者的带凭证包必须使用 trusted-beta 预发布渠道：下一稳定版本由用户每个开发周期显式配置一次，具体 `<target>-beta.<UTC YYYYMMDD>.<sequence>` 只由标准脚本在正式构建锁内分配。Coding Agent 不得自行推进 major/minor/patch、手拼 beta 序号或用 `--local-test` 产物代替可分发内测包。
+- 同一 profile 只能有一个受管理程序根。目标根不同必须有显式 move intent，并把旧根、新根、注册表、快捷方式和自启作为同一 transaction；普通 `/D` 目录漂移必须 fail closed。
+- 程序根迁移不得调用删除用户状态的卸载语义。用户数据、设置、日志和 keyring namespace 原位保持；Windows 默认日志目录若嵌套于旧程序根，只允许旧路径保留受保护的 `Logs`，不得留下 shell、runtime、payload、receipt 或 uninstaller。
+- 简体中文是首次默认语言，English 可选；所有交互式安装必须显示语言选择器，已保存语言只能作为预选值，不能使选择器消失；silent 模式不得因此挂起。所有项目自定义安装提示必须成对提供两种语言。
+
+## 最低门禁
+
+- contract/纯模型改动：`installer-contract`、对应单测和受影响项目检查。语言门禁必须检查渲染后模板包含始终显示交互式 selector 的契约；仅检查 `displayLanguageSelector=true`、语言资源存在或全新隔离身份首次启动不构成充分证据。
+- installer-sensitive 实现：上项之外，必须取得一个由标准脚本确认 `packageInputSha256` 匹配的通过报告。没有匹配报告时，构建 `installer-smoke` profile 的真实 local-test installer，运行 `installer-smoke`，再用候选 build ID 与 installer 文件执行 `installer-smoke-verify`；已有匹配报告时可由 production `installer|all --smoke-report <PATH>` 显式复用，不重跑矩阵。smoke 必须在任何安装 mutation 前按真实 baseline/candidate 制品执行磁盘空间预检；不得在容量不足时继续并把截断写入误归因为产品逻辑。
+- 诊断结构变化：同时更新 producer contract、Rust producer、inspect Skill、格式 reference 与 consumer fixture；旧 bundle 必须保持可读。
+- frozen runtime 变化继续服从 `frozen-runtime-packaging` Rule 的 runtime build 与 capability smoke。
+
+report 缺失或旧 schema、`packageInputSha256`、candidate build/hash、candidate release manifest、必需 scenario 任一不匹配，或验证未执行时，只能记录 verification gap；不得声称安装问题已解决、升级已验证或可以发布。Coding Agent 不得自行比较 commit/full-tree hash、猜测最近报告或手工声明输入等价；复用决定必须来自构建脚本的成功结果。
+
+## 真实 production 覆盖升级
+
+隔离 smoke 不修改 production 安装。Coding Agent 只有在确定性检查、完整 installer 和匹配候选的隔离 smoke report 全部通过后，才能展示当前 production 安装、运行组件、候选 build ID/hash 与预期影响，并取得本次操作的用户明确授权。授权只覆盖该候选的一次普通用户路径升级，不外推到以后运行；不得把 VM、额外 Windows 用户、手工备份或复杂预检变成正常用户升级步骤。

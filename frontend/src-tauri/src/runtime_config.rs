@@ -1,3 +1,4 @@
+use crate::install_contract;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -6,6 +7,12 @@ use std::{
 };
 
 const KEYRING_SERVICE: &str = "agent-friend";
+
+fn keyring_service() -> String {
+    install_contract::embedded_profile()
+        .map(|profile| profile.keyring_service)
+        .unwrap_or_else(|_| KEYRING_SERVICE.to_string())
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,40 +184,42 @@ fn require_secret(name: &str) -> Result<&'static SecretSpec, String> {
 }
 
 fn python_keyring_compound_target(name: &str) -> String {
-    format!("{name}@{KEYRING_SERVICE}")
+    format!("{name}@{}", keyring_service())
 }
 
-fn python_keyring_service_target() -> &'static str {
-    KEYRING_SERVICE
+fn python_keyring_service_target() -> String {
+    keyring_service()
 }
 
 #[cfg(test)]
 fn rust_keyring_default_target(name: &str) -> String {
-    format!("{name}.{KEYRING_SERVICE}")
+    format!("{name}.{}", keyring_service())
 }
 
 #[cfg(target_os = "windows")]
 fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
     let target = python_keyring_compound_target(name);
-    keyring::Entry::new_with_target(&target, KEYRING_SERVICE, name)
+    let service = keyring_service();
+    keyring::Entry::new_with_target(&target, &service, name)
         .map_err(|e| format!("runtime config keyring entry failed for {name}: {e}"))
 }
 
 #[cfg(not(target_os = "windows"))]
 fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, name)
+    keyring::Entry::new(&keyring_service(), name)
         .map_err(|e| format!("runtime config keyring entry failed for {name}: {e}"))
 }
 
 #[cfg(target_os = "windows")]
 fn legacy_rust_keyring_entry(name: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, name)
+    keyring::Entry::new(&keyring_service(), name)
         .map_err(|e| format!("runtime config keyring legacy entry failed for {name}: {e}"))
 }
 
 #[cfg(target_os = "windows")]
 fn python_service_keyring_entry(name: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new_with_target(python_keyring_service_target(), KEYRING_SERVICE, name)
+    let service = keyring_service();
+    keyring::Entry::new_with_target(&python_keyring_service_target(), &service, name)
         .map_err(|e| format!("runtime config keyring service entry failed for {name}: {e}"))
 }
 
@@ -221,9 +230,10 @@ fn keyring_configured(name: &str) -> Result<bool, String> {
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
     let mut options = ItemSearchOptions::new();
+    let service = keyring_service();
     options
         .class(ItemClass::generic_password())
-        .service(KEYRING_SERVICE)
+        .service(&service)
         .account(name)
         .cloud_sync(CloudSync::MatchSyncAny)
         .load_attributes(true)

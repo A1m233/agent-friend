@@ -3,6 +3,7 @@
 //! Python/bridge 侧用户数据路径仍由 `agent.paths` 负责；这里只管理 Tauri 壳自身
 //! 需要知道的路径，例如 plugin-store settings 文件与 Tauri 日志目录。
 
+use crate::install_contract;
 use std::path::PathBuf;
 
 pub const BUNDLE_ID: &str = "com.agentfriend.desktop";
@@ -22,8 +23,14 @@ pub const WEBVIEW_RENDER_EVIDENCE_DIR: &str = "webview-render-evidence";
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
 
+fn profile() -> install_contract::InstallProfile {
+    install_contract::embedded_profile()
+        .unwrap_or_else(|_| panic!("embedded install profile must be valid"))
+}
+
 fn app_store_path(base: PathBuf) -> PathBuf {
-    base.join(BUNDLE_ID).join(SETTINGS_STORE_PATH)
+    base.join(profile().settings_namespace)
+        .join(SETTINGS_STORE_PATH)
 }
 
 /// Tauri plugin-store 的 settings 文件绝对路径。
@@ -37,7 +44,10 @@ pub fn settings_store_path() -> Option<PathBuf> {
 
 /// 统一系统权限模块的处理历史；只保存应用历史，不保存系统状态真相。
 pub fn permission_state_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|base| base.join(BUNDLE_ID).join(PERMISSION_STATE_FILE))
+    dirs::config_dir().map(|base| {
+        base.join(profile().settings_namespace)
+            .join(PERMISSION_STATE_FILE)
+    })
 }
 
 /// 历史版本曾误按 local data dir 读 settings；启动期只作为兼容 fallback 使用。
@@ -55,7 +65,9 @@ pub fn user_data_dir() -> PathBuf {
         return PathBuf::from(p);
     }
 
-    dirs::data_dir().expect("data dir").join(APP_NAME)
+    dirs::data_dir()
+        .expect("data dir")
+        .join(profile().data_namespace)
 }
 
 /// Avatar 模型资源根目录：`<user_data_dir>/avatar-models`。
@@ -111,25 +123,30 @@ pub fn log_dir() -> PathBuf {
     {
         dirs::home_dir()
             .expect("home dir")
-            .join("Library/Logs/agent-friend")
+            .join("Library/Logs")
+            .join(profile().log_namespace)
     }
 
     #[cfg(target_os = "windows")]
     {
         dirs::data_local_dir()
             .expect("local data dir")
-            .join("agent-friend")
+            .join(profile().log_namespace)
             .join("Logs")
     }
 
     #[cfg(target_os = "linux")]
     {
         if let Ok(state) = std::env::var("XDG_STATE_HOME") {
-            PathBuf::from(state).join("agent-friend").join("log")
+            PathBuf::from(state)
+                .join(profile().log_namespace)
+                .join("log")
         } else {
             dirs::home_dir()
                 .expect("home dir")
-                .join(".local/state/agent-friend/log")
+                .join(".local/state")
+                .join(profile().log_namespace)
+                .join("log")
         }
     }
 }

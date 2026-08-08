@@ -195,6 +195,51 @@ def _build_bundle(
         },
         "diagnostics/runtime-services.json": {},
         "diagnostics/runtime-config.json": {"items": []},
+        "install/integrity.json": {
+            "schemaVersion": 1,
+            "status": "consistent",
+            "errorCode": None,
+            "shell": {
+                "available": True,
+                "buildId": "fixture",
+                "profileId": "production",
+                "buildIdentitySha256": "c" * 64,
+            },
+            "activeInstall": {
+                "present": True,
+                "parseable": True,
+                "buildId": "fixture",
+                "profileId": "production",
+                "buildIdentitySha256": "c" * 64,
+                "payloadManifestSha256": "d" * 64,
+                "payloadRelativePath": "packages/fixture",
+            },
+            "payload": {
+                "validated": True,
+                "buildId": "fixture",
+                "profileId": "production",
+                "buildIdentitySha256": "c" * 64,
+                "payloadManifestSha256": "d" * 64,
+                "runtimeExecutableSha256": "e" * 64,
+            },
+            "runtime": {
+                "observedReadiness": {
+                    "bridge": {
+                        "service": "bridge",
+                        "buildId": "fixture",
+                        "profileId": "production",
+                        "buildIdentitySha256": "c" * 64,
+                        "status": "ready",
+                    },
+                    "voice": None,
+                },
+                "jobObject": {"packaged": True, "created": True, "assignedCount": 1},
+            },
+            "residue": {
+                "legacyFixedRuntimePresent": False,
+                "incompleteTransactionCount": 0,
+            },
+        },
         "diagnostics/webview2.json": {
             "schemaVersion": 1,
             "supported": True,
@@ -392,6 +437,10 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
         "render-evidence/webview2-pet.png",
         "render-evidence/windows-desktop.png",
     ]
+    assert summary["installIntegrity"]["status"] == "consistent"
+    assert summary["installIntegrity"]["evidence"] == "collected"
+    assert summary["installIntegrity"]["payload"]["validated"] is True
+    assert summary["installIntegrity"]["runtime"]["jobObjectAssignedCount"] == 1
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:
@@ -449,7 +498,10 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
         zipfile.ZipFile(older_bundle, "w", compression=zipfile.ZIP_DEFLATED) as target,
     ):
         for info in source.infolist():
-            if info.filename == "diagnostics/webview2.json" or info.filename.startswith(
+            if info.filename in (
+                "diagnostics/webview2.json",
+                "install/integrity.json",
+            ) or info.filename.startswith(
                 ("diagnostics/webview2-render-evidence.json", "render-evidence/")
             ):
                 continue
@@ -459,6 +511,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                 manifest["schemaRevision"] = 1
                 manifest["capabilities"].remove("webview2-process-health-v1")
                 manifest["capabilities"].remove("webview2-render-evidence-v1")
+                manifest["capabilities"].remove("install-integrity-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
             target.writestr(info.filename, data)
@@ -468,6 +521,10 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
     assert summary["manifest"]["schemaRevision"] == 1
     assert summary["webView2"] is None
     assert summary["webView2RenderEvidence"] is None
+    assert summary["installIntegrity"] == {
+        "status": "unavailable",
+        "evidence": "not-collected",
+    }
     assert not any("webview2" in warning.lower() for warning in summary["warnings"])
 
 
@@ -484,6 +541,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
         for info in source.infolist():
             if (
                 info.filename == "diagnostics/webview2-render-evidence.json"
+                or info.filename == "install/integrity.json"
                 or info.filename.startswith("render-evidence/")
             ):
                 continue
@@ -492,6 +550,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
                 manifest = json.loads(data)
                 manifest["schemaRevision"] = 2
                 manifest["capabilities"].remove("webview2-render-evidence-v1")
+                manifest["capabilities"].remove("install-integrity-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
             target.writestr(info.filename, data)
@@ -503,4 +562,8 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
     assert summary["webView2"]["failureReportCount"] == 1
     assert summary["webView2"]["newestFailureReportUnixSeconds"] == 1785523202
     assert summary["webView2RenderEvidence"] is None
+    assert summary["installIntegrity"] == {
+        "status": "unavailable",
+        "evidence": "not-collected",
+    }
     assert not any("render evidence" in warning.lower() for warning in summary["warnings"])

@@ -2,7 +2,7 @@ use super::model::{
     BackgroundDemandSnapshot, RuntimeServiceError, RuntimeServiceKind, RuntimeServicePhase,
     RuntimeServiceSnapshot,
 };
-use crate::paths;
+use crate::{install_contract, paths};
 use rand::{rngs::OsRng, RngCore};
 use std::{
     collections::HashMap,
@@ -21,6 +21,96 @@ use tokio::sync::Mutex;
 const EVENT_CHANGED: &str = "runtime-service://changed";
 const READINESS_ATTEMPTS: usize = 50;
 const POLL_DELAY: Duration = Duration::from_millis(200);
+
+#[cfg(target_os = "windows")]
+struct PackagedProcessJob {
+    handle: windows::Win32::Foundation::HANDLE,
+    assigned_count: std::sync::atomic::AtomicUsize,
+}
+
+// A Job Object handle is a process-wide kernel handle. Assigning child process handles and
+// closing it are thread-safe Win32 operations; ownership remains unique in this wrapper.
+#[cfg(target_os = "windows")]
+unsafe impl Send for PackagedProcessJob {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for PackagedProcessJob {}
+
+#[cfg(target_os = "windows")]
+impl PackagedProcessJob {
+    fn new() -> Result<Self, String> {
+        use windows::{
+            core::PCWSTR,
+            Win32::System::JobObjects::{
+                CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            },
+        };
+        let handle =
+            unsafe { CreateJobObjectW(None, PCWSTR::null()) }.map_err(|error| error.to_string())?;
+        let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if let Err(error) = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(information).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } {
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(handle);
+            }
+            return Err(error.to_string());
+        }
+        Ok(Self {
+            handle,
+            assigned_count: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn assign(&self, child: &Child) -> Result<(), String> {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{Foundation::HANDLE, System::JobObjects::AssignProcessToJobObject};
+        let process = HANDLE(child.as_raw_handle());
+        unsafe { AssignProcessToJobObject(self.handle, process) }
+            .map_err(|error| error.to_string())?;
+        self.assigned_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn assigned_count(&self) -> usize {
+        self.assigned_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for PackagedProcessJob {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+struct PackagedProcessJob;
+
+#[cfg(not(target_os = "windows"))]
+impl PackagedProcessJob {
+    fn new() -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn assign(&self, _child: &Child) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn assigned_count(&self) -> usize {
+        0
+    }
+}
 
 struct ServiceSlot {
     snapshot: RuntimeServiceSnapshot,
@@ -81,6 +171,8 @@ pub struct RuntimeServiceSupervisor {
     voice_public_url: Mutex<Option<String>>,
     tunnel_child: Mutex<Option<Child>>,
     client: reqwest::Client,
+    process_job: Option<Arc<PackagedProcessJob>>,
+    observed_readiness: Mutex<HashMap<RuntimeServiceKind, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -89,8 +181,11 @@ enum RuntimeLaunchContext {
     Packaged {
         launcher: PathBuf,
         memory_model_dir: PathBuf,
+        identity: install_contract::BuildIdentity,
+        identity_sha256: String,
+        profile: install_contract::InstallProfile,
     },
-    Unavailable,
+    Unavailable(String),
 }
 
 impl RuntimeServiceSupervisor {
@@ -100,13 +195,35 @@ impl RuntimeServiceSupervisor {
             .and_then(|path| path.canonicalize().ok());
         let launch_context = match repo_root {
             Some(path) => RuntimeLaunchContext::Source(path),
-            None => discover_packaged_runtime(resource_dir.as_deref())
-                .unwrap_or(RuntimeLaunchContext::Unavailable),
+            None => match discover_packaged_runtime(resource_dir.as_deref()) {
+                Ok(Some(context)) => context,
+                Ok(None) => RuntimeLaunchContext::Unavailable(
+                    "runtime_unavailable: packaged build identity is unavailable".to_string(),
+                ),
+                Err(error) => {
+                    log::error!("packaged runtime rejected: {error}");
+                    RuntimeLaunchContext::Unavailable(error)
+                }
+            },
         };
         Self::new(launch_context)
     }
 
     fn new(launch_context: RuntimeLaunchContext) -> Self {
+        let (launch_context, process_job) =
+            if matches!(launch_context, RuntimeLaunchContext::Packaged { .. }) {
+                match PackagedProcessJob::new() {
+                    Ok(job) => (launch_context, Some(Arc::new(job))),
+                    Err(error) => (
+                        RuntimeLaunchContext::Unavailable(format!(
+                            "runtime_job_create_failed: {error}"
+                        )),
+                        None,
+                    ),
+                }
+            } else {
+                (launch_context, None)
+            };
         let slots = [RuntimeServiceKind::Bridge, RuntimeServiceKind::Voice]
             .into_iter()
             .map(|service| (service, Arc::new(Mutex::new(ServiceSlot::new(service)))))
@@ -122,6 +239,8 @@ impl RuntimeServiceSupervisor {
             voice_public_url: Mutex::new(None),
             tunnel_child: Mutex::new(None),
             client: reqwest::Client::new(),
+            process_job,
+            observed_readiness: Mutex::new(HashMap::new()),
         }
     }
 
@@ -154,7 +273,7 @@ impl RuntimeServiceSupervisor {
             .client
             .get(format!(
                 "{}/internal/lifecycle/background-demand",
-                RuntimeServiceKind::Bridge.base_url()
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .timeout(Duration::from_secs(1))
@@ -184,7 +303,7 @@ impl RuntimeServiceSupervisor {
             .client
             .get(format!(
                 "{}/internal/migration/im-credentials",
-                RuntimeServiceKind::Bridge.base_url()
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .send()
@@ -213,7 +332,7 @@ impl RuntimeServiceSupervisor {
             .client
             .get(format!(
                 "{}/internal/migration/inventory",
-                RuntimeServiceKind::Bridge.base_url()
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .send()
@@ -245,7 +364,7 @@ impl RuntimeServiceSupervisor {
             .client
             .post(format!(
                 "{}/internal/migration/im-credentials/replace",
-                RuntimeServiceKind::Bridge.base_url()
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .json(payload)
@@ -273,7 +392,7 @@ impl RuntimeServiceSupervisor {
             .client
             .post(format!(
                 "{}/internal/migration/memory-index/rebuild",
-                RuntimeServiceKind::Bridge.base_url()
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .send()
@@ -309,24 +428,24 @@ impl RuntimeServiceSupervisor {
         let generation = slot.begin(RuntimeServicePhase::Starting);
         emit(app, &slot.snapshot);
 
-        if matches!(self.launch_context, RuntimeLaunchContext::Unavailable) {
+        if let RuntimeLaunchContext::Unavailable(error) = &self.launch_context {
             slot.fail(
                 RuntimeServicePhase::Unavailable,
-                "runtime_unavailable",
-                "neither a source runtime nor the packaged runtime resources are available"
-                    .to_string(),
+                "install_integrity_unavailable",
+                error.clone(),
             );
             emit(app, &slot.snapshot);
             return Err(error_message(&slot.snapshot));
         }
 
-        if port_is_occupied(service.port()) {
+        let service_port = self.launch_context.port(service);
+        if port_is_occupied(service_port) {
             slot.fail(
                 RuntimeServicePhase::Failed,
                 "port_conflict",
                 format!(
                     "port {} is already occupied by a process not owned by this supervisor",
-                    service.port()
+                    service_port
                 ),
             );
             emit(app, &slot.snapshot);
@@ -339,6 +458,7 @@ impl RuntimeServiceSupervisor {
             service,
             &token,
             voice_public_url.as_deref(),
+            self.process_job.as_deref(),
         ) {
             Ok(child) => {
                 slot.child = Some(child);
@@ -381,6 +501,18 @@ impl RuntimeServiceSupervisor {
                     slot.snapshot.error = None;
                     emit(app, &slot.snapshot);
                     return Ok(slot.snapshot.clone());
+                }
+                Err(error) if error.starts_with("runtime_identity_mismatch") => {
+                    let mut slot = slot_ref.lock().await;
+                    terminate_child(&mut slot.child);
+                    slot.token = None;
+                    slot.fail(
+                        RuntimeServicePhase::Failed,
+                        "runtime_identity_mismatch",
+                        error,
+                    );
+                    emit(app, &slot.snapshot);
+                    return Err(error_message(&slot.snapshot));
                 }
                 Ok(false) | Err(_) => tokio::time::sleep(POLL_DELAY).await,
             }
@@ -544,10 +676,12 @@ impl RuntimeServiceSupervisor {
             return self.start(app, RuntimeServiceKind::Voice).await;
         }
         let cloudflared = self.cloudflared_executable()?;
+        let voice_port = self.launch_context.port(RuntimeServiceKind::Voice);
+        let process_job = self.process_job.clone();
 
         self.stop(app, RuntimeServiceKind::Voice).await?;
         let tunnel_result = tokio::task::spawn_blocking(move || {
-            spawn_quick_tunnel(&cloudflared, RuntimeServiceKind::Voice.port())
+            spawn_quick_tunnel(&cloudflared, voice_port, process_job.as_deref())
         })
         .await
         .map_err(|error| format!("tunnel_task_failed: cloudflared task failed: {error}"))?;
@@ -615,7 +749,7 @@ impl RuntimeServiceSupervisor {
                 }
                 Ok(executable)
             }
-            RuntimeLaunchContext::Unavailable => {
+            RuntimeLaunchContext::Unavailable(_) => {
                 Err("tunnel_binary_missing: runtime launch context is unavailable".to_string())
             }
         }
@@ -626,7 +760,7 @@ impl RuntimeServiceSupervisor {
             .client
             .get(format!(
                 "{}/internal/lifecycle/readiness",
-                service.base_url()
+                self.launch_context.base_url(service)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token)
             .send()
@@ -636,7 +770,32 @@ impl RuntimeServiceSupervisor {
             return Ok(false);
         }
         let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
-        Ok(body.get("status").and_then(|value| value.as_str()) == Some("ready"))
+        self.observed_readiness.lock().await.insert(
+            service,
+            serde_json::json!({
+                "service": body.get("service"),
+                "buildId": body.get("buildId"),
+                "profileId": body.get("profileId"),
+                "buildIdentitySha256": body.get("buildIdentitySha256"),
+                "status": body.get("status"),
+            }),
+        );
+        validate_readiness_identity(&body, service, &self.launch_context)
+    }
+
+    pub async fn install_integrity_runtime_evidence(&self) -> serde_json::Value {
+        let observed = self.observed_readiness.lock().await;
+        serde_json::json!({
+            "observedReadiness": {
+                "bridge": observed.get(&RuntimeServiceKind::Bridge),
+                "voice": observed.get(&RuntimeServiceKind::Voice),
+            },
+            "jobObject": {
+                "packaged": matches!(self.launch_context, RuntimeLaunchContext::Packaged { .. }),
+                "created": self.process_job.is_some(),
+                "assignedCount": self.process_job.as_ref().map(|job| job.assigned_count()).unwrap_or(0),
+            }
+        })
     }
 
     async fn request_shutdown(
@@ -648,7 +807,7 @@ impl RuntimeServiceSupervisor {
             .client
             .post(format!(
                 "{}/internal/lifecycle/shutdown",
-                service.base_url()
+                self.launch_context.base_url(service)
             ))
             .header("X-Agent-Friend-Lifecycle-Token", token);
         let request = if service == RuntimeServiceKind::Bridge {
@@ -667,17 +826,85 @@ impl RuntimeServiceSupervisor {
     }
 }
 
-fn discover_packaged_runtime(resource_dir: Option<&Path>) -> Option<RuntimeLaunchContext> {
-    let runtime_root = resource_dir?.join("runtime");
+fn validate_readiness_identity(
+    body: &serde_json::Value,
+    service: RuntimeServiceKind,
+    launch_context: &RuntimeLaunchContext,
+) -> Result<bool, String> {
+    if body.get("status").and_then(|value| value.as_str()) != Some("ready") {
+        return Ok(false);
+    }
+    if let RuntimeLaunchContext::Packaged {
+        identity,
+        identity_sha256,
+        ..
+    } = launch_context
+    {
+        let observed = (
+            body.get("service").and_then(|value| value.as_str()),
+            body.get("buildId").and_then(|value| value.as_str()),
+            body.get("profileId").and_then(|value| value.as_str()),
+            body.get("buildIdentitySha256")
+                .and_then(|value| value.as_str()),
+        );
+        let expected = (
+            service.command(),
+            identity.build_id.as_str(),
+            identity.profile_id.as_str(),
+            identity_sha256.as_str(),
+        );
+        if observed
+            != (
+                Some(expected.0),
+                Some(expected.1),
+                Some(expected.2),
+                Some(expected.3),
+            )
+        {
+            return Err(format!(
+                    "runtime_identity_mismatch: expected service/build/profile/hash {:?}, observed {:?}",
+                    expected, observed
+                ));
+        }
+    }
+    Ok(true)
+}
+
+fn discover_packaged_runtime(
+    resource_dir: Option<&Path>,
+) -> Result<Option<RuntimeLaunchContext>, String> {
+    let Some(active) = install_contract::discover_active_payload(resource_dir)? else {
+        return Ok(None);
+    };
+    let runtime_root = active.runtime_root;
     let launcher = runtime_root.join("python").join("agent-friend-runtime.exe");
     let memory_model_dir = runtime_root.join("models").join("bge-small-zh-v1.5");
     if launcher.is_file() && memory_model_dir.is_dir() {
-        Some(RuntimeLaunchContext::Packaged {
+        Ok(Some(RuntimeLaunchContext::Packaged {
             launcher,
             memory_model_dir,
-        })
+            identity: active.identity,
+            identity_sha256: active.identity_sha256,
+            profile: active.profile,
+        }))
     } else {
-        None
+        Err("install_integrity_required_runtime_missing".to_string())
+    }
+}
+
+impl RuntimeLaunchContext {
+    fn port(&self, service: RuntimeServiceKind) -> u16 {
+        match self {
+            Self::Packaged { profile, .. } => match service {
+                RuntimeServiceKind::Bridge => profile.bridge_port,
+                RuntimeServiceKind::Voice => profile.voice_port,
+            },
+            Self::Source(_) | Self::Unavailable(_) => service.port(),
+        }
+    }
+
+    fn base_url(&self, service: RuntimeServiceKind) -> String {
+        format!("http://127.0.0.1:{}", self.port(service))
     }
 }
 
@@ -686,6 +913,7 @@ fn spawn_service(
     service: RuntimeServiceKind,
     token: &str,
     voice_public_url: Option<&str>,
+    process_job: Option<&PackagedProcessJob>,
 ) -> Result<Child, String> {
     let mut command = match context {
         RuntimeLaunchContext::Source(root) => {
@@ -701,13 +929,38 @@ fn spawn_service(
         RuntimeLaunchContext::Packaged {
             launcher,
             memory_model_dir,
+            identity,
+            profile,
+            ..
         } => {
             let mut command = Command::new(launcher);
             command
                 .args([service.command(), "--config-mode", "desktop"])
                 .current_dir(launcher.parent().unwrap_or_else(|| Path::new(".")))
                 .env("AGENT_FRIEND_MEMORY_MODEL_DIR", memory_model_dir)
-                .env("AGENT_BRIDGE_DEV_MODE", "false");
+                .env("AGENT_BRIDGE_DEV_MODE", "false")
+                .env("AGENT_BRIDGE_PORT", profile.bridge_port.to_string())
+                .env("VOICE_BRIDGE_PORT", profile.voice_port.to_string())
+                .env(
+                    "AGENT_BRIDGE_VOICE_BRIDGE_BASE_URL",
+                    format!("http://127.0.0.1:{}", profile.voice_port),
+                )
+                .env(
+                    "VOICE_BRIDGE_AGENT_BRIDGE_URL",
+                    format!("http://127.0.0.1:{}", profile.bridge_port),
+                )
+                .env("AGENT_FRIEND_KEYRING_SERVICE", &profile.keyring_service)
+                .env(
+                    "AGENT_FRIEND_SETTINGS_BUNDLE_ID",
+                    &profile.settings_namespace,
+                )
+                .env("AGENT_FRIEND_DATA_DIR", paths::user_data_dir())
+                .env("AGENT_FRIEND_LOG_DIR", paths::log_dir())
+                .env(
+                    "AGENT_FRIEND_BUILD_IDENTITY_JSON",
+                    serde_json::to_string(identity)
+                        .map_err(|error| format!("runtime_identity_serialize_failed: {error}"))?,
+                );
             if let Some((stdout, stderr)) = packaged_runtime_stdio(service) {
                 command.stdout(stdout).stderr(stderr);
             } else {
@@ -716,20 +969,29 @@ fn spawn_service(
             configure_packaged_process(&mut command);
             command
         }
-        RuntimeLaunchContext::Unavailable => {
+        RuntimeLaunchContext::Unavailable(_) => {
             return Err("runtime launch context is unavailable".to_string())
         }
     };
     if let Some(public_url) = voice_public_url {
         command.env("VOICE_BRIDGE_PUBLIC_URL", public_url);
     }
-    command
+    let mut child = command
         .env("AGENT_FRIEND_LIFECYCLE_TOKEN", token)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|error| format!("failed to launch {}: {error}", service.module()))
+        .map_err(|error| format!("failed to launch {}: {error}", service.module()))?;
+    if matches!(context, RuntimeLaunchContext::Packaged { .. }) {
+        let job = process_job.ok_or_else(|| "runtime_job_unavailable".to_string())?;
+        if let Err(error) = job.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("runtime_job_assign_failed: {error}"));
+        }
+    }
+    Ok(child)
 }
 
 fn packaged_runtime_stdio(service: RuntimeServiceKind) -> Option<(Stdio, Stdio)> {
@@ -755,7 +1017,11 @@ fn packaged_runtime_stdio(service: RuntimeServiceKind) -> Option<(Stdio, Stdio)>
     Some((Stdio::from(stdout), Stdio::from(file)))
 }
 
-fn spawn_quick_tunnel(executable: &Path, port: u16) -> Result<(Child, String), String> {
+fn spawn_quick_tunnel(
+    executable: &Path,
+    port: u16,
+    process_job: Option<&PackagedProcessJob>,
+) -> Result<(Child, String), String> {
     let mut command = Command::new(executable);
     command
         .args([
@@ -771,6 +1037,13 @@ fn spawn_quick_tunnel(executable: &Path, port: u16) -> Result<(Child, String), S
     let mut child = command
         .spawn()
         .map_err(|error| format!("tunnel_start_failed: failed to launch cloudflared: {error}"))?;
+    if let Some(job) = process_job {
+        if let Err(error) = job.assign(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("tunnel_start_failed: job assign failed: {error}"));
+        }
+    }
     let stderr = child
         .stderr
         .take()
@@ -940,7 +1213,9 @@ mod tests {
     #[test]
     fn missing_source_root_is_explicitly_unavailable() {
         tauri::async_runtime::block_on(async {
-            let supervisor = RuntimeServiceSupervisor::new(RuntimeLaunchContext::Unavailable);
+            let supervisor = RuntimeServiceSupervisor::new(RuntimeLaunchContext::Unavailable(
+                "runtime_unavailable".to_string(),
+            ));
             let error = supervisor
                 .start(None, RuntimeServiceKind::Bridge)
                 .await
@@ -966,16 +1241,30 @@ mod tests {
     fn packaged_paths_are_stable_and_do_not_require_python() {
         let context = RuntimeLaunchContext::Packaged {
             launcher: PathBuf::from(
-                r"C:\Program Files\agent-friend\runtime\python\agent-friend-runtime.exe",
+                r"C:\Program Files\agent-friend\packages\build-123\runtime\python\agent-friend-runtime.exe",
             ),
             memory_model_dir: PathBuf::from(
-                r"C:\Program Files\agent-friend\runtime\models\bge-small-zh-v1.5",
+                r"C:\Program Files\agent-friend\packages\build-123\runtime\models\bge-small-zh-v1.5",
             ),
+            identity: install_contract::BuildIdentity {
+                schema_version: 1,
+                product_version: "1.2.3".to_string(),
+                build_id: "build-123".to_string(),
+                source_commit: "a".repeat(40),
+                source_tree_sha256: "b".repeat(64),
+                dirty: false,
+                build_mode: "formal".to_string(),
+                distribution: "ordinary".to_string(),
+                profile_id: "production".to_string(),
+            },
+            identity_sha256: "c".repeat(64),
+            profile: install_contract::embedded_profile().unwrap(),
         };
         match context {
             RuntimeLaunchContext::Packaged {
                 launcher,
                 memory_model_dir,
+                ..
             } => {
                 assert!(launcher.ends_with("agent-friend-runtime.exe"));
                 assert!(memory_model_dir.ends_with("bge-small-zh-v1.5"));
@@ -985,24 +1274,84 @@ mod tests {
     }
 
     #[test]
-    fn packaged_runtime_is_discovered_from_tauri_resource_dir() {
+    fn packaged_runtime_without_embedded_identity_is_not_guessed_from_paths() {
         let resource_dir = std::env::temp_dir().join(format!(
             "agent-friend-resource-discovery-{}",
             rand::random::<u64>()
         ));
-        let runtime = resource_dir.join("runtime");
+        let runtime = resource_dir
+            .join("packages")
+            .join("build-123")
+            .join("runtime");
         let launcher = runtime.join("python").join("agent-friend-runtime.exe");
         let model = runtime.join("models").join("bge-small-zh-v1.5");
         std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
         std::fs::create_dir_all(&model).unwrap();
         std::fs::write(&launcher, b"test").unwrap();
 
-        let context = discover_packaged_runtime(Some(&resource_dir));
+        let context = discover_packaged_runtime(Some(&resource_dir)).unwrap();
 
-        assert!(matches!(
-            context,
-            Some(RuntimeLaunchContext::Packaged { .. })
-        ));
+        assert!(context.is_none());
         std::fs::remove_dir_all(resource_dir).unwrap();
+    }
+
+    #[test]
+    fn packaged_readiness_requires_exact_service_build_profile_and_hash() {
+        let context = RuntimeLaunchContext::Packaged {
+            launcher: PathBuf::from("runtime.exe"),
+            memory_model_dir: PathBuf::from("model"),
+            identity: install_contract::BuildIdentity {
+                schema_version: 1,
+                product_version: "1.2.3".to_string(),
+                build_id: "build-123".to_string(),
+                source_commit: "a".repeat(40),
+                source_tree_sha256: "b".repeat(64),
+                dirty: false,
+                build_mode: "formal".to_string(),
+                distribution: "ordinary".to_string(),
+                profile_id: "production".to_string(),
+            },
+            identity_sha256: "c".repeat(64),
+            profile: install_contract::embedded_profile().unwrap(),
+        };
+        let matching = serde_json::json!({
+            "status": "ready",
+            "service": "bridge",
+            "buildId": "build-123",
+            "profileId": "production",
+            "buildIdentitySha256": "c".repeat(64),
+        });
+        assert!(
+            validate_readiness_identity(&matching, RuntimeServiceKind::Bridge, &context).unwrap()
+        );
+        let mut stale = matching;
+        stale["buildId"] = serde_json::json!("old-build");
+        assert!(
+            validate_readiness_identity(&stale, RuntimeServiceKind::Bridge, &context)
+                .expect_err("stale runtime must be rejected")
+                .starts_with("runtime_identity_mismatch")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn dropping_packaged_job_terminates_assigned_child() {
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -n 30 127.0.0.1 > nul"])
+            .spawn()
+            .unwrap();
+        let job = PackagedProcessJob::new().unwrap();
+        job.assign(&child).unwrap();
+        drop(job);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        panic!("assigned child survived Job Object close");
     }
 }
