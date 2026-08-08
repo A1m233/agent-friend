@@ -34,15 +34,22 @@ def test_parallel_read_bodies_finish_faster_but_results_keep_call_order() -> Non
     registry = ToolRegistry(cast(list[Tool], [_SleepTool("a", 0.12), _SleepTool("b", 0.12)]))
     executor = ToolBatchExecutor(max_workers=2)
     started = time.monotonic()
+    invocation_ids: list[str] = []
+
+    def invocation_args(_name: str, args: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
+        invocation_ids.append(tool_call_id)
+        return args
+
     results = executor.execute(
         [_call("a", "first"), _call("b", "second")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=invocation_args,
     )
     elapsed = time.monotonic() - started
     assert elapsed < 0.22
     assert [item.result.text for item in results] == ["first", "second"]
+    assert sorted(invocation_ids) == ["event-first", "event-second"]
 
 
 def test_serial_tool_is_a_barrier() -> None:
@@ -62,7 +69,7 @@ def test_serial_tool_is_a_barrier() -> None:
         [_call("a", "a"), _call("serial", "s"), _call("b", "b")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=lambda _name, args, _tool_call_id: args,
     )
     assert time.monotonic() - started >= 0.16
 
@@ -80,7 +87,7 @@ def test_hooks_are_ordered_around_parallel_bodies() -> None:
         [_call("a", "a"), _call("b", "b")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=lambda _name, args, _tool_call_id: args,
         pre_hook=lambda name, _args: seen.append(f"pre:{name}"),
         post_hook=lambda name, _args, _result: seen.append(f"post:{name}"),
     )
@@ -95,7 +102,7 @@ def test_timeout_returns_error_and_discards_late_result() -> None:
         [_call("slow", "late")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=lambda _name, args, _tool_call_id: args,
     )[0]
     assert result.result.is_error
     assert result.result.meta["error_kind"] == "timeout"
@@ -115,7 +122,7 @@ def test_parallel_completed_result_survives_wait_for_earlier_call() -> None:
         [_call("slow_first", "slow"), _call("fast_second", "fast")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=lambda _name, args, _tool_call_id: args,
     )
     assert [item.result.text for item in results] == ["slow", "fast"]
     assert not results[1].result.is_error
@@ -136,7 +143,7 @@ def test_parallel_late_result_still_times_out_when_observed_after_earlier_call()
         [_call("slow_first", "slow"), _call("late_second", "late")],
         registry=registry,
         default_timeout_seconds=1,
-        invocation_args=lambda _name, args: args,
+        invocation_args=lambda _name, args, _tool_call_id: args,
     )
     assert results[1].result.is_error
     assert results[1].result.meta == {
@@ -161,7 +168,7 @@ def test_cancel_check_interrupts_waiting_for_a_tool() -> None:
             [_call("slow", "waiting")],
             registry=registry,
             default_timeout_seconds=1,
-            invocation_args=lambda _name, args: args,
+            invocation_args=lambda _name, args, _tool_call_id: args,
             cancel_check=cancel_check,
         )
 

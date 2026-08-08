@@ -147,6 +147,74 @@ def _smoke_skill_catalog() -> dict[str, Any]:
             service.stop()
 
 
+def _smoke_filesystem_tools() -> dict[str, Any]:
+    """Exercise frozen filesystem imports plus deterministic read/write/copy paths."""
+    from agent.filesystem import (
+        ApprovalAction,
+        FilesystemAuthorizationLedger,
+        FilesystemService,
+        ProtectedPathPolicy,
+    )
+
+    with tempfile.TemporaryDirectory(prefix="agent-friend-filesystem-smoke-") as temp_dir:
+        root = Path(temp_dir).resolve()
+        service = FilesystemService(ProtectedPathPolicy(product_roots=(), personal_skill_roots=()))
+        ledger = FilesystemAuthorizationLedger()
+        scope = ledger.grant_scope(
+            root=root,
+            root_kind="directory",
+            permissions=frozenset({"search_metadata", "read_text", "create", "edit"}),
+        )
+        created = service.write_text(
+            ledger,
+            scope_id=scope.scope_id,
+            relative_path="source.txt",
+            content="alpha\nbeta\n",
+        )
+        read = service.read_text(
+            ledger,
+            scope_id=scope.scope_id,
+            relative_path="source.txt",
+        )
+        patched = service.apply_patch(
+            ledger,
+            scope_id=scope.scope_id,
+            relative_path="source.txt",
+            expected_sha256=str(read["sha256"]),
+            patch=(
+                "*** Begin Patch\n*** Update File: source.txt\n@@\n alpha\n-beta\n+gamma\n"
+                "*** End Patch\n"
+            ),
+        )
+        binary = root / "source.bin"
+        binary.write_bytes(bytes(range(256)))
+        copied = service.copy(
+            ledger,
+            source_scope_id=scope.scope_id,
+            source_path="source.bin",
+            destination_scope_id=scope.scope_id,
+            destination_path="copy.bin",
+        )
+        delete_action = ApprovalAction(
+            action_id="doctor-delete",
+            action="delete",
+            target=(root / "copy.bin").resolve(),
+        )
+        ledger.grant_action(delete_action)
+        service.delete(
+            ledger,
+            scope_id=scope.scope_id,
+            relative_path="copy.bin",
+            action_id=delete_action.action_id,
+        )
+        return {
+            "created_sha256": created["sha256"],
+            "patched_sha256": patched["sha256"],
+            "binary_sha256": copied["sha256"],
+            "deleted": not (root / "copy.bin").exists(),
+        }
+
+
 def _doctor() -> int:
     checks: dict[str, dict[str, Any]] = {}
     modules = (
@@ -230,6 +298,20 @@ def _doctor() -> int:
         }
     else:
         checks["capability:skill_catalog_hot_reload"] = {"ok": True, **skill_details}
+
+    try:
+        filesystem_details = _smoke_filesystem_tools()
+    except Exception as exc:
+        checks["capability:governed_filesystem"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:governed_filesystem"] = {
+            "ok": bool(filesystem_details.get("deleted")),
+            **filesystem_details,
+        }
 
     model_dir = os.environ.get("AGENT_FRIEND_MEMORY_MODEL_DIR", "").strip()
     if model_dir:

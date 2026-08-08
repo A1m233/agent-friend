@@ -45,6 +45,8 @@ pub struct PushEnvelope {
     pub channel: Option<String>,
     #[serde(default)]
     pub run: Option<RunSnapshot>,
+    #[serde(default)]
+    pub filesystem_approval: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -110,7 +112,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -179,6 +181,11 @@ async fn run_connection(
                 Some(env) if env.kind == "run_event" => {
                     if let Err(e) = app.emit_to("chat", "session://run-event", env) {
                         log::warn!("emit_to(chat, run event) failed: {e}");
+                    }
+                }
+                Some(env) if env.kind == "filesystem_approval_changed" => {
+                    if let Err(e) = app.emit_to("chat", "session://filesystem-approval", env) {
+                        log::warn!("emit_to(chat, filesystem approval) failed: {e}");
                     }
                 }
                 Some(env) => {
@@ -377,6 +384,7 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             origin: None,
             channel: None,
             run: None,
+            filesystem_approval: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();

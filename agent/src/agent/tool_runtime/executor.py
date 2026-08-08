@@ -72,7 +72,7 @@ class ToolBatchExecutor:
         *,
         registry: ToolRegistry | None,
         default_timeout_seconds: float,
-        invocation_args: Callable[[str, dict[str, Any]], dict[str, Any]],
+        invocation_args: Callable[[str, dict[str, Any], str], dict[str, Any]],
         cancel_check: Callable[[], None] | None = None,
         legacy_hook_invoker: ToolHookInvoker | None = None,
         pre_hook: PreToolHook | None = None,
@@ -113,7 +113,7 @@ class ToolBatchExecutor:
         *,
         registry: ToolRegistry | None,
         default_timeout_seconds: float,
-        invocation_args: Callable[[str, dict[str, Any]], dict[str, Any]],
+        invocation_args: Callable[[str, dict[str, Any], str], dict[str, Any]],
         legacy_hook_invoker: ToolHookInvoker | None,
         pre_hook: PreToolHook | None,
     ) -> _Pending:
@@ -142,7 +142,11 @@ class ToolBatchExecutor:
                         meta={"error_kind": "unavailable"},
                     )
                 try:
-                    return registry.invoke(name, invocation_args(name, public_args))
+                    tool_call_id = str(call.get("event_id") or call.get("id") or "")
+                    return registry.invoke(
+                        name,
+                        invocation_args(name, public_args, tool_call_id),
+                    )
                 except Exception as exc:
                     return ToolResult(
                         text=f"工具 {name!r} 执行出错: {exc}",

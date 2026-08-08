@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from agent.filesystem import FILESYSTEM_TOOL_NAMES
 from agent.sessions.store import NullSessionStore
 from agent.todos import TodoService, TodoStore
 from agent.tools import ToolRegistry, make_default_registry
@@ -38,6 +39,18 @@ from agent.tools.builtin.web_search import WebSearchTool
 from agent.tools.builtin.web_search.providers.tavily import TavilyProvider
 from memory.search import MemorySearchService
 
+BASE_TOOL_NAMES = {
+    "calculate",
+    "datetime_calculate",
+    "nearby_place_search",
+    "weather_query",
+    "social_search",
+    "social_read",
+    "request_social_auth",
+    "web_fetch",
+    *FILESYSTEM_TOOL_NAMES,
+}
+
 
 @pytest.fixture(autouse=True)
 def _isolate_tool_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,16 +68,7 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
 
     assert isinstance(registry, ToolRegistry)
     tools = registry.all_tools()
-    assert {tool.name for tool in tools} == {
-        "calculate",
-        "datetime_calculate",
-        "nearby_place_search",
-        "weather_query",
-        "social_search",
-        "social_read",
-        "request_social_auth",
-        "web_fetch",
-    }
+    assert {tool.name for tool in tools} == BASE_TOOL_NAMES
     nearby = registry.get("nearby_place_search")
     assert isinstance(nearby, NearbyPlaceSearchTool)
     assert isinstance(nearby._provider, UnavailableNearbyPlaceProvider)
@@ -88,16 +92,7 @@ def test_silent_when_no_api_key_and_warn_disabled(
 
     registry = make_default_registry(stderr_warn=False)
 
-    assert {tool.name for tool in registry.all_tools()} == {
-        "calculate",
-        "datetime_calculate",
-        "nearby_place_search",
-        "weather_query",
-        "social_search",
-        "social_read",
-        "request_social_auth",
-        "web_fetch",
-    }
+    assert {tool.name for tool in registry.all_tools()} == BASE_TOOL_NAMES
     captured = capsys.readouterr()
     assert captured.err == ""
 
@@ -110,7 +105,7 @@ def test_returns_registry_with_web_search_when_api_key_set(
     registry = make_default_registry()
 
     tools = registry.all_tools()
-    assert len(tools) == 9
+    assert len(tools) == len(BASE_TOOL_NAMES) + 1
     tool = registry.get("web_search")
     assert isinstance(tool, WebSearchTool)
     assert tool.name == "web_search"
@@ -127,7 +122,7 @@ def test_explicit_tavily_key_registers_web_search_without_env(
     registry = make_default_registry(tavily_api_key="test-tavily-explicit")
 
     tools = registry.all_tools()
-    assert len(tools) == 9
+    assert len(tools) == len(BASE_TOOL_NAMES) + 1
     assert isinstance(registry.get("web_search"), WebSearchTool)
 
 
@@ -188,7 +183,7 @@ def test_session_store_injection_registers_history_tool(
     registry = make_default_registry(session_store=NullSessionStore())
 
     tools = registry.all_tools()
-    assert len(tools) == 10
+    assert len(tools) == len(BASE_TOOL_NAMES) + 2
     history = registry.get("recall_past_chats")
     assert isinstance(history, ConversationHistoryTool)
     recovery = registry.get("recover_tool_result")
@@ -202,17 +197,9 @@ def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch
 
     tools = registry.all_tools()
     names = {t.name for t in tools}
-    assert names == {
-        "calculate",
-        "datetime_calculate",
+    assert names == BASE_TOOL_NAMES | {
         "web_search",
-        "web_fetch",
-        "nearby_place_search",
-        "weather_query",
         "recall_past_chats",
-        "social_search",
-        "social_read",
-        "request_social_auth",
         "recover_tool_result",
     }
 

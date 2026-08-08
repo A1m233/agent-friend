@@ -47,7 +47,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "agent_turn,user_turn",
             description=(
                 "逗号分隔的 envelope kind 过滤：agent_turn / user_turn / "
-                "session_changed / run_changed"
+                "session_changed / run_changed / filesystem_approval_changed"
             ),
         ),
     ) -> StreamingResponse:

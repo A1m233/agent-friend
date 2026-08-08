@@ -17,7 +17,11 @@ from .models import (
     SkillTurnSnapshot,
     SkillWatcherState,
 )
-from .rendering import render_activated_skill, render_activation_issue
+from .rendering import (
+    render_activated_skill,
+    render_activation_issue,
+    render_runtime_capability_notice,
+)
 from .selection import decode_skill_selections
 from .service import SkillCatalogService, default_shared_skills_dir
 
@@ -42,4 +46,5 @@ __all__ = [
     "render_activated_skill",
     "render_activation_issue",
     "render_catalog",
+    "render_runtime_capability_notice",
 ]

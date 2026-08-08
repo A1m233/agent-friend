@@ -6,8 +6,10 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from html import escape
 from uuid import uuid4
 
+from ..filesystem.models import FilesystemAuthorizationLedger
 from .evidence import (
     EvidenceSource,
     PublicEvidence,
@@ -77,6 +79,9 @@ class ToolRunContext:
     trusted_timezone: str
     url_authorizations: UrlAuthorizationLedger = field(default_factory=UrlAuthorizationLedger)
     public_evidence: PublicEvidenceLedger = field(default_factory=PublicEvidenceLedger)
+    filesystem_authorizations: FilesystemAuthorizationLedger = field(
+        default_factory=FilesystemAuthorizationLedger
+    )
     _clock: Callable[[], datetime] = field(default=_system_now, repr=False)
 
     @classmethod
@@ -221,12 +226,35 @@ class ToolRunContext:
         """
         current_datetime = self.trusted_now.isoformat(timespec="seconds")
         today = self.trusted_now.date()
-        return (
+        runtime_time = (
             f'<runtime_now at="{current_datetime}" tz="{self.trusted_timezone}" '
             f'yesterday="{today - timedelta(days=1)}" today="{today}" '
             f'tomorrow="{today + timedelta(days=1)}" />\n'
             "本轮时间以此为准；日历锚点同样可信，历史日期不覆盖，勿反推。"
         )
+        skill_scopes = [
+            capability
+            for capability in self.filesystem_authorizations.scopes()
+            if capability.source == "skill"
+        ]
+        if not skill_scopes:
+            return runtime_time
+        scope_lines = [
+            '<filesystem_scopes lifetime="current_user_turn" absolute_paths_exposed="false">'
+        ]
+        for capability in skill_scopes:
+            label = escape(capability.label or "activated Skill", quote=True)
+            permissions = ",".join(sorted(capability.permissions))
+            scope_lines.append(
+                f'  <scope id="{capability.scope_id}" label="{label}" '
+                f'permissions="{permissions}" relative_root="." />'
+            )
+        scope_lines.append(
+            "  <instruction>只在 Skill 指引或当前任务需要时按相对路径读取；"
+            "scope 不提供包外权限。</instruction>"
+        )
+        scope_lines.append("</filesystem_scopes>")
+        return runtime_time + "\n" + "\n".join(scope_lines)
 
 
 def _read_trusted_clock(clock: Callable[[], datetime]) -> tuple[datetime, str]:

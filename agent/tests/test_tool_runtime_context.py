@@ -1,10 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from agent.tool_runtime import ToolRunContext, UrlAuthorizationLedger
 from agent.tool_runtime.evidence import evidence_result_meta, make_public_evidence
+
+
+def test_skill_filesystem_scope_is_rendered_without_absolute_path(tmp_path: Path) -> None:
+    context = ToolRunContext.create("hello")
+    capability = context.filesystem_authorizations.grant_scope(
+        root=tmp_path,
+        root_kind="directory",
+        permissions=frozenset({"search_metadata", "read_text"}),
+        allow_protected=True,
+        source="skill",
+        label="Skill demo",
+    )
+
+    rendered = context.render_for_model()
+
+    assert capability.scope_id in rendered
+    assert "Skill demo" in rendered
+    assert str(tmp_path) not in rendered
 
 
 def test_user_urls_are_normalized_and_scoped_to_one_context() -> None:

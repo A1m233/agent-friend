@@ -15,7 +15,7 @@
     "file": "skill-creator/license.txt"
   },
   "compatibility_patches": [
-    "Added a runtime capability notice to SKILL.md.",
+    "Added a host-authoritative runtime capability contract to SKILL.md.",
     "Reused the SVG icon for icon_large; the optional raster PNG is not bundled.",
     "Removed one redundant f-string prefix to satisfy the host repository lint gate.",
     "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",

@@ -74,6 +74,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
         if snapshot is None:  # pragma: no cover - defensive invariant
             raise HTTPException(status_code=500, detail="run snapshot unavailable")
+        if runtime.filesystem_approval_broker is not None:
+            runtime.filesystem_approval_broker.deny_session(session_id)
         return {"result": result, "run": _snapshot_payload(snapshot)}
 
     app.include_router(router)

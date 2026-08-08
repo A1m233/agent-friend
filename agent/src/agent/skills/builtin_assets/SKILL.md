@@ -7,7 +7,7 @@ metadata:
 
 # Skill Creator
 
-> agent-friend compatibility: this release can load this complete `SKILL.md`, but it cannot yet read bundled references, create or edit local files, run bundled scripts, or launch subagents. Explain those capability gaps honestly and provide suggested content in the response when the task depends on them.
+> agent-friend compatibility: Treat the host-provided `<runtime_capabilities>` block and current public tool list as authoritative. This Skill never grants file, command, script, or subagent permissions by itself; use only capabilities the host actually exposes and report any remaining gap honestly.
 
 This skill provides guidance for creating effective skills.
 
