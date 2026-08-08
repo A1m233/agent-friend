@@ -2,9 +2,9 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
-安装完整性、禁止降级、同 profile 唯一程序根、事务化目录迁移、始终显示交互式语言 selector 和独立 `packageInputSha256` 复用门禁已实现，并由当前候选的 12/12 隔离矩阵验证。稳定 release、可分发 trusted-beta 与不可分发 local-test 现已采用显式渠道意图；trusted-beta 从一次配置的下一稳定版本自动派生单调 prerelease。可见语言交互和真实 production 覆盖升级仍由用户验收，因此总体状态保持 `IN_PROGRESS`。
+安装完整性、禁止降级、同 profile 唯一程序根、事务化目录迁移、始终显示交互式语言 selector 和独立 `packageInputSha256` 复用门禁已实现，并由最终候选的 12/12 隔离矩阵验证。稳定 release、可分发 trusted-beta 与不可分发 local-test 采用显式渠道意图；trusted-beta 从一次配置的下一稳定版本自动派生单调 prerelease。基于干净源码构建的正式带凭据 trusted-beta 已完成真实 production 覆盖升级，用户确认语言选择、升级结果和维护交互验收通过，因此总体状态为 `COMPLETED`。
 
 ## 任务列表
 
@@ -30,13 +30,13 @@ IN_PROGRESS
 - [x] 为新指纹门禁重跑一次最终 12 场景隔离矩阵，并用其显式构建 production `local-test + trusted-beta`
 - [x] 建立 stable / trusted-beta / local-test 显式渠道意图、trusted-beta 自动 prerelease 分配与 coding-agent fail-closed 约束
 - [x] 为 selector 与版本渠道最终输入重建 candidate，并完成 12/12 隔离矩阵及 build/hash/fingerprint 二次验证
-- [ ] 复验无历史语言和已保存 English 两种身份下均显示交互式语言选择器
-- [ ] 前置门禁通过后，单独取得授权并执行当前账户真实 0.1.7 → candidate 覆盖升级
+- [x] 复验无历史语言和已保存 English 两种身份下均显示交互式语言选择器
+- [x] 前置门禁通过后，单独取得授权并执行当前账户真实 0.1.7 → candidate 覆盖升级
 
 ## AC 验证
 
-- [ ] AC-1 中文默认与中英文新装/卸载：production identity 已保存 English 时 selector 被跳过，已定位为 NSIS registry-backed MUI 默认行为；正在修复并复验。
-- [ ] AC-2 0.1.7 固定布局直接覆盖升级并保留用户状态：隔离固定布局升级通过；真实用户状态保留留待 AC-14。
+- [x] AC-1 中文默认与中英文新装/卸载：`MUI_LANGDLL_ALWAYSSHOW` 机器契约通过；无历史语言和已保存 English 的交互式 selector 已由用户验收确认。
+- [x] AC-2 0.1.7 固定布局直接覆盖升级并保留用户状态：隔离固定布局升级通过，正式 trusted-beta 的真实覆盖升级与用户状态保留由用户验收确认。
 - [x] AC-3 主壳运行中的受控升级：最终隔离候选复验通过。
 - [x] AC-4 orphan runtime 锁文件失败/恢复：最终隔离候选复验通过。
 - [x] AC-5 核心 payload 缺失、损坏、跳过或旧构建时 fail closed
@@ -45,16 +45,16 @@ IN_PROGRESS
 - [x] AC-8 错误端口进程不能以通用 ready 冒充 runtime
 - [x] AC-9 自定义中英文提示完整性机器门禁
 - [x] AC-10 silent/passive 不挂起并返回稳定 exit code：成功为 0，降级为 35，无 move intent 为 32，超长迁移失败为 34。
-- [ ] AC-11 ordinary / trusted-beta / local-test 现有语义保持：稳定 release、可分发 trusted-beta 和不可分发 local-test 的构建契约与自动化通过；带真实凭据的 trusted-beta 正式构建与升级未执行。
+- [x] AC-11 ordinary / trusted-beta / local-test 现有语义保持：稳定 release、可分发 trusted-beta 和不可分发 local-test 的构建契约与自动化通过；带真实凭据的正式 trusted-beta 已构建并完成真实升级验收，seed/key 临时副本清理通过。
 - [x] AC-12 可断言行为自动化与项目全量检查：最终 backend、frontend、Rust 与 package checks 全部通过。
 - [x] AC-13 当前账户下专用测试身份隔离升级矩阵：最终 schema 2 candidate `20260808T085256Z-d474f058f416-b976370d` 12/12 通过，指纹/build/hash 二次验证通过。
-- [ ] AC-14 当前账户真实 0.1.7 → candidate 正常覆盖升级：未授权、未执行。
+- [x] AC-14 当前账户真实 0.1.7 → candidate 正常覆盖升级：用户已执行正式 `0.1.8-beta.20260808.1` 安装并确认验收通过；验证过程未读取、导出或改写真实凭据内容。
 - [x] AC-15 Rule、Skill、脚本和机器门禁一致：指纹复用门禁、Rule、package-release Skill、脚本文档和 adapter 已同步；guidance audit 0 finding，真实 candidate → production target 复用通过。
-- [ ] AC-16 已安装产品状态化交互且无 Add/Install 多实例语义
+- [x] AC-16 已安装产品状态化交互且无 Add/Install 多实例语义：状态机与文案机器契约通过，同版本维护交互由用户验收确认。
 - [x] AC-17 程序目录事务化迁移后只保留一处受管理程序根，用户 namespace 原位不变；Windows 默认旧路径可仅保留受保护的 `Logs` 容器，不构成第二处安装。
-- [ ] AC-18 更高已安装版本固定双语拒绝且 mutation-free
+- [x] AC-18 更高已安装版本固定双语拒绝且 mutation-free：固定中英文文案、交互式关闭边界、silent/passive exit 35 和安装状态零修改由隔离矩阵与自动化覆盖。
 - [x] AC-19 相同安装行为输入复用矩阵、变化输入拒绝旧报告：自动化覆盖 docs/test 稳定及代码/环境失效；真实 candidate → production trusted local-test 复用通过，目标 manifest 指纹一致。
-- [ ] AC-20 trusted-beta 自动版本序列：CLI 临时渠道实测从目标 `0.1.8` 派生 `0.1.8-beta.20260808.1`，单调分配、目标合法性、clock rollback、显式构建意图和 build/version 分离均有自动化覆盖；待 clean source 的真实 trusted-beta prerelease installer 完成前后版本升级验收。
+- [x] AC-20 trusted-beta 自动版本序列：正式渠道从目标 `0.1.8` 派生并构建 `0.1.8-beta.20260808.1`，下一版本预览为 `0.1.8-beta.20260808.2`；单调分配、目标合法性、clock rollback、显式构建意图、build/version 分离以及 stable 高于同目标 beta 均有自动化覆盖，首个 beta 的真实升级由用户验收确认。
 
 ## 实现日志
 
@@ -84,6 +84,7 @@ IN_PROGRESS
 | 2026-08-08 | selector 修复后的项目合入门禁通过。 | backend 1604 passed / 3 skipped，Ruff 与 mypy 通过；frontend 89 files / 498 tests、lint、typecheck、production build 通过；Rust 170 passed / 1 ignored，installer helper 5 passed，release check 通过；Skill 校验、project adapter 和 23 项 guidance audit 通过。 |
 | 2026-08-08 | 完成 stable、trusted-beta、local-test 版本渠道治理。 | stable release 必须显式 `--release`；trusted-beta 每周期只配置下一稳定版本，包版本自动派生为 `<target>-beta.<UTC date>.<sequence>`；local-test 不可分发。裸 `all`、Agent 自选 major/minor/patch、手写 beta、以 build ID 冒充版本和 dirty 可分发构建均 fail closed。临时 release 根实测目标 `0.1.8` 得到 `0.1.8-beta.20260808.1`。 |
 | 2026-08-08 | 版本渠道改动后的全量门禁与隔离矩阵通过。 | package focused 68 passed；backend 1608 passed / 3 skipped；frontend 498 passed；Rust core 170 passed / 1 ignored、helper 5 passed。最终 candidate `20260808T085256Z-d474f058f416-b976370d` 的 12/12 场景通过，`packageInputSha256=004d8e20e1bc4f819f68c9e6ca44ab0a53c42cdb34752141ad23c1988089ae25`，installer SHA-256 `ca539e02c3d4485e6ee57e9b2fa636d7cb94a4dc21c9429d8dba57d83189550e`，二次验证通过。 |
+| 2026-08-08 | 完成正式可信内测包构建与真实用户验收。 | 基于干净 commit `14766fe2018f` 构建 `0.1.8-beta.20260808.1`，build ID `20260808T094201Z-14766fe2018f-36652253`，installer SHA-256 `f92878740fa6fd9b042ff4e18654cbc6e28b511b61167913c46d5715ebed9b9f`；manifest、实际文件和 SHA 文件一致，临时 seed/key 已清理。用户确认语言选择、真实覆盖升级和维护交互验收通过，需求状态转为 `COMPLETED`。 |
 
 ## 构建与 Smoke 证据
 
@@ -127,7 +128,12 @@ IN_PROGRESS
 - schema 2 build report：`C:\Users\example-user\AppData\Local\agent-friend\packaging\work\4aa1f81a6164\ef101cfe97dd\installer-smoke-reports\build-20260808T085256Z-d474f058f416-b976370d.json`
 - schema 2 smoke report：`C:\Users\example-user\AppData\Local\agent-friend\packaging\work\4aa1f81a6164\ef101cfe97dd\installer-smoke-reports\smoke-20260808T085256Z-d474f058f416-b976370d.json`
 - 自动场景：12/12 passed；`installer-smoke-verify` 绑定 candidate build ID、installer SHA 与当前 fingerprint 后通过；`productionUpgrade.executed=false`。
-- 临时渠道 CLI：目标 `0.1.8` 自动预览 `0.1.8-beta.20260808.1`；真实 release 根仍未配置目标，未创建可分发 beta。
+- 正式渠道目标：`0.1.8`；已构建 `0.1.8-beta.20260808.1`，下一版本预览为 `0.1.8-beta.20260808.2`。
+- 正式 trusted-beta build：`20260808T094201Z-14766fe2018f-36652253`。
+- 正式 sensitive installer：`C:\Users\example-user\agent-friend-releases\releases\0.1.8-beta.20260808.1\windows-x64\trusted-beta-sensitive\agent-friend_0.1.8-beta.20260808.1_windows_x64-trusted-beta-SENSITIVE-setup.exe`。
+- 正式 sensitive installer SHA-256：`f92878740fa6fd9b042ff4e18654cbc6e28b511b61167913c46d5715ebed9b9f`；manifest、实际文件和 SHA 文件一致。
+- 正式构建来源为干净 commit `14766fe2018f`；`publishable=true`、`sensitive=true`，构建后临时 seed/key 已清理。
+- 用户已使用该正式包完成真实 production 验收；隔离 smoke 报告中的 `productionUpgrade.executed=false` 仅描述隔离矩阵自身没有修改 production。
 
 ## 当前证据边界
 
@@ -135,5 +141,5 @@ IN_PROGRESS
 - 事后诊断强烈支持新壳与旧 runtime 混装风险，但缺少 runtime 内嵌身份，不能把具体混装状态写成已确认事实。
 - 该安装事件晚于 issue 043 的黑屏事故，不作为黑屏根因证据。
 - 当前实现和验证不得读取、导出或打印真实凭据值。
-- 最终报告明确 `productionUpgrade.executed=false`；真实 `D:\agent-friend` 没有被候选安装器执行覆盖升级。
-- 状态化维护页、固定降级中文文案与语言选择已有机器契约，但仍需可见安装器 UI 人工观察后才能完成 AC-1、AC-16 和 AC-18 的交互部分。
+- 隔离矩阵报告明确 `productionUpgrade.executed=false`，表示自动化 smoke 没有修改真实安装；其后用户使用正式 trusted-beta 独立完成了 production 覆盖升级并确认验收通过。
+- 语言选择与同版本维护交互有机器契约和用户验收双重证据；更高版本拒绝的固定双语文案、exit code 与 mutation-free 边界由自动化和隔离矩阵证明，未把它记录为用户手动执行。
