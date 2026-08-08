@@ -62,6 +62,7 @@ from .protocol import Tool
 from .registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from ..filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
     from ..skills import SkillCatalogService
@@ -80,6 +81,8 @@ def make_default_registry(
     qweather_api_host: str | None = None,
     social_platform_service: SocialPlatformService | None = None,
     skill_service: SkillCatalogService | None = None,
+    filesystem_approval_broker: FilesystemApprovalBroker | None = None,
+    filesystem_policy: ProtectedPathPolicy | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -111,9 +114,18 @@ def make_default_registry(
         - 始终包含 ``nearby_place_search``；无高德 Key 时返回配置提示
         - 始终包含 ``weather_query``；天气 Key 或 Host 不完整时返回配置提示
         - ``session_store`` 非 ``None`` → 含 :class:`ConversationHistoryTool`
-        - 网络与记忆条件都不满足 → 仍保留两个本地工具及地点、天气工具表面
+        - 始终包含受治理的公共文件工具；授权能力由入口和当前用户轮决定
+        - 网络与记忆条件都不满足 → 仍保留确定性工具、公共文件工具及地点、天气工具表面
     """
+    from ..filesystem.tools import make_filesystem_tools
+
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
+    tools.extend(
+        make_filesystem_tools(
+            broker=filesystem_approval_broker,
+            policy=filesystem_policy,
+        )
+    )
 
     if skill_service is not None:
         from .builtin.skills import SkillReadTool

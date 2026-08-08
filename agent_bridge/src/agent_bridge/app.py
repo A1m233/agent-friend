@@ -43,6 +43,7 @@ from .protocols.im import register_routes as register_im_routes
 from .protocols.openai import register_routes as register_openai_routes
 from .push import register_routes as register_push_routes
 from .routes.attachments import register_routes as register_attachment_routes
+from .routes.filesystem import register_routes as register_filesystem_routes
 from .routes.memory import register_routes as register_memory_routes
 from .routes.meta import register_routes as register_meta_routes
 from .routes.models import register_routes as register_model_routes
@@ -138,6 +139,7 @@ def create_app_with_runtime(
     register_meta_routes(app, runtime)
     register_memory_routes(app, runtime)
     register_attachment_routes(app, runtime)
+    register_filesystem_routes(app, runtime)
     register_model_routes(app, runtime)
     register_persona_routes(app, runtime)
     register_run_routes(app, runtime)

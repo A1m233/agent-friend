@@ -36,6 +36,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
@@ -72,6 +73,14 @@ from .conversation_events import (
     TurnDone,
 )
 from .errors import AgentError
+from .filesystem.tools import (
+    FILESYSTEM_LEDGER_ARG,
+    FILESYSTEM_RUN_ID_ARG,
+    FILESYSTEM_SESSION_ID_ARG,
+    FILESYSTEM_SURFACE_ARG,
+    FILESYSTEM_TOOL_CALL_ID_ARG,
+    FILESYSTEM_TOOL_NAMES,
+)
 from .latency import (
     RunLatencyContext,
     VoiceLatencyContext,
@@ -90,6 +99,7 @@ from .skills import (
     SkillTurnSnapshot,
     render_activated_skill,
     render_activation_issue,
+    render_runtime_capability_notice,
 )
 from .system_prompt.sections import PromptChannel
 from .system_prompt.surfaces import (
@@ -104,7 +114,11 @@ from .tool_runtime import (
     ToolRunState,
 )
 from .tools import ToolRegistry, ToolResult
-from .tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SKILL_READ_TOOL_NAME
+from .tools.builtin.skills import (
+    SKILL_CATALOG_SNAPSHOT_ARG,
+    SKILL_READ_TOOL_NAME,
+    SKILL_RUNTIME_CAPABILITIES_ARG,
+)
 
 if TYPE_CHECKING:
     LLMClientFactory = Callable[[str], LLMClient]
@@ -1408,6 +1422,7 @@ class Conversation:
             return []
         activations = {item.record.id: item for item in snapshot.activations}
         issues = {item.skill_id: item for item in snapshot.activation_issues}
+        runtime_capabilities = self._skill_runtime_capability_notice()
         payloads: list[dict[str, Any]] = []
         for order, selection in enumerate(self._active_skill_selections):
             activation = activations.get(selection.id)
@@ -1424,7 +1439,10 @@ class Conversation:
                         "path": str(activation.record.entry_path),
                         "version": activation.version,
                         "contents": activation.contents,
-                        "rendered": render_activated_skill(activation),
+                        "rendered": render_activated_skill(
+                            activation,
+                            runtime_capabilities=runtime_capabilities,
+                        ),
                     }
                 )
                 continue
@@ -1439,10 +1457,24 @@ class Conversation:
                         "skill_id": issue.skill_id,
                         "error_code": issue.code,
                         "error_message": issue.message,
-                        "rendered": render_activation_issue(issue),
+                        "rendered": render_activation_issue(
+                            issue,
+                            runtime_capabilities=runtime_capabilities,
+                        ),
                     }
                 )
         return payloads
+
+    def _skill_runtime_capability_notice(self) -> str:
+        tool_names = (
+            tuple(tool.name for tool in self._tool_registry.all_tools())
+            if self._tool_registry is not None
+            else ()
+        )
+        return render_runtime_capability_notice(
+            tool_names,
+            surface=str(self._prompt_surface_override or ""),
+        )
 
     def _skill_context_messages(self) -> list[Message]:
         return [
@@ -2855,6 +2887,16 @@ class Conversation:
         """Create a turn context and restore only typed public evidence from active history."""
 
         context = self._tool_run_context_factory(user_input)
+        if self._active_skill_turn_snapshot is not None:
+            for activation in self._active_skill_turn_snapshot.activations:
+                context.filesystem_authorizations.grant_scope(
+                    root=activation.record.package_root.resolve(),
+                    root_kind="directory",
+                    permissions=frozenset({"search_metadata", "read_text"}),
+                    allow_protected=True,
+                    source="skill",
+                    label=f"Skill {activation.record.name}",
+                )
         source_events = self._session.active_events if events is None else events
         for event in source_events:
             if event.type == "user_message":
@@ -2883,11 +2925,29 @@ class Conversation:
         *,
         current_turn_start_idx: int | None,
         tool_run_context: ToolRunContext | None = None,
+        tool_call_id: str = "",
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name in FILESYSTEM_TOOL_NAMES:
+            invocation_args.update(
+                {
+                    FILESYSTEM_LEDGER_ARG: (
+                        tool_run_context.filesystem_authorizations
+                        if tool_run_context is not None
+                        else None
+                    ),
+                    FILESYSTEM_SESSION_ID_ARG: self._session.session_id,
+                    FILESYSTEM_RUN_ID_ARG: self._run_id_override or "",
+                    FILESYSTEM_SURFACE_ARG: str(self._prompt_surface_override or ""),
+                    FILESYSTEM_TOOL_CALL_ID_ARG: tool_call_id,
+                }
+            )
         if name == SKILL_READ_TOOL_NAME and self._active_skill_turn_snapshot is not None:
             invocation_args[SKILL_CATALOG_SNAPSHOT_ARG] = self._active_skill_turn_snapshot.catalog
+            invocation_args[SKILL_RUNTIME_CAPABILITIES_ARG] = (
+                self._skill_runtime_capability_notice()
+            )
         if name == _RECALL_PAST_CHATS_TOOL_NAME and current_turn_start_idx is not None:
             invocation_args.update(
                 {
@@ -3155,11 +3215,14 @@ class Conversation:
                 allowed,
                 registry=self._tool_registry,
                 default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
-                invocation_args=lambda name, args: self._tool_args_with_invocation_context(
-                    name,
-                    args,
-                    current_turn_start_idx=current_turn_start_idx,
-                    tool_run_context=context,
+                invocation_args=lambda name, args, tool_call_id: (
+                    self._tool_args_with_invocation_context(
+                        name,
+                        args,
+                        current_turn_start_idx=current_turn_start_idx,
+                        tool_run_context=context,
+                        tool_call_id=tool_call_id,
+                    )
                 ),
                 cancel_check=(lambda: self._check_cancel(cancel_check)),
                 legacy_hook_invoker=legacy_hooks,
@@ -3211,6 +3274,16 @@ class Conversation:
                 result.meta.get("public_evidence"),
                 result.meta.get("ephemeral_evidence"),
             )
+            skill_root = result.meta.get("filesystem_package_root")
+            if tc["name"] == SKILL_READ_TOOL_NAME and isinstance(skill_root, str):
+                context.filesystem_authorizations.grant_scope(
+                    root=Path(skill_root).resolve(),
+                    root_kind="directory",
+                    permissions=frozenset({"search_metadata", "read_text"}),
+                    allow_protected=True,
+                    source="skill",
+                    label=f"Skill {result.meta.get('skill_activation', {}).get('name', '')}",
+                )
             no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
             runtime.new_evidence_count = progress.new_evidence_count
             runtime.reused_evidence_count = progress.reused_evidence_count

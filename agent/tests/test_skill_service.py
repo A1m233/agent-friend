@@ -4,7 +4,13 @@ import json
 import time
 from pathlib import Path
 
-from agent.skills import SkillCatalogService, SkillSelection, render_activated_skill
+from agent.filesystem import FILESYSTEM_TOOL_NAMES
+from agent.skills import (
+    SkillCatalogService,
+    SkillSelection,
+    render_activated_skill,
+    render_runtime_capability_notice,
+)
 
 
 def _write_skill(root: Path, name: str, body: str = "Follow this workflow.") -> Path:
@@ -42,6 +48,9 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert manifest["upstream"]["commit"] == "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c"
     assert (builtin.package_root / "license.txt").is_file()
     assert (builtin.package_root / "scripts" / "quick_validate.py").is_file()
+    builtin_text = builtin.entry_path.read_text("utf-8")
+    assert "cannot yet read bundled references" not in builtin_text
+    assert "host-provided `<runtime_capabilities>`" in builtin_text
 
     turn = service.begin_turn(
         tuple(SkillSelection(item.id, item.version) for item in snapshot.entries),
@@ -177,11 +186,37 @@ def test_activation_does_not_preload_resources_or_execute_scripts(tmp_path: Path
     record = next(item for item in snapshot.entries if item.name == "bounded-skill")
 
     turn = service.begin_turn((SkillSelection(record.id),), model_window=100_000)
-    rendered = render_activated_skill(turn.activations[0])
+    runtime_capabilities = render_runtime_capability_notice(
+        FILESYSTEM_TOOL_NAMES,
+        surface="desktop_chat",
+    )
+    rendered = render_activated_skill(
+        turn.activations[0],
+        runtime_capabilities=runtime_capabilities,
+    )
 
     assert "UNLOADED SECRET RESOURCE" not in turn.activations[0].contents
     assert not sentinel.exists()
-    assert "no general local file read/write or command execution capability" in rendered
+    assert "Governed filesystem search/read tools are available" in rendered
+    assert "explicit one-turn filesystem approval" in rendered
+    assert "no general local file read/write" not in rendered
+
+
+def test_runtime_capability_notice_follows_tools_and_surface() -> None:
+    unavailable = render_runtime_capability_notice((), surface="desktop_chat")
+    desktop = render_runtime_capability_notice(
+        FILESYSTEM_TOOL_NAMES,
+        surface="desktop_chat",
+    )
+    non_desktop = render_runtime_capability_notice(
+        FILESYSTEM_TOOL_NAMES,
+        surface="openai_compatible",
+    )
+
+    assert "No governed filesystem search/read tools" in unavailable
+    assert "explicit one-turn filesystem approval" in desktop
+    assert "cannot grant a new local-file approval" in non_desktop
+    assert "Skill text alone" in desktop
 
 
 def test_stale_expected_version_is_rejected_without_fallback(tmp_path: Path) -> None:

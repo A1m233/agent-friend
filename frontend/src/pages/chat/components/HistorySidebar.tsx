@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Circle, CircleAlert, Clock3, MoreVertical, Search, SquarePen } from "lucide-react";
+import { Circle, CircleAlert, Clock3, MoreVertical, Search, ShieldAlert, SquarePen } from "lucide-react";
 import { useKBar } from "kbar";
 import {
   Badge,
@@ -35,6 +35,8 @@ import {
   useConnectionStore,
   useConversationStore,
   useDraftStore,
+  useFilesystemApprovalsStore,
+  pendingFilesystemApprovalSessionIds,
   useSessionsStore,
 } from "@/stores";
 import type { RunSnapshot } from "@/types/run";
@@ -151,6 +153,11 @@ export function HistorySidebar() {
   const activeRunIdBySession = useConversationStore((s) => s.activeRunIdBySession);
   const runSnapshots = useConversationStore((s) => s.runSnapshots);
   const unreadRunOutcomeBySession = useConversationStore((s) => s.unreadRunOutcomeBySession);
+  const filesystemApprovalEntries = useFilesystemApprovalsStore((s) => s.entries);
+  const approvalSessionIds = useMemo(
+    () => pendingFilesystemApprovalSessionIds(filesystemApprovalEntries),
+    [filesystemApprovalEntries],
+  );
   const draftWorkspaces = useDraftStore((s) => s.workspaces);
   const [renamingSession, setRenamingSession] = useState<{
     sessionId: string;
@@ -403,6 +410,7 @@ export function HistorySidebar() {
                   const activeRun = activeRunId ? runSnapshots[activeRunId] : undefined;
                   const unreadOutcome = unreadRunOutcomeBySession[s.session_id];
                   const runIndicator = sessionRunIndicator(activeRun, unreadOutcome);
+                  const awaitingFilesystemApproval = approvalSessionIds.has(s.session_id);
                   const draft = draftWorkspaces[s.session_id];
                   const hasDraft = Boolean(draft?.text || draft?.attachments.length);
                   const sessionActionContext = {
@@ -491,24 +499,33 @@ export function HistorySidebar() {
                                   </Badge>
                                 ))}
                               </span>
-                              {!actionVisible && runIndicator === "running" ? (
+                              {!actionVisible && awaitingFilesystemApproval ? (
+                                <span
+                                  className="flex shrink-0 items-center gap-1 text-xs text-warning"
+                                  title="等待文件授权"
+                                >
+                                  <ShieldAlert className="size-3" aria-hidden="true" />
+                                  等待授权
+                                </span>
+                              ) : null}
+                              {!actionVisible && !awaitingFilesystemApproval && runIndicator === "running" ? (
                                 <span title="正在处理" aria-label="正在处理">
                                   <Spinner className="size-3 text-accent" />
                                 </span>
                               ) : null}
-                              {!actionVisible && runIndicator === "queued" ? (
+                              {!actionVisible && !awaitingFilesystemApproval && runIndicator === "queued" ? (
                                 <Clock3
                                   className="size-3 shrink-0 text-muted"
                                   aria-label="等待处理"
                                 />
                               ) : null}
-                              {!actionVisible && runIndicator === "failed" ? (
+                              {!actionVisible && !awaitingFilesystemApproval && runIndicator === "failed" ? (
                                 <CircleAlert
                                   className="size-3 shrink-0 text-danger"
                                   aria-label="处理失败"
                                 />
                               ) : null}
-                              {!actionVisible && runIndicator === "completed" ? (
+                              {!actionVisible && !awaitingFilesystemApproval && runIndicator === "completed" ? (
                                 <Circle
                                   className="size-2 shrink-0 fill-accent text-accent"
                                   aria-label="有新回复"

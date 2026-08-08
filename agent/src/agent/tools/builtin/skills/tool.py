@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Any, ClassVar, cast
 
 from ....skills.models import SkillCatalogSnapshot, SkillInvocationKind, SkillSelection
-from ....skills.rendering import render_activated_skill, render_activation_issue
+from ....skills.rendering import (
+    render_activated_skill,
+    render_activation_issue,
+    render_runtime_capability_notice,
+)
 from ....skills.service import SkillCatalogService
 from ...protocol import ToolResult
 
 SKILL_READ_TOOL_NAME = "skill_read"
 SKILL_CATALOG_SNAPSHOT_ARG = "__agent_friend_skill_catalog_snapshot"
+SKILL_RUNTIME_CAPABILITIES_ARG = "__agent_friend_skill_runtime_capabilities"
 _INVOCATION_KINDS = frozenset({"named", "referenced", "implicit"})
 
 
@@ -62,6 +67,9 @@ class SkillReadTool:
         raw_kind = args.get("invocation_kind")
         reason = args.get("reason")
         snapshot = args.get(SKILL_CATALOG_SNAPSHOT_ARG)
+        runtime_capabilities = args.get(SKILL_RUNTIME_CAPABILITIES_ARG)
+        if not isinstance(runtime_capabilities, str) or not runtime_capabilities.strip():
+            runtime_capabilities = render_runtime_capability_notice((), surface=None)
         if not isinstance(skill_id, str) or not skill_id.strip():
             return self._argument_error("id 必须是当前 catalog 中的非空稳定 ID。")
         if raw_kind not in _INVOCATION_KINDS:
@@ -83,7 +91,10 @@ class SkillReadTool:
         )
         if activation is not None:
             return ToolResult(
-                text=render_activated_skill(activation),
+                text=render_activated_skill(
+                    activation,
+                    runtime_capabilities=runtime_capabilities,
+                ),
                 meta={
                     "context_retention": "pinned",
                     "skill_activation": {
@@ -95,12 +106,16 @@ class SkillReadTool:
                         "invocation_kind": invocation_kind,
                         "reason": reason.strip(),
                     },
+                    "filesystem_package_root": str(activation.record.package_root),
                 },
             )
 
         assert issue is not None
         return ToolResult(
-            text=render_activation_issue(issue),
+            text=render_activation_issue(
+                issue,
+                runtime_capabilities=runtime_capabilities,
+            ),
             is_error=True,
             meta={
                 "error_kind": issue.code,

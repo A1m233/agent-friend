@@ -153,6 +153,7 @@ def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) 
     skill_index = next(
         index for index, item in enumerate(messages) if "FIRST VERSION" in item["content"]
     )
+    assert "No governed filesystem search/read tools" in messages[skill_index]["content"]
     existing_context_index = next(
         index for index, item in enumerate(messages) if item["content"] == "EXISTING TURN CONTEXT"
     )
@@ -286,6 +287,7 @@ def test_model_can_semantically_select_and_read_skill_in_tool_loop(tmp_path: Pat
         event for event in conversation.session.events if event.type == "tool_call_result"
     )
     assert result_event.payload["is_error"] is False
+    assert "No governed filesystem search/read tools" in result_event.payload["content"]
     assert result_event.meta["extra"]["skill_activation"]["status"] == "activated"
     assert any(getattr(event, "type", "") == "tool_call_result" for event in events)
 

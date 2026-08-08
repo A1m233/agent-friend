@@ -56,8 +56,8 @@ class Tool(Protocol):
 
         Protocol 上**不绑定 UI 渲染**（无 ``render_xxx`` / ``user_facing_name``
         等方法）——UI 渲染统一由 CLI / 前端基于 ``ConversationEvent`` 决定。
-        Protocol 上**不绑定权限**——本期不做沙箱 / 用户开关；未来真有需求时
-        通过新增可选方法扩展。
+        Protocol 本身**不绑定权限策略**；需要权限的工具可通过宿主注入的隐藏运行时
+        上下文执行校验，不能把模型参数当成授权事实。
 
         三个属性用 :class:`typing.ClassVar` 标注——Tool 实现的 ``name`` /
         ``description`` / ``parameters_schema`` 都是定义级常量（同类所有实例共享），

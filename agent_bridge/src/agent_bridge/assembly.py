@@ -15,15 +15,20 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from agent.filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
+from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource
+from agent.paths import log_dir
 from agent.runtime import AgentRuntime
 from agent.todos import ReminderScheduler, TodoService, TodoStore
 from agent.tools import ToolRegistry
+from runtime_config.sources import default_settings_path
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -181,6 +186,8 @@ class BridgeRuntime:
     """072：共享的本地只读平台 connector 与 opaque resource 生命周期。"""
     social_auth_orchestrator: SocialAuthOrchestrator | None = None
     """072：桌面批准登录、Agent continuation 与原 surface 投递编排。"""
+    filesystem_approval_broker: FilesystemApprovalBroker | None = None
+    """078：桌面文件授权请求与一次性决定的进程级 broker。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -309,6 +316,35 @@ def build_runtime(
         personal_root=settings.sessions_dir.parent / "skills",
     )
     skill_service.initialize()
+    filesystem_approval_broker = FilesystemApprovalBroker()
+    builtin_skill_roots = tuple(
+        canonical_path(record.package_root)
+        for record in skill_service.snapshot.entries
+        if record.source == "builtin"
+    )
+    product_paths = [
+        settings.sessions_dir,
+        settings.memory_db,
+        settings.personas_dir,
+        settings.attachments_dir,
+        settings.im_credentials_dir,
+        settings.im_resume_dir,
+        settings.im_state_path,
+        settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db",
+        log_dir(),
+        default_settings_path(),
+    ]
+    if getattr(sys, "frozen", False):
+        product_paths.append(Path(sys.executable).resolve().parent)
+    product_roots = tuple(canonical_path(path) for path in product_paths)
+    filesystem_policy = ProtectedPathPolicy(
+        product_roots=product_roots,
+        personal_skill_roots=(
+            canonical_path(skill_service.personal_root),
+            canonical_path(skill_service.shared_root),
+        ),
+        builtin_skill_roots=builtin_skill_roots,
+    )
 
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
@@ -345,6 +381,8 @@ def build_runtime(
         qweather_api_host=runtime_config.tool_credentials.qweather_api_host,
         social_platform_service=social_platform_service,
         skill_service=skill_service,
+        filesystem_approval_broker=filesystem_approval_broker,
+        filesystem_policy=filesystem_policy,
     )
 
     llm_client_factory = runtime_config.llm_client_factory
@@ -378,6 +416,9 @@ def build_runtime(
         session_turn_guard=turn_coordinator.hold,
     )
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
+    filesystem_approval_broker.add_listener(
+        agent_runtime.listeners.publish_filesystem_approval_change
+    )
     session_model_service = SessionModelService(
         persistent_session_manager,
         turn_coordinator,
@@ -442,6 +483,7 @@ def build_runtime(
             todo_service=todo_service,
             presence_registry=presence_registry,
             social_platform_service=social_platform_service,
+            filesystem_approval_broker=filesystem_approval_broker,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -546,4 +588,5 @@ def build_runtime(
         reminder_scheduler=reminder_scheduler,
         social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
+        filesystem_approval_broker=filesystem_approval_broker,
     )
