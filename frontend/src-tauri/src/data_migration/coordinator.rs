@@ -974,7 +974,7 @@ async fn restore_runtime_state(
 
 fn validate_manifest_semantics(manifest: &Manifest) -> Result<(), String> {
     let source_version = parse_app_version(&manifest.source_app_version)?;
-    let current_version = parse_app_version(env!("CARGO_PKG_VERSION"))?;
+    let current_version = parse_app_version(env!("AGENT_FRIEND_PRODUCT_VERSION"))?;
     if source_version > current_version {
         return Err("package_requires_newer_app".to_string());
     }

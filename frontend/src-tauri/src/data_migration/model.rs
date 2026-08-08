@@ -41,7 +41,7 @@ impl Manifest {
     pub fn new(entries: Vec<ManifestEntry>) -> Self {
         Self {
             schema_version: MANIFEST_VERSION,
-            source_app_version: env!("CARGO_PKG_VERSION").to_string(),
+            source_app_version: env!("AGENT_FRIEND_PRODUCT_VERSION").to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
             entries,
         }

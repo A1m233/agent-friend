@@ -13,6 +13,7 @@ mod avatar_models;
 mod bubble_window;
 mod data_migration;
 mod diagnostics;
+pub mod install_contract;
 mod paths;
 mod permissions;
 mod pet_cursor_passthrough;
@@ -948,7 +949,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
-                .app_name("agent-friend")
+                .app_name(
+                    install_contract::embedded_profile()
+                        .expect("embedded install profile must be valid")
+                        .product_name,
+                )
                 .arg("--autostart")
                 .build(),
         )

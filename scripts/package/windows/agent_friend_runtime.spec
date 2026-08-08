@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
@@ -6,6 +7,9 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 repo_root = Path(SPECPATH).parents[2]
 entry = repo_root / "scripts" / "package" / "runtime_entry.py"
 hooks_dir = repo_root / "scripts" / "package" / "windows" / "hooks"
+identity_module = Path(os.environ["AGENT_FRIEND_RUNTIME_IDENTITY_MODULE"]).resolve()
+if not identity_module.is_file():
+    raise RuntimeError(f"generated runtime identity module is missing: {identity_module}")
 
 datas = []
 binaries = []
@@ -63,10 +67,10 @@ datas += collect_data_files(
 
 analysis = Analysis(
     [str(entry)],
-    pathex=[str(repo_root)],
+    pathex=[str(repo_root), str(identity_module.parent)],
     binaries=binaries,
     datas=datas,
-    hiddenimports=sorted(set(hiddenimports)),
+    hiddenimports=sorted({*hiddenimports, identity_module.stem}),
     hookspath=[str(hooks_dir)],
     runtime_hooks=[],
     excludes=[

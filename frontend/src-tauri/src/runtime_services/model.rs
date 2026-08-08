@@ -1,3 +1,4 @@
+use crate::install_contract;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -22,17 +23,16 @@ impl RuntimeServiceKind {
         }
     }
 
-    pub fn base_url(self) -> &'static str {
-        match self {
-            Self::Bridge => "http://127.0.0.1:18800",
-            Self::Voice => "http://127.0.0.1:18900",
-        }
+    pub fn base_url(self) -> String {
+        format!("http://127.0.0.1:{}", self.port())
     }
 
     pub fn port(self) -> u16 {
+        let profile =
+            install_contract::embedded_profile().expect("embedded install profile must be valid");
         match self {
-            Self::Bridge => 18800,
-            Self::Voice => 18900,
+            Self::Bridge => profile.bridge_port,
+            Self::Voice => profile.voice_port,
         }
     }
 }

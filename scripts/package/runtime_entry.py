@@ -23,6 +23,11 @@ from runtime_config import (
     install_credential_seed,
 )
 
+try:
+    from agent_friend_build_identity import BUILD_IDENTITY_JSON
+except ImportError:
+    BUILD_IDENTITY_JSON = ""
+
 
 class _CredentialStore(Protocol):
     def get(self, name: str) -> Any: ...
@@ -38,6 +43,25 @@ def _runtime_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
+
+
+def _build_identity() -> dict[str, Any]:
+    if not BUILD_IDENTITY_JSON:
+        raise RuntimeError("frozen runtime build identity is unavailable")
+    value = json.loads(BUILD_IDENTITY_JSON)
+    if not isinstance(value, dict):
+        raise RuntimeError("frozen runtime build identity is invalid")
+    return value
+
+
+def _print_build_identity() -> int:
+    try:
+        identity = _build_identity()
+    except (RuntimeError, json.JSONDecodeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": True, "identity": identity}, ensure_ascii=False))
+    return 0
 
 
 def _smoke_skill_catalog() -> dict[str, Any]:
@@ -330,6 +354,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     for command in ("bridge", "voice"):
         subparsers.add_parser(command)
     subparsers.add_parser("doctor")
+    subparsers.add_parser("build-identity")
     seed_parser = subparsers.add_parser("seed-credentials")
     seed_parser.add_argument("--payload", type=Path, required=True)
     seed_parser.add_argument("--key-file", type=Path, required=True)
@@ -346,10 +371,14 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
     if args.command == "doctor":
         return _doctor()
+    if args.command == "build-identity":
+        return _print_build_identity()
     if args.command == "seed-credentials":
         return _seed_credentials(args.payload, args.key_file)
     if args.command == "credential-status":
         return _credential_status(require_operational=args.require_operational)
+    if BUILD_IDENTITY_JSON:
+        os.environ["AGENT_FRIEND_BUILD_IDENTITY_JSON"] = BUILD_IDENTITY_JSON
     if args.command == "bridge":
         from agent_bridge.__main__ import main as bridge_main
 

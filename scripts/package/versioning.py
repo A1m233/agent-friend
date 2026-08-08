@@ -6,8 +6,9 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from functools import total_ordering
 from pathlib import Path
 
@@ -17,6 +18,7 @@ SEMVER_PATTERN = re.compile(
     r"(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
+TRUSTED_BETA_CHANNEL_SCHEMA_VERSION = 1
 
 
 @total_ordering
@@ -101,6 +103,136 @@ class SemVer:
 class ProjectVersion:
     version: SemVer
     values: dict[str, str]
+
+
+@dataclass(frozen=True)
+class TrustedBetaChannel:
+    target_release_version: SemVer
+    path: Path
+
+
+def _require_stable_version(version: SemVer, *, label: str) -> None:
+    if version.prerelease or version.build:
+        raise RuntimeError(f"{label} must be a stable SemVer without prerelease/build metadata")
+
+
+def trusted_beta_channel_path(releases_root: Path) -> Path:
+    return releases_root.resolve(strict=False) / "channels" / "trusted-beta.json"
+
+
+def read_trusted_beta_channel(releases_root: Path) -> TrustedBetaChannel | None:
+    path = trusted_beta_channel_path(releases_root)
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"trusted-beta channel configuration is unreadable: {path}") from error
+    if (
+        not isinstance(value, dict)
+        or value.get("schemaVersion") != TRUSTED_BETA_CHANNEL_SCHEMA_VERSION
+    ):
+        raise RuntimeError(f"unsupported trusted-beta channel configuration: {path}")
+    raw_target = value.get("targetReleaseVersion")
+    if not isinstance(raw_target, str):
+        raise RuntimeError(f"trusted-beta target release version is missing: {path}")
+    try:
+        target = SemVer.parse(raw_target)
+    except ValueError as error:
+        raise RuntimeError(
+            f"invalid trusted-beta target release version: {raw_target!r}"
+        ) from error
+    _require_stable_version(target, label="trusted-beta target release version")
+    return TrustedBetaChannel(target_release_version=target, path=path)
+
+
+def configure_trusted_beta_channel(
+    releases_root: Path,
+    value: str,
+    *,
+    minimum_release_version: SemVer,
+    replace: Callable[[str | os.PathLike[str], str | os.PathLike[str]], None] = os.replace,
+) -> TrustedBetaChannel:
+    try:
+        target = SemVer.parse(value)
+    except ValueError as error:
+        raise RuntimeError(f"invalid trusted-beta target release version: {value!r}") from error
+    _require_stable_version(target, label="trusted-beta target release version")
+    if target <= minimum_release_version:
+        raise RuntimeError(
+            "trusted-beta target release version must be newer than the current/latest stable "
+            f"release ({minimum_release_version})"
+        )
+
+    path = trusted_beta_channel_path(releases_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(
+            {
+                "schemaVersion": TRUSTED_BETA_CHANNEL_SCHEMA_VERSION,
+                "targetReleaseVersion": str(target),
+            },
+            indent=2,
+        )
+        + "\n"
+    ).encode("utf-8")
+    descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temp_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    configured = read_trusted_beta_channel(releases_root)
+    if configured is None or configured.target_release_version != target:
+        raise RuntimeError("trusted-beta channel configuration verification failed")
+    return configured
+
+
+def next_trusted_beta_version(
+    channel: TrustedBetaChannel,
+    published_versions: Iterable[SemVer],
+    *,
+    now: datetime | None = None,
+) -> SemVer:
+    date = (now or datetime.now(UTC)).strftime("%Y%m%d")
+    target = channel.target_release_version
+    dated_sequences: list[tuple[str, int]] = []
+    for version in published_versions:
+        if (version.major, version.minor, version.patch) != (
+            target.major,
+            target.minor,
+            target.patch,
+        ):
+            continue
+        prerelease = version.prerelease
+        if (
+            len(prerelease) != 3
+            or prerelease[0] != "beta"
+            or not re.fullmatch(r"[1-9]\d{7}", prerelease[1])
+            or not re.fullmatch(r"[1-9]\d*", prerelease[2])
+        ):
+            raise RuntimeError(
+                "trusted-beta channel contains a version outside the governed "
+                f"<target>-beta.<YYYYMMDD>.<sequence> scheme: {version}"
+            )
+        dated_sequences.append((prerelease[1], int(prerelease[2])))
+
+    if dated_sequences:
+        latest_date = max(item[0] for item in dated_sequences)
+        if latest_date > date:
+            raise RuntimeError(
+                "system UTC date is earlier than the latest trusted-beta artifact "
+                f"({date} < {latest_date}); refusing a non-monotonic version"
+            )
+    sequence = 1 + max(
+        (sequence for published_date, sequence in dated_sequences if published_date == date),
+        default=0,
+    )
+    return SemVer.parse(f"{target.major}.{target.minor}.{target.patch}-beta.{date}.{sequence}")
 
 
 def _paths(repo_root: Path) -> dict[str, Path]:

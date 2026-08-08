@@ -87,8 +87,20 @@ def validate_release_directory(directory: Path, *, formal: bool) -> dict[str, An
     missing = sorted(required - manifest.keys())
     if missing:
         raise RuntimeError(f"release manifest missing fields {missing}: {directory}")
-    if manifest["schema_version"] != 2 or manifest["product"] != "agent-friend":
+    if manifest["schema_version"] != 2 or manifest["product"] not in {
+        "agent-friend",
+        "agent-friend-installer-smoke",
+    }:
         raise RuntimeError(f"unsupported release manifest: {directory}")
+    profile_id = manifest.get("profile_id", "production")
+    expected_product = (
+        "agent-friend" if profile_id == "production" else "agent-friend-installer-smoke"
+    )
+    if (
+        profile_id not in {"production", "installer-smoke"}
+        or manifest["product"] != expected_product
+    ):
+        raise RuntimeError(f"release manifest product/profile mismatch: {directory}")
     if manifest["platform"] != "windows-x64":
         raise RuntimeError(f"unexpected release platform: {directory}")
     SemVer.parse(str(manifest["version"]))
@@ -99,6 +111,8 @@ def validate_release_directory(directory: Path, *, formal: bool) -> dict[str, An
     if not isinstance(manifest["toolchain"], dict):
         raise RuntimeError(f"invalid release toolchain: {directory}")
     if formal:
+        if profile_id != "production":
+            raise RuntimeError(f"formal releases require the production profile: {directory}")
         if manifest["build_mode"] != "formal" or manifest["publishable"] is not True:
             raise RuntimeError(f"not a publishable formal release: {directory}")
         if manifest["distribution"] not in FORMAL_DISTRIBUTIONS:

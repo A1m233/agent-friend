@@ -288,7 +288,7 @@ agent-friend_<version>_windows_x64-trusted-beta-SENSITIVE-setup.exe
 - `frontend/package.json`
 - 对应 lock / package version 测试
 
-最终普通包与可信包来自同一份代码和版本，只通过显式分发模式区分。
+最终 stable release 与可信包仍可来自同一份已验收代码；stable release 使用显式项目版本，日常可分发可信包按 055 / 077 的渠道治理派生 `<target>-beta.<UTC date>.<sequence>` 版本。凭据是否注入仍只由显式 distribution 区分，版本渠道不参与凭据选择。
 
 ## 数据流
 
@@ -390,4 +390,5 @@ flowchart TD
 |------|---------|------------------|
 | 2026-07-17 | 初版确认：默认无凭据包；显式 trusted-beta 模式；keyring-only 构建输入；AES-GCM 临时 seed；NSIS post-install 一次性导入；每次可信包安装全量覆盖托管凭据 | 新设计，待实现 |
 | 2026-07-17 | 修正凭据完整性语义：注册表 key 仍 exact-set；必需项必须非空，可选 `VOLC_SPEECH_API_KEY` 可为 `null`，安装时删除该可选旧值；状态 smoke 改按 operational 必需项判断 | 需要增量调整 seed、runtime status 与测试 |
+| 2026-08-08 | 对齐 055 / 077 的版本渠道治理：可信分发使用自动派生的单调 prerelease 版本，stable release 保持显式项目版本；凭据注入边界不变 | 只需调整 package harness 与治理文档，不重做凭据 seed |
 

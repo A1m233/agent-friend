@@ -28,6 +28,7 @@ CAPABILITY_HANDLERS = {
     "windows-shell-history-v1": "windowsShell",
     "webview2-process-health-v1": "webView2",
     "webview2-render-evidence-v1": "webView2RenderEvidence",
+    "install-integrity-v1": "installIntegrity",
 }
 
 
@@ -177,6 +178,69 @@ def summarize_webview2(value: Any) -> dict[str, Any] | None:
                 ).items()
             )
         ),
+    }
+
+
+def summarize_install_integrity(value: Any, *, collected: bool) -> dict[str, Any]:
+    if value is None:
+        return {
+            "status": "unavailable",
+            "evidence": "missing" if collected else "not-collected",
+        }
+    if not isinstance(value, dict):
+        return {
+            "status": "unavailable",
+            "evidence": "invalid",
+            "error": "install integrity root is not an object",
+        }
+    shell = value.get("shell") if isinstance(value.get("shell"), dict) else {}
+    active = value.get("activeInstall") if isinstance(value.get("activeInstall"), dict) else {}
+    payload = value.get("payload") if isinstance(value.get("payload"), dict) else {}
+    runtime = value.get("runtime") if isinstance(value.get("runtime"), dict) else {}
+    residue = value.get("residue") if isinstance(value.get("residue"), dict) else {}
+    job = runtime.get("jobObject") if isinstance(runtime.get("jobObject"), dict) else {}
+    observed = (
+        runtime.get("observedReadiness")
+        if isinstance(runtime.get("observedReadiness"), dict)
+        else {}
+    )
+    return {
+        "schemaVersion": value.get("schemaVersion"),
+        "status": value.get("status"),
+        "errorCode": value.get("errorCode"),
+        "evidence": "collected",
+        "shell": {
+            "available": shell.get("available"),
+            "buildId": shell.get("buildId"),
+            "profileId": shell.get("profileId"),
+            "buildIdentitySha256": shell.get("buildIdentitySha256"),
+        },
+        "activeInstall": {
+            "present": active.get("present"),
+            "parseable": active.get("parseable"),
+            "buildId": active.get("buildId"),
+            "profileId": active.get("profileId"),
+            "buildIdentitySha256": active.get("buildIdentitySha256"),
+            "payloadManifestSha256": active.get("payloadManifestSha256"),
+            "payloadRelativePath": active.get("payloadRelativePath"),
+        },
+        "payload": {
+            "validated": payload.get("validated"),
+            "buildId": payload.get("buildId"),
+            "profileId": payload.get("profileId"),
+            "buildIdentitySha256": payload.get("buildIdentitySha256"),
+            "payloadManifestSha256": payload.get("payloadManifestSha256"),
+            "runtimeExecutableSha256": payload.get("runtimeExecutableSha256"),
+        },
+        "runtime": {
+            "observedReadiness": observed,
+            "jobObjectCreated": job.get("created"),
+            "jobObjectAssignedCount": job.get("assignedCount"),
+        },
+        "residue": {
+            "legacyFixedRuntimePresent": residue.get("legacyFixedRuntimePresent"),
+            "incompleteTransactionCount": residue.get("incompleteTransactionCount"),
+        },
     }
 
 
@@ -472,6 +536,14 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             or "diagnostics/webview2-render-evidence.json" in names
             else None
         )
+        install_integrity_collected = (
+            "install-integrity-v1" in capabilities or "install/integrity.json" in names
+        )
+        install_integrity = (
+            optional_json(archive, "install/integrity.json", warnings)
+            if install_integrity_collected
+            else None
+        )
         render_evidence_summary = summarize_webview2_render_evidence(
             webview2_render_evidence,
             set(names),
@@ -656,6 +728,10 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             },
             "webView2": summarize_webview2(webview2),
             "webView2RenderEvidence": render_evidence_summary,
+            "installIntegrity": summarize_install_integrity(
+                install_integrity,
+                collected=install_integrity_collected,
+            ),
             "warnings": warnings,
         }
 
@@ -741,6 +817,16 @@ def print_human(summary: dict[str, Any]) -> None:
         f"deltaMs={render_evidence.get('startDeltaMs')} "
         f"artifacts={len(render_evidence.get('includedArtifacts', []))} "
         f"missing={len(render_evidence.get('missingArtifacts', []))}"
+    )
+    install_integrity = summary["installIntegrity"]
+    print(
+        "Install integrity: "
+        f"status={install_integrity.get('status')} "
+        f"evidence={install_integrity.get('evidence')} "
+        f"error={install_integrity.get('errorCode')} "
+        f"shellBuild={install_integrity.get('shell', {}).get('buildId')} "
+        f"payloadValid={install_integrity.get('payload', {}).get('validated')} "
+        f"runtimeObserved={json.dumps(install_integrity.get('runtime', {}).get('observedReadiness', {}), ensure_ascii=False, sort_keys=True)}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "

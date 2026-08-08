@@ -1,3 +1,5 @@
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+use crate::install_contract;
 use serde::Serialize;
 use tauri::{AppHandle, Runtime, WebviewWindow};
 
@@ -13,7 +15,11 @@ const SETTINGS_WINDOW: &str = "settings";
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 const WINDOWS_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
-const WINDOWS_RUN_VALUE: &str = "agent-friend";
+fn windows_run_value() -> String {
+    install_contract::embedded_profile()
+        .map(|profile| profile.autostart_value_name)
+        .unwrap_or_else(|_| "agent-friend".to_string())
+}
 
 #[cfg(all(target_os = "windows", any(test, not(debug_assertions))))]
 fn windows_autostart_command(executable: &Path) -> String {
@@ -27,7 +33,7 @@ fn normalize_windows_run_entry() -> Result<(), String> {
     let run = hkcu
         .open_subkey_with_flags(WINDOWS_RUN_KEY, winreg::enums::KEY_SET_VALUE)
         .map_err(|error| error.to_string())?;
-    run.set_value(WINDOWS_RUN_VALUE, &windows_autostart_command(&executable))
+    run.set_value(windows_run_value(), &windows_autostart_command(&executable))
         .map_err(|error| error.to_string())
 }
 

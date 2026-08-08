@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
+from runtime_config.build_identity import readiness_identity
 
 from .assembly import BridgeRuntime
 
@@ -46,7 +47,7 @@ class BridgeLifecycleController:
         ready = activity is not None and activity.accepting
         return {
             "status": "ready" if ready else "not_ready",
-            "service": "bridge",
+            **readiness_identity("bridge"),
             "accepting": activity.accepting if activity is not None else False,
             "checks": {
                 "runtime": "ready" if ready else "not_ready",

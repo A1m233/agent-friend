@@ -6,6 +6,7 @@ import secrets
 from collections.abc import Callable
 
 from fastapi import APIRouter, FastAPI, Header, HTTPException
+from runtime_config.build_identity import readiness_identity
 
 from .assembly import VoiceBridgeRuntime
 
@@ -38,7 +39,7 @@ class VoiceLifecycleController:
         activity = self.runtime.call_registry.activity_snapshot()
         return {
             "status": "not_ready" if self._quiescing else "ready",
-            "service": "voice",
+            **readiness_identity("voice"),
             "accepting": not self._quiescing,
             "checks": {"runtime": "ready", "routes": "ready"},
             "activity": {

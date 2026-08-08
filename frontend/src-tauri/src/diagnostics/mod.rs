@@ -1,4 +1,7 @@
-use crate::{paths, runtime_config, runtime_services, shell_diagnostics, webview_diagnostics};
+use crate::{
+    install_contract, paths, runtime_config, runtime_services, shell_diagnostics,
+    webview_diagnostics,
+};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -117,7 +120,7 @@ pub async fn generate_diagnostic_bundle(
         let client = client.clone();
         async move {
             let mut url =
-                reqwest::Url::parse(runtime_services::RuntimeServiceKind::Bridge.base_url())
+                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
                     .map_err(|e| e.to_string())?;
             url.path_segments_mut()
                 .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
@@ -135,7 +138,7 @@ pub async fn generate_diagnostic_bundle(
         let session_id = session_id.clone();
         async move {
             let mut url =
-                reqwest::Url::parse(runtime_services::RuntimeServiceKind::Bridge.base_url())
+                reqwest::Url::parse(&runtime_services::RuntimeServiceKind::Bridge.base_url())
                     .map_err(|e| e.to_string())?;
             url.path_segments_mut()
                 .map_err(|_| "bridge base URL cannot accept path segments".to_string())?
@@ -190,6 +193,10 @@ pub async fn generate_diagnostic_bundle(
     let mut render_evidence_export = webview_diagnostics_manager
         .export_render_evidence_for_bundle(request.include_render_evidence);
     let render_evidence_metadata = render_evidence_export.metadata;
+    let install_integrity = collect_install_integrity(
+        resource_dir.as_deref(),
+        services.install_integrity_runtime_evidence().await,
+    );
 
     for (name, mut value) in [
         ("diagnostics/application.json", app_info),
@@ -201,6 +208,7 @@ pub async fn generate_diagnostic_bundle(
             "diagnostics/webview2-render-evidence.json",
             render_evidence_metadata,
         ),
+        ("install/integrity.json", install_integrity),
     ] {
         let mut count = 0;
         redact_json(&mut value, &credentials, home.as_deref(), &mut count);
@@ -361,6 +369,187 @@ fn load_package_build_metadata(resource_dir: Option<&Path>) -> Value {
         return Value::Null;
     };
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+}
+
+fn collect_install_integrity(resource_dir: Option<&Path>, runtime: Value) -> Value {
+    let embedded = install_contract::embedded_identity();
+    let embedded_error_code = embedded
+        .as_ref()
+        .err()
+        .map(|error| stable_install_error(error).to_string());
+    let shell = embedded
+        .as_ref()
+        .ok()
+        .and_then(|value| value.as_ref())
+        .map(|(identity, identity_sha256)| {
+            json!({
+                "available": true,
+                "buildId": identity.build_id,
+                "profileId": identity.profile_id,
+                "buildIdentitySha256": identity_sha256,
+                "productVersion": identity.product_version,
+                "buildMode": identity.build_mode,
+                "distribution": identity.distribution,
+                "sourceCommit": identity.source_commit,
+                "sourceTreeSha256": identity.source_tree_sha256,
+                "dirty": identity.dirty,
+            })
+        })
+        .unwrap_or_else(|| json!({"available": false}));
+
+    let receipt_path = resource_dir.map(|root| root.join(install_contract::ACTIVE_INSTALL_FILE));
+    let receipt = receipt_path
+        .as_deref()
+        .filter(|path| path.is_file())
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| {
+            serde_json::from_slice::<install_contract::ActiveInstallReceipt>(&bytes).ok()
+        });
+    let receipt_summary = receipt
+        .as_ref()
+        .map(|receipt| {
+            json!({
+                "present": true,
+                "parseable": true,
+                "buildId": receipt.build_id,
+                "profileId": receipt.profile_id,
+                "buildIdentitySha256": receipt.build_identity_sha256,
+                "payloadManifestSha256": receipt.payload_manifest_sha256,
+                "payloadRelativePath": receipt.payload_relative_path.replace('\\', "/"),
+                "activatedAt": receipt.activated_at,
+            })
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "present": receipt_path.as_deref().is_some_and(Path::is_file),
+                "parseable": false,
+            })
+        });
+
+    let observed_mismatch = embedded
+        .as_ref()
+        .ok()
+        .and_then(|value| value.as_ref())
+        .is_some_and(|(identity, identity_sha256)| {
+            runtime
+                .get("observedReadiness")
+                .and_then(Value::as_object)
+                .is_some_and(|observed| {
+                    observed.values().any(|value| {
+                        value.is_object()
+                            && (value.get("buildId").and_then(Value::as_str)
+                                != Some(identity.build_id.as_str())
+                                || value.get("profileId").and_then(Value::as_str)
+                                    != Some(identity.profile_id.as_str())
+                                || value.get("buildIdentitySha256").and_then(Value::as_str)
+                                    != Some(identity_sha256.as_str()))
+                    })
+                })
+        });
+
+    let active_result = install_contract::discover_active_payload(resource_dir);
+    let (mut status, error_code, payload) = match active_result {
+        Ok(Some(active)) if observed_mismatch => (
+            "runtime_identity_mismatch",
+            Some("runtime_identity_mismatch".to_string()),
+            json!({
+                "validated": true,
+                "buildId": active.identity.build_id,
+                "profileId": active.identity.profile_id,
+                "buildIdentitySha256": active.identity_sha256,
+                "payloadRelativePath": active.receipt.payload_relative_path.replace('\\', "/"),
+                "payloadManifestSha256": active.receipt.payload_manifest_sha256,
+                "runtimeExecutableSha256": active.runtime_executable_sha256,
+            }),
+        ),
+        Ok(Some(active)) => (
+            "consistent",
+            None,
+            json!({
+                "validated": true,
+                "buildId": active.identity.build_id,
+                "profileId": active.identity.profile_id,
+                "buildIdentitySha256": active.identity_sha256,
+                "payloadRelativePath": active.receipt.payload_relative_path.replace('\\', "/"),
+                "payloadManifestSha256": active.receipt.payload_manifest_sha256,
+                "runtimeExecutableSha256": active.runtime_executable_sha256,
+            }),
+        ),
+        Ok(None) => (
+            "unavailable",
+            embedded_error_code,
+            json!({"validated": false}),
+        ),
+        Err(error) => {
+            let error_code = stable_install_error(&error).to_string();
+            let status = classify_install_integrity_status(&error_code);
+            (status, Some(error_code), json!({"validated": false}))
+        }
+    };
+
+    let legacy_layout_present = resource_dir.is_some_and(|root| {
+        root.join("runtime")
+            .join("python")
+            .join("agent-friend-runtime.exe")
+            .is_file()
+    });
+    let incomplete_transaction_count = resource_dir
+        .map(|root| root.join(".installer-transactions"))
+        .filter(|path| path.is_dir())
+        .and_then(|path| fs::read_dir(path).ok())
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
+                .count()
+        })
+        .unwrap_or(0);
+    if status == "consistent" && incomplete_transaction_count > 0 {
+        status = "incomplete_install";
+    }
+
+    json!({
+        "schemaVersion": 1,
+        "status": status,
+        "errorCode": error_code,
+        "shell": shell,
+        "activeInstall": receipt_summary,
+        "payload": payload,
+        "runtime": runtime,
+        "residue": {
+            "legacyFixedRuntimePresent": legacy_layout_present,
+            "incompleteTransactionCount": incomplete_transaction_count,
+        },
+    })
+}
+
+fn stable_install_error(error: &str) -> &str {
+    error
+        .split(':')
+        .next()
+        .unwrap_or("install_integrity_unknown")
+}
+
+fn classify_install_integrity_status(error_code: &str) -> &'static str {
+    match error_code {
+        "install_integrity_shell_receipt_mismatch" => "shell_receipt_mismatch",
+        "runtime_identity_mismatch" => "runtime_identity_mismatch",
+        code if code.contains("hash_mismatch")
+            || code.contains("identity_mismatch")
+            || code.contains("required_capability_missing") =>
+        {
+            "payload_hash_mismatch"
+        }
+        code if code.contains("unreadable")
+            || code.contains("invalid")
+            || code.contains("unsafe_path")
+            || code.contains("escaped_root")
+            || code.contains("duplicate_path") =>
+        {
+            "incomplete_install"
+        }
+        _ => "unavailable",
+    }
 }
 
 struct AttachmentCollectionResult {
@@ -985,6 +1174,7 @@ mod tests {
                     "diagnostics/runtime-config.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
+                    "install/integrity.json",
                     "diagnostics/attachments.json",
                     "diagnostics/windows-shell/current.json",
                 ],
@@ -1022,6 +1212,23 @@ mod tests {
         assert_eq!(metadata["buildMode"], "local-test");
         assert_eq!(metadata["distribution"], "trusted-beta");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn install_integrity_error_classification_is_stable() {
+        assert_eq!(
+            classify_install_integrity_status("install_integrity_shell_receipt_mismatch"),
+            "shell_receipt_mismatch"
+        );
+        assert_eq!(
+            classify_install_integrity_status("install_integrity_payload_hash_mismatch"),
+            "payload_hash_mismatch"
+        );
+        assert_eq!(
+            classify_install_integrity_status("install_integrity_receipt_unreadable"),
+            "incomplete_install"
+        );
+        assert_eq!(classify_install_integrity_status("unknown"), "unavailable");
     }
 
     #[test]
