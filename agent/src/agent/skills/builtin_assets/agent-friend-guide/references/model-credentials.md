@@ -2,6 +2,8 @@
 
 agent-friend 当前提供 DeepSeek 与 Kimi 模型选项。使用某个供应商前，需要配置该供应商的 API Key，并确保账号有可用额度。
 
+设置页显示“已配置”只表示 Key 已保存到系统凭据存储，不代表供应商已经验证它可用。保存或更换 Key 后，应选择对应模型发起一次普通对话；如果立即失败，先到供应商控制台确认 Key 未被撤销、复制完整且属于对应平台。
+
 ## DeepSeek API Key
 
 1. 登录 [DeepSeek 开放平台](https://platform.deepseek.com/)。
