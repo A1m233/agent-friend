@@ -21,6 +21,7 @@ def _load_script() -> ModuleType:
 
 
 guide = _load_script()
+PRODUCT_REPO = Path(__file__).resolve().parents[2]
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -32,6 +33,19 @@ def _git(repo: Path, *args: str) -> str:
         encoding="utf-8",
     )
     return completed.stdout.strip()
+
+
+def test_checked_in_builtin_snapshot_has_stable_lf_bytes() -> None:
+    attribute = _git(
+        PRODUCT_REPO,
+        "check-attr",
+        "eol",
+        "--",
+        "agent/src/agent/skills/builtin_assets/agent-friend-guide/SKILL.md",
+    )
+
+    assert attribute.endswith(": eol: lf")
+    assert guide.builtin_state(PRODUCT_REPO)["valid"] is True
 
 
 def _write_package(repo: Path) -> Path:
