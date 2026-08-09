@@ -1,0 +1,403 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-09T08:52:19.656925+00:00",
+    "ended_at": "2026-08-09T08:52:53.491535+00:00",
+    "duration_seconds": 33.835,
+    "git_commit": "dae4e47",
+    "working_tree_dirty": true,
+    "note": "unified Skill catalog discovery first validation",
+    "selection": {
+      "contract": "C21",
+      "case": null,
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "bd5c2b331b70a1b24a129de7bba4df8837f15faaec18277b3b4b8d8b1ce1f3d2",
+      "total_contracts": 22,
+      "total_cases": 201,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 4,
+    "passed": 3,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.75,
+    "by_contract": {
+      "C21": {
+        "total": 4,
+        "passed": 3,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.75
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C21",
+      "name": "unified-skill-catalog-discovery",
+      "expected_behavior": "response",
+      "total": 4,
+      "passed": 3,
+      "failed": 1,
+      "pass_rate": 0.75,
+      "cases": [
+        {
+          "id": "C21-01",
+          "query": "我给你新加了一个skill，你看看能找到吗",
+          "facet": "生产事故 anchor · builtin guide 不得被 personal 目录结果遮蔽",
+          "source": "prod-desktop-builtin-skill-omission-20260809",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "visible Skill catalog entries omitted from response: ['agent-friend-guide']",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "skill_08dee1d0e3e5c08697de6afa236139567cfb91c76b98141111d5752049088e3a",
+                "invocation_kind": "named",
+                "reason": "用户问是否能找到新添加的 skill，catalog 中有一个 test-file-skill 可能是刚加的。"
+              },
+              "result_text": "<skill>\n<name>test-file-skill</name>\n<id>skill_08dee1d0e3e5c08697de6afa236139567cfb91c76b98141111d5752049088e3a</id>\n<source>personal</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-qbk9d59g\\fixture-skills\\personal\\test-file-skill\\SKILL.md</path>\n<version>c8548bfacad49cfa94e79bfd7628947373143810907cbe84de76d79604995747</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped Skill scope IDs supplied by the host. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"test-file-skill\"\r\ndescription: \"Use when validating personal Skill creation and loading behavior.\"\r\n---\r\n\r\nExplain the minimal personal Skill validation workflow.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "找到了，我看到了 `test-file-skill`。这也确实是你刚刚加进来的那个个人 skill，我已经把它加载进来了。\n\n看起来内容很简单——它就是个用来验证个人 skill 创建和加载流程的最小样例，核心就是说明如何跑一遍最小化的个人 skill 校验流程。你现在是想自己确认一下能不能正常被识别，还是接下来要按这个 skill 的实际功能来用？"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_a3486d9876e2fd8b6c9fbdfc3ab9dbcc48cac142541411b11b358f0e19e66fd2"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_08dee1d0e3e5c08697de6afa236139567cfb91c76b98141111d5752049088e3a"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "29b5ce066874453f2a1af18975ae5b5732053314e1c457dbcee32974ff6b88b6",
+            "render_fingerprint": "6933f2bc552d5f6b26b55209ea02482fc010d763d684cbb1ad25175377f0856d",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_a3486d9876e2fd8b6c9fbdfc3ab9dbcc48cac142541411b11b358f0e19e66fd2"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_08dee1d0e3e5c08697de6afa236139567cfb91c76b98141111d5752049088e3a"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "172daf6a4847734dd7b54a2c573462ebe1b120eb35c8845eb6f0bb2ee7ead8bb",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "找到了，我看到了 `test-file-skill`。这也确实是你刚刚加进来的那个个人 skill，我已经把它加载进来了。\n\n看起来内容很简单——它就是个用来验证个人 skill 创建和加载流程的最小样例，核心就是说明如何跑一遍最小化的个人 skill 校验流程。你现在是想自己确认一下能不能正常被识别，还是接下来要按这个 skill 的实际功能来用？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C21-02",
+          "query": "agent-friend-guide 这个 Skill 当前可发现吗？请根据当前统一 catalog 判断。",
+          "facet": "builtin isolation · catalog 明确可见时必须识别",
+          "source": "synthetic-builtin-skill-discovery-isolation",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "id": "builtin/agent-friend-guide",
+                "invocation_kind": "named",
+                "reason": "确认该 Skill 在当前 catalog 中是否可发现并可直接引用"
+              },
+              "result_text": "<skill>\n<name>agent-friend-guide</name>\n<id>builtin/agent-friend-guide</id>\n<source>builtin</source>\n<path>C:\\Users\\example-user\\AppData\\Local\\Temp\\agent-eval-vzn11hwb\\fixture-skills\\personal\\.system\\38cafe73f72b16dc88ff9384469d96ec1ddbe4d2dcb59284785909a55714616d\\agent-friend-guide\\SKILL.md</path>\n<version>16068ddb090eb5e1402e12249f759c57aa3a0efc5c19942f53f37b42d22eddf9</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped Skill scope IDs supplied by the host. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\nname: agent-friend-guide\ndescription: 查询和解答 agent-friend 的产品功能、使用方法、设置、模型与在线工具凭据、语音凭据、数据隐私和常见故障。Use when 用户询问 agent-friend 能做什么、某项功能怎么用、某类 API Key 或服务凭据如何申请和配置、数据存在哪里或如何迁移、以及功能不可用时如何排查。\n---\n\n# agent-friend 使用指南\n\n使用本 Skill 回答 agent-friend 用户问题。只提供用户需要知道的产品知识，不解释源码、内部服务、环境变量或发布实现。\n\n## 使用方式\n\n1. 先判断问题属于下面哪一类。\n2. 只读取回答所需的 reference；不要默认加载全部文件。\n3. 以当前 reference 为准，明确区分“必须配置”和“可选增强”。\n4. 涉及第三方平台时，给出对应能力需要的字段、官方入口和最短申请路径；不要扩展成完整云平台教程。\n5. reference 没有覆盖或产品版本可能已变化时，坦率说明无法确认，不要从实现细节猜测用户行为。\n\n## Reference 路由\n\n| 用户问题 | 读取 |\n| --- | --- |\n| 产品是什么、能做什么、能力边界 | `references/product-overview.md` |\n| 对话、会话、搜索、附件、人格、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |\n| 设置页在哪里、设置何时生效 | `references/settings-reference.md` |\n| DeepSeek / Kimi 模型与 API Key | `references/model-credentials.md` |\n| 联网搜索、Tavily Key | `references/web-search-credentials.md` |\n| 附近地点、高德 Web 服务 Key | `references/nearby-place-credentials.md` |\n| 天气、和风天气 API Key 与 API Host | `references/weather-credentials.md` |\n| 语音输入、语音通话、火山引擎凭据 | `references/voice-credentials.md` |\n| 本地数据、迁移、诊断包、隐私 | `references/data-and-privacy.md` |\n| 功能不可用、凭据不生效、常见排查 | `references/troubleshooting.md` |\n\n`references/getting-started.md` 是后续完整新手引导的占位文件。首版不要把普通问题路由到它。\n\n## 回答边界\n\n- 不索要、复述或展示用户的密钥；引导用户在 agent-friend 的“设置 → 模型与凭据”中保存。\n- 不保证第三方平台的价格、免费额度、审核时间或页面布局长期不变。\n- 不把“支持配置”表述成“相关第三方服务已经免费开通”。\n- 语音输入与语音通话使用不同的凭据组合，必须按 `voice-credentials.md` 分开说明。\n- 诊断包可能包含私密对话、工具参数、附件或截图；回答相关问题时必须提示用户发送前检查。\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.015000000013969839
+            }
+          ],
+          "assistant_segments": [
+            "我需要确认当前 catalog 的状态来判断这个 Skill 是否可发现。",
+            "是的，`agent-friend-guide` 这个 Skill 当前可发现。\n\n它在当前统一 catalog 里出现，源类型是 builtin（内置），id 为 `builtin/agent-friend-guide`，并且明确标注了 `allow_implicit_invocation=true`，也就是说不仅能通过直接名称或上下文指代使用，也允许在任务匹配时被隐式激活。我刚才也成功按其精确 id 读取到了 SKILL.md 全文，确认它在当前目录下正常可用。\n\n简单说：可发现、可命名引用、也可隐式匹配调用，三个层面都没问题。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_d3b998b9a9415b735d484195f25b0fdf070e7d831cc528a01c1fed9cff9e485b"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_7b51b367500291f365d2d9cd20edeca64acc53f8a3f7d809df9bd91c760787b8"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "fc4a46916a82c39d13a79b0f25b44adbfbbe5eb73bf4ab7d0b51b5f13fd40eeb",
+            "render_fingerprint": "bd7da99f956fc709ab3e22a8fcb6e44caa48e814d7b455c2a8e415a314394cbf",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_d3b998b9a9415b735d484195f25b0fdf070e7d831cc528a01c1fed9cff9e485b"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_7b51b367500291f365d2d9cd20edeca64acc53f8a3f7d809df9bd91c760787b8"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "ff6d72174e7984bec01a91aeb19fd5a990478c5eb00b222698a248ba8288f44d",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我需要确认当前 catalog 的状态来判断这个 Skill 是否可发现。是的，`agent-friend-guide` 这个 Skill 当前可发现。\n\n它在当前统一 catalog 里出现，源类型是 builtin（内置），id 为 `builtin/agent-friend-guide`，并且明确标注了 `allow_implicit_invocation=true`，也就是说不仅能通过直接名称或上下文指代使用，也允许在任务匹配时被隐式激活。我刚才也成功按其精确 id 读取到了 SKILL.md 全文，确认它在当前目录下正常可用。\n\n简单说：可发现、可命名引用、也可隐式匹配调用，三个层面都没问题。",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C21-03",
+          "query": "请根据当前统一 catalog，列出现在可发现的全部 Skill。",
+          "facet": "多来源 control · builtin / personal / shared 都属于当前 discovery",
+          "source": "synthetic-unified-skill-catalog-multi-source-control",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "当前 catalog 里可发现的 Skill 一共有 5 个：\n\n1. **agent-friend-guide**（内置）——查询和解答 agent-friend 的产品功能、使用方法、设置、凭据、数据隐私和常见故障。\n2. **skill-creator**（内置）——创建或更新 Skill 的指南，帮助你扩展能力。\n3. **context7-mcp**（个人）——用于当前库、框架、SDK 和 API 文档类问题。\n4. **test-file-skill**（个人）——用于验证个人 Skill 的创建和加载行为。\n5. **shared-release-helper**（共享）——共享发布协调检查用。\n\n需要我用其中某一个吗？"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_baefb947971098eba6b5beaa32cbc9f4b14023bf6453fe4615d9324537d6bb8a"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_f40a8a9b95936605c5abb45bb92a7e3d86b066e8409567f6706c99ff98dc5a4b"
+              },
+              {
+                "name": "shared-release-helper",
+                "source": "shared",
+                "id": "skill_cf5ba29e184840cc99e461fdaff5a11f86ac416d01bcddb2cc639e4181058540"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "76dc1e847c2c541aea6d835ba02aa9385ba982d14192dbf7d49715ac26fd7c9f",
+            "render_fingerprint": "806056af3e51f645a40f757699a0c489d1b1c0f0922ce703bde0bf01205fb82b",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_baefb947971098eba6b5beaa32cbc9f4b14023bf6453fe4615d9324537d6bb8a"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_f40a8a9b95936605c5abb45bb92a7e3d86b066e8409567f6706c99ff98dc5a4b"
+              },
+              {
+                "name": "shared-release-helper",
+                "source": "shared",
+                "id": "skill_cf5ba29e184840cc99e461fdaff5a11f86ac416d01bcddb2cc639e4181058540"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "eb33c803446a17149704d5ab3aa3f0a6fad5c1cbfd2d0da1c604d4a6ca64b621",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "当前 catalog 里可发现的 Skill 一共有 5 个：\n\n1. **agent-friend-guide**（内置）——查询和解答 agent-friend 的产品功能、使用方法、设置、凭据、数据隐私和常见故障。\n2. **skill-creator**（内置）——创建或更新 Skill 的指南，帮助你扩展能力。\n3. **context7-mcp**（个人）——用于当前库、框架、SDK 和 API 文档类问题。\n4. **test-file-skill**（个人）——用于验证个人 Skill 的创建和加载行为。\n5. **shared-release-helper**（共享）——共享发布协调检查用。\n\n需要我用其中某一个吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        },
+        {
+          "id": "C21-04",
+          "query": "missing-release-helper 这个 Skill 当前可发现吗？请根据当前完整 catalog 判断。",
+          "facet": "真缺失 control · 完整 catalog 确实缺失时允许否定当前可发现性",
+          "source": "synthetic-complete-catalog-true-absence-control",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我根据当前 skills_catalog 里的条目来看一下。\n\n当前的 catalog 里列出的 Skill 有：agent-friend-guide、skill-creator、context7-mcp、test-file-skill 这四个。`missing-release-helper` 不在其中，当前 catalog 里查不到这个 Skill。\n\n所以按当前完整的 catalog 判断，`missing-release-helper` 目前不可发现。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_8216ce1e5a049ffde2fd795ccb8f0dcc6cc17dd531b6622f172eee88b90040ad"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_c74a9ea3a0cede248a2674787cb28290fa29c156f31d735f268162f626d757e5"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "f97f2c13c9a68d6f1b3fd08ac7ade10882535a70793541c46ff8d7a566cd2d52",
+            "render_fingerprint": "a9354547cd949e725176f51e82446804ec801241956539fc02e0119b7590db15",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_8216ce1e5a049ffde2fd795ccb8f0dcc6cc17dd531b6622f172eee88b90040ad"
+              },
+              {
+                "name": "test-file-skill",
+                "source": "personal",
+                "id": "skill_c74a9ea3a0cede248a2674787cb28290fa29c156f31d735f268162f626d757e5"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "3d673b1bf79d826615afc8142e6ef01230a341a350e7b435a967522d4e1e9aeb",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我根据当前 skills_catalog 里的条目来看一下。\n\n当前的 catalog 里列出的 Skill 有：agent-friend-guide、skill-creator、context7-mcp、test-file-skill 这四个。`missing-release-helper` 不在其中，当前 catalog 里查不到这个 Skill。\n\n所以按当前完整的 catalog 判断，`missing-release-helper` 目前不可发现。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

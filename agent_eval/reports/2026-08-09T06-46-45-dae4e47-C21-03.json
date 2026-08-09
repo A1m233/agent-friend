@@ -1,0 +1,105 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-09T06:46:45.994296+00:00",
+    "ended_at": "2026-08-09T06:46:46.148725+00:00",
+    "duration_seconds": 0.154,
+    "git_commit": "dae4e47",
+    "working_tree_dirty": true,
+    "note": "catalog-current-history-coverage-after-budget-boundary-fix",
+    "selection": {
+      "contract": "all",
+      "case": "C21-03",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "fd4b4ae3a10213a90af6ee700e225db2dbd4e11f99bc5928043d041ce151f635",
+      "total_contracts": 21,
+      "total_cases": 198,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 1,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C21": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 1,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C21",
+      "name": "skill-catalog-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C21-03",
+          "query": "zz-private-release-check 这个 Skill 当前可发现吗？请根据当前 catalog 判断。",
+          "facet": "coverage isolation · entries 被预算截断时不把未显示推导为不存在",
+          "source": "synthetic-skill-catalog-truncated-coverage",
+          "surface": "desktop_chat",
+          "passed": false,
+          "reason": "runtime error: ContextBaseOverBudgetError: 系统提示词、运行上下文与工具定义已超过模型预算，请调整模型配置后重试。",
+          "tool_calls": [],
+          "assistant_segments": [],
+          "final_text": "",
+          "stop_reason": "error",
+          "error": "ContextBaseOverBudgetError: 系统提示词、运行上下文与工具定义已超过模型预算，请调整模型配置后重试。"
+        }
+      ]
+    }
+  ]
+}

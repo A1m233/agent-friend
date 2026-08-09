@@ -15,6 +15,7 @@ from .schema import (
     CaseJudge,
     CaseSetMeta,
     Contract,
+    ExpectedSkillCatalogEntry,
     FakeTool,
     FakeToolResponse,
     FixtureAttachment,
@@ -29,6 +30,8 @@ from .schema import (
 
 _SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_FIXTURE_SKILL_SOURCES = frozenset({"personal", "shared"})
+_CATALOG_SKILL_SOURCES = frozenset({"builtin", "personal", "shared"})
 
 
 def _mapping(raw: Any, *, label: str) -> dict[str, Any]:
@@ -87,6 +90,30 @@ def _bool(raw: Any, *, label: str) -> bool:
     if not isinstance(raw, bool):
         raise ValueError(f"{label} 必须是 bool")
     return raw
+
+
+def _optional_positive_int(raw: dict[str, Any], key: str, *, label: str) -> int | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{label}.{key} 必须是正整数或 null")
+    return value
+
+
+def _optional_choice(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    choices: frozenset[str],
+    label: str,
+) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in choices:
+        raise ValueError(f"{label}.{key} 必须是 {sorted(choices)} 之一或 null")
+    return value
 
 
 def _parse_fixture_attachment(
@@ -187,12 +214,52 @@ def _parse_fixture_skills(raw: Any, *, label: str) -> list[FixtureSkill]:
                         label=f"{item_label}.allow_implicit_invocation",
                     )
                 ),
+                source=(
+                    _optional_choice(
+                        data,
+                        "source",
+                        choices=_FIXTURE_SKILL_SOURCES,
+                        label=item_label,
+                    )
+                    or "personal"
+                ),
             )
         )
     names = [skill.name for skill in skills]
     if len(names) != len(set(names)):
         raise ValueError(f"{label}.name 不能重复")
     return skills
+
+
+def _parse_expected_skill_catalog_entries(
+    raw: Any,
+    *,
+    label: str,
+) -> list[ExpectedSkillCatalogEntry]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{label} 必须是非空 list")
+    entries: list[ExpectedSkillCatalogEntry] = []
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        data = _mapping(item, label=item_label)
+        name = _required_str(data, "name", label=item_label)
+        if len(name) > 64 or not _SKILL_NAME_RE.fullmatch(name):
+            raise ValueError(f"{item_label}.name 必须是合法 Skill 名称")
+        source = _optional_choice(
+            data,
+            "source",
+            choices=_CATALOG_SKILL_SOURCES,
+            label=item_label,
+        )
+        if source is None:
+            raise ValueError(f"{item_label}.source 必须是非空字符串")
+        entries.append(ExpectedSkillCatalogEntry(name=name, source=source))
+    pairs = [(entry.name, entry.source) for entry in entries]
+    if len(pairs) != len(set(pairs)):
+        raise ValueError(f"{label} 不能重复")
+    return entries
 
 
 def _parse_fixture_messages(
@@ -501,6 +568,22 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("forbid_unsupported_skill_activation_claim"),
             label=f"{label}.forbid_unsupported_skill_activation_claim",
         ),
+        forbid_unsupported_skill_catalog_change_claim=_bool(
+            data.get("forbid_unsupported_skill_catalog_change_claim"),
+            label=f"{label}.forbid_unsupported_skill_catalog_change_claim",
+        ),
+        must_recognize_catalog_skills=_str_list(
+            data.get("must_recognize_catalog_skills"),
+            label=f"{label}.must_recognize_catalog_skills",
+        ),
+        must_report_catalog_skills_undiscoverable=_str_list(
+            data.get("must_report_catalog_skills_undiscoverable"),
+            label=f"{label}.must_report_catalog_skills_undiscoverable",
+        ),
+        must_cover_visible_skill_catalog=_bool(
+            data.get("must_cover_visible_skill_catalog"),
+            label=f"{label}.must_cover_visible_skill_catalog",
+        ),
     )
 
 
@@ -566,6 +649,29 @@ def _load_contract_file(path: Path) -> Contract:
                 fixture_skills=_parse_fixture_skills(
                     case_data.get("fixture_skills"),
                     label=f"{label}.fixture_skills",
+                ),
+                prior_fixture_skills=_parse_fixture_skills(
+                    case_data.get("prior_fixture_skills"),
+                    label=f"{label}.prior_fixture_skills",
+                ),
+                fixture_skill_catalog_window=_optional_positive_int(
+                    case_data,
+                    "fixture_skill_catalog_window",
+                    label=label,
+                ),
+                expected_skill_catalog_coverage=_optional_choice(
+                    case_data,
+                    "expected_skill_catalog_coverage",
+                    choices=frozenset({"complete", "truncated"}),
+                    label=label,
+                ),
+                expected_skill_catalog_entries=_parse_expected_skill_catalog_entries(
+                    case_data.get("expected_skill_catalog_entries"),
+                    label=f"{label}.expected_skill_catalog_entries",
+                ),
+                expected_skill_catalog_absent=_str_list(
+                    case_data.get("expected_skill_catalog_absent"),
+                    label=f"{label}.expected_skill_catalog_absent",
                 ),
                 current_session_messages=_parse_fixture_messages(
                     current_messages_raw or [],

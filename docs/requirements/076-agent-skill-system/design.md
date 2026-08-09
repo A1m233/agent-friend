@@ -281,9 +281,12 @@ package，policy 文件变化会触发完整 rescan；该 boolean 纳入 catalog
 
 ### Catalog 渲染与预算
 
-catalog 由全量 `SkillCatalogSnapshot` 按当前激活模型的上下文窗口逐轮渲染。预算为模型
-effective context window 的 2%；无法取得窗口时使用 8,000 字符上限。单条描述即使在
-metadata 中合法，也最多贡献 1,024 字符。
+catalog 由全量 `SkillCatalogSnapshot` 按当前激活模型的上下文窗口逐轮渲染。固定的控制
+语义（discovery 状态、历史基线边界、coverage、选择与激活协议、权限边界）必须完整保留，
+不参与可变条目预算竞争。Skill entry 与 description 组成的可变区域预算为模型 effective
+context window 的 2%；无法取得窗口时使用 8,000 字符上限。这样 catalog 总量始终受
+“常量协议开销 + 有界条目”约束，同时不会因为增加必要控制语义而反向压缩其表达效果。
+单条描述即使在 metadata 中合法，也最多贡献 1,024 字符。
 
 每条 model-visible entry 至少包含：
 
@@ -669,7 +672,8 @@ Skill service 只提供已选 package 的身份信息，不替公共工具绕过
 
 #### Catalog 与 watcher
 
-- 2% token/8,000 char fallback、描述公平截断、entry 省略、policy 标记和稳定 fingerprint；
+- 固定 catalog 控制语义不受条目预算挤压；可变 entry 区域使用 2% token/8,000 char
+  fallback，并覆盖描述公平截断、entry 省略、policy 标记和稳定 fingerprint；
 - 只改非 model-visible 资源时 generation 变化但 rendered fingerprint 不变；
 - add/change/delete/rename、编辑器原子保存和短时间批量事件只触发一次稳定 rescan；
 - shared 根从不存在到创建、根删除重建、外部 symlink target 修改；

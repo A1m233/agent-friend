@@ -280,11 +280,7 @@ class SkillLoader:
             )
             return None
         version = hashlib.sha256(raw).hexdigest()
-        record_id = (
-            "builtin/skill-creator"
-            if root.source == "builtin" and name == "skill-creator"
-            else skill_id_for_path(canonical)
-        )
+        record_id = f"builtin/{name}" if root.source == "builtin" else skill_id_for_path(canonical)
         allow_implicit_invocation = self._load_implicit_invocation_policy(
             canonical.parent,
             root,

@@ -1,0 +1,69 @@
+# C22 · Skill catalog 变化比较 (skill-catalog-change-comparison)
+#
+# 次级契约：当前 catalog 不保证历史基线；上下文中存在可信旧 production catalog 时，才可
+# 比较新增、删除或不变。它保留原 C21 的历史边界，但不作为 builtin discovery 事故证据。
+
+contract:
+  id: C22
+  name: skill-catalog-change-comparison
+  expected_behavior: response
+
+cases:
+  - id: C22-01
+    query: 和上一次 Skill catalog 相比，现在有哪些变化？
+    facet: 无历史基线 isolation · 不虚构新增、删除或不变
+    source: synthetic-skill-catalog-no-prior-boundary
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    fixture_skills:
+      - name: stable-writing-helper
+        description: Use for prose editing and rewriting.
+        instructions: Improve prose while preserving meaning.
+    judge:
+      require_non_empty_response: true
+      forbid_unsupported_skill_catalog_change_claim: true
+
+  - id: C22-02
+    query: 和上一次可信的 Skill catalog 相比，现在有哪些变化？
+    facet: 可信历史 control · 允许识别新增条目
+    source: synthetic-skill-catalog-trusted-prior-addition-control
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    prior_fixture_skills:
+      - name: stable-writing-helper
+        description: Use for prose editing and rewriting.
+        instructions: Improve prose while preserving meaning.
+    fixture_skills:
+      - name: stable-writing-helper
+        description: Use for prose editing and rewriting.
+        instructions: Improve prose while preserving meaning.
+      - name: new-research-helper
+        description: Use for evidence-grounded research summaries.
+        instructions: Summarize research evidence and state its limits.
+    judge:
+      require_non_empty_response: true
+      must_mention_all: [new-research-helper]
+      forbid_unsupported_skill_catalog_change_claim: true
+
+  - id: C22-03
+    query: 和可信的上一次 catalog 相比，现在有 Skill 被删除或移除吗？
+    facet: 可信历史 control · 允许识别删除条目
+    source: synthetic-skill-catalog-trusted-prior-removal-control
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    prior_fixture_skills:
+      - name: stable-writing-helper
+        description: Use for prose editing and rewriting.
+        instructions: Improve prose while preserving meaning.
+      - name: temporary-catalog-helper
+        description: Use for temporary catalog verification.
+        instructions: Report the catalog verification result.
+    fixture_skills:
+      - name: stable-writing-helper
+        description: Use for prose editing and rewriting.
+        instructions: Improve prose while preserving meaning.
+    judge:
+      require_non_empty_response: true
+      must_mention_all: [temporary-catalog-helper]
+      must_mention_any: [删除, 移除, 不再]
+      forbid_unsupported_skill_catalog_change_claim: true

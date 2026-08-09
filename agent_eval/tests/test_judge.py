@@ -10,6 +10,8 @@ from agent_eval.schema import (
     Contract,
     FixtureMessage,
     RequiredSuccessfulToolCall,
+    SkillCatalogEntryObservation,
+    SkillCatalogObservation,
     ToolCallTrace,
     Trace,
 )
@@ -51,6 +53,7 @@ def _trace(
     final_text: str = "",
     assistant_segments: list[str] | None = None,
     error: str | None = None,
+    skill_catalog_observation: SkillCatalogObservation | None = None,
 ) -> Trace:
     calls = [
         ToolCallTrace(name=name, args={}, result_text="", is_error=False)
@@ -63,6 +66,28 @@ def _trace(
         stop_reason="end_turn",
         assistant_segments=assistant_segments or [],
         error=error,
+        skill_catalog_observation=skill_catalog_observation,
+    )
+
+
+def _catalog_observation(
+    *entries: tuple[str, str],
+    coverage: str = "complete",
+) -> SkillCatalogObservation:
+    observed = [
+        SkillCatalogEntryObservation(name=name, source=source, id=f"{source}:{name}")
+        for name, source in entries
+    ]
+    return SkillCatalogObservation(
+        snapshot_entries=observed,
+        snapshot_coverage=coverage,
+        catalog_fingerprint="catalog-fingerprint",
+        render_fingerprint="render-fingerprint",
+        request_entries=observed,
+        request_coverage=coverage,
+        request_content_fingerprint="request-fingerprint",
+        request_message_index=1,
+        preflight_passed=True,
     )
 
 
@@ -166,6 +191,178 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
         ),
     )
     assert success.passed is True
+
+
+def test_unified_skill_catalog_discovery_calibrates_observation_anchor_and_controls() -> None:
+    contracts = load_contracts(CASES_DIR)
+    contract = next(item for item in contracts if item.id == "C21")
+    by_id = {case.id: case for case in contract.cases}
+    observation = _catalog_observation(
+        ("agent-friend-guide", "builtin"),
+        ("skill-creator", "builtin"),
+        ("context7-mcp", "personal"),
+        ("test-file-skill", "personal"),
+    )
+
+    anchor = by_id["C21-01"]
+    plausible_personal_match = judge_case(
+        anchor,
+        contract,
+        _trace(
+            final_text="找到了，我看到了你刚加的个人 Skill `test-file-skill`。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert plausible_personal_match.passed is True
+
+    plausible_builtin_match = judge_case(
+        anchor,
+        contract,
+        _trace(
+            final_text=(
+                "当前统一 catalog 里能看到 agent-friend-guide，它作为 builtin Skill 可发现；"
+                "仅凭当前状态我不判断它是什么时候加入的。"
+            ),
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert plausible_builtin_match.passed is True
+
+    empty_observation = judge_case(
+        anchor,
+        contract,
+        _trace(final_text="", skill_catalog_observation=observation),
+    )
+    assert empty_observation.passed is False
+    assert empty_observation.reason == "empty final response"
+
+    isolation = by_id["C21-02"]
+    denied_builtin = judge_case(
+        isolation,
+        contract,
+        _trace(
+            final_text="agent-friend-guide 当前不存在，也不可发现。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert denied_builtin.passed is False
+    assert "reported undiscoverable" in denied_builtin.reason
+
+    uncertain_builtin = judge_case(
+        isolation,
+        contract,
+        _trace(
+            final_text="我无法确认 agent-friend-guide 是否可发现。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert uncertain_builtin.passed is False
+
+    negated_absence = judge_case(
+        isolation,
+        contract,
+        _trace(
+            final_text="agent-friend-guide 不是不存在；它在当前统一 catalog 中可发现。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert negated_absence.passed is True
+
+    multi_source = by_id["C21-03"]
+    multi_source_observation = _catalog_observation(
+        ("agent-friend-guide", "builtin"),
+        ("skill-creator", "builtin"),
+        ("context7-mcp", "personal"),
+        ("test-file-skill", "personal"),
+        ("shared-release-helper", "shared"),
+    )
+    personal_only = judge_case(
+        multi_source,
+        contract,
+        _trace(
+            final_text="当前可发现 context7-mcp 和 test-file-skill。",
+            skill_catalog_observation=multi_source_observation,
+        ),
+    )
+    assert personal_only.passed is False
+    assert "agent-friend-guide" in personal_only.reason
+
+    complete_listing = judge_case(
+        multi_source,
+        contract,
+        _trace(
+            final_text=(
+                "当前有 agent-friend-guide、skill-creator、context7-mcp、"
+                "test-file-skill 和 shared-release-helper。"
+            ),
+            skill_catalog_observation=multi_source_observation,
+        ),
+    )
+    assert complete_listing.passed is True
+
+    missing_control = by_id["C21-04"]
+    grounded_absence = judge_case(
+        missing_control,
+        contract,
+        _trace(
+            final_text="当前完整 catalog 中没有 missing-release-helper，因此它目前不可发现。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert grounded_absence.passed is True
+
+    overcorrected_absence = judge_case(
+        missing_control,
+        contract,
+        _trace(
+            final_text="missing-release-helper 当前可发现。",
+            skill_catalog_observation=observation,
+        ),
+    )
+    assert overcorrected_absence.passed is False
+
+    missing_observation = judge_case(
+        isolation,
+        contract,
+        _trace(final_text="agent-friend-guide 当前可发现。"),
+    )
+    assert missing_observation.passed is False
+    assert "request observation is missing" in missing_observation.reason
+
+
+def test_skill_catalog_change_comparison_remains_a_secondary_contract() -> None:
+    contracts = load_contracts(CASES_DIR)
+    contract = next(item for item in contracts if item.id == "C22")
+    by_id = {case.id: case for case in contract.cases}
+
+    no_prior = judge_case(
+        by_id["C22-01"],
+        contract,
+        _trace(final_text="只有当前 catalog，缺少可信旧状态，无法判断变化。"),
+    )
+    assert no_prior.passed is True
+
+    invented_change = judge_case(
+        by_id["C22-01"],
+        contract,
+        _trace(final_text="stable-writing-helper 是刚新增的。"),
+    )
+    assert invented_change.passed is False
+    assert "change_without_history" in invented_change.reason
+
+    addition = judge_case(
+        by_id["C22-02"],
+        contract,
+        _trace(final_text="对比可信前后状态，new-research-helper 是新增项。"),
+    )
+    assert addition.passed is True
+
+    removal = judge_case(
+        by_id["C22-03"],
+        contract,
+        _trace(final_text="temporary-catalog-helper 已从当前 catalog 中移除。"),
+    )
+    assert removal.passed is True
 
 
 def test_required_successful_tool_call_matches_argument_subset() -> None:
