@@ -1031,6 +1031,10 @@ def _write_version_fixture(root: Path, version: str = "1.2.3") -> None:
         f'[package]\nname = "app"\nversion = "{version}"\n\n[dependencies]\n',
         encoding="utf-8",
     )
+    (tauri / "Cargo.lock").write_text(
+        f'version = 4\n\n[[package]]\nname = "app"\nversion = "{version}"\n',
+        encoding="utf-8",
+    )
 
 
 def test_semver_validation_and_precedence() -> None:
@@ -1182,6 +1186,9 @@ def test_project_version_set_updates_all_product_metadata(tmp_path) -> None:
 
     assert str(result.version) == "1.3.0-beta.1"
     assert set(result.values.values()) == {"1.3.0-beta.1"}
+    assert 'version = "1.3.0-beta.1"' in (
+        tmp_path / "frontend" / "src-tauri" / "Cargo.lock"
+    ).read_text(encoding="utf-8")
 
 
 def test_project_version_set_rolls_back_after_partial_replace(tmp_path) -> None:
