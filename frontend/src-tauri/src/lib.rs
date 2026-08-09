@@ -17,6 +17,7 @@ pub mod install_contract;
 mod paths;
 mod permissions;
 mod pet_cursor_passthrough;
+mod pet_display_recovery;
 mod pet_display_topology;
 mod power_policy;
 mod presence;
@@ -29,6 +30,8 @@ mod shell_diagnostics;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
+#[cfg(target_os = "windows")]
+mod windows_display_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
@@ -115,6 +118,7 @@ struct PetOverlayState {
 #[derive(Default)]
 struct PetOverlayStateInner {
     topology_epoch: pet_display_topology::TopologyEpochState,
+    display_recovery: pet_display_recovery::PetDisplayRecoveryState,
     bounds_correction_request_id: u64,
     bounds_correction_pending: bool,
 }
@@ -775,10 +779,7 @@ fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// menu event handler）。tray toggle 只控制窗口 show/hide，不改桌宠尺寸偏好。
 #[tauri::command]
 fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("pet") {
-        let _ = w.hide();
-    }
-    Ok(())
+    pet_display_recovery::set_desired_visibility(&app, false, "hide-command")
 }
 
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
@@ -874,12 +875,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let _ = show_and_focus(app, "chat");
             }
             "toggle_pet" => {
-                if let Some(w) = app.get_webview_window("pet") {
-                    if w.is_visible().unwrap_or(true) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                    }
+                if let Err(error) = pet_display_recovery::toggle_visibility(app) {
+                    log::warn!("toggle pet visibility failed: {error}");
                 }
             }
             "quit" => app.exit(0),
@@ -1361,6 +1358,8 @@ pub fn run() {
                 }
             }
             spawn_pet_overlay_reconciler(app.handle());
+            #[cfg(target_os = "windows")]
+            windows_display_state::install(app.handle());
             #[cfg(debug_assertions)]
             setup_live2d_debugger_window(app.handle())?;
             #[cfg(debug_assertions)]
