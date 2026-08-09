@@ -44,7 +44,12 @@ from .errors import (
     LLMRateLimitError,
     LLMTransientProviderError,
 )
-from .kimi_transport import open_kimi_stream, uses_kimi_stream_transport
+from .kimi_transport import (
+    open_cancellable_kimi_stream,
+    open_kimi_stream,
+    uses_kimi_stream_transport,
+)
+from .litellm_transport import open_cancellable_litellm_stream
 from .spec import ProviderSpec
 from .stream_events import (
     LLMResponseDiagnostics,
@@ -671,11 +676,16 @@ class LLMClient:
             Callable[[LLMTransportDiagnostic], None] | None,
             overrides.pop("_diagnostic_callback", None),
         )
+        cancel_check = cast(
+            Callable[[], None] | None,
+            overrides.pop("_cancel_check", None),
+        )
         return self._stream_with_network_retries(
             self.spec,
             messages,
             tools=tools,
             diagnostic_callback=diagnostic_callback,
+            cancel_check=cancel_check,
             **overrides,
         )
 
@@ -686,6 +696,7 @@ class LLMClient:
         *,
         tools: list[dict[str, Any]] | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
@@ -701,6 +712,7 @@ class LLMClient:
                 tools=tools,
                 diagnostic_callback=diagnostic_callback,
                 diagnostic_attempt=attempt + 1,
+                cancel_check=cancel_check,
                 **overrides,
             )
             try:
@@ -726,7 +738,13 @@ class LLMClient:
                     max_attempts=retry_limit + 1,
                     delay_seconds=delay,
                 )
-                self._wait_before_retry(retry_error, attempt, retry_limit, delay)
+                self._wait_before_retry(
+                    retry_error,
+                    attempt,
+                    retry_limit,
+                    delay,
+                    cancel_check=cancel_check,
+                )
 
     def _network_retry_delay(self, attempt: int) -> float:
         return self._network_retry_backoff_seconds * (2**attempt)
@@ -769,6 +787,8 @@ class LLMClient:
         attempt: int,
         retry_limit: int,
         delay: float,
+        *,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
         logger.warning(
             "LLM transient request failed before usable output; retrying model=%s "
@@ -783,8 +803,18 @@ class LLMClient:
             getattr(error, "retry_after_seconds", None),
             getattr(error, "provider_request_id", None),
         )
-        if delay > 0:
+        if delay <= 0:
+            return
+        if cancel_check is None:
             time.sleep(delay)
+            return
+        deadline = time.monotonic() + delay
+        while True:
+            cancel_check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(remaining, 0.05))
 
     def _call_once(
         self,
@@ -829,6 +859,7 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         diagnostic_attempt: int = 1,
+        cancel_check: Callable[[], None] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """单次流式调用 LiteLLM（generator function）。
@@ -883,8 +914,21 @@ class LLMClient:
         )
 
         try:
+            if cancel_check is not None:
+                cancel_check()
             if uses_kimi_stream_transport(spec):
-                response = open_kimi_stream(spec, messages, kwargs)
+                response = (
+                    open_cancellable_kimi_stream(spec, messages, kwargs, cancel_check)
+                    if cancel_check is not None
+                    else open_kimi_stream(spec, messages, kwargs)
+                )
+            elif cancel_check is not None:
+                response = open_cancellable_litellm_stream(
+                    spec,
+                    messages,
+                    kwargs,
+                    cancel_check,
+                )
             else:
                 response = litellm.completion(
                     model=spec.model,
@@ -894,7 +938,11 @@ class LLMClient:
                     stream=True,
                     **kwargs,
                 )
-        except Exception as e:
+        except BaseException as e:
+            if cancel_check is not None:
+                cancel_check()
+            if not isinstance(e, Exception):
+                raise
             mapped_error = _map_exception(e)
             _emit_transport_diagnostic(
                 diagnostic_callback,
@@ -957,6 +1005,8 @@ class LLMClient:
         service_tier: str | None = None
         try:
             for chunk in response:
+                if cancel_check is not None:
+                    cancel_check()
                 chunk_count += 1
                 response_id = response_id or _response_text_field(chunk, "id")
                 response_model = response_model or _response_text_field(chunk, "model")
@@ -1040,7 +1090,11 @@ class LLMClient:
                 if finish_reason:
                     finish_reason_raw = str(finish_reason)
                     stop_reason = _map_finish_reason(finish_reason)
-        except Exception as e:
+        except BaseException as e:
+            if cancel_check is not None:
+                cancel_check()
+            if not isinstance(e, Exception):
+                raise
             raise _map_exception(e) from e
         finally:
             # 下游 SSE 客户端断开时，上层 generator 会收到 GeneratorExit 并关闭本

@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Ban, Plus, Upload } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
-import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
+import { Input, Spinner, TooltipButton, TooltipProvider } from "@/components/ui";
 import { resolveBridgeUrl } from "@/constants";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
@@ -85,6 +85,11 @@ export function Composer({
 }: ComposerProps) {
   const streaming = useConversationStore((s) => s.streaming);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
+  const cancellationPhase = useConversationStore((s) => {
+    const sessionId = s.currentSessionId;
+    const runId = sessionId ? s.activeRunIdBySession[sessionId] : undefined;
+    return runId ? s.stopRequestsByRun[runId] : undefined;
+  });
   const currentModel = useConversationStore((s) => s.currentModel);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
@@ -128,11 +133,14 @@ export function Composer({
   const lastVoiceErrorToastKeyRef = useRef<string | null>(null);
   const voiceErrorToastReadyRef = useRef(false);
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
-  const voiceInputDisabled = disabled || streaming;
-  const attachmentsDisabled = disabled || streaming || !capabilities?.attachments;
+  const cancelling = cancellationPhase !== undefined;
+  const voiceInputDisabled = disabled || streaming || cancelling;
+  const attachmentsDisabled = disabled || streaming || cancelling || !capabilities?.attachments;
   const composerControlDisabledReason = disabled
     ? disabledReason ?? "暂时不可用"
-    : streaming
+    : cancelling
+      ? "正在取消当前回复…"
+      : streaming
       ? "请等待当前回复完成"
       : undefined;
   const availableAttachmentSlots = capabilities?.attachments
@@ -311,7 +319,9 @@ export function Composer({
   const dropFeedback = attachmentsDisabled
     ? disabled
       ? disabledReason ?? "暂时不能添加附件"
-      : streaming
+      : cancelling
+        ? "正在取消当前回复…"
+        : streaming
         ? "请等待当前回复完成"
         : "当前模型不支持附件"
     : availableAttachmentSlots <= 0
@@ -490,7 +500,7 @@ export function Composer({
   }, [voiceInputError, voiceInputErrorCode, voiceInputLastEventAt]);
 
   const submit = (text: string) => {
-    if (disabled) return;
+    if (disabled || cancelling) return;
     const visibleText = text || draftTextRef.current;
     const trimmed = visibleText.trim();
     const readyAttachments = draftAttachments.flatMap((item) =>
@@ -594,9 +604,15 @@ export function Composer({
             ref={senderRef}
             value={draftText}
             autosize={COMPOSER_AUTOSIZE}
-            disabled={disabled}
+            disabled={disabled || cancelling}
             loading={streaming}
-            placeholder={disabled ? disabledReason ?? "暂时不能发送" : "说点什么…（Enter 发送）"}
+            placeholder={
+              disabled
+                ? disabledReason ?? "暂时不能发送"
+                : cancelling
+                  ? "正在取消当前回复…"
+                  : "说点什么…（Enter 发送）"
+            }
             shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
             onNativeValueChange={(value) => applyDraftText(value, "user")}
             onNativePasteFiles={(files) => void addFiles(files)}
@@ -606,7 +622,14 @@ export function Composer({
               applyDraftText(value, "user");
             }}
             onSend={(e) => submit(e.detail.value)}
-            onStop={() => stop()}
+            onStop={() => {
+              if (cancelling) return;
+              void stop().then((outcome) => {
+                if (outcome === "failed") {
+                  toast.error("取消失败，回复仍在继续");
+                }
+              });
+            }}
             onFileRemove={(event) => syncAttachmentsAfterSenderRemoval(event.detail)}
             sendBtnDisabled={(value) => !attachmentCompatibility.compatible || (
               !value.trim() && !attachmentItems.some((item) => item.status === "success")
@@ -643,9 +666,20 @@ export function Composer({
                   />
                   <ConversationModelSelector
                     selectedModel={selectedModel}
-                    disabled={disabled || streaming}
+                    disabled={disabled || streaming || cancelling}
                     disabledReason={composerControlDisabledReason}
                   />
+                  {cancelling && (
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      aria-atomic="true"
+                      className="ml-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                    >
+                      <Spinner role="presentation" aria-hidden="true" className="size-3.5" />
+                      取消中…
+                    </span>
+                  )}
                 </div>
                 <VoiceInputAction
                   phase={voiceInputPhase}

@@ -2242,6 +2242,7 @@ class Conversation:
         recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         request_observer: Callable[[list[dict[str, Any]], int, dict[str, Any]], None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
         current_messages = messages
@@ -2260,6 +2261,7 @@ class Conversation:
                         current_messages,
                         tools=tools,
                         _diagnostic_callback=diagnostic_callback,
+                        _cancel_check=cancel_check,
                         **request_overrides,
                     )
                     if isinstance(client, LLMClient)
@@ -2298,6 +2300,7 @@ class Conversation:
         turn_idx: int,
         overrides: dict[str, Any] | None = None,
         recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Wrap every provider stream with run-correlated, content-free timings."""
         context = self._run_latency_context
@@ -2452,6 +2455,7 @@ class Conversation:
                 recovery_builder=recovery_builder,
                 diagnostic_callback=observe_transport,
                 request_observer=observe_request,
+                cancel_check=cancel_check,
             ):
                 if (
                     isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone))
@@ -3100,6 +3104,7 @@ class Conversation:
                 call_kind="initial" if turn_idx == 0 else "tool_continuation",
                 turn_idx=turn_idx,
                 overrides=self._voice_latency_llm_overrides,
+                cancel_check=cancel_check,
             ):
                 self._check_cancel(cancel_check)
                 if isinstance(event, LLMTextDelta):
@@ -3357,6 +3362,7 @@ class Conversation:
                 trailing_system=extra_system,
                 tool_specs=None,
             ),
+            cancel_check=cancel_check,
         ):
             self._check_cancel(cancel_check)
             if isinstance(ev, LLMTextDelta):
