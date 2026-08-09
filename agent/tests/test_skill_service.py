@@ -58,7 +58,7 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert (
         manifest["skills"]["agent-friend-guide"]["source_commit"]
-        == "f9e3ed3d91b1c481f2d7499567590e0007657905"
+        == "464e0c8ed749571bb93faf946837848099f18250"
     )
     assert (creator.package_root / "license.txt").is_file()
     assert (creator.package_root / "scripts" / "quick_validate.py").is_file()
