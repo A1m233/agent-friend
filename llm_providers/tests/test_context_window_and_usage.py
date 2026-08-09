@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import ssl
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -485,6 +488,106 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     assert response.closed is True
     assert len(clients) == 1
     assert clients[0].closed is True
+
+
+def test_kimi_cancellable_stream_interrupts_response_header_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_started = threading.Event()
+    request_cancelled = threading.Event()
+    clients: list[Any] = []
+
+    class FakeRawCompletions:
+        async def create(self, **_kwargs: Any) -> Any:
+            request_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                request_cancelled.set()
+                raise
+
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.with_raw_response = FakeRawCompletions()
+
+    class FakeAsyncOpenAI:
+        closed = False
+
+        def __init__(self, **_kwargs: Any) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+            clients.append(self)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    class StopRequested(Exception):
+        pass
+
+    def cancel_check() -> None:
+        if request_started.is_set():
+            raise StopRequested("stop requested")
+
+    monkeypatch.setattr("llm_providers.kimi_transport.openai.AsyncOpenAI", FakeAsyncOpenAI)
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.7-code-highspeed",
+            api_base="https://api.moonshot.cn/v1",
+        )
+    )
+
+    started = time.monotonic()
+    with pytest.raises(StopRequested, match="stop requested"):
+        list(
+            client.stream(
+                [{"role": "user", "content": "hi"}],
+                _cancel_check=cancel_check,
+            )
+        )
+
+    assert time.monotonic() - started < 1.5
+    assert request_cancelled.wait(1)
+    assert len(clients) == 1
+    assert clients[0].closed is True
+
+
+def test_litellm_cancellable_stream_interrupts_response_header_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_started = threading.Event()
+    request_cancelled = threading.Event()
+
+    async def fake_acompletion(**_kwargs: Any) -> Any:
+        request_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            request_cancelled.set()
+            raise
+
+    class StopRequested(Exception):
+        pass
+
+    def cancel_check() -> None:
+        if request_started.is_set():
+            raise StopRequested("stop requested")
+
+    monkeypatch.setattr(
+        "llm_providers.litellm_transport.litellm.acompletion",
+        fake_acompletion,
+    )
+    client = LLMClient(_spec())
+
+    started = time.monotonic()
+    with pytest.raises(StopRequested, match="stop requested"):
+        list(
+            client.stream(
+                [{"role": "user", "content": "hi"}],
+                _cancel_check=cancel_check,
+            )
+        )
+
+    assert time.monotonic() - started < 1.5
+    assert request_cancelled.wait(1)
 
 
 # ===== timeout 透传与异常映射 =====

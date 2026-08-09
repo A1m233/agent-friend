@@ -78,6 +78,7 @@ interface ConversationState {
   runSnapshots: Record<string, RunSnapshot>;
   viewAccessedAt: Record<string, number>;
   activeRunIdBySession: Record<string, string>;
+  stopRequestsByRun: Record<string, StopRequestPhase>;
   unreadRunOutcomeBySession: Record<string, "completed" | "failed">;
   detachedSessionId: string | null;
   searchTarget: SearchNavigationTarget | null;
@@ -102,8 +103,8 @@ interface ConversationState {
   editResendLatest: (messageId: string, text: string) => Promise<void>;
   /** 不重跑工具，复用失败轮中已经完成的工具结果继续生成。 */
   continueToolResult: (messageId: string) => Promise<void>;
-  /** 打断当前流（保留已生成的部分）。 */
-  stop: () => void;
+  /** 请求打断当前 run；终态仍由 Runtime snapshot 确认。 */
+  stop: () => Promise<StopOutcome>;
 }
 
 interface SessionConversationView {
@@ -117,6 +118,10 @@ interface SessionConversationView {
 }
 
 export type SendOutcome = "completed" | "failed" | "interrupted" | "rejected";
+
+export type StopRequestPhase = "requesting" | "accepted";
+
+export type StopOutcome = "accepted" | "already-pending" | "noop" | "failed";
 
 export type SendStartResult =
   | {
@@ -259,6 +264,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   runSnapshots: {},
   viewAccessedAt: {},
   activeRunIdBySession: {},
+  stopRequestsByRun: {},
   unreadRunOutcomeBySession: {},
   detachedSessionId: null,
   searchTarget: null,
@@ -541,10 +547,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set((state) => {
       const terminal = snapshot.status === "terminal";
       const activeRunIdBySession = { ...state.activeRunIdBySession };
+      const stopRequestsByRun = { ...state.stopRequestsByRun };
       if (terminal) {
         if (activeRunIdBySession[snapshot.session_id] === snapshot.run_id) {
           delete activeRunIdBySession[snapshot.session_id];
         }
+        delete stopRequestsByRun[snapshot.run_id];
       } else {
         activeRunIdBySession[snapshot.session_id] = snapshot.run_id;
       }
@@ -572,6 +580,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return {
         runSnapshots,
         activeRunIdBySession,
+        stopRequestsByRun,
         unreadRunOutcomeBySession,
         sessionViews: nextView
           ? { ...state.sessionViews, [snapshot.session_id]: nextView }
@@ -595,16 +604,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const sessionsToRefresh: string[] = [];
     set((state) => {
       const activeRunIdBySession = { ...state.activeRunIdBySession };
+      const stopRequestsByRun = { ...state.stopRequestsByRun };
       const sessionViews = { ...state.sessionViews };
       for (const [sessionId, runId] of Object.entries(activeRunIdBySession)) {
         if (returnedRunIds.has(runId)) continue;
         delete activeRunIdBySession[sessionId];
+        delete stopRequestsByRun[runId];
         const view = sessionViews[sessionId];
         if (view) sessionViews[sessionId] = { ...view, streaming: false };
         sessionsToRefresh.push(sessionId);
       }
+      for (const runId of Object.keys(stopRequestsByRun)) {
+        if (!returnedRunIds.has(runId)) delete stopRequestsByRun[runId];
+      }
       return {
         activeRunIdBySession,
+        stopRequestsByRun,
         sessionViews,
         streaming:
           state.currentSessionId && sessionsToRefresh.includes(state.currentSessionId)
@@ -831,7 +846,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         try {
           const snapshot = await runsApi.get(runId);
           get().applyRunSnapshot(snapshot);
-          runStillActive = snapshot.status !== "terminal";
+          runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
           if (snapshot.outcome === "cancelled") outcome = "interrupted";
           else if (snapshot.outcome === "rejected") outcome = "rejected";
         } catch {
@@ -854,12 +869,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 : existing.messages,
           };
           const activeRunIdBySession = { ...s.activeRunIdBySession };
+          const stopRequestsByRun = { ...s.stopRequestsByRun };
           if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
             delete activeRunIdBySession[sessionId];
           }
+          if (!runStillActive) delete stopRequestsByRun[runId];
           return {
             sessionViews: { ...s.sessionViews, [sessionId]: next },
             activeRunIdBySession,
+            stopRequestsByRun,
             streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
             messages: s.currentSessionId === sessionId ? next.messages : s.messages,
           };
@@ -977,21 +995,29 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } finally {
       streamUpdates.dispose();
       activeTransports.delete(runId);
+      let runStillActive = controller.signal.aborted;
       try {
-        get().applyRunSnapshot(await runsApi.get(runId));
+        const snapshot = await runsApi.get(runId);
+        get().applyRunSnapshot(snapshot);
+        runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
       } catch {
         // run_changed / reconnect calibration remains the fallback.
       }
       set((s) => {
         const view = s.sessionViews[sessionId];
         if (!view) return s;
-        const next = { ...view, streaming: false };
+        const next = { ...view, streaming: runStillActive };
         const activeRunIdBySession = { ...s.activeRunIdBySession };
-        if (activeRunIdBySession[sessionId] === runId) delete activeRunIdBySession[sessionId];
+        const stopRequestsByRun = { ...s.stopRequestsByRun };
+        if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
+          delete activeRunIdBySession[sessionId];
+        }
+        if (!runStillActive) delete stopRequestsByRun[runId];
         return {
           sessionViews: { ...s.sessionViews, [sessionId]: next },
           activeRunIdBySession,
-          streaming: s.currentSessionId === sessionId ? false : s.streaming,
+          stopRequestsByRun,
+          streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
         };
       });
       try {
@@ -1107,36 +1133,78 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     } finally {
       streamUpdates.dispose();
       activeTransports.delete(runId);
+      let runStillActive = controller.signal.aborted;
       try {
-        get().applyRunSnapshot(await runsApi.get(runId));
+        const snapshot = await runsApi.get(runId);
+        get().applyRunSnapshot(snapshot);
+        runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
       } catch {
         // run_changed / reconnect calibration remains the fallback.
       }
       set((s) => {
         const view = s.sessionViews[sessionId];
         if (!view) return s;
-        const next = { ...view, streaming: false };
+        const next = { ...view, streaming: runStillActive };
         const activeRunIdBySession = { ...s.activeRunIdBySession };
-        if (activeRunIdBySession[sessionId] === runId) delete activeRunIdBySession[sessionId];
+        const stopRequestsByRun = { ...s.stopRequestsByRun };
+        if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
+          delete activeRunIdBySession[sessionId];
+        }
+        if (!runStillActive) delete stopRequestsByRun[runId];
         return {
           sessionViews: { ...s.sessionViews, [sessionId]: next },
           activeRunIdBySession,
-          streaming: s.currentSessionId === sessionId ? false : s.streaming,
+          stopRequestsByRun,
+          streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
         };
       });
       void useSessionsStore.getState().refresh();
     }
   },
 
-  stop() {
-    const sessionId = get().currentSessionId;
-    if (!sessionId) return;
-    const runId = get().activeRunIdBySession[sessionId];
-    if (!runId) return;
-    void runsApi.cancel(sessionId, runId).then(({ run }) => {
+  async stop() {
+    const initial = get();
+    const sessionId = initial.currentSessionId;
+    if (!sessionId) return "noop";
+    const runId = initial.activeRunIdBySession[sessionId];
+    if (!runId) return "noop";
+    if (initial.stopRequestsByRun[runId]) return "already-pending";
+
+    set((state) => ({
+      stopRequestsByRun: {
+        ...state.stopRequestsByRun,
+        [runId]: "requesting",
+      },
+    }));
+    const transport = activeTransports.get(runId);
+    try {
+      const { run } = await runsApi.cancel(sessionId, runId);
       get().applyRunSnapshot(run);
-    }).catch(() => {
+      if (run.status !== "terminal") {
+        set((state) => {
+          if (
+            state.activeRunIdBySession[sessionId] !== runId
+            || !state.stopRequestsByRun[runId]
+          ) return state;
+          return {
+            stopRequestsByRun: {
+              ...state.stopRequestsByRun,
+              [runId]: "accepted",
+            },
+          };
+        });
+      }
+      if (transport?.sessionId === sessionId) transport.controller.abort();
+      return "accepted";
+    } catch {
+      set((state) => {
+        if (!state.stopRequestsByRun[runId]) return state;
+        const stopRequestsByRun = { ...state.stopRequestsByRun };
+        delete stopRequestsByRun[runId];
+        return { stopRequestsByRun };
+      });
       void get().calibrateRuns();
-    });
+      return "failed";
+    }
   },
 }));

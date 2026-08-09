@@ -43,6 +43,7 @@ import {
   sessionsApi,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
+import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
 import { useConversationStore, type SendStartResult } from "./conversation";
 import { useDraftStore } from "./drafts";
@@ -50,6 +51,7 @@ import { useDraftStore } from "./drafts";
 const mockStream = vi.mocked(runAgentStream);
 const mockRunGet = vi.mocked(runsApi.get);
 const mockRunList = vi.mocked(runsApi.list);
+const mockRunCancel = vi.mocked(runsApi.cancel);
 const mockEditStream = vi.mocked(editResendLatestStream);
 const mockContinueStream = vi.mocked(continueToolResultStream);
 const mockGet = vi.mocked(sessionsApi.get);
@@ -102,6 +104,29 @@ function sessionDetail(sessionId: string, content: string, model = "test"): Sess
   };
 }
 
+function runSnapshot(
+  runId: string,
+  sessionId: string,
+  status: RunSnapshot["status"],
+  version: number,
+  outcome: RunSnapshot["outcome"] = null,
+): RunSnapshot {
+  return {
+    run_id: runId,
+    session_id: sessionId,
+    status,
+    outcome,
+    reason_code: "",
+    channel: "text",
+    origin: "ag_ui",
+    control_scope: "desktop_text",
+    created_at: "2026-07-25T00:00:00Z",
+    started_at: "2026-07-25T00:00:00Z",
+    finished_at: status === "terminal" ? "2026-07-25T00:00:01Z" : null,
+    version,
+  };
+}
+
 function firstText() {
   const block = useConversationStore.getState().messages[0]?.blocks[0];
   return block?.kind === "text" ? block.text : "";
@@ -121,6 +146,7 @@ function messageTexts() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGet.mockReset();
+  mockRunCancel.mockReset();
   useConversationStore.getState().newSession();
   useConversationStore.setState({
     currentSessionId: null,
@@ -135,6 +161,7 @@ beforeEach(() => {
     runSnapshots: {},
     viewAccessedAt: {},
     activeRunIdBySession: {},
+    stopRequestsByRun: {},
     unreadRunOutcomeBySession: {},
     detachedSessionId: null,
     searchTarget: null,
@@ -146,6 +173,141 @@ beforeEach(() => {
     session_id: sessionId,
     model,
   }));
+});
+
+describe("conversation store · cancel lifecycle", () => {
+  it("立即进入取消中、去重请求，并在 Runtime 终态前保持 busy", async () => {
+    let streamSignal: AbortSignal | undefined;
+    mockStream.mockImplementation((_input, opts) => (async function* () {
+      const signal = opts?.signal;
+      streamSignal = signal;
+      await new Promise<void>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new Error("aborted"));
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "unused", runId: "unused" });
+    })());
+
+    const cancelGate = deferred<CancelRunResponse>();
+    const terminalGate = deferred<RunSnapshot>();
+    mockRunCancel.mockReturnValueOnce(cancelGate.promise);
+    mockRunGet.mockReturnValueOnce(terminalGate.promise);
+
+    const sendResult = useConversationStore.getState().send("请停下来");
+    expect(sendResult.accepted).toBe(true);
+    if (!sendResult.accepted) return;
+    expect(streamSignal?.aborted).toBe(false);
+
+    const firstStop = useConversationStore.getState().stop();
+    expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBe(
+      "requesting",
+    );
+    await expect(useConversationStore.getState().stop()).resolves.toBe("already-pending");
+    expect(mockRunCancel).toHaveBeenCalledTimes(1);
+
+    cancelGate.resolve({
+      result: "accepted",
+      run: runSnapshot(sendResult.runId, sendResult.sessionId, "running", 2),
+    });
+    await expect(firstStop).resolves.toBe("accepted");
+
+    expect(streamSignal?.aborted).toBe(true);
+    expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBe(
+      "accepted",
+    );
+    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBe(
+      sendResult.runId,
+    );
+    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(useConversationStore.getState().send("不能抢跑下一条")).toEqual({
+      accepted: false,
+      reason: "busy",
+    });
+
+    terminalGate.resolve(
+      runSnapshot(sendResult.runId, sendResult.sessionId, "terminal", 3, "cancelled"),
+    );
+    await expect(sendResult.completion).resolves.toBe("interrupted");
+    expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBeUndefined();
+    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBeUndefined();
+    expect(useConversationStore.getState().streaming).toBe(false);
+  });
+
+  it("取消 API 失败时撤销取消中状态并触发权威状态校准", async () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-cancel-failed",
+      streaming: true,
+      activeRunIdBySession: { "sid-cancel-failed": "run-cancel-failed" },
+    });
+    mockRunCancel.mockRejectedValueOnce(new Error("bridge offline"));
+
+    await expect(useConversationStore.getState().stop()).resolves.toBe("failed");
+
+    expect(useConversationStore.getState().stopRequestsByRun).toEqual({});
+    expect(mockRunList).toHaveBeenCalledWith(true);
+  });
+
+  it("终态 push 先到时忽略 SSE 收尾拉到的旧 running 快照", async () => {
+    mockStream.mockImplementation((_input, opts) => (async function* () {
+      await new Promise<void>((_resolve, reject) => {
+        opts?.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+      yield ev({ type: EventType.RUN_FINISHED, threadId: "unused", runId: "unused" });
+    })());
+    const stalePull = deferred<RunSnapshot>();
+    mockRunGet.mockReturnValueOnce(stalePull.promise);
+
+    const sendResult = useConversationStore.getState().send("测试终态竞态");
+    expect(sendResult.accepted).toBe(true);
+    if (!sendResult.accepted) return;
+    mockRunCancel.mockResolvedValueOnce({
+      result: "accepted",
+      run: runSnapshot(sendResult.runId, sendResult.sessionId, "running", 2),
+    });
+
+    await expect(useConversationStore.getState().stop()).resolves.toBe("accepted");
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot(sendResult.runId, sendResult.sessionId, "terminal", 4, "cancelled"),
+    );
+    stalePull.resolve(runSnapshot(sendResult.runId, sendResult.sessionId, "running", 3));
+
+    await expect(sendResult.completion).resolves.toBe("interrupted");
+    expect(useConversationStore.getState().runSnapshots[sendResult.runId].version).toBe(4);
+    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBeUndefined();
+    expect(useConversationStore.getState().streaming).toBe(false);
+  });
+
+  it("终态先于取消响应到达时不会被旧响应重新写回取消中", async () => {
+    const cancelGate = deferred<CancelRunResponse>();
+    mockRunCancel.mockReturnValueOnce(cancelGate.promise);
+    useConversationStore.setState({
+      currentSessionId: "sid-race",
+      streaming: true,
+      activeRunIdBySession: { "sid-race": "run-race" },
+    });
+
+    const stopPromise = useConversationStore.getState().stop();
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-race", "sid-race", "terminal", 3, "cancelled"),
+    );
+    cancelGate.resolve({
+      result: "accepted",
+      run: runSnapshot("run-race", "sid-race", "running", 2),
+    });
+
+    await expect(stopPromise).resolves.toBe("accepted");
+    expect(useConversationStore.getState().runSnapshots["run-race"].status).toBe("terminal");
+    expect(useConversationStore.getState().activeRunIdBySession["sid-race"]).toBeUndefined();
+    expect(useConversationStore.getState().stopRequestsByRun["run-race"]).toBeUndefined();
+    expect(useConversationStore.getState().streaming).toBe(false);
+  });
 });
 
 describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
