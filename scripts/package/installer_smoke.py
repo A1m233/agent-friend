@@ -694,11 +694,13 @@ def _run_smoke(
             raise RuntimeError("failed preinstall diagnostics did not identify its phase")
         if diagnostics.get("helperResult") != ["error"]:
             raise RuntimeError("failed preinstall diagnostics did not identify launch failure")
+        if diagnostics.get("helperPresentAfterRun") != ["0"]:
+            raise RuntimeError("failed preinstall diagnostics did not record helper absence")
         return {
             "exitCode": result.returncode,
             "installKind": diagnostics["installKind"][0],
             "helperResult": diagnostics["helperResult"][0],
-            "win32LastErrorCaptured": bool(diagnostics.get("win32LastError", [""])[0]),
+            "helperPresentAfterRun": diagnostics["helperPresentAfterRun"][0],
             "diagnosticsPersisted": True,
         }
 

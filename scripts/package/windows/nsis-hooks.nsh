@@ -36,7 +36,7 @@ Var AgentFriendDesktopShortcutExisted
 Var AgentFriendInstallKind
 Var AgentFriendHelperResult
 Var AgentFriendHelperOutput
-Var AgentFriendHelperSystemError
+Var AgentFriendHelperPresentAfterRun
 Var AgentFriendDiagnosticHandle
 Var AgentFriendRuntimeExecutable
 
@@ -56,9 +56,9 @@ Function AgentFriendInitializeDiagnostics
     StrCpy $AgentFriendDiagnosticPath ""
     Return
   ${EndIf}
-  FileWriteUTF16LE /BOM $AgentFriendDiagnosticHandle "schemaVersion=1$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "product=${PRODUCTNAME}$\r$\n"
-  FileWriteUTF16LE $AgentFriendDiagnosticHandle "version=${VERSION}$\r$\n"
+  FileWriteUTF16LE /BOM $AgentFriendDiagnosticHandle "schemaVersion=2$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "product=${AGENT_FRIEND_PRODUCT_NAME}$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "version=${AGENT_FRIEND_PRODUCT_VERSION}$\r$\n"
   FileWriteUTF16LE $AgentFriendDiagnosticHandle "buildId=${AGENT_FRIEND_BUILD_ID}$\r$\n"
   FileWriteUTF16LE $AgentFriendDiagnosticHandle "profileId=${AGENT_FRIEND_PROFILE_ID}$\r$\n"
   FileWriteUTF16LE $AgentFriendDiagnosticHandle "installKind=$AgentFriendInstallKind$\r$\n"
@@ -76,7 +76,8 @@ FunctionEnd
       FileSeek $AgentFriendDiagnosticHandle 0 END
       FileWriteUTF16LE $AgentFriendDiagnosticHandle "phase=${phase}$\r$\n"
       FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperResult=$AgentFriendHelperResult$\r$\n"
-      FileWriteUTF16LE $AgentFriendDiagnosticHandle "win32LastError=$AgentFriendHelperSystemError$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperPath=$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperPresentAfterRun=$AgentFriendHelperPresentAfterRun$\r$\n"
       FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperOutput=$AgentFriendHelperOutput$\r$\n"
       FileClose $AgentFriendDiagnosticHandle
     ${EndIf}
@@ -85,10 +86,12 @@ FunctionEnd
 !macroend
 
 !macro AGENT_FRIEND_CAPTURE_HELPER_RESULT phase
-  System::Call "kernel32::GetLastError() i .r0"
   Pop $AgentFriendHelperResult
   Pop $AgentFriendHelperOutput
-  StrCpy $AgentFriendHelperSystemError "$0"
+  StrCpy $AgentFriendHelperPresentAfterRun "0"
+  ${If} ${FileExists} "$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}"
+    StrCpy $AgentFriendHelperPresentAfterRun "1"
+  ${EndIf}
   !insertmacro AGENT_FRIEND_RECORD_HELPER_RESULT "${phase}"
 !macroend
 

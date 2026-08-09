@@ -832,6 +832,7 @@ def _apply_nsis_template_overlay(
         f'!define AGENT_FRIEND_BUILD_ID "{identity.build_id}"\n'
         f'!define AGENT_FRIEND_PROFILE_ID "{profile.profile_id}"\n'
         f'!define AGENT_FRIEND_PRODUCT_NAME "{profile.product_name}"\n'
+        f'!define AGENT_FRIEND_PRODUCT_VERSION "{identity.product_version}"\n'
         f'!define AGENT_FRIEND_PAYLOAD_RELATIVE "{payload_install_relative_path(identity.build_id)}"\n'
         f'!define AGENT_FRIEND_AUTOSTART_VALUE "{profile.autostart_value_name}"\n'
         '!define AGENT_FRIEND_INSTALLER_HELPER "agent-friend-installer-helper.exe"\n\n'
