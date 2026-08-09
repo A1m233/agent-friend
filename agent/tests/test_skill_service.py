@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 
+import pytest
 from agent.filesystem import FILESYSTEM_TOOL_NAMES
 from agent.skills import (
     SkillCatalogService,
@@ -11,6 +12,7 @@ from agent.skills import (
     render_activated_skill,
     render_runtime_capability_notice,
 )
+from agent.skills.builtin import BuiltinSkillInstaller
 
 
 def _write_skill(root: Path, name: str, body: str = "Follow this workflow.") -> Path:
@@ -38,30 +40,58 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     snapshot = service.initialize()
 
     assert [(item.source, item.name) for item in snapshot.entries] == [
+        ("builtin", "agent-friend-guide"),
         ("builtin", "skill-creator"),
         ("personal", "personal-skill"),
         ("shared", "shared-skill"),
     ]
-    builtin = snapshot.entries[0]
-    assert builtin.id == "builtin/skill-creator"
-    manifest = json.loads((builtin.package_root.parent / "manifest.json").read_text("utf-8"))
-    assert manifest["upstream"]["commit"] == "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c"
-    assert (builtin.package_root / "license.txt").is_file()
-    assert (builtin.package_root / "scripts" / "quick_validate.py").is_file()
-    builtin_text = builtin.entry_path.read_text("utf-8")
+    by_name = {item.name: item for item in snapshot.entries}
+    guide = by_name["agent-friend-guide"]
+    creator = by_name["skill-creator"]
+    assert guide.id == "builtin/agent-friend-guide"
+    assert creator.id == "builtin/skill-creator"
+    manifest = json.loads((creator.package_root.parent / "manifest.json").read_text("utf-8"))
+    assert manifest["schema_version"] == 2
+    assert (
+        manifest["skills"]["skill-creator"]["source_commit"]
+        == "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c"
+    )
+    assert (
+        manifest["skills"]["agent-friend-guide"]["source_commit"]
+        == "23111919226d00e647ace99a340aa95c642649f4"
+    )
+    assert (creator.package_root / "license.txt").is_file()
+    assert (creator.package_root / "scripts" / "quick_validate.py").is_file()
+    builtin_text = creator.entry_path.read_text("utf-8")
     assert "cannot yet read bundled references" not in builtin_text
     assert "host-provided `<runtime_capabilities>`" in builtin_text
+    assert (guide.package_root / "references" / "voice-credentials.md").is_file()
+    assert "语音输入" in (guide.package_root / "references" / "voice-credentials.md").read_text(
+        "utf-8"
+    )
 
     turn = service.begin_turn(
         tuple(SkillSelection(item.id, item.version) for item in snapshot.entries),
         model_window=100_000,
     )
     assert [item.record.name for item in turn.activations] == [
+        "agent-friend-guide",
         "skill-creator",
         "personal-skill",
         "shared-skill",
     ]
     assert not turn.activation_issues
+
+
+def test_builtin_installer_rejects_unexpected_files_in_existing_bundle(
+    tmp_path: Path,
+) -> None:
+    installer = BuiltinSkillInstaller(target_root=tmp_path / "skills")
+    installed = installer.install()
+    (installed / "unexpected.txt").write_text("drift\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        installer.install()
 
 
 def test_service_refreshes_changed_skill_without_reusing_stale_body(tmp_path: Path) -> None:

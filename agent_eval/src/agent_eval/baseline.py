@@ -15,7 +15,7 @@ from .report import CaseRunResult, summarize
 from .schema import CaseSetMeta, Contract
 from .selection import Selection
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _GIT_TIMEOUT_SEC = 5
 
 
@@ -130,6 +130,49 @@ def _serialize_results(
                             for tool_call in item.trace.tool_calls
                         ],
                         "assistant_segments": item.trace.assistant_segments,
+                        "skill_catalog_observation": (
+                            {
+                                "snapshot_entries": [
+                                    {
+                                        "name": entry.name,
+                                        "source": entry.source,
+                                        "id": entry.id,
+                                    }
+                                    for entry in item.trace.skill_catalog_observation.snapshot_entries
+                                ],
+                                "snapshot_coverage": (
+                                    item.trace.skill_catalog_observation.snapshot_coverage
+                                ),
+                                "catalog_fingerprint": (
+                                    item.trace.skill_catalog_observation.catalog_fingerprint
+                                ),
+                                "render_fingerprint": (
+                                    item.trace.skill_catalog_observation.render_fingerprint
+                                ),
+                                "request_entries": [
+                                    {
+                                        "name": entry.name,
+                                        "source": entry.source,
+                                        "id": entry.id,
+                                    }
+                                    for entry in item.trace.skill_catalog_observation.request_entries
+                                ],
+                                "request_coverage": (
+                                    item.trace.skill_catalog_observation.request_coverage
+                                ),
+                                "request_content_fingerprint": (
+                                    item.trace.skill_catalog_observation.request_content_fingerprint
+                                ),
+                                "request_message_index": (
+                                    item.trace.skill_catalog_observation.request_message_index
+                                ),
+                                "preflight_passed": (
+                                    item.trace.skill_catalog_observation.preflight_passed
+                                ),
+                            }
+                            if item.trace.skill_catalog_observation is not None
+                            else None
+                        ),
                         "final_text": item.trace.final_text,
                         "stop_reason": item.trace.stop_reason,
                         "error": item.trace.error,

@@ -33,6 +33,8 @@ def test_loads_builtin_cases() -> None:
         ("C18", "clarification-action-consistency", 3),
         ("C19", "source-authority-calibration", 5),
         ("C20", "skill-semantic-activation", 8),
+        ("C21", "unified-skill-catalog-discovery", 4),
+        ("C22", "skill-catalog-change-comparison", 3),
     ]
 
 
@@ -184,6 +186,7 @@ def test_loads_fixture_session_and_case_judge() -> None:
     skill_anchor = next(item for item in c20.cases if item.id == "C20-01")
     assert skill_anchor.fixture_skills[0].name == "context7-mcp"
     assert skill_anchor.fixture_skills[0].allow_implicit_invocation is True
+    assert skill_anchor.fixture_skills[0].source == "personal"
     assert skill_anchor.judge is not None
     assert skill_anchor.judge.required_successful_tool_calls[0].name == "skill_read"
     assert skill_anchor.judge.required_successful_tool_calls[0].args == {}
@@ -201,13 +204,53 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert failure_control.judge is not None
     assert failure_control.judge.forbid_unsupported_skill_activation_claim is True
 
+    c21 = next(contract for contract in contracts if contract.id == "C21")
+    catalog_anchor = next(item for item in c21.cases if item.id == "C21-01")
+    assert catalog_anchor.prior_fixture_skills == []
+    assert catalog_anchor.expected_skill_catalog_coverage == "complete"
+    assert [
+        (entry.name, entry.source) for entry in catalog_anchor.expected_skill_catalog_entries
+    ] == [
+        ("agent-friend-guide", "builtin"),
+        ("context7-mcp", "personal"),
+        ("test-file-skill", "personal"),
+    ]
+    assert catalog_anchor.judge is not None
+    assert catalog_anchor.judge.require_non_empty_response is True
+    assert catalog_anchor.judge.must_recognize_catalog_skills == []
+    multi_source = next(item for item in c21.cases if item.id == "C21-03")
+    assert [(skill.name, skill.source) for skill in multi_source.fixture_skills] == [
+        ("context7-mcp", "personal"),
+        ("test-file-skill", "personal"),
+        ("shared-release-helper", "shared"),
+    ]
+    assert multi_source.judge is not None
+    assert multi_source.judge.must_cover_visible_skill_catalog is True
+    missing_control = next(item for item in c21.cases if item.id == "C21-04")
+    assert missing_control.expected_skill_catalog_absent == ["missing-release-helper"]
+    assert missing_control.judge is not None
+    assert missing_control.judge.must_report_catalog_skills_undiscoverable == [
+        "missing-release-helper"
+    ]
+
+    c22 = next(contract for contract in contracts if contract.id == "C22")
+    history_control = next(item for item in c22.cases if item.id == "C22-02")
+    assert [skill.name for skill in history_control.prior_fixture_skills] == [
+        "stable-writing-helper"
+    ]
+    removal_control = next(item for item in c22.cases if item.id == "C22-03")
+    assert [skill.name for skill in removal_control.prior_fixture_skills] == [
+        "stable-writing-helper",
+        "temporary-catalog-helper",
+    ]
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 20
-    assert meta.total_cases == 194
+    assert meta.total_contracts == 22
+    assert meta.total_cases == 201
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -229,6 +272,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C18": 3,
         "C19": 5,
         "C20": 8,
+        "C21": 4,
+        "C22": 3,
     }
     assert len(meta.digest) == 64
 
@@ -475,6 +520,81 @@ cases:
     )
 
     with pytest.raises(ValueError, match="合法 Skill 名称"):
+        load_contracts(tmp_path)
+
+
+def test_fixture_skill_source_rejects_builtin_override(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-fixture-source
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fixture_skills:
+      - name: fake-builtin
+        source: builtin
+        description: desc
+        instructions: body
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="source 必须是"):
+        load_contracts(tmp_path)
+
+
+def test_expected_skill_catalog_entry_requires_known_source(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-catalog-entry-source
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    expected_skill_catalog_entries:
+      - name: target-skill
+        source: workspace
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="source 必须是"):
+        load_contracts(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("fixture_skill_catalog_window", "0", "必须是正整数"),
+        ("expected_skill_catalog_coverage", "partial", "必须是"),
+    ],
+)
+def test_skill_catalog_fixture_controls_are_validated(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    error: str,
+) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        f"""
+contract:
+  id: C1
+  name: invalid-skill-catalog-fixture
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    {field}: {value}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=error):
         load_contracts(tmp_path)
 
 

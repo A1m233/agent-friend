@@ -198,6 +198,24 @@ def test_plain_query_does_not_activate_and_unchanged_catalog_is_not_appended(
     assert all("<skill>" not in item["content"] for item in llm.received[-1][current_index + 1 :])
 
 
+def test_changed_catalog_keeps_trusted_prior_state_in_uncompacted_context(
+    tmp_path: Path,
+) -> None:
+    conversation, llm, service, _ = _conversation(tmp_path)
+    list(conversation.stream("first catalog"))
+    _write_skill(service.personal_root, "later-skill", "LATER VERSION")
+    service.refresh()
+
+    list(conversation.stream("compare catalogs"))
+
+    catalogs = [
+        item["content"] for item in llm.received[-1] if "<skills_catalog>" in item["content"]
+    ]
+    assert len(catalogs) == 2
+    assert "later-skill" not in catalogs[0]
+    assert "later-skill" in catalogs[1]
+
+
 @dataclass
 class _SkillCallingLLM:
     skill_id: str

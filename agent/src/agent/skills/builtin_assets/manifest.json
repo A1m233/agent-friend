@@ -1,25 +1,28 @@
 {
-  "schema_version": 1,
-  "content_fingerprint": {
-    "algorithm": "sha256",
-    "value": "installed immutable bundle directory name"
-  },
-  "upstream": {
-    "repository": "https://github.com/openai/codex",
-    "commit": "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c",
-    "path": "codex-rs/skills/src/assets/samples/skill-creator",
-    "retrieved_at": "2026-08-06"
-  },
-  "license": {
-    "spdx": "Apache-2.0",
-    "file": "skill-creator/license.txt"
-  },
-  "compatibility_patches": [
-    "Added a host-authoritative runtime capability contract to SKILL.md.",
-    "Reused the SVG icon for icon_large; the optional raster PNG is not bundled.",
-    "Removed one redundant f-string prefix to satisfy the host repository lint gate.",
-    "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
-    "Applied the host repository's deterministic Ruff formatting to bundled Python scripts.",
-    "Trimmed trailing blank lines to satisfy the host repository whitespace gate."
-  ]
+  "schema_version": 2,
+  "skills": {
+    "skill-creator": {
+      "source_repository": "https://github.com/openai/codex",
+      "source_commit": "9d00bb01c0a712fb7c2f5b002bdf33bcc0fc352c",
+      "source_path": "codex-rs/skills/src/assets/samples/skill-creator",
+      "license": "Apache-2.0",
+      "snapshot_sha256": "6f994bec845b2f43909e5020b705353af563167b34e6cd65b76d089e6e2ca29b",
+      "retrieved_at": "2026-08-06",
+      "compatibility_patches": [
+        "Added a host-authoritative runtime capability contract to SKILL.md.",
+        "Reused the SVG icon for icon_large; the optional raster PNG is not bundled.",
+        "Removed one redundant f-string prefix to satisfy the host repository lint gate.",
+        "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
+        "Applied the host repository's deterministic Ruff formatting to bundled Python scripts.",
+        "Trimmed trailing blank lines to satisfy the host repository whitespace gate."
+      ]
+    },
+    "agent-friend-guide": {
+      "source_repository": "https://github.com/A1m233/agent-friend-guide",
+      "source_commit": "23111919226d00e647ace99a340aa95c642649f4",
+      "source_path": "skills/agent-friend-guide",
+      "license": "Apache-2.0",
+      "snapshot_sha256": "6affdb5f09b7ec24ef83e98159ebc719cbf94a689a23eee830287907ac261b7f"
+    }
+  }
 }

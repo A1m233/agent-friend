@@ -38,8 +38,11 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
    - `package-sensitive`：合入前至少构建真实 frozen candidate，并以 doctor/capability smoke 为证据；用户需要完整包时再继续 installer。语义上需要但脚本未自动识别时用 `--verification-level package-sensitive` 升档。
    - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，不能跳过矩阵。
    - 安装器语言发生变化时，`installer-contract` 必须报告交互式 selector 为 `always`。可见 UI 验收同时覆盖无历史语言与已保存 English 的身份；仅在全新隔离身份看到一次 selector，不能证明真实产品升级仍允许选语言。
-5. 调用脚本完成目标构建。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
-6. 构建开始时核对脚本输出的 `package_version`、`release_channel` 和可选 `target_release_version`；回报绝对安装包路径、build ID、精确版本、模式、敏感标识和 SHA/manifest 核验结果。不得把同版本包描述为升级包，不得用 build ID 判断版本先后。失败时原样保留脚本的 fail-closed 原因，不绕过门禁。
+5. 在当前工作流第一次执行任何实际构建前，提醒用户：“是否先进行 agent-friend-guide 知识维护检查？”这包括 `runtime`、`installer`、`all`、`installer-smoke-build` 和会在内部构建 candidate 的 installer smoke 流程，覆盖 ordinary release、trusted-beta 与 local-test 三种渠道。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不提醒。提醒只询问，不自行检查；用户拒绝后立即继续原打包流程，不改变任何门禁。用户同意后显式调用 `maintain-agent-friend-guide` 的只读检查阶段；检查认为需要更新时，是否执行更新仍要单独取得授权。
+6. 调用脚本完成目标构建。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
+7. 构建开始时核对脚本输出的 `package_version`、`release_channel` 和可选 `target_release_version`；回报绝对安装包路径、build ID、精确版本、模式、敏感标识和 SHA/manifest 核验结果。不得把同版本包描述为升级包，不得用 build ID 判断版本先后。失败时原样保留脚本的 fail-closed 原因，不绕过门禁。
+
+同一任务内按 `product_state_summary + package:<channel>` 去重提醒：相同产品 HEAD、tracked diff、untracked 文件集合/内容和相同渠道已经询问、检查或维护后，不再重复询问；产品状态实质变化后可以重新提醒。用户直接要求检查或更新知识时直接进入 maintainer Skill，不先重复提醒。
 
 ## 打包工作区治理
 

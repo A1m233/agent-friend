@@ -5,7 +5,16 @@ from datetime import UTC, datetime
 
 from agent_eval.baseline import ProviderRunInfo, ReportRun, ToolRunInfo, write_report
 from agent_eval.report import CaseRunResult
-from agent_eval.schema import Case, CaseSetMeta, Contract, ToolCallTrace, Trace, Verdict
+from agent_eval.schema import (
+    Case,
+    CaseSetMeta,
+    Contract,
+    SkillCatalogEntryObservation,
+    SkillCatalogObservation,
+    ToolCallTrace,
+    Trace,
+    Verdict,
+)
 from agent_eval.selection import Selection
 
 
@@ -67,6 +76,33 @@ def _run() -> ReportRun:
     )
 
 
+def _catalog_result() -> CaseRunResult:
+    result = _result()
+    entry = SkillCatalogEntryObservation(
+        name="agent-friend-guide",
+        source="builtin",
+        id="builtin:agent-friend-guide",
+    )
+    trace = Trace(
+        case_id=result.trace.case_id,
+        tool_calls=result.trace.tool_calls,
+        final_text="agent-friend-guide 当前可发现。",
+        stop_reason="end_turn",
+        skill_catalog_observation=SkillCatalogObservation(
+            snapshot_entries=[entry],
+            snapshot_coverage="complete",
+            catalog_fingerprint="catalog",
+            render_fingerprint="render",
+            request_entries=[entry],
+            request_coverage="complete",
+            request_content_fingerprint="request",
+            request_message_index=1,
+            preflight_passed=True,
+        ),
+    )
+    return CaseRunResult(case=result.case, trace=trace, verdict=result.verdict)
+
+
 def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     contract = _contract()
     path = write_report(
@@ -78,7 +114,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert path.name.startswith("2026-06-25T08-00-00-")
     assert path.name.endswith("-C4-limit1.json")
 
@@ -104,4 +140,28 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert case["assistant_segments"] == [
         "我翻一下之前聊过的。",
         "我没找到我们之前聊过诺兰。",
+    ]
+    assert case["skill_catalog_observation"] is None
+
+
+def test_write_report_serializes_skill_catalog_observation(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    contract = _contract()
+    path = write_report(
+        out_dir=tmp_path / "reports",
+        label="C21-01",
+        contracts_run=[contract],
+        results={"C4": [_catalog_result()]},
+        run=_run(),
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    observation = payload["contracts"][0]["cases"][0]["skill_catalog_observation"]
+    assert observation["preflight_passed"] is True
+    assert observation["request_coverage"] == "complete"
+    assert observation["request_entries"] == [
+        {
+            "name": "agent-friend-guide",
+            "source": "builtin",
+            "id": "builtin:agent-friend-guide",
+        }
     ]

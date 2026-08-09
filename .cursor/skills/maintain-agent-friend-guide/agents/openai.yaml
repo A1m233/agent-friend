@@ -1,0 +1,7 @@
+interface:
+  display_name: "维护 agent-friend 用户知识"
+  short_description: "检查并发布 agent-friend 使用指南更新"
+  default_prompt: "使用 $maintain-agent-friend-guide 检查本次产品变更是否需要维护用户知识。"
+
+policy:
+  allow_implicit_invocation: false

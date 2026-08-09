@@ -7,7 +7,16 @@ import re
 
 from agent.todos import TodoError, schedule_from_dict
 
-from .schema import Case, Contract, FixtureMessage, ToolCallTrace, Trace, Verdict
+from .schema import (
+    Case,
+    CaseJudge,
+    Contract,
+    FixtureMessage,
+    SkillCatalogObservation,
+    ToolCallTrace,
+    Trace,
+    Verdict,
+)
 
 MEMORY_MECHANISM_TERMS = (
     "没存",
@@ -60,6 +69,133 @@ SKILL_ACTIVATION_CLAIM_TERMS = (
 SKILL_ACTIVATION_NEGATION_PATTERNS = (
     re.compile(r"(?:并)?(?:没能|未能|没有|没|未|无法|不能)(?:真正|实际)?成功(?:加载|激活|启用)"),
     re.compile(r"(?:并)?不(?:代表|意味着)(?:已经|成功)(?:加载|激活|启用)"),
+)
+SKILL_CATALOG_CHANGE_TERMS = (
+    "都是之前",
+    "之前就在",
+    "原来就有",
+    "一直存在",
+    "一直都有",
+    "没有新增",
+    "没新增",
+    "没有变化",
+    "没变化",
+    "没变",
+    "新增了",
+    "新加了",
+    "新增的",
+    "新加的",
+    "刚加的",
+    "刚新增",
+    "是新增项",
+    "属于新增",
+    "是新加的",
+    "多了",
+    "少了",
+    "删除了",
+    "移除了",
+    "不再存在",
+    "之前没有",
+    "此前没有",
+    "no new skill",
+    "unchanged",
+    "was already",
+    "newly added",
+    "is new",
+    "removed since",
+)
+SKILL_CATALOG_CHANGE_PATTERNS = (
+    re.compile(r"(?:没有|没)(?:看到|发现|出现).{0,24}(?:新加|新增)", re.IGNORECASE),
+    re.compile(r"(?:新加|新增).{0,24}(?:没有|没)(?:看到|发现|出现)", re.IGNORECASE),
+)
+SKILL_CATALOG_ABSENCE_TERMS = (
+    "不存在",
+    "不可发现",
+    "无法发现",
+    "没看到",
+    "没有看到",
+    "没找到",
+    "没有找到",
+    "找不到",
+    "未发现",
+    "没有发现",
+    "未出现",
+    "没有列出",
+    "未列出",
+    "不包含",
+    "不在当前",
+    "不在列表",
+    "目录里没有",
+    "does not exist",
+    "not found",
+    "not present",
+    "not discoverable",
+)
+SKILL_CATALOG_PRESENCE_TERMS = (
+    "可发现",
+    "能够发现",
+    "能发现",
+    "可以找到",
+    "能够找到",
+    "能找到",
+    "找到了",
+    "已找到",
+    "包含这个",
+    "包含该",
+    "列出了",
+    "列有",
+    "显示有",
+    "可以读取",
+    "currently discoverable",
+    "is discoverable",
+    "is present",
+    "is listed",
+)
+SKILL_CATALOG_DISCOVERY_UNCERTAINTY_TERMS = (
+    "无法确认",
+    "不能确认",
+    "没法确认",
+    "不确定",
+    "无法判断",
+    "不能判断",
+    "cannot confirm",
+    "can't confirm",
+    "uncertain",
+)
+SKILL_CATALOG_NEGATED_ABSENCE_PATTERNS = (
+    re.compile(
+        r"(?:不是|并非|不代表|不意味着|不能说|不能认为)"
+        r".{0,10}(?:不存在|不可发现|无法发现|没找到|没有找到|未发现|不包含)"
+    ),
+    re.compile(
+        r"(?:not|isn't|is not)\s+(?:absent|missing|undiscoverable|not present)",
+        re.IGNORECASE,
+    ),
+)
+SKILL_CATALOG_EVIDENCE_BOUNDARY_TERMS = (
+    "无法判断",
+    "不能判断",
+    "没法判断",
+    "无法确认",
+    "不能确认",
+    "不确定",
+    "缺少基线",
+    "没有基线",
+    "无基线",
+    "仅有当前",
+    "只看当前",
+    "需要对比",
+    "需要先前",
+    "可信旧状态",
+    "截断",
+    "省略",
+    "未完整",
+    "不完整",
+    "cannot determine",
+    "can't determine",
+    "no baseline",
+    "truncated",
+    "omitted",
 )
 RECORD_NOUNS = (
     "聊天记录",
@@ -564,6 +700,20 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 f"{activation_hit}",
             )
 
+    if spec.forbid_unsupported_skill_catalog_change_claim:
+        catalog_hit = _unsupported_skill_catalog_claims(case, trace.final_text)
+        if catalog_hit:
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                f"unsupported Skill catalog state claim: {catalog_hit}",
+            )
+
+    catalog_error = _skill_catalog_response_error(spec, trace)
+    if catalog_error is not None:
+        return Verdict(case.id, contract.id, False, catalog_error)
+
     if spec.forbid_memory_mismatch_story:
         story_hit = [kw for kw in MEMORY_MISMATCH_STORY_TERMS if kw.lower() in text_lc]
         if story_hit:
@@ -715,6 +865,168 @@ def _unsupported_skill_activation_claims(trace: Trace) -> list[str]:
     for pattern in SKILL_ACTIVATION_NEGATION_PATTERNS:
         candidate = pattern.sub("", candidate)
     return [term for term in SKILL_ACTIVATION_CLAIM_TERMS if term in candidate]
+
+
+def _unsupported_skill_catalog_claims(case: Case, final_text: str) -> list[str]:
+    """Find temporal or absence conclusions unsupported by catalog evidence boundaries."""
+
+    history_available = bool(case.prior_fixture_skills)
+    entries_truncated = case.expected_skill_catalog_coverage == "truncated"
+    if history_available and not entries_truncated:
+        return []
+
+    hits: list[str] = []
+    for clause in _evidence_clauses(final_text):
+        clause_lc = clause.lower()
+        if any(marker in clause_lc for marker in SKILL_CATALOG_EVIDENCE_BOUNDARY_TERMS):
+            continue
+        if any(f"{clause}{mark}" in final_text for mark in ("?", "？")):
+            continue
+        reasons: list[str] = []
+        if not history_available and (
+            any(term in clause_lc for term in SKILL_CATALOG_CHANGE_TERMS)
+            or any(pattern.search(clause) for pattern in SKILL_CATALOG_CHANGE_PATTERNS)
+        ):
+            reasons.append("change_without_history")
+        if entries_truncated and any(term in clause_lc for term in SKILL_CATALOG_ABSENCE_TERMS):
+            reasons.append("absence_from_truncated_catalog")
+        if reasons:
+            hits.append(f"{'+'.join(reasons)}:{clause}")
+    return hits
+
+
+def _skill_catalog_response_error(spec: CaseJudge, trace: Trace) -> str | None:
+    required_visible = list(spec.must_recognize_catalog_skills)
+    required_absent = list(spec.must_report_catalog_skills_undiscoverable)
+    must_cover = spec.must_cover_visible_skill_catalog
+    if not required_visible and not required_absent and not must_cover:
+        return None
+
+    observation = trace.skill_catalog_observation
+    preflight_error = _skill_catalog_observation_error(observation)
+    if preflight_error is not None:
+        return preflight_error
+    assert observation is not None
+
+    request_names = {entry.name for entry in observation.request_entries}
+    missing_fixture_truth = sorted(set(required_visible) - request_names)
+    if missing_fixture_truth:
+        return (
+            "Skill catalog harness precondition failed: required visible Skills are absent "
+            f"from the observed request: {missing_fixture_truth}"
+        )
+    if required_absent:
+        if observation.request_coverage != "complete":
+            return (
+                "Skill catalog harness precondition failed: absence requires a complete "
+                "observed request catalog"
+            )
+        unexpectedly_visible = sorted(set(required_absent) & request_names)
+        if unexpectedly_visible:
+            return (
+                "Skill catalog harness precondition failed: expected absent Skills are visible "
+                f"in the observed request: {unexpectedly_visible}"
+            )
+
+    recognition_targets = list(required_visible)
+    if must_cover:
+        if observation.request_coverage != "complete":
+            return (
+                "Skill catalog harness precondition failed: full coverage requires a complete "
+                "observed request catalog"
+            )
+        recognition_targets.extend(
+            entry.name
+            for entry in observation.request_entries
+            if entry.name not in recognition_targets
+        )
+
+    missing_mentions: list[str] = []
+    denied_visible: list[str] = []
+    for name in recognition_targets:
+        clauses = _catalog_skill_clauses(trace.final_text, name)
+        if not clauses:
+            missing_mentions.append(name)
+            continue
+        if not any(_clause_recognizes_visible_skill(clause, name) for clause in clauses):
+            denied_visible.append(name)
+    if missing_mentions:
+        return f"visible Skill catalog entries omitted from response: {missing_mentions}"
+    if denied_visible:
+        return f"visible Skill catalog entries reported undiscoverable: {denied_visible}"
+
+    missing_absence_conclusions = [
+        name
+        for name in required_absent
+        if not any(
+            _clause_reports_skill_absent(clause, name)
+            for clause in _catalog_skill_clauses(trace.final_text, name)
+        )
+    ]
+    if missing_absence_conclusions:
+        return (
+            "response does not report complete-catalog Skill absence: "
+            f"{missing_absence_conclusions}"
+        )
+    return None
+
+
+def _skill_catalog_observation_error(
+    observation: SkillCatalogObservation | None,
+) -> str | None:
+    if observation is None:
+        return "Skill catalog harness precondition failed: request observation is missing"
+    if not observation.preflight_passed:
+        return "Skill catalog harness precondition failed before model evaluation"
+    if observation.request_coverage is None:
+        return "Skill catalog harness precondition failed: request coverage is missing"
+    return None
+
+
+def _catalog_skill_clauses(final_text: str, name: str) -> list[str]:
+    name_lc = name.lower()
+    return [clause for clause in _evidence_clauses(final_text) if name_lc in clause.lower()]
+
+
+def _without_negated_catalog_absence(clause: str) -> str:
+    candidate = clause
+    for pattern in SKILL_CATALOG_NEGATED_ABSENCE_PATTERNS:
+        candidate = pattern.sub("", candidate)
+    return candidate
+
+
+def _catalog_absence_hits(clause: str, name: str) -> list[str]:
+    candidate = _without_negated_catalog_absence(clause).lower()
+    hits = [term for term in SKILL_CATALOG_ABSENCE_TERMS if term in candidate]
+    name_lc = re.escape(name.lower())
+    if re.search(rf"(?:没有|没|无)\s*(?:名为)?\s*{name_lc}", candidate):
+        hits.append("missing-before-name")
+    if re.search(rf"(?:catalog|目录|列表).{{0,20}}(?:没有|不含).{{0,12}}{name_lc}", candidate):
+        hits.append("catalog-missing-name")
+    return hits
+
+
+def _clause_recognizes_visible_skill(clause: str, name: str) -> bool:
+    candidate = _without_negated_catalog_absence(clause).lower()
+    absence_hits = _catalog_absence_hits(clause, name)
+    presence_candidate = candidate
+    for term in SKILL_CATALOG_ABSENCE_TERMS:
+        presence_candidate = presence_candidate.replace(term, "")
+    presence_candidate = re.sub(
+        r"(?:是否|能否|可否)\s*(?:可|能)?发现",
+        "",
+        presence_candidate,
+    )
+    presence_hits = [term for term in SKILL_CATALOG_PRESENCE_TERMS if term in presence_candidate]
+    if absence_hits:
+        return bool(presence_hits)
+    if any(term in candidate for term in SKILL_CATALOG_DISCOVERY_UNCERTAINTY_TERMS):
+        return bool(presence_hits)
+    return True
+
+
+def _clause_reports_skill_absent(clause: str, name: str) -> bool:
+    return bool(_catalog_absence_hits(clause, name))
 
 
 def _unsupported_source_attributions(final_text: str) -> list[str]:

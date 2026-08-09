@@ -1,0 +1,107 @@
+{
+  "schema_version": 2,
+  "run": {
+    "started_at": "2026-08-09T06:47:15.937924+00:00",
+    "ended_at": "2026-08-09T06:47:21.419850+00:00",
+    "duration_seconds": 5.482,
+    "git_commit": "dae4e47",
+    "working_tree_dirty": true,
+    "note": "catalog-current-history-coverage-after-budget-boundary-fix",
+    "selection": {
+      "contract": "all",
+      "case": "C21-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "fd4b4ae3a10213a90af6ee700e225db2dbd4e11f99bc5928043d041ce151f635",
+      "total_contracts": 21,
+      "total_cases": 198,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C21": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C21",
+      "name": "skill-catalog-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C21-04",
+          "query": "和可信的上一次 catalog 相比，现在有 Skill 被删除或移除吗？",
+          "facet": "历史比较 holdout · 可信旧状态支持识别当前已删除条目",
+          "source": "synthetic-skill-catalog-removal-holdout",
+          "surface": "desktop_chat",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['移除'] required_anchors=['temporary-catalog-helper']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我来对比一下当前和之前的 catalog 里有哪些 Skill 变化。\n\n之前（prior）的 catalog 里有 4 个 Skill：\n- agent-friend-guide\n- skill-creator\n- stable-writing-helper\n- temporary-catalog-helper\n\n当前（current）的 catalog 里有 3 个 Skill：\n- agent-friend-guide\n- skill-creator\n- stable-writing-helper\n\n对比下来，**temporary-catalog-helper** 这个 Skill 已经从 catalog 里移除了。其余 3 个 Skill（agent-friend-guide、skill-creator、stable-writing-helper）两个版本都在。\n\n顺带一提，stable-writing-helper 的条目 id 也变了（`skill_8d8...` → `skill_3a4...`），但名字、版本号和路径都一致，只是标识符不同。"
+          ],
+          "final_text": "我来对比一下当前和之前的 catalog 里有哪些 Skill 变化。\n\n之前（prior）的 catalog 里有 4 个 Skill：\n- agent-friend-guide\n- skill-creator\n- stable-writing-helper\n- temporary-catalog-helper\n\n当前（current）的 catalog 里有 3 个 Skill：\n- agent-friend-guide\n- skill-creator\n- stable-writing-helper\n\n对比下来，**temporary-catalog-helper** 这个 Skill 已经从 catalog 里移除了。其余 3 个 Skill（agent-friend-guide、skill-creator、stable-writing-helper）两个版本都在。\n\n顺带一提，stable-writing-helper 的条目 id 也变了（`skill_8d8...` → `skill_3a4...`），但名字、版本号和路径都一致，只是标识符不同。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

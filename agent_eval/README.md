@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C20，共 194 条 fixture：
+当前内置 C1-C22，共 201 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -33,6 +33,8 @@
 | C18 | 澄清与行动一致性：信息明确时确定执行；有歧义时可询问，但不得同轮替用户安排受该问题影响的动作 | 3 |
 | C19 | 来源权威校准：区分发布者与材料声称，把结论绑定到实际支撑它的页面；二手转述不自动升级为官方确认 | 5 |
 | C20 | Skill 语义激活真实性：名称/序号、上下文指代与 description 匹配会真实读取；policy、无关请求与读取失败不虚构激活 | 8 |
+| C21 | 统一 Skill discovery：精确指代时不遗漏 builtin / personal / shared；保留无可信指代基线的歧义问法作观察样本 | 4 |
+| C22 | Skill catalog 变化比较：只有上下文存在可信旧 production catalog 时才判断新增、删除或不变 | 3 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -48,9 +50,22 @@ case 可用 `runtime_now` 固定带时区的本轮可信时间，保证跨日、
 JSONL；`current_session_events` 只表达 case 明确列出的最小历史事务，不是生产
 session 自动导入器。
 
-C20 可用 `fixture_skills` 声明 case-local `name`、`description`、`instructions` 与
-`allow_implicit_invocation`。runner 会把它们物化到临时目录，并经生产
+C20-C22 可用 `fixture_skills` 声明 case-local `name`、`description`、`instructions`、
+`allow_implicit_invocation` 与可选 `source: personal|shared`（默认 personal）。runner 会把
+它们物化到对应临时 discovery 根，并经生产
 `SkillCatalogService`、catalog 和 `skill_read` 运行；fixture 不绕过真实读取/激活边界。
+
+C21 用 `expected_skill_catalog_entries`、`expected_skill_catalog_absent` 和
+`expected_skill_catalog_coverage` 机械核对 production discovery snapshot，再在真实 provider
+请求边界检查最终 messages 中的 catalog 与该 render 一致。报告保存两层条目、source、
+fingerprint 与 preflight 结果；只有通过后才调用模型并评估回答。
+
+C22 可用 `prior_fixture_skills` 注入一份由 production renderer 生成的可信旧 catalog；
+旧状态与当前状态复用同一 discovery 根，未变化 Skill 保持稳定身份。用
+`fixture_skill_catalog_window` 只控制 catalog entry 渲染预算，不改写被测模型的真实
+context window；再用
+`expected_skill_catalog_coverage` 让 runner fail-fast 核对 entries 是 `complete` 还是
+`truncated`。这些字段只表达评测输入和预期覆盖状态，不向 production prompt 注入答案。
 
 C12 使用 `fake_tools` 为同一 case 注入多个固定结果工具，并在 trace 的
 `assistant_segments` 中保留每次模型 continuation 的可见文案边界。这样既能判断
@@ -80,6 +95,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 ./scripts/agent-eval/run.sh --case C19-01 --model kimi/kimi-k2.7-code-highspeed --note "source authority anchor"
 ./scripts/agent-eval/run.sh --case C19-05 --model kimi/kimi-k2.7-code-highspeed --note "source authority direct query replay"
 ./scripts/agent-eval/run.sh --case C20-01 --model kimi/kimi-k2.7-code-highspeed --note "skill ordinal activation anchor"
+./scripts/agent-eval/run.sh --case C21-02 --model deepseek/deepseek-v4-flash --note "builtin Skill unified discovery anchor"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -87,7 +103,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|C21|C22|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |

@@ -1,0 +1,7 @@
+interface:
+  display_name: "agent-friend 使用指南"
+  short_description: "查询 agent-friend 的功能、配置、凭据与排障方法"
+  default_prompt: "使用 $agent-friend-guide 帮我了解并配置 agent-friend。"
+
+policy:
+  allow_implicit_invocation: true
