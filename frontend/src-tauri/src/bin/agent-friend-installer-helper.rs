@@ -1495,11 +1495,28 @@ fn run() -> Result<serde_json::Value, String> {
     }
 }
 
+fn failure_payload(command: &str, error: &str) -> serde_json::Value {
+    json!({
+        "schemaVersion": 1,
+        "ok": false,
+        "command": command,
+        "error": error,
+    })
+}
+
 fn main() {
+    let command = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "<missing>".to_string());
     match run() {
         Ok(value) => println!("{value}"),
         Err(error) => {
-            eprintln!("{}", json!({"ok": false, "error": error}));
+            // The NSIS installer captures stdout into its pre-application
+            // diagnostics file. Keep failures structured and on the same
+            // channel as successful helper results.
+            let mut stdout = std::io::stdout().lock();
+            let _ = writeln!(stdout, "{}", failure_payload(&command, &error));
+            let _ = stdout.flush();
             std::process::exit(32);
         }
     }
@@ -1526,6 +1543,19 @@ mod tests {
         assert!(validate_registry_component("../other", "product").is_err());
         assert!(validate_registry_component("other\\product", "product").is_err());
         assert!(validate_registry_component("", "product").is_err());
+    }
+
+    #[test]
+    fn helper_failures_use_the_installer_diagnostics_protocol() {
+        assert_eq!(
+            failure_payload("preinstall", "blocked"),
+            json!({
+                "schemaVersion": 1,
+                "ok": false,
+                "command": "preinstall",
+                "error": "blocked",
+            })
+        );
     }
 
     #[test]

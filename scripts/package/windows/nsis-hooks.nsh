@@ -1,10 +1,14 @@
 ; All custom installer text must be present in both supported languages.
 ; The hook is included before MUI_LANGUAGE defines symbolic language constants,
 ; so bind these strings to the stable Windows LCIDs directly (zh-CN 2052, en-US 1033).
+Var AgentFriendDiagnosticPath
+
 LangString AgentFriendAppRunning 2052 "agent-friend 的产品组件仍在运行，安装程序无法安全继续。请稍后重试；无需手动查找隐藏进程。"
 LangString AgentFriendAppRunning 1033 "An agent-friend component is still running, so setup cannot continue safely. Please retry; you do not need to find hidden processes manually."
-LangString AgentFriendPreinstallFailed 2052 "安装前检查未通过，现有版本尚未被替换。安装程序无法安全关闭或确认占用组件，请重试。"
-LangString AgentFriendPreinstallFailed 1033 "The pre-install check failed before the existing version was replaced. Setup could not safely close or identify a blocking component; please retry."
+LangString AgentFriendPreinstallFailed 2052 "安装前检查未通过，agent-friend 尚未写入或替换程序文件。诊断信息已保存至：$\r$\n$AgentFriendDiagnosticPath$\r$\n$\r$\n请将该文件提供给开发者。"
+LangString AgentFriendPreinstallFailed 1033 "The pre-install check failed before agent-friend program files were written or replaced. Diagnostics were saved to:$\r$\n$AgentFriendDiagnosticPath$\r$\n$\r$\nPlease provide that file to the developer."
+LangString AgentFriendPreinstallFailedWithoutDiagnostics 2052 "安装前检查未通过，agent-friend 尚未写入或替换程序文件，而且安装器无法创建诊断文件。请将此截图提供给开发者。"
+LangString AgentFriendPreinstallFailedWithoutDiagnostics 1033 "The pre-install check failed before agent-friend program files were written or replaced, and setup could not create a diagnostics file. Please provide a screenshot to the developer."
 LangString AgentFriendIntegrityFailed 2052 "新版本完整性校验失败，未激活本次安装。安装程序将恢复原版本；请重新运行安装程序。"
 LangString AgentFriendIntegrityFailed 1033 "The new version failed integrity verification and was not activated. Setup will restore the previous version; please run the installer again."
 LangString AgentFriendTrustedWarning 2052 "这是包含受信凭据种子的敏感测试安装包。仅在确认来源可信时继续。种子会在校验后导入并立即清除。"
@@ -29,6 +33,64 @@ Var AgentFriendRegisteredRoot
 Var AgentFriendMoveIntent
 Var AgentFriendInstallRootMove
 Var AgentFriendDesktopShortcutExisted
+Var AgentFriendInstallKind
+Var AgentFriendHelperResult
+Var AgentFriendHelperOutput
+Var AgentFriendHelperSystemError
+Var AgentFriendDiagnosticHandle
+Var AgentFriendRuntimeExecutable
+
+Function AgentFriendInitializeDiagnostics
+  StrCpy $AgentFriendInstallKind "first-install"
+  ${If} $AgentFriendRegisteredRoot != ""
+    StrCpy $AgentFriendInstallKind "in-place"
+  ${EndIf}
+  ${If} $AgentFriendInstallRootMove == "1"
+    StrCpy $AgentFriendInstallKind "explicit-move"
+  ${EndIf}
+
+  StrCpy $AgentFriendDiagnosticPath "$TEMP\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}.log"
+  ClearErrors
+  FileOpen $AgentFriendDiagnosticHandle "$AgentFriendDiagnosticPath" w
+  ${If} ${Errors}
+    StrCpy $AgentFriendDiagnosticPath ""
+    Return
+  ${EndIf}
+  FileWriteUTF16LE /BOM $AgentFriendDiagnosticHandle "schemaVersion=1$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "product=${PRODUCTNAME}$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "version=${VERSION}$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "buildId=${AGENT_FRIEND_BUILD_ID}$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "profileId=${AGENT_FRIEND_PROFILE_ID}$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installKind=$AgentFriendInstallKind$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installRoot=$INSTDIR$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "registeredRoot=$AgentFriendRegisteredRoot$\r$\n"
+  FileWriteUTF16LE $AgentFriendDiagnosticHandle "installerPath=$EXEPATH$\r$\n"
+  FileClose $AgentFriendDiagnosticHandle
+FunctionEnd
+
+!macro AGENT_FRIEND_RECORD_HELPER_RESULT phase
+  ${If} $AgentFriendDiagnosticPath != ""
+    ClearErrors
+    FileOpen $AgentFriendDiagnosticHandle "$AgentFriendDiagnosticPath" a
+    ${IfNot} ${Errors}
+      FileSeek $AgentFriendDiagnosticHandle 0 END
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "phase=${phase}$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperResult=$AgentFriendHelperResult$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "win32LastError=$AgentFriendHelperSystemError$\r$\n"
+      FileWriteUTF16LE $AgentFriendDiagnosticHandle "helperOutput=$AgentFriendHelperOutput$\r$\n"
+      FileClose $AgentFriendDiagnosticHandle
+    ${EndIf}
+  ${EndIf}
+  DetailPrint "${PRODUCTNAME}: ${phase} helper result=$AgentFriendHelperResult; diagnostics=$AgentFriendDiagnosticPath"
+!macroend
+
+!macro AGENT_FRIEND_CAPTURE_HELPER_RESULT phase
+  System::Call "kernel32::GetLastError() i .r0"
+  Pop $AgentFriendHelperResult
+  Pop $AgentFriendHelperOutput
+  StrCpy $AgentFriendHelperSystemError "$0"
+  !insertmacro AGENT_FRIEND_RECORD_HELPER_RESULT "${phase}"
+!macroend
 
 Function AgentFriendCaptureAutostart
   ${If} $AgentFriendAutostartCaptured == "1"
@@ -74,7 +136,8 @@ Function AgentFriendRollback
   ${IfNot} ${FileExists} "$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}"
     Return
   ${EndIf}
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" rollback --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"' $R8
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" rollback --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "rollback"
   StrCpy $AgentFriendTransactionStarted "0"
 FunctionEnd
 
@@ -152,17 +215,35 @@ FunctionEnd
     agent_friend_trusted_warning_done:
   ${EndIf}
 
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" preinstall --install-root "$INSTDIR" --registered-root "$AgentFriendRegisteredRoot" --move-intent "$AgentFriendMoveIntent" --target-existed-before-install "0" --transaction-id "${AGENT_FRIEND_BUILD_ID}" --main-binary-name "${MAINBINARYNAME}" --registry-product-name "${PRODUCTNAME}" --manufacturer "${MANUFACTURER}" --autostart-value-name "${AGENT_FRIEND_AUTOSTART_VALUE}" --start-menu-shortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" --legacy-start-menu-shortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" --desktop-shortcut "$DESKTOP\${PRODUCTNAME}.lnk"' $R0
-  ${If} $R0 != 0
-    !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendPreinstallFailed)" 32
+  Call AgentFriendInitializeDiagnostics
+
+  ; The isolated smoke installer can deliberately remove only its extracted helper
+  ; to prove that launch failures still leave useful pre-install diagnostics.
+  !if "${AGENT_FRIEND_PROFILE_ID}" == "installer-smoke"
+    ClearErrors
+    ${GetOptions} $CMDLINE "/AGENTFRIENDSMOKEPREINSTALLLAUNCHFAIL" $R9
+    ${IfNot} ${Errors}
+      Delete "$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}"
+    ${EndIf}
+  !endif
+
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" preinstall --install-root "$INSTDIR" --registered-root "$AgentFriendRegisteredRoot" --move-intent "$AgentFriendMoveIntent" --target-existed-before-install "0" --transaction-id "${AGENT_FRIEND_BUILD_ID}" --main-binary-name "${MAINBINARYNAME}" --registry-product-name "${PRODUCTNAME}" --manufacturer "${MANUFACTURER}" --autostart-value-name "${AGENT_FRIEND_AUTOSTART_VALUE}" --start-menu-shortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" --legacy-start-menu-shortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" --desktop-shortcut "$DESKTOP\${PRODUCTNAME}.lnk"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "preinstall"
+  ${If} $AgentFriendHelperResult != 0
+    ${If} $AgentFriendDiagnosticPath == ""
+      !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendPreinstallFailedWithoutDiagnostics)" 32
+    ${Else}
+      !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendPreinstallFailed)" 32
+    ${EndIf}
   ${EndIf}
   StrCpy $AgentFriendTransactionStarted "1"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  StrCpy $R3 "$INSTDIR\${AGENT_FRIEND_PAYLOAD_RELATIVE}\runtime\python\agent-friend-runtime.exe"
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" verify --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"' $R0
-  ${If} $R0 != 0
+  StrCpy $AgentFriendRuntimeExecutable "$INSTDIR\${AGENT_FRIEND_PAYLOAD_RELATIVE}\runtime\python\agent-friend-runtime.exe"
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" verify --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "verify"
+  ${If} $AgentFriendHelperResult != 0
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendIntegrityFailed)" 34
   ${EndIf}
 
@@ -171,7 +252,7 @@ FunctionEnd
       Delete "$PLUGINSDIR\trusted-credential-seed.bin"
       !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendCredentialFailed)" 33
     ${EndIf}
-    ExecWait '"$R3" seed-credentials --payload "$PLUGINSDIR\trusted-credential-seed.bin" --key-file "$PLUGINSDIR\trusted-credential-seed.key"' $R0
+    ExecWait '"$AgentFriendRuntimeExecutable" seed-credentials --payload "$PLUGINSDIR\trusted-credential-seed.bin" --key-file "$PLUGINSDIR\trusted-credential-seed.key"' $R0
     Delete "$PLUGINSDIR\trusted-credential-seed.bin"
     Delete "$PLUGINSDIR\trusted-credential-seed.key"
     ${If} $R0 != 0
@@ -182,19 +263,22 @@ FunctionEnd
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendCredentialFailed)" 33
   ${EndIf}
 
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" activate --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"' $R0
-  ${If} $R0 != 0
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" activate --install-root "$INSTDIR" --payload-relative-path "${AGENT_FRIEND_PAYLOAD_RELATIVE}" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "activate"
+  ${If} $AgentFriendHelperResult != 0
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendIntegrityFailed)" 34
   ${EndIf}
 
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" cleanup --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"' $R0
-  ${If} $R0 != 0
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" cleanup --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "cleanup"
+  ${If} $AgentFriendHelperResult != 0
     DetailPrint "${PRODUCTNAME}: $(AgentFriendCleanupPending)"
   ${EndIf}
 
   ${If} $AgentFriendInstallRootMove == "1"
-    ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" retire-source --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"' $R0
-    ${If} $R0 != 0
+    nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" retire-source --install-root "$INSTDIR" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
+    !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "retire-source"
+    ${If} $AgentFriendHelperResult != 0
       !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendIntegrityFailed)" 34
     ${EndIf}
   ${EndIf}
@@ -211,8 +295,9 @@ FunctionEnd
     CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   ${EndIf}
 
-  ExecWait '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" commit --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"' $R0
-  ${If} $R0 != 0
+  nsExec::ExecToStack '"$PLUGINSDIR\${AGENT_FRIEND_INSTALLER_HELPER}" commit --install-root "$INSTDIR" --profile-id "${AGENT_FRIEND_PROFILE_ID}" --build-id "${AGENT_FRIEND_BUILD_ID}" --transaction-id "${AGENT_FRIEND_BUILD_ID}"'
+  !insertmacro AGENT_FRIEND_CAPTURE_HELPER_RESULT "commit"
+  ${If} $AgentFriendHelperResult != 0
     !insertmacro AGENT_FRIEND_FAIL "$(AgentFriendIntegrityFailed)" 34
   ${EndIf}
   StrCpy $AgentFriendTransactionStarted "0"

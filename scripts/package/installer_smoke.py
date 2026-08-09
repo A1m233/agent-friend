@@ -24,10 +24,12 @@ from install_contract import (
 from paths import PackageRoots, create_build_paths
 from releases import validate_release_directory
 
-SMOKE_REPORT_SCHEMA = 2
+SMOKE_REPORT_SCHEMA = 3
 SMOKE_DISK_MARGIN_BYTES = 512 * 1024 * 1024
 REQUIRED_SCENARIOS = {
     "collision_preflight",
+    "fresh_install",
+    "preinstall_launch_failure_diagnostics",
     "legacy_fixed_layout_upgrade",
     "running_shell_upgrade",
     "owned_orphan_runtime_upgrade",
@@ -492,8 +494,10 @@ def _run_installer(
     *,
     target: Path | None = None,
     move_install: bool = False,
+    extra_args: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     command = [str(installer), "/S"]
+    command.extend(extra_args)
     if move_install:
         command.append("/MOVEINSTALL")
     if target is not None:
@@ -507,6 +511,28 @@ def _run_installer(
         timeout=180,
         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     )
+
+
+def _installer_diagnostic_path(build_id: str) -> Path:
+    temp = Path(os.environ["TEMP"]).resolve()
+    path = (temp / f"{INSTALLER_SMOKE_PROFILE.product_name}-installer-{build_id}.log").resolve()
+    if path.parent != temp:
+        raise RuntimeError(f"unsafe installer diagnostics path: {path}")
+    return path
+
+
+def _read_installer_diagnostics(path: Path) -> dict[str, list[str]]:
+    if not path.is_file():
+        raise RuntimeError("installer diagnostics file was not created")
+    result: dict[str, list[str]] = {}
+    for line in path.read_text(encoding="utf-16").splitlines():
+        if not line:
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or not key:
+            raise RuntimeError("installer diagnostics line is malformed")
+        result.setdefault(key, []).append(value)
+    return result
 
 
 @contextmanager
@@ -563,15 +589,25 @@ def run_smoke(
     installed_smoke: Any,
     expected_verification_inputs: InstallerVerificationInputs,
 ) -> Path:
+    completed = False
     try:
-        return _run_smoke(
+        output = _run_smoke(
             roots,
             build_report_path=build_report_path,
             installed_smoke=installed_smoke,
             expected_verification_inputs=expected_verification_inputs,
         )
+        completed = True
+        return output
     finally:
         cleanup_smoke_state()
+        if completed:
+            build_report = _read_json(build_report_path)
+            candidate = build_report.get("candidate")
+            if isinstance(candidate, dict):
+                _installer_diagnostic_path(str(candidate.get("buildId", ""))).unlink(
+                    missing_ok=True
+                )
 
 
 def _run_smoke(
@@ -590,7 +626,10 @@ def _run_smoke(
     candidate = build_report["candidate"]
     baseline = build_report["baseline"]
     candidate_version = str(build_report["projectVersion"])
+    candidate_build_id = str(candidate["buildId"])
     paths = _windows_paths()
+    diagnostic_path = _installer_diagnostic_path(candidate_build_id)
+    diagnostic_path.unlink(missing_ok=True)
     candidate_payload = create_build_paths(roots, build_id=str(candidate["buildId"])).payload_stage
     disk_preflight = _smoke_disk_preflight(
         baseline_runtime=baseline_payload / "runtime",
@@ -608,6 +647,65 @@ def _run_smoke(
                 "productionCollision": False,
                 "disk": disk_preflight,
             },
+        )
+    )
+
+    def fresh_install() -> dict[str, Any]:
+        cleanup_smoke_state()
+        diagnostic_path.unlink(missing_ok=True)
+        result = _run_installer(installer)
+        if result.returncode != 0:
+            raise RuntimeError(f"fresh installer returned {result.returncode}")
+        installed_smoke(paths["install"], profile=INSTALLER_SMOKE_PROFILE)
+        registered = _read_registered_install()
+        if Path(registered["root"]).resolve() != paths["install"]:
+            raise RuntimeError("fresh install did not register the isolated install root")
+        diagnostics = _read_installer_diagnostics(diagnostic_path)
+        if diagnostics.get("installKind") != ["first-install"]:
+            raise RuntimeError("fresh install diagnostics did not identify first-install")
+        if "0" not in diagnostics.get("helperResult", []):
+            raise RuntimeError("fresh install diagnostics did not record helper success")
+        return {
+            "exitCode": result.returncode,
+            "identity": "consistent",
+            "installKind": diagnostics["installKind"][0],
+            "diagnosticsPersisted": True,
+        }
+
+    scenarios.append(_scenario("fresh_install", fresh_install))
+
+    def preinstall_launch_failure_diagnostics() -> dict[str, Any]:
+        cleanup_smoke_state()
+        diagnostic_path.unlink(missing_ok=True)
+        result = _run_installer(
+            installer,
+            extra_args=("/AGENTFRIENDSMOKEPREINSTALLLAUNCHFAIL",),
+        )
+        if result.returncode != 32:
+            raise RuntimeError(
+                f"preinstall launch failure returned {result.returncode}, expected 32"
+            )
+        if (paths["install"] / f"{INSTALLER_SMOKE_PROFILE.main_binary_name}.exe").exists():
+            raise RuntimeError("failed preinstall wrote the main program binary")
+        diagnostics = _read_installer_diagnostics(diagnostic_path)
+        if diagnostics.get("installKind") != ["first-install"]:
+            raise RuntimeError("failed preinstall diagnostics lost first-install identity")
+        if diagnostics.get("phase") != ["preinstall"]:
+            raise RuntimeError("failed preinstall diagnostics did not identify its phase")
+        if diagnostics.get("helperResult") != ["error"]:
+            raise RuntimeError("failed preinstall diagnostics did not identify launch failure")
+        return {
+            "exitCode": result.returncode,
+            "installKind": diagnostics["installKind"][0],
+            "helperResult": diagnostics["helperResult"][0],
+            "win32LastErrorCaptured": bool(diagnostics.get("win32LastError", [""])[0]),
+            "diagnosticsPersisted": True,
+        }
+
+    scenarios.append(
+        _scenario(
+            "preinstall_launch_failure_diagnostics",
+            preinstall_launch_failure_diagnostics,
         )
     )
 
