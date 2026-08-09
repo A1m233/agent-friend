@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -58,6 +59,7 @@ from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ProviderSpec,
 )
 
 
@@ -87,10 +89,39 @@ class _ScriptedLLMClient:
         yield from events
 
 
+class _CancelAwareBlockingLLMClient(LLMClient):
+    def __init__(self) -> None:
+        super().__init__(
+            ProviderSpec(
+                model="openai/kimi-k2.7-code-highspeed",
+                api_key="test",
+                api_base="https://api.moonshot.cn/v1",
+                context_window=128000,
+            )
+        )
+        self.request_started = threading.Event()
+
+    def stream(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        **overrides: Any,
+    ) -> Iterator[LLMStreamEvent]:
+        del messages, tools
+        cancel_check = overrides.get("_cancel_check")
+        self.request_started.set()
+        assert callable(cancel_check)
+        while True:
+            cancel_check()
+            time.sleep(0.01)
+        yield  # pragma: no cover - keeps this method an iterator
+
+
 def _make_conversation(
     tmp_path: Path,
     *,
-    fake_llm: _ScriptedLLMClient,
+    fake_llm: LLMClient | _ScriptedLLMClient,
     tool_registry: ToolRegistry | None = None,
 ) -> Conversation:
     """与 AgentRuntime 装配的 Conversation 一致：post_turn_external=True，
@@ -640,6 +671,42 @@ def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -
     assistant = next(event for event in conv.session.events if event.type == "assistant_message")
     assert assistant.payload == {"content": "partial", "partial": True}
     assert assistant.meta["run_id"] == request.run_id
+
+
+def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
+    tmp_path: Path,
+) -> None:
+    from agent.runtime import RunRequest
+    from agent.runtime.cancellation import CancelReason, RunCancelled
+    from agent.runtime.models import RunHandle
+
+    fake = _CancelAwareBlockingLLMClient()
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+    request = RunRequest(event=UserEvent(session_id=conv.session.session_id, user_input="hello"))
+    handle = RunHandle(request)
+    errors: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            list(
+                conv.stream(
+                    "hello",
+                    run_id=request.run_id,
+                    cancel_check=handle.token.raise_if_cancelled,
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=consume)
+    worker.start()
+    assert fake.request_started.wait(1)
+    assert handle.cancel(CancelReason.EXPLICIT_REQUEST)
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunCancelled)
 
 
 def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) -> None:
