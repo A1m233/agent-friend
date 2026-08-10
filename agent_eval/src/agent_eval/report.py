@@ -68,6 +68,16 @@ def render_failure_details(
             console.print(f"  response: {head}{tail}")
         if item.trace.error:
             console.print(f"  [red]error[/red]: {item.trace.error}")
+        if item.trace.skill_catalog_observation is not None:
+            observation = item.trace.skill_catalog_observation
+            console.print(
+                "  skill_catalog: "
+                f"snapshot={observation.snapshot_coverage}/"
+                f"{len(observation.snapshot_entries)} "
+                f"request={observation.request_coverage}/"
+                f"{len(observation.request_entries)} "
+                f"preflight={observation.preflight_passed}"
+            )
         console.print()
 
 

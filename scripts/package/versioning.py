@@ -240,6 +240,7 @@ def _paths(repo_root: Path) -> dict[str, Path]:
         "tauri": repo_root / "frontend" / "src-tauri" / "tauri.conf.json",
         "frontend": repo_root / "frontend" / "package.json",
         "cargo": repo_root / "frontend" / "src-tauri" / "Cargo.toml",
+        "cargo_lock": repo_root / "frontend" / "src-tauri" / "Cargo.lock",
     }
 
 
@@ -256,6 +257,14 @@ def _cargo_version(text: str) -> str:
     raise RuntimeError("Cargo.toml [package].version is missing")
 
 
+def _cargo_lock_version(text: str) -> str:
+    pattern = re.compile(r'(?m)^\[\[package\]\]\r?\nname = "app"\r?\nversion = "([^"]+)"\r?$')
+    matches = pattern.findall(text)
+    if len(matches) != 1:
+        raise RuntimeError("Cargo.lock app package version is missing or ambiguous")
+    return matches[0]
+
+
 def read_project_version(repo_root: Path) -> ProjectVersion:
     paths = _paths(repo_root)
     tauri = json.loads(paths["tauri"].read_text(encoding="utf-8"))
@@ -264,6 +273,7 @@ def read_project_version(repo_root: Path) -> ProjectVersion:
         "tauri": str(tauri.get("version", "")),
         "frontend": str(frontend.get("version", "")),
         "cargo": _cargo_version(paths["cargo"].read_text(encoding="utf-8")),
+        "cargo_lock": _cargo_lock_version(paths["cargo_lock"].read_text(encoding="utf-8")),
     }
     parsed: dict[str, SemVer] = {}
     for name, value in values.items():
@@ -306,6 +316,14 @@ def _replace_cargo_version(text: str, version: str) -> str:
     return "".join(lines)
 
 
+def _replace_cargo_lock_version(text: str, version: str) -> str:
+    pattern = re.compile(r'(?m)^(\[\[package\]\]\r?\nname = "app"\r?\nversion = ")[^"]+("\r?$)')
+    updated, count = pattern.subn(lambda match: f"{match.group(1)}{version}{match.group(2)}", text)
+    if count != 1:
+        raise RuntimeError("Cargo.lock app package version is missing or ambiguous")
+    return updated
+
+
 def set_project_version(
     repo_root: Path,
     value: str,
@@ -320,6 +338,7 @@ def set_project_version(
         "tauri": _replace_json_version(texts["tauri"], str(version)),
         "frontend": _replace_json_version(texts["frontend"], str(version)),
         "cargo": _replace_cargo_version(texts["cargo"], str(version)),
+        "cargo_lock": _replace_cargo_lock_version(texts["cargo_lock"], str(version)),
     }
     temporary: dict[str, Path] = {}
     replaced: list[str] = []

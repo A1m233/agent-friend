@@ -635,6 +635,8 @@ def test_nsis_template_overlay_defaults_chinese_and_enforces_maintenance_state()
     assert 'SetOutPath "$PLUGINSDIR"' in generated
     assert "File /oname=agent-friend-installer-helper.exe" in generated
     assert 'SetOutPath "$INSTDIR"' in generated
+    assert '!define AGENT_FRIEND_PRODUCT_NAME "agent-friend-installer-smoke"' in generated
+    assert '!define AGENT_FRIEND_PRODUCT_VERSION "1.2.3"' in generated
     assert "agent-friend requires its fail-closed uninstall guard" in generated
 
 
@@ -658,6 +660,31 @@ def test_nsis_install_uses_owned_blocker_helper_and_never_kills_by_name() -> Non
     assert "MUI_CUSTOMFUNCTION_ABORT AgentFriendUserAbort" in hooks
     assert "Function .onUserAbort" not in hooks
     assert "KillProcess" not in hooks
+    assert "nsExec::ExecToStack" in hooks
+    assert "AGENT_FRIEND_CAPTURE_HELPER_RESULT" in hooks
+
+
+def test_nsis_preinstall_failure_is_first_install_safe_and_persists_diagnostics() -> None:
+    hooks = (PACKAGE_DIR / "windows" / "nsis-hooks.nsh").read_text("utf-8")
+
+    assert "现有版本尚未被替换" not in hooks
+    assert "尚未写入或替换程序文件" in hooks
+    assert "$TEMP\\${AGENT_FRIEND_PRODUCT_NAME}-installer-${AGENT_FRIEND_BUILD_ID}.log" in hooks
+    assert "FileWriteUTF16LE /BOM" in hooks
+    assert "FileSeek $AgentFriendDiagnosticHandle 0 END" in hooks
+    assert "installKind=$AgentFriendInstallKind" in hooks
+    assert "schemaVersion=2" in hooks
+    assert "product=${AGENT_FRIEND_PRODUCT_NAME}" in hooks
+    assert "version=${AGENT_FRIEND_PRODUCT_VERSION}" in hooks
+    assert "phase=${phase}" in hooks
+    assert "helperResult=$AgentFriendHelperResult" in hooks
+    assert "helperPath=$PLUGINSDIR\\${AGENT_FRIEND_INSTALLER_HELPER}" in hooks
+    assert "helperPresentAfterRun=$AgentFriendHelperPresentAfterRun" in hooks
+    assert "GetLastError" not in hooks
+    assert "win32LastError" not in hooks
+    assert "helperOutput=$AgentFriendHelperOutput" in hooks
+    assert '!if "${AGENT_FRIEND_PROFILE_ID}" == "installer-smoke"' in hooks
+    assert "/AGENTFRIENDSMOKEPREINSTALLLAUNCHFAIL" in hooks
 
 
 def test_nsis_custom_messages_have_chinese_and_english_pairs() -> None:
@@ -1031,6 +1058,10 @@ def _write_version_fixture(root: Path, version: str = "1.2.3") -> None:
         f'[package]\nname = "app"\nversion = "{version}"\n\n[dependencies]\n',
         encoding="utf-8",
     )
+    (tauri / "Cargo.lock").write_text(
+        f'version = 4\n\n[[package]]\nname = "app"\nversion = "{version}"\n',
+        encoding="utf-8",
+    )
 
 
 def test_semver_validation_and_precedence() -> None:
@@ -1182,6 +1213,9 @@ def test_project_version_set_updates_all_product_metadata(tmp_path) -> None:
 
     assert str(result.version) == "1.3.0-beta.1"
     assert set(result.values.values()) == {"1.3.0-beta.1"}
+    assert 'version = "1.3.0-beta.1"' in (
+        tmp_path / "frontend" / "src-tauri" / "Cargo.lock"
+    ).read_text(encoding="utf-8")
 
 
 def test_project_version_set_rolls_back_after_partial_replace(tmp_path) -> None:

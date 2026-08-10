@@ -38,6 +38,19 @@ def test_loader_discovers_sources_and_keeps_same_name(tmp_path: Path) -> None:
     assert sum(issue.code == "duplicate_name" for issue in snapshot.issues) == 2
 
 
+def test_loader_assigns_stable_ids_to_every_builtin_skill(tmp_path: Path) -> None:
+    root = tmp_path / "builtin"
+    _write_skill(root, "agent-friend-guide")
+    _write_skill(root, "skill-creator")
+
+    snapshot = SkillLoader().load((SkillRoot("builtin", root),))
+
+    assert [(item.name, item.id) for item in snapshot.entries] == [
+        ("agent-friend-guide", "builtin/agent-friend-guide"),
+        ("skill-creator", "builtin/skill-creator"),
+    ]
+
+
 def test_loader_isolates_invalid_skill(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     _write_skill(root, "valid-skill")

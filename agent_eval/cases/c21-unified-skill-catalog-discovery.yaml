@@ -1,0 +1,96 @@
+# C21 · 统一 Skill catalog discovery (unified-skill-catalog-discovery)
+#
+# 契约：production catalog 是 builtin / personal / shared 当前 Skill discovery 的统一事实源。
+# 完整 catalog 中可见的 Skill 不能因更窄的个人目录或其它局部结果而被遗漏或判断为不存在。
+# 工具调用路径与回复格式不受约束；只评估模型实际收到的 catalog 和最终 discovery 结论。
+#
+# C21-01 保留原始歧义问法作观察样本：上下文未建立“新加的 Skill”指向哪个
+# catalog 条目，因此不固定 builtin 或 personal 答案。C21-02 是精确 builtin 回归 anchor；
+# C21-03 验证三类来源的统一结果；C21-04 是完整 catalog 下的真缺失 control。
+
+contract:
+  id: C21
+  name: unified-skill-catalog-discovery
+  expected_behavior: response
+
+cases:
+  - id: C21-01
+    query: 我给你新加了一个skill，你看看能找到吗
+    facet: 歧义指代观察 · 不在无模型可见指代证据时固定 builtin 或 personal 答案
+    source: prod-desktop-ambiguous-new-skill-query-20260809
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: agent-friend-guide
+        source: builtin
+      - name: context7-mcp
+        source: personal
+      - name: test-file-skill
+        source: personal
+    fixture_skills:
+      - &context7-skill
+        name: context7-mcp
+        description: Use for current library, framework, SDK, and API documentation questions.
+        instructions: Use authoritative documentation for library and API questions.
+      - &test-file-skill
+        name: test-file-skill
+        description: Use when validating personal Skill creation and loading behavior.
+        instructions: Explain the minimal personal Skill validation workflow.
+    judge:
+      require_non_empty_response: true
+
+  - id: C21-02
+    query: agent-friend-guide 这个 Skill 当前可发现吗？请根据当前统一 catalog 判断。
+    facet: builtin isolation · catalog 明确可见时必须识别
+    source: synthetic-builtin-skill-discovery-isolation
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: agent-friend-guide
+        source: builtin
+    fixture_skills:
+      - *context7-skill
+      - *test-file-skill
+    judge:
+      require_non_empty_response: true
+      must_recognize_catalog_skills: [agent-friend-guide]
+
+  - id: C21-03
+    query: 请根据当前统一 catalog，列出现在可发现的全部 Skill。
+    facet: 多来源 control · builtin / personal / shared 都属于当前 discovery
+    source: synthetic-unified-skill-catalog-multi-source-control
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: agent-friend-guide
+        source: builtin
+      - name: context7-mcp
+        source: personal
+      - name: test-file-skill
+        source: personal
+      - name: shared-release-helper
+        source: shared
+    fixture_skills:
+      - *context7-skill
+      - *test-file-skill
+      - name: shared-release-helper
+        source: shared
+        description: Use for shared release coordination checks.
+        instructions: Report the shared release coordination state.
+    judge:
+      require_non_empty_response: true
+      must_cover_visible_skill_catalog: true
+
+  - id: C21-04
+    query: missing-release-helper 这个 Skill 当前可发现吗？请根据当前完整 catalog 判断。
+    facet: 真缺失 control · 完整 catalog 确实缺失时允许否定当前可发现性
+    source: synthetic-complete-catalog-true-absence-control
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_absent: [missing-release-helper]
+    fixture_skills:
+      - *context7-skill
+      - *test-file-skill
+    judge:
+      require_non_empty_response: true
+      must_report_catalog_skills_undiscoverable: [missing-release-helper]

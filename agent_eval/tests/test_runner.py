@@ -3,16 +3,24 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from agent.tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SkillReadTool
 from agent_eval.runner import (
     _AssistantTextTrace,
     _build_fixture_skill_service,
+    _CatalogGuardedLLMClient,
     _FixtureTool,
     _import_fixture_attachment,
     _inject_current_session_events,
     _inject_current_session_messages,
+    _inject_skill_catalog_state,
+    _replace_fixture_skills,
+    _SkillCatalogRequestGuard,
 )
 from agent_eval.schema import (
+    Case,
+    CaseJudge,
+    ExpectedSkillCatalogEntry,
     FakeTool,
     FakeToolResponse,
     FixtureAttachment,
@@ -190,6 +198,193 @@ def test_fixture_skills_use_production_catalog_and_reader(tmp_path: Path) -> Non
     assert result.is_error is False
     assert "Always compare baseline and candidate blindly." in result.text
     assert result.meta["skill_activation"]["status"] == "activated"
+
+
+def test_fixture_skills_can_exercise_shared_production_discovery(tmp_path: Path) -> None:
+    service = _build_fixture_skill_service(
+        tmp_path,
+        [
+            FixtureSkill(
+                name="shared-release-helper",
+                description="Use for shared release checks.",
+                instructions="Report the shared state.",
+                source="shared",
+            )
+        ],
+    )
+
+    record = next(item for item in service.snapshot.entries if item.name == "shared-release-helper")
+    assert record.source == "shared"
+    assert record.entry_path == tmp_path / "shared" / "shared-release-helper" / "SKILL.md"
+
+
+def test_skill_catalog_request_guard_records_actual_unified_catalog(tmp_path: Path) -> None:
+    case = Case(
+        id="C21-test",
+        query="q",
+        facet="request guard",
+        source="test",
+        expected_skill_catalog_coverage="complete",
+        expected_skill_catalog_entries=[
+            ExpectedSkillCatalogEntry(name="agent-friend-guide", source="builtin"),
+            ExpectedSkillCatalogEntry(name="personal-helper", source="personal"),
+            ExpectedSkillCatalogEntry(name="shared-helper", source="shared"),
+        ],
+        judge=CaseJudge(must_recognize_catalog_skills=["agent-friend-guide"]),
+    )
+    service = _build_fixture_skill_service(
+        tmp_path,
+        [
+            FixtureSkill(
+                name="personal-helper",
+                description="Personal fixture.",
+                instructions="Read personal fixture.",
+            ),
+            FixtureSkill(
+                name="shared-helper",
+                description="Shared fixture.",
+                instructions="Read shared fixture.",
+                source="shared",
+            ),
+        ],
+    )
+    guard = _SkillCatalogRequestGuard(case)
+    guard.prepare(service, model_window=100_000)
+    content = service.begin_turn(model_window=100_000).rendered_catalog.content
+
+    guard.observe(
+        [
+            {"role": "system", "content": "base prompt"},
+            {"role": "system", "content": content},
+            {"role": "user", "content": "q"},
+        ]
+    )
+
+    observation = guard.observation
+    assert observation is not None
+    assert observation.preflight_passed is True
+    assert observation.request_message_index == 1
+    assert {(entry.name, entry.source) for entry in observation.request_entries} >= {
+        ("agent-friend-guide", "builtin"),
+        ("personal-helper", "personal"),
+        ("shared-helper", "shared"),
+    }
+
+
+def test_skill_catalog_request_guard_blocks_before_delegate_call(tmp_path: Path) -> None:
+    case = Case(
+        id="C21-test",
+        query="q",
+        facet="request guard",
+        source="test",
+        expected_skill_catalog_coverage="complete",
+        expected_skill_catalog_entries=[
+            ExpectedSkillCatalogEntry(name="agent-friend-guide", source="builtin")
+        ],
+    )
+    service = _build_fixture_skill_service(tmp_path, [])
+    guard = _SkillCatalogRequestGuard(case)
+    guard.prepare(service, model_window=100_000)
+
+    class RecordingDelegate:
+        called = False
+
+        def stream(self, messages: list[dict[str, object]]) -> list[object]:
+            self.called = True
+            return []
+
+    delegate = RecordingDelegate()
+    client = _CatalogGuardedLLMClient(delegate, guard)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="missing the production Skill catalog"):
+        client.stream([{"role": "user", "content": "q"}])
+    assert delegate.called is False
+
+
+def test_prior_fixture_catalog_is_injected_as_trusted_system_state(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new(
+        title="catalog history",
+        persona="default",
+        model="fake/model",
+        created_at=datetime.now(UTC),
+    )
+    store.create(session)
+    service = _build_fixture_skill_service(
+        tmp_path / "prior-catalog",
+        [
+            FixtureSkill(
+                name="stable-writing-helper",
+                description="Use for prose editing.",
+                instructions="Preserve meaning.",
+            )
+        ],
+    )
+
+    _inject_skill_catalog_state(store, session, service, model_window=100_000)
+
+    loaded = store.load(session.session_id)
+    event = loaded.events[-1]
+    assert event.type == "skill_catalog_state"
+    assert "stable-writing-helper" in event.payload["content"]
+    assert 'value="current"' in event.payload["content"]
+    assert '<catalog_coverage entries="complete"' in event.payload["content"]
+    assert loaded.llm_messages[-1].role == "system"
+
+
+def test_prior_and_current_fixture_catalogs_share_stable_skill_identity(tmp_path: Path) -> None:
+    prior = [
+        FixtureSkill(
+            name="stable-writing-helper",
+            description="Use for prose editing.",
+            instructions="Preserve meaning.",
+        ),
+        FixtureSkill(
+            name="temporary-helper",
+            description="Use for temporary checks.",
+            instructions="Report the check.",
+        ),
+    ]
+    current = [prior[0]]
+    service = _build_fixture_skill_service(tmp_path, prior)
+    prior_record = next(
+        item for item in service.snapshot.entries if item.name == "stable-writing-helper"
+    )
+
+    _replace_fixture_skills(tmp_path, prior, current)
+    service.refresh()
+
+    current_record = next(
+        item for item in service.snapshot.entries if item.name == "stable-writing-helper"
+    )
+    assert current_record.id == prior_record.id
+    assert current_record.entry_path == prior_record.entry_path
+    assert all(item.name != "temporary-helper" for item in service.snapshot.entries)
+
+
+def test_truncated_catalog_fixture_omits_named_tail_skill(tmp_path: Path) -> None:
+    fixtures = [
+        FixtureSkill(
+            name=f"aa-catalog-{index:02d}",
+            description="Generic catalog fixture used to exercise bounded discovery rendering.",
+            instructions="Answer only when selected.",
+        )
+        for index in range(1, 13)
+    ]
+    fixtures.append(
+        FixtureSkill(
+            name="zz-private-release-check",
+            description="Use for checking private release package metadata.",
+            instructions="Report release metadata.",
+        )
+    )
+    service = _build_fixture_skill_service(tmp_path, fixtures)
+
+    rendered = service.begin_turn(model_window=32_000).rendered_catalog
+
+    assert rendered.omitted_count > 0
+    assert '<catalog_coverage entries="truncated"' in rendered.content
+    assert "zz-private-release-check" not in rendered.content
 
 
 def test_fixture_skill_read_failure_keeps_production_tool_spec() -> None:

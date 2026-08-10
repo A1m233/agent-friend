@@ -64,6 +64,15 @@ class FixtureSkill:
     description: str
     instructions: str
     allow_implicit_invocation: bool = True
+    source: str = "personal"
+
+
+@dataclass(frozen=True)
+class ExpectedSkillCatalogEntry:
+    """A Skill that the evaluated model request must expose from one discovery source."""
+
+    name: str
+    source: str
 
 
 @dataclass(frozen=True)
@@ -124,6 +133,10 @@ class CaseJudge:
     forbid_unsupported_model_motive_story: bool = False
     forbid_unsupported_future_action_commitment: bool = False
     forbid_unsupported_skill_activation_claim: bool = False
+    forbid_unsupported_skill_catalog_change_claim: bool = False
+    must_recognize_catalog_skills: list[str] = field(default_factory=list)
+    must_report_catalog_skills_undiscoverable: list[str] = field(default_factory=list)
+    must_cover_visible_skill_catalog: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +152,11 @@ class Case:
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
     fixture_skills: list[FixtureSkill] = field(default_factory=list)
+    prior_fixture_skills: list[FixtureSkill] = field(default_factory=list)
+    fixture_skill_catalog_window: int | None = None
+    expected_skill_catalog_coverage: str | None = None
+    expected_skill_catalog_entries: list[ExpectedSkillCatalogEntry] = field(default_factory=list)
+    expected_skill_catalog_absent: list[str] = field(default_factory=list)
     current_session_messages: list[FixtureMessage] = field(default_factory=list)
     current_session_events: list[FixtureCurrentEvent] = field(default_factory=list)
     query_attachments: list[FixtureAttachment] = field(default_factory=list)
@@ -170,6 +188,30 @@ class ToolCallTrace:
 
 
 @dataclass(frozen=True)
+class SkillCatalogEntryObservation:
+    """One Skill entry observed in a production-rendered catalog."""
+
+    name: str
+    source: str
+    id: str
+
+
+@dataclass(frozen=True)
+class SkillCatalogObservation:
+    """Mechanical evidence from discovery snapshot through the final model request."""
+
+    snapshot_entries: list[SkillCatalogEntryObservation]
+    snapshot_coverage: str
+    catalog_fingerprint: str
+    render_fingerprint: str
+    request_entries: list[SkillCatalogEntryObservation] = field(default_factory=list)
+    request_coverage: str | None = None
+    request_content_fingerprint: str | None = None
+    request_message_index: int | None = None
+    preflight_passed: bool = False
+
+
+@dataclass(frozen=True)
 class Trace:
     """跑完一个 case 后收集到的 agent 行为。"""
 
@@ -179,6 +221,7 @@ class Trace:
     stop_reason: str
     assistant_segments: list[str] = field(default_factory=list)
     error: str | None = None
+    skill_catalog_observation: SkillCatalogObservation | None = None
 
 
 @dataclass(frozen=True)

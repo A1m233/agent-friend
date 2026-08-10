@@ -39,10 +39,7 @@ class BuiltinSkillInstaller:
         bundle = resources.files(BUILTIN_PACKAGE)
         packaged_files = _resource_files(bundle)
         files = [
-            (
-                relative if relative == "manifest.json" else f"skill-creator/{relative}",
-                resource,
-            )
+            (relative, resource)
             for relative, resource in packaged_files
             if relative != "__init__.py"
         ]
@@ -83,7 +80,11 @@ class BuiltinSkillInstaller:
     @staticmethod
     def _matches(target: Path, files: list[tuple[str, Traversable]]) -> bool:
         try:
-            return all(
+            expected = {relative for relative, _resource in files}
+            actual = {
+                path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()
+            }
+            return actual == expected and all(
                 (target / Path(relative)).read_bytes() == resource.read_bytes()
                 for relative, resource in files
             )

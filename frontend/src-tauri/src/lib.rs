@@ -17,6 +17,7 @@ pub mod install_contract;
 mod paths;
 mod permissions;
 mod pet_cursor_passthrough;
+mod pet_display_recovery;
 mod pet_display_topology;
 mod power_policy;
 mod presence;
@@ -26,9 +27,13 @@ mod runtime_observability;
 mod runtime_services;
 mod settings;
 mod shell_diagnostics;
+#[cfg(target_os = "windows")]
+mod startup_instance_gate;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
+#[cfg(target_os = "windows")]
+mod windows_display_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
 const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
@@ -115,6 +120,7 @@ struct PetOverlayState {
 #[derive(Default)]
 struct PetOverlayStateInner {
     topology_epoch: pet_display_topology::TopologyEpochState,
+    display_recovery: pet_display_recovery::PetDisplayRecoveryState,
     bounds_correction_request_id: u64,
     bounds_correction_pending: bool,
 }
@@ -775,10 +781,7 @@ fn setup_live2d_debugger_window(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// menu event handler）。tray toggle 只控制窗口 show/hide，不改桌宠尺寸偏好。
 #[tauri::command]
 fn hide_pet(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("pet") {
-        let _ = w.hide();
-    }
-    Ok(())
+    pet_display_recovery::set_desired_visibility(&app, false, "hide-command")
 }
 
 /// 起一个后台线程，用 Tauri 内置 cursor_position 以 ~60fps 把
@@ -874,12 +877,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 let _ = show_and_focus(app, "chat");
             }
             "toggle_pet" => {
-                if let Some(w) = app.get_webview_window("pet") {
-                    if w.is_visible().unwrap_or(true) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.show();
-                    }
+                if let Err(error) = pet_display_recovery::toggle_visibility(app) {
+                    log::warn!("toggle pet visibility failed: {error}");
                 }
             }
             "quit" => app.exit(0),
@@ -892,6 +891,16 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The Tauri single-instance plugin creates its mutex during Builder::build. Keep concurrent
+    // Windows launches serialized until that mutex and its callback window are ready; otherwise
+    // two slow cold starts can both pass the plugin boundary and start competing runtimes.
+    #[cfg(target_os = "windows")]
+    let (mut startup_instance_gate, startup_instance_gate_acquire_error) =
+        match startup_instance_gate::StartupInstanceGate::acquire() {
+            Ok(gate) => (Some(gate), None),
+            Err(error) => (None, Some(error)),
+        };
+
     let context = tauri::generate_context!();
     let runtime_observer = runtime_observability::RuntimeObserver::start(paths::log_dir());
     runtime_observability::install_panic_hook(runtime_observer.clone());
@@ -1184,6 +1193,14 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // Plugin setup has completed and Tauri has created the configured windows before this
+            // callback runs. Releasing here lets a queued launch reach the existing plugin callback
+            // without exposing the pre-plugin startup race.
+            #[cfg(target_os = "windows")]
+            let startup_instance_gate_release_error = startup_instance_gate
+                .take()
+                .and_then(|gate| gate.release().err());
+
             let log_dir = paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
             app.handle().plugin(
@@ -1235,6 +1252,21 @@ pub fn run() {
                 "desktop lifecycle: logger attached; process_session_id={}",
                 setup_runtime_observer.process_session_id()
             );
+            #[cfg(target_os = "windows")]
+            match (
+                startup_instance_gate_acquire_error.as_deref(),
+                startup_instance_gate_release_error.as_deref(),
+            ) {
+                (None, None) => log::info!("startup instance gate released"),
+                (Some(error), _) => {
+                    log::warn!(
+                        "startup instance gate unavailable; relying on Tauri plugin: {error}"
+                    )
+                }
+                (_, Some(error)) => {
+                    log::warn!("startup instance gate release failed: {error}")
+                }
+            }
 
             if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
                 log::warn!("windows shell diagnostics observer started partially: {error}");
@@ -1361,6 +1393,8 @@ pub fn run() {
                 }
             }
             spawn_pet_overlay_reconciler(app.handle());
+            #[cfg(target_os = "windows")]
+            windows_display_state::install(app.handle());
             #[cfg(debug_assertions)]
             setup_live2d_debugger_window(app.handle())?;
             #[cfg(debug_assertions)]

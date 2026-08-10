@@ -29,7 +29,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 1f14667e24486500d8a6a5369045723e3d056658d1ed8c69463663240b84be06 -->
+<!-- codex-adapter-source-sha256: 1f690914ff4201acca78bc2856210b03b17e67b3e6e1c101be9189f5150d485b -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -273,6 +273,10 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 - 用户明确确认验收完成；
 - 已 rebase / merge 最新 main，无遗留冲突。
 
+当用户的当前意图同时包含“合入 `main`”和“推送远端”，或完成合入后继续要求推送 `main` 时，在开始该组合 Git 流程前提醒：“是否先进行 agent-friend-guide 知识维护检查？”提醒只询问，不自行检查；用户拒绝后继续原合入与推送流程，不改变下方任何门禁。用户同意后显式调用 `maintain-agent-friend-guide` 的只读检查阶段；检查认为需要更新时，是否执行更新仍需单独授权。普通 feature/fix 分支 push、普通 commit/rebase、只合入不推送或只推送非 `main` 分支均不触发。
+
+同一任务内按 `product_state_summary + merge-main-and-push` 去重：相同产品 HEAD、tracked diff、untracked 文件集合/内容已经询问、检查或维护后，不重复提醒；产品状态实质变化后可以重新提醒。用户直接要求检查或更新知识时直接进入 maintainer Skill，不先重复提醒。
+
 提交、合入和推送是版本控制操作，本身不构成重新构建安装包、重跑 installer smoke 或重新执行真实安装验收的理由。安装器相关需求已经用某一精确 feature head 完成机器验证和用户验收时，只要合入结果在安装行为输入上与该 head 相同，保留原证据关联即可；用 Git diff 核对合入树，不得为了“在 main 再确认一次”主动打包。只有用户明确要求生成新安装包，或后续确实改变了安装行为输入 / 验证契约并准备构建新包时，才进入对应打包门禁。若相同 Git 内容因 worktree 路径、换行符或 checkout 表现得到不同验证指纹，应停止并报告门禁缺陷，不得用重新打包掩盖误判。
 
 合入时保留 merge commit，便于后续从历史看到"哪些 commit 属于哪个需求"。
@@ -500,6 +504,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
 | `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
+| `maintain-agent-friend-guide` | 只读检查 agent-friend 产品变更是否需要更新公开用户知识，并在用户明确授权后维护、验证、发布公开 agent-friend-guide，再同步产品内置快照。显式触发：用户说“检查… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |
 | `showcase-update` | Update the public agent-friend showcase repository from the private source repo. Use when the u… |
 | `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |

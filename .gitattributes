@@ -6,3 +6,6 @@ scripts/dev/run.sh text eol=lf
 
 # Checksummed source patches must keep byte-identical LF content on Windows.
 scripts/_lib/xiaohongshu_connector/windows-disable-leakless.patch text eol=lf
+
+# Builtin Skill manifests and snapshots use byte-exact SHA-256 digests.
+agent/src/agent/skills/builtin_assets/** text eol=lf

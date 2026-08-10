@@ -36,7 +36,7 @@ def _report(path: Path, installer: Path, *, failed: str | None = None) -> None:
     path.write_text(
         json.dumps(
             {
-                "schemaVersion": 2,
+                "schemaVersion": installer_smoke.SMOKE_REPORT_SCHEMA,
                 "kind": "installer-smoke",
                 "profileId": "installer-smoke",
                 "verificationInputs": _inputs().to_json_dict(),
@@ -194,3 +194,27 @@ def test_smoke_disk_preflight_fails_before_install_mutation(tmp_path: Path) -> N
         installer=installer,
         available_bytes=required,
     ) == {"availableBytes": required, "requiredBytes": required}
+
+
+def test_required_scenarios_cover_first_install_and_preinstall_diagnostics() -> None:
+    assert "fresh_install" in REQUIRED_SCENARIOS
+    assert "preinstall_launch_failure_diagnostics" in REQUIRED_SCENARIOS
+    assert installer_smoke.SMOKE_REPORT_SCHEMA == 3
+
+
+def test_installer_diagnostics_parser_preserves_repeated_phases_and_equals(
+    tmp_path: Path,
+) -> None:
+    diagnostic = tmp_path / "installer.log"
+    diagnostic.write_text(
+        "schemaVersion=1\r\n"
+        "phase=preinstall\r\n"
+        'helperOutput={"error":"path=a"}\r\n'
+        "phase=rollback\r\n",
+        encoding="utf-16",
+    )
+
+    parsed = installer_smoke._read_installer_diagnostics(diagnostic)
+
+    assert parsed["phase"] == ["preinstall", "rollback"]
+    assert parsed["helperOutput"] == ['{"error":"path=a"}']

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import re
+import shutil
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -56,11 +59,20 @@ from .schema import (
     FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
+    SkillCatalogEntryObservation,
+    SkillCatalogObservation,
     ToolCallTrace,
     Trace,
 )
 
 ResolveAttachments = Callable[[list[FixtureAttachment]], list[AttachmentRef]]
+
+_CATALOG_ENTRY_RE = re.compile(
+    r"^- (?P<name>[a-z0-9]+(?:-[a-z0-9]+)*): .*?"
+    r"\(source=(?P<source>builtin|personal|shared), id=(?P<id>[^,]+),",
+    re.MULTILINE,
+)
+_CATALOG_COVERAGE_RE = re.compile(r'<catalog_coverage entries="(?P<coverage>complete|truncated)"')
 
 
 @dataclass
@@ -84,6 +96,168 @@ class _AssistantTextTrace:
     @property
     def final_text(self) -> str:
         return "".join(self.all_chunks)
+
+
+def _catalog_entries_from_content(content: str) -> list[SkillCatalogEntryObservation]:
+    return [
+        SkillCatalogEntryObservation(
+            name=match.group("name"),
+            source=match.group("source"),
+            id=match.group("id"),
+        )
+        for match in _CATALOG_ENTRY_RE.finditer(content)
+    ]
+
+
+def _catalog_coverage_from_content(content: str) -> str:
+    match = _CATALOG_COVERAGE_RE.search(content)
+    if match is None:
+        raise ValueError("Skill catalog is missing catalog_coverage")
+    return match.group("coverage")
+
+
+class _SkillCatalogRequestGuard:
+    """Verify discovery truth at the snapshot and final provider-request boundaries."""
+
+    def __init__(self, case: Case) -> None:
+        self._case = case
+        self._snapshot_entries: list[SkillCatalogEntryObservation] = []
+        self._snapshot_coverage: str | None = None
+        self._catalog_fingerprint: str | None = None
+        self._render_fingerprint: str | None = None
+        self._render_content_fingerprint: str | None = None
+        self._request_entries: list[SkillCatalogEntryObservation] = []
+        self._request_coverage: str | None = None
+        self._request_content_fingerprint: str | None = None
+        self._request_message_index: int | None = None
+        self._preflight_passed = False
+
+    def prepare(self, service: SkillCatalogService, *, model_window: int) -> None:
+        snapshot = service.begin_turn(model_window=model_window)
+        rendered = snapshot.rendered_catalog
+        self._snapshot_entries = [
+            SkillCatalogEntryObservation(name=item.name, source=item.source, id=item.id)
+            for item in snapshot.catalog.entries
+        ]
+        self._snapshot_coverage = "truncated" if rendered.omitted_count else "complete"
+        self._catalog_fingerprint = snapshot.catalog.fingerprint
+        self._render_fingerprint = rendered.fingerprint
+        self._render_content_fingerprint = hashlib.sha256(rendered.content.encode()).hexdigest()
+        self._validate_catalog(
+            self._snapshot_entries,
+            coverage=self._snapshot_coverage,
+            boundary="discovery snapshot",
+        )
+
+    def observe(self, messages: list[dict[str, Any]]) -> None:
+        if self._request_message_index is not None:
+            return
+        catalog_messages = [
+            (index, content)
+            for index, message in enumerate(messages)
+            if isinstance((content := message.get("content")), str)
+            and "<skills_catalog>" in content
+        ]
+        if not catalog_messages:
+            raise ValueError("LLM request is missing the production Skill catalog")
+        index, content = catalog_messages[-1]
+        self._request_message_index = index
+        self._request_entries = _catalog_entries_from_content(content)
+        self._request_coverage = _catalog_coverage_from_content(content)
+        self._request_content_fingerprint = hashlib.sha256(content.encode()).hexdigest()
+        if self._render_content_fingerprint != self._request_content_fingerprint:
+            raise ValueError(
+                "LLM request Skill catalog does not match the prepared production render"
+            )
+        self._validate_catalog(
+            self._request_entries,
+            coverage=self._request_coverage,
+            boundary="LLM request",
+        )
+        self._preflight_passed = True
+
+    def _validate_catalog(
+        self,
+        entries: list[SkillCatalogEntryObservation],
+        *,
+        coverage: str,
+        boundary: str,
+    ) -> None:
+        expected_coverage = self._case.expected_skill_catalog_coverage
+        if expected_coverage is not None and coverage != expected_coverage:
+            raise ValueError(
+                f"{boundary} Skill catalog coverage mismatch: "
+                f"expected={expected_coverage} actual={coverage}"
+            )
+
+        actual_pairs = {(entry.name, entry.source) for entry in entries}
+        missing_pairs = [
+            (entry.name, entry.source)
+            for entry in self._case.expected_skill_catalog_entries
+            if (entry.name, entry.source) not in actual_pairs
+        ]
+        if missing_pairs:
+            raise ValueError(
+                f"{boundary} Skill catalog is missing expected entries: {missing_pairs}"
+            )
+
+        actual_names = {entry.name for entry in entries}
+        judge = self._case.judge
+        required_names = set(judge.must_recognize_catalog_skills if judge else [])
+        missing_names = sorted(required_names - actual_names)
+        if missing_names:
+            raise ValueError(
+                f"{boundary} Skill catalog is missing judge-visible Skills: {missing_names}"
+            )
+
+        expected_absent = set(self._case.expected_skill_catalog_absent)
+        if judge is not None:
+            expected_absent.update(judge.must_report_catalog_skills_undiscoverable)
+        if expected_absent:
+            if coverage != "complete":
+                raise ValueError(f"{boundary} cannot prove Skill absence from a truncated catalog")
+            unexpectedly_present = sorted(expected_absent & actual_names)
+            if unexpectedly_present:
+                raise ValueError(
+                    f"{boundary} Skill catalog unexpectedly contains: {unexpectedly_present}"
+                )
+        if judge is not None and judge.must_cover_visible_skill_catalog and coverage != "complete":
+            raise ValueError(
+                f"{boundary} cannot require complete enumeration from a truncated catalog"
+            )
+
+    @property
+    def observation(self) -> SkillCatalogObservation | None:
+        if self._snapshot_coverage is None:
+            return None
+        assert self._catalog_fingerprint is not None
+        assert self._render_fingerprint is not None
+        return SkillCatalogObservation(
+            snapshot_entries=list(self._snapshot_entries),
+            snapshot_coverage=self._snapshot_coverage,
+            catalog_fingerprint=self._catalog_fingerprint,
+            render_fingerprint=self._render_fingerprint,
+            request_entries=list(self._request_entries),
+            request_coverage=self._request_coverage,
+            request_content_fingerprint=self._request_content_fingerprint,
+            request_message_index=self._request_message_index,
+            preflight_passed=self._preflight_passed,
+        )
+
+
+class _CatalogGuardedLLMClient:
+    """Eval-only proxy that checks final messages before delegating a real request."""
+
+    def __init__(self, delegate: LLMClient, guard: _SkillCatalogRequestGuard) -> None:
+        self._delegate = delegate
+        self._guard = guard
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    def stream(self, messages: list[dict[str, Any]], *args: Any, **kwargs: Any) -> Any:
+        self._guard.observe(messages)
+        return self._delegate.stream(messages, *args, **kwargs)
 
 
 class _FixtureTool:
@@ -155,24 +329,23 @@ def _build_manager(
     *,
     tavily_api_key: str | None = None,
     fake_tools: list[FakeTool] | None = None,
-    fixture_skills: list[FixtureSkill] | None = None,
+    skill_service: SkillCatalogService | None = None,
     attachment_store: AttachmentStore | None = None,
+    skill_catalog_request_guard: _SkillCatalogRequestGuard | None = None,
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
     def _llm_factory(_model: str) -> LLMClient:
-        return LLMClient(spec)
+        client = LLMClient(spec)
+        if skill_catalog_request_guard is None:
+            return client
+        return cast(LLMClient, _CatalogGuardedLLMClient(client, skill_catalog_request_guard))
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)
 
     metadata_store = SessionMetadataStore(store.base_dir / "metadata.json")
     session_catalog = SessionCatalog(store, metadata_store)
-    skill_service = (
-        _build_fixture_skill_service(store.base_dir / "fixture-skills", fixture_skills)
-        if fixture_skills
-        else None
-    )
     registry = make_default_registry(
         tavily_api_key=tavily_api_key,
         session_store=store,
@@ -205,12 +378,10 @@ def _build_manager(
     )
 
 
-def _build_fixture_skill_service(root: Path, fixtures: list[FixtureSkill]) -> SkillCatalogService:
-    """Materialize case-local packages, then let the production service discover them."""
-
-    personal_root = root / "personal"
+def _materialize_fixture_skills(root: Path, fixtures: list[FixtureSkill]) -> None:
+    """Write case-local packages beneath one stable production discovery root."""
     for fixture in fixtures:
-        package = personal_root / fixture.name
+        package = root / fixture.source / fixture.name
         package.mkdir(parents=True, exist_ok=False)
         package.joinpath("SKILL.md").write_text(
             "---\n"
@@ -228,6 +399,27 @@ def _build_fixture_skill_service(root: Path, fixtures: list[FixtureSkill]) -> Sk
             f"{'true' if fixture.allow_implicit_invocation else 'false'}\n",
             encoding="utf-8",
         )
+
+
+def _replace_fixture_skills(
+    root: Path,
+    previous: list[FixtureSkill],
+    current: list[FixtureSkill],
+) -> None:
+    """Transition fixture packages in place so unchanged Skills keep stable identity."""
+
+    for fixture in previous:
+        package = root / fixture.source / fixture.name
+        if package.exists():
+            shutil.rmtree(package)
+    _materialize_fixture_skills(root, current)
+
+
+def _build_fixture_skill_service(root: Path, fixtures: list[FixtureSkill]) -> SkillCatalogService:
+    """Materialize case-local packages, then let the production service discover them."""
+
+    _materialize_fixture_skills(root, fixtures)
+    personal_root = root / "personal"
     service = SkillCatalogService(
         personal_root=personal_root,
         shared_root=root / "shared",
@@ -292,6 +484,33 @@ def _inject_current_session_messages(
         list(messages),
         resolve_attachments=resolve_attachments,
     )
+
+
+def _inject_skill_catalog_state(
+    store: JsonlSessionStore,
+    session: Session,
+    service: SkillCatalogService,
+    *,
+    model_window: int,
+) -> None:
+    """Inject one trusted historical production-rendered Skill catalog snapshot."""
+
+    snapshot = service.begin_turn(model_window=model_window)
+    event = Event(
+        type="skill_catalog_state",
+        uuid=str(uuid4()),
+        ts=datetime.now(UTC),
+        payload={
+            "generation": snapshot.catalog.generation,
+            "render_fingerprint": snapshot.rendered_catalog.fingerprint,
+            "catalog_fingerprint": snapshot.catalog.fingerprint,
+            "budget_profile": snapshot.rendered_catalog.budget_profile,
+            "content": snapshot.rendered_catalog.content,
+        },
+        meta={"model": session.current_model},
+    )
+    session.append(event)
+    store.append_event(session.session_id, event)
 
 
 def _inject_current_session_events(
@@ -359,12 +578,43 @@ def _import_fixture_attachment(
 
 def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = None) -> Trace:
     """跑一个 case，返回完整 Trace；异常以 ``Trace.error`` 形式返回。"""
+    catalog_guard: _SkillCatalogRequestGuard | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="agent-eval-") as tmp:
             temp_root = Path(tmp)
             store = JsonlSessionStore(temp_root / "sessions")
             attachment_store = AttachmentStore(temp_root / "attachments")
             attachment_cache: dict[tuple[Path, str], AttachmentRef] = {}
+            needs_skill_catalog = bool(
+                case.fixture_skills
+                or case.prior_fixture_skills
+                or case.expected_skill_catalog_coverage
+                or case.expected_skill_catalog_entries
+                or case.expected_skill_catalog_absent
+                or (
+                    case.judge is not None
+                    and (
+                        case.judge.must_recognize_catalog_skills
+                        or case.judge.must_report_catalog_skills_undiscoverable
+                        or case.judge.must_cover_visible_skill_catalog
+                    )
+                )
+            )
+            fixture_skill_root = temp_root / "fixture-skills"
+            initial_fixture_skills = case.prior_fixture_skills or case.fixture_skills
+            skill_service = (
+                _build_fixture_skill_service(
+                    fixture_skill_root,
+                    initial_fixture_skills,
+                )
+                if needs_skill_catalog
+                else None
+            )
+            catalog_model_window = case.fixture_skill_catalog_window
+            if needs_skill_catalog and catalog_model_window is None:
+                catalog_model_window = LLMClient(spec).context_window
+
+            catalog_guard = _SkillCatalogRequestGuard(case) if needs_skill_catalog else None
 
             def resolve_attachments(items: list[FixtureAttachment]) -> list[AttachmentRef]:
                 resolved: list[AttachmentRef] = []
@@ -390,14 +640,34 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 spec,
                 tavily_api_key=tavily_api_key,
                 fake_tools=case.fake_tools,
-                fixture_skills=case.fixture_skills,
+                skill_service=skill_service,
                 attachment_store=attachment_store,
+                skill_catalog_request_guard=catalog_guard,
             )
             session = manager.create(
                 persona="default",
                 model=spec.model,
                 persona_id=BUILTIN_DEFAULT_PERSONA_ID,
             )
+            if case.prior_fixture_skills:
+                assert catalog_model_window is not None
+                assert skill_service is not None
+                _inject_skill_catalog_state(
+                    store,
+                    session,
+                    skill_service,
+                    model_window=catalog_model_window,
+                )
+                _replace_fixture_skills(
+                    fixture_skill_root,
+                    case.prior_fixture_skills,
+                    case.fixture_skills,
+                )
+                skill_service.refresh()
+            if catalog_guard is not None:
+                assert skill_service is not None
+                assert catalog_model_window is not None
+                catalog_guard.prepare(skill_service, model_window=catalog_model_window)
             _inject_current_session_messages(
                 store,
                 session,
@@ -467,6 +737,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 final_text=assistant_text.final_text,
                 stop_reason=stop_reason,
                 assistant_segments=assistant_text.segments,
+                skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
             )
     except Exception as exc:
         return Trace(
@@ -476,4 +747,5 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             stop_reason="error",
             assistant_segments=[],
             error=f"{type(exc).__name__}: {exc}",
+            skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
         )
