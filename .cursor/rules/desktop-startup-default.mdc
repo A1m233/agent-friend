@@ -1,5 +1,5 @@
 ---
-description: agent-friend 项目桌面开发运行态规范：coding agent 启动前端或项目时默认使用 Tauri 桌面端，并确认运行实例身份和任务结束后的生命周期；除非用户或当前 skill / 流程明确要求 web。
+description: agent-friend 项目桌面开发运行态规范：coding agent 启动前端或项目时默认使用 Tauri 桌面端，并确认运行实例身份、源码新鲜度和任务结束后的生命周期；除非用户或当前 skill / 流程明确要求 web。
 alwaysApply: true
 ---
 
@@ -27,6 +27,17 @@ alwaysApply: true
 不能只因为窗口标题正确、端口可连接或页面能打开，就假定它来自当前 worktree。已有 runtime 的 lease 与当前任务不一致时，不得用它为本次代码下结论；按任务边界决定保留、停止或显式 takeover。归属不明或可能是用户正在使用的运行态，不自动停止。
 
 一个 Tauri runtime 可以暴露多个窗口或 WebView target。runtime 身份由本规则负责；具体选择哪个窗口、页面和交互表面，由当前验收 skill 按目标核对。
+
+### 源码新鲜度
+
+worktree、branch 和端口匹配只证明运行实例的归属，不能证明各进程已经加载当前源码。需要基于运行态对代码行为下结论时，还必须确认本次涉及的每个长驻进程都晚于对应源码变更启动，或由能够证明等价内容身份的构建 / runtime fingerprint 绑定：
+
+- Vite HMR 只代表前端模块可能已更新，不代表 Python bridge、voice service、Rust/Tauri 或其它长驻进程同步重载。
+- 涉及前后端、协议或持久化边界的验收，必须分别核对相关进程；任一进程早于待验证源码且没有可靠热重载证据时，当前实例只能标记为 mixed-version runtime，不能作为完整行为验收证据。
+- mock、dev-only 状态注入或单层 DOM 验证只能证明对应层的呈现；不得据此断言跨层协议、落盘、刷新恢复或端到端竞态已经通过。
+- 若需要重启才能取得新鲜实例，coding agent 自己启动并拥有生命周期的 runtime 可以按标准脚本重启；复用任务开始前已存在或可能由用户使用的 runtime 时，先取得用户授权，否则把结论标记为 not verified。
+
+优先通过 `scripts/dev/run.* status`、进程启动时间和源码修改时间完成核对。项目后续若提供统一 build / source fingerprint，则以该指纹为权威，不在 Agent 流程里另造内容身份算法。
 
 ## 生命周期
 
