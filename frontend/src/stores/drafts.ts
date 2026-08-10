@@ -1,11 +1,24 @@
 import { create } from "zustand";
 import { releaseAttachmentDraft, type AttachmentDraft } from "@/services";
+import type { ChatAttachment } from "@/types/chat";
 
 export const HOME_DRAFT_KEY = "__agent_friend_home_draft__";
 
 export type DraftAttachmentState =
   | { status: "uploading"; localId: string; file: File }
-  | { status: "ready"; localId: string; file: File; draft: AttachmentDraft }
+  | {
+      status: "ready";
+      source: "draft";
+      localId: string;
+      file: File;
+      draft: AttachmentDraft;
+    }
+  | {
+      status: "ready";
+      source: "existing";
+      localId: string;
+      attachment: ChatAttachment;
+    }
   | { status: "failed"; localId: string; file: File; message: string }
   | { status: "expired"; localId: string; file: File; message: string };
 
@@ -35,13 +48,18 @@ interface DraftSubmission {
 interface DraftState {
   workspaces: Record<string, DraftWorkspace>;
   submissions: Record<string, DraftSubmission>;
+  initialize: (
+    key: string,
+    text: string,
+    attachments?: DraftAttachmentState[],
+  ) => void;
   setText: (key: string, text: string) => void;
   addAttachment: (key: string, attachment: DraftAttachmentState) => void;
   updateAttachment: (
     key: string,
     localId: string,
     update: (current: DraftAttachmentState) => DraftAttachmentState,
-  ) => void;
+  ) => boolean;
   removeAttachment: (key: string, localId: string) => void;
   setValidation: (key: string, validation: DraftValidationState) => void;
   claimHome: (sessionId: string) => void;
@@ -52,6 +70,10 @@ interface DraftState {
 
 export function draftKey(sessionId: string | null): string {
   return sessionId ?? HOME_DRAFT_KEY;
+}
+
+export function editDraftKey(sessionId: string, messageId: string): string {
+  return `edit:${sessionId}:${messageId}`;
 }
 
 export const EMPTY_DRAFT_WORKSPACE: DraftWorkspace = Object.freeze({
@@ -79,6 +101,18 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   workspaces: {},
   submissions: {},
 
+  initialize(key, text, attachments = []) {
+    set((state) => {
+      if (state.workspaces[key]) return state;
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(EMPTY_DRAFT_WORKSPACE, { text, attachments }),
+        },
+      };
+    });
+  },
+
   setText(key, text) {
     set((state) => ({
       workspaces: {
@@ -100,9 +134,11 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   },
 
   updateAttachment(key, localId, update) {
+    let updated = false;
     set((state) => {
       const current = workspace(state, key);
       if (!current.attachments.some((item) => item.localId === localId)) return state;
+      updated = true;
       return {
         workspaces: {
           ...state.workspaces,
@@ -113,6 +149,7 @@ export const useDraftStore = create<DraftState>((set, get) => ({
         },
       };
     });
+    return updated;
   },
 
   removeAttachment(key, localId) {
@@ -128,7 +165,9 @@ export const useDraftStore = create<DraftState>((set, get) => ({
         },
       };
     });
-    if (target?.status === "ready") void releaseAttachmentDraft(target.draft.draftId);
+    if (target?.status === "ready" && target.source === "draft") {
+      void releaseAttachmentDraft(target.draft.draftId);
+    }
   },
 
   setValidation(key, validation) {
@@ -201,7 +240,9 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   discard(key) {
     const current = workspace(get(), key);
     for (const item of current.attachments) {
-      if (item.status === "ready") void releaseAttachmentDraft(item.draft.draftId);
+      if (item.status === "ready" && item.source === "draft") {
+        void releaseAttachmentDraft(item.draft.draftId);
+      }
     }
     set((state) => {
       const workspaces = { ...state.workspaces };

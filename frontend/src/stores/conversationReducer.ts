@@ -13,6 +13,7 @@ import {
   type BaseEvent,
   type CustomEvent,
   type RunErrorEvent,
+  type RunFinishedEvent,
   type TextMessageContentEvent,
   type TextMessageStartEvent,
   type ThinkingTextMessageContentEvent,
@@ -108,8 +109,14 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       return msg;
     }
 
-    case EventType.RUN_FINISHED:
-      return { ...msg, status: "complete", runStatus: undefined };
+    case EventType.RUN_FINISHED: {
+      const e = evt as RunFinishedEvent;
+      return {
+        ...msg,
+        status: isCancelledRunResult(e.result) ? "interrupted" : "complete",
+        runStatus: undefined,
+      };
+    }
 
     case EventType.RUN_ERROR: {
       const e = evt as RunErrorEvent;
@@ -127,6 +134,11 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       // RUN_STARTED / TEXT_MESSAGE_END / TOOL_CALL_END / THINKING_* 边界事件等无需改状态。
       return msg;
   }
+}
+
+function isCancelledRunResult(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  return (value as Record<string, unknown>).outcome === "cancelled";
 }
 
 /**

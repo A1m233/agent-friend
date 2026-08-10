@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
@@ -20,7 +20,7 @@ import {
 import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
-import { Composer } from "./components/Composer";
+import { Composer, type ComposerHandle } from "./components/Composer";
 import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 import { openFeedback } from "@/lib/settings/navigation";
@@ -41,6 +41,7 @@ export function ChatApp() {
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
+  const composerRef = useRef<ComposerHandle>(null);
   const loadModelCatalog = useModelCatalogStore((state) => state.load);
   const voiceBlocksText =
     Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
@@ -55,6 +56,7 @@ export function ChatApp() {
       ? "正在打开这段对话..."
       : "语音通话中，文字输入已暂时停用";
   const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
+  const focusComposer = useCallback(() => composerRef.current?.focus(), []);
 
   useEffect(() => {
     if (status === "online") void loadModelCatalog();
@@ -140,8 +142,12 @@ export function ChatApp() {
           />
         ) : (
           <>
-            <MessageList composerHeight={composerHeight} />
+            <MessageList
+              composerHeight={composerHeight}
+              onFocusComposer={focusComposer}
+            />
             <Composer
+              ref={composerRef}
               disabled={composerDisabled}
               disabledReason={composerDisabledReason}
               onHeightChange={setComposerHeight}

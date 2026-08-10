@@ -1,13 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Ban, Plus, Upload } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
 import { Input, Spinner, TooltipButton, TooltipProvider } from "@/components/ui";
-import { resolveBridgeUrl } from "@/constants";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
 import {
+  releaseAttachmentDraft,
   uploadAttachment,
 } from "@/services";
 import { draftKey, HOME_DRAFT_KEY, useConversationStore, useDraftStore } from "@/stores";
@@ -25,11 +33,22 @@ import {
 import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
 import { ConversationModelSelector } from "./ConversationModelSelector";
+import { ComposerEditStatus } from "./ComposerEditStatus";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
   dropzoneAcceptFromMediaTypes,
   filesFromDropEvent,
 } from "./attachmentInput";
+import {
+  draftAttachmentFileType,
+  draftAttachmentMediaType,
+  draftAttachmentName,
+  draftAttachmentSize,
+  draftAttachmentUrl,
+  toAttachmentDraft,
+  toChatAttachment,
+  toEditResendAttachment,
+} from "./composerAttachments";
 
 const COMPOSER_AUTOSIZE = { minRows: 2, maxRows: 6 } as const;
 const VOICE_INPUT_PREWARM_RENEW_MS = 25_000;
@@ -58,6 +77,10 @@ interface ComposerProps {
   onHeightChange?: (height: number) => void;
 }
 
+export interface ComposerHandle {
+  focus(): void;
+}
+
 interface VoiceDraftSegment {
   workspaceKey: string;
   traceId: string;
@@ -70,19 +93,12 @@ function effectiveMediaType(file: File): string {
   return file.name.toLowerCase().endsWith(".txt") ? "text/plain" : "application/octet-stream";
 }
 
-function attachmentFileType(item: DraftAttachmentState): TdAttachmentItem["fileType"] {
-  const type = effectiveMediaType(item.file);
-  if (type.startsWith("image/")) return "image";
-  if (type === "application/pdf") return "pdf";
-  return "txt";
-}
-
-export function Composer({
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({
   disabled = false,
   disabledReason,
   placement = "bottom",
   onHeightChange,
-}: ComposerProps) {
+}, forwardedRef) {
   const streaming = useConversationStore((s) => s.streaming);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const cancellationPhase = useConversationStore((s) => {
@@ -91,6 +107,10 @@ export function Composer({
     return runId ? s.stopRequestsByRun[runId] : undefined;
   });
   const currentModel = useConversationStore((s) => s.currentModel);
+  const modelSwitching = useConversationStore((s) => s.modelSwitching);
+  const editingMessage = useConversationStore((s) => s.editingMessage);
+  const cancelEditing = useConversationStore((s) => s.cancelEditing);
+  const editResendLatest = useConversationStore((s) => s.editResendLatest);
   const send = useConversationStore((s) => s.send);
   const stop = useConversationStore((s) => s.stop);
   const voiceInputPhase = useVoiceInputStore((s) => s.phase);
@@ -107,7 +127,9 @@ export function Composer({
   const senderRef = useRef<HTMLElement>(null);
   const lastHeightRef = useRef(0);
   const prewarmRenewCountRef = useRef(0);
-  const workspaceKey = draftKey(currentSessionId);
+  const workspaceKey = editingMessage?.sessionId === currentSessionId
+    ? editingMessage.draftKey
+    : draftKey(currentSessionId);
   const draftText = useDraftStore((state) => state.workspaces[workspaceKey]?.text ?? "");
   const draftAttachments = useDraftStore(
     (state) => state.workspaces[workspaceKey]?.attachments ?? [],
@@ -134,12 +156,19 @@ export function Composer({
   const voiceErrorToastReadyRef = useRef(false);
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
   const cancelling = cancellationPhase !== undefined;
-  const voiceInputDisabled = disabled || streaming || cancelling;
-  const attachmentsDisabled = disabled || streaming || cancelling || !capabilities?.attachments;
+  const editSubmitting = editingMessage?.phase === "submitting";
+  const voiceInputDisabled = disabled || streaming || cancelling || editSubmitting;
+  const attachmentsDisabled = disabled
+    || streaming
+    || cancelling
+    || editSubmitting
+    || !capabilities?.attachments;
   const composerControlDisabledReason = disabled
     ? disabledReason ?? "暂时不可用"
     : cancelling
       ? "正在取消当前回复…"
+      : editSubmitting
+        ? "正在提交修改…"
       : streaming
       ? "请等待当前回复完成"
       : undefined;
@@ -164,9 +193,9 @@ export function Composer({
   const attachmentCompatibility = useMemo(
     () => evaluateAttachmentCompatibility(
       draftAttachments.map((item) => ({
-        name: item.file.name,
-        mediaType: effectiveMediaType(item.file),
-        size: item.file.size,
+        name: draftAttachmentName(item),
+        mediaType: draftAttachmentMediaType(item),
+        size: draftAttachmentSize(item),
       })),
       capabilities,
     ),
@@ -180,21 +209,19 @@ export function Composer({
   const attachmentItems = useMemo<TdAttachmentItem[]>(
     () => draftAttachments.map((item) => ({
       key: item.localId,
-      name: item.file.name,
-      size: item.file.size,
-      type: effectiveMediaType(item.file),
-      fileType: attachmentFileType(item),
+      name: draftAttachmentName(item),
+      size: draftAttachmentSize(item),
+      type: draftAttachmentMediaType(item),
+      fileType: draftAttachmentFileType(item),
       status: item.status === "uploading"
         ? "progress"
         : item.status === "failed"
             || item.status === "expired"
-            || incompatibleAttachmentNames.has(item.file.name)
+            || incompatibleAttachmentNames.has(draftAttachmentName(item))
           ? "fail"
           : "success",
       percent: item.status === "uploading" ? 50 : item.status === "ready" ? 100 : 0,
-      url: item.status === "ready"
-        ? resolveBridgeUrl(item.draft.contentUrl)
-        : undefined,
+      url: draftAttachmentUrl(item),
     })),
     [draftAttachments, incompatibleAttachmentNames],
   );
@@ -207,6 +234,18 @@ export function Composer({
       incompatibleNames: [...attachmentCompatibility.incompatibleNames],
     });
   }, [attachmentCompatibility, selectedModel, setDraftValidation, workspaceKey]);
+
+  useImperativeHandle(forwardedRef, () => ({
+    focus() {
+      senderRef.current?.focus();
+    },
+  }), []);
+
+  useEffect(() => {
+    if (!editingMessage || editingMessage.sessionId !== currentSessionId) return;
+    const frame = window.requestAnimationFrame(() => senderRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentSessionId, editingMessage?.messageId]);
 
   useEffect(() => {
     if (attachmentCompatibility.compatible || !attachmentCompatibility.reason) return;
@@ -221,7 +260,7 @@ export function Composer({
   }, [attachmentDisabledReason]);
 
   const addFiles = useCallback(async (files: File[]) => {
-    if (disabled || streaming) {
+    if (disabled || streaming || editSubmitting) {
       explainAttachmentUnavailable();
       return;
     }
@@ -238,7 +277,10 @@ export function Composer({
     if (selected.length < files.length) {
       toast.error(`单轮最多添加 ${capabilities.maxAttachmentsPerTurn} 个附件`);
     }
-    let selectedBytes = draftAttachments.reduce((total, item) => total + item.file.size, 0);
+    let selectedBytes = draftAttachments.reduce(
+      (total, item) => total + draftAttachmentSize(item),
+      0,
+    );
     for (const file of selected) {
       const mediaType = effectiveMediaType(file);
       if (!capabilities.acceptedMediaTypes.includes(mediaType)) {
@@ -259,20 +301,22 @@ export function Composer({
       addDraftAttachment(targetWorkspaceKey, { status: "uploading", localId, file });
       try {
         const draft = await uploadAttachment(file);
-        updateDraftAttachment(targetWorkspaceKey, localId, () => ({
+        const updated = updateDraftAttachment(targetWorkspaceKey, localId, () => ({
           status: "ready",
+          source: "draft",
           localId,
           file,
           draft,
         }));
+        if (!updated) void releaseAttachmentDraft(draft.draftId);
       } catch {
-        updateDraftAttachment(targetWorkspaceKey, localId, () => ({
+        const updated = updateDraftAttachment(targetWorkspaceKey, localId, () => ({
           status: "failed",
           localId,
           file,
           message: "上传失败",
         }));
-        toast.error(`${file.name} 添加失败`);
+        if (updated) toast.error(`${file.name} 添加失败`);
       }
     }
   }, [
@@ -280,6 +324,7 @@ export function Composer({
     capabilities,
     disabled,
     draftAttachments,
+    editSubmitting,
     explainAttachmentUnavailable,
     streaming,
     updateDraftAttachment,
@@ -321,6 +366,8 @@ export function Composer({
       ? disabledReason ?? "暂时不能添加附件"
       : cancelling
         ? "正在取消当前回复…"
+        : editSubmitting
+          ? "正在提交修改…"
         : streaming
         ? "请等待当前回复完成"
         : "当前模型不支持附件"
@@ -352,7 +399,16 @@ export function Composer({
     [prewarmVoiceInput, voiceInputDisabled, voiceInputLive],
   );
 
+  const isWorkspaceWritable = useCallback((key: string) => {
+    const conversation = useConversationStore.getState();
+    if (conversation.editingMessage?.draftKey === key) {
+      return conversation.editingMessage.phase === "editing";
+    }
+    return key === draftKey(conversation.currentSessionId);
+  }, []);
+
   const applyDraftText = useCallback((next: string, source: "user" | "voice" | "send") => {
+    if (!isWorkspaceWritable(workspaceKey)) return;
     const submittedEcho = submittedValueEchoRef.current;
     if (
       source === "user"
@@ -388,7 +444,7 @@ export function Composer({
       applyingVoiceDraftRef.current = true;
     }
     setWorkspaceText(workspaceKey, next);
-  }, [setWorkspaceText, workspaceKey]);
+  }, [isWorkspaceWritable, setWorkspaceText, workspaceKey]);
 
   useEffect(() => {
     draftTextRef.current = draftText;
@@ -416,6 +472,13 @@ export function Composer({
 
     return () => window.clearInterval(intervalId);
   }, [prewarmVoiceInput, voiceInputDisabled, voiceInputLive]);
+
+  useEffect(() => {
+    const segment = voiceSegmentRef.current;
+    if (!voiceInputLive || !segment || segment.workspaceKey === workspaceKey) return;
+    voiceSegmentRef.current = null;
+    void stopVoiceInput("manual");
+  }, [stopVoiceInput, voiceInputLive, workspaceKey]);
 
   useEffect(() => {
     const el = rootRef.current;
@@ -469,7 +532,7 @@ export function Composer({
     );
     const next = joinVoiceDraft(segment.baseText, transcript);
     const targetText = useDraftStore.getState().workspaces[segment.workspaceKey]?.text ?? "";
-    if (next !== targetText) {
+    if (next !== targetText && isWorkspaceWritable(segment.workspaceKey)) {
       setWorkspaceText(segment.workspaceKey, next);
       if (segment.workspaceKey === workspaceKey) draftTextRef.current = next;
     }
@@ -482,7 +545,13 @@ export function Composer({
       };
     }
     acknowledgeVoiceTranscript(latestVoiceTranscript.seq);
-  }, [acknowledgeVoiceTranscript, latestVoiceTranscript, setWorkspaceText, workspaceKey]);
+  }, [
+    acknowledgeVoiceTranscript,
+    isWorkspaceWritable,
+    latestVoiceTranscript,
+    setWorkspaceText,
+    workspaceKey,
+  ]);
 
   useEffect(() => {
     if (!voiceErrorToastReadyRef.current) {
@@ -500,13 +569,18 @@ export function Composer({
   }, [voiceInputError, voiceInputErrorCode, voiceInputLastEventAt]);
 
   const submit = (text: string) => {
-    if (disabled || cancelling) return;
+    if (disabled || cancelling || editSubmitting) return;
+    if (modelSwitching) {
+      toast.error("模型正在切换，请稍后再发送");
+      return;
+    }
     const visibleText = text || draftTextRef.current;
     const trimmed = visibleText.trim();
-    const readyAttachments = draftAttachments.flatMap((item) =>
-      item.status === "ready" ? [item.draft] : [],
+    const readyAttachmentStates = draftAttachments.filter(
+      (item): item is Extract<DraftAttachmentState, { status: "ready" }> =>
+        item.status === "ready",
     );
-    if (!trimmed && readyAttachments.length === 0) return;
+    if (!trimmed && readyAttachmentStates.length === 0) return;
     if (draftAttachments.some((item) => item.status !== "ready")) {
       toast.error("请等待附件上传完成，或移除失败的附件");
       return;
@@ -521,6 +595,31 @@ export function Composer({
       if (isVoiceInputLive(voiceState.phase) && voiceTargetsSubmission) {
         await stopVoiceInput("send");
       }
+      const activeEditing = useConversationStore.getState().editingMessage;
+      if (activeEditing?.draftKey === workspaceKey) {
+        const result = await editResendLatest(
+          trimmed,
+          readyAttachmentStates.flatMap((item) => {
+            const attachment = toEditResendAttachment(item);
+            return attachment ? [attachment] : [];
+          }),
+          readyAttachmentStates.flatMap((item) => {
+            const attachment = toChatAttachment(item);
+            return attachment ? [attachment] : [];
+          }),
+        );
+        if (result === "rejected" && useConversationStore.getState().editingMessage) {
+          toast.error("修改没有提交成功", {
+            description: "编辑内容已经保留，可以检查后重试。",
+          });
+        }
+        return;
+      }
+
+      const readyAttachments = readyAttachmentStates.flatMap((item) => {
+        const attachment = toAttachmentDraft(item);
+        return attachment ? [attachment] : [];
+      });
       const result = send(trimmed, readyAttachments);
       if (!result.accepted) return;
 
@@ -567,7 +666,19 @@ export function Composer({
     void startVoiceInput(workspaceKey);
   };
 
+  const handleCancelEditing = () => {
+    if (voiceSegmentRef.current?.workspaceKey === workspaceKey && voiceInputLive) {
+      void stopVoiceInput("manual");
+      voiceSegmentRef.current = null;
+    }
+    cancelEditing();
+  };
+
   const isBottomPlacement = placement === "bottom";
+  const editSummary = editingMessage
+    ? editingMessage.originalText.trim()
+      || `${editingMessage.originalAttachments.length} 个附件`
+    : "";
 
   return (
     <div
@@ -589,123 +700,138 @@ export function Composer({
             : "pointer-events-auto relative w-full"
         }
       >
-        <div
-          {...getRootProps({
-            className: cn(
-              "pointer-events-auto relative",
-              isDragActive && !dropAllowed && "cursor-not-allowed",
-            ),
-          })}
-        >
-          <Input {...getInputProps()} />
-          <ChatSenderBox
-            className={isBottomPlacement ? "pointer-events-auto" : undefined}
-            placement="bottom"
-            ref={senderRef}
-            value={draftText}
-            autosize={COMPOSER_AUTOSIZE}
-            disabled={disabled || cancelling}
-            loading={streaming}
-            placeholder={
-              disabled
-                ? disabledReason ?? "暂时不能发送"
-                : cancelling
-                  ? "正在取消当前回复…"
-                  : "说点什么…（Enter 发送）"
-            }
-            shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
-            onNativeValueChange={(value) => applyDraftText(value, "user")}
-            onNativePasteFiles={(files) => void addFiles(files)}
-            onChange={(e) => {
-              const value = readStringEventValue(e);
-              if (value === null || applyingVoiceDraftRef.current) return;
-              applyDraftText(value, "user");
-            }}
-            onSend={(e) => submit(e.detail.value)}
-            onStop={() => {
-              if (cancelling) return;
-              void stop().then((outcome) => {
-                if (outcome === "failed") {
-                  toast.error("取消失败，回复仍在继续");
-                }
-              });
-            }}
-            onFileRemove={(event) => syncAttachmentsAfterSenderRemoval(event.detail)}
-            sendBtnDisabled={(value) => !attachmentCompatibility.compatible || (
-              !value.trim() && !attachmentItems.some((item) => item.status === "success")
-            )}
-            attachmentsProps={{
-              items: attachmentItems,
-              overflow: "scrollX",
-              removable: !streaming,
-              imageViewer: false,
-              onFileClick: (event) => {
-                const item = event.detail;
-                if (item.fileType !== "image" || !item.url) return;
-                setAttachmentPreview({ name: item.name ?? "图片预览", url: item.url });
-              },
-            }}
-          >
-            <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
-              <TooltipProvider>
-                <div className="flex min-w-0 items-center gap-1">
-                  <TooltipButton
-                    type="button"
-                    disabled={attachmentActionDisabled}
-                    aria-label="添加附件"
-                    tooltip={attachmentDisabledReason ?? "添加附件"}
-                    icon={<Plus className="size-4" />}
-                    className="rounded-full"
-                    onClick={() => {
-                      if (attachmentsDisabled) {
-                        explainAttachmentUnavailable();
-                        return;
-                      }
-                      openFileDialog();
-                    }}
-                  />
-                  <ConversationModelSelector
-                    selectedModel={selectedModel}
-                    disabled={disabled || streaming || cancelling}
-                    disabledReason={composerControlDisabledReason}
-                  />
-                  {cancelling && (
-                    <span
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                      className="ml-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                    >
-                      <Spinner role="presentation" aria-hidden="true" className="size-3.5" />
-                      取消中…
-                    </span>
-                  )}
-                </div>
-                <VoiceInputAction
-                  phase={voiceInputPhase}
-                  volumeLevel={voiceInputVolume}
-                  error={voiceInputError}
-                  disabled={voiceInputDisabled}
-                  disabledReason={composerControlDisabledReason}
-                  onToggle={toggleVoiceInput}
-                />
-              </TooltipProvider>
-            </div>
-          </ChatSenderBox>
-          {isDragActive && (
-            <div
-              aria-hidden="true"
-              className={cn(
-                "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 bg-surface/95 text-sm font-medium",
-                dropAllowed
-                  ? "border-accent text-accent"
-                  : "border-danger text-danger",
-              )}
-            >
-              {dropAllowed ? <Upload className="size-5" /> : <Ban className="size-5" />}
-              <span>{dropFeedback}</span>
-            </div>
+        <div className="pointer-events-auto relative">
+          {editingMessage && (
+            <ComposerEditStatus
+              summary={editSummary}
+              phase={editingMessage.phase}
+              onCancel={handleCancelEditing}
+            />
           )}
+          <div
+            {...getRootProps({
+              className: cn(
+                "relative",
+                isDragActive && !dropAllowed && "cursor-not-allowed",
+              ),
+            })}
+          >
+            <Input {...getInputProps()} />
+            <ChatSenderBox
+              className={isBottomPlacement ? "pointer-events-auto" : undefined}
+              placement="bottom"
+              ref={senderRef}
+              value={draftText}
+              autosize={COMPOSER_AUTOSIZE}
+              disabled={disabled || cancelling || editSubmitting}
+              loading={streaming}
+              placeholder={
+                disabled
+                  ? disabledReason ?? "暂时不能发送"
+                  : cancelling
+                    ? "正在取消当前回复…"
+                    : editSubmitting
+                      ? "正在提交修改…"
+                      : editingMessage
+                        ? "修改后重新发送"
+                        : "说点什么…（Enter 发送）"
+              }
+              shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
+              onNativeValueChange={(value) => applyDraftText(value, "user")}
+              onNativePasteFiles={(files) => void addFiles(files)}
+              onChange={(e) => {
+                const value = readStringEventValue(e);
+                if (value === null || applyingVoiceDraftRef.current) return;
+                applyDraftText(value, "user");
+              }}
+              onSend={(e) => submit(e.detail.value)}
+              onStop={() => {
+                if (cancelling) return;
+                void stop().then((outcome) => {
+                  if (outcome === "failed") {
+                    toast.error("取消失败，回复仍在继续");
+                  }
+                });
+              }}
+              onFileRemove={(event) => syncAttachmentsAfterSenderRemoval(event.detail)}
+              sendBtnDisabled={(value) => modelSwitching
+                || editSubmitting
+                || !attachmentCompatibility.compatible
+                || draftAttachments.some((item) => item.status !== "ready")
+                || (!value.trim() && !attachmentItems.some((item) => item.status === "success"))}
+              attachmentsProps={{
+                items: attachmentItems,
+                overflow: "scrollX",
+                removable: !streaming && !editSubmitting,
+                imageViewer: false,
+                onFileClick: (event) => {
+                  const item = event.detail;
+                  if (item.fileType !== "image" || !item.url) return;
+                  setAttachmentPreview({ name: item.name ?? "图片预览", url: item.url });
+                },
+              }}
+            >
+              <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
+                <TooltipProvider>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <TooltipButton
+                      type="button"
+                      disabled={attachmentActionDisabled}
+                      aria-label="添加附件"
+                      tooltip={attachmentDisabledReason ?? "添加附件"}
+                      icon={<Plus className="size-4" />}
+                      className="rounded-full"
+                      onClick={() => {
+                        if (attachmentsDisabled) {
+                          explainAttachmentUnavailable();
+                          return;
+                        }
+                        openFileDialog();
+                      }}
+                    />
+                    <ConversationModelSelector
+                      selectedModel={selectedModel}
+                      disabled={disabled || streaming || cancelling || editSubmitting}
+                      disabledReason={composerControlDisabledReason}
+                    />
+                    {cancelling && (
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="ml-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                      >
+                        <Spinner role="presentation" aria-hidden="true" className="size-3.5" />
+                        取消中…
+                      </span>
+                    )}
+                  </div>
+                  <VoiceInputAction
+                    phase={voiceInputPhase}
+                    volumeLevel={voiceInputVolume}
+                    error={voiceInputError}
+                    disabled={voiceInputDisabled}
+                    disabledReason={composerControlDisabledReason}
+                    onToggle={toggleVoiceInput}
+                  />
+                </TooltipProvider>
+              </div>
+            </ChatSenderBox>
+            {isDragActive && (
+              <div
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 bg-surface/95 text-sm font-medium",
+                  dropAllowed
+                    ? "border-accent text-accent"
+                    : "border-danger text-danger",
+                )}
+              >
+                {dropAllowed ? <Upload className="size-5" /> : <Ban className="size-5" />}
+                <span>{dropFeedback}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <AttachmentImageViewer
@@ -714,4 +840,6 @@ export function Composer({
       />
     </div>
   );
-}
+});
+
+Composer.displayName = "Composer";

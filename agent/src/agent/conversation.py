@@ -128,6 +128,21 @@ if TYPE_CHECKING:
 # 014: tool-hook 注入点。AgentRuntime 装配时传入；None 时 _invoke_tool_safely 走原行为。
 ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
 PreToolHook = Callable[[str, dict[str, Any]], ToolResult | None]
+
+
+def _is_explicit_run_cancellation(exc: BaseException | None) -> bool:
+    """识别 runtime cooperative cancellation，避免 Conversation 反向依赖 runtime 包。
+
+    ``agent.runtime`` 的包入口会导入 :class:`Conversation`，这里不能直接 import
+    ``RunCancelled``，否则会形成循环依赖。异常通过稳定的 ``cancellation.reason``
+    结构暴露原因；只有用户明确点击停止的 ``explicit_request`` 需要持久化空
+    assistant partial，transport 断开和真实失败继续沿用既有落盘语义。
+    """
+
+    cancellation = getattr(exc, "cancellation", None)
+    return getattr(cancellation, "reason", None) == "explicit_request"
+
+
 PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
 MessageRenderer = Callable[[Message, LLMClient], dict[str, Any]]
 
@@ -686,6 +701,7 @@ class Conversation:
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
+                    persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
                 )
             else:
                 if not self._post_turn_external:
@@ -708,6 +724,8 @@ class Conversation:
         self,
         user_input: str,
         *,
+        attachments: list[AttachmentRef] | None = None,
+        expected_user_uuid: str | None = None,
         expected_user_content: str | None = None,
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
@@ -721,7 +739,15 @@ class Conversation:
         让旧最后一轮在 active projection 中失活。首轮 LLM 初始化失败时不追加 marker，
         保持用户可重试的干净状态。
         """
-        plan = self._latest_active_user_rewrite_plan(expected_user_content=expected_user_content)
+        plan = self._latest_active_user_rewrite_plan(
+            expected_user_uuid=expected_user_uuid,
+            expected_user_content=expected_user_content,
+        )
+        replacement_attachments = (
+            plan.target_user_attachments if attachments is None else list(attachments)
+        )
+        if not user_input.strip() and not replacement_attachments:
+            raise AgentError("编辑后的文字和附件不能同时为空")
 
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
@@ -734,7 +760,7 @@ class Conversation:
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
-        self._turn_context_override = _compose_turn_context(None, plan.target_user_attachments)
+        self._turn_context_override = _compose_turn_context(None, replacement_attachments)
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
 
@@ -772,7 +798,7 @@ class Conversation:
             nonlocal rewrite_event_appended, user_event_appended
             messages = self._build_openai_messages_first_turn(
                 user_input,
-                attachments=plan.target_user_attachments,
+                attachments=replacement_attachments,
                 history_override=prefix_history,
                 prior_summary_override=prefix_prior_summary,
                 persist_compaction=False,
@@ -784,7 +810,7 @@ class Conversation:
                 self._append_skill_catalog_state_event()
                 appended_user_id = self._append_user_event(
                     user_input,
-                    attachments=plan.target_user_attachments,
+                    attachments=replacement_attachments,
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
@@ -822,6 +848,7 @@ class Conversation:
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
+                    persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
                 )
             else:
                 if not self._post_turn_external:
@@ -1030,6 +1057,7 @@ class Conversation:
         finally:
             interrupted = sys.exc_info()[0] is not None
             if interrupted:
+                exc = sys.exc_info()[1]
                 self._on_interrupt(
                     user_input="",
                     user_event_appended=False,
@@ -1038,6 +1066,7 @@ class Conversation:
                     persona_name=persona_name,
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
+                    persist_empty_partial=_is_explicit_run_cancellation(exc),
                 )
             elif not self._post_turn_external:
                 self._observe_turn(turn_start_idx)
@@ -1540,6 +1569,7 @@ class Conversation:
     def _latest_active_user_rewrite_plan(
         self,
         *,
+        expected_user_uuid: str | None,
         expected_user_content: str | None,
     ) -> _RewritePlan:
         active_events = self._session.active_events
@@ -1552,6 +1582,8 @@ class Conversation:
             raise AgentError("当前会话没有可编辑重发的用户消息")
 
         target = active_events[target_idx]
+        if expected_user_uuid is not None and target.uuid != expected_user_uuid:
+            raise AgentError("最后一条用户消息已变化，请刷新后再编辑重发")
         content = target.payload.get("content", "")
         if not isinstance(content, str):
             content = ""
@@ -3391,13 +3423,17 @@ class Conversation:
         persona_name: str,
         persona_id: str | None,
         model_snapshot: str,
+        persist_empty_partial: bool = False,
     ) -> None:
         """被异常 / KeyboardInterrupt 中断时的落盘策略。
 
         - 第一轮 LLM 还没出任何内容（``not user_event_appended`` 且 buffer 全空）：
           完全不落盘——下次重试干净（与 001 起的语义一致）
-        - 否则把当前轮已经累积的部分文本落为 ``partial=True`` 的 assistant_event；
-          已成功完成的前几轮 tool 调用事件不受影响
+        - user event 已落盘且属于用户明确停止时，即使当前还没有文本，也落一个
+          ``partial=True`` 的 assistant_event，使 UI 能在刷新后恢复“已停止回答”
+          的终态；普通异常仍保持既有 ``user_message + run_error`` 契约
+        - 已有文本时把当前轮累积内容落为 partial；已成功完成的前几轮 tool 调用
+          事件不受影响
         """
         if current_text_persisted:
             return
@@ -3407,14 +3443,15 @@ class Conversation:
                 return  # 完全没启动，不落盘
             # 罕见：LLM 已经流出文本但中途中断，user_event 还没落
             self._append_user_event(user_input)
-        if current_text_buf:
-            self._append_assistant_event(
-                "".join(current_text_buf),
-                partial=True,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model=model_snapshot,
-            )
+        if not current_text_buf and not persist_empty_partial:
+            return
+        self._append_assistant_event(
+            "".join(current_text_buf),
+            partial=True,
+            persona_name=persona_name,
+            persona_id=persona_id,
+            model=model_snapshot,
+        )
 
     def _append_tool_call_request_event(self, tc: dict[str, Any]) -> None:
         """落 ``tool_call_request`` 事件。"""

@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -15,6 +16,7 @@ from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
 
 from agent import (
+    AttachmentStore,
     Event,
     JsonlSessionStore,
     MarkdownPromptBuilder,
@@ -58,7 +60,10 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     """构造一个全新 BridgeRuntime，sessions 落到 tmp_path 隔离。"""
     _RouteLLM.seen_messages = []
     _RouteLLM.seen_tools = []
-    settings = BridgeSettings(sessions_dir=tmp_path / "sessions")
+    settings = BridgeSettings(
+        sessions_dir=tmp_path / "sessions",
+        attachments_dir=tmp_path / "attachments",
+    )
     persistent_store = JsonlSessionStore(settings.sessions_dir)
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
@@ -88,6 +93,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
         prompt_builder_factory=_prompt_factory,
         default_persona=catalog.find_by_name("default").name,
         default_model="deepseek/deepseek-chat",
+        attachment_store=AttachmentStore(settings.attachments_dir),
     )
 
 
@@ -348,6 +354,143 @@ class TestEditResendLatestEndpoint:
             '<surface type="desktop_chat" />' in message.get("content", "")
             for message in _RouteLLM.seen_messages[-1]
         )
+
+    def test_edit_resend_replaces_original_and_new_attachments_in_request_order(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post(
+            "/v1/sessions",
+            json={"model": "kimi/kimi-k2.6"},
+        ).json()["session_id"]
+        assert runtime.attachment_store is not None
+        old_draft_id, old_ref = asyncio.run(
+            runtime.attachment_store.import_stream(
+                _bytes(b"old attachment"),
+                display_name="old.txt",
+                declared_media_type="text/plain",
+            )
+        )
+        runtime.attachment_store.consume_draft(old_draft_id)
+        new_draft_id, new_ref = asyncio.run(
+            runtime.attachment_store.import_stream(
+                _bytes(b"new attachment"),
+                display_name="new.txt",
+                declared_media_type="text/plain",
+            )
+        )
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="user_message",
+                uuid="old-user-with-attachment",
+                ts=datetime.now(UTC),
+                payload={"content": "", "attachments": [old_ref.to_dict()]},
+            ),
+        )
+
+        with client.stream(
+            "POST",
+            f"/v1/sessions/{sid}/edit-resend-latest",
+            json={
+                "text": "",
+                "expectedUserMessageId": "old-user-with-attachment",
+                "expectedUserContent": "",
+                "attachments": [
+                    {"source": "draft", "draftId": new_draft_id, "kind": "document"},
+                    {"source": "existing", "assetId": old_ref.asset_id},
+                ],
+            },
+            headers={"accept": "text/event-stream"},
+        ) as response:
+            body = "".join(response.iter_text())
+
+        assert response.status_code == 200
+        assert "new answer" in body
+        active_user = next(
+            event
+            for event in reversed(runtime.persistent_session_manager.open(sid).active_events)
+            if event.type == "user_message"
+        )
+        assert [item["asset_id"] for item in active_user.payload["attachments"]] == [
+            new_ref.asset_id,
+            old_ref.asset_id,
+        ]
+
+    def test_edit_resend_rejects_existing_asset_outside_target(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post(
+            "/v1/sessions",
+            json={"model": "kimi/kimi-k2.6"},
+        ).json()["session_id"]
+        assert runtime.attachment_store is not None
+        _, unrelated = asyncio.run(
+            runtime.attachment_store.import_stream(
+                _bytes(b"unrelated"),
+                display_name="unrelated.txt",
+                declared_media_type="text/plain",
+            )
+        )
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="user_message",
+                uuid="target-user",
+                ts=datetime.now(UTC),
+                payload={"content": "old"},
+            ),
+        )
+
+        response = client.post(
+            f"/v1/sessions/{sid}/edit-resend-latest",
+            json={
+                "text": "new",
+                "expectedUserMessageId": "target-user",
+                "attachments": [
+                    {"source": "existing", "assetId": unrelated.asset_id},
+                ],
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["error"] == "attachment_not_on_edit_target"
+        assert not any(
+            event.type == "turn_rewrite"
+            for event in runtime.persistent_session_manager.open(sid).events
+        )
+
+    def test_edit_resend_rejects_stale_target_before_sse(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="user_message",
+                uuid="current-user",
+                ts=datetime.now(UTC),
+                payload={"content": "current"},
+            ),
+        )
+
+        response = client.post(
+            f"/v1/sessions/{sid}/edit-resend-latest",
+            json={
+                "text": "new",
+                "expectedUserMessageId": "stale-user",
+                "expectedUserContent": "current",
+                "attachments": [],
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        assert response.status_code == 409
+        assert not response.headers["content-type"].startswith("text/event-stream")
+
+
+async def _bytes(value: bytes) -> AsyncIterator[bytes]:
+    yield value
 
 
 class TestContinueToolResultEndpoint:

@@ -10,6 +10,7 @@
 | ``ToolCallRequest``  | 切走当前文本 message → ``TEXT_MESSAGE_END`` 然后 ``TOOL_CALL_START`` + ``TOOL_CALL_ARGS``（整段 args JSON 一次性 delta）+ ``TOOL_CALL_END`` |
 | ``ToolCallResult``   | ``TOOL_CALL_RESULT``                                            |
 | ``TurnDone``         | 收尾未关闭 message（``TEXT_MESSAGE_END``）+ ``RUN_FINISHED``    |
+| runtime 主动取消     | 收尾未关闭 message + 带 cancelled result 的 ``RUN_FINISHED``    |
 | 异常                | ``RUN_ERROR`` 后**不发** ``RUN_FINISHED``                        |
 
 注意：
@@ -290,6 +291,27 @@ def encode_stream(
 
         if run_handle is not None:
             terminal = run_handle.terminal
+            if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:
+                if open_message_id is not None:
+                    yield _encode(
+                        TextMessageEndEvent(
+                            type=EventType.TEXT_MESSAGE_END,
+                            message_id=open_message_id,
+                        )
+                    )
+                    open_message_id = None
+                yield _encode(
+                    RunFinishedEvent(
+                        type=EventType.RUN_FINISHED,
+                        thread_id=thread_id,
+                        run_id=run_id,
+                        result={
+                            "outcome": "cancelled",
+                            "reasonCode": terminal.reason_code,
+                        },
+                    )
+                )
+                return
             if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
                 if open_message_id is not None:
                     yield _encode(
@@ -301,9 +323,7 @@ def encode_stream(
                     open_message_id = None
                 message = "本轮对话未能完成，请稍后重试"
                 code = terminal.reason_code if terminal is not None else "runtime_error"
-                if terminal is not None and terminal.outcome is RunOutcome.CANCELLED:
-                    message = "本轮对话已取消"
-                elif terminal is not None and terminal.error is not None:
+                if terminal is not None and terminal.error is not None:
                     err = map_exception(terminal.error)
                     message = err.message
                     code = err.code

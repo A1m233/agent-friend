@@ -707,6 +707,9 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
     assert not worker.is_alive()
     assert len(errors) == 1
     assert isinstance(errors[0], RunCancelled)
+    assistant = next(event for event in conv.session.events if event.type == "assistant_message")
+    assert assistant.payload == {"content": "", "partial": True}
+    assert assistant.meta["run_id"] == request.run_id
 
 
 def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) -> None:

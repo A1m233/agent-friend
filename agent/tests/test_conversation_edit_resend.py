@@ -14,6 +14,7 @@ from agent.sessions import Event
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    AgentError,
     AttachmentRef,
     Conversation,
     JsonlSessionStore,
@@ -451,6 +452,99 @@ def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:
     user = next(message for message in conv.session.messages if message.role == "user")
     assert user.content == "read carefully"
     assert user.attachments == [attachment]
+
+
+def test_edit_resend_latest_replaces_attachments_and_allows_attachment_only(
+    tmp_path: Path,
+) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTurnDone(stop_reason="end_turn")],
+            [LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    original = AttachmentRef(
+        asset_id="c" * 64,
+        display_name="original.txt",
+        kind="document",
+        media_type="text/plain",
+        size_bytes=10,
+        sha256="c" * 64,
+    )
+    replacement = AttachmentRef(
+        asset_id="d" * 64,
+        display_name="replacement.txt",
+        kind="document",
+        media_type="text/plain",
+        size_bytes=20,
+        sha256="d" * 64,
+    )
+
+    list(conv.stream("old", attachments=[original]))
+    target_uuid = next(
+        event.uuid for event in reversed(conv.session.active_events) if event.type == "user_message"
+    )
+    list(
+        conv.edit_resend_latest(
+            "",
+            attachments=[replacement],
+            expected_user_uuid=target_uuid,
+            expected_user_content="old",
+        )
+    )
+
+    user = next(message for message in conv.session.messages if message.role == "user")
+    assert user.content == ""
+    assert user.attachments == [replacement]
+
+
+def test_edit_resend_latest_explicit_empty_attachments_removes_original(
+    tmp_path: Path,
+) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [LLMTurnDone(stop_reason="end_turn")],
+            [LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    original = AttachmentRef(
+        asset_id="e" * 64,
+        display_name="original.pdf",
+        kind="document",
+        media_type="application/pdf",
+        size_bytes=10,
+        sha256="e" * 64,
+    )
+
+    list(conv.stream("old", attachments=[original]))
+    list(
+        conv.edit_resend_latest(
+            "text only",
+            attachments=[],
+            expected_user_content="old",
+        )
+    )
+
+    user = next(message for message in conv.session.messages if message.role == "user")
+    assert user.content == "text only"
+    assert user.attachments == []
+
+
+def test_edit_resend_latest_rejects_stale_user_uuid(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    list(conv.stream("old"))
+
+    with pytest.raises(AgentError, match="最后一条用户消息已变化"):
+        list(
+            conv.edit_resend_latest(
+                "new",
+                expected_user_uuid="stale-user-uuid",
+                expected_user_content="old",
+            )
+        )
 
 
 def test_edit_resend_latest_reinjects_image_evidence_boundary(tmp_path: Path) -> None:

@@ -30,7 +30,7 @@ import {
   CHAT_SCROLL_VIEWPORT_CLASS,
 } from "../layout";
 import { toMarkdownContent } from "../projection";
-import { EditMessageSender } from "./EditMessageSender";
+import { EditMessageHint } from "./EditMessageHint";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import {
@@ -305,18 +305,14 @@ function MessageContent({
   message,
   actionBar,
   editing,
-  editDisabled,
-  onCancelEdit,
-  onSubmitEdit,
+  onFocusComposer,
   onContinueToolResult,
   searchAnchorEventUuid,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
   editing?: boolean;
-  editDisabled?: boolean;
-  onCancelEdit?: () => void;
-  onSubmitEdit?: (text: string) => void;
+  onFocusComposer?: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
 }) {
@@ -328,15 +324,13 @@ function MessageContent({
     if (editing) {
       return (
         <div className="ml-auto flex w-full flex-col items-end gap-2">
-          {message.attachments?.length ? (
-            <TextBubble role="user" text="" attachments={message.attachments} />
-          ) : null}
-          <EditMessageSender
-            initialText={text}
-            disabled={editDisabled}
-            onCancel={onCancelEdit ?? (() => undefined)}
-            onSubmit={onSubmitEdit ?? (() => undefined)}
+          <TextBubble
+            role="user"
+            text={text}
+            attachments={message.attachments}
+            searchAnchor={message.id === searchAnchorEventUuid ? message.id : undefined}
           />
+          <EditMessageHint onFocusComposer={onFocusComposer ?? (() => undefined)} />
         </div>
       );
     }
@@ -399,9 +393,10 @@ function MessageContent({
         </div>
       )}
       {message.status === "interrupted" && (
-        <p className="px-1 text-xs text-danger" role="status">
-          回答已被中断
-        </p>
+        <div className="flex items-center gap-1.5 px-1 text-xs text-muted" role="status">
+          <StatusDot tone="muted" />
+          <span>已停止回答</span>
+        </div>
       )}
       {message.status === "streaming" && message.runStatus && (
         <ModelResponseStatus status={message.runStatus} />
@@ -423,20 +418,16 @@ const MessageItem = memo(function MessageItem({
   message,
   canEdit,
   editing,
-  editDisabled,
   onEdit,
-  onCancelEdit,
-  onSubmitEdit,
+  onFocusComposer,
   onContinueToolResult,
   searchAnchorEventUuid,
 }: {
   message: ChatMessage;
   canEdit: boolean;
   editing: boolean;
-  editDisabled: boolean;
   onEdit: () => void;
-  onCancelEdit: () => void;
-  onSubmitEdit: (text: string) => void;
+  onFocusComposer: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
 }) {
@@ -463,9 +454,7 @@ const MessageItem = memo(function MessageItem({
         message={message}
         actionBar={actionBar}
         editing={editing}
-        editDisabled={editDisabled}
-        onCancelEdit={onCancelEdit}
-        onSubmitEdit={onSubmitEdit}
+        onFocusComposer={onFocusComposer}
         onContinueToolResult={onContinueToolResult}
         searchAnchorEventUuid={searchAnchorEventUuid}
       />
@@ -478,9 +467,8 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
     prev.message === next.message &&
     prev.canEdit === next.canEdit &&
     prev.editing === next.editing &&
-    prev.editDisabled === next.editDisabled
-    && prev.onContinueToolResult === next.onContinueToolResult
-    && prev.searchAnchorEventUuid === next.searchAnchorEventUuid
+    prev.onContinueToolResult === next.onContinueToolResult &&
+    prev.searchAnchorEventUuid === next.searchAnchorEventUuid
   );
 }
 
@@ -488,10 +476,8 @@ interface MessageItemProps {
   message: ChatMessage;
   canEdit: boolean;
   editing: boolean;
-  editDisabled: boolean;
   onEdit: () => void;
-  onCancelEdit: () => void;
-  onSubmitEdit: (text: string) => void;
+  onFocusComposer: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
 }
@@ -539,9 +525,10 @@ interface MessageTimelineProps {
   composerHeight?: number;
   overlayComposer?: boolean;
   emptyLabel?: string;
-  onEditLatestUserMessage?: (messageId: string, text: string) => void | Promise<void>;
+  editingMessageId?: string | null;
+  onBeginEditLatestUserMessage?: (messageId: string) => void;
+  onFocusComposer?: () => void;
   onContinueToolResult?: (messageId: string) => void | Promise<void>;
-  onEditingChange?: (messageId: string | null) => void;
   searchTarget?: SearchNavigationTarget | null;
   onSearchTargetHandled?: (token: number, found: boolean) => void;
 }
@@ -559,9 +546,10 @@ export function MessageTimeline({
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
   overlayComposer = true,
   emptyLabel = "开始一段对话吧～",
-  onEditLatestUserMessage,
+  editingMessageId = null,
+  onBeginEditLatestUserMessage,
+  onFocusComposer,
   onContinueToolResult,
-  onEditingChange,
   searchTarget = null,
   onSearchTargetHandled,
 }: MessageTimelineProps) {
@@ -583,12 +571,7 @@ export function MessageTimeline({
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
   const [isFollowing, setIsFollowing] = useState(true);
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [activeSearchAnchor, setActiveSearchAnchor] = useState<string | null>(null);
-  const updateEditingMessage = useCallback((messageId: string | null) => {
-    setEditingMessageId(messageId);
-    onEditingChange?.(messageId);
-  }, [onEditingChange]);
   const composerInset = overlayComposer
     ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
     : 0;
@@ -891,15 +874,6 @@ export function MessageTimeline({
     [clearSearchFeedback, handlePointerScrollEnd],
   );
 
-  useEffect(() => {
-    if (!editingMessageId) return;
-    if (!messages.some((m) => m.id === editingMessageId) || streaming || historyLoading) {
-      updateEditingMessage(null);
-    }
-  }, [editingMessageId, historyLoading, messages, streaming, updateEditingMessage]);
-
-  useEffect(() => () => onEditingChange?.(null), [onEditingChange]);
-
   if (historyLoading) {
     return <HistoryLoadingState />;
   }
@@ -939,7 +913,7 @@ export function MessageTimeline({
             const canEdit =
               m.role === "user" &&
               m.id === lastUserMessageId &&
-              Boolean(onEditLatestUserMessage) &&
+              Boolean(onBeginEditLatestUserMessage) &&
               !editDisabled &&
               !editingMessageId;
             const canContinueToolResult =
@@ -968,13 +942,8 @@ export function MessageTimeline({
                     message={m}
                     canEdit={canEdit}
                     editing={editing}
-                    editDisabled={editDisabled}
-                    onEdit={() => updateEditingMessage(m.id)}
-                    onCancelEdit={() => updateEditingMessage(null)}
-                    onSubmitEdit={(text) => {
-                      updateEditingMessage(null);
-                      void onEditLatestUserMessage?.(m.id, text);
-                    }}
+                    onEdit={() => onBeginEditLatestUserMessage?.(m.id)}
+                    onFocusComposer={onFocusComposer ?? (() => undefined)}
                     onContinueToolResult={canContinueToolResult
                       ? () => void onContinueToolResult?.(m.id)
                       : undefined}
@@ -1007,20 +976,24 @@ export function MessageTimeline({
 
 interface MessageListProps {
   composerHeight?: number;
+  onFocusComposer?: () => void;
 }
 
 /** 正式会话 adapter：只负责把 conversation store 接到共享时间线。 */
 export function MessageList({
   composerHeight = CHAT_COMPOSER_FALLBACK_HEIGHT_PX,
+  onFocusComposer,
 }: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
   const streaming = useConversationStore((s) => s.streaming);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
   const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
-  const editResendLatest = useConversationStore((s) => s.editResendLatest);
+  const editingMessage = useConversationStore((s) => s.editingMessage);
+  const editingMessageId = editingMessage?.messageId ?? null;
   const continueToolResult = useConversationStore((s) => s.continueToolResult);
-  const setEditingMessage = useConversationStore((s) => s.setEditingMessage);
+  const beginEditingMessage = useConversationStore((s) => s.beginEditingMessage);
+  const cancelEditing = useConversationStore((s) => s.cancelEditing);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
   const searchTarget = useConversationStore((s) => s.searchTarget);
   const clearSearchTarget = useConversationStore((s) => s.clearSearchTarget);
@@ -1039,6 +1012,24 @@ export function MessageList({
     ? searchTarget
     : null;
 
+  useEffect(() => {
+    if (!editingMessageId) return;
+    if (
+      (editingMessage?.phase === "editing" && streaming)
+      || historyLoading
+      || !messages.some((message) => message.id === editingMessageId)
+    ) {
+      cancelEditing();
+    }
+  }, [
+    cancelEditing,
+    editingMessage?.phase,
+    editingMessageId,
+    historyLoading,
+    messages,
+    streaming,
+  ]);
+
   return (
     <MessageTimeline
       messages={messages}
@@ -1047,9 +1038,12 @@ export function MessageList({
       historyLoadSeq={historyLoadSeq}
       syncRefreshSeq={syncRefreshSeq}
       composerHeight={composerHeight}
-      onEditLatestUserMessage={editResendLatest}
+      editingMessageId={editingMessageId}
+      onBeginEditLatestUserMessage={(messageId) => {
+        if (beginEditingMessage(messageId)) onFocusComposer?.();
+      }}
+      onFocusComposer={onFocusComposer}
       onContinueToolResult={continueToolResult}
-      onEditingChange={setEditingMessage}
       searchTarget={currentSearchTarget}
       onSearchTargetHandled={handleSearchTarget}
     />

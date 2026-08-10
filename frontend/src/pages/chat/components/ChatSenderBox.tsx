@@ -14,7 +14,7 @@ import { extractClipboardFiles } from "./attachmentInput";
 type ChatSenderProps = ComponentProps<typeof ChatSender>;
 
 interface ChatSenderBoxProps extends ChatSenderProps {
-  placement: "bottom" | "edit";
+  placement: "bottom";
   children?: ReactNode;
   className?: string;
   onNativeValueChange?: (value: string) => void;
@@ -91,10 +91,8 @@ export const ChatSenderBox = forwardRef<HTMLElement, ChatSenderBoxProps>(
 
     return (
       <div
-        className={cn(
-          placement === "bottom" ? "rounded-2xl shadow-lg" : "",
-          className,
-        )}
+        data-placement={placement}
+        className={cn("rounded-2xl shadow-lg", className)}
       >
         <ChatSender ref={senderRef} {...props}>
           {children}

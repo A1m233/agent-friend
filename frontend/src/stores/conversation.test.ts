@@ -41,6 +41,7 @@ import {
   runAgentStream,
   runsApi,
   sessionsApi,
+  StreamAdmissionError,
 } from "@/services";
 import type { SessionDetail } from "@/types/meta";
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
@@ -156,7 +157,7 @@ beforeEach(() => {
     historyLoading: false,
     modelSwitching: false,
     modelSwitchTarget: null,
-    editingMessageId: null,
+    editingMessage: null,
     sessionViews: {},
     runSnapshots: {},
     viewAccessedAt: {},
@@ -236,6 +237,24 @@ describe("conversation store · cancel lifecycle", () => {
     expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBeUndefined();
     expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBeUndefined();
     expect(useConversationStore.getState().streaming).toBe(false);
+    expect(lastMessage().status).toBe("interrupted");
+  });
+
+  it("SSE cancelled 终态直接投影为 interrupted，不进入 RUN_ERROR", async () => {
+    mockStream.mockImplementation(async function* () {
+      yield ev({
+        type: EventType.RUN_FINISHED,
+        threadId: "t",
+        runId: "r",
+        result: { outcome: "cancelled", reasonCode: "explicit_request" },
+      });
+    });
+
+    const outcome = await finishAcceptedSend(useConversationStore.getState().send("主动停止"));
+
+    expect(outcome).toBe("interrupted");
+    expect(lastMessage().status).toBe("interrupted");
+    expect(lastMessage().error).toBeUndefined();
   });
 
   it("取消 API 失败时撤销取消中状态并触发权威状态校准", async () => {
@@ -739,23 +758,30 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
           },
         ],
       });
-    mockEditStream.mockImplementation(async function* () {
+    mockEditStream.mockImplementation(async function* (_input, opts) {
+      opts?.onAdmitted?.();
       yield ev({ type: EventType.RUN_FINISHED, threadId: "sid-1", runId: "r" });
     });
 
     await useConversationStore.getState().openSession("sid-1");
     const oldUserId = useConversationStore.getState().messages[0]?.id;
     expect(oldUserId).toBeTruthy();
-    await useConversationStore.getState().editResendLatest(oldUserId!, "新问题");
+    expect(useConversationStore.getState().beginEditingMessage(oldUserId!)).toBe(true);
+    await useConversationStore.getState().editResendLatest("新问题", [], []);
 
     expect(mockEditStream).toHaveBeenCalledWith(
       {
         sessionId: "sid-1",
         runId: expect.any(String),
         text: "新问题",
+        expectedUserMessageId: "old-user",
         expectedUserContent: "旧问题",
+        attachments: [],
       },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        onAdmitted: expect.any(Function),
+      }),
     );
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
   });
@@ -798,13 +824,15 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
           },
         ],
       });
-    mockEditStream.mockImplementation(async function* () {
+    mockEditStream.mockImplementation(async function* (_input, opts) {
+      opts?.onAdmitted?.();
       yield ev({ type: EventType.RUN_ERROR, message: errorText, code: "rate_limit" });
     });
 
     await useConversationStore.getState().openSession("sid-1");
     const oldUserId = useConversationStore.getState().messages[0]?.id;
-    await useConversationStore.getState().editResendLatest(oldUserId!, "新问题");
+    expect(useConversationStore.getState().beginEditingMessage(oldUserId!)).toBe(true);
+    await useConversationStore.getState().editResendLatest("新问题", [], []);
 
     const errors = useConversationStore
       .getState()
@@ -812,6 +840,44 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].error).toBe(errorText);
     expect(errors[0].errorCode).toBe("rate_limit");
+  });
+
+  it("admission 失败时保留原消息和完整编辑 workspace", async () => {
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "test",
+      events: [
+        {
+          type: "user_message",
+          uuid: "old-user",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "旧问题" },
+        },
+      ],
+    });
+    mockEditStream.mockImplementation(async function* () {
+      yield* [];
+      throw new StreamAdmissionError("rejected");
+    });
+
+    await useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().beginEditingMessage("old-user")).toBe(true);
+    const draftKey = useConversationStore.getState().editingMessage!.draftKey;
+    useDraftStore.getState().setText(draftKey, "还要继续改");
+
+    const result = await useConversationStore.getState().editResendLatest(
+      "还要继续改",
+      [],
+      [],
+    );
+
+    expect(result).toBe("rejected");
+    expect(useConversationStore.getState().editingMessage?.phase).toBe("editing");
+    expect(useDraftStore.getState().workspaces[draftKey].text).toBe("还要继续改");
+    expect(messageTexts()).toEqual(["旧问题"]);
+    expect(useConversationStore.getState().streaming).toBe(false);
   });
 });
 
@@ -1114,13 +1180,49 @@ describe("conversation store · session model selection", () => {
     expect(useConversationStore.getState().currentModel).toBe("kimi/final");
   });
 
+  it("编辑草稿期间允许切换会话模型且不退出编辑", async () => {
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "deepseek/old",
+      events: [
+        {
+          type: "user_message",
+          uuid: "user-1",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "old" },
+        },
+      ],
+    });
+    await useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().beginEditingMessage("user-1")).toBe(true);
+
+    expect(await useConversationStore.getState().selectModel("kimi/new")).toEqual({
+      status: "applied",
+      model: "kimi/new",
+    });
+    expect(useConversationStore.getState().currentModel).toBe("kimi/new");
+    expect(useConversationStore.getState().editingMessage?.messageId).toBe("user-1");
+  });
+
   it("切换和编辑状态阻止发送", () => {
     useConversationStore.setState({ modelSwitching: true });
     expect(useConversationStore.getState().send("hello")).toEqual({
       accepted: false,
       reason: "model-switching",
     });
-    useConversationStore.setState({ modelSwitching: false, editingMessageId: "user-1" });
+    useConversationStore.setState({
+      modelSwitching: false,
+      editingMessage: {
+        sessionId: "sid-1",
+        messageId: "user-1",
+        draftKey: "edit:sid-1:user-1",
+        originalText: "hello",
+        originalAttachments: [],
+        phase: "editing",
+      },
+    });
     expect(useConversationStore.getState().send("hello")).toEqual({
       accepted: false,
       reason: "editing",
