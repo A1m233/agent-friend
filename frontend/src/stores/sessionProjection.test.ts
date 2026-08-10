@@ -64,6 +64,18 @@ describe("projectSessionEvents", () => {
     expect(out[1].role).toBe("user");
   });
 
+  it("无文本的 partial assistant 仍恢复为 interrupted 状态", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "请停一下" }),
+      ev("assistant_message", { content: "", partial: true }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].role).toBe("assistant");
+    expect(out[1].status).toBe("interrupted");
+    expect(out[1].blocks).toEqual([]);
+  });
+
   it("把 run_error 投影成可刷新的 assistant 错误状态", () => {
     const out = projectSessionEvents([
       ev("user_message", { content: "继续说" }),

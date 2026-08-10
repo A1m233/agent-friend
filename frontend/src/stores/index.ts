@@ -6,7 +6,7 @@ export {
   startFilesystemApprovalSync,
   useFilesystemApprovalsStore,
 } from "./filesystemApprovals";
-export { draftKey, HOME_DRAFT_KEY, useDraftStore } from "./drafts";
+export { draftKey, editDraftKey, HOME_DRAFT_KEY, useDraftStore } from "./drafts";
 export {
   emitSessionsChanged,
   startSessionsChangedSubscriber,

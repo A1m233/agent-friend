@@ -22,9 +22,10 @@ design §6.2（弱稳定，本期落地后默认不变）。
 from __future__ import annotations
 
 import dataclasses
+from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import ExitStack
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from ag_ui.encoder import EventEncoder
@@ -37,6 +38,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
+    AttachmentRef,
     Conversation,
     ConversationEvent,
     PersonaAmbiguousError,
@@ -46,6 +48,12 @@ from agent import (
 )
 
 from ..assembly import BridgeRuntime
+from ..attachment_inputs import (
+    AttachmentInput,
+    DraftAttachmentInput,
+    ExistingAttachmentInput,
+    prepare_attachment_input,
+)
 from ..attachment_reconciliation import reconcile_attachments
 from ..errors import build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
@@ -80,12 +88,29 @@ class ChannelSwitchBody(BaseModel):
     channel: Literal["voice", "text"] = Field(..., description="目标 channel")
 
 
+class ExistingEditAttachmentBody(BaseModel):
+    source: Literal["existing"]
+    asset_id: str = Field(..., alias="assetId")
+
+
+class DraftEditAttachmentBody(BaseModel):
+    source: Literal["draft"]
+    draft_id: str = Field(..., alias="draftId")
+    kind: Literal["image", "document"]
+
+
+EditAttachmentBody = Annotated[
+    ExistingEditAttachmentBody | DraftEditAttachmentBody,
+    Field(discriminator="source"),
+]
+
+
 class EditResendLatestBody(BaseModel):
     """``POST /v1/sessions/{id}/edit-resend-latest`` 请求体。"""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    text: str = Field(..., min_length=1, description="替换后的用户输入")
+    text: str = Field(..., description="替换后的用户输入；有附件时允许为空")
     run_id: str | None = Field(
         None,
         alias="runId",
@@ -95,6 +120,15 @@ class EditResendLatestBody(BaseModel):
         None,
         alias="expectedUserContent",
         description="客户端看到的旧最后一条 user 内容，用于并发变化保护",
+    )
+    expected_user_message_id: str | None = Field(
+        None,
+        alias="expectedUserMessageId",
+        description="客户端看到的旧最后一条 user event UUID，用于并发变化保护",
+    )
+    attachments: list[EditAttachmentBody] | None = Field(
+        None,
+        description="最终附件替换集；缺省时保留全部原附件，空数组表示删除全部",
     )
 
 
@@ -265,10 +299,85 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     ) -> StreamingResponse:
         """编辑并重发最后一条 active user 消息，返回 AG-UI SSE。"""
         text = body.text.strip()
-        if not text:
-            raise HTTPException(status_code=400, detail="text 不能为空")
         accept = request.headers.get("accept") or ""
         run_id = body.run_id or uuid4().hex
+
+        try:
+            preflight_session = mgr.open(session_id)
+        except SessionNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        target = next(
+            (
+                event
+                for event in reversed(preflight_session.active_events)
+                if event.type == "user_message"
+            ),
+            None,
+        )
+        if target is None:
+            raise HTTPException(status_code=400, detail="当前会话没有可编辑重发的用户消息")
+        target_content = target.payload.get("content", "")
+        if not isinstance(target_content, str):
+            target_content = ""
+        if (
+            body.expected_user_message_id is not None
+            and body.expected_user_message_id != target.uuid
+        ) or (
+            body.expected_user_content is not None and body.expected_user_content != target_content
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="最后一条用户消息已变化，请刷新后再编辑重发",
+            )
+
+        try:
+            original_attachments = [
+                AttachmentRef.from_dict(item)
+                for item in target.payload.get("attachments", [])
+                if isinstance(item, dict)
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail="历史附件数据无法读取") from exc
+
+        if body.attachments is None:
+            attachment_inputs: list[AttachmentInput] = [
+                ExistingAttachmentInput(ref) for ref in original_attachments
+            ]
+        else:
+            original_by_asset: dict[str, list[AttachmentRef]] = defaultdict(list)
+            for ref in original_attachments:
+                original_by_asset[ref.asset_id].append(ref)
+            attachment_inputs = []
+            for item in body.attachments:
+                if isinstance(item, ExistingEditAttachmentBody):
+                    candidates = original_by_asset[item.asset_id]
+                    if not candidates:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": "attachment_not_on_edit_target",
+                                "message": "只能保留当前编辑消息原有的附件。",
+                            },
+                        )
+                    attachment_inputs.append(ExistingAttachmentInput(candidates.pop(0)))
+                else:
+                    attachment_inputs.append(
+                        DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
+                    )
+
+        attachment_plan = prepare_attachment_input(
+            attachment_inputs,
+            model_id=preflight_session.current_model,
+            store=runtime.attachment_store,
+        )
+        if not text and not attachment_plan.validated_refs:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "empty_edit_resend",
+                    "message": "编辑后的文字和附件不能同时为空。",
+                },
+            )
 
         def _conversation_for_edit() -> Conversation:
             session = mgr.open(session_id)
@@ -284,7 +393,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             ) -> Iterator[ConversationEvent]:
                 return conv.edit_resend_latest(
                     text,
-                    expected_user_content=body.expected_user_content,
+                    attachments=attachment_plan.resolve(),
+                    expected_user_uuid=target.uuid,
+                    expected_user_content=target_content,
                     channel="text",
                     surface=run_request.surface,
                     run_id=run_request.run_id,
@@ -314,7 +425,9 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 agent_runtime=runtime.agent_runtime,
                 run_conversation=lambda conv, value: conv.edit_resend_latest(
                     value,
-                    expected_user_content=body.expected_user_content,
+                    attachments=attachment_plan.resolve(),
+                    expected_user_uuid=target.uuid,
+                    expected_user_content=target_content,
                     channel="text",
                     surface=DESKTOP_CHAT_SURFACE,
                 ),

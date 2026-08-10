@@ -7,7 +7,13 @@ export {
   runAgentStream,
   StreamAdmissionError,
 } from "./stream";
-export type { EditResendLatestInput, RunStreamInput, RunStreamOptions } from "./stream";
+export type {
+  EditResendAttachmentInput,
+  EditResendLatestInput,
+  EditResendStreamOptions,
+  RunStreamInput,
+  RunStreamOptions,
+} from "./stream";
 export {
   attachmentAssetUrl,
   isAttachmentAssetAvailable,

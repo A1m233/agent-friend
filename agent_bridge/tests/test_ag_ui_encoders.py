@@ -209,6 +209,34 @@ def test_encode_stream_maps_runtime_failure_from_terminal_error() -> None:
     assert b"RUN_FINISHED" not in body
 
 
+def test_encode_stream_maps_runtime_cancellation_to_finished_result() -> None:
+    request = RunRequest(event=UserEvent(session_id="session-a", user_input="hello"))
+    handle = RunHandle(request)
+    assert handle.mark_running()
+    handle.emit(TextDelta(text="partial"))
+    assert handle.finish_once(
+        RunOutcome.CANCELLED,
+        reason_code="explicit_request",
+    )
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, _ConversationStub()),
+            "hello",
+            thread_id="session-a",
+            run_id=request.run_id,
+            accept="text/event-stream",
+            run_handle=handle,
+        )
+    )
+
+    assert b"partial" in body
+    assert b"RUN_FINISHED" in body
+    assert b'"outcome":"cancelled"' in body
+    assert b'"reasonCode":"explicit_request"' in body
+    assert b"RUN_ERROR" not in body
+
+
 def test_closing_run_handle_stream_cancels_abandoned_run() -> None:
     from agent.runtime.cancellation import CancelReason
 

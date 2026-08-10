@@ -69,6 +69,21 @@ describe("applyAguiEvent", () => {
     expect(out.errorCode).toBe("rate_limit");
   });
 
+  it("cancelled RUN_FINISHED → 标记为 interrupted，不冒充错误", () => {
+    const out = applyAguiEvent(
+      base,
+      emit({
+        type: EventType.RUN_FINISHED,
+        threadId: "t",
+        runId: "r",
+        result: { outcome: "cancelled", reasonCode: "explicit_request" },
+      }),
+    );
+    expect(out.status).toBe("interrupted");
+    expect(out.error).toBeUndefined();
+    expect(out.errorCode).toBeUndefined();
+  });
+
   it("自定义 run status 投影重试状态，并在文本到达时清除", () => {
     const waiting = applyAguiEvent(
       base,

@@ -16,8 +16,6 @@
 from __future__ import annotations
 
 import logging
-import threading
-from typing import Any
 
 from ag_ui.core import RunAgentInput
 from ag_ui.encoder import EventEncoder
@@ -28,9 +26,9 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent import Conversation
-from llm_providers import model_capabilities
 
 from ...assembly import BridgeRuntime
+from ...attachment_inputs import DraftAttachmentInput, prepare_attachment_input
 from ...errors import map_exception
 from ...routes.runs import DESKTOP_TEXT_CONTROL_SCOPE
 from ...session_bridge import PersistentBootstrap, SessionBridge
@@ -64,80 +62,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             effective_model = runtime.persistent_session_manager.open(
                 decoded.thread_id
             ).current_model
-        capabilities = model_capabilities(effective_model)
-        if decoded.draft_attachments and not capabilities.attachments:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "attachment_model_unsupported",
-                    "message": "当前模型不支持附件，请切换到支持图片或文档的模型。",
-                },
-            )
-        if len(decoded.draft_attachments) > capabilities.max_attachments_per_turn:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "attachment_turn_limit_exceeded",
-                    "message": f"单轮最多添加 {capabilities.max_attachments_per_turn} 个附件。",
-                },
-            )
-        validated_attachments = []
-        attachment_store = None
-        if decoded.draft_attachments:
-            store = runtime.attachment_store
-            if store is None:
-                raise HTTPException(status_code=503, detail="attachment store unavailable")
-            for draft in decoded.draft_attachments:
-                try:
-                    ref = store.draft(draft.draft_id)
-                except Exception as exc:
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "error": getattr(exc, "code", "attachment_draft_expired"),
-                            "message": str(exc),
-                        },
-                    ) from exc
-                if (
-                    ref.kind != draft.kind
-                    or ref.media_type not in capabilities.accepted_media_types
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "error": "attachment_type_unsupported",
-                            "message": "当前模型不支持此附件类型。",
-                        },
-                    )
-                validated_attachments.append(ref)
-            if (
-                sum(item.size_bytes for item in validated_attachments)
-                > capabilities.max_total_attachment_bytes
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "attachment_total_limit_exceeded",
-                        "message": "本轮附件总大小超过限制。",
-                    },
-                )
-            attachment_store = store
-
-        consume_lock = threading.Lock()
-        consumed_attachments: list[Any] | None = None
-
-        def _consume_attachments() -> list[Any]:
-            nonlocal consumed_attachments
-            with consume_lock:
-                if consumed_attachments is None:
-                    consumed_attachments = (
-                        attachment_store.consume_drafts(
-                            [item.draft_id for item in decoded.draft_attachments]
-                        )
-                        if attachment_store is not None
-                        else []
-                    )
-                return consumed_attachments
+        attachment_plan = prepare_attachment_input(
+            [
+                DraftAttachmentInput(draft_id=item.draft_id, kind=item.kind)
+                for item in decoded.draft_attachments
+            ],
+            model_id=effective_model,
+            store=runtime.attachment_store,
+        )
 
         accept = request.headers.get("accept") or ""
         handle = None
@@ -173,7 +105,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 control_scope=DESKTOP_TEXT_CONTROL_SCOPE,
                 conversation_runner=lambda conv, run_request, token: conv.stream(
                     decoded.new_user_input,
-                    attachments=_consume_attachments(),
+                    attachments=attachment_plan.resolve(),
                     user_event_id=decoded.user_message_id,
                     channel=run_request.channel,
                     surface=run_request.surface,
@@ -198,7 +130,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_handle=handle,
                 run_conversation=lambda conv, text: conv.stream(
                     text,
-                    attachments=_consume_attachments(),
+                    attachments=attachment_plan.resolve(),
                     user_event_id=decoded.user_message_id,
                     channel="text",
                     surface=DESKTOP_CHAT_SURFACE,

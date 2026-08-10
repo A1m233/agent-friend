@@ -37,7 +37,6 @@ export function ConversationModelSelector({
   const modelSwitchTarget = useConversationStore((state) => state.modelSwitchTarget);
   const streaming = useConversationStore((state) => state.streaming);
   const historyLoading = useConversationStore((state) => state.historyLoading);
-  const editingMessageId = useConversationStore((state) => state.editingMessageId);
   const selectModel = useConversationStore((state) => state.selectModel);
   const [announcement, setAnnouncement] = useState("");
 
@@ -45,7 +44,7 @@ export function ConversationModelSelector({
     .flatMap((provider) => provider.models)
     .find((model) => model.id === selectedModel);
   const selectedLabel = selectedOption?.label ?? selectedModel;
-  const unavailable = disabled || !catalog || modelSwitching || streaming || historyLoading || Boolean(editingMessageId);
+  const unavailable = disabled || !catalog || modelSwitching || streaming || historyLoading;
   const reason = modelSwitching
     ? `正在切换到 ${modelSwitchTarget ?? "目标模型"}`
     : disabled
@@ -54,11 +53,9 @@ export function ConversationModelSelector({
         ? "请等待当前回复完成"
         : historyLoading
           ? "正在加载会话历史"
-          : editingMessageId
-            ? "请先完成或取消编辑"
-            : !catalog
-              ? "模型列表尚未就绪"
-              : undefined;
+          : !catalog
+            ? "模型列表尚未就绪"
+            : undefined;
 
   const handleSelect = async (modelId: string) => {
     if (modelId === selectedModel || modelSwitching) return;

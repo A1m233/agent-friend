@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 from ag_ui.core import (
@@ -60,7 +60,7 @@ class DecodedRequest:
 @dataclass(frozen=True)
 class DecodedDraftAttachment:
     draft_id: str
-    kind: str
+    kind: Literal["image", "document"]
 
 
 _DRAFT_CONTENT_PATH = re.compile(r"^/v1/attachments/drafts/([A-Za-z0-9_-]{16,80})/content$")

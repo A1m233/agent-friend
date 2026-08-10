@@ -1,5 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { buildRunAgentInput, isEventStreamContentType } from "./stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/services/runtime", () => ({
+  ensureLocalServiceReady: vi.fn(async () => undefined),
+}));
+
+import {
+  buildRunAgentInput,
+  editResendLatestStream,
+  isEventStreamContentType,
+} from "./stream";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("isEventStreamContentType", () => {
   it("accepts SSE content types with parameters", () => {
@@ -59,5 +72,49 @@ describe("buildRunAgentInput", () => {
     ]);
     expect(payload.forwardedProps).not.toHaveProperty("attachments");
     expect(payload.forwardedProps).toMatchObject({ model: "kimi/kimi-k2.6" });
+  });
+});
+
+describe("editResendLatestStream", () => {
+  it("sends the explicit replacement set and announces admission before events", async () => {
+    const order: string[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      order.push("fetch");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        runId: "run-1",
+        text: "changed",
+        expectedUserMessageId: "user-1",
+        expectedUserContent: "old",
+        attachments: [
+          { source: "existing", assetId: "asset-1" },
+          { source: "draft", draftId: "draft-1", kind: "document" },
+        ],
+      });
+      return new Response('data: {"type":"RUN_FINISHED"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for await (const _event of editResendLatestStream(
+      {
+        sessionId: "session-1",
+        runId: "run-1",
+        text: "changed",
+        expectedUserMessageId: "user-1",
+        expectedUserContent: "old",
+        attachments: [
+          { source: "existing", assetId: "asset-1" },
+          { source: "draft", draftId: "draft-1", kind: "document" },
+        ],
+      },
+      { onAdmitted: () => order.push("admitted") },
+    )) {
+      order.push("event");
+    }
+
+    expect(order).toEqual(["fetch", "admitted", "event"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

@@ -19,7 +19,11 @@ import {
   sessionsApi,
   StreamAdmissionError,
 } from "@/services";
-import type { AttachmentDraft, FriendlyError } from "@/services";
+import type {
+  AttachmentDraft,
+  EditResendAttachmentInput,
+  FriendlyError,
+} from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import type { SessionDetail } from "@/types/meta";
 import type { PushEvent } from "@/types/push";
@@ -28,7 +32,12 @@ import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
 import { useSessionsStore } from "./sessions";
-import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
+import {
+  editDraftKey,
+  HOME_DRAFT_KEY,
+  type DraftAttachmentState,
+  useDraftStore,
+} from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 
 /** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
@@ -40,6 +49,7 @@ interface RunTransport {
 }
 
 const activeTransports = new Map<string, RunTransport>();
+const pendingEditAdmissionBySession = new Map<string, AbortController>();
 const HOME_VIEW_KEY = "__agent_friend_home__";
 const MAX_IDLE_SESSION_VIEWS = 20;
 const MAX_RUN_SNAPSHOTS = 512;
@@ -61,12 +71,21 @@ interface OpenSessionOptions {
   searchTarget?: SearchNavigationTarget;
 }
 
+export interface EditingMessageDescriptor {
+  sessionId: string;
+  messageId: string;
+  draftKey: string;
+  originalText: string;
+  originalAttachments: ChatAttachment[];
+  phase: "editing" | "submitting";
+}
+
 interface ConversationState {
   currentSessionId: string | null;
   currentModel: string | null;
   modelSwitching: boolean;
   modelSwitchTarget: string | null;
-  editingMessageId: string | null;
+  editingMessage: EditingMessageDescriptor | null;
   messages: ChatMessage[];
   streaming: boolean;
   historyLoading: boolean;
@@ -96,11 +115,16 @@ interface ConversationState {
   markSessionViewed: (sessionId: string) => void;
   pruneCaches: () => void;
   selectModel: (modelId: string) => Promise<ModelSelectionOutcome>;
-  setEditingMessage: (messageId: string | null) => void;
+  beginEditingMessage: (messageId: string) => boolean;
+  cancelEditing: () => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
   send: (text: string, attachments?: AttachmentDraft[]) => SendStartResult;
   /** 编辑并重发最后一条用户消息。 */
-  editResendLatest: (messageId: string, text: string) => Promise<void>;
+  editResendLatest: (
+    text: string,
+    attachments: EditResendAttachmentInput[],
+    optimisticAttachments: ChatAttachment[],
+  ) => Promise<SendOutcome>;
   /** 不重跑工具，复用失败轮中已经完成的工具结果继续生成。 */
   continueToolResult: (messageId: string) => Promise<void>;
   /** 请求打断当前 run；终态仍由 Runtime snapshot 确认。 */
@@ -254,7 +278,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   currentModel: null,
   modelSwitching: false,
   modelSwitchTarget: null,
-  editingMessageId: null,
+  editingMessage: null,
   messages: [],
   streaming: false,
   historyLoading: false,
@@ -270,6 +294,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   searchTarget: null,
 
   newSession() {
+    if (get().editingMessage?.phase === "submitting") return;
+    get().cancelEditing();
     openSessionToken += 1;
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
@@ -283,7 +309,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentSessionId: null,
         modelSwitching: false,
         modelSwitchTarget: null,
-        editingMessageId: null,
+        editingMessage: null,
         detachedSessionId: null,
         searchTarget: null,
         sessionViews: {
@@ -297,6 +323,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   async openSession(sessionId, options) {
+    if (get().editingMessage?.phase === "submitting") return false;
+    get().cancelEditing();
     const failureMode = options?.failureMode ?? "message";
     const remember = options?.remember ?? true;
     const detached = options?.detached ?? false;
@@ -319,7 +347,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       historyLoading: cached?.streaming ? false : true,
       modelSwitching: false,
       modelSwitchTarget: null,
-      editingMessageId: null,
+      editingMessage: null,
       detachedSessionId: detached ? sessionId : null,
       searchTarget: options?.searchTarget ?? null,
       sessionViews: {
@@ -364,7 +392,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             currentSessionId: null,
             modelSwitching: false,
             modelSwitchTarget: null,
-            editingMessageId: null,
+            editingMessage: null,
             detachedSessionId: null,
             searchTarget: null,
             historyLoadSeq: s.historyLoadSeq + 1,
@@ -383,7 +411,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             searchTarget: null,
             modelSwitching: false,
             modelSwitchTarget: null,
-            editingMessageId: null,
+            editingMessage: null,
             historyLoadSeq: s.historyLoadSeq + 1,
           };
         });
@@ -676,7 +704,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const current = get();
     const effectiveModel = current.currentModel ?? resolveDefaultConversationModel();
     if (modelId === effectiveModel) return { status: "applied", model: effectiveModel };
-    if (current.streaming || current.historyLoading || current.editingMessageId) {
+    if (
+      current.streaming
+      || current.historyLoading
+      || current.editingMessage?.phase === "submitting"
+    ) {
       return {
         status: "failed",
         error: { friendly: "请先结束当前操作，再切换模型。", code: "session_busy" },
@@ -718,8 +750,50 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  setEditingMessage(messageId) {
-    set({ editingMessageId: messageId });
+  beginEditingMessage(messageId) {
+    const current = get();
+    if (
+      current.streaming
+      || current.historyLoading
+      || !current.currentSessionId
+      || current.editingMessage?.phase === "submitting"
+    ) return false;
+    const target = [...current.messages].reverse().find((message) => message.role === "user");
+    if (!target || target.id !== messageId) return false;
+    if (current.editingMessage?.messageId === messageId) return true;
+
+    const key = editDraftKey(current.currentSessionId, messageId);
+    const initialAttachments: DraftAttachmentState[] = (target.attachments ?? []).map(
+      (attachment, index) => ({
+        status: "ready",
+        source: "existing",
+        localId: `existing:${messageId}:${index}`,
+        attachment,
+      }),
+    );
+    useDraftStore.getState().initialize(key, messageText(target), initialAttachments);
+    set({
+      editingMessage: {
+        sessionId: current.currentSessionId,
+        messageId,
+        draftKey: key,
+        originalText: messageText(target),
+        originalAttachments: [...(target.attachments ?? [])],
+        phase: "editing",
+      },
+    });
+    return true;
+  },
+
+  cancelEditing() {
+    const editing = get().editingMessage;
+    if (!editing) return;
+    pendingEditAdmissionBySession.get(editing.sessionId)?.abort();
+    pendingEditAdmissionBySession.delete(editing.sessionId);
+    useDraftStore.getState().discard(editing.draftKey);
+    set((state) => state.editingMessage?.messageId === editing.messageId
+      ? { editingMessage: null }
+      : state);
   },
 
   send(text, attachments = []) {
@@ -728,7 +802,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (get().streaming) return { accepted: false, reason: "busy" };
     if (get().historyLoading) return { accepted: false, reason: "history-loading" };
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
-    if (get().editingMessageId) return { accepted: false, reason: "editing" };
+    if (get().editingMessage) return { accepted: false, reason: "editing" };
 
     const sessionId = get().currentSessionId ?? newId();
     const runId = newId();
@@ -826,10 +900,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         }
         streamUpdates.flush();
         patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
-        outcome = get().sessionViews[sessionId]?.messages
-          .find((message) => message.id === assistantId)?.status === "error"
+        const assistantStatus = get().sessionViews[sessionId]?.messages
+          .find((message) => message.id === assistantId)?.status;
+        outcome = assistantStatus === "error"
           ? "failed"
-          : "completed";
+          : assistantStatus === "interrupted"
+            ? "interrupted"
+            : "completed";
       } catch (error) {
         streamUpdates.flush();
         admissionFailed = error instanceof StreamAdmissionError;
@@ -890,28 +967,33 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return { accepted: true, sessionId, runId, completion };
   },
 
-  async editResendLatest(messageId, text) {
+  async editResendLatest(text, attachments, optimisticAttachments) {
     const trimmed = text.trim();
     const state = get();
+    const editing = state.editingMessage;
     if (
-      !trimmed ||
+      (!trimmed && attachments.length === 0) ||
       state.streaming ||
       state.historyLoading ||
       state.modelSwitching ||
-      !state.currentSessionId
-    ) return;
+      !state.currentSessionId ||
+      !editing ||
+      editing.phase !== "editing" ||
+      editing.sessionId !== state.currentSessionId
+    ) return "rejected";
 
     const latestUserIndex = [...state.messages]
       .reverse()
       .findIndex((m) => m.role === "user");
-    if (latestUserIndex === -1) return;
+    if (latestUserIndex === -1) return "rejected";
     const targetIndex = state.messages.length - 1 - latestUserIndex;
     const target = state.messages[targetIndex];
-    if (!target || target.id !== messageId || target.role !== "user") return;
+    if (!target || target.id !== editing.messageId || target.role !== "user") {
+      return "rejected";
+    }
 
     const sessionId = state.currentSessionId;
     const runId = newId();
-    const expectedUserContent = messageText(target);
     const assistantId = newId();
     const sentAt = new Date().toISOString();
     const placeholder: ChatMessage = {
@@ -922,31 +1004,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       status: "streaming",
     };
 
-    const messages = [
-        ...state.messages.slice(0, targetIndex),
-        userMessage(trimmed, sentAt, target.attachments ?? []),
-        placeholder,
-      ];
-    set((current) => ({
-      editingMessageId: null,
-      streaming: true,
-      messages,
-      sessionViews: {
-        ...current.sessionViews,
-        [sessionId]: {
-          ...(current.sessionViews[sessionId] ?? emptyView()),
-          messages,
-          streaming: true,
-        },
-      },
-      activeRunIdBySession: {
-        ...current.activeRunIdBySession,
-        [sessionId]: runId,
-      },
-    }));
+    const admittedMessages = [
+      ...state.messages.slice(0, targetIndex),
+      userMessage(trimmed, sentAt, optimisticAttachments),
+      placeholder,
+    ];
+    set((current) => current.editingMessage?.messageId === editing.messageId
+      ? { editingMessage: { ...editing, phase: "submitting" } }
+      : current);
 
     const controller = new AbortController();
     activeTransports.set(runId, { sessionId, controller });
+    pendingEditAdmissionBySession.set(sessionId, controller);
 
     const patch = (fn: (m: ChatMessage) => ChatMessage) =>
       set((s) => {
@@ -967,11 +1036,56 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       patch((m) => applyStreamEvents(m, events));
     });
 
+    let admitted = false;
+    let outcome: SendOutcome = "completed";
     let failedError: string | null = null;
     try {
       for await (const evt of editResendLatestStream(
-        { sessionId, runId, text: trimmed, expectedUserContent },
-        { signal: controller.signal },
+        {
+          sessionId,
+          runId,
+          text: trimmed,
+          expectedUserMessageId: editing.messageId,
+          expectedUserContent: editing.originalText,
+          attachments,
+        },
+        {
+          signal: controller.signal,
+          onAdmitted: () => {
+            if (admitted || controller.signal.aborted) return;
+            admitted = true;
+            pendingEditAdmissionBySession.delete(sessionId);
+            useDraftStore.getState().beginSubmission(
+              editing.draftKey,
+              sessionId,
+              runId,
+            );
+            set((current) => {
+              const view = {
+                ...(current.sessionViews[sessionId] ?? emptyView()),
+                messages: admittedMessages,
+                streaming: true,
+              };
+              return {
+                ...(current.currentSessionId === sessionId
+                  ? { messages: admittedMessages, streaming: true }
+                  : {}),
+                editingMessage:
+                  current.editingMessage?.messageId === editing.messageId
+                    ? null
+                    : current.editingMessage,
+                sessionViews: {
+                  ...current.sessionViews,
+                  [sessionId]: view,
+                },
+                activeRunIdBySession: {
+                  ...current.activeRunIdBySession,
+                  [sessionId]: runId,
+                },
+              };
+            });
+          },
+        },
       )) {
         streamUpdates.enqueue(evt);
       }
@@ -981,75 +1095,95 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       );
       if (assistant?.status === "error") {
         failedError = assistant.error ?? FRIENDLY_FALLBACK;
+        outcome = "failed";
+      } else if (assistant?.status === "interrupted") {
+        outcome = "interrupted";
       } else {
         patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
       }
     } catch {
       streamUpdates.flush();
-      if (controller.signal.aborted) {
+      if (!admitted) {
+        outcome = "rejected";
+        set((current) => current.editingMessage?.messageId === editing.messageId
+          ? {
+              editingMessage: {
+                ...current.editingMessage,
+                phase: "editing",
+              },
+            }
+          : current);
+      } else if (controller.signal.aborted) {
+        outcome = "interrupted";
         patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
       } else {
+        outcome = "failed";
         failedError = FRIENDLY_FALLBACK;
         patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
       }
     } finally {
       streamUpdates.dispose();
       activeTransports.delete(runId);
-      let runStillActive = controller.signal.aborted;
-      try {
-        const snapshot = await runsApi.get(runId);
-        get().applyRunSnapshot(snapshot);
-        runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
-      } catch {
-        // run_changed / reconnect calibration remains the fallback.
-      }
-      set((s) => {
-        const view = s.sessionViews[sessionId];
-        if (!view) return s;
-        const next = { ...view, streaming: runStillActive };
-        const activeRunIdBySession = { ...s.activeRunIdBySession };
-        const stopRequestsByRun = { ...s.stopRequestsByRun };
-        if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
-          delete activeRunIdBySession[sessionId];
+      pendingEditAdmissionBySession.delete(sessionId);
+      if (admitted) {
+        useDraftStore.getState().finishSubmission(runId, false);
+        let runStillActive = controller.signal.aborted;
+        try {
+          const snapshot = await runsApi.get(runId);
+          get().applyRunSnapshot(snapshot);
+          runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
+        } catch {
+          // run_changed / reconnect calibration remains the fallback.
         }
-        if (!runStillActive) delete stopRequestsByRun[runId];
-        return {
-          sessionViews: { ...s.sessionViews, [sessionId]: next },
-          activeRunIdBySession,
-          stopRequestsByRun,
-          streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
-        };
-      });
-      try {
-        const detail = await sessionsApi.get(sessionId);
-        const projected = projectSessionDetail(detail);
         set((s) => {
-          const view = s.sessionViews[sessionId] ?? emptyView();
-          const nextMessages = failedError
-            ? hasErrorMessage(projected, failedError)
-              ? projected
-              : [...projected, assistantErrorMessage(failedError)]
-            : projected;
-          const nextView = {
-            ...view,
-            messages: nextMessages,
-            currentModel: detail.model,
-            streaming: false,
-            revision: detail.revision ?? view.revision,
-            historyLoadSeq: view.historyLoadSeq + 1,
-          };
+          const view = s.sessionViews[sessionId];
+          if (!view) return s;
+          const next = { ...view, streaming: runStillActive };
+          const activeRunIdBySession = { ...s.activeRunIdBySession };
+          const stopRequestsByRun = { ...s.stopRequestsByRun };
+          if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
+            delete activeRunIdBySession[sessionId];
+          }
+          if (!runStillActive) delete stopRequestsByRun[runId];
           return {
-            sessionViews: { ...s.sessionViews, [sessionId]: nextView },
-            ...(s.currentSessionId === sessionId
-              ? { ...viewFields(nextView), currentModel: detail.model }
-              : {}),
+            sessionViews: { ...s.sessionViews, [sessionId]: next },
+            activeRunIdBySession,
+            stopRequestsByRun,
+            streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
           };
         });
-      } catch {
-        // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
+        try {
+          const detail = await sessionsApi.get(sessionId);
+          const projected = projectSessionDetail(detail);
+          set((s) => {
+            const view = s.sessionViews[sessionId] ?? emptyView();
+            const nextMessages = failedError
+              ? hasErrorMessage(projected, failedError)
+                ? projected
+                : [...projected, assistantErrorMessage(failedError)]
+              : projected;
+            const nextView = {
+              ...view,
+              messages: nextMessages,
+              currentModel: detail.model,
+              streaming: false,
+              revision: detail.revision ?? view.revision,
+              historyLoadSeq: view.historyLoadSeq + 1,
+            };
+            return {
+              sessionViews: { ...s.sessionViews, [sessionId]: nextView },
+              ...(s.currentSessionId === sessionId
+                ? { ...viewFields(nextView), currentModel: detail.model }
+                : {}),
+            };
+          });
+        } catch {
+          // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
+        }
+        void useSessionsStore.getState().refresh();
       }
-      void useSessionsStore.getState().refresh();
     }
+    return outcome;
   },
 
   async continueToolResult(messageId) {

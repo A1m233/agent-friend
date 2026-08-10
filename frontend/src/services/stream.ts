@@ -33,13 +33,25 @@ export interface EditResendLatestInput {
   runId: string;
   /** 替换后的 user 输入。 */
   text: string;
+  /** 前端当前看到的旧最后一条 user event UUID。 */
+  expectedUserMessageId?: string;
   /** 前端当前看到的旧最后一条 user 内容，用于后端并发保护。 */
   expectedUserContent?: string;
+  /** 编辑稿最终完整附件集；空数组表示删除全部附件。 */
+  attachments: EditResendAttachmentInput[];
 }
+
+export type EditResendAttachmentInput =
+  | { source: "existing"; assetId: string }
+  | { source: "draft"; draftId: string; kind: "image" | "document" };
 
 export interface RunStreamOptions {
   baseUrl?: string;
   signal?: AbortSignal;
+}
+
+export interface EditResendStreamOptions extends RunStreamOptions {
+  onAdmitted?: () => void;
 }
 
 /** HTTP admission 在建立 SSE 之前被明确拒绝；与已接纳后的 transport 断线分开。 */
@@ -147,7 +159,7 @@ export async function* runAgentStreamAtPath(
 /** 编辑并重发最后一条 user 输入，返回与普通 send 相同的 AG-UI 事件流。 */
 export async function* editResendLatestStream(
   input: EditResendLatestInput,
-  opts: RunStreamOptions = {},
+  opts: EditResendStreamOptions = {},
 ): AsyncGenerator<BaseEvent> {
   await ensureLocalServiceReady("bridge");
   const base = opts.baseUrl ?? BRIDGE_BASE_URL;
@@ -162,13 +174,17 @@ export async function* editResendLatestStream(
       body: JSON.stringify({
         runId: input.runId,
         text: input.text,
+        expectedUserMessageId: input.expectedUserMessageId,
         expectedUserContent: input.expectedUserContent,
+        attachments: input.attachments,
       }),
       signal: opts.signal,
     },
   );
 
-  yield* readEventStream(requireEventStreamResponse(res, "edit-resend latest"));
+  const body = requireEventStreamResponse(res, "edit-resend latest");
+  opts.onAdmitted?.();
+  yield* readEventStream(body);
 }
 
 /** 不重跑工具，直接用会话中最后一次成功工具结果继续整理。 */
