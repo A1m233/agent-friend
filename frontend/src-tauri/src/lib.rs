@@ -27,6 +27,8 @@ mod runtime_observability;
 mod runtime_services;
 mod settings;
 mod shell_diagnostics;
+#[cfg(target_os = "windows")]
+mod startup_instance_gate;
 mod ui_state;
 mod webview_diagnostics;
 mod window_placement;
@@ -889,6 +891,16 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The Tauri single-instance plugin creates its mutex during Builder::build. Keep concurrent
+    // Windows launches serialized until that mutex and its callback window are ready; otherwise
+    // two slow cold starts can both pass the plugin boundary and start competing runtimes.
+    #[cfg(target_os = "windows")]
+    let (mut startup_instance_gate, startup_instance_gate_acquire_error) =
+        match startup_instance_gate::StartupInstanceGate::acquire() {
+            Ok(gate) => (Some(gate), None),
+            Err(error) => (None, Some(error)),
+        };
+
     let context = tauri::generate_context!();
     let runtime_observer = runtime_observability::RuntimeObserver::start(paths::log_dir());
     runtime_observability::install_panic_hook(runtime_observer.clone());
@@ -1181,6 +1193,14 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // Plugin setup has completed and Tauri has created the configured windows before this
+            // callback runs. Releasing here lets a queued launch reach the existing plugin callback
+            // without exposing the pre-plugin startup race.
+            #[cfg(target_os = "windows")]
+            let startup_instance_gate_release_error = startup_instance_gate
+                .take()
+                .and_then(|gate| gate.release().err());
+
             let log_dir = paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
             app.handle().plugin(
@@ -1232,6 +1252,21 @@ pub fn run() {
                 "desktop lifecycle: logger attached; process_session_id={}",
                 setup_runtime_observer.process_session_id()
             );
+            #[cfg(target_os = "windows")]
+            match (
+                startup_instance_gate_acquire_error.as_deref(),
+                startup_instance_gate_release_error.as_deref(),
+            ) {
+                (None, None) => log::info!("startup instance gate released"),
+                (Some(error), _) => {
+                    log::warn!(
+                        "startup instance gate unavailable; relying on Tauri plugin: {error}"
+                    )
+                }
+                (_, Some(error)) => {
+                    log::warn!("startup instance gate release failed: {error}")
+                }
+            }
 
             if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
                 log::warn!("windows shell diagnostics observer started partially: {error}");
