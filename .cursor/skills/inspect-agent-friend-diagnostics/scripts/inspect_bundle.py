@@ -28,6 +28,7 @@ CAPABILITY_HANDLERS = {
     "windows-shell-history-v1": "windowsShell",
     "webview2-process-health-v1": "webView2",
     "webview2-render-evidence-v1": "webView2RenderEvidence",
+    "webview2-render-evidence-v2": "webView2RenderEvidence",
     "install-integrity-v1": "installIntegrity",
 }
 
@@ -280,6 +281,11 @@ def summarize_webview2_render_evidence(
         }
 
     errors = capture.get("errors") if capture and isinstance(capture.get("errors"), list) else []
+    recovery_assessment = (
+        capture.get("recoveryAssessment")
+        if capture and isinstance(capture.get("recoveryAssessment"), dict)
+        else None
+    )
     graphics = (
         capture.get("graphics") if capture and isinstance(capture.get("graphics"), dict) else {}
     )
@@ -287,12 +293,16 @@ def summarize_webview2_render_evidence(
         "schemaVersion": value.get("schemaVersion"),
         "supported": value.get("supported"),
         "includeRequested": value.get("includeRequested"),
+        "automaticIncidentIncluded": value.get("automaticIncidentIncluded"),
         "armed": status.get("armed"),
         "captureInProgress": status.get("captureInProgress"),
         "pending": pending,
         "captureId": capture.get("captureId") if capture else None,
         "capturedAt": capture.get("captureCompletedAt") if capture else None,
         "trigger": capture.get("trigger") if capture else None,
+        "automaticIncident": capture.get("automaticIncident") if capture else None,
+        "recoveryGeneration": capture.get("recoveryGeneration") if capture else None,
+        "recoveryAssessment": recovery_assessment,
         "hiddenDurationMs": capture.get("hiddenDurationMs") if capture else None,
         "startDeltaMs": capture.get("startDeltaMs") if capture else None,
         "webView2Image": image_summary(capture.get("webview2")) if capture else None,
@@ -533,6 +543,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 warnings,
             )
             if "webview2-render-evidence-v1" in capabilities
+            or "webview2-render-evidence-v2" in capabilities
             or "diagnostics/webview2-render-evidence.json" in names
             else None
         )

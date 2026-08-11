@@ -156,6 +156,7 @@ def _build_bundle(
         "renderEvidence": {
             "supported": True,
             "includeRequested": True,
+            "automaticIncidentIncluded": False,
             "pendingCapture": {
                 "captureId": "capture-1",
                 "capturedAt": "2026-08-01T00:00:02+00:00",
@@ -287,6 +288,7 @@ def _build_bundle(
             "schemaVersion": 1,
             "supported": True,
             "includeRequested": True,
+            "automaticIncidentIncluded": False,
             "status": {
                 "supported": True,
                 "armed": False,
@@ -353,6 +355,9 @@ def _build_bundle(
                     },
                 },
                 "errors": [],
+                "automaticIncident": False,
+                "recoveryGeneration": None,
+                "recoveryAssessment": None,
             },
             "includedArtifacts": [
                 "render-evidence/webview2-pet.png",
@@ -405,7 +410,7 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     capability_ids = {
         capability["id"] for capability in capabilities if isinstance(capability, dict)
     }
-    assert set(INSPECTOR.CAPABILITY_HANDLERS) == capability_ids
+    assert capability_ids.issubset(INSPECTOR.CAPABILITY_HANDLERS)
 
     bundle = tmp_path / "agent-friend-diagnostics-contract-fixture.zip"
     _build_bundle(bundle, contract)
@@ -510,7 +515,12 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                 manifest = json.loads(data)
                 manifest["schemaRevision"] = 1
                 manifest["capabilities"].remove("webview2-process-health-v1")
-                manifest["capabilities"].remove("webview2-render-evidence-v1")
+                for capability in (
+                    "webview2-render-evidence-v1",
+                    "webview2-render-evidence-v2",
+                ):
+                    if capability in manifest["capabilities"]:
+                        manifest["capabilities"].remove(capability)
                 manifest["capabilities"].remove("install-integrity-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
@@ -549,7 +559,12 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
             if info.filename == "manifest.json":
                 manifest = json.loads(data)
                 manifest["schemaRevision"] = 2
-                manifest["capabilities"].remove("webview2-render-evidence-v1")
+                for capability in (
+                    "webview2-render-evidence-v1",
+                    "webview2-render-evidence-v2",
+                ):
+                    if capability in manifest["capabilities"]:
+                        manifest["capabilities"].remove(capability)
                 manifest["capabilities"].remove("install-integrity-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()

@@ -6,6 +6,7 @@ pub const RECOVERY_POLL_INTERVAL_MS: u64 = 250;
 pub const RECOVERY_MIN_HIDDEN_MS: u64 = 6_500;
 pub const RECOVERY_STABLE_MS: u64 = 1_500;
 pub const RECOVERY_TIMEOUT_MS: u64 = 12_000;
+pub const RECOVERY_SAFETY_GATE_ENV: &str = "AGENT_FRIEND_DISPLAY_RECOVERY_SAFETY_GATE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionDisplayState {
@@ -191,6 +192,69 @@ fn apply_visibility_command(
     }
 }
 
+fn suppress_recovery(app: &tauri::AppHandle, generation: u64, stage: &'static str, detail: &str) {
+    let suppressed = app
+        .try_state::<crate::PetOverlayState>()
+        .and_then(|state| {
+            state
+                .inner
+                .lock()
+                .ok()
+                .map(|mut guard| guard.display_recovery.timeout(generation))
+        })
+        .unwrap_or(false);
+    if let Some(pet) = app.get_webview_window("pet") {
+        if let Err(error) = pet.hide() {
+            log::error!(
+                "pet display recovery: safety hide failed generation={} stage={} error={}",
+                generation,
+                stage,
+                error
+            );
+        }
+    }
+    if suppressed {
+        log::error!(
+            "pet display recovery suppressed: generation={} stage={} detail={}; pet remains safely hidden",
+            generation,
+            stage,
+            detail
+        );
+    }
+}
+
+fn safety_gate_enabled_from_value(value: Option<&str>) -> bool {
+    !value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "disabled"
+        )
+    })
+}
+
+fn safety_gate_enabled() -> bool {
+    safety_gate_enabled_from_value(std::env::var(RECOVERY_SAFETY_GATE_ENV).ok().as_deref())
+}
+
+fn complete_and_restore(
+    app: &tauri::AppHandle,
+    generation: u64,
+    reason: &'static str,
+) -> Result<bool, String> {
+    let command = app.try_state::<crate::PetOverlayState>().and_then(|state| {
+        state
+            .inner
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.display_recovery.complete(generation))
+    });
+    let Some(command) = command else {
+        return Ok(false);
+    };
+    apply_visibility_command(app, command, reason)?;
+    Ok(true)
+}
+
 pub(crate) fn set_desired_visibility(
     app: &tauri::AppHandle,
     visible: bool,
@@ -249,11 +313,12 @@ fn schedule(app: &tauri::AppHandle, generation: u64) {
     }
 
     log::info!(
-        "pet display recovery started: generation={} min_hidden_ms={} stable_ms={} timeout_ms={}",
+        "pet display recovery started: generation={} min_hidden_ms={} stable_ms={} timeout_ms={} safety_gate_enabled={}",
         generation,
         RECOVERY_MIN_HIDDEN_MS,
         RECOVERY_STABLE_MS,
-        RECOVERY_TIMEOUT_MS
+        RECOVERY_TIMEOUT_MS,
+        safety_gate_enabled()
     );
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -272,29 +337,129 @@ fn schedule(app: &tauri::AppHandle, generation: u64) {
                 .and_then(|window| crate::read_pet_display_topology(&window))
                 .is_some_and(|snapshot| stability.observe(snapshot, elapsed_ms));
             if stable {
-                let command = handle
-                    .try_state::<crate::PetOverlayState>()
-                    .and_then(|state| {
-                        state
-                            .inner
-                            .lock()
-                            .ok()
-                            .and_then(|mut guard| guard.display_recovery.complete(generation))
-                    });
-                if let Some(command) = command {
-                    if let Err(error) =
-                        apply_visibility_command(&handle, command, "display-resume-complete")
-                    {
+                let gate_enabled = safety_gate_enabled();
+                let Some(manager) = handle
+                    .try_state::<std::sync::Arc<crate::webview_diagnostics::WebViewDiagnosticsManager>>()
+                    .map(|state| state.inner().clone())
+                else {
+                    if gate_enabled {
+                        suppress_recovery(
+                            &handle,
+                            generation,
+                            "diagnostics-unavailable",
+                            "WebView diagnostics manager is unavailable",
+                        );
+                    } else if let Err(error) = complete_and_restore(
+                        &handle,
+                        generation,
+                        "display-resume-gate-disabled",
+                    ) {
+                        log::warn!("pet display recovery legacy restore failed: {error}");
+                    }
+                    return;
+                };
+                let baseline = match manager
+                    .capture_display_recovery_baseline(&handle, generation, elapsed_ms)
+                    .await
+                {
+                    Ok(record) => record,
+                    Err(error) => {
+                        if gate_enabled {
+                            suppress_recovery(&handle, generation, "baseline-capture", &error);
+                        } else if let Err(restore_error) = complete_and_restore(
+                            &handle,
+                            generation,
+                            "display-resume-gate-disabled",
+                        ) {
+                            log::warn!(
+                                "pet display recovery legacy restore failed after baseline error: {restore_error}"
+                            );
+                        }
+                        return;
+                    }
+                };
+                if !is_current(&handle, generation) {
+                    log::info!(
+                        "pet display recovery cancelled after baseline: generation={}",
+                        generation
+                    );
+                    return;
+                }
+                if let Err(reasons) = manager.validate_display_recovery_baseline(&baseline) {
+                    if gate_enabled {
+                        suppress_recovery(
+                            &handle,
+                            generation,
+                            "baseline-validation",
+                            &reasons.join("; "),
+                        );
+                        return;
+                    }
+                    log::warn!(
+                        "pet display recovery ignored unsafe baseline because safety gate is disabled: generation={} reasons={}",
+                        generation,
+                        reasons.join("; ")
+                    );
+                }
+                if let Err(error) = apply_visibility_command(
+                    &handle,
+                    VisibilityCommand::Show,
+                    "display-resume-probe",
+                ) {
+                    suppress_recovery(&handle, generation, "probe-show", &error);
+                    return;
+                }
+                let presented_safe = manager
+                    .capture_display_recovery_presented(&handle, &baseline, generation, elapsed_ms)
+                    .await;
+                match presented_safe {
+                    Ok(true) if is_current(&handle, generation) => {
+                        if complete_and_restore(&handle, generation, "display-resume-complete")
+                            .unwrap_or(false)
+                        {
+                            log::info!(
+                                "pet display recovery completed with render evidence: generation={} elapsed_ms={}",
+                                generation,
+                                elapsed_ms
+                            );
+                        }
+                    }
+                    Ok(true) => {
+                        log::info!(
+                            "pet display recovery cancelled after presented probe: generation={}",
+                            generation
+                        );
+                    }
+                    Ok(false) if gate_enabled => suppress_recovery(
+                        &handle,
+                        generation,
+                        "presented-validation",
+                        "presented desktop gained a near-black full-screen layer",
+                    ),
+                    Ok(false) => {
                         log::warn!(
-                            "pet display recovery: restore failed generation={} error={}",
+                            "pet display recovery ignored unsafe presented probe because safety gate is disabled: generation={}",
+                            generation
+                        );
+                        let _ = complete_and_restore(
+                            &handle,
+                            generation,
+                            "display-resume-gate-disabled",
+                        );
+                    }
+                    Err(error) if gate_enabled => {
+                        suppress_recovery(&handle, generation, "presented-capture", &error)
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "pet display recovery ignored presented probe error because safety gate is disabled: generation={} error={}",
                             generation,
                             error
                         );
-                    } else {
-                        log::info!(
-                            "pet display recovery completed: generation={} elapsed_ms={}",
+                        let _ = complete_and_restore(
+                            &handle,
                             generation,
-                            elapsed_ms
+                            "display-resume-gate-disabled",
                         );
                     }
                 }
@@ -460,5 +625,13 @@ mod tests {
             RECOVERY_MIN_HIDDEN_MS + RECOVERY_STABLE_MS - 1
         ));
         assert!(tracker.observe(topology(1250), RECOVERY_MIN_HIDDEN_MS + RECOVERY_STABLE_MS));
+    }
+
+    #[test]
+    fn safety_gate_defaults_on_and_has_an_explicit_emergency_rollback_value() {
+        assert!(safety_gate_enabled_from_value(None));
+        assert!(safety_gate_enabled_from_value(Some("true")));
+        assert!(!safety_gate_enabled_from_value(Some("0")));
+        assert!(!safety_gate_enabled_from_value(Some("off")));
     }
 }

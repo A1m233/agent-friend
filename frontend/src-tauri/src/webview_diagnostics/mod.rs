@@ -27,6 +27,7 @@ const RENDER_EVIDENCE_DESKTOP_FILE: &str = "windows-desktop.png";
 const RENDER_EVIDENCE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 const MIN_ARMED_HIDDEN_DURATION_MS: u64 = 500;
 const FAILURE_REPORT_LIMIT: usize = 16;
+const PRESENTED_RECOVERY_PROBE_TIMEOUT_MS: u64 = 750;
 
 fn unix_time_ms() -> u64 {
     SystemTime::now()
@@ -59,6 +60,28 @@ pub(crate) struct RenderImageEvidence {
     pixel_metrics: RenderPixelMetrics,
 }
 
+impl RenderImageEvidence {
+    fn transparent_ratio(&self) -> Option<f64> {
+        (self.pixel_metrics.total_pixels > 0).then_some(
+            self.pixel_metrics.transparent_pixel_count as f64
+                / self.pixel_metrics.total_pixels as f64,
+        )
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoveryRenderAssessment {
+    generation: u64,
+    baseline_capture_id: String,
+    verdict: String,
+    reasons: Vec<String>,
+    baseline_desktop_near_black_ratio: Option<f64>,
+    presented_desktop_near_black_ratio: Option<f64>,
+    near_black_ratio_delta: Option<f64>,
+    baseline_webview_transparent_ratio: Option<f64>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RenderEvidenceRecord {
@@ -75,6 +98,12 @@ pub(crate) struct RenderEvidenceRecord {
     webview2: Option<RenderImageEvidence>,
     desktop: Option<RenderImageEvidence>,
     errors: Vec<String>,
+    #[serde(default)]
+    automatic_incident: bool,
+    #[serde(default)]
+    recovery_generation: Option<u64>,
+    #[serde(default)]
+    recovery_assessment: Option<RecoveryRenderAssessment>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -87,6 +116,7 @@ pub(crate) struct RenderEvidencePendingSummary {
     webview2_available: bool,
     desktop_available: bool,
     error_count: usize,
+    automatic_incident: bool,
 }
 
 impl From<&RenderEvidenceRecord> for RenderEvidencePendingSummary {
@@ -101,6 +131,7 @@ impl From<&RenderEvidenceRecord> for RenderEvidencePendingSummary {
             webview2_available: record.webview2.is_some(),
             desktop_available: record.desktop.is_some(),
             error_count: record.errors.len(),
+            automatic_incident: record.automatic_incident,
         }
     }
 }
@@ -655,11 +686,15 @@ impl WebViewDiagnosticsManager {
                 None
             }
         };
-        if include_requested && record.is_none() && failures.is_empty() {
+        let automatic_incident = record
+            .as_ref()
+            .is_some_and(|record| record.automatic_incident);
+        let include_capture = include_requested || automatic_incident;
+        if include_capture && record.is_none() && failures.is_empty() {
             failures.push("no pending render evidence is available".into());
         }
 
-        if include_requested {
+        if include_capture {
             if let Some(record) = &record {
                 failures.extend(record.errors.iter().cloned());
                 let mut total_bytes = 0_u64;
@@ -701,13 +736,15 @@ impl WebViewDiagnosticsManager {
             "schemaVersion": RENDER_EVIDENCE_SCHEMA_VERSION,
             "supported": self.supported,
             "includeRequested": include_requested,
+            "automaticIncidentIncluded": automatic_incident,
             "status": status,
-            "capture": if include_requested { record.as_ref() } else { None },
+            "capture": if include_capture { record.as_ref() } else { None },
             "includedArtifacts": artifact_names,
         });
         let summary = json!({
             "supported": self.supported,
             "includeRequested": include_requested,
+            "automaticIncidentIncluded": automatic_incident,
             "pendingCapture": record.as_ref().map(RenderEvidencePendingSummary::from),
             "artifacts": artifact_names,
             "failureCount": failures.len(),
@@ -780,6 +817,8 @@ impl WebViewDiagnosticsManager {
             &self.render_evidence_dir,
             trigger,
             hidden_duration_ms,
+            false,
+            None,
         )
         .await;
 
@@ -816,6 +855,114 @@ impl WebViewDiagnosticsManager {
                 Err(error)
             }
         }
+    }
+
+    pub(crate) async fn capture_display_recovery_baseline(
+        &self,
+        app: &AppHandle,
+        generation: u64,
+        hidden_duration_ms: u64,
+    ) -> Result<RenderEvidenceRecord, String> {
+        self.begin_manual_render_capture()?;
+        #[cfg(target_os = "windows")]
+        let result = windows_capture::capture_and_store(
+            app,
+            &self.render_evidence_dir,
+            "display-resume-hidden-baseline",
+            Some(hidden_duration_ms),
+            true,
+            Some(generation),
+        )
+        .await;
+        #[cfg(not(target_os = "windows"))]
+        let result: Result<RenderEvidenceRecord, String> =
+            Err("display recovery evidence is only supported on Windows".into());
+        self.finish_render_capture();
+        if let Some(observer) = &self.runtime_observer {
+            match &result {
+                Ok(record) => observer.record(
+                    "webview2",
+                    "display-recovery-baseline-captured",
+                    json!({
+                        "generation": generation,
+                        "captureId": record.capture_id,
+                        "webView2Available": record.webview2.is_some(),
+                        "desktopAvailable": record.desktop.is_some(),
+                        "errorCount": record.errors.len(),
+                    }),
+                ),
+                Err(error) => observer.record(
+                    "webview2",
+                    "display-recovery-baseline-failed",
+                    json!({"generation": generation, "message": error}),
+                ),
+            }
+        }
+        result
+    }
+
+    pub(crate) fn validate_display_recovery_baseline(
+        &self,
+        record: &RenderEvidenceRecord,
+    ) -> Result<(), Vec<String>> {
+        #[cfg(target_os = "windows")]
+        return windows_capture::validate_hidden_recovery_baseline(record);
+        #[cfg(not(target_os = "windows"))]
+        Err(vec![
+            "display recovery evidence is only supported on Windows".into(),
+        ])
+    }
+
+    pub(crate) async fn capture_display_recovery_presented(
+        &self,
+        app: &AppHandle,
+        baseline: &RenderEvidenceRecord,
+        generation: u64,
+        hidden_duration_ms: u64,
+    ) -> Result<bool, String> {
+        self.begin_manual_render_capture()?;
+        #[cfg(target_os = "windows")]
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(PRESENTED_RECOVERY_PROBE_TIMEOUT_MS),
+            windows_capture::capture_presented_recovery_and_store(
+                app,
+                &self.render_evidence_dir,
+                baseline,
+                generation,
+                Some(hidden_duration_ms),
+            ),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "presented desktop recovery probe timed out after {PRESENTED_RECOVERY_PROBE_TIMEOUT_MS} ms"
+            )
+        })
+        .and_then(|result| result);
+        #[cfg(not(target_os = "windows"))]
+        let result: Result<(RenderEvidenceRecord, bool), String> =
+            Err("display recovery evidence is only supported on Windows".into());
+        self.finish_render_capture();
+        if let Some(observer) = &self.runtime_observer {
+            match &result {
+                Ok((record, safe)) => observer.record(
+                    "webview2",
+                    "display-recovery-presented-probed",
+                    json!({
+                        "generation": generation,
+                        "captureId": record.capture_id,
+                        "safe": safe,
+                        "assessment": record.recovery_assessment.as_ref(),
+                    }),
+                ),
+                Err(error) => observer.record(
+                    "webview2",
+                    "display-recovery-presented-probe-failed",
+                    json!({"generation": generation, "message": error}),
+                ),
+            }
+        }
+        result.map(|(_, safe)| safe)
     }
 
     fn push_event(&self, mut event: WebView2DiagnosticEvent) {
@@ -1068,6 +1215,9 @@ mod tests {
             webview2: Some(image(RENDER_EVIDENCE_WEBVIEW_FILE)),
             desktop: Some(image(RENDER_EVIDENCE_DESKTOP_FILE)),
             errors: Vec::new(),
+            automatic_incident: false,
+            recovery_generation: None,
+            recovery_assessment: None,
         }
     }
 
@@ -1157,6 +1307,18 @@ mod tests {
         assert_eq!(included.artifacts.len(), 2);
         assert!(included.failures.is_empty());
         assert_eq!(included.metadata["capture"]["captureId"], "capture-1");
+
+        let mut automatic_record = record.clone();
+        automatic_record.automatic_incident = true;
+        fs::write(
+            latest.join(RENDER_EVIDENCE_METADATA_FILE),
+            serde_json::to_vec(&automatic_record).unwrap(),
+        )
+        .unwrap();
+        let automatic = manager.export_render_evidence_for_bundle(false);
+        assert_eq!(automatic.artifacts.len(), 2);
+        assert!(automatic.metadata["automaticIncidentIncluded"] == true);
+        assert_eq!(automatic.metadata["capture"]["captureId"], "capture-1");
 
         fs::write(latest.join(RENDER_EVIDENCE_WEBVIEW_FILE), b"tampered").unwrap();
         let tampered = manager.export_render_evidence_for_bundle(true);

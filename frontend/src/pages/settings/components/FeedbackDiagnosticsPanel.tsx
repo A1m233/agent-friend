@@ -275,10 +275,10 @@ export function FeedbackDiagnosticsPanel({
             <div className="flex items-start gap-3">
               <MonitorCog className="mt-0.5 size-4 shrink-0 text-warning" />
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-fg">息屏黑屏一次性取证</p>
+                <p className="text-sm font-medium text-fg">息屏黑屏取证</p>
                 <p className="mt-1 text-xs text-muted">
-                  开启后，桌宠下一次从隐藏恢复时，会自动同时保存桌宠 WebView2
-                  内部画面和完整 Windows 桌面截图。完整桌面可能包含其他应用和私人内容；只保留最近一次、本机保存、不会自动上传，采集后自动关闭。
+                  显示器从息屏恢复时会自动保存最近一次桌宠 WebView2
+                  内部画面和完整 Windows 桌面截图，无需提前开启。完整桌面可能包含其他应用和私人内容；证据只保留最近一次、本机保存、不会自动上传，只有你主动生成诊断包时才会导出。
                 </p>
               </div>
             </div>
@@ -295,14 +295,14 @@ export function FeedbackDiagnosticsPanel({
               />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-fg">
-                  等待下一次息屏恢复时采集
+                  额外等待下一次页面隐藏恢复时采集
                 </span>
                 <span className="mt-1 block text-xs text-muted">
                   {renderEvidenceStatus.waitingForVisibleAfterHidden
                     ? "已观察到页面隐藏，正在等待恢复。"
                     : renderEvidenceStatus.armed
                       ? "已开启一次性等待；保持 agent-friend 运行即可。"
-                      : "默认关闭；只有你明确开启后才会读取桌面像素。"}
+                      : "这是手动补充入口；息屏恢复事故不需要开启。"}
                 </span>
               </span>
             </label>
@@ -346,7 +346,11 @@ export function FeedbackDiagnosticsPanel({
                 <label className="flex cursor-pointer items-start gap-3">
                   <Checkbox
                     className="mt-0.5"
-                    checked={includeRenderEvidence}
+                    checked={
+                      renderEvidenceStatus.pending.automaticIncident ||
+                      includeRenderEvidence
+                    }
+                    disabled={renderEvidenceStatus.pending.automaticIncident}
                     onCheckedChange={(checked) =>
                       setIncludeRenderEvidence(checked === true)
                     }
@@ -354,10 +358,14 @@ export function FeedbackDiagnosticsPanel({
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-fg">
-                      在本次 ZIP 中包含渲染截图
+                      {renderEvidenceStatus.pending.automaticIncident
+                        ? "显示恢复事故证据将自动包含"
+                        : "在本次 ZIP 中包含渲染截图"}
                     </span>
                     <span className="mt-1 block text-xs text-muted">
-                      再次确认：ZIP 将包含完整桌面截图和桌宠 WebView2 内部截图，发送前请按私人文件检查。
+                      {renderEvidenceStatus.pending.automaticIncident
+                        ? "你只需生成诊断包；ZIP 会包含这次自动取证。发送前仍请按私人文件检查。"
+                        : "再次确认：ZIP 将包含完整桌面截图和桌宠 WebView2 内部截图，发送前请按私人文件检查。"}
                     </span>
                   </span>
                 </label>
