@@ -432,14 +432,14 @@ async def test_empty_output_falls_back(router: IMRouter, session_bridge: MagicMo
     assert captured[0].text_format == "plain_text"
 
 
-# ---------- ToolCall* 不污染 outbound ----------
+# ---------- ToolCall* 不污染 outbound，但保留文本边界 ----------
 
 
 @pytest.mark.asyncio
 async def test_tool_call_events_not_in_outbound(
     router: IMRouter, session_bridge: MagicMock
 ) -> None:
-    """``ToolCallRequest`` / ``ToolCallResult`` 不应进入聚合 buffer。"""
+    """工具载荷不进入 buffer，工具前后的 assistant 文本保留段落边界。"""
     session_bridge.bind_persistent.return_value = _make_conv(
         [
             TextDelta(text="thinking..."),
@@ -457,7 +457,59 @@ async def test_tool_call_events_not_in_outbound(
 
     await router.handle_inbound("qq", _make_event(), send)
     # 只 TextDelta 进 buffer,tool 文本(``晴天 28°C`` 在 ToolCallResult.text)不进
-    assert captured[0].text == "thinking...今天是晴天 28°C"
+    assert captured[0].text == "thinking...\n\n今天是晴天 28°C"
+
+
+@pytest.mark.asyncio
+async def test_tool_boundary_reuses_existing_newlines(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            TextDelta(text="正在处理\n"),
+            ToolCallRequest(tool_call_id="call-1", tool_name="todo_manage", args={}),
+            ToolCallResult(tool_call_id="call-1", tool_name="todo_manage", text="ok"),
+            TextDelta(text="\n已完成"),
+            TurnDone(),
+        ]
+    )
+
+    captured: list[OutboundContent] = []
+
+    async def send(content: OutboundContent) -> None:
+        captured.append(content)
+
+    await router.handle_inbound("qq", _make_event(), send)
+
+    assert captured[0].text == "正在处理\n\n已完成"
+
+
+@pytest.mark.asyncio
+async def test_native_stream_includes_tool_boundary_in_updates_and_finish(
+    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            TextDelta(text="好，添加一条 todo。"),
+            ToolCallRequest(tool_call_id="call-1", tool_name="todo_manage", args={}),
+            ToolCallResult(tool_call_id="call-1", tool_name="todo_manage", text="ok"),
+            TextDelta(text="搞定了。"),
+            TurnDone(),
+        ]
+    )
+    stream = StubStreamSession()
+    provider = StubStreamingProvider(stream)
+
+    async def no_delay(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", no_delay)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    expected = "好，添加一条 todo。\n\n搞定了。"
+    assert stream.updates[-1] == expected
+    assert stream.finishes == [expected]
 
 
 # ---------- outbound 字段从 inbound 映射 ----------

@@ -10,8 +10,8 @@
 2. **跑一轮 Conversation**(:meth:`_run_turn_sync`):
    走现成的 :meth:`SessionBridge.bind_persistent` 拿 :class:`Conversation`,
    消费 ``conv.stream`` 同步 generator,聚合 :class:`TextDelta` 文本到 buffer,
-   等 stream 自然结束。``ToolCallRequest`` / ``ToolCallResult`` 在 agent 主链路
-   自处理,IM 通道**不感知**(本期范围)。
+   等 stream 自然结束。工具请求与结果正文不会发到 IM，但会保留
+   工具调用前后的 assistant 段落边界。
 
 3. **同步 generator 跑在线程池**(:meth:`handle_inbound`):
    ``Conversation.stream`` 是同步 generator(详见 ``agent.Conversation`` 设计),
@@ -44,7 +44,7 @@ from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
-from agent import Conversation, TextDelta
+from agent import Conversation, TextDelta, ToolCallResult
 from llm_providers import model_capabilities
 
 from ...errors import map_exception
@@ -89,6 +89,14 @@ def _surface_for_im(im_type: str) -> InteractionSurfaceId:
         return _IM_SURFACES[im_type]
     except KeyError as exc:
         raise RuntimeError(f"IM adapter missing interaction surface: {im_type}") from exc
+
+
+def _missing_tool_boundary(parts: list[str], incoming: str) -> str:
+    """让工具调用前后的 assistant 文本至少相隔一个 Markdown 段落。"""
+    existing = "".join(parts)
+    trailing_newlines = len(existing) - len(existing.rstrip("\n"))
+    leading_newlines = len(incoming) - len(incoming.lstrip("\n"))
+    return "\n" * max(0, 2 - trailing_newlines - leading_newlines)
 
 
 class IMRouter:
@@ -438,7 +446,8 @@ class IMRouter:
         流式分片**(QQ c2c 无打字态,分片只是切碎),所以聚合后整段回写。
 
         ``ToolCallRequest`` / ``ToolCallResult``:agent 主链路自处理(执行工具
-        + 把结果喂回 LLM),IM 通道不感知 —— 我们只关心最终 assistant 文本。
+        + 把结果喂回 LLM)。IM 不透出工具载荷，但在工具结果后的
+        下一段 assistant 文本前保留段落边界。
 
         Args:
             boot: 已构造好的 :class:`PersistentBootstrap`。
@@ -447,6 +456,29 @@ class IMRouter:
             聚合后的完整文本(可能空字符串,如果 LLM 没输出任何 text)。
         """
         buf: list[str] = []
+        tool_boundary_pending = False
+
+        def consume_event(ev: object) -> None:
+            nonlocal tool_boundary_pending
+
+            if isinstance(ev, ToolCallResult):
+                tool_boundary_pending = bool(buf)
+                return
+            if not isinstance(ev, TextDelta) or not ev.text:
+                return
+
+            if tool_boundary_pending:
+                separator = _missing_tool_boundary(buf, ev.text)
+                if separator:
+                    buf.append(separator)
+                    if on_text_delta is not None:
+                        on_text_delta(separator)
+                tool_boundary_pending = False
+
+            buf.append(ev.text)
+            if on_text_delta is not None:
+                on_text_delta(ev.text)
+
         if self._agent_runtime is not None:
             handle = self._agent_runtime.submit(
                 UserEvent(session_id=boot.thread_id, user_input=boot.new_user_input),
@@ -476,10 +508,7 @@ class IMRouter:
                 },
             )
             for ev in handle.events():
-                if isinstance(ev, TextDelta):
-                    buf.append(ev.text)
-                    if on_text_delta is not None:
-                        on_text_delta(ev.text)
+                consume_event(ev)
             terminal = handle.terminal
             if terminal is None or terminal.outcome is not RunOutcome.COMPLETED:
                 if terminal is not None and terminal.error is not None:
@@ -500,10 +529,7 @@ class IMRouter:
                     surface=surface,
                     interaction_destination_id=interaction_destination_id,
                 ):
-                    if isinstance(ev, TextDelta):
-                        buf.append(ev.text)
-                        if on_text_delta is not None:
-                            on_text_delta(ev.text)
+                    consume_event(ev)
                     # TurnDone:不 break,让 generator 自然 return — 跟 ag_ui/openai encoder 同款约定。
                     # 早 break 会触发 generator close 抛 GeneratorExit,而 Conversation.stream 的
                     # finally 把它误判为业务中断,落一份 partial=True 的 assistant_event;下一轮组装
