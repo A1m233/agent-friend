@@ -3,7 +3,6 @@ import {
   KBarPortal,
   KBarPositioner,
   KBarProvider,
-  KBarResults,
   KBarSearch,
   useKBar,
   useRegisterActions,
@@ -17,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
@@ -31,6 +31,9 @@ import type {
 import { formatRelativeMessageTime } from "@/utils/formatRelativeMessageTime";
 
 const SEARCH_DEBOUNCE_MS = 200;
+const KBAR_LISTBOX_ID = "kbar-listbox";
+
+const getKBarListboxItemId = (index: number) => `kbar-listbox-item-${index}`;
 
 type SearchViewState =
   | { status: "idle" }
@@ -187,7 +190,7 @@ function GlobalConversationSearch() {
               ) : null}
               {view.status === "settled" && total > 0 ? (
                 <>
-                  <KBarResults
+                  <SearchResultsList
                     items={resultItems}
                     onRender={({ item, active }) => {
                       if (typeof item === "string") {
@@ -222,6 +225,121 @@ function GlobalConversationSearch() {
         </KBarAnimator>
       </KBarPositioner>
     </KBarPortal>
+  );
+}
+
+interface SearchResultsListProps {
+  items: Array<ActionImpl | string>;
+  onRender: (params: { item: ActionImpl | string; active: boolean }) => ReactElement;
+}
+
+export function SearchResultsList({ items, onRender }: SearchResultsListProps) {
+  const activeRef = useRef<HTMLDivElement>(null);
+  const { query, search, currentRootActionId, activeIndex, options } = useKBar((state) => ({
+    search: state.searchQuery,
+    currentRootActionId: state.currentRootActionId,
+    activeIndex: state.activeIndex,
+  }));
+
+  const firstSelectableIndex = useMemo(
+    () => items.findIndex((item) => typeof item !== "string"),
+    [items],
+  );
+
+  const findNextSelectableIndex = useCallback(
+    (currentIndex: number, direction: -1 | 1) => {
+      let nextIndex = currentIndex + direction;
+      while (nextIndex >= 0 && nextIndex < items.length) {
+        if (typeof items[nextIndex] !== "string") return nextIndex;
+        nextIndex += direction;
+      }
+      return currentIndex;
+    },
+    [items],
+  );
+
+  const execute = useCallback(
+    (item: ActionImpl) => {
+      if (item.command) {
+        item.command.perform(item);
+        query.toggle();
+      } else {
+        query.setSearch("");
+        query.setCurrentRootAction(item.id);
+      }
+      options.callbacks?.onSelectAction?.(item);
+    },
+    [options.callbacks, query],
+  );
+
+  useEffect(() => {
+    if (firstSelectableIndex >= 0) query.setActiveIndex(firstSelectableIndex);
+  }, [currentRootActionId, firstSelectableIndex, query, search]);
+
+  useEffect(() => {
+    if (firstSelectableIndex < 0) return;
+    if (typeof items[activeIndex] === "string" || !items[activeIndex]) {
+      query.setActiveIndex(firstSelectableIndex);
+    }
+  }, [activeIndex, firstSelectableIndex, items, query]);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) return;
+      if (event.key === "ArrowUp" || (event.ctrlKey && event.key === "p")) {
+        event.preventDefault();
+        event.stopPropagation();
+        query.setActiveIndex((index) => findNextSelectableIndex(index, -1));
+      } else if (event.key === "ArrowDown" || (event.ctrlKey && event.key === "n")) {
+        event.preventDefault();
+        event.stopPropagation();
+        query.setActiveIndex((index) => findNextSelectableIndex(index, 1));
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = items[activeIndex];
+        if (item && typeof item !== "string") execute(item);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [activeIndex, execute, findNextSelectableIndex, items, query]);
+
+  return (
+    <div id={KBAR_LISTBOX_ID} role="listbox" className="max-h-100 overflow-y-auto">
+      {items.map((item, index) => {
+        if (typeof item === "string") {
+          return (
+            <div key={`${item}-${index}`} role="presentation">
+              {onRender({ item, active: false })}
+            </div>
+          );
+        }
+
+        const active = index === activeIndex;
+        return (
+          <div
+            id={getKBarListboxItemId(index)}
+            key={item.id}
+            ref={active ? activeRef : null}
+            role="option"
+            aria-selected={active}
+            onPointerMove={() => {
+              if (!active) query.setActiveIndex(index);
+            }}
+            onPointerDown={() => query.setActiveIndex(index)}
+            onClick={() => execute(item)}
+          >
+            {onRender({ item, active })}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
