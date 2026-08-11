@@ -38,3 +38,27 @@
   min-width: 0 !important;
   max-width: 100%;
 }
+
+.chat-scroll-activity {
+  animation: chat-scroll-activity-spin
+    var(--motion-duration-chat-scroll-activity)
+    var(--motion-ease-chat-scroll-activity)
+    infinite;
+  animation-play-state: paused;
+}
+
+.chat-scroll-activity[data-running="true"] {
+  animation-play-state: running;
+}
+
+@keyframes chat-scroll-activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-scroll-activity {
+    animation: none;
+  }
+}

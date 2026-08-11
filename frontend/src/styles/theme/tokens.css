@@ -33,4 +33,8 @@
 
   /* 对话附件 */
   --size-chat-attachment-image: 10rem;
+
+  /* 对话滚动活动提示 */
+  --motion-duration-chat-scroll-activity: 1.8s;
+  --motion-ease-chat-scroll-activity: cubic-bezier(0.45, 0.16, 0.55, 0.84);
 }
