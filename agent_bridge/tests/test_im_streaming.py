@@ -177,6 +177,15 @@ async def test_qq_stream_reuses_id_and_increments_index_after_success(
     assert "run_id=run-1" in latency_text
     assert "session_id=session-1" in latency_text
     assert "hello" not in latency_text
+    accepted_text = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("QQ stream accepted ")
+    )
+    assert "first_codepoint=U+0068" in accepted_text
+    assert "payload_ref=2cf24dba5fb0" in accepted_text
+    assert "since_previous_accepted_ms=-1" in accepted_text
+    assert "hello" not in accepted_text
 
 
 @pytest.mark.asyncio
