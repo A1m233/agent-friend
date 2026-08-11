@@ -5,7 +5,6 @@ import {
   KBarPortal,
   KBarPositioner,
   KBarProvider,
-  KBarResults,
   KBarSearch,
   useKBar,
   useRegisterActions,
@@ -15,6 +14,7 @@ import {
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SearchResultsList } from "./GlobalConversationSearch";
 
 const waitForDom = async (assertion: () => void): Promise<void> => {
   let lastError: unknown;
@@ -51,8 +51,8 @@ function RegisteredResults({ actions }: { actions: Action[] }) {
         KBarAnimator,
         null,
         createElement(KBarSearch, { "aria-label": "Search conversations" }),
-        createElement(KBarResults, {
-          items,
+        createElement(SearchResultsList, {
+          items: ["消息", ...items],
           onRender: ({ item, active }) =>
             createElement(
               "span",
@@ -105,6 +105,10 @@ describe("kbar React 19 compatibility", () => {
     Object.defineProperty(HTMLElement.prototype, "animate", {
       configurable: true,
       value: vi.fn(() => ({ cancel: vi.fn(), finished: Promise.resolve() })),
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
     });
     Object.defineProperty(globalThis, "ResizeObserver", {
       configurable: true,
@@ -193,6 +197,34 @@ describe("kbar React 19 compatibility", () => {
     await waitForDom(() => {
       expect(document.querySelector('[aria-label="Search conversations"]')).toBeNull();
       expect(document.activeElement).toBe(previousFocus);
+    });
+  });
+
+  it("renders every result in normal flow with listbox semantics", async () => {
+    const actions: Action[] = [
+      { id: "result-1", name: "First result" },
+      { id: "result-2", name: "Second result" },
+    ];
+
+    await act(async () => root.render(createElement(CompatibilityHarness, { actions })));
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        code: "KeyF",
+        ctrlKey: true,
+        key: "f",
+      }));
+    });
+
+    await waitForDom(() => {
+      const input = document.querySelector('[aria-label="Search conversations"]');
+      const listbox = document.querySelector<HTMLElement>('[role="listbox"]');
+      const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+      expect(input?.getAttribute("aria-controls")).toBe(listbox?.id);
+      expect(options).toHaveLength(2);
+      expect(options.every((option) => option.style.position !== "absolute")).toBe(true);
+      expect(options.map((option) => option.textContent)).toEqual(["First result", "Second result"]);
     });
   });
 });

@@ -44,6 +44,7 @@ class QQC2CStreamSession:
         self._phase: Literal["idle", "streaming", "completed", "failed"] = "idle"
         self._had_failure = False
         self._started_at = time.monotonic()
+        self._last_accepted_at: float | None = None
         self._run_latency = (
             RunLatencyContext(
                 run_id=context.run_id,
@@ -197,6 +198,13 @@ class QQC2CStreamSession:
             self._stream_msg_id = response_id
 
         first_delivery = self._successful_updates == 0
+        accepted_at = time.monotonic()
+        since_previous_accepted_ms = (
+            -1
+            if self._last_accepted_at is None
+            else max(0, round((accepted_at - self._last_accepted_at) * 1000))
+        )
+        self._last_accepted_at = accepted_at
         self._last_accepted_text = full_text
         self._successful_updates += 1
         self._next_index += 1
@@ -204,7 +212,8 @@ class QQC2CStreamSession:
         logger.info(
             "QQ stream accepted stream_trace=%s run_id=%s phase=%s index=%d "
             "content_len=%d elapsed_ms=%d update_count=%d bind_ref=%s chat_ref=%s "
-            "stream_ref=%s",
+            "stream_ref=%s first_codepoint=%s payload_ref=%s "
+            "since_previous_accepted_ms=%d",
             self._context.stream_trace,
             self._context.run_id or "",
             phase,
@@ -215,6 +224,9 @@ class QQC2CStreamSession:
             self._bind_ref,
             self._chat_ref,
             _safe_ref(self._stream_msg_id),
+            _first_codepoint(full_text),
+            _safe_ref(full_text),
+            since_previous_accepted_ms,
         )
         if first_delivery:
             log_run_latency(
@@ -266,6 +278,12 @@ def _safe_ref(value: object) -> str:
     if value in (None, ""):
         return ""
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _first_codepoint(text: str) -> str:
+    if not text:
+        return "none"
+    return f"U+{ord(text[0]):04X}"
 
 
 def _safe_reason(value: object, *, redact: tuple[str, ...] = ()) -> str:

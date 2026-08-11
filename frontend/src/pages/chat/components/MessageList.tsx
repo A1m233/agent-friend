@@ -41,8 +41,13 @@ import {
   MESSAGE_VIRTUALIZER_PADDING_START_PX,
 } from "./messageVirtualization";
 import {
+  getMessageScrollDirection,
+  isMessageScrollAtBottom,
+  MESSAGE_SCROLL_BOTTOM_EPSILON_PX,
+  reduceMessageScrollButtonVisible,
   reduceMessageScrollFollowing,
   shouldFollowAfterTotalSizeChange,
+  type MessageScrollDirection,
   type MessageScrollFollowEvent,
 } from "./messageScrollFollow";
 import { ReminderCard } from "./ReminderCard";
@@ -56,7 +61,6 @@ import {
 } from "./searchNavigation";
 
 type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
-const BOTTOM_THRESHOLD_PX = 16;
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const USER_SCROLL_IDLE_MS = 160;
@@ -80,7 +84,7 @@ const SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET =
   SCROLL_ACTIVITY_RING_RADIUS
   * Math.sin((SCROLL_ACTIVITY_ARC_DEGREES / 2) * (Math.PI / 180));
 
-function ScrollActivityRing() {
+function ScrollActivityRing({ running }: { running: boolean }) {
   const gradientId = `scroll-activity-${useId().replaceAll(":", "")}`;
   const gradientStart = SCROLL_ACTIVITY_RING_CENTER - SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET;
   const gradientEnd = SCROLL_ACTIVITY_RING_CENTER + SCROLL_ACTIVITY_ARC_ENDPOINT_OFFSET;
@@ -88,7 +92,8 @@ function ScrollActivityRing() {
   return (
     <svg
       aria-hidden
-      className="pointer-events-none absolute -inset-1 size-10 animate-spin text-accent motion-reduce:animate-none"
+      className="chat-scroll-activity pointer-events-none absolute -inset-1 size-10 text-accent"
+      data-running={running}
       viewBox="0 0 36 36"
     >
       <defs>
@@ -150,7 +155,7 @@ function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
 }
 
 function isNearBottom(el: HTMLDivElement): boolean {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
+  return isMessageScrollAtBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
 }
 
 function useThrottledText(value: string, delayMs: number): string {
@@ -556,6 +561,8 @@ export function MessageTimeline({
   const scrollRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const userScrollSessionRef = useRef(false);
+  const userScrollTopRef = useRef<number | null>(null);
+  const supportsScrollEndRef = useRef(false);
   const pointerScrollActiveRef = useRef(false);
   const userScrollIdleTimerRef = useRef(0);
   const scrollRafRef = useRef(0);
@@ -570,7 +577,8 @@ export function MessageTimeline({
   const handledHistoryLoadSeqRef = useRef(0);
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
-  const [isFollowing, setIsFollowing] = useState(true);
+  const scrollButtonVisibleRef = useRef(false);
+  const [isScrollButtonVisible, setIsScrollButtonVisible] = useState(false);
   const [activeSearchAnchor, setActiveSearchAnchor] = useState<string | null>(null);
   const composerInset = overlayComposer
     ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
@@ -593,7 +601,7 @@ export function MessageTimeline({
     paddingEnd: composerInset,
     anchorTo: "end",
     followOnAppend: false,
-    scrollEndThreshold: BOTTOM_THRESHOLD_PX,
+    scrollEndThreshold: MESSAGE_SCROLL_BOTTOM_EPSILON_PX,
   });
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTotalSize = virtualizer.getTotalSize();
@@ -614,18 +622,41 @@ export function MessageTimeline({
 
   const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
     const next = reduceMessageScrollFollowing(followingRef.current, event);
-    if (next === followingRef.current) return;
-    followingRef.current = next;
-    setIsFollowing(next);
+    if (next !== followingRef.current) {
+      followingRef.current = next;
+    }
+
+    const nextButtonVisible = reduceMessageScrollButtonVisible(
+      scrollButtonVisibleRef.current,
+      event,
+    );
+    if (nextButtonVisible !== scrollButtonVisibleRef.current) {
+      scrollButtonVisibleRef.current = nextButtonVisible;
+      setIsScrollButtonVisible(nextButtonVisible);
+    }
   }, []);
 
   const endUserScrollSession = useCallback(() => {
     userScrollSessionRef.current = false;
+    userScrollTopRef.current = null;
     if (userScrollIdleTimerRef.current) {
       window.clearTimeout(userScrollIdleTimerRef.current);
       userScrollIdleTimerRef.current = 0;
     }
   }, []);
+
+  const settleUserScrollSession = useCallback(() => {
+    if (!userScrollSessionRef.current) return;
+    const viewport = scrollRef.current;
+    endUserScrollSession();
+    if (!viewport) return;
+    applyFollowEvent({
+      type: "viewport-scrolled",
+      atBottom: isNearBottom(viewport),
+      source: "user",
+      direction: "none",
+    });
+  }, [applyFollowEvent, endUserScrollSession]);
 
   const scheduleUserScrollSessionEnd = useCallback(() => {
     if (userScrollIdleTimerRef.current) {
@@ -633,12 +664,13 @@ export function MessageTimeline({
     }
     userScrollIdleTimerRef.current = window.setTimeout(() => {
       userScrollIdleTimerRef.current = 0;
-      userScrollSessionRef.current = false;
+      settleUserScrollSession();
     }, USER_SCROLL_IDLE_MS);
-  }, []);
+  }, [settleUserScrollSession]);
 
   const beginUserScrollSession = useCallback(() => {
     userScrollSessionRef.current = true;
+    userScrollTopRef.current = scrollRef.current?.scrollTop ?? null;
     if (userScrollIdleTimerRef.current) {
       window.clearTimeout(userScrollIdleTimerRef.current);
       userScrollIdleTimerRef.current = 0;
@@ -665,16 +697,28 @@ export function MessageTimeline({
 
   const handleViewportScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
-      const atBottom = isNearBottom(e.currentTarget);
+      const viewport = e.currentTarget;
+      const atBottom = isNearBottom(viewport);
       const source = userScrollSessionRef.current ? "user" : "automatic";
-      applyFollowEvent({ type: "viewport-scrolled", atBottom, source });
+      let direction: MessageScrollDirection = "none";
+      if (source === "user" && userScrollTopRef.current !== null) {
+        direction = getMessageScrollDirection(userScrollTopRef.current, viewport.scrollTop);
+      }
+      if (source === "user") userScrollTopRef.current = viewport.scrollTop;
+      applyFollowEvent({ type: "viewport-scrolled", atBottom, source, direction });
 
-      if (source === "user" && !pointerScrollActiveRef.current) {
-        if (atBottom) endUserScrollSession();
-        else scheduleUserScrollSessionEnd();
+      if (source === "user") {
+        if (supportsScrollEndRef.current) {
+          if (userScrollIdleTimerRef.current) {
+            window.clearTimeout(userScrollIdleTimerRef.current);
+            userScrollIdleTimerRef.current = 0;
+          }
+        } else {
+          scheduleUserScrollSessionEnd();
+        }
       }
     },
-    [applyFollowEvent, endUserScrollSession, scheduleUserScrollSessionEnd],
+    [applyFollowEvent, scheduleUserScrollSessionEnd],
   );
 
   const handleWheelCapture = useCallback((event: WheelEvent<HTMLDivElement>) => {
@@ -682,7 +726,7 @@ export function MessageTimeline({
     beginUserScrollSession();
     scheduleUserScrollSessionEnd();
     if (event.deltaY < 0) {
-      applyFollowEvent({ type: "viewport-scrolled", atBottom: false, source: "user" });
+      applyFollowEvent({ type: "detach-requested" });
     }
   }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
 
@@ -716,7 +760,7 @@ export function MessageTimeline({
     beginUserScrollSession();
     scheduleUserScrollSessionEnd();
     if (scrollsAway) {
-      applyFollowEvent({ type: "viewport-scrolled", atBottom: false, source: "user" });
+      applyFollowEvent({ type: "detach-requested" });
     }
   }, [applyFollowEvent, beginUserScrollSession, scheduleUserScrollSessionEnd]);
 
@@ -859,6 +903,19 @@ export function MessageTimeline({
     virtualizer,
   ]);
 
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    const supportsScrollEnd = Boolean(viewport && "onscrollend" in viewport);
+    supportsScrollEndRef.current = supportsScrollEnd;
+    if (!viewport || !supportsScrollEnd) return;
+
+    viewport.addEventListener("scrollend", settleUserScrollSession);
+    return () => {
+      viewport.removeEventListener("scrollend", settleUserScrollSession);
+      supportsScrollEndRef.current = false;
+    };
+  }, [historyLoading, messages.length, settleUserScrollSession]);
+
   useEffect(
     () => {
       window.addEventListener("pointerup", handlePointerScrollEnd);
@@ -955,7 +1012,19 @@ export function MessageTimeline({
           })}
         </div>
       </ScrollArea>
-      {!isFollowing && (
+      {streaming && (
+        <div
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute left-1/2 z-10 size-8 -translate-x-1/2",
+            !isScrollButtonVisible && "invisible",
+          )}
+          style={{ bottom: scrollButtonBottom }}
+        >
+          <ScrollActivityRing running={isScrollButtonVisible} />
+        </div>
+      )}
+      {isScrollButtonVisible && (
         <Button
           type="button"
           variant="ghost"
@@ -966,7 +1035,6 @@ export function MessageTimeline({
           aria-busy={streaming || undefined}
           onClick={() => scheduleScrollToBottom({ force: true, behavior: "smooth" })}
         >
-          {streaming && <ScrollActivityRing />}
           <ArrowDown className="size-4" />
         </Button>
       )}

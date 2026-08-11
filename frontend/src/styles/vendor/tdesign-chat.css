@@ -50,6 +50,10 @@ t-chat-item::part(t-chat__text__markdown) {
   --td-attachment-image-height: var(--size-chat-attachment-image);
 }
 
+.chat-message-attachments::part(t-attachment-list) {
+  justify-content: flex-end;
+}
+
 t-chat-sender::part(t-textarea) {
   overflow: hidden;
 }
