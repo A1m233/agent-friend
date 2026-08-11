@@ -47,14 +47,18 @@ use windows::{
 use crate::shell_diagnostics;
 
 use super::{
-    RenderEvidenceRecord, RenderImageEvidence, RenderPixelMetrics, RENDER_EVIDENCE_DESKTOP_FILE,
-    RENDER_EVIDENCE_LATEST_DIR, RENDER_EVIDENCE_METADATA_FILE, RENDER_EVIDENCE_SCHEMA_VERSION,
-    RENDER_EVIDENCE_WEBVIEW_FILE,
+    RecoveryRenderAssessment, RenderEvidenceRecord, RenderImageEvidence, RenderPixelMetrics,
+    RENDER_EVIDENCE_DESKTOP_FILE, RENDER_EVIDENCE_LATEST_DIR, RENDER_EVIDENCE_METADATA_FILE,
+    RENDER_EVIDENCE_SCHEMA_VERSION, RENDER_EVIDENCE_WEBVIEW_FILE,
 };
 
 const CAPTURE_TIMEOUT_SECONDS: u64 = 10;
 const MAX_IMAGE_BYTES: usize = 48 * 1024 * 1024;
 const MAX_DECODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES * 4;
+const MIN_WEBVIEW_TRANSPARENT_RATIO: f64 = 0.50;
+const MAX_WEBVIEW_NEAR_BLACK_OPAQUE_RATIO: f64 = 0.98;
+const PRESENTED_BLACK_RATIO_THRESHOLD: f64 = 0.90;
+const PRESENTED_BLACK_RATIO_DELTA_THRESHOLD: f64 = 0.35;
 
 struct CapturedImage {
     bytes: Vec<u8>,
@@ -149,6 +153,8 @@ pub(super) async fn capture_and_store(
     evidence_root: &Path,
     trigger: &str,
     hidden_duration_ms: Option<u64>,
+    automatic_incident: bool,
+    recovery_generation: Option<u64>,
 ) -> Result<RenderEvidenceRecord, String> {
     let window = app
         .get_webview_window("pet")
@@ -226,9 +232,153 @@ pub(super) async fn capture_and_store(
         webview2,
         desktop,
         errors,
+        automatic_incident,
+        recovery_generation,
+        recovery_assessment: None,
     };
     publish_record(evidence_root, &capture_id, &record)?;
     Ok(record)
+}
+
+pub(super) fn validate_hidden_recovery_baseline(
+    record: &RenderEvidenceRecord,
+) -> Result<(), Vec<String>> {
+    let mut reasons = record.errors.clone();
+    let Some(webview) = record.webview2.as_ref() else {
+        reasons.push("WebView2 preview is unavailable".into());
+        return Err(reasons);
+    };
+    if record.desktop.is_none() {
+        reasons.push("hidden desktop baseline is unavailable".into());
+    }
+    match webview.transparent_ratio() {
+        Some(ratio) if ratio >= MIN_WEBVIEW_TRANSPARENT_RATIO => {}
+        Some(ratio) => reasons.push(format!(
+            "WebView2 transparent ratio {ratio:.4} is below {MIN_WEBVIEW_TRANSPARENT_RATIO:.2}"
+        )),
+        None => reasons.push("WebView2 preview has no pixels".into()),
+    }
+    if webview
+        .pixel_metrics
+        .near_black_opaque_ratio
+        .is_some_and(|ratio| ratio >= MAX_WEBVIEW_NEAR_BLACK_OPAQUE_RATIO)
+    {
+        reasons.push("WebView2 opaque pixels are almost entirely near-black".into());
+    }
+    if reasons.is_empty() {
+        Ok(())
+    } else {
+        Err(reasons)
+    }
+}
+
+fn presented_desktop_assessment(
+    baseline: &RenderImageEvidence,
+    presented: &RenderImageEvidence,
+) -> (bool, Vec<String>, Option<f64>) {
+    let baseline_ratio = baseline.pixel_metrics.near_black_opaque_ratio;
+    let presented_ratio = presented.pixel_metrics.near_black_opaque_ratio;
+    let delta = baseline_ratio
+        .zip(presented_ratio)
+        .map(|(baseline, presented)| presented - baseline);
+    let suspicious = presented_ratio.is_some_and(|ratio| ratio >= PRESENTED_BLACK_RATIO_THRESHOLD)
+        && delta.is_some_and(|value| value >= PRESENTED_BLACK_RATIO_DELTA_THRESHOLD);
+    let reasons = suspicious
+        .then(|| {
+            vec![format!(
+                "presented desktop near-black ratio increased from {:.4} to {:.4}",
+                baseline_ratio.unwrap_or_default(),
+                presented_ratio.unwrap_or_default()
+            )]
+        })
+        .unwrap_or_default();
+    (!suspicious, reasons, delta)
+}
+
+pub(super) async fn capture_presented_recovery_and_store(
+    app: &AppHandle,
+    evidence_root: &Path,
+    baseline: &RenderEvidenceRecord,
+    generation: u64,
+    hidden_duration_ms: Option<u64>,
+) -> Result<(RenderEvidenceRecord, bool), String> {
+    let window = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "pet WebView window is unavailable".to_string())?;
+    let baseline_desktop = baseline
+        .desktop
+        .as_ref()
+        .ok_or_else(|| "hidden desktop baseline is unavailable".to_string())?;
+    let baseline_webview = baseline
+        .webview2
+        .as_ref()
+        .ok_or_else(|| "hidden WebView2 baseline is unavailable".to_string())?;
+    let capture_id = format!("{}-{}", unix_time_ms(), std::process::id());
+    let capture_started_at = Local::now().to_rfc3339();
+    let target_window = target_window_snapshot(&window);
+    let desktop_image = tauri::async_runtime::spawn_blocking(capture_presented_desktop)
+        .await
+        .map_err(|error| format!("desktop capture worker failed: {error}"))??;
+    let staging = staging_dir(evidence_root, &capture_id);
+    let desktop = write_captured_image(
+        evidence_root,
+        &capture_id,
+        RENDER_EVIDENCE_DESKTOP_FILE,
+        desktop_image,
+    )?;
+
+    let baseline_webview_path = evidence_root
+        .join(RENDER_EVIDENCE_LATEST_DIR)
+        .join(RENDER_EVIDENCE_WEBVIEW_FILE);
+    let webview_bytes = fs::read(&baseline_webview_path)
+        .map_err(|error| format!("read hidden WebView2 baseline failed: {error}"))?;
+    if webview_bytes.len() as u64 != baseline_webview.bytes
+        || format!("{:x}", Sha256::digest(&webview_bytes)) != baseline_webview.sha256
+    {
+        return Err("hidden WebView2 baseline changed before presented capture".into());
+    }
+    fs::create_dir_all(&staging)
+        .map_err(|error| format!("create recovery evidence staging directory failed: {error}"))?;
+    fs::write(staging.join(RENDER_EVIDENCE_WEBVIEW_FILE), &webview_bytes)
+        .map_err(|error| format!("persist hidden WebView2 baseline failed: {error}"))?;
+
+    let (safe, reasons, near_black_ratio_delta) =
+        presented_desktop_assessment(baseline_desktop, &desktop);
+    let assessment = RecoveryRenderAssessment {
+        generation,
+        baseline_capture_id: baseline.capture_id.clone(),
+        verdict: if safe { "safe" } else { "unsafe" }.into(),
+        reasons,
+        baseline_desktop_near_black_ratio: baseline_desktop.pixel_metrics.near_black_opaque_ratio,
+        presented_desktop_near_black_ratio: desktop.pixel_metrics.near_black_opaque_ratio,
+        near_black_ratio_delta,
+        baseline_webview_transparent_ratio: baseline_webview.transparent_ratio(),
+    };
+    let record = RenderEvidenceRecord {
+        schema_version: RENDER_EVIDENCE_SCHEMA_VERSION,
+        capture_id: capture_id.clone(),
+        trigger: "display-resume-presented-probe".into(),
+        hidden_duration_ms,
+        capture_started_at,
+        capture_completed_at: Local::now().to_rfc3339(),
+        start_delta_ms: Some(
+            baseline_webview
+                .capture_started_unix_ms
+                .abs_diff(desktop.capture_started_unix_ms),
+        ),
+        target_window,
+        graphics: capture_graphics_snapshot(),
+        windows_shell_snapshot: shell_diagnostics::capture_current_snapshot(app)
+            .unwrap_or_else(|error| json!({"captureError": error})),
+        webview2: Some(baseline_webview.clone()),
+        desktop: Some(desktop),
+        errors: Vec::new(),
+        automatic_incident: true,
+        recovery_generation: Some(generation),
+        recovery_assessment: Some(assessment),
+    };
+    publish_record(evidence_root, &capture_id, &record)?;
+    Ok((record, safe))
 }
 
 fn staging_dir(evidence_root: &Path, capture_id: &str) -> PathBuf {
@@ -635,6 +785,54 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
 
+    fn image_with_metrics(
+        transparent_ratio: f64,
+        near_black_opaque_ratio: f64,
+    ) -> RenderImageEvidence {
+        let total_pixels = 1_000_u64;
+        let transparent_pixel_count = (transparent_ratio * total_pixels as f64) as u64;
+        let opaque_pixel_count = total_pixels - transparent_pixel_count;
+        RenderImageEvidence {
+            file_name: "test.png".into(),
+            capture_started_unix_ms: 1,
+            capture_completed_unix_ms: 2,
+            width: 10,
+            height: 100,
+            bytes: 3,
+            sha256: "0".repeat(64),
+            pixel_metrics: RenderPixelMetrics {
+                total_pixels,
+                transparent_pixel_count,
+                opaque_pixel_count,
+                near_black_opaque_pixel_count: (near_black_opaque_ratio * opaque_pixel_count as f64)
+                    as u64,
+                near_black_opaque_ratio: Some(near_black_opaque_ratio),
+                average_opaque_luma: Some(32.0),
+            },
+        }
+    }
+
+    fn recovery_record(webview: RenderImageEvidence) -> RenderEvidenceRecord {
+        RenderEvidenceRecord {
+            schema_version: RENDER_EVIDENCE_SCHEMA_VERSION,
+            capture_id: "baseline".into(),
+            trigger: "display-resume-hidden-baseline".into(),
+            hidden_duration_ms: Some(6_500),
+            capture_started_at: "2026-08-12T00:00:00Z".into(),
+            capture_completed_at: "2026-08-12T00:00:01Z".into(),
+            start_delta_ms: Some(1),
+            target_window: json!({"label": "pet"}),
+            graphics: json!({"supported": true}),
+            windows_shell_snapshot: json!({"capability": "supported"}),
+            webview2: Some(webview),
+            desktop: Some(image_with_metrics(0.0, 0.1)),
+            errors: Vec::new(),
+            automatic_incident: true,
+            recovery_generation: Some(1),
+            recovery_assessment: None,
+        }
+    }
+
     #[test]
     fn pixel_metrics_ignore_transparent_pixels_and_count_black_opaque_pixels() {
         let metrics = metrics_from_rgba(&[0, 0, 0, 255, 255, 255, 255, 255, 1, 2, 3, 0]);
@@ -653,5 +851,41 @@ mod tests {
 
         assert_eq!((width, height), (2, 1));
         assert_eq!(metrics.near_black_opaque_ratio, Some(0.5));
+    }
+
+    #[test]
+    fn presented_probe_rejects_a_new_near_black_full_desktop_layer() {
+        let baseline = image_with_metrics(0.0, 0.10);
+        let presented = image_with_metrics(0.0, 0.96);
+
+        let (safe, reasons, delta) = presented_desktop_assessment(&baseline, &presented);
+
+        assert!(!safe);
+        assert!(!reasons.is_empty());
+        assert!((delta.expect("ratio delta") - 0.86).abs() < f64::EPSILON * 4.0);
+    }
+
+    #[test]
+    fn presented_probe_does_not_reject_an_already_dark_desktop_without_a_delta() {
+        let baseline = image_with_metrics(0.0, 0.94);
+        let presented = image_with_metrics(0.0, 0.95);
+
+        let (safe, reasons, _) = presented_desktop_assessment(&baseline, &presented);
+
+        assert!(safe);
+        assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn hidden_baseline_requires_a_transparent_non_black_webview() {
+        let healthy = recovery_record(image_with_metrics(0.90, 0.10));
+        assert!(validate_hidden_recovery_baseline(&healthy).is_ok());
+
+        let opaque_black = recovery_record(image_with_metrics(0.0, 1.0));
+        let reasons = validate_hidden_recovery_baseline(&opaque_black).unwrap_err();
+        assert!(reasons
+            .iter()
+            .any(|reason| reason.contains("transparent ratio")));
+        assert!(reasons.iter().any(|reason| reason.contains("near-black")));
     }
 }

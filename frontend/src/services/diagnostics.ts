@@ -28,6 +28,7 @@ export interface RenderEvidencePendingSummary {
   webview2Available: boolean;
   desktopAvailable: boolean;
   errorCount: number;
+  automaticIncident: boolean;
 }
 
 export interface RenderEvidenceStatus {
