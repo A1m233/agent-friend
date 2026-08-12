@@ -18,6 +18,7 @@ from install_contract import (  # noqa: E402
     INSTALLER_VERIFICATION_REQUIRED_FILES,
     PRODUCTION_PROFILE,
     WINDOWS_INSTALLER_MANUFACTURER,
+    ActiveInstallReceipt,
     InstalledVersionState,
     InstallRootTransition,
     PackageVerificationLevel,
@@ -30,6 +31,7 @@ from install_contract import (  # noqa: E402
     classify_installed_version,
     classify_installer_impact,
     payload_install_relative_path,
+    read_active_install_receipt,
     read_build_identity,
     resolve_install_profile,
     validate_payload_manifest,
@@ -82,6 +84,29 @@ def test_installed_version_state_forbids_downgrades(
 ) -> None:
     assert classify_installed_version(installed, "0.1.7") == expected
     assert DOWNGRADE_BLOCKED_ZH_CN == ("当前已安装的 agent-friend 是更新的版本，此安装包无法继续")
+
+
+def test_active_install_receipt_round_trips_and_rejects_noncanonical_input(tmp_path: Path) -> None:
+    receipt = ActiveInstallReceipt(
+        schema_version=1,
+        profile_id="production",
+        build_identity_sha256="a" * 64,
+        build_id="20260808T000000Z-abcdef123456-deadbeef",
+        payload_relative_path=("packages/20260808T000000Z-abcdef123456-deadbeef"),
+        payload_manifest_sha256="b" * 64,
+        activated_at="2026-08-08T00:00:00+00:00",
+        transaction_id="transaction-1",
+    )
+    path = tmp_path / "active-install.json"
+    path.write_text(json.dumps(receipt.to_json_dict()), encoding="utf-8")
+
+    assert read_active_install_receipt(path) == receipt
+
+    value = receipt.to_json_dict()
+    value["unexpected"] = True
+    path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="not canonical"):
+        read_active_install_receipt(path)
 
 
 def test_install_root_transition_requires_explicit_move_intent() -> None:

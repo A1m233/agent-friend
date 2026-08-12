@@ -27,7 +27,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 
 ## 工作流
 
-1. 先运行 `version-status` 和 `installer-contract`，向用户展示项目稳定版本、源码 dirty 状态、本机最新正式版本、trusted-beta 目标与下一自动候选版本、正式制品可构建状态、脚本解析出的目录、`impact.packageRequired`、`impact.minimumVerificationLevel` 和 `verificationInputs.packageInputSha256`。不要自行降低脚本给出的最低等级。
+1. 先运行 `version-status` 和 `installer-contract`，向用户展示项目稳定版本、源码 dirty 状态、本机最新正式版本、trusted-beta 目标与下一自动候选版本、正式制品可构建状态、脚本解析出的目录、`impact.packageRequired`、`impact.minimumVerificationLevel` 和 `verificationInputs.packageInputSha256`。不要自行降低脚本给出的最低等级。若当前目标包含安装到本机 production，必须在任何实际构建前按同一渠道参数运行 `production-install-plan`；它读取真实安装注册表、active receipt 与 build identity，确定 `absent / upgrade / repair / downgrade-blocked`。不得用 `version-status` 的制品库版本代替真实安装身份。
 2. 产品稳定版本仍只接受用户明确给出的 SemVer，通过 `version-set` 同步。可信内测每个开发周期只配置一次用户明确给出的下一稳定版本：`trusted-beta-configure <next-stable-semver>`；脚本随后自动生成单调递增的 `<target>-beta.<UTC YYYYMMDD>.<sequence>`。目标缺失或过期时询问用户，不自行选择 major/minor/patch，也不联网查远端版本。
 3. 独立判断是否需要产包。一级改动默认不自动打包；只有用户要求测试包、AC 要求真实安装、准备交付用户或 release 时才产包。二级/三级代码改动即使用户没有要求分发包，也必须在合入前构建验证 candidate。然后根据用户意图选择渠道：
    - 正式公开发布：只有用户明确要求 release 时使用 `all --release`；脚本要求稳定项目版本、clean worktree并执行版本与不可变制品门禁。裸 `all` 不是有效构建意图。
@@ -39,7 +39,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
    - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，不能跳过矩阵。
    - 安装器语言发生变化时，`installer-contract` 必须报告交互式 selector 为 `always`。可见 UI 验收同时覆盖无历史语言与已保存 English 的身份；仅在全新隔离身份看到一次 selector，不能证明真实产品升级仍允许选语言。
 5. 在当前工作流第一次执行任何实际构建前，提醒用户：“是否先进行 agent-friend-guide 知识维护检查？”这包括 `runtime`、`installer`、`all`、`installer-smoke-build` 和会在内部构建 candidate 的 installer smoke 流程，覆盖 ordinary release、trusted-beta 与 local-test 三种渠道。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不提醒。提醒只询问，不自行检查；用户拒绝后立即继续原打包流程，不改变任何门禁。用户同意后显式调用 `maintain-agent-friend-guide` 的只读检查阶段；检查认为需要更新时，是否执行更新仍要单独取得授权。
-6. 调用脚本完成目标构建。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
+6. 调用脚本完成目标构建。准备安装到当前机器时，production `installer|all` 必须附带 `--for-current-install`，让脚本在创建 build workspace 和冻结 runtime 前重新执行同一安装计划并 fail closed；`--trusted-beta --local-test` 使用受治理的下一 beta 版本，`--local-test` 只改变可发布性，不得把候选版本降回项目稳定版本。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。
 7. 构建开始时核对脚本输出的 `package_version`、`release_channel` 和可选 `target_release_version`；回报绝对安装包路径、build ID、精确版本、模式、敏感标识和 SHA/manifest 核验结果。不得把同版本包描述为升级包，不得用 build ID 判断版本先后。失败时原样保留脚本的 fail-closed 原因，不绕过门禁。
 
 同一任务内按 `product_state_summary + package:<channel>` 去重提醒：相同产品 HEAD、tracked diff、untracked 文件集合/内容和相同渠道已经询问、检查或维护后，不再重复询问；产品状态实质变化后可以重新提醒。用户直接要求检查或更新知识时直接进入 maintainer Skill，不先重复提醒。
@@ -58,7 +58,7 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 - `local-test` 使用 release 优化编译，但属于不可分发的本机测试制品；它不是 Tauri/Cargo debug profile。
 - `trusted-beta` 是可分发给明确可信对象的敏感预发布渠道，不是 local-test，也不是稳定 release；正式制品一旦生成不可覆盖。
 - stable release 版本来自同步的项目版本；trusted-beta 精确包版本由脚本从一次性配置的下一稳定版本派生。build ID 只负责构建追溯和完整性，不参与安装器新旧比较。
-- `version-status` 的“最新版本”只来自本机有效正式 manifest；local-test、损坏目录和远端 GitHub Release 不参与。
+- `version-status` 的“最新版本”只来自本机有效正式 manifest；local-test、损坏目录和远端 GitHub Release 不参与。真实安装兼容性只以 `production-install-plan` 为准。
 - 分步重试只能使用脚本返回的 build ID 和 `--reuse-build-id`，不要猜测“最近一次”worktree 产物。
 - `sourceTreeSha256` 用于完整源码追溯，`packageInputSha256` 与 candidate build/hash 用于验证证据复用。输入未变时可显式复用当前工作流记录的证据；脚本拒绝旧 schema、输入、环境、build 或 installer hash 不匹配的报告。
 - `installer-smoke` 只允许受治理的 `installer-smoke` profile，并在同一账户使用完全隔离的安装、注册表、快捷方式、启动项、数据、设置、日志、keyring 和端口 namespace；它不授权修改 production。
