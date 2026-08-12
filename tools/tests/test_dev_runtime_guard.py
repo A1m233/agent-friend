@@ -311,6 +311,7 @@ def test_live_desktop_owner_is_attributed(monkeypatch: Any, tmp_path: Path) -> N
         "list_processes",
         lambda: [process(1234, "start-1", "agent-friend.exe")],
     )
+    monkeypatch.setattr(guard, "process_start_id_direct", lambda _pid: "start-1")
 
     status, owner, reason = guard.inspect_desktop_owner()
 
@@ -328,6 +329,7 @@ def test_desktop_owner_pid_reuse_is_stale(monkeypatch: Any, tmp_path: Path) -> N
         "list_processes",
         lambda: [process(1234, "start-2", "other.exe")],
     )
+    monkeypatch.setattr(guard, "process_start_id_direct", lambda _pid: "start-2")
 
     status, _, reason = guard.inspect_desktop_owner()
 

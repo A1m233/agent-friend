@@ -565,7 +565,14 @@ def inspect_desktop_owner() -> tuple[str, dict[str, Any] | None, str]:
     process = processes.get(pid)
     if process is None:
         return "stale", value, "owner-process-exited"
-    actual_start_id = process.start_id or process_start_id_direct(pid)
+    # Windows process enumeration exposes CreationDate as a CIM timestamp, while the desktop
+    # owner contract deliberately uses the lossless GetProcessTimes FILETIME identity. Always
+    # compare like-for-like on Windows; otherwise every live owner looks like PID reuse.
+    actual_start_id = (
+        process_start_id_direct(pid)
+        if platform.system().lower() == "windows"
+        else process.start_id or process_start_id_direct(pid)
+    )
     if not actual_start_id:
         return "invalid", value, "owner process start identity is unavailable"
     if actual_start_id != expected_start_id:
