@@ -306,6 +306,34 @@ def test_installer_verification_fingerprint_ignores_docs_but_binds_code_and_envi
     assert environment_changed.package_input_sha256 != code_changed.package_input_sha256
 
 
+def test_installer_verification_fingerprint_ignores_dev_runtime_operations(
+    tmp_path: Path,
+) -> None:
+    paths = _verification_repository(tmp_path)
+    runtime_guard = tmp_path / "scripts" / "dev" / "runtime_guard.py"
+    runtime_guard.parent.mkdir(parents=True)
+    runtime_guard.write_text("before", encoding="utf-8")
+    paths.add("scripts/dev/runtime_guard.py")
+    environment = {"rustc": "rustc 1", "pnpm": "10"}
+
+    baseline = build_installer_verification_inputs(
+        tmp_path,
+        repository_paths=paths,
+        build_environment=environment,
+    )
+    runtime_guard.write_text("after", encoding="utf-8")
+    dev_operation_changed = build_installer_verification_inputs(
+        tmp_path,
+        repository_paths=paths,
+        build_environment=environment,
+    )
+
+    assert dev_operation_changed == baseline
+    impact = classify_installer_impact({"scripts/dev/runtime_guard.py"})
+    assert impact["packageRequired"] is False
+    assert impact["verificationExcludedPaths"] == ["scripts/dev/runtime_guard.py"]
+
+
 def test_installer_verification_fingerprint_normalizes_utf8_checkout_line_endings(
     tmp_path: Path,
 ) -> None:

@@ -160,6 +160,7 @@ INSTALLER_VERIFICATION_EXCLUDED_PREFIXES = (
     "frontend/src/__tests__/",
     "frontend/src/test/",
     "memory_eval/",
+    "scripts/dev/",
     "tools/",
 )
 INSTALLER_VERIFICATION_EXCLUDED_FILES = {
