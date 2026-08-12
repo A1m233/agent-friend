@@ -65,6 +65,7 @@ PACKAGE_VERIFICATION_LEVEL_ORDER = {
 class InstallProfile:
     schema_version: int
     profile_id: str
+    instance_domain: str
     product_name: str
     bundle_identifier: str
     main_binary_name: str
@@ -82,6 +83,7 @@ class InstallProfile:
         return {
             "schemaVersion": self.schema_version,
             "profileId": self.profile_id,
+            "instanceDomain": self.instance_domain,
             "productName": self.product_name,
             "bundleIdentifier": self.bundle_identifier,
             "mainBinaryName": self.main_binary_name,
@@ -107,6 +109,7 @@ class InstallProfile:
 PRODUCTION_PROFILE = InstallProfile(
     schema_version=PROFILE_SCHEMA_VERSION,
     profile_id="production",
+    instance_domain="agent-friend-production",
     product_name="agent-friend",
     bundle_identifier="com.agentfriend.desktop",
     main_binary_name="agent-friend",
@@ -124,6 +127,7 @@ PRODUCTION_PROFILE = InstallProfile(
 INSTALLER_SMOKE_PROFILE = InstallProfile(
     schema_version=PROFILE_SCHEMA_VERSION,
     profile_id="installer-smoke",
+    instance_domain="agent-friend-installer-smoke",
     product_name="agent-friend-installer-smoke",
     bundle_identifier="com.agentfriend.desktop.installer-smoke",
     main_binary_name="agent-friend-installer-smoke",

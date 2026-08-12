@@ -14,10 +14,11 @@ The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` comma
 6. snapshots the bounded WebView2 process/lifecycle buffer, runtime identity, and Windows graphics-adapter inventory;
 7. describes the latest one-shot render capture and, only when the user confirms inclusion, verifies and adds its WebView2/internal and full-desktop PNGs;
 8. snapshots shell, active receipt, payload hashes, observed runtime readiness, Job Object assignment, legacy layout, and incomplete installer transactions;
-9. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
-10. redacts managed credentials and replaces the user home path;
-11. validates the manifest and every archive entry against the producer-owned bundle contract;
-12. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
+9. snapshots the current desktop instance domain and its safely attributable owner evidence;
+10. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
+11. redacts managed credentials and replaces the user home path;
+12. validates the manifest and every archive entry against the producer-owned bundle contract;
+13. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
 
 The generator does not upload the bundle or intentionally call an external provider.
 
@@ -31,6 +32,7 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/environment.json` | OS, architecture, locale, timezone | No hostname or full environment dump |
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
+| `diagnostics/desktop-instance.json` | Resolved runtime kind, shared instance domain, process session, and current owner evidence | Present when `desktop-instance-governance-v1` is declared; paths are home-redacted and no command-line or environment content is included |
 | `install/integrity.json` | Embedded shell identity, active receipt, verified payload/runtime hashes, observed readiness identity, Job Object state, and installer residue | Present when `install-integrity-v1` is declared; uses relative paths and stable error codes, never credential values |
 | `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included and no automatic recovery action is implied |
 | `diagnostics/webview2-render-evidence.json` | Consent/inclusion state plus capture trigger, timestamps, graphics/window state, pixel metrics, integrity hashes, recovery assessment, and capture failures | Always present in newer v1 bundles; manual captures require explicit inclusion, while an automatic display-recovery incident is included when the user exports the diagnostic bundle |
@@ -61,6 +63,7 @@ The generator does not upload the bundle or intentionally call an external provi
 - `diagnostics/webview2.json` records up to 128 `ProcessFailed`, `BrowserProcessExited`, and pet page-visibility events. A nonzero `droppedEventCount` means earlier events were evicted. Empty events prove only that registered handlers observed no failure; inspect `registeredWindows` and `registrationFailures` before treating the absence as evidence.
 - `renderEvidence.includeRequested` remains the second consent boundary for manual captures. `automaticIncidentIncluded` means the latest bounded display-recovery incident was included by the user's diagnostic-bundle export without a separate checkbox. `pendingCapture` means a local capture existed; `artifacts` lists only screenshots actually included. Missing referenced screenshots, hash/size mismatch, partial capture errors, or a large `startDeltaMs` are explicit evidence gaps.
 - `install-integrity-v1` means `install/integrity.json` was collected. Older bundles without the capability remain valid; the inspector reports `evidence: not-collected` and must not infer either consistency or corruption.
+- `desktop-instance-governance-v1` means the bundle records the running shell's resolved domain and current owner. A missing owner is an evidence gap, not proof that no competing historical launch occurred; correlate `tauri.log.runtime*` instance-governance events for recent arbitration.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
 

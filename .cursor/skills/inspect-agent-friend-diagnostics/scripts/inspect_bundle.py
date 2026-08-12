@@ -30,6 +30,7 @@ CAPABILITY_HANDLERS = {
     "webview2-render-evidence-v1": "webView2RenderEvidence",
     "webview2-render-evidence-v2": "webView2RenderEvidence",
     "install-integrity-v1": "installIntegrity",
+    "desktop-instance-governance-v1": "desktopInstance",
 }
 
 
@@ -242,6 +243,34 @@ def summarize_install_integrity(value: Any, *, collected: bool) -> dict[str, Any
             "legacyFixedRuntimePresent": residue.get("legacyFixedRuntimePresent"),
             "incompleteTransactionCount": residue.get("incompleteTransactionCount"),
         },
+    }
+
+
+def summarize_desktop_instance(value: Any, *, collected: bool) -> dict[str, Any]:
+    if value is None:
+        return {"evidence": "missing" if collected else "not-collected"}
+    if not isinstance(value, dict):
+        return {"evidence": "invalid", "error": "desktop instance root is not an object"}
+    identity = value.get("identity") if isinstance(value.get("identity"), dict) else {}
+    owner = value.get("owner") if isinstance(value.get("owner"), dict) else None
+    return {
+        "evidence": "collected",
+        "schemaVersion": value.get("schemaVersion"),
+        "runtimeKind": identity.get("runtimeKind"),
+        "instanceDomain": identity.get("instanceDomain"),
+        "profileId": identity.get("profileId"),
+        "processSessionId": owner.get("processSessionId") if owner else None,
+        "owner": {
+            "runtimeKind": owner.get("runtimeKind"),
+            "pid": owner.get("pid"),
+            "profileId": owner.get("profileId"),
+            "processSessionId": owner.get("processSessionId"),
+            "worktree": owner.get("worktree"),
+            "installRoot": owner.get("installRoot"),
+            "publishedAt": owner.get("publishedAt"),
+        }
+        if owner
+        else None,
     }
 
 
@@ -555,6 +584,15 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             if install_integrity_collected
             else None
         )
+        desktop_instance_collected = (
+            "desktop-instance-governance-v1" in capabilities
+            or "diagnostics/desktop-instance.json" in names
+        )
+        desktop_instance = (
+            optional_json(archive, "diagnostics/desktop-instance.json", warnings)
+            if desktop_instance_collected
+            else None
+        )
         render_evidence_summary = summarize_webview2_render_evidence(
             webview2_render_evidence,
             set(names),
@@ -743,6 +781,10 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 install_integrity,
                 collected=install_integrity_collected,
             ),
+            "desktopInstance": summarize_desktop_instance(
+                desktop_instance,
+                collected=desktop_instance_collected,
+            ),
             "warnings": warnings,
         }
 
@@ -838,6 +880,17 @@ def print_human(summary: dict[str, Any]) -> None:
         f"shellBuild={install_integrity.get('shell', {}).get('buildId')} "
         f"payloadValid={install_integrity.get('payload', {}).get('validated')} "
         f"runtimeObserved={json.dumps(install_integrity.get('runtime', {}).get('observedReadiness', {}), ensure_ascii=False, sort_keys=True)}"
+    )
+    desktop_instance = summary["desktopInstance"]
+    desktop_owner = desktop_instance.get("owner") or {}
+    print(
+        "Desktop instance: "
+        f"evidence={desktop_instance.get('evidence')} "
+        f"kind={desktop_instance.get('runtimeKind')} "
+        f"domain={desktop_instance.get('instanceDomain')} "
+        f"ownerKind={desktop_owner.get('runtimeKind')} "
+        f"ownerPid={desktop_owner.get('pid')} "
+        f"session={desktop_owner.get('processSessionId')}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "

@@ -48,6 +48,8 @@ sha2 = "0.10"
 notify-debouncer-full = "0.3.1"
 tar = "0.4"
 tauri-plugin-dialog = "2"
+fs4 = { version = "0.13", default-features = false, features = ["sync"] }
+rfd = "0.16"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

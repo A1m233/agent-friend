@@ -26,6 +26,7 @@ pub struct BuildIdentity {
 pub struct InstallProfile {
     pub schema_version: u32,
     pub profile_id: String,
+    pub instance_domain: String,
     pub product_name: String,
     pub bundle_identifier: String,
     pub main_binary_name: String,
@@ -91,10 +92,11 @@ pub struct VerifiedPayload {
     pub runtime_executable_sha256: String,
 }
 
-fn production_profile() -> InstallProfile {
+pub(crate) fn production_profile() -> InstallProfile {
     InstallProfile {
         schema_version: 1,
         profile_id: "production".to_string(),
+        instance_domain: "agent-friend-production".to_string(),
         product_name: "agent-friend".to_string(),
         bundle_identifier: "com.agentfriend.desktop".to_string(),
         main_binary_name: "agent-friend".to_string(),

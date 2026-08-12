@@ -196,6 +196,33 @@ def _build_bundle(
         },
         "diagnostics/runtime-services.json": {},
         "diagnostics/runtime-config.json": {"items": []},
+        "diagnostics/desktop-instance.json": {
+            "schemaVersion": 1,
+            "identity": {
+                "attemptId": "diagnostic-snapshot",
+                "runtimeKind": "production",
+                "instanceDomain": "agent-friend-production",
+                "profileId": "production",
+                "tauriIdentifier": "com.agentfriend.desktop",
+                "buildIdentity": None,
+                "executablePath": "<USER_HOME>/agent-friend.exe",
+                "installRoot": "<USER_HOME>/agent-friend",
+                "worktree": None,
+            },
+            "owner": {
+                "instanceDomain": "agent-friend-production",
+                "runtimeKind": "production",
+                "pid": 1234,
+                "processSessionId": "1234-5678",
+                "profileId": "production",
+                "tauriIdentifier": "com.agentfriend.desktop",
+                "buildIdentity": None,
+                "executablePath": "<USER_HOME>/agent-friend.exe",
+                "installRoot": "<USER_HOME>/agent-friend",
+                "worktree": None,
+                "publishedAt": "2026-08-01T00:00:00Z",
+            },
+        },
         "install/integrity.json": {
             "schemaVersion": 1,
             "status": "consistent",
@@ -446,6 +473,9 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["installIntegrity"]["evidence"] == "collected"
     assert summary["installIntegrity"]["payload"]["validated"] is True
     assert summary["installIntegrity"]["runtime"]["jobObjectAssignedCount"] == 1
+    assert summary["desktopInstance"]["runtimeKind"] == "production"
+    assert summary["desktopInstance"]["instanceDomain"] == "agent-friend-production"
+    assert summary["desktopInstance"]["owner"]["pid"] == 1234
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:

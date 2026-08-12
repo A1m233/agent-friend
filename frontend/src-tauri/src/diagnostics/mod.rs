@@ -1,5 +1,5 @@
 use crate::{
-    install_contract, paths, runtime_config, runtime_services, shell_diagnostics,
+    desktop_instance, install_contract, paths, runtime_config, runtime_services, shell_diagnostics,
     webview_diagnostics,
 };
 use chrono::Local;
@@ -82,6 +82,7 @@ pub async fn generate_diagnostic_bundle(
     app: AppHandle,
     request: GenerateDiagnosticBundleRequest,
     services: State<'_, Arc<runtime_services::RuntimeServiceSupervisor>>,
+    desktop_instance_state: State<'_, desktop_instance::DesktopInstanceState>,
     shell_diagnostics_manager: State<'_, Arc<shell_diagnostics::ShellDiagnosticsManager>>,
     webview_diagnostics_manager: State<'_, Arc<webview_diagnostics::WebViewDiagnosticsManager>>,
 ) -> Result<GenerateDiagnosticBundleResult, String> {
@@ -197,6 +198,7 @@ pub async fn generate_diagnostic_bundle(
         resource_dir.as_deref(),
         services.install_integrity_runtime_evidence().await,
     );
+    let desktop_instance = desktop_instance_state.snapshot();
 
     for (name, mut value) in [
         ("diagnostics/application.json", app_info),
@@ -208,6 +210,7 @@ pub async fn generate_diagnostic_bundle(
             "diagnostics/webview2-render-evidence.json",
             render_evidence_metadata,
         ),
+        ("diagnostics/desktop-instance.json", desktop_instance),
         ("install/integrity.json", install_integrity),
     ] {
         let mut count = 0;
@@ -1172,6 +1175,7 @@ mod tests {
                     "diagnostics/environment.json",
                     "diagnostics/runtime-services.json",
                     "diagnostics/runtime-config.json",
+                    "diagnostics/desktop-instance.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",
                     "install/integrity.json",

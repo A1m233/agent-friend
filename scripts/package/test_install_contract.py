@@ -54,6 +54,8 @@ def test_profiles_are_explicit_and_fully_isolated() -> None:
     assert PRODUCTION_PROFILE.profile_id == "production"
     assert WINDOWS_INSTALLER_MANUFACTURER == "agentfriend"
     assert INSTALLER_SMOKE_PROFILE.profile_id == "installer-smoke"
+    assert PRODUCTION_PROFILE.instance_domain == "agent-friend-production"
+    assert INSTALLER_SMOKE_PROFILE.instance_domain == "agent-friend-installer-smoke"
     assert PRODUCTION_PROFILE.to_json_dict()["keyringService"] == "agent-friend"
     assert (
         INSTALLER_SMOKE_PROFILE.to_json_dict()["keyringService"] == "agent-friend-installer-smoke"
