@@ -39,3 +39,5 @@ COMPLETED
 | 2026-08-13 | 完成 Todo 状态迁移原生批量、默认 recoverable、显式 pinned 例外和安全只读并行分类。 | 10 项完成可由一次 invoke 处理；批量结果支持有序逐项 revision/error 和部分成功；旧事件兼容及 075 恢复机制未改。 |
 | 2026-08-13 | 完成局部回归与项目三段统一门禁。 | 局部 73 passed；backend lint/mypy 通过，1673 passed / 4 skipped；frontend 91 files / 525 tests 与 production build 通过；Rust 183 + 6 passed / 1 ignored，release check 通过；未调用真实 LLM。 |
 | 2026-08-13 | 用户明确要求合入主干并推送，确认本需求验收完成。 | 需求实现与 AC 已完成；进入知识维护检查、提交与交付阶段。 |
+| 2026-08-13 | 同步已合入需求 081 的最新 `origin/main`，知识维护检查结论为无需更新。 | 公开 guide 与 builtin 均精确绑定 `b2de939`；082 不改变用户入口、设置、凭据、数据或可见错误语义。 |
+| 2026-08-13 | 完成主干同步后的完整项目门禁。 | backend lint/mypy 通过，1681 passed / 4 skipped；frontend 91 files / 525 tests 与 production build 通过；Rust 188 + 6 passed / 1 ignored，release check 通过。 |
