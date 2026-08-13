@@ -32,6 +32,8 @@ import {
   visiblePersonaEditorMessages,
 } from "../personaEditorState";
 import { PersonaMarkdown } from "./PersonaMarkdown";
+import { ImmersiveModeSetting } from "./ImmersiveModeSetting";
+import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageLayout } from "./SettingsPageLayout";
 
 const PERSONA_REFRESH_MS = 3_000;
@@ -311,6 +313,10 @@ export function PersonaPanel({ active }: PersonaPanelProps) {
           </DropdownMenu>
         )}
       >
+        <SettingsGroup title="交流方式">
+          <ImmersiveModeSetting />
+        </SettingsGroup>
+
         <div className="overflow-hidden rounded-xl border border-border bg-surface/50">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div className="min-w-0">

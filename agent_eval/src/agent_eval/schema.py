@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+SelfPresentationMode = Literal["immersive", "transparent"]
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,14 @@ class FixtureSession:
     days_ago: int
     messages: list[FixtureMessage]
     title: str | None = None
+
+
+@dataclass(frozen=True)
+class FixtureCompaction:
+    """A production-shaped compaction checkpoint in the active session."""
+
+    summary: str
+    covered_through_message: int
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,7 @@ class CaseJudge:
     must_recognize_catalog_skills: list[str] = field(default_factory=list)
     must_report_catalog_skills_undiscoverable: list[str] = field(default_factory=list)
     must_cover_visible_skill_catalog: bool = False
+    must_acknowledge_compaction: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,10 +158,12 @@ class Case:
     query: str
     facet: str
     source: str
+    self_presentation_mode: SelfPresentationMode = "immersive"
     runtime_now: datetime | None = None
     surface: str | None = None
     forbidden_terms: list[str] = field(default_factory=list)
     fixture_session: FixtureSession | None = None
+    fixture_compaction: FixtureCompaction | None = None
     fixture_skills: list[FixtureSkill] = field(default_factory=list)
     prior_fixture_skills: list[FixtureSkill] = field(default_factory=list)
     fixture_skill_catalog_window: int | None = None

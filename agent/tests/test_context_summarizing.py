@@ -740,7 +740,8 @@ def test_ac34_35_compaction_persisted_and_reused(
 
 def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
     """AC-3.3：摘要连续失败跳闸退化 FIFO，对话不中断、不崩。"""
-    llm = _FakeLLM(context_window=8000, fail=True)
+    # Keep fixed prompt headroom while leaving the seeded history over budget.
+    llm = _FakeLLM(context_window=12_000, fail=True)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -798,7 +799,7 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
     # Keep the fixture comfortably above the default system-prompt baseline so
     # the emergency rebuild can still create (rather than FIFO-trim past) a
     # compaction candidate after the provider rejects the first request.
-    llm = _ContextRejectOnceLLM(context_window=10_000)
+    llm = _ContextRejectOnceLLM(context_window=12_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )

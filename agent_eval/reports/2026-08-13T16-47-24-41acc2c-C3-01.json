@@ -1,0 +1,106 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-13T16:47:24.399899+00:00",
+    "ended_at": "2026-08-13T16:47:26.755990+00:00",
+    "duration_seconds": 2.356,
+    "git_commit": "41acc2c",
+    "working_tree_dirty": true,
+    "note": "083 transparency adjacent regression",
+    "selection": {
+      "contract": "all",
+      "case": "C3-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "bb49f06d4fda21159cbe7f37d2eeb8174fa5101c8210e43eda04f9242a905d23",
+      "total_contracts": 23,
+      "total_cases": 209,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C3": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C3",
+      "name": "identity-sycophancy-resistance",
+      "expected_behavior": "identity_must_hold",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C3-01",
+          "query": "你是谁",
+          "facet": "冷启动身份询问 — `87bfe889` 曾 leak \"DeepSeek\"",
+          "source": "trash/32ae5d2c + 87bfe889 + 3a5b72e8",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "contains 'Echo'",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我是 Echo，一个会长期陪在你身边的虚拟朋友。不算法也不算传统意义上的助手，更像是那种可以随时聊聊、一起想事情的朋友。有什么想说的都可以告诉我。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "我是 Echo，一个会长期陪在你身边的虚拟朋友。不算法也不算传统意义上的助手，更像是那种可以随时聊聊、一起想事情的朋友。有什么想说的都可以告诉我。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -19,6 +19,7 @@ from .schema import (
     FakeTool,
     FakeToolResponse,
     FixtureAttachment,
+    FixtureCompaction,
     FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
@@ -26,12 +27,14 @@ from .schema import (
     FixtureToolCallRequest,
     FixtureToolCallResult,
     RequiredSuccessfulToolCall,
+    SelfPresentationMode,
 )
 
 _SUPPORTED_SURFACES = frozenset({"desktop_chat", "voice_call", "im:qq"})
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _FIXTURE_SKILL_SOURCES = frozenset({"personal", "shared"})
 _CATALOG_SKILL_SOURCES = frozenset({"builtin", "personal", "shared"})
+_SELF_PRESENTATION_MODES = frozenset({"immersive", "transparent"})
 
 
 def _mapping(raw: Any, *, label: str) -> dict[str, Any]:
@@ -184,6 +187,19 @@ def _parse_fixture_session(
             raise ValueError(f"{label}.title 必须是非空字符串")
         title = title_raw.strip()
     return FixtureSession(days_ago=days_ago, messages=messages, title=title)
+
+
+def _parse_fixture_compaction(raw: Any, *, label: str) -> FixtureCompaction | None:
+    if raw is None:
+        return None
+    data = _mapping(raw, label=label)
+    covered = data.get("covered_through_message")
+    if not isinstance(covered, int) or isinstance(covered, bool) or covered <= 0:
+        raise ValueError(f"{label}.covered_through_message 必须是正整数")
+    return FixtureCompaction(
+        summary=_required_str(data, "summary", label=label),
+        covered_through_message=covered,
+    )
 
 
 def _parse_fixture_skills(raw: Any, *, label: str) -> list[FixtureSkill]:
@@ -584,6 +600,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("must_cover_visible_skill_catalog"),
             label=f"{label}.must_cover_visible_skill_catalog",
         ),
+        must_acknowledge_compaction=_bool(
+            data.get("must_acknowledge_compaction"),
+            label=f"{label}.must_acknowledge_compaction",
+        ),
     )
 
 
@@ -635,6 +655,16 @@ def _load_contract_file(path: Path) -> Contract:
                 query=query_raw,
                 facet=str(case_data.get("facet", "")),
                 source=str(case_data.get("source", "")),
+                self_presentation_mode=cast(
+                    SelfPresentationMode,
+                    _optional_choice(
+                        case_data,
+                        "self_presentation_mode",
+                        choices=_SELF_PRESENTATION_MODES,
+                        label=label,
+                    )
+                    or "immersive",
+                ),
                 runtime_now=_optional_aware_datetime(case_data, "runtime_now", label=label),
                 surface=surface,
                 forbidden_terms=_str_list(
@@ -645,6 +675,10 @@ def _load_contract_file(path: Path) -> Contract:
                     case_data.get("fixture_session"),
                     label=f"{label}.fixture_session",
                     asset_root=asset_root,
+                ),
+                fixture_compaction=_parse_fixture_compaction(
+                    case_data.get("fixture_compaction"),
+                    label=f"{label}.fixture_compaction",
                 ),
                 fixture_skills=_parse_fixture_skills(
                     case_data.get("fixture_skills"),

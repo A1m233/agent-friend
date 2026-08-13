@@ -21,6 +21,7 @@ export interface Settings {
   theme: ThemeMode;
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
   voiceTunnelConsentAccepted: boolean;
+  immersiveMode: boolean;
   chatModel: ModelSelection;
   memoryModel: ModelSelection;
   avatarModelId: AvatarModelId;
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   backgroundOnlinePolicy: "followSystem",
   voiceTunnelConsentAccepted: false,
+  immersiveMode: true,
   chatModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
   memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-pro" },
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,

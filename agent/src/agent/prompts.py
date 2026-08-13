@@ -25,7 +25,11 @@ from .errors import PersonaNotFoundError
 from .personas import PersonaCatalog
 from .sessions import Session
 from .system_prompt import SystemPromptComposer
-from .system_prompt.sections import PromptChannel
+from .system_prompt.sections import (
+    PromptChannel,
+    SelfPresentationModeProvider,
+    default_self_presentation_mode,
+)
 
 
 class PromptBuilder(Protocol):
@@ -52,7 +56,7 @@ class MarkdownPromptBuilder:
             ``None`` 时由 :class:`~agent.PersonaCatalog` 用其默认目录
             （:func:`agent.paths.personas_dir`）。
         composer: 可选 :class:`SystemPromptComposer`；``None`` 时调
-            :meth:`SystemPromptComposer.default` 构造含 4 个默认槽位的装配。
+            :meth:`SystemPromptComposer.default` 构造默认职责槽位装配。
             调用方需要变体（如替换 ``persona_switch_strategy`` / 关闭某槽位）
             时自行构造并传入。
         session: 可选 :class:`Session`（007 起新增）。传入时
@@ -73,15 +77,20 @@ class MarkdownPromptBuilder:
         external_dir: Path | None = None,
         composer: SystemPromptComposer | None = None,
         session: Session | None = None,
+        self_presentation_mode_provider: SelfPresentationModeProvider = (
+            default_self_presentation_mode
+        ),
     ):
         self.persona_id = persona_id
         self._catalog = catalog or PersonaCatalog(external_dir=external_dir)
         self._session = session
+        self._self_presentation_mode_provider = self_presentation_mode_provider
         self._composer_was_explicit = composer is not None
         self._composer = composer or SystemPromptComposer.default(
             persona_id,
             catalog=self._catalog,
             session=session,
+            self_presentation_mode_provider=self._self_presentation_mode_provider,
         )
 
     def with_session(self, session: Session) -> MarkdownPromptBuilder:
@@ -100,24 +109,29 @@ class MarkdownPromptBuilder:
                 catalog=self._catalog,
                 composer=self._composer,
                 session=session,
+                self_presentation_mode_provider=self._self_presentation_mode_provider,
             )
         return MarkdownPromptBuilder(
             persona_id=self.persona_id,
             catalog=self._catalog,
             session=session,
+            self_presentation_mode_provider=self._self_presentation_mode_provider,
         )
 
     def snapshot(self) -> MarkdownPromptBuilder:
         """冻结当前 persona 槽位，供一个用户回合的多次 LLM 调用复用。"""
-        try:
-            composer = self._composer.freeze("persona")
-        except KeyError:
-            composer = self._composer
+        composer = self._composer
+        for key in ("persona", "self_presentation"):
+            try:
+                composer = composer.freeze(key)
+            except KeyError:
+                continue
         return MarkdownPromptBuilder(
             persona_id=self.persona_id,
             catalog=self._catalog,
             composer=composer,
             session=self._session,
+            self_presentation_mode_provider=self._self_presentation_mode_provider,
         )
 
     def build(

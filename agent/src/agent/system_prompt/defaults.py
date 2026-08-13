@@ -11,12 +11,18 @@ from __future__ import annotations
 from importlib.resources import files
 
 from ..sessions import Session
-from .sections import ChannelSection, StaticSection
+from .sections import (
+    ChannelSection,
+    SelfPresentationModeProvider,
+    SelfPresentationSection,
+    StaticSection,
+)
 
 _RESOURCE_PACKAGE = "agent.prompt_sections"
 
 _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "project_identity": "project_identity.md",
+    "instruction_confidentiality": "instruction_confidentiality.md",
     "evidence_policy": "evidence_policy.md",
     "persona_switch_strategy": "persona_switch_strategy.md",
     "relationship_contract": "relationship_contract.md",
@@ -27,6 +33,11 @@ _SECTION_KEY_TO_FILENAME: dict[str, str] = {
     "interaction_context_contract": "interaction_context_contract.md",
     "runtime_context": "runtime_context.md",
     "channel": "channel_voice.md",
+}
+
+_SELF_PRESENTATION_FILENAMES = {
+    "immersive": "self_presentation_immersive.md",
+    "transparent": "self_presentation_transparent.md",
 }
 
 
@@ -56,6 +67,24 @@ def load_default_static_section(key: str) -> StaticSection:
     """
     text = _load_section_text(key)
     return StaticSection(key=key, text=text)
+
+
+def load_default_self_presentation_section(
+    mode_provider: SelfPresentationModeProvider,
+    key: str = "self_presentation",
+) -> SelfPresentationSection:
+    """加载两种呈现模板并构造动态 section。"""
+    package = files(_RESOURCE_PACKAGE)
+    return SelfPresentationSection(
+        key=key,
+        mode_provider=mode_provider,
+        immersive_template=(package / _SELF_PRESENTATION_FILENAMES["immersive"])
+        .read_text(encoding="utf-8")
+        .strip(),
+        transparent_template=(package / _SELF_PRESENTATION_FILENAMES["transparent"])
+        .read_text(encoding="utf-8")
+        .strip(),
+    )
 
 
 def load_default_runtime_context_section(

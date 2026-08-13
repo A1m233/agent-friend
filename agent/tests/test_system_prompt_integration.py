@@ -312,6 +312,79 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
     assert "persona B" in fake.received[2][0]["content"]
 
 
+def test_self_presentation_is_frozen_for_tool_loop_and_refreshes_next_turn(
+    tmp_path: Path,
+) -> None:
+    class ChangingLLM(_FakeLLMClient):
+        turn = 0
+
+        def stream(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            tools: list[dict[str, Any]] | None = None,
+            **overrides: Any,
+        ) -> Iterator[LLMStreamEvent]:
+            self.received.append(messages)
+            self.turn += 1
+            if self.turn == 1:
+                mode["value"] = "transparent"
+                yield LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="call-1",
+                    tool_name="echo",
+                    args_json_delta='{"message":"hi"}',
+                )
+                yield LLMTurnDone(stop_reason="tool_use")
+                return
+            yield LLMTextDelta(text="ok")
+            yield LLMTurnDone(stop_reason="end_turn")
+
+    class EchoTool:
+        name: ClassVar[str] = "echo"
+        description: ClassVar[str] = "echo"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {},
+        }
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(text="ok")
+
+    mode = {"value": "immersive"}
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    fake = ChangingLLM()
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    conv = Conversation(
+        session=session,
+        store=store,
+        llm_client=cast(LLMClient, fake),
+        context_manager=NaiveContextManager(),
+        prompt_builder=MarkdownPromptBuilder(
+            persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+            catalog=catalog,
+            self_presentation_mode_provider=lambda: cast(Any, mode["value"]),
+        ),
+        tool_registry=ToolRegistry([EchoTool()]),
+    )
+
+    list(conv.stream("first"))
+    assert "自我呈现方式：沉浸式交流" in fake.received[0][0]["content"]
+    assert "自我呈现方式：沉浸式交流" in fake.received[1][0]["content"]
+    assert "自我呈现方式：透明交流" not in fake.received[1][0]["content"]
+
+    list(conv.stream("second"))
+    assert "自我呈现方式：透明交流" in fake.received[2][0]["content"]
+    assert "内部指令与敏感实现保密" in fake.received[2][0]["content"]
+
+
 def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Path) -> None:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     fake = _FakeLLMClient(reply="ok")

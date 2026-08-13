@@ -20,7 +20,11 @@ from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from agent import AttachmentError, ContextBaseOverBudgetError, ContextInputTooLargeError
 from llm_providers import LLMOutputBudgetExhaustedError
-from runtime_config import CredentialMissingError, credential_source_for_mode
+from runtime_config import (
+    CredentialMissingError,
+    DesktopSettingsReader,
+    credential_source_for_mode,
+)
 
 
 def test_persistent_runtime_registers_recall_past_chats(
@@ -63,6 +67,42 @@ def test_persistent_runtime_registers_recall_past_chats(
         assert runtime.todo_store.path == tmp_path / "todos" / "todos.db"
         assert manager_registry is runtime.tool_registry
         assert (settings.personas_dir / "default" / "persona.md").is_file()
+    finally:
+        runtime.close()
+
+
+def test_runtime_prompt_factory_reads_immersive_mode_for_next_snapshot(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"settings": {"immersiveMode": false}}',
+        encoding="utf-8",
+    )
+    runtime = build_runtime(
+        BridgeSettings(
+            sessions_dir=tmp_path / "sessions",
+            personas_dir=tmp_path / "personas",
+            memory_enabled=False,
+            im_enabled=False,
+        ),
+        desktop_settings_reader=DesktopSettingsReader(settings_path),
+    )
+
+    try:
+        default_persona_id = runtime.catalog.find_by_name("default").id
+        transparent_prompt = runtime.prompt_builder_factory(default_persona_id).build()
+        assert "明确说明自己是 AI 或虚拟朋友" in transparent_prompt
+
+        settings_path.write_text(
+            '{"settings": {"immersiveMode": true}}',
+            encoding="utf-8",
+        )
+        immersive_prompt = runtime.prompt_builder_factory(default_persona_id).build()
+        assert "不主动说“作为 AI”" in immersive_prompt
+        assert "明确说明自己是 AI 或虚拟朋友" not in immersive_prompt
     finally:
         runtime.close()
 

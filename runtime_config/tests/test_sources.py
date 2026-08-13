@@ -25,6 +25,7 @@ from runtime_config import (
     VOLC_SPEECH_ACCESS_TOKEN,
     VOLC_SPEECH_API_KEY,
     VOLC_SPEECH_APP_ID,
+    DesktopSettingsReader,
     KeyringSource,
     LegacyDotenvSource,
     SettingsFileSource,
@@ -57,6 +58,29 @@ VOICE_BRIDGE_VOLC_ALIASES = (
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def test_desktop_settings_reader_distinguishes_valid_empty_from_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "settings.json"
+    reader = DesktopSettingsReader(path)
+
+    assert reader.read() is None
+    path.write_text('{"settings": {}}', encoding="utf-8")
+    assert reader.read() == {}
+    path.write_text("[]", encoding="utf-8")
+    assert reader.read() is None
+
+
+def test_desktop_settings_reader_supports_wrapped_and_flat_snapshots(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    reader = DesktopSettingsReader(path)
+
+    path.write_text('{"settings": {"immersiveMode": false}}', encoding="utf-8")
+    assert reader.read() == {"immersiveMode": False}
+    path.write_text('{"immersiveMode": true}', encoding="utf-8")
+    assert reader.read() == {"immersiveMode": True}
 
 
 def test_process_env_wins_over_keyring_and_dotenv(tmp_path: Path) -> None:

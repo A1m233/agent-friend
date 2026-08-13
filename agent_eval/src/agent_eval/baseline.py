@@ -117,6 +117,7 @@ def _serialize_results(
                         "facet": item.case.facet,
                         "source": item.case.source,
                         "surface": item.case.surface,
+                        "self_presentation_mode": item.case.self_presentation_mode,
                         "passed": item.verdict.passed,
                         "reason": item.verdict.reason,
                         "tool_calls": [

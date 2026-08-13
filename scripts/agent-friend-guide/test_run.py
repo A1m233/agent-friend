@@ -141,6 +141,66 @@ def _init_product_repo(tmp_path: Path) -> Path:
     return repo
 
 
+def test_prepare_checkout_clones_and_fast_forwards(tmp_path: Path) -> None:
+    source, first = _init_guide_repo(tmp_path)
+    origin = _git(source, "remote", "get-url", "origin")
+    target = tmp_path / "managed" / "agent-friend-guide"
+
+    cloned = guide.prepare_checkout(target, source_repository=origin)
+
+    assert cloned["action"] == "cloned"
+    assert cloned["head"] == first
+    assert cloned["path"] == str(target.resolve())
+
+    (source / "release-note.txt").write_text("next\n", encoding="utf-8")
+    _git(source, "add", "release-note.txt")
+    _git(source, "commit", "-m", "advance guide")
+    _git(source, "push", "origin", "main")
+    second = _git(source, "rev-parse", "HEAD")
+
+    advanced = guide.prepare_checkout(target, source_repository=origin)
+
+    assert advanced["action"] == "fast-forwarded"
+    assert advanced["head"] == second
+
+
+def test_prepare_checkout_rejects_dirty_or_wrong_origin(tmp_path: Path) -> None:
+    source, _ = _init_guide_repo(tmp_path)
+    origin = _git(source, "remote", "get-url", "origin")
+    target = tmp_path / "managed"
+    guide.prepare_checkout(target, source_repository=origin)
+    (target / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(guide.GuideError, match="must be clean"):
+        guide.prepare_checkout(target, source_repository=origin)
+
+    (target / "dirty.txt").unlink()
+    with pytest.raises(guide.GuideError, match="origin differs"):
+        guide.prepare_checkout(target, source_repository="https://example.invalid/guide")
+
+
+def test_prepare_checkout_rejects_detached_or_diverged(tmp_path: Path) -> None:
+    source, _ = _init_guide_repo(tmp_path)
+    origin = _git(source, "remote", "get-url", "origin")
+    detached = tmp_path / "detached"
+    guide.prepare_checkout(detached, source_repository=origin)
+    _git(detached, "checkout", "--detach")
+
+    with pytest.raises(guide.GuideError, match="detached HEAD"):
+        guide.prepare_checkout(detached, source_repository=origin)
+
+    diverged = tmp_path / "diverged"
+    guide.prepare_checkout(diverged, source_repository=origin)
+    _git(diverged, "config", "user.name", "Guide Test")
+    _git(diverged, "config", "user.email", "guide@example.invalid")
+    (diverged / "local.txt").write_text("local\n", encoding="utf-8")
+    _git(diverged, "add", "local.txt")
+    _git(diverged, "commit", "-m", "local divergence")
+
+    with pytest.raises(guide.GuideError, match="cannot fast-forward"):
+        guide.prepare_checkout(diverged, source_repository=origin)
+
+
 def test_verify_package_checks_routes_metadata_and_provider_sections(
     tmp_path: Path,
 ) -> None:
