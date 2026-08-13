@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 5,
+  "schemaRevision": 6,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -113,6 +113,16 @@
       ],
       "entryPatterns": [
         "install/integrity.json"
+      ]
+    },
+    {
+      "id": "desktop-instance-governance-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "diagnostics/desktop-instance.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/desktop-instance.json"
       ]
     }
   ]

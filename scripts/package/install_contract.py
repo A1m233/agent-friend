@@ -16,6 +16,7 @@ PROFILE_SCHEMA_VERSION = 1
 BUILD_IDENTITY_SCHEMA_VERSION = 1
 PAYLOAD_MANIFEST_SCHEMA_VERSION = 1
 ACTIVE_INSTALL_SCHEMA_VERSION = 1
+ACTIVE_INSTALL_FILE = "active-install.json"
 INSTALLER_VERIFICATION_SCHEMA_VERSION = 1
 INSTALLER_VERIFICATION_SCOPE = "windows-installer-shared-behavior-v1"
 WINDOWS_INSTALLER_MANUFACTURER = "agentfriend"
@@ -65,6 +66,7 @@ PACKAGE_VERIFICATION_LEVEL_ORDER = {
 class InstallProfile:
     schema_version: int
     profile_id: str
+    instance_domain: str
     product_name: str
     bundle_identifier: str
     main_binary_name: str
@@ -82,6 +84,7 @@ class InstallProfile:
         return {
             "schemaVersion": self.schema_version,
             "profileId": self.profile_id,
+            "instanceDomain": self.instance_domain,
             "productName": self.product_name,
             "bundleIdentifier": self.bundle_identifier,
             "mainBinaryName": self.main_binary_name,
@@ -107,6 +110,7 @@ class InstallProfile:
 PRODUCTION_PROFILE = InstallProfile(
     schema_version=PROFILE_SCHEMA_VERSION,
     profile_id="production",
+    instance_domain="agent-friend-production",
     product_name="agent-friend",
     bundle_identifier="com.agentfriend.desktop",
     main_binary_name="agent-friend",
@@ -124,6 +128,7 @@ PRODUCTION_PROFILE = InstallProfile(
 INSTALLER_SMOKE_PROFILE = InstallProfile(
     schema_version=PROFILE_SCHEMA_VERSION,
     profile_id="installer-smoke",
+    instance_domain="agent-friend-installer-smoke",
     product_name="agent-friend-installer-smoke",
     bundle_identifier="com.agentfriend.desktop.installer-smoke",
     main_binary_name="agent-friend-installer-smoke",
@@ -155,6 +160,7 @@ INSTALLER_VERIFICATION_EXCLUDED_PREFIXES = (
     "frontend/src/__tests__/",
     "frontend/src/test/",
     "memory_eval/",
+    "scripts/dev/",
     "tools/",
 )
 INSTALLER_VERIFICATION_EXCLUDED_FILES = {
@@ -675,6 +681,39 @@ class ActiveInstallReceipt:
             "transactionId": self.transaction_id,
         }
 
+    @classmethod
+    def from_json_dict(cls, value: dict[str, Any]) -> ActiveInstallReceipt:
+        try:
+            receipt = cls(
+                schema_version=int(value["schemaVersion"]),
+                profile_id=str(value["profileId"]),
+                build_identity_sha256=str(value["buildIdentitySha256"]),
+                build_id=str(value["buildId"]),
+                payload_relative_path=str(value["payloadRelativePath"]),
+                payload_manifest_sha256=str(value["payloadManifestSha256"]),
+                activated_at=str(value["activatedAt"]),
+                transaction_id=str(value["transactionId"]),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError("invalid active install receipt") from error
+        if receipt.schema_version != ACTIVE_INSTALL_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"unsupported active install receipt schema: {receipt.schema_version}"
+            )
+        resolve_install_profile(receipt.profile_id)
+        if not BUILD_ID_PATTERN.fullmatch(receipt.build_id):
+            raise RuntimeError(f"invalid active install build id: {receipt.build_id!r}")
+        if not SHA256_PATTERN.fullmatch(receipt.build_identity_sha256):
+            raise RuntimeError("active install build identity SHA-256 is invalid")
+        if not SHA256_PATTERN.fullmatch(receipt.payload_manifest_sha256):
+            raise RuntimeError("active install payload manifest SHA-256 is invalid")
+        safe_relative_path(receipt.payload_relative_path)
+        if not receipt.activated_at or not receipt.transaction_id:
+            raise RuntimeError("active install receipt metadata is incomplete")
+        if receipt.to_json_dict() != value:
+            raise RuntimeError("active install receipt is not canonical")
+        return receipt
+
 
 def resolve_install_profile(profile_id: str) -> InstallProfile:
     try:
@@ -744,6 +783,16 @@ def read_build_identity(path: Path) -> BuildIdentity:
     if not isinstance(value, dict):
         raise RuntimeError(f"build identity must be an object: {path}")
     return BuildIdentity.from_json_dict(value)
+
+
+def read_active_install_receipt(path: Path) -> ActiveInstallReceipt:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"could not read active install receipt: {path}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"active install receipt must be an object: {path}")
+    return ActiveInstallReceipt.from_json_dict(value)
 
 
 def read_payload_manifest(path: Path) -> PayloadManifest:

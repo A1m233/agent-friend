@@ -275,3 +275,104 @@ def test_posix_entry_no_longer_contains_startup_dev_port_killer() -> None:
 
     assert "cleanup_port" not in run_sh
     assert "尝试清理上次残留的 vite/tauri 进程" not in run_sh
+
+
+def write_desktop_owner(
+    path: Path, *, start_id: str = "start-1", runtime_kind: str = "production"
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "instanceDomain": guard.PRODUCTION_INSTANCE_DOMAIN,
+                "runtimeKind": runtime_kind,
+                "pid": 1234,
+                "processStartIdentity": start_id,
+                "processSessionId": "1234-session",
+                "profileId": "production",
+                "tauriIdentifier": "com.agentfriend.desktop",
+                "buildIdentity": None,
+                "executablePath": "agent-friend.exe",
+                "installRoot": "C:/agent-friend",
+                "worktree": None,
+                "publishedAt": "2026-08-12T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_live_desktop_owner_is_attributed(monkeypatch: Any, tmp_path: Path) -> None:
+    owner_path = tmp_path / "owner.json"
+    write_desktop_owner(owner_path)
+    monkeypatch.setattr(guard, "desktop_owner_path", lambda: owner_path)
+    monkeypatch.setattr(
+        guard,
+        "list_processes",
+        lambda: [process(1234, "start-1", "agent-friend.exe")],
+    )
+    monkeypatch.setattr(guard, "process_start_id_direct", lambda _pid: "start-1")
+
+    status, owner, reason = guard.inspect_desktop_owner()
+
+    assert status == "live"
+    assert owner is not None and owner["runtimeKind"] == "production"
+    assert reason == ""
+
+
+def test_desktop_owner_pid_reuse_is_stale(monkeypatch: Any, tmp_path: Path) -> None:
+    owner_path = tmp_path / "owner.json"
+    write_desktop_owner(owner_path)
+    monkeypatch.setattr(guard, "desktop_owner_path", lambda: owner_path)
+    monkeypatch.setattr(
+        guard,
+        "list_processes",
+        lambda: [process(1234, "start-2", "other.exe")],
+    )
+    monkeypatch.setattr(guard, "process_start_id_direct", lambda _pid: "start-2")
+
+    status, _, reason = guard.inspect_desktop_owner()
+
+    assert status == "stale"
+    assert reason == "owner-pid-reused"
+
+
+def test_invalid_desktop_owner_contract_fails_closed(monkeypatch: Any, tmp_path: Path) -> None:
+    owner_path = tmp_path / "owner.json"
+    write_desktop_owner(owner_path, runtime_kind="unknown")
+    monkeypatch.setattr(guard, "desktop_owner_path", lambda: owner_path)
+
+    status, _, reason = guard.inspect_desktop_owner()
+
+    assert status == "invalid"
+    assert "runtimeKind" in reason
+
+
+def test_latest_instance_event_is_read_without_log_body_dump(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    (log_dir / "tauri.log.runtime").write_text(
+        "\n".join(
+            [
+                json.dumps({"source": "lifecycle", "kind": "process-started"}),
+                json.dumps(
+                    {
+                        "source": "instance-governance",
+                        "kind": "cross-identity-rejected",
+                        "processSessionId": "session-1",
+                        "details": {"reasonCode": "cross_identity_conflict"},
+                    }
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(guard, "instance_log_dir", lambda: log_dir)
+
+    event = guard.recent_instance_governance_event()
+
+    assert event is not None
+    assert event["kind"] == "cross-identity-rejected"
+    assert event["details"]["reasonCode"] == "cross_identity_conflict"

@@ -25,18 +25,24 @@ from typing import Any
 import brotli
 from dependency_policy import validate_frozen_runtime_dependency_policy
 from install_contract import (
+    ACTIVE_INSTALL_FILE,
     INSTALL_PROFILES,
     PRODUCTION_PROFILE,
+    WINDOWS_INSTALLER_MANUFACTURER,
     BuildIdentity,
+    InstalledVersionState,
     InstallerVerificationInputs,
     InstallProfile,
     PackageVerificationLevel,
     build_identity,
     build_installer_verification_inputs,
     canonical_json_bytes,
+    canonical_windows_install_root,
+    classify_installed_version,
     classify_installer_impact,
     max_package_verification_level,
     payload_install_relative_path,
+    read_active_install_receipt,
     read_build_identity,
     read_payload_manifest,
     resolve_install_profile,
@@ -1496,6 +1502,136 @@ def _release_status(roots: PackageRoots, project: ProjectVersion) -> dict[str, A
     }
 
 
+def _planned_package_version(
+    roots: PackageRoots,
+    project: ProjectVersion,
+    *,
+    local_test: bool,
+    trusted_beta: bool,
+) -> tuple[SemVer | None, SemVer]:
+    if trusted_beta:
+        records, warnings = discover_formal_releases(roots.releases_root)
+        for warning in warnings:
+            print(f"warning: invalid formal release ignored: {warning}")
+        return _trusted_beta_candidate(roots, project, records)
+    package_version = project.version
+    if not local_test and (package_version.prerelease or package_version.build):
+        raise RuntimeError(
+            "stable --release builds require a project version without prerelease or build metadata"
+        )
+    return None, package_version
+
+
+def _read_registry_value(key: Any, name: str) -> str:
+    import winreg
+
+    value, _ = winreg.QueryValueEx(key, name)
+    if not isinstance(value, str) or not value.strip():
+        label = name or "(default)"
+        raise RuntimeError(f"production install registry value is missing: {label}")
+    return value.strip()
+
+
+def _read_current_production_install() -> dict[str, Any] | None:
+    import winreg
+
+    uninstall_path = (
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+        + PRODUCTION_PROFILE.registry_product_name
+    )
+    manufacturer_path = (
+        f"Software\\{WINDOWS_INSTALLER_MANUFACTURER}\\" + PRODUCTION_PROFILE.registry_product_name
+    )
+
+    def open_optional(path: str) -> Any | None:
+        try:
+            return winreg.OpenKey(winreg.HKEY_CURRENT_USER, path)
+        except FileNotFoundError:
+            return None
+
+    uninstall = open_optional(uninstall_path)
+    manufacturer = open_optional(manufacturer_path)
+    if uninstall is None and manufacturer is None:
+        return None
+    if uninstall is None or manufacturer is None:
+        if uninstall is not None:
+            uninstall.Close()
+        if manufacturer is not None:
+            manufacturer.Close()
+        raise RuntimeError(
+            "production install identity is incomplete: uninstall and manufacturer "
+            "registry records must either both exist or both be absent"
+        )
+    try:
+        registered_version = _read_registry_value(uninstall, "DisplayVersion")
+        uninstall_root = _read_registry_value(uninstall, "InstallLocation")
+        manufacturer_root = _read_registry_value(manufacturer, "")
+    finally:
+        uninstall.Close()
+        manufacturer.Close()
+    if canonical_windows_install_root(uninstall_root) != canonical_windows_install_root(
+        manufacturer_root
+    ):
+        raise RuntimeError("production install registry roots disagree")
+    install_root = Path(uninstall_root.strip().strip('"'))
+    receipt_path = install_root / ACTIVE_INSTALL_FILE
+    receipt = read_active_install_receipt(receipt_path)
+    if receipt.profile_id != PRODUCTION_PROFILE.profile_id:
+        raise RuntimeError("active production install receipt has the wrong profile")
+    expected_payload = payload_install_relative_path(receipt.build_id)
+    if receipt.payload_relative_path != expected_payload:
+        raise RuntimeError("active production install payload path disagrees with its build id")
+    identity_path = install_root / Path(receipt.payload_relative_path) / "build-identity.json"
+    identity = read_build_identity(identity_path)
+    if identity.profile_id != PRODUCTION_PROFILE.profile_id:
+        raise RuntimeError("active production build identity has the wrong profile")
+    if identity.build_id != receipt.build_id:
+        raise RuntimeError("active production receipt and build identity disagree on build id")
+    if sha256(identity_path) != receipt.build_identity_sha256:
+        raise RuntimeError("active production build identity hash mismatch")
+    if identity.product_version != registered_version:
+        raise RuntimeError(
+            "production registry version and active build identity disagree: "
+            f"{registered_version} != {identity.product_version}"
+        )
+    return {
+        "version": registered_version,
+        "installRoot": str(install_root.resolve(strict=False)),
+        "buildId": identity.build_id,
+        "sourceCommit": identity.source_commit,
+        "sourceTreeSha256": identity.source_tree_sha256,
+        "distribution": identity.distribution,
+        "buildMode": identity.build_mode,
+        "profileId": identity.profile_id,
+    }
+
+
+def _production_install_plan(candidate_version: SemVer) -> dict[str, Any]:
+    installed = _read_current_production_install()
+    state = classify_installed_version(
+        None if installed is None else str(installed["version"]),
+        str(candidate_version),
+    )
+    return {
+        "schemaVersion": 1,
+        "profileId": PRODUCTION_PROFILE.profile_id,
+        "candidateVersion": str(candidate_version),
+        "installed": installed,
+        "state": state.value,
+        "allowed": state != InstalledVersionState.DOWNGRADE_BLOCKED,
+    }
+
+
+def _require_install_candidate_allowed(plan: dict[str, Any]) -> None:
+    if plan["state"] == InstalledVersionState.DOWNGRADE_BLOCKED.value:
+        installed = plan["installed"]
+        assert isinstance(installed, dict)
+        raise RuntimeError(
+            "production install plan rejected a downgrade before build: "
+            f"installed={installed['version']} candidate={plan['candidateVersion']}"
+        )
+
+
 def _installer_contract_report(
     roots: PackageRoots,
     *,
@@ -1760,6 +1896,7 @@ def _parse_args() -> argparse.Namespace:
             "workspace-status",
             "workspace-gc",
             "version-status",
+            "production-install-plan",
             "version-set",
             "trusted-beta-configure",
         ),
@@ -1818,6 +1955,14 @@ def _parse_args() -> argparse.Namespace:
         "--local-test",
         action="store_true",
         help="build a non-publishable local test installer and allow a dirty worktree",
+    )
+    parser.add_argument(
+        "--for-current-install",
+        action="store_true",
+        help=(
+            "fail before build unless the candidate can install over this machine's "
+            "production identity"
+        ),
     )
     parser.add_argument(
         "--smoke-build-report",
@@ -1911,6 +2056,12 @@ def main() -> int:
     args = _parse_args()
     validate_profile_isolation()
     profile = resolve_install_profile(args.install_profile)
+    if args.for_current_install and (
+        args.step not in {"all", "installer"} or profile.profile_id != "production"
+    ):
+        raise RuntimeError(
+            "--for-current-install is only valid for production installer or all builds"
+        )
     if args.verification_level is not None and args.step not in {"runtime", "installer", "all"}:
         raise RuntimeError("--verification-level is only valid for package build steps")
     if args.step == "version-set":
@@ -2032,6 +2183,31 @@ def main() -> int:
         ):
             raise RuntimeError("version-status does not accept package build mode options")
         print(json.dumps(_release_status(roots, read_project_version(REPO_ROOT)), indent=2))
+        return 0
+
+    if args.step == "production-install-plan":
+        if args.reuse_build_id or args.reuse_frozen or profile.profile_id != "production":
+            raise RuntimeError(
+                "production-install-plan does not accept build reuse or non-production profiles"
+            )
+        _validate_package_build_intent(
+            step="all",
+            profile=profile,
+            local_test=args.local_test,
+            trusted_beta=args.trusted_beta,
+            release=args.release,
+        )
+        _ensure_windows_x64()
+        target_release_version, package_version = _planned_package_version(
+            roots,
+            read_project_version(REPO_ROOT),
+            local_test=args.local_test,
+            trusted_beta=args.trusted_beta,
+        )
+        plan = _production_install_plan(package_version)
+        if target_release_version is not None:
+            plan["targetReleaseVersion"] = str(target_release_version)
+        print(json.dumps(plan, indent=2))
         return 0
 
     if args.step == "installer-contract":
@@ -2160,6 +2336,16 @@ def main() -> int:
     project = read_project_version(REPO_ROOT)
     source = _source_metadata()
     distribution = "trusted-beta" if args.trusted_beta else "ordinary"
+    target_release_version, package_version = _planned_package_version(
+        roots,
+        project,
+        local_test=args.local_test,
+        trusted_beta=args.trusted_beta,
+    )
+    if args.for_current_install:
+        install_plan = _production_install_plan(package_version)
+        print("production_install_plan: " + json.dumps(install_plan, separators=(",", ":")))
+        _require_install_candidate_allowed(install_plan)
     with _package_build_lock(package_workspace_lock_path(roots)):
         disk = ensure_package_disk_headroom(roots)
         mark_workspace_used(roots)
@@ -2168,21 +2354,6 @@ def main() -> int:
             f"available={disk['availableBytes']} required={disk['requiredBytes']} "
             f"state={disk['statePath']}"
         )
-        package_version = project.version
-        target_release_version: SemVer | None = None
-        if not args.local_test and args.trusted_beta:
-            records, warnings = discover_formal_releases(roots.releases_root)
-            for warning in warnings:
-                print(f"warning: invalid formal release ignored: {warning}")
-            target_release_version, package_version = _trusted_beta_candidate(
-                roots, project, records
-            )
-        elif not args.local_test:
-            if package_version.prerelease or package_version.build:
-                raise RuntimeError(
-                    "stable --release builds require a project version without prerelease "
-                    "or build metadata"
-                )
         if not args.local_test:
             _validate_formal_build(
                 roots,
