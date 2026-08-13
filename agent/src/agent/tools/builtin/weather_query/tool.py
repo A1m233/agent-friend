@@ -58,7 +58,6 @@ class WeatherQueryTool:
     """解析地点并按用户意图查询天气和官方天气预警。"""
 
     name: ClassVar[str] = "weather_query"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 30.0
     description: ClassVar[str] = (

@@ -18,7 +18,7 @@ class ToolResultRecoveryTool:
     """只允许按 result_ref 读取当前会话的 active tool result。"""
 
     name: ClassVar[str] = "recover_tool_result"
-    result_context_retention: ClassVar[str] = "recoverable"
+    execution_kind: ClassVar[str] = "parallel_read"
     description: ClassVar[str] = (
         "仅当上下文占位符给出了 result_ref、且回答确实需要被清理结果里的精确细节时使用。"
         "它只读当前会话，按 query 或 offset 分页返回有限片段；不要为了概览恢复整份结果，"

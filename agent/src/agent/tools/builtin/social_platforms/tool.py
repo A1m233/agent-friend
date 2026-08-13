@@ -58,7 +58,6 @@ _MISSING_CAPABILITIES: dict[SocialPlatform, frozenset[SocialMissingCapability]] 
 
 class SocialSearchTool:
     name: ClassVar[str] = "social_search"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     # Xiaohongshu performs a login preflight before its independently bounded search call.
     timeout_seconds: ClassVar[float] = 90.0
@@ -123,7 +122,6 @@ class SocialSearchTool:
 
 class SocialReadTool:
     name: ClassVar[str] = "social_read"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 45.0
     description: ClassVar[str] = (

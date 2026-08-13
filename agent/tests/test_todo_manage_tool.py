@@ -47,6 +47,11 @@ def test_schema_exposes_create_with_reminders_and_operation_requirements() -> No
     assert "create 时必填" in schema["properties"]["title"]["description"]
     assert "add_reminder 不需要 revision" in schema["properties"]["revision"]["description"]
     assert "add_reminder 或 update_reminder" in schema["properties"]["reminder"]["description"]
+    assert "全部 Todo 合并到一次" in TodoManageTool.description
+    items_schema = schema["properties"]["items"]
+    assert items_schema["minItems"] == 1
+    assert items_schema["maxItems"] == 50
+    assert set(items_schema["items"]["required"]) == {"todo_id", "revision"}
 
     schedule_schema = schema["properties"]["reminders"]["items"]
     assert "oneOf" not in schedule_schema
@@ -92,16 +97,157 @@ def test_create_list_update_and_complete(tmp_path: Path) -> None:
             "description": "带齐附件",
         },
     )["todo"]
-    completed = _payload(
+    completed_batch = _payload(
         tool,
         {
             "operation": "complete",
+            "items": [{"todo_id": created["id"], "revision": updated["revision"]}],
+        },
+    )
+    completed = completed_batch["items"][0]
+    assert completed == {
+        "index": 0,
+        "revision": updated["revision"] + 1,
+        "status": "success",
+        "todo_id": created["id"],
+        "todo_status": "completed",
+    }
+    assert "description" not in completed
+    assert "reminders" not in completed
+    assert (
+        _payload(tool, {"operation": "get", "todo_id": created["id"]})["todo"]["reminders"][0][
+            "status"
+        ]
+        == "disabled"
+    )
+
+
+def test_complete_batch_handles_ten_todos_in_one_invoke(tmp_path: Path) -> None:
+    service = TodoService(TodoStore(tmp_path / "todos.db"))
+    tool = TodoManageTool(service)
+    created = [
+        _payload(tool, {"operation": "create", "title": f"Todo {index}"})["todo"]
+        for index in range(10)
+    ]
+
+    result = tool.invoke(
+        {
+            "operation": "complete",
+            "items": [{"todo_id": item["id"], "revision": item["revision"]} for item in created],
+        }
+    )
+
+    assert result.is_error is False
+    payload = json.loads(result.text)
+    assert payload["status"] == "success"
+    assert payload["succeeded"] == 10
+    assert payload["failed"] == 0
+    assert [item["todo_id"] for item in payload["items"]] == [item["id"] for item in created]
+    assert all(item["todo_status"] == "completed" for item in payload["items"])
+    assert result.meta == {
+        "operation": "complete",
+        "item_count": 10,
+        "success_count": 10,
+        "error_count": 0,
+    }
+
+
+def test_status_batch_reports_partial_revision_conflict_and_continues(tmp_path: Path) -> None:
+    service = TodoService(TodoStore(tmp_path / "todos.db"))
+    tool = TodoManageTool(service)
+    created = [
+        _payload(tool, {"operation": "create", "title": f"Todo {index}"})["todo"]
+        for index in range(3)
+    ]
+    service.update(
+        created[1]["id"],
+        revision=created[1]["revision"],
+        description="并发修改",
+    )
+
+    result = tool.invoke(
+        {
+            "operation": "complete",
+            "items": [{"todo_id": item["id"], "revision": item["revision"]} for item in created],
+        }
+    )
+
+    assert result.is_error is True
+    payload = json.loads(result.text)
+    assert payload["status"] == "partial"
+    assert payload["succeeded"] == 2
+    assert payload["failed"] == 1
+    assert [item["status"] for item in payload["items"]] == [
+        "success",
+        "error",
+        "success",
+    ]
+    conflict = payload["items"][1]
+    assert conflict["error_kind"] == "revision_conflict"
+    assert conflict["details"] == {"actual_revision": 2, "expected_revision": 1}
+    assert service.get(created[2]["id"]).todo.status.value == "completed"
+
+
+def test_status_batch_rejects_duplicate_ids_before_writing(tmp_path: Path) -> None:
+    service = TodoService(TodoStore(tmp_path / "todos.db"))
+    tool = TodoManageTool(service)
+    created = _payload(tool, {"operation": "create", "title": "Todo"})["todo"]
+
+    result = tool.invoke(
+        {
+            "operation": "complete",
+            "items": [
+                {"todo_id": created["id"], "revision": created["revision"]},
+                {"todo_id": created["id"], "revision": created["revision"]},
+            ],
+        }
+    )
+
+    assert result.is_error is True
+    assert json.loads(result.text)["error_kind"] == "invalid_arguments"
+    assert service.get(created["id"]).todo.status.value == "open"
+
+
+def test_status_transitions_require_items_while_update_remains_single(tmp_path: Path) -> None:
+    service = TodoService(TodoStore(tmp_path / "todos.db"))
+    tool = TodoManageTool(service)
+    created = _payload(tool, {"operation": "create", "title": "Todo"})["todo"]
+    updated = _payload(
+        tool,
+        {
+            "operation": "update",
             "todo_id": created["id"],
-            "revision": updated["revision"],
+            "revision": created["revision"],
+            "description": "单项修改",
         },
     )["todo"]
-    assert completed["status"] == "completed"
-    assert completed["reminders"][0]["status"] == "disabled"
+
+    old_shape = tool.invoke(
+        {
+            "operation": "complete",
+            "todo_id": updated["id"],
+            "revision": updated["revision"],
+        }
+    )
+    assert old_shape.is_error is True
+    assert json.loads(old_shape.text)["error_kind"] == "invalid_arguments"
+
+    cancelled = _payload(
+        tool,
+        {
+            "operation": "cancel",
+            "items": [{"todo_id": updated["id"], "revision": updated["revision"]}],
+        },
+    )["items"][0]
+    reopened = _payload(
+        tool,
+        {
+            "operation": "reopen",
+            "items": [{"todo_id": updated["id"], "revision": cancelled["revision"]}],
+        },
+    )["items"][0]
+    assert cancelled["todo_status"] == "cancelled"
+    assert reopened["todo_status"] == "open"
 
 
 def test_create_normalizes_relative_reminders_from_one_trusted_anchor(tmp_path: Path) -> None:

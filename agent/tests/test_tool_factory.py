@@ -79,6 +79,9 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
     assert "TAVILY_API_KEY" in captured.err
     assert "网页搜索和远端正文回退已关闭" in captured.err
     assert "AMAP_WEBSERVICE_KEY" in captured.err
+    assert registry.result_context_retention("calculate") == "recoverable"
+    assert registry.result_context_retention("request_filesystem_access") == "pinned"
+    assert registry.result_context_retention("request_social_auth") == "recoverable"
 
     result = nearby.invoke({"query": "药店", "near": "福民银行"})
     assert result.is_error is True
@@ -188,6 +191,10 @@ def test_session_store_injection_registers_history_tool(
     assert isinstance(history, ConversationHistoryTool)
     recovery = registry.get("recover_tool_result")
     assert isinstance(recovery, ToolResultRecoveryTool)
+    assert history.execution_kind == "parallel_read"
+    assert recovery.execution_kind == "parallel_read"
+    assert registry.result_context_retention("recall_past_chats") == "recoverable"
+    assert registry.result_context_retention("recover_tool_result") == "recoverable"
 
 
 def test_both_key_and_store_registers_both_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,6 +230,8 @@ def test_todo_service_registers_todo_manage(tmp_path: Path) -> None:
         stderr_warn=False,
     )
     assert "todo_manage" in registry
+    assert getattr(registry.get("todo_manage"), "execution_kind", None) == "serial"
+    assert registry.result_context_retention("todo_manage") == "recoverable"
 
 
 def test_social_tools_share_explicit_service() -> None:

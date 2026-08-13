@@ -219,7 +219,6 @@ class WebSearchTool:
     """
 
     name: ClassVar[str] = "web_search"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 30.0
     description: ClassVar[str] = (

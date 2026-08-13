@@ -1100,7 +1100,6 @@ def test_recoverable_result_is_pinned_unless_recovery_tool_is_registered(
 ) -> None:
     class ReadTool:
         name: ClassVar[str] = "read_test"
-        result_context_retention: ClassVar[str] = "recoverable"
         description: ClassVar[str] = "read"
         parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
 
