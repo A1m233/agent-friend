@@ -22,6 +22,7 @@ LEASE_VERSION = 1
 DEFAULT_PORTS = [1420, 1421, 18800, 18900]
 LOCK_TIMEOUT_SECONDS = 10.0
 STOP_TIMEOUT_SECONDS = 5.0
+PRODUCTION_INSTANCE_DOMAIN = "agent-friend-production"
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,30 @@ class RuntimeManager:
                     lines.append("  [WARN] dev runtime lease 已失效，已安全回收 stale lease。")
                 self._remove_lease()
 
+            owner_status, desktop_owner, owner_reason = inspect_desktop_owner()
+            if owner_status == "live" and desktop_owner:
+                return CommandResult(
+                    1,
+                    [
+                        *lines,
+                        "  [ERROR] agent-friend desktop instance 已占用 production/dev 单例域。",
+                        *format_desktop_owner(desktop_owner),
+                        "          production 与 dev 不能共存；脚本不会自动结束已有实例。",
+                        "          处理命令：若 ownerKind=dev，使用 scripts/dev/run.* stop；否则先从产品内退出安装版。",
+                    ],
+                )
+            if owner_status == "invalid":
+                return CommandResult(
+                    1,
+                    [
+                        *lines,
+                        "  [ERROR] desktop owner evidence 无法安全确认，dev 启动已停止。",
+                        f"          reason={owner_reason}",
+                    ],
+                )
+            if owner_status == "stale":
+                lines.append("  [WARN] desktop owner evidence 已 stale；应用内门禁将在确认后接管。")
+
             blockers = self._port_blockers()
             unknown = [owner for owner in blockers if owner.classification == "unknown"]
             legacy = [owner for owner in blockers if owner.classification != "unknown"]
@@ -173,6 +198,36 @@ class RuntimeManager:
                 ]
             else:
                 lines.append("===> no active agent-friend dev runtime lease")
+
+            owner_status, desktop_owner, owner_reason = inspect_desktop_owner()
+            if owner_status == "live" and desktop_owner:
+                lines += [
+                    "===> active agent-friend desktop owner",
+                    *format_desktop_owner(desktop_owner),
+                ]
+            elif owner_status == "stale" and desktop_owner:
+                lines += [
+                    "===> stale agent-friend desktop owner evidence",
+                    *format_desktop_owner(desktop_owner),
+                    f"          reason={owner_reason}",
+                ]
+            elif owner_status == "invalid":
+                lines += [
+                    "===> invalid agent-friend desktop owner evidence",
+                    f"          reason={owner_reason}",
+                ]
+            else:
+                lines.append("===> no active agent-friend desktop owner")
+
+            recent_event = recent_instance_governance_event()
+            if recent_event:
+                lines += [
+                    "===> latest desktop instance governance event",
+                    f"          recordedAt={recent_event.get('recordedAt', '<unknown>')}",
+                    f"          kind={recent_event.get('kind', '<unknown>')}",
+                    f"          processSessionId={recent_event.get('processSessionId', '<unknown>')}",
+                    f"          reasonCode={(recent_event.get('details') or {}).get('reasonCode', '<none>') if isinstance(recent_event.get('details'), dict) else '<none>'}",
+                ]
 
             blockers = self._port_blockers()
             if blockers:
@@ -460,6 +515,102 @@ def runtime_state_dir() -> Path:
     return Path.home() / ".local" / "state" / "agent-friend" / "dev-runtime"
 
 
+def instance_coordination_dir() -> Path:
+    system = platform.system().lower()
+    if system == "windows":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or str(Path.home())
+        return Path(base) / "agent-friend" / "instance-governance"
+    if system == "darwin":
+        return (
+            Path.home() / "Library" / "Application Support" / "agent-friend" / "instance-governance"
+        )
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
+    return base / "agent-friend" / "instance-governance"
+
+
+def desktop_owner_path() -> Path:
+    return instance_coordination_dir() / f"{PRODUCTION_INSTANCE_DOMAIN}.owner.json"
+
+
+def inspect_desktop_owner() -> tuple[str, dict[str, Any] | None, str]:
+    path = desktop_owner_path()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "missing", None, ""
+    except (OSError, json.JSONDecodeError) as error:
+        return "invalid", None, str(error)
+    if not isinstance(value, dict):
+        return "invalid", None, "owner root is not an object"
+    required = {
+        "schemaVersion": 1,
+        "instanceDomain": PRODUCTION_INSTANCE_DOMAIN,
+        "tauriIdentifier": "com.agentfriend.desktop",
+    }
+    if any(value.get(key) != expected for key, expected in required.items()):
+        return "invalid", value, "owner contract does not match production/dev domain"
+    if value.get("runtimeKind") not in {"production", "dev"}:
+        return "invalid", value, "owner runtimeKind is unsupported"
+    pid = value.get("pid")
+    expected_start_id = value.get("processStartIdentity")
+    if (
+        not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(expected_start_id, str)
+        or not expected_start_id
+    ):
+        return "invalid", value, "owner process identity is incomplete"
+    processes = {process.pid: process for process in list_processes()}
+    process = processes.get(pid)
+    if process is None:
+        return "stale", value, "owner-process-exited"
+    # Windows process enumeration exposes CreationDate as a CIM timestamp, while the desktop
+    # owner contract deliberately uses the lossless GetProcessTimes FILETIME identity. Always
+    # compare like-for-like on Windows; otherwise every live owner looks like PID reuse.
+    actual_start_id = (
+        process_start_id_direct(pid)
+        if platform.system().lower() == "windows"
+        else process.start_id or process_start_id_direct(pid)
+    )
+    if not actual_start_id:
+        return "invalid", value, "owner process start identity is unavailable"
+    if actual_start_id != expected_start_id:
+        return "stale", value, "owner-pid-reused"
+    return "live", value, ""
+
+
+def instance_log_dir() -> Path:
+    configured = os.environ.get("AGENT_FRIEND_LOG_DIR")
+    if configured:
+        return Path(configured)
+    system = platform.system().lower()
+    if system == "windows":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or str(Path.home())
+        return Path(base) / "agent-friend" / "Logs"
+    if system == "darwin":
+        return Path.home() / "Library" / "Logs" / "agent-friend"
+    xdg_state_home = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg_state_home) if xdg_state_home else Path.home() / ".local" / "state"
+    return base / "agent-friend" / "log"
+
+
+def recent_instance_governance_event() -> dict[str, Any] | None:
+    path = instance_log_dir() / "tauri.log.runtime"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines[-1000:]):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("source") == "instance-governance":
+            return value
+    return None
+
+
 def git_repo_id(worktree: Path) -> str:
     remote = run_text(["git", "-C", str(worktree), "config", "--get", "remote.origin.url"])
     if remote:
@@ -527,16 +678,30 @@ def process_start_id_direct(pid: int) -> str:
 
 
 def windows_process_start_id(pid: int) -> str:
-    command = [
-        "powershell",
-        "-NoProfile",
-        "-Command",
-        (
-            "$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
-            f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CreationDate"
-        ),
-    ]
-    return run_text(command)
+    import ctypes
+    from ctypes import wintypes
+
+    process_query_limited_information = 0x1000
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return ""
+    creation = wintypes.FILETIME()
+    exit_time = wintypes.FILETIME()
+    kernel = wintypes.FILETIME()
+    user = wintypes.FILETIME()
+    try:
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(creation),
+            ctypes.byref(exit_time),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            return ""
+        return f"{creation.dwHighDateTime:08x}{creation.dwLowDateTime:08x}"
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def list_processes() -> list[ProcessInfo]:
@@ -787,6 +952,19 @@ def format_lease(lease: dict[str, Any]) -> list[str]:
         f"          PID={lease.get('ownerPid', '<unknown>')}",
         f"          startedAt={lease.get('startedAt', '<unknown>')}",
         f"          ports={ports or '<unknown>'}",
+    ]
+
+
+def format_desktop_owner(owner: dict[str, Any]) -> list[str]:
+    return [
+        f"          ownerKind={owner.get('runtimeKind', '<unknown>')}",
+        f"          instanceDomain={owner.get('instanceDomain', '<unknown>')}",
+        f"          profileId={owner.get('profileId', '<unknown>')}",
+        f"          PID={owner.get('pid', '<unknown>')}",
+        f"          processSessionId={owner.get('processSessionId', '<unknown>')}",
+        f"          worktree={owner.get('worktree') or '<none>'}",
+        f"          installRoot={owner.get('installRoot') or '<none>'}",
+        f"          publishedAt={owner.get('publishedAt', '<unknown>')}",
     ]
 
 

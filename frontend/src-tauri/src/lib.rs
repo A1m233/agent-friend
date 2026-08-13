@@ -12,6 +12,7 @@ mod autostart;
 mod avatar_models;
 mod bubble_window;
 mod data_migration;
+mod desktop_instance;
 mod diagnostics;
 pub mod install_contract;
 mod paths;
@@ -27,7 +28,6 @@ mod runtime_observability;
 mod runtime_services;
 mod settings;
 mod shell_diagnostics;
-#[cfg(target_os = "windows")]
 mod startup_instance_gate;
 mod ui_state;
 mod webview_diagnostics;
@@ -891,21 +891,189 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // The Tauri single-instance plugin creates its mutex during Builder::build. Keep concurrent
-    // Windows launches serialized until that mutex and its callback window are ready; otherwise
-    // two slow cold starts can both pass the plugin boundary and start competing runtimes.
-    #[cfg(target_os = "windows")]
-    let (mut startup_instance_gate, startup_instance_gate_acquire_error) =
-        match startup_instance_gate::StartupInstanceGate::acquire() {
-            Ok(gate) => (Some(gate), None),
-            Err(error) => (None, Some(error)),
-        };
+    // Instance-governance failures happen before the regular Tauri logger exists. Start the
+    // crash-safe journal first, using a path that remains available even for an invalid profile.
+    let runtime_observer =
+        runtime_observability::RuntimeObserver::start(paths::bootstrap_log_dir());
+    runtime_observability::install_panic_hook(runtime_observer.clone());
+    let attempt_id = format!(
+        "{}-{:016x}",
+        runtime_observer.process_session_id(),
+        rand::random::<u64>()
+    );
+    runtime_observer.record(
+        "instance-governance",
+        "startup-attempted",
+        serde_json::json!({
+            "attemptId": attempt_id,
+            "argsCount": std::env::args_os().count(),
+        }),
+    );
 
     let context = tauri::generate_context!();
-    let runtime_observer = runtime_observability::RuntimeObserver::start(paths::log_dir());
-    runtime_observability::install_panic_hook(runtime_observer.clone());
     let resource_dir =
         tauri::utils::platform::resource_dir(context.package_info(), &tauri::Env::default()).ok();
+    let desktop_identity = match desktop_instance::DesktopInstanceIdentity::resolve(
+        resource_dir.clone(),
+        &context.config().identifier,
+    ) {
+        Ok(identity) => identity,
+        Err(error) => {
+            runtime_observer.record(
+                    "instance-governance",
+                    "identity-rejected",
+                    serde_json::json!({"attemptId": attempt_id, "reasonCode": "identity_contract_invalid", "error": error}),
+                );
+            desktop_instance::report_startup_rejection(
+                    "当前程序的实例身份无效。为避免启动出错或污染现有数据，本次启动已停止。请查看诊断日志。",
+                );
+            return;
+        }
+    };
+    runtime_observer.record(
+        "instance-governance",
+        "identity-resolved",
+        desktop_identity.log_details(&attempt_id),
+    );
+    runtime_observer.record(
+        "instance-governance",
+        "startup-gate-waiting",
+        serde_json::json!({
+            "attemptId": attempt_id,
+            "instanceDomain": desktop_identity.instance_domain,
+        }),
+    );
+    let mut startup_instance_gate = match startup_instance_gate::StartupInstanceGate::acquire(
+        &desktop_identity.instance_domain,
+    ) {
+        Ok(gate) => Some(gate),
+        Err(error) => {
+            runtime_observer.record(
+                    "instance-governance",
+                    "startup-gate-failed",
+                    serde_json::json!({"attemptId": attempt_id, "reasonCode": "startup_gate_unavailable", "error": error}),
+                );
+            desktop_instance::report_startup_rejection(
+                "无法确认当前运行实例。为避免同时启动多个副本，本次启动已停止。请查看诊断日志。",
+            );
+            return;
+        }
+    };
+    runtime_observer.record(
+        "instance-governance",
+        "startup-gate-acquired",
+        serde_json::json!({
+            "attemptId": attempt_id,
+            "instanceDomain": desktop_identity.instance_domain,
+        }),
+    );
+
+    let owner_to_publish = match desktop_instance::inspect_owner(&desktop_identity) {
+        desktop_instance::OwnerInspection::Missing => {
+            match desktop_instance::OwnerEvidence::for_current_process(
+                &desktop_identity,
+                runtime_observer.process_session_id(),
+            ) {
+                Ok(owner) => Some(owner),
+                Err(error) => {
+                    runtime_observer.record(
+                        "instance-governance",
+                        "owner-evidence-invalid",
+                        serde_json::json!({"attemptId": attempt_id, "reasonCode": "owner_process_mismatch", "error": error}),
+                    );
+                    desktop_instance::report_startup_rejection(
+                        "无法验证当前进程身份。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
+                    );
+                    return;
+                }
+            }
+        }
+        desktop_instance::OwnerInspection::Stale { previous, reason } => {
+            runtime_observer.record(
+                "instance-governance",
+                "stale-owner-recovered",
+                serde_json::json!({
+                    "attemptId": attempt_id,
+                    "reasonCode": reason,
+                    "previousOwner": previous.safe_summary(),
+                }),
+            );
+            match desktop_instance::OwnerEvidence::for_current_process(
+                &desktop_identity,
+                runtime_observer.process_session_id(),
+            ) {
+                Ok(owner) => Some(owner),
+                Err(error) => {
+                    runtime_observer.record(
+                        "instance-governance",
+                        "owner-evidence-invalid",
+                        serde_json::json!({"attemptId": attempt_id, "reasonCode": "owner_process_mismatch", "error": error}),
+                    );
+                    desktop_instance::report_startup_rejection(
+                        "无法验证当前进程身份。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
+                    );
+                    return;
+                }
+            }
+        }
+        desktop_instance::OwnerInspection::Live(owner)
+            if owner.runtime_kind == desktop_identity.runtime_kind =>
+        {
+            runtime_observer.record(
+                "instance-governance",
+                "same-identity-forward-started",
+                serde_json::json!({
+                    "attemptId": attempt_id,
+                    "owner": owner.safe_summary(),
+                }),
+            );
+            if let Some(gate) = startup_instance_gate.take() {
+                if let Err(error) = gate.release() {
+                    runtime_observer.record(
+                        "instance-governance",
+                        "startup-gate-failed",
+                        serde_json::json!({"attemptId": attempt_id, "reasonCode": "startup_gate_unavailable", "error": error}),
+                    );
+                    desktop_instance::report_startup_rejection(
+                        "无法安全转发本次启动。为避免多实例冲突，本次启动已停止。请查看诊断日志。",
+                    );
+                    return;
+                }
+            }
+            None
+        }
+        desktop_instance::OwnerInspection::Live(owner) => {
+            runtime_observer.record(
+                "instance-governance",
+                "cross-identity-rejected",
+                serde_json::json!({
+                    "attemptId": attempt_id,
+                    "reasonCode": "cross_identity_conflict",
+                    "requestedRuntimeKind": desktop_identity.runtime_kind,
+                    "owner": owner.safe_summary(),
+                }),
+            );
+            desktop_instance::report_startup_rejection(&format!(
+                "已有 {} 实例正在运行（PID {}）。production 与 dev 当前不能同时运行；请先通过其标准入口停止已有实例。",
+                owner.runtime_kind.as_str(),
+                owner.pid
+            ));
+            return;
+        }
+        desktop_instance::OwnerInspection::Invalid(error) => {
+            runtime_observer.record(
+                "instance-governance",
+                "owner-evidence-invalid",
+                serde_json::json!({"attemptId": attempt_id, "reasonCode": "owner_evidence_invalid", "error": error}),
+            );
+            desktop_instance::report_startup_rejection(
+                "现有实例的归属信息无法安全确认。为避免误开或误停，本次启动已停止。请查看诊断日志。",
+            );
+            return;
+        }
+    };
+    let desktop_owner = Arc::new(Mutex::new(None));
+
     // 028 · 启动期同步读盘，拼 js_init_script；所有 webview 加载前注入，保证首帧主题正确。
     let bootstrap_settings = settings::load_from_disk_or_default();
     let init_script = settings::build_init_script(&bootstrap_settings);
@@ -922,6 +1090,10 @@ pub fn run() {
     let setup_shell_diagnostics_manager = shell_diagnostics_manager.clone();
     let setup_webview_diagnostics_manager = webview_diagnostics_manager.clone();
     let setup_runtime_observer = runtime_observer.clone();
+    let single_instance_runtime_observer = runtime_observer.clone();
+    let single_instance_runtime_kind = desktop_identity.runtime_kind;
+    let setup_desktop_owner = desktop_owner.clone();
+    let exit_desktop_owner = desktop_owner.clone();
     let exit_runtime_service_supervisor = runtime_service_supervisor.clone();
     let exit_runtime_observer = runtime_observer.clone();
 
@@ -930,18 +1102,49 @@ pub fn run() {
     // ownerless when the original process exits.
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-        if should_focus_existing_instance(&args) {
-            log::info!("second instance launch received; focusing chat window");
-            if let Err(error) = show_and_focus(app, "chat") {
-                log::warn!("second instance focus failed: {error}");
+    let builder = builder.plugin(tauri_plugin_single_instance::init(
+        move |app, args, _cwd| {
+            single_instance_runtime_observer.record(
+                "instance-governance",
+                "activation-received",
+                serde_json::json!({
+                    "runtimeKind": single_instance_runtime_kind,
+                    "argsCount": args.len(),
+                    "autostart": args.iter().any(|arg| arg == "--autostart"),
+                }),
+            );
+            if should_focus_existing_instance(&args) {
+                log::info!("second instance launch received; focusing chat window");
+                if let Err(error) = show_and_focus(app, "chat") {
+                    log::warn!("second instance focus failed: {error}");
+                    single_instance_runtime_observer.record(
+                        "instance-governance",
+                        "activation-failed",
+                        serde_json::json!({"error": error.to_string()}),
+                    );
+                } else {
+                    single_instance_runtime_observer.record(
+                        "instance-governance",
+                        "activation-handled",
+                        serde_json::json!({"action": "focus-chat"}),
+                    );
+                }
+            } else {
+                log::info!("duplicate autostart launch ignored");
+                single_instance_runtime_observer.record(
+                    "instance-governance",
+                    "activation-handled",
+                    serde_json::json!({"action": "ignore-duplicate-autostart"}),
+                );
             }
-        } else {
-            log::info!("duplicate autostart launch ignored");
-        }
-    }));
+        },
+    ));
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
+        .manage(desktop_instance::DesktopInstanceState::new(
+            desktop_identity.clone(),
+            desktop_owner.clone(),
+        ))
         .manage(bubble_window::BubbleState::default())
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
@@ -1193,13 +1396,47 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            // Plugin setup has completed and Tauri has created the configured windows before this
-            // callback runs. Releasing here lets a queued launch reach the existing plugin callback
-            // without exposing the pre-plugin startup race.
-            #[cfg(target_os = "windows")]
-            let startup_instance_gate_release_error = startup_instance_gate
-                .take()
-                .and_then(|gate| gate.release().err());
+            // The single-instance endpoint is established before this setup callback. Publish the
+            // owner while the short startup gate is still held, then release queued launches.
+            if let Some(owner) = owner_to_publish.as_ref() {
+                if let Err(error) = desktop_instance::publish_owner(owner, &attempt_id) {
+                    setup_runtime_observer.record(
+                        "instance-governance",
+                        "owner-evidence-invalid",
+                        serde_json::json!({
+                            "attemptId": attempt_id,
+                            "reasonCode": "owner_evidence_invalid",
+                            "error": error,
+                        }),
+                    );
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, error).into());
+                }
+                *setup_desktop_owner
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(owner.clone());
+                setup_runtime_observer.record(
+                    "instance-governance",
+                    "owner-published",
+                    serde_json::json!({
+                        "attemptId": attempt_id,
+                        "owner": owner.safe_summary(),
+                    }),
+                );
+            }
+            if let Some(gate) = startup_instance_gate.take() {
+                if let Err(error) = gate.release() {
+                    setup_runtime_observer.record(
+                        "instance-governance",
+                        "startup-gate-failed",
+                        serde_json::json!({
+                            "attemptId": attempt_id,
+                            "reasonCode": "startup_gate_unavailable",
+                            "error": error,
+                        }),
+                    );
+                    return Err(std::io::Error::new(std::io::ErrorKind::Other, error).into());
+                }
+            }
 
             let log_dir = paths::log_dir();
             std::fs::create_dir_all(&log_dir).ok();
@@ -1252,21 +1489,7 @@ pub fn run() {
                 "desktop lifecycle: logger attached; process_session_id={}",
                 setup_runtime_observer.process_session_id()
             );
-            #[cfg(target_os = "windows")]
-            match (
-                startup_instance_gate_acquire_error.as_deref(),
-                startup_instance_gate_release_error.as_deref(),
-            ) {
-                (None, None) => log::info!("startup instance gate released"),
-                (Some(error), _) => {
-                    log::warn!(
-                        "startup instance gate unavailable; relying on Tauri plugin: {error}"
-                    )
-                }
-                (_, Some(error)) => {
-                    log::warn!("startup instance gate release failed: {error}")
-                }
-            }
+            log::info!("startup instance gate released");
 
             if let Err(error) = setup_shell_diagnostics_manager.start(app.handle()) {
                 log::warn!("windows shell diagnostics observer started partially: {error}");
@@ -1461,6 +1684,13 @@ pub fn run() {
                         .cleanup_owned_children()
                         .await;
                 });
+                if let Some(owner) = exit_desktop_owner
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .as_ref()
+                {
+                    desktop_instance::clear_owner_if_current(owner);
+                }
                 exit_runtime_observer.record(
                     "lifecycle",
                     "process-exit-completed",

@@ -13,6 +13,7 @@ from pathlib import Path
 from types import ModuleType
 
 import brotli
+import pytest
 
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
@@ -1134,6 +1135,58 @@ def test_package_build_intent_requires_an_explicit_governed_channel() -> None:
             assert message in str(error)
         else:
             raise AssertionError(f"invalid package intent was accepted: {context} {intent}")
+
+
+def test_local_test_trusted_beta_uses_the_governed_next_beta(monkeypatch, tmp_path) -> None:
+    package = _load("package_run_local_trusted_beta_version", PACKAGE_DIR / "run.py")
+    project = package.ProjectVersion(
+        version=package.SemVer.parse("0.2.0"),
+        values={"tauri": "0.2.0"},
+    )
+    target = package.SemVer.parse("0.2.1")
+    candidate = package.SemVer.parse("0.2.1-beta.20260812.1")
+    monkeypatch.setattr(package, "discover_formal_releases", lambda _root: ([], []))
+    monkeypatch.setattr(
+        package,
+        "_trusted_beta_candidate",
+        lambda _roots, _project, _records: (target, candidate),
+    )
+    roots = package.PackageRoots(
+        repo_root=tmp_path,
+        state_root=tmp_path / "state",
+        cache_dir=tmp_path / "state" / "cache",
+        work_root=tmp_path / "state" / "work",
+        releases_root=tmp_path / "releases",
+        repo_id="repo",
+        worktree_id="worktree",
+    )
+
+    assert package._planned_package_version(
+        roots,
+        project,
+        local_test=True,
+        trusted_beta=True,
+    ) == (target, candidate)
+
+
+def test_production_install_plan_blocks_downgrade_before_build(monkeypatch) -> None:
+    package = _load("package_run_production_install_plan", PACKAGE_DIR / "run.py")
+    monkeypatch.setattr(
+        package,
+        "_read_current_production_install",
+        lambda: {"version": "0.2.1-beta.20260811.1", "buildId": "installed-build"},
+    )
+
+    blocked = package._production_install_plan(package.SemVer.parse("0.2.0"))
+    assert blocked["state"] == "downgrade-blocked"
+    assert blocked["allowed"] is False
+    with pytest.raises(RuntimeError, match="rejected a downgrade before build"):
+        package._require_install_candidate_allowed(blocked)
+
+    upgrade = package._production_install_plan(package.SemVer.parse("0.2.1-beta.20260812.1"))
+    assert upgrade["state"] == "upgrade"
+    assert upgrade["allowed"] is True
+    package._require_install_candidate_allowed(upgrade)
 
 
 def test_trusted_beta_channel_allocates_monotonic_daily_prerelease_versions(tmp_path) -> None:

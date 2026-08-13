@@ -19,6 +19,7 @@ pub const MIGRATION_DIR: &str = "migration";
 pub const MIGRATION_BACKUPS_DIR: &str = "migration-backups";
 pub const SHELL_DIAGNOSTICS_DIR: &str = "windows-shell";
 pub const WEBVIEW_RENDER_EVIDENCE_DIR: &str = "webview-render-evidence";
+pub const INSTANCE_COORDINATION_DIR: &str = "instance-governance";
 
 const DATA_DIR_ENV: &str = "AGENT_FRIEND_DATA_DIR";
 const LOG_DIR_ENV: &str = "AGENT_FRIEND_LOG_DIR";
@@ -110,6 +111,18 @@ pub fn migration_backups_dir() -> PathBuf {
     user_data_dir().join(MIGRATION_BACKUPS_DIR)
 }
 
+/// Per-user desktop instance coordination state.
+///
+/// This path is deliberately independent from install profiles and runtime overrides: production
+/// and dev must always observe the same owner evidence, while installer-smoke is separated by its
+/// instance-domain file name inside this directory.
+pub fn instance_coordination_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .expect("local data dir")
+        .join(APP_NAME)
+        .join(INSTANCE_COORDINATION_DIR)
+}
+
 /// Tauri / bridge / memory 共享的日志目录。
 ///
 /// 与 Python 侧 `agent.paths.log_dir()` 对齐：三端共享同一根目录，便于事后排查。
@@ -146,6 +159,46 @@ pub fn log_dir() -> PathBuf {
                 .expect("home dir")
                 .join(".local/state")
                 .join(profile().log_namespace)
+                .join("log")
+        }
+    }
+}
+
+/// Earliest crash journal location. Unlike `log_dir`, this never panics on an invalid embedded
+/// profile, so identity-contract failures still leave persistent evidence.
+pub fn bootstrap_log_dir() -> PathBuf {
+    if let Ok(path) = std::env::var(LOG_DIR_ENV) {
+        return PathBuf::from(path);
+    }
+    let namespace = install_contract::embedded_profile()
+        .map(|value| value.log_namespace)
+        .unwrap_or_else(|_| APP_NAME.to_string());
+
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir()
+            .expect("home dir")
+            .join("Library/Logs")
+            .join(namespace)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_local_dir()
+            .expect("local data dir")
+            .join(namespace)
+            .join("Logs")
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(state) = std::env::var("XDG_STATE_HOME") {
+            PathBuf::from(state).join(namespace).join("log")
+        } else {
+            dirs::home_dir()
+                .expect("home dir")
+                .join(".local/state")
+                .join(namespace)
                 .join("log")
         }
     }
