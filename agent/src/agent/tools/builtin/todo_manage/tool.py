@@ -23,6 +23,8 @@ from ...protocol import ToolResult
 
 _RUNTIME_SESSION_ID = "__agent_friend_current_session_id"
 _RUNTIME_NOW = "__agent_friend_runtime_now"
+_BATCH_STATUS_OPERATIONS = frozenset({"complete", "cancel", "reopen"})
+_MAX_BATCH_ITEMS = 50
 
 _REMINDER_SCHEDULE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -136,6 +138,8 @@ class TodoManageTool:
         "再执行。新建 Todo 时提醒时间已经确定，必须在同一次 create 的 reminders 中一起提交；"
         "不能只创建无 Reminder 的 Todo 就声称提醒已设置。"
         "add_reminder 只用于给已经存在的 Todo 后补提醒。"
+        "complete、cancel、reopen 必须把本次同一状态迁移涉及的全部 Todo 合并到一次 "
+        "items 调用；单个 Todo 也传长度为 1 的 items。"
         "用户给出“几分钟/小时/天/周后”时，一次性提醒直接使用 relative_delay，"
         "不要自行猜测当前钟点或拆成第二次调用。"
         "更新必须使用 list/get 返回的稳定 id 和 revision，目标不唯一时先澄清。"
@@ -167,8 +171,8 @@ class TodoManageTool:
             "todo_id": {
                 "type": "string",
                 "description": (
-                    "get、update、complete、cancel、reopen、add_reminder、update_reminder、"
-                    "remove_reminder 时必填的 Todo 稳定 id。"
+                    "get、update、add_reminder、update_reminder、remove_reminder 时必填的 "
+                    "Todo 稳定 id。complete、cancel、reopen 改在 items 中提供。"
                 ),
             },
             "reminder_id": {
@@ -179,10 +183,35 @@ class TodoManageTool:
                 "type": "integer",
                 "minimum": 1,
                 "description": (
-                    "update、complete、cancel、reopen 使用 Todo revision；"
-                    "update_reminder、remove_reminder 使用 Reminder revision。"
+                    "update 使用 Todo revision；update_reminder、remove_reminder 使用 "
+                    "Reminder revision。complete、cancel、reopen 改在 items 中提供；"
                     "create、list、get、add_reminder 不需要 revision。"
                 ),
+            },
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": _MAX_BATCH_ITEMS,
+                "description": (
+                    "complete、cancel、reopen 必填。一次调用中要执行同一状态迁移的全部 "
+                    "Todo；单项也使用长度为 1 的数组。todo_id 不得重复。"
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "todo_id": {
+                            "type": "string",
+                            "description": "Todo 稳定 id。",
+                        },
+                        "revision": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "list/get 返回的 Todo revision。",
+                        },
+                    },
+                    "required": ["todo_id", "revision"],
+                    "additionalProperties": False,
+                },
             },
             "title": {"type": "string", "description": "create 时必填的 Todo 标题。"},
             "description": {"type": "string", "description": "Todo 的可选详细说明。"},
@@ -245,9 +274,20 @@ class TodoManageTool:
                 is_error=True,
                 meta={"error_kind": "invalid_arguments"},
             )
+        status = payload.get("status")
+        meta: dict[str, Any] = {"operation": args.get("operation")}
+        if "items" in payload and isinstance(payload.get("items"), list):
+            meta.update(
+                {
+                    "item_count": len(payload["items"]),
+                    "success_count": payload.get("succeeded", 0),
+                    "error_count": payload.get("failed", 0),
+                }
+            )
         return ToolResult(
             text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
-            meta={"operation": args.get("operation")},
+            is_error=status in {"partial", "failed"},
+            meta=meta,
         )
 
     def _invoke(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -277,6 +317,9 @@ class TodoManageTool:
             )
             return _success(operation, todos=[_details(item) for item in listed])
 
+        if operation in _BATCH_STATUS_OPERATIONS:
+            return self._invoke_status_batch(operation, args)
+
         todo_id = _required_string(args, "todo_id")
         if operation == "get":
             return _success(operation, todo=_details(self._service.get(todo_id)))
@@ -294,18 +337,6 @@ class TodoManageTool:
                 description=_optional_string(args, "description"),
             )
             return _success(operation, todo=_details(updated))
-        if operation == "complete":
-            return _success(
-                operation, todo=_details(self._service.complete(todo_id, revision=revision))
-            )
-        if operation == "cancel":
-            return _success(
-                operation, todo=_details(self._service.cancel(todo_id, revision=revision))
-            )
-        if operation == "reopen":
-            return _success(
-                operation, todo=_details(self._service.reopen(todo_id, revision=revision))
-            )
         reminder_id = _required_string(args, "reminder_id")
         if operation == "update_reminder":
             schedule = _schedule_from_input(_mapping(args.get("reminder"), "reminder"), args)
@@ -324,9 +355,81 @@ class TodoManageTool:
             return _success(operation, reminder=_reminder(removed_reminder))
         raise TodoError("invalid_arguments", f"不支持的 operation: {operation}")
 
+    def _invoke_status_batch(
+        self,
+        operation: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        items = _status_batch_items(args.get("items"))
+        results: list[dict[str, Any]] = []
+        succeeded = 0
+        transition = getattr(self._service, operation)
+        for index, (todo_id, revision) in enumerate(items):
+            try:
+                details = transition(todo_id, revision=revision)
+            except TodoError as exc:
+                error: dict[str, Any] = {
+                    "index": index,
+                    "status": "error",
+                    "todo_id": todo_id,
+                    "error_kind": exc.kind,
+                    "message": exc.message,
+                }
+                if exc.details:
+                    error["details"] = exc.details
+                results.append(error)
+                continue
+            succeeded += 1
+            results.append(
+                {
+                    "index": index,
+                    "status": "success",
+                    "todo_id": details.todo.id,
+                    "todo_status": details.todo.status.value,
+                    "revision": details.todo.revision,
+                }
+            )
+        failed = len(results) - succeeded
+        status = "success" if failed == 0 else "partial" if succeeded else "failed"
+        return {
+            "status": status,
+            "operation": operation,
+            "succeeded": succeeded,
+            "failed": failed,
+            "items": results,
+        }
+
 
 def _success(operation: str, **payload: Any) -> dict[str, Any]:
     return {"status": "success", "operation": operation, **payload}
+
+
+def _status_batch_items(value: object) -> list[tuple[str, int]]:
+    raw_items = _list(value, "items")
+    if not 1 <= len(raw_items) <= _MAX_BATCH_ITEMS:
+        raise TodoError(
+            "invalid_arguments",
+            f"items 必须包含 1-{_MAX_BATCH_ITEMS} 项",
+        )
+    parsed: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(raw_items):
+        item = _mapping(raw, f"items[{index}]")
+        unknown = set(item) - {"todo_id", "revision"}
+        if unknown:
+            raise TodoError(
+                "invalid_arguments",
+                f"items[{index}] 包含未知字段: {', '.join(sorted(unknown))}",
+            )
+        todo_id = _required_string(item, "todo_id")
+        revision = _integer(item, "revision")
+        if revision < 1:
+            raise TodoError("invalid_arguments", f"items[{index}].revision 必须大于等于 1")
+        if todo_id in seen:
+            raise TodoError("invalid_arguments", f"items 中 todo_id 不得重复: {todo_id}")
+        seen.add(todo_id)
+        parsed.append((todo_id, revision))
+    return parsed
 
 
 def _details(value: TodoDetails) -> dict[str, Any]:

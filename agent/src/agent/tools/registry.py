@@ -62,9 +62,11 @@ class ToolRegistry:
         return list(self._tool_ids.values())
 
     def result_context_retention(self, name: str) -> str:
-        """返回工具结果的上下文保留策略；未知或未声明工具默认 pinned。"""
+        """返回工具结果的上下文保留策略；未声明工具默认 recoverable。"""
         tool = self._tools.get(name)
-        policy = getattr(tool, "result_context_retention", "pinned")
+        if tool is None:
+            return "pinned"
+        policy = getattr(tool, "result_context_retention", "recoverable")
         return policy if policy in {"recoverable", "pinned"} else "pinned"
 
     def render_capability_catalog(

@@ -123,6 +123,8 @@ class ProposePersonaTool:
     """把模型提出的完整候选稿收敛成可被客户端识别的结构化结果。"""
 
     name: ClassVar[str] = "propose_persona"
+    execution_kind: ClassVar[str] = "serial"
+    result_context_retention: ClassVar[str] = "pinned"
     description: ClassVar[str] = (
         "当已经理解用户想要的人格变化时调用。提交完整 persona.md 候选稿和 1 到 5 条变化摘要；"
         "不要提交局部 patch，也不要在仍需向用户澄清时调用。"

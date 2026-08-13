@@ -19,6 +19,16 @@ class _ExternalEchoTool:
         return ToolResult(text=str(args))
 
 
+class _PinnedEchoTool(_ExternalEchoTool):
+    name: ClassVar[str] = "pinned_echo"
+    result_context_retention: ClassVar[str] = "pinned"
+
+
+class _InvalidRetentionTool(_ExternalEchoTool):
+    name: ClassVar[str] = "invalid_retention"
+    result_context_retention: ClassVar[str] = "typo"
+
+
 def test_builtin_namespace_is_derived_from_relative_capability_package() -> None:
     registry = ToolRegistry([CalculateTool()])
 
@@ -67,3 +77,14 @@ def test_injected_tool_outside_builtin_root_remains_callable_but_unscoped() -> N
     assert registry.identity("echo") == ToolId(namespace=None, name="echo")
     assert registry.render_capability_catalog() == ""
     assert registry.invoke("echo", {"value": "ok"}).text == "{'value': 'ok'}"
+
+
+def test_result_retention_defaults_to_recoverable_and_fails_safe() -> None:
+    registry = ToolRegistry(
+        cast(list[Tool], [_ExternalEchoTool(), _PinnedEchoTool(), _InvalidRetentionTool()])
+    )
+
+    assert registry.result_context_retention("echo") == "recoverable"
+    assert registry.result_context_retention("pinned_echo") == "pinned"
+    assert registry.result_context_retention("invalid_retention") == "pinned"
+    assert registry.result_context_retention("not_registered") == "pinned"

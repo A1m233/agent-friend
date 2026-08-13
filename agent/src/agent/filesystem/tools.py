@@ -336,7 +336,6 @@ class RequestFilesystemAccessTool:
 
 
 class FilesystemOperationTool:
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind = "serial"
     timeout_seconds: ClassVar[float] = 60.0
 

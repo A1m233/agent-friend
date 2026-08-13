@@ -60,6 +60,8 @@ def test_propose_persona_tool_returns_validated_candidate_with_revision(tmp_path
         "summary": ["表达更直接"],
         "baseRevision": snapshot.revision,
     }
+    assert ProposePersonaTool.execution_kind == "serial"
+    assert ProposePersonaTool.result_context_retention == "pinned"
 
 
 def test_propose_persona_tool_rejects_incomplete_payload(tmp_path: Path) -> None:

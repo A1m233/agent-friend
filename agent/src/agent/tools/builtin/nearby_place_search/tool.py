@@ -24,7 +24,6 @@ class NearbyPlaceSearchTool:
     """把锚点解析、歧义澄清和附近 POI 查询编排成一把工具。"""
 
     name: ClassVar[str] = "nearby_place_search"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 30.0
     description: ClassVar[str] = (

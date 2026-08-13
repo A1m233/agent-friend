@@ -33,7 +33,6 @@ _MAX_HTML_CHARS = 120_000
 
 class WebFetchTool:
     name: ClassVar[str] = "web_fetch"
-    result_context_retention: ClassVar[str] = "recoverable"
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 45.0
     description: ClassVar[str] = (
