@@ -35,6 +35,7 @@ def test_loads_builtin_cases() -> None:
         ("C20", "skill-semantic-activation", 8),
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
+        ("C23", "self-presentation-and-transparency", 8),
     ]
 
 
@@ -244,13 +245,23 @@ def test_loads_fixture_session_and_case_judge() -> None:
         "temporary-catalog-helper",
     ]
 
+    c23 = next(contract for contract in contracts if contract.id == "C23")
+    transparency_anchor = next(item for item in c23.cases if item.id == "C23-01")
+    assert transparency_anchor.self_presentation_mode == "transparent"
+    assert transparency_anchor.fixture_compaction is not None
+    assert transparency_anchor.fixture_compaction.covered_through_message == 2
+    assert transparency_anchor.judge is not None
+    assert transparency_anchor.judge.must_acknowledge_compaction is True
+    immersive_control = next(item for item in c23.cases if item.id == "C23-04")
+    assert immersive_control.self_presentation_mode == "immersive"
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 22
-    assert meta.total_cases == 201
+    assert meta.total_contracts == 23
+    assert meta.total_cases == 209
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -274,6 +285,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C20": 8,
         "C21": 4,
         "C22": 3,
+        "C23": 8,
     }
     assert len(meta.digest) == 64
 
@@ -344,6 +356,46 @@ cases:
     )
 
     with pytest.raises(ValueError, match="query"):
+        load_contracts(tmp_path)
+
+
+def test_self_presentation_mode_rejects_unknown_value(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-self-presentation
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    self_presentation_mode: candid-ish
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="self_presentation_mode"):
+        load_contracts(tmp_path)
+
+
+def test_fixture_compaction_rejects_non_positive_boundary(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-compaction-boundary
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fixture_compaction:
+      summary: compacted context
+      covered_through_message: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="covered_through_message"):
         load_contracts(tmp_path)
 
 

@@ -18,6 +18,7 @@ import yaml
 SCHEMA_VERSION = 1
 SKILL_NAME = "agent-friend-guide"
 SOURCE_REPOSITORY = "https://github.com/A1m233/agent-friend-guide"
+DEFAULT_BRANCH = "main"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 ROUTED_REFERENCE_RE = re.compile(r"`(references/[a-z0-9-]+\.md)`")
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -67,6 +68,19 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def default_guide_repo() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA")
+        if not base:
+            raise GuideError("LOCALAPPDATA is required for the managed guide checkout")
+        root = Path(base)
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return root / "agent-friend" / "maintenance" / SKILL_NAME
+
+
 def package_root(guide_repo: Path) -> Path:
     return guide_repo / "skills" / SKILL_NAME
 
@@ -88,6 +102,93 @@ def git(repo: Path, *args: str, check: bool = True) -> str:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise GuideError(f"git {' '.join(args)} failed in {repo}: {detail}")
     return completed.stdout.strip()
+
+
+def git_succeeds(repo: Path, *args: str) -> bool:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return completed.returncode == 0
+
+
+def normalized_repository_url(value: str) -> str:
+    normalized = value.strip().replace("\\", "/").rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return normalized.lower()
+
+
+def prepare_checkout(
+    guide_repo: Path, *, source_repository: str = SOURCE_REPOSITORY
+) -> dict[str, Any]:
+    target = guide_repo.resolve()
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        completed = subprocess.run(
+            [
+                "git",
+                "clone",
+                "--branch",
+                DEFAULT_BRANCH,
+                "--single-branch",
+                source_repository,
+                str(target),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise GuideError(f"failed to clone managed guide checkout: {detail}")
+        action = "cloned"
+    else:
+        if not target.is_dir() or not git_succeeds(target, "rev-parse", "--git-dir"):
+            raise GuideError(f"managed guide checkout is not a Git repository: {target}")
+        action = "unchanged"
+
+    origin = git(target, "remote", "get-url", "origin")
+    if normalized_repository_url(origin) != normalized_repository_url(source_repository):
+        raise GuideError(
+            f"managed guide checkout origin differs from {source_repository}: {origin}"
+        )
+    if git_changes(target):
+        raise GuideError("managed guide checkout must be clean before prepare")
+    branch = git(target, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if branch != DEFAULT_BRANCH:
+        raise GuideError(
+            f"managed guide checkout must be on {DEFAULT_BRANCH}, found {branch or 'detached HEAD'}"
+        )
+
+    before = git_head(target)
+    git(target, "fetch", "--prune", "origin", DEFAULT_BRANCH)
+    remote_ref = f"refs/remotes/origin/{DEFAULT_BRANCH}"
+    remote_head = git(target, "rev-parse", remote_ref)
+    if not COMMIT_RE.fullmatch(remote_head):
+        raise GuideError(f"origin/{DEFAULT_BRANCH} is not a full commit")
+    if not git_succeeds(target, "merge-base", "--is-ancestor", before, remote_head):
+        raise GuideError(
+            f"managed guide checkout cannot fast-forward: local {before}, origin {remote_head}"
+        )
+    if before != remote_head:
+        git(target, "merge", "--ff-only", remote_ref)
+        action = "fast-forwarded"
+    if git_changes(target):
+        raise GuideError("managed guide checkout became dirty during prepare")
+    return {
+        "path": str(target),
+        "action": action,
+        "head": git_head(target),
+        "origin": origin,
+        "branch": branch,
+    }
 
 
 def git_head(repo: Path) -> str:
@@ -464,12 +565,15 @@ def sync(product_repo: Path, guide_repo: Path, guide_commit: str) -> dict[str, A
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Maintain the agent-friend guide snapshot.")
     subparsers = value.add_subparsers(dest="command", required=True)
+    prepare_parser = subparsers.add_parser("prepare")
+    prepare_parser.add_argument("--guide-repo", type=Path)
+    prepare_parser.add_argument("--json", action="store_true")
     for command in ("status", "verify"):
         sub = subparsers.add_parser(command)
-        sub.add_argument("--guide-repo", type=Path, required=True)
+        sub.add_argument("--guide-repo", type=Path)
         sub.add_argument("--json", action="store_true")
     sync_parser = subparsers.add_parser("sync")
-    sync_parser.add_argument("--guide-repo", type=Path, required=True)
+    sync_parser.add_argument("--guide-repo", type=Path)
     sync_parser.add_argument("--guide-commit", required=True)
     sync_parser.add_argument("--json", action="store_true")
     return value
@@ -494,9 +598,11 @@ def print_result(command: str, payload: dict[str, Any], *, as_json: bool) -> Non
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     product_repo = repository_root()
-    guide_repo = args.guide_repo.resolve()
+    guide_repo = (args.guide_repo or default_guide_repo()).resolve()
     try:
-        if args.command == "status":
+        if args.command == "prepare":
+            payload = prepare_checkout(guide_repo)
+        elif args.command == "status":
             payload = status_payload(product_repo, guide_repo)
         elif args.command == "verify":
             payload = verify_package(package_root(guide_repo))

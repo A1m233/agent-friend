@@ -445,7 +445,8 @@ def _make_conversation(
 
 def test_ac21_long_conversation_truncates_and_keeps_recent(tmp_path: Path) -> None:
     """AC-2.1/2.2：长会话触发 FIFO 裁剪、不抛错、最新输入仍在上下文里。"""
-    fake = _RecordingLLM(context_window=8000)
+    # Keep fixed prompt headroom while leaving the seeded history over budget.
+    fake = _RecordingLLM(context_window=12_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=fake, context_manager=FifoContextManager()
     )

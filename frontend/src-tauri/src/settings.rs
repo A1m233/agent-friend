@@ -22,6 +22,8 @@ pub struct Settings {
     pub background_online_policy: BackgroundOnlinePolicy,
     #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
+    #[serde(default = "default_immersive_mode")]
+    pub immersive_mode: bool,
     #[serde(default = "default_chat_model")]
     pub chat_model: ModelSelection,
     #[serde(default = "default_memory_model")]
@@ -135,6 +137,10 @@ fn default_pet_mini_scale_percent() -> u16 {
     50
 }
 
+fn default_immersive_mode() -> bool {
+    true
+}
+
 fn validate_percent(value: u16, min: u16, max: u16, key: &str) -> Result<u16, String> {
     if value < min || value > max {
         return Err(format!("invalid {key}: expected {min}..={max}"));
@@ -148,6 +154,7 @@ impl Default for Settings {
             theme: ThemeMode::Light,
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             voice_tunnel_consent_accepted: false,
+            immersive_mode: default_immersive_mode(),
             chat_model: default_chat_model(),
             memory_model: default_memory_model(),
             avatar_model_id: default_avatar_model_id(),
@@ -569,6 +576,11 @@ pub fn set_setting<R: Runtime>(
                 .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
             s.voice_tunnel_consent_accepted = accepted;
         }
+        "immersiveMode" => {
+            let enabled: bool = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid immersiveMode: {e}"))?;
+            s.immersive_mode = enabled;
+        }
         "chatModel" => {
             let model: ModelSelection = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid chatModel: {e}"))?;
@@ -781,6 +793,41 @@ mod tests {
             Settings::default().background_online_policy,
             BackgroundOnlinePolicy::FollowSystem
         );
+    }
+
+    #[test]
+    fn default_immersive_mode_is_enabled() {
+        assert!(Settings::default().immersive_mode);
+    }
+
+    #[test]
+    fn missing_immersive_mode_in_legacy_settings_defaults_to_enabled() {
+        let dir = temp_settings_dir("immersive-mode-default");
+        let path = dir.join("settings.json");
+        write_raw(&path, r#"{"settings":{"theme":"light"}}"#);
+
+        let settings = read_settings_file(&path).expect("read settings");
+
+        assert!(settings.immersive_mode);
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn explicit_transparent_mode_round_trips() {
+        let dir = temp_settings_dir("immersive-mode-false");
+        let path = dir.join("settings.json");
+        write_raw(
+            &path,
+            r#"{"settings":{"theme":"light","immersiveMode":false}}"#,
+        );
+
+        let settings = read_settings_file(&path).expect("read settings");
+
+        assert!(!settings.immersive_mode);
+        assert!(serde_json::to_string(&settings)
+            .expect("serialize settings")
+            .contains(r#""immersiveMode":false"#));
+        fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

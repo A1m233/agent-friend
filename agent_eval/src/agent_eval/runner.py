@@ -53,6 +53,7 @@ from .schema import (
     FakeTool,
     FakeToolResponse,
     FixtureAttachment,
+    FixtureCompaction,
     FixtureCurrentEvent,
     FixtureMessage,
     FixtureSession,
@@ -332,6 +333,7 @@ def _build_manager(
     skill_service: SkillCatalogService | None = None,
     attachment_store: AttachmentStore | None = None,
     skill_catalog_request_guard: _SkillCatalogRequestGuard | None = None,
+    self_presentation_mode: str = "immersive",
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
@@ -342,7 +344,10 @@ def _build_manager(
         return cast(LLMClient, _CatalogGuardedLLMClient(client, skill_catalog_request_guard))
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
-        return MarkdownPromptBuilder(persona_id=persona_id)
+        return MarkdownPromptBuilder(
+            persona_id=persona_id,
+            self_presentation_mode_provider=lambda: cast(Any, self_presentation_mode),
+        )
 
     metadata_store = SessionMetadataStore(store.base_dir / "metadata.json")
     session_catalog = SessionCatalog(store, metadata_store)
@@ -484,6 +489,41 @@ def _inject_current_session_messages(
         list(messages),
         resolve_attachments=resolve_attachments,
     )
+
+
+def _inject_fixture_compaction(
+    store: JsonlSessionStore,
+    session: Session,
+    fixture: FixtureCompaction,
+) -> None:
+    """Append a valid production-shaped checkpoint over active projected messages."""
+    messages = session.messages
+    index = fixture.covered_through_message - 1
+    if index >= len(messages):
+        raise ValueError(
+            "fixture_compaction.covered_through_message exceeds active message count: "
+            f"{fixture.covered_through_message} > {len(messages)}"
+        )
+    covered = messages[index]
+    retained_from = messages[index + 1].uuid if index + 1 < len(messages) else ""
+    event = Event(
+        type="compaction",
+        uuid=str(uuid4()),
+        ts=datetime.now(UTC),
+        payload={
+            "summary": fixture.summary,
+            "covered_through_uuid": covered.uuid,
+            "checkpoint_version": 2,
+            "summary_prompt_version": 1,
+            "summary_source_from_uuid": messages[0].uuid,
+            "retained_from_uuid": retained_from,
+            "omitted_before_count": 0,
+            "model": session.current_model,
+        },
+        meta={},
+    )
+    session.append(event)
+    store.append_event(session.session_id, event)
 
 
 def _inject_skill_catalog_state(
@@ -643,6 +683,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 skill_service=skill_service,
                 attachment_store=attachment_store,
                 skill_catalog_request_guard=catalog_guard,
+                self_presentation_mode=case.self_presentation_mode,
             )
             session = manager.create(
                 persona="default",
@@ -680,6 +721,8 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 case.current_session_events,
                 resolve_attachments=resolve_attachments,
             )
+            if case.fixture_compaction is not None:
+                _inject_fixture_compaction(store, session, case.fixture_compaction)
 
             def tool_run_context_factory(user_input: str) -> ToolRunContext:
                 return ToolRunContext.create(user_input, now=case.runtime_now)

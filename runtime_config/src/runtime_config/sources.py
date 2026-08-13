@@ -245,23 +245,37 @@ def default_settings_path() -> Path:
     return Path(base) / bundle_id / SETTINGS_STORE_FILE
 
 
+class DesktopSettingsReader:
+    """Read non-secret values from the Tauri settings store.
+
+    ``None`` means the file could not be read as a valid settings object. An
+    empty mapping is a valid legacy/default snapshot.
+    """
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path) if path is not None else default_settings_path()
+
+    def read(self) -> dict[str, Any] | None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        data = raw.get("settings", raw)
+        return data if isinstance(data, dict) else None
+
+
 class SettingsFileSource:
     """Non-secret runtime settings backed by the desktop settings store."""
 
     source_name = "settings"
 
     def __init__(self, path: str | Path | None = None) -> None:
-        self._path = Path(path) if path is not None else default_settings_path()
+        self._reader = DesktopSettingsReader(path)
 
     def _settings(self) -> dict[str, Any]:
-        try:
-            if not self._path.exists():
-                return {}
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        data = raw.get("settings", raw) if isinstance(raw, dict) else {}
-        return data if isinstance(data, dict) else {}
+        return self._reader.read() or {}
 
     def _model_selection(
         self, key: str, *, legacy_key: str, legacy_default: str

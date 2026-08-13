@@ -13,6 +13,7 @@ from agent_eval.runner import (
     _import_fixture_attachment,
     _inject_current_session_events,
     _inject_current_session_messages,
+    _inject_fixture_compaction,
     _inject_skill_catalog_state,
     _replace_fixture_skills,
     _SkillCatalogRequestGuard,
@@ -24,6 +25,7 @@ from agent_eval.schema import (
     FakeTool,
     FakeToolResponse,
     FixtureAttachment,
+    FixtureCompaction,
     FixtureMessage,
     FixtureSkill,
     FixtureToolCallRequest,
@@ -445,6 +447,55 @@ def test_inject_current_session_messages_populates_active_session_without_llm(
         "前置问题",
         "前置回答",
     ]
+
+
+def test_inject_fixture_compaction_uses_production_checkpoint_boundaries(
+    tmp_path: Path,
+) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new(
+        title="compaction replay",
+        persona="default",
+        model="fake/model",
+        created_at=datetime.now(UTC),
+    )
+    store.create(session)
+    _inject_current_session_messages(
+        store,
+        session,
+        [
+            FixtureMessage(role="user", text="前置问题"),
+            FixtureMessage(role="assistant", text="前置回答"),
+        ],
+    )
+
+    _inject_fixture_compaction(
+        store,
+        session,
+        FixtureCompaction(summary="结构化摘要", covered_through_message=2),
+    )
+
+    loaded = store.load(session.session_id)
+    checkpoint = loaded.latest_compaction()
+    assert checkpoint is not None
+    assert checkpoint.payload["summary"] == "结构化摘要"
+    assert checkpoint.payload["checkpoint_version"] == 2
+    assert checkpoint.payload["covered_through_uuid"] == loaded.messages[1].uuid
+    assert checkpoint.payload["summary_source_from_uuid"] == loaded.messages[0].uuid
+    assert checkpoint.payload["retained_from_uuid"] == ""
+
+
+def test_inject_fixture_compaction_rejects_missing_message_boundary(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new(title="empty", persona="default", model="fake/model")
+    store.create(session)
+
+    with pytest.raises(ValueError, match="exceeds active message count"):
+        _inject_fixture_compaction(
+            store,
+            session,
+            FixtureCompaction(summary="摘要", covered_through_message=1),
+        )
 
 
 def test_inject_current_session_message_persists_multimodal_fixture(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ import {
 
 describe("avatar scale settings", () => {
   it("uses product defaults", () => {
+    expect(DEFAULT_SETTINGS.immersiveMode).toBe(true);
     expect(DEFAULT_SETTINGS.avatarModelScalePercents).toEqual({});
     expect(DEFAULT_SETTINGS.petMiniScalePercent).toBe(50);
     expect(AVATAR_SCALE_STEP_PERCENT).toBe(1);

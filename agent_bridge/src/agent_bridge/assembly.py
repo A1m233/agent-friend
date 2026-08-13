@@ -58,7 +58,7 @@ from agent import (
 )
 from llm_providers import LLMClient, MultimodalInputAdapter
 from memory import Memory, MemorySearchService, build_memory
-from runtime_config import config_mode_from_env, credential_source_for_mode
+from runtime_config import DesktopSettingsReader, config_mode_from_env, credential_source_for_mode
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
@@ -75,6 +75,7 @@ if TYPE_CHECKING:
 
     from .protocols.im import IMRuntime, OnboardSessionRegistry
 
+from .self_presentation import DesktopSelfPresentationModeProvider
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def _llm_factory(model: str) -> LLMClient:
 
 def _make_prompt_factory(
     catalog: PersonaCatalog | EffectivePersonaCatalog,
+    self_presentation_mode_provider: DesktopSelfPresentationModeProvider,
 ) -> Callable[[str], MarkdownPromptBuilder]:
     """构造 prompt builder 工厂，绑定用户 persona 目录。
 
@@ -97,6 +99,7 @@ def _make_prompt_factory(
         return MarkdownPromptBuilder(
             persona_id=persona_id,
             catalog=cast(PersonaCatalog, catalog),
+            self_presentation_mode_provider=self_presentation_mode_provider,
         )
 
     return factory
@@ -269,6 +272,7 @@ def build_runtime(
     settings: BridgeSettings,
     *,
     runtime_config: BridgeRuntimeConfig | None = None,
+    desktop_settings_reader: DesktopSettingsReader | None = None,
 ) -> BridgeRuntime:
     """进程启动期一次性装配 :class:`BridgeRuntime`。
 
@@ -305,7 +309,13 @@ def build_runtime(
     # 暴露成用户需要理解的“默认 / 自定义”产品状态。
     persona_store.materialize()
     prompt_catalog = EffectivePersonaCatalog(persona_store, catalog)
-    prompt_builder_factory = _make_prompt_factory(prompt_catalog)
+    self_presentation_mode_provider = DesktopSelfPresentationModeProvider(
+        desktop_settings_reader or DesktopSettingsReader()
+    )
+    prompt_builder_factory = _make_prompt_factory(
+        prompt_catalog,
+        self_presentation_mode_provider,
+    )
     if runtime_config is None:
         runtime_config = resolve_bridge_runtime_config(
             credential_source_for_mode(config_mode_from_env())

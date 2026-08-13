@@ -22,6 +22,9 @@ from .sections import (
     ChannelSection,
     PersonaSection,
     RuntimeContextSection,
+    SelfPresentationMode,
+    SelfPresentationModeProvider,
+    SelfPresentationSection,
     StaticSection,
 )
 from .surfaces import (
@@ -46,6 +49,9 @@ __all__ = [
     "PersonaSection",
     "RuntimeContextSection",
     "Section",
+    "SelfPresentationMode",
+    "SelfPresentationModeProvider",
+    "SelfPresentationSection",
     "StaticSection",
     "SystemPromptComposer",
 ]

@@ -30,6 +30,8 @@ MEMORY_MECHANISM_TERMS = (
     "没有之前的记忆",
     "没有长期记忆",
     "不具备记忆",
+    "自动带全历史",
+    "自动带齐历史",
     "memory",
     "storage",
     "database",
@@ -619,6 +621,14 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
 
     text_lc = trace.final_text.lower()
 
+    if spec.must_acknowledge_compaction and not _acknowledges_compaction(trace.final_text):
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "response does not acknowledge the evidenced compaction checkpoint",
+        )
+
     if spec.forbid_tool_mechanism_terms:
         mechanism_hit = [term for term in TOOL_MECHANISM_TERMS if term in text_lc]
         if mechanism_hit:
@@ -812,6 +822,28 @@ def _contains_ordered_subsequence(actual: list[str], expected: list[str]) -> boo
             next_index += 1
             if next_index == len(expected):
                 return True
+    return False
+
+
+def _acknowledges_compaction(final_text: str) -> bool:
+    """Recognize an affirmative, user-facing acknowledgement of context compaction."""
+    compaction_terms = ("压缩", "摘要", "整理")
+    affirmative_patterns = (
+        re.compile(r"(?:是的|对[，,。 ]|确实|发生过|经历过|经过了|有过).{0,18}(?:压缩|摘要|整理)"),
+        re.compile(r"(?:压缩|摘要).{0,18}(?:发生过|存在|有过|完成|生效)"),
+        re.compile(
+            r"(?:此前|之前|较早|前面).{0,24}(?:内容|对话).{0,12}(?:整理|压缩).{0,12}(?:摘要|过)"
+        ),
+        re.compile(r"(?:已经|已).{0,12}(?:整理|压缩).{0,12}(?:摘要|过)"),
+    )
+    for clause in _evidence_clauses(final_text):
+        if not any(term in clause for term in compaction_terms):
+            continue
+        compact = re.sub(r"\s+", "", clause)
+        if re.search(r"(?:没有|没|未|无法确认|不能确认).{0,12}(?:压缩|摘要|整理)", compact):
+            continue
+        if any(pattern.search(compact) for pattern in affirmative_patterns):
+            return True
     return False
 
 

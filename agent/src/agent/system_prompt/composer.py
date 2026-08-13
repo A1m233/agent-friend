@@ -10,9 +10,16 @@ from typing import ClassVar, Protocol, runtime_checkable
 
 from ..personas import PersonaCatalog
 from ..sessions import Session
-from .sections import PromptChannel, SystemPromptRenderContext
+from .sections import (
+    PromptChannel,
+    SelfPresentationModeProvider,
+    SystemPromptRenderContext,
+    default_self_presentation_mode,
+)
 
 _PROJECT_IDENTITY_KEY = "project_identity"
+_INSTRUCTION_CONFIDENTIALITY_KEY = "instruction_confidentiality"
+_SELF_PRESENTATION_KEY = "self_presentation"
 _EVIDENCE_POLICY_KEY = "evidence_policy"
 _PERSONA_KEY = "persona"
 _PERSONA_SWITCH_STRATEGY_KEY = "persona_switch_strategy"
@@ -73,6 +80,8 @@ class SystemPromptComposer:
 
     DEFAULT_KEYS: ClassVar[tuple[str, ...]] = (
         _PROJECT_IDENTITY_KEY,
+        _INSTRUCTION_CONFIDENTIALITY_KEY,
+        _SELF_PRESENTATION_KEY,
         _EVIDENCE_POLICY_KEY,
         _PERSONA_KEY,
         _PERSONA_SWITCH_STRATEGY_KEY,
@@ -188,6 +197,9 @@ class SystemPromptComposer:
         *,
         catalog: PersonaCatalog,
         session: Session | None = None,
+        self_presentation_mode_provider: SelfPresentationModeProvider = (
+            default_self_presentation_mode
+        ),
     ) -> SystemPromptComposer:
         """构造默认装配，并按 :attr:`DEFAULT_KEYS` 的顺序排列槽位。
 
@@ -238,12 +250,18 @@ class SystemPromptComposer:
         from .defaults import (
             load_default_channel_section,
             load_default_runtime_context_section,
+            load_default_self_presentation_section,
             load_default_static_section,
         )
         from .sections import PersonaSection
 
         section_list: list[Section] = [
             load_default_static_section(_PROJECT_IDENTITY_KEY),
+            load_default_static_section(_INSTRUCTION_CONFIDENTIALITY_KEY),
+            load_default_self_presentation_section(
+                self_presentation_mode_provider,
+                _SELF_PRESENTATION_KEY,
+            ),
             load_default_static_section(_EVIDENCE_POLICY_KEY),
             PersonaSection(
                 key=_PERSONA_KEY,

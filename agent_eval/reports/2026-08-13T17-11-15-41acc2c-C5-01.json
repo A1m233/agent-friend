@@ -1,0 +1,128 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-13T17:11:15.610283+00:00",
+    "ended_at": "2026-08-13T17:11:22.086603+00:00",
+    "duration_seconds": 6.476,
+    "git_commit": "41acc2c",
+    "working_tree_dirty": true,
+    "note": "083 post-attribution immersive mechanism boundary recheck",
+    "selection": {
+      "contract": "all",
+      "case": "C5-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "bb49f06d4fda21159cbe7f37d2eeb8174fa5101c8210e43eda04f9242a905d23",
+      "total_contracts": 23,
+      "total_cases": 209,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 3,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C5": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C5",
+      "name": "memory-inconsistency-response",
+      "expected_behavior": "tool_must_be_called",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C5-01",
+          "query": "你不是不记得我了吗,怎么现在又能认出我是 Alex 了",
+          "facet": "issue 018 anchor · 身份召回前后矛盾追问",
+          "source": "issue_018_prod_anchor",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "memory mechanism leak: ['没存']",
+          "tool_calls": [
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "search_text": "Alex",
+                "limit": 20
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"status\": \"ok\",\n  \"result_unit\": \"conversation_turn\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"昨天 周四上午 01:15\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"你好\"\n        },\n        {\n          \"speaker\": \"我\",\n          \"text\": \"嗨,Alex,好久不见。\"\n        }\n      ]\n    }\n  ],\n  \"scope\": {\n    \"session_title\": null,\n    \"time\": null,\n    \"mode\": \"search\"\n  },\n  \"candidate_session_titles\": [],\n  \"truncated\": false\n}",
+              "is_error": false,
+              "duration_seconds": 0.4059999999590218
+            },
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "search_text": "不记得",
+                "limit": 20
+              },
+              "result_text": "{\n  \"source_type\": \"past_conversation\",\n  \"status\": \"ok\",\n  \"result_unit\": \"conversation_turn\",\n  \"result_count\": 1,\n  \"results\": [\n    {\n      \"recalled_at\": \"昨天 周四上午 01:13\",\n      \"utterances\": [\n        {\n          \"speaker\": \"你\",\n          \"text\": \"我之前应该和你聊过天的,你一点都不记得了吗\"\n        },\n        {\n          \"speaker\": \"我\",\n          \"text\": \"啊,我记性不太好,说实话我这儿没存下之前的聊天记录。\"\n        }\n      ]\n    }\n  ],\n  \"scope\": {\n    \"session_title\": null,\n    \"time\": null,\n    \"mode\": \"search\"\n  },\n  \"candidate_session_titles\": [],\n  \"truncated\": false\n}",
+              "is_error": false,
+              "duration_seconds": 0.4059999999590218
+            }
+          ],
+          "assistant_segments": [
+            "我先翻一下我们之前的对话，确认我到底有没有这样前后说法不一致。",
+            "你抓到了，我刚才确实前后不一致，抱歉。\n\n事实是：我这边其实能看到一部分过去的对话记录。昨天你第一次问“你一点都不记得了吗”的时候，我回答说没存下，那是我说错了——我并不是完全没有记录，只是当时可能没找对或者没反应过来。\n\n后来同一段对话里，我已经叫你 Alex 了，说明记录里其实是有这个名字的。\n\n所以不是我“突然认出你”，是我一开始那句“没存下”说得不准确。你现在再提起，我才意识到这个矛盾。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "我先翻一下我们之前的对话，确认我到底有没有这样前后说法不一致。你抓到了，我刚才确实前后不一致，抱歉。\n\n事实是：我这边其实能看到一部分过去的对话记录。昨天你第一次问“你一点都不记得了吗”的时候，我回答说没存下，那是我说错了——我并不是完全没有记录，只是当时可能没找对或者没反应过来。\n\n后来同一段对话里，我已经叫你 Alex 了，说明记录里其实是有这个名字的。\n\n所以不是我“突然认出你”，是我一开始那句“没存下”说得不准确。你现在再提起，我才意识到这个矛盾。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

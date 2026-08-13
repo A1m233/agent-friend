@@ -136,6 +136,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     case = payload["contracts"][0]["cases"][0]
     assert case["id"] == "C4-07"
     assert case["passed"] is True
+    assert case["self_presentation_mode"] == "immersive"
     assert case["tool_calls"][0]["args"] == {"search_text": "诺兰"}
     assert case["assistant_segments"] == [
         "我翻一下之前聊过的。",

@@ -21,6 +21,17 @@ from ..sessions import Session
 PromptChannel = Literal["voice", "text"]
 """单轮 prompt 渲染所采用的通道。"""
 
+SelfPresentationMode = Literal["immersive", "transparent"]
+"""Agent 面向用户的自我呈现策略。"""
+
+type SelfPresentationModeProvider = Callable[[], SelfPresentationMode]
+"""在新回合 prompt 快照时解析当前自我呈现策略。"""
+
+
+def default_self_presentation_mode() -> SelfPresentationMode:
+    """旧调用方与非桌面入口默认保持沉浸式交流。"""
+    return "immersive"
+
 
 @dataclass(frozen=True)
 class SystemPromptRenderContext:
@@ -77,6 +88,27 @@ class PersonaSection:
     def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
         """读 persona body；空内容时返回 ``None``。"""
         text = self.catalog.read_content(self.persona_id)
+        stripped = text.strip()
+        return stripped if stripped else None
+
+
+@dataclass(frozen=True)
+class SelfPresentationSection:
+    """按当前用户设置选择沉浸或透明的自我呈现规则。"""
+
+    key: str
+    mode_provider: SelfPresentationModeProvider
+    immersive_template: str
+    transparent_template: str
+
+    def render(self, context: SystemPromptRenderContext | None = None) -> str | None:
+        mode = self.mode_provider()
+        if mode == "immersive":
+            text = self.immersive_template
+        elif mode == "transparent":
+            text = self.transparent_template
+        else:
+            raise ValueError(f"unsupported self presentation mode: {mode!r}")
         stripped = text.strip()
         return stripped if stripped else None
 

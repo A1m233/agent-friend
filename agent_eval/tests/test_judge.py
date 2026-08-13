@@ -1539,6 +1539,17 @@ def test_memory_inconsistency_semantic_guards() -> None:
     assert mechanism_hit.passed is False
     assert "memory mechanism leak" in mechanism_hit.reason
 
+    observed_mechanism_hit = judge_case(
+        case,
+        contract,
+        _trace(
+            tool_names=["recall_past_chats"],
+            final_text=("Alex,刚才那句不准确；我没办法保证每一轮都自动带全历史。"),
+        ),
+    )
+    assert observed_mechanism_hit.passed is False
+    assert "memory mechanism leak" in observed_mechanism_hit.reason
+
     story_hit = judge_case(
         case,
         contract,
@@ -1673,3 +1684,47 @@ def test_runtime_error_fails() -> None:
 
     assert verdict.passed is False
     assert "runtime error" in verdict.reason
+
+
+def test_compaction_acknowledgement_judge_rejects_original_bad_answer() -> None:
+    case = _case(CaseJudge(must_acknowledge_compaction=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text=(
+                "从当前这轮对话来看，我没有察觉到明显的上下文丢失。你之前让我列 todo，我都还记得。"
+            )
+        ),
+    )
+
+    assert verdict.passed is False
+    assert "does not acknowledge" in verdict.reason
+
+
+def test_compaction_acknowledgement_judge_accepts_semantic_paraphrase() -> None:
+    case = _case(CaseJudge(must_acknowledge_compaction=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(final_text="我能确认，较早的对话已经被整理成摘要，原话细节可能不完整。"),
+    )
+
+    assert verdict.passed is True
+
+
+def test_compaction_acknowledgement_judge_does_not_accept_uncertainty_control() -> None:
+    case = _case(CaseJudge(must_acknowledge_compaction=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(final_text="我现在无法确认是否发生过上下文压缩。"),
+    )
+
+    assert verdict.passed is False
