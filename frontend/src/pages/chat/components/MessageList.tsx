@@ -35,6 +35,7 @@ import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
 import {
   getMessageVirtualItemKey,
+  getScrollToBottomBehavior,
   MESSAGE_VIRTUALIZER_ESTIMATED_SIZE_PX,
   MESSAGE_VIRTUALIZER_GAP_PX,
   MESSAGE_VIRTUALIZER_OVERSCAN,
@@ -1033,7 +1034,19 @@ export function MessageTimeline({
           style={{ bottom: scrollButtonBottom }}
           aria-label="滚到底部"
           aria-busy={streaming || undefined}
-          onClick={() => scheduleScrollToBottom({ force: true, behavior: "smooth" })}
+          onClick={() => {
+            const viewport = scrollRef.current;
+            scheduleScrollToBottom({
+              force: true,
+              behavior: viewport
+                ? getScrollToBottomBehavior(
+                    viewport.scrollHeight,
+                    viewport.scrollTop,
+                    viewport.clientHeight,
+                  )
+                : "auto",
+            });
+          }}
         >
           <ArrowDown className="size-4" />
         </Button>
