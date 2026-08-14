@@ -6,6 +6,17 @@ export const MESSAGE_VIRTUALIZER_ESTIMATED_SIZE_PX = 120;
 export const MESSAGE_VIRTUALIZER_GAP_PX = 16;
 export const MESSAGE_VIRTUALIZER_PADDING_START_PX = 16;
 export const MESSAGE_VIRTUALIZER_OVERSCAN = 6;
+export const MESSAGE_SMOOTH_SCROLL_MAX_VIEWPORTS = 2;
+
+export function getScrollToBottomBehavior(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+): ScrollBehavior {
+  const distanceFromBottom = Math.max(0, scrollHeight - scrollTop - clientHeight);
+  const maxSmoothDistance = Math.max(0, clientHeight) * MESSAGE_SMOOTH_SCROLL_MAX_VIEWPORTS;
+  return distanceFromBottom <= maxSmoothDistance ? "smooth" : "auto";
+}
 
 /**
  * Keep a message's virtual row identity stable when older history is prepended.
