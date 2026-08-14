@@ -302,7 +302,7 @@ export function ToolCard({ block }: { block: ToolBlock }) {
           <CollapsibleTrigger className="cursor-pointer select-none text-muted transition-colors hover:text-fg">
             参数 / 结果
           </CollapsibleTrigger>
-          <CollapsibleContent>
+          <CollapsibleContent className="max-h-80 overflow-y-auto overscroll-contain">
             {args && (
               <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
                 {args}
