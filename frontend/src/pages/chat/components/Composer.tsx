@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { Ban, Plus, Upload } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
-import { Input, Spinner, TooltipButton, TooltipProvider } from "@/components/ui";
+import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
 import { useSetting } from "@/lib/settings";
 import {
@@ -725,16 +725,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               autosize={COMPOSER_AUTOSIZE}
               disabled={disabled || cancelling || editSubmitting}
               loading={streaming}
+              sendBtnLoading={cancelling}
               placeholder={
                 disabled
                   ? disabledReason ?? "暂时不能发送"
-                  : cancelling
-                    ? "正在取消当前回复…"
-                    : editSubmitting
-                      ? "正在提交修改…"
-                      : editingMessage
-                        ? "修改后重新发送"
-                        : "说点什么…（Enter 发送）"
+                  : editSubmitting
+                    ? "正在提交修改…"
+                    : editingMessage
+                      ? "修改后重新发送"
+                      : "说点什么…（Enter 发送）"
               }
               shouldIgnoreNativeValueChange={() => applyingVoiceDraftRef.current}
               onNativeValueChange={(value) => applyDraftText(value, "user")}
@@ -794,17 +793,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       disabled={disabled || streaming || cancelling || editSubmitting}
                       disabledReason={composerControlDisabledReason}
                     />
-                    {cancelling && (
-                      <span
-                        role="status"
-                        aria-live="polite"
-                        aria-atomic="true"
-                        className="ml-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground"
-                      >
-                        <Spinner role="presentation" aria-hidden="true" className="size-3.5" />
-                        取消中…
-                      </span>
-                    )}
                   </div>
                   <VoiceInputAction
                     phase={voiceInputPhase}

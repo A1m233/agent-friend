@@ -1,17 +1,39 @@
+diff --git a/cjs/chat-sender/chat-sender.d.ts b/cjs/chat-sender/chat-sender.d.ts
+index 6a48203acebbfa8ff90853138568947760859561..991d507fe0f54de3a173dbfe4cd01bfd52f1941f 100644
+--- a/cjs/chat-sender/chat-sender.d.ts
++++ b/cjs/chat-sender/chat-sender.d.ts
+@@ -18,6 +18,7 @@ export default class ChatSender extends Component<TdChatSenderProps> {
+         actions: (ArrayConstructor | FunctionConstructor | BooleanConstructor)[];
+         defaultValue: StringConstructor;
+         loading: BooleanConstructor;
++        sendBtnLoading: BooleanConstructor;
+         autosize: ObjectConstructor;
+         attachmentsProps: ObjectConstructor;
+         textareaProps: ObjectConstructor;
 diff --git a/cjs/chat-sender/chat-sender.js b/cjs/chat-sender/chat-sender.js
-index a68c2903919c8263fb182c59e8a4eddc9ddd8b79..9eda9bc862910033c31d657c2ac87f2aa06b79a9 100644
+index a68c2903919c8263fb182c59e8a4eddc9ddd8b79..2040e9da2ffcf9d9ceb3a88c3d3d130335e9c31f 100644
 --- a/cjs/chat-sender/chat-sender.js
 +++ b/cjs/chat-sender/chat-sender.js
-@@ -985,7 +985,7 @@ __publicField$1(Button, "defaultProps", {
+@@ -35,6 +35,7 @@ require('../_chunks/dep-d26a9931.js');
+ require('../_chunks/dep-f8c29094.js');
+ require('../_chunks/dep-4a9acad4.js');
+ require('../filecard/filecard.js');
++require('tdesign-icons-web-components/lib/components/loading.js');
+ require('clsx');
+ require('../_chunks/dep-33071bd3.js');
+ require('../_util/easing.js');
+@@ -985,8 +986,9 @@ __publicField$1(Button, "defaultProps", {
  });
  Button = __decorateClass$1([omi.tag("t-button")], Button);
  
 -var css_248z = ":host {\n  width: 100%;\n}\n.t-chat__input {\n  position: relative;\n  width: 100%;\n  box-sizing: border-box;\n}\n.t-chat__input *,\n.t-chat__input *::before,\n.t-chat__input *::after {\n  box-sizing: border-box;\n}\n.t-chat__input__content {\n  position: relative;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  box-sizing: border-box;\n  padding: var(--td-chat-input-padding);\n  border: 1px solid var(--td-chat-input-content-default-border);\n  border-radius: var(--td-chat-input-radius);\n  background: var(--td-chat-input-background);\n  transition: all 0.3s;\n  z-index: 1;\n  box-shadow: var(--td-chat-input-box-shadow);\n}\n.t-chat__input__content:focus-within {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-chat-input-shadow);\n}\n.t-chat__input__content:hover {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-shadow-1);\n}\n.t-chat__input__attachments {\n  display: block;\n  margin: var(--td-chat-input-attachments-margin);\n}\n.t-chat__input__attachments::part(t-attachment-list-wrap) {\n  top: -4px;\n}\n.t-chat__input__textarea__wrapper {\n  position: relative;\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  width: 100%;\n}\n.t-chat__input__textarea {\n  flex: 1;\n  min-width: 0;\n  max-height: var(--td-chat-input-textarea-max-height);\n  display: flex;\n  flex-direction: column;\n}\n.t-chat__input__textarea::part(t-textarea) {\n  flex: 1;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar {\n  width: var(--td-chat-input-textarea-scrollbar-width);\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb {\n  border-radius: var(--td-chat-input-textarea-scrollbar-thumb-radius);\n  background-color: var(--td-chat-input-textarea-scrollbar-color);\n  cursor: pointer;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb:hover {\n  background-color: var(--td-chat-input-textarea-scrollbar-hover-color);\n}\n.t-chat__input__textarea::part(t-textarea__inner) {\n  padding: 0 0 var(--td-comp-paddingTB-s) 0;\n  border: none;\n  font-size: var(--td-chat-input-font-size);\n  background: none;\n  box-shadow: none;\n  min-height: 60px;\n}\n.t-chat__input__textarea::part(t-textarea__inner):placeholder {\n  color: var(--td-text-color-secondary);\n}\n.t-chat__input__footer {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: var(--td-comp-margin-s);\n  min-height: 32px;\n}\n.t-chat__input__footer__right {\n  display: flex;\n  align-items: center;\n}\n.t-chat__input__actions {\n  display: flex;\n  align-items: center;\n  gap: var(--td-chat-input-actions-gap);\n  margin: var(--td-chat-input-actions-margin);\n}\n.t-chat__input__actions__item__wrapper {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: var(--td-chat-input-actions-item-wh);\n  height: var(--td-chat-input-actions-item-wh);\n  border-radius: var(--td-chat-input-actions-item-radius);\n  font-size: var(--td-chat-input-actions-item-font-size);\n  background: var(--td-chat-input-actions-item-bg);\n}\n.t-chat__input__actions__item__wrapper:hover {\n  background: var(--td-chat-input-actions-item-hover-bg);\n}\n.t-chat__input__actions__icon {\n  display: flex;\n}\n.t-chat__input__actions__upload::part(t-upload__trigger) {\n  display: flex;\n}\n.t-chat__input__actions__tooltip {\n  display: flex;\n  color: var(--td-chat-input-actions-item-color);\n  cursor: pointer;\n}\n.t-chat__input__button {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: auto;\n  height: var(--td-comp-size-s);\n  text-align: center;\n  cursor: pointer;\n}\n.t-chat__input__button::part(t-button) {\n  transform: rotate(-90deg);\n  width: var(--td-comp-size-s);\n  height: var(--td-comp-size-s);\n  border-radius: var(--td-radius-circle);\n  background: var(--td-chat-input-button-default-bg);\n  color: var(--td-chat-input-button-default-color);\n  border-width: 0;\n}\n.t-chat__input__button--focus::part(t-button) {\n  background: var(--td-brand-color);\n  color: var(--td-text-color-anti);\n}\n.t-chat__input__button:hover::part(t-button) {\n  background: var(--td-brand-color-hover);\n}\n.t-chat__input__button:focus::part(t-button) {\n  background: var(--td-brand-color-active);\n}\n.t-chat__input__button__icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n.t-chat__input__button__icon .t-icon {\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__button__stop .t-icon {\n  font-size: 28px;\n}\n.t-chat__input__stopbtn {\n  flex: 0 0 auto;\n  margin-left: var(--td-comp-margin-l);\n}\n.t-chat__input__stopbtn .t-button {\n  width: 100px;\n  height: var(--td-comp-size-xxxxl);\n  border-radius: var(--td-radius-round);\n  background: var(--td-bg-color-secondarycontainer);\n  color: var(--td-text-color-primary);\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__stopbtn .t-button__text {\n  align-items: center;\n}\n.t-chat__input__stopbtn .t-button .t-icon {\n  font-size: var(--td-font-size-title-large);\n  margin-right: var(--td-comp-margin-s);\n}\n.t-portal-wrapper .t-chat__input__model-dropdown {\n  border: none;\n}\n\n/*# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbInNyYy9jaGF0LXNlbmRlci9zdHlsZS9jaGF0LXNlbmRlci5sZXNzIiwiY2hhdC1zZW5kZXIubGVzcyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFFQTtFQUNFLFdBQUE7QUNERjtBRElDO0VBQ0Msa0JBQUE7RUFDQSxXQUFBO0VBQ0Esc0JBQUE7QUNGRjtBRElFOzs7RUFDRSxzQkFBQTtBQ0FKO0FESUU7RUFDRSxrQkFBQTtFQUNBLFdBQUE7RUFDQSxhQUFBO0VBQ0Esc0JBQUE7RUFDQSxzQkFBQTtFQUNBLHFDQUFBO0VBQ0EsNkRBQUE7RUFDQSwwQ0FBQTtFQUNBLDJDQUFBO0VBQ0Esb0JBQUE7RUFDQSxVQUFBO0VBQ0EsMkNBQUE7QUNGSjtBRElJO0VBQ0UsK0NBQUE7RUFDQSx1Q0FBQTtBQ0ZOO0FES0k7RUFDRSwrQ0FBQTtFQUNBLDhCQUFBO0FDSE47QURRRTtFQUNFLGNBQUE7RUFDQSwrQ0FBQTtBQ05KO0FEUUk7RUFDRSxTQUFBO0FDTk47QURVRTtFQUNFLGtCQUFBO0VBQ0EsT0FBQTtFQUNBLGFBQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtBQ1JKO0FEWUU7RUFDRSxPQUFBO0VBQ0EsWUFBQTtFQUNBLG9EQUFBO0VBQ0EsYUFBQTtFQUNBLHNCQUFBO0FDVko7QURZSTtFQUNFLE9BQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtFQUNBLGdCQUFBO0FDVk47QURZTTtFQUNFLG9EQUFBO0FDVlI7QURZTTtFQUNFLG1FQUFBO0VBQ0EsK0RBQUE7RUFDQSxlQUFBO0FDVlI7QURZTTtFQUNFLHFFQUFBO0FDVlI7QURjSTtFQUNFLHlDQUFBO0VBQ0EsWUFBQTtFQUNBLHlDQUFBO0VBQ0EsZ0JBQUE7RUFDQSxnQkFBQTtFQUNBLGdCQUFBO0FDWk47QURlSTtFQUNFLHFDQUFBO0FDYk47QURpQkU7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSw4QkFBQTtFQUNBLG1DQUFBO0VBQ0EsZ0JBQUE7QUNmSjtBRGlCSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtBQ2ZOO0FEb0JFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EscUNBQUE7RUFDQSwyQ0FBQTtBQ2xCSjtBRG9CSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtFQUNBLHVCQUFBO0VBQ0EsMkNBQUE7RUFDQSw0Q0FBQTtFQUNBLHVEQUFBO0VBQ0Esc0RBQUE7RUFDQSxnREFBQTtBQ2xCTjtBRG9CTTtFQUNFLHNEQUFBO0FDbEJSO0FEc0JJO0VBQ0UsYUFBQTtBQ3BCTjtBRHdCTTtFQUNFLGFBQUE7QUN0QlI7QUQwQkk7RUFDRSxhQUFBO0VBQ0EsOENBQUE7RUFDQSxlQUFBO0FDeEJOO0FENEJFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EsdUJBQUE7RUFDQSxXQUFBO0VBQ0EsNkJBQUE7RUFDQSxrQkFBQTtFQUNBLGVBQUE7QUMxQko7QUQ2Qkk7RUFDRSx5QkFBQTtFQUNBLDRCQUFBO0VBQ0EsNkJBQUE7RUFDQSxzQ0FBQTtFQUNBLGtEQUFBO0VBQ0EsZ0RBQUE7RUFDQSxlQUFBO0FDM0JOO0FEOEJJO0VBQ0UsaUNBQUE7RUFDQSxnQ0FBQTtBQzVCTjtBRCtCSTtFQUNFLHVDQUFBO0FDN0JOO0FEZ0NJO0VBQ0Usd0NBQUE7QUM5Qk47QURpQ0k7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSx1QkFBQTtBQy9CTjtBRDRCSTtFQU1JLHlDQUFBO0FDL0JSO0FEbUNJO0VBRUksZUFBQTtBQ2xDUjtBRHVDRTtFQUNFLGNBQUE7RUFDQSxvQ0FBQTtBQ3JDSjtBRG1DRTtFQUtJLFlBQUE7RUFDQSxpQ0FBQTtFQUNBLHFDQUFBO0VBQ0EsaURBQUE7RUFDQSxtQ0FBQTtFQUNBLHlDQUFBO0FDckNOO0FEdUNNO0VBQ0UsbUJBQUE7QUNyQ1I7QUR3QkU7RUFpQk0sMENBQUE7RUFDQSxxQ0FBQTtBQ3RDUjtBRDZDQztFQUVHLFlBQUE7QUM1Q0oiLCJmaWxlIjoiY2hhdC1zZW5kZXIubGVzcyJ9 */";
 +var css_248z = ":host {\n  width: 100%;\n}\n.t-chat__input {\n  position: relative;\n  width: 100%;\n  box-sizing: border-box;\n}\n.t-chat__input *,\n.t-chat__input *::before,\n.t-chat__input *::after {\n  box-sizing: border-box;\n}\n.t-chat__input__content {\n  position: relative;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  box-sizing: border-box;\n  padding: var(--td-chat-input-padding);\n  border: 1px solid var(--td-chat-input-content-default-border);\n  border-radius: var(--td-chat-input-radius);\n  background: var(--td-chat-input-background);\n  transition: all 0.3s;\n  z-index: 1;\n  box-shadow: var(--td-chat-input-box-shadow);\n}\n.t-chat__input__content:focus-within {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-chat-input-shadow);\n}\n.t-chat__input__content:hover {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-shadow-1);\n}\n.t-chat__input__attachments {\n  display: block;\n  margin: var(--td-chat-input-attachments-margin);\n}\n.t-chat__input__attachments::part(t-attachment-list-wrap) {\n  top: -4px;\n}\n.t-chat__input__textarea__wrapper {\n  position: relative;\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  width: 100%;\n}\n.t-chat__input__textarea {\n  flex: 1;\n  min-width: 0;\n  max-height: var(--td-chat-input-textarea-max-height);\n  display: flex;\n  flex-direction: column;\n}\n.t-chat__input__textarea::part(t-textarea) {\n  flex: 1;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar {\n  width: var(--td-chat-input-textarea-scrollbar-width);\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb {\n  border-radius: var(--td-chat-input-textarea-scrollbar-thumb-radius);\n  background-color: var(--td-chat-input-textarea-scrollbar-color);\n  cursor: pointer;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb:hover {\n  background-color: var(--td-chat-input-textarea-scrollbar-hover-color);\n}\n.t-chat__input__textarea::part(t-textarea__inner) {\n  padding: 0 0 var(--td-comp-paddingTB-s) 0;\n  border: none;\n  font-size: var(--td-chat-input-font-size);\n  background: none;\n  box-shadow: none;\n  min-height: 60px;\n}\n.t-chat__input__textarea::part(t-textarea__inner):placeholder {\n  color: var(--td-text-color-secondary);\n}\n.t-chat__input__footer {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: var(--td-comp-margin-s);\n  min-height: 32px;\n}\n.t-chat__input__footer__right {\n  display: flex;\n  align-items: center;\n}\n.t-chat__input__actions {\n  display: flex;\n  align-items: center;\n  gap: var(--td-chat-input-actions-gap);\n  margin: var(--td-chat-input-actions-margin);\n}\n.t-chat__input__actions__item__wrapper {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: var(--td-chat-input-actions-item-wh);\n  height: var(--td-chat-input-actions-item-wh);\n  border-radius: var(--td-chat-input-actions-item-radius);\n  font-size: var(--td-chat-input-actions-item-font-size);\n  background: var(--td-chat-input-actions-item-bg);\n}\n.t-chat__input__actions__item__wrapper:hover {\n  background: var(--td-chat-input-actions-item-hover-bg);\n}\n.t-chat__input__actions__icon {\n  display: flex;\n}\n.t-chat__input__actions__upload::part(t-upload__trigger) {\n  display: flex;\n}\n.t-chat__input__actions__tooltip {\n  display: flex;\n  color: var(--td-chat-input-actions-item-color);\n  cursor: pointer;\n}\n.t-chat__input__button {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: auto;\n  height: var(--td-comp-size-s);\n  text-align: center;\n  cursor: pointer;\n}\n.t-chat__input__button::part(t-button) {\n  transform: rotate(-90deg);\n  width: var(--td-comp-size-s);\n  height: var(--td-comp-size-s);\n  border-radius: var(--td-radius-circle);\n  background: var(--td-chat-input-button-default-bg);\n  color: var(--td-chat-input-button-default-color);\n  border-width: 0;\n}\n.t-chat__input__button--focus::part(t-button) {\n  background: var(--td-brand-color);\n  color: var(--td-text-color-anti);\n}\n.t-chat__input__button__icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n.t-chat__input__button__icon .t-icon {\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__button__stop .t-icon {\n  font-size: 28px;\n}\n.t-chat__input__stopbtn {\n  flex: 0 0 auto;\n  margin-left: var(--td-comp-margin-l);\n}\n.t-chat__input__stopbtn .t-button {\n  width: 100px;\n  height: var(--td-comp-size-xxxxl);\n  border-radius: var(--td-radius-round);\n  background: var(--td-bg-color-secondarycontainer);\n  color: var(--td-text-color-primary);\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__stopbtn .t-button__text {\n  align-items: center;\n}\n.t-chat__input__stopbtn .t-button .t-icon {\n  font-size: var(--td-font-size-title-large);\n  margin-right: var(--td-comp-margin-s);\n}\n.t-portal-wrapper .t-chat__input__model-dropdown {\n  border: none;\n}\n\n/*# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbInNyYy9jaGF0LXNlbmRlci9zdHlsZS9jaGF0LXNlbmRlci5sZXNzIiwiY2hhdC1zZW5kZXIubGVzcyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFFQTtFQUNFLFdBQUE7QUNERjtBRElDO0VBQ0Msa0JBQUE7RUFDQSxXQUFBO0VBQ0Esc0JBQUE7QUNGRjtBRElFOzs7RUFDRSxzQkFBQTtBQ0FKO0FESUU7RUFDRSxrQkFBQTtFQUNBLFdBQUE7RUFDQSxhQUFBO0VBQ0Esc0JBQUE7RUFDQSxzQkFBQTtFQUNBLHFDQUFBO0VBQ0EsNkRBQUE7RUFDQSwwQ0FBQTtFQUNBLDJDQUFBO0VBQ0Esb0JBQUE7RUFDQSxVQUFBO0VBQ0EsMkNBQUE7QUNGSjtBRElJO0VBQ0UsK0NBQUE7RUFDQSx1Q0FBQTtBQ0ZOO0FES0k7RUFDRSwrQ0FBQTtFQUNBLDhCQUFBO0FDSE47QURRRTtFQUNFLGNBQUE7RUFDQSwrQ0FBQTtBQ05KO0FEUUk7RUFDRSxTQUFBO0FDTk47QURVRTtFQUNFLGtCQUFBO0VBQ0EsT0FBQTtFQUNBLGFBQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtBQ1JKO0FEWUU7RUFDRSxPQUFBO0VBQ0EsWUFBQTtFQUNBLG9EQUFBO0VBQ0EsYUFBQTtFQUNBLHNCQUFBO0FDVko7QURZSTtFQUNFLE9BQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtFQUNBLGdCQUFBO0FDVk47QURZTTtFQUNFLG9EQUFBO0FDVlI7QURZTTtFQUNFLG1FQUFBO0VBQ0EsK0RBQUE7RUFDQSxlQUFBO0FDVlI7QURZTTtFQUNFLHFFQUFBO0FDVlI7QURjSTtFQUNFLHlDQUFBO0VBQ0EsWUFBQTtFQUNBLHlDQUFBO0VBQ0EsZ0JBQUE7RUFDQSxnQkFBQTtFQUNBLGdCQUFBO0FDWk47QURlSTtFQUNFLHFDQUFBO0FDYk47QURpQkU7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSw4QkFBQTtFQUNBLG1DQUFBO0VBQ0EsZ0JBQUE7QUNmSjtBRGlCSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtBQ2ZOO0FEb0JFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EscUNBQUE7RUFDQSwyQ0FBQTtBQ2xCSjtBRG9CSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtFQUNBLHVCQUFBO0VBQ0EsMkNBQUE7RUFDQSw0Q0FBQTtFQUNBLHVEQUFBO0VBQ0Esc0RBQUE7RUFDQSxnREFBQTtBQ2xCTjtBRG9CTTtFQUNFLHNEQUFBO0FDbEJSO0FEc0JJO0VBQ0UsYUFBQTtBQ3BCTjtBRHdCTTtFQUNFLGFBQUE7QUN0QlI7QUQwQkk7RUFDRSxhQUFBO0VBQ0EsOENBQUE7RUFDQSxlQUFBO0FDeEJOO0FENEJFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EsdUJBQUE7RUFDQSxXQUFBO0VBQ0EsNkJBQUE7RUFDQSxrQkFBQTtFQUNBLGVBQUE7QUMxQko7QUQ2Qkk7RUFDRSx5QkFBQTtFQUNBLDRCQUFBO0VBQ0EsNkJBQUE7RUFDQSxzQ0FBQTtFQUNBLGtEQUFBO0VBQ0EsZ0RBQUE7RUFDQSxlQUFBO0FDM0JOO0FEOEJJO0VBQ0UsaUNBQUE7RUFDQSxnQ0FBQTtBQzVCTjtBRCtCSTtFQUNFLHVDQUFBO0FDN0JOO0FEZ0NJO0VBQ0Usd0NBQUE7QUM5Qk47QURpQ0k7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSx1QkFBQTtBQy9CTjtBRDRCSTtFQU1JLHlDQUFBO0FDL0JSO0FEbUNJO0VBRUksZUFBQTtBQ2xDUjtBRHVDRTtFQUNFLGNBQUE7RUFDQSxvQ0FBQTtBQ3JDSjtBRG1DRTtFQUtJLFlBQUE7RUFDQSxpQ0FBQTtFQUNBLHFDQUFBO0VBQ0EsaURBQUE7RUFDQSxtQ0FBQTtFQUNBLHlDQUFBO0FDckNOO0FEdUNNO0VBQ0UsbUJBQUE7QUNyQ1I7QUR3QkU7RUFpQk0sMENBQUE7RUFDQSxxQ0FBQTtBQ3RDUjtBRDZDQztFQUVHLFlBQUE7QUM1Q0oiLCJmaWxlIjoiY2hhdC1zZW5kZXIubGVzcyJ9 */";
  var styles = css_248z;
++var sendButtonLoadingStyles = ".t-chat__input__button__loading { animation: t-chat-sender-loading-spin var(--td-chat-input-loading-duration, 1s) linear infinite; }\n@keyframes t-chat-sender-loading-spin { to { transform: rotate(360deg); } }";
  
  function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
-@@ -1084,9 +1084,9 @@ exports["default"] = /*#__PURE__*/function (_Component) {
+ function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { defineProperty._defineProperty(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+@@ -1084,10 +1086,12 @@ exports["default"] = /*#__PURE__*/function (_Component) {
          theme: "default",
          size: "small",
          variant: "text",
@@ -19,11 +41,15 @@ index a68c2903919c8263fb182c59e8a4eddc9ddd8b79..9eda9bc862910033c31d657c2ac87f2a
 +        className: _util_classname["default"](["".concat(className, "__button"), defineProperty._defineProperty({}, "".concat(className, "__button--focus"), !_this.isSendBtnDisabled || _this.props.loading)]),
          onClick: _this.clickSend,
 -        disabled: disabled
-+        disabled: disabled || !_this.props.loading && _this.isSendBtnDisabled
-       }, _util_lightDom.convertToLightDomNode(_this.props.loading ? /* @__PURE__ */omi.Component.h("t-icon-stop", {
+-      }, _util_lightDom.convertToLightDomNode(_this.props.loading ? /* @__PURE__ */omi.Component.h("t-icon-stop", {
++        disabled: disabled || _this.props.sendBtnLoading || !_this.props.loading && _this.isSendBtnDisabled
++      }, _util_lightDom.convertToLightDomNode(_this.props.sendBtnLoading ? /* @__PURE__ */omi.Component.h("t-icon-loading", {
++        className: _util_classname["default"]("".concat(className, "__button__icon"), "".concat(className, "__button__loading"))
++      }) : _this.props.loading ? /* @__PURE__ */omi.Component.h("t-icon-stop", {
          className: _util_classname["default"]("".concat(className, "__button__icon"), "".concat(className, "__button__stop"))
        }) : /* @__PURE__ */omi.Component.h("t-icon-send-filled", {
-@@ -1162,7 +1162,7 @@ exports["default"] = /*#__PURE__*/function (_Component) {
+         className: "".concat(className, "__button__icon")
+@@ -1162,7 +1166,7 @@ exports["default"] = /*#__PURE__*/function (_Component) {
        });
      });
      defineProperty._defineProperty(_this, "handleSend", function () {
@@ -32,15 +58,16 @@ index a68c2903919c8263fb182c59e8a4eddc9ddd8b79..9eda9bc862910033c31d657c2ac87f2a
          return;
        }
        _this.fire("send", {
-@@ -1221,6 +1221,7 @@ exports["default"] = /*#__PURE__*/function (_Component) {
+@@ -1221,6 +1225,8 @@ exports["default"] = /*#__PURE__*/function (_Component) {
        }
        if (props.attachmentsProps.items !== oldProps.attachmentsProps.items) return true;
        if (props.loading !== oldProps.loading) return true;
 +      if (props.sendBtnDisabled !== oldProps.sendBtnDisabled) return true;
++      if (props.sendBtnLoading !== oldProps.sendBtnLoading) return true;
        return false;
      }
    }, {
-@@ -1239,6 +1240,15 @@ exports["default"] = /*#__PURE__*/function (_Component) {
+@@ -1239,6 +1245,15 @@ exports["default"] = /*#__PURE__*/function (_Component) {
      get: function get() {
        return this.props.readyToSend && typeof this.props.readyToSend === "function" ? this.props.readyToSend(this.inputValue) : this.inputValue && this.inputValue.trim() !== "";
      }
@@ -56,32 +83,73 @@ index a68c2903919c8263fb182c59e8a4eddc9ddd8b79..9eda9bc862910033c31d657c2ac87f2a
    }, {
      key: "render",
      value: function render(props) {
-@@ -1319,6 +1329,7 @@ __publicField(exports["default"], "propTypes", {
+@@ -1306,7 +1321,7 @@ exports["default"] = /*#__PURE__*/function (_Component) {
+     }
+   }]);
+ }(omi.Component);
+-__publicField(exports["default"], "css", [styles]);
++__publicField(exports["default"], "css", [styles, sendButtonLoadingStyles]);
+ __publicField(exports["default"], "propTypes", {
+   placeholder: String,
+   disabled: Boolean,
+@@ -1319,6 +1334,8 @@ __publicField(exports["default"], "propTypes", {
    textareaProps: Object,
    uploadProps: Object,
    readyToSend: [Object, Function],
 +  sendBtnDisabled: [Boolean, Function],
++  sendBtnLoading: Boolean,
    onFileSelect: Function,
    onFileRemove: Function,
    onSend: Function,
 diff --git a/cjs/chat-sender/type.d.ts b/cjs/chat-sender/type.d.ts
-index aa6df2a3017ef6cbc59476cf054050c23d12306a..be0516f1159ea607514e8e718f23baf490a2ac71 100644
+index aa6df2a3017ef6cbc59476cf054050c23d12306a..df93b0f1e861918cd4680a5e9844f593684ffa04 100644
 --- a/cjs/chat-sender/type.d.ts
 +++ b/cjs/chat-sender/type.d.ts
-@@ -31,6 +31,8 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
+@@ -31,6 +31,10 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
       * @default value不为空时可发送
       */
      readyToSend?: (inputValue: string) => boolean;
 +    /** 控制发送按钮的禁用状态 */
 +    sendBtnDisabled?: boolean | ((inputValue: string) => boolean);
++    /** 控制发送按钮的加载状态 */
++    sendBtnLoading?: boolean;
      onSend?: (e: CustomEvent<TdChatSenderParams>) => ChatRequestParams | void;
      onStop?: (e: CustomEvent<string>) => void;
      onChange?: (e: CustomEvent<string>) => void;
+diff --git a/esm/chat-sender/chat-sender.d.ts b/esm/chat-sender/chat-sender.d.ts
+index 6a48203acebbfa8ff90853138568947760859561..991d507fe0f54de3a173dbfe4cd01bfd52f1941f 100644
+--- a/esm/chat-sender/chat-sender.d.ts
++++ b/esm/chat-sender/chat-sender.d.ts
+@@ -18,6 +18,7 @@ export default class ChatSender extends Component<TdChatSenderProps> {
+         actions: (ArrayConstructor | FunctionConstructor | BooleanConstructor)[];
+         defaultValue: StringConstructor;
+         loading: BooleanConstructor;
++        sendBtnLoading: BooleanConstructor;
+         autosize: ObjectConstructor;
+         attachmentsProps: ObjectConstructor;
+         textareaProps: ObjectConstructor;
 diff --git a/esm/chat-sender/chat-sender.js b/esm/chat-sender/chat-sender.js
-index 54620469827c1ad3338a8a71c517ff63593ebff3..d1bd76b1b04f918b4951a963df80fb39009f867d 100644
+index 54620469827c1ad3338a8a71c517ff63593ebff3..42a0a0b6be3a4debef22fe008167401d2f434c15 100644
 --- a/esm/chat-sender/chat-sender.js
 +++ b/esm/chat-sender/chat-sender.js
-@@ -1066,9 +1066,9 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+@@ -30,6 +30,7 @@ import '../_chunks/dep-fa67c1a0.js';
+ import '../_chunks/dep-44edcc03.js';
+ import '../_chunks/dep-538a5b49.js';
+ import '../filecard/filecard.js';
++import 'tdesign-icons-web-components/esm/components/loading.js';
+ import './style/filecard.less';
+ import './style/attachments.less';
+ import 'clsx';
+@@ -40,6 +41,8 @@ import '../_chunks/dep-6a28701a.js';
+ import 'omi-transition';
+ import '@popperjs/core';
+
++var sendButtonLoadingStyles = ".t-chat__input__button__loading { animation: t-chat-sender-loading-spin var(--td-chat-input-loading-duration, 1s) linear infinite; }\n@keyframes t-chat-sender-loading-spin { to { transform: rotate(360deg); } }";
++
+ var _class$3;
+ function ownKeys$6(object, enumerableOnly) {
+   var keys = Object.keys(object);
+@@ -1066,10 +1069,12 @@ var ChatSender = /*#__PURE__*/function (_Component) {
          theme: "default",
          size: "small",
          variant: "text",
@@ -89,11 +157,15 @@ index 54620469827c1ad3338a8a71c517ff63593ebff3..d1bd76b1b04f918b4951a963df80fb39
 +        className: classname(["".concat(className, "__button"), _defineProperty$1({}, "".concat(className, "__button--focus"), !_this.isSendBtnDisabled || _this.props.loading)]),
          onClick: _this.clickSend,
 -        disabled: disabled
-+        disabled: disabled || !_this.props.loading && _this.isSendBtnDisabled
-       }, convertToLightDomNode(_this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
+-      }, convertToLightDomNode(_this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
++        disabled: disabled || _this.props.sendBtnLoading || !_this.props.loading && _this.isSendBtnDisabled
++      }, convertToLightDomNode(_this.props.sendBtnLoading ? /* @__PURE__ */Component.h("t-icon-loading", {
++        className: classname("".concat(className, "__button__icon"), "".concat(className, "__button__loading"))
++      }) : _this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
          className: classname("".concat(className, "__button__icon"), "".concat(className, "__button__stop"))
        }) : /* @__PURE__ */Component.h("t-icon-send-filled", {
-@@ -1144,7 +1144,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+         className: "".concat(className, "__button__icon")
+@@ -1144,7 +1149,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
        });
      });
      _defineProperty$1(_this, "handleSend", function () {
@@ -102,15 +174,16 @@ index 54620469827c1ad3338a8a71c517ff63593ebff3..d1bd76b1b04f918b4951a963df80fb39
          return;
        }
        _this.fire("send", {
-@@ -1203,6 +1203,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+@@ -1203,6 +1208,8 @@ var ChatSender = /*#__PURE__*/function (_Component) {
        }
        if (props.attachmentsProps.items !== oldProps.attachmentsProps.items) return true;
        if (props.loading !== oldProps.loading) return true;
 +      if (props.sendBtnDisabled !== oldProps.sendBtnDisabled) return true;
++      if (props.sendBtnLoading !== oldProps.sendBtnLoading) return true;
        return false;
      }
    }, {
-@@ -1221,6 +1222,15 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+@@ -1221,6 +1228,15 @@ var ChatSender = /*#__PURE__*/function (_Component) {
      get: function get() {
        return this.props.readyToSend && typeof this.props.readyToSend === "function" ? this.props.readyToSend(this.inputValue) : this.inputValue && this.inputValue.trim() !== "";
      }
@@ -126,16 +199,26 @@ index 54620469827c1ad3338a8a71c517ff63593ebff3..d1bd76b1b04f918b4951a963df80fb39
    }, {
      key: "render",
      value: function render(props) {
-@@ -1301,6 +1311,7 @@ __publicField(ChatSender, "propTypes", {
+@@ -1288,7 +1304,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+     }
+   }]);
+ }(Component);
+-__publicField(ChatSender, "css", [styles]);
++__publicField(ChatSender, "css", [styles, sendButtonLoadingStyles]);
+ __publicField(ChatSender, "propTypes", {
+   placeholder: String,
+   disabled: Boolean,
+@@ -1301,6 +1317,8 @@ __publicField(ChatSender, "propTypes", {
    textareaProps: Object,
    uploadProps: Object,
    readyToSend: [Object, Function],
 +  sendBtnDisabled: [Boolean, Function],
++  sendBtnLoading: Boolean,
    onFileSelect: Function,
    onFileRemove: Function,
    onSend: Function,
 diff --git a/esm/chat-sender/style/chat-sender.less b/esm/chat-sender/style/chat-sender.less
-index 675acacda195611c21d3b7c8fbe1b204a3bb57bf..a318762e28cde34244448b3150f1f2edfc01d4b6 100644
+index 675acacda195611c21d3b7c8fbe1b204a3bb57bf..6b682d7f2977a9e55d84e2adc16e83ae23c4684a 100644
 --- a/esm/chat-sender/style/chat-sender.less
 +++ b/esm/chat-sender/style/chat-sender.less
 @@ -175,14 +175,6 @@
@@ -154,32 +237,56 @@ index 675acacda195611c21d3b7c8fbe1b204a3bb57bf..a318762e28cde34244448b3150f1f2ed
        display: flex;
        align-items: center;
 diff --git a/esm/chat-sender/type.d.ts b/esm/chat-sender/type.d.ts
-index aa6df2a3017ef6cbc59476cf054050c23d12306a..be0516f1159ea607514e8e718f23baf490a2ac71 100644
+index aa6df2a3017ef6cbc59476cf054050c23d12306a..df93b0f1e861918cd4680a5e9844f593684ffa04 100644
 --- a/esm/chat-sender/type.d.ts
 +++ b/esm/chat-sender/type.d.ts
-@@ -31,6 +31,8 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
+@@ -31,6 +31,10 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
       * @default value不为空时可发送
       */
      readyToSend?: (inputValue: string) => boolean;
 +    /** 控制发送按钮的禁用状态 */
 +    sendBtnDisabled?: boolean | ((inputValue: string) => boolean);
++    /** 控制发送按钮的加载状态 */
++    sendBtnLoading?: boolean;
      onSend?: (e: CustomEvent<TdChatSenderParams>) => ChatRequestParams | void;
      onStop?: (e: CustomEvent<string>) => void;
      onChange?: (e: CustomEvent<string>) => void;
+diff --git a/lib/chat-sender/chat-sender.d.ts b/lib/chat-sender/chat-sender.d.ts
+index 6a48203acebbfa8ff90853138568947760859561..991d507fe0f54de3a173dbfe4cd01bfd52f1941f 100644
+--- a/lib/chat-sender/chat-sender.d.ts
++++ b/lib/chat-sender/chat-sender.d.ts
+@@ -18,6 +18,7 @@ export default class ChatSender extends Component<TdChatSenderProps> {
+         actions: (ArrayConstructor | FunctionConstructor | BooleanConstructor)[];
+         defaultValue: StringConstructor;
+         loading: BooleanConstructor;
++        sendBtnLoading: BooleanConstructor;
+         autosize: ObjectConstructor;
+         attachmentsProps: ObjectConstructor;
+         textareaProps: ObjectConstructor;
 diff --git a/lib/chat-sender/chat-sender.js b/lib/chat-sender/chat-sender.js
-index 3c693fc3e79da953a57fe8cfb11d76e01b3de12a..c1287e3f5ff438eef87deb660dd934c54b2bc9e6 100644
+index 3c693fc3e79da953a57fe8cfb11d76e01b3de12a..761501a3eac0913e246613a28af9c492e1786f7f 100644
 --- a/lib/chat-sender/chat-sender.js
 +++ b/lib/chat-sender/chat-sender.js
-@@ -981,7 +981,7 @@ __publicField$1(Button, "defaultProps", {
+@@ -31,6 +31,7 @@ import '../_chunks/dep-44edcc03.js';
+ import '../_chunks/dep-538a5b49.js';
+ import '../_chunks/dep-8d41bb96.js';
+ import '../filecard/filecard.js';
++import 'tdesign-icons-web-components/esm/components/loading.js';
+ import 'clsx';
+ import '../_chunks/dep-81c28922.js';
+ import '../_util/easing.js';
+@@ -981,8 +982,9 @@ __publicField$1(Button, "defaultProps", {
  });
  Button = __decorateClass$1([tag("t-button")], Button);
  
 -var css_248z = ":host {\n  width: 100%;\n}\n.t-chat__input {\n  position: relative;\n  width: 100%;\n  box-sizing: border-box;\n}\n.t-chat__input *,\n.t-chat__input *::before,\n.t-chat__input *::after {\n  box-sizing: border-box;\n}\n.t-chat__input__content {\n  position: relative;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  box-sizing: border-box;\n  padding: var(--td-chat-input-padding);\n  border: 1px solid var(--td-chat-input-content-default-border);\n  border-radius: var(--td-chat-input-radius);\n  background: var(--td-chat-input-background);\n  transition: all 0.3s;\n  z-index: 1;\n  box-shadow: var(--td-chat-input-box-shadow);\n}\n.t-chat__input__content:focus-within {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-chat-input-shadow);\n}\n.t-chat__input__content:hover {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-shadow-1);\n}\n.t-chat__input__attachments {\n  display: block;\n  margin: var(--td-chat-input-attachments-margin);\n}\n.t-chat__input__attachments::part(t-attachment-list-wrap) {\n  top: -4px;\n}\n.t-chat__input__textarea__wrapper {\n  position: relative;\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  width: 100%;\n}\n.t-chat__input__textarea {\n  flex: 1;\n  min-width: 0;\n  max-height: var(--td-chat-input-textarea-max-height);\n  display: flex;\n  flex-direction: column;\n}\n.t-chat__input__textarea::part(t-textarea) {\n  flex: 1;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar {\n  width: var(--td-chat-input-textarea-scrollbar-width);\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb {\n  border-radius: var(--td-chat-input-textarea-scrollbar-thumb-radius);\n  background-color: var(--td-chat-input-textarea-scrollbar-color);\n  cursor: pointer;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb:hover {\n  background-color: var(--td-chat-input-textarea-scrollbar-hover-color);\n}\n.t-chat__input__textarea::part(t-textarea__inner) {\n  padding: 0 0 var(--td-comp-paddingTB-s) 0;\n  border: none;\n  font-size: var(--td-chat-input-font-size);\n  background: none;\n  box-shadow: none;\n  min-height: 60px;\n}\n.t-chat__input__textarea::part(t-textarea__inner):placeholder {\n  color: var(--td-text-color-secondary);\n}\n.t-chat__input__footer {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: var(--td-comp-margin-s);\n  min-height: 32px;\n}\n.t-chat__input__footer__right {\n  display: flex;\n  align-items: center;\n}\n.t-chat__input__actions {\n  display: flex;\n  align-items: center;\n  gap: var(--td-chat-input-actions-gap);\n  margin: var(--td-chat-input-actions-margin);\n}\n.t-chat__input__actions__item__wrapper {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: var(--td-chat-input-actions-item-wh);\n  height: var(--td-chat-input-actions-item-wh);\n  border-radius: var(--td-chat-input-actions-item-radius);\n  font-size: var(--td-chat-input-actions-item-font-size);\n  background: var(--td-chat-input-actions-item-bg);\n}\n.t-chat__input__actions__item__wrapper:hover {\n  background: var(--td-chat-input-actions-item-hover-bg);\n}\n.t-chat__input__actions__icon {\n  display: flex;\n}\n.t-chat__input__actions__upload::part(t-upload__trigger) {\n  display: flex;\n}\n.t-chat__input__actions__tooltip {\n  display: flex;\n  color: var(--td-chat-input-actions-item-color);\n  cursor: pointer;\n}\n.t-chat__input__button {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: auto;\n  height: var(--td-comp-size-s);\n  text-align: center;\n  cursor: pointer;\n}\n.t-chat__input__button::part(t-button) {\n  transform: rotate(-90deg);\n  width: var(--td-comp-size-s);\n  height: var(--td-comp-size-s);\n  border-radius: var(--td-radius-circle);\n  background: var(--td-chat-input-button-default-bg);\n  color: var(--td-chat-input-button-default-color);\n  border-width: 0;\n}\n.t-chat__input__button--focus::part(t-button) {\n  background: var(--td-brand-color);\n  color: var(--td-text-color-anti);\n}\n.t-chat__input__button:hover::part(t-button) {\n  background: var(--td-brand-color-hover);\n}\n.t-chat__input__button:focus::part(t-button) {\n  background: var(--td-brand-color-active);\n}\n.t-chat__input__button__icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n.t-chat__input__button__icon .t-icon {\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__button__stop .t-icon {\n  font-size: 28px;\n}\n.t-chat__input__stopbtn {\n  flex: 0 0 auto;\n  margin-left: var(--td-comp-margin-l);\n}\n.t-chat__input__stopbtn .t-button {\n  width: 100px;\n  height: var(--td-comp-size-xxxxl);\n  border-radius: var(--td-radius-round);\n  background: var(--td-bg-color-secondarycontainer);\n  color: var(--td-text-color-primary);\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__stopbtn .t-button__text {\n  align-items: center;\n}\n.t-chat__input__stopbtn .t-button .t-icon {\n  font-size: var(--td-font-size-title-large);\n  margin-right: var(--td-comp-margin-s);\n}\n.t-portal-wrapper .t-chat__input__model-dropdown {\n  border: none;\n}\n\n/*# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbInNyYy9jaGF0LXNlbmRlci9zdHlsZS9jaGF0LXNlbmRlci5sZXNzIiwiY2hhdC1zZW5kZXIubGVzcyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFFQTtFQUNFLFdBQUE7QUNERjtBRElDO0VBQ0Msa0JBQUE7RUFDQSxXQUFBO0VBQ0Esc0JBQUE7QUNGRjtBRElFOzs7RUFDRSxzQkFBQTtBQ0FKO0FESUU7RUFDRSxrQkFBQTtFQUNBLFdBQUE7RUFDQSxhQUFBO0VBQ0Esc0JBQUE7RUFDQSxzQkFBQTtFQUNBLHFDQUFBO0VBQ0EsNkRBQUE7RUFDQSwwQ0FBQTtFQUNBLDJDQUFBO0VBQ0Esb0JBQUE7RUFDQSxVQUFBO0VBQ0EsMkNBQUE7QUNGSjtBRElJO0VBQ0UsK0NBQUE7RUFDQSx1Q0FBQTtBQ0ZOO0FES0k7RUFDRSwrQ0FBQTtFQUNBLDhCQUFBO0FDSE47QURRRTtFQUNFLGNBQUE7RUFDQSwrQ0FBQTtBQ05KO0FEUUk7RUFDRSxTQUFBO0FDTk47QURVRTtFQUNFLGtCQUFBO0VBQ0EsT0FBQTtFQUNBLGFBQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtBQ1JKO0FEWUU7RUFDRSxPQUFBO0VBQ0EsWUFBQTtFQUNBLG9EQUFBO0VBQ0EsYUFBQTtFQUNBLHNCQUFBO0FDVko7QURZSTtFQUNFLE9BQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtFQUNBLGdCQUFBO0FDVk47QURZTTtFQUNFLG9EQUFBO0FDVlI7QURZTTtFQUNFLG1FQUFBO0VBQ0EsK0RBQUE7RUFDQSxlQUFBO0FDVlI7QURZTTtFQUNFLHFFQUFBO0FDVlI7QURjSTtFQUNFLHlDQUFBO0VBQ0EsWUFBQTtFQUNBLHlDQUFBO0VBQ0EsZ0JBQUE7RUFDQSxnQkFBQTtFQUNBLGdCQUFBO0FDWk47QURlSTtFQUNFLHFDQUFBO0FDYk47QURpQkU7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSw4QkFBQTtFQUNBLG1DQUFBO0VBQ0EsZ0JBQUE7QUNmSjtBRGlCSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtBQ2ZOO0FEb0JFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EscUNBQUE7RUFDQSwyQ0FBQTtBQ2xCSjtBRG9CSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtFQUNBLHVCQUFBO0VBQ0EsMkNBQUE7RUFDQSw0Q0FBQTtFQUNBLHVEQUFBO0VBQ0Esc0RBQUE7RUFDQSxnREFBQTtBQ2xCTjtBRG9CTTtFQUNFLHNEQUFBO0FDbEJSO0FEc0JJO0VBQ0UsYUFBQTtBQ3BCTjtBRHdCTTtFQUNFLGFBQUE7QUN0QlI7QUQwQkk7RUFDRSxhQUFBO0VBQ0EsOENBQUE7RUFDQSxlQUFBO0FDeEJOO0FENEJFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EsdUJBQUE7RUFDQSxXQUFBO0VBQ0EsNkJBQUE7RUFDQSxrQkFBQTtFQUNBLGVBQUE7QUMxQko7QUQ2Qkk7RUFDRSx5QkFBQTtFQUNBLDRCQUFBO0VBQ0EsNkJBQUE7RUFDQSxzQ0FBQTtFQUNBLGtEQUFBO0VBQ0EsZ0RBQUE7RUFDQSxlQUFBO0FDM0JOO0FEOEJJO0VBQ0UsaUNBQUE7RUFDQSxnQ0FBQTtBQzVCTjtBRCtCSTtFQUNFLHVDQUFBO0FDN0JOO0FEZ0NJO0VBQ0Usd0NBQUE7QUM5Qk47QURpQ0k7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSx1QkFBQTtBQy9CTjtBRDRCSTtFQU1JLHlDQUFBO0FDL0JSO0FEbUNJO0VBRUksZUFBQTtBQ2xDUjtBRHVDRTtFQUNFLGNBQUE7RUFDQSxvQ0FBQTtBQ3JDSjtBRG1DRTtFQUtJLFlBQUE7RUFDQSxpQ0FBQTtFQUNBLHFDQUFBO0VBQ0EsaURBQUE7RUFDQSxtQ0FBQTtFQUNBLHlDQUFBO0FDckNOO0FEdUNNO0VBQ0UsbUJBQUE7QUNyQ1I7QUR3QkU7RUFpQk0sMENBQUE7RUFDQSxxQ0FBQTtBQ3RDUjtBRDZDQztFQUVHLFlBQUE7QUM1Q0oiLCJmaWxlIjoiY2hhdC1zZW5kZXIubGVzcyJ9 */";
 +var css_248z = ":host {\n  width: 100%;\n}\n.t-chat__input {\n  position: relative;\n  width: 100%;\n  box-sizing: border-box;\n}\n.t-chat__input *,\n.t-chat__input *::before,\n.t-chat__input *::after {\n  box-sizing: border-box;\n}\n.t-chat__input__content {\n  position: relative;\n  width: 100%;\n  display: flex;\n  flex-direction: column;\n  box-sizing: border-box;\n  padding: var(--td-chat-input-padding);\n  border: 1px solid var(--td-chat-input-content-default-border);\n  border-radius: var(--td-chat-input-radius);\n  background: var(--td-chat-input-background);\n  transition: all 0.3s;\n  z-index: 1;\n  box-shadow: var(--td-chat-input-box-shadow);\n}\n.t-chat__input__content:focus-within {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-chat-input-shadow);\n}\n.t-chat__input__content:hover {\n  border-color: var(--td-chat-input-hover-border);\n  box-shadow: var(--td-shadow-1);\n}\n.t-chat__input__attachments {\n  display: block;\n  margin: var(--td-chat-input-attachments-margin);\n}\n.t-chat__input__attachments::part(t-attachment-list-wrap) {\n  top: -4px;\n}\n.t-chat__input__textarea__wrapper {\n  position: relative;\n  flex: 1;\n  min-height: 0;\n  display: flex;\n  width: 100%;\n}\n.t-chat__input__textarea {\n  flex: 1;\n  min-width: 0;\n  max-height: var(--td-chat-input-textarea-max-height);\n  display: flex;\n  flex-direction: column;\n}\n.t-chat__input__textarea::part(t-textarea) {\n  flex: 1;\n  min-height: 0;\n  width: 100%;\n  overflow-y: auto;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar {\n  width: var(--td-chat-input-textarea-scrollbar-width);\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb {\n  border-radius: var(--td-chat-input-textarea-scrollbar-thumb-radius);\n  background-color: var(--td-chat-input-textarea-scrollbar-color);\n  cursor: pointer;\n}\n.t-chat__input__textarea::part(t-textarea)::-webkit-scrollbar-thumb:hover {\n  background-color: var(--td-chat-input-textarea-scrollbar-hover-color);\n}\n.t-chat__input__textarea::part(t-textarea__inner) {\n  padding: 0 0 var(--td-comp-paddingTB-s) 0;\n  border: none;\n  font-size: var(--td-chat-input-font-size);\n  background: none;\n  box-shadow: none;\n  min-height: 60px;\n}\n.t-chat__input__textarea::part(t-textarea__inner):placeholder {\n  color: var(--td-text-color-secondary);\n}\n.t-chat__input__footer {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  margin-top: var(--td-comp-margin-s);\n  min-height: 32px;\n}\n.t-chat__input__footer__right {\n  display: flex;\n  align-items: center;\n}\n.t-chat__input__actions {\n  display: flex;\n  align-items: center;\n  gap: var(--td-chat-input-actions-gap);\n  margin: var(--td-chat-input-actions-margin);\n}\n.t-chat__input__actions__item__wrapper {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: var(--td-chat-input-actions-item-wh);\n  height: var(--td-chat-input-actions-item-wh);\n  border-radius: var(--td-chat-input-actions-item-radius);\n  font-size: var(--td-chat-input-actions-item-font-size);\n  background: var(--td-chat-input-actions-item-bg);\n}\n.t-chat__input__actions__item__wrapper:hover {\n  background: var(--td-chat-input-actions-item-hover-bg);\n}\n.t-chat__input__actions__icon {\n  display: flex;\n}\n.t-chat__input__actions__upload::part(t-upload__trigger) {\n  display: flex;\n}\n.t-chat__input__actions__tooltip {\n  display: flex;\n  color: var(--td-chat-input-actions-item-color);\n  cursor: pointer;\n}\n.t-chat__input__button {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n  width: auto;\n  height: var(--td-comp-size-s);\n  text-align: center;\n  cursor: pointer;\n}\n.t-chat__input__button::part(t-button) {\n  transform: rotate(-90deg);\n  width: var(--td-comp-size-s);\n  height: var(--td-comp-size-s);\n  border-radius: var(--td-radius-circle);\n  background: var(--td-chat-input-button-default-bg);\n  color: var(--td-chat-input-button-default-color);\n  border-width: 0;\n}\n.t-chat__input__button--focus::part(t-button) {\n  background: var(--td-brand-color);\n  color: var(--td-text-color-anti);\n}\n.t-chat__input__button__icon {\n  display: flex;\n  align-items: center;\n  justify-content: center;\n}\n.t-chat__input__button__icon .t-icon {\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__button__stop .t-icon {\n  font-size: 28px;\n}\n.t-chat__input__stopbtn {\n  flex: 0 0 auto;\n  margin-left: var(--td-comp-margin-l);\n}\n.t-chat__input__stopbtn .t-button {\n  width: 100px;\n  height: var(--td-comp-size-xxxxl);\n  border-radius: var(--td-radius-round);\n  background: var(--td-bg-color-secondarycontainer);\n  color: var(--td-text-color-primary);\n  font-size: var(--td-font-size-body-large);\n}\n.t-chat__input__stopbtn .t-button__text {\n  align-items: center;\n}\n.t-chat__input__stopbtn .t-button .t-icon {\n  font-size: var(--td-font-size-title-large);\n  margin-right: var(--td-comp-margin-s);\n}\n.t-portal-wrapper .t-chat__input__model-dropdown {\n  border: none;\n}\n\n/*# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbInNyYy9jaGF0LXNlbmRlci9zdHlsZS9jaGF0LXNlbmRlci5sZXNzIiwiY2hhdC1zZW5kZXIubGVzcyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFFQTtFQUNFLFdBQUE7QUNERjtBRElDO0VBQ0Msa0JBQUE7RUFDQSxXQUFBO0VBQ0Esc0JBQUE7QUNGRjtBRElFOzs7RUFDRSxzQkFBQTtBQ0FKO0FESUU7RUFDRSxrQkFBQTtFQUNBLFdBQUE7RUFDQSxhQUFBO0VBQ0Esc0JBQUE7RUFDQSxzQkFBQTtFQUNBLHFDQUFBO0VBQ0EsNkRBQUE7RUFDQSwwQ0FBQTtFQUNBLDJDQUFBO0VBQ0Esb0JBQUE7RUFDQSxVQUFBO0VBQ0EsMkNBQUE7QUNGSjtBRElJO0VBQ0UsK0NBQUE7RUFDQSx1Q0FBQTtBQ0ZOO0FES0k7RUFDRSwrQ0FBQTtFQUNBLDhCQUFBO0FDSE47QURRRTtFQUNFLGNBQUE7RUFDQSwrQ0FBQTtBQ05KO0FEUUk7RUFDRSxTQUFBO0FDTk47QURVRTtFQUNFLGtCQUFBO0VBQ0EsT0FBQTtFQUNBLGFBQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtBQ1JKO0FEWUU7RUFDRSxPQUFBO0VBQ0EsWUFBQTtFQUNBLG9EQUFBO0VBQ0EsYUFBQTtFQUNBLHNCQUFBO0FDVko7QURZSTtFQUNFLE9BQUE7RUFDQSxhQUFBO0VBQ0EsV0FBQTtFQUNBLGdCQUFBO0FDVk47QURZTTtFQUNFLG9EQUFBO0FDVlI7QURZTTtFQUNFLG1FQUFBO0VBQ0EsK0RBQUE7RUFDQSxlQUFBO0FDVlI7QURZTTtFQUNFLHFFQUFBO0FDVlI7QURjSTtFQUNFLHlDQUFBO0VBQ0EsWUFBQTtFQUNBLHlDQUFBO0VBQ0EsZ0JBQUE7RUFDQSxnQkFBQTtFQUNBLGdCQUFBO0FDWk47QURlSTtFQUNFLHFDQUFBO0FDYk47QURpQkU7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSw4QkFBQTtFQUNBLG1DQUFBO0VBQ0EsZ0JBQUE7QUNmSjtBRGlCSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtBQ2ZOO0FEb0JFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EscUNBQUE7RUFDQSwyQ0FBQTtBQ2xCSjtBRG9CSTtFQUNFLGFBQUE7RUFDQSxtQkFBQTtFQUNBLHVCQUFBO0VBQ0EsMkNBQUE7RUFDQSw0Q0FBQTtFQUNBLHVEQUFBO0VBQ0Esc0RBQUE7RUFDQSxnREFBQTtBQ2xCTjtBRG9CTTtFQUNFLHNEQUFBO0FDbEJSO0FEc0JJO0VBQ0UsYUFBQTtBQ3BCTjtBRHdCTTtFQUNFLGFBQUE7QUN0QlI7QUQwQkk7RUFDRSxhQUFBO0VBQ0EsOENBQUE7RUFDQSxlQUFBO0FDeEJOO0FENEJFO0VBQ0UsYUFBQTtFQUNBLG1CQUFBO0VBQ0EsdUJBQUE7RUFDQSxXQUFBO0VBQ0EsNkJBQUE7RUFDQSxrQkFBQTtFQUNBLGVBQUE7QUMxQko7QUQ2Qkk7RUFDRSx5QkFBQTtFQUNBLDRCQUFBO0VBQ0EsNkJBQUE7RUFDQSxzQ0FBQTtFQUNBLGtEQUFBO0VBQ0EsZ0RBQUE7RUFDQSxlQUFBO0FDM0JOO0FEOEJJO0VBQ0UsaUNBQUE7RUFDQSxnQ0FBQTtBQzVCTjtBRCtCSTtFQUNFLHVDQUFBO0FDN0JOO0FEZ0NJO0VBQ0Usd0NBQUE7QUM5Qk47QURpQ0k7RUFDRSxhQUFBO0VBQ0EsbUJBQUE7RUFDQSx1QkFBQTtBQy9CTjtBRDRCSTtFQU1JLHlDQUFBO0FDL0JSO0FEbUNJO0VBRUksZUFBQTtBQ2xDUjtBRHVDRTtFQUNFLGNBQUE7RUFDQSxvQ0FBQTtBQ3JDSjtBRG1DRTtFQUtJLFlBQUE7RUFDQSxpQ0FBQTtFQUNBLHFDQUFBO0VBQ0EsaURBQUE7RUFDQSxtQ0FBQTtFQUNBLHlDQUFBO0FDckNOO0FEdUNNO0VBQ0UsbUJBQUE7QUNyQ1I7QUR3QkU7RUFpQk0sMENBQUE7RUFDQSxxQ0FBQTtBQ3RDUjtBRDZDQztFQUVHLFlBQUE7QUM1Q0oiLCJmaWxlIjoiY2hhdC1zZW5kZXIubGVzcyJ9 */";
  var styles = css_248z;
++var sendButtonLoadingStyles = ".t-chat__input__button__loading { animation: t-chat-sender-loading-spin var(--td-chat-input-loading-duration, 1s) linear infinite; }\n@keyframes t-chat-sender-loading-spin { to { transform: rotate(360deg); } }";
  
  function ownKeys(e, r) { var t = Object.keys(e); if (Object.getOwnPropertySymbols) { var o = Object.getOwnPropertySymbols(e); r && (o = o.filter(function (r) { return Object.getOwnPropertyDescriptor(e, r).enumerable; })), t.push.apply(t, o); } return t; }
-@@ -1080,9 +1080,9 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+ function _objectSpread(e) { for (var r = 1; r < arguments.length; r++) { var t = null != arguments[r] ? arguments[r] : {}; r % 2 ? ownKeys(Object(t), !0).forEach(function (r) { _defineProperty$1(e, r, t[r]); }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(e, Object.getOwnPropertyDescriptors(t)) : ownKeys(Object(t)).forEach(function (r) { Object.defineProperty(e, r, Object.getOwnPropertyDescriptor(t, r)); }); } return e; }
+@@ -1080,10 +1082,12 @@ var ChatSender = /*#__PURE__*/function (_Component) {
          theme: "default",
          size: "small",
          variant: "text",
@@ -187,11 +294,15 @@ index 3c693fc3e79da953a57fe8cfb11d76e01b3de12a..c1287e3f5ff438eef87deb660dd934c5
 +        className: classname(["".concat(className, "__button"), _defineProperty$1({}, "".concat(className, "__button--focus"), !_this.isSendBtnDisabled || _this.props.loading)]),
          onClick: _this.clickSend,
 -        disabled: disabled
-+        disabled: disabled || !_this.props.loading && _this.isSendBtnDisabled
-       }, convertToLightDomNode(_this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
+-      }, convertToLightDomNode(_this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
++        disabled: disabled || _this.props.sendBtnLoading || !_this.props.loading && _this.isSendBtnDisabled
++      }, convertToLightDomNode(_this.props.sendBtnLoading ? /* @__PURE__ */Component.h("t-icon-loading", {
++        className: classname("".concat(className, "__button__icon"), "".concat(className, "__button__loading"))
++      }) : _this.props.loading ? /* @__PURE__ */Component.h("t-icon-stop", {
          className: classname("".concat(className, "__button__icon"), "".concat(className, "__button__stop"))
        }) : /* @__PURE__ */Component.h("t-icon-send-filled", {
-@@ -1158,7 +1158,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+         className: "".concat(className, "__button__icon")
+@@ -1158,7 +1162,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
        });
      });
      _defineProperty$1(_this, "handleSend", function () {
@@ -200,15 +311,16 @@ index 3c693fc3e79da953a57fe8cfb11d76e01b3de12a..c1287e3f5ff438eef87deb660dd934c5
          return;
        }
        _this.fire("send", {
-@@ -1217,6 +1217,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+@@ -1217,6 +1221,8 @@ var ChatSender = /*#__PURE__*/function (_Component) {
        }
        if (props.attachmentsProps.items !== oldProps.attachmentsProps.items) return true;
        if (props.loading !== oldProps.loading) return true;
 +      if (props.sendBtnDisabled !== oldProps.sendBtnDisabled) return true;
++      if (props.sendBtnLoading !== oldProps.sendBtnLoading) return true;
        return false;
      }
    }, {
-@@ -1235,6 +1236,15 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+@@ -1235,6 +1241,15 @@ var ChatSender = /*#__PURE__*/function (_Component) {
      get: function get() {
        return this.props.readyToSend && typeof this.props.readyToSend === "function" ? this.props.readyToSend(this.inputValue) : this.inputValue && this.inputValue.trim() !== "";
      }
@@ -224,24 +336,36 @@ index 3c693fc3e79da953a57fe8cfb11d76e01b3de12a..c1287e3f5ff438eef87deb660dd934c5
    }, {
      key: "render",
      value: function render(props) {
-@@ -1315,6 +1325,7 @@ __publicField(ChatSender, "propTypes", {
+@@ -1302,7 +1317,7 @@ var ChatSender = /*#__PURE__*/function (_Component) {
+     }
+   }]);
+ }(Component);
+-__publicField(ChatSender, "css", [styles]);
++__publicField(ChatSender, "css", [styles, sendButtonLoadingStyles]);
+ __publicField(ChatSender, "propTypes", {
+   placeholder: String,
+   disabled: Boolean,
+@@ -1315,6 +1330,8 @@ __publicField(ChatSender, "propTypes", {
    textareaProps: Object,
    uploadProps: Object,
    readyToSend: [Object, Function],
 +  sendBtnDisabled: [Boolean, Function],
++  sendBtnLoading: Boolean,
    onFileSelect: Function,
    onFileRemove: Function,
    onSend: Function,
 diff --git a/lib/chat-sender/type.d.ts b/lib/chat-sender/type.d.ts
-index aa6df2a3017ef6cbc59476cf054050c23d12306a..be0516f1159ea607514e8e718f23baf490a2ac71 100644
+index aa6df2a3017ef6cbc59476cf054050c23d12306a..df93b0f1e861918cd4680a5e9844f593684ffa04 100644
 --- a/lib/chat-sender/type.d.ts
 +++ b/lib/chat-sender/type.d.ts
-@@ -31,6 +31,8 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
+@@ -31,6 +31,10 @@ export interface TdChatSenderProps extends Pick<TdTextareaProps, 'autosize'> {
       * @default value不为空时可发送
       */
      readyToSend?: (inputValue: string) => boolean;
 +    /** 控制发送按钮的禁用状态 */
 +    sendBtnDisabled?: boolean | ((inputValue: string) => boolean);
++    /** 控制发送按钮的加载状态 */
++    sendBtnLoading?: boolean;
      onSend?: (e: CustomEvent<TdChatSenderParams>) => ChatRequestParams | void;
      onStop?: (e: CustomEvent<string>) => void;
      onChange?: (e: CustomEvent<string>) => void;
