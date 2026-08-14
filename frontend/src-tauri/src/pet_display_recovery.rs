@@ -6,6 +6,8 @@ pub const RECOVERY_POLL_INTERVAL_MS: u64 = 250;
 pub const RECOVERY_MIN_HIDDEN_MS: u64 = 6_500;
 pub const RECOVERY_STABLE_MS: u64 = 1_500;
 pub const RECOVERY_TIMEOUT_MS: u64 = 12_000;
+pub const RECOVERY_PRESENTED_PROBE_MAX_ATTEMPTS: u32 = 3;
+pub const RECOVERY_PRESENTED_PROBE_RETRY_DELAY_MS: u64 = 500;
 pub const RECOVERY_SAFETY_GATE_ENV: &str = "AGENT_FRIEND_DISPLAY_RECOVERY_SAFETY_GATE";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +52,45 @@ pub enum DisplayObservation {
 pub enum VisibilityCommand {
     Show,
     Hide,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PresentedProbeAction {
+    Complete,
+    Cancel,
+    Retry,
+    SuppressUnsafe,
+    SuppressError,
+    RestoreWithoutGate,
+}
+
+fn is_retryable_presented_probe_error(error: &str) -> bool {
+    error.starts_with("presented desktop recovery probe timed out after ")
+}
+
+fn decide_presented_probe_action(
+    result: &Result<bool, String>,
+    current: bool,
+    gate_enabled: bool,
+    attempt: u32,
+) -> PresentedProbeAction {
+    if !current {
+        return PresentedProbeAction::Cancel;
+    }
+    match result {
+        Ok(true) => PresentedProbeAction::Complete,
+        Ok(false) if gate_enabled => PresentedProbeAction::SuppressUnsafe,
+        Ok(false) => PresentedProbeAction::RestoreWithoutGate,
+        Err(error)
+            if gate_enabled
+                && is_retryable_presented_probe_error(error)
+                && attempt < RECOVERY_PRESENTED_PROBE_MAX_ATTEMPTS =>
+        {
+            PresentedProbeAction::Retry
+        }
+        Err(_) if gate_enabled => PresentedProbeAction::SuppressError,
+        Err(_) => PresentedProbeAction::RestoreWithoutGate,
+    }
 }
 
 #[derive(Debug)]
@@ -401,67 +442,124 @@ fn schedule(app: &tauri::AppHandle, generation: u64) {
                         reasons.join("; ")
                     );
                 }
-                if let Err(error) = apply_visibility_command(
-                    &handle,
-                    VisibilityCommand::Show,
-                    "display-resume-probe",
-                ) {
-                    suppress_recovery(&handle, generation, "probe-show", &error);
-                    return;
-                }
-                let presented_safe = manager
-                    .capture_display_recovery_presented(&handle, &baseline, generation, elapsed_ms)
-                    .await;
-                match presented_safe {
-                    Ok(true) if is_current(&handle, generation) => {
-                        if complete_and_restore(&handle, generation, "display-resume-complete")
-                            .unwrap_or(false)
-                        {
+                let mut attempt = 1;
+                loop {
+                    if let Err(error) = apply_visibility_command(
+                        &handle,
+                        VisibilityCommand::Show,
+                        "display-resume-probe",
+                    ) {
+                        suppress_recovery(&handle, generation, "probe-show", &error);
+                        return;
+                    }
+                    let probe_elapsed_ms =
+                        started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                    let presented_safe = manager
+                        .capture_display_recovery_presented(
+                            &handle,
+                            &baseline,
+                            generation,
+                            probe_elapsed_ms,
+                        )
+                        .await;
+                    match decide_presented_probe_action(
+                        &presented_safe,
+                        is_current(&handle, generation),
+                        gate_enabled,
+                        attempt,
+                    ) {
+                        PresentedProbeAction::Complete => {
+                            if complete_and_restore(&handle, generation, "display-resume-complete")
+                                .unwrap_or(false)
+                            {
+                                log::info!(
+                                    "pet display recovery completed with render evidence: generation={} elapsed_ms={} attempts={}",
+                                    generation,
+                                    probe_elapsed_ms,
+                                    attempt
+                                );
+                            }
+                        }
+                        PresentedProbeAction::Cancel => {
                             log::info!(
-                                "pet display recovery completed with render evidence: generation={} elapsed_ms={}",
+                                "pet display recovery cancelled after presented probe: generation={}",
+                                generation
+                            );
+                        }
+                        PresentedProbeAction::Retry => {
+                            let error = presented_safe
+                                .as_ref()
+                                .expect_err("retry is only selected for probe errors");
+                            if let Err(hide_error) = apply_visibility_command(
+                                &handle,
+                                VisibilityCommand::Hide,
+                                "display-resume-probe-retry",
+                            ) {
+                                suppress_recovery(
+                                    &handle,
+                                    generation,
+                                    "probe-retry-hide",
+                                    &format!(
+                                        "probe error: {error}; retry hide failed: {hide_error}"
+                                    ),
+                                );
+                                return;
+                            }
+                            log::warn!(
+                                "pet display recovery presented probe failed; retrying safely hidden: generation={} attempt={} max_attempts={} retry_delay_ms={} error={}",
                                 generation,
-                                elapsed_ms
+                                attempt,
+                                RECOVERY_PRESENTED_PROBE_MAX_ATTEMPTS,
+                                RECOVERY_PRESENTED_PROBE_RETRY_DELAY_MS,
+                                error
+                            );
+                            tokio::time::sleep(Duration::from_millis(
+                                RECOVERY_PRESENTED_PROBE_RETRY_DELAY_MS,
+                            ))
+                            .await;
+                            if !is_current(&handle, generation) {
+                                log::info!(
+                                    "pet display recovery cancelled during presented probe retry delay: generation={}",
+                                    generation
+                                );
+                                return;
+                            }
+                            attempt += 1;
+                            continue;
+                        }
+                        PresentedProbeAction::SuppressUnsafe => suppress_recovery(
+                            &handle,
+                            generation,
+                            "presented-validation",
+                            "presented desktop gained a near-black full-screen layer",
+                        ),
+                        PresentedProbeAction::SuppressError => {
+                            let error = presented_safe
+                                .as_ref()
+                                .expect_err("suppression is only selected for probe errors");
+                            suppress_recovery(&handle, generation, "presented-capture", error);
+                        }
+                        PresentedProbeAction::RestoreWithoutGate => {
+                            match &presented_safe {
+                                Ok(false) => log::warn!(
+                                    "pet display recovery ignored unsafe presented probe because safety gate is disabled: generation={}",
+                                    generation
+                                ),
+                                Err(error) => log::warn!(
+                                    "pet display recovery ignored presented probe error because safety gate is disabled: generation={} error={}",
+                                    generation,
+                                    error
+                                ),
+                                Ok(true) => {}
+                            }
+                            let _ = complete_and_restore(
+                                &handle,
+                                generation,
+                                "display-resume-gate-disabled",
                             );
                         }
                     }
-                    Ok(true) => {
-                        log::info!(
-                            "pet display recovery cancelled after presented probe: generation={}",
-                            generation
-                        );
-                    }
-                    Ok(false) if gate_enabled => suppress_recovery(
-                        &handle,
-                        generation,
-                        "presented-validation",
-                        "presented desktop gained a near-black full-screen layer",
-                    ),
-                    Ok(false) => {
-                        log::warn!(
-                            "pet display recovery ignored unsafe presented probe because safety gate is disabled: generation={}",
-                            generation
-                        );
-                        let _ = complete_and_restore(
-                            &handle,
-                            generation,
-                            "display-resume-gate-disabled",
-                        );
-                    }
-                    Err(error) if gate_enabled => {
-                        suppress_recovery(&handle, generation, "presented-capture", &error)
-                    }
-                    Err(error) => {
-                        log::warn!(
-                            "pet display recovery ignored presented probe error because safety gate is disabled: generation={} error={}",
-                            generation,
-                            error
-                        );
-                        let _ = complete_and_restore(
-                            &handle,
-                            generation,
-                            "display-resume-gate-disabled",
-                        );
-                    }
+                    break;
                 }
                 return;
             }
@@ -633,5 +731,58 @@ mod tests {
         assert!(safety_gate_enabled_from_value(Some("true")));
         assert!(!safety_gate_enabled_from_value(Some("0")));
         assert!(!safety_gate_enabled_from_value(Some("off")));
+    }
+
+    #[test]
+    fn transient_presented_probe_errors_retry_before_suppression() {
+        let error = Err("presented desktop recovery probe timed out after 750 ms".to_owned());
+        assert_eq!(
+            decide_presented_probe_action(&error, true, true, 1),
+            PresentedProbeAction::Retry
+        );
+        assert_eq!(
+            decide_presented_probe_action(
+                &error,
+                true,
+                true,
+                RECOVERY_PRESENTED_PROBE_MAX_ATTEMPTS - 1,
+            ),
+            PresentedProbeAction::Retry
+        );
+        assert_eq!(
+            decide_presented_probe_action(
+                &error,
+                true,
+                true,
+                RECOVERY_PRESENTED_PROBE_MAX_ATTEMPTS,
+            ),
+            PresentedProbeAction::SuppressError
+        );
+        assert_eq!(
+            decide_presented_probe_action(
+                &Err("hidden WebView2 baseline changed before presented capture".to_owned()),
+                true,
+                true,
+                1,
+            ),
+            PresentedProbeAction::SuppressError
+        );
+    }
+
+    #[test]
+    fn unsafe_or_cancelled_presented_probe_is_never_retried() {
+        assert_eq!(
+            decide_presented_probe_action(&Ok(false), true, true, 1),
+            PresentedProbeAction::SuppressUnsafe
+        );
+        assert_eq!(
+            decide_presented_probe_action(
+                &Err("presented desktop recovery probe timed out after 750 ms".to_owned()),
+                false,
+                true,
+                1,
+            ),
+            PresentedProbeAction::Cancel
+        );
     }
 }
