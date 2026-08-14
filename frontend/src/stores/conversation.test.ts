@@ -879,6 +879,68 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(messageTexts()).toEqual(["旧问题"]);
     expect(useConversationStore.getState().streaming).toBe(false);
   });
+
+  it("编辑重发后立即停止时，活跃 run 不用旧 detail 覆盖新分支", async () => {
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-1",
+      title: "sid-1",
+      persona: "default",
+      model: "test",
+      events: [
+        {
+          type: "user_message",
+          uuid: "old-user",
+          ts: "2026-06-10T00:00:00Z",
+          payload: { content: "旧问题" },
+        },
+        {
+          type: "assistant_message",
+          uuid: "old-assistant",
+          ts: "2026-06-10T00:00:01Z",
+          payload: { content: "旧回答", partial: false },
+        },
+      ],
+    });
+
+    let admittedRunId = "";
+    mockEditStream.mockImplementation((input, opts) => (async function* () {
+      admittedRunId = input.runId;
+      opts?.onAdmitted?.();
+      await new Promise<void>((_resolve, reject) => {
+        const signal = opts?.signal;
+        if (signal?.aborted) {
+          reject(new Error("aborted"));
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+      });
+      yield ev({ type: EventType.RUN_FINISHED });
+    })());
+
+    await useConversationStore.getState().openSession("sid-1");
+    expect(useConversationStore.getState().beginEditingMessage("old-user")).toBe(true);
+    const resend = useConversationStore.getState().editResendLatest("新问题", [], []);
+    await vi.waitFor(() => expect(admittedRunId).not.toBe(""));
+
+    mockRunCancel.mockResolvedValueOnce({
+      result: "accepted",
+      run: runSnapshot(admittedRunId, "sid-1", "running", 2),
+    });
+    mockRunGet.mockResolvedValueOnce(runSnapshot(admittedRunId, "sid-1", "running", 2));
+
+    await expect(useConversationStore.getState().stop()).resolves.toBe("accepted");
+    await expect(resend).resolves.toBe("interrupted");
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(messageTexts()).toEqual(["新问题", ""]);
+    expect(lastMessage().status).toBe("interrupted");
+    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(useConversationStore.getState().stopRequestsByRun[admittedRunId]).toBe(
+      "accepted",
+    );
+  });
 });
 
 describe("conversation store · continue tool result", () => {

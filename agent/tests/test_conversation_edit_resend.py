@@ -631,6 +631,59 @@ def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
     ]
 
 
+def test_edit_resend_latest_commits_new_branch_before_context_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    _append(store, session, _event("user_message", {"content": "old question"}))
+    _append(
+        store,
+        session,
+        _event("assistant_message", {"content": "old answer", "partial": False}),
+    )
+    fake = _ScriptedLLMClient(
+        script=[[LLMTextDelta(text="new answer"), LLMTurnDone(stop_reason="stop")]]
+    )
+    conv = _conversation(
+        tmp_path,
+        session=session,
+        store=store,
+        llm=cast(LLMClient, fake),
+    )
+    original_build = conv._build_openai_messages_first_turn
+
+    def assert_committed_before_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        assert [event.type for event in conv.session.events][-2:] == [
+            "turn_rewrite",
+            "user_message",
+        ]
+        assert [(message.role, message.content) for message in conv.session.messages] == [
+            ("user", "new question"),
+        ]
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(
+        conv,
+        "_build_openai_messages_first_turn",
+        assert_committed_before_build,
+    )
+
+    list(conv.edit_resend_latest("new question", expected_user_content="old question"))
+
+    assert [(message.role, message.content) for message in conv.session.messages] == [
+        ("user", "new question"),
+        ("assistant", "new answer"),
+    ]
+
+
 def test_user_event_id_retry_rejects_different_content(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="stop")]])
     conv = _conversation(tmp_path, llm=cast(LLMClient, fake))

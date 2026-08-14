@@ -1152,33 +1152,35 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
           };
         });
-        try {
-          const detail = await sessionsApi.get(sessionId);
-          const projected = projectSessionDetail(detail);
-          set((s) => {
-            const view = s.sessionViews[sessionId] ?? emptyView();
-            const nextMessages = failedError
-              ? hasErrorMessage(projected, failedError)
-                ? projected
-                : [...projected, assistantErrorMessage(failedError)]
-              : projected;
-            const nextView = {
-              ...view,
-              messages: nextMessages,
-              currentModel: detail.model,
-              streaming: false,
-              revision: detail.revision ?? view.revision,
-              historyLoadSeq: view.historyLoadSeq + 1,
-            };
-            return {
-              sessionViews: { ...s.sessionViews, [sessionId]: nextView },
-              ...(s.currentSessionId === sessionId
-                ? { ...viewFields(nextView), currentModel: detail.model }
-                : {}),
-            };
-          });
-        } catch {
-          // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
+        if (!runStillActive) {
+          try {
+            const detail = await sessionsApi.get(sessionId);
+            const projected = projectSessionDetail(detail);
+            set((s) => {
+              const view = s.sessionViews[sessionId] ?? emptyView();
+              const nextMessages = failedError
+                ? hasErrorMessage(projected, failedError)
+                  ? projected
+                  : [...projected, assistantErrorMessage(failedError)]
+                : projected;
+              const nextView = {
+                ...view,
+                messages: nextMessages,
+                currentModel: detail.model,
+                streaming: false,
+                revision: detail.revision ?? view.revision,
+                historyLoadSeq: view.historyLoadSeq + 1,
+              };
+              return {
+                sessionViews: { ...s.sessionViews, [sessionId]: nextView },
+                ...(s.currentSessionId === sessionId
+                  ? { ...viewFields(nextView), currentModel: detail.model }
+                  : {}),
+              };
+            });
+          } catch {
+            // 保留乐观态 + 错误占位，避免二次失败把用户带回空白。
+          }
         }
         void useSessionsStore.getState().refresh();
       }

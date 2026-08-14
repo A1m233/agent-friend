@@ -735,9 +735,9 @@ class Conversation:
     ) -> Iterator[ConversationEvent]:
         """编辑并重发最后一条 active user 消息。
 
-        原始事件流保持 append-only；成功启动新分支后追加 ``turn_rewrite`` marker，
-        让旧最后一轮在 active projection 中失活。首轮 LLM 初始化失败时不追加 marker，
-        保持用户可重试的干净状态。
+        原始事件流保持 append-only；通过校验并开始执行后，先追加
+        ``turn_rewrite`` marker 和新 user 事件，让旧最后一轮在 active projection
+        中失活，再进行可能较慢的上下文构建。后续生成失败或取消都保留已提交的新分支。
         """
         plan = self._latest_active_user_rewrite_plan(
             expected_user_uuid=expected_user_uuid,
@@ -796,13 +796,6 @@ class Conversation:
 
         def prepare_first_turn() -> list[dict[str, Any]]:
             nonlocal rewrite_event_appended, user_event_appended
-            messages = self._build_openai_messages_first_turn(
-                user_input,
-                attachments=replacement_attachments,
-                history_override=prefix_history,
-                prior_summary_override=prefix_prior_summary,
-                persist_compaction=False,
-            )
             if not rewrite_event_appended:
                 self._append_turn_rewrite_event(plan, replacement_text=user_input)
                 rewrite_event_appended = True
@@ -814,7 +807,13 @@ class Conversation:
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
-            return messages
+            return self._build_openai_messages_first_turn(
+                user_input,
+                attachments=replacement_attachments,
+                history_override=prefix_history,
+                prior_summary_override=prefix_prior_summary,
+                persist_compaction=False,
+            )
 
         try:
             self._check_cancel(cancel_check)
