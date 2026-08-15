@@ -73,8 +73,9 @@ class StreamRelay:
     The relay is consumed by exactly one asyncio task. ``feed`` never creates
     background requests, so provider calls remain strictly ordered. The first
     non-empty delta is sent immediately; later updates are coalesced until the
-    configured interval has elapsed. ``finish`` is intentionally owned by the
-    router so it can use the authoritative final Agent output.
+    configured interval has elapsed. ``feed_from_queue`` also flushes a trailing
+    coalesced snapshot when no later delta arrives. ``finish`` is intentionally
+    owned by the router so it can use the authoritative final Agent output.
     """
 
     def __init__(
@@ -135,11 +136,33 @@ class StreamRelay:
         if not self._session.is_failed:
             self._last_sent_text = snapshot
 
+    def _trailing_flush_delay(self) -> float | None:
+        if self._session.is_failed or not self.full_text:
+            return None
+        if self.full_text == self._last_sent_text:
+            return None
+        if self._last_attempt_at is None:
+            return 0.0
+        elapsed = time.monotonic() - self._last_attempt_at
+        return max(0.0, self._throttle_seconds - elapsed)
+
     async def feed_from_queue(self, queue: asyncio.Queue[object], end_marker: object) -> None:
-        """Consume deltas until ``end_marker``, draining bursts before each feed."""
+        """Consume deltas and time-flush a trailing coalesced snapshot."""
 
         while True:
-            item = await queue.get()
+            flush_delay = self._trailing_flush_delay()
+            if flush_delay is not None and flush_delay <= 0:
+                await self.flush()
+                continue
+            try:
+                item = (
+                    await queue.get()
+                    if flush_delay is None
+                    else await asyncio.wait_for(queue.get(), timeout=flush_delay)
+                )
+            except TimeoutError:
+                await self.flush()
+                continue
             if item is end_marker:
                 return
             if not isinstance(item, str):
