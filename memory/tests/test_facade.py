@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from memory.contracts import RecallTrace
+from memory.core_profile import normalize_core_value
 
 from memory import (
     ConversationFragment,
+    CoreProfileEntry,
     Extractor,
     KeywordRetrieval,
     Memory,
@@ -138,6 +141,37 @@ def test_retrieve_source_kwarg_passed_to_trace() -> None:
 
     mem.retrieve("query", persona_id="p1", source="probe")
     assert traces[0].source == "probe"
+    mem.close()
+
+
+def test_natural_retrieve_gets_full_core_while_probe_excludes_it() -> None:
+    mem = _memory('{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}')
+    now = datetime.now(UTC)
+    mem.store.add_core_profile_entry(
+        CoreProfileEntry(
+            id=str(uuid4()),
+            owner_user_id="local",
+            scope_kind="user",
+            persona_id="",
+            field_key="user.preferred_name",
+            value="小陈",
+            normalized_value=normalize_core_value("小陈"),
+            valid_from=now,
+            valid_until=None,
+            supersedes_id=None,
+            provenance=(),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    natural = mem.retrieve("天气怎么样", persona_id="p1", source="natural", top_k=1)
+    probe = mem.retrieve("小陈", persona_id="p1", source="probe", top_k=50)
+
+    assert "小陈" in natural.rendered
+    assert [item.layer for item in natural.items] == ["core"]
+    assert "小陈" not in probe.rendered
+    assert all(item.layer != "core" for item in probe.items)
     mem.close()
 
 

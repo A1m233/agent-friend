@@ -19,7 +19,13 @@ if TYPE_CHECKING:
     from memory import MemoryContext
     from memory_eval.datasets import EvalQuestion
 
-__all__ = ["AnchorRecallJudge", "Judge", "JudgeResult", "NoopJudge"]
+__all__ = [
+    "AnchorRecallJudge",
+    "Judge",
+    "JudgeResult",
+    "LayerConstrainedAnchorJudge",
+    "NoopJudge",
+]
 
 
 @dataclass(frozen=True)
@@ -86,3 +92,41 @@ class AnchorRecallJudge:
             detail=detail,
             score=score,
         )
+
+
+class LayerConstrainedAnchorJudge:
+    """Validate both recalled content and its product memory layer.
+
+    Core Profile cases must not pass merely because an equivalent Episodic or
+    ordinary Semantic entry happens to contain the answer anchor.  Questions
+    without layer metadata retain the ordinary anchor-judge behavior.
+    """
+
+    def judge(self, question: EvalQuestion, context: MemoryContext) -> JudgeResult:
+        expected_layer = question.expected_memory_layer
+        if expected_layer is None:
+            return AnchorRecallJudge().judge(question, context)
+        if not question.anchors:
+            return JudgeResult(correct=None, detail="(无 anchor，跳过判分)", score=None)
+
+        eligible = [item for item in context.items if item.layer == expected_layer]
+        if question.expected_core_field is not None:
+            prefix = f"{question.expected_core_field} = "
+            eligible = [item for item in eligible if item.text.startswith(prefix)]
+        eligible_text = "\n".join(item.text for item in eligible)
+        hits = [anchor for anchor in question.anchors if anchor in eligible_text]
+        misses = [anchor for anchor in question.anchors if anchor not in eligible_text]
+
+        violations = [
+            item.layer
+            for item in context.items
+            if item.layer in question.forbidden_memory_layers
+            and any(anchor in item.text for anchor in question.anchors)
+        ]
+        score = 0.0 if violations else len(hits) / len(question.anchors)
+        detail = f"{len(hits)}/{len(question.anchors)} 在 {expected_layer} 命中"
+        if misses:
+            detail += f"；目标层未命中: {misses}"
+        if violations:
+            detail += f"；禁止层出现等价事实: {sorted(set(violations))}"
+        return JudgeResult(correct=(score == 1.0), detail=detail, score=score)

@@ -122,7 +122,7 @@ def test_soft_delete_by_source_events_deletes_episodic_and_semantic_provenance()
         deleted_at=now,
     )
 
-    assert counts == {"episodic": 1, "semantic": 1}
+    assert counts == {"episodic": 1, "semantic": 1, "core": 0}
     assert [r.id for r in store.list_episodic(owner_user_id="local", persona_id=None)] == [
         "ep-keep"
     ]
@@ -324,8 +324,8 @@ def test_list_episodic_excludes_deleted() -> None:
     assert [r.id for r in rows] == ["e1"]
 
 
-def test_v1_to_v4_lazy_migration() -> None:
-    """旧库启动时自动升 v4，回填 tokens 并安全分类旧 pinned。"""
+def test_v1_to_v5_lazy_migration() -> None:
+    """旧库启动时自动升 v5，回填 tokens 并创建 Core schema。"""
     import sqlite3
     import tempfile
     from pathlib import Path as _Path
@@ -378,7 +378,7 @@ def test_v1_to_v4_lazy_migration() -> None:
             meta = store._conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            assert meta["value"] == "4"
+            assert meta["value"] == "5"
 
             # 验证新列加好
             cols = {
@@ -394,9 +394,11 @@ def test_v1_to_v4_lazy_migration() -> None:
             )
 
             migrated = {row.id: row for row in store.list_semantic(owner_user_id="local")}
-            assert migrated["name"].memory_class == "core"
-            assert migrated["name"].fact_key == "user.name"
-            assert migrated["hobby"].memory_class == "priority"
+            assert "name" not in migrated
+            assert migrated["hobby"].memory_class == "normal"
+            assert migrated["hobby"].fact_key is None
+            profile = store.core_profile(owner_user_id="local", persona_id="p1")
+            assert profile.as_dict()["user"]["preferred_name"] == "小明"  # type: ignore[index]
 
             # 验证旧数据可被 jieba 召回（"宠物" 通过新 FTS5 命中）
             hits = store.search_semantic("宠物", owner_user_id="local", persona_id="p1", limit=10)

@@ -22,7 +22,7 @@ __all__ = [
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
@@ -31,6 +31,7 @@ SCHEMA_VERSION = 4
   3-字滑窗换成"按词"匹配。详见 docs/requirements/013-memory-quality-pass-1/design.md §4。
 - v3（048 M48.2）：semantic 增加 memory_class / fact_key / supersedes_id。
 - v4（048 M48.3）：增加 embedding generation / manifest 派生索引元数据。
+- v5（084）：增加独立、版本化 Core Profile 与 extraction commit。
 """
 
 MemoryClass = Literal["core", "priority", "normal"]
@@ -156,6 +157,54 @@ DDL_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_semantic_class ON semantic(owner_user_id, memory_class)",
     "CREATE INDEX IF NOT EXISTS idx_semantic_fact_key ON semantic(owner_user_id, fact_key)",
     "CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic(owner_user_id, persona_id)",
+    """
+    CREATE TABLE IF NOT EXISTS core_profile_entry (
+        id               TEXT PRIMARY KEY,
+        owner_user_id    TEXT NOT NULL DEFAULT 'local',
+        scope_kind       TEXT NOT NULL,
+        persona_id       TEXT NOT NULL DEFAULT '',
+        field_key        TEXT NOT NULL,
+        value_json       TEXT NOT NULL,
+        normalized_value TEXT NOT NULL,
+        valid_from       TEXT NOT NULL,
+        valid_until      TEXT,
+        supersedes_id    TEXT,
+        provenance       TEXT NOT NULL DEFAULT '[]',
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL,
+        deleted_at       TEXT
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_core_single_active
+    ON core_profile_entry(owner_user_id, scope_kind, persona_id, field_key)
+    WHERE valid_until IS NULL AND deleted_at IS NULL
+      AND field_key IN (
+        'user.preferred_name',
+        'relationship.kind',
+        'relationship.agent_nickname'
+      )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_core_many_active
+    ON core_profile_entry(owner_user_id, scope_kind, persona_id, field_key, normalized_value)
+    WHERE valid_until IS NULL AND deleted_at IS NULL
+      AND field_key = 'user.current_residences'
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_core_scope
+    ON core_profile_entry(owner_user_id, scope_kind, persona_id, field_key)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS extraction_commit (
+        observation_id   TEXT PRIMARY KEY,
+        session_id       TEXT NOT NULL,
+        first_source_ref TEXT,
+        last_source_ref  TEXT,
+        output_sha256    TEXT NOT NULL,
+        committed_at     TEXT NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS embedding_generation (
         generation_id TEXT PRIMARY KEY,

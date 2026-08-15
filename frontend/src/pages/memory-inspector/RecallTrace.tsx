@@ -177,6 +177,8 @@ function TraceCard({
   onHitClick: (hit: { layer: Layer; source_ref: string }) => void;
 }) {
   const isProbe = trace.source === "probe";
+  const coreItems = trace.items.filter((item) => item.layer === "core");
+  const retrievedItems = trace.items.filter((item) => item.layer !== "core");
 
   return (
     <div
@@ -204,7 +206,7 @@ function TraceCard({
         <span>top_k: {trace.top_k}</span>
         <span>intent: {trace.intent ?? "legacy"}</span>
         <span>mode: {trace.mode ?? trace.gate_mode ?? "legacy"}</span>
-        <span>pre/post: {trace.pinned_pre_gate}/{trace.pinned_post_gate}</span>
+        <span>core: {coreItems.length}</span>
         <span>candidates: {trace.candidates_count} / ranked: {trace.ranked_count}</span>
         <span>dense: {trace.index_state?.dense_status ?? "legacy"}</span>
         <span>
@@ -214,8 +216,14 @@ function TraceCard({
 
       {expanded && (
         <div className="mt-3 space-y-2 border-t border-border pt-2">
-          {trace.items.map((item, i) => (
-            <TraceItemRow key={i} item={item} onClick={() => onHitClick(item)} />
+          <p className="text-xs font-medium text-muted">固定 Core Profile</p>
+          {coreItems.map((item, i) => (
+            <TraceItemRow key={`core-${i}`} item={item} onClick={() => onHitClick(item)} />
+          ))}
+          {coreItems.length === 0 && <div className="text-xs text-muted">本次未装配 Core</div>}
+          <p className="pt-1 text-xs font-medium text-muted">动态召回</p>
+          {retrievedItems.map((item, i) => (
+            <TraceItemRow key={`retrieved-${i}`} item={item} onClick={() => onHitClick(item)} />
           ))}
           {trace.items.length === 0 && (
             <div className="text-xs text-muted">无命中条目</div>

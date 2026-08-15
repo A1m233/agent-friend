@@ -154,7 +154,7 @@ def test_zhangxiaohong_block_retains_majority_anchors() -> None:
     ``test_legacy_baseline_misses_almost_all_anchors``），pass-1 必须改善到 ≥ 半数。
     """
     extractor = Extractor(_CassetteLLM(_ZHANGXIAOHONG_REPLY_V1), prompt="x")  # type: ignore[arg-type]
-    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), existing_facts=[])
+    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
 
     # 确保解析走通了（episodic_entries 非空、semantic_ops 非空）
     assert len(out.episodic_entries) > 0, "新 prompt 应该输出 episodic_entries，不是 None"
@@ -169,13 +169,11 @@ def test_zhangxiaohong_block_retains_majority_anchors() -> None:
     )
 
 
-def test_zhangxiaohong_block_pins_brother_identity() -> None:
-    """抽取出"弟弟叫张小明"这种身份事实，应标 pinned=True（不能退化 008 R-4.1）。"""
+def test_zhangxiaohong_block_keeps_sibling_identity_as_ordinary_semantic() -> None:
+    """Sibling identity is outside the fixed Core schema and stays Semantic."""
     extractor = Extractor(_CassetteLLM(_ZHANGXIAOHONG_REPLY_V1), prompt="x")  # type: ignore[arg-type]
-    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), existing_facts=[])
-    pinned_ops = [op for op in out.semantic_ops if op.pinned]
-    assert pinned_ops, "应至少有一条 pinned 身份事实（如'弟弟叫张小明'）"
-    assert any("张小明" in op.statement for op in pinned_ops)
+    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
+    assert any("张小明" in op.statement for op in out.semantic_ops)
 
 
 # ===== 对照测试：旧 prompt baseline 在同样 anchor 集合上几乎全 miss =====
@@ -188,7 +186,7 @@ def test_legacy_baseline_misses_almost_all_anchors() -> None:
     若有人改 _LEGACY_ZHANGXIAOHONG_REPLY 让它"看起来过得去"，这条会挂、强制 review。
     """
     extractor = Extractor(_CassetteLLM(_LEGACY_ZHANGXIAOHONG_REPLY), prompt="x")  # type: ignore[arg-type]
-    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), existing_facts=[])
+    out = extractor.extract(_fragment_from_turns(_ZHANGXIAOHONG_TURNS), [])
 
     all_text = _output_text([out.episodic_entries, [op.statement for op in out.semantic_ops]])
     hit, _missed = _anchor_retention(all_text, _ZHANGXIAOHONG_ANCHORS)

@@ -244,7 +244,10 @@ def _rebuild_store(
 def _deserialize_output(payload: dict[str, Any]) -> ExtractionOutput:
     return ExtractionOutput(
         episodic_entries=[str(item) for item in payload.get("episodic_entries", [])],
-        semantic_ops=[SemanticOp(**item) for item in payload.get("semantic_ops", [])],
+        semantic_ops=[
+            SemanticOp(**{"reason": "legacy factorial extraction record", **item})
+            for item in payload.get("semantic_ops", [])
+        ],
     )
 
 

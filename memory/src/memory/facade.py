@@ -3,8 +3,8 @@
 编排读写两条路，对调用方（``agent.Conversation``）隐藏内部结构：
 
 - ``observe(fragment)``：非阻塞入队，异步抽取（写路径，design §5）。
-- ``retrieve(query, ...)``：pinned 全量 + 关键词召回打分 → 渲染成 :class:`MemoryContext`
-  （读路径，design §6）。
+- ``retrieve(query, ...)``：自然对话时全量 Core Profile + 普通记忆召回；probe 只返回
+  普通记忆（读路径，084）。
 - ``flush()`` / ``close()``：退出前 drain 抽取队列（design §5.1）。
 
 同步/异步、关键词/向量等都是内部实现，``observe`` / ``retrieve`` 契约稳定
@@ -17,10 +17,18 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
-from .contracts import DEFAULT_OWNER_USER_ID, MemoryContext, RecallTrace, RecallTraceItem
+from .contracts import (
+    DEFAULT_OWNER_USER_ID,
+    MemoryContext,
+    MemoryItem,
+    RecallTrace,
+    RecallTraceItem,
+)
+from .core_profile import CoreProfileError, CoreProfileRenderer
 from .extraction import AsyncExtractionWorker
-from .retrieval import Renderer, ScoreWeights, pinned_gate, rank
+from .retrieval import Renderer, ScoreWeights, rank
 from .search import MemorySearchService, SearchRequest
+from .store import SemanticRow
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +61,8 @@ class Memory:
         on_retrieved: 召回完成回调（observability / inspector）。
         owner_user_id: 多 user 预留维度，v1 固定。
         top_k: 召回注入条目上限。
-        pinned_relevance_gate: 是否启用 pinned relevance gate（pass-1 M13.3，
-            issue 003 主因 2）。``True``（默认）→ 用 :func:`pinned_gate` 按 query
-            相关性过滤 pinned；``False`` → pre-pass-1 行为（pinned 全量注入）。
-            切片 baseline 关此开关用作对照。
-        pinned_gate_mode: gate 阈值档位（``strict`` / ``lenient``，详见
-            :data:`memory.contracts.GateMode`）。仅 ``pinned_relevance_gate=True``
-            时生效。
+        pinned_relevance_gate: 旧评测配置兼容字段；v5 生产路径不再读取 pinned。
+        pinned_gate_mode: 旧 trace/replay 兼容字段；v5 生产路径不再执行 gate。
     """
 
     def __init__(
@@ -93,7 +96,7 @@ class Memory:
         self._index_manager = index_manager
 
         def _extracted(result: ExtractionResult) -> None:
-            if self._index_manager is not None:
+            if self._index_manager is not None and result.committed and not result.is_empty():
                 self._index_manager.request_backfill()
             if on_extracted is not None:
                 on_extracted(result)
@@ -212,25 +215,11 @@ class Memory:
                 now=now,
             )
 
-        pinned_raw = self._store.pinned(owner_user_id=owner, persona_id=persona_id)
-        pinned_pre = len(pinned_raw)
-
-        if self._pinned_gate_enabled:
-            pinned = pinned_gate(
-                query,
-                pinned_raw,
-                store=self._store,
-                owner_user_id=owner,
-                mode=self._pinned_gate_mode,
-            )
-            stripped = query.strip()
-            if not stripped or (self._pinned_gate_mode == "lenient" and len(stripped) < 6):
-                gate_decision: Literal["disabled", "pass-through", "matched"] = "pass-through"
-            else:
-                gate_decision = "matched"
-        else:
-            pinned = pinned_raw
-            gate_decision = "disabled"
+        # v5 no longer has a pinned Semantic tier. Core is a separate, complete
+        # profile and is only injected for natural conversation retrieval.
+        pinned: list[SemanticRow] = []
+        pinned_pre = 0
+        gate_decision: Literal["disabled", "pass-through", "matched"] = "disabled"
 
         recalled: list[tuple[Candidate, float]] = []
         candidates_count = 0
@@ -250,6 +239,8 @@ class Memory:
             logger.info("retrieve skipped ranking (no strategy or empty query)")
 
         ctx = self._renderer.render(pinned=pinned, recalled=recalled, now=now)
+        if source == "natural":
+            ctx = self._with_core_profile(ctx, owner=owner, persona_id=persona_id)
 
         if self._on_retrieved is not None:
             trace = RecallTrace(
@@ -307,9 +298,10 @@ class Memory:
             )
         )
         ctx = self._renderer.render_search(result.evidence, now=now)
+        if source == "natural":
+            ctx = self._with_core_profile(ctx, owner=owner, persona_id=persona_id)
         if self._on_retrieved is not None:
-            core_count = sum(candidate.kind == "core" for candidate in result.evidence)
-            ordinary_count = len(result.evidence) - core_count
+            ordinary_count = len(result.evidence)
             time_range = None
             if result.query.time_range is not None:
                 time_range = {
@@ -324,8 +316,8 @@ class Memory:
                 persona_id=persona_id,
                 top_k=top_k,
                 source=source,
-                pinned_pre_gate=core_count,
-                pinned_post_gate=core_count,
+                pinned_pre_gate=0,
+                pinned_post_gate=0,
                 gate_enabled=False,
                 gate_mode=None,
                 gate_decision="disabled",
@@ -366,11 +358,10 @@ class Memory:
                     for candidate in result.evidence
                 ],
                 budget={
-                    "core": 6,
                     "semantic": top_k,
                     "episodic": top_k,
                     "utterance": 4 if mode == "automatic" else top_k,
-                    "total": 6 + top_k + (4 if mode == "automatic" else 0),
+                    "total": top_k + (4 if mode == "automatic" else 0),
                 },
                 index_state=self._dense_index_state(),
             )
@@ -379,6 +370,40 @@ class Memory:
             except Exception:
                 logger.exception("on_retrieved callback failed; dropping trace")
         return ctx
+
+    def _with_core_profile(
+        self, context: MemoryContext, *, owner: str, persona_id: str
+    ) -> MemoryContext:
+        try:
+            profile = self._store.core_profile(owner_user_id=owner, persona_id=persona_id)
+        except CoreProfileError:
+            logger.warning(
+                "core profile unavailable owner=%s persona=%s",
+                owner,
+                persona_id,
+                exc_info=True,
+            )
+            unavailable = "# 核心资料状态\n- Core Profile 暂不可用"
+            rendered = unavailable
+            if context.rendered:
+                rendered += "\n\n" + context.rendered
+            return MemoryContext(rendered=rendered, items=context.items)
+        rendered_core = CoreProfileRenderer().render(profile)
+        if not rendered_core:
+            return context
+        core_items = [
+            MemoryItem(
+                text=f"{entry.field_key} = {entry.value}",
+                layer="core",
+                source_ref=entry.id,
+                score=999.0,
+            )
+            for entry in profile.entries
+        ]
+        rendered = rendered_core
+        if context.rendered:
+            rendered += "\n\n" + context.rendered
+        return MemoryContext(rendered=rendered, items=[*core_items, *context.items])
 
     def _dense_index_state(self) -> dict[str, object]:
         if self._index_manager is None:

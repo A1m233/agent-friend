@@ -4,8 +4,10 @@ use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Emitter, Manager, WebviewWindow,
 };
+#[cfg(debug_assertions)]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
 mod autostart;
@@ -15,6 +17,7 @@ mod data_migration;
 mod desktop_instance;
 mod diagnostics;
 pub mod install_contract;
+mod owner_capabilities;
 mod paths;
 mod permissions;
 mod pet_cursor_passthrough;
@@ -736,10 +739,12 @@ fn consume_pending_voice_start(
     state.take_pending_start()
 }
 
-/// 026 · dev 模式入口：打开记忆面板窗口。
-#[cfg(debug_assertions)]
+/// Open the memory inspector only when this machine opted into Owner Mode.
 #[tauri::command]
 fn open_memory_inspector(app: tauri::AppHandle) -> Result<(), String> {
+    if !owner_capabilities::local_capabilities().memory_inspector {
+        return Err("memory_inspector_disabled".to_string());
+    }
     show_and_focus(&app, "memory-inspector")
 }
 
@@ -1205,6 +1210,7 @@ pub fn run() {
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
+        owner_capabilities::get_local_capabilities,
         open_memory_inspector,
         open_live2d_debugger,
         hide_pet,
@@ -1277,6 +1283,8 @@ pub fn run() {
         open_voice_call,
         open_voice_call_with_start,
         consume_pending_voice_start,
+        owner_capabilities::get_local_capabilities,
+        open_memory_inspector,
         hide_pet,
         pet_cursor_passthrough::set_pet_cursor_passthrough,
         set_pet_webview_dpr,

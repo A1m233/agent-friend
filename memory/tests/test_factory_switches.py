@@ -30,7 +30,7 @@ def test_build_memory_default_is_pass1_full() -> None:
         assert mem._pinned_gate_enabled is True
         # 抽取走默认新 prompt（不是 legacy），简单粗略地验证 prompt 含 pass-1 标志词
         prompt = mem._worker._extractor._prompt
-        assert "保留对话里的具体词" in prompt
+        assert "Core Profile（先做）" in prompt
     finally:
         mem.close()
 

@@ -16,12 +16,13 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
 
+from .context import ExtractionContext
 from .result import (
+    CoreUpdate,
     ExtractionAttempt,
     ExtractionAttemptStatus,
     ExtractionOutput,
     SemanticOp,
-    normalize_memory_metadata,
 )
 
 if TYPE_CHECKING:
@@ -35,8 +36,6 @@ __all__ = ["Extractor"]
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extract.md"
-_MAX_FACTS_IN_PROMPT = 60
-"""喂给 LLM 的已知事实条数上限，控制 prompt 体积。"""
 
 
 class Extractor:
@@ -58,17 +57,26 @@ class Extractor:
         self._llm = llm_client
         self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
         self._on_attempt = on_attempt
+        # Kept as an inert compatibility argument for older composition roots.  Core
+        # classification is now exclusively an extractor schema decision.
         self._normalize_metadata = normalize_metadata
 
     def extract(
-        self, fragment: ConversationFragment, existing_facts: list[SemanticRow]
+        self,
+        fragment: ConversationFragment,
+        context: ExtractionContext | list[SemanticRow],
     ) -> ExtractionOutput:
         """抽取一个 fragment。
 
         失败（LLM 报错 / 返回非法 JSON）时**返回空 output、不抛异常**——抽取是
         尽力而为的旁路，不应让 worker 崩溃或污染对话。
         """
-        user_content = self._render_input(fragment, existing_facts)
+        extraction_context = (
+            context
+            if isinstance(context, ExtractionContext)
+            else ExtractionContext.from_existing(context)
+        )
+        user_content = self._render_input(fragment, extraction_context)
         messages = [
             {"role": "system", "content": self._prompt},
             {"role": "user", "content": user_content},
@@ -80,17 +88,17 @@ class Extractor:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
             self._report_attempt(
                 fragment,
-                existing_facts,
+                extraction_context,
                 status="llm_error",
                 started=started,
                 error=exc,
             )
             return ExtractionOutput()
 
-        output, status = _parse_output_with_status(raw, normalize_metadata=self._normalize_metadata)
+        output, status = _parse_output_with_status(raw)
         self._report_attempt(
             fragment,
-            existing_facts,
+            extraction_context,
             status=status,
             started=started,
             raw_response=raw,
@@ -101,7 +109,7 @@ class Extractor:
     def _report_attempt(
         self,
         fragment: ConversationFragment,
-        existing_facts: list[SemanticRow],
+        context: ExtractionContext,
         *,
         status: ExtractionAttemptStatus,
         started: float,
@@ -117,9 +125,13 @@ class Extractor:
             first_source_ref=source_refs[0] if source_refs else None,
             last_source_ref=source_refs[-1] if source_refs else None,
             utterance_count=len(fragment.utterances),
-            existing_fact_count=len(existing_facts),
+            existing_fact_count=len(context.semantic_facts),
             status=status,
             duration_ms=(perf_counter() - started) * 1000,
+            core_context_count=len(context.core_entries),
+            semantic_total=context.semantic_total,
+            semantic_omitted=context.semantic_omitted,
+            core_update_count=len(output.core_updates) if output is not None else 0,
             episodic_count=len(output.episodic_entries) if output is not None else 0,
             semantic_count=len(output.semantic_ops) if output is not None else 0,
             raw_response=raw_response,
@@ -131,17 +143,26 @@ class Extractor:
         except Exception:
             logger.warning("记忆抽取 attempt 回调异常", exc_info=True)
 
-    def _render_input(
-        self, fragment: ConversationFragment, existing_facts: list[SemanticRow]
-    ) -> str:
-        lines: list[str] = []
-        if existing_facts:
-            lines.append("## 已知事实清单")
-            for f in existing_facts[:_MAX_FACTS_IN_PROMPT]:
-                lines.append(f"- {f.statement}")
-            lines.append("")
+    def _render_input(self, fragment: ConversationFragment, context: ExtractionContext) -> str:
+        lines: list[str] = ["## 当前完整 Core Profile"]
+        if context.core_entries:
+            for ref, entry in context.core_entries:
+                scope = "全局用户" if entry.scope_kind == "user" else f"persona={entry.persona_id}"
+                lines.append(f"[{ref}] {entry.field_key} = {entry.value} ({scope})")
         else:
-            lines.append("## 已知事实清单\n（暂无）\n")
+            lines.append("（暂无）")
+        lines.extend(("", "## 当前有效普通 Semantic"))
+        if context.semantic_facts:
+            for ref, fact in context.semantic_facts:
+                lines.append(f"[{ref}] {fact.statement}")
+        else:
+            lines.append("（暂无）")
+        if context.semantic_omitted:
+            lines.append(
+                f"（另有 {context.semantic_omitted} 条因 50000 token 预算未展示；"
+                "不可引用或猜测这些条目。）"
+            )
+        lines.append("")
         lines.append("## 对话片段")
         for u in fragment.utterances:
             who = "用户" if u.speaker == "user" else "AI"
@@ -160,9 +181,7 @@ def _parse_output(raw: str) -> ExtractionOutput:
     return _parse_output_with_status(raw)[0]
 
 
-def _parse_output_with_status(
-    raw: str, *, normalize_metadata: bool = True
-) -> tuple[ExtractionOutput, ExtractionAttemptStatus]:
+def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAttemptStatus]:
     text = _strip_code_fence(raw).strip()
     if not text:
         return ExtractionOutput(), "empty_response"
@@ -174,16 +193,42 @@ def _parse_output_with_status(
     if not isinstance(obj, dict):
         return ExtractionOutput(), "invalid_shape"
 
+    strict_reasons = "core_updates" in obj
+    core_updates: list[CoreUpdate] = []
+    invalid_operation = False
+    raw_core = obj.get("core_updates")
+    if isinstance(raw_core, list):
+        for item in raw_core:
+            parsed = _parse_core_update(item, require_reason=strict_reasons)
+            if parsed is None:
+                invalid_operation = True
+            else:
+                core_updates.append(parsed)
+    elif strict_reasons:
+        invalid_operation = True
+
     entries = _parse_entries(obj)
 
     ops: list[SemanticOp] = []
     raw_ops = obj.get("semantic_ops")
     if isinstance(raw_ops, list):
         for item in raw_ops:
-            op = _parse_op(item, normalize_metadata=normalize_metadata)
-            if op is not None:
+            op = _parse_op(item, require_reason=strict_reasons)
+            if op is None:
+                invalid_operation = True
+            else:
                 ops.append(op)
-    output = ExtractionOutput(episodic_entries=entries, semantic_ops=ops)
+    elif strict_reasons:
+        invalid_operation = True
+    if invalid_operation:
+        return ExtractionOutput(
+            validation_error="invalid_operation_shape_or_reason"
+        ), "invalid_shape"
+    output = ExtractionOutput(
+        core_updates=core_updates,
+        semantic_ops=ops,
+        episodic_entries=entries,
+    )
     return output, "empty_output" if output.is_noop() else "success"
 
 
@@ -206,7 +251,41 @@ def _parse_entries(obj: dict[str, object]) -> list[str]:
     return []
 
 
-def _parse_op(item: object, *, normalize_metadata: bool) -> SemanticOp | None:
+def _parse_core_update(item: object, *, require_reason: bool) -> CoreUpdate | None:
+    if not isinstance(item, dict):
+        return None
+    op = item.get("op")
+    field = item.get("field")
+    if op not in ("add", "replace", "remove"):
+        return None
+    if field not in (
+        "user.preferred_name",
+        "user.current_residences",
+        "relationship.kind",
+        "relationship.agent_nickname",
+    ):
+        return None
+    value = item.get("value")
+    if not isinstance(value, str) or not value.strip():
+        value = None
+    target_ref = item.get("target_ref")
+    if not isinstance(target_ref, str) or not target_ref.strip():
+        target_ref = None
+    reason = item.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        if require_reason:
+            return None
+        reason = "legacy extractor output without classification rationale"
+    return CoreUpdate(
+        op=op,
+        field=field,
+        reason=reason.strip(),
+        value=value,
+        target_ref=target_ref,
+    )
+
+
+def _parse_op(item: object, *, require_reason: bool) -> SemanticOp | None:
     if not isinstance(item, dict):
         return None
     statement = item.get("statement")
@@ -214,36 +293,29 @@ def _parse_op(item: object, *, normalize_metadata: bool) -> SemanticOp | None:
         return None
     op = item.get("op")
     if op not in ("add", "supersede"):
-        op = "add"
+        return None
     importance = item.get("importance", 0.5)
     if not isinstance(importance, int | float):
         importance = 0.5
     importance = max(0.0, min(1.0, float(importance)))
-    pinned = bool(item.get("pinned", False))
     speaker_origin = item.get("speaker_origin", "user")
     if speaker_origin not in ("user", "agent"):
         speaker_origin = "user"
-    target_hint = item.get("target_hint")
-    if not isinstance(target_hint, str) or not target_hint.strip():
-        target_hint = None
-    if normalize_metadata:
-        memory_class, fact_key, pinned = normalize_memory_metadata(
-            statement.strip(),
-            pinned=pinned,
-            memory_class=item.get("memory_class"),
-            fact_key=item.get("fact_key"),
-        )
-    else:
-        memory_class, fact_key = "normal", None
+    target_ref = item.get("target_ref")
+    if not isinstance(target_ref, str) or not target_ref.strip():
+        target_ref = None
+    reason = item.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        if require_reason:
+            return None
+        reason = "legacy extractor output without classification rationale"
     return SemanticOp(
-        op=op,  # type: ignore[arg-type]
+        op=op,
         statement=statement.strip(),
+        reason=reason.strip(),
         importance=importance,
-        pinned=pinned,
         speaker_origin=speaker_origin,
-        target_hint=target_hint,
-        memory_class=memory_class,
-        fact_key=fact_key,
+        target_ref=target_ref,
     )
 
 

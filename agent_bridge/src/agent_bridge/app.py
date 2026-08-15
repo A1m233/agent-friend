@@ -101,7 +101,17 @@ def create_app() -> FastAPI:
     credentials = credential_source_for_mode(mode)
     runtime_config = resolve_bridge_runtime_config(credentials)
     runtime = build_runtime(settings, runtime_config=runtime_config)
-    return create_app_with_runtime(runtime, lifecycle_token=os.environ.get(LIFECYCLE_TOKEN_ENV))
+    inspector_env = os.environ.get("AGENT_FRIEND_MEMORY_INSPECTOR_ENABLED")
+    memory_inspector_enabled = (
+        inspector_env.lower() == "true"
+        if inspector_env is not None
+        else os.environ.get("AGENT_BRIDGE_DEV_MODE", "false").lower() == "true"
+    )
+    return create_app_with_runtime(
+        runtime,
+        lifecycle_token=os.environ.get(LIFECYCLE_TOKEN_ENV),
+        memory_inspector_enabled=memory_inspector_enabled,
+    )
 
 
 def create_app_with_runtime(
@@ -109,6 +119,7 @@ def create_app_with_runtime(
     *,
     lifecycle_token: str | None = None,
     shutdown_callback: Callable[[], None] | None = None,
+    memory_inspector_enabled: bool = True,
 ) -> FastAPI:
     """测试 helper：直接传入已经装配好的 :class:`BridgeRuntime`，绕过环境变量加载。
 
@@ -137,7 +148,8 @@ def create_app_with_runtime(
     register_openai_routes(app, runtime)
     register_ag_ui_routes(app, runtime)
     register_meta_routes(app, runtime)
-    register_memory_routes(app, runtime)
+    if memory_inspector_enabled:
+        register_memory_routes(app, runtime)
     register_attachment_routes(app, runtime)
     register_filesystem_routes(app, runtime)
     register_model_routes(app, runtime)

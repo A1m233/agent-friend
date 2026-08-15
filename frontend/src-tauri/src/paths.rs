@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub const BUNDLE_ID: &str = "com.agentfriend.desktop";
 pub const APP_NAME: &str = "agent-friend";
 pub const SETTINGS_STORE_PATH: &str = "settings.json";
+pub const OWNER_CAPABILITIES_FILE: &str = "owner-capabilities.json";
 pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
 pub const PERMISSION_STATE_FILE: &str = "permission-state.json";
 pub const AVATAR_MODELS_DIR: &str = "avatar-models";
@@ -41,6 +42,13 @@ fn app_store_path(base: PathBuf) -> PathBuf {
 /// AppHandle 才能拿到 path resolver。
 pub fn settings_store_path() -> Option<PathBuf> {
     dirs::config_dir().map(app_store_path)
+}
+
+pub fn owner_capabilities_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|base| {
+        base.join(profile().settings_namespace)
+            .join(OWNER_CAPABILITIES_FILE)
+    })
 }
 
 /// 统一系统权限模块的处理历史；只保存应用历史，不保存系统状态真相。

@@ -217,34 +217,3 @@ def test_facade_retrieve_with_gate_drops_unrelated_pinned() -> None:
     finally:
         # mem.close() 已关 store；再 close 是幂等
         pass
-
-
-def test_facade_retrieve_without_gate_keeps_legacy_behavior() -> None:
-    """关闭 gate 时退回 pre-pass-1 行为（pinned 全量注入），供切片 baseline 对照。"""
-    from memory.extraction import Extractor, Reconciler
-
-    from memory import Memory
-
-    class _FakeLLM:
-        def complete(self, *_a: object, **_kw: object) -> str:
-            return '{"episodic_entries": [], "semantic_ops": []}'
-
-    store = SqliteMemoryStore(":memory:")
-    try:
-        _seed_identity_pinned(store)
-        mem = Memory(
-            store,
-            Extractor(_FakeLLM(), prompt="x"),  # type: ignore[arg-type]
-            Reconciler(store),
-            pinned_relevance_gate=False,
-        )
-        try:
-            ctx = mem.retrieve("今天天气真好出去走走怎么样", persona_id="p1")
-            # 关闭 gate → 4 条 pinned 全部注入
-            assert not ctx.is_empty()
-            pinned_items = [it for it in ctx.items if it.layer == "pinned"]
-            assert len(pinned_items) == 4
-        finally:
-            mem.close()
-    finally:
-        pass

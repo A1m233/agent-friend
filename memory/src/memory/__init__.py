@@ -28,9 +28,22 @@ from .contracts import (
     Speaker,
     Utterance,
 )
+from .core_profile import (
+    CORE_FIELD_SPECS,
+    CoreFieldKey,
+    CoreFieldSpec,
+    CoreProfile,
+    CoreProfileEntry,
+    CoreProfileError,
+    CoreProfileRenderer,
+    CoreScopeKind,
+)
 from .extraction import (
     AsyncExtractionWorker,
+    CoreUpdate,
     ExtractionAttempt,
+    ExtractionContext,
+    ExtractionContextBuilder,
     ExtractionOutput,
     ExtractionResult,
     Extractor,
@@ -69,11 +82,20 @@ from .store import EpisodicRow, SemanticRow, SqliteMemoryStore
 __version__ = "0.2.0"
 
 __all__ = [
+    "CORE_FIELD_SPECS",
     "DEFAULT_OWNER_USER_ID",
     "AnalyzedQuery",
     "AsyncExtractionWorker",
     "Candidate",
     "ConversationFragment",
+    "CoreFieldKey",
+    "CoreFieldSpec",
+    "CoreProfile",
+    "CoreProfileEntry",
+    "CoreProfileError",
+    "CoreProfileRenderer",
+    "CoreScopeKind",
+    "CoreUpdate",
     "DenseIndexState",
     "EmbeddingIndexManager",
     "EmbeddingProvider",
@@ -82,6 +104,8 @@ __all__ = [
     "EvidenceExcerpt",
     "EvidenceSource",
     "ExtractionAttempt",
+    "ExtractionContext",
+    "ExtractionContextBuilder",
     "ExtractionOutput",
     "ExtractionResult",
     "Extractor",

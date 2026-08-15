@@ -22,8 +22,10 @@ if TYPE_CHECKING:
     from ..contracts import ConversationFragment
     from ..store import SqliteMemoryStore
     from .extractor import Extractor
-    from .reconciler import Reconciler
-    from .result import ExtractionResult
+
+from .context import ExtractionContextBuilder
+from .reconciler import ExtractionApplyError, Reconciler
+from .result import ExtractionResult
 
 __all__ = ["AsyncExtractionWorker"]
 
@@ -55,6 +57,7 @@ class AsyncExtractionWorker:
         self._store = store
         self._extractor = extractor
         self._reconciler = reconciler
+        self._context_builder = ExtractionContextBuilder(store)
         self._on_extracted = on_extracted
         self._queue: queue.Queue[object] = queue.Queue()
         self._thread: threading.Thread | None = None
@@ -109,14 +112,21 @@ class AsyncExtractionWorker:
     def _process(self, fragment: ConversationFragment) -> None:
         if fragment.is_empty():
             return
-        existing = self._store.related_semantic(
-            owner_user_id=fragment.owner_user_id, persona_id=fragment.persona_id
-        )
-        output = self._extractor.extract(fragment, existing)
-        if output.is_noop():
-            return
-        result = self._reconciler.apply(output, fragment, existing)
-        if self._on_extracted is not None and not result.is_empty():
+        context = self._context_builder.build(fragment)
+        output = self._extractor.extract(fragment, context)
+        # Even a legal empty proposal is committed: observation identity is the
+        # idempotency boundary, not whether the model happened to emit writes.
+        try:
+            result = self._reconciler.apply(output, fragment, context)
+        except ExtractionApplyError as exc:
+            logger.warning("extraction batch rejected code=%s detail=%s", exc.code, exc)
+            result = ExtractionResult(
+                session_id=fragment.session_id,
+                committed=False,
+                error_code=exc.code,
+                error_message=str(exc),
+            )
+        if self._on_extracted is not None:
             try:
                 self._on_extracted(result)
             except Exception:

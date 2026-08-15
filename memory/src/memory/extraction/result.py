@@ -1,27 +1,21 @@
-"""抽取管线的数据结构：LLM 输出（解析后）与落库结果（可观测）。
-
-详见 docs/requirements/008-engine-memory/design.md §5.2 / §8。
-"""
+"""Typed extraction proposals and observable commit results."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..store import MemoryClass
+from ..core_profile import CoreFieldKey
 
 __all__ = [
-    "ALLOWED_FACT_KEYS",
+    "CoreUpdate",
     "ExtractionAttempt",
     "ExtractionAttemptStatus",
     "ExtractionOutput",
     "ExtractionResult",
     "SemanticOp",
-    "normalize_memory_metadata",
 ]
 
-OpKind = Literal["add", "supersede"]
 ExtractionAttemptStatus = Literal[
     "success",
     "empty_response",
@@ -30,109 +24,51 @@ ExtractionAttemptStatus = Literal[
     "empty_output",
     "llm_error",
 ]
-ALLOWED_FACT_KEYS = frozenset({"user.name", "agent.name", "user.employer", "user.residence"})
-_CORE_FACT_KEYS = frozenset({"user.name", "agent.name"})
-_CORE_RELATION_RE = re.compile(
-    r"用户(?:的)?(?:伴侣|妻子|丈夫|男朋友|女朋友|父亲|母亲|爸爸|妈妈|儿子|女儿|孩子)"
-)
-_FACT_KEY_PATTERNS = {
-    "user.name": re.compile(r"用户(?:的)?(?:名字|姓名)(?:是|叫|为)|用户(?:叫|名叫)"),
-    "agent.name": re.compile(
-        r"(?:AI|助手|智能体)(?:的)?(?:名字|名称)(?:是|叫|为)|(?:AI|助手)(?:叫|名叫)"
-    ),
-    "user.employer": re.compile(r"用户(?:目前|现在)?(?:在.{1,24}工作|就职于|任职于)"),
-    "user.residence": re.compile(r"用户(?:目前|现在)?(?:住在|居住在|定居在|家住)"),
-}
+
+
+@dataclass(frozen=True)
+class CoreUpdate:
+    """One schema-bound Core Profile proposal.
+
+    ``replace`` and ``remove`` must address an entry shown to the extractor by its
+    short ``Cxxx`` reference.  ``add`` never accepts a target reference.
+    """
+
+    op: Literal["add", "replace", "remove"]
+    field: CoreFieldKey
+    reason: str
+    value: str | None = None
+    target_ref: str | None = None
 
 
 @dataclass(frozen=True)
 class SemanticOp:
-    """LLM 提议的一次语义记忆操作。
+    """One ordinary Semantic proposal using an exact ``Mxxx`` reference."""
 
-    Attributes:
-        op: ``add`` 新增 / ``supersede`` 取代某条旧事实。
-        statement: 第三人称、原子化的事实陈述。
-        importance: LLM 给的重要性初值 [0,1]。
-        pinned: 是否"每次必进上下文"（仅姓名 / 核心关系等稳定身份事实置真）。
-        speaker_origin: 该事实主要基于谁的话（``user`` / ``agent``）；
-            ``user`` 在落库时加一档重要性。
-        target_hint: ``supersede`` 时指向被取代旧事实的近似陈述，供 reconcile 定位。
-    """
-
-    op: OpKind
+    op: Literal["add", "supersede"]
     statement: str
+    reason: str
     importance: float = 0.5
-    pinned: bool = False
-    speaker_origin: str = "user"
-    target_hint: str | None = None
-    memory_class: MemoryClass = "normal"
-    fact_key: str | None = None
-
-
-def normalize_memory_metadata(
-    statement: str,
-    *,
-    pinned: bool,
-    memory_class: object,
-    fact_key: object,
-) -> tuple[MemoryClass, str | None, bool]:
-    """对白名单字段做最后一道确定性校验，LLM 不能任意升级 core。"""
-    requested_key = fact_key.strip() if isinstance(fact_key, str) else None
-    normalized_key = (
-        requested_key
-        if requested_key in ALLOWED_FACT_KEYS
-        and _FACT_KEY_PATTERNS[requested_key].search(statement)
-        else _infer_fact_key(statement)
-    )
-    normalized_class: MemoryClass = (
-        memory_class if memory_class in ("core", "priority", "normal") else "normal"
-    )
-
-    core_allowed = normalized_key in _CORE_FACT_KEYS or bool(_CORE_RELATION_RE.search(statement))
-    if normalized_key in _CORE_FACT_KEYS:
-        normalized_class = "core"
-    elif normalized_key is not None and normalized_class == "normal":
-        normalized_class = "priority"
-    if normalized_class == "core" and not core_allowed:
-        normalized_class = "priority"
-    if pinned and normalized_class == "normal":
-        normalized_class = "core" if core_allowed else "priority"
-    return normalized_class, normalized_key, normalized_class != "normal"
-
-
-def _infer_fact_key(statement: str) -> str | None:
-    for fact_key, pattern in _FACT_KEY_PATTERNS.items():
-        if pattern.search(statement):
-            return fact_key
-    return None
+    speaker_origin: Literal["user", "agent"] = "user"
+    target_ref: str | None = None
 
 
 @dataclass(frozen=True)
 class ExtractionOutput:
-    """对一个 fragment 抽取后、解析好的 LLM 产物。
+    """Parsed extractor output, ordered by conceptual responsibility."""
 
-    Attributes:
-        episodic_entries: 这段对话发生了什么的具体记录列表（每条含原话里的具体词；
-            issue 003 root cause——旧 prompt 把对话压成单条话题摘要导致下游召回失败）。
-            空表示没什么可记的。
-        semantic_ops: 提议落库的语义事实操作。
-    """
-
-    episodic_entries: list[str] = field(default_factory=list)
+    core_updates: list[CoreUpdate] = field(default_factory=list)
     semantic_ops: list[SemanticOp] = field(default_factory=list)
+    episodic_entries: list[str] = field(default_factory=list)
+    validation_error: str | None = None
 
     def is_noop(self) -> bool:
-        """既没有可记的情节条目、也没有语义操作。"""
-        return not self.episodic_entries and not self.semantic_ops
+        return not self.core_updates and not self.semantic_ops and not self.episodic_entries
 
 
 @dataclass(frozen=True)
 class ExtractionAttempt:
-    """一次 LLM 抽取尝试的诊断快照。
-
-    仅通过显式 observer 暴露；生产默认不持久化原始响应。评测 harness 可用它
-    区分 API 异常、解析失败、合法空产出与正常产出，并按 fragment checkpoint。
-    """
+    """Diagnostic snapshot for one LLM extraction attempt."""
 
     session_id: str
     first_source_ref: str | None
@@ -141,6 +77,10 @@ class ExtractionAttempt:
     existing_fact_count: int
     status: ExtractionAttemptStatus
     duration_ms: float
+    core_context_count: int = 0
+    semantic_total: int = 0
+    semantic_omitted: int = 0
+    core_update_count: int = 0
     episodic_count: int = 0
     semantic_count: int = 0
     raw_response: str | None = None
@@ -150,12 +90,29 @@ class ExtractionAttempt:
 
 @dataclass(frozen=True)
 class ExtractionResult:
-    """一次抽取真正落库的结果，供 observability（design §8）。"""
+    """The atomic store result for one observed fragment."""
 
     session_id: str
+    observation_id: str = ""
+    committed: bool = True
+    duplicate: bool = False
     episodic_ids: list[str] = field(default_factory=list)
-    added_semantic: list[str] = field(default_factory=list)  # "statement" 文本
-    superseded_semantic: list[str] = field(default_factory=list)  # 旧 statement 文本
+    added_semantic: list[str] = field(default_factory=list)
+    superseded_semantic: list[str] = field(default_factory=list)
+    added_core: list[str] = field(default_factory=list)
+    replaced_core: list[str] = field(default_factory=list)
+    removed_core: list[str] = field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
 
     def is_empty(self) -> bool:
-        return not self.episodic_ids and not self.added_semantic and not self.superseded_semantic
+        return not any(
+            (
+                self.episodic_ids,
+                self.added_semantic,
+                self.superseded_semantic,
+                self.added_core,
+                self.replaced_core,
+                self.removed_core,
+            )
+        )

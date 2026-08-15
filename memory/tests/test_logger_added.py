@@ -85,99 +85,10 @@ def test_retrieval_strategy_emits_info_on_search() -> None:
     )
 
 
-def test_pinned_gate_emits_info() -> None:
-    handler = _capture_memory_logs()
-    store = SqliteMemoryStore(":memory:")
-    mem = Memory(
-        store,
-        Extractor(_FakeLLM('{"episodic_summary": null, "semantic_ops": []}'), prompt="x"),  # type: ignore[arg-type]
-        Reconciler(store),
-        retrieval=KeywordRetrieval(store),
-    )
-
-    # 让 observe 走 pinned gate（短 query 直接通过也会 emit）
-    mem.observe(_fragment("我叫小明"))
-    mem.flush()
-    mem.retrieve("小明", persona_id="p1")
-
-    assert any(
-        r.name == "memory.retrieval.pinned_gate" and r.levelno == logging.INFO
-        for r in handler.records
-    )
-    mem.close()
-
-
 def test_sqlite_store_emits_info_on_init() -> None:
     handler = _capture_memory_logs()
     SqliteMemoryStore(":memory:").close()
 
     assert any(
         r.name == "memory.store.sqlite_store" and r.levelno == logging.INFO for r in handler.records
-    )
-
-
-def test_reconciler_emits_warn_on_supersede_conflict() -> None:
-    handler = _capture_memory_logs()
-    store = SqliteMemoryStore(":memory:")
-    reconciler = Reconciler(store)
-
-    # 先写入一条事实
-    first = _fragment("我叫小明")
-    reconciler.apply(
-        type(
-            "Output",
-            (),
-            {
-                "episodic_entries": None,
-                "semantic_ops": [
-                    type(
-                        "Op",
-                        (),
-                        {
-                            "op": "add",
-                            "statement": "用户叫小明",
-                            "target_hint": None,
-                            "importance": 0.8,
-                            "speaker_origin": "user",
-                            "pinned": True,
-                        },
-                    ),
-                ],
-            },
-        )(),
-        first,
-        [],
-    )
-
-    # 再试图 supersede 它
-    second = _fragment("其实我是大明")
-    reconciler.apply(
-        type(
-            "Output",
-            (),
-            {
-                "episodic_entries": None,
-                "semantic_ops": [
-                    type(
-                        "Op",
-                        (),
-                        {
-                            "op": "supersede",
-                            "statement": "用户叫大明",
-                            "target_hint": "用户叫小明",
-                            "importance": 0.8,
-                            "speaker_origin": "user",
-                            "pinned": True,
-                        },
-                    ),
-                ],
-            },
-        )(),
-        second,
-        store.related_semantic(owner_user_id="u1", persona_id="p1"),
-    )
-
-    assert any(
-        r.name == "memory.extraction.reconciler" and r.levelno == logging.WARNING
-        for r in handler.records
     )
