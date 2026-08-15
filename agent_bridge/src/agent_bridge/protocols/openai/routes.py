@@ -113,7 +113,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                         new_user_input=decoded.latest_user_input,
                         default_persona=runtime.default_persona,
                         default_model=model,
-                    )
+                    ),
+                    post_turn_external=runtime.agent_runtime is not None,
                 )
             else:
                 boot = TransientBootstrap(

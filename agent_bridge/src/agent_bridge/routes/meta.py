@@ -381,7 +381,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
         def _conversation_for_edit() -> Conversation:
             session = mgr.open(session_id)
-            return mgr.start_conversation(session)
+            return mgr.start_conversation(
+                session,
+                post_turn_external=runtime.agent_runtime is not None,
+            )
 
         handle = None
         if runtime.agent_runtime is not None:
@@ -455,7 +458,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
 
         def _conversation_for_continue() -> Conversation:
             session = mgr.open(session_id)
-            return mgr.start_conversation(session)
+            return mgr.start_conversation(
+                session,
+                post_turn_external=runtime.agent_runtime is not None,
+            )
 
         def _persist_error(
             conv: Conversation,

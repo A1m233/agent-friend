@@ -17,15 +17,18 @@
 
 from __future__ import annotations
 
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agent.runtime import AgentRuntime, RunOutcome
 from agent.system_prompt import IM_QQ_SURFACE
 from agent_bridge.protocols.im.content import OutboundContent
 from agent_bridge.protocols.im.event import InboundEvent
 from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
+from agent_bridge.session_bridge import PersistentBootstrap
 
 from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
 from llm_providers import LLMTransientProviderError
@@ -162,6 +165,47 @@ def test_session_id_for_different_chat_id_different(router: IMRouter) -> None:
 def test_session_id_for_different_im_type_different(router: IMRouter) -> None:
     ev = _make_event(chat_id="OPENID-X")
     assert router.session_id_for("qq", ev) != router.session_id_for("feishu", ev)
+
+
+def test_runtime_conversation_factory_delegates_post_turn_observe(
+    session_bridge: MagicMock,
+) -> None:
+    """AgentRuntime 调度的 IM Conversation 必须关闭内部 observe，避免同轮双写。"""
+    conv = _make_conv([TurnDone()])
+    session_bridge.bind_persistent.return_value = conv
+    runtime = MagicMock()
+    handle = MagicMock()
+    handle.events.return_value = iter([TurnDone()])
+    handle.terminal = SimpleNamespace(
+        outcome=RunOutcome.COMPLETED,
+        error=None,
+        reason_code="",
+    )
+
+    def submit(_event: object, **kwargs: Any) -> MagicMock:
+        kwargs["conversation_factory"]()
+        return handle
+
+    runtime.submit.side_effect = submit
+    runtime_router = IMRouter(
+        session_bridge=session_bridge,
+        default_persona="default-persona",
+        default_model="default-model",
+        agent_runtime=cast(AgentRuntime, runtime),
+    )
+    boot = PersistentBootstrap(
+        thread_id="im:qq:OPENID-A",
+        new_user_input="hello",
+        default_persona="default-persona",
+        default_model="default-model",
+    )
+
+    runtime_router._run_turn_sync(boot)
+
+    session_bridge.bind_persistent.assert_called_once_with(
+        boot,
+        post_turn_external=True,
+    )
 
 
 # ---------- handle_inbound 调用 bind_persistent ----------

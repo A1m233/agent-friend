@@ -137,7 +137,12 @@ class SessionBridge:
 
         return mgr.start_conversation(session)
 
-    def bind_persistent(self, boot: PersistentBootstrap) -> Conversation:
+    def bind_persistent(
+        self,
+        boot: PersistentBootstrap,
+        *,
+        post_turn_external: bool = False,
+    ) -> Conversation:
         """AG-UI 持久化分支：``thread_id`` ↔ ``session_id`` 一对一。
 
         - ``thread_id`` 已存在（jsonl 落盘）→ ``open(thread_id)``，事件流自动 replay
@@ -150,6 +155,9 @@ class SessionBridge:
 
         Args:
             boot: 解析完成的 AG-UI 请求中可用的全部信息。
+            post_turn_external: ``True`` 表示本轮由外部 ``AgentRuntime`` 的
+                PostTurn hook 统一调用 ``memory.observe``；直接运行
+                ``Conversation`` 时保持默认 ``False``，由 Conversation 自己观察。
 
         Returns:
             装配好的 :class:`Conversation`，可立刻调用 ``stream(new_user_input)``。
@@ -172,7 +180,10 @@ class SessionBridge:
                 session_id=boot.thread_id,
             )
 
-        return mgr.start_conversation(session)
+        return mgr.start_conversation(
+            session,
+            post_turn_external=post_turn_external,
+        )
 
     @staticmethod
     def _append_history_message_in_memory(session: Session, msg: Message) -> None:
