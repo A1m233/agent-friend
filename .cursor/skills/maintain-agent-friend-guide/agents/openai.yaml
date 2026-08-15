@@ -4,4 +4,4 @@ interface:
   default_prompt: "使用 $maintain-agent-friend-guide 检查本次产品变更是否需要维护用户知识。"
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
