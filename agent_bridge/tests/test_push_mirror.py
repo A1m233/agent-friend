@@ -46,6 +46,7 @@ from llm_providers import (
     LLMTextDelta,
     LLMTurnDone,
 )
+from memory import ConversationFragment, Memory, MemoryContext
 
 if TYPE_CHECKING:
     pass
@@ -78,6 +79,20 @@ class _ScriptedLLMClient:
         events = self.script[self.turn_idx]
         self.turn_idx += 1
         yield from events
+
+
+class _FakeMemory:
+    def __init__(self) -> None:
+        self.observed: list[ConversationFragment] = []
+
+    def retrieve(self, _query: str, **_kwargs: Any) -> MemoryContext:
+        return MemoryContext.empty()
+
+    def observe(self, fragment: ConversationFragment) -> None:
+        self.observed.append(fragment)
+
+    def close(self) -> None:
+        return None
 
 
 @contextmanager
@@ -113,6 +128,7 @@ def _build_runtime(
     tmp_path: Path,
     *,
     llm_script: list[list[LLMStreamEvent]],
+    memory: _FakeMemory | None = None,
 ) -> BridgeRuntime:
     settings = BridgeSettings(
         sessions_dir=tmp_path / "sessions",
@@ -136,6 +152,7 @@ def _build_runtime(
         prompt_builder_factory=_prompt_factory,
         context_manager_factory=NaiveContextManager,
         tool_registry=tool_registry,
+        memory=cast(Memory, memory) if memory is not None else None,
     )
 
     # AgentRuntime 装在 BridgeRuntime 上——但本测试不通过 dispatch 触发，
@@ -144,6 +161,7 @@ def _build_runtime(
 
     agent_runtime = AgentRuntime(
         conversation_factory=lambda sid: cast(_Conv, None),
+        memory=cast(Memory, memory) if memory is not None else None,
     )
 
     return BridgeRuntime(
@@ -156,6 +174,7 @@ def _build_runtime(
         prompt_builder_factory=_prompt_factory,
         default_persona=catalog.find_by_name("default").name,
         default_model="deepseek/deepseek-chat",
+        memory=cast(Memory, memory) if memory is not None else None,
         agent_runtime=agent_runtime,
     )
 
@@ -208,6 +227,23 @@ def test_ag_ui_pull_mirrors_user_turn_to_push_listener(tmp_path: Path) -> None:
         types = [e["type"] for e in env.events]
         assert "text_delta" in types
         assert "done" in types
+
+
+def test_ag_ui_runtime_observes_each_turn_exactly_once(tmp_path: Path) -> None:
+    """自定义 Conversation factory 不得与 runtime PostTurn hook 重复 observe。"""
+    memory = _FakeMemory()
+    runtime = _build_runtime(
+        tmp_path,
+        llm_script=[[LLMTextDelta(text="hi"), LLMTurnDone(stop_reason="end_turn")]],
+        memory=memory,
+    )
+
+    with TestClient(create_app_with_runtime(runtime)) as client:
+        response = client.post("/ag-ui/run", json=_ag_ui_payload("memory-thread", "hello"))
+
+    assert response.status_code == 200
+    assert len(memory.observed) == 1
+    assert [utterance.text for utterance in memory.observed[0].utterances] == ["hello", "hi"]
 
 
 def test_ag_ui_pull_with_no_user_turn_subscriber_not_mirrored(tmp_path: Path) -> None:

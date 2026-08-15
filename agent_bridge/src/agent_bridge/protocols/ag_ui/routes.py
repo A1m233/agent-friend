@@ -98,7 +98,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_id=decoded.run_id,
                 channel="text",
                 surface=DESKTOP_CHAT_SURFACE,
-                conversation_factory=lambda: bridge.bind_persistent(boot),
+                conversation_factory=lambda: bridge.bind_persistent(
+                    boot,
+                    post_turn_external=True,
+                ),
                 metadata={"protocol": "ag_ui"},
                 consumer_abandon_policy=ConsumerAbandonPolicy.DETACH,
                 interactive_busy_policy=InteractiveBusyPolicy.REJECT_IF_INTERACTIVE_BUSY,

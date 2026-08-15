@@ -486,7 +486,10 @@ class IMRouter:
                 latency_started_ms=latency_started_ms,
                 channel="text",
                 surface=surface,
-                conversation_factory=lambda: self._bridge.bind_persistent(boot),
+                conversation_factory=lambda: self._bridge.bind_persistent(
+                    boot,
+                    post_turn_external=True,
+                ),
                 conversation_runner=lambda conv, request, token: conv.stream(
                     boot.new_user_input,
                     attachments=list(attachments),
