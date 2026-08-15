@@ -8,7 +8,7 @@ html[theme="light"] {
   --surface-hover: #e5e7eb;
   --fg: #1a1a1a;
   --muted: #6b7280;
-  --accent: #4f46e5;
+  --accent: #0052d9;
   --accent-fg: #ffffff;
   --border: #e5e7eb;
   --sidebar-accent: #e5e7eb;
@@ -17,7 +17,7 @@ html[theme="light"] {
   --danger: #dc2626;
   --warning: #d97706;
   --search-hit: #fde68a;
-  --search-target: #eef2ff;
+  --search-target: #f2f3ff;
 
   /* 阴影（值 = Tailwind v4 默认 light，保证视觉零变化） */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
