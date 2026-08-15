@@ -193,7 +193,7 @@ impl OwnerEvidence {
     ) -> Result<Self, String> {
         let process_start_identity = match probe_process(std::process::id()) {
             ProcessProbe::Running(value) => value,
-            ProcessProbe::Missing => {
+            ProcessProbe::Exited | ProcessProbe::Missing => {
                 return Err("owner_process_mismatch: current process is unavailable".to_string())
             }
             ProcessProbe::Unknown(error) => {
@@ -287,7 +287,7 @@ fn inspect_owner_path(path: &Path, identity: &DesktopInstanceIdentity) -> OwnerI
             previous: owner,
             reason: "owner-pid-reused".to_string(),
         },
-        ProcessProbe::Missing => OwnerInspection::Stale {
+        ProcessProbe::Exited | ProcessProbe::Missing => OwnerInspection::Stale {
             previous: owner,
             reason: "owner-process-exited".to_string(),
         },
@@ -391,6 +391,7 @@ fn redact_home(path: &Path) -> String {
 
 enum ProcessProbe {
     Running(String),
+    Exited,
     Missing,
     Unknown(String),
 }
@@ -436,26 +437,54 @@ fn probe_process(pid: u32) -> ProcessProbe {
 #[cfg(target_os = "windows")]
 fn probe_process(pid: u32) -> ProcessProbe {
     use windows::Win32::{
-        Foundation::{CloseHandle, FILETIME},
-        System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE},
     };
 
-    let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+    let handle = match unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            false,
+            pid,
+        )
+    } {
         Ok(value) => value,
         Err(error) if error.code().0 == unchecked_hresult(0x80070057) => {
             return ProcessProbe::Missing
         }
         Err(error) => return ProcessProbe::Unknown(error.to_string()),
     };
+    let probe = probe_windows_process_handle(handle);
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    probe
+}
+
+#[cfg(target_os = "windows")]
+fn probe_windows_process_handle(handle: windows::Win32::Foundation::HANDLE) -> ProcessProbe {
+    use windows::Win32::{
+        Foundation::{FILETIME, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Threading::{GetProcessTimes, WaitForSingleObject},
+    };
+
+    match unsafe { WaitForSingleObject(handle, 0) } {
+        WAIT_OBJECT_0 => return ProcessProbe::Exited,
+        WAIT_TIMEOUT => {}
+        wait => {
+            return ProcessProbe::Unknown(format!(
+                "process wait returned unexpected status 0x{:08x}",
+                wait.0
+            ))
+        }
+    }
+
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();
     let mut user = FILETIME::default();
     let result =
         unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
-    unsafe {
-        let _ = CloseHandle(handle);
-    }
     match result {
         Ok(()) => ProcessProbe::Running(format!(
             "{:08x}{:08x}",
@@ -543,6 +572,41 @@ mod tests {
             OwnerInspection::Live(_)
         ));
         fs::remove_dir_all(root).ok();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn queryable_exited_windows_process_is_not_reported_as_running() {
+        use std::process::{Command, Stdio};
+        use windows::Win32::{
+            Foundation::CloseHandle,
+            System::Threading::{
+                OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            },
+        };
+
+        let mut child = Command::new("ping.exe")
+            .args(["127.0.0.1", "-n", "2"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn temporary child process");
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                false,
+                child.id(),
+            )
+        }
+        .expect("retain child process handle");
+
+        child.wait().expect("wait for temporary child process");
+        let probe = probe_windows_process_handle(handle);
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+
+        assert!(matches!(probe, ProcessProbe::Exited));
     }
 
     #[test]
