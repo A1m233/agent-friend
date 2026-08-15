@@ -382,6 +382,7 @@ def build_runtime(
 
     # 048 M48.1: 工具只依赖统一 service；memory 关闭时 service 仍保留 raw history source。
     tool_registry = make_default_registry(
+        persistent_store,
         memory_search=memory_search,
         todo_service=todo_service,
         session_catalog=session_catalog,
