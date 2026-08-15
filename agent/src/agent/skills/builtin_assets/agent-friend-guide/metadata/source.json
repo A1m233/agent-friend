@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "product_repository": "https://github.com/A1m233/agent-friend",
-  "reviewed_product_commit": "89e600714218e5730847b20a0d6bd393e0f20f9e",
-  "reviewed_at": "2026-08-14",
+  "reviewed_product_commit": "211264de07c201dea057e86b18aacef0c2a223d7",
+  "reviewed_at": "2026-08-16",
   "product_version": "0.2.0",
-  "content_sha256": "a7b3339cb72bf64e1b6b6dfcfb822bf1235309eb92c91199620a20b4115b2fb6"
+  "content_sha256": "ca05aa9b43611a63632f37a15580db18f52c9f1cfe6bc107b8532e1889a168dd"
 }
