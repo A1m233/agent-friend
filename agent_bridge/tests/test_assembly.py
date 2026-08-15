@@ -58,6 +58,7 @@ def test_persistent_runtime_registers_recall_past_chats(
         )._tool_registry
 
         assert "recall_past_chats" in tool_names
+        assert "recover_tool_result" in tool_names
         assert "nearby_place_search" in tool_names
         assert "todo_manage" in tool_names
         assert "social_search" in tool_names
