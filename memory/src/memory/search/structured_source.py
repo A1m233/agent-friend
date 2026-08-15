@@ -14,7 +14,12 @@ if TYPE_CHECKING:
 
 
 class StructuredMemorySource:
-    """组合 core、FTS5 keyword 与可选 dense 派生索引。"""
+    """Combine ordinary Semantic/Episodic keyword and optional dense evidence.
+
+    Core Profile is deliberately absent. Automatic conversation retrieval injects
+    it through :class:`memory.Memory`; explicit search and inspector probes must
+    never smuggle Core into their result set.
+    """
 
     name = "structured_memory"
 
@@ -34,15 +39,8 @@ class StructuredMemorySource:
         request: SearchRequest,
         limit: int,
     ) -> list[EvidenceCandidate]:
-        core = [
-            _semantic_candidate(row, None)
-            for row in self._store.core(
-                owner_user_id=request.owner_user_id,
-                limit=20,
-            )
-        ]
         if not query.retrieval_text:
-            return core
+            return []
         since = query.time_range.since if query.time_range is not None else None
         until = query.time_range.until if query.time_range is not None else None
         semantic = self._store.search_semantic(
@@ -80,7 +78,7 @@ class StructuredMemorySource:
                 keyword_candidates.append(episodic_candidates[index])
         dense_candidates = self._dense_candidates(query, request=request, limit=limit)
         merged: dict[str, EvidenceCandidate] = {
-            candidate.evidence_id: candidate for candidate in [*core, *keyword_candidates]
+            candidate.evidence_id: candidate for candidate in keyword_candidates
         }
         for candidate in dense_candidates:
             existing = merged.get(candidate.evidence_id)

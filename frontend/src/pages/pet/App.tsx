@@ -179,6 +179,14 @@ export function PetApp() {
   const nativeContextMenuPopupInFlightRef = useRef(false);
   // 18 · dev-only 切穿透：开 inspector 调试时点"穿透 OFF"让 pet 变实窗，inspector 可点
   const [passthroughDisabled, setPassthroughDisabled] = useState(false);
+  const [memoryInspectorEnabled, setMemoryInspectorEnabled] = useState(import.meta.env.DEV);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    void invoke<{ memoryInspector: boolean }>("get_local_capabilities")
+      .then((capabilities) => setMemoryInspectorEnabled(capabilities.memoryInspector))
+      .catch(() => setMemoryInspectorEnabled(false));
+  }, []);
   const voicePhase = useVoiceStore((s) => s.phase);
   const requestStartVoice = useVoiceStore((s) => s.requestStartFromAnyWindow);
   const [runtime, setRuntime] = useState<PetAvatarRuntime | null>(null);
@@ -1041,6 +1049,7 @@ export function PetApp() {
             voiceCallActive={isVoiceCallLive(voicePhase)}
             passthroughDisabled={passthroughDisabled}
             onTogglePassthrough={() => setPassthroughDisabled((v) => !v)}
+            memoryInspectorEnabled={memoryInspectorEnabled}
             onOpenMemoryInspector={openMemoryInspector}
             onOpenLive2DDebugger={openLive2DDebugger}
             onInjectShort={injectShort}

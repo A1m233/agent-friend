@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .factorial import build_factorial_corpora, factorial_db_path, summarize_factorial
-from .judge import AnchorRecallJudge, Judge, JudgeResult, NoopJudge
+from .judge import AnchorRecallJudge, Judge, JudgeResult, LayerConstrainedAnchorJudge, NoopJudge
 from .paired_extraction import run_paired_extraction_probe
 from .report import print_outcome, print_summary
 from .runner import (
@@ -24,6 +24,7 @@ __all__ = [
     "EvalWorkspace",
     "Judge",
     "JudgeResult",
+    "LayerConstrainedAnchorJudge",
     "MemoryConfig",
     "NoopJudge",
     "QuestionOutcome",

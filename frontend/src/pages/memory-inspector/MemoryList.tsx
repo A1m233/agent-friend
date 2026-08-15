@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Pin, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Badge,
@@ -9,7 +9,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Skeleton,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -21,7 +20,15 @@ import {
   listSemantic,
   searchMemory,
 } from "./api";
-import type { EpisodicRow, Layer, Persona, SemanticRow } from "./api";
+import type {
+  CoreProfileEntry,
+  EpisodicRow,
+  InspectorSemanticRow,
+  Layer,
+  Persona,
+  SemanticKind,
+  SemanticRow,
+} from "./api";
 
 const PAGE_SIZE = 50;
 
@@ -35,7 +42,8 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [activeTab, setActiveTab] = useState<"semantic" | "episodic">("semantic");
   const [query, setQuery] = useState("");
-  const [semanticRows, setSemanticRows] = useState<SemanticRow[]>([]);
+  const [semanticKind, setSemanticKind] = useState<SemanticKind>("all");
+  const [semanticRows, setSemanticRows] = useState<InspectorSemanticRow[]>([]);
   const [episodicRows, setEpisodicRows] = useState<EpisodicRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +87,7 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
       try {
         const currentOffset = append ? offset : 0;
         if (activeTab === "semantic") {
-          const rows = await listSemantic(PAGE_SIZE, currentOffset);
+          const rows = await listSemantic(semanticKind, personaId, PAGE_SIZE, currentOffset);
           setSemanticRows((prev) => (append ? [...prev, ...rows] : rows));
           setHasMore(rows.length === PAGE_SIZE);
         } else {
@@ -105,7 +113,7 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
         if (!q.trim()) {
           resetAndLoad();
           if (activeTab === "semantic") {
-            const rows = await listSemantic(PAGE_SIZE, 0);
+            const rows = await listSemantic(semanticKind, personaId, PAGE_SIZE, 0);
             setSemanticRows(rows);
             setHasMore(rows.length === PAGE_SIZE);
           } else {
@@ -123,7 +131,18 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
           PAGE_SIZE,
         );
         if (activeTab === "semantic") {
-          setSemanticRows(result.semantic.map((r) => r.row));
+          const ordinary = result.semantic.map((r) => ({ ...r.row, kind: "ordinary" as const }));
+          if (semanticKind === "ordinary") {
+            setSemanticRows(ordinary);
+          } else {
+            const core = await listSemantic("core", personaId, PAGE_SIZE, 0);
+            const matchedCore = core.filter(
+              (row) =>
+                row.kind === "core" &&
+                `${row.field_key} ${row.value}`.toLocaleLowerCase().includes(q.toLocaleLowerCase()),
+            );
+            setSemanticRows(semanticKind === "core" ? matchedCore : [...matchedCore, ...ordinary]);
+          }
         } else {
           setEpisodicRows(result.episodic.map((r) => r.row));
         }
@@ -134,7 +153,7 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
         setLoading(false);
       }
     },
-    [activeTab, personaId, resetAndLoad],
+    [activeTab, personaId, resetAndLoad, semanticKind],
   );
 
   useEffect(() => {
@@ -144,7 +163,7 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
   useEffect(() => {
     resetAndLoad();
     void loadMore(false);
-  }, [activeTab, personaId]);
+  }, [activeTab, personaId, semanticKind]);
 
   const searchTimer = useRef<number | null>(null);
 
@@ -191,32 +210,47 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
 
   return (
     <div className="flex flex-col h-full min-w-0">
-      <div className="flex items-center gap-2 p-3 border-b border-border bg-surface/50">
-        <Select
-          value={personaId ?? "__all__"}
-          onValueChange={(v) => onPersonaChange(v === "__all__" ? null : v)}
-        >
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="选择 persona" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">全部</SelectItem>
-            {personas.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-2 p-3 border-b border-border bg-surface/50">
+        <div className="flex items-center gap-2">
+          <Select
+            value={personaId ?? "__all__"}
+            onValueChange={(v) => onPersonaChange(v === "__all__" ? null : v)}
+          >
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="选择 persona" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">全部</SelectItem>
+              {personas.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
-          <TabsList>
-            <TabsTrigger value="semantic">Semantic</TabsTrigger>
-            <TabsTrigger value="episodic">Episodic</TabsTrigger>
-          </TabsList>
-        </Tabs>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+            <TabsList>
+              <TabsTrigger value="semantic">Semantic</TabsTrigger>
+              <TabsTrigger value="episodic">Episodic</TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-        <div className="relative flex-1 min-w-0">
+          {activeTab === "semantic" && (
+            <Select value={semanticKind} onValueChange={(v) => setSemanticKind(v as SemanticKind)}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">全部</SelectItem>
+                <SelectItem value="core">核心身份信息</SelectItem>
+                <SelectItem value="ordinary">普通 Semantic</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        <div className="relative w-full min-w-0">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-4 text-muted" />
           <Input
             className="pl-8"
@@ -230,7 +264,7 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
 
       {activeTab === "semantic" && (
         <div className="px-3 py-1.5 text-xs text-muted bg-bg border-b border-border">
-          Semantic 记忆跨 persona 共享，selector 不影响此列表
+          Core 的关系字段按 persona 隔离；普通 Semantic 跨 persona 共享
         </div>
       )}
 
@@ -239,7 +273,13 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
       <div ref={scrollRef} className="flex-1 overflow-auto p-3" onScroll={onScroll}>
         {rows.length === 0 && !loading && (
           <div className="py-8 text-center text-sm text-muted">
-            无 {activeTab === "semantic" ? "semantic" : "episodic"} 记忆
+            {activeTab === "episodic"
+              ? "无 Episodic 记忆"
+              : semanticKind === "core"
+                ? "无核心身份信息"
+                : semanticKind === "ordinary"
+                  ? "无普通 Semantic 记忆"
+                  : "无 Semantic 记忆"}
           </div>
         )}
 
@@ -266,10 +306,17 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
                     ref={virtualizer.measureElement}
                   >
                     {activeTab === "semantic" ? (
-                      <SemanticCard
-                        row={row as SemanticRow}
-                        highlighted={highlight?.layer === "semantic" && highlight.source_ref === row.id}
-                      />
+                      (row as InspectorSemanticRow).kind === "core" ? (
+                        <CoreCard
+                          row={row as CoreProfileEntry}
+                          highlighted={highlight?.layer === "core" && highlight.source_ref === row.id}
+                        />
+                      ) : (
+                        <SemanticCard
+                          row={row as SemanticRow}
+                          highlighted={highlight?.layer === "semantic" && highlight.source_ref === row.id}
+                        />
+                      )
                     ) : (
                       <EpisodicCard
                         row={row as EpisodicRow}
@@ -280,13 +327,6 @@ export function MemoryList({ personaId, onPersonaChange, highlight }: Props) {
                 );
               })}
             </div>
-          </div>
-        )}
-
-        {loading && (
-          <div className="space-y-2 mt-2">
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
           </div>
         )}
 
@@ -308,12 +348,6 @@ function SemanticCard({ row, highlighted }: { row: SemanticRow; highlighted: boo
     >
       <div className="flex items-start justify-between gap-2">
         <p className="font-medium leading-snug">{row.statement}</p>
-        {row.pinned && (
-          <Badge variant="default" className="shrink-0">
-            <Pin className="size-3" />
-            pinned
-          </Badge>
-        )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
         <Badge variant="secondary">{row.source}</Badge>
@@ -321,6 +355,33 @@ function SemanticCard({ row, highlighted }: { row: SemanticRow; highlighted: boo
         <span>importance {row.importance.toFixed(2)}</span>
         <span>·</span>
         <span>{formatTime(row.created_at)}</span>
+      </div>
+    </div>
+  );
+}
+
+function CoreCard({ row, highlighted }: { row: CoreProfileEntry; highlighted: boolean }) {
+  return (
+    <div
+      data-source-ref={row.id}
+      className={`rounded-lg border p-3 text-sm ${
+        highlighted ? "border-accent bg-accent/10" : "border-border bg-surface/50"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-xs text-muted">{row.field_key}</p>
+          <p className="font-medium leading-snug">{row.value}</p>
+        </div>
+        <Badge variant="default">核心身份信息</Badge>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+        <Badge variant="secondary">
+          {row.scope_kind === "user" ? "全局用户" : `persona ${row.persona_id}`}
+        </Badge>
+        <span>·</span>
+        <span>{formatTime(row.updated_at)}</span>
+        {row.provenance.length > 0 && <span>来源 {row.provenance.join(", ")}</span>}
       </div>
     </div>
   );

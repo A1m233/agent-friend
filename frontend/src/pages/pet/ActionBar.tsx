@@ -79,6 +79,7 @@ interface Props {
   voiceCallActive: boolean;
   passthroughDisabled: boolean;
   onTogglePassthrough: () => void;
+  memoryInspectorEnabled: boolean;
   onOpenMemoryInspector: () => void;
   onOpenLive2DDebugger: () => void;
   onInjectShort: () => void;
@@ -119,6 +120,7 @@ export function ActionBar({
   voiceCallActive,
   passthroughDisabled,
   onTogglePassthrough,
+  memoryInspectorEnabled,
   onOpenMemoryInspector,
   onOpenLive2DDebugger,
   onInjectShort,
@@ -141,13 +143,17 @@ export function ActionBar({
     { icon: <Settings />, tooltip: "打开设置", onClick: onOpenSettings },
   ];
   if (import.meta.env.DEV) {
+    buttons.push({
+      icon: passthroughDisabled ? <Unlock /> : <Lock />,
+      tooltip: passthroughDisabled ? "穿透 OFF · 点开" : "穿透 ON · 点关",
+      onClick: onTogglePassthrough,
+    });
+  }
+  if (memoryInspectorEnabled) {
+    buttons.push({ icon: <Brain />, tooltip: "记忆面板", onClick: onOpenMemoryInspector });
+  }
+  if (import.meta.env.DEV) {
     buttons.push(
-      {
-        icon: passthroughDisabled ? <Unlock /> : <Lock />,
-        tooltip: passthroughDisabled ? "穿透 OFF · 点开" : "穿透 ON · 点关",
-        onClick: onTogglePassthrough,
-      },
-      { icon: <Brain />, tooltip: "记忆面板", onClick: onOpenMemoryInspector },
       { icon: <SlidersHorizontal />, tooltip: "Live2D 调试器", onClick: onOpenLive2DDebugger },
       { icon: <MessageSquareDashed />, tooltip: "注入短气泡", onClick: onInjectShort },
       { icon: <ScrollText />, tooltip: "注入长气泡", onClick: onInjectLong },

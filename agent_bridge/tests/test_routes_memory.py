@@ -12,6 +12,7 @@ from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.dev.recall_buffer import RecallBuffer
 from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
+from memory.core_profile import normalize_core_value
 from memory.facade import Memory
 
 from agent import (
@@ -22,7 +23,7 @@ from agent import (
     SessionManager,
     make_default_registry,
 )
-from memory import EpisodicRow, SemanticRow, SqliteMemoryStore
+from memory import CoreProfileEntry, EpisodicRow, SemanticRow, SqliteMemoryStore
 
 if TYPE_CHECKING:
     from llm_providers import LLMClient
@@ -59,6 +60,23 @@ def _memory_with_data() -> Memory:
             persona_id="p1",
             occurred_at=now,
             created_at=now,
+        )
+    )
+    store.add_core_profile_entry(
+        CoreProfileEntry(
+            id="core-name",
+            owner_user_id="local",
+            scope_kind="user",
+            persona_id="",
+            field_key="user.preferred_name",
+            value="小陈",
+            normalized_value=normalize_core_value("小陈"),
+            valid_from=now,
+            valid_until=None,
+            supersedes_id=None,
+            provenance=(),
+            created_at=now,
+            updated_at=now,
         )
     )
     store.add_episodic(
@@ -139,6 +157,13 @@ def client(runtime: BridgeRuntime) -> TestClient:
 
 
 class TestMemoryDisabled:
+    def test_owner_mode_disabled_does_not_register_inspector_routes(
+        self, runtime: BridgeRuntime
+    ) -> None:
+        app = create_app_with_runtime(runtime, memory_inspector_enabled=False)
+        test_client = TestClient(app)
+        assert test_client.get("/v1/memory/semantic").status_code == 404
+
     def test_memory_disabled_returns_503(self, tmp_path: Path) -> None:
         settings = BridgeSettings(sessions_dir=tmp_path / "sessions")
         persistent_store = JsonlSessionStore(settings.sessions_dir)
@@ -183,6 +208,16 @@ class TestSemanticRoutes:
         assert len(data) == 2
         assert data[0]["id"] == "s1"
         assert data[0]["pinned"] is True
+
+    def test_core_filter_and_projection(self, client: TestClient) -> None:
+        filtered = client.get("/v1/memory/semantic?kind=core&persona_id=p1")
+        assert filtered.status_code == 200
+        assert filtered.json()[0]["field_key"] == "user.preferred_name"
+        assert filtered.json()[0]["kind"] == "core"
+
+        profile = client.get("/v1/memory/core-profile?persona_id=p1")
+        assert profile.status_code == 200
+        assert profile.json()["profile"]["user"]["preferred_name"] == "小陈"
 
     def test_search_semantic(self, client: TestClient) -> None:
         resp = client.get("/v1/memory/search?q=Tom&layer=semantic")

@@ -56,10 +56,47 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         return _require_memory()[0].store
 
     @router.get("/semantic")
-    def list_semantic(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        """按 created_at 倒序列出活跃语义记忆。"""
-        rows = _store().list_semantic(owner_user_id=OWNER, limit=limit, offset=offset)
-        return [_dataclass_to_dict(r) for r in rows]
+    def list_semantic(
+        kind: str = "ordinary",
+        persona_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List ordinary Semantic, Core entries, or the combined inspector view."""
+        if kind not in ("all", "ordinary", "core"):
+            raise HTTPException(status_code=422, detail="kind must be all, ordinary, or core")
+        core_rows = []
+        if kind in ("all", "core"):
+            core_rows = [
+                {"kind": "core", **_dataclass_to_dict(row)}
+                for row in _store().list_core_profile_entries(
+                    owner_user_id=OWNER, persona_id=persona_id
+                )
+            ]
+        semantic_rows = []
+        if kind in ("all", "ordinary"):
+            semantic_limit = limit + offset if kind == "all" else limit
+            semantic_offset = 0 if kind == "all" else offset
+            semantic_rows = [
+                {"kind": "ordinary", **_dataclass_to_dict(row)}
+                for row in _store().list_semantic(
+                    owner_user_id=OWNER,
+                    limit=semantic_limit,
+                    offset=semantic_offset,
+                )
+            ]
+        if kind == "ordinary":
+            return semantic_rows
+        combined = [*core_rows, *semantic_rows]
+        return combined[offset : offset + limit]
+
+    @router.get("/core-profile")
+    def core_profile(persona_id: str) -> dict[str, Any]:
+        profile = _store().core_profile(owner_user_id=OWNER, persona_id=persona_id)
+        return {
+            "profile": profile.as_dict(),
+            "entries": [_dataclass_to_dict(row) for row in profile.entries],
+        }
 
     @router.get("/episodic")
     def list_episodic(
@@ -131,6 +168,8 @@ def _serialize_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return serialize_ts(value)
     if isinstance(value, list):
+        return [_serialize_value(v) for v in value]
+    if isinstance(value, tuple):
         return [_serialize_value(v) for v in value]
     if isinstance(value, dict):
         return {k: _serialize_value(v) for k, v in value.items()}

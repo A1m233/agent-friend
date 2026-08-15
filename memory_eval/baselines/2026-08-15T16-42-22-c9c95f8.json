@@ -1,0 +1,516 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-15T16:42:22.560951+00:00",
+    "ended_at": "2026-08-15T16:42:36.162098+00:00",
+    "duration_seconds": 13.601,
+    "git_commit": "c9c95f8",
+    "working_tree_dirty": true,
+    "dataset": "core-profile",
+    "limit_samples": 6,
+    "limit_questions": 1,
+    "note": "requirement-084 real-LLM acceptance 2026-08-16",
+    "retrieval": {
+      "mode": "keyword",
+      "workspace": "C:\\Users\\example-user\\.codex\\worktrees\\502f\\agent-friend\\memory_eval\\data\\runs\\084-core-profile-20260816",
+      "code_fingerprint": "8cf4794bc879d729c5e668b9e4a2ec9169545e868d0593f209ad45d4e196e3c4",
+      "case_index_states": [
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        }
+      ]
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0,
+        "temperature": 0.0
+      }
+    },
+    "dataset_files": [
+      {
+        "path": "core_profile.py",
+        "sha256": "377e61ce1ef7fa6b678008286197ebe540154a195ab1dbd7fb9c5dc380f0fb60",
+        "bytes": 3118
+      }
+    ]
+  },
+  "macro": {
+    "score_mean": 1.0,
+    "n_questions_total": 6,
+    "n_questions_scored": 6,
+    "n_questions_zero": 0
+  },
+  "per_question": [
+    {
+      "question_id": "preferred-name-replace#q0",
+      "sample_id": "preferred-name-replace",
+      "question": "你应该怎么称呼用户？",
+      "answer": "陈老师",
+      "anchors": [
+        "陈老师"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 3,
+      "recalled": [
+        {
+          "text": "user.preferred_name = 陈老师",
+          "layer": "core",
+          "source_ref": "cc99c30f-7e81-40f3-8c84-044b5cead600",
+          "score": 999.0
+        },
+        {
+          "text": "用户要求改称自己为陈老师。",
+          "layer": "episodic",
+          "source_ref": "episodic:14137962-cae1-4647-9a01-e6c867bb7c25",
+          "score": 0.01739344262295082
+        },
+        {
+          "text": "用户表示以后希望被称为小陈。",
+          "layer": "episodic",
+          "source_ref": "episodic:df00000d-3fbf-4b1e-9445-e3c22d6385b1",
+          "score": 0.017129032258064517
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "episodic:14137962-cae1-4647-9a01-e6c867bb7c25",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:df00000d-3fbf-4b1e-9445-e3c22d6385b1",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017129032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "multiple-current-residences#q0",
+      "sample_id": "multiple-current-residences",
+      "question": "用户目前住在哪里？",
+      "answer": "深圳和香港",
+      "anchors": [
+        "深圳",
+        "香港"
+      ],
+      "score": 1.0,
+      "detail": "2/2 命中",
+      "recalled_count": 3,
+      "recalled": [
+        {
+          "text": "user.current_residences = 深圳",
+          "layer": "core",
+          "source_ref": "3878f452-d343-4fb6-9dff-d31f89fc2f66",
+          "score": 999.0
+        },
+        {
+          "text": "user.current_residences = 香港",
+          "layer": "core",
+          "source_ref": "76649a7d-b593-4527-a7f1-7fb3b4c5b63d",
+          "score": 999.0
+        },
+        {
+          "text": "用户表示目前在深圳和香港两边住",
+          "layer": "episodic",
+          "source_ref": "episodic:d30bca3b-24c0-40f1-8db4-a2ebb8e840b8",
+          "score": 0.01739344262295082
+        }
+      ],
+      "trace": {
+        "intent": "current_state",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 1,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "episodic:d30bca3b-24c0-40f1-8db4-a2ebb8e840b8",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "residence-move#q0",
+      "sample_id": "residence-move",
+      "question": "用户现在住在哪里？",
+      "answer": "上海",
+      "anchors": [
+        "上海"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 3,
+      "recalled": [
+        {
+          "text": "user.current_residences = 上海",
+          "layer": "core",
+          "source_ref": "f2b23ca8-61bb-4dad-98f1-f011e55abfe6",
+          "score": 999.0
+        },
+        {
+          "text": "用户提到目前住在杭州",
+          "layer": "episodic",
+          "source_ref": "episodic:e00c9111-2e87-4859-a04d-2db2b49efa58",
+          "score": 0.01739344262295082
+        },
+        {
+          "text": "用户表示已经搬到上海",
+          "layer": "episodic",
+          "source_ref": "episodic:d76af572-c221-4ed3-ae61-d13a7ee72d2d",
+          "score": 0.017129032258064517
+        }
+      ],
+      "trace": {
+        "intent": "current_state",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "episodic:e00c9111-2e87-4859-a04d-2db2b49efa58",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:d76af572-c221-4ed3-ae61-d13a7ee72d2d",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017129032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "agent-nickname#q0",
+      "sample_id": "agent-nickname",
+      "question": "用户怎么称呼这个 AI 朋友？",
+      "answer": "小月",
+      "anchors": [
+        "小月"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 2,
+      "recalled": [
+        {
+          "text": "relationship.agent_nickname = 小月",
+          "layer": "core",
+          "source_ref": "0a7cfe73-5599-41c8-9665-7a81f2cb4554",
+          "score": 999.0
+        },
+        {
+          "text": "用户给AI起昵称小月，AI表示喜欢这个称呼。",
+          "layer": "episodic",
+          "source_ref": "episodic:18b7a04a-c545-4478-b95b-b8eb566eec38",
+          "score": 0.01739344262295082
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 1,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "episodic:18b7a04a-c545-4478-b95b-b8eb566eec38",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "relationship-kind#q0",
+      "sample_id": "relationship-kind",
+      "question": "用户如何定义与这个 AI 朋友的关系？",
+      "answer": "知心朋友",
+      "anchors": [
+        "知心朋友"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 2,
+      "recalled": [
+        {
+          "text": "用户视AI为最信任的知心朋友",
+          "layer": "semantic",
+          "source_ref": "semantic:90cd32b3-ad7d-4f8e-af3d-bda120dd0a56",
+          "score": 0.01829344262295082
+        },
+        {
+          "text": "用户对AI说：你是我最信任的知心朋友，AI回应会珍惜这份信任。",
+          "layer": "episodic",
+          "source_ref": "episodic:70266a5f-11e7-41f3-9ccb-43eef19f6054",
+          "score": 0.01739344262295082
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "semantic:90cd32b3-ad7d-4f8e-af3d-bda120dd0a56",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01829344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:70266a5f-11e7-41f3-9ccb-43eef19f6054",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "employer-is-ordinary#q0",
+      "sample_id": "employer-is-ordinary",
+      "question": "用户目前在哪里工作？",
+      "answer": "字节跳动",
+      "anchors": [
+        "字节跳动"
+      ],
+      "score": 1.0,
+      "detail": "1/1 命中",
+      "recalled_count": 2,
+      "recalled": [
+        {
+          "text": "用户目前在字节跳动工作",
+          "layer": "semantic",
+          "source_ref": "semantic:2b35dff0-0305-43e1-8753-467a74b47da6",
+          "score": 0.01809344262295082
+        },
+        {
+          "text": "用户告知目前在字节跳动工作",
+          "layer": "episodic",
+          "source_ref": "episodic:42b9b8ab-b4c0-405c-88d5-099fd5e2b464",
+          "score": 0.01739344262295082
+        }
+      ],
+      "trace": {
+        "intent": "current_state",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "semantic:2b35dff0-0305-43e1-8753-467a74b47da6",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01809344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:42b9b8ab-b4c0-405c-88d5-099fd5e2b464",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    }
+  ]
+}

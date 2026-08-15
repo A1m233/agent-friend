@@ -18,12 +18,25 @@ import logging
 import re
 import sqlite3
 import threading
-from datetime import datetime
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import jieba
 
+from ..core_profile import (
+    CORE_FIELD_SPECS,
+    CoreFieldKey,
+    CoreProfile,
+    CoreProfileEntry,
+    CoreScopeKind,
+    build_core_profile,
+    normalize_core_value,
+    validate_core_value,
+)
 from .schema import (
     DDL_STATEMENTS,
     SCHEMA_VERSION,
@@ -33,7 +46,7 @@ from .schema import (
     serialize_ts,
 )
 
-__all__ = ["SqliteMemoryStore"]
+__all__ = ["ExtractionTransaction", "SqliteMemoryStore"]
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +54,128 @@ _RELATED_DEFAULT_LIMIT = 200
 """``related_semantic`` 兜底返回的活跃事实上限。
 
 孵化期单 user 单 persona 的活跃事实远小于此；超出再谈分页 / 更精的召回。"""
+
+
+class ExtractionTransaction:
+    """Write facade used only inside :meth:`SqliteMemoryStore.extraction_batch`."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def core_is_active(self, entry_id: str) -> bool:
+        return (
+            self._conn.execute(
+                """SELECT 1 FROM core_profile_entry
+               WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
+                (entry_id,),
+            ).fetchone()
+            is not None
+        )
+
+    def semantic_is_active(self, semantic_id: str) -> bool:
+        return (
+            self._conn.execute(
+                """SELECT 1 FROM semantic
+               WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
+                (semantic_id,),
+            ).fetchone()
+            is not None
+        )
+
+    def add_core(self, row: CoreProfileEntry) -> None:
+        validate_core_value(row.field_key, row.value)
+        _insert_core_profile_entry(self._conn, row)
+
+    def validate_core_profile(self, *, owner_user_id: str, persona_id: str) -> None:
+        rows = self._conn.execute(
+            """SELECT * FROM core_profile_entry
+               WHERE owner_user_id = ?
+                 AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                 AND valid_until IS NULL AND deleted_at IS NULL""",
+            (owner_user_id, persona_id),
+        ).fetchall()
+        build_core_profile(
+            [_to_core_profile_entry(row) for row in rows],
+            owner_user_id=owner_user_id,
+            persona_id=persona_id,
+        )
+
+    def end_core(self, entry_id: str, ended_at: datetime) -> bool:
+        cur = self._conn.execute(
+            """UPDATE core_profile_entry SET valid_until = ?, updated_at = ?
+               WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
+            (serialize_ts(ended_at), serialize_ts(ended_at), entry_id),
+        )
+        return cur.rowcount == 1
+
+    def add_semantic(self, row: SemanticRow) -> None:
+        tokens = _tokenize(row.statement)
+        cur = self._conn.execute(
+            """INSERT INTO semantic
+                   (id, statement, statement_tokens, importance, pinned, source,
+                    speaker_origin, memory_class, fact_key, supersedes_id, valid_from,
+                    valid_until, provenance, deleted_at, owner_user_id, persona_id,
+                    created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row.id,
+                row.statement,
+                tokens,
+                row.importance,
+                0,
+                row.source,
+                row.speaker_origin,
+                "normal",
+                None,
+                row.supersedes_id,
+                serialize_ts(row.valid_from),
+                serialize_ts(row.valid_until),
+                json.dumps(row.provenance, ensure_ascii=False),
+                serialize_ts(row.deleted_at),
+                row.owner_user_id,
+                row.persona_id,
+                serialize_ts(row.created_at),
+                serialize_ts(row.updated_at),
+            ),
+        )
+        self._conn.execute(
+            "INSERT INTO semantic_fts(rowid, statement_tokens) VALUES (?, ?)",
+            (cur.lastrowid, tokens),
+        )
+
+    def end_semantic(self, semantic_id: str, ended_at: datetime) -> bool:
+        cur = self._conn.execute(
+            """UPDATE semantic SET valid_until = ?, updated_at = ?
+               WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL""",
+            (serialize_ts(ended_at), serialize_ts(ended_at), semantic_id),
+        )
+        return cur.rowcount == 1
+
+    def add_episodic(self, row: EpisodicRow) -> None:
+        tokens = _tokenize(row.summary)
+        cur = self._conn.execute(
+            """INSERT INTO episodic
+                   (id, summary, summary_tokens, source_ref, importance, participants,
+                    occurred_at, deleted_at, owner_user_id, persona_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row.id,
+                row.summary,
+                tokens,
+                row.source_ref,
+                row.importance,
+                json.dumps(row.participants, ensure_ascii=False),
+                serialize_ts(row.occurred_at),
+                serialize_ts(row.deleted_at),
+                row.owner_user_id,
+                row.persona_id,
+                serialize_ts(row.created_at),
+            ),
+        )
+        self._conn.execute(
+            "INSERT INTO episodic_fts(rowid, summary_tokens) VALUES (?, ?)",
+            (cur.lastrowid, tokens),
+        )
 
 
 class SqliteMemoryStore:
@@ -64,6 +199,7 @@ class SqliteMemoryStore:
             with self._lock:
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA foreign_keys=ON")
+                previous_version = _schema_version(self._conn)
                 # v1 → v2 迁移：在 DDL 跑之前 ALTER TABLE 加列 + DROP 旧 trigram FTS5；
                 # 后续 DDL 的 CREATE IF NOT EXISTS 会用新 unicode61 配置建表，旧表
                 # IF NOT EXISTS 不会改、必须先 DROP。
@@ -76,6 +212,8 @@ class SqliteMemoryStore:
                 if need_backfill:
                     _backfill_tokens_and_rebuild_fts(self._conn)
                     logger.info("schema backfill completed")
+                if previous_version < 5:
+                    _migrate_core_profile_v5(self._conn)
                 self._conn.execute(
                     "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
@@ -95,7 +233,123 @@ class SqliteMemoryStore:
         with self._lock:
             self._conn.execute("SELECT 1").fetchone()
 
+    @contextmanager
+    def extraction_batch(
+        self,
+        *,
+        observation_id: str,
+        session_id: str,
+        first_source_ref: str | None,
+        last_source_ref: str | None,
+        output_sha256: str,
+        committed_at: datetime,
+    ) -> Iterator[ExtractionTransaction | None]:
+        """Open the all-or-nothing/idempotent boundary for one extraction output."""
+        with self._lock:
+            duplicate = self._conn.execute(
+                "SELECT 1 FROM extraction_commit WHERE observation_id = ?",
+                (observation_id,),
+            ).fetchone()
+            if duplicate is not None:
+                yield None
+                return
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                yield ExtractionTransaction(self._conn)
+                self._conn.execute(
+                    """INSERT INTO extraction_commit
+                           (observation_id, session_id, first_source_ref, last_source_ref,
+                            output_sha256, committed_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        observation_id,
+                        session_id,
+                        first_source_ref,
+                        last_source_ref,
+                        output_sha256,
+                        serialize_ts(committed_at),
+                    ),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
     # ----- 写 -----
+
+    def add_core_profile_entry(self, row: CoreProfileEntry) -> None:
+        """Insert one validated Core Profile version."""
+        validate_core_value(row.field_key, row.value)
+        try:
+            with self._lock:
+                _insert_core_profile_entry(self._conn, row)
+                rows = self._conn.execute(
+                    """SELECT * FROM core_profile_entry
+                       WHERE owner_user_id = ?
+                         AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                         AND valid_until IS NULL AND deleted_at IS NULL""",
+                    (row.owner_user_id, row.persona_id),
+                ).fetchall()
+                build_core_profile(
+                    [_to_core_profile_entry(item) for item in rows],
+                    owner_user_id=row.owner_user_id,
+                    persona_id=row.persona_id,
+                )
+                self._conn.commit()
+        except (sqlite3.Error, ValueError):
+            self._conn.rollback()
+            logger.exception("add_core_profile_entry failed id=%s", row.id)
+            raise
+
+    def supersede_and_add_core_profile_entry(
+        self, old_id: str, row: CoreProfileEntry, valid_until: datetime
+    ) -> bool:
+        """Atomically replace one active Core Profile entry."""
+        validate_core_value(row.field_key, row.value)
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    """
+                    UPDATE core_profile_entry SET valid_until = ?, updated_at = ?
+                    WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL
+                    """,
+                    (serialize_ts(valid_until), serialize_ts(valid_until), old_id),
+                )
+                if cur.rowcount == 0:
+                    self._conn.rollback()
+                    return False
+                _insert_core_profile_entry(self._conn, row)
+                rows = self._conn.execute(
+                    """SELECT * FROM core_profile_entry
+                       WHERE owner_user_id = ?
+                         AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))
+                         AND valid_until IS NULL AND deleted_at IS NULL""",
+                    (row.owner_user_id, row.persona_id),
+                ).fetchall()
+                build_core_profile(
+                    [_to_core_profile_entry(item) for item in rows],
+                    owner_user_id=row.owner_user_id,
+                    persona_id=row.persona_id,
+                )
+                self._conn.commit()
+                return True
+        except (sqlite3.Error, ValueError):
+            self._conn.rollback()
+            logger.exception("supersede_and_add_core_profile_entry failed old=%s", old_id)
+            raise
+
+    def remove_core_profile_entry(self, old_id: str, valid_until: datetime) -> bool:
+        """End one active Core Profile value without creating a replacement."""
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                UPDATE core_profile_entry SET valid_until = ?, updated_at = ?
+                WHERE id = ? AND valid_until IS NULL AND deleted_at IS NULL
+                """,
+                (serialize_ts(valid_until), serialize_ts(valid_until), old_id),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
 
     def add_semantic(self, row: SemanticRow) -> None:
         """插入一条语义记忆，同步写 FTS。"""
@@ -270,12 +524,12 @@ class SqliteMemoryStore:
     ) -> dict[str, int]:
         """软删除来源命中指定 session event 的记忆。
 
-        情节记忆按 ``source_ref`` 的首尾事件 uuid 匹配；语义记忆按
-        ``provenance`` 中被软删的 episodic id 匹配。语义层不排除 pinned，避免旧
-        分支抽取出的高优先级事实继续召回。
+        情节记忆按 ``source_ref`` 的首尾事件 uuid 匹配；Core / Semantic 同时
+        识别直接 fragment source refs 与关联 episodic ids，避免没有 episodic
+        摘要时丢失分支撤回能力。
         """
         if not session_id or not event_uuids:
-            return {"episodic": 0, "semantic": 0}
+            return {"episodic": 0, "semantic": 0, "core": 0}
 
         deleted_at_s = serialize_ts(deleted_at)
         try:
@@ -306,38 +560,75 @@ class SqliteMemoryStore:
                     episodic_count = cur.rowcount
 
                 semantic_count = 0
-                if episodic_ids:
-                    episodic_id_set = set(episodic_ids)
-                    semantic_rows = self._conn.execute(
-                        """
-                        SELECT id, provenance FROM semantic
-                        WHERE deleted_at IS NULL AND valid_until IS NULL
-                        """
-                    ).fetchall()
-                    semantic_ids: list[str] = []
-                    for row in semantic_rows:
-                        try:
-                            provenance = json.loads(row["provenance"])
-                        except (TypeError, json.JSONDecodeError):
-                            provenance = []
-                        if isinstance(provenance, list) and any(
-                            isinstance(item, str) and item in episodic_id_set for item in provenance
-                        ):
-                            semantic_ids.append(str(row["id"]))
-
-                    if semantic_ids:
-                        placeholders = ",".join("?" for _ in semantic_ids)
-                        cur = self._conn.execute(
-                            f"""
-                            UPDATE semantic SET deleted_at = ?, updated_at = ?
-                            WHERE deleted_at IS NULL AND id IN ({placeholders})
-                            """,
-                            [deleted_at_s, deleted_at_s, *semantic_ids],
+                core_count = 0
+                episodic_id_set = set(episodic_ids)
+                semantic_rows = self._conn.execute(
+                    """
+                    SELECT id, provenance FROM semantic
+                    WHERE deleted_at IS NULL AND valid_until IS NULL
+                    """
+                ).fetchall()
+                semantic_ids: list[str] = []
+                for row in semantic_rows:
+                    try:
+                        provenance = json.loads(row["provenance"])
+                    except (TypeError, json.JSONDecodeError):
+                        provenance = []
+                    if isinstance(provenance, list) and any(
+                        isinstance(item, str)
+                        and (
+                            item in episodic_id_set
+                            or _source_ref_touches(item, session_id, event_uuids)
                         )
-                        semantic_count = cur.rowcount
+                        for item in provenance
+                    ):
+                        semantic_ids.append(str(row["id"]))
+
+                if semantic_ids:
+                    placeholders = ",".join("?" for _ in semantic_ids)
+                    cur = self._conn.execute(
+                        f"""
+                        UPDATE semantic SET deleted_at = ?, updated_at = ?
+                        WHERE deleted_at IS NULL AND id IN ({placeholders})
+                        """,
+                        [deleted_at_s, deleted_at_s, *semantic_ids],
+                    )
+                    semantic_count = cur.rowcount
+
+                core_rows = self._conn.execute(
+                    """SELECT id, provenance FROM core_profile_entry
+                       WHERE deleted_at IS NULL AND valid_until IS NULL"""
+                ).fetchall()
+                core_ids: list[str] = []
+                for row in core_rows:
+                    try:
+                        provenance = json.loads(row["provenance"])
+                    except (TypeError, json.JSONDecodeError):
+                        provenance = []
+                    if isinstance(provenance, list) and any(
+                        isinstance(item, str)
+                        and (
+                            item in episodic_id_set
+                            or _source_ref_touches(item, session_id, event_uuids)
+                        )
+                        for item in provenance
+                    ):
+                        core_ids.append(str(row["id"]))
+                if core_ids:
+                    placeholders = ",".join("?" for _ in core_ids)
+                    cur = self._conn.execute(
+                        f"""UPDATE core_profile_entry SET deleted_at = ?, updated_at = ?
+                            WHERE deleted_at IS NULL AND id IN ({placeholders})""",
+                        [deleted_at_s, deleted_at_s, *core_ids],
+                    )
+                    core_count = cur.rowcount
 
                 self._conn.commit()
-                return {"episodic": episodic_count, "semantic": semantic_count}
+                return {
+                    "episodic": episodic_count,
+                    "semantic": semantic_count,
+                    "core": core_count,
+                }
         except sqlite3.Error:
             logger.exception(
                 "soft_delete_by_source_events failed session=%s events=%d",
@@ -347,6 +638,53 @@ class SqliteMemoryStore:
             raise
 
     # ----- 读 -----
+
+    def list_core_profile_entries(
+        self,
+        *,
+        owner_user_id: str,
+        persona_id: str | None,
+        include_history: bool = False,
+    ) -> list[CoreProfileEntry]:
+        """List user-global and current-persona Core Profile rows."""
+        active = "" if include_history else " AND valid_until IS NULL AND deleted_at IS NULL"
+        scope = (
+            " AND (scope_kind = 'user' OR (scope_kind = 'persona' AND persona_id = ?))"
+            if persona_id is not None
+            else ""
+        )
+        params: tuple[object, ...] = (
+            (owner_user_id, persona_id) if persona_id is not None else (owner_user_id,)
+        )
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM core_profile_entry
+                WHERE owner_user_id = ?
+                  {scope}
+                  {active}
+                ORDER BY field_key, normalized_value, id
+                """,
+                params,
+            ).fetchall()
+        return [_to_core_profile_entry(row) for row in rows]
+
+    def core_profile(self, *, owner_user_id: str, persona_id: str) -> CoreProfile:
+        return build_core_profile(
+            self.list_core_profile_entries(owner_user_id=owner_user_id, persona_id=persona_id),
+            owner_user_id=owner_user_id,
+            persona_id=persona_id,
+        )
+
+    def core_profile_entries_by_ids(self, ids: list[str]) -> dict[str, CoreProfileEntry]:
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM core_profile_entry WHERE id IN ({placeholders})", ids
+            ).fetchall()
+        return {str(row["id"]): _to_core_profile_entry(row) for row in rows}
 
     def pinned(self, *, owner_user_id: str, persona_id: str, limit: int = 50) -> list[SemanticRow]:
         """取所有 pinned 的活跃语义记忆（按 importance 倒序）。
@@ -555,6 +893,20 @@ class SqliteMemoryStore:
                 (owner_user_id, limit),
             ).fetchall()
         return [_to_semantic(r) for r in rows]
+
+    def list_active_ordinary_semantic(self, *, owner_user_id: str) -> list[SemanticRow]:
+        """Return every active ordinary Semantic, newest first, without a count cap."""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM semantic
+                WHERE deleted_at IS NULL AND valid_until IS NULL
+                  AND owner_user_id = ? AND memory_class = 'normal' AND pinned = 0
+                ORDER BY updated_at DESC, id ASC
+                """,
+                (owner_user_id,),
+            ).fetchall()
+        return [_to_semantic(row) for row in rows]
 
     def list_semantic(
         self, *, owner_user_id: str, limit: int = 50, offset: int = 0
@@ -782,6 +1134,72 @@ def _to_episodic(r: sqlite3.Row) -> EpisodicRow:
     )
 
 
+def _to_core_profile_entry(r: sqlite3.Row) -> CoreProfileEntry:
+    value = json.loads(r["value_json"])
+    if not isinstance(value, str):
+        raise ValueError(f"core profile value must be a string: {r['id']}")
+    valid_from = parse_ts(r["valid_from"])
+    created_at = parse_ts(r["created_at"])
+    updated_at = parse_ts(r["updated_at"])
+    if valid_from is None or created_at is None or updated_at is None:
+        raise ValueError(f"core profile timestamps are required: {r['id']}")
+    return CoreProfileEntry(
+        id=str(r["id"]),
+        owner_user_id=str(r["owner_user_id"]),
+        scope_kind=r["scope_kind"],
+        persona_id=str(r["persona_id"]),
+        field_key=r["field_key"],
+        value=value,
+        normalized_value=str(r["normalized_value"]),
+        valid_from=valid_from,
+        valid_until=parse_ts(r["valid_until"]),
+        supersedes_id=r["supersedes_id"],
+        provenance=tuple(json.loads(r["provenance"])),
+        created_at=created_at,
+        updated_at=updated_at,
+        deleted_at=parse_ts(r["deleted_at"]),
+    )
+
+
+def _insert_core_profile_entry(conn: sqlite3.Connection, row: CoreProfileEntry) -> None:
+    spec = CORE_FIELD_SPECS[row.field_key]
+    expected_persona = row.persona_id if spec.scope_kind == "persona" else ""
+    if (
+        row.scope_kind != spec.scope_kind
+        or row.persona_id != expected_persona
+        or (spec.scope_kind == "persona" and not row.persona_id)
+    ):
+        raise ValueError(f"invalid scope for {row.field_key}")
+    value = validate_core_value(row.field_key, row.value)
+    if row.value != value or row.normalized_value != normalize_core_value(value):
+        raise ValueError(f"invalid normalized value for {row.field_key}")
+    conn.execute(
+        """
+        INSERT INTO core_profile_entry(
+            id, owner_user_id, scope_kind, persona_id, field_key, value_json,
+            normalized_value, valid_from, valid_until, supersedes_id, provenance,
+            created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row.id,
+            row.owner_user_id,
+            row.scope_kind,
+            row.persona_id,
+            row.field_key,
+            json.dumps(row.value, ensure_ascii=False),
+            row.normalized_value,
+            serialize_ts(row.valid_from),
+            serialize_ts(row.valid_until),
+            row.supersedes_id,
+            json.dumps(list(row.provenance), ensure_ascii=False),
+            serialize_ts(row.created_at),
+            serialize_ts(row.updated_at),
+            serialize_ts(row.deleted_at),
+        ),
+    )
+
+
 _MAX_QUERY_TOKENS = 64
 """单次 MATCH 拼接的 query token 上限，防超长 query 生成过多子句。"""
 
@@ -829,6 +1247,16 @@ def _fts_query(text: str) -> str | None:
 
 
 # ===== schema migration =====
+
+
+def _schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+    ).fetchone()
+    if row is None:
+        return 0
+    meta = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+    return int(meta["value"]) if meta else 1
 
 
 def _premigrate_schema(conn: sqlite3.Connection) -> bool:
@@ -938,3 +1366,127 @@ def _migrate_legacy_pinned(conn: sqlite3.Connection) -> None:
             "UPDATE semantic SET memory_class = ?, fact_key = COALESCE(fact_key, ?) WHERE id = ?",
             (memory_class, fact_key, row["id"]),
         )
+
+
+_V5_VALUE_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    "user.name": (
+        re.compile(r"^用户(?:的)?(?:名字|姓名)(?:是|叫|为)\s*(.+)$"),
+        re.compile(r"^用户(?:叫|名叫)\s*(.+)$"),
+    ),
+    "agent.name": (
+        re.compile(r"^(?:AI|助手|智能体|agent)(?:的)?(?:名字|名称)(?:是|叫|为)\s*(.+)$", re.I),
+        re.compile(r"^(?:AI|助手|智能体|agent)(?:叫|名叫)\s*(.+)$", re.I),
+    ),
+    "user.residence": (re.compile(r"^用户(?:目前|现在)?(?:住在|居住在|定居在|家住)\s*(.+)$"),),
+}
+
+
+def _migrate_core_profile_v5(conn: sqlite3.Connection) -> None:
+    """Conservatively project unambiguous v4 fact keys into Core Profile."""
+    rows = conn.execute(
+        """
+        SELECT * FROM semantic
+        WHERE deleted_at IS NULL AND valid_until IS NULL
+        ORDER BY updated_at DESC, id ASC
+        """
+    ).fetchall()
+    candidates: dict[
+        tuple[str, CoreScopeKind, str, CoreFieldKey], list[tuple[sqlite3.Row, str]]
+    ] = {}
+    key_map: dict[str, CoreFieldKey] = {
+        "user.name": "user.preferred_name",
+        "user.residence": "user.current_residences",
+        "agent.name": "relationship.agent_nickname",
+    }
+    for row in rows:
+        old_key = row["fact_key"]
+        field_key = key_map.get(old_key)
+        if field_key is None:
+            continue
+        value = _extract_v5_value(str(row["statement"]), old_key)
+        if value is None:
+            continue
+        spec = CORE_FIELD_SPECS[field_key]
+        persona_id = str(row["persona_id"]) if spec.scope_kind == "persona" else ""
+        if spec.scope_kind == "persona" and not persona_id:
+            continue
+        group = (str(row["owner_user_id"]), spec.scope_kind, persona_id, field_key)
+        candidates.setdefault(group, []).append((row, value))
+
+    now = datetime.now(UTC)
+    migrated_ids: set[str] = set()
+    for (owner, scope_kind, persona_id, field_key), grouped in candidates.items():
+        spec = CORE_FIELD_SPECS[field_key]
+        if spec.cardinality == "single" and len(grouped) != 1:
+            logger.warning(
+                "core migration kept ambiguous singleton as ordinary field=%s count=%d",
+                field_key,
+                len(grouped),
+            )
+            continue
+        seen_values: set[str] = set()
+        for row, value in grouped:
+            normalized = normalize_core_value(value)
+            if normalized in seen_values:
+                migrated_ids.add(str(row["id"]))
+                continue
+            seen_values.add(normalized)
+            created_at = parse_ts(row["created_at"]) or now
+            updated_at = parse_ts(row["updated_at"]) or created_at
+            valid_from = parse_ts(row["valid_from"]) or created_at
+            _insert_core_profile_entry(
+                conn,
+                CoreProfileEntry(
+                    id=str(uuid4()),
+                    owner_user_id=owner,
+                    scope_kind=scope_kind,
+                    persona_id=persona_id,
+                    field_key=field_key,
+                    value=value,
+                    normalized_value=normalized,
+                    valid_from=valid_from,
+                    valid_until=None,
+                    supersedes_id=None,
+                    provenance=tuple(json.loads(row["provenance"])),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                ),
+            )
+            migrated_ids.add(str(row["id"]))
+
+    if migrated_ids:
+        placeholders = ",".join("?" for _ in migrated_ids)
+        conn.execute(
+            f"""
+            UPDATE semantic SET valid_until = ?, updated_at = ?
+            WHERE id IN ({placeholders}) AND valid_until IS NULL AND deleted_at IS NULL
+            """,
+            [serialize_ts(now), serialize_ts(now), *sorted(migrated_ids)],
+        )
+    conn.execute(
+        """
+        UPDATE semantic SET pinned = 0, memory_class = 'normal', fact_key = NULL
+        WHERE deleted_at IS NULL AND valid_until IS NULL
+        """
+    )
+
+
+def _extract_v5_value(statement: str, old_key: str) -> str | None:
+    for pattern in _V5_VALUE_PATTERNS.get(old_key, ()):
+        match = pattern.fullmatch(statement.strip())
+        if match is None:
+            continue
+        value = match.group(1).strip().rstrip("。.!！")
+        if old_key == "user.residence" and re.search(r"[、,，/]|(?:和|及)", value):
+            return None
+        value_key_map: dict[str, CoreFieldKey] = {
+            "user.name": "user.preferred_name",
+            "user.residence": "user.current_residences",
+            "agent.name": "relationship.agent_nickname",
+        }
+        field_key = value_key_map[old_key]
+        try:
+            return validate_core_value(field_key, value)
+        except ValueError:
+            return None
+    return None

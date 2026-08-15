@@ -977,6 +977,14 @@ fn spawn_service(
         command.env("VOICE_BRIDGE_PUBLIC_URL", public_url);
     }
     let mut child = command
+        .env(
+            "AGENT_FRIEND_MEMORY_INSPECTOR_ENABLED",
+            if crate::owner_capabilities::local_capabilities().memory_inspector {
+                "true"
+            } else {
+                "false"
+            },
+        )
         .env("AGENT_FRIEND_LIFECYCLE_TOKEN", token)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")

@@ -47,6 +47,9 @@ class EvalQuestion:
             缺失为空列表。
         anchors: 答案关键 token 列表（PerLTQA 的 ``Memory Anchors`` token，丢弃字符 span）。
             仅 PerLTQA 填充，其它基准默认空列表。供 anchor 召回判分器使用。
+        expected_memory_layer: 产品切片可声明 anchor 必须出现在哪个记忆层；普通基准为空。
+        expected_core_field: Core 产品切片可进一步约束必须由哪个 Core 字段承载。
+        forbidden_memory_layers: 出现等价 anchor 即判为分层违规的记忆层。
     """
 
     question: str
@@ -54,6 +57,9 @@ class EvalQuestion:
     category: str | None
     evidence: list[str]
     anchors: list[str] = field(default_factory=list)
+    expected_memory_layer: str | None = None
+    expected_core_field: str | None = None
+    forbidden_memory_layers: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

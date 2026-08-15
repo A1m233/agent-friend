@@ -9,6 +9,7 @@ export interface Persona {
 }
 
 export interface SemanticRow {
+  kind: "ordinary";
   id: string;
   statement: string;
   persona_id: string;
@@ -27,6 +28,31 @@ export interface SemanticRow {
   deleted_at: string | null;
   owner_user_id: string;
 }
+
+export interface CoreProfileEntry {
+  kind: "core";
+  id: string;
+  owner_user_id: string;
+  scope_kind: "user" | "persona";
+  persona_id: string;
+  field_key:
+    | "user.preferred_name"
+    | "user.current_residences"
+    | "relationship.kind"
+    | "relationship.agent_nickname";
+  value: string;
+  normalized_value: string;
+  valid_from: string;
+  valid_until: string | null;
+  supersedes_id: string | null;
+  provenance: string[];
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export type InspectorSemanticRow = SemanticRow | CoreProfileEntry;
+export type SemanticKind = "all" | "core" | "ordinary";
 
 export interface EpisodicRow {
   id: string;
@@ -128,8 +154,15 @@ export async function listPersonas(): Promise<Persona[]> {
   return fetchJson<Persona[]>("/v1/personas");
 }
 
-export async function listSemantic(limit = 50, offset = 0): Promise<SemanticRow[]> {
-  return fetchJson<SemanticRow[]>(`/v1/memory/semantic?limit=${limit}&offset=${offset}`);
+export async function listSemantic(
+  kind: SemanticKind = "ordinary",
+  personaId: string | null = null,
+  limit = 50,
+  offset = 0,
+): Promise<InspectorSemanticRow[]> {
+  const params = new URLSearchParams({ kind, limit: String(limit), offset: String(offset) });
+  if (personaId) params.set("persona_id", personaId);
+  return fetchJson<InspectorSemanticRow[]>(`/v1/memory/semantic?${params.toString()}`);
 }
 
 export async function listEpisodic(
