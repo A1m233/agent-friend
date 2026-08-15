@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,7 @@ class StubStreamSession:
         self.finished: list[str] = []
         self.aborted: list[tuple[str, str]] = []
         self.failed = False
+        self.update_event = asyncio.Event()
 
     @property
     def has_started(self) -> bool:
@@ -32,6 +34,7 @@ class StubStreamSession:
 
     async def update(self, full_text: str) -> None:
         self.updates.append(full_text)
+        self.update_event.set()
 
     async def finish(self, full_text: str) -> None:
         self.finished.append(full_text)
@@ -89,8 +92,6 @@ async def test_relay_sends_latest_snapshot_after_throttle(
 
 @pytest.mark.asyncio
 async def test_relay_drains_burst_to_one_cumulative_update() -> None:
-    import asyncio
-
     session = StubStreamSession()
     relay = StreamRelay(session, stream_trace="trace-2", throttle_seconds=60)
     queue: asyncio.Queue[object] = asyncio.Queue()
@@ -104,6 +105,29 @@ async def test_relay_drains_burst_to_one_cumulative_update() -> None:
 
     assert session.updates == ["abc"]
     assert relay.full_text == "abc"
+
+
+@pytest.mark.asyncio
+async def test_relay_time_flushes_when_text_pauses_before_turn_end() -> None:
+    session = StubStreamSession()
+    relay = StreamRelay(session, stream_trace="trace-pause", throttle_seconds=0.02)
+    queue: asyncio.Queue[object] = asyncio.Queue()
+    end = object()
+    task = asyncio.create_task(relay.feed_from_queue(queue, end))
+
+    try:
+        await queue.put("我")
+        await asyncio.wait_for(session.update_event.wait(), timeout=0.2)
+        session.update_event.clear()
+
+        await queue.put("已经开始查了")
+        await asyncio.wait_for(session.update_event.wait(), timeout=0.2)
+
+        assert session.updates == ["我", "我已经开始查了"]
+        assert task.done() is False
+    finally:
+        await queue.put(end)
+        await task
 
 
 def stream_context() -> OutboundStreamContext:
