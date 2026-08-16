@@ -11,7 +11,10 @@ from memory.extraction import (
     ExtractionResult,
     Extractor,
     Reconciler,
+    SemanticChange,
+    SemanticFactDraft,
     SemanticOp,
+    SemanticRetirement,
 )
 from memory.extraction.extractor import _PROMPT_PATH, _parse_output
 from memory.extraction.reconciler import ExtractionApplyError
@@ -163,7 +166,7 @@ def test_reconciler_requires_exact_visible_ref_and_rolls_back_whole_batch() -> N
     assert store.list_semantic(owner_user_id="local") == []
 
 
-def test_reconciler_supersede_never_degrades_to_add() -> None:
+def test_legacy_supersede_converts_to_change_without_writing_scalar_lineage() -> None:
     store = SqliteMemoryStore(":memory:")
     store.add_semantic(_semantic("old-job", "用户目前在腾讯工作"))
     fragment = _fragment("我现在在字节跳动工作")
@@ -181,7 +184,145 @@ def test_reconciler_supersede_never_degrades_to_add() -> None:
     Reconciler(store).apply(output, fragment, context)
     active = store.list_semantic(owner_user_id="local")
     assert [row.statement for row in active] == ["用户目前在字节跳动工作"]
-    assert active[0].supersedes_id == "old-job"
+    assert active[0].supersedes_id is None
+    changes = store.list_semantic_changes(owner_user_id="local")
+    assert len(changes) == 1
+    assert {(member.role, member.semantic_id) for member in changes[0].members} == {
+        ("retired", "old-job"),
+        ("introduced", active[0].id),
+    }
+
+
+def test_extractor_parses_v2_many_to_many_change_and_contract_version() -> None:
+    output = _parse_output(
+        '{"core_updates":[],"semantic_changes":[{"retirements":['
+        '{"target_ref":"M001","reason":"旧事实一不再准确"},'
+        '{"target_ref":"M002","reason":"旧事实二不再准确"}],"new_facts":['
+        '{"statement":"新事实一","reason":"普通长期事实","importance":0.8},'
+        '{"statement":"新事实二","reason":"另一普通长期事实",'
+        '"speaker_origin":"agent"}]}],"episodic_entries":[]}'
+    )
+    assert output.output_contract_version == 2
+    assert output.validation_error is None
+    assert output.semantic_changes == [
+        SemanticChange(
+            retirements=[
+                SemanticRetirement("M001", "旧事实一不再准确"),
+                SemanticRetirement("M002", "旧事实二不再准确"),
+            ],
+            new_facts=[
+                SemanticFactDraft("新事实一", "普通长期事实", importance=0.8),
+                SemanticFactDraft("新事实二", "另一普通长期事实", speaker_origin="agent"),
+            ],
+        )
+    ]
+
+
+def test_extractor_rejects_ambiguous_or_reasonless_v2_contract() -> None:
+    ambiguous = _parse_output(
+        '{"core_updates":[],"semantic_changes":[],"semantic_ops":[],"episodic_entries":[]}'
+    )
+    assert ambiguous.validation_error == "ambiguous_semantic_contract"
+    reasonless = _parse_output(
+        '{"core_updates":[],"semantic_changes":[{"retirements":['
+        '{"target_ref":"M001","reason":""}],"new_facts":[]}],'
+        '"episodic_entries":[]}'
+    )
+    assert reasonless.validation_error == "invalid_operation_shape_or_reason"
+
+
+def test_reconciler_applies_many_to_many_change_and_preserves_member_reasons() -> None:
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_semantic("old-1", "用户每周运动三次"))
+    store.add_semantic(_semantic("old-2", "用户通常隔天运动"))
+    fragment = _fragment("前两种说法都不准，我周六骑行、周日徒步")
+    context = ExtractionContextBuilder(store).build(fragment)
+    refs = {row.id: ref for ref, row in context.semantic_facts}
+    output = ExtractionOutput(
+        semantic_changes=[
+            SemanticChange(
+                retirements=[
+                    SemanticRetirement(refs["old-1"], "频率已被用户纠正"),
+                    SemanticRetirement(refs["old-2"], "间隔说法已被用户纠正"),
+                ],
+                new_facts=[
+                    SemanticFactDraft("用户通常周六骑行", "稳定活动习惯"),
+                    SemanticFactDraft("用户通常周日徒步", "另一项稳定活动习惯"),
+                ],
+            )
+        ]
+    )
+    result = Reconciler(store).apply(output, fragment, context)
+    assert len(result.semantic_change_ids) == 1
+    assert set(result.retired_semantic) == {
+        "用户每周运动三次",
+        "用户通常隔天运动",
+    }
+    assert {row.statement for row in store.list_semantic(owner_user_id="local")} == {
+        "用户通常周六骑行",
+        "用户通常周日徒步",
+    }
+    change = store.list_semantic_changes(owner_user_id="local")[0]
+    assert change.id == result.semantic_change_ids[0]
+    assert {member.reason for member in change.members} == {
+        "频率已被用户纠正",
+        "间隔说法已被用户纠正",
+        "稳定活动习惯",
+        "另一项稳定活动习惯",
+    }
+
+
+def test_reconciler_retracts_without_new_fact_or_soft_delete() -> None:
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_semantic("old-plan", "用户正在准备资格考试"))
+    fragment = _fragment("我已经取消考试计划")
+    context = ExtractionContextBuilder(store).build(fragment)
+    ref = context.semantic_facts[0][0]
+    Reconciler(store).apply(
+        ExtractionOutput(
+            semantic_changes=[
+                SemanticChange(retirements=[SemanticRetirement(ref, "用户明确取消了计划")])
+            ]
+        ),
+        fragment,
+        context,
+    )
+    assert store.list_semantic(owner_user_id="local") == []
+    historical = store._conn.execute(
+        "SELECT valid_until, deleted_at FROM semantic WHERE id = 'old-plan'"
+    ).fetchone()
+    assert historical["valid_until"] is not None
+    assert historical["deleted_at"] is None
+
+
+def test_reconciler_rolls_back_entire_change_when_one_target_is_stale() -> None:
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_semantic("old-a", "旧事实 A"))
+    store.add_semantic(_semantic("old-b", "旧事实 B"))
+    fragment = _fragment("纠正两条旧事实")
+    context = ExtractionContextBuilder(store).build(fragment)
+    refs = {row.id: ref for ref, row in context.semantic_facts}
+    store.supersede_semantic("old-b", datetime(2026, 8, 16, tzinfo=UTC))
+    with pytest.raises(ExtractionApplyError) as error:
+        Reconciler(store).apply(
+            ExtractionOutput(
+                semantic_changes=[
+                    SemanticChange(
+                        retirements=[
+                            SemanticRetirement(refs["old-a"], "需要纠正"),
+                            SemanticRetirement(refs["old-b"], "需要纠正"),
+                        ],
+                        new_facts=[SemanticFactDraft("新事实", "稳定普通事实")],
+                    )
+                ]
+            ),
+            fragment,
+            context,
+        )
+    assert error.value.code == "stale_semantic_ref"
+    active = store.list_semantic(owner_user_id="local")
+    assert [row.id for row in active] == ["old-a"]
+    assert store.list_semantic_changes(owner_user_id="local") == []
 
 
 def test_reconciler_observation_identity_is_idempotent_even_for_empty_output() -> None:

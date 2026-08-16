@@ -11,11 +11,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from memory import (
+    CoreUpdate,
     ExtractionAttempt,
     ExtractionOutput,
     Extractor,
     Reconciler,
+    SemanticChange,
+    SemanticFactDraft,
     SemanticOp,
+    SemanticRetirement,
     SqliteMemoryStore,
 )
 from memory_eval.adapters import case_fragments
@@ -242,12 +246,30 @@ def _rebuild_store(
 
 
 def _deserialize_output(payload: dict[str, Any]) -> ExtractionOutput:
+    raw_changes = payload.get("semantic_changes")
+    if isinstance(raw_changes, list):
+        changes = [
+            SemanticChange(
+                retirements=[SemanticRetirement(**item) for item in change.get("retirements", [])],
+                new_facts=[SemanticFactDraft(**item) for item in change.get("new_facts", [])],
+            )
+            for change in raw_changes
+        ]
+        return ExtractionOutput(
+            core_updates=[CoreUpdate(**item) for item in payload.get("core_updates", [])],
+            episodic_entries=[str(item) for item in payload.get("episodic_entries", [])],
+            semantic_changes=changes,
+            output_contract_version=int(payload.get("output_contract_version", 2)),
+            validation_error=payload.get("validation_error"),
+        )
     return ExtractionOutput(
+        core_updates=[CoreUpdate(**item) for item in payload.get("core_updates", [])],
         episodic_entries=[str(item) for item in payload.get("episodic_entries", [])],
         semantic_ops=[
             SemanticOp(**{"reason": "legacy factorial extraction record", **item})
             for item in payload.get("semantic_ops", [])
         ],
+        validation_error=payload.get("validation_error"),
     )
 
 

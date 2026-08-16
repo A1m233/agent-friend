@@ -34,7 +34,13 @@ from agent.paths import memory_db_path
 from llm_providers import LLMAuthError, LLMClient, ProviderSpec
 from memory import ExtractionAttempt
 from memory_eval.adapters import case_fragments
-from memory_eval.datasets import EvalCase, load_core_profile_cases, load_locomo, load_perltqa
+from memory_eval.datasets import (
+    EvalCase,
+    load_core_profile_cases,
+    load_locomo,
+    load_perltqa,
+    load_semantic_change_cases,
+)
 from memory_eval.harness import (
     AnchorRecallJudge,
     CaseOutcome,
@@ -71,8 +77,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _EXTRACTION_PROMPT_REPO_PATH = "memory/src/memory/extraction/prompts/extract.md"
 _CURRENT_EXTRACTION_PROMPT = _REPO_ROOT / _EXTRACTION_PROMPT_REPO_PATH
 _CORE_PROFILE_DATASET_SOURCE = Path(__file__).resolve().parent / "datasets" / "core_profile.py"
+_SEMANTIC_CHANGE_DATASET_SOURCE = (
+    Path(__file__).resolve().parent / "datasets" / "semantic_changes.py"
+)
 
-_DATASETS = ("perltqa", "locomo", "core-profile")
+_DATASETS = ("perltqa", "locomo", "core-profile", "semantic-change")
 
 
 def _credential_source() -> CredentialSource:
@@ -159,7 +168,7 @@ def _nonnegative_float(value: str) -> float:
 
 def _pick_judge(dataset: str) -> Judge:
     """PerLTQA 用 AnchorRecallJudge（数据自带 anchor）；其它数据集继续 NoopJudge。"""
-    if dataset == "core-profile":
+    if dataset in ("core-profile", "semantic-change"):
         return LayerConstrainedAnchorJudge()
     if dataset == "perltqa":
         return AnchorRecallJudge()
@@ -172,6 +181,8 @@ def _dataset_paths(dataset: str) -> tuple[Path, ...]:
         return (_LOCOMO_PATH,)
     if dataset == "core-profile":
         return (_CORE_PROFILE_DATASET_SOURCE,)
+    if dataset == "semantic-change":
+        return (_SEMANTIC_CHANGE_DATASET_SOURCE,)
     return (_PERLTQA_MEM, _PERLTQA_QA)
 
 
@@ -191,6 +202,8 @@ def _load_cases(dataset: str, limit_samples: int) -> tuple[list[EvalCase], str |
 
     if dataset == "core-profile":
         return load_core_profile_cases(limit_samples=limit_samples), None
+    if dataset == "semantic-change":
+        return load_semantic_change_cases(limit_samples=limit_samples), None
 
     if not _PERLTQA_MEM.exists() or not _PERLTQA_QA.exists():
         return [], (
@@ -210,7 +223,10 @@ def _parse_args() -> argparse.Namespace:
         "--dataset",
         choices=_DATASETS,
         default="perltqa",
-        help="评测基准：perltqa（默认）/ locomo / core-profile（084 产品回归切片）",
+        help=(
+            "评测基准：perltqa（默认）/ locomo / core-profile（084 产品回归切片）/ "
+            "semantic-change（086 变更图切片）"
+        ),
     )
     p.add_argument("--limit-samples", type=int, default=1, help="只跑前 N 个样本（控制成本）")
     p.add_argument("--limit-questions", type=int, default=5, help="每个样本只问前 N 个问题")

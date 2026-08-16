@@ -75,6 +75,7 @@ class Reconciler:
         provenance = [*source_refs, *episodic_ids]
         added_semantic: list[str] = []
         superseded_semantic: list[str] = []
+        semantic_change_ids: list[str] = []
         added_core: list[str] = []
         replaced_core: list[str] = []
         removed_core: list[str] = []
@@ -85,6 +86,7 @@ class Reconciler:
             first_source_ref=first_ref,
             last_source_ref=last_ref,
             output_sha256=output_sha256,
+            output_contract_version=output.output_contract_version,
             committed_at=now,
         ) as tx:
             if tx is None:
@@ -93,7 +95,22 @@ class Reconciler:
                     observation_id=observation_id,
                     committed=False,
                     duplicate=True,
+                    output_contract_version=output.output_contract_version,
                 )
+
+            # Recheck every referenced Semantic before performing any mutation.
+            # The surrounding transaction still guarantees rollback if a target
+            # becomes stale between context construction and this point.
+            for change in output.semantic_changes:
+                for retirement in change.retirements:
+                    semantic_precheck_target = extraction_context.semantic_ref_map[
+                        retirement.target_ref
+                    ]
+                    if not tx.semantic_is_active(semantic_precheck_target.id):
+                        raise ExtractionApplyError(
+                            "stale_semantic_ref",
+                            f"stale Semantic ref: {retirement.target_ref}",
+                        )
 
             for update in output.core_updates:
                 spec = CORE_FIELD_SPECS[update.field]
@@ -144,43 +161,64 @@ class Reconciler:
                     persona_id=fragment.persona_id,
                 )
 
-            for op in output.semantic_ops:
-                semantic_target = (
-                    extraction_context.semantic_ref_map[op.target_ref]
-                    if op.target_ref is not None
-                    else None
+            for change in output.semantic_changes:
+                change_id = str(uuid4())
+                semantic_change_ids.append(change_id)
+                tx.add_semantic_change(
+                    change_id=change_id,
+                    observation_id=observation_id,
+                    owner_user_id=fragment.owner_user_id,
+                    persona_id=fragment.persona_id,
+                    origin="extracted",
+                    provenance=provenance,
+                    created_at=now,
                 )
-                if semantic_target is not None:
-                    if not tx.semantic_is_active(semantic_target.id) or not tx.end_semantic(
-                        semantic_target.id, now
-                    ):
+                for retirement in change.retirements:
+                    semantic_target = extraction_context.semantic_ref_map[retirement.target_ref]
+                    if not tx.end_semantic(semantic_target.id, now):
                         raise ExtractionApplyError(
-                            "stale_semantic_ref", f"stale Semantic ref: {op.target_ref}"
+                            "stale_semantic_ref",
+                            f"stale Semantic ref: {retirement.target_ref}",
                         )
-                    superseded_semantic.append(semantic_target.statement)
-                importance = min(
-                    1.0, op.importance + (self._bonus if op.speaker_origin == "user" else 0)
-                )
-                tx.add_semantic(
-                    SemanticRow(
-                        id=str(uuid4()),
-                        statement=op.statement,
-                        persona_id=fragment.persona_id,
-                        created_at=now,
-                        updated_at=now,
-                        importance=importance,
-                        pinned=False,
-                        source="extracted",
-                        speaker_origin=op.speaker_origin,
-                        valid_from=now,
-                        provenance=list(provenance),
-                        owner_user_id=fragment.owner_user_id,
-                        memory_class="normal",
-                        fact_key=None,
-                        supersedes_id=semantic_target.id if semantic_target is not None else None,
+                    tx.add_semantic_change_member(
+                        change_id=change_id,
+                        semantic_id=semantic_target.id,
+                        role="retired",
+                        reason=retirement.reason,
                     )
-                )
-                added_semantic.append(op.statement)
+                    superseded_semantic.append(semantic_target.statement)
+                for fact in change.new_facts:
+                    importance = min(
+                        1.0,
+                        fact.importance + (self._bonus if fact.speaker_origin == "user" else 0),
+                    )
+                    semantic_id = str(uuid4())
+                    tx.add_semantic(
+                        SemanticRow(
+                            id=semantic_id,
+                            statement=fact.statement,
+                            persona_id=fragment.persona_id,
+                            created_at=now,
+                            updated_at=now,
+                            importance=importance,
+                            pinned=False,
+                            source="extracted",
+                            speaker_origin=fact.speaker_origin,
+                            valid_from=now,
+                            provenance=list(provenance),
+                            owner_user_id=fragment.owner_user_id,
+                            memory_class="normal",
+                            fact_key=None,
+                            supersedes_id=None,
+                        )
+                    )
+                    tx.add_semantic_change_member(
+                        change_id=change_id,
+                        semantic_id=semantic_id,
+                        role="introduced",
+                        reason=fact.reason,
+                    )
+                    added_semantic.append(fact.statement)
 
             for row in episodic_rows:
                 tx.add_episodic(row)
@@ -189,6 +227,10 @@ class Reconciler:
             session_id=fragment.session_id,
             observation_id=observation_id,
             episodic_ids=episodic_ids,
+            semantic_change_ids=semantic_change_ids,
+            introduced_semantic=added_semantic,
+            retired_semantic=superseded_semantic,
+            output_contract_version=output.output_contract_version,
             added_semantic=added_semantic,
             superseded_semantic=superseded_semantic,
             added_core=added_core,
@@ -249,18 +291,32 @@ def _validate_output(output: ExtractionOutput, context: ExtractionContext) -> No
             touched_single_fields.add(update.field)
 
     touched_semantic: set[str] = set()
-    for op in output.semantic_ops:
-        if not op.reason.strip():
-            raise ExtractionApplyError("missing_semantic_reason", op.statement)
-        if op.op == "add":
-            if op.target_ref is not None:
-                raise ExtractionApplyError("add_has_semantic_ref", op.target_ref)
-        else:
-            if op.target_ref is None or op.target_ref not in semantic_refs:
-                raise ExtractionApplyError("unknown_semantic_ref", op.target_ref or "")
-            if op.target_ref in touched_semantic:
-                raise ExtractionApplyError("duplicate_semantic_target", op.target_ref)
-            touched_semantic.add(op.target_ref)
+    new_statements: set[str] = set()
+    for change_index, change in enumerate(output.semantic_changes):
+        if not change.retirements and not change.new_facts:
+            raise ExtractionApplyError("empty_semantic_change", str(change_index))
+        local_refs: set[str] = set()
+        for retirement in change.retirements:
+            if not retirement.reason.strip():
+                raise ExtractionApplyError(
+                    "missing_semantic_retirement_reason", retirement.target_ref
+                )
+            if retirement.target_ref not in semantic_refs:
+                raise ExtractionApplyError("unknown_semantic_ref", retirement.target_ref)
+            if retirement.target_ref in local_refs or retirement.target_ref in touched_semantic:
+                raise ExtractionApplyError("duplicate_semantic_target", retirement.target_ref)
+            local_refs.add(retirement.target_ref)
+            touched_semantic.add(retirement.target_ref)
+        for fact in change.new_facts:
+            if not fact.statement.strip():
+                raise ExtractionApplyError("empty_semantic_statement", str(change_index))
+            if not fact.reason.strip():
+                raise ExtractionApplyError("missing_semantic_reason", fact.statement)
+            if fact.speaker_origin not in ("user", "agent"):
+                raise ExtractionApplyError("invalid_semantic_speaker", fact.speaker_origin)
+            if fact.statement in new_statements:
+                raise ExtractionApplyError("duplicate_semantic_statement", fact.statement)
+            new_statements.add(fact.statement)
 
 
 def _episodic_rows(

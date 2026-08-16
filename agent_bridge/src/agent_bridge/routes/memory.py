@@ -3,6 +3,7 @@
 | Endpoint | 用途 |
 |---|---|
 | GET  /v1/memory/semantic       | list semantic |
+| GET  /v1/memory/semantic-changes | list Semantic change history |
 | GET  /v1/memory/episodic       | list episodic（可按 persona 过滤） |
 | GET  /v1/memory/search         | FTS 关键字搜（layer = semantic / episodic / both） |
 | GET  /v1/memory/recalls        | ring buffer snapshot |
@@ -97,6 +98,26 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "profile": profile.as_dict(),
             "entries": [_dataclass_to_dict(row) for row in profile.entries],
         }
+
+    @router.get("/semantic-changes")
+    def list_semantic_changes(
+        persona_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return owner-scoped Semantic change lineage for diagnostics."""
+        if limit < 1 or limit > 200 or offset < 0:
+            raise HTTPException(
+                status_code=422,
+                detail="limit must be between 1 and 200 and offset must be non-negative",
+            )
+        rows = _store().list_semantic_changes(
+            owner_user_id=OWNER,
+            persona_id=persona_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [_dataclass_to_dict(row) for row in rows]
 
     @router.get("/episodic")
     def list_episodic(

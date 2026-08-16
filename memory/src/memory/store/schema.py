@@ -17,12 +17,14 @@ __all__ = [
     "SCHEMA_VERSION",
     "EpisodicRow",
     "MemoryClass",
+    "SemanticChangeMemberRow",
+    "SemanticChangeRow",
     "SemanticRow",
     "parse_ts",
     "serialize_ts",
 ]
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 """记忆库 schema 版本。
 
 - v1：semantic/episodic 表，FTS5 `tokenize='trigram'` 直接索引原文列
@@ -32,6 +34,7 @@ SCHEMA_VERSION = 5
 - v3（048 M48.2）：semantic 增加 memory_class / fact_key / supersedes_id。
 - v4（048 M48.3）：增加 embedding generation / manifest 派生索引元数据。
 - v5（084）：增加独立、版本化 Core Profile 与 extraction commit。
+- v6（086）：增加普通 Semantic 多对多 change/member 谱系与抽取输出契约版本。
 """
 
 MemoryClass = Literal["core", "priority", "normal"]
@@ -93,6 +96,33 @@ class EpisodicRow:
     participants: list[str] = field(default_factory=list)
     deleted_at: datetime | None = None
     owner_user_id: str = "local"
+
+
+@dataclass(frozen=True)
+class SemanticChangeMemberRow:
+    """One introduced or retired member of a Semantic change event."""
+
+    semantic_id: str
+    role: Literal["introduced", "retired"]
+    reason: str
+    statement: str = ""
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
+
+@dataclass(frozen=True)
+class SemanticChangeRow:
+    """Diagnostic projection of one atomic Semantic change event."""
+
+    id: str
+    observation_id: str | None
+    owner_user_id: str
+    persona_id: str
+    origin: str
+    provenance: tuple[str, ...]
+    created_at: datetime
+    output_contract_version: int | None = None
+    members: tuple[SemanticChangeMemberRow, ...] = ()
 
 
 DDL_STATEMENTS: tuple[str, ...] = (
@@ -202,8 +232,45 @@ DDL_STATEMENTS: tuple[str, ...] = (
         first_source_ref TEXT,
         last_source_ref  TEXT,
         output_sha256    TEXT NOT NULL,
+        output_contract_version INTEGER NOT NULL DEFAULT 1,
         committed_at     TEXT NOT NULL
     )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS semantic_change (
+        id              TEXT PRIMARY KEY,
+        observation_id  TEXT,
+        owner_user_id   TEXT NOT NULL,
+        persona_id      TEXT NOT NULL,
+        origin          TEXT NOT NULL,
+        provenance      TEXT NOT NULL DEFAULT '[]',
+        created_at      TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS semantic_change_member (
+        change_id       TEXT NOT NULL,
+        semantic_id     TEXT NOT NULL,
+        role            TEXT NOT NULL,
+        reason          TEXT NOT NULL,
+        PRIMARY KEY (change_id, semantic_id, role),
+        FOREIGN KEY (change_id) REFERENCES semantic_change(id) ON DELETE CASCADE,
+        FOREIGN KEY (semantic_id) REFERENCES semantic(id) ON DELETE RESTRICT,
+        CHECK (role IN ('introduced', 'retired')),
+        CHECK (length(trim(reason)) > 0)
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_member_introduced_once
+    ON semantic_change_member(semantic_id) WHERE role = 'introduced'
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_semantic_member_retired_once
+    ON semantic_change_member(semantic_id) WHERE role = 'retired'
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_semantic_change_scope
+    ON semantic_change(owner_user_id, persona_id, created_at)
     """,
     """
     CREATE TABLE IF NOT EXISTS embedding_generation (

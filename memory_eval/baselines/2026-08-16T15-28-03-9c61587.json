@@ -1,0 +1,428 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-16T15:28:03.178470+00:00",
+    "ended_at": "2026-08-16T15:28:22.296330+00:00",
+    "duration_seconds": 19.118,
+    "git_commit": "9c61587",
+    "working_tree_dirty": true,
+    "dataset": "semantic-change",
+    "limit_samples": 4,
+    "limit_questions": 1,
+    "note": "req086 semantic change first validation",
+    "retrieval": {
+      "mode": "keyword",
+      "workspace": "C:\\Users\\example-user\\.codex\\worktrees\\89b0\\agent-friend\\memory_eval\\data\\runs\\req086-semantic-change-20260816-1",
+      "code_fingerprint": "1758a7f1445bb1f7f0ab9f78298bcfc0dc2daa2b13dd147815e3c9409ddad8cd",
+      "case_index_states": [
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        },
+        {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null,
+          "session_history_enabled": false
+        }
+      ]
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      }
+    },
+    "dataset_files": [
+      {
+        "path": "semantic_changes.py",
+        "sha256": "b01bac74deb2c9cf16f6be9c7620ee1ddbb54b21cf229a0db1a87bd32a0d9d57",
+        "bytes": 3488
+      }
+    ]
+  },
+  "macro": {
+    "score_mean": 1.0,
+    "n_questions_total": 4,
+    "n_questions_scored": 4,
+    "n_questions_zero": 0
+  },
+  "per_question": [
+    {
+      "question_id": "semantic-add#q0",
+      "sample_id": "semantic-add",
+      "question": "用户的守宫叫什么？",
+      "answer": "青柠",
+      "anchors": [
+        "青柠"
+      ],
+      "score": 1.0,
+      "detail": "1/1 在 semantic 命中",
+      "recalled_count": 2,
+      "recalled": [
+        {
+          "text": "用户收养了一只名叫青柠的守宫",
+          "layer": "semantic",
+          "source_ref": "semantic:f8243944-8566-4234-b769-a20bea6fa64d",
+          "score": 0.017893442622950822
+        },
+        {
+          "text": "用户告诉AI自己收养了一只叫青柠的守宫",
+          "layer": "episodic",
+          "source_ref": "episodic:1781ed14-bb68-4748-9d75-74d51ae77faa",
+          "score": 0.01739344262295082
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "semantic:f8243944-8566-4234-b769-a20bea6fa64d",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.017893442622950822,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:1781ed14-bb68-4748-9d75-74d51ae77faa",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "semantic-retract#q0",
+      "sample_id": "semantic-retract",
+      "question": "用户现在还参加合唱团吗？",
+      "answer": "已经退出，不再参加",
+      "anchors": [
+        "退出合唱团"
+      ],
+      "score": 1.0,
+      "detail": "1/1 在 episodic 命中",
+      "recalled_count": 2,
+      "recalled": [
+        {
+          "text": "用户提到每周四参加合唱团排练",
+          "layer": "episodic",
+          "source_ref": "episodic:24807522-3a05-4af2-8b95-ab9c4eeaeb38",
+          "score": 0.01739344262295082
+        },
+        {
+          "text": "用户告知AI自己已退出合唱团，以后不会再参加排练",
+          "layer": "episodic",
+          "source_ref": "episodic:b71de8b2-e6e1-462b-88fb-4f3b65fefad4",
+          "score": 0.017129032258064517
+        }
+      ],
+      "trace": {
+        "intent": "current_state",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 2,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "episodic:24807522-3a05-4af2-8b95-ab9c4eeaeb38",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:b71de8b2-e6e1-462b-88fb-4f3b65fefad4",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017129032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "semantic-many-to-one#q0",
+      "sample_id": "semantic-many-to-one",
+      "question": "用户通常哪几天早晨喝咖啡？",
+      "answer": "周一和周五",
+      "anchors": [
+        "周一",
+        "周五"
+      ],
+      "score": 1.0,
+      "detail": "2/2 在 semantic 命中",
+      "recalled_count": 4,
+      "recalled": [
+        {
+          "text": "用户只在周一和周五早晨喝咖啡",
+          "layer": "semantic",
+          "source_ref": "semantic:d4bf99a9-4afa-421a-bc3f-fde88065927c",
+          "score": 0.017893442622950822
+        },
+        {
+          "text": "用户提到习惯在工作日早晨喝咖啡",
+          "layer": "episodic",
+          "source_ref": "episodic:0c940266-32f9-4842-9d59-077435103d6c",
+          "score": 0.01739344262295082
+        },
+        {
+          "text": "用户澄清自己只在周一和周五早晨喝咖啡，纠正了之前关于工作日早晨每天喝咖啡的说法",
+          "layer": "episodic",
+          "source_ref": "episodic:7ea7ae27-4845-41a3-9200-1377c82d17d8",
+          "score": 0.017129032258064517
+        },
+        {
+          "text": "用户说自己每天上班前都会喝一杯咖啡",
+          "layer": "episodic",
+          "source_ref": "episodic:46247043-5629-413c-ac95-e87bda3e8645",
+          "score": 0.016873015873015873
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 4,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "semantic:d4bf99a9-4afa-421a-bc3f-fde88065927c",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.017893442622950822,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:0c940266-32f9-4842-9d59-077435103d6c",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:7ea7ae27-4845-41a3-9200-1377c82d17d8",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017129032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:46247043-5629-413c-ac95-e87bda3e8645",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 3,
+            "dense_rank": null,
+            "fused_score": 0.016873015873015873,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    },
+    {
+      "question_id": "semantic-one-to-many#q0",
+      "sample_id": "semantic-one-to-many",
+      "question": "用户周六和周日分别学习什么？",
+      "answer": "周六学西班牙语，周日学日语",
+      "anchors": [
+        "周六",
+        "西班牙语",
+        "周日",
+        "日语"
+      ],
+      "score": 1.0,
+      "detail": "4/4 在 semantic 命中",
+      "recalled_count": 4,
+      "recalled": [
+        {
+          "text": "用户通常在周六学习西班牙语",
+          "layer": "semantic",
+          "source_ref": "semantic:bf2a878b-aac9-4a8a-a63b-ca2295598da8",
+          "score": 0.017893442622950822
+        },
+        {
+          "text": "用户通常在周日学习日语",
+          "layer": "semantic",
+          "source_ref": "semantic:64171777-4687-452c-818e-2ec9bf7ec2bc",
+          "score": 0.017629032258064517
+        },
+        {
+          "text": "用户说明了周末学习外语的具体安排：周六学西班牙语，周日学日语",
+          "layer": "episodic",
+          "source_ref": "episodic:4dfd5619-8385-48e1-b1f8-ed3ea1e4ceac",
+          "score": 0.01739344262295082
+        },
+        {
+          "text": "用户说周末通常学习外语，AI表示记住了",
+          "layer": "episodic",
+          "source_ref": "episodic:713ff674-3482-49da-a0d5-8d5818479968",
+          "score": 0.017129032258064517
+        }
+      ],
+      "trace": {
+        "intent": "general",
+        "time_range": null,
+        "mode": "automatic",
+        "source_runs": [
+          {
+            "source": "structured_memory",
+            "candidate_count": 4,
+            "limit": 24,
+            "status": "ok"
+          }
+        ],
+        "candidates": [
+          {
+            "evidence_id": "semantic:bf2a878b-aac9-4a8a-a63b-ca2295598da8",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.017893442622950822,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "semantic:64171777-4687-452c-818e-2ec9bf7ec2bc",
+            "kind": "semantic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017629032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:4dfd5619-8385-48e1-b1f8-ed3ea1e4ceac",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 1,
+            "dense_rank": null,
+            "fused_score": 0.01739344262295082,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          },
+          {
+            "evidence_id": "episodic:713ff674-3482-49da-a0d5-8d5818479968",
+            "kind": "episodic",
+            "source": "structured_memory",
+            "keyword_rank": 2,
+            "dense_rank": null,
+            "fused_score": 0.017129032258064517,
+            "decision": "injected",
+            "decision_reason": "ordinary_budget"
+          }
+        ],
+        "budget": {
+          "semantic": 8,
+          "episodic": 8,
+          "utterance": 4,
+          "total": 12
+        },
+        "index_state": {
+          "keyword_ready": true,
+          "dense_status": "disabled",
+          "active_generation": null
+        }
+      }
+    }
+  ]
+}
