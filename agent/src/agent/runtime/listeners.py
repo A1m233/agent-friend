@@ -34,6 +34,8 @@ EnvelopeKind = Literal[
     "session_changed",
     "run_changed",
     "filesystem_approval_changed",
+    "approval_changed",
+    "command_process_changed",
     "heartbeat",
 ]
 
@@ -67,6 +69,8 @@ class PushEnvelope:
     run: RunSnapshot | None = None
     presentation: str | None = None
     filesystem_approval: dict[str, Any] | None = None
+    approval: dict[str, Any] | None = None
+    command_process: dict[str, Any] | None = None
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -332,6 +336,53 @@ class ListenerRegistry:
                         events=[],
                         run_id=str(approval.get("run_id") or "") or None,
                         filesystem_approval=dict(approval),
+                    ),
+                )
+
+    def publish_approval_change(self, approval: dict[str, object]) -> None:
+        """Publish the common lifecycle while retaining the filesystem compatibility event."""
+
+        if approval.get("kind") == "filesystem":
+            self.publish_filesystem_approval_change(approval)
+            return
+        session_id = str(approval.get("session_id") or "")
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "approval_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="approval_changed",
+                        session_id=session_id,
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        run_id=str(approval.get("run_id") or "") or None,
+                        approval=dict(approval),
+                    ),
+                )
+
+    def publish_command_process_change(self, process: dict[str, object]) -> None:
+        """Push one bounded command process snapshot without scheduling a model turn."""
+
+        session_id = str(process.get("session_id") or "")
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "command_process_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="command_process_changed",
+                        session_id=session_id,
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        run_id=str(process.get("run_id") or "") or None,
+                        command_process=dict(process),
                     ),
                 )
 

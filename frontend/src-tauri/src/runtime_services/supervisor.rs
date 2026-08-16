@@ -934,10 +934,19 @@ fn spawn_service(
             ..
         } => {
             let mut command = Command::new(launcher);
+            let codex_executable = launcher
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or_else(|| Path::new("."))
+                .join("vendor")
+                .join("codex")
+                .join("bin")
+                .join("codex.exe");
             command
                 .args([service.command(), "--config-mode", "desktop"])
                 .current_dir(launcher.parent().unwrap_or_else(|| Path::new(".")))
                 .env("AGENT_FRIEND_MEMORY_MODEL_DIR", memory_model_dir)
+                .env("AGENT_FRIEND_CODEX_EXECUTABLE", codex_executable)
                 .env("AGENT_BRIDGE_DEV_MODE", "false")
                 .env("AGENT_BRIDGE_PORT", profile.bridge_port.to_string())
                 .env("VOICE_BRIDGE_PORT", profile.voice_port.to_string())

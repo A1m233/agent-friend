@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import threading
+import time
+from types import SimpleNamespace
+from typing import Any, cast
+
+from agent.approvals import ApprovalBroker
+from agent.command_runtime import (
+    CommandApprovalDetails,
+    PendingCommandApproval,
+)
+from agent_bridge.routes.approvals import register_routes
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+
+def test_command_approval_is_listed_and_decided_on_common_control_plane() -> None:
+    broker = ApprovalBroker()
+    request = PendingCommandApproval.create(
+        session_id="session-1",
+        run_id="run-1",
+        tool_call_id="tool-1",
+        reason="run deterministic check",
+        details=CommandApprovalDetails(
+            cmd="echo ok",
+            argv=("shell", "-c", "echo ok"),
+            workdir="C:/workspace",
+            mode="buffered",
+            timeout_seconds=30,
+            filesystem_access="read_only",
+            additional_roots=(),
+            network_access="disabled",
+            interactive=False,
+        ),
+    )
+    decisions = []
+    worker = threading.Thread(
+        target=lambda: decisions.append(broker.request(request, timeout_seconds=2))
+    )
+    worker.start()
+    deadline = time.monotonic() + 1
+    while not broker.pending(kind="command") and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(Any, SimpleNamespace(filesystem_approval_broker=broker, command_runtime=None)),
+    )
+    client = TestClient(app)
+    pending = client.get("/v1/approvals", params={"kind": "command"})
+    assert pending.status_code == 200
+    assert pending.json()["requests"][0]["details"]["cmd"] == "echo ok"
+
+    unsupported = client.post(
+        f"/v1/approvals/{request.request_id}/command-decision",
+        json={
+            "session_id": "session-1",
+            "run_id": "run-1",
+            "allow": True,
+            "lifetime": "session",
+        },
+    )
+    assert unsupported.status_code == 422
+    assert broker.pending(kind="command")
+
+    decided = client.post(
+        f"/v1/approvals/{request.request_id}/command-decision",
+        json={
+            "session_id": "session-1",
+            "run_id": "run-1",
+            "allow": True,
+            "lifetime": "once",
+        },
+    )
+    assert decided.status_code == 200
+    worker.join(timeout=2)
+    assert decisions[0].approved is True
+
+
+def test_windows_sandbox_setup_requires_explicit_endpoint_call() -> None:
+    class FakeRuntime:
+        setup_calls = 0
+
+        def status(self) -> dict[str, object]:
+            return {
+                "available": True,
+                "platform": "windows",
+                "windows_sandbox_ready": self.setup_calls > 0,
+                "requires_windows_sandbox_setup": self.setup_calls == 0,
+            }
+
+        def setup_windows_sandbox(self) -> dict[str, object]:
+            self.setup_calls += 1
+            return self.status()
+
+    command_runtime = FakeRuntime()
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(
+            Any,
+            SimpleNamespace(
+                filesystem_approval_broker=ApprovalBroker(),
+                command_runtime=command_runtime,
+            ),
+        ),
+    )
+    client = TestClient(app)
+
+    status = client.get("/v1/command-runtime/status")
+    assert status.json()["requires_windows_sandbox_setup"] is True
+    assert command_runtime.setup_calls == 0
+
+    setup = client.post("/v1/command-runtime/windows-sandbox/setup")
+    assert setup.status_code == 200
+    assert setup.json()["windows_sandbox_ready"] is True
+    assert command_runtime.setup_calls == 1

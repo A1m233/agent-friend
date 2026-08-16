@@ -31,7 +31,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         if broker is None:
             raise HTTPException(status_code=503, detail="filesystem approval unavailable")
         return {
-            "requests": [request.to_dict() for request in broker.pending(session_id=session_id)]
+            "requests": [
+                request.to_dict()
+                for request in broker.pending(session_id=session_id, kind="filesystem")
+            ]
         }
 
     @app.post("/v1/filesystem/approvals/{request_id}/decision")
@@ -53,6 +56,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             decision,
             session_id=body.session_id,
             run_id=body.run_id,
+            expected_kind="filesystem",
         ):
             raise HTTPException(status_code=404, detail="approval request not pending")
         return {"accepted": True}

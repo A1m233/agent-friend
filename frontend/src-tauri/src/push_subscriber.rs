@@ -112,7 +112,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -186,6 +186,13 @@ async fn run_connection(
                 Some(env) if env.kind == "filesystem_approval_changed" => {
                     if let Err(e) = app.emit_to("chat", "session://filesystem-approval", env) {
                         log::warn!("emit_to(chat, filesystem approval) failed: {e}");
+                    }
+                }
+                Some(env)
+                    if env.kind == "approval_changed" || env.kind == "command_process_changed" =>
+                {
+                    if let Err(e) = app.emit_to("chat", "session://command-runtime", env) {
+                        log::warn!("emit command runtime event failed: {e}");
                     }
                 }
                 Some(env) => {

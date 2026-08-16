@@ -3,6 +3,8 @@ import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/compo
 import { FeedbackIcon } from "@/components/app/FeedbackIcon";
 import {
   startSessionSyncSubscriber,
+  startCommandRuntimeSync,
+  useCommandRuntimeStore,
   startFilesystemApprovalSync,
   useFilesystemApprovalsStore,
   useConnectionStore,
@@ -78,9 +80,15 @@ export function ChatApp() {
   useEffect(() => {
     if (status !== "online") {
       useFilesystemApprovalsStore.getState().markDisconnected();
+      useCommandRuntimeStore.getState().markDisconnected();
       return;
     }
-    return startFilesystemApprovalSync();
+    const stopFilesystem = startFilesystemApprovalSync();
+    const stopCommands = startCommandRuntimeSync();
+    return () => {
+      stopFilesystem();
+      stopCommands();
+    };
   }, [status]);
 
   useEffect(

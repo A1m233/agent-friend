@@ -15,12 +15,16 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import sys
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from agent.approvals import ApprovalBroker
+from agent.command_runtime import CodexIdentityError, CommandRuntime, verify_codex_executable
 from agent.filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource
@@ -191,6 +195,8 @@ class BridgeRuntime:
     """072：桌面批准登录、Agent continuation 与原 surface 投递编排。"""
     filesystem_approval_broker: FilesystemApprovalBroker | None = None
     """078：桌面文件授权请求与一次性决定的进程级 broker。"""
+    command_runtime: CommandRuntime | None = None
+    """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -218,6 +224,8 @@ class BridgeRuntime:
             self.social_auth_orchestrator.close()
         if self.social_platform_service is not None:
             self.social_platform_service.close()
+        if self.command_runtime is not None:
+            self.command_runtime.close()
         if self.memory is not None:
             self.memory.close()
 
@@ -326,7 +334,20 @@ def build_runtime(
         personal_root=settings.sessions_dir.parent / "skills",
     )
     skill_service.initialize()
-    filesystem_approval_broker = FilesystemApprovalBroker()
+    filesystem_approval_broker = ApprovalBroker()
+    codex_path_value = os.environ.get("AGENT_FRIEND_CODEX_EXECUTABLE")
+    codex_executable: Path | None = None
+    if codex_path_value:
+        try:
+            codex_executable = verify_codex_executable(Path(codex_path_value))
+        except CodexIdentityError:
+            logger.warning("governed Codex payload rejected", exc_info=True)
+    command_runtime_root = settings.sessions_dir.parent / "command-runtime"
+    command_runtime = CommandRuntime(
+        codex_executable,
+        codex_home=command_runtime_root / "codex-home",
+        execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
+    )
     builtin_skill_roots = tuple(
         canonical_path(record.package_root)
         for record in skill_service.snapshot.entries
@@ -394,6 +415,7 @@ def build_runtime(
         skill_service=skill_service,
         filesystem_approval_broker=filesystem_approval_broker,
         filesystem_policy=filesystem_policy,
+        command_runtime=command_runtime,
     )
 
     llm_client_factory = runtime_config.llm_client_factory
@@ -427,9 +449,8 @@ def build_runtime(
         session_turn_guard=turn_coordinator.hold,
     )
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
-    filesystem_approval_broker.add_listener(
-        agent_runtime.listeners.publish_filesystem_approval_change
-    )
+    filesystem_approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
+    command_runtime.add_listener(agent_runtime.listeners.publish_command_process_change)
     session_model_service = SessionModelService(
         persistent_session_manager,
         turn_coordinator,
@@ -495,6 +516,7 @@ def build_runtime(
             presence_registry=presence_registry,
             social_platform_service=social_platform_service,
             filesystem_approval_broker=filesystem_approval_broker,
+            command_runtime=command_runtime,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -600,4 +622,5 @@ def build_runtime(
         social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
         filesystem_approval_broker=filesystem_approval_broker,
+        command_runtime=command_runtime,
     )

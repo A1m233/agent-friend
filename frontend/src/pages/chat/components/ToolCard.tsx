@@ -11,6 +11,7 @@ import type { ToolBlock, ToolStatus } from "@/types/chat";
 import { SocialAuthCard } from "./SocialAuthCard";
 import {
   useConversationStore,
+  useCommandRuntimeStore,
   useFilesystemApprovalsStore,
 } from "@/stores";
 import type {
@@ -276,12 +277,202 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
   );
 }
 
+interface CommandArgs {
+  cmd?: string;
+  workdir?: string;
+  mode?: "buffered" | "streaming";
+  timeout_seconds?: number;
+  reason?: string;
+  access?: {
+    filesystem?: "read_only" | "workspace_write";
+    network?: "disabled" | "enabled";
+    additional_roots?: Array<{ path?: string; access?: string }>;
+  };
+  skill?: { id?: string; entry?: string };
+}
+
+function CommandRuntimeCard({ block }: { block: ToolBlock }) {
+  const approval = useCommandRuntimeStore((state) =>
+    Object.values(state.approvals).find((item) => item.tool_call_id === block.toolCallId),
+  );
+  const process = useCommandRuntimeStore((state) =>
+    Object.values(state.processes).find((item) => item.tool_call_id === block.toolCallId),
+  );
+  const submitting = useCommandRuntimeStore((state) =>
+    approval ? state.submitting.has(approval.request_id) : false,
+  );
+  const decide = useCommandRuntimeStore((state) => state.decide);
+  const cancel = useCommandRuntimeStore((state) => state.cancel);
+  const runtimeStatus = useCommandRuntimeStore((state) => state.runtimeStatus);
+  const settingUpSandbox = useCommandRuntimeStore((state) => state.settingUpSandbox);
+  const setupError = useCommandRuntimeStore((state) => state.setupError);
+  const setupWindowsSandbox = useCommandRuntimeStore((state) => state.setupWindowsSandbox);
+  const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
+  let args: CommandArgs = {};
+  try {
+    args = JSON.parse(block.args) as CommandArgs;
+  } catch {
+    // Keep the runtime card useful for malformed provider arguments.
+  }
+  const details = approval?.details;
+  const runActive = Boolean(
+    approval && activeRunIdBySession[approval.session_id] === approval.run_id,
+  );
+  const actionable = approval?.status === "pending" && runActive && !submitting;
+  let resultError = "";
+  try {
+    const result = JSON.parse(block.result || "{}") as { error?: unknown };
+    resultError = typeof result.error === "string" ? result.error : "";
+  } catch {
+    // The card falls back to the tool status when the result is not JSON.
+  }
+  const needsSandboxSetup = resultError === "windows_sandbox_setup_required"
+    || runtimeStatus?.requires_windows_sandbox_setup === true;
+  const status = process?.status;
+  let label = approval?.status === "pending" ? "等待授权" : "准备运行";
+  let tone: StatusDotProps["tone"] = "warning";
+  let pulse = approval?.status === "pending" && runActive;
+  if (status === "running") {
+    label = details?.mode === "streaming" ? "交互式进程运行中" : "运行中";
+    tone = "accent";
+    pulse = true;
+  } else if (status === "exited") {
+    label = process?.sandbox_denied
+      ? "沙箱拒绝"
+      : process?.exit_code === 0 ? "已完成" : `退出码 ${process?.exit_code ?? "未知"}`;
+    tone = process?.exit_code === 0 && !process?.sandbox_denied ? "success" : "danger";
+    pulse = false;
+  } else if (status === "timed_out") {
+    label = "已超时";
+    pulse = false;
+  } else if (status === "cancelled" || approval?.status === "cancelled") {
+    label = "已取消";
+    pulse = false;
+  } else if (status === "runtime_lost") {
+    label = "运行时失联";
+    tone = "danger";
+    pulse = false;
+  } else if (approval?.status === "denied") {
+    label = "已拒绝";
+    tone = "danger";
+    pulse = false;
+  } else if (approval?.status === "expired") {
+    label = "已过期";
+    pulse = false;
+  } else if (needsSandboxSetup) {
+    label = "需要初始化沙箱";
+    tone = "warning";
+    pulse = false;
+  }
+  const output = [process?.pty, process?.stdout, process?.stderr]
+    .filter((value): value is string => Boolean(value))
+    .join("");
+  const roots = details?.additional_roots ?? args.access?.additional_roots ?? [];
+
+  return (
+    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+      <div className="flex items-center gap-2">
+        <StatusDot tone={tone} pulse={pulse} />
+        <span className="font-medium text-fg">本地命令</span>
+        <span className="ml-auto text-muted">{label}</span>
+      </div>
+      <p className="mt-2 text-sm text-fg">{approval?.reason || args.reason || "运行本地命令"}</p>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-bg/60 p-2.5 text-fg">
+        {details?.cmd || args.cmd || "未提供命令"}
+      </pre>
+      <div className="mt-2 space-y-1 text-muted">
+        <p className="break-all">工作目录：{details?.workdir || args.workdir || "未提供"}</p>
+        <p>
+          模式：{(details?.mode || args.mode || "buffered") === "streaming" ? "交互式" : "普通"}
+          {` · 超时 ${details?.timeout_seconds || args.timeout_seconds || 900} 秒`}
+          {process?.duration_seconds != null
+            ? ` · 已运行 ${process.duration_seconds.toFixed(1)} 秒`
+            : ""}
+        </p>
+        <p>
+          文件：{(details?.filesystem_access || args.access?.filesystem || "read_only") === "workspace_write" ? "工作区可写" : "只读"}
+          {` · 网络：${(details?.network_access || args.access?.network || "disabled") === "enabled" ? "允许" : "禁止"}`}
+        </p>
+        {details?.skill || args.skill ? (
+          <p className="break-all">
+            Skill：{details?.skill?.skill_id || args.skill?.id || "未知"}
+            {` · ${details?.skill?.entry || args.skill?.entry || "未提供入口"}`}
+            {details?.skill?.fingerprint
+              ? ` · 快照 ${details.skill.fingerprint.slice(0, 12)}`
+              : ""}
+          </p>
+        ) : null}
+        {roots.map((root, index) => (
+          <p key={`${root.path}-${index}`} className="break-all">
+            附加范围：{root.path}（{root.access === "workspace_write" ? "可写" : "只读"}）
+          </p>
+        ))}
+      </div>
+      {process?.dropped_bytes ? (
+        <p className="mt-2 text-warning">较早输出已截断 {process.dropped_bytes} 字节</p>
+      ) : null}
+      {output ? (
+        <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded bg-bg/80 p-2 text-fg">
+          {output}
+        </pre>
+      ) : null}
+      {needsSandboxSetup ? (
+        <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2.5">
+          <p className="text-fg">
+            首次运行前需要初始化 Windows 沙箱。点击后系统会显示管理员授权窗口；普通命令不会自动触发。
+          </p>
+          <div className="mt-2 flex justify-end">
+            <Button
+              size="xs"
+              disabled={settingUpSandbox}
+              onClick={() => void setupWindowsSandbox()}
+            >
+              {settingUpSandbox ? "正在初始化…" : "初始化命令沙箱"}
+            </Button>
+          </div>
+          {setupError ? <p className="mt-2 text-danger">{setupError}</p> : null}
+        </div>
+      ) : null}
+      {approval?.status === "pending" ? (
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!actionable}
+            onClick={() => void decide(approval.request_id, false)}
+          >
+            拒绝
+          </Button>
+          <Button
+            size="xs"
+            disabled={!actionable}
+            onClick={() => void decide(approval.request_id, true)}
+          >
+            {submitting ? "处理中…" : "仅本次允许"}
+          </Button>
+        </div>
+      ) : process?.status === "running" ? (
+        <div className="mt-3 flex justify-end">
+          <Button size="xs" variant="outline" onClick={() => void cancel(process.process_id)}>
+            停止
+          </Button>
+        </div>
+      ) : (
+        <p className="mt-2 text-muted">命令授权只对这一次准确启动有效。</p>
+      )}
+    </div>
+  );
+}
+
 export function ToolCard({ block }: { block: ToolBlock }) {
   if (block.name === "request_filesystem_access") {
     return <FilesystemApprovalCard block={block} />;
   }
   if (block.name === "request_social_auth" && block.status === "done") {
     return <SocialAuthCard block={block} />;
+  }
+  if (block.name === "exec_command") {
+    return <CommandRuntimeCard block={block} />;
   }
   if (block.name === "skill_read") {
     return <SkillStatusCard block={block} />;

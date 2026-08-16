@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -83,6 +84,12 @@ class ToolRunContext:
         default_factory=FilesystemAuthorizationLedger
     )
     _clock: Callable[[], datetime] = field(default=_system_now, repr=False)
+    _command_handles: dict[str, Callable[[str], None]] = field(default_factory=dict, repr=False)
+    _command_handles_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _command_resources: dict[str, object] = field(default_factory=dict, repr=False)
+    _command_resource_cleanups: dict[str, Callable[[], None]] = field(
+        default_factory=dict, repr=False
+    )
 
     @classmethod
     def create(
@@ -114,6 +121,58 @@ class ToolRunContext:
         """
 
         self.trusted_now, self.trusted_timezone = _read_trusted_clock(self._clock)
+
+    def register_command_handle(self, process_id: str, terminate: Callable[[str], None]) -> None:
+        """Bind an interactive process handle to this single tool-running turn."""
+
+        with self._command_handles_lock:
+            self._command_handles[process_id] = terminate
+
+    def owns_command_handle(self, process_id: str) -> bool:
+        with self._command_handles_lock:
+            return process_id in self._command_handles
+
+    def release_command_handle(self, process_id: str) -> None:
+        with self._command_handles_lock:
+            self._command_handles.pop(process_id, None)
+
+    def close_commands(self, reason: str = "run_finished") -> None:
+        """Terminate all live command handles without keeping a detached process."""
+
+        with self._command_handles_lock:
+            handles = tuple(self._command_handles.values())
+            self._command_handles.clear()
+        for terminate in handles:
+            try:
+                terminate(reason)
+            except Exception:
+                continue
+        with self._command_handles_lock:
+            cleanups = tuple(reversed(tuple(self._command_resource_cleanups.values())))
+            self._command_resource_cleanups.clear()
+            self._command_resources.clear()
+        for cleanup in cleanups:
+            try:
+                cleanup()
+            except Exception:
+                continue
+
+    def command_resource(self, key: str) -> object | None:
+        with self._command_handles_lock:
+            return self._command_resources.get(key)
+
+    def register_command_resource(
+        self, key: str, value: object, cleanup: Callable[[], None]
+    ) -> object:
+        """Keep one run-scoped command resource and its eventual cleanup."""
+
+        with self._command_handles_lock:
+            existing = self._command_resources.get(key)
+            if existing is not None:
+                return existing
+            self._command_resources[key] = value
+            self._command_resource_cleanups[key] = cleanup
+            return value
 
     def register_user_text_evidence(
         self,

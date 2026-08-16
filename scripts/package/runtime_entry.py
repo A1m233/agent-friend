@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from importlib.resources import files
 from pathlib import Path
@@ -215,6 +216,316 @@ def _smoke_filesystem_tools() -> dict[str, Any]:
         }
 
 
+def _smoke_command_runtime() -> dict[str, Any]:
+    """Exercise the packaged official exec-server without network or an LLM."""
+
+    from agent.approvals import ApprovalBroker
+    from agent.command_runtime import (
+        CommandApprovalDecision,
+        CommandRuntime,
+        ExecCommandTool,
+        verify_codex_executable,
+    )
+    from agent.command_runtime.runtime import sandbox_context
+    from agent.command_runtime.tools import (
+        COMMAND_RUN_CONTEXT_ARG,
+        COMMAND_RUN_ID_ARG,
+        COMMAND_SESSION_ID_ARG,
+        COMMAND_SKILL_SNAPSHOT_ARG,
+        COMMAND_SURFACE_ARG,
+        COMMAND_TOOL_CALL_ID_ARG,
+    )
+    from agent.skills.models import (
+        ActivatedSkill,
+        RenderedSkillCatalog,
+        SkillCatalogSnapshot,
+        SkillRecord,
+        SkillTurnSnapshot,
+    )
+    from agent.tool_runtime import ToolRunContext
+
+    executable_value = os.environ.get("AGENT_FRIEND_CODEX_EXECUTABLE", "").strip()
+    if not executable_value:
+        return {"status": "not-injected", "runtime_exercised": False}
+    codex_home_value = os.environ.get("AGENT_FRIEND_COMMAND_RUNTIME_CODEX_HOME", "").strip()
+    if not codex_home_value:
+        raise RuntimeError("packaged command runtime CODEX_HOME was not injected")
+    execution_root_value = os.environ.get("AGENT_FRIEND_COMMAND_RUNTIME_EXECUTION_ROOT", "").strip()
+    if not execution_root_value:
+        raise RuntimeError("packaged command runtime execution root was not injected")
+    executable = verify_codex_executable(Path(executable_value))
+    with tempfile.TemporaryDirectory(prefix="agent-friend-command-smoke-") as temp_dir:
+        root = Path(temp_dir).resolve()
+        runtime = CommandRuntime(
+            executable,
+            codex_home=Path(codex_home_value),
+            execution_root=Path(execution_root_value),
+        )
+        command_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key.upper()
+            in {
+                "PATH",
+                "PATHEXT",
+                "SYSTEMROOT",
+                "WINDIR",
+                "COMSPEC",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "APPDATA",
+                "LOCALAPPDATA",
+            }
+        }
+        sandbox = sandbox_context(
+            workdir=root,
+            writable=True,
+            additional_roots=(),
+            network_enabled=False,
+        )
+        try:
+            process = runtime.start_process(
+                argv=(os.environ["COMSPEC"], "/D", "/S", "/C", "echo frozen-command-ok"),
+                workdir=root,
+                env=command_env,
+                mode="buffered",
+                session_id="doctor",
+                run_id="doctor-buffered",
+                tool_call_id="doctor-buffered",
+                sandbox=sandbox,
+            )
+            finished = runtime.wait(
+                process.process_id,
+                session_id="doctor",
+                run_id="doctor-buffered",
+                timeout_seconds=30,
+            )
+            if not finished.terminal():
+                runtime.terminate(
+                    process.process_id,
+                    session_id="doctor",
+                    run_id="doctor-buffered",
+                    reason="timeout",
+                )
+                raise RuntimeError("packaged buffered command did not finish")
+            if finished.exit_code != 0 or b"frozen-command-ok" not in finished.stdout_tail:
+                raise RuntimeError(
+                    "packaged buffered command failed: "
+                    + finished.stderr_tail.decode("utf-8", errors="replace")
+                )
+
+            streaming = runtime.start_process(
+                argv=(os.environ["COMSPEC"], "/D", "/Q"),
+                workdir=root,
+                env=command_env,
+                mode="streaming",
+                session_id="doctor",
+                run_id="doctor-streaming",
+                tool_call_id="doctor-streaming",
+                sandbox=sandbox,
+            )
+            runtime.write(
+                streaming.process_id,
+                session_id="doctor",
+                run_id="doctor-streaming",
+                chunk=b"echo frozen-streaming-ok\r\nexit\r\n",
+            )
+            streaming_finished = runtime.wait(
+                streaming.process_id,
+                session_id="doctor",
+                run_id="doctor-streaming",
+                timeout_seconds=30,
+            )
+            if (
+                not streaming_finished.terminal()
+                or streaming_finished.exit_code != 0
+                or b"frozen-streaming-ok" not in streaming_finished.pty_tail
+            ):
+                raise RuntimeError("packaged streaming command or stdin failed")
+
+            denied_path = root / "denied.txt"
+            denied = runtime.start_process(
+                argv=(
+                    os.environ["COMSPEC"],
+                    "/D",
+                    "/S",
+                    "/C",
+                    f"echo forbidden>{denied_path.name}",
+                ),
+                workdir=root,
+                env=command_env,
+                mode="buffered",
+                session_id="doctor",
+                run_id="doctor-read-only",
+                tool_call_id="doctor-read-only",
+                sandbox=sandbox_context(
+                    workdir=root,
+                    writable=False,
+                    additional_roots=(),
+                    network_enabled=False,
+                ),
+            )
+            denied_finished = runtime.wait(
+                denied.process_id,
+                session_id="doctor",
+                run_id="doctor-read-only",
+                timeout_seconds=30,
+            )
+            if denied_finished.exit_code == 0 or denied_path.exists():
+                raise RuntimeError("packaged read-only sandbox allowed a write")
+
+            package = root / "skill-package"
+            package.mkdir()
+            skill_md = package / "SKILL.md"
+            skill_md.write_text(
+                "---\nname: frozen-smoke\ndescription: frozen smoke\n---\n",
+                encoding="utf-8",
+            )
+            skill_script = package / "run.cmd"
+            skill_script.write_text("@echo skill-original\n", encoding="utf-8")
+            record = SkillRecord(
+                id="skill_frozen_smoke",
+                source="personal",
+                name="frozen-smoke",
+                description="frozen smoke",
+                entry_path=skill_md,
+                canonical_entry_path=skill_md,
+                package_root=package,
+                version="f" * 64,
+                frontmatter={},
+            )
+            activation = ActivatedSkill(
+                record=record,
+                contents=skill_md.read_text(encoding="utf-8"),
+                version=record.version,
+            )
+            catalog = SkillCatalogSnapshot(
+                generation=1,
+                fingerprint="c" * 64,
+                entries=(record,),
+            )
+            turn_snapshot = SkillTurnSnapshot(
+                catalog=catalog,
+                rendered_catalog=RenderedSkillCatalog(
+                    content="",
+                    fingerprint=catalog.fingerprint,
+                    budget_profile="frozen-smoke",
+                ),
+                activations=(activation,),
+            )
+            context = ToolRunContext.create("")
+            broker = ApprovalBroker()
+            tool = ExecCommandTool(runtime, broker)
+            result_box: list[Any] = []
+            invoke_args = {
+                "cmd": "run.cmd",
+                "workdir": str(package),
+                "skill": {"id": record.id, "entry": "run.cmd"},
+                "reason": "verify the frozen governed Skill command path",
+                COMMAND_SESSION_ID_ARG: "doctor",
+                COMMAND_RUN_ID_ARG: "doctor-skill",
+                COMMAND_TOOL_CALL_ID_ARG: "doctor-skill",
+                COMMAND_SURFACE_ARG: "desktop_chat",
+                COMMAND_RUN_CONTEXT_ARG: context,
+                COMMAND_SKILL_SNAPSHOT_ARG: turn_snapshot,
+            }
+            skill_thread = threading.Thread(
+                target=lambda: result_box.append(tool.invoke(invoke_args)),
+                daemon=True,
+            )
+            skill_thread.start()
+            try:
+                deadline = time.monotonic() + 10
+                pending = ()
+                while time.monotonic() < deadline:
+                    pending = broker.pending(kind="command")
+                    if pending:
+                        break
+                    time.sleep(0.01)
+                if not pending:
+                    raise RuntimeError("packaged Skill command did not request approval")
+                request = pending[0]
+                if request.details.skill is None:
+                    raise RuntimeError("packaged Skill command lost its structured binding")
+                skill_script.write_text("@echo skill-replaced\n", encoding="utf-8")
+                if not broker.decide(
+                    request.request_id,
+                    CommandApprovalDecision(allow=True),
+                    session_id="doctor",
+                    run_id="doctor-skill",
+                    expected_kind="command",
+                ):
+                    raise RuntimeError("packaged Skill command approval was rejected")
+                skill_thread.join(timeout=40)
+                if skill_thread.is_alive() or not result_box:
+                    raise RuntimeError("packaged Skill command did not finish")
+                skill_payload = json.loads(result_box[0].text)
+                skill_output = str(skill_payload.get("stdout", ""))
+                if (
+                    skill_payload.get("status") != "exited"
+                    or skill_payload.get("exit_code") != 0
+                    or "skill-original" not in skill_output
+                    or "skill-replaced" in skill_output
+                ):
+                    raise RuntimeError(
+                        "packaged Skill Tool path did not preserve snapshot identity: "
+                        + json.dumps(skill_payload, ensure_ascii=False)
+                    )
+                skill_fingerprint = request.details.skill.fingerprint
+            finally:
+                context.close_commands()
+
+            child_script = root / "child.cmd"
+            child_marker = root / "escaped-child.txt"
+            child_script.write_text(
+                "@echo off\nping -n 6 127.0.0.1 >nul\necho escaped>escaped-child.txt\n",
+                encoding="utf-8",
+            )
+            long_process = runtime.start_process(
+                argv=(
+                    os.environ["COMSPEC"],
+                    "/D",
+                    "/S",
+                    "/C",
+                    'start "" /B cmd.exe /D /S /C child.cmd & ping -n 30 127.0.0.1 >nul',
+                ),
+                workdir=root,
+                env=command_env,
+                mode="buffered",
+                session_id="doctor",
+                run_id="doctor-cancel",
+                tool_call_id="doctor-cancel",
+                sandbox=sandbox,
+            )
+            time.sleep(0.5)
+            cancelled = runtime.terminate(
+                long_process.process_id,
+                session_id="doctor",
+                run_id="doctor-cancel",
+            )
+            if cancelled.status != "cancelled":
+                raise RuntimeError("packaged command cancellation did not become terminal")
+            time.sleep(6)
+            if child_marker.exists():
+                raise RuntimeError("packaged command cancellation left a child process running")
+            return {
+                "versioned_payload": executable.name,
+                "sandbox_type": finished.sandbox_type,
+                "buffered_output": "frozen-command-ok",
+                "streaming_input": True,
+                "read_only_write_denied": True,
+                "skill_snapshot_fingerprint": skill_fingerprint,
+                "skill_tool_path": True,
+                "cancelled": True,
+                "child_tree_cleaned": True,
+            }
+        finally:
+            runtime.close()
+
+
 def _doctor() -> int:
     checks: dict[str, dict[str, Any]] = {}
     modules = (
@@ -312,6 +623,17 @@ def _doctor() -> int:
             "ok": bool(filesystem_details.get("deleted")),
             **filesystem_details,
         }
+
+    try:
+        command_details = _smoke_command_runtime()
+    except Exception as exc:
+        checks["capability:governed_command_runtime"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:governed_command_runtime"] = {"ok": True, **command_details}
 
     model_dir = os.environ.get("AGENT_FRIEND_MEMORY_MODEL_DIR", "").strip()
     if model_dir:

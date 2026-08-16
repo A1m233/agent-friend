@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+from ..approvals.models import ApprovalLifetime, ApprovalStatus
+
 FilesystemPermission = Literal["search_metadata", "read_text", "create", "edit"]
 DestructiveAction = Literal["overwrite", "move", "delete"]
-FilesystemApprovalStatus = Literal["pending", "approved", "denied", "expired", "cancelled"]
+FilesystemApprovalStatus = ApprovalStatus
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,10 @@ class ApprovalDecision:
     approved_permissions: dict[str, frozenset[FilesystemPermission]] = field(default_factory=dict)
     approved_action_ids: frozenset[str] = frozenset()
 
+    @property
+    def approved(self) -> bool:
+        return bool(self.approved_permissions or self.approved_action_ids)
+
 
 @dataclass
 class PendingFilesystemApproval:
@@ -82,6 +88,8 @@ class PendingFilesystemApproval:
     reason: str
     items: tuple[ApprovalItem, ...]
     actions: tuple[ApprovalAction, ...]
+    kind: str = "filesystem"
+    requested_lifetime: ApprovalLifetime = "once"
     version: int = 1
     status: FilesystemApprovalStatus = "pending"
     _decision: ApprovalDecision | None = field(default=None, repr=False)
@@ -111,15 +119,21 @@ class PendingFilesystemApproval:
     def to_dict(self) -> dict[str, object]:
         return {
             "request_id": self.request_id,
+            "kind": self.kind,
             "session_id": self.session_id,
             "run_id": self.run_id,
             "tool_call_id": self.tool_call_id,
             "reason": self.reason,
             "items": [item.to_dict() for item in self.items],
             "actions": [action.to_dict() for action in self.actions],
+            "requested_lifetime": self.requested_lifetime,
             "version": self.version,
             "status": self.status,
         }
+
+    @staticmethod
+    def cancelled_decision() -> ApprovalDecision:
+        return ApprovalDecision()
 
 
 class FilesystemAuthorizationLedger:
