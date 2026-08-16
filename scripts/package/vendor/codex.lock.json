@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "product": "openai-codex",
+  "version": "0.147.0",
+  "release_tag": "rust-v0.147.0",
+  "release_url": "https://github.com/openai/codex/releases/tag/rust-v0.147.0",
+  "protocol": {
+    "transport": "stdio-jsonl",
+    "required_methods": [
+      "initialize",
+      "process/start",
+      "process/write",
+      "process/terminate"
+    ],
+    "required_notifications": [
+      "process/output",
+      "process/exited",
+      "process/closed"
+    ],
+    "required_start_result": ["sandboxType"]
+  },
+  "license": {
+    "url": "https://raw.githubusercontent.com/openai/codex/rust-v0.147.0/LICENSE",
+    "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+  },
+  "artifacts": {
+    "windows-x86_64": {
+      "filename": "codex-x86_64-pc-windows-msvc.exe.zip",
+      "sha256": "a1c073ede409178502b1ff11bed635d2b644424352f9d4f3999de8272c6aebbd",
+      "executable": "codex-x86_64-pc-windows-msvc.exe"
+    },
+    "macos-aarch64": {
+      "filename": "codex-aarch64-apple-darwin.tar.gz",
+      "sha256": "75984b81f92a71b0c0f4b3b5cad80e5c57177e4d8c8b4b1e13db703b20dc4358",
+      "executable": "codex-aarch64-apple-darwin"
+    },
+    "macos-x86_64": {
+      "filename": "codex-x86_64-apple-darwin.tar.gz",
+      "sha256": "36e782f71d8164cc37c2b89c64948f2180e9a2f8456b27e660da75bc6b5574e2",
+      "executable": "codex-x86_64-apple-darwin"
+    },
+    "linux-aarch64": {
+      "filename": "codex-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "eb677c80f666b1ab8b4b1d083b66e8d614b1281d960bb6f9fd8ca98f58b38b90",
+      "executable": "codex-aarch64-unknown-linux-musl"
+    },
+    "linux-x86_64": {
+      "filename": "codex-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "0246e2e773834e07f0fb5249ed6ebad12e4591e608f8c7bb97dd6a9690544c36",
+      "executable": "codex-x86_64-unknown-linux-musl"
+    }
+  }
+}

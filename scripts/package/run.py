@@ -80,6 +80,8 @@ from releases import (
     publish_installer,
     sha256,
 )
+from vendor.codex import load_lock as load_codex_lock
+from vendor.codex import stage_for_package as stage_codex_for_package
 from versioning import (
     ProjectVersion,
     SemVer,
@@ -640,6 +642,15 @@ def _stage_runtime(
         offline=offline,
     )
     shutil.copy2(cloudflared_license, vendor_dir / "LICENSE-cloudflared.txt")
+    codex_executable = stage_codex_for_package(
+        REPO_ROOT,
+        vendor_dir / "codex",
+        cache_base=cache_dir,
+        offline=offline,
+    )
+    if not codex_executable.is_file():
+        raise RuntimeError("staged Codex executable is missing")
+    codex_lock = load_codex_lock()
 
     xhs_dir = stage_dir / "connectors" / "xiaohongshu"
     xhs_dir.mkdir(parents=True)
@@ -665,6 +676,10 @@ def _stage_runtime(
         f"Version: {cloudflared_lock['version']}\n"
         f"Source: {cloudflared_lock['source']}\n"
         "License: Apache License 2.0 (see vendor/LICENSE-cloudflared.txt)\n\n"
+        "openai-codex\n"
+        f"Version: {codex_lock['version']}\n"
+        f"Source: {codex_lock['release_url']}\n"
+        "License: Apache License 2.0 (see vendor/codex/LICENSE-CODEX)\n\n"
         "xiaohongshu-mcp\n"
         f"Version: {xhs_version}\n"
         "Source: https://github.com/xpzouying/xiaohongshu-mcp\n"
@@ -675,7 +690,16 @@ def _stage_runtime(
     )
 
     doctor_env = _sanitized_env()
+    from agent.paths import user_data_dir
+
     doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(stage_dir / MODEL_RELATIVE_DIR)
+    doctor_env["AGENT_FRIEND_CODEX_EXECUTABLE"] = str(codex_executable)
+    doctor_env["AGENT_FRIEND_COMMAND_RUNTIME_CODEX_HOME"] = str(
+        user_data_dir() / "command-runtime" / "codex-home"
+    )
+    doctor_env["AGENT_FRIEND_COMMAND_RUNTIME_EXECUTION_ROOT"] = str(
+        Path(tempfile.gettempdir()) / "agent-friend-command-execution"
+    )
     staged_launcher = stage_dir / "python" / "agent-friend-runtime.exe"
     _run([str(staged_launcher), "doctor"], env=doctor_env)
     _smoke_frozen_services(staged_launcher, doctor_env, expected_identity=identity)

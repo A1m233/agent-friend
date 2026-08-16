@@ -37,6 +37,8 @@ import {
   useDraftStore,
   useFilesystemApprovalsStore,
   pendingFilesystemApprovalSessionIds,
+  pendingCommandApprovalSessionIds,
+  useCommandRuntimeStore,
   useSessionsStore,
 } from "@/stores";
 import type { RunSnapshot } from "@/types/run";
@@ -154,9 +156,13 @@ export function HistorySidebar() {
   const runSnapshots = useConversationStore((s) => s.runSnapshots);
   const unreadRunOutcomeBySession = useConversationStore((s) => s.unreadRunOutcomeBySession);
   const filesystemApprovalEntries = useFilesystemApprovalsStore((s) => s.entries);
+  const commandApprovals = useCommandRuntimeStore((s) => s.approvals);
   const approvalSessionIds = useMemo(
-    () => pendingFilesystemApprovalSessionIds(filesystemApprovalEntries),
-    [filesystemApprovalEntries],
+    () => new Set([
+      ...pendingFilesystemApprovalSessionIds(filesystemApprovalEntries),
+      ...pendingCommandApprovalSessionIds(commandApprovals),
+    ]),
+    [commandApprovals, filesystemApprovalEntries],
   );
   const draftWorkspaces = useDraftStore((s) => s.workspaces);
   const [renamingSession, setRenamingSession] = useState<{

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
 import pytest
-from agent.tool_runtime import ToolBatchExecutor
+from agent.tool_runtime import (
+    TOOL_INVOCATION_CONTROL_ARG,
+    ToolBatchExecutor,
+    ToolInvocationControl,
+)
 from agent.tools import Tool, ToolRegistry, ToolResult
 
 
@@ -24,6 +29,24 @@ class _SleepTool:
             self.start_log.append(f"body:{self.name}")
         time.sleep(self.delay)
         return ToolResult(str(args["value"]))
+
+
+@dataclass
+class _ControlledTool:
+    cancelled: threading.Event
+    name: str = "controlled"
+    execution_kind: str = "serial"
+    timeout_seconds: float = 0.02
+    supports_invocation_control: bool = True
+    description: ClassVar[str] = "test"
+    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        control = args[TOOL_INVOCATION_CONTROL_ARG]
+        assert isinstance(control, ToolInvocationControl)
+        control.add_cancel_callback(lambda _reason: self.cancelled.set())
+        self.cancelled.wait(1)
+        return ToolResult("cancelled")
 
 
 def _call(name: str, value: str) -> dict[str, Any]:
@@ -106,6 +129,19 @@ def test_timeout_returns_error_and_discards_late_result() -> None:
     )[0]
     assert result.result.is_error
     assert result.result.meta["error_kind"] == "timeout"
+
+
+def test_timeout_signals_cooperative_tool_control() -> None:
+    cancelled = threading.Event()
+    registry = ToolRegistry(cast(list[Tool], [_ControlledTool(cancelled)]))
+    result = ToolBatchExecutor(max_workers=1).execute(
+        [_call("controlled", "value")],
+        registry=registry,
+        default_timeout_seconds=1,
+        invocation_args=lambda _name, args, _tool_call_id: args,
+    )[0]
+    assert result.result.meta["error_kind"] == "timeout"
+    assert cancelled.wait(0.2)
 
 
 def test_parallel_completed_result_survives_wait_for_earlier_call() -> None:

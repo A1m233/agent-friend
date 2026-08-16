@@ -1,4 +1,9 @@
 export { useConnectionStore } from "./connection";
+export {
+  pendingCommandApprovalSessionIds,
+  startCommandRuntimeSync,
+  useCommandRuntimeStore,
+} from "./commandRuntime";
 export type { ConnectionStatus } from "./connection";
 export { useConversationStore } from "./conversation";
 export {

@@ -59,6 +59,12 @@ while [ "$#" -gt 0 ]; do
 done
 export AGENT_FRIEND_CONFIG_MODE="$CONFIG_MODE"
 export AGENT_FRIEND_REPO_ROOT="$ROOT"
+if CODEX_EXECUTABLE="$(uv run python scripts/command-runtime/run.py path 2>/dev/null)"; then
+    export AGENT_FRIEND_CODEX_EXECUTABLE="$CODEX_EXECUTABLE"
+else
+    unset AGENT_FRIEND_CODEX_EXECUTABLE || true
+    echo "  [INFO] 命令运行时尚未准备；需要时运行 ./scripts/command-runtime/run.sh prepare"
+fi
 if [ -z "${AGENT_FRIEND_LOG_DIR:-}" ]; then
     case "$(uname -s)" in
         Darwin)

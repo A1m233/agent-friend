@@ -11,6 +11,7 @@ from typing import Any
 
 from ..tools.protocol import ToolResult
 from ..tools.registry import ToolRegistry
+from .control import TOOL_INVOCATION_CONTROL_ARG, ToolInvocationControl
 
 ToolHookInvoker = Callable[[str, dict[str, Any], Callable[[], ToolResult]], ToolResult]
 PreToolHook = Callable[[str, dict[str, Any]], ToolResult | None]
@@ -44,6 +45,7 @@ class _Pending:
     timeout_seconds: float
     immediate_result: ToolResult | None = None
     invoke: Callable[[], ToolResult] | None = None
+    control: ToolInvocationControl | None = None
 
 
 class ToolBatchExecutor:
@@ -121,9 +123,11 @@ class ToolBatchExecutor:
         public_args = call["args"]
         started_at = time.monotonic()
         timeout = default_timeout_seconds
+        tool: object | None = None
         if registry is not None:
             try:
-                configured = getattr(registry.get(name), "timeout_seconds", timeout)
+                tool = registry.get(name)
+                configured = getattr(tool, "timeout_seconds", timeout)
                 if isinstance(configured, (int, float)) and configured > 0:
                     timeout = float(configured)
             except Exception:
@@ -132,6 +136,12 @@ class ToolBatchExecutor:
             blocked = pre_hook(name, public_args)
             if blocked is not None:
                 return _Pending(call, public_args, None, started_at, timeout, blocked)
+
+        control = (
+            ToolInvocationControl()
+            if tool is not None and getattr(tool, "supports_invocation_control", False) is True
+            else None
+        )
 
         def invoke() -> ToolResult:
             def raw() -> ToolResult:
@@ -143,10 +153,10 @@ class ToolBatchExecutor:
                     )
                 try:
                     tool_call_id = str(call.get("event_id") or call.get("id") or "")
-                    return registry.invoke(
-                        name,
-                        invocation_args(name, public_args, tool_call_id),
-                    )
+                    args = invocation_args(name, public_args, tool_call_id)
+                    if control is not None:
+                        args[TOOL_INVOCATION_CONTROL_ARG] = control
+                    return registry.invoke(name, args)
                 except Exception as exc:
                     return ToolResult(
                         text=f"工具 {name!r} 执行出错: {exc}",
@@ -156,7 +166,9 @@ class ToolBatchExecutor:
 
             return legacy_hook_invoker(name, public_args, raw) if legacy_hook_invoker else raw()
 
-        return _Pending(call, public_args, None, started_at, timeout, invoke=invoke)
+        return _Pending(
+            call, public_args, None, started_at, timeout, invoke=invoke, control=control
+        )
 
     def _finish(
         self, pending: _Pending, cancel_check: Callable[[], None] | None
@@ -169,7 +181,12 @@ class ToolBatchExecutor:
         deadline = pending.started_at + pending.timeout_seconds
         while True:
             if cancel_check is not None:
-                cancel_check()
+                try:
+                    cancel_check()
+                except BaseException:
+                    if pending.control is not None:
+                        pending.control.cancel("run_cancelled")
+                    raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if pending.future.done():
@@ -196,6 +213,8 @@ class ToolBatchExecutor:
     @staticmethod
     def _timeout_result(pending: _Pending) -> ExecutedToolCall:
         assert pending.future is not None
+        if pending.control is not None:
+            pending.control.cancel("tool_timeout")
         pending.future.cancel()
         result = ToolResult(
             text="工具在限定时间内没有返回，未取得可用证据。",

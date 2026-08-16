@@ -52,6 +52,14 @@ from llm_providers import (
 from memory import ConversationFragment, Memory, MemoryContext, Utterance
 
 from .attachments import AttachmentRef
+from .command_runtime.tools import (
+    COMMAND_RUN_CONTEXT_ARG,
+    COMMAND_RUN_ID_ARG,
+    COMMAND_SESSION_ID_ARG,
+    COMMAND_SKILL_SNAPSHOT_ARG,
+    COMMAND_SURFACE_ARG,
+    COMMAND_TOOL_CALL_ID_ARG,
+)
 from .context import (
     BuildResult,
     CompactionRecord,
@@ -718,6 +726,7 @@ class Conversation:
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
+            tool_run_context.close_commands("run_finished")
             self._active_tool_run_context = previous_tool_run_context
 
     def edit_resend_latest(
@@ -861,6 +870,7 @@ class Conversation:
             self._active_skill_turn_snapshot = previous_skill_turn_snapshot
             self._active_skill_selections = previous_skill_selections
             self._active_tool_run_state = None
+            tool_run_context.close_commands("run_finished")
             self._active_tool_run_context = previous_tool_run_context
 
     def continue_after_tool_error(
@@ -1076,6 +1086,7 @@ class Conversation:
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_state = None
+            tool_run_context.close_commands("run_finished")
             self._active_tool_run_context = previous_tool_run_context
 
     # ----- 系统级触发轮（014：main loop 入口） -----
@@ -2964,6 +2975,17 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        if name in {"exec_command", "write_stdin"}:
+            invocation_args.update(
+                {
+                    COMMAND_SESSION_ID_ARG: self._session.session_id,
+                    COMMAND_RUN_ID_ARG: self._run_id_override or "",
+                    COMMAND_SURFACE_ARG: str(self._prompt_surface_override or ""),
+                    COMMAND_TOOL_CALL_ID_ARG: tool_call_id,
+                    COMMAND_RUN_CONTEXT_ARG: tool_run_context,
+                    COMMAND_SKILL_SNAPSHOT_ARG: self._active_skill_turn_snapshot,
+                }
+            )
         if name in FILESYSTEM_TOOL_NAMES:
             invocation_args.update(
                 {
