@@ -15,6 +15,7 @@
 | **PerLTQA**（默认） | 原生中文 | 仅 **dialogues 子集** | **AnchorRecallJudge**：基于 PerLTQA 自带 `Memory Anchors`，substring 匹配召回内容，输出 `命中 anchor 数 / 总 anchor 数 ∈ [0, 1]` |
 | LoCoMo | 英文 | 全量 QA | NoopJudge（无 anchor 数据，不打分；保留作英文基线对照、跑通流程） |
 | Core Profile | 中文 | 084 内置产品回归切片：称呼、多住处、搬家、Agent nickname、雇主分层 | AnchorRecallJudge |
+| Semantic Change | 中文 | 086 内置抽取切片：新增、撤回、多对一、一对多 | 分层 AnchorRecallJudge + extraction attempts / change DB 人工复核 |
 
 > 实测发现：用英文 LoCoMo 测中文 memory 时，「英文 query × 中文记忆」会让 FTS5 关键词召回严重失效，分数不反映真实能力——故默认走原生中文的 PerLTQA。
 
@@ -55,6 +56,8 @@ src/memory_eval/
 ./scripts/memory-eval/run.sh --dataset locomo --retrieval-mode keyword --limit-samples 1 --limit-questions 5
 # Core Profile 产品切片（首次 ingest 会调用真实 LLM；replay 不调用）
 ./scripts/memory-eval/run.sh --dataset core-profile --retrieval-mode keyword --limit-samples 6 --limit-questions 1
+# Semantic change 产品切片（4 cases / 8 fragments，首次完整 ingest 约 8 次真实 LLM 调用）
+./scripts/memory-eval/run.sh --dataset semantic-change --retrieval-mode keyword --limit-samples 4 --limit-questions 1
 # 固定 30 个 fragment，每个重复抽取 3 次；只测抽取稳定性，不建 memory DB、不跑检索
 # ⚠️ 共 90 次真实 LLM 调用，仍须按 llm-api-confirm 在当次运行前获得授权
 ./scripts/memory-eval/run.sh --stability-probe --temperature 0 --stability-fragments 30 --stability-repeats 3 --limit-samples 31 --workspace memory_eval/data/runs/stability-example
@@ -70,7 +73,7 @@ src/memory_eval/
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--dataset` | `perltqa` | `perltqa`（中文）/ `locomo`（英文）/ `core-profile`（084 内置产品切片） |
+| `--dataset` | `perltqa` | `perltqa`（中文）/ `locomo`（英文）/ `core-profile`（084 切片）/ `semantic-change`（086 切片） |
 | `--limit-samples` | `1` | 只跑前 N 个样本（控制成本） |
 | `--limit-questions` | `5` | 每个样本只问前 N 个问题 |
 | `--retrieval-mode` | 普通评测必填 | `legacy-keyword` / `keyword` / `hybrid` / `unified-keyword` / `unified-hybrid`；`unified-*` 复用生产 automatic history fallback；hybrid 禁止静默降级 |

@@ -13,6 +13,7 @@ docs/requirements/013-memory-quality-pass-1/design.md §4。
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -41,6 +42,8 @@ from .schema import (
     DDL_STATEMENTS,
     SCHEMA_VERSION,
     EpisodicRow,
+    SemanticChangeMemberRow,
+    SemanticChangeRow,
     SemanticRow,
     parse_ts,
     serialize_ts,
@@ -151,6 +154,46 @@ class ExtractionTransaction:
         )
         return cur.rowcount == 1
 
+    def add_semantic_change(
+        self,
+        *,
+        change_id: str,
+        observation_id: str,
+        owner_user_id: str,
+        persona_id: str,
+        origin: str,
+        provenance: list[str],
+        created_at: datetime,
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO semantic_change
+                   (id, observation_id, owner_user_id, persona_id, origin, provenance, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                change_id,
+                observation_id,
+                owner_user_id,
+                persona_id,
+                origin,
+                json.dumps(provenance, ensure_ascii=False),
+                serialize_ts(created_at),
+            ),
+        )
+
+    def add_semantic_change_member(
+        self,
+        *,
+        change_id: str,
+        semantic_id: str,
+        role: str,
+        reason: str,
+    ) -> None:
+        self._conn.execute(
+            """INSERT INTO semantic_change_member(change_id, semantic_id, role, reason)
+               VALUES (?, ?, ?, ?)""",
+            (change_id, semantic_id, role, reason),
+        )
+
     def add_episodic(self, row: EpisodicRow) -> None:
         tokens = _tokenize(row.summary)
         cur = self._conn.execute(
@@ -214,6 +257,8 @@ class SqliteMemoryStore:
                     logger.info("schema backfill completed")
                 if previous_version < 5:
                     _migrate_core_profile_v5(self._conn)
+                if previous_version < 6:
+                    _migrate_semantic_changes_v6(self._conn)
                 self._conn.execute(
                     "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
                     (str(SCHEMA_VERSION),),
@@ -242,6 +287,7 @@ class SqliteMemoryStore:
         first_source_ref: str | None,
         last_source_ref: str | None,
         output_sha256: str,
+        output_contract_version: int,
         committed_at: datetime,
     ) -> Iterator[ExtractionTransaction | None]:
         """Open the all-or-nothing/idempotent boundary for one extraction output."""
@@ -259,14 +305,15 @@ class SqliteMemoryStore:
                 self._conn.execute(
                     """INSERT INTO extraction_commit
                            (observation_id, session_id, first_source_ref, last_source_ref,
-                            output_sha256, committed_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
+                            output_sha256, output_contract_version, committed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         observation_id,
                         session_id,
                         first_source_ref,
                         last_source_ref,
                         output_sha256,
+                        output_contract_version,
                         serialize_ts(committed_at),
                     ),
                 )
@@ -925,6 +972,71 @@ class SqliteMemoryStore:
             ).fetchall()
         return [_to_semantic(r) for r in rows]
 
+    def list_semantic_changes(
+        self,
+        *,
+        owner_user_id: str,
+        persona_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[SemanticChangeRow]:
+        """List atomic Semantic change events with their historical members."""
+        filters = "WHERE sc.owner_user_id = ?"
+        params: list[object] = [owner_user_id]
+        if persona_id is not None:
+            filters += " AND sc.persona_id = ?"
+            params.append(persona_id)
+        params.extend([limit, offset])
+        with self._lock:
+            changes = self._conn.execute(
+                f"""SELECT sc.*, ec.output_contract_version
+                    FROM semantic_change sc
+                    LEFT JOIN extraction_commit ec
+                      ON ec.observation_id = sc.observation_id
+                    {filters}
+                    ORDER BY sc.created_at DESC, sc.id DESC
+                    LIMIT ? OFFSET ?""",
+                params,
+            ).fetchall()
+            if not changes:
+                return []
+            change_ids = [str(row["id"]) for row in changes]
+            placeholders = ",".join("?" for _ in change_ids)
+            members = self._conn.execute(
+                f"""SELECT scm.*, s.statement, s.valid_from, s.valid_until
+                    FROM semantic_change_member scm
+                    JOIN semantic s ON s.id = scm.semantic_id
+                    WHERE scm.change_id IN ({placeholders})
+                    ORDER BY scm.change_id, scm.role, scm.semantic_id""",
+                change_ids,
+            ).fetchall()
+        grouped: dict[str, list[SemanticChangeMemberRow]] = {}
+        for member in members:
+            grouped.setdefault(str(member["change_id"]), []).append(
+                SemanticChangeMemberRow(
+                    semantic_id=str(member["semantic_id"]),
+                    role=member["role"],
+                    reason=str(member["reason"]),
+                    statement=str(member["statement"]),
+                    valid_from=parse_ts(member["valid_from"]),
+                    valid_until=parse_ts(member["valid_until"]),
+                )
+            )
+        return [
+            SemanticChangeRow(
+                id=str(row["id"]),
+                observation_id=row["observation_id"],
+                owner_user_id=str(row["owner_user_id"]),
+                persona_id=str(row["persona_id"]),
+                origin=str(row["origin"]),
+                provenance=tuple(json.loads(row["provenance"])),
+                created_at=parse_ts(row["created_at"]),  # type: ignore[arg-type]
+                output_contract_version=row["output_contract_version"],
+                members=tuple(grouped.get(str(row["id"]), [])),
+            )
+            for row in changes
+        ]
+
     def list_episodic(
         self,
         *,
@@ -1301,6 +1413,13 @@ def _premigrate_schema(conn: sqlite3.Connection) -> bool:
         conn.execute("ALTER TABLE semantic ADD COLUMN fact_key TEXT")
     if _column_missing(conn, "semantic", "supersedes_id"):
         conn.execute("ALTER TABLE semantic ADD COLUMN supersedes_id TEXT")
+    if _table_exists(conn, "extraction_commit") and _column_missing(
+        conn, "extraction_commit", "output_contract_version"
+    ):
+        conn.execute(
+            "ALTER TABLE extraction_commit ADD COLUMN output_contract_version "
+            "INTEGER NOT NULL DEFAULT 1"
+        )
     _migrate_legacy_pinned(conn)
     return need_token_backfill
 
@@ -1308,6 +1427,15 @@ def _premigrate_schema(conn: sqlite3.Connection) -> bool:
 def _column_missing(conn: sqlite3.Connection, table: str, column: str) -> bool:
     cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     return column not in cols
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _backfill_tokens_and_rebuild_fts(conn: sqlite3.Connection) -> None:
@@ -1366,6 +1494,115 @@ def _migrate_legacy_pinned(conn: sqlite3.Connection) -> None:
             "UPDATE semantic SET memory_class = ?, fact_key = COALESCE(fact_key, ?) WHERE id = ?",
             (memory_class, fact_key, row["id"]),
         )
+
+
+_LEGACY_CHANGE_REASON = "旧协议迁移，原始理由不可用"
+
+
+def _migrate_semantic_changes_v6(conn: sqlite3.Connection) -> None:
+    """Project scalar ``supersedes_id`` history into idempotent change events."""
+    rows = conn.execute(
+        """SELECT id, supersedes_id, owner_user_id, persona_id, provenance,
+                  created_at, valid_until
+           FROM semantic ORDER BY created_at, id"""
+    ).fetchall()
+    if not rows:
+        return
+    by_id = {str(row["id"]): row for row in rows}
+    successors: dict[str, list[sqlite3.Row]] = {}
+    introduced_by_relation: set[str] = set()
+    for row in rows:
+        semantic_id = str(row["id"])
+        old_id = row["supersedes_id"]
+        if old_id is None:
+            continue
+        old_id = str(old_id)
+        if old_id not in by_id or old_id == semantic_id:
+            logger.warning(
+                "semantic v6 migration kept dangling supersedes_id semantic=%s target=%s",
+                semantic_id,
+                old_id,
+            )
+            continue
+        successors.setdefault(old_id, []).append(row)
+        introduced_by_relation.add(semantic_id)
+
+    for old_id, new_rows in successors.items():
+        old = by_id[old_id]
+        change_id = _legacy_change_id("supersede", old_id)
+        created_at = min(str(row["created_at"]) for row in new_rows)
+        provenance = _merge_legacy_provenance([old, *new_rows])
+        conn.execute(
+            """INSERT OR IGNORE INTO semantic_change
+                   (id, observation_id, owner_user_id, persona_id, origin, provenance, created_at)
+               VALUES (?, NULL, ?, ?, 'legacy_migration', ?, ?)""",
+            (
+                change_id,
+                old["owner_user_id"],
+                old["persona_id"],
+                json.dumps(provenance, ensure_ascii=False),
+                created_at,
+            ),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO semantic_change_member
+                   (change_id, semantic_id, role, reason)
+               VALUES (?, ?, 'retired', ?)""",
+            (change_id, old_id, _LEGACY_CHANGE_REASON),
+        )
+        for new_row in new_rows:
+            conn.execute(
+                """INSERT OR IGNORE INTO semantic_change_member
+                       (change_id, semantic_id, role, reason)
+                   VALUES (?, ?, 'introduced', ?)""",
+                (change_id, new_row["id"], _LEGACY_CHANGE_REASON),
+            )
+
+    for row in rows:
+        semantic_id = str(row["id"])
+        if semantic_id in introduced_by_relation:
+            continue
+        change_id = _legacy_change_id("introduce", semantic_id)
+        conn.execute(
+            """INSERT OR IGNORE INTO semantic_change
+                   (id, observation_id, owner_user_id, persona_id, origin, provenance, created_at)
+               VALUES (?, NULL, ?, ?, 'legacy_migration', ?, ?)""",
+            (
+                change_id,
+                row["owner_user_id"],
+                row["persona_id"],
+                json.dumps(_merge_legacy_provenance([row]), ensure_ascii=False),
+                row["created_at"],
+            ),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO semantic_change_member
+                   (change_id, semantic_id, role, reason)
+               VALUES (?, ?, 'introduced', ?)""",
+            (change_id, semantic_id, _LEGACY_CHANGE_REASON),
+        )
+
+
+def _legacy_change_id(kind: str, semantic_id: str) -> str:
+    digest = hashlib.sha256(f"v6:{kind}:{semantic_id}".encode()).hexdigest()
+    return f"legacy-{digest[:32]}"
+
+
+def _merge_legacy_provenance(rows: list[sqlite3.Row]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        try:
+            values = json.loads(row["provenance"])
+        except (TypeError, json.JSONDecodeError):
+            values = []
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value not in seen:
+                seen.add(value)
+                merged.append(value)
+    return merged
 
 
 _V5_VALUE_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {

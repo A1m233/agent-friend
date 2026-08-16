@@ -22,7 +22,10 @@ from .result import (
     ExtractionAttempt,
     ExtractionAttemptStatus,
     ExtractionOutput,
+    SemanticChange,
+    SemanticFactDraft,
     SemanticOp,
+    SemanticRetirement,
 )
 
 if TYPE_CHECKING:
@@ -133,7 +136,14 @@ class Extractor:
             semantic_omitted=context.semantic_omitted,
             core_update_count=len(output.core_updates) if output is not None else 0,
             episodic_count=len(output.episodic_entries) if output is not None else 0,
-            semantic_count=len(output.semantic_ops) if output is not None else 0,
+            semantic_count=(
+                sum(len(change.new_facts) for change in output.semantic_changes)
+                if output is not None
+                else 0
+            ),
+            output_contract_version=(
+                output.output_contract_version if output is not None else None
+            ),
             raw_response=raw_response,
             error_type=type(error).__name__ if error is not None else None,
             error_message=str(error) if error is not None else None,
@@ -193,7 +203,16 @@ def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAtt
     if not isinstance(obj, dict):
         return ExtractionOutput(), "invalid_shape"
 
-    strict_reasons = "core_updates" in obj
+    has_changes = "semantic_changes" in obj
+    has_ops = "semantic_ops" in obj
+    if has_changes and has_ops:
+        return ExtractionOutput(
+            validation_error="ambiguous_semantic_contract",
+            output_contract_version=2,
+        ), "invalid_shape"
+
+    output_contract_version = 2 if has_changes or not has_ops else 1
+    strict_reasons = has_changes or "core_updates" in obj
     core_updates: list[CoreUpdate] = []
     invalid_operation = False
     raw_core = obj.get("core_updates")
@@ -208,26 +227,46 @@ def _parse_output_with_status(raw: str) -> tuple[ExtractionOutput, ExtractionAtt
         invalid_operation = True
 
     entries = _parse_entries(obj)
+    if has_changes and not isinstance(obj.get("episodic_entries"), list):
+        invalid_operation = True
 
+    changes: list[SemanticChange] = []
     ops: list[SemanticOp] = []
-    raw_ops = obj.get("semantic_ops")
-    if isinstance(raw_ops, list):
-        for item in raw_ops:
-            op = _parse_op(item, require_reason=strict_reasons)
-            if op is None:
-                invalid_operation = True
-            else:
-                ops.append(op)
+    if has_changes:
+        raw_changes = obj.get("semantic_changes")
+        if isinstance(raw_changes, list):
+            for item in raw_changes:
+                change = _parse_change(item)
+                if change is None:
+                    invalid_operation = True
+                else:
+                    changes.append(change)
+        else:
+            invalid_operation = True
+    elif has_ops:
+        raw_ops = obj.get("semantic_ops")
+        if isinstance(raw_ops, list):
+            for item in raw_ops:
+                op = _parse_op(item, require_reason=strict_reasons)
+                if op is None:
+                    invalid_operation = True
+                else:
+                    ops.append(op)
+        else:
+            invalid_operation = True
     elif strict_reasons:
         invalid_operation = True
     if invalid_operation:
         return ExtractionOutput(
-            validation_error="invalid_operation_shape_or_reason"
+            validation_error="invalid_operation_shape_or_reason",
+            output_contract_version=output_contract_version,
         ), "invalid_shape"
     output = ExtractionOutput(
         core_updates=core_updates,
+        semantic_changes=changes,
         semantic_ops=ops,
         episodic_entries=entries,
+        output_contract_version=output_contract_version,
     )
     return output, "empty_output" if output.is_noop() else "success"
 
@@ -317,6 +356,59 @@ def _parse_op(item: object, *, require_reason: bool) -> SemanticOp | None:
         speaker_origin=speaker_origin,
         target_ref=target_ref,
     )
+
+
+def _parse_change(item: object) -> SemanticChange | None:
+    if not isinstance(item, dict):
+        return None
+    raw_retirements = item.get("retirements")
+    raw_new_facts = item.get("new_facts")
+    if not isinstance(raw_retirements, list) or not isinstance(raw_new_facts, list):
+        return None
+    retirements: list[SemanticRetirement] = []
+    for raw_retirement in raw_retirements:
+        if not isinstance(raw_retirement, dict):
+            return None
+        target_ref = raw_retirement.get("target_ref")
+        reason = raw_retirement.get("reason")
+        if (
+            not isinstance(target_ref, str)
+            or not target_ref.strip()
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            return None
+        retirements.append(SemanticRetirement(target_ref=target_ref.strip(), reason=reason.strip()))
+    new_facts: list[SemanticFactDraft] = []
+    for raw_fact in raw_new_facts:
+        if not isinstance(raw_fact, dict):
+            return None
+        statement = raw_fact.get("statement")
+        reason = raw_fact.get("reason")
+        if (
+            not isinstance(statement, str)
+            or not statement.strip()
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            return None
+        importance = raw_fact.get("importance", 0.5)
+        if not isinstance(importance, int | float):
+            return None
+        speaker_origin = raw_fact.get("speaker_origin", "user")
+        if speaker_origin not in ("user", "agent"):
+            return None
+        new_facts.append(
+            SemanticFactDraft(
+                statement=statement.strip(),
+                reason=reason.strip(),
+                importance=max(0.0, min(1.0, float(importance))),
+                speaker_origin=speaker_origin,
+            )
+        )
+    if not retirements and not new_facts:
+        return None
+    return SemanticChange(retirements=retirements, new_facts=new_facts)
 
 
 def _strip_code_fence(text: str) -> str:

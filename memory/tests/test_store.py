@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from memory import EpisodicRow, SemanticRow, SqliteMemoryStore
 
@@ -378,7 +379,7 @@ def test_v1_to_v5_lazy_migration() -> None:
             meta = store._conn.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
-            assert meta["value"] == "5"
+            assert meta["value"] == "6"
 
             # 验证新列加好
             cols = {
@@ -446,3 +447,90 @@ def test_fact_key_supersede_is_atomic_and_historical_query_keeps_old_version() -
         until=second,
     )
     assert [row.id for row, _ in historical] == ["old-job"]
+
+
+def test_v5_to_v6_migrates_one_old_to_many_new_and_dangling_refs(tmp_path: Path) -> None:
+    db = tmp_path / "v5.db"
+    store = SqliteMemoryStore(db)
+    old_time = datetime(2026, 1, 1, tzinfo=UTC)
+    new_time = datetime(2026, 2, 1, tzinfo=UTC)
+    store.add_semantic(
+        _semantic(
+            "用户周末常参加户外活动",
+            id="old",
+            valid_from=old_time,
+            valid_until=new_time,
+            created_at=old_time,
+            updated_at=new_time,
+        )
+    )
+    store.add_semantic(
+        _semantic(
+            "用户通常周六骑行",
+            id="new-a",
+            supersedes_id="old",
+            valid_from=new_time,
+            created_at=new_time,
+            updated_at=new_time,
+        )
+    )
+    store.add_semantic(
+        _semantic(
+            "用户通常周日徒步",
+            id="new-b",
+            supersedes_id="old",
+            valid_from=new_time,
+            created_at=new_time,
+            updated_at=new_time,
+        )
+    )
+    store.add_semantic(
+        _semantic(
+            "带悬空历史引用的事实",
+            id="dangling",
+            supersedes_id="missing",
+            valid_from=new_time,
+            created_at=new_time,
+            updated_at=new_time,
+        )
+    )
+    store._conn.execute("DELETE FROM semantic_change_member")
+    store._conn.execute("DELETE FROM semantic_change")
+    store._conn.execute("UPDATE schema_meta SET value = '5' WHERE key = 'schema_version'")
+    store._conn.commit()
+    store.close()
+
+    migrated = SqliteMemoryStore(db)
+    changes = migrated.list_semantic_changes(owner_user_id="local", limit=20)
+    supersede = next(
+        change
+        for change in changes
+        if {(member.role, member.semantic_id) for member in change.members}
+        == {
+            ("retired", "old"),
+            ("introduced", "new-a"),
+            ("introduced", "new-b"),
+        }
+    )
+    assert supersede.origin == "legacy_migration"
+    assert {member.reason for member in supersede.members} == {"旧协议迁移，原始理由不可用"}
+    dangling_change = next(
+        change
+        for change in changes
+        if [(member.role, member.semantic_id) for member in change.members]
+        == [("introduced", "dangling")]
+    )
+    assert dangling_change.observation_id is None
+    assert (
+        migrated._conn.execute(
+            "SELECT supersedes_id FROM semantic WHERE id = 'dangling'"
+        ).fetchone()["supersedes_id"]
+        == "missing"
+    )
+    first_ids = {change.id for change in changes}
+    migrated.close()
+
+    reopened = SqliteMemoryStore(db)
+    assert {
+        change.id for change in reopened.list_semantic_changes(owner_user_id="local")
+    } == first_ids

@@ -6,7 +6,16 @@
 from .context import ExtractionContext, ExtractionContextBuilder
 from .extractor import Extractor
 from .reconciler import Reconciler
-from .result import CoreUpdate, ExtractionAttempt, ExtractionOutput, ExtractionResult, SemanticOp
+from .result import (
+    CoreUpdate,
+    ExtractionAttempt,
+    ExtractionOutput,
+    ExtractionResult,
+    SemanticChange,
+    SemanticFactDraft,
+    SemanticOp,
+    SemanticRetirement,
+)
 from .worker import AsyncExtractionWorker
 
 __all__ = [
@@ -19,5 +28,8 @@ __all__ = [
     "ExtractionResult",
     "Extractor",
     "Reconciler",
+    "SemanticChange",
+    "SemanticFactDraft",
     "SemanticOp",
+    "SemanticRetirement",
 ]

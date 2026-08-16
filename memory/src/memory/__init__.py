@@ -48,7 +48,10 @@ from .extraction import (
     ExtractionResult,
     Extractor,
     Reconciler,
+    SemanticChange,
+    SemanticFactDraft,
     SemanticOp,
+    SemanticRetirement,
 )
 from .facade import Memory
 from .factory import build_memory
@@ -77,7 +80,13 @@ from .search import (
     TimeRange,
     VectorIndex,
 )
-from .store import EpisodicRow, SemanticRow, SqliteMemoryStore
+from .store import (
+    EpisodicRow,
+    SemanticChangeMemberRow,
+    SemanticChangeRow,
+    SemanticRow,
+    SqliteMemoryStore,
+)
 
 __version__ = "0.2.0"
 
@@ -127,7 +136,12 @@ __all__ = [
     "ScoreWeights",
     "SearchRequest",
     "SearchResult",
+    "SemanticChange",
+    "SemanticChangeMemberRow",
+    "SemanticChangeRow",
+    "SemanticFactDraft",
     "SemanticOp",
+    "SemanticRetirement",
     "SemanticRow",
     "Speaker",
     "SqliteMemoryStore",

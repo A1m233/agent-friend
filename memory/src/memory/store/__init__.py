@@ -4,13 +4,21 @@
 """
 
 from ..core_profile import CoreProfileEntry
-from .schema import EpisodicRow, MemoryClass, SemanticRow
+from .schema import (
+    EpisodicRow,
+    MemoryClass,
+    SemanticChangeMemberRow,
+    SemanticChangeRow,
+    SemanticRow,
+)
 from .sqlite_store import SqliteMemoryStore
 
 __all__ = [
     "CoreProfileEntry",
     "EpisodicRow",
     "MemoryClass",
+    "SemanticChangeMemberRow",
+    "SemanticChangeRow",
     "SemanticRow",
     "SqliteMemoryStore",
 ]

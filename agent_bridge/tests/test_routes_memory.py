@@ -62,6 +62,31 @@ def _memory_with_data() -> Memory:
             created_at=now,
         )
     )
+    with store.extraction_batch(
+        observation_id="obs-1",
+        session_id="s1",
+        first_source_ref="s1#a",
+        last_source_ref="s1#b",
+        output_sha256="test",
+        output_contract_version=2,
+        committed_at=now,
+    ) as tx:
+        assert tx is not None
+        tx.add_semantic_change(
+            change_id="change-1",
+            observation_id="obs-1",
+            owner_user_id="local",
+            persona_id="p1",
+            origin="extracted",
+            provenance=["s1#a", "s1#b"],
+            created_at=now,
+        )
+        tx.add_semantic_change_member(
+            change_id="change-1",
+            semantic_id="s1",
+            role="introduced",
+            reason="测试中的普通长期事实",
+        )
     store.add_core_profile_entry(
         CoreProfileEntry(
             id="core-name",
@@ -163,6 +188,7 @@ class TestMemoryDisabled:
         app = create_app_with_runtime(runtime, memory_inspector_enabled=False)
         test_client = TestClient(app)
         assert test_client.get("/v1/memory/semantic").status_code == 404
+        assert test_client.get("/v1/memory/semantic-changes").status_code == 404
 
     def test_memory_disabled_returns_503(self, tmp_path: Path) -> None:
         settings = BridgeSettings(sessions_dir=tmp_path / "sessions")
@@ -225,6 +251,32 @@ class TestSemanticRoutes:
         data = resp.json()
         assert len(data["semantic"]) >= 1
         assert any("Tom" in r["row"]["statement"] for r in data["semantic"])
+
+    def test_list_semantic_changes_with_contract_version(self, client: TestClient) -> None:
+        resp = client.get("/v1/memory/semantic-changes?persona_id=p1")
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {
+                "id": "change-1",
+                "observation_id": "obs-1",
+                "owner_user_id": "local",
+                "persona_id": "p1",
+                "origin": "extracted",
+                "provenance": ["s1#a", "s1#b"],
+                "created_at": resp.json()[0]["created_at"],
+                "output_contract_version": 2,
+                "members": [
+                    {
+                        "semantic_id": "s1",
+                        "role": "introduced",
+                        "reason": "测试中的普通长期事实",
+                        "statement": "用户养了一只叫 Tom 的猫",
+                        "valid_from": None,
+                        "valid_until": None,
+                    }
+                ],
+            }
+        ]
 
 
 class TestEpisodicRoutes:
