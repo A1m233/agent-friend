@@ -38,6 +38,13 @@ import {
 import { sampleSpine38CanonicalLayoutBounds } from "./spine38LayoutBounds";
 import { loadSpine38Model } from "./spine38Loader";
 import {
+  canSampleSpineVisibleBounds,
+  createSpineVisibleBoundsStabilityState,
+  discardPendingSpineVisibleBoundsSample,
+  observeSpineVisibleBoundsSample,
+  resetPendingSpineVisibleBoundsForDisplayChange,
+} from "./spine38VisibleBoundsStability";
+import {
   Spine38DragFacingDetector,
   orientPointOffset,
   orientRegionOffset,
@@ -248,6 +255,9 @@ export function Spine38AvatarSurface({
   const initialVisibleAnchorAlignedRef = useRef(false);
   const alphaScanReadyRef = useRef(false);
   const alphaScanGivenUpRef = useRef(false);
+  const visibleBoundsStabilityRef = useRef(
+    createSpineVisibleBoundsStabilityState(performance.now()),
+  );
   const [ready, setReady] = useState(false);
 
   const setActionBarAnchorIfChanged = useCallback(
@@ -516,6 +526,9 @@ export function Spine38AvatarSurface({
       initialVisibleAnchorAlignedRef.current = false;
       alphaScanReadyRef.current = false;
       alphaScanGivenUpRef.current = false;
+      visibleBoundsStabilityRef.current = createSpineVisibleBoundsStabilityState(
+        performance.now(),
+      );
       animationsRef.current = [];
       currentPhaseRef.current = "idle";
 
@@ -662,6 +675,16 @@ export function Spine38AvatarSurface({
           !alphaScanReadyRef.current &&
           !alphaScanGivenUpRef.current
         ) {
+          const sampleTime = performance.now();
+          if (
+            !canSampleSpineVisibleBounds(
+              visibleBoundsStabilityRef.current,
+              sampleTime,
+            )
+          ) {
+            syncBounds();
+            return;
+          }
           const layoutBounds = layoutBoundsRef.current;
           let screenBounds = layoutBounds
             ? toScreenRegion(slot, spine, layoutBounds, geometryFacingRef.current)
@@ -678,6 +701,16 @@ export function Spine38AvatarSurface({
               scanned,
               geometryFacingRef.current,
             );
+            visibleBoundsStabilityRef.current = observeSpineVisibleBoundsSample(
+              visibleBoundsStabilityRef.current,
+              localVisualBounds,
+              sampleTime,
+            );
+            if (!visibleBoundsStabilityRef.current.accepted) {
+              nullScanCount = 0;
+              syncBounds();
+              return;
+            }
             const localVisibleCentroid = visibleCentroid
               ? toSpineLocalPoint(
                   slot,
@@ -772,6 +805,10 @@ export function Spine38AvatarSurface({
               actionBarAnchor: scanned,
             });
           } else {
+            visibleBoundsStabilityRef.current =
+              discardPendingSpineVisibleBoundsSample(
+                visibleBoundsStabilityRef.current,
+              );
             nullScanCount += 1;
             if (nullScanCount >= ALPHA_SCAN_NULL_FRAMES) {
               alphaScanGivenUpRef.current = true;
@@ -805,6 +842,9 @@ export function Spine38AvatarSurface({
       initialVisibleAnchorAlignedRef.current = false;
       alphaScanReadyRef.current = false;
       alphaScanGivenUpRef.current = false;
+      visibleBoundsStabilityRef.current = createSpineVisibleBoundsStabilityState(
+        performance.now(),
+      );
       const currentApp = appRef.current;
       const canvas = currentApp?.view;
       if (canvas && stage.contains(canvas)) {
@@ -844,18 +884,29 @@ export function Spine38AvatarSurface({
   }, [facing, syncBounds]);
 
   useEffect(() => {
+    visibleBoundsStabilityRef.current =
+      resetPendingSpineVisibleBoundsForDisplayChange(
+        visibleBoundsStabilityRef.current,
+        performance.now(),
+      );
+  }, [
+    displayContext.dpr,
+    displayContext.overlayViewport.h,
+    displayContext.overlayViewport.w,
+    displayContext.topologyGeneration,
+  ]);
+
+  useEffect(() => {
     const app = appRef.current;
     if (!app || !syncPixiRendererDpr(app, displayContext.dpr)) return;
 
-    alphaScanReadyRef.current = false;
-    alphaScanGivenUpRef.current = false;
-    actionBarAnchorOffsetRef.current = null;
-    visualAnchorOffsetRef.current = null;
+    // DPR changes alter framebuffer density, not the Spine model's local geometry. Keep the
+    // last trusted visible bounds and normalization scale instead of re-learning them from a
+    // resize-transition frame, which can contain only a fragment of the avatar.
     lastSpriteScreenRef.current = null;
     lastActionBarAnchorRef.current = null;
-    setActionBarAnchorIfChanged(null);
     syncBounds();
-  }, [displayContext.dpr, setActionBarAnchorIfChanged, syncBounds]);
+  }, [displayContext.dpr, syncBounds]);
 
   const runtime = useMemo<PetAvatarRuntime>(
     () => ({
