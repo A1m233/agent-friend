@@ -31,6 +31,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageLayout } from "./SettingsPageLayout";
 import { SettingsRow } from "./SettingsRow";
 import { createAvatarScalePreviewScheduler } from "./avatarScalePreview";
+import { DisplayRecoveryProtectionSetting } from "./DisplayRecoveryProtectionSetting";
 
 function backendLabel(backend: string): string {
   return backend === "live2d" ? "Live2D" : "Spine";
@@ -151,6 +152,13 @@ export function AvatarModelPanel() {
             </span>
           </div>
         </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="显示恢复"
+        description="用于规避 Windows 屏幕恢复后透明桌宠窗口异常覆盖桌面的情况。默认关闭。"
+      >
+        <DisplayRecoveryProtectionSetting />
       </SettingsGroup>
 
       <SettingsGroup title="导入 Spine 3.8 模型">

@@ -96,6 +96,7 @@ fn decide_presented_probe_action(
 #[derive(Debug)]
 pub struct PetDisplayRecoveryState {
     last_display_state: Option<SessionDisplayState>,
+    protection_enabled: bool,
     desired_visible: bool,
     next_generation: u64,
     active_generation: Option<u64>,
@@ -106,6 +107,7 @@ impl Default for PetDisplayRecoveryState {
     fn default() -> Self {
         Self {
             last_display_state: None,
+            protection_enabled: true,
             desired_visible: true,
             next_generation: 0,
             active_generation: None,
@@ -117,6 +119,12 @@ impl Default for PetDisplayRecoveryState {
 impl PetDisplayRecoveryState {
     pub fn observe_display_state(&mut self, state: SessionDisplayState) -> DisplayObservation {
         let previous = self.last_display_state.replace(state);
+
+        if !self.protection_enabled {
+            self.active_generation = None;
+            self.safety_suppressed = false;
+            return DisplayObservation::None;
+        }
 
         if state.is_not_rendering() {
             self.active_generation = None;
@@ -184,6 +192,17 @@ impl PetDisplayRecoveryState {
         self.active_generation = None;
         self.safety_suppressed = self.desired_visible;
         true
+    }
+
+    pub fn disable_protection(&mut self) -> Option<VisibilityCommand> {
+        self.protection_enabled = false;
+        let interrupted = self.active_generation.take().is_some() || self.safety_suppressed;
+        self.safety_suppressed = false;
+        interrupted.then_some(if self.desired_visible {
+            VisibilityCommand::Show
+        } else {
+            VisibilityCommand::Hide
+        })
     }
 }
 
@@ -338,6 +357,20 @@ pub(crate) fn toggle_visibility(app: &tauri::AppHandle) -> Result<(), String> {
             VisibilityCommand::Show
         });
     apply_visibility_command(app, command, "tray-toggle")
+}
+
+pub(crate) fn disable_protection(app: &tauri::AppHandle) -> Result<(), String> {
+    let command = app.try_state::<crate::PetOverlayState>().and_then(|state| {
+        state
+            .inner
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.display_recovery.disable_protection())
+    });
+    let Some(command) = command else {
+        return Ok(());
+    };
+    apply_visibility_command(app, command, "display-recovery-protection-disabled")
 }
 
 fn schedule(app: &tauri::AppHandle, generation: u64) {
@@ -590,19 +623,28 @@ fn schedule(app: &tauri::AppHandle, generation: u64) {
 
 pub(crate) fn handle_session_display_state(app: &tauri::AppHandle, raw_state: u32) {
     let state = SessionDisplayState::from_raw(raw_state);
+    let protection_enabled = app
+        .try_state::<std::sync::Arc<std::sync::Mutex<crate::settings::Settings>>>()
+        .and_then(|settings| {
+            settings
+                .lock()
+                .ok()
+                .map(|settings| settings.display_recovery_protection_enabled)
+        })
+        .unwrap_or(false);
     log::info!(
-        "windows session display state observed: state={} raw={}",
+        "windows session display state observed: state={} raw={} protection_enabled={}",
         state.label(),
-        raw_state
+        raw_state,
+        protection_enabled
     );
     let observation = app
         .try_state::<crate::PetOverlayState>()
         .and_then(|overlay_state| {
-            overlay_state
-                .inner
-                .lock()
-                .ok()
-                .map(|mut guard| guard.display_recovery.observe_display_state(state))
+            overlay_state.inner.lock().ok().map(|mut guard| {
+                guard.display_recovery.protection_enabled = protection_enabled;
+                guard.display_recovery.observe_display_state(state)
+            })
         })
         .unwrap_or(DisplayObservation::None);
     if let DisplayObservation::BeginRecovery { generation } = observation {
@@ -704,6 +746,33 @@ mod tests {
         state.observe_display_state(SessionDisplayState::On);
         assert!(state.timeout(1));
         assert_eq!(state.toggle_requested(false), VisibilityCommand::Show);
+    }
+
+    #[test]
+    fn disabled_protection_tracks_display_state_without_starting_recovery() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.disable_protection();
+
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::Off),
+            DisplayObservation::None
+        );
+        assert_eq!(
+            state.observe_display_state(SessionDisplayState::On),
+            DisplayObservation::None
+        );
+        assert!(state.active_generation.is_none());
+    }
+
+    #[test]
+    fn disabling_protection_restores_an_interrupted_visible_pet() {
+        let mut state = PetDisplayRecoveryState::default();
+        state.observe_display_state(SessionDisplayState::Off);
+        state.observe_display_state(SessionDisplayState::On);
+
+        assert_eq!(state.disable_protection(), Some(VisibilityCommand::Show));
+        assert!(state.active_generation.is_none());
+        assert!(!state.safety_suppressed);
     }
 
     #[test]
