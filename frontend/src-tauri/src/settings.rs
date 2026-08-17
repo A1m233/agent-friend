@@ -24,6 +24,8 @@ pub struct Settings {
     pub voice_tunnel_consent_accepted: bool,
     #[serde(default = "default_immersive_mode")]
     pub immersive_mode: bool,
+    #[serde(default)]
+    pub display_recovery_protection_enabled: bool,
     #[serde(default = "default_chat_model")]
     pub chat_model: ModelSelection,
     #[serde(default = "default_memory_model")]
@@ -110,15 +112,15 @@ fn deepseek_model_id(model: DeepseekModel) -> String {
 
 fn default_chat_model() -> ModelSelection {
     ModelSelection {
-        provider: ModelProvider::Deepseek,
-        model: "deepseek/deepseek-v4-flash".to_string(),
+        provider: ModelProvider::Kimi,
+        model: "kimi/kimi-k2.5".to_string(),
     }
 }
 
 fn default_memory_model() -> ModelSelection {
     ModelSelection {
         provider: ModelProvider::Deepseek,
-        model: "deepseek/deepseek-v4-pro".to_string(),
+        model: "deepseek/deepseek-v4-flash".to_string(),
     }
 }
 
@@ -155,6 +157,7 @@ impl Default for Settings {
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
             voice_tunnel_consent_accepted: false,
             immersive_mode: default_immersive_mode(),
+            display_recovery_protection_enabled: false,
             chat_model: default_chat_model(),
             memory_model: default_memory_model(),
             avatar_model_id: default_avatar_model_id(),
@@ -548,8 +551,8 @@ pub struct SetPayload {
 }
 
 #[tauri::command]
-pub fn set_setting<R: Runtime>(
-    app: AppHandle<R>,
+pub fn set_setting(
+    app: AppHandle,
     state: tauri::State<'_, Arc<Mutex<Settings>>>,
     payload: SetPayload,
 ) -> Result<(), String> {
@@ -580,6 +583,11 @@ pub fn set_setting<R: Runtime>(
             let enabled: bool = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid immersiveMode: {e}"))?;
             s.immersive_mode = enabled;
+        }
+        "displayRecoveryProtectionEnabled" => {
+            let enabled: bool = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid displayRecoveryProtectionEnabled: {e}"))?;
+            s.display_recovery_protection_enabled = enabled;
         }
         "chatModel" => {
             let model: ModelSelection = serde_json::from_value(payload.value.clone())
@@ -672,6 +680,12 @@ pub fn set_setting<R: Runtime>(
         serde_json::json!({ "key": event_key, "value": event_value }),
     )
     .map_err(|e| e.to_string())?;
+
+    if event_key == "displayRecoveryProtectionEnabled" && !s.display_recovery_protection_enabled {
+        if let Err(error) = crate::pet_display_recovery::disable_protection(&app) {
+            log::warn!("pet display recovery: failed to apply disabled setting: {error}");
+        }
+    }
 
     if event_key == "backgroundOnlinePolicy" {
         request_power_policy_refresh(&app);
@@ -780,11 +794,13 @@ mod tests {
     }
 
     #[test]
-    fn default_models_use_flash_for_chat_and_pro_for_memory() {
+    fn product_defaults_use_kimi_2_5_for_chat_and_deepseek_flash_for_memory() {
         let settings = Settings::default();
 
-        assert_eq!(settings.chat_model, default_chat_model());
-        assert_eq!(settings.memory_model, default_memory_model());
+        assert_eq!(settings.chat_model.provider, ModelProvider::Kimi);
+        assert_eq!(settings.chat_model.model, "kimi/kimi-k2.5");
+        assert_eq!(settings.memory_model.provider, ModelProvider::Deepseek);
+        assert_eq!(settings.memory_model.model, "deepseek/deepseek-v4-flash");
     }
 
     #[test]
@@ -798,6 +814,23 @@ mod tests {
     #[test]
     fn default_immersive_mode_is_enabled() {
         assert!(Settings::default().immersive_mode);
+    }
+
+    #[test]
+    fn display_recovery_protection_defaults_to_disabled() {
+        assert!(!Settings::default().display_recovery_protection_enabled);
+    }
+
+    #[test]
+    fn missing_display_recovery_protection_in_legacy_settings_defaults_to_disabled() {
+        let dir = temp_settings_dir("display-recovery-default");
+        let path = dir.join("settings.json");
+        write_raw(&path, r#"{"settings":{"theme":"light"}}"#);
+
+        let settings = read_settings_file(&path).expect("read settings");
+
+        assert!(!settings.display_recovery_protection_enabled);
+        fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

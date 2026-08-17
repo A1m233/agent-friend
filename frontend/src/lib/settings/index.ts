@@ -22,6 +22,7 @@ export interface Settings {
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
   voiceTunnelConsentAccepted: boolean;
   immersiveMode: boolean;
+  displayRecoveryProtectionEnabled: boolean;
   chatModel: ModelSelection;
   memoryModel: ModelSelection;
   avatarModelId: AvatarModelId;
@@ -35,8 +36,9 @@ export const DEFAULT_SETTINGS: Settings = {
   backgroundOnlinePolicy: "followSystem",
   voiceTunnelConsentAccepted: false,
   immersiveMode: true,
-  chatModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
-  memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-pro" },
+  displayRecoveryProtectionEnabled: false,
+  chatModel: { provider: "kimi", model: "kimi/kimi-k2.5" },
+  memoryModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
   avatarModelId: DEFAULT_AVATAR_MODEL_ID,
   petAvatarSize: "normal",
   avatarModelScalePercents: {},

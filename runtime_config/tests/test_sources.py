@@ -83,6 +83,17 @@ def test_desktop_settings_reader_supports_wrapped_and_flat_snapshots(tmp_path: P
     assert reader.read() == {"immersiveMode": True}
 
 
+def test_settings_file_source_uses_product_model_defaults_when_settings_are_missing(
+    tmp_path: Path,
+) -> None:
+    source = SettingsFileSource(tmp_path / "missing-settings.json")
+
+    assert source.get(LLM_CHAT_PROVIDER).value == "kimi"  # type: ignore[union-attr]
+    assert source.get(LLM_CHAT_MODEL).value == "kimi/kimi-k2.5"  # type: ignore[union-attr]
+    assert source.get(LLM_MEMORY_PROVIDER).value == "deepseek"  # type: ignore[union-attr]
+    assert source.get(LLM_MEMORY_MODEL).value == "deepseek/deepseek-v4-flash"  # type: ignore[union-attr]
+
+
 def test_process_env_wins_over_keyring_and_dotenv(tmp_path: Path) -> None:
     fake = FakeKeyring()
     fake.set_password("agent-friend", DEEPSEEK_API_KEY, "from-keyring")
