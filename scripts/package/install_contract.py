@@ -239,6 +239,8 @@ FROZEN_RUNTIME_SOURCE_PREFIXES = (
     "runtime_config/src/",
     "voice_bridge/src/",
 )
+FROZEN_RUNTIME_STANDARD_TEXT_RESOURCE_PREFIXES = ("agent/src/agent/skills/builtin_assets/",)
+FROZEN_RUNTIME_STANDARD_TEXT_RESOURCE_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
 
 
 def _canonical_repository_path(value: str) -> str:
@@ -293,6 +295,11 @@ def package_verification_level_for_path(path: str) -> PackageVerificationLevel:
         normalized.startswith(prefix) for prefix in PACKAGE_SENSITIVE_PREFIXES
     ):
         return PackageVerificationLevel.PACKAGE_SENSITIVE
+    if (
+        normalized.startswith(FROZEN_RUNTIME_STANDARD_TEXT_RESOURCE_PREFIXES)
+        and Path(normalized).suffix in FROZEN_RUNTIME_STANDARD_TEXT_RESOURCE_SUFFIXES
+    ):
+        return PackageVerificationLevel.STANDARD
     if normalized.startswith(FROZEN_RUNTIME_SOURCE_PREFIXES):
         suffix = Path(normalized).suffix
         if suffix not in {".py", ".pyi"}:

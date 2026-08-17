@@ -9,7 +9,7 @@
 5. 在 `manual` 模式经单独 Git 授权、在 `merge-main-and-push` 模式使用工作流授权，于公开仓库形成提交 `G`。
 6. 按当前模式的 push 授权推送 `G`，确认 origin 的 branch 或 tag 精确指向 `G`。
 7. 在产品仓库运行 `sync --guide-commit G`。
-8. 验证 builtin、manifest、局部测试、完整检查和 package-sensitive frozen runtime。
+8. 验证 builtin、manifest、局部测试和完整检查。仅同步既有 Skill 的文本、metadata、摘要与 manifest pin 时按 `standard` 收口，不运行 frozen runtime；只有资源收集类型 / 路径 / 加载契约或其它打包敏感输入变化时，才按 `frozen-runtime-packaging` Rule 运行 package-sensitive 验证。
 9. 按当前模式的 Git 授权形成包含 builtin pin 的后续产品提交 `B`。
 
 公开工作区、未提交内容或只存在于本地的 commit 不能作为 builtin 来源。

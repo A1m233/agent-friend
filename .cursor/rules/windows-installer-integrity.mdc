@@ -17,10 +17,10 @@ codexLoad: preflight
 脚本输出三个最低等级：
 
 - `standard`（一级）：普通业务、UI、日志和诊断采集等不改变冻结内容或安装协议的代码。默认不强制打包；一旦用户或验收决定产包，必须走标准完整构建，不能用裸 executable 代替可信包。
-- `package-sensitive`（二级）：冻结 runtime 依赖、PyInstaller spec/hook、必须入包的资源或 runtime entry 等会改变包内内容和启动能力的变化。合入前至少构建一次真实 frozen candidate，并通过 doctor/capability smoke；不跑无关的升级、降级或迁移矩阵。
+- `package-sensitive`（二级）：冻结 runtime 依赖、PyInstaller spec/hook、资源收集类型 / 路径 / 加载契约或 runtime entry 等会改变包内组成和启动能力的变化。合入前至少构建一次真实 frozen candidate，并通过 doctor/capability smoke；不跑无关的升级、降级或迁移矩阵。现有收集机制覆盖下的内置 Skill 纯文本、metadata、摘要和 manifest pin 更新属于一级，由 validator、同步一致性、catalog / loader 测试和后端检查覆盖。
 - `full-matrix`（三级）：改变已安装版本判定、安装根选择或迁移、安装时写入、active payload/receipt/identity、产品旧进程关闭与文件占用、安装失败恢复、安装器语言或矩阵契约的变化。合入前必须通过完整隔离矩阵。stable release 作为发布事件无条件升到三级；重要 RC 或用户要求也可显式升档。
 
-开始验证前读取 `impact.packageRequired`、`impact.minimumVerificationLevel` 和分级路径。语义上新增动态导入、package data 或原生库但路径分类仍为一级时，Coding Agent 必须通过 `--verification-level package-sensitive` 升档；涉及安装状态转换时升到 `full-matrix`。不得主观降级脚本给出的 floor。
+开始验证前读取 `impact.packageRequired`、`impact.minimumVerificationLevel` 和分级路径。语义上新增动态导入、package data 收集 / 加载契约或原生库但路径分类仍为一级时，Coding Agent 必须通过 `--verification-level package-sensitive` 升档；涉及安装状态转换时升到 `full-matrix`。不得主观降级脚本给出的 floor。机器分类器把既有内置 Skill 纯内容同步误升档时，应修正分类器和测试后再继续，不把错误 floor 当作长期事实，也不做调用时临时降级。
 
 完整 `sourceTreeSha256` 只负责制品来源追溯；验证证据复用只认脚本输出的 `verificationInputs.packageInputSha256` 以及报告绑定的 candidate build/hash。指纹中的源码内容身份必须经过 Git clean filter 规范化，因此同一 Git 内容不能因 worktree 绝对路径、`core.autocrlf` 或 LF/CRLF checkout 差异而变化；二进制与真实内容变化仍必须失效。具体排除项、构建环境字段和 hash 算法只由 `scripts/package/install_contract.py` 维护。
 

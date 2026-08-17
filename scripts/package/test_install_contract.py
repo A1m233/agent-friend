@@ -258,6 +258,22 @@ def test_package_impact_separates_package_trigger_from_verification_level() -> N
     ]
     assert frozen["standardPaths"] == ["agent/src/agent/session_context.py"]
 
+    builtin_skill_content = classify_installer_impact(
+        {
+            "agent/src/agent/skills/builtin_assets/agent-friend-guide/references/settings-reference.md",
+            "agent/src/agent/skills/builtin_assets/manifest.json",
+        }
+    )
+    assert builtin_skill_content["minimumVerificationLevel"] == "standard"
+    assert builtin_skill_content["packageRequired"] is False
+    assert builtin_skill_content["packageSensitivePaths"] == []
+
+    builtin_skill_binary = classify_installer_impact(
+        {"agent/src/agent/skills/builtin_assets/example/assets/model.bin"}
+    )
+    assert builtin_skill_binary["minimumVerificationLevel"] == "package-sensitive"
+    assert builtin_skill_binary["packageRequired"] is True
+
     installer = classify_installer_impact(
         {"scripts/package/windows/nsis-hooks.nsh", "frontend/src/app.tsx"}
     )
