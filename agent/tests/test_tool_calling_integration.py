@@ -21,6 +21,8 @@ from typing import Any, ClassVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
+from agent.filesystem import ProtectedPathPolicy
+from agent.filesystem.tools import RequestFilesystemAccessTool
 from agent.latency import RunLatencyContext, monotonic_ms
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
@@ -1989,6 +1991,83 @@ def test_repeated_identical_failures_stop_as_no_progress(tmp_path: Path) -> None
     )
     events = list(_make_conversation(tmp_path, fake_llm=fake, registry=registry).stream("retry"))
     done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.stop_reason == "no_progress"
+    assert done.total_tool_calls == 3
+
+
+def test_unavailable_filesystem_approval_groups_changed_requests_as_no_progress(
+    tmp_path: Path,
+) -> None:
+    tool = RequestFilesystemAccessTool(
+        None,
+        ProtectedPathPolicy(
+            product_roots=((tmp_path / "product").resolve(),),
+            personal_skill_roots=((tmp_path / "personal-skills").resolve(),),
+        ),
+    )
+    requests = [
+        {
+            "reason": "读取用户指定的说明文件",
+            "items": [
+                {
+                    "item_id": "docs",
+                    "locator": {"kind": "path", "path": str(tmp_path)},
+                    "root_kind": "directory",
+                    "permissions": ["search_metadata", "read_text"],
+                }
+            ],
+        },
+        {
+            "reason": "核对本地安装包版本",
+            "items": [
+                {
+                    "item_id": "docs",
+                    "locator": {"kind": "path", "path": str(tmp_path)},
+                    "root_kind": "directory",
+                    "permissions": ["search_metadata", "read_text"],
+                }
+            ],
+        },
+        {
+            "reason": "核对本地安装包版本",
+            "items": [
+                {
+                    "item_id": "packages",
+                    "locator": {"kind": "path", "path": str(tmp_path / "packages")},
+                    "root_kind": "directory",
+                    "permissions": ["search_metadata", "read_text"],
+                }
+            ],
+        },
+    ]
+    repeated: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(
+                0,
+                f"approval-{index}",
+                tool.name,
+                json.dumps(args, ensure_ascii=False),
+            ),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+        for index, args in enumerate(requests)
+    ]
+    fake = _ScriptedLLMClient(
+        script=[*repeated, [LLMTextDelta(text="请在桌面端继续。"), LLMTurnDone("end_turn")]]
+    )
+
+    events = list(
+        _make_conversation(
+            tmp_path,
+            fake_llm=fake,
+            registry=ToolRegistry([tool]),
+        ).stream("检查本地安装包")
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert len(results) == 3
+    assert all(event.is_error for event in results)
     assert done.stop_reason == "no_progress"
     assert done.total_tool_calls == 3
 
