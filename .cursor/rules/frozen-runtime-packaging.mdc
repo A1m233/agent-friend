@@ -17,11 +17,13 @@ codexLoad: preflight
 
 - 冻结 runtime 项目的直接依赖新增、删除、替换或版本约束变化；
 - `uv.lock` 变化影响这些项目的运行时依赖闭包；
-- 新增或改变 package data、相对包路径文件读取、`importlib.resources`、动态导入、entry point、插件发现或原生库加载；
+- 新增 package data 类型、改变资源收集范围或目标路径、改变相对包路径文件读取 / `importlib.resources` 契约、动态导入、entry point、插件发现或原生库加载；
 - 修改 PyInstaller spec、hook、runtime supplement、staging 或 frozen doctor；
 - 新增或改变一项必须在安装包内工作的用户可见能力，且现有 frozen capability smoke 未覆盖其高风险路径。
 
-纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，保持一级 `standard`，不要求运行 PyInstaller，也不要求构建 local-test runtime。不要因为本 Rule 被加载就扩大验证范围。若语义上命中上述事实但机器路径分类仍为一级，使用标准 runner 的 `--verification-level package-sensitive` 主动升档。
+纯业务逻辑、测试、注释或文档改动，如果不具备上述事实，保持一级 `standard`，不要求运行 PyInstaller，也不要求构建 local-test runtime。已由现有收集机制完整覆盖的内置 Skill，若只修改既有文本资源、metadata、内容摘要或 manifest source pin，同样属于 `standard`；此类变更应验证 Skill validator、同步摘要、catalog / loader 测试和后端检查，而不是运行与内容变化无关的整套 frozen capability smoke。
+
+不要因为本 Rule 被加载就扩大验证范围。若语义上命中上述事实但机器路径分类仍为一级，使用标准 runner 的 `--verification-level package-sensitive` 主动升档。机器分类器若把上述“既有内置 Skill 纯内容同步”升为二级，应先按本 Rule 的语义边界修正分类器和对应测试，不得用一次次手工降级绕过。
 
 ## 打包敏感变更的处理
 
@@ -32,6 +34,8 @@ codexLoad: preflight
 5. 同步维护受影响的 package tests 和 `scripts/README.md`；脚本入口仍服从 `cross-platform-dev` Rule。
 
 ## 验证门禁
+
+既有内置 Skill 的纯内容同步运行公开 Skill validator、项目 guide `verify`、builtin / manifest 一致性检查、相关 catalog / loader 测试和 `scripts/check/run.* --stage backend`；不要求构建冻结 runtime。
 
 打包敏感的代码或配置发生实质变化时：
 

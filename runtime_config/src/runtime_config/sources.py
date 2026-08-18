@@ -35,8 +35,10 @@ SETTINGS_NAME_MAP: dict[str, str] = {
     DEEPSEEK_MEMORY_MODEL: "deepseekMemoryModel",
 }
 
-DEFAULT_CHAT_MODEL = "deepseek/deepseek-v4-flash"
-DEFAULT_MEMORY_MODEL = "deepseek/deepseek-v4-pro"
+DEFAULT_CHAT_PROVIDER = "kimi"
+DEFAULT_CHAT_MODEL = "kimi/kimi-k2.5"
+DEFAULT_MEMORY_PROVIDER = "deepseek"
+DEFAULT_MEMORY_MODEL = "deepseek/deepseek-v4-flash"
 
 
 def _string_setting(data: Mapping[str, Any], key: str) -> str | None:
@@ -278,7 +280,12 @@ class SettingsFileSource:
         return self._reader.read() or {}
 
     def _model_selection(
-        self, key: str, *, legacy_key: str, legacy_default: str
+        self,
+        key: str,
+        *,
+        legacy_key: str,
+        legacy_default_provider: str,
+        legacy_default_model: str,
     ) -> tuple[str, str]:
         settings = self._settings()
         value = settings.get(key)
@@ -288,19 +295,23 @@ class SettingsFileSource:
             if provider and model:
                 return provider, model
 
-        legacy_model = _string_setting(settings, legacy_key) or legacy_default
-        return "deepseek", legacy_model
+        legacy_model = _string_setting(settings, legacy_key)
+        if legacy_model:
+            return "deepseek", legacy_model
+        return legacy_default_provider, legacy_default_model
 
     def _projected_model_value(self, name: str) -> str | None:
         chat_provider, chat_model = self._model_selection(
             "chatModel",
             legacy_key="deepseekModel",
-            legacy_default=DEFAULT_CHAT_MODEL,
+            legacy_default_provider=DEFAULT_CHAT_PROVIDER,
+            legacy_default_model=DEFAULT_CHAT_MODEL,
         )
         memory_provider, memory_model = self._model_selection(
             "memoryModel",
             legacy_key="deepseekMemoryModel",
-            legacy_default=DEFAULT_MEMORY_MODEL,
+            legacy_default_provider=DEFAULT_MEMORY_PROVIDER,
+            legacy_default_model=DEFAULT_MEMORY_MODEL,
         )
         values = {
             LLM_CHAT_PROVIDER: chat_provider,
