@@ -25,6 +25,7 @@ from .models import (
     SkillTurnSnapshot,
     SkillWatcherState,
 )
+from .selection import resolve_explicit_skill_selections
 
 if TYPE_CHECKING:
     from .watcher import SkillWatcher
@@ -174,19 +175,31 @@ class SkillCatalogService:
         self,
         snapshot: SkillCatalogSnapshot,
         selection: SkillSelection,
-        *,
-        invocation_kind: SkillInvocationKind,
     ) -> tuple[ActivatedSkill | None, SkillActivationIssue | None]:
-        """Resolve one model- or caller-selected Skill without changing the turn snapshot."""
+        """Resolve one model-selected Skill as an implicit invocation."""
 
         activation, issue, _ = self._activate_one(
             snapshot,
             selection,
-            invocation_kind=invocation_kind,
+            invocation_kind="implicit",
             final_attempt=True,
             changed_code="skill_changed_during_turn",
         )
         return activation, issue
+
+    def resolve_explicit_selections(
+        self,
+        user_input: str,
+        *,
+        prior_assistant_text: str | None = None,
+    ) -> tuple[SkillSelection, ...]:
+        """Return host-verifiable explicit selections from the current catalog."""
+
+        return resolve_explicit_skill_selections(
+            user_input,
+            self.snapshot,
+            prior_assistant_text=prior_assistant_text,
+        )
 
     def catalog_payload(self) -> dict[str, object]:
         snapshot = self.snapshot

@@ -15,6 +15,7 @@
 | 文件 | 适用场景 |
 |---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 |
+| `agent-tool-contract-design.mdc` | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 |
 | `coding-design.mdc` | agent-friend 项目编码设计原则：边界、可扩展性与不过度设计 |
 | `cross-platform-dev.mdc` | agent-friend 项目跨平台开发支持与 scripts/ 规范 |
 | `desktop-startup-default.mdc` | agent-friend 项目桌面开发运行态规范：coding agent 启动前端或项目时默认使用 Tauri 桌面端，并确认运行实例身份、源码新鲜度和任务结束后的生命周期；除非用户或当前… |
@@ -29,7 +30,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 52d924c7ff81c4e72482e01b5478d628572959dbbf484527e424651433ffdcf5 -->
+<!-- codex-adapter-source-sha256: bb99bebae5a18cec7ab7181256cd25e07a103d5bd11eb2031d8b31479eb3aef3 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -480,6 +481,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | 文件 | 触发条件 | 适用场景 | 读取路径 |
 |---|---|---|---|
 | `agent-eval-governance.mdc` | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | agent-friend 的 agent_eval 治理规则：约束 case 维护、确定性验证、真实模型运行、续跑和报告复核 | `.cursor/rules/agent-eval-governance.mdc` |
+| `agent-tool-contract-design.mdc` | ["agent/src/agent/tools/**", "agent/src/agent/command_runtime/**", "agent/src/agent/filesystem/**", "agent/src/agent/tool_runtime/**", "agent/src/agent/prompt_sections/tool_usage_contract.md", "agent_bridge/**", "llm_providers/**", "agent_eval/**"] | agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证 | `.cursor/rules/agent-tool-contract-design.mdc` |
 | `diagnostic-bundle-contract.mdc` | ["frontend/src-tauri/src/diagnostics/**", "frontend/src-tauri/src/shell_diagnostics/**", ".cursor/skills/inspect-agent-friend-diagnostics/**"] | agent-friend 诊断包生产协议、机器契约与 inspect-agent-friend-diagnostics 消费者的同步约束 | `.cursor/rules/diagnostic-bundle-contract.mdc` |
 | `frontend-ui-conventions.mdc` | frontend/** | agent-friend 前端 UI 编写规范：语义化组件选型、组件复用与设计 token CSS 变量化 | `.cursor/rules/frontend-ui-conventions.mdc` |
 | `frontend-visual-verification.mdc` | frontend/** | agent-friend 桌面前端视觉验收授权规范：改 Tauri 窗口 UI 时先询问是否做真实桌面端视觉验收；确认后才启动桌面端、截图、DOM 或 Playwright/CDP。 | `.cursor/rules/frontend-visual-verification.mdc` |

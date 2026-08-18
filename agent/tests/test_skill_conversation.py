@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from agent.command_runtime.tools import COMMAND_SKILL_SNAPSHOT_ARG
 from agent.skills import SkillCatalogService, SkillSelection
 from agent.tools import ToolRegistry
-from agent.tools.builtin.skills import SkillReadTool
+from agent.tools.builtin.skills import (
+    SKILL_CATALOG_SNAPSHOT_ARG,
+    SKILL_RUNTIME_CAPABILITIES_ARG,
+    SkillReadTool,
+)
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -176,7 +181,7 @@ def test_skill_context_order_persistence_and_general_projection(tmp_path: Path) 
             skill_id=selection.id,
             name="test-skill",
             source="personal",
-            reason="由调用方为当前用户轮选择",
+            reason="由宿主从当前用户轮的显式选择中解析",
         )
     ]
 
@@ -186,14 +191,14 @@ def test_plain_query_does_not_activate_and_unchanged_catalog_is_not_appended(
 ) -> None:
     conversation, llm, _, selection = _conversation(tmp_path)
     list(conversation.stream("first", skill_selections=(selection,)))
-    list(conversation.stream("please use $test-skill"))
+    list(conversation.stream("test-skill 是什么？"))
 
     assert sum(event.type == "skill_catalog_state" for event in conversation.session.events) == 1
     assert sum(event.type == "skill_context" for event in conversation.session.events) == 1
     current_index = next(
         index
         for index, item in enumerate(llm.received[-1])
-        if item["content"] == "please use $test-skill"
+        if item["content"] == "test-skill 是什么？"
     )
     assert all("<skill>" not in item["content"] for item in llm.received[-1][current_index + 1 :])
 
@@ -243,9 +248,8 @@ class _SkillCallingLLM:
                 tool_name="skill_read",
                 args_json_delta=json.dumps(
                     {
-                        "id": self.skill_id,
-                        "invocation_kind": "named",
-                        "reason": "用户指的是当前列表中的第 2 个 Skill",
+                        "skill_id": self.skill_id,
+                        "reason": "当前任务与 Test workflow 匹配",
                     },
                     ensure_ascii=False,
                 ),
@@ -260,7 +264,7 @@ class _SkillCallingLLM:
         yield LLMTurnDone(stop_reason="end_turn")
 
 
-def test_model_can_semantically_select_and_read_skill_in_tool_loop(tmp_path: Path) -> None:
+def test_model_can_implicitly_select_and_read_skill_in_tool_loop(tmp_path: Path) -> None:
     personal = tmp_path / "skills"
     _write_skill(personal, "test-skill", "FIRST VERSION")
     skill_service = SkillCatalogService(
@@ -296,7 +300,7 @@ def test_model_can_semantically_select_and_read_skill_in_tool_loop(tmp_path: Pat
         tool_registry=ToolRegistry([SkillReadTool(skill_service)]),
     )
 
-    events = list(conversation.stream("你用一下 2 试试"))
+    events = list(conversation.stream("帮我完成这个 Test workflow"))
 
     assert len(llm.received) == 2
     assert llm.received_tools[0] is not None
@@ -308,6 +312,56 @@ def test_model_can_semantically_select_and_read_skill_in_tool_loop(tmp_path: Pat
     assert "No governed filesystem search/read tools" in result_event.payload["content"]
     assert result_event.meta["extra"]["skill_activation"]["status"] == "activated"
     assert any(getattr(event, "type", "") == "tool_call_result" for event in events)
+
+
+def test_semantic_skill_activation_is_available_to_later_command_binding(
+    tmp_path: Path,
+) -> None:
+    conversation, _, service, selection = _conversation(tmp_path)
+    snapshot = service.begin_turn()
+    conversation._active_skill_turn_snapshot = snapshot
+    result = SkillReadTool(service).invoke(
+        {
+            "skill_id": selection.id,
+            "reason": "test",
+            SKILL_CATALOG_SNAPSHOT_ARG: snapshot.catalog,
+            SKILL_RUNTIME_CAPABILITIES_ARG: "test capabilities",
+        }
+    )
+
+    conversation._adopt_runtime_skill_activation(result)
+    invocation_args = conversation._tool_args_with_invocation_context(
+        "exec_command",
+        {},
+        current_turn_start_idx=None,
+    )
+    adopted = invocation_args[COMMAND_SKILL_SNAPSHOT_ARG]
+
+    assert [item.record.id for item in adopted.activations] == [selection.id]
+    conversation._append_tool_call_result_event(
+        {
+            "id": "skill-call",
+            "event_id": "skill-event",
+            "name": "skill_read",
+            "args": {},
+        },
+        result,
+        0,
+    )
+    assert "_activated_skill" not in conversation.session.events[-1].meta["extra"]
+
+
+def test_explicit_name_is_host_activated_before_the_model(tmp_path: Path) -> None:
+    conversation, llm, _, selection = _conversation(tmp_path)
+
+    events = list(conversation.stream("请用 test-skill 处理这个任务"))
+
+    assert len(llm.received) == 1
+    assert any("FIRST VERSION" in item.get("content", "") for item in llm.received[0])
+    activation = next(event for event in events if isinstance(event, SkillActivationStatus))
+    assert activation.status == "activated"
+    assert activation.skill_id == selection.id
+    assert not any(event.type == "tool_call_result" for event in events)
 
 
 def test_reactivation_reads_current_version_and_idempotency_checks_selection(

@@ -59,7 +59,9 @@ for raw_line in sys.stdin:
             sys.stdout.close()
             break
         live.add(process_id)
-        sandbox_type = "none" if command == "fake:none-sandbox" else "windows"
+        sandbox_type = (
+            "none" if command == "fake:none-sandbox" or "sandbox" not in params else "windows"
+        )
         send({"id": request_id, "result": {"sandboxType": sandbox_type}})
         if command == "fake:buffered":
             threading.Thread(
@@ -67,6 +69,19 @@ for raw_line in sys.stdin:
             ).start()
         elif command == "fake:large":
             threading.Thread(target=finish, args=(process_id, b"x" * 128), daemon=True).start()
+    elif method == "fs/getMetadata":
+        send(
+            {
+                "id": request_id,
+                "result": {
+                    "isDirectory": True,
+                    "isFile": False,
+                    "isSymlink": False,
+                    "createdAtMs": 0,
+                    "modifiedAtMs": 0,
+                },
+            }
+        )
     elif method == "process/write":
         process_id = params["processId"]
         if not isinstance(params.get("writeId"), str) or not params["writeId"]:

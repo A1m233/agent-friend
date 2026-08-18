@@ -40,6 +40,7 @@ import { AutostartSetting } from "./components/AutostartSetting";
 import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
 import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
+import { startCommandRuntimeSync } from "@/stores";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
@@ -85,6 +86,8 @@ export function SettingsApp() {
       void unlistenPromise.then((unlisten) => unlisten());
     };
   }, [navigate]);
+
+  useEffect(() => startCommandRuntimeSync(), []);
 
   const selectSection = (target: SettingsTarget) => navigate({ target });
 

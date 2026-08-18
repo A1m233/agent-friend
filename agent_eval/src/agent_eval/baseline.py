@@ -15,7 +15,7 @@ from .report import CaseRunResult, summarize
 from .schema import CaseSetMeta, Contract
 from .selection import Selection
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _GIT_TIMEOUT_SEC = 5
 
 
@@ -129,6 +129,19 @@ def _serialize_results(
                                 "duration_seconds": tool_call.duration_seconds,
                             }
                             for tool_call in item.trace.tool_calls
+                        ],
+                        "skill_activations": [
+                            {
+                                "status": activation.status,
+                                "skill_id": activation.skill_id,
+                                "name": activation.name,
+                                "source": activation.source,
+                                "invocation_kind": activation.invocation_kind,
+                                "reason": activation.reason,
+                                "error_code": activation.error_code,
+                                "error_message": activation.error_message,
+                            }
+                            for activation in item.trace.skill_activations
                         ],
                         "assistant_segments": item.trace.assistant_segments,
                         "skill_catalog_observation": (

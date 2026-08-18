@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Literal
 
 SkillSource = Literal["builtin", "personal", "shared"]
-SkillInvocationKind = Literal["caller", "named", "referenced", "implicit"]
+SkillInvocationKind = Literal["caller", "implicit"]
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,12 @@ class RenderedSkillCatalog:
 
 @dataclass(frozen=True)
 class SkillTurnSnapshot:
-    """Catalog and activations frozen before the first model assembly of a turn."""
+    """Frozen catalog plus host-recorded activations for the current user turn.
+
+    The catalog is fixed before the first model assembly. Explicit selections start in
+    ``activations``; successful semantic ``skill_read`` calls append activation records
+    without refreshing or otherwise changing that catalog.
+    """
 
     catalog: SkillCatalogSnapshot
     rendered_catalog: RenderedSkillCatalog

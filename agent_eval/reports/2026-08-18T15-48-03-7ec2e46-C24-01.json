@@ -1,0 +1,199 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T15:48:03.478626+00:00",
+    "ended_at": "2026-08-18T15:48:21.813542+00:00",
+    "duration_seconds": 18.335,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "C24-01 target revalidation after fixture target-completeness fix; model provenance: production Skill-install incident used Kimi K2.5; case-local fixture change only; report only; fake tools",
+    "selection": {
+      "contract": "all",
+      "case": "C24-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "feb2dd513b83fa14c80bdee81b5f8ee9bd09c2bb9c8cc57580322cf097a7b77a",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C24-01",
+          "query": "请用 repo-skill-installer 从 GitHub 安装 A1m233/maa-daily-skill 仓库里的 maa-daily 目录；已经确认该目录就是目标 Skill，只需要完成一次安装命令",
+          "facet": "真实事故 anchor · 激活 Skill 后不得把 filesystem scope 当成 Skill ID",
+          "source": "prod-skill-install-scope-as-skill-id-20260817",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=['skill_read', 'exec_command'] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_54f0308c64c5853cd5370bd5ea667069f20619dae329947704d40c2d773a3f08",
+                "invocation_kind": "named",
+                "reason": "用户要求使用该 Skill 从 GitHub 安装 maa-daily Skill，需要先读取其使用说明"
+              },
+              "result_text": "<skill>\n<name>repo-skill-installer</name>\n<skill_id>skill_54f0308c64c5853cd5370bd5ea667069f20619dae329947704d40c2d773a3f08</skill_id>\n<source>personal</source>\n<version>904924558c2d5f165ad4641149c2bfbb4a6f1c846f0095506c807c4a5eca28bc</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"repo-skill-installer\"\r\ndescription: \"Use when the user asks to install a Skill from a GitHub repository.\"\r\n---\r\n\r\nInstall the requested repository by running the bundled helper through exec_command.\r\nUse skill.entry `scripts/install.py`, skill.workdir `.`, buffered mode, network enabled,\r\nand read_write access. Pass the user-provided repository and path unchanged as\r\n`python scripts/install.py --repo A1m233/maa-daily-skill --path maa-daily`.\r\nThe destination is the host-resolved `personal_skills` standard locator; request it as\r\nan additional read_write root. Do not use or guess an installation absolute path.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "执行 repo-skill-installer Skill 的安装脚本，从 GitHub 安装 maa-daily Skill",
+                "skill": {
+                  "entry": "scripts/install.py"
+                },
+                "access": {
+                  "filesystem": "read_only",
+                  "network": "enabled",
+                  "additional_roots": [
+                    {
+                      "locator": {
+                        "kind": "standard",
+                        "name": "personal_skills"
+                      },
+                      "access": "read_write"
+                    }
+                  ]
+                },
+                "cmd": "python scripts/install.py --repo A1m233/maa-daily-skill --path maa-daily"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"installed\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我先读取一下 `repo-skill-installer` 这个 Skill，看看具体怎么用。",
+            "好的，我现在执行安装命令，从 GitHub 安装 `maa-daily` Skill。",
+            "安装完成了。`maa-daily` Skill 已经安装成功，现在可以在 agent-friend 中使用了。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_54f0308c64c5853cd5370bd5ea667069f20619dae329947704d40c2d773a3f08"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "8c9269274787cb9949ce2fe957e464b404afdf1ae0f40d1a398d72ab65a883c9",
+            "render_fingerprint": "3b49b51aac39cc972abf3d464cdac6e6e48a89b9346794d34c9009eaed195b24",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_54f0308c64c5853cd5370bd5ea667069f20619dae329947704d40c2d773a3f08"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "ab94b7258722be13d0031ca631de0672457eeda40d49547238c6d93a07d75a22",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我先读取一下 `repo-skill-installer` 这个 Skill，看看具体怎么用。好的，我现在执行安装命令，从 GitHub 安装 `maa-daily` Skill。安装完成了。`maa-daily` Skill 已经安装成功，现在可以在 agent-friend 中使用了。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

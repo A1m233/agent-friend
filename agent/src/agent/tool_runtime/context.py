@@ -305,11 +305,12 @@ class ToolRunContext:
             label = escape(capability.label or "activated Skill", quote=True)
             permissions = ",".join(sorted(capability.permissions))
             scope_lines.append(
-                f'  <scope id="{capability.scope_id}" label="{label}" '
+                f'  <scope filesystem_scope_id="{capability.scope_id}" label="{label}" '
                 f'permissions="{permissions}" relative_root="." />'
             )
         scope_lines.append(
             "  <instruction>只在 Skill 指引或当前任务需要时按相对路径读取；"
+            "filesystem_scope_id 只用于 filesystem_* 工具，不是 skill_id；"
             "scope 不提供包外权限。</instruction>"
         )
         scope_lines.append("</filesystem_scopes>")

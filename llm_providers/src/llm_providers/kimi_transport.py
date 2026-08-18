@@ -127,6 +127,8 @@ def open_cancellable_kimi_stream(
     messages: list[dict[str, Any]],
     request_options: dict[str, Any],
     cancel_check: Callable[[], None],
+    *,
+    timeout_seconds: float | None = None,
 ) -> CancellableAsyncStream:
     """Open a Kimi stream whose response-header wait can be explicitly cancelled."""
     if not spec.api_base:
@@ -137,5 +139,6 @@ def open_cancellable_kimi_stream(
     return open_cancellable_stream(
         KimiAsyncStreamSource(spec, messages, options),
         cancel_check,
+        timeout_seconds=timeout_seconds,
         thread_name="kimi-cancellable-stream",
     )

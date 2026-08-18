@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { Ban, Plus, Upload } from "lucide-react";
 import type { TdAttachmentItem } from "@tdesign-react/chat";
@@ -75,11 +76,14 @@ interface ComposerProps {
   disabledReason?: string;
   placement?: "bottom" | "inline";
   onHeightChange?: (height: number) => void;
+  topSlot?: ReactNode;
 }
 
 export interface ComposerHandle {
   focus(): void;
 }
+
+const EMPTY_DRAFT_ATTACHMENTS: DraftAttachmentState[] = [];
 
 interface VoiceDraftSegment {
   workspaceKey: string;
@@ -98,6 +102,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   disabledReason,
   placement = "bottom",
   onHeightChange,
+  topSlot,
 }, forwardedRef) {
   const streaming = useConversationStore((s) => s.streaming);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
@@ -132,7 +137,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     : draftKey(currentSessionId);
   const draftText = useDraftStore((state) => state.workspaces[workspaceKey]?.text ?? "");
   const draftAttachments = useDraftStore(
-    (state) => state.workspaces[workspaceKey]?.attachments ?? [],
+    (state) => state.workspaces[workspaceKey]?.attachments ?? EMPTY_DRAFT_ATTACHMENTS,
   );
   const setWorkspaceText = useDraftStore((state) => state.setText);
   const addDraftAttachment = useDraftStore((state) => state.addAttachment);
@@ -691,6 +696,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           : "w-full"
       }
     >
+      {topSlot}
       <div
         onFocusCapture={() => requestVoicePrewarm("composer_focus")}
         onPointerEnter={() => requestVoicePrewarm("composer_focus")}

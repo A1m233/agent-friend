@@ -56,6 +56,11 @@ def sessions_dir() -> Path:
     return user_data_dir() / "sessions"
 
 
+def command_workspaces_dir() -> Path:
+    """会话级命令目录根：``<user_data_dir>/command-workspaces``。"""
+    return user_data_dir() / "command-workspaces"
+
+
 def memory_db_path() -> Path:
     """记忆 SQLite 文件：``<user_data_dir>/memory/memory.db``。"""
     return user_data_dir() / "memory" / "memory.db"
@@ -115,6 +120,7 @@ __all__ = [
     "LOG_DIR_ENV",
     "attachments_dir",
     "cli_history_path",
+    "command_workspaces_dir",
     "editable_persona_path",
     "log_dir",
     "memory_db_path",

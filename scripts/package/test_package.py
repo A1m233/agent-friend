@@ -729,10 +729,13 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     assert runtime_entry._doctor() == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
+    assert payload["checks"]["capability:tool_schema_validation"]["ok"] is True
     assert payload["checks"]["capability:governed_filesystem"]["ok"] is True
     skill_check = payload["checks"]["capability:skill_catalog_hot_reload"]
     assert skill_check["ok"] is True
     assert skill_check["builtin"] == "skill-creator"
+    assert skill_check["installer"] == "skill-installer"
+    assert skill_check["installer_validation"] == "fail-closed"
     assert skill_check["watcher_status"] == "healthy"
     assert skill_check["activated"] == "frozen-watcher-smoke"
 

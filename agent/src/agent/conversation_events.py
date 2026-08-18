@@ -90,7 +90,7 @@ class ToolCallResult:
 class ModelResponseStatus:
     """当前模型请求的瞬态进度；只供实时 UI，不持久化到 session。"""
 
-    phase: Literal["waiting", "retrying"] = "waiting"
+    phase: Literal["waiting", "reasoning", "processing", "retrying"] = "waiting"
     after_tool: bool = False
     attempt: int = 1
     max_attempts: int = 1
@@ -127,6 +127,7 @@ class TurnDone:
             - ``"end_turn"`` — LLM 主动结束（无工具调用 或 整合工具结果后结束）
             - ``"budget_exhausted"`` — 显式运行预算耗尽（已走收尾兜底逻辑）
             - ``"no_progress"`` — 连续重复失败触发无进展保护
+            - ``"user_action_required"`` — 工具需要用户先完成外部动作，已停止继续调用
         total_tool_calls: 本轮累计执行的工具调用次数（含失败）。
     """
 

@@ -23,6 +23,7 @@ import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
 import { MessageList } from "./components/MessageList";
 import { Composer, type ComposerHandle } from "./components/Composer";
+import { ApprovalDock } from "./components/ApprovalDock";
 import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
 import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
 import { openFeedback } from "@/lib/settings/navigation";
@@ -159,6 +160,7 @@ export function ChatApp() {
               disabled={composerDisabled}
               disabledReason={composerDisabledReason}
               onHeightChange={setComposerHeight}
+              topSlot={<ApprovalDock />}
             />
           </>
         )}

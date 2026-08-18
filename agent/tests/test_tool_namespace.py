@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, ClassVar, cast
 
 from agent.tools import Tool, ToolRegistry, ToolResult
@@ -27,6 +28,24 @@ class _PinnedEchoTool(_ExternalEchoTool):
 class _InvalidRetentionTool(_ExternalEchoTool):
     name: ClassVar[str] = "invalid_retention"
     result_context_retention: ClassVar[str] = "typo"
+
+
+class _StrictEchoTool:
+    name: ClassVar[str] = "strict_echo"
+    description: ClassVar[str] = "Echo one declared string."
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {"message": {"type": "string"}},
+        "required": ["message"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        self.invocations += 1
+        return ToolResult(text=str(args["message"]))
 
 
 def test_builtin_namespace_is_derived_from_relative_capability_package() -> None:
@@ -88,3 +107,34 @@ def test_result_retention_defaults_to_recoverable_and_fails_safe() -> None:
     assert registry.result_context_retention("pinned_echo") == "pinned"
     assert registry.result_context_retention("invalid_retention") == "pinned"
     assert registry.result_context_retention("not_registered") == "pinned"
+
+
+def test_registry_enforces_public_schema_but_ignores_host_injected_context() -> None:
+    tool = _StrictEchoTool()
+    registry = ToolRegistry(cast(list[Tool], [tool]))
+
+    accepted = registry.invoke(
+        "strict_echo",
+        {"message": "ok", "__agent_friend_current_session_id": "session-a"},
+    )
+    rejected = registry.invoke("strict_echo", {"message": 7, "extra": True})
+    payload = json.loads(rejected.text)
+
+    assert accepted.text == "ok"
+    assert tool.invocations == 1
+    assert rejected.is_error is True
+    assert payload["error"] == "invalid_arguments"
+    assert payload["field"] in {"$", "message"}
+    assert payload["rule"] in {"additionalProperties", "type"}
+
+
+def test_openai_compatible_projection_keeps_draft7_schema_and_omits_provider_strict() -> None:
+    tool = _StrictEchoTool()
+    function = ToolRegistry(cast(list[Tool], [tool])).to_openai_tools()[0]["function"]
+
+    assert function == {
+        "name": "strict_echo",
+        "description": tool.description,
+        "parameters": tool.parameters_schema,
+    }
+    assert "strict" not in function

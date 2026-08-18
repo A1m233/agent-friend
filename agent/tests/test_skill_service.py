@@ -42,14 +42,17 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert [(item.source, item.name) for item in snapshot.entries] == [
         ("builtin", "agent-friend-guide"),
         ("builtin", "skill-creator"),
+        ("builtin", "skill-installer"),
         ("personal", "personal-skill"),
         ("shared", "shared-skill"),
     ]
     by_name = {item.name: item for item in snapshot.entries}
     guide = by_name["agent-friend-guide"]
     creator = by_name["skill-creator"]
+    installer = by_name["skill-installer"]
     assert guide.id == "builtin/agent-friend-guide"
     assert creator.id == "builtin/skill-creator"
+    assert installer.id == "builtin/skill-installer"
     manifest = json.loads((creator.package_root.parent / "manifest.json").read_text("utf-8"))
     assert manifest["schema_version"] == 2
     assert (
@@ -60,8 +63,13 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
         manifest["skills"]["agent-friend-guide"]["source_commit"]
         == "a87bf567dae3bf3f7ae30a084f5126e5b9eb95be"
     )
+    assert (
+        manifest["skills"]["skill-installer"]["source_commit"]
+        == "9ded177ce7c1c0bd2047f902936c177612ab3434"
+    )
     assert (creator.package_root / "license.txt").is_file()
     assert (creator.package_root / "scripts" / "quick_validate.py").is_file()
+    assert (installer.package_root / "scripts" / "install-skill-from-github.py").is_file()
     builtin_text = creator.entry_path.read_text("utf-8")
     assert "cannot yet read bundled references" not in builtin_text
     assert "host-provided `<runtime_capabilities>`" in builtin_text
@@ -77,6 +85,7 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert [item.record.name for item in turn.activations] == [
         "agent-friend-guide",
         "skill-creator",
+        "skill-installer",
         "personal-skill",
         "shared-skill",
     ]
@@ -269,7 +278,9 @@ def test_stale_expected_version_is_rejected_without_fallback(tmp_path: Path) -> 
     assert [issue.code for issue in turn.activation_issues] == ["skill_version_mismatch"]
 
 
-def test_model_activation_respects_implicit_policy_and_frozen_snapshot(tmp_path: Path) -> None:
+def test_model_activation_is_always_implicit_while_host_selection_bypasses_policy(
+    tmp_path: Path,
+) -> None:
     personal = tmp_path / "personal"
     entry = _write_skill(personal, "explicit-skill", "ORIGINAL BODY")
     agents = entry.parent / "agents"
@@ -289,18 +300,17 @@ def test_model_activation_respects_implicit_policy_and_frozen_snapshot(tmp_path:
     activation, issue = service.activate_from_snapshot(
         snapshot,
         SkillSelection(record.id),
-        invocation_kind="implicit",
     )
     assert activation is None
     assert issue is not None and issue.code == "implicit_invocation_disabled"
 
-    activation, issue = service.activate_from_snapshot(
-        snapshot,
-        SkillSelection(record.id),
-        invocation_kind="named",
+    turn = service.begin_turn(
+        (SkillSelection(record.id, expected_version=record.version),),
+        model_window=100_000,
     )
-    assert issue is None
-    assert activation is not None and "ORIGINAL BODY" in activation.contents
+    assert not turn.activation_issues
+    assert len(turn.activations) == 1
+    assert "ORIGINAL BODY" in turn.activations[0].contents
 
     entry.write_text(
         "---\nname: explicit-skill\ndescription: Changed\n---\n\nNEW BODY\n",
@@ -309,10 +319,9 @@ def test_model_activation_respects_implicit_policy_and_frozen_snapshot(tmp_path:
     activation, issue = service.activate_from_snapshot(
         snapshot,
         SkillSelection(record.id),
-        invocation_kind="referenced",
     )
     assert activation is None
-    assert issue is not None and issue.code == "skill_changed_during_turn"
+    assert issue is not None and issue.code == "implicit_invocation_disabled"
 
 
 def _wait_until(predicate: object, timeout: float = 5.0) -> None:

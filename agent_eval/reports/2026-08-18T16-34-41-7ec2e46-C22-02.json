@@ -1,0 +1,169 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T16:34:41.340189+00:00",
+    "ended_at": "2026-08-18T16:35:06.969996+00:00",
+    "duration_seconds": 25.63,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "fresh synthetic Skill catalog change control; current product model provenance: active agent-friend manual replay uses kimi/kimi-k2.5; trusted prior catalog fixture; report only",
+    "selection": {
+      "contract": "all",
+      "case": "C22-02",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "8e4b1d691c4905871bd120758e2c8dd0a52127f49e85ab46144446fd2ab03eec",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C22": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C22",
+      "name": "skill-catalog-change-comparison",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C22-02",
+          "query": "和上一次可信的 Skill catalog 相比，现在有哪些变化？",
+          "facet": "可信历史 control · 允许识别新增条目",
+          "source": "synthetic-skill-catalog-trusted-prior-addition-control",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=['new-research-helper']",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我翻了下当前会话里出现的两次 Skill catalog，它们确实有变化：\n\n**新增：**\n- `new-research-helper`（personal）——用于基于证据的研究摘要\n\n**保持不变：**\n- `agent-friend-guide`（builtin）\n- `skill-creator`（builtin）\n- `skill-installer`（builtin）\n- `stable-writing-helper`（personal）\n\n不过需要说明的是，这两个 catalog 快照都是本轮系统提供的上下文，它们之间的时间先后关系我无法完全确认。如果你说的\"上一次可信\"指的是某个特定的历史状态（比如上一轮对话或之前某个会话），那我现在拿不到那个基线来做准确对比。\n\n你是指某个特定的历史 catalog 吗？还是就是想看看刚才上下文里这两个快照的差异？"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "new-research-helper",
+                "source": "personal",
+                "id": "skill_45655a92cbc2638abe1ae22ca17614d76bc418670001b5a71b15ab0c918a8c5e"
+              },
+              {
+                "name": "stable-writing-helper",
+                "source": "personal",
+                "id": "skill_de00e634118324d288d2a0232ab65b610b6519cb57c247ff5682f961adad35cf"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "6c1c64e5d854e51ece47e822d94990c8c99ceaa549e9049a0809eaac925e6d5f",
+            "render_fingerprint": "af40a7fcf22246f65b1555c49e3b6a728c4931eded395c5bc70d3c7e0f5497a9",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "new-research-helper",
+                "source": "personal",
+                "id": "skill_45655a92cbc2638abe1ae22ca17614d76bc418670001b5a71b15ab0c918a8c5e"
+              },
+              {
+                "name": "stable-writing-helper",
+                "source": "personal",
+                "id": "skill_de00e634118324d288d2a0232ab65b610b6519cb57c247ff5682f961adad35cf"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "21cd05a8e9967052f5f3cf380c2ab9f73635e3ec40d2d57ec7a18ac6c6e5ddb7",
+            "request_message_index": 2,
+            "preflight_passed": true
+          },
+          "final_text": "我翻了下当前会话里出现的两次 Skill catalog，它们确实有变化：\n\n**新增：**\n- `new-research-helper`（personal）——用于基于证据的研究摘要\n\n**保持不变：**\n- `agent-friend-guide`（builtin）\n- `skill-creator`（builtin）\n- `skill-installer`（builtin）\n- `stable-writing-helper`（personal）\n\n不过需要说明的是，这两个 catalog 快照都是本轮系统提供的上下文，它们之间的时间先后关系我无法完全确认。如果你说的\"上一次可信\"指的是某个特定的历史状态（比如上一轮对话或之前某个会话），那我现在拿不到那个基线来做准确对比。\n\n你是指某个特定的历史 catalog 吗？还是就是想看看刚才上下文里这两个快照的差异？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

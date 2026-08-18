@@ -64,6 +64,7 @@ from agent import (
     TurnDone,
 )
 from llm_providers import (
+    LLMActivity,
     LLMClient,
     LLMNetworkError,
     LLMStreamEvent,
@@ -109,6 +110,19 @@ class FailingTool:
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         raise RuntimeError("simulated tool crash")
+
+
+class UserActionRequiredTool:
+    name: ClassVar[str] = "user_action_required"
+    description: ClassVar[str] = "需要用户先完成外部动作。"
+    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(
+            text='{"error":"setup_required"}',
+            is_error=True,
+            meta={"error_kind": "setup_required", "requires_user_action": True},
+        )
 
 
 class SpyRecallTool:
@@ -545,6 +559,27 @@ def _text_chunk(text: str) -> SimpleNamespace:
 # ===== happy path =====
 
 
+def test_hidden_reasoning_activity_becomes_transient_model_status(tmp_path: Path) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMActivity(kind="reasoning"),
+                LLMTextDelta(text="完成"),
+                LLMTurnDone(stop_reason="end_turn"),
+            ]
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+
+    events = list(conv.stream("hi"))
+
+    statuses = [event for event in events if isinstance(event, ModelResponseStatus)]
+    assert statuses[0].phase == "waiting"
+    assert statuses[0].after_tool is False
+    assert any(status.phase == "reasoning" for status in statuses)
+    assert all("reasoning" not in event.type for event in conv.session.events)
+
+
 def test_tool_call_happy_path(tmp_path: Path) -> None:
     """LLM 第一轮调 echo tool → 工具执行 → LLM 第二轮整合结果输出 → 结束。"""
     echo = EchoTool()
@@ -601,12 +636,12 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
         for event in events
     )
 
-    # 事件落盘：session_meta + user + assistant(turn 0) + tool_call_request +
-    # tool_call_result + assistant(turn 1)
+    # 纯 tool-call 轮由 tool_call_request 表达，不额外落空 assistant；
+    # 最终文本轮才产生 assistant_message。
     types = [ev.type for ev in conv.session.events]
     assert types[0] == "session_meta"
     assert types.count("user_message") == 1
-    assert types.count("assistant_message") == 2
+    assert types.count("assistant_message") == 1
     assert types.count("tool_call_request") == 1
     assert types.count("tool_call_result") == 1
 
@@ -622,6 +657,58 @@ def test_tool_call_happy_path(tmp_path: Path) -> None:
     assert len(assistant_msgs) == 1
     assert "tool_calls" in assistant_msgs[0]
     assert assistant_msgs[0]["tool_calls"][0]["id"] == "call_1"
+
+
+@pytest.mark.parametrize("broken_args", ["{", "{}"])
+def test_malformed_tool_call_is_retried_before_publish_or_invoke(
+    tmp_path: Path,
+    broken_args: str,
+) -> None:
+    """Provider 损坏或 schema 不合法的参数不得变成空授权卡。"""
+    echo = EchoTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="broken-call",
+                    tool_name="echo",
+                    args_json_delta=broken_args,
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="recovered-call",
+                    tool_name="echo",
+                    args_json_delta=json.dumps({"message": "fixed"}),
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+
+    events = list(conv.stream("recover malformed tool args"))
+
+    requests = [event for event in events if isinstance(event, ToolCallRequest)]
+    assert [(event.tool_call_id, event.args) for event in requests] == [
+        ("recovered-call", {"message": "fixed"}),
+    ]
+    assert echo.call_count == 1
+    assert len(fake.received) == 3
+    assert any(
+        message.get("role") == "system" and "工具调用参数损坏" in message.get("content", "")
+        for message in fake.received[1]
+    )
+    assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
+    assert [event.payload["content"] for event in assistant_events] == ["done"]
 
 
 def test_normal_system_turn_reuses_full_tool_loop(tmp_path: Path) -> None:
@@ -771,10 +858,10 @@ def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
     assert "PRIVATE_USER_TEXT" not in latency_text
     assert "PRIVATE_TOOL_ARG" not in latency_text
     assert "PRIVATE_ANSWER" not in latency_text
-    assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
+    diagnostic_events = [event for event in conv.session.events if "context_usage" in event.meta]
     cache_diagnostics = [
         event.meta.get("context_usage", {}).get("cache_diagnostics", {})
-        for event in assistant_events
+        for event in diagnostic_events
     ]
     assert cache_diagnostics[0]["cache_lineage"] == "new"
     assert cache_diagnostics[1]["previous_request_prefix_preserved"] is False
@@ -1379,8 +1466,8 @@ def test_closing_stream_after_turndone_does_not_write_partial_duplicate(tmp_path
     conv = _make_conversation(tmp_path, fake_llm=fake, registry=ToolRegistry([]))
 
     stream = cast(Generator[Any, None, None], conv.stream("hi"))
-    first = next(stream)
-    done = next(stream)
+    first = next(event for event in stream if isinstance(event, TextDelta))
+    done = next(event for event in stream if isinstance(event, TurnDone))
     assert isinstance(first, TextDelta)
     assert isinstance(done, TurnDone)
 
@@ -1904,6 +1991,30 @@ def test_repeated_identical_failures_stop_as_no_progress(tmp_path: Path) -> None
     done = next(event for event in events if isinstance(event, TurnDone))
     assert done.stop_reason == "no_progress"
     assert done.total_tool_calls == 3
+
+
+def test_user_action_required_stops_before_model_can_try_another_tool(tmp_path: Path) -> None:
+    tool = UserActionRequiredTool()
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "setup", tool.name, "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="请先完成初始化。"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    events = list(
+        _make_conversation(
+            tmp_path,
+            fake_llm=fake,
+            registry=ToolRegistry([tool]),
+        ).stream("继续")
+    )
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert done.stop_reason == "user_action_required"
+    assert done.total_tool_calls == 1
+    assert len(fake.received) == 2
 
 
 def test_soft_budget_reminder_is_injected_once(tmp_path: Path) -> None:

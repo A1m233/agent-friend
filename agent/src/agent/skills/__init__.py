@@ -22,7 +22,7 @@ from .rendering import (
     render_activation_issue,
     render_runtime_capability_notice,
 )
-from .selection import decode_skill_selections
+from .selection import decode_skill_selections, resolve_explicit_skill_selections
 from .service import SkillCatalogService, default_shared_skills_dir
 
 __all__ = [
@@ -47,4 +47,5 @@ __all__ = [
     "render_activation_issue",
     "render_catalog",
     "render_runtime_capability_notice",
+    "resolve_explicit_skill_selections",
 ]

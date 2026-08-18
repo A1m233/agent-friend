@@ -37,7 +37,16 @@ def test_schema_exposes_create_with_reminders_and_operation_requirements() -> No
     assert "相关上下文指代" in TodoManageTool.description
     assert "本轮不得创建或修改 Reminder" in TodoManageTool.description
     assert "不能只创建无 Reminder 的 Todo 就声称提醒已设置" in TodoManageTool.description
-    assert "oneOf" not in schema
+    assert len(schema["oneOf"]) == 10
+    branches = {branch["properties"]["operation"]["const"]: branch for branch in schema["oneOf"]}
+    assert branches["create"]["required"] == ["title"]
+    assert branches["complete"]["required"] == ["items"]
+    assert branches["update_reminder"]["required"] == [
+        "todo_id",
+        "reminder_id",
+        "revision",
+        "reminder",
+    ]
     operation_description = cast(str, schema["properties"]["operation"]["description"])
     assert "reminders 就是本次调用的必填参数" in operation_description
     reminders_description = cast(str, schema["properties"]["reminders"]["description"])

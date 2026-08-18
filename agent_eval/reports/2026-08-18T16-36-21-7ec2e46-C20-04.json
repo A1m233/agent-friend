@@ -1,0 +1,193 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T16:36:21.132651+00:00",
+    "ended_at": "2026-08-18T16:36:50.785011+00:00",
+    "duration_seconds": 29.652,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "fresh synthetic implicit Skill description activation after tool-contract revisions; current product model kimi/kimi-k2.5; case-local Skill fixture; report only",
+    "selection": {
+      "contract": "all",
+      "case": "C20-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "8e4b1d691c4905871bd120758e2c8dd0a52127f49e85ab46144446fd2ab03eec",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C20-04",
+          "query": "帮我设计一次 baseline/candidate 的盲审实验，要能复查证据",
+          "facet": "description 隐式匹配 isolation · 未点名但任务明确匹配时应读取",
+          "source": "synthetic-skill-implicit-description-match",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_c4c56f3c6bc58ed602c05018eae941faa1da201cd2e671ca8949e295a10f773e",
+                "invocation_kind": "implicit",
+                "reason": "用户需要设计 baseline/candidate 盲审实验并支持证据复查，匹配 experiment-review skill 的核心用途"
+              },
+              "result_text": "<skill>\n<name>experiment-review</name>\n<skill_id>skill_c4c56f3c6bc58ed602c05018eae941faa1da201cd2e671ca8949e295a10f773e</skill_id>\n<source>personal</source>\n<version>f2b608fd880ec4a6be4fbff73fae16adaaf83119dfd4f09a8d34a87265ef3d2e</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"experiment-review\"\r\ndescription: \"Use when designing baseline/candidate experiments, blind review, or evidence-based evaluation.\"\r\n---\r\n\r\nProvide a minimal reproducible baseline/candidate experiment with a blind comparison.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "filesystem_list_directory",
+              "args": {
+                "filesystem_scope_id": "scope_d01ba294e425491a8d9f16fcbc07a922",
+                "relative_path": "."
+              },
+              "result_text": "{\"continuation\": null, \"entries\": [{\"mtime\": \"2026-08-18T16:36:21.136549+00:00\", \"name\": \"agents\", \"path\": \"agents\", \"protected\": false, \"size\": 0, \"type\": \"directory\"}, {\"mtime\": \"2026-08-18T16:36:21.136549+00:00\", \"name\": \"SKILL.md\", \"path\": \"SKILL.md\", \"protected\": false, \"size\": 237, \"type\": \"file\"}], \"ok\": true, \"truncated\": false}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "filesystem_list_directory",
+              "args": {
+                "filesystem_scope_id": "scope_d01ba294e425491a8d9f16fcbc07a922",
+                "relative_path": "agents"
+              },
+              "result_text": "{\"continuation\": null, \"entries\": [{\"mtime\": \"2026-08-18T16:36:21.136549+00:00\", \"name\": \"openai.yaml\", \"path\": \"agents/openai.yaml\", \"protected\": false, \"size\": 44, \"type\": \"file\"}], \"ok\": true, \"truncated\": false}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我来帮你设计这次盲审实验。先让我读取相关的专业指导。",
+            "让我看看这个 skill 是否有更详细的模板或指导文件。",
+            "好的，我可以帮你设计这套盲审实验。先问你几个问题，以便设计更贴合的方案：\n\n**实验基本信息：**\n1. **Baseline 和 Candidate 是什么？**（比如：A/B 两种文案风格、两个模型版本、新旧流程等）\n2. **评判维度有哪些？**（质量评分、偏好选择、完成效率、准确性等）\n3. **评判者是谁？**（内部团队、外部用户、专家等）\n4. **样本量大概多少？**（多少条测试用例/样本）\n\n在你补充细节之前，我先给你一个**通用可复现的盲审实验框架**，你可以根据实际场景调整：\n\n---\n\n## 盲审实验设计框架\n\n### 1. 实验目标\n- **核心假设**：Candidate 在 [具体维度] 上优于/不劣于 Baseline\n- **成功标准**：Candidate 在 [指标] 上达到 [阈值/显著性]\n\n### 2. 盲审机制\n| 要素 | 设计 |\n|------|------|\n| **身份隐藏** | 所有样本仅标记为「方案 A」「方案 B」，不透露哪个是 baseline |\n| **顺序随机** | 每轮评测随机打乱 A/B 顺序，避免顺序效应 |\n| **样本隔离** | 每个评判者只看到自己分配到的子集，不暴露全集 |\n\n### 3. 证据可追溯结构\n```\nexperiment/\n├── 01_design/\n│   ├── hypothesis.md       # 假设、指标、成功标准\n│   └── blind_protocol.md   # 盲审规则、解码密钥（独立保管）\n├── 02_samples/\n│   ├── sample_pool.json    # 全部样本（含原始来源ID）\n│   ├── randomization_log/  # 每轮分配记录\n│   └── assignments/        # 评判者-样本映射（匿名ID）\n├── 03_judgments/\n│   ├── raw_scores/         # 原始评分（盲态）\n│   └── qualitative_notes/  # 定性反馈\n└── 04_analysis/\n    ├── decode_key.json     # 解码映射（实验结束后解锁）\n    └── analysis_report.md  # 统计结果+复查结论\n```\n\n### 4. 复查证据清单\n每个评判结果都应包含：\n- **样本指纹**：来源ID + 版本哈希\n- **时间戳**：评测时间\n- **评判者ID**：匿名标识\n- **原始评分**：未经转换的打分\n- **置信度/备注**：可选的定性说明\n\n---\n\n你可以告诉我你的具体场景，我帮你细化实验设计、样本量计算或评分量表。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "experiment-review",
+                "source": "personal",
+                "id": "skill_c4c56f3c6bc58ed602c05018eae941faa1da201cd2e671ca8949e295a10f773e"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "6e0caedfa49ae837f726295e32e5ccae10de4d70b35b075c618a34a7efc68da6",
+            "render_fingerprint": "edc1e325d8d3416c36c9be6c929bd0a38d13dc0140bdc6170684f48fee2f3fda",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "experiment-review",
+                "source": "personal",
+                "id": "skill_c4c56f3c6bc58ed602c05018eae941faa1da201cd2e671ca8949e295a10f773e"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "577af27375917717a6f91b79df28c5031235e0530162a8f94d49ed151bef43b4",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我来帮你设计这次盲审实验。先让我读取相关的专业指导。让我看看这个 skill 是否有更详细的模板或指导文件。好的，我可以帮你设计这套盲审实验。先问你几个问题，以便设计更贴合的方案：\n\n**实验基本信息：**\n1. **Baseline 和 Candidate 是什么？**（比如：A/B 两种文案风格、两个模型版本、新旧流程等）\n2. **评判维度有哪些？**（质量评分、偏好选择、完成效率、准确性等）\n3. **评判者是谁？**（内部团队、外部用户、专家等）\n4. **样本量大概多少？**（多少条测试用例/样本）\n\n在你补充细节之前，我先给你一个**通用可复现的盲审实验框架**，你可以根据实际场景调整：\n\n---\n\n## 盲审实验设计框架\n\n### 1. 实验目标\n- **核心假设**：Candidate 在 [具体维度] 上优于/不劣于 Baseline\n- **成功标准**：Candidate 在 [指标] 上达到 [阈值/显著性]\n\n### 2. 盲审机制\n| 要素 | 设计 |\n|------|------|\n| **身份隐藏** | 所有样本仅标记为「方案 A」「方案 B」，不透露哪个是 baseline |\n| **顺序随机** | 每轮评测随机打乱 A/B 顺序，避免顺序效应 |\n| **样本隔离** | 每个评判者只看到自己分配到的子集，不暴露全集 |\n\n### 3. 证据可追溯结构\n```\nexperiment/\n├── 01_design/\n│   ├── hypothesis.md       # 假设、指标、成功标准\n│   └── blind_protocol.md   # 盲审规则、解码密钥（独立保管）\n├── 02_samples/\n│   ├── sample_pool.json    # 全部样本（含原始来源ID）\n│   ├── randomization_log/  # 每轮分配记录\n│   └── assignments/        # 评判者-样本映射（匿名ID）\n├── 03_judgments/\n│   ├── raw_scores/         # 原始评分（盲态）\n│   └── qualitative_notes/  # 定性反馈\n└── 04_analysis/\n    ├── decode_key.json     # 解码映射（实验结束后解锁）\n    └── analysis_report.md  # 统计结果+复查结论\n```\n\n### 4. 复查证据清单\n每个评判结果都应包含：\n- **样本指纹**：来源ID + 版本哈希\n- **时间戳**：评测时间\n- **评判者ID**：匿名标识\n- **原始评分**：未经转换的打分\n- **置信度/备注**：可选的定性说明\n\n---\n\n你可以告诉我你的具体场景，我帮你细化实验设计、样本量计算或评分量表。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

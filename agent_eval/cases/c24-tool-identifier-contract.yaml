@@ -1,0 +1,110 @@
+# C24 · 跨工具标识符与 Skill 命令绑定
+#
+# 来源于 2026-08-17 的真实 Skill 安装事故：Skill 已成功激活，但模型把当前轮
+# filesystem_scope_id 填入 exec_command 的 Skill binding，随后又改猜内部绝对路径。
+# 本 contract 固化稳定边界：Skill 命令使用结构化 binding，单 Skill 时可由宿主绑定；
+# filesystem scope 只供 filesystem_* 工具使用，普通命令仍使用绝对 workdir。
+
+contract:
+  id: C24
+  name: tool-identifier-contract
+  expected_behavior: response
+
+cases:
+  - id: C24-01
+    query: >-
+      请用 repo-skill-installer 从 GitHub 安装 A1m233/maa-daily-skill 仓库里的
+      maa-daily 目录；已经确认该目录就是目标 Skill，只需要完成一次安装命令
+    facet: 真实事故 anchor · 激活 Skill 后不得把 filesystem scope 当成 Skill ID
+    source: prod-skill-install-scope-as-skill-id-20260817
+    surface: desktop_chat
+    fixture_skills:
+      - name: repo-skill-installer
+        description: Use when the user asks to install a Skill from a GitHub repository.
+        instructions: |
+          Install the requested repository by running the bundled helper through exec_command.
+          Use skill.entry `scripts/install.py`, skill.workdir `.`, buffered mode, network enabled,
+          and read_write access. Pass the user-provided repository and path unchanged as
+          `python scripts/install.py --repo A1m233/maa-daily-skill --path maa-daily`.
+          The destination is the host-resolved `personal_skills` standard locator; request it as
+          an additional read_write root. Do not use or guess an installation absolute path.
+    fake_tools:
+      - name: exec_command
+        result_text: '{"status":"exited","exit_code":0,"stdout":"installed"}'
+    judge:
+      required_skill_activations: [repo-skill-installer]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            skill: {entry: scripts/install.py}
+      forbid_tool_identifier_confusion: true
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true
+
+  - id: C24-02
+    query: >-
+      请使用 repo-skill-installer 的脚本检查已确认存在的 C:\fixture\repo 本地仓库；
+      不要安装或修改文件
+    facet: isolation · 单个已激活 Skill 的 skill_id 可由宿主绑定，模型无需搬运临时 ID
+    source: synthetic-single-active-skill-host-binding
+    surface: desktop_chat
+    fixture_skills:
+      - name: repo-skill-installer
+        description: Use when checking or installing a Skill from a GitHub repository.
+        instructions: |
+          For a read-only repository check, run the bundled helper through exec_command with
+          skill.entry `scripts/check.py`, skill.workdir `.`, buffered mode and read-only access.
+          Pass the user-provided path unchanged as `python scripts/check.py C:\fixture\repo`,
+          and request that repository as an additional read_only root. Network is not needed.
+    fake_tools:
+      - name: exec_command
+        result_text: '{"status":"exited","exit_code":0,"stdout":"valid"}'
+    judge:
+      required_skill_activations: [repo-skill-installer]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            skill: {entry: scripts/check.py}
+      forbid_tool_identifier_confusion: true
+      require_non_empty_response: true
+
+  - id: C24-03
+    query: 请在 C:\fixture 目录运行 echo ready；这是普通命令，不使用任何 Skill
+    facet: control · 普通命令继续使用绝对 workdir，不应被强制包装成 Skill binding
+    source: synthetic-ordinary-command-workdir-control
+    surface: desktop_chat
+    fake_tools:
+      - name: exec_command
+        result_text: '{"status":"exited","exit_code":0,"stdout":"ready"}'
+    judge:
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            workdir: 'C:\fixture'
+      forbid_tool_identifier_confusion: true
+      require_non_empty_response: true
+
+  - id: C24-04
+    query: 已经确认是 2 号 MuMu 实例，继续启动模拟器；这是需要当前桌面用户会话的程序
+    facet: 多账号事故 isolation · 已知完整启动参数时必须用 host_user 结构化 argv
+    source: prod-maa-multi-account-sandbox-launch-20260818
+    surface: desktop_chat
+    current_session_messages:
+      - role: assistant
+        text: 已从可信日志确认实例 2，完整启动参数是 C:\fixture\MuMuPlayer.exe -v 2。
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
+              execution: host_user
+            result_text: '{"status":"exited","exit_code":0,"execution":"host_user","sandbox_type":"none"}'
+    judge:
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
+            execution: host_user
+      require_non_empty_response: true
+      forbid_question: true
+      forbid_tool_identifier_confusion: true

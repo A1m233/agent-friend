@@ -1,0 +1,221 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T14:48:20.439500+00:00",
+    "ended_at": "2026-08-18T14:48:50.710862+00:00",
+    "duration_seconds": 30.271,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "target revalidation with evidence-grounded launch argv",
+    "selection": {
+      "contract": "all",
+      "case": "C18-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "38ebc751bb88c5b1c0e305cad2e8258446b66ef02cf895230995da73d2ff2d9f",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C18": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C18",
+      "name": "clarification-action-consistency",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C18-04",
+          "query": "继续跑这个多账号日常。账号配置你直接从现有 MAA 日志里看，不要再问我账号名称； 先找到两个账号和真实 MuMu 实例，再启动模拟器。",
+          "facet": "真实多账号 anchor · 用户要求自行发现时应读取 Skill、查日志并按证据启动",
+          "source": "prod-maa-multi-account-sandbox-launch-20260818",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "missing successful tool call exec_command with args containing {'argv': ['maa', 'dir', 'log'], 'execution': 'sandboxed'} and result containing None (actual: [{'args': {'argv': ['maa', 'dir', 'log'], 'reason': '从 MAA 日志目录开始定位账号配置和 MuMu 实例信息。'}, 'is_error': True, 'result_text': '评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。'}, {'args': {'argv': ['rg', '-n', 'CurrentAccount|account', 'C:\\\\fixture\\\\maa\\\\logs'], 'reason': '在 MAA 日志目录中检索账号配置和 MuMu 实例信息。'}, 'is_error': True, 'result_text': '评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。'}, {'args': {'argv': ['where', 'maa'], 'reason': '确认 maa 可执行文件位置，以便定位其日志目录。'}, 'is_error': True, 'result_text': '评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。'}])",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_323a70a3e40e06755f67780dcd92d068776176474984d2c542f29426e8fb0114",
+                "invocation_kind": "referenced",
+                "reason": "用户要求继续多账号日常任务，需要读取 maa-daily skill 了解流程和配置。"
+              },
+              "result_text": "<skill>\n<name>maa-daily</name>\n<skill_id>skill_323a70a3e40e06755f67780dcd92d068776176474984d2c542f29426e8fb0114</skill_id>\n<source>personal</source>\n<version>7d84247505de5a1349a77e33e0a6c3f799ff84556d6143b0f47da41b6583fd90</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"maa-daily\"\r\ndescription: \"Use for MAA, maa-cli, MuMu discovery, multi-account daily tasks, or one-shot Arknights automation.\"\r\n---\r\n\r\nFor multi-account requests, inspect trustworthy MAA logs instead of asking for account\r\nnames when the user explicitly asks you to discover them. First call exec_command with\r\n`{\"argv\":[\"maa\",\"dir\",\"log\"],\"execution\":\"sandboxed\"}`. In this fixture, inspect the\r\nreturned log directory with `{\"argv\":[\"rg\",\"-n\",\"CurrentAccount|account\",\"C:\\\\fixture\\\\maa\\\\logs\"],\"execution\":\"sandboxed\"}`.\r\nThe regex pipe is one argv element, not a shell pipeline. That result contains both masked\r\naccounts, the actual MuMu instance, and a complete launch_argv verified for that instance.\r\nNever guess an instance number or emulator flag: use the returned launch_argv unchanged.\r\nLaunch the discovered desktop emulator with host_user structured argv and no access object.\r\nDo not claim the environment is complete until these steps succeed.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "maa",
+                  "dir",
+                  "log"
+                ],
+                "reason": "从 MAA 日志目录开始定位账号配置和 MuMu 实例信息。"
+              },
+              "result_text": "评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "rg",
+                  "-n",
+                  "CurrentAccount|account",
+                  "C:\\fixture\\maa\\logs"
+                ],
+                "reason": "在 MAA 日志目录中检索账号配置和 MuMu 实例信息。"
+              },
+              "result_text": "评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "where",
+                  "maa"
+                ],
+                "reason": "确认 maa 可执行文件位置，以便定位其日志目录。"
+              },
+              "result_text": "评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "好，我先从 MAA 日志里找账号配置和 MuMu 实例。先看日志目录。",
+            "日志目录定位没直接给出路径，我按 skill 里列的日志目录去检索账号和 MuMu 实例信息。",
+            "两条命令在当前环境都没返回实际数据。我先看看能不能确认真实路径——用列目录的方式确认 MAA 日志到底在哪。",
+            "当前环境里这些命令都没有返回实际数据，我拿不到日志内容、账号配置或 MuMu 实例的真实信息。我不能凭空编造账号名、实例号或者模拟器启动命令——那正是你想避免的。\n\n要往下跑的话，我需要能实际访问到 MAA 日志。你看要不要先确认一下环境状态：确实装了 MAA / MuMu 吗？如果装了，日志大概在哪个目录？我可以按你给的路径去读，而不是乱猜。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_323a70a3e40e06755f67780dcd92d068776176474984d2c542f29426e8fb0114"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "22aa764793221d959d79ed111c49bee988a075368b27ab3c91efd6fdfd2a025b",
+            "render_fingerprint": "dd07687c2d5350204ce71a09ecf4a24317a6a08033aa1982cde056f54cf92610",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_323a70a3e40e06755f67780dcd92d068776176474984d2c542f29426e8fb0114"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "b30a8d46d5640ac76703b115a40e24fe80e1dc801448bb8759a99be25e6f5240",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "好，我先从 MAA 日志里找账号配置和 MuMu 实例。先看日志目录。日志目录定位没直接给出路径，我按 skill 里列的日志目录去检索账号和 MuMu 实例信息。两条命令在当前环境都没返回实际数据。我先看看能不能确认真实路径——用列目录的方式确认 MAA 日志到底在哪。当前环境里这些命令都没有返回实际数据，我拿不到日志内容、账号配置或 MuMu 实例的真实信息。我不能凭空编造账号名、实例号或者模拟器启动命令——那正是你想避免的。\n\n要往下跑的话，我需要能实际访问到 MAA 日志。你看要不要先确认一下环境状态：确实装了 MAA / MuMu 吗？如果装了，日志大概在哪个目录？我可以按你给的路径去读，而不是乱猜。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

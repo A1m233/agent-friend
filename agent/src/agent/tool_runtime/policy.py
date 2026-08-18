@@ -133,6 +133,7 @@ class NoProgressTracker:
     def __init__(self, limit: int) -> None:
         self._limit = limit
         self._counts: dict[str, int] = {}
+        self._error_family_counts: dict[tuple[str, str], int] = {}
         self._seen_evidence: set[str] = set()
         self.new_evidence_count = 0
         self.reused_evidence_count = 0
@@ -164,7 +165,23 @@ class NoProgressTracker:
             self._counts[signature] = 0
             return False
 
-        error_kind = str(result.meta.get("error_kind", ""))
+        raw_error_kind = result.meta.get("error_kind")
+        error_kind = raw_error_kind if isinstance(raw_error_kind, str) else ""
+        raw_no_progress_family = result.meta.get("no_progress_family")
+        no_progress_family = (
+            raw_no_progress_family if isinstance(raw_no_progress_family, str) else ""
+        )
+        if result.is_error and no_progress_family:
+            error_family = (name, no_progress_family)
+            self._error_family_counts[error_family] = (
+                self._error_family_counts.get(error_family, 0) + 1
+            )
+            if self._error_family_counts[error_family] >= self._limit:
+                return True
+        elif not result.is_error:
+            self._error_family_counts = {
+                key: count for key, count in self._error_family_counts.items() if key[0] != name
+            }
         empty = (
             not result.text.strip()
             or error_kind in {"empty_content", "no_results"}

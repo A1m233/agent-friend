@@ -42,6 +42,7 @@ class DateTimeCalculateTool:
         "properties": {
             "operation": {
                 "type": "string",
+                "description": "日期时间计算类型；每种 operation 必须满足对应参数分支。",
                 "enum": [
                     "difference",
                     "add",
@@ -52,10 +53,19 @@ class DateTimeCalculateTool:
                     "calendar_relation",
                 ],
             },
-            "start": {"type": "string"},
-            "end": {"type": "string"},
-            "datetime": {"type": "string"},
-            "date": {"type": "string"},
+            "start": {
+                "type": "string",
+                "description": "difference 的起始 ISO 8601 日期或日期时间。",
+            },
+            "end": {"type": "string", "description": "difference 的结束 ISO 8601 日期或日期时间。"},
+            "datetime": {
+                "type": "string",
+                "description": "add/subtract/weekday/convert_timezone 使用的 ISO 8601 日期时间。",
+            },
+            "date": {
+                "type": "string",
+                "description": "add/subtract/weekday 使用的 ISO 8601 纯日期；与 datetime 二选一。",
+            },
             "target": {
                 "type": "string",
                 "description": (
@@ -63,17 +73,60 @@ class DateTimeCalculateTool:
                     "参考时间是运行时可信的当前时间，无需也禁止传 $now。"
                 ),
             },
-            "year": {"type": "integer"},
-            "timezone": {"type": "string"},
-            "target_timezone": {"type": "string"},
-            "amount": {"type": "integer"},
+            "year": {"type": "integer", "description": "is_leap_year 要检查的公历年份。"},
+            "timezone": {
+                "type": "string",
+                "description": "输入本地时间的 IANA 时区或 UTC offset；纯日期通常可省略。",
+            },
+            "target_timezone": {
+                "type": "string",
+                "description": "convert_timezone 的目标 IANA 时区或 UTC offset。",
+            },
+            "amount": {"type": "integer", "description": "add/subtract 的整数增减量。"},
             "unit": {
                 "type": "string",
                 "enum": ["minute", "hour", "day", "week", "month", "year"],
+                "description": "add/subtract 的增减单位。",
             },
-            "fold": {"type": "integer", "enum": [0, 1]},
+            "fold": {
+                "type": "integer",
+                "enum": [0, 1],
+                "description": "夏令时回拨导致本地时间重复时选择第 1 次（0）或第 2 次（1）。",
+            },
         },
         "required": ["operation"],
+        "oneOf": [
+            {
+                "properties": {"operation": {"const": "difference"}},
+                "required": ["start", "end"],
+            },
+            {
+                "properties": {"operation": {"const": "add"}},
+                "required": ["amount", "unit"],
+                "oneOf": [{"required": ["datetime"]}, {"required": ["date"]}],
+            },
+            {
+                "properties": {"operation": {"const": "subtract"}},
+                "required": ["amount", "unit"],
+                "oneOf": [{"required": ["datetime"]}, {"required": ["date"]}],
+            },
+            {
+                "properties": {"operation": {"const": "weekday"}},
+                "oneOf": [{"required": ["datetime"]}, {"required": ["date"]}],
+            },
+            {
+                "properties": {"operation": {"const": "is_leap_year"}},
+                "required": ["year"],
+            },
+            {
+                "properties": {"operation": {"const": "convert_timezone"}},
+                "required": ["datetime", "target_timezone"],
+            },
+            {
+                "properties": {"operation": {"const": "calendar_relation"}},
+                "required": ["target"],
+            },
+        ],
         "additionalProperties": False,
     }
 

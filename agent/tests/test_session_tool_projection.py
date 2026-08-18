@@ -107,6 +107,40 @@ def test_llm_messages_keeps_closed_sibling_and_removes_unmatched_request() -> No
     assert projected[2].meta["tool_call_id"] == "call-1"
 
 
+def test_closed_tool_request_projects_protocol_assistant_without_persisted_empty_event() -> None:
+    session = Session.new(title="t", persona="default", model="m")
+    session.append(_event("user_message", "u", {"content": "hello"}))
+    session.append(
+        _event(
+            "tool_call_request",
+            "req",
+            {"tool_call_id": "call-1", "tool_name": "search", "args": {"q": "a"}},
+        )
+    )
+    session.append(
+        _event(
+            "tool_call_result",
+            "res",
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "search",
+                "content": "result-a",
+                "is_error": False,
+            },
+        )
+    )
+
+    projected = session.llm_messages
+
+    assert [message.role for message in projected] == ["user", "assistant", "tool"]
+    assert projected[1].content == ""
+    assert projected[1].meta["synthetic"] == "tool_call_container"
+    assert projected[1].meta["tool_calls"] == [
+        {"id": "call-1", "name": "search", "args": {"q": "a"}},
+    ]
+    assert not any(event.type == "assistant_message" for event in session.events)
+
+
 def test_llm_messages_replaces_partial_assistant_before_new_attachment_turn() -> None:
     session = Session.new(title="t", persona="default", model="m")
     session.append(_event("user_message", "old-user", {"content": "马杜罗是什么情况"}))

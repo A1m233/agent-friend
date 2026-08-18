@@ -55,10 +55,13 @@ def open_cancellable_litellm_stream(
     messages: list[dict[str, Any]],
     request_options: dict[str, Any],
     cancel_check: Callable[[], None],
+    *,
+    timeout_seconds: float | None = None,
 ) -> CancellableAsyncStream:
     """Open any LiteLLM-backed provider with interruptible header waiting."""
     return open_cancellable_stream(
         LiteLLMAsyncStreamSource(spec, messages, dict(request_options)),
         cancel_check,
+        timeout_seconds=timeout_seconds,
         thread_name="litellm-cancellable-stream",
     )

@@ -47,6 +47,10 @@ pub struct PushEnvelope {
     pub run: Option<RunSnapshot>,
     #[serde(default)]
     pub filesystem_approval: Option<serde_json::Value>,
+    #[serde(default)]
+    pub approval: Option<serde_json::Value>,
+    #[serde(default)]
+    pub command_process: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -112,7 +116,7 @@ pub fn spawn_push_subscriber(app: &AppHandle, bridge_base_url: String) {
 
 async fn run_reconnecting(app: AppHandle, base_url: String) {
     let url = format!(
-        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed",
+        "{}/push/subscribe?kinds=agent_turn,run_event,session_changed,run_changed,filesystem_approval_changed,approval_changed,command_process_changed,sandbox_capability_changed",
         base_url.trim_end_matches('/')
     );
     let client = reqwest::Client::new();
@@ -189,10 +193,18 @@ async fn run_connection(
                     }
                 }
                 Some(env)
-                    if env.kind == "approval_changed" || env.kind == "command_process_changed" =>
+                    if env.kind == "approval_changed"
+                        || env.kind == "command_process_changed"
+                        || env.kind == "sandbox_capability_changed" =>
                 {
-                    if let Err(e) = app.emit_to("chat", "session://command-runtime", env) {
+                    let is_sandbox_capability = env.kind == "sandbox_capability_changed";
+                    if let Err(e) = app.emit_to("chat", "session://command-runtime", &env) {
                         log::warn!("emit command runtime event failed: {e}");
+                    }
+                    if is_sandbox_capability {
+                        if let Err(e) = app.emit_to("settings", "session://command-runtime", &env) {
+                            log::warn!("emit sandbox capability to settings failed: {e}");
+                        }
                     }
                 }
                 Some(env) => {
@@ -392,6 +404,8 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
             channel: None,
             run: None,
             filesystem_approval: None,
+            approval: None,
+            command_process: None,
         };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: PushEnvelope = serde_json::from_str(&json).unwrap();
@@ -434,6 +448,33 @@ data: {"kind":"heartbeat","session_id":"","seq":0,"source_kind":null,"events":[]
         assert_eq!(env.run_id.as_deref(), Some("r1"));
         assert_eq!(env.presentation.as_deref(), Some("conversation"));
         assert_eq!(env.events.len(), 1);
+    }
+
+    #[test]
+    fn command_runtime_payloads_survive_serde_round_trip() {
+        let approval_frame = br#"data: {"kind":"approval_changed","session_id":"s1","seq":7,"source_kind":null,"events":[],"run_id":"r1","approval":{"request_id":"cmdreq-1","kind":"command","tool_call_id":"tool-1","status":"pending"}}"#;
+        let approval = parse_envelope_frame(approval_frame).unwrap();
+        assert_eq!(approval.kind, "approval_changed");
+        assert_eq!(
+            approval
+                .approval
+                .as_ref()
+                .and_then(|value| value.get("request_id"))
+                .and_then(|value| value.as_str()),
+            Some("cmdreq-1")
+        );
+
+        let process_frame = br#"data: {"kind":"command_process_changed","session_id":"s1","seq":8,"source_kind":null,"events":[],"run_id":"r1","command_process":{"process_id":"proc-1","tool_call_id":"tool-1","status":"running"}}"#;
+        let process = parse_envelope_frame(process_frame).unwrap();
+        assert_eq!(process.kind, "command_process_changed");
+        assert_eq!(
+            process
+                .command_process
+                .as_ref()
+                .and_then(|value| value.get("process_id"))
+                .and_then(|value| value.as_str()),
+            Some("proc-1")
+        );
     }
 
     #[test]

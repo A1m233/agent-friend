@@ -8,13 +8,32 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection
 from html import escape
 from typing import Any
 
+from jsonschema import Draft7Validator, FormatChecker
+
 from .errors import ToolDuplicateError, ToolNotFoundError
 from .identity import ToolId, tool_id_from_implementation
 from .protocol import Tool, ToolResult
+
+
+def _schema_error_message(rule: object, field: str) -> str:
+    if rule == "required":
+        return f"缺少必填参数；请按工具 schema 补齐 {field} 所在对象的必填字段。"
+    if rule == "additionalProperties":
+        return f"{field} 含工具 schema 未声明的字段；请删除未知字段后重试。"
+    if rule in {"oneOf", "anyOf"}:
+        return f"{field} 没有匹配唯一支持的参数形状；请按互斥分支只选择一种调用模式。"
+    if rule == "type":
+        return f"{field} 的 JSON 类型不符合工具 schema；请改用字段声明的类型。"
+    if rule in {"enum", "const"}:
+        return f"{field} 的值不在工具 schema 允许范围内；请从声明的选项中选择。"
+    if rule in {"minimum", "maximum", "minLength", "maxLength", "pattern", "format"}:
+        return f"{field} 不符合工具 schema 的 {rule} 约束；请按字段说明修正。"
+    return f"{field} 不符合工具 schema 的 {rule} 约束；请修正参数后重试。"
 
 
 class ToolRegistry:
@@ -30,12 +49,18 @@ class ToolRegistry:
     def __init__(self, tools: list[Tool]) -> None:
         self._tools: dict[str, Tool] = {}
         self._tool_ids: dict[str, ToolId] = {}
+        self._validators: dict[str, Draft7Validator] = {}
         for t in tools:
             if t.name in self._tools:
                 raise ToolDuplicateError(f"工具名重复: {t.name!r}")
+            Draft7Validator.check_schema(t.parameters_schema)
             tool_id = tool_id_from_implementation(t)
             self._tools[t.name] = t
             self._tool_ids[t.name] = tool_id
+            self._validators[t.name] = Draft7Validator(
+                t.parameters_schema,
+                format_checker=FormatChecker(),
+            )
 
     def all_tools(self) -> list[Tool]:
         """返回所有已注册工具的列表（按构造时的插入顺序）。"""
@@ -120,7 +145,49 @@ class ToolRegistry:
             Exception: 工具内部协议级异常会原样向上抛（业务级失败应是
                 ``ToolResult(is_error=True)``，不会 raise）。
         """
-        return self.get(name).invoke(args)
+        tool = self.get(name)
+        validation_error = self.validate(name, args)
+        if validation_error is not None:
+            return validation_error
+        return tool.invoke(args)
+
+    def validate(self, name: str, args: dict[str, Any]) -> ToolResult | None:
+        """Validate model-visible arguments without invoking the tool.
+
+        The conversation loop uses this before publishing tool-call cards so a
+        malformed provider payload cannot turn into an actionable approval UI.
+        ``invoke`` repeats the same check because callers outside Conversation
+        must remain fail-closed too.
+        """
+
+        self.get(name)
+        public_args = {
+            key: value for key, value in args.items() if not key.startswith("__agent_friend_")
+        }
+        errors = sorted(
+            self._validators[name].iter_errors(public_args),
+            key=lambda item: (list(item.absolute_path), item.message),
+        )
+        if errors:
+            error = errors[0]
+            field = ".".join(str(part) for part in error.absolute_path) or "$"
+            message = _schema_error_message(error.validator, field)
+            return ToolResult(
+                text=json.dumps(
+                    {
+                        "status": "error",
+                        "error": "invalid_arguments",
+                        "field": field,
+                        "rule": str(error.validator),
+                        "message": message,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                is_error=True,
+                meta={"error_kind": "invalid_arguments", "schema_rule": error.validator},
+            )
+        return None
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
         """转换为 OpenAI tool calling API 要求的 ``tools`` 数组。
@@ -132,6 +199,9 @@ class ToolRegistry:
             可直接传给 :meth:`llm_providers.LLMClient.stream` 的 ``tools`` 参数。
             空 registry 返回空列表。
         """
+        # The shared OpenAI-compatible wire intentionally omits provider-specific
+        # strict flags. ToolRegistry enforces the declared Draft 7 schema before
+        # every invocation, including providers that only treat it as guidance.
         return [
             {
                 "type": "function",

@@ -166,6 +166,7 @@ class CalculateTool:
         "properties": {
             "operation": {
                 "type": "string",
+                "description": "要执行的精确计算类型；每种类型只使用对应分支声明的参数。",
                 "enum": [
                     "evaluate",
                     "percentage_of",
@@ -175,14 +176,38 @@ class CalculateTool:
                     "statistics",
                 ],
             },
-            "expression": {"type": "string"},
-            "value": {"type": ["string", "number"]},
-            "percentage": {"type": ["string", "number"]},
-            "old_value": {"type": ["string", "number"]},
-            "new_value": {"type": ["string", "number"]},
-            "values": {"type": "array", "items": {"type": ["string", "number"]}},
+            "expression": {
+                "type": "string",
+                "description": "仅 evaluate 使用的算术表达式，不接受变量、函数或代码。",
+            },
+            "value": {
+                "type": ["string", "number"],
+                "description": "百分比运算的基准数值；高精度十进制可使用字符串。",
+            },
+            "percentage": {
+                "type": ["string", "number"],
+                "description": "百分数本身，例如 15 表示 15%。",
+            },
+            "old_value": {
+                "type": ["string", "number"],
+                "description": "percentage_change 的旧值/基期值。",
+            },
+            "new_value": {
+                "type": ["string", "number"],
+                "description": "percentage_change 的新值/本期值。",
+            },
+            "values": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": _MAX_VALUES,
+                "items": {"type": ["string", "number"]},
+                "description": "statistics 使用的 1-1000 个数值。",
+            },
             "statistics": {
                 "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "description": "statistics 要返回的统计量；省略时返回全部支持项。",
                 "items": {
                     "type": "string",
                     "enum": ["sum", "count", "mean", "median", "min", "max"],
@@ -190,6 +215,32 @@ class CalculateTool:
             },
         },
         "required": ["operation"],
+        "oneOf": [
+            {
+                "properties": {"operation": {"const": "evaluate"}},
+                "required": ["expression"],
+            },
+            {
+                "properties": {"operation": {"const": "percentage_of"}},
+                "required": ["value", "percentage"],
+            },
+            {
+                "properties": {"operation": {"const": "percentage_change"}},
+                "required": ["old_value", "new_value"],
+            },
+            {
+                "properties": {"operation": {"const": "increase_by_percentage"}},
+                "required": ["value", "percentage"],
+            },
+            {
+                "properties": {"operation": {"const": "decrease_by_percentage"}},
+                "required": ["value", "percentage"],
+            },
+            {
+                "properties": {"operation": {"const": "statistics"}},
+                "required": ["values"],
+            },
+        ],
         "additionalProperties": False,
     }
 

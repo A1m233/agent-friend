@@ -24,6 +24,10 @@ class LLMNetworkError(LLMError):
     """网络错误或超时。LLMClient 有限重试用尽后交给上层兜底。"""
 
 
+class LLMStreamTimeoutError(LLMNetworkError):
+    """A provider stream stopped making observable progress for too long."""
+
+
 class LLMBadRequestError(LLMError):
     """请求格式错误。多半是 bug，CLI 层不重试。"""
 

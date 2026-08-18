@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
@@ -18,6 +19,14 @@ from typing import Any, Protocol
 
 _CANCEL_POLL_SECONDS = 0.05
 _STREAM_END = object()
+
+
+class StreamIdleTimeoutExceeded(TimeoutError):
+    """Raised when a provider stream makes no observable progress for too long."""
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__(f"LLM stream was idle for {timeout_seconds:g}s")
+        self.timeout_seconds = timeout_seconds
 
 
 class AsyncStreamSource(Protocol):
@@ -45,8 +54,11 @@ class CancellableAsyncStream:
         source: AsyncStreamSource,
         cancel_check: Callable[[], None],
         *,
+        timeout_seconds: float | None = None,
         thread_name: str = "llm-cancellable-stream",
     ) -> None:
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         self.request_id: str | None = None
         self._source = source
         self._cancel_check = cancel_check
@@ -56,6 +68,8 @@ class CancellableAsyncStream:
         self._open_error: BaseException | None = None
         self._closed = threading.Event()
         self._done = threading.Event()
+        self._timeout_seconds = timeout_seconds
+        self._last_activity_at = time.monotonic()
         self._task_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task[None] | None = None
@@ -70,8 +84,8 @@ class CancellableAsyncStream:
         """Wait for response headers while continuing to observe cancellation."""
         try:
             while not self._opened.wait(_CANCEL_POLL_SECONDS):
-                self._cancel_check()
-            self._cancel_check()
+                self._check_control()
+            self._check_control()
         except BaseException:
             self.close()
             raise
@@ -85,11 +99,7 @@ class CancellableAsyncStream:
 
     def __next__(self) -> Any:
         while True:
-            try:
-                self._cancel_check()
-            except BaseException:
-                self.close()
-                raise
+            self._check_control()
             try:
                 item = self._items.get(timeout=_CANCEL_POLL_SECONDS)
             except queue.Empty:
@@ -101,6 +111,19 @@ class CancellableAsyncStream:
             if isinstance(item, _StreamFailure):
                 raise item.error
             return item
+
+    def _check_control(self) -> None:
+        try:
+            self._cancel_check()
+            timeout_seconds = self._timeout_seconds
+            if (
+                timeout_seconds is not None
+                and time.monotonic() - self._last_activity_at >= timeout_seconds
+            ):
+                raise StreamIdleTimeoutExceeded(timeout_seconds)
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
         if self._closed.is_set():
@@ -128,11 +151,13 @@ class CancellableAsyncStream:
             if self._closed.is_set():
                 return
             self.request_id = self._source.request_id
+            self._last_activity_at = time.monotonic()
             self._opened_successfully = True
             self._opened.set()
             async for chunk in response:
                 if self._closed.is_set():
                     break
+                self._last_activity_at = time.monotonic()
                 self._items.put(chunk)
         except asyncio.CancelledError as exc:
             if not self._closed.is_set():
@@ -161,12 +186,14 @@ def open_cancellable_stream(
     source: AsyncStreamSource,
     cancel_check: Callable[[], None],
     *,
+    timeout_seconds: float | None = None,
     thread_name: str = "llm-cancellable-stream",
 ) -> CancellableAsyncStream:
     """Open ``source`` without making response-header wait uninterruptible."""
     stream = CancellableAsyncStream(
         source,
         cancel_check,
+        timeout_seconds=timeout_seconds,
         thread_name=thread_name,
     )
     try:

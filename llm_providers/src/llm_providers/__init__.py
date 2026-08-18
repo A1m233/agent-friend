@@ -36,11 +36,13 @@ from .errors import (
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMStreamTimeoutError,
     LLMTransientProviderError,
 )
 from .multimodal import MultimodalInputAdapter
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
+    LLMActivity,
     LLMResponseDiagnostics,
     LLMRetryScheduled,
     LLMStreamEvent,
@@ -58,6 +60,7 @@ __all__ = [
     "DEEPSEEK_PROVIDER_ID",
     "KIMI_API_KEY",
     "KIMI_PROVIDER_ID",
+    "LLMActivity",
     "LLMAuthError",
     "LLMBadRequestError",
     "LLMClient",
@@ -73,6 +76,7 @@ __all__ = [
     "LLMResponseDiagnostics",
     "LLMRetryScheduled",
     "LLMStreamEvent",
+    "LLMStreamTimeoutError",
     "LLMTextDelta",
     "LLMToolCallDelta",
     "LLMTransientProviderError",

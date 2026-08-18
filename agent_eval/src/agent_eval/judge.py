@@ -562,16 +562,20 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
         )
 
     for requirement in spec.required_successful_tool_calls:
-        if any(
-            call.name == requirement.name
-            and not call.is_error
-            and _value_contains(call.args, requirement.args)
-            and (
-                requirement.result_contains is None
-                or requirement.result_contains in call.result_text
-            )
+        matching_calls = [
+            call
             for call in trace.tool_calls
-        ):
+            if (
+                call.name == requirement.name
+                and not call.is_error
+                and _value_contains(call.args, requirement.args)
+                and (
+                    requirement.result_contains is None
+                    or requirement.result_contains in call.result_text
+                )
+            )
+        ]
+        if len(matching_calls) >= requirement.min_count:
             continue
         actual = [
             {
@@ -586,9 +590,37 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             case.id,
             contract.id,
             False,
-            f"missing successful tool call {requirement.name} with args containing "
+            f"missing successful tool call {requirement.name}: need at least "
+            f"{requirement.min_count}, found {len(matching_calls)}, with args containing "
             f"{requirement.args!r} and result containing {requirement.result_contains!r} "
             f"(actual: {actual or 'none'})",
+        )
+
+    successful_skill_activations = {
+        activation.name
+        for activation in trace.skill_activations
+        if activation.status == "activated"
+    }
+    missing_skill_activations = sorted(
+        set(spec.required_skill_activations) - successful_skill_activations
+    )
+    if missing_skill_activations:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "missing successful host Skill activations: "
+            f"{missing_skill_activations} (actual: {sorted(successful_skill_activations) or 'none'})",
+        )
+    forbidden_skill_activations = sorted(
+        set(spec.must_not_activate_skills) & successful_skill_activations
+    )
+    if forbidden_skill_activations:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"forbidden host Skill activations: {forbidden_skill_activations}",
         )
 
     if spec.require_non_empty_response and not trace.final_text.strip():
@@ -709,6 +741,11 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 "unsupported Skill activation claim without successful skill_read: "
                 f"{activation_hit}",
             )
+
+    if spec.forbid_tool_identifier_confusion:
+        identifier_error = _tool_identifier_confusion(trace.tool_calls)
+        if identifier_error is not None:
+            return Verdict(case.id, contract.id, False, identifier_error)
 
     if spec.forbid_unsupported_skill_catalog_change_claim:
         catalog_hit = _unsupported_skill_catalog_claims(case, trace.final_text)
@@ -890,13 +927,34 @@ def _unsupported_lookup_claims(final_text: str, tool_names: list[str]) -> list[s
 
 
 def _unsupported_skill_activation_claims(trace: Trace) -> list[str]:
-    if any(call.name == "skill_read" and not call.is_error for call in trace.tool_calls):
+    if any(call.name == "skill_read" and not call.is_error for call in trace.tool_calls) or any(
+        activation.status == "activated" for activation in trace.skill_activations
+    ):
         return []
     visible_text = "\n".join([*trace.assistant_segments, trace.final_text])
     candidate = visible_text
     for pattern in SKILL_ACTIVATION_NEGATION_PATTERNS:
         candidate = pattern.sub("", candidate)
     return [term for term in SKILL_ACTIVATION_CLAIM_TERMS if term in candidate]
+
+
+def _tool_identifier_confusion(tool_calls: list[ToolCallTrace]) -> str | None:
+    """Reject cross-domain handles and mutually exclusive command modes."""
+
+    for call in tool_calls:
+        if call.name != "exec_command":
+            continue
+        skill = call.args.get("skill")
+        if not isinstance(skill, dict):
+            continue
+        if "workdir" in call.args:
+            return "exec_command mixed ordinary workdir with Skill binding"
+        if "id" in skill:
+            return "exec_command used ambiguous legacy skill.id instead of skill.skill_id"
+        skill_id = skill.get("skill_id")
+        if isinstance(skill_id, str) and skill_id.startswith("scope_"):
+            return "exec_command used filesystem_scope_id as skill.skill_id"
+    return None
 
 
 def _unsupported_skill_catalog_claims(case: Case, final_text: str) -> list[str]:

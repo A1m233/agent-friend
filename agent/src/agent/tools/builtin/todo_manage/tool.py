@@ -218,9 +218,19 @@ class TodoManageTool:
             "statuses": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["open", "completed", "cancelled"]},
+                "description": "list 要包含的 Todo 状态；默认只列 open。",
             },
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-            "offset": {"type": "integer", "minimum": 0},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "list 最多返回的 Todo 数，默认 100。",
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "list 分页起始偏移，默认 0。",
+            },
             "reminder": {
                 **_REMINDER_SCHEDULE_SCHEMA,
                 "description": (
@@ -238,9 +248,52 @@ class TodoManageTool:
                     "本字段；不得省略，也不要先创建 Todo 再调用 add_reminder。"
                 ),
             },
-            "enabled": {"type": "boolean"},
+            "enabled": {
+                "type": "boolean",
+                "description": "update_reminder 更新后的启用状态，默认 true。",
+            },
         },
         "required": ["operation"],
+        "oneOf": [
+            {
+                "properties": {"operation": {"const": "create"}},
+                "required": ["title"],
+            },
+            {"properties": {"operation": {"const": "list"}}},
+            {
+                "properties": {"operation": {"const": "get"}},
+                "required": ["todo_id"],
+            },
+            {
+                "properties": {"operation": {"const": "update"}},
+                "required": ["todo_id", "revision"],
+                "anyOf": [{"required": ["title"]}, {"required": ["description"]}],
+            },
+            {
+                "properties": {"operation": {"const": "complete"}},
+                "required": ["items"],
+            },
+            {
+                "properties": {"operation": {"const": "cancel"}},
+                "required": ["items"],
+            },
+            {
+                "properties": {"operation": {"const": "reopen"}},
+                "required": ["items"],
+            },
+            {
+                "properties": {"operation": {"const": "add_reminder"}},
+                "required": ["todo_id", "reminder"],
+            },
+            {
+                "properties": {"operation": {"const": "update_reminder"}},
+                "required": ["todo_id", "reminder_id", "revision", "reminder"],
+            },
+            {
+                "properties": {"operation": {"const": "remove_reminder"}},
+                "required": ["todo_id", "reminder_id", "revision"],
+            },
+        ],
         "additionalProperties": False,
     }
 

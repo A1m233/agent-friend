@@ -17,6 +17,24 @@
         "Trimmed trailing blank lines to satisfy the host repository whitespace gate."
       ]
     },
+    "skill-installer": {
+      "source_repository": "https://github.com/openai/codex",
+      "source_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
+      "source_path": "codex-rs/skills/src/assets/samples/skill-installer",
+      "license": "Apache-2.0",
+      "snapshot_sha256": "73b07e929e9036ecb7351b017cfa3c531cbd3fbe4ba18c9aed2f5b8d4a69f032",
+      "retrieved_at": "2026-08-17",
+      "compatibility_patches": [
+        "Added agent-friend runtime capability and governed command instructions to SKILL.md.",
+        "Changed governed Skill commands to use package-relative workdir without exposing materialized builtin paths.",
+        "Defaulted installed-skill discovery and destination to AGENT_FRIEND_PERSONAL_SKILLS_DIR.",
+        "Used the product-owned run temp directory instead of a Codex-specific temp namespace.",
+        "Allowed auto mode to fall back from GitHub archive HTTP failures to git while preserving both HTTPS and SSH clone diagnostics.",
+        "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
+        "Regenerated agents/openai.yaml with agent-friend-facing Chinese metadata.",
+        "Omitted optional icon assets while retaining the upstream Apache-2.0 license."
+      ]
+    },
     "agent-friend-guide": {
       "source_repository": "https://github.com/A1m233/agent-friend-guide",
       "source_commit": "a87bf567dae3bf3f7ae30a084f5126e5b9eb95be",

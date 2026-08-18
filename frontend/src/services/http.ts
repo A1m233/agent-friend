@@ -18,6 +18,15 @@ export interface FriendlyError {
   code?: string;
 }
 
+export function friendlyErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "friendly" in error) {
+    const friendly = (error as Partial<FriendlyError>).friendly;
+    if (typeof friendly === "string" && friendly.trim()) return friendly;
+  }
+  return "我这边好像出了点小问题，能稍后再试一次吗？";
+}
+
 export function requireJsonRestResponse(data: unknown, contentType: unknown): void {
   if (data === null || data === undefined || data === "") return;
   if (typeof contentType === "string" && contentType.toLowerCase().includes("json")) return;

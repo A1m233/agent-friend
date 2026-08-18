@@ -202,7 +202,12 @@ def _parse_fixture_compaction(raw: Any, *, label: str) -> FixtureCompaction | No
     )
 
 
-def _parse_fixture_skills(raw: Any, *, label: str) -> list[FixtureSkill]:
+def _parse_fixture_skills(
+    raw: Any,
+    *,
+    label: str,
+    asset_root: Path,
+) -> list[FixtureSkill]:
     if raw is None:
         return []
     if not isinstance(raw, list) or not raw:
@@ -214,22 +219,52 @@ def _parse_fixture_skills(raw: Any, *, label: str) -> list[FixtureSkill]:
         name = _required_str(data, "name", label=item_label)
         if len(name) > 64 or not _SKILL_NAME_RE.fullmatch(name):
             raise ValueError(f"{item_label}.name 必须是合法 Skill 名称")
-        description = _required_str(data, "description", label=item_label)
-        if len(description) > 1_024:
-            raise ValueError(f"{item_label}.description 不能超过 1024 字符")
+        package_path_raw = _optional_str(data, "package_path")
+        package_path: Path | None = None
+        if package_path_raw is not None:
+            if any(
+                key in data for key in ("description", "instructions", "allow_implicit_invocation")
+            ):
+                raise ValueError(
+                    f"{item_label}.package_path 不能与 description、instructions 或 "
+                    "allow_implicit_invocation 同时配置"
+                )
+            relative = Path(package_path_raw)
+            if relative.is_absolute():
+                raise ValueError(f"{item_label}.package_path 必须是相对路径")
+            root = asset_root.resolve()
+            package_path = (root / relative).resolve()
+            if package_path != root and root not in package_path.parents:
+                raise ValueError(f"{item_label}.package_path 不能逃逸 agent_eval 目录")
+            if not package_path.is_dir() or not package_path.joinpath("SKILL.md").is_file():
+                raise ValueError(f"{item_label}.package_path 必须指向包含 SKILL.md 的目录")
+            if package_path.name != name:
+                raise ValueError(f"{item_label}.package_path 目录名必须与 name 一致")
+            if any(path.is_symlink() or path.is_junction() for path in package_path.rglob("*")):
+                raise ValueError(f"{item_label}.package_path 不能包含符号链接")
+            description = None
+            instructions = None
+            allow_implicit_invocation = None
+        else:
+            description = _required_str(data, "description", label=item_label)
+            if len(description) > 1_024:
+                raise ValueError(f"{item_label}.description 不能超过 1024 字符")
+            instructions = _required_str(data, "instructions", label=item_label)
+            allow_implicit_invocation = (
+                True
+                if "allow_implicit_invocation" not in data
+                else _bool(
+                    data.get("allow_implicit_invocation"),
+                    label=f"{item_label}.allow_implicit_invocation",
+                )
+            )
         skills.append(
             FixtureSkill(
                 name=name,
                 description=description,
-                instructions=_required_str(data, "instructions", label=item_label),
-                allow_implicit_invocation=(
-                    True
-                    if "allow_implicit_invocation" not in data
-                    else _bool(
-                        data.get("allow_implicit_invocation"),
-                        label=f"{item_label}.allow_implicit_invocation",
-                    )
-                ),
+                instructions=instructions,
+                package_path=package_path,
+                allow_implicit_invocation=allow_implicit_invocation,
                 source=(
                     _optional_choice(
                         data,
@@ -482,11 +517,13 @@ def _parse_required_successful_tool_calls(
         result_contains = _optional_str(data, "result_contains")
         if result_contains is not None and not result_contains.strip():
             raise ValueError(f"{item_label}.result_contains 必须是非空字符串或 null")
+        min_count = _optional_positive_int(data, "min_count", label=item_label) or 1
         requirements.append(
             RequiredSuccessfulToolCall(
                 name=_required_str(data, "name", label=item_label),
                 args=dict(args),
                 result_contains=result_contains,
+                min_count=min_count,
             )
         )
     return requirements
@@ -548,6 +585,14 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("required_successful_tool_calls"),
             label=f"{label}.required_successful_tool_calls",
         ),
+        required_skill_activations=_str_list(
+            data.get("required_skill_activations"),
+            label=f"{label}.required_skill_activations",
+        ),
+        must_not_activate_skills=_str_list(
+            data.get("must_not_activate_skills"),
+            label=f"{label}.must_not_activate_skills",
+        ),
         require_progress_continuity=_bool(
             data.get("require_progress_continuity"),
             label=f"{label}.require_progress_continuity",
@@ -583,6 +628,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         forbid_unsupported_skill_activation_claim=_bool(
             data.get("forbid_unsupported_skill_activation_claim"),
             label=f"{label}.forbid_unsupported_skill_activation_claim",
+        ),
+        forbid_tool_identifier_confusion=_bool(
+            data.get("forbid_tool_identifier_confusion"),
+            label=f"{label}.forbid_tool_identifier_confusion",
         ),
         forbid_unsupported_skill_catalog_change_claim=_bool(
             data.get("forbid_unsupported_skill_catalog_change_claim"),
@@ -683,10 +732,12 @@ def _load_contract_file(path: Path) -> Contract:
                 fixture_skills=_parse_fixture_skills(
                     case_data.get("fixture_skills"),
                     label=f"{label}.fixture_skills",
+                    asset_root=asset_root,
                 ),
                 prior_fixture_skills=_parse_fixture_skills(
                     case_data.get("prior_fixture_skills"),
                     label=f"{label}.prior_fixture_skills",
+                    asset_root=asset_root,
                 ),
                 fixture_skill_catalog_window=_optional_positive_int(
                     case_data,
@@ -779,7 +830,7 @@ def build_case_set_meta(cases_dir: Path, contracts: list[Contract]) -> CaseSetMe
         digest.update(path.read_bytes())
         digest.update(b"\0")
     asset_root = cases_dir.parent.resolve()
-    attachment_paths = {
+    asset_paths = {
         attachment.path.resolve()
         for contract in contracts
         for case in contract.cases
@@ -799,7 +850,16 @@ def build_case_set_meta(cases_dir: Path, contracts: list[Contract]) -> CaseSetMe
             ]
         )
     }
-    for path in sorted(attachment_paths, key=lambda item: item.as_posix()):
+    package_roots = {
+        fixture.package_path.resolve()
+        for contract in contracts
+        for case in contract.cases
+        for fixture in case.fixture_skills + case.prior_fixture_skills
+        if fixture.package_path is not None
+    }
+    for package_root in package_roots:
+        asset_paths.update(path.resolve() for path in package_root.rglob("*") if path.is_file())
+    for path in sorted(asset_paths, key=lambda item: item.as_posix()):
         rel = path.relative_to(asset_root).as_posix()
         digest.update(rel.encode("utf-8"))
         digest.update(b"\0")

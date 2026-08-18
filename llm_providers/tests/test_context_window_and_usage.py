@@ -21,6 +21,7 @@ from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 from openai.types.chat import ChatCompletionChunk
 
 from llm_providers import (
+    LLMActivity,
     LLMClient,
     LLMContentPolicyError,
     LLMContextWindowError,
@@ -590,6 +591,82 @@ def test_litellm_cancellable_stream_interrupts_response_header_wait(
     assert request_cancelled.wait(1)
 
 
+def test_kimi_cancellable_stream_allows_total_duration_beyond_idle_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response_closed = threading.Event()
+    clients: list[FakeAsyncOpenAI] = []
+
+    class ProgressingResponse:
+        def __init__(self) -> None:
+            self.remaining = 20
+
+        def __aiter__(self) -> ProgressingResponse:
+            return self
+
+        async def __anext__(self) -> Any:
+            if self.remaining == 0:
+                raise StopAsyncIteration
+            self.remaining -= 1
+            await asyncio.sleep(0.005)
+            if self.remaining:
+                return SimpleNamespace(usage=None, choices=[])
+            delta = SimpleNamespace(content="ok", reasoning_content=None, tool_calls=[])
+            return SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(delta=delta, finish_reason="stop")],
+            )
+
+        async def close(self) -> None:
+            response_closed.set()
+
+    class FakeRawResponse:
+        request_id = "deadline-request"
+
+        async def create(self, **_kwargs: Any) -> FakeRawResponse:
+            return self
+
+        def parse(self) -> ProgressingResponse:
+            return ProgressingResponse()
+
+    class FakeCompletions:
+        def __init__(self) -> None:
+            self.with_raw_response = FakeRawResponse()
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+            clients.append(self)
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "llm_providers.kimi_transport.openai.AsyncOpenAI",
+        FakeAsyncOpenAI,
+    )
+    client = LLMClient(
+        _spec(
+            model="openai/kimi-k2.7-code-highspeed",
+            api_base="https://api.moonshot.cn/v1",
+            defaults={"network_retries": 1},
+        ),
+        stream_timeout_seconds=0.05,
+    )
+
+    started = time.monotonic()
+    list(
+        client.stream(
+            [{"role": "user", "content": "hi"}],
+            _cancel_check=lambda: None,
+        )
+    )
+
+    assert time.monotonic() - started >= 0.08
+    assert response_closed.wait(1)
+    assert len(clients) == 1
+
+
 # ===== timeout 透传与异常映射 =====
 
 
@@ -1116,6 +1193,52 @@ def test_stream_logs_privacy_safe_empty_response_shape(
     assert "finish_reason_raw=stop" in diagnostic
     assert secret_reasoning not in diagnostic
     assert "sensitive prompt" not in diagnostic
+
+
+def test_stream_emits_content_free_reasoning_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret_reasoning = "private chain of thought"
+
+    def fake_completion(**_kwargs: Any) -> Any:
+        return iter(
+            [
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content=None,
+                                reasoning_content=secret_reasoning,
+                                tool_calls=[],
+                            ),
+                            finish_reason=None,
+                        )
+                    ],
+                ),
+                SimpleNamespace(
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(
+                                content="完成",
+                                reasoning_content=None,
+                                tool_calls=[],
+                            ),
+                            finish_reason="stop",
+                        )
+                    ],
+                ),
+            ]
+        )
+
+    monkeypatch.setattr(_COMPLETION, fake_completion)
+    events = list(LLMClient(_spec(), network_retries=0).stream([{"role": "user", "content": "hi"}]))
+
+    activity = next(event for event in events if isinstance(event, LLMActivity))
+    assert activity.kind == "reasoning"
+    assert secret_reasoning not in repr(activity)
+    assert any(isinstance(event, LLMTextDelta) and event.text == "完成" for event in events)
 
 
 def test_stream_rejects_reasoning_only_output_budget_exhaustion(

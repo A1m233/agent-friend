@@ -1,6 +1,6 @@
 # 052 · 流式回复增长时消息列表会中途丢失末端跟随
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-18
 - **关联需求**：[010-desktop-shell-and-chat-ui](../../requirements/010-desktop-shell-and-chat-ui/)
@@ -37,3 +37,7 @@
 - 升级后用真实虚拟列表夹具连续增大最后一项高度，验证滚动位置、`isAtEnd()` 与“滚动到最新消息”按钮始终一致。
 - 若升级仍不能覆盖 Tauri WebView 下的时序，再对齐官方 chat 示例评估 `directDomUpdates` + `containerRef`；启用时必须让 virtualizer 独占内部容器高度和 item 主轴位置，避免 React style 与直接 DOM 写入互相覆盖。
 - 回归测试同时覆盖：贴底时流式增长持续跟随、用户主动向上滚动后不被拉回、重新点击到底后恢复跟随，以及流式结束时 Markdown 组件切换不会再次脱底。
+
+---
+
+已在需求 085 当前分支合入前通过撤回未提交的 TanStack end-anchor 重构恢复主干滚动行为；对应变更将随需求 085 提交。

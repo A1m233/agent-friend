@@ -21,7 +21,7 @@ from vendor.codex import load_lock, prepare, verify_prepared  # noqa: E402
 
 
 def smoke(executable: Path) -> dict[str, object]:
-    from agent.command_runtime import CommandRuntime
+    from agent.command_runtime import CommandRuntime, ExecCommandTool
     from agent.command_runtime.runtime import sandbox_context
 
     with tempfile.TemporaryDirectory(prefix="agent-friend-command-runtime-") as temp_value:
@@ -47,6 +47,59 @@ def smoke(executable: Path) -> dict[str, object]:
             )
             if buffered.exit_code != 0 or b"ok" not in buffered.stdout_tail:
                 raise RuntimeError(f"buffered command failed: {buffered.to_dict()}")
+
+            host_user = runtime.start_process(
+                argv=(_system_cmd(), "/D", "/S", "/C", "echo host-user-ok"),
+                workdir=root,
+                env=dict(os.environ),
+                mode="buffered",
+                session_id="smoke",
+                run_id="smoke-host-user",
+                tool_call_id="smoke-host-user",
+                sandbox=None,
+            )
+            host_user = runtime.wait(
+                host_user.process_id,
+                session_id="smoke",
+                run_id="smoke-host-user",
+                timeout_seconds=30,
+            )
+            if (
+                host_user.exit_code != 0
+                or host_user.sandbox_type != "none"
+                or b"host-user-ok" not in host_user.stdout_tail
+            ):
+                raise RuntimeError(f"host-user command failed: {host_user.to_dict()}")
+
+            powershell_argv = ExecCommandTool(
+                runtime,
+                None,
+                base_env=dict(os.environ),
+            )._shell_argv(
+                'pwsh.exe -NoProfile -Command "Write-Output agent-friend-powershell-ok"',
+                "buffered",
+            )
+            powershell = runtime.start_process(
+                argv=powershell_argv,
+                workdir=root,
+                env=_command_env(),
+                mode="buffered",
+                session_id="smoke",
+                run_id="smoke-powershell-argv",
+                tool_call_id="smoke-powershell-argv",
+                sandbox=writable,
+            )
+            powershell = runtime.wait(
+                powershell.process_id,
+                session_id="smoke",
+                run_id="smoke-powershell-argv",
+                timeout_seconds=30,
+            )
+            if (
+                powershell.exit_code != 0
+                or b"agent-friend-powershell-ok" not in powershell.stdout_tail
+            ):
+                raise RuntimeError(f"direct PowerShell argv command failed: {powershell.to_dict()}")
 
             streaming = runtime.start_process(
                 argv=(
@@ -111,6 +164,8 @@ def smoke(executable: Path) -> dict[str, object]:
                 "status": "ok",
                 "sandbox_type": buffered.sandbox_type,
                 "buffered": True,
+                "host_user": True,
+                "powershell_argv": True,
                 "streaming": True,
                 "cancelled": True,
                 "write_denied": True,
@@ -119,6 +174,345 @@ def smoke(executable: Path) -> dict[str, object]:
             }
         finally:
             runtime.close()
+
+
+def network_smoke(executable: Path) -> dict[str, object]:
+    """Verify approved HTTPS through the public Tool and exec-server sandbox."""
+    from agent.approvals import ApprovalBroker
+    from agent.command_runtime import CommandApprovalDecision, CommandRuntime, ExecCommandTool
+    from agent.command_runtime.tools import (
+        COMMAND_RUN_CONTEXT_ARG,
+        COMMAND_RUN_ID_ARG,
+        COMMAND_SESSION_ID_ARG,
+        COMMAND_SURFACE_ARG,
+        COMMAND_TOOL_CALL_ID_ARG,
+    )
+    from agent.tool_runtime import ToolRunContext
+
+    with tempfile.TemporaryDirectory(prefix="agent-friend-command-network-") as temp_value:
+        root = Path(temp_value).resolve()
+        probe = root / "network_probe.py"
+        probe.write_text(
+            """import json
+import os
+import socket
+import ssl
+import sys
+import urllib.error
+import urllib.request
+
+result = {
+    "environment": {
+        name: bool(os.environ.get(name))
+        for name in ("SystemRoot", "WINDIR", "ComSpec", "TEMP", "TMP")
+    }
+}
+try:
+    socket.socket().close()
+    result["winsock"] = "ok"
+except OSError as exc:
+    result.update(stage="winsock", error=repr(exc))
+    print(json.dumps(result))
+    raise SystemExit(11)
+try:
+    with urllib.request.urlopen(
+        "https://api.github.com/zen",
+        timeout=20,
+    ) as response:
+        body = response.read(4096)
+        result.update(stage="https", http_status=response.status, response_bytes=len(body))
+except urllib.error.URLError as exc:
+    reason = exc.reason
+    if isinstance(reason, socket.gaierror):
+        stage = "dns"
+    elif isinstance(reason, ssl.SSLError):
+        stage = "tls"
+    elif isinstance(reason, OSError) and getattr(reason, "winerror", None) == 10106:
+        stage = "winsock"
+    else:
+        stage = "connect"
+    result.update(stage=stage, error=repr(reason))
+    print(json.dumps(result))
+    raise SystemExit(12)
+print(json.dumps(result))
+""",
+            encoding="utf-8",
+        )
+        runtime = CommandRuntime(
+            executable,
+            codex_home=_product_codex_home(),
+            execution_root=_product_execution_root(),
+        )
+        base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+        broker = ApprovalBroker()
+        context = ToolRunContext.create("")
+        result_box: list[Any] = []
+        args = {
+            "cmd": subprocess.list2cmdline([str(base_executable), str(probe)]),
+            "workdir": str(root),
+            "access": {
+                "filesystem": "read_only",
+                "additional_roots": [{"path": str(base_executable.parent), "access": "read_only"}],
+                "network": "enabled",
+            },
+            "reason": "verify real HTTPS through the governed command Tool",
+            COMMAND_SESSION_ID_ARG: "smoke",
+            COMMAND_RUN_ID_ARG: "smoke-network",
+            COMMAND_TOOL_CALL_ID_ARG: "smoke-network",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: context,
+        }
+        thread = threading.Thread(
+            target=lambda: result_box.append(ExecCommandTool(runtime, broker).invoke(args)),
+            daemon=True,
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            pending = ()
+            while time.monotonic() < deadline:
+                pending = broker.pending(kind="command")
+                if pending:
+                    break
+                time.sleep(0.01)
+            if not pending:
+                raise RuntimeError("network command did not request approval")
+            request = pending[0]
+            if not broker.decide(
+                request.request_id,
+                CommandApprovalDecision(allow=True),
+                session_id="smoke",
+                run_id="smoke-network",
+                expected_kind="command",
+            ):
+                raise RuntimeError("network command approval was rejected")
+            thread.join(timeout=40)
+            if thread.is_alive() or not result_box:
+                raise RuntimeError("network command did not finish")
+            payload = json.loads(result_box[0].text)
+            if payload.get("status") != "exited" or payload.get("exit_code") != 0:
+                raise RuntimeError(
+                    "managed network command failed: " + json.dumps(payload, ensure_ascii=False)
+                )
+            lines = [line for line in str(payload.get("stdout", "")).splitlines() if line]
+            probe_result = json.loads(lines[-1]) if lines else {}
+            if probe_result.get("http_status") != 200 or probe_result.get("winsock") != "ok":
+                raise RuntimeError(
+                    "managed network probe was incomplete: "
+                    + json.dumps(probe_result, ensure_ascii=False)
+                )
+            return {
+                "status": "ok",
+                "sandbox_type": payload.get("sandbox_type"),
+                "https": True,
+                "probe": probe_result,
+            }
+        finally:
+            context.close_commands()
+            runtime.close()
+
+
+def skill_install_smoke(executable: Path) -> dict[str, object]:
+    """Install one public Skill through the governed Tool into an isolated catalog."""
+    from agent.approvals import ApprovalBroker
+    from agent.command_runtime import CommandApprovalDecision, CommandRuntime, ExecCommandTool
+    from agent.command_runtime.tools import (
+        COMMAND_RUN_CONTEXT_ARG,
+        COMMAND_RUN_ID_ARG,
+        COMMAND_SESSION_ID_ARG,
+        COMMAND_SKILL_SNAPSHOT_ARG,
+        COMMAND_SURFACE_ARG,
+        COMMAND_TOOL_CALL_ID_ARG,
+    )
+    from agent.skills import SkillCatalogService, SkillSelection
+    from agent.tool_runtime import ToolRunContext
+
+    with tempfile.TemporaryDirectory(prefix="agent-friend-skill-install-") as temp_value:
+        root = Path(temp_value).resolve()
+        personal_root = root / "personal-skills"
+        personal_root.mkdir(parents=True)
+        _ensure_windows_owner_inheritance(personal_root)
+        service = SkillCatalogService(
+            personal_root=personal_root,
+            shared_root=root / "shared-skills",
+            watcher_enabled=True,
+        )
+        catalog = service.initialize()
+        installer = next(
+            (record for record in catalog.entries if record.id == "builtin/skill-installer"),
+            None,
+        )
+        if installer is None:
+            raise RuntimeError("builtin skill-installer was not discovered")
+        turn_snapshot = service.begin_turn(
+            (SkillSelection(id=installer.id, expected_version=installer.version),)
+        )
+        if len(turn_snapshot.activations) != 1 or turn_snapshot.activation_issues:
+            raise RuntimeError("builtin skill-installer could not be activated")
+        service.start()
+
+        runtime = CommandRuntime(
+            executable,
+            codex_home=_product_codex_home(),
+            execution_root=_product_execution_root(),
+        )
+        broker = ApprovalBroker()
+        context = ToolRunContext.create("")
+        base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+        installed_name = "skill-creator"
+        command = subprocess.list2cmdline(
+            [
+                str(base_executable),
+                "scripts/install-skill-from-github.py",
+                "--repo",
+                "openai/skills",
+                "--path",
+                "skills/.system/skill-creator",
+                "--name",
+                installed_name,
+                "--method",
+                "auto",
+            ]
+        )
+        args = {
+            "cmd": command,
+            "skill": {
+                "id": installer.id,
+                "entry": "scripts/install-skill-from-github.py",
+                "workdir": ".",
+            },
+            "access": {
+                "filesystem": "read_only",
+                "additional_roots": [
+                    {
+                        "locator": {"kind": "standard", "name": "personal_skills"},
+                        "access": "read_write",
+                    },
+                    {"path": str(base_executable.parent), "access": "read_only"},
+                ],
+                "network": "enabled",
+            },
+            "reason": "verify public Skill installation into an isolated personal catalog",
+            COMMAND_SESSION_ID_ARG: "smoke",
+            COMMAND_RUN_ID_ARG: "smoke-skill-install",
+            COMMAND_TOOL_CALL_ID_ARG: "smoke-skill-install",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: context,
+            COMMAND_SKILL_SNAPSHOT_ARG: turn_snapshot,
+        }
+        result_box: list[Any] = []
+        thread = threading.Thread(
+            target=lambda: result_box.append(
+                ExecCommandTool(
+                    runtime,
+                    broker,
+                    personal_skills_root=personal_root,
+                ).invoke(args)
+            ),
+            daemon=True,
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            pending = ()
+            while time.monotonic() < deadline:
+                pending = broker.pending(kind="command")
+                if pending:
+                    break
+                time.sleep(0.01)
+            if not pending:
+                raise RuntimeError("Skill install command did not request approval")
+            request = pending[0]
+            if request.details.workdir != "." or request.details.skill is None:
+                raise RuntimeError("Skill install command exposed an internal workdir")
+            if not broker.decide(
+                request.request_id,
+                CommandApprovalDecision(allow=True),
+                session_id="smoke",
+                run_id="smoke-skill-install",
+                expected_kind="command",
+            ):
+                raise RuntimeError("Skill install command approval was rejected")
+            thread.join(timeout=90)
+            if thread.is_alive() or not result_box:
+                raise RuntimeError("Skill install command did not finish")
+            payload = json.loads(result_box[0].text)
+            if payload.get("status") != "exited" or payload.get("exit_code") != 0:
+                raise RuntimeError(
+                    "Skill install command failed: " + json.dumps(payload, ensure_ascii=False)
+                )
+            deadline = time.monotonic() + 10
+            discovered = None
+            while time.monotonic() < deadline:
+                discovered = next(
+                    (
+                        item
+                        for item in service.snapshot.entries
+                        if item.source == "personal" and item.package_root.name == installed_name
+                    ),
+                    None,
+                )
+                if discovered is not None:
+                    break
+                time.sleep(0.1)
+            if discovered is None:
+                raise RuntimeError(
+                    "catalog watcher did not discover the installed Skill: "
+                    + json.dumps(
+                        {
+                            "generation": service.snapshot.generation,
+                            "watcher": service.watcher_state.to_dict(),
+                            "entries": [
+                                {
+                                    "id": item.id,
+                                    "source": item.source,
+                                    "package": item.package_root.name,
+                                }
+                                for item in service.snapshot.entries
+                            ],
+                            "issues": [issue.to_dict() for issue in service.snapshot.issues],
+                            "destination_exists": (personal_root / installed_name).is_dir(),
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            return {
+                "status": "ok",
+                "sandbox_type": payload.get("sandbox_type"),
+                "installed": installed_name,
+                "catalog_generation": service.snapshot.generation,
+                "skill_id": discovered.id,
+                "workdir": request.details.workdir,
+            }
+        finally:
+            context.close_commands()
+            runtime.close()
+            service.stop()
+
+
+def _ensure_windows_owner_inheritance(path: Path) -> None:
+    """Make a temp smoke root match the explicit user ACE of the product data root."""
+    if os.name != "nt":
+        return
+    identity = subprocess.run(
+        ["whoami"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    completed = subprocess.run(
+        ["icacls", str(path), "/grant:r", f"{identity}:(OI)(CI)(F)"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "failed to prepare isolated Skill smoke ACL: "
+            + (completed.stderr.strip() or completed.stdout.strip())
+        )
 
 
 def _smoke_builtin_skill_tool(runtime, root: Path) -> str:
@@ -173,8 +567,11 @@ def _smoke_builtin_skill_tool(runtime, root: Path) -> str:
     result_box: list[Any] = []
     args = {
         "cmd": command,
-        "workdir": str(record.package_root),
-        "skill": {"id": record.id, "entry": "scripts/quick_validate.py"},
+        "skill": {
+            "id": record.id,
+            "entry": "scripts/quick_validate.py",
+            "workdir": ".",
+        },
         "access": {
             "filesystem": "read_only",
             "additional_roots": [
@@ -234,6 +631,7 @@ def _smoke_builtin_skill_tool(runtime, root: Path) -> str:
 
 
 def _start(runtime, root: Path, sandbox, run_id: str, command: str):
+    permissions = sandbox.get("permissions", {})
     return runtime.start_process(
         argv=(
             _system_cmd(),
@@ -243,7 +641,7 @@ def _start(runtime, root: Path, sandbox, run_id: str, command: str):
             command,
         ),
         workdir=root,
-        env=_command_env(),
+        env=_command_env(network_enabled=permissions.get("network") == "enabled"),
         mode="buffered",
         session_id="smoke",
         run_id=run_id,
@@ -262,8 +660,8 @@ def _system_cmd() -> str:
     return str(executable)
 
 
-def _command_env() -> dict[str, str]:
-    return {
+def _command_env(*, network_enabled: bool = False) -> dict[str, str]:
+    env = {
         key: value
         for key, value in os.environ.items()
         if key
@@ -282,6 +680,11 @@ def _command_env() -> dict[str, str]:
             "LOCALAPPDATA",
         }
     }
+    if network_enabled:
+        from agent.command_runtime.runtime import safe_loopback_proxy_environment
+
+        env.update(safe_loopback_proxy_environment(os.environ))
+    return env
 
 
 def _product_codex_home() -> Path:
@@ -318,7 +721,19 @@ def setup_windows(executable: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("prepare", "doctor", "path", "status", "setup", "smoke"))
+    parser.add_argument(
+        "action",
+        choices=(
+            "prepare",
+            "doctor",
+            "path",
+            "status",
+            "setup",
+            "smoke",
+            "network-smoke",
+            "skill-install-smoke",
+        ),
+    )
     args = parser.parse_args()
     executable = prepare(ROOT) if args.action == "prepare" else verify_prepared(ROOT)
     if args.action == "path":
@@ -349,6 +764,12 @@ def main() -> int:
         return 0
     if args.action == "smoke":
         print(json.dumps(smoke(executable), ensure_ascii=False))
+        return 0
+    if args.action == "network-smoke":
+        print(json.dumps(network_smoke(executable), ensure_ascii=False))
+        return 0
+    if args.action == "skill-install-smoke":
+        print(json.dumps(skill_install_smoke(executable), ensure_ascii=False))
         return 0
     if args.action == "doctor":
         completed = subprocess.run(

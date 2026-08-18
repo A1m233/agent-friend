@@ -1,0 +1,159 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T16:35:23.598487+00:00",
+    "ended_at": "2026-08-18T16:35:42.668561+00:00",
+    "duration_seconds": 19.07,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "fresh synthetic no-prior Skill catalog comparison boundary; current product model kimi/kimi-k2.5; report only",
+    "selection": {
+      "contract": "all",
+      "case": "C22-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "8e4b1d691c4905871bd120758e2c8dd0a52127f49e85ab46144446fd2ab03eec",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C22": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C22",
+      "name": "skill-catalog-change-comparison",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C22-01",
+          "query": "和上一次 Skill catalog 相比，现在有哪些变化？",
+          "facet": "无历史基线 isolation · 不虚构新增、删除或不变",
+          "source": "synthetic-skill-catalog-no-prior-boundary",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "assistant_segments": [
+            "我目前没有上一次 Skill catalog 的可信快照，所以无法直接对比变化。\n\n当前我能看到的 Skill catalog 包含 **4 个条目**：\n\n1. **agent-friend-guide**（内置）- 关于 agent-friend 产品功能、使用方法、设置等的指南\n2. **skill-creator**（内置）- 创建有效 Skill 的指南\n3. **skill-installer**（内置）- 从 GitHub 安装 Agent Skill\n4. **stable-writing-helper**（个人）- 用于散文编辑和改写\n\n如果你记得上次看到的内容，可以告诉我，我帮你确认哪些是新出现的、哪些可能有变化。或者如果你是在某次特定对话后询问的，也可以指出具体是哪个会话，我尝试去翻一下当时的记录。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "stable-writing-helper",
+                "source": "personal",
+                "id": "skill_534b92b76626ad3c46363820d9cc3bdc7c5342f80e230cbedb2fbac82c14c7dc"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "7069eda721d932ba2c4aeb70bfc40bbb2aece76769cb2227f92ecdc9a6630fee",
+            "render_fingerprint": "cc6aeae318d1952cee2e60f9c70b01c65da383913b4f0d2cb216116f7a8afbea",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "stable-writing-helper",
+                "source": "personal",
+                "id": "skill_534b92b76626ad3c46363820d9cc3bdc7c5342f80e230cbedb2fbac82c14c7dc"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "3a79825f13038bf1fd0e5e9cad58056d2a70d6e5f996ec5e3a81c3262c0a44ab",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我目前没有上一次 Skill catalog 的可信快照，所以无法直接对比变化。\n\n当前我能看到的 Skill catalog 包含 **4 个条目**：\n\n1. **agent-friend-guide**（内置）- 关于 agent-friend 产品功能、使用方法、设置等的指南\n2. **skill-creator**（内置）- 创建有效 Skill 的指南\n3. **skill-installer**（内置）- 从 GitHub 安装 Agent Skill\n4. **stable-writing-helper**（个人）- 用于散文编辑和改写\n\n如果你记得上次看到的内容，可以告诉我，我帮你确认哪些是新出现的、哪些可能有变化。或者如果你是在某次特定对话后询问的，也可以指出具体是哪个会话，我尝试去翻一下当时的记录。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

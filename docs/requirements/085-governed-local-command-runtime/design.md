@@ -41,6 +41,8 @@ CONFIRMED
 
 ```mermaid
 flowchart LR
+    GS["全局系统权限设置"] --> SM["SandboxCapabilityManager"]
+    SM --> ES
     LLM["Agent / Skill"] --> EC["exec_command"]
     LLM --> WS["write_stdin"]
     EC --> AB["公共 ApprovalBroker"]
@@ -61,6 +63,8 @@ codex exec-server --strict-config --listen stdio --concurrent-requests <bounded-
 ```
 
 Bridge 通过子进程 stdin/stdout 独占 JSON-RPC 连接，不开放本地 TCP 端口，不使用 remote exec-server。启动后完成 `initialize` / `initialized` 握手，再允许 Tool 提交进程请求。
+
+Bridge 同时拥有进程级 `SandboxCapabilityManager`。它负责读取 Codex 沙箱 marker、判断当前产品锁定版本和代理配置对应的 provisioning 是否可用，并通过全局设置提供初始化或修复入口；它不持有任何命令授权。`CommandRuntime` 在启动具体命令前仍会让 Codex 做当前 cwd 和权限根的非提权 refresh，但不能借这个路径隐式触发 UAC。
 
 exec-server 子进程、它托管的命令和 Bridge 具有同一生命周期：
 
@@ -104,35 +108,36 @@ Bridge 使用统一 `/v1/approvals` 查询与决策入口，push kind 统一为 
 
 #### `exec_command`
 
-公开参数采用 Codex 风格的通用命令形态：
+公开参数采用 Codex 风格的通用命令形态。直接启动单个程序时优先使用结构化 `argv`：
 
 ```json
 {
-  "cmd": "./scripts/check/run.sh --stage backend",
-  "workdir": "/absolute/project/path",
+  "argv": ["maa", "--version"],
   "mode": "buffered",
   "timeout_seconds": 900,
   "access": {
-    "filesystem": "workspace_write",
+    "filesystem": "read_only",
     "additional_roots": [],
     "network": "disabled"
   },
-  "reason": "运行项目后端检查"
+  "reason": "检查 maa-cli 版本"
 }
 ```
 
 字段约束：
 
-- `cmd` 是需要展示和审计的完整 shell 命令；runtime 根据 exec-server `environment/info` 返回的当前平台 shell 生成确定的 argv。Windows 非交互命令不加载用户 PowerShell profile。
-- `workdir` 必须是绝对、规范化后的目录。不存在、越界、链接身份变化或不满足请求访问模式时，在启动进程前失败。
+- `argv` 是直接启动单个程序的首选形态，每个参数独立表达，避免路径、正则、引号或管道字符被 shell 二次解释。
+- `cmd` 是需要展示和审计的完整 shell 命令，只用于确实需要 shell 内建命令、管道、重定向、变量展开或 Skill-bound 脚本的场景；runtime 根据 exec-server `environment/info` 返回的当前平台 shell 生成确定的 argv。Windows 非交互命令不加载用户 PowerShell profile。
+- 普通非 Skill 命令的 `workdir` 是可选的单条命令覆盖。省略时使用当前会话的受治理默认执行目录；提供时必须是绝对、规范化且已存在的目录。显式覆盖只作用于当前命令，不修改会话默认目录。
+- 结构化 Skill 命令不要求 Agent 提供产品内部绝对路径；其包内工作目录放在 `skill.workdir`，由 runtime 针对当前 run 的不可变 Skill 快照解析。顶层 `workdir` 与 `skill.workdir` 不能同时出现。
 - `mode` 只能是 `buffered` 或 `streaming`，默认 `buffered`；进程启动后不可静默切换。
 - `timeout_seconds` 有产品默认值和硬上限。第一版默认 15 分钟、最大 60 分钟；批准卡片展示实际值。内部测试可以通过依赖注入使用更短时钟，不改变生产上限。
-- `access.filesystem` 第一版支持 `read_only` 和 `workspace_write`；不提供 unsandboxed / danger-full-access。
+- `execution` 默认 `sandboxed`；此时 `access.filesystem` 支持 `read_only` 和 `read_write`，描述 cwd 的访问等级。`host_user` 是显式高权限级别，只接受结构化 `argv`，拒绝 `cmd`、`access` 与 Skill binding；审批 wire 将文件系统和网络标为 `unrestricted`，runtime 不把它伪装成可落实的沙箱策略。
 - `additional_roots` 每项都包含规范化路径和只读或读写意图，并完整展示在同一次命令审批中。
 - `access.network` 第一版支持 `disabled` 和 `enabled`。网络开启是显式高风险能力，必须在卡片中单独展示；不因命令名称或安装工具类型自动开启。
 - `reason` 是给用户看的本次操作理由，不参与权限判定。
 
-Tool 的公开参数只是请求，不是授权事实。实际批准形成绑定精确请求指纹的 one-shot `CommandGrant`，包含规范化 cwd、shell argv、访问范围、网络状态、模式、超时和 Skill 快照身份。启动前再次比较请求指纹与批准指纹。
+Tool schema 允许普通命令同时省略 `workdir` 和 `skill`，但继续机械拒绝顶层 `workdir` 与 `skill` 同时出现；`cmd` 与 `argv` 必须且只能提供一个。schema 同时机械约束 `host_user` 必须使用 `argv` 且不得携带 `cmd`、`access` 或 Skill binding；Skill binding 必须使用 `cmd`、不得携带顶层 `workdir` 或 `argv`，并保持 `sandboxed`。Tool 的公开参数只是请求，不是授权事实。实际批准形成绑定精确请求指纹的 one-shot `CommandGrant`，包含 execution 级别、cwd 来源与规范化真实路径、最终 argv、显式和宿主派生访问范围、网络状态、模式、超时和 Skill 快照身份。启动前再次比较请求指纹与批准指纹。
 
 #### `write_stdin`
 
@@ -214,16 +219,60 @@ exit_code / sandbox_denied / terminal_reason
 
 这个控制对象作为通用可选扩展加入 Tool Runtime，现有同步短 Tool 无需实现 cancel callback，行为保持不变。
 
+### 会话级默认执行目录
+
+Codex 的公开 app-server 契约把 cwd 作为 thread 设置保存，并允许 turn 临时覆盖；agent-friend 对齐这个生命周期，把一个会话视为命令执行上下文的稳定所有者，而不是把默认目录绑定到单次 Agent run。
+
+- 每个 session 在用户数据根下拥有一个产品管理的命令目录，由 `agent.paths` 统一解析并按规范化 session id 定位；它不是项目、用户选择的文件夹或对宿主目录的别名。
+- 会话目录按需创建并跨 turn、run 和应用重启复用。显式顶层 `workdir` 只覆盖当前命令；本需求不增加切换或持久修改会话 cwd 的用户界面。
+- 会话归档保留目录；hard delete 单个会话或批量删除已归档会话时，通过同一会话删除生命周期精确清理。清理失败不回滚会话删除，但留下不含文件内容的诊断并由后续孤儿回收处理。
+- 会话目录设置文件数、单文件大小和总字节预算。命令运行时不以绕过沙箱的宿主扫描维持配额；批准写入前做已有状态检查，命令结束后更新可诊断用量，超限后的新写请求 fail-closed。
+- run 仍拥有独立 `TEMP` / `TMP`、进程句柄和 Skill execution snapshot，并在 run 结束时清理。临时下载、代理状态和不可变 Skill 内容不进入会话目录。
+- 默认 cwd 来源记录为 `session_managed`；显式普通目录为 `explicit`；Skill 快照目录为 `skill_snapshot`。审批、历史、push 与结果使用同一来源枚举，避免前端根据路径形状猜测。
+
 ### 沙箱与环境映射
+
+#### 全局 provisioning 与逐命令 refresh
+
+Codex 的 Windows 沙箱准备按两个生命周期处理：
+
+1. **全局 provisioning**：创建或修复沙箱用户、凭据、ACL / firewall 等系统能力，并写入产品隔离 `CODEX_HOME` 下的 setup marker。该动作可能触发 UAC，只能由全局系统权限设置中的明确操作发起。应用启动和 Bridge 重连只做只读 readiness 检查，不主动弹 UAC。
+2. **逐命令 refresh**：在已完成 provisioning 的前提下，为本次 cwd、权限根、宿主派生的可执行程序根和网络策略刷新运行所需状态。它属于 `process/start` 前置步骤，但必须保持非提权；refresh 失败时命令以 `sandbox_unavailable` 终止，不能自动退回全量 setup。
+
+setup marker 决定全局 elevated setup 是否已经完成；refresh payload 只携带当前命令根并且不得请求 elevation。agent-friend 不复制 marker 结果到 `settings.json` 形成第二真相源；Bridge 的实时读取结果是权威状态。
+
+能力状态为：
+
+```text
+unsupported | checking | setup_required | setting_up | ready | repair_required
+```
+
+- Bridge 启动、exec-server 重启、产品 Codex identity / setup version / 代理配置变化和用户主动刷新时重新检查。
+- `setup_required`、`repair_required` 下到来的命令审批保持 pending；卡片禁用“允许”，展示“前往系统权限”。这不会取消或批准原请求。
+- 初始化成功后通过 `sandbox_capability_changed` push 广播。原命令卡片恢复可批准状态，但仍要求用户对该条命令作出 one-shot 决定。
+- 初始化被取消或失败时保留可诊断原因和重试入口；不在每条命令、每个会话或每次模型续轮重复触发初始化。
 
 命令审批结果被转换为 exec-server `process/start` 的 sandbox context：
 
-- cwd 是主 workspace root；`read_only` 只允许读取，`workspace_write` 只允许在批准根内写入。
+- exec-server 协议仍要求 cwd 与 workspace roots；runtime 把会话默认目录、显式目录或 Skill 快照目录映射为内部主执行根，但该协议术语不向上提升为 agent-friend 的项目或用户工作区概念。
+- cwd 默认映射为只读 permission entry；只有 `access.filesystem=read_write` 获批时才映射为该根可写。cwd 不覆盖父目录、兄弟目录或其它宿主位置。
 - additional roots 逐项映射为显式只读或读写 permission entry。
 - Skill 执行快照目录作为内部只读根；run 私有临时目录作为内部最小写入根。
+- runtime 对能够确定首个程序的普通命令使用受控宿主 `PATH` 做启动前解析。解析出的用户级可执行程序目录作为 `host_derived_executable` 最小只读根进入审批详情、grant 指纹、路径身份复核和 sandbox refresh；Agent 不负责复制安装路径或把该目录改成 cwd。
 - network disabled 映射为拒绝网络的 permission profile；enabled 映射为本次明确批准的网络能力。
-- 请求必须要求 sandbox。`process/start` 返回的 `sandboxType` 缺失、为 `none`，或当前平台不能落实请求 policy 时，runtime 立即终止进程并返回 `sandbox_unavailable`。
+- `sandboxed` 请求必须携带 sandbox；`process/start` 返回的 `sandboxType` 缺失、为 `none`，或当前平台不能落实请求 policy 时，runtime 立即终止进程并返回 `sandbox_unavailable`。经批准的 `host_user` 请求故意不向 exec-server 传 sandbox，并把 `none` 记录为已声明的执行事实；两种路径不能相互回退。
 - exec-server 报告 `sandboxDenied` 时保留独立错误类别，不把它折叠为普通非零退出。
+
+桌面用户执行仍复用 exec-server 的进程 ID、输出、超时、取消和 run 清理语义。它不是 detach，也不是第二套进程运行时。Windows 负数退出码统一投影为无符号 NTSTATUS 十六进制；`0xC0000409` 只标为 `STATUS_FAIL_FAST_EXCEPTION`，不能单凭该码断言具体程序根因。在受限沙箱下出现 fast-fail 时，结果可以建议可信桌面程序改为重新申请 `host_user`，但不能自动重试或放宽。
+
+宿主预检与命令终态使用稳定错误族区分边界：
+
+- 简单程序无法从受控宿主 `PATH` 解析：`executable_not_found_on_host`，不创建误导性的命令审批；
+- 显式 cwd 或额外根在宿主不存在：`host_path_not_found`；路径存在但请求未包含必要范围：`filesystem_scope_required`；
+- 已批准并通过身份复核的根无法由 exec-server 落实：`sandbox_visibility_unavailable` 或 `sandbox_denied`；
+- 进程已经在预期 sandbox 中启动后返回非零码：`command_failed`，保留退出码和有界输出，不反推宿主软件不存在。
+
+任意 shell 管道、重定向和脚本内部子程序不做不可靠的完整静态解析。runtime 只派生能够确定的启动程序根；其它宿主目录继续由结构化 additional roots 表达。错误结果保留宿主已验证事实和 sandbox 观察边界，但不靠自然语言提示要求 Agent 猜测用户目录。
 
 子进程环境从最小基线构造，不继承整个 Bridge 环境：
 
@@ -231,6 +280,19 @@ exit_code / sandbox_denied / terminal_reason
 - 不继承 LLM provider key、社交平台凭据、代理凭据、生命周期 token、产品内部端口 token、用户 Codex auth 或调试注入变量。
 - Agent 请求的额外环境键和值会显示在授权详情中；命中凭据型名称、控制字符、超限或产品保留前缀时拒绝。第一版不提供隐藏 secret 注入通道。
 - exec-server 自身使用独立产品 `CODEX_HOME`；该变量不自动传给受执行命令。
+
+#### 真实网络链路
+
+`access.network=enabled` 只有在完整链路可用时才视为成功：Tool grant → exec-server permission profile → Windows online sandbox identity / 受治理代理 → DNS → TCP/TLS → HTTPS。`process/start` 成功和 `sandboxType` 正确只证明进程进入沙箱，不证明网络可用。
+
+网络实现先提供分层 probe，用同一环境分别输出：
+
+- 必需 Windows 环境键是否存在，包括大小写归一后的 `SystemRoot`、`windir`、`ComSpec`、`TEMP` / `TMP`；
+- Winsock 初始化、DNS 解析、TCP 连接、TLS 握手和 HTTP 状态分别是否成功；
+- exec-server 返回的 sandbox identity / type，以及代理是否配置、采用何种模式；
+- `network=disabled` 是否在同一 fixture 上确定性拒绝外联。
+
+生产环境只保留结构化阶段、错误码和脱敏 endpoint 类别，不记录代理凭据或完整响应。环境 allowlist 使用 Windows 环境变量不区分大小写的语义构造，避免宿主实际提供 `windir` 而 allowlist 只接受 `WINDIR` 一类差异破坏 Winsock。证书、代理、DNS、Winsock 与上游 HTTP 失败映射为不同诊断类别。
 
 ### Skill 执行快照
 
@@ -240,7 +302,8 @@ exit_code / sandbox_denied / terminal_reason
 {
   "skill": {
     "id": "builtin/skill-creator",
-    "entry": "scripts/quick_validate.py"
+    "entry": "scripts/quick_validate.py",
+    "workdir": "."
   }
 }
 ```
@@ -249,6 +312,7 @@ exit_code / sandbox_denied / terminal_reason
 
 - `id` 是当前 `SkillTurnSnapshot.activations` 中已激活的 Skill；不能按任意磁盘路径声称属于某个 Skill。
 - `entry` 是包内相对路径，规范化后不能逃逸 package root，也不能经过 symlink、junction 或特殊文件。
+- `workdir` 可省略，默认包根；提供时必须是包内相对目录。Agent 不读取、缓存或猜测 builtin 物化目录与 run snapshot 的绝对路径。
 - runtime 在首次执行前把该激活 Skill 的受支持常规文件复制到 run 私有、不可被用户路径别名访问的 execution snapshot，生成包含相对路径、大小和 SHA-256 的 manifest。
 - snapshot 过程有文件数、单文件大小和总字节上限；遇到链接、特殊文件、读取竞态或预算超限时 fail-closed，并提示 Skill 包不满足可执行快照约束。
 - 命令中的 Skill entry 和位于 Skill 根内的工作目录被重写到 snapshot 路径；批准卡片展示原 Skill 名、entry 和内容指纹，不暴露内部 staging 路径。
@@ -280,9 +344,18 @@ source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `prepare`、
 
 ### 前端交互
 
+全局设置的“系统权限”增加命令沙箱能力区：
+
+- 展示当前是否受支持、正在检查、尚未初始化、可用或需要修复，以及最近一次失败的可操作摘要。
+- `setup_required` 提供“初始化命令沙箱”，`repair_required` 提供“修复命令沙箱”；按钮触发全局 setup RPC，并明确说明可能出现 Windows 管理员确认。
+- 状态来自 Bridge readiness snapshot 与 push，不写成普通用户偏好；多个会话和窗口共享同一能力状态。
+- 全局初始化只获得“以后可以安全承载命令”的系统能力，不授予文件、网络、命令或会话级访问。
+
 现有 `ToolCard` 继续是会话内展示入口：
 
-- `exec_command` pending approval 时显示命令授权卡片，包含命令、cwd、buffered/streaming、超时、文件范围、网络状态、理由和“仅本次允许”。
+- `exec_command` pending approval 时显示命令授权卡片，包含命令、cwd 来源与实际目录、buffered/streaming、超时、文件范围、网络状态、理由和“仅本次允许”。会话默认目录显示为“本会话命令目录”，显式目录和 Skill 快照使用各自语义标签；技术详情仍可检查规范化路径。
+- 文件能力显示“执行目录只读 / 执行目录可写”和逐项额外范围，不再显示“工作区可写”。宿主自动派生的可执行程序根单独标记为“程序运行所需（只读）”，与 Agent 请求的业务目录区分。
+- 全局沙箱未就绪时，卡片保持 pending 且“允许”禁用，提供前往“系统权限”的入口；全局状态变为 ready 后就地恢复，但不自动执行。
 - 批准后同一卡片进入运行态，展示持续时间、最近有界输出、截断提示和取消入口；不会弹出全窗口 Dialog。
 - streaming 模式额外显示“交互式进程”与句柄仍受当前任务治理，不提供独立终端输入 UI。
 - 命令在后台会话等待授权时复用现有侧边栏 attention 机制；运行中的普通长命令不抢占当前会话。
@@ -301,13 +374,15 @@ source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `prepare`、
 | `agent/src/agent/tools/protocol.py` | 修改 | 记录可选协作式取消扩展，不破坏同步 Tool |
 | `agent/src/agent/tool_runtime/executor.py` | 修改 | 传播 invocation control，超时和 run 取消时触发底层清理 |
 | `agent/src/agent/tool_runtime/context.py` | 修改 | 持有 run-scoped 命令句柄与 Skill execution snapshots，并在 finally 清理 |
+| `agent/src/agent/paths.py`、`agent/src/agent/sessions/` | 修改 | 解析并治理 session-scoped 默认命令目录；归档保留，hard delete 与孤儿回收精确清理 |
 | `agent/src/agent/conversation.py` | 修改 | 注入命令隐藏上下文，保持 buffered 结果只在终态落盘 |
 | `agent/src/agent/runtime/listeners.py` | 修改 | 增加通用 approval 和 command process push |
 | `agent_bridge/src/agent_bridge/assembly.py` | 修改 | 装配唯一 ApprovalBroker 与进程级 CommandRuntime，绑定 lifecycle/listeners |
-| `agent_bridge/src/agent_bridge/routes/` | 修改 | 通用审批决策、命令 snapshot 和精确取消/恢复入口 |
+| `agent_bridge/src/agent_bridge/routes/` | 修改 | 通用审批决策、全局 sandbox readiness/setup、命令 snapshot 和精确取消/恢复入口 |
 | `frontend/src-tauri/src/push_subscriber.rs` | 修改 | 透传 `approval_changed` 与 `command_process_changed` |
-| `frontend/src/services/api/` | 修改 | 通用 approval 和 command process 类型/REST client |
-| `frontend/src/stores/` | 修改 | 公共 approval store、命令 process push/reconnect store |
+| `frontend/src/services/api/` | 修改 | 通用 approval、sandbox capability 与 command process 类型/REST client |
+| `frontend/src/stores/` | 修改 | 公共 approval store、全局 sandbox capability store、命令 process push/reconnect store |
+| `frontend/src/pages/settings/` 及邻近系统权限组件 | 修改 | 全局命令沙箱 readiness、初始化、修复与诊断入口 |
 | `frontend/src/pages/chat/components/ToolCard.tsx` 及邻近领域组件 | 修改 | 命令审批、运行进度和终态卡片；文件审批改用公共壳 |
 | `runtime_config/src/runtime_config/` | 修改 | 产品 Codex 路径、隔离 home 和命令 runtime 配置 |
 | `frontend/src-tauri/src/runtime_services/` | 修改 | packaged/source 启动时向 Bridge 注入经过身份校验的 Codex 路径；不新增第三个长期服务槽 |
@@ -318,6 +393,31 @@ source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `prepare`、
 | 各受影响模块 tests | 修改/新增 | 公共审批、协议、沙箱、模式、取消、Skill identity、push、UI 和 packaging 回归 |
 
 ## 数据流
+
+### 全局沙箱准备与命令批准
+
+```mermaid
+sequenceDiagram
+    participant S as 全局系统权限设置
+    participant B as Bridge Capability Manager
+    participant C as Codex setup/runtime
+    participant T as 会话命令卡片
+
+    B->>C: readiness(marker + identity + proxy)
+    C-->>B: setup_required / ready / repair_required
+    B-->>S: snapshot + push
+    T->>B: 读取同一全局状态
+    alt 未就绪
+        T-->>T: 保持 pending，禁用允许
+        S->>B: 用户点击初始化或修复
+        B->>C: windows sandbox setup（可能 UAC）
+        C-->>B: setup completed
+        B-->>S: ready
+        B-->>T: ready，但仍未批准命令
+    end
+    T->>T: 用户明确批准这一条命令
+    B->>C: 非提权 per-command refresh + process/start
+```
 
 ### buffered 长命令
 
@@ -377,6 +477,7 @@ sequenceDiagram
 - **文件工具**：审批基础设施会迁移，但文件 Tool 的公开 schema、授权范围和用户可见结果不改变。命令沙箱权限不生成可供文件 Tool 使用的 scope ID，反向亦然。
 - **Skill 系统**：激活快照增加 execution snapshot 能力；普通 Skill 发现、读取和 catalog 热更新不因未执行脚本而承担复制成本。
 - **多入口**：桌面端可审批并展示进度；不能展示本地审批的入口得到 `approval_surface_unavailable`，不会启动命令。
+- **全局能力与会话授权**：sandbox capability 是进程级运行事实；command approval 仍按 session/run/tool-call 绑定。前者变化只解锁审批动作，不改变后者状态。
 - **产品生命周期**：Bridge drain 必须等待或取消活跃命令；Tauri background demand 已把运行中的 Agent task 视为 active，无需另造常驻需求类型。
 - **打包**：新增官方二进制和 license 属于 package-sensitive 输入，需要真实 frozen candidate 与 capability smoke；不改变安装根、active receipt 或迁移状态机，因此默认不升到 full-matrix。
 - **诊断**：诊断结构若增加 command runtime 摘要，需要同步 producer contract、检查 Skill 与 fixture；不收集原始命令输出正文。
@@ -397,6 +498,10 @@ sequenceDiagram
 - **Skill TOCTOU**：实际执行 immutable snapshot 而非原目录；snapshot 失败不回退到原文件直接执行。
 - **环境兼容**：最小环境可能使依赖用户 profile 的脚本失败。失败结果应列出被允许的环境类别，引导 Skill 使用显式、可复现入口，不为兼容而恢复全量继承。
 - **Windows sandbox 能力**：锁定版本必须在 packaged Windows 上真实证明 requested policy 被落实；不能只根据命令成功或进程存在判断沙箱有效。
+- **初始化时机回归**：如果 readiness 检查、命令审批和 setup RPC 再次耦合，可能出现每会话 UAC、批准即隐式安装或 setup 后自动执行。状态机测试必须固定三者之间的单向关系。
+- **网络假阳性**：沙箱进程可启动但 Winsock、DNS、代理或证书链不可用。验收必须跑真实 HTTPS 数据交换，并保留分阶段诊断。
+- **会话目录积累或越权复用**：默认目录跨 run 保留可能增长或承载旧文件。目录按精确 session 隔离、设置预算并接入 hard delete；任何命令仍需本次 one-shot 审批，目录持久存在不构成权限持久化。
+- **宿主程序解析不完整**：shell 管道或脚本内部可再启动其它程序。只自动授权能够确定的启动程序根，不扩大到全部 PATH 目录；无法落实时返回可行动错误，不退回让 Agent 猜 workdir。
 
 ## 验证方案
 
@@ -407,7 +512,10 @@ sequenceDiagram
 - 模式契约：buffered 只在终态返回；streaming 在 start ack 后返回句柄；模式不可切换；句柄跨 run、跨会话和 run 结束后不可用。
 - 模型调用边界：fake LLM 发出一次 buffered 命令，虚拟时钟或可控 fixture 跨过长等待，断言等待期间没有模型 continuation 或状态 Tool 调用。
 - 取消与超时：run cancel、工具 timeout、Bridge drain 和 exec-server crash 都触发精确 terminate，并证明子进程树清理及终态唯一。
-- 沙箱与环境：cwd/额外根、链接/junction、read-only/write、network disabled/enabled、敏感环境剥离、sandboxType 缺失/none 和 sandboxDenied。
+- 沙箱与环境：session-scoped 默认 cwd、显式单命令覆盖、跨 run 复用、跨 session 隔离、hard delete 清理、cwd/额外根、链接/junction、read-only/read-write、network disabled/enabled、敏感环境剥离、sandboxType 缺失/none 和 sandboxDenied。
+- PATH 程序：普通命令省略 workdir、宿主简单程序解析、用户级程序根自动只读授权、grant/TOCTOU 绑定、宿主不存在、范围缺失、沙箱不可见和普通非零退出错误分流；复杂 shell 不扩大为全部 PATH 根。
+- 全局 capability：marker 缺失、版本/代理不兼容、setup 成功/取消/失败、并发 single-flight、Bridge 重启复用、跨会话 push，以及 setup ready 不自动批准 pending command。
+- Skill-bound cwd：省略 cwd、包内相对目录、顶层与 Skill cwd 冲突、`..` / junction 逃逸、snapshot 重写和 Agent 无需知道物化绝对路径。
 - 输出：stdout/stderr/pty、UTF-8 边界、不可解码字节、持续洪泛、tail 截断、push 合并、重连 cursor 和最终结果预算。
 - Skill：未激活、version 不匹配、包内 entry、`..`、symlink/junction、复制竞态、预算超限、run 内复用和修改原包后仍只执行 snapshot。
 - 前端：文件与命令 approval 共用 store、background attention、buffered progress、streaming 标识、终态、重连恢复和不可重复操作。
@@ -416,6 +524,7 @@ sequenceDiagram
 
 - `scripts/command-runtime/run.* doctor` 验证 source-mode 锁定二进制、隔离 CODEX_HOME、exec-server handshake 和 sandbox capability。
 - `scripts/command-runtime/run.* smoke` 使用无网络、无真实 LLM、无 MAA 的本地 fixture 覆盖 buffered、streaming、write、cancel 和输出边界。
+- source Windows 真实沙箱测试使用受控本地 HTTP/TLS fixture 与网络阶段 probe，先固定环境、Winsock、DNS/连接、代理和禁网边界；不依赖公开服务证明确定性机制。
 - Windows、macOS、Linux 的 source 测试共享同一行为断言；平台特有 sandbox fixture 只验证对应 backend，不用其它平台结果代替。
 - 运行项目规定的完整 `scripts/check/run.*` 门禁。
 
@@ -423,6 +532,8 @@ sequenceDiagram
 
 - 使用标准 package runner 构建 `package-sensitive` frozen runtime candidate，确认 Codex binary、license、lock identity 和 payload manifest 一致。
 - frozen capability smoke 通过真实被携带的 Codex 执行本地命令、sandbox 拒绝、streaming 输入、取消和进程树清理；不调用网络、真实 LLM 或第三方 provider。
+- source 测试稳定后，增加一次 network-enabled 公开 GitHub HTTPS smoke，证明公共 Tool 到 Windows 沙箱的真实外网链路；失败按阶段诊断，不把第三方波动当机制回归。
+- builtin Skill 安装器以受控仓库 fixture 自动验证 clone / 下载、写入隔离个人 Skill 根、catalog 无重启刷新和新 Skill 激活；随后用公开测试 Skill 做一次人工旅程。MAA 与用户日常 Task 只作为需求外最终 UAT，不进入通用回归夹具。
 - 10 分钟长任务使用 fake LLM 加真实本地命令：模型只发出一次 buffered `exec_command`，runtime 独立推送少量合并进度，命令终态后才发生一次模型 continuation。报告记录模型调用数、process push 数、输出截断和最终退出状态。
 - Windows 安装形态验证在无用户 Codex、空用户 Codex auth、PATH 不含 Codex的隔离环境运行；再加入一个不同版本的用户 Codex，结果仍绑定产品 lock 与 active payload。
 - 只有需求验收明确需要完整 installer 时才进入标准 installer 构建；本需求不改变安装事务语义，不因新增 payload 文件机械扩大到升级/降级 full matrix。
@@ -432,3 +543,6 @@ sequenceDiagram
 | 日期 | 变更内容 | 是否需要重新实现 |
 | --- | --- | --- |
 | 2026-08-16 | 首次确认：Bridge 通过 stdio 独占产品自带 exec-server；复用并泛化现有审批控制面；普通命令使用 buffered pending-to-terminal，交互式命令使用 streaming governed handle；进度不触发 LLM；Skill 执行使用 immutable run snapshot；Windows packaged 优先、source 跨平台。 | 是，新需求尚未实现 |
+| 2026-08-17 | 根据真实 Skill 安装失败补齐闭环：把沙箱初始化拆为全局 provisioning 与逐命令非提权 refresh，并将全局操作移到系统权限；Skill-bound 命令使用包内相对 cwd；增加 Windows 网络阶段诊断、真实 HTTPS 与完整 Skill 安装旅程验收。 | 是，现有实现需按新状态机和完整链路修订 |
+| 2026-08-18 | 对齐 Codex thread-scoped cwd：普通命令 workdir 改为可选，省略时使用跨 run 持久的 session-managed 默认目录；run TEMP 与 Skill 快照继续隔离。模型权限值改为 read_only/read_write，宿主派生 PATH 程序根进入同一次授权，并补齐路径/沙箱错误分流和 UI 语义。 | 是，需要重做普通命令 schema、session 目录生命周期、沙箱映射、授权指纹、错误与前端展示 |
+| 2026-08-18 | 增加显式 `host_user` 执行级别：只接受结构化 argv，经现有一次性审批展示 unrestricted 能力，exec-server 不传 sandbox；普通命令继续默认 sandboxed，二者不静默回退。 | 是，需要扩展 Tool/approval wire、runtime start、前端展示与回归 |

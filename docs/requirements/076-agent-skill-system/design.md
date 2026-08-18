@@ -75,12 +75,13 @@ flowchart TB
     CS --> SNAP["Immutable SkillCatalogSnapshot"]
     SNAP --> API["GET /v1/skills"]
     SNAP --> T["Frozen turn catalog"]
-    CALLER["Caller SkillSelection"] --> R["Shared activation resolver"]
+    CALLER["Structured selection / explicit name / current ordinal"] --> HOST["Host explicit resolver"]
+    HOST --> R["Shared activation resolver"]
     T --> CAT["skill_catalog_state before user"]
     T --> C["Conversation / ContextManager"]
     CAT --> C
-    C --> M["LLM sees catalog + skill_read"]
-    M -->|"named / referenced / implicit"| TOOL["skills namespace · skill_read"]
+    C --> M["LLM sees implicit-eligible catalog + skill_read"]
+    M -->|"implicit only"| TOOL["skills namespace · skill_read"]
     TOOL --> R
     R -->|"success"| BODY["Full SKILL.md in current turn"]
     R -->|"failure"| ERR["Structured not-activated result"]
@@ -167,7 +168,7 @@ class SkillSelection:
     id: str
     expected_version: str | None = None
 
-SkillInvocationKind = Literal["caller", "named", "referenced", "implicit"]
+SkillInvocationKind = Literal["caller", "implicit"]
 
 @dataclass(frozen=True)
 class ActivatedSkill:
@@ -288,24 +289,23 @@ context window 的 2%；无法取得窗口时使用 8,000 字符上限。这样 
 “常量协议开销 + 有界条目”约束，同时不会因为增加必要控制语义而反向压缩其表达效果。
 单条描述即使在 metadata 中合法，也最多贡献 1,024 字符。
 
-每条 model-visible entry 至少包含：
+每条允许隐式调用的 model-visible entry 至少包含：
 
 ```text
-- name: description (source=personal, id=skill_..., version=abc123...,
-  allow_implicit_invocation=true, path=.../SKILL.md)
+- name: description (source=personal, skill_id=skill_..., version=abc123...,
+  allow_implicit_invocation=true)
 ```
 
 渲染器先计算每条 entry 不含描述时的最小成本，再在能保留的 entry 间轮转分配描述预算，
 避免前面的 Skill 独占空间。最小 entry 也放不下时按稳定顺序省略尾部，并加入省略数量
 提示。完整列表和所有 load issues 仍可通过 Bridge catalog route 读取。
 
-catalog 外层使用内部生成的 `<skills_catalog>` envelope，并明确：
+`allow_implicit_invocation=false` 的 Skill 不进入该 model-visible 列表，完整 catalog 仍通过
+Bridge route 提供给宿主选择面。catalog 外层使用内部生成的 `<skills_catalog>` envelope，并明确：
 
-- 用户直接说出 Skill 名称或当前列表序号、通过有效上下文指代某个 Skill，或任务与
-  `description` 匹配时，Agent 必须自行完成语义选择，不等待后端解析 query；
-- 语义选择后必须调用 `skill_read` 并传精确 ID；成功结果才表示激活，失败结果表示未激活；
-- `allow_implicit_invocation=false` 禁止仅因任务匹配而调用，但不阻止直接点名、明确指代或
-  调用方结构化选择；
+- 结构化选择、`$skill-name`、带使用动作的精确名称和当前枚举列表序号由宿主解析并在模型前加载；
+- 有效上下文指代或 `description` 匹配由 Agent 选择，且必须调用 `skill_read` 并传精确 ID；成功结果才表示隐式激活，失败结果表示未激活；
+- `allow_implicit_invocation=false` 的 Skill 不进入隐式 catalog，也不能通过 `skill_read` 激活；
 - 同时匹配多个 Skill 时只选择完成任务所需的最小集合，并按需要逐个读取；
 - 使用前简短说明将使用哪个 Skill 及原因；读取失败时说明未激活事实并合理降级；
 - 不得把 catalog 出现、历史正文或任意普通工具调用说成 Skill 已激活；
@@ -398,9 +398,9 @@ activation issue 会作为当前用户后的模型专用 `<skill_load_error>` fr
 Agent 简短说明缺口并在不依赖该 Skill 时继续。它与成功 activation 一样持久化，保证失败
 重试和会话恢复看到相同事实。
 
-调用方选择是可选的确定性入口，不取代 Agent 自主选择。没有调用方 selection 时，模型从
-catalog 和对话语义判断；后端不检查 `$name`、普通 Skill 名称、序号、指代或 description
-相似度，也不提供 name-to-id fallback。本期不实现 `$skill-name` 命令语法。
+宿主显式选择不取代 Agent 自主的隐式选择。宿主只解析能够确定性证明的结构化选择、
+`$skill-name`、带使用动作的精确名称和最近枚举列表序号；不尝试理解普通上下文指代或
+description 相似度。后两者仍由模型在隐式候选内判断。
 
 模型选择通过普通 ToolRegistry 中的 `skill_read` 兑现。实现位于
 `agent.tools.builtin.skills`，因此模型可见 capability catalog 将其归入可信 `skills`
@@ -409,19 +409,15 @@ namespace；受 OpenAI-compatible function name 约束，wire callable 保持扁
 
 ```json
 {
-  "id": "skill_...",
-  "invocation_kind": "named | referenced | implicit",
+  "skill_id": "skill_...",
   "reason": "一句简短的选择理由"
 }
 ```
 
-- `named` 表示用户直接说出名称或当前可见列表序号；`referenced` 表示“那个 Skill”或
-  “实验的 Skill”等能由有效对话上下文唯一消歧的指代；其余 description 匹配使用
-  `implicit`；
-- `id` 必须来自本轮 catalog，工具不接受名称、序号、路径或任意文件 URI；
+- `skill_read` 只能表示模型自主的隐式调用，schema 不向模型暴露调用类型字段；
+- `skill_id` 必须来自本轮隐式 catalog，工具不接受名称、序号、路径或任意文件 URI；
 - `reason` 只用于用户可见状态和诊断，限制为短文本，不参与 ID 解析；
-- `allow_implicit_invocation=false` 时，工具对 `implicit` 返回结构化失败；named/referenced
-  由 Agent 负责语义分类，并由行为评测约束不得借错误分类绕过 policy；
+- `allow_implicit_invocation=false` 时，即使伪造或猜中稳定 ID，工具仍返回结构化失败；
 - 成功结果包含完整、带身份和当前轮作用域 envelope 的 `SKILL.md`；失败结果包含稳定错误码
   和“未激活”事实。ToolResult meta 同时写入不含正文的 activation 摘要，供日志和 UI 使用；
 - 工具不接受 `expected_version`。它直接使用本轮冻结 record 的 version，避免要求模型抄写

@@ -100,7 +100,14 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       const e = evt as CustomEvent;
       if (e.name === "agent_friend.run_status") {
         const runStatus = parseRunStatus(e.value);
-        return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+        return runStatus ? {
+          ...msg,
+          status: "streaming",
+          runStatus: {
+            ...runStatus,
+            activityVersion: (msg.runStatus?.activityVersion ?? 0) + 1,
+          },
+        } : msg;
       }
       if (e.name === "agent_friend.skill_activation") {
         const block = skillActivationBlock(e.value, "caller-skill");
@@ -211,7 +218,14 @@ export function applyPushConversationEvent(
         attempt: evt.attempt,
         maxAttempts: evt.max_attempts,
       });
-      return runStatus ? { ...msg, status: "streaming", runStatus } : msg;
+      return runStatus ? {
+        ...msg,
+        status: "streaming",
+        runStatus: {
+          ...runStatus,
+          activityVersion: (msg.runStatus?.activityVersion ?? 0) + 1,
+        },
+      } : msg;
     }
 
     case "skill_activation_status": {
@@ -249,12 +263,17 @@ function parseRunStatus(value: unknown): ModelResponseProgress | null {
   const attempt = candidate.attempt;
   const maxAttempts = candidate.maxAttempts;
   if (
-    (phase !== "waiting" && phase !== "retrying")
+    (
+      phase !== "waiting"
+      && phase !== "reasoning"
+      && phase !== "processing"
+      && phase !== "retrying"
+    )
     || typeof afterTool !== "boolean"
     || typeof attempt !== "number"
     || typeof maxAttempts !== "number"
   ) return null;
-  return { phase, afterTool, attempt, maxAttempts };
+  return { phase, afterTool, attempt, maxAttempts, activityVersion: 0 };
 }
 
 function skillActivationBlock(value: unknown, idPrefix: string): ToolBlock | null {

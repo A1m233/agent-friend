@@ -1,0 +1,197 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T15:48:43.135509+00:00",
+    "ended_at": "2026-08-18T15:49:08.857494+00:00",
+    "duration_seconds": 25.722,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "C24-02 control revalidation after fixture target-completeness fix; synthetic control uses current target model Kimi K2.5; case-local fixture change only; report only; fake tools",
+    "selection": {
+      "contract": "all",
+      "case": "C24-02",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "feb2dd513b83fa14c80bdee81b5f8ee9bd09c2bb9c8cc57580322cf097a7b77a",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C24-02",
+          "query": "请使用 repo-skill-installer 的脚本检查已确认存在的 C:\\fixture\\repo 本地仓库； 不要安装或修改文件",
+          "facet": "isolation · 单个已激活 Skill 的 skill_id 可由宿主绑定，模型无需搬运临时 ID",
+          "source": "synthetic-single-active-skill-host-binding",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=['skill_read', 'exec_command'] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_2ecbd372b7bef46d5dd75cb4d797b85013fb3171e0eb470f7da4239e220598f1",
+                "invocation_kind": "named",
+                "reason": "用户需要使用 repo-skill-installer 脚本检查本地仓库 C:\\fixture\\repo"
+              },
+              "result_text": "<skill>\n<name>repo-skill-installer</name>\n<skill_id>skill_2ecbd372b7bef46d5dd75cb4d797b85013fb3171e0eb470f7da4239e220598f1</skill_id>\n<source>personal</source>\n<version>00ecb060536754fbce112daa51709dab66b63234c4177f39d565a67a9ee5991b</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"repo-skill-installer\"\r\ndescription: \"Use when checking or installing a Skill from a GitHub repository.\"\r\n---\r\n\r\nFor a read-only repository check, run the bundled helper through exec_command with\r\nskill.entry `scripts/check.py`, skill.workdir `.`, buffered mode and read-only access.\r\nPass the user-provided path unchanged as `python scripts/check.py C:\\fixture\\repo`,\r\nand request that repository as an additional read_only root. Network is not needed.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "cmd": "python scripts/check.py C:\\fixture\\repo",
+                "skill": {
+                  "entry": "scripts/check.py",
+                  "workdir": "."
+                },
+                "mode": "buffered",
+                "access": {
+                  "filesystem": "read_only",
+                  "network": "disabled",
+                  "additional_roots": [
+                    {
+                      "path": "C:\\fixture\\repo",
+                      "access": "read_only"
+                    }
+                  ]
+                },
+                "reason": "使用 repo-skill-installer 的 check.py 脚本检查本地仓库 C:\\fixture\\repo"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"valid\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我来使用 repo-skill-installer 的脚本检查这个本地仓库。",
+            "检查完成了。结果显示仓库是 **valid**（有效），这是一个有效的 Skill 仓库。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_2ecbd372b7bef46d5dd75cb4d797b85013fb3171e0eb470f7da4239e220598f1"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "b015c9cb41f7a1b88fefe5fdf36cf4ed5c4fc29ba69e646323a67cd239e5129f",
+            "render_fingerprint": "2a8d9500321c3bf98317d164829b681b3de981f7eb4b60390c192c020716989c",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_2ecbd372b7bef46d5dd75cb4d797b85013fb3171e0eb470f7da4239e220598f1"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "c50f7df9854a93354887b05b9490856d5053b332f801d287f47190847381e087",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我来使用 repo-skill-installer 的脚本检查这个本地仓库。检查完成了。结果显示仓库是 **valid**（有效），这是一个有效的 Skill 仓库。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

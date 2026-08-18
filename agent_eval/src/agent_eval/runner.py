@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
+from agent.command_runtime.tools import ExecCommandTool
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext
 from agent.tools.builtin.skills import SkillReadTool
@@ -36,6 +37,7 @@ from agent import (
     SessionCatalog,
     SessionManager,
     SessionMetadataStore,
+    SkillActivationStatus,
     SkillCatalogService,
     TextDelta,
     ToolCallRequest,
@@ -60,6 +62,7 @@ from .schema import (
     FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
+    SkillActivationTrace,
     SkillCatalogEntryObservation,
     SkillCatalogObservation,
     ToolCallTrace,
@@ -70,7 +73,7 @@ ResolveAttachments = Callable[[list[FixtureAttachment]], list[AttachmentRef]]
 
 _CATALOG_ENTRY_RE = re.compile(
     r"^- (?P<name>[a-z0-9]+(?:-[a-z0-9]+)*): .*?"
-    r"\(source=(?P<source>builtin|personal|shared), id=(?P<id>[^,]+),",
+    r"\(source=(?P<source>builtin|personal|shared), skill_id=(?P<id>[^,]+),",
     re.MULTILINE,
 )
 _CATALOG_COVERAGE_RE = re.compile(r'<catalog_coverage entries="(?P<coverage>complete|truncated)"')
@@ -287,6 +290,9 @@ class _FixtureTool:
         elif fixture.name == "skill_read":
             self.description = SkillReadTool.description
             self.parameters_schema = SkillReadTool.parameters_schema
+        elif fixture.name == "exec_command":
+            self.description = ExecCommandTool.description
+            self.parameters_schema = ExecCommandTool.parameters_schema
         else:
             self.description = "读取完成当前请求所需的数据。"
             self.parameters_schema = {"type": "object", "properties": {}}
@@ -387,6 +393,15 @@ def _materialize_fixture_skills(root: Path, fixtures: list[FixtureSkill]) -> Non
     """Write case-local packages beneath one stable production discovery root."""
     for fixture in fixtures:
         package = root / fixture.source / fixture.name
+        if fixture.package_path is not None:
+            shutil.copytree(fixture.package_path, package)
+            continue
+        if (
+            fixture.description is None
+            or fixture.instructions is None
+            or fixture.allow_implicit_invocation is None
+        ):
+            raise ValueError(f"inline fixture Skill {fixture.name!r} 缺少必要内容")
         package.mkdir(parents=True, exist_ok=False)
         package.joinpath("SKILL.md").write_text(
             "---\n"
@@ -734,6 +749,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
 
             tool_requests: dict[str, ToolCallRequest] = {}
             tool_calls: list[ToolCallTrace] = []
+            skill_activations: list[SkillActivationTrace] = []
             assistant_text = _AssistantTextTrace()
             stop_reason = "unknown"
 
@@ -758,6 +774,19 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                     )
                 elif isinstance(event, TextDelta):
                     assistant_text.add(event.text)
+                elif isinstance(event, SkillActivationStatus):
+                    skill_activations.append(
+                        SkillActivationTrace(
+                            status=event.status,
+                            skill_id=event.skill_id,
+                            name=event.name,
+                            source=event.source,
+                            invocation_kind=event.invocation_kind,
+                            reason=event.reason,
+                            error_code=event.error_code,
+                            error_message=event.error_message,
+                        )
+                    )
                 elif isinstance(event, TurnDone):
                     stop_reason = event.stop_reason
 
@@ -780,6 +809,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 final_text=assistant_text.final_text,
                 stop_reason=stop_reason,
                 assistant_segments=assistant_text.segments,
+                skill_activations=skill_activations,
                 skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
             )
     except Exception as exc:
@@ -789,6 +819,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             final_text="",
             stop_reason="error",
             assistant_segments=[],
+            skill_activations=[],
             error=f"{type(exc).__name__}: {exc}",
             skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
         )

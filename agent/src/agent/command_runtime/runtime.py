@@ -5,21 +5,30 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
+import ipaddress
+import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 from .exec_server import ExecServerClient, ExecServerError
-from .models import CommandMode, CommandProcessSnapshot, CommandProcessStatus
+from .models import (
+    CommandMode,
+    CommandProcessSnapshot,
+    CommandProcessStatus,
+    decode_process_output,
+)
 
 OUTPUT_TAIL_BYTES = 256 * 1024
 MAX_RETAINED_TERMINAL_PROCESSES = 128
@@ -53,31 +62,115 @@ def _encoded_powershell(script: str) -> str:
     return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
 
 
-def _decode_process_output(value: bytes) -> str:
-    if value.startswith((b"\xff\xfe", b"\xfe\xff")) or value.count(b"\x00") > len(value) // 4:
-        return value.decode("utf-16", errors="replace")
-    return value.decode("utf-8", errors="replace")
+def _decode_powershell_clixml_text(value: str) -> str:
+    """Return PowerShell error records while discarding progress-only CLIXML."""
+    stripped = value.strip()
+    if not stripped.startswith("#< CLIXML"):
+        return stripped
+    xml_text = stripped.removeprefix("#< CLIXML").strip()
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return stripped
+    errors: list[str] = []
+    for element in root.iter():
+        if element.attrib.get("S") != "Error" or not element.text:
+            continue
+        decoded = re.sub(
+            r"_x([0-9A-Fa-f]{4})_",
+            lambda match: chr(int(match.group(1), 16)),
+            element.text,
+        ).strip()
+        if decoded:
+            errors.append(decoded)
+    return "\n".join(errors).strip()
 
 
-def windows_elevated_setup_command(
-    executable: Path, codex_home: Path, base_env: Mapping[str, str]
-) -> list[str]:
-    """Build an elevated child that sets product CODEX_HOME before Codex setup."""
-    system_root = base_env.get("SystemRoot") or base_env.get("WINDIR")
-    if not system_root:
-        raise CommandRuntimeError(
-            "windows_sandbox_setup_unavailable", "Windows system root is unavailable"
+def _windows_setup_process_detail(stdout: bytes, stderr: bytes) -> str:
+    raw = stderr or stdout
+    if not raw:
+        return ""
+    return _decode_powershell_clixml_text(decode_process_output(raw))
+
+
+def _windows_setup_was_cancelled(detail: str) -> bool:
+    folded = detail.casefold()
+    return any(
+        marker in folded
+        for marker in (
+            "operation was canceled by the user",
+            "operation was cancelled by the user",
+            "the user canceled the operation",
+            "the user cancelled the operation",
+            "操作被用户取消",
+            "用户取消了操作",
         )
+    )
+
+
+def _env_value(values: Mapping[str, str], *names: str) -> str | None:
+    """Read an environment value with Windows' case-insensitive semantics."""
+    folded = {key.upper(): value for key, value in values.items()}
+    return next((folded[name.upper()] for name in names if name.upper() in folded), None)
+
+
+def windows_sandbox_setup_command(
+    executable: Path,
+    codex_home: Path,
+    base_env: Mapping[str, str],
+    *,
+    diagnostic_path: Path,
+    proxy_port: int | None = None,
+) -> list[str]:
+    """Build the elevated Codex provisioning command for the product user."""
+    system_root = _env_value(base_env, "SystemRoot", "WINDIR")
+    username = _env_value(base_env, "USERNAME", "USER")
+    if not system_root or not username:
+        raise CommandRuntimeError(
+            "windows_sandbox_setup_unavailable",
+            "Windows system root or signed-in user identity is unavailable",
+        )
+    user_domain = _env_value(base_env, "USERDOMAIN")
+    real_user = f"{user_domain}\\{username}" if user_domain else username
     powershell = Path(system_root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    setup_args = ""
+    if proxy_port is not None:
+        setup_args = (
+            " -c default_permissions=agent_friend_network"
+            " -c permissions.agent_friend_network.extends=':workspace'"
+            " -c permissions.agent_friend_network.network.enabled=true"
+            " -c permissions.agent_friend_network.network.mode='full'"
+            " -c features.network_proxy.enabled=true"
+            " -c features.network_proxy.mode='full'"
+            f" -c features.network_proxy.proxy_url={_powershell_literal(f'http://127.0.0.1:{proxy_port}')}"
+            " -c features.network_proxy.enable_socks5=false"
+        )
     child_script = (
-        "$ErrorActionPreference='Stop';"
+        "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
         f"$env:CODEX_HOME={_powershell_literal(str(codex_home))};"
-        f"& {_powershell_literal(str(executable))} sandbox setup --elevated --current-user;"
-        "exit $LASTEXITCODE"
+        f"$diagnosticPath={_powershell_literal(str(diagnostic_path))};"
+        "$utf8=New-Object System.Text.UTF8Encoding($false);"
+        '[System.IO.File]::WriteAllText($diagnosticPath,"child_started`n",$utf8);'
+        "try{"
+        "$ErrorActionPreference='Continue';"
+        f"$setupOutput=(& {_powershell_literal(str(executable))}{setup_args} "
+        "sandbox setup --elevated "
+        f"--user {_powershell_literal(real_user)} "
+        f"--codex-home {_powershell_literal(str(codex_home))} 2>&1 | Out-String);"
+        "$setupExitCode=$LASTEXITCODE;"
+        "[System.IO.File]::AppendAllText($diagnosticPath,$setupOutput,$utf8);"
+        "[System.IO.File]::AppendAllText($diagnosticPath,"
+        '"`nchild_exit_code=$setupExitCode`n",$utf8);'
+        "exit $setupExitCode"
+        "}catch{"
+        "$detail=($_ | Out-String);"
+        "[System.IO.File]::AppendAllText($diagnosticPath,"
+        '"`nchild_exception: $detail`n",$utf8);'
+        "exit 1}"
     )
     child_encoded = _encoded_powershell(child_script)
     parent_script = (
-        "$ErrorActionPreference='Stop';"
+        "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
         f"$p=Start-Process -FilePath {_powershell_literal(str(powershell))} "
         "-ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',"
         f"'{child_encoded}') -Verb RunAs -Wait -PassThru -WindowStyle Hidden;"
@@ -125,7 +218,7 @@ def sandbox_context(
         path_to_file_uri(workdir),
         *[path_to_file_uri(path) for path, _ in additional_roots],
     ]
-    return {
+    context: dict[str, Any] = {
         "permissions": {
             "type": "managed",
             "file_system": {"type": "restricted", "entries": entries},
@@ -140,6 +233,112 @@ def sandbox_context(
         "windowsSandboxLevel": "elevated" if os.name == "nt" else "disabled",
         "windowsSandboxPrivateDesktop": False,
         "useLegacyLandlock": False,
+    }
+    if os.name == "nt":
+        # Proxy ports are provisioned only by the explicit setup action. Ordinary
+        # commands, including network-restricted ones, preserve that global
+        # administrator-approved firewall configuration so process/start can never
+        # reinterpret a missing child proxy variable as a request to reprovision.
+        context["windowsSandboxProxySettingsMode"] = "preserve"
+    return context
+
+
+def safe_loopback_proxy_environment(base_env: Mapping[str, str]) -> dict[str, str]:
+    """Return credential-free loopback proxy variables safe for a sandbox child."""
+    result: dict[str, str] = {}
+    casefolded = {key.upper(): value for key, value in base_env.items()}
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        value = casefolded.get(key)
+        if not value:
+            continue
+        try:
+            parsed = urlsplit(value)
+            host = parsed.hostname
+            if (
+                parsed.scheme not in {"http", "https"}
+                or host is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                continue
+            is_loopback = host.casefold() == "localhost" or ipaddress.ip_address(host).is_loopback
+            if not is_loopback or parsed.port is None:
+                continue
+        except (ValueError, UnicodeError):
+            continue
+        result[key] = value
+    return result
+
+
+def safe_loopback_proxy_port(base_env: Mapping[str, str]) -> int | None:
+    """Return one unambiguous host proxy port suitable for Windows provisioning."""
+    ports: set[int] = set()
+    for value in safe_loopback_proxy_environment(base_env).values():
+        port = urlsplit(value).port
+        if port is not None:
+            ports.add(port)
+    if len(ports) != 1:
+        return None
+    return next(iter(ports))
+
+
+def managed_network_request(
+    network_enabled: bool, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """Build exec-server fields that make approved network access usable.
+
+    A managed permission profile describes whether network access is allowed, but
+    restricted Windows identities cannot use the host network directly. Codex
+    0.147.0 expects the client to request an executor-local proxy as well; the
+    exec-server then injects proxy variables and grants the sandbox identity access
+    only to that proxy.
+    """
+    if not network_enabled:
+        return {
+            "enforceManagedNetwork": False,
+            "managedNetwork": None,
+            "networkProxy": None,
+        }
+    proxy_ports: set[int] = set()
+    for value in safe_loopback_proxy_environment(env or {}).values():
+        port = urlsplit(value).port
+        if port is not None:
+            proxy_ports.add(port)
+    loopback_ports = sorted(proxy_ports)
+    if loopback_ports:
+        return {
+            "enforceManagedNetwork": True,
+            "managedNetwork": {
+                "loopbackPorts": loopback_ports,
+                "allowLocalBinding": False,
+            },
+            "networkProxy": None,
+        }
+    if os.name != "nt":
+        return {
+            "enforceManagedNetwork": False,
+            "managedNetwork": None,
+            "networkProxy": None,
+        }
+    return {
+        "enforceManagedNetwork": True,
+        "managedNetwork": None,
+        "networkProxy": {
+            "proxy": {
+                "enabled": True,
+                "enableSocks5": False,
+                "enableSocks5Udp": False,
+                "allowUpstreamProxy": False,
+                "dangerouslyAllowAllUnixSockets": False,
+                "mode": "full",
+                "domains": None,
+                "unixSockets": None,
+                "allowLocalBinding": False,
+            }
+        },
     }
 
 
@@ -171,6 +370,11 @@ class CommandRuntime:
         self._client: ExecServerClient | None = None
         self._processes: dict[str, _ProcessState] = {}
         self._listeners: list[Callable[[dict[str, object]], None]] = []
+        self._capability_listeners: list[Callable[[dict[str, object]], None]] = []
+        self._setup_active = False
+        self._setup_error: dict[str, str] | None = None
+        self._capability_version = 1
+        self._capability_fingerprint: tuple[object, ...] | None = None
 
     @property
     def available(self) -> bool:
@@ -186,17 +390,103 @@ class CommandRuntime:
     def windows_sandbox_ready(self) -> bool:
         if os.name != "nt" or self._exec_server_command is not None:
             return True
-        return (self._codex_home / ".sandbox" / "setup_marker.json").is_file() and (
-            self._codex_home / ".sandbox-secrets" / "sandbox_users.json"
-        ).is_file()
+        return self._read_windows_sandbox_state()[0] == "ready"
+
+    def _read_windows_sandbox_state(self) -> tuple[str, dict[str, str] | None]:
+        if os.name != "nt":
+            return "unsupported", None
+        if not self.available:
+            return "unsupported", {
+                "error": "command_runtime_unavailable",
+                "message": "产品内置的 Codex 命令运行时不可用。",
+            }
+        if self._exec_server_command is not None:
+            return "ready", None
+        marker_path = self._codex_home / ".sandbox" / "setup_marker.json"
+        users_path = self._codex_home / ".sandbox-secrets" / "sandbox_users.json"
+        if not marker_path.exists() and not users_path.exists():
+            return "setup_required", None
+        if not marker_path.is_file() or not users_path.is_file():
+            return "repair_required", {
+                "error": "windows_sandbox_state_incomplete",
+                "message": "Windows 命令沙箱的初始化文件不完整，需要修复。",
+            }
+        required_proxy_port = safe_loopback_proxy_port(self._base_env)
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            users = json.loads(users_path.read_text(encoding="utf-8"))
+            if not isinstance(marker, dict) or not isinstance(marker.get("version"), int):
+                raise ValueError("invalid setup marker")
+            if not isinstance(users, dict):
+                raise ValueError("invalid sandbox users")
+            configured_ports = marker.get("proxy_ports")
+            if required_proxy_port is not None and (
+                not isinstance(configured_ports, list)
+                or required_proxy_port not in configured_ports
+            ):
+                return "repair_required", {
+                    "error": "windows_sandbox_proxy_configuration_changed",
+                    "message": "当前受治理代理与命令沙箱初始化配置不一致，需要修复。",
+                }
+            return "ready", None
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError, ValueError):
+            return "repair_required", {
+                "error": "windows_sandbox_state_unreadable",
+                "message": "Windows 命令沙箱状态无法读取，需要修复。",
+            }
+
+    def sandbox_capability(self) -> dict[str, object]:
+        state, detected_error = self._read_windows_sandbox_state()
+        with self._lock:
+            if self._setup_active:
+                state = "setting_up"
+                error = None
+            elif state == "ready":
+                error = None
+            else:
+                error = self._setup_error or detected_error
+                if self._setup_error is not None and state == "setup_required":
+                    state = "repair_required"
+            return {
+                "state": state,
+                "supported": os.name == "nt" and self.available,
+                "ready": state == "ready",
+                "last_error": copy.deepcopy(error),
+                "version": self._capability_version,
+            }
+
+    def refresh_sandbox_capability(self) -> dict[str, object]:
+        snapshot = self.sandbox_capability()
+        error = snapshot.get("last_error")
+        fingerprint = (
+            snapshot["state"],
+            snapshot["supported"],
+            json.dumps(error, sort_keys=True, ensure_ascii=False) if error else None,
+        )
+        listeners: tuple[Callable[[dict[str, object]], None], ...] = ()
+        with self._lock:
+            if fingerprint != self._capability_fingerprint:
+                if self._capability_fingerprint is not None:
+                    self._capability_version += 1
+                self._capability_fingerprint = fingerprint
+                snapshot["version"] = self._capability_version
+                listeners = tuple(self._capability_listeners)
+        for listener in listeners:
+            try:
+                listener(copy.deepcopy(snapshot))
+            except Exception:
+                logger.exception("Command sandbox capability listener failed")
+        return snapshot
 
     def status(self) -> dict[str, object]:
+        capability = self.refresh_sandbox_capability()
         return {
             "available": self.available,
             "platform": "windows" if os.name == "nt" else "other",
-            "windows_sandbox_ready": self.windows_sandbox_ready,
+            "sandbox_capability": capability,
+            "windows_sandbox_ready": capability["ready"] if os.name == "nt" else True,
             "requires_windows_sandbox_setup": (
-                os.name == "nt" and self.available and not self.windows_sandbox_ready
+                os.name == "nt" and self.available and not capability["ready"]
             ),
         }
 
@@ -222,33 +512,108 @@ class CommandRuntime:
         with self._setup_lock:
             if self.windows_sandbox_ready:
                 return self.status()
+            with self._lock:
+                self._setup_active = True
+                self._setup_error = None
+            self.refresh_sandbox_capability()
             try:
-                completed = subprocess.run(
-                    windows_elevated_setup_command(executable, self._codex_home, self._base_env),
-                    env=self._windows_setup_env(),
-                    capture_output=True,
-                    timeout=timeout_seconds,
-                    check=False,
+                self._perform_windows_sandbox_setup(executable, timeout_seconds=timeout_seconds)
+            except Exception as exc:
+                runtime_error = (
+                    exc
+                    if isinstance(exc, CommandRuntimeError)
+                    else CommandRuntimeError(
+                        "windows_sandbox_setup_failed",
+                        f"Windows sandbox setup failed: {exc}",
+                    )
                 )
-            except subprocess.TimeoutExpired as exc:
-                raise CommandRuntimeError(
-                    "windows_sandbox_setup_timed_out",
-                    "Windows sandbox setup timed out or its administrator prompt was not accepted",
-                ) from exc
-            if completed.returncode != 0 or not self.windows_sandbox_ready:
-                raw_detail = completed.stderr or completed.stdout
-                detail = _decode_process_output(raw_detail).strip()
-                message = "Windows sandbox setup did not complete successfully"
-                if detail:
-                    message = f"{message}: {detail[-2000:]}"
-                raise CommandRuntimeError("windows_sandbox_setup_failed", message)
+                with self._lock:
+                    self._setup_active = False
+                    self._setup_error = {
+                        "error": runtime_error.code,
+                        "message": str(runtime_error),
+                    }
+                self.refresh_sandbox_capability()
+                raise runtime_error from exc
+            with self._lock:
+                self._setup_active = False
+                self._setup_error = None
+            self.refresh_sandbox_capability()
             return self.status()
+
+    def _perform_windows_sandbox_setup(self, executable: Path, *, timeout_seconds: float) -> None:
+        self._execution_root.mkdir(parents=True, exist_ok=True)
+        diagnostic_path = self._execution_root / f"windows-sandbox-setup-{uuid4().hex}.log"
+        try:
+            completed = subprocess.run(
+                windows_sandbox_setup_command(
+                    executable,
+                    self._codex_home,
+                    self._base_env,
+                    diagnostic_path=diagnostic_path,
+                    proxy_port=safe_loopback_proxy_port(self._base_env),
+                ),
+                env=self._windows_setup_env(),
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            detail = self._consume_windows_setup_diagnostic(diagnostic_path)
+            suffix = f": {detail[-2000:]}" if detail else ""
+            raise CommandRuntimeError(
+                "windows_sandbox_setup_timed_out",
+                "Windows sandbox setup timed out or its administrator prompt was not accepted"
+                f"{suffix}",
+            ) from exc
+        detail = _windows_setup_process_detail(completed.stdout, completed.stderr)
+        child_detail = self._consume_windows_setup_diagnostic(diagnostic_path)
+        if child_detail:
+            detail = child_detail
+        if completed.returncode != 0:
+            if _windows_setup_was_cancelled(detail):
+                raise CommandRuntimeError(
+                    "windows_sandbox_setup_cancelled",
+                    "Windows sandbox setup was cancelled before administrator approval completed",
+                )
+            message = (
+                f"Windows sandbox elevated setup process exited with code {completed.returncode}"
+            )
+            if detail:
+                message = f"{message}: {detail[-2000:]}"
+            else:
+                message = f"{message} without diagnostic output"
+            raise CommandRuntimeError("windows_sandbox_setup_failed", message)
+        if not self.windows_sandbox_ready:
+            required_proxy_port = safe_loopback_proxy_port(self._base_env)
+            suffix = (
+                f" for required proxy port {required_proxy_port}"
+                if required_proxy_port is not None
+                else ""
+            )
+            raise CommandRuntimeError(
+                "windows_sandbox_setup_incomplete",
+                "Windows sandbox setup exited successfully, but its readiness marker "
+                f"was not updated{suffix}",
+            )
+
+    @staticmethod
+    def _consume_windows_setup_diagnostic(path: Path) -> str:
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return ""
+        finally:
+            with suppress(OSError):
+                path.unlink()
+        return _decode_powershell_clixml_text(decode_process_output(raw))
 
     def _windows_setup_env(self) -> dict[str, str]:
         allowed = {
             "PATH",
             "PATHEXT",
             "SYSTEMROOT",
+            "SYSTEMDRIVE",
             "WINDIR",
             "COMSPEC",
             "TEMP",
@@ -276,6 +641,12 @@ class CommandRuntime:
         with self._lock:
             self._listeners.append(listener)
 
+    def add_sandbox_capability_listener(
+        self, listener: Callable[[dict[str, object]], None]
+    ) -> None:
+        with self._lock:
+            self._capability_listeners.append(listener)
+
     def start_process(
         self,
         *,
@@ -286,9 +657,9 @@ class CommandRuntime:
         session_id: str,
         run_id: str,
         tool_call_id: str,
-        sandbox: dict[str, Any],
+        sandbox: dict[str, Any] | None,
     ) -> CommandProcessSnapshot:
-        if not self.windows_sandbox_ready:
+        if sandbox is not None and not self.windows_sandbox_ready:
             raise CommandRuntimeError(
                 "windows_sandbox_setup_required",
                 "Windows command sandbox is not initialized; run the explicit setup action first",
@@ -305,6 +676,8 @@ class CommandRuntime:
         state = _ProcessState(snapshot)
         with self._lock:
             self._processes[process_id] = state
+        permissions = sandbox.get("permissions") if sandbox is not None else None
+        network_enabled = isinstance(permissions, dict) and permissions.get("network") == "enabled"
         params = {
             "processId": process_id,
             "argv": list(argv),
@@ -313,9 +686,10 @@ class CommandRuntime:
             "tty": mode == "streaming",
             "pipeStdin": mode == "streaming",
             "arg0": None,
-            "sandbox": sandbox,
-            "enforceManagedNetwork": False,
         }
+        if sandbox is not None:
+            params["sandbox"] = sandbox
+            params.update(managed_network_request(network_enabled, env))
         try:
             # The elevated Windows backend may need to establish or refresh its
             # dedicated sandbox identities before the first process starts.
@@ -327,18 +701,65 @@ class CommandRuntime:
             detail = f"{exc}; exec-server stderr: {stderr}" if stderr else str(exc)
             raise CommandRuntimeError("process_start_failed", detail) from exc
         sandbox_type = response.get("sandboxType") if isinstance(response, dict) else None
-        if not isinstance(sandbox_type, str) or sandbox_type.lower() == "none":
+        if sandbox is not None and (
+            not isinstance(sandbox_type, str) or sandbox_type.lower() == "none"
+        ):
             with suppress(ExecServerError):
                 client.request("process/terminate", {"processId": process_id}, timeout_seconds=5)
-            self._finish(state, "runtime_lost", "sandbox_unavailable")
+            self._finish(state, "runtime_lost", "sandbox_visibility_unavailable")
             raise CommandRuntimeError(
-                "sandbox_unavailable", "exec-server did not confirm an enforced sandbox"
+                "sandbox_visibility_unavailable",
+                "exec-server did not confirm an enforced sandbox",
             )
         with state.condition:
-            state.snapshot.sandbox_type = sandbox_type
+            state.snapshot.sandbox_type = sandbox_type if isinstance(sandbox_type, str) else "none"
             state.snapshot.version += 1
         self._publish_state(state)
         return self._copy_snapshot(state.snapshot)
+
+    def prepare_owned_read_only_workdir(
+        self,
+        workdir: Path,
+        sandbox: Mapping[str, Any],
+    ) -> None:
+        """Synchronously warm a product-owned Windows cwd before a read-only launch."""
+        if os.name != "nt":
+            return
+        target_uri = path_to_file_uri(workdir)
+        prepared = copy.deepcopy(dict(sandbox))
+        permissions = prepared.get("permissions")
+        file_system = permissions.get("file_system") if isinstance(permissions, dict) else None
+        entries = file_system.get("entries") if isinstance(file_system, dict) else None
+        if not isinstance(entries, list):
+            raise CommandRuntimeError(
+                "sandbox_visibility_unavailable", "sandbox filesystem entries are unavailable"
+            )
+        matched = False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            locator = entry.get("path")
+            if (
+                isinstance(locator, dict)
+                and locator.get("path") == target_uri
+                and entry.get("access") == "read"
+            ):
+                entry["access"] = "write"
+                matched = True
+                break
+        if not matched:
+            return
+        try:
+            self._ensure_client().request(
+                "fs/getMetadata",
+                {"path": target_uri, "sandbox": prepared},
+                timeout_seconds=60,
+            )
+        except ExecServerError as exc:
+            raise CommandRuntimeError(
+                "sandbox_visibility_unavailable",
+                f"failed to prepare product-owned read-only workdir {target_uri}: {exc}",
+            ) from exc
 
     def wait(
         self,
@@ -486,19 +907,25 @@ class CommandRuntime:
             return client
 
     def _exec_server_env(self) -> dict[str, str]:
-        allowed = {
-            "PATH",
-            "PATHEXT",
-            "SystemRoot",
-            "WINDIR",
-            "COMSPEC",
-            "LANG",
-            "LC_ALL",
-            "TMP",
-            "TEMP",
-            "TMPDIR",
+        canonical_names = {
+            "PATH": "PATH",
+            "PATHEXT": "PATHEXT",
+            "SYSTEMROOT": "SystemRoot",
+            "SYSTEMDRIVE": "SystemDrive",
+            "WINDIR": "WINDIR",
+            "COMSPEC": "ComSpec",
+            "LANG": "LANG",
+            "LC_ALL": "LC_ALL",
+            "TMP": "TMP",
+            "TEMP": "TEMP",
+            "TMPDIR": "TMPDIR",
         }
-        env = {key: value for key, value in self._base_env.items() if key in allowed}
+        casefolded = {key.upper(): value for key, value in self._base_env.items()}
+        env = {
+            canonical: casefolded[key]
+            for key, canonical in canonical_names.items()
+            if key in casefolded
+        }
         env["CODEX_HOME"] = str(self._codex_home)
         env.pop("CODEX_API_KEY", None)
         env.pop("CODEX_ACCESS_TOKEN", None)

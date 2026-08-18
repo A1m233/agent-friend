@@ -6,10 +6,12 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from agent.filesystem import (
     ApprovalDecision,
     ApprovalItem,
     FilesystemApprovalBroker,
+    FilesystemError,
     FilesystemService,
     ProtectedPathPolicy,
 )
@@ -61,6 +63,70 @@ def test_non_desktop_surface_fails_closed(tmp_path: Path) -> None:
     assert json.loads(result.text)["status"] == "unavailable"
 
 
+def test_instruction_directory_requires_exact_file_for_content_or_write(tmp_path: Path) -> None:
+    config_root = tmp_path / ".codex"
+    config_root.mkdir()
+    config_file = config_root / "config.toml"
+    config_file.write_text("model = 'fixture'\n", encoding="utf-8")
+    tool = RequestFilesystemAccessTool(FilesystemApprovalBroker(), _policy(tmp_path))
+
+    with pytest.raises(FilesystemError) as broad:
+        tool._parse_items(
+            [
+                {
+                    "item_id": "codex-dir",
+                    "locator": {"kind": "path", "path": str(config_root)},
+                    "root_kind": "directory",
+                    "permissions": ["search_metadata", "read_text", "edit"],
+                }
+            ]
+        )
+    assert getattr(broad.value, "code", None) == "protected_path"
+    assert "准确文件" in str(broad.value)
+
+    metadata = tool._parse_items(
+        [
+            {
+                "item_id": "codex-dir",
+                "locator": {"kind": "path", "path": str(config_root)},
+                "root_kind": "directory",
+                "permissions": ["search_metadata"],
+            }
+        ]
+    )
+    assert metadata[0].permissions == frozenset({"search_metadata"})
+
+    exact = tool._parse_items(
+        [
+            {
+                "item_id": "codex-config",
+                "locator": {"kind": "path", "path": str(config_file)},
+                "root_kind": "file",
+                "permissions": ["read_text", "edit"],
+            }
+        ]
+    )
+    assert exact[0].allow_protected is True
+
+
+def test_filesystem_tool_contract_explains_create_and_exact_patch_syntax(tmp_path: Path) -> None:
+    access = RequestFilesystemAccessTool(FilesystemApprovalBroker(), _policy(tmp_path))
+    copy_tool = FilesystemOperationTool("filesystem_copy", FilesystemService(_policy(tmp_path)))
+    patch_tool = FilesystemOperationTool(
+        "filesystem_apply_patch", FilesystemService(_policy(tmp_path))
+    )
+
+    assert "edit 只修改已有目标" in access.description
+    assert "同时申请 search_metadata 和 read_text" in access.description
+    permissions_description = access.parameters_schema["properties"]["items"]["items"][
+        "properties"
+    ]["permissions"]["description"]
+    assert "filesystem_list_directory" in permissions_description
+    assert "备份" in copy_tool.description and "create" in copy_tool.description
+    assert "*** Begin Patch" in patch_tool.description
+    assert "*** End Patch" in patch_tool.description
+
+
 def test_broker_grants_only_approved_subset_for_current_ledger(tmp_path: Path) -> None:
     broker = FilesystemApprovalBroker()
     lifecycle: list[dict[str, object]] = []
@@ -101,7 +167,7 @@ def test_broker_grants_only_approved_subset_for_current_ledger(tmp_path: Path) -
     result = holder[0]
     payload = json.loads(result.text)
     assert payload["status"] == "partially_granted"
-    scope = ledger.scope(payload["scopes"][0]["scope_id"])
+    scope = ledger.scope(payload["scopes"][0]["filesystem_scope_id"])
     assert scope is not None
     assert scope.permissions == frozenset({"search_metadata"})
     assert FilesystemAuthorizationLedger().scope(scope.scope_id) is None
@@ -132,16 +198,16 @@ def test_batch_file_operation_reports_partial_result(tmp_path: Path) -> None:
             "items": [
                 {
                     "item_id": "ok",
-                    "source_scope_id": source_scope.scope_id,
+                    "source_filesystem_scope_id": source_scope.scope_id,
                     "source_path": "exists.bin",
-                    "destination_scope_id": destination_scope.scope_id,
+                    "destination_filesystem_scope_id": destination_scope.scope_id,
                     "destination_path": "copy.bin",
                 },
                 {
                     "item_id": "missing",
-                    "source_scope_id": source_scope.scope_id,
+                    "source_filesystem_scope_id": source_scope.scope_id,
                     "source_path": "missing.bin",
-                    "destination_scope_id": destination_scope.scope_id,
+                    "destination_filesystem_scope_id": destination_scope.scope_id,
                     "destination_path": "missing-copy.bin",
                 },
             ],

@@ -1,0 +1,157 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T15:19:09.932753+00:00",
+    "ended_at": "2026-08-18T15:27:34.911077+00:00",
+    "duration_seconds": 504.978,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "target revalidation after complete-flow fixture fix; model provenance: source session f41eb97c-e570-420b-918b-968844ac6f37 incident turns on 2026-08-18 used kimi/kimi-k2.5; case-local exact workflow means instruction-following evidence only; report only; fake tools",
+    "selection": {
+      "contract": "all",
+      "case": "C18-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "3a9f89e7fe960afd38177b8a9572402892c048c5bec0aa57b427b5a8664857d8",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 1,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C18": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 1,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C18",
+      "name": "clarification-action-consistency",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C18-04",
+          "query": "继续跑这个多账号日常。账号配置你直接从现有 MAA 日志里看，不要再问我账号名称； 先找到两个账号和真实 MuMu 实例，再启动模拟器。",
+          "facet": "真实多账号 anchor · 用户要求自行发现时应读取 Skill、查日志并完成隔离的 A→B 日常",
+          "source": "prod-maa-multi-account-sandbox-launch-20260818",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "runtime error: LLMOutputBudgetExhaustedError: 模型输出预算已被推理内容耗尽，未生成可见正文。",
+          "tool_calls": [],
+          "assistant_segments": [],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_50e1aeaf86f2650342c54fe6bf7a69909658f21d6b37f90ff125c084549f7793"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "20d34ebe0ddfa588ce4b88f5bf7541bc5d1136e8074dde2631993d3cb6fb00ee",
+            "render_fingerprint": "fa096f3264a283b7b33a7419fe9e37a756760bda6933769823c2c799ce6b960f",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_50e1aeaf86f2650342c54fe6bf7a69909658f21d6b37f90ff125c084549f7793"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "a6d6a5c68944ec4b24791846bff61e73a7abc2ec26d7c007c0bc7fe3cd7bb360",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "",
+          "stop_reason": "error",
+          "error": "LLMOutputBudgetExhaustedError: 模型输出预算已被推理内容耗尽，未生成可见正文。"
+        }
+      ]
+    }
+  ]
+}

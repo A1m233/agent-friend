@@ -76,6 +76,21 @@ describe("projectSessionEvents", () => {
     expect(out[1].blocks).toEqual([]);
   });
 
+  it("模型流超时的 partial assistant 恢复为错误而不是用户停止", () => {
+    const out = projectSessionEvents([
+      ev("user_message", { content: "查一下" }),
+      ev("assistant_message", {
+        content: "我来看看",
+        partial: true,
+        interruption_reason: "LLMStreamTimeoutError",
+      }),
+    ]);
+
+    expect(out[1].status).toBe("error");
+    expect(out[1].errorCode).toBe("LLMStreamTimeoutError");
+    expect(out[1].error).toContain("模型响应长时间没有进展");
+  });
+
   it("把 run_error 投影成可刷新的 assistant 错误状态", () => {
     const out = projectSessionEvents([
       ev("user_message", { content: "继续说" }),
@@ -145,6 +160,52 @@ describe("projectSessionEvents", () => {
       expect(block.status).toBe("error");
       expect(block.result).toBe("超时了");
     }
+  });
+
+  it("按持久化 is_error 恢复无旧前缀的工具失败", () => {
+    const content = JSON.stringify({ error: "approval_cancelled", status: "cancelled" });
+    const out = projectSessionEvents([
+      ev("tool_call_request", { tool_call_id: "cmd", tool_name: "command_run", args: {} }),
+      ev("tool_call_result", {
+        tool_call_id: "cmd",
+        tool_name: "command_run",
+        content,
+        is_error: true,
+      }),
+    ]);
+
+    expect(out[0].blocks[0]).toMatchObject({
+      kind: "tool",
+      status: "error",
+      result: content,
+    });
+  });
+
+  it("Skill 读取失败在历史会话中保持失败状态", () => {
+    const content = JSON.stringify({
+      error: "skill_not_found",
+      skill_id: "builtin/skill-installer",
+    });
+    const out = projectSessionEvents([
+      ev("tool_call_request", {
+        tool_call_id: "skill",
+        tool_name: "skill_read",
+        args: { id: "builtin/skill-installer" },
+      }),
+      ev("tool_call_result", {
+        tool_call_id: "skill",
+        tool_name: "skill_read",
+        content,
+        is_error: true,
+      }),
+    ]);
+
+    expect(out[0].blocks[0]).toMatchObject({
+      kind: "tool",
+      name: "skill_read",
+      status: "error",
+      result: content,
+    });
   });
 
   it("从 skill_context 恢复 Skill 状态但不暴露完整指令", () => {
