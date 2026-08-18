@@ -19,6 +19,7 @@ import type {
   FilesystemApprovalRequest,
   FilesystemPermission,
 } from "@/services/api/filesystem";
+import { commandNeedsSandboxPreparation } from "./commandRuntimePresentation";
 
 /**
  * 工具调用卡片（自写，AC-M3.2）。
@@ -156,7 +157,6 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
   const entry = useFilesystemApprovalsStore((state) =>
     Object.values(state.entries).find((value) => value.request.tool_call_id === block.toolCallId),
   );
-  const decide = useFilesystemApprovalsStore((state) => state.decide);
   const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
   const args = parseFilesystemArgs(block.args);
@@ -166,7 +166,16 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
   const runActive = Boolean(
     request && activeRunIdBySession[request.session_id] === request.run_id,
   );
-  const actionable = brokerPending && runActive && entry?.status === "pending";
+  const currentRunActive = Boolean(
+    currentSessionId && activeRunIdBySession[currentSessionId],
+  );
+
+  // Tool requests are persisted before the serial executor reaches them. Keep
+  // future approvals out of the visible stack until their broker request is
+  // actually active; the bottom dock then advances one item at a fixed target.
+  if (block.status === "running" && !entry && currentRunActive) {
+    return null;
+  }
 
   let label = "等待授权";
   let tone: StatusDotProps["tone"] = "warning";
@@ -248,23 +257,9 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
         ))}
       </div>
       {brokerPending && runActive ? (
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={entry?.status === "submitting"}
-            onClick={() => request && void decide(request.request_id, false)}
-          >
-            拒绝
-          </Button>
-          <Button
-            size="xs"
-            disabled={!actionable}
-            onClick={() => request && void decide(request.request_id, true)}
-          >
-            {entry?.status === "submitting" ? "处理中…" : "仅本次允许"}
-          </Button>
-        </div>
+        <p className="mt-2 text-muted">
+          {entry?.status === "submitting" ? "正在处理底部的授权决定。" : "请在输入框上方处理当前授权。"}
+        </p>
       ) : (
         <p className="mt-2 text-muted">
           {label === "已中断" || label === "已过期"
@@ -279,16 +274,22 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
 
 interface CommandArgs {
   cmd?: string;
+  argv?: string[];
+  execution?: "sandboxed" | "host_user";
   workdir?: string;
   mode?: "buffered" | "streaming";
   timeout_seconds?: number;
   reason?: string;
   access?: {
-    filesystem?: "read_only" | "workspace_write";
+    filesystem?: "read_only" | "read_write";
     network?: "disabled" | "enabled";
-    additional_roots?: Array<{ path?: string; access?: string }>;
+    additional_roots?: Array<{
+      path?: string;
+      locator?: { kind?: string; name?: string; path?: string };
+      access?: string;
+    }>;
   };
-  skill?: { id?: string; entry?: string };
+  skill?: { id?: string; entry?: string; workdir?: string };
 }
 
 function CommandRuntimeCard({ block }: { block: ToolBlock }) {
@@ -298,16 +299,10 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
   const process = useCommandRuntimeStore((state) =>
     Object.values(state.processes).find((item) => item.tool_call_id === block.toolCallId),
   );
-  const submitting = useCommandRuntimeStore((state) =>
-    approval ? state.submitting.has(approval.request_id) : false,
-  );
-  const decide = useCommandRuntimeStore((state) => state.decide);
   const cancel = useCommandRuntimeStore((state) => state.cancel);
   const runtimeStatus = useCommandRuntimeStore((state) => state.runtimeStatus);
-  const settingUpSandbox = useCommandRuntimeStore((state) => state.settingUpSandbox);
-  const setupError = useCommandRuntimeStore((state) => state.setupError);
-  const setupWindowsSandbox = useCommandRuntimeStore((state) => state.setupWindowsSandbox);
   const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
+  const currentSessionId = useConversationStore((state) => state.currentSessionId);
   let args: CommandArgs = {};
   try {
     args = JSON.parse(block.args) as CommandArgs;
@@ -318,16 +313,24 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
   const runActive = Boolean(
     approval && activeRunIdBySession[approval.session_id] === approval.run_id,
   );
-  const actionable = approval?.status === "pending" && runActive && !submitting;
+  const currentRunActive = Boolean(
+    currentSessionId && activeRunIdBySession[currentSessionId],
+  );
+  if (block.status === "running" && !approval && !process && currentRunActive) {
+    return null;
+  }
   let resultError = "";
+  let resultMessage = "";
   try {
-    const result = JSON.parse(block.result || "{}") as { error?: unknown };
+    const result = JSON.parse(block.result || "{}") as { error?: unknown; message?: unknown };
     resultError = typeof result.error === "string" ? result.error : "";
+    resultMessage = typeof result.message === "string" ? result.message : "";
   } catch {
     // The card falls back to the tool status when the result is not JSON.
   }
-  const needsSandboxSetup = resultError === "windows_sandbox_setup_required"
-    || runtimeStatus?.requires_windows_sandbox_setup === true;
+  const sandboxCapability = runtimeStatus?.sandbox_capability;
+  const execution = details?.execution || args.execution || "sandboxed";
+  const needsSandboxSetup = commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
   const status = process?.status;
   let label = approval?.status === "pending" ? "等待授权" : "准备运行";
   let tone: StatusDotProps["tone"] = "warning";
@@ -359,15 +362,37 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
   } else if (approval?.status === "expired") {
     label = "已过期";
     pulse = false;
+  } else if (resultError === "approval_cancelled") {
+    label = "已取消";
+    pulse = false;
+  } else if (resultError === "approval_denied") {
+    label = "已拒绝";
+    tone = "danger";
+    pulse = false;
+  } else if (resultError === "approval_expired") {
+    label = "已过期";
+    pulse = false;
   } else if (needsSandboxSetup) {
     label = "需要初始化沙箱";
     tone = "warning";
+    pulse = false;
+  } else if (block.status === "error") {
+    label = "执行失败";
+    tone = "danger";
     pulse = false;
   }
   const output = [process?.pty, process?.stdout, process?.stderr]
     .filter((value): value is string => Boolean(value))
     .join("");
   const roots = details?.additional_roots ?? args.access?.additional_roots ?? [];
+  const derivedRoots = details?.host_derived_roots ?? [];
+  const cwdLabel = details?.cwd_source === "session_managed"
+    ? "本会话命令目录"
+    : details?.cwd_source === "skill_snapshot"
+      ? "Skill 快照目录"
+      : details?.cwd_source === "explicit"
+        ? "指定目录"
+        : "执行目录";
 
   return (
     <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
@@ -378,10 +403,12 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
       </div>
       <p className="mt-2 text-sm text-fg">{approval?.reason || args.reason || "运行本地命令"}</p>
       <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-bg/60 p-2.5 text-fg">
-        {details?.cmd || args.cmd || "未提供命令"}
+        {details?.cmd || args.cmd || (args.argv ? JSON.stringify(args.argv) : "未提供命令")}
       </pre>
       <div className="mt-2 space-y-1 text-muted">
-        <p className="break-all">工作目录：{details?.workdir || args.workdir || "未提供"}</p>
+        <p className="break-all">
+          {cwdLabel}：{details?.workdir || args.workdir || "由会话管理"}
+        </p>
         <p>
           模式：{(details?.mode || args.mode || "buffered") === "streaming" ? "交互式" : "普通"}
           {` · 超时 ${details?.timeout_seconds || args.timeout_seconds || 900} 秒`}
@@ -390,8 +417,18 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
             : ""}
         </p>
         <p>
-          文件：{(details?.filesystem_access || args.access?.filesystem || "read_only") === "workspace_write" ? "工作区可写" : "只读"}
-          {` · 网络：${(details?.network_access || args.access?.network || "disabled") === "enabled" ? "允许" : "禁止"}`}
+          执行级别：{execution === "host_user" ? "宿主用户（不受沙箱限制）" : "Codex 沙箱"}
+        </p>
+        {execution === "host_user" ? (
+          <p>环境：继承当前桌面用户环境</p>
+        ) : null}
+        <p>
+          执行目录：{execution === "host_user"
+            ? "不受限"
+            : (details?.filesystem_access || args.access?.filesystem || "read_only") === "read_write" ? "可写" : "只读"}
+          {` · 网络：${execution === "host_user"
+            ? "不受限"
+            : (details?.network_access || args.access?.network || "disabled") === "enabled" ? "允许" : "禁止"}`}
         </p>
         {details?.skill || args.skill ? (
           <p className="break-all">
@@ -402,9 +439,19 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
               : ""}
           </p>
         ) : null}
-        {roots.map((root, index) => (
-          <p key={`${root.path}-${index}`} className="break-all">
-            附加范围：{root.path}（{root.access === "workspace_write" ? "可写" : "只读"}）
+        {roots.map((root, index) => {
+          const locatorName = "locator" in root ? root.locator?.name : undefined;
+          const rootLabel = root.path || locatorName || "未提供";
+          return (
+            <p key={`${rootLabel}-${index}`} className="break-all">
+              附加范围：{rootLabel}
+              （{root.access === "read_write" ? "可写" : "只读"}）
+            </p>
+          );
+        })}
+        {derivedRoots.map((root) => (
+          <p key={root.path} className="break-all">
+            宿主派生程序范围：{root.path}（只读）
           </p>
         ))}
       </div>
@@ -416,41 +463,29 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
           {output}
         </pre>
       ) : null}
+      {block.status === "error" && resultMessage && !needsSandboxSetup ? (
+        <p className="mt-2 rounded-md border border-danger/40 bg-danger/10 p-2.5 text-danger">
+          失败原因：{resultMessage}
+        </p>
+      ) : null}
       {needsSandboxSetup ? (
         <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-2.5">
           <p className="text-fg">
-            首次运行前需要初始化 Windows 沙箱。点击后系统会显示管理员授权窗口；普通命令不会自动触发。
+            {sandboxCapability?.state === "repair_required"
+              ? "Windows 命令沙箱需要修复。命令会继续等待，不会自动触发管理员授权。"
+              : "首次运行前需要在全局系统权限中初始化 Windows 命令沙箱。命令会继续等待，不会自动触发管理员授权。"}
           </p>
-          <div className="mt-2 flex justify-end">
-            <Button
-              size="xs"
-              disabled={settingUpSandbox}
-              onClick={() => void setupWindowsSandbox()}
-            >
-              {settingUpSandbox ? "正在初始化…" : "初始化命令沙箱"}
-            </Button>
-          </div>
-          {setupError ? <p className="mt-2 text-danger">{setupError}</p> : null}
+          <p className="mt-1 text-muted">请在输入框上方打开系统权限。</p>
         </div>
       ) : null}
       {approval?.status === "pending" ? (
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!actionable}
-            onClick={() => void decide(approval.request_id, false)}
-          >
-            拒绝
-          </Button>
-          <Button
-            size="xs"
-            disabled={!actionable}
-            onClick={() => void decide(approval.request_id, true)}
-          >
-            {submitting ? "处理中…" : "仅本次允许"}
-          </Button>
-        </div>
+        <p className="mt-2 text-muted">
+          {runActive ? "请在输入框上方处理当前授权。" : "正在恢复任务状态。"}
+        </p>
+      ) : approval?.status === "approved" && !process && block.status === "running" ? (
+        <p className="mt-2 text-muted">
+          授权已完成，正在启动进程；启动阶段超过 60 秒会明确失败，不会无限等待。
+        </p>
       ) : process?.status === "running" ? (
         <div className="mt-3 flex justify-end">
           <Button size="xs" variant="outline" onClick={() => void cancel(process.process_id)}>
@@ -458,7 +493,9 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
           </Button>
         </div>
       ) : (
-        <p className="mt-2 text-muted">命令授权只对这一次准确启动有效。</p>
+        block.status === "error"
+          ? null
+          : <p className="mt-2 text-muted">命令授权只对这一次准确启动有效。</p>
       )}
     </div>
   );

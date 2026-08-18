@@ -166,6 +166,25 @@ def test_atomic_create_overwrite_and_patch_require_current_version(tmp_path: Pat
     assert target.read_text(encoding="utf-8") == "alpha\ndelta\n"
 
 
+def test_edit_only_scope_explains_that_missing_backup_needs_create(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "edit")
+
+    with pytest.raises(FilesystemError) as missing:
+        FilesystemService(_policy(tmp_path)).write_text(
+            ledger,
+            scope_id=scope_id,
+            relative_path="config.toml.backup",
+            content="backup",
+        )
+
+    assert missing.value.code == "permission_denied"
+    assert "create" in str(missing.value)
+    assert "edit" in str(missing.value)
+
+
 def test_binary_copy_is_byte_transparent(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     destination_root = tmp_path / "destination"

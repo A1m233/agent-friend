@@ -6,13 +6,14 @@ import argparse
 import importlib
 import json
 import os
+import runpy
 import sys
 import tempfile
 import threading
 import time
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
@@ -101,6 +102,40 @@ def _smoke_skill_catalog() -> dict[str, Any]:
                     f"packaged builtin Skill resources are missing: {','.join(missing)}"
                 )
 
+            installer = next(
+                (record for record in initial.entries if record.id == "builtin/skill-installer"),
+                None,
+            )
+            if installer is None:
+                raise RuntimeError("packaged builtin skill-installer was not discovered")
+            installer_entry = installer.package_root / "scripts" / "install-skill-from-github.py"
+            if not installer_entry.is_file():
+                raise RuntimeError("packaged skill-installer entry is missing")
+            installer_scripts = str(installer_entry.parent)
+            sys.path.insert(0, installer_scripts)
+            try:
+                installer_namespace = runpy.run_path(
+                    str(installer_entry),
+                    run_name="agent_friend_packaged_skill_installer_probe",
+                )
+            finally:
+                sys.path.remove(installer_scripts)
+            validator = installer_namespace.get("_validate_relative_path")
+            install_error = installer_namespace.get("InstallError")
+            if not callable(validator) or not isinstance(install_error, type):
+                raise RuntimeError("packaged skill-installer validation API is unavailable")
+            try:
+                validator("../outside")
+            except Exception as exc:
+                if not isinstance(exc, install_error) or "relative path inside the repo" not in str(
+                    exc
+                ):
+                    raise RuntimeError(
+                        "packaged skill-installer validation raised an unexpected error"
+                    ) from exc
+            else:
+                raise RuntimeError("packaged skill-installer validation path did not fail closed")
+
             service.start()
             package = personal_root / "frozen-watcher-smoke"
             package.mkdir(parents=True)
@@ -140,12 +175,46 @@ def _smoke_skill_catalog() -> dict[str, Any]:
             return {
                 "builtin": builtin.name,
                 "builtin_resources": len(required_resources),
+                "installer": installer.name,
+                "installer_validation": "fail-closed",
                 "catalog_generation": turn.catalog.generation,
                 "watcher_status": service.watcher_state.status,
                 "activated": turn.activations[0].record.name,
             }
         finally:
             service.stop()
+
+
+def _smoke_tool_schema_validation() -> dict[str, Any]:
+    """Exercise frozen jsonschema through the production registry boundary."""
+
+    from agent.tools import ToolRegistry, ToolResult
+
+    class _SchemaSmokeTool:
+        name = "schema_smoke"
+        description = "Frozen runtime schema validation smoke."
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            return ToolResult(text=json.dumps({"accepted": args["value"]}))
+
+    registry = ToolRegistry([_SchemaSmokeTool()])
+    accepted = registry.invoke("schema_smoke", {"value": 7})
+    rejected = registry.invoke("schema_smoke", {"value": "wrong", "extra": True})
+    rejected_payload = json.loads(rejected.text)
+    if accepted.is_error or not rejected.is_error:
+        raise RuntimeError("production ToolRegistry did not enforce its input schema")
+    if rejected_payload.get("error") != "invalid_arguments":
+        raise RuntimeError("schema rejection did not preserve the model-visible error code")
+    return {
+        "accepted": json.loads(accepted.text).get("accepted") == 7,
+        "rejected_rule": rejected_payload.get("rule"),
+    }
 
 
 def _smoke_filesystem_tools() -> dict[str, Any]:
@@ -269,6 +338,7 @@ def _smoke_command_runtime() -> dict[str, Any]:
                 "PATH",
                 "PATHEXT",
                 "SYSTEMROOT",
+                "SYSTEMDRIVE",
                 "WINDIR",
                 "COMSPEC",
                 "TEMP",
@@ -288,7 +358,13 @@ def _smoke_command_runtime() -> dict[str, Any]:
         )
         try:
             process = runtime.start_process(
-                argv=(os.environ["COMSPEC"], "/D", "/S", "/C", "echo frozen-command-ok"),
+                argv=(
+                    os.environ["COMSPEC"],
+                    "/D",
+                    "/S",
+                    "/C",
+                    "if defined SystemDrive (echo frozen-command-ok) else exit /b 17",
+                ),
                 workdir=root,
                 env=command_env,
                 mode="buffered",
@@ -315,6 +391,38 @@ def _smoke_command_runtime() -> dict[str, Any]:
                 raise RuntimeError(
                     "packaged buffered command failed: "
                     + finished.stderr_tail.decode("utf-8", errors="replace")
+                )
+
+            host_user = runtime.start_process(
+                argv=(
+                    os.environ["COMSPEC"],
+                    "/D",
+                    "/S",
+                    "/C",
+                    "echo frozen-host-user-ok",
+                ),
+                workdir=root,
+                env=dict(os.environ),
+                mode="buffered",
+                session_id="doctor",
+                run_id="doctor-host-user",
+                tool_call_id="doctor-host-user",
+                sandbox=None,
+            )
+            host_user = runtime.wait(
+                host_user.process_id,
+                session_id="doctor",
+                run_id="doctor-host-user",
+                timeout_seconds=30,
+            )
+            if (
+                host_user.exit_code != 0
+                or host_user.sandbox_type != "none"
+                or b"frozen-host-user-ok" not in host_user.stdout_tail
+            ):
+                raise RuntimeError(
+                    "packaged host-user command failed: "
+                    + json.dumps(host_user.to_dict(), ensure_ascii=False)
                 )
 
             streaming = runtime.start_process(
@@ -377,6 +485,137 @@ def _smoke_command_runtime() -> dict[str, Any]:
             if denied_finished.exit_code == 0 or denied_path.exists():
                 raise RuntimeError("packaged read-only sandbox allowed a write")
 
+            default_context = ToolRunContext.create("")
+            default_broker = ApprovalBroker()
+            default_tool = ExecCommandTool(
+                runtime,
+                default_broker,
+                session_workspaces_root=root / "session-workspaces",
+            )
+            default_results: list[Any] = []
+            default_thread = threading.Thread(
+                target=lambda: default_results.append(
+                    default_tool.invoke(
+                        {
+                            "cmd": "echo frozen-session-cwd-ok>session-cwd.txt",
+                            "access": {"filesystem": "read_write"},
+                            "reason": "verify the frozen session-managed command directory",
+                            COMMAND_SESSION_ID_ARG: "doctor-default-cwd",
+                            COMMAND_RUN_ID_ARG: "doctor-default-cwd",
+                            COMMAND_TOOL_CALL_ID_ARG: "doctor-default-cwd",
+                            COMMAND_SURFACE_ARG: "desktop_chat",
+                            COMMAND_RUN_CONTEXT_ARG: default_context,
+                        }
+                    )
+                ),
+                daemon=True,
+            )
+            default_thread.start()
+            try:
+                deadline = time.monotonic() + 10
+                default_pending = ()
+                while time.monotonic() < deadline:
+                    default_pending = default_broker.pending(kind="command")
+                    if default_pending:
+                        break
+                    time.sleep(0.01)
+                if not default_pending:
+                    raise RuntimeError("packaged default-cwd command did not request approval")
+                default_request = default_pending[0]
+                if default_request.details.cwd_source != "session_managed":
+                    raise RuntimeError("packaged command did not select the session-managed cwd")
+                if not default_broker.decide(
+                    default_request.request_id,
+                    CommandApprovalDecision(allow=True),
+                    session_id="doctor-default-cwd",
+                    run_id="doctor-default-cwd",
+                    expected_kind="command",
+                ):
+                    raise RuntimeError("packaged default-cwd command approval was rejected")
+                default_thread.join(timeout=40)
+                if default_thread.is_alive() or not default_results:
+                    raise RuntimeError("packaged default-cwd command did not finish")
+                default_payload = json.loads(default_results[0].text)
+                default_marker = Path(default_request.details.workdir) / "session-cwd.txt"
+                if (
+                    default_payload.get("status") != "exited"
+                    or default_payload.get("exit_code") != 0
+                    or not default_marker.is_file()
+                ):
+                    raise RuntimeError(
+                        "packaged session-managed cwd command failed: "
+                        + json.dumps(default_payload, ensure_ascii=False)
+                    )
+            finally:
+                default_context.close_commands()
+
+            read_only_context = ToolRunContext.create("")
+            read_only_broker = ApprovalBroker()
+            read_only_tool = ExecCommandTool(
+                runtime,
+                read_only_broker,
+                session_workspaces_root=root / "session-workspaces",
+            )
+            read_only_results: list[Any] = []
+            read_only_thread = threading.Thread(
+                target=lambda: read_only_results.append(
+                    read_only_tool.invoke(
+                        {
+                            "cmd": "echo forbidden>session-cwd-denied.txt",
+                            "reason": "verify a fresh session-managed cwd remains read-only",
+                            COMMAND_SESSION_ID_ARG: "doctor-default-cwd-read-only",
+                            COMMAND_RUN_ID_ARG: "doctor-default-cwd-read-only",
+                            COMMAND_TOOL_CALL_ID_ARG: "doctor-default-cwd-read-only",
+                            COMMAND_SURFACE_ARG: "desktop_chat",
+                            COMMAND_RUN_CONTEXT_ARG: read_only_context,
+                        }
+                    )
+                ),
+                daemon=True,
+            )
+            read_only_thread.start()
+            try:
+                deadline = time.monotonic() + 10
+                read_only_pending = ()
+                while time.monotonic() < deadline:
+                    read_only_pending = read_only_broker.pending(kind="command")
+                    if read_only_pending:
+                        break
+                    time.sleep(0.01)
+                if not read_only_pending:
+                    raise RuntimeError(
+                        "packaged read-only default-cwd command did not request approval"
+                    )
+                read_only_request = read_only_pending[0]
+                if read_only_request.details.cwd_source != "session_managed":
+                    raise RuntimeError(
+                        "packaged read-only command did not select the session-managed cwd"
+                    )
+                if not read_only_broker.decide(
+                    read_only_request.request_id,
+                    CommandApprovalDecision(allow=True),
+                    session_id="doctor-default-cwd-read-only",
+                    run_id="doctor-default-cwd-read-only",
+                    expected_kind="command",
+                ):
+                    raise RuntimeError(
+                        "packaged read-only default-cwd command approval was rejected"
+                    )
+                read_only_thread.join(timeout=40)
+                if read_only_thread.is_alive() or not read_only_results:
+                    raise RuntimeError("packaged read-only default-cwd command did not finish")
+                read_only_payload = json.loads(read_only_results[0].text)
+                read_only_marker = (
+                    Path(read_only_request.details.workdir) / "session-cwd-denied.txt"
+                )
+                if read_only_payload.get("exit_code") == 0 or read_only_marker.exists():
+                    raise RuntimeError(
+                        "packaged fresh session-managed read-only sandbox allowed a write: "
+                        + json.dumps(read_only_payload, ensure_ascii=False)
+                    )
+            finally:
+                read_only_context.close_commands()
+
             package = root / "skill-package"
             package.mkdir()
             skill_md = package / "SKILL.md"
@@ -422,8 +661,7 @@ def _smoke_command_runtime() -> dict[str, Any]:
             result_box: list[Any] = []
             invoke_args = {
                 "cmd": "run.cmd",
-                "workdir": str(package),
-                "skill": {"id": record.id, "entry": "run.cmd"},
+                "skill": {"skill_id": record.id, "entry": "run.cmd", "workdir": "."},
                 "reason": "verify the frozen governed Skill command path",
                 COMMAND_SESSION_ID_ARG: "doctor",
                 COMMAND_RUN_ID_ARG: "doctor-skill",
@@ -515,8 +753,11 @@ def _smoke_command_runtime() -> dict[str, Any]:
                 "versioned_payload": executable.name,
                 "sandbox_type": finished.sandbox_type,
                 "buffered_output": "frozen-command-ok",
+                "host_user": True,
                 "streaming_input": True,
                 "read_only_write_denied": True,
+                "session_managed_cwd": True,
+                "session_managed_read_only": True,
                 "skill_snapshot_fingerprint": skill_fingerprint,
                 "skill_tool_path": True,
                 "cancelled": True,
@@ -536,6 +777,7 @@ def _doctor() -> int:
         "runtime_config",
         "voice_bridge",
         "keyring",
+        "jsonschema",
         "onnxruntime",
         "qqbot_agent_sdk",
         "sqlite_vec",
@@ -598,6 +840,17 @@ def _doctor() -> int:
             "content_chars": len(page.text),
             "link_count": len(page.links),
         }
+
+    try:
+        schema_details = _smoke_tool_schema_validation()
+    except Exception as exc:
+        checks["capability:tool_schema_validation"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:tool_schema_validation"] = {"ok": True, **schema_details}
 
     try:
         skill_details = _smoke_skill_catalog()

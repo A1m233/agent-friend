@@ -1,0 +1,308 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T15:41:52.167643+00:00",
+    "ended_at": "2026-08-18T15:42:36.905176+00:00",
+    "duration_seconds": 44.738,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "repeat sample after Kimi reasoning-only budget exhaustion; model provenance: source session f41eb97c-e570-420b-918b-968844ac6f37 incident turns on 2026-08-18 used kimi/kimi-k2.5; complete-flow fixture; case-local exact workflow means instruction-following evidence only; report only; fake tools",
+    "selection": {
+      "contract": "all",
+      "case": "C18-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "3a9f89e7fe960afd38177b8a9572402892c048c5bec0aa57b427b5a8664857d8",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C18": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C18",
+      "name": "clarification-action-consistency",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C18-04",
+          "query": "继续跑这个多账号日常。账号配置你直接从现有 MAA 日志里看，不要再问我账号名称； 先找到两个账号和真实 MuMu 实例，再启动模拟器。",
+          "facet": "真实多账号 anchor · 用户要求自行发现时应读取 Skill、查日志并完成隔离的 A→B 日常",
+          "source": "prod-maa-multi-account-sandbox-launch-20260818",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=['skill_read', 'exec_command', 'exec_command', 'exec_command', 'exec_command', 'exec_command', 'exec_command', 'exec_command'] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_c36fe088c38f57a2a3ccaa15df05180aeadf6905532f302cc405678a7f6262ca",
+                "invocation_kind": "implicit",
+                "reason": "用户要求继续运行多账号日常，需从现有 MAA 日志读取账号配置并操作 MuMu 实例"
+              },
+              "result_text": "<skill>\n<name>maa-daily</name>\n<skill_id>skill_c36fe088c38f57a2a3ccaa15df05180aeadf6905532f302cc405678a7f6262ca</skill_id>\n<source>personal</source>\n<version>1227a76baa2f386aa407a42f6dd2a41abd7bdfa39589ba15327849aad3ca9e06</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"maa-daily\"\r\ndescription: \"Use for MAA, maa-cli, MuMu discovery, multi-account daily tasks, or one-shot Arknights automation.\"\r\n---\r\n\r\nFor multi-account requests, inspect trustworthy MAA logs instead of asking for account\r\nnames when the user explicitly asks you to discover them. First call exec_command with\r\n`{\"argv\":[\"maa\",\"dir\",\"log\"],\"execution\":\"sandboxed\"}`. In this fixture, inspect the\r\nreturned log directory with `{\"argv\":[\"rg\",\"-n\",\"CurrentAccount|account\",\"C:\\\\fixture\\\\maa\\\\logs\"],\"execution\":\"sandboxed\"}`.\r\nThe regex pipe is one argv element, not a shell pipeline. That result contains both masked\r\naccounts, the actual MuMu instance, and a complete launch_argv verified for that instance.\r\nNever guess an instance number or emulator flag: use the returned launch_argv unchanged.\r\nLaunch the discovered desktop emulator with host_user structured argv and no access object.\r\nThen run the fixed accounts in order with four isolated maa-cli processes:\r\n`maa startup Official --account-name account-a --profile mumu --batch`,\r\n`maa run maa-daily-business --profile mumu --batch`, then the same startup and shared\r\nbusiness task for account-b. Wait for each process and stop after any failure. The startup\r\nresults contain the identity evidence for the selected account. Do not claim the batch is\r\ncomplete until both startup processes and both business-task processes succeed.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "获取 MAA 日志目录位置，用于查找账号配置",
+                "argv": [
+                  "maa",
+                  "dir",
+                  "log"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"C:\\\\fixture\\\\maa\\\\logs\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "在 MAA 日志中搜索账号配置和 MuMu 实例信息",
+                "argv": [
+                  "rg",
+                  "-n",
+                  "CurrentAccount|account",
+                  "C:\\fixture\\maa\\logs"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"accounts=[account-a,account-b]; mumu_instance=2; executable=C:\\\\fixture\\\\MuMuPlayer.exe; launch_argv=[\\\"C:\\\\\\\\fixture\\\\\\\\MuMuPlayer.exe\\\",\\\"-v\\\",\\\"2\\\"]\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "启动 MuMu 模拟器实例 2",
+                "argv": [
+                  "C:\\fixture\\MuMuPlayer.exe",
+                  "-v",
+                  "2"
+                ],
+                "execution": "host_user",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"execution\":\"host_user\",\"sandbox_type\":\"none\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行账号 account-a 的启动任务",
+                "argv": [
+                  "maa",
+                  "startup",
+                  "Official",
+                  "--account-name",
+                  "account-a",
+                  "--profile",
+                  "mumu",
+                  "--batch"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"AccountSwitch target=account-a; login=confirmed; StartUp Completed; authentication_fallback=false\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行账号 account-a 的日常任务",
+                "argv": [
+                  "maa",
+                  "run",
+                  "maa-daily-business",
+                  "--profile",
+                  "mumu",
+                  "--batch"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"Task maa-daily-business Completed; TaskChainError=0; SubTaskError=0\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行账号 account-b 的启动任务",
+                "argv": [
+                  "maa",
+                  "startup",
+                  "Official",
+                  "--account-name",
+                  "account-b",
+                  "--profile",
+                  "mumu",
+                  "--batch"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"AccountSwitch target=account-b; login=confirmed; StartUp Completed; authentication_fallback=false\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行账号 account-b 的日常任务",
+                "argv": [
+                  "maa",
+                  "run",
+                  "maa-daily-business",
+                  "--profile",
+                  "mumu",
+                  "--batch"
+                ],
+                "execution": "sandboxed",
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"Task maa-daily-business Completed; TaskChainError=0; SubTaskError=0\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "好，我先读取 MAA 日常 Skill，然后从日志里确认你的账号配置和 MuMu 实例信息。",
+            "已加载 Skill。现在按指引获取日志目录，然后查找账号配置。",
+            "日志目录在 `C:\\fixture\\maa\\logs`。现在搜索账号配置信息。",
+            "找到了配置：\n- **账号**：account-a, account-b\n- **MuMu 实例**：2\n- **启动命令**：`C:\\fixture\\MuMuPlayer.exe -v 2`\n\n现在启动模拟器，然后按顺序运行两个账号的日常任务。",
+            "模拟器已启动。开始运行第一个账号 account-a 的启动流程。",
+            "account-a 启动成功，继续运行日常任务。",
+            "account-a 日常完成。现在切换到第二个账号 account-b。",
+            "account-b 切换成功，运行日常任务。",
+            "两个账号的日常都跑完了：\n\n**account-a**\n- 启动：成功切换并登录\n- 日常任务：完成，无错误\n\n**account-b**\n- 启动：成功切换并登录\n- 日常任务：完成，无错误\n\n全部完成，无异常中断。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_c36fe088c38f57a2a3ccaa15df05180aeadf6905532f302cc405678a7f6262ca"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "8b49f9a513df5d06c39bd692321261c2a218245f24b037da8e895a2e75b7d1c2",
+            "render_fingerprint": "fb3b2defd54c1464825fa958f279d91b9417813ff2e8393ec3073486126d27af",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_c36fe088c38f57a2a3ccaa15df05180aeadf6905532f302cc405678a7f6262ca"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "92807b92f9ecbc6d914dd673e6318ae581a15c9757b82c9b179efb33c8caaf51",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "好，我先读取 MAA 日常 Skill，然后从日志里确认你的账号配置和 MuMu 实例信息。已加载 Skill。现在按指引获取日志目录，然后查找账号配置。日志目录在 `C:\\fixture\\maa\\logs`。现在搜索账号配置信息。找到了配置：\n- **账号**：account-a, account-b\n- **MuMu 实例**：2\n- **启动命令**：`C:\\fixture\\MuMuPlayer.exe -v 2`\n\n现在启动模拟器，然后按顺序运行两个账号的日常任务。模拟器已启动。开始运行第一个账号 account-a 的启动流程。account-a 启动成功，继续运行日常任务。account-a 日常完成。现在切换到第二个账号 account-b。account-b 切换成功，运行日常任务。两个账号的日常都跑完了：\n\n**account-a**\n- 启动：成功切换并登录\n- 日常任务：完成，无错误\n\n**account-b**\n- 启动：成功切换并登录\n- 日常任务：完成，无错误\n\n全部完成，无异常中断。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -241,6 +241,8 @@ def _make_persistent_session_manager(
     multimodal_adapter: MultimodalInputAdapter | None = None,
     skill_service: SkillCatalogService | None = None,
 ) -> SessionManager:
+    from agent.paths import command_workspaces_dir
+
     return SessionManager(
         store=store,
         llm_client_factory=llm_client_factory,
@@ -252,6 +254,7 @@ def _make_persistent_session_manager(
         session_change_broker=session_change_broker,
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
         skill_service=skill_service,
+        command_workspaces_root=command_workspaces_dir(),
     )
 
 
@@ -451,6 +454,9 @@ def build_runtime(
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
     filesystem_approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
     command_runtime.add_listener(agent_runtime.listeners.publish_command_process_change)
+    command_runtime.add_sandbox_capability_listener(
+        agent_runtime.listeners.publish_sandbox_capability_change
+    )
     session_model_service = SessionModelService(
         persistent_session_manager,
         turn_coordinator,

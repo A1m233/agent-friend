@@ -68,12 +68,13 @@ class FixtureCompaction:
 
 @dataclass(frozen=True)
 class FixtureSkill:
-    """A minimal case-local Skill package discovered by the production loader."""
+    """An inline or package-backed Skill discovered by the production loader."""
 
     name: str
-    description: str
-    instructions: str
-    allow_implicit_invocation: bool = True
+    description: str | None = None
+    instructions: str | None = None
+    package_path: Path | None = None
+    allow_implicit_invocation: bool | None = True
     source: str = "personal"
 
 
@@ -108,11 +109,12 @@ class FakeTool:
 
 @dataclass(frozen=True)
 class RequiredSuccessfulToolCall:
-    """A successful tool call matching public args and optional result evidence."""
+    """Successful tool calls matching public args and optional result evidence."""
 
     name: str
     args: dict[str, Any] = field(default_factory=dict)
     result_contains: str | None = None
+    min_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -134,6 +136,8 @@ class CaseJudge:
     forbid_unsupported_source_attribution: bool = False
     required_tool_sequence: list[str] = field(default_factory=list)
     required_successful_tool_calls: list[RequiredSuccessfulToolCall] = field(default_factory=list)
+    required_skill_activations: list[str] = field(default_factory=list)
+    must_not_activate_skills: list[str] = field(default_factory=list)
     require_progress_continuity: bool = False
     forbid_tool_mechanism_terms: bool = False
     forbid_unsupported_collection_characterization: bool = False
@@ -143,6 +147,7 @@ class CaseJudge:
     forbid_unsupported_model_motive_story: bool = False
     forbid_unsupported_future_action_commitment: bool = False
     forbid_unsupported_skill_activation_claim: bool = False
+    forbid_tool_identifier_confusion: bool = False
     forbid_unsupported_skill_catalog_change_claim: bool = False
     must_recognize_catalog_skills: list[str] = field(default_factory=list)
     must_report_catalog_skills_undiscoverable: list[str] = field(default_factory=list)
@@ -201,6 +206,20 @@ class ToolCallTrace:
 
 
 @dataclass(frozen=True)
+class SkillActivationTrace:
+    """宿主在模型调用前完成的一次显式 Skill 激活。"""
+
+    status: str
+    skill_id: str
+    name: str
+    source: str
+    invocation_kind: str
+    reason: str
+    error_code: str = ""
+    error_message: str = ""
+
+
+@dataclass(frozen=True)
 class SkillCatalogEntryObservation:
     """One Skill entry observed in a production-rendered catalog."""
 
@@ -233,6 +252,7 @@ class Trace:
     final_text: str
     stop_reason: str
     assistant_segments: list[str] = field(default_factory=list)
+    skill_activations: list[SkillActivationTrace] = field(default_factory=list)
     error: str | None = None
     skill_catalog_observation: SkillCatalogObservation | None = None
 

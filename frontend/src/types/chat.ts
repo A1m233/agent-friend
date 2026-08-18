@@ -15,10 +15,11 @@ export type MessageStatus = "streaming" | "complete" | "interrupted" | "error";
 export type ToolStatus = "running" | "done" | "error";
 
 export interface ModelResponseProgress {
-  phase: "waiting" | "retrying";
+  phase: "waiting" | "reasoning" | "processing" | "retrying";
   afterTool: boolean;
   attempt: number;
   maxAttempts: number;
+  activityVersion: number;
 }
 
 /** 文本块：assistant 一段连续文本（markdown）。AG-UI 把被工具调用打断的两段文本

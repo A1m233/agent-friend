@@ -98,6 +98,7 @@ describe("applyAguiEvent", () => {
       afterTool: true,
       attempt: 2,
       maxAttempts: 2,
+      activityVersion: 1,
     });
 
     const content = reduce(waiting, [
@@ -105,6 +106,34 @@ describe("applyAguiEvent", () => {
       { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "恢复了" },
     ]);
     expect(content.runStatus).toBeUndefined();
+  });
+
+  it("不可见推理活动会刷新活动版本，但不暴露推理正文", () => {
+    const first = applyAguiEvent(
+      base,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.run_status",
+        value: { phase: "reasoning", afterTool: true, attempt: 1, maxAttempts: 1 },
+      }),
+    );
+    const second = applyAguiEvent(
+      first,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.run_status",
+        value: { phase: "reasoning", afterTool: true, attempt: 1, maxAttempts: 1 },
+      }),
+    );
+
+    expect(second.runStatus).toEqual({
+      phase: "reasoning",
+      afterTool: true,
+      attempt: 1,
+      maxAttempts: 1,
+      activityVersion: 2,
+    });
+    expect(JSON.stringify(second)).not.toContain("reasoning_content");
   });
 
   it("把调用方 Skill 激活状态投影成紧凑工具块", () => {
@@ -210,6 +239,7 @@ describe("applyPushConversationEvent", () => {
       afterTool: true,
       attempt: 2,
       maxAttempts: 3,
+      activityVersion: 1,
     });
     expect(
       applyPushConversationEvent(waiting, { type: "text_delta", text: "恢复" }, "run-1")

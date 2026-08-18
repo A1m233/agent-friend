@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from agent.command_runtime import CommandApprovalDecision, CommandRuntimeError
@@ -9,6 +10,8 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..assembly import BridgeRuntime
+
+logger = logging.getLogger(__name__)
 
 
 class CommandApprovalDecisionBody(BaseModel):
@@ -54,6 +57,40 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                     "message": "当前版本只支持仅本次授权。",
                 },
             )
+        pending_request = next(
+            (
+                item
+                for item in broker.pending(
+                    session_id=body.session_id,
+                    run_id=body.run_id,
+                    kind="command",
+                )
+                if item.request_id == request_id
+            ),
+            None,
+        )
+        if pending_request is None:
+            raise HTTPException(status_code=404, detail="approval request not pending")
+        if (
+            body.allow
+            and pending_request.details.execution == "sandboxed"
+            and runtime.command_runtime is not None
+        ):
+            status = runtime.command_runtime.status()
+            capability = status.get("sandbox_capability")
+            if (
+                status.get("platform") == "windows"
+                and isinstance(capability, dict)
+                and capability.get("state") != "ready"
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "windows_sandbox_setup_required",
+                        "message": "请先在全局系统权限中初始化或修复命令沙箱。",
+                        "sandbox_capability": capability,
+                    },
+                )
         decision = CommandApprovalDecision(allow=body.allow, lifetime=body.lifetime)
         if not broker.decide(
             request_id,
@@ -95,6 +132,11 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         try:
             return runtime.command_runtime.setup_windows_sandbox()
         except CommandRuntimeError as exc:
+            logger.warning(
+                "Windows command sandbox setup failed error_kind=%s message=%s",
+                exc.code,
+                str(exc),
+            )
             raise HTTPException(
                 status_code=409,
                 detail={"error": exc.code, "message": str(exc)},

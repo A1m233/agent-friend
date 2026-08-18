@@ -68,6 +68,7 @@ const USER_SCROLL_IDLE_MS = 160;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 const SLOW_MODEL_RESPONSE_MS = 10_000;
+const STALE_MODEL_ACTIVITY_MS = 12_000;
 const SEARCH_FEEDBACK_MS = 2400;
 const SEARCH_ANCHOR_MOUNT_ATTEMPTS = 8;
 const GOLDEN_SECTION = (Math.sqrt(5) - 1) / 2;
@@ -131,6 +132,7 @@ function ScrollActivityRing({ running }: { running: boolean }) {
 
 function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
   const [slow, setSlow] = useState(false);
+  const [staleActivity, setStaleActivity] = useState(false);
 
   useEffect(() => {
     setSlow(false);
@@ -139,13 +141,28 @@ function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
     return () => window.clearTimeout(timer);
   }, [status.phase, status.afterTool]);
 
+  useEffect(() => {
+    setStaleActivity(false);
+    if (status.phase !== "reasoning" && status.phase !== "processing") return;
+    const timer = window.setTimeout(() => setStaleActivity(true), STALE_MODEL_ACTIVITY_MS);
+    return () => window.clearTimeout(timer);
+  }, [status.phase, status.activityVersion]);
+
   const label = status.phase === "retrying"
     ? `连接不稳定，正在重试 ${Math.max(1, status.attempt - 1)}/${Math.max(1, status.maxAttempts - 1)}`
-    : slow
-      ? "模型响应较慢，仍在等待…"
-      : status.afterTool
-        ? "正在整理工具结果…"
-        : "正在等待模型响应…";
+    : status.phase === "reasoning"
+      ? staleActivity
+        ? "暂时没有收到新的推理活动，模型可能仍在处理，也可能已经停滞…"
+        : "模型仍在推理，连接正常…"
+      : status.phase === "processing"
+        ? staleActivity
+          ? "暂时没有收到新的模型活动，可能仍在处理，也可能已经停滞…"
+          : "模型仍在处理，连接正常…"
+        : slow
+          ? "暂未收到新的模型活动，可能仍在等待服务，也可能已经停滞…"
+          : status.afterTool
+            ? "正在整理工具结果…"
+            : "正在等待模型响应…";
 
   return (
     <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">

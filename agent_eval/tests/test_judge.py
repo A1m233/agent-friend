@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from agent_eval.judge import judge_case
 from agent_eval.loader import load_contracts
 from agent_eval.schema import (
@@ -10,6 +11,7 @@ from agent_eval.schema import (
     Contract,
     FixtureMessage,
     RequiredSuccessfulToolCall,
+    SkillActivationTrace,
     SkillCatalogEntryObservation,
     SkillCatalogObservation,
     ToolCallTrace,
@@ -54,6 +56,7 @@ def _trace(
     assistant_segments: list[str] | None = None,
     error: str | None = None,
     skill_catalog_observation: SkillCatalogObservation | None = None,
+    skill_activations: list[SkillActivationTrace] | None = None,
 ) -> Trace:
     calls = [
         ToolCallTrace(name=name, args={}, result_text="", is_error=False)
@@ -65,6 +68,7 @@ def _trace(
         final_text=final_text,
         stop_reason="end_turn",
         assistant_segments=assistant_segments or [],
+        skill_activations=skill_activations or [],
         error=error,
         skill_catalog_observation=skill_catalog_observation,
     )
@@ -124,7 +128,7 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
             tool_calls=[
                 ToolCallTrace(
                     name="skill_read",
-                    args={"invocation_kind": "named"},
+                    args={},
                     result_text="读取失败，未激活",
                     is_error=True,
                 )
@@ -143,7 +147,7 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
             tool_calls=[
                 ToolCallTrace(
                     name="skill_read",
-                    args={"invocation_kind": "named"},
+                    args={},
                     result_text="读取失败，未激活",
                     is_error=True,
                 )
@@ -162,7 +166,7 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
             tool_calls=[
                 ToolCallTrace(
                     name="skill_read",
-                    args={"invocation_kind": "named"},
+                    args={},
                     result_text="读取失败，未激活",
                     is_error=True,
                 )
@@ -181,7 +185,7 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
             tool_calls=[
                 ToolCallTrace(
                     name="skill_read",
-                    args={"invocation_kind": "named"},
+                    args={},
                     result_text="<skill>...</skill>",
                     is_error=False,
                 )
@@ -191,6 +195,120 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
         ),
     )
     assert success.passed is True
+
+    host_success = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="Skill 已激活。",
+            skill_activations=[
+                SkillActivationTrace(
+                    status="activated",
+                    skill_id="personal/context7-mcp",
+                    name="context7-mcp",
+                    source="personal",
+                    invocation_kind="caller",
+                    reason="host selection",
+                )
+            ],
+        ),
+    )
+    assert host_success.passed is True
+
+
+def test_case_level_checks_host_skill_activation_contract() -> None:
+    activation = SkillActivationTrace(
+        status="activated",
+        skill_id="personal/context7-mcp",
+        name="context7-mcp",
+        source="personal",
+        invocation_kind="caller",
+        reason="host selection",
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    required = _case(CaseJudge(required_skill_activations=["context7-mcp"]))
+    assert judge_case(
+        required,
+        contract,
+        _trace(final_text="done", skill_activations=[activation]),
+    ).passed
+    assert not judge_case(required, contract, _trace(final_text="done")).passed
+
+    forbidden = _case(CaseJudge(must_not_activate_skills=["context7-mcp"]))
+    verdict = judge_case(
+        forbidden,
+        contract,
+        _trace(final_text="done", skill_activations=[activation]),
+    )
+    assert verdict.passed is False
+    assert "forbidden host Skill activations" in verdict.reason
+
+
+@pytest.mark.parametrize(
+    ("args", "reason"),
+    [
+        (
+            {"skill": {"skill_id": "scope_abc", "entry": "scripts/run.py"}},
+            "filesystem_scope_id",
+        ),
+        (
+            {"skill": {"id": "builtin/helper", "entry": "scripts/run.py"}},
+            "legacy skill.id",
+        ),
+        (
+            {
+                "workdir": "C:\\fixture",
+                "skill": {"entry": "scripts/run.py"},
+            },
+            "mixed ordinary workdir",
+        ),
+    ],
+)
+def test_tool_identifier_confusion_is_rejected(args: dict[str, object], reason: str) -> None:
+    case = _case(CaseJudge(forbid_tool_identifier_confusion=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    trace = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args=args,
+                result_text='{"status":"exited"}',
+                is_error=False,
+            )
+        ],
+        final_text="完成。",
+        stop_reason="end_turn",
+    )
+
+    verdict = judge_case(case, contract, trace)
+
+    assert verdict.passed is False
+    assert reason in verdict.reason
+
+
+def test_tool_identifier_contract_allows_host_bound_skill_and_ordinary_command() -> None:
+    case = _case(CaseJudge(forbid_tool_identifier_confusion=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    for args in (
+        {"skill": {"entry": "scripts/run.py"}},
+        {"workdir": "C:\\fixture"},
+    ):
+        trace = Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="exec_command",
+                    args=args,
+                    result_text='{"status":"exited"}',
+                    is_error=False,
+                )
+            ],
+            final_text="完成。",
+            stop_reason="end_turn",
+        )
+        assert judge_case(case, contract, trace).passed is True
 
 
 def test_unified_skill_catalog_discovery_calibrates_observation_anchor_and_controls() -> None:
@@ -426,6 +544,257 @@ def test_required_successful_tool_call_matches_argument_subset() -> None:
     assert judge_case(case, contract, grounded).passed is True
 
 
+def test_required_successful_tool_call_honors_min_count_and_allows_recovery() -> None:
+    case = _case(
+        CaseJudge(
+            required_successful_tool_calls=[
+                RequiredSuccessfulToolCall(
+                    name="exec_command",
+                    args={"argv": ["maa", "run", "daily"]},
+                    min_count=2,
+                )
+            ]
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    one_success = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["maa", "run", "daily"]},
+                result_text='{"status":"exited","exit_code":0}',
+                is_error=False,
+            )
+        ],
+        final_text="只完成一次。",
+        stop_reason="end_turn",
+    )
+    verdict = judge_case(case, contract, one_success)
+    assert verdict.passed is False
+    assert "need at least 2, found 1" in verdict.reason
+
+    recovered = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["maa", "run", "wrong"]},
+                result_text="failed",
+                is_error=True,
+            ),
+            *one_success.tool_calls,
+            *one_success.tool_calls,
+        ],
+        final_text="在一次错误尝试后，两个目标均已完成。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, recovered).passed is True
+
+
+def _maa_discovery_and_launch_calls() -> list[ToolCallTrace]:
+    return [
+        ToolCallTrace(
+            name="skill_read",
+            args={"skill_id": "personal/maa-daily"},
+            result_text="<name>maa-daily</name>",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="filesystem_read_text",
+            args={
+                "filesystem_scope_id": "scope_fixture_skill",
+                "relative_path": "references/multi-account.md",
+            },
+            result_text="Use maa dir log before asking for account names.",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={"argv": ["maa", "dir", "log"], "execution": "sandboxed"},
+            result_text=r"C:\fixture\maa\logs",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [
+                    "rg",
+                    "-n",
+                    "-g",
+                    "*.log",
+                    "account_name|CurrentAccount|AccountSwitch",
+                    r"C:\fixture\maa\logs",
+                ],
+                "execution": "sandboxed",
+            },
+            result_text="accounts=[account-a,account-b]; mumu_instance=2",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+                "execution": "host_user",
+            },
+            result_text='{"status":"exited","exit_code":0}',
+            is_error=False,
+        ),
+    ]
+
+
+def _maa_account_run_calls(account: str) -> list[ToolCallTrace]:
+    return [
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [
+                    "maa",
+                    "startup",
+                    "Official",
+                    "--account-name",
+                    account,
+                    "--profile",
+                    "mumu",
+                    "--batch",
+                ]
+            },
+            result_text=f"AccountSwitch target={account}; login=confirmed; StartUp Completed",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [
+                    "maa",
+                    "run",
+                    "maa-daily-business",
+                    "--profile",
+                    "mumu",
+                    "--batch",
+                ]
+            },
+            result_text="Task maa-daily-business Completed; TaskChainError=0",
+            is_error=False,
+        ),
+    ]
+
+
+def test_maa_multi_account_anchor_rejects_repeat_question_and_false_completion() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C18")
+    case = next(item for item in contract.cases if item.id == "C18-04")
+    repeat_question = Trace(
+        case_id=case.id,
+        tool_calls=[],
+        final_text="请把两个账号名称和 MuMu 实例号告诉我？",
+        stop_reason="end_turn",
+    )
+    false_completion = Trace(
+        case_id=case.id,
+        tool_calls=[
+            *_maa_discovery_and_launch_calls(),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["maa", "run", "account-a"]},
+                result_text="评测 fixture 没有唯一匹配本次调用参数的固定结果。",
+                is_error=True,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["maa", "run", "account-b"]},
+                result_text="评测 fixture 没有唯一匹配本次调用参数的固定结果。",
+                is_error=True,
+            ),
+        ],
+        final_text="两个账号的日常任务已准备就绪，现在应该可以正常运行了。",
+        stop_reason="end_turn",
+    )
+
+    question_verdict = judge_case(case, contract, repeat_question)
+    assert question_verdict.passed is False
+    assert "missing ordered tool sequence" in question_verdict.reason
+    completion_verdict = judge_case(case, contract, false_completion)
+    assert completion_verdict.passed is False
+    assert "missing ordered tool sequence" in completion_verdict.reason
+
+
+def test_maa_multi_account_anchor_accepts_complete_flow_and_recovered_probe() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C18")
+    case = next(item for item in contract.cases if item.id == "C18-04")
+    complete_calls = [
+        *_maa_discovery_and_launch_calls(),
+        *_maa_account_run_calls("account-a"),
+        *_maa_account_run_calls("account-b"),
+    ]
+    complete = Trace(
+        case_id=case.id,
+        tool_calls=complete_calls,
+        final_text="账号 A 与账号 B 均已切换并完成共享日常。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, complete).passed is True
+
+    recovered = Trace(
+        case_id=case.id,
+        tool_calls=[
+            *_maa_discovery_and_launch_calls(),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["maa", "run", "wrong-task"]},
+                result_text="unknown task",
+                is_error=True,
+            ),
+            *_maa_account_run_calls("account-a"),
+            *_maa_account_run_calls("account-b"),
+        ],
+        final_text="一次无效探测后已按正确流程恢复，账号 A 与账号 B 均完成。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, recovered).passed is True
+
+
+def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_argv() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
+    case = next(item for item in contract.cases if item.id == "C24-04")
+    sandboxed_shell = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "cmd": r'"C:\fixture\MuMuPlayer.exe" -v 2',
+                    "execution": "sandboxed",
+                },
+                result_text='{"exit_code":-1073740791}',
+                is_error=True,
+            )
+        ],
+        final_text="请手动启动模拟器。",
+        stop_reason="end_turn",
+    )
+    host_argv = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+                    "execution": "host_user",
+                },
+                result_text='{"status":"exited","exit_code":0}',
+                is_error=False,
+            )
+        ],
+        final_text="模拟器已按当前桌面用户身份启动。",
+        stop_reason="end_turn",
+    )
+
+    bad_verdict = judge_case(case, contract, sandboxed_shell)
+    assert bad_verdict.passed is False
+    assert "missing successful tool call exec_command" in bad_verdict.reason
+    assert judge_case(case, contract, host_argv).passed is True
+
+
 def test_required_successful_tool_call_can_match_result_evidence() -> None:
     case = _case(
         CaseJudge(
@@ -444,7 +813,7 @@ def test_required_successful_tool_call_can_match_result_evidence() -> None:
         tool_calls=[
             ToolCallTrace(
                 name="skill_read",
-                args={"invocation_kind": "referenced"},
+                args={},
                 result_text="<name>writing-helper</name>",
                 is_error=False,
             )
@@ -459,7 +828,7 @@ def test_required_successful_tool_call_can_match_result_evidence() -> None:
         tool_calls=[
             ToolCallTrace(
                 name="skill_read",
-                args={"invocation_kind": "named"},
+                args={},
                 result_text="<name>experiment-review</name>",
                 is_error=False,
             )
@@ -569,7 +938,7 @@ def test_case_level_can_forbid_only_successful_tool_calls() -> None:
         tool_calls=[
             ToolCallTrace(
                 name="skill_read",
-                args={"invocation_kind": "implicit"},
+                args={},
                 result_text="implicit invocation disabled",
                 is_error=True,
             )
@@ -584,7 +953,7 @@ def test_case_level_can_forbid_only_successful_tool_calls() -> None:
         tool_calls=[
             ToolCallTrace(
                 name="skill_read",
-                args={"invocation_kind": "named"},
+                args={},
                 result_text="<name>private-release-check</name>",
                 is_error=False,
             )

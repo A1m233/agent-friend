@@ -1,9 +1,10 @@
 """``LLMStreamEvent``：:meth:`LLMClient.stream` 的流式输出协议。
 
-discriminated union（按 ``type`` 字段分派）。本期承载 3 类事件：
+discriminated union（按 ``type`` 字段分派）。本期承载 4 类事件：
 
 - :class:`LLMTextDelta` — assistant 文本增量
 - :class:`LLMToolCallDelta` — tool_calls 增量（同一 ``tool_call_id`` 可能多次到达，需调用方累积）
+- :class:`LLMActivity` — 不暴露推理正文的上游活动信号
 - :class:`LLMTurnDone` — 本次 LLM 流式响应结束（携带 ``stop_reason``）
 
 **仅 ``llm_providers`` 内部 + ``agent.conversation`` 消费**——不视作引擎对外
@@ -57,6 +58,14 @@ class LLMRetryScheduled:
     max_attempts: int = 1
     delay_seconds: float = 0.0
     type: Literal["retry_scheduled"] = "retry_scheduled"
+
+
+@dataclass(frozen=True)
+class LLMActivity:
+    """上游仍在产出不可见内容的瞬态活动信号，不包含推理正文。"""
+
+    kind: Literal["reasoning", "processing"] = "processing"
+    type: Literal["activity"] = "activity"
 
 
 @dataclass(frozen=True)
@@ -155,5 +164,5 @@ class LLMTurnDone:
     type: Literal["done"] = "done"
 
 
-LLMStreamEvent = LLMTextDelta | LLMToolCallDelta | LLMRetryScheduled | LLMTurnDone
+LLMStreamEvent = LLMTextDelta | LLMToolCallDelta | LLMRetryScheduled | LLMActivity | LLMTurnDone
 """所有 :meth:`LLMClient.stream` 可能 yield 的事件类型并集。"""

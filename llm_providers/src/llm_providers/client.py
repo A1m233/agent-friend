@@ -30,6 +30,7 @@ from typing import Any, cast
 import litellm
 import openai
 
+from .cancellable_stream import StreamIdleTimeoutExceeded
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -42,6 +43,7 @@ from .errors import (
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMStreamTimeoutError,
     LLMTransientProviderError,
 )
 from .kimi_transport import (
@@ -52,6 +54,7 @@ from .kimi_transport import (
 from .litellm_transport import open_cancellable_litellm_stream
 from .spec import ProviderSpec
 from .stream_events import (
+    LLMActivity,
     LLMResponseDiagnostics,
     LLMRetryScheduled,
     LLMStreamEvent,
@@ -81,7 +84,10 @@ MAX_ENGINE_OVERLOAD_RETRY_DELAY_SECONDS = 30.0
 """交互请求单次过载退避的上限，避免异常响应让一轮会话长期挂起。"""
 
 DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
-"""聊天流单次等待上游事件的最大秒数；总耗时还取决于错误对应的重试策略。"""
+"""聊天流等待响应头或下一条上游事件的最大静默时长；超时不自动重放。"""
+
+_HIDDEN_ACTIVITY_EMIT_INTERVAL_SECONDS = 2.0
+"""不可见上游增量的状态事件节流间隔，避免把推理 token 逐个推给 UI。"""
 
 _TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
 """Provider 用非 5xx 状态码表达的、可安全有限重试的明确瞬时错误。"""
@@ -431,6 +437,8 @@ def _map_exception(e: Exception) -> LLMError:
             provider_request_id=provider_metadata.request_id,
         )
 
+    if any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
+        return LLMStreamTimeoutError(str(e))
     if any(isinstance(item, openai.AuthenticationError) for item in chain):
         return LLMAuthError(str(e))
     if any(isinstance(item, openai.RateLimitError) for item in chain):
@@ -717,7 +725,10 @@ class LLMClient:
             )
             try:
                 for event in upstream:
-                    emitted = True
+                    # 活动信号不包含正文或工具调用；它不应改变“尚未产出可用结果”
+                    # 的安全重试语义。
+                    if not isinstance(event, LLMActivity):
+                        emitted = True
                     yield event
                 return
             except (LLMNetworkError, LLMTransientProviderError) as exc:
@@ -757,6 +768,8 @@ class LLMClient:
         )
 
     def _retry_limit(self, error: LLMError) -> int:
+        if isinstance(error, LLMStreamTimeoutError):
+            return 0
         if self._is_engine_overload(error):
             return self._engine_overload_retries
         return self._network_retries
@@ -878,6 +891,7 @@ class LLMClient:
         - ``chunk.choices[0].delta.content`` 非空 → :class:`LLMTextDelta`
         - ``chunk.choices[0].delta.tool_calls[*]`` → :class:`LLMToolCallDelta`
           （每个数组元素 yield 一次；同一 ``index`` 可能多次到达，调用方累积）
+        - 只有隐藏推理或其它不可见增量 → 节流后的 :class:`LLMActivity`
         - 流结束时统一 yield **一次** :class:`LLMTurnDone`，携带标准化
           ``stop_reason`` 与（若 provider 透出的）真实 ``usage``
 
@@ -918,7 +932,13 @@ class LLMClient:
                 cancel_check()
             if uses_kimi_stream_transport(spec):
                 response = (
-                    open_cancellable_kimi_stream(spec, messages, kwargs, cancel_check)
+                    open_cancellable_kimi_stream(
+                        spec,
+                        messages,
+                        kwargs,
+                        cancel_check,
+                        timeout_seconds=self._stream_timeout_seconds,
+                    )
                     if cancel_check is not None
                     else open_kimi_stream(spec, messages, kwargs)
                 )
@@ -928,6 +948,7 @@ class LLMClient:
                     messages,
                     kwargs,
                     cancel_check,
+                    timeout_seconds=self._stream_timeout_seconds,
                 )
             else:
                 response = litellm.completion(
@@ -999,6 +1020,7 @@ class LLMClient:
         delta_fields: set[str] = set()
         first_chunk_ms: int | None = None
         first_reasoning_delta_ms: int | None = None
+        last_hidden_activity_emit_at: float | None = None
         response_id: str | None = None
         response_model: str | None = None
         system_fingerprint: str | None = None
@@ -1044,7 +1066,9 @@ class LLMClient:
                 delta_fields.update(_present_delta_field_names(delta))
 
                 content = getattr(delta, "content", None)
+                visible_chunk = False
                 if content:
+                    visible_chunk = True
                     text_delta_count += 1
                     text_chars += len(content)
                     yield LLMTextDelta(text=content)
@@ -1077,6 +1101,7 @@ class LLMClient:
 
                 tool_calls = getattr(delta, "tool_calls", None) or []
                 for tc in tool_calls:
+                    visible_chunk = True
                     tool_call_delta_count += 1
                     func = getattr(tc, "function", None)
                     yield LLMToolCallDelta(
@@ -1090,6 +1115,16 @@ class LLMClient:
                 if finish_reason:
                     finish_reason_raw = str(finish_reason)
                     stop_reason = _map_finish_reason(finish_reason)
+
+                if not visible_chunk and not finish_reason:
+                    activity_now = time.monotonic()
+                    if (
+                        last_hidden_activity_emit_at is None
+                        or activity_now - last_hidden_activity_emit_at
+                        >= _HIDDEN_ACTIVITY_EMIT_INTERVAL_SECONDS
+                    ):
+                        last_hidden_activity_emit_at = activity_now
+                        yield LLMActivity(kind="reasoning" if reasoning else "processing")
         except BaseException as e:
             if cancel_check is not None:
                 cancel_check()

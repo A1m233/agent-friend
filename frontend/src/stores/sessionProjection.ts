@@ -50,6 +50,13 @@ function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function interruptionMessage(reason: string): string {
+  if (reason === "LLMStreamTimeoutError") {
+    return "模型响应长时间没有进展，这轮回答已超时。你可以重试。";
+  }
+  return "这轮回答因运行错误中断了。你可以重试。";
+}
+
 function attachmentsOf(value: unknown): ChatAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -167,7 +174,14 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content });
       }
       if (p.partial === true) {
-        message.status = "interrupted";
+        const reason = asString(p.interruption_reason);
+        if (reason && reason !== "explicit_request") {
+          message.status = "error";
+          message.errorCode = reason;
+          message.error = interruptionMessage(reason);
+        } else {
+          message.status = "interrupted";
+        }
       }
       continue;
     }
@@ -234,8 +248,9 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       const block = toolBlocks.get(id);
       if (!block) continue;
       const content = asString(p.content);
-      const isError = content.startsWith(TOOL_ERROR_PREFIX);
-      block.result = isError ? content.slice(TOOL_ERROR_PREFIX.length) : content;
+      const hasLegacyErrorPrefix = content.startsWith(TOOL_ERROR_PREFIX);
+      const isError = p.is_error === true || hasLegacyErrorPrefix;
+      block.result = hasLegacyErrorPrefix ? content.slice(TOOL_ERROR_PREFIX.length) : content;
       block.status = isError ? "error" : "done";
       continue;
     }

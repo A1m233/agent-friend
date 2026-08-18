@@ -342,6 +342,19 @@ class FilesystemService:
         except FilesystemError as exc:
             if exc.code != "permission_denied":
                 raise
+            capability = ledger.scope(scope_id)
+            raw_target = (
+                capability.root
+                if capability is not None and capability.root_kind == "file"
+                else capability.root / Path(relative_path or ".")
+                if capability is not None
+                else None
+            )
+            if raw_target is not None and not raw_target.exists():
+                raise FilesystemError(
+                    "permission_denied",
+                    "目标不存在；创建新文件或备份需要 create 权限，edit 不能创建目标。",
+                ) from exc
             preliminary = self.resolve(ledger, scope_id, relative_path, "edit", write=True)
         existed = preliminary.path.exists()
         if existed:

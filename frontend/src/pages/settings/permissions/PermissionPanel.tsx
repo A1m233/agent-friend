@@ -13,6 +13,17 @@ import {
 import { executeMicrophonePermissionAttempt } from "@/services/permissions/microphone";
 import { SettingsGroup } from "../components/SettingsGroup";
 import { SettingsPageLayout } from "../components/SettingsPageLayout";
+import { useCommandRuntimeStore } from "@/stores";
+import { systemPreparationPlan } from "./systemPreparation";
+
+const SANDBOX_STATUS_LABELS = {
+  unsupported: "当前平台暂不支持",
+  checking: "正在检测",
+  setup_required: "尚未初始化",
+  setting_up: "正在初始化",
+  ready: "可用",
+  repair_required: "需要修复",
+} as const;
 
 const STATUS_LABELS: Record<PermissionItemSnapshot["presentationState"], string> = {
   not_requested: "尚未处理",
@@ -32,52 +43,78 @@ export function PermissionPanel() {
   const snapshot = usePermissionSnapshot();
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const runtimeStatus = useCommandRuntimeStore((state) => state.runtimeStatus);
+  const refreshCommandRuntime = useCommandRuntimeStore((state) => state.refresh);
+  const settingUpSandbox = useCommandRuntimeStore((state) => state.settingUpSandbox);
+  const setupError = useCommandRuntimeStore((state) => state.setupError);
+  const setupWindowsSandbox = useCommandRuntimeStore((state) => state.setupWindowsSandbox);
+  const sandbox = runtimeStatus?.sandbox_capability;
   const microphone = snapshot.items.find((item) => item.id === "microphone");
   const activeFlow = snapshot.activeFlow;
-  const canStart = Boolean(activeFlow && activeFlow.phase === "awaiting_user");
+  const preparation = systemPreparationPlan(microphone, activeFlow, sandbox);
+  const canStart = !busy
+    && !settingUpSandbox
+    && runtimeStatus !== null
+    && (!activeFlow || activeFlow.phase === "awaiting_user");
+  const canManuallyPrepareMicrophone = Boolean(
+    !activeFlow && microphone && microphone.systemState !== "granted",
+  );
   const status = useMemo(
     () => (microphone ? STATUS_LABELS[microphone.presentationState] : "正在读取"),
     [microphone],
   );
 
-  const beginFlow = async () => {
-    if (!activeFlow) return;
-    setBusy(true);
-    setFeedback(null);
-    try {
-      for (const permissionId of activeFlow.permissionIds) {
-        if (permissionId !== "microphone") continue;
-        const instruction = await beginPermissionAttempt(activeFlow.flowId, permissionId);
-        if (instruction === "web_media") {
-          const result = await executeMicrophonePermissionAttempt();
-          if (result.kind === "timeout") setFeedback("系统授权等待超时，请重新尝试。");
-          if (result.kind === "failed") setFeedback("系统授权未能完成，请检查设备后重试。");
-        } else if (instruction === "open_settings") {
-          await openPermissionSystemSettings(permissionId);
-        }
-        await completePermissionAttempt(activeFlow.flowId, permissionId);
+  const executePermissionFlow = async (
+    flow: NonNullable<typeof snapshot.activeFlow>,
+  ) => {
+    for (const permissionId of flow.permissionIds) {
+      if (permissionId !== "microphone") continue;
+      const instruction = await beginPermissionAttempt(flow.flowId, permissionId);
+      if (instruction === "web_media") {
+        const result = await executeMicrophonePermissionAttempt();
+        if (result.kind === "timeout") setFeedback("系统授权等待超时，请重新尝试。");
+        if (result.kind === "failed") setFeedback("系统授权未能完成，请检查设备后重试。");
+      } else if (instruction === "open_settings") {
+        await openPermissionSystemSettings(permissionId);
       }
-    } catch (error) {
-      const message = String(error);
-      if (!message.includes("permission_already_granted")) setFeedback(message);
-      await refreshPermissions();
-    } finally {
-      setBusy(false);
+      await completePermissionAttempt(flow.flowId, permissionId);
     }
   };
 
-  const createManualFlow = async () => {
+  const beginPreparation = async (forceMicrophone = false) => {
+    if (!preparation.required && !forceMicrophone) return;
     setBusy(true);
     setFeedback(null);
     try {
-      await requestPermissionFlow({
-        requestId: requestId(),
-        reason: "manual",
-        permissionIds: ["microphone"],
-        sourceWindow: "settings",
-      });
+      let flow = activeFlow;
+      const actions = forceMicrophone && !preparation.microphone
+        ? ["microphone" as const, ...preparation.actions]
+        : preparation.actions;
+      for (const action of actions) {
+        if (action === "microphone") {
+          if (!flow) {
+            const ticket = await requestPermissionFlow({
+              requestId: requestId(),
+              reason: "manual",
+              permissionIds: ["microphone"],
+              sourceWindow: "settings",
+            });
+            if (ticket.flowId) {
+              flow = (await refreshPermissions()).activeFlow;
+            }
+          }
+          if (flow) {
+            await executePermissionFlow(flow);
+          }
+        } else {
+          await setupWindowsSandbox();
+        }
+      }
+      await refreshAll();
     } catch (error) {
-      setFeedback(String(error));
+      const message = String(error);
+      if (!message.includes("permission_already_granted")) setFeedback(message);
+      await refreshAll();
     } finally {
       setBusy(false);
     }
@@ -96,6 +133,10 @@ export function PermissionPanel() {
     }
   };
 
+  const refreshAll = async () => {
+    await Promise.all([refreshPermissions(), refreshCommandRuntime()]);
+  };
+
   return (
     <SettingsPageLayout
       title="系统权限"
@@ -104,13 +145,67 @@ export function PermissionPanel() {
           variant="outline"
           size="sm"
           loading={snapshot.refreshing}
-          onClick={() => void refreshPermissions()}
+          onClick={() => void refreshAll()}
         >
           重新检测
         </Button>
       }
     >
-      <SettingsGroup title={activeFlow ? "需要处理的权限" : "权限状态"}>
+      {preparation.required ? (
+        <SettingsGroup
+          title="需要处理的系统能力"
+          description="开始后会按顺序处理当前尚未完成的系统授权与能力准备，已经满足的项目会自动跳过。"
+        >
+          <div className="space-y-1 text-sm text-muted">
+            {preparation.microphone ? <p>麦克风权限</p> : null}
+            {preparation.windowsSandbox ? <p>Windows 命令沙箱</p> : null}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {activeFlow ? (
+              <Button
+                variant="ghost"
+                disabled={busy || activeFlow.phase !== "awaiting_user"}
+                onClick={() => void deferFlow()}
+              >
+                暂不处理麦克风
+              </Button>
+            ) : null}
+            <Button
+              loading={busy || settingUpSandbox}
+              disabled={!canStart}
+              onClick={() => void beginPreparation()}
+            >
+              开始准备
+            </Button>
+          </div>
+        </SettingsGroup>
+      ) : null}
+
+      <SettingsGroup
+        title="命令沙箱"
+        description="为本地命令提供受治理的 Windows 隔离环境。这里仅准备系统能力，不会批准任何具体命令、文件或网络访问。"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="font-medium text-fg">Windows 命令沙箱</div>
+            <p className="text-sm text-muted">
+              初始化或修复时可能显示 Windows 管理员确认。成功一次后由所有会话共享。
+            </p>
+          </div>
+          <Badge variant={sandbox?.state === "ready" ? "default" : "secondary"}>
+            {sandbox ? SANDBOX_STATUS_LABELS[sandbox.state] : "正在读取"}
+          </Badge>
+        </div>
+
+        {sandbox?.last_error?.message || setupError ? (
+          <p className="text-sm text-danger">
+            {sandbox?.last_error?.message || setupError}
+          </p>
+        ) : null}
+
+      </SettingsGroup>
+
+      <SettingsGroup title="权限状态">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-1">
             <div className="font-medium text-fg">麦克风</div>
@@ -125,35 +220,18 @@ export function PermissionPanel() {
 
         {feedback ? <p className="text-sm text-danger">{feedback}</p> : null}
 
-        <div className="flex flex-wrap justify-end gap-2">
-          {activeFlow ? (
-            <>
-              <Button
-                variant="ghost"
-                disabled={busy || !canStart}
-                onClick={() => void deferFlow()}
-              >
-                暂不处理
-              </Button>
-              <Button loading={busy} disabled={!canStart} onClick={() => void beginFlow()}>
-                开始授权
-              </Button>
-            </>
-          ) : microphone?.systemState === "granted" ? null : (
-            <Button loading={busy} onClick={() => void createManualFlow()}>
+        {canManuallyPrepareMicrophone && !preparation.microphone ? (
+          <div className="flex justify-end">
+            <Button
+              loading={busy}
+              disabled={!canStart}
+              onClick={() => void beginPreparation(true)}
+            >
               处理麦克风权限
             </Button>
-          )}
+          </div>
+        ) : null}
 
-          {!activeFlow && microphone?.recoveryAction === "open_system_settings" ? (
-            <Button
-              variant="outline"
-              onClick={() => void openPermissionSystemSettings("microphone")}
-            >
-              打开系统设置
-            </Button>
-          ) : null}
-        </div>
       </SettingsGroup>
     </SettingsPageLayout>
   );

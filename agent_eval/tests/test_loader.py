@@ -30,12 +30,13 @@ def test_loads_builtin_cases() -> None:
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
         ("C17", "future-action-commitment-grounding", 3),
-        ("C18", "clarification-action-consistency", 3),
+        ("C18", "clarification-action-consistency", 4),
         ("C19", "source-authority-calibration", 5),
         ("C20", "skill-semantic-activation", 8),
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
+        ("C24", "tool-identifier-contract", 4),
     ]
 
 
@@ -189,16 +190,12 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert skill_anchor.fixture_skills[0].allow_implicit_invocation is True
     assert skill_anchor.fixture_skills[0].source == "personal"
     assert skill_anchor.judge is not None
-    assert skill_anchor.judge.required_successful_tool_calls[0].name == "skill_read"
-    assert skill_anchor.judge.required_successful_tool_calls[0].args == {}
-    assert (
-        skill_anchor.judge.required_successful_tool_calls[0].result_contains
-        == "<name>context7-mcp</name>"
-    )
+    assert skill_anchor.judge.required_skill_activations == ["context7-mcp"]
     implicit_disabled = next(item for item in c20.cases if item.id == "C20-05")
     assert implicit_disabled.fixture_skills[0].allow_implicit_invocation is False
     assert implicit_disabled.judge is not None
     assert implicit_disabled.judge.must_not_succeed_any == ["skill_read"]
+    assert implicit_disabled.judge.must_not_activate_skills == ["private-release-check"]
     failure_control = next(item for item in c20.cases if item.id == "C20-08")
     assert failure_control.fake_tools[0].name == "skill_read"
     assert failure_control.fake_tools[0].is_error is True
@@ -255,13 +252,57 @@ def test_loads_fixture_session_and_case_judge() -> None:
     immersive_control = next(item for item in c23.cases if item.id == "C23-04")
     assert immersive_control.self_presentation_mode == "immersive"
 
+    c24 = next(contract for contract in contracts if contract.id == "C24")
+    identifier_anchor = next(item for item in c24.cases if item.id == "C24-01")
+    assert "A1m233/maa-daily-skill" in identifier_anchor.query
+    assert "maa-daily" in identifier_anchor.query
+    assert identifier_anchor.judge is not None
+    assert identifier_anchor.judge.forbid_tool_identifier_confusion is True
+    assert identifier_anchor.judge.required_skill_activations == ["repo-skill-installer"]
+    assert [tool.name for tool in identifier_anchor.fake_tools] == ["exec_command"]
+    host_bound_control = next(item for item in c24.cases if item.id == "C24-02")
+    assert r"C:\fixture\repo" in host_bound_control.query
+    host_launch = next(item for item in c24.cases if item.id == "C24-04")
+    assert host_launch.judge is not None
+    assert host_launch.judge.required_successful_tool_calls[0].args == {
+        "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+        "execution": "host_user",
+    }
+
+    c18 = next(contract for contract in contracts if contract.id == "C18")
+    maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
+    assert maa_anchor.fixture_skills[0].name == "maa-daily"
+    assert (
+        maa_anchor.fixture_skills[0].package_path
+        == (CASES_DIR.parent / "fixtures" / "skills" / "maa-daily").resolve()
+    )
+    assert maa_anchor.fixture_skills[0].instructions is None
+    assert maa_anchor.judge is not None
+    assert maa_anchor.judge.forbid_question is True
+    assert maa_anchor.judge.required_tool_sequence == [
+        "skill_read",
+        "filesystem_read_text",
+        "exec_command",
+        "exec_command",
+        "exec_command",
+        "exec_command",
+        "exec_command",
+        "exec_command",
+        "exec_command",
+    ]
+    business_requirement = maa_anchor.judge.required_successful_tool_calls[-1]
+    assert business_requirement.args == {
+        "argv": ["maa", "run", "maa-daily-business", "--profile", "mumu", "--batch"]
+    }
+    assert business_requirement.min_count == 2
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 23
-    assert meta.total_cases == 209
+    assert meta.total_contracts == 24
+    assert meta.total_cases == 214
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -280,14 +321,50 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C15": 2,
         "C16": 2,
         "C17": 3,
-        "C18": 3,
+        "C18": 4,
         "C19": 5,
         "C20": 8,
         "C21": 4,
         "C22": 3,
         "C23": 8,
+        "C24": 4,
     }
     assert len(meta.digest) == 64
+
+
+def test_case_set_digest_includes_package_fixture_contents(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "cases"
+    package = tmp_path / "fixtures" / "skills" / "package-helper"
+    cases_dir.mkdir()
+    package.joinpath("references").mkdir(parents=True)
+    package.joinpath("SKILL.md").write_text(
+        "---\nname: package-helper\ndescription: helper\n---\n",
+        encoding="utf-8",
+    )
+    reference = package / "references" / "guide.md"
+    reference.write_text("first\n", encoding="utf-8")
+    cases_dir.joinpath("c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: package-fixture
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fixture_skills:
+      - name: package-helper
+        package_path: fixtures/skills/package-helper
+""",
+        encoding="utf-8",
+    )
+
+    contracts = load_contracts(cases_dir)
+    before = build_case_set_meta(cases_dir, contracts).digest
+    reference.write_text("second\n", encoding="utf-8")
+    after = build_case_set_meta(cases_dir, contracts).digest
+
+    assert before != after
 
 
 def test_loads_fixed_runtime_clock_for_relative_calendar_case() -> None:
@@ -552,6 +629,32 @@ cases:
         load_contracts(tmp_path)
 
 
+@pytest.mark.parametrize("min_count_yaml", ["0", "-1", "true", "'2'"])
+def test_required_successful_tool_call_min_count_must_be_positive_integer(
+    tmp_path: Path,
+    min_count_yaml: str,
+) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        f"""
+contract:
+  id: C1
+  name: invalid-tool-call-count
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    judge:
+      required_successful_tool_calls:
+        - name: exec_command
+          min_count: {min_count_yaml}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="min_count 必须是正整数"):
+        load_contracts(tmp_path)
+
+
 def test_fixture_skill_name_and_policy_are_validated(tmp_path: Path) -> None:
     (tmp_path / "c1.yaml").write_text(
         """
@@ -596,6 +699,35 @@ cases:
 
     with pytest.raises(ValueError, match="source 必须是"):
         load_contracts(tmp_path)
+
+
+def test_fixture_skill_package_path_is_confined_and_exclusive(tmp_path: Path) -> None:
+    package = tmp_path / "fixtures" / "skills" / "package-helper"
+    package.mkdir(parents=True)
+    package.joinpath("SKILL.md").write_text(
+        "---\nname: package-helper\ndescription: helper\n---\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cases").mkdir()
+    (tmp_path / "cases" / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: package-fixture
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    fixture_skills:
+      - name: package-helper
+        package_path: fixtures/skills/package-helper
+        description: duplicate
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="不能与 description"):
+        load_contracts(tmp_path / "cases")
 
 
 def test_expected_skill_catalog_entry_requires_known_source(tmp_path: Path) -> None:

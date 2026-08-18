@@ -9,6 +9,7 @@ from agent_eval.schema import (
     Case,
     CaseSetMeta,
     Contract,
+    SkillActivationTrace,
     SkillCatalogEntryObservation,
     SkillCatalogObservation,
     ToolCallTrace,
@@ -45,6 +46,16 @@ def _result() -> CaseRunResult:
         final_text="我没找到我们之前聊过诺兰。",
         stop_reason="end_turn",
         assistant_segments=["我翻一下之前聊过的。", "我没找到我们之前聊过诺兰。"],
+        skill_activations=[
+            SkillActivationTrace(
+                status="activated",
+                skill_id="personal/example",
+                name="example",
+                source="personal",
+                invocation_kind="caller",
+                reason="host selection",
+            )
+        ],
     )
     verdict = Verdict(case_id=case.id, contract_id="C4", passed=True, reason="grounded")
     return CaseRunResult(case=case, trace=trace, verdict=verdict)
@@ -114,7 +125,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert path.name.startswith("2026-06-25T08-00-00-")
     assert path.name.endswith("-C4-limit1.json")
 
@@ -138,6 +149,7 @@ def test_write_report_schema(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert case["passed"] is True
     assert case["self_presentation_mode"] == "immersive"
     assert case["tool_calls"][0]["args"] == {"search_text": "诺兰"}
+    assert case["skill_activations"][0]["name"] == "example"
     assert case["assistant_segments"] == [
         "我翻一下之前聊过的。",
         "我没找到我们之前聊过诺兰。",

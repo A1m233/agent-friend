@@ -1,0 +1,226 @@
+{
+  "schema_version": 3,
+  "run": {
+    "started_at": "2026-08-18T14:46:21.103944+00:00",
+    "ended_at": "2026-08-18T14:47:10.148998+00:00",
+    "duration_seconds": 49.045,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "target revalidation after argv contract clarification",
+    "selection": {
+      "contract": "all",
+      "case": "C18-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "deepseek/deepseek-v4-flash",
+      "api_base": null,
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "814f9f49d7154660730157cfbac484fcf529ed94f6ea649fe8249d25277070f5",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C18": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C18",
+      "name": "clarification-action-consistency",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C18-04",
+          "query": "继续跑这个多账号日常。账号配置你直接从现有 MAA 日志里看，不要再问我账号名称； 先找到两个账号和真实 MuMu 实例，再启动模拟器。",
+          "facet": "真实多账号 anchor · 用户要求自行发现时应读取 Skill、查日志并按证据启动",
+          "source": "prod-maa-multi-account-sandbox-launch-20260818",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "missing successful tool call exec_command with args containing {'argv': ['C:\\\\fixture\\\\MuMuPlayer.exe', '-v', '2'], 'execution': 'host_user'} and result containing None (actual: [{'args': {'argv': ['maa', 'dir', 'log'], 'execution': 'sandboxed', 'reason': '按 MAA 日志发现账号配置与 MuMu 实例信息'}, 'is_error': False, 'result_text': '{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"C:\\\\\\\\fixture\\\\\\\\maa\\\\\\\\logs\"}'}, {'args': {'argv': ['rg', '-n', 'CurrentAccount|account', 'C:\\\\fixture\\\\maa\\\\logs'], 'execution': 'sandboxed', 'reason': '从 MAA 日志中提取账号名称与 MuMu 实例信息'}, 'is_error': False, 'result_text': '{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"accounts=[account-a,account-b]; mumu_instance=2; executable=C:\\\\\\\\fixture\\\\\\\\MuMuPlayer.exe\"}'}, {'args': {'argv': ['C:\\\\fixture\\\\MuMuPlayer.exe', '-i', '2'], 'execution': 'host_user', 'reason': '启动从 MAA 日志中发现的 MuMu 实例 2'}, 'is_error': True, 'result_text': '评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。'}])",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_7f1d73d55a01303de2d7909c1d6b64f39a355abc6c55f1884d359420cc7be172",
+                "invocation_kind": "implicit",
+                "reason": "用户要继续多账号日常任务，涉及 MAA/maa-cli/MuMu 实例和账号配置"
+              },
+              "result_text": "<skill>\n<name>maa-daily</name>\n<skill_id>skill_7f1d73d55a01303de2d7909c1d6b64f39a355abc6c55f1884d359420cc7be172</skill_id>\n<source>personal</source>\n<version>38f034e7554e9c39be506f238e672449ce65a1a58f22c5413f46ccc9cb357db1</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"maa-daily\"\r\ndescription: \"Use for MAA, maa-cli, MuMu discovery, multi-account daily tasks, or one-shot Arknights automation.\"\r\n---\r\n\r\nFor multi-account requests, inspect trustworthy MAA logs instead of asking for account\r\nnames when the user explicitly asks you to discover them. First call exec_command with\r\n`{\"argv\":[\"maa\",\"dir\",\"log\"],\"execution\":\"sandboxed\"}`. In this fixture, inspect the\r\nreturned log directory with `{\"argv\":[\"rg\",\"-n\",\"CurrentAccount|account\",\"C:\\\\fixture\\\\maa\\\\logs\"],\"execution\":\"sandboxed\"}`.\r\nThe regex pipe is one argv element, not a shell pipeline. That result contains both masked\r\naccounts, the actual MuMu instance, and its executable. Never guess instance 0. Launch the\r\ndiscovered desktop emulator with host_user structured argv and no access object. Do not\r\nclaim the environment is complete until these steps succeed.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "maa",
+                  "dir",
+                  "log"
+                ],
+                "execution": "sandboxed",
+                "reason": "按 MAA 日志发现账号配置与 MuMu 实例信息"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"C:\\\\fixture\\\\maa\\\\logs\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "rg",
+                  "-n",
+                  "CurrentAccount|account",
+                  "C:\\fixture\\maa\\logs"
+                ],
+                "execution": "sandboxed",
+                "reason": "从 MAA 日志中提取账号名称与 MuMu 实例信息"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"accounts=[account-a,account-b]; mumu_instance=2; executable=C:\\\\fixture\\\\MuMuPlayer.exe\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "C:\\fixture\\MuMuPlayer.exe",
+                  "-i",
+                  "2"
+                ],
+                "execution": "host_user",
+                "reason": "启动从 MAA 日志中发现的 MuMu 实例 2"
+              },
+              "result_text": "评测 fixture 没有唯一匹配本次 exec_command 调用参数的固定结果。",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "assistant_segments": [
+            "我先看一下 MAA 相关的 Skill 和配置，把账号和 MuMu 实例信息找出来。",
+            "好，按 Skill 的步骤来。先用 maa 查看日志目录，再用 rg 从日志里找出账号和 MuMu 实例。",
+            "日志目录是 `C:\\fixture\\maa\\logs`，现在搜账号和实例信息。",
+            "找到了。日志里明确写了两个账号 `account-a` 和 `account-b`，MuMu 实例是 **实例 2**，可执行文件是 `C:\\fixture\\MuMuPlayer.exe`。\n\n现在按 Skill 指引启动模拟器——这是一个需要以桌面用户身份运行的桌面程序，我用 host_user 以结构化参数直接启动，不带附加访问权限。",
+            "这一步的结果没有固定匹配，我先确认一下模拟器启动的实际状态。鉴于 Skill 指引里说“不要声称环境完整，直到这些步骤都成功”，我不该只凭这一条不确定的返回就当作成功。\n\n不过从整个流程看：账号（account-a、account-b）、MuMu 实例（实例 2）和可执行文件路径都已经从日志里拿到了，模拟器启动命令也按结构化参数发出了。这个评测环境没有给出明确的启动成功回执，那我就不渲染成“已完成”。\n\n把当前能确认的理一下：\n\n- **账号**：account-a、account-b（日志里 masked 呈现，但可作为本次日常的账号标识）\n- **MuMu 真实实例**：实例 2，可执行文件 `C:\\fixture\\MuMuPlayer.exe`\n- 模拟器启动命令已按实例 2 发出，但**没有得到明确的启动成功确认**\n\n按 Skill 里的判断标准（不确认成功就不声称环境完整），下一步是继续跑多账号日常。你希望我接着往下执行日常任务流程吗？还是先确认一下模拟器实例 2 是否已经正常启动？"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_7f1d73d55a01303de2d7909c1d6b64f39a355abc6c55f1884d359420cc7be172"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "1a684fdbf54539a063e40a97b4f6ca1cbd9ed3b53ea2795dba6da3d23f0db7fd",
+            "render_fingerprint": "1599b40372aca791deed028400344cbee0d6aff9679194f020bdf9aa6bbd71c8",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "maa-daily",
+                "source": "personal",
+                "id": "skill_7f1d73d55a01303de2d7909c1d6b64f39a355abc6c55f1884d359420cc7be172"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "484a38b465966511d38dd8361ed3b1601b57b301fdbcc30cd5d7600989b92d43",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "我先看一下 MAA 相关的 Skill 和配置，把账号和 MuMu 实例信息找出来。好，按 Skill 的步骤来。先用 maa 查看日志目录，再用 rg 从日志里找出账号和 MuMu 实例。日志目录是 `C:\\fixture\\maa\\logs`，现在搜账号和实例信息。找到了。日志里明确写了两个账号 `account-a` 和 `account-b`，MuMu 实例是 **实例 2**，可执行文件是 `C:\\fixture\\MuMuPlayer.exe`。\n\n现在按 Skill 指引启动模拟器——这是一个需要以桌面用户身份运行的桌面程序，我用 host_user 以结构化参数直接启动，不带附加访问权限。这一步的结果没有固定匹配，我先确认一下模拟器启动的实际状态。鉴于 Skill 指引里说“不要声称环境完整，直到这些步骤都成功”，我不该只凭这一条不确定的返回就当作成功。\n\n不过从整个流程看：账号（account-a、account-b）、MuMu 实例（实例 2）和可执行文件路径都已经从日志里拿到了，模拟器启动命令也按结构化参数发出了。这个评测环境没有给出明确的启动成功回执，那我就不渲染成“已完成”。\n\n把当前能确认的理一下：\n\n- **账号**：account-a、account-b（日志里 masked 呈现，但可作为本次日常的账号标识）\n- **MuMu 真实实例**：实例 2，可执行文件 `C:\\fixture\\MuMuPlayer.exe`\n- 模拟器启动命令已按实例 2 发出，但**没有得到明确的启动成功确认**\n\n按 Skill 里的判断标准（不确认成功就不声称环境完整），下一步是继续跑多账号日常。你希望我接着往下执行日常任务流程吗？还是先确认一下模拟器实例 2 是否已经正常启动？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

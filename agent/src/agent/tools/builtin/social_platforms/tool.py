@@ -79,7 +79,11 @@ class SocialSearchTool:
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
-            "platform": {"type": "string", "enum": ["xiaohongshu", "bilibili"]},
+            "platform": {
+                "type": "string",
+                "enum": ["xiaohongshu", "bilibili"],
+                "description": "用户明确要求搜索的平台。",
+            },
             "query": {"type": "string", "description": "平台内搜索关键词。"},
             "content_types": {
                 "type": "array",
@@ -88,14 +92,24 @@ class SocialSearchTool:
                     "enum": ["note", "video", "article", "creator"],
                 },
                 "maxItems": 3,
+                "description": "要搜索的内容类型；必须属于所选 platform 支持的类型。",
             },
             "sort": {
                 "type": "string",
                 "enum": ["relevance", "latest", "popular"],
                 "default": "relevance",
+                "description": "用户未指定排序时使用 relevance。",
             },
-            "published_after": {"type": "string", "format": "date"},
-            "published_before": {"type": "string", "format": "date"},
+            "published_after": {
+                "type": "string",
+                "format": "date",
+                "description": "用户明确给出的发布日下界，YYYY-MM-DD。",
+            },
+            "published_before": {
+                "type": "string",
+                "format": "date",
+                "description": "用户明确给出的发布日上界，YYYY-MM-DD。",
+            },
         },
         "required": ["platform", "query"],
         "additionalProperties": False,
@@ -175,6 +189,7 @@ class SocialReadTool:
             "continuation_ref": {
                 "type": "string",
                 "pattern": "^continuation_ref_[a-f0-9]{32}$",
+                "description": "上一次 creator works 结果返回的分页引用，只能原样复用。",
             },
         },
         "oneOf": [
@@ -267,7 +282,11 @@ class RequestSocialAuthTool:
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
-            "platform": {"type": "string", "enum": ["xiaohongshu", "bilibili"]},
+            "platform": {
+                "type": "string",
+                "enum": ["xiaohongshu", "bilibili"],
+                "description": "最近一次受限结果所属、需要在电脑端登录的平台。",
+            },
             "missing_capabilities": {
                 "type": "array",
                 "items": {

@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import builtins
 import dataclasses
+import logging
+import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..command_runtime.workspace import session_workspace_path
 from ..errors import AgentError
 from .changes import SessionChangeBroker
 from .metadata import SessionMetadataStore
@@ -47,6 +51,7 @@ TitleGenerator = Callable[[Session], str]
 LLMClientFactory = Callable[[str], "LLMClient"]
 PromptBuilderFactory = Callable[[str], "PromptBuilder"]
 ContextManagerFactory = Callable[[], "ContextManager"]
+logger = logging.getLogger(__name__)
 
 
 def _default_title(now: datetime | None = None) -> str:
@@ -93,6 +98,7 @@ class SessionManager:
         session_change_broker: SessionChangeBroker | None = None,
         message_renderer: MessageRenderer | None = None,
         skill_service: SkillCatalogService | None = None,
+        command_workspaces_root: Path | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -105,6 +111,9 @@ class SessionManager:
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
         self._skill_service = skill_service
+        self._command_workspaces_root = (
+            command_workspaces_root.resolve() if command_workspaces_root is not None else None
+        )
 
     # ----- 会话 CRUD -----
 
@@ -251,6 +260,25 @@ class SessionManager:
         self._store.delete(session_id)
         if self._metadata_store is not None:
             self._metadata_store.delete(session_id)
+        self._delete_command_workspace(session_id)
+
+    def _delete_command_workspace(self, session_id: str) -> None:
+        root = self._command_workspaces_root
+        if root is None:
+            return
+        try:
+            target = session_workspace_path(root, session_id)
+        except ValueError:
+            logger.warning("skip empty command workspace session id")
+            return
+        try:
+            if target.exists():
+                shutil.rmtree(target)
+        except OSError:
+            logger.exception(
+                "failed to remove deleted session command workspace",
+                extra={"session_id": session_id, "path": str(target)},
+            )
 
     def delete_archived(self, *, query: str | None = None) -> builtins.list[str]:
         """删除当前已归档会话，返回成功删除的 session ids。"""

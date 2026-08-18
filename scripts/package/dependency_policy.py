@@ -27,6 +27,7 @@ REVIEWED_DIRECT_DEPENDENCIES = {
     "cryptography": "pyinstaller-hook",
     "fastapi": "module-graph",
     "httpx": "module-graph",
+    "jsonschema": "module-graph-and-capability-smoke",
     "jieba": "module-graph",
     "keyring": "spec-backend-collection",
     "litellm": "spec-targeted-data",

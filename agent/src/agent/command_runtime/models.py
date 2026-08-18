@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import locale
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -11,9 +12,30 @@ from uuid import uuid4
 from ..approvals.models import ApprovalLifetime, ApprovalStatus
 
 CommandMode = Literal["buffered", "streaming"]
-FilesystemAccess = Literal["read_only", "workspace_write"]
-NetworkAccess = Literal["disabled", "enabled"]
+CommandExecution = Literal["sandboxed", "host_user"]
+FilesystemAccess = Literal["read_only", "read_write", "unrestricted"]
+CwdSource = Literal["session_managed", "explicit", "skill_snapshot"]
+NetworkAccess = Literal["disabled", "enabled", "unrestricted"]
 CommandProcessStatus = Literal["running", "exited", "cancelled", "timed_out", "runtime_lost"]
+
+
+def decode_process_output(value: bytes, *, fallback_encoding: str | None = None) -> str:
+    """Decode raw exec-server bytes without assuming every Windows command emits UTF-8."""
+
+    if value.startswith((b"\xff\xfe", b"\xfe\xff")) or value.count(b"\x00") > len(value) // 4:
+        return value.decode("utf-16", errors="replace")
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        # The desktop supervisor deliberately starts Python in UTF-8 mode so
+        # bridge I/O is stable.  getpreferredencoding() follows that mode and
+        # therefore cannot tell us which legacy Windows code page cmd.exe used
+        # for captured output.  getencoding() reports the actual locale
+        # encoding independently of Python UTF-8 mode.
+        encoding = fallback_encoding or locale.getencoding()
+        if encoding.lower().replace("-", "") in {"utf8", "utf_8"}:
+            return value.decode("utf-8", errors="replace")
+        return value.decode(encoding, errors="replace")
 
 
 @dataclass(frozen=True)
@@ -29,12 +51,14 @@ class CommandAdditionalRoot:
 class CommandSkillBinding:
     skill_id: str
     entry: str
+    workdir: str
     fingerprint: str
 
     def to_dict(self) -> dict[str, str]:
         return {
             "skill_id": self.skill_id,
             "entry": self.entry,
+            "workdir": self.workdir,
             "fingerprint": self.fingerprint,
         }
 
@@ -44,23 +68,29 @@ class CommandApprovalDetails:
     cmd: str
     argv: tuple[str, ...]
     workdir: str
+    cwd_source: CwdSource
     mode: CommandMode
     timeout_seconds: float
     filesystem_access: FilesystemAccess
     additional_roots: tuple[CommandAdditionalRoot, ...]
+    host_derived_roots: tuple[CommandAdditionalRoot, ...]
     network_access: NetworkAccess
     interactive: bool
+    execution: CommandExecution = "sandboxed"
     skill: CommandSkillBinding | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "cmd": self.cmd,
             "argv": list(self.argv),
+            "execution": self.execution,
             "workdir": self.workdir,
+            "cwd_source": self.cwd_source,
             "mode": self.mode,
             "timeout_seconds": self.timeout_seconds,
             "filesystem_access": self.filesystem_access,
             "additional_roots": [item.to_dict() for item in self.additional_roots],
+            "host_derived_roots": [item.to_dict() for item in self.host_derived_roots],
             "network_access": self.network_access,
             "interactive": self.interactive,
             "skill": self.skill.to_dict() if self.skill is not None else None,
@@ -177,9 +207,9 @@ class CommandProcessSnapshot:
         if include_output:
             value.update(
                 {
-                    "stdout": self.stdout_tail.decode("utf-8", errors="replace"),
-                    "stderr": self.stderr_tail.decode("utf-8", errors="replace"),
-                    "pty": self.pty_tail.decode("utf-8", errors="replace"),
+                    "stdout": decode_process_output(self.stdout_tail),
+                    "stderr": decode_process_output(self.stderr_tail),
+                    "pty": decode_process_output(self.pty_tail),
                 }
             )
         return value

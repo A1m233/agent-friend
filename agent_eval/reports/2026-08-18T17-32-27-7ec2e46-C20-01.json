@@ -1,0 +1,171 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-18T17:32:27.309461+00:00",
+    "ended_at": "2026-08-18T17:32:31.916782+00:00",
+    "duration_seconds": 4.607,
+    "git_commit": "7ec2e46",
+    "working_tree_dirty": true,
+    "note": "post-fix production ordinal Skill activation replay; model provenance: original C20-01 production model kimi/kimi-k2.7-code-highspeed; host-owned explicit selection; report only",
+    "selection": {
+      "contract": "all",
+      "case": "C20-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.7-code-highspeed",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "790c199a88e544117fce8054eb0fe17c50c28d56f72654d715b91d17b105bd8a",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C20-01",
+          "query": "你用一下2试试",
+          "facet": "生产长会话 anchor · 当前列表序号应由宿主解析并在模型前真实加载",
+          "source": "prod-long-session-skill-ordinal-no-activation-20260807",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "skill_activations": [
+            {
+              "status": "activated",
+              "skill_id": "skill_be09bb47517f157b084e45f152ab32809d380d1ebebad9491bd3256535a28d24",
+              "name": "context7-mcp",
+              "source": "personal",
+              "invocation_kind": "caller",
+              "reason": "由宿主从当前用户轮的显式选择中解析",
+              "error_code": "",
+              "error_message": ""
+            }
+          ],
+          "assistant_segments": [
+            "context7-mcp 的 Skill 已经加载好了。你想查什么库、框架、SDK 或者 API 文档？告诉我具体名称和想问的问题就行。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_be09bb47517f157b084e45f152ab32809d380d1ebebad9491bd3256535a28d24"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "c5a69d3f028ab16bc536c421220380012c3ad906e8f7da7c61cedc31a8e50663",
+            "render_fingerprint": "556199a8059d39bf9f727abc61adb888e05609abb8d6d611dae838d6c96ba8ee",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "context7-mcp",
+                "source": "personal",
+                "id": "skill_be09bb47517f157b084e45f152ab32809d380d1ebebad9491bd3256535a28d24"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "0fe0330a149653e3981c8329b9b8cf533318ca00d63f9acfc88ef49a5b2d5b4f",
+            "request_message_index": 3,
+            "preflight_passed": true
+          },
+          "final_text": "context7-mcp 的 Skill 已经加载好了。你想查什么库、框架、SDK 或者 API 文档？告诉我具体名称和想问的问题就行。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

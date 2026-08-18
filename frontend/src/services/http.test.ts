@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requireJsonRestResponse, toFriendlyError } from "./http";
+import { friendlyErrorMessage, requireJsonRestResponse, toFriendlyError } from "./http";
 
 describe("requireJsonRestResponse", () => {
   it("accepts JSON responses from local services", () => {
@@ -64,5 +64,20 @@ describe("toFriendlyError", () => {
       friendly: "persona.md 已发生变化",
       code: "persona_revision_conflict",
     });
+  });
+});
+
+describe("friendlyErrorMessage", () => {
+  it("preserves backend-friendly errors", () => {
+    expect(friendlyErrorMessage({
+      friendly: "Windows 沙箱初始化失败：用户取消了管理员授权。",
+      code: "windows_sandbox_setup_failed",
+    })).toBe("Windows 沙箱初始化失败：用户取消了管理员授权。");
+  });
+
+  it("does not render plain objects as object Object", () => {
+    expect(friendlyErrorMessage({ detail: "hidden" })).toBe(
+      "我这边好像出了点小问题，能稍后再试一次吗？",
+    );
   });
 });

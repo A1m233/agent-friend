@@ -6,16 +6,20 @@ export type CommandProcessStatus = "running" | "exited" | "cancelled" | "timed_o
 export interface CommandApprovalDetails {
   cmd: string;
   argv: string[];
+  execution: "sandboxed" | "host_user";
   workdir: string;
+  cwd_source: "session_managed" | "explicit" | "skill_snapshot";
   mode: "buffered" | "streaming";
   timeout_seconds: number;
-  filesystem_access: "read_only" | "workspace_write";
-  additional_roots: Array<{ path: string; access: "read_only" | "workspace_write" }>;
-  network_access: "disabled" | "enabled";
+  filesystem_access: "read_only" | "read_write" | "unrestricted";
+  additional_roots: Array<{ path: string; access: "read_only" | "read_write" }>;
+  host_derived_roots: Array<{ path: string; access: "read_only" }>;
+  network_access: "disabled" | "enabled" | "unrestricted";
   interactive: boolean;
   skill?: {
     skill_id: string;
     entry: string;
+    workdir: string;
     fingerprint: string;
   } | null;
 }
@@ -58,8 +62,25 @@ export interface CommandProcessSnapshot {
 export interface CommandRuntimeStatus {
   available: boolean;
   platform: "windows" | "other";
+  sandbox_capability: SandboxCapabilitySnapshot;
   windows_sandbox_ready: boolean;
   requires_windows_sandbox_setup: boolean;
+}
+
+export type SandboxCapabilityState =
+  | "unsupported"
+  | "checking"
+  | "setup_required"
+  | "setting_up"
+  | "ready"
+  | "repair_required";
+
+export interface SandboxCapabilitySnapshot {
+  state: SandboxCapabilityState;
+  supported: boolean;
+  ready: boolean;
+  last_error?: { error: string; message: string } | null;
+  version: number;
 }
 
 export const commandRuntimeApi = {
@@ -85,6 +106,7 @@ export const commandRuntimeApi = {
     return await http.post(
       "/v1/command-runtime/windows-sandbox/setup",
       {},
+      { timeout: 310_000 },
     ) as CommandRuntimeStatus;
   },
 

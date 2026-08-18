@@ -33,8 +33,8 @@ def render_runtime_capability_notice(
     if available >= _FILESYSTEM_READ_TOOLS:
         parts.append(
             "Governed filesystem search/read tools are available. Activated Skill package "
-            "resources may be accessed only through the turn-scoped Skill scope IDs supplied "
-            "by the host."
+            "resources may be accessed only through the turn-scoped filesystem_scope_id values "
+            "supplied by the host; these values are not Skill IDs."
         )
     else:
         parts.append("No governed filesystem search/read tools are registered on this turn.")
@@ -69,9 +69,8 @@ def render_activated_skill(
     return (
         "<skill>\n"
         f"<name>{escape(record.name)}</name>\n"
-        f"<id>{escape(record.id)}</id>\n"
+        f"<skill_id>{escape(record.id)}</skill_id>\n"
         f"<source>{record.source}</source>\n"
-        f"<path>{escape(str(record.entry_path))}</path>\n"
         f"<version>{activation.version}</version>\n"
         f"<runtime_capabilities>{escape(capabilities)}</runtime_capabilities>\n"
         f"{activation.contents}\n"
@@ -87,7 +86,7 @@ def render_activation_issue(
     capabilities = runtime_capabilities or render_runtime_capability_notice((), surface=None)
     return (
         "<skill_load_error>\n"
-        f"<id>{escape(issue.skill_id)}</id>\n"
+        f"<skill_id>{escape(issue.skill_id)}</skill_id>\n"
         f"<code>{escape(issue.code)}</code>\n"
         f"<message>{escape(issue.message)}</message>\n"
         f"<runtime_capabilities>{escape(capabilities)}</runtime_capabilities>\n"

@@ -1,0 +1,173 @@
+---
+description: agent-friend 面向 LLM/Agent 公开工具的设计与变更规则：约束工具边界、description、JSON Schema、标识符、错误恢复、权限和验证
+globs: ["agent/src/agent/tools/**", "agent/src/agent/command_runtime/**", "agent/src/agent/filesystem/**", "agent/src/agent/tool_runtime/**", "agent/src/agent/prompt_sections/tool_usage_contract.md", "agent_bridge/**", "llm_providers/**", "agent_eval/**"]
+alwaysApply: false
+codexLoad: preflight
+---
+
+# Agent 工具契约设计
+
+本 Rule 约束 Coding Agent 如何为 agent-friend 的运行时 Agent 新增或修改工具。工具是确定性
+宿主与非确定性 Agent 之间的可执行契约；“后端能够调用”不等于“Agent 能够稳定选对、填对、
+失败后恢复”。实现前必须同时设计模型看到的工具集合、description、schema、结果和错误。
+
+## 适用范围与责任边界
+
+以下任一变化都适用本 Rule：
+
+- 新增、删除、合并或拆分模型可见工具；
+- 修改工具名、description、输入 schema、模型可见结果、错误或重试语义；
+- 让一个工具的输出成为另一个工具的输入，特别是 ID、scope、路径、句柄和 capability；
+- 修改工具审批、权限、长任务、Skill binding 或其它模型必须正确组装参数才能进入的协议；
+- 修改 provider 侧工具 schema 投影、校验、序列化或 tool call/result 续接。
+
+纯内部 helper、只供 UI/日志使用且不会进入模型上下文的数据不适用。
+
+责任边界：
+
+- 本 Rule 是“如何设计、实现和验证 Agent 工具契约”的工程 owner。
+- [Lesson 002](../../docs/lessons/002-tool-usage-contract-and-description-boundary/README.md)
+  解释 system prompt、tool description、tool result 为什么要分层；本 Rule 不复制其通用陈述契约。
+- `agent/src/agent/prompt_sections/tool_usage_contract.md` 只拥有跨工具的 Agent 行为红线，不承载
+  单个工具字段手册。
+- `agent/src/agent/tools/protocol.py` 和当前 provider adapter 是实际 wire contract 的代码真相源；
+  文档与 schema 不得声称它们尚未支持的 strict、dialect 或 structured result 能力。
+- 授权、真实 LLM 调用和 eval 运行分别继续服从已有权限规则、`llm-api-confirm` 与
+  `agent-eval-governance`；本 Rule 不放宽它们。
+
+## 先设计 Agent 可理解的能力面
+
+新增字段或工具前，先回答：Agent 要完成什么用户任务、它在调用时已经知道什么、哪些事实只有
+宿主知道、最容易与什么工具或标识符混淆。
+
+- 每个工具必须有清晰且不同的目的。两个工具何时使用如果连工程师都无法明确区分，先合并、
+  改名或缩小边界，不用更长 prompt 掩盖重叠。
+- 初始暴露的工具保持任务相关且尽量少。大型或低频工具面使用现有 catalog、namespace、Skill
+  或延迟加载机制，不把所有能力一次塞入上下文。
+- 总是连续调用且中间没有新判断价值的步骤，优先由确定性代码合并；宿主已经知道的参数由宿主
+  注入，不要求模型从上文复制回来。
+- 工具名和参数名使用领域语义，不使用脱离上下文的 `id`、`path`、`value`、`mode`。存在多种
+  ID 时写成 `skill_id`、`filesystem_scope_id`、`tool_call_id` 等，并让名称本身足以区分。
+- 不让一个字段同时接受多个概念上不同的标识符。确需兼容多种引用时，用 `oneOf` 分成字段名
+  不同、形状互斥的分支，并在运行时拒绝歧义输入。
+
+## Tool description 必须完成的工作
+
+description 是模型选择工具的路由说明，不是产品名或一句摘要。复杂工具至少覆盖：
+
+1. 工具做什么，以及返回什么；
+2. 何时使用、何时不要使用，与相邻工具如何区分；
+3. 每类关键参数从哪里取得、格式是什么、如何影响行为；
+4. 不支持的边界、外部副作用、授权或确认时机；
+5. 空结果、可恢复错误和终止错误后允许采取什么下一步，是否允许重试。
+
+字段级语义优先写在对应 schema property 的 `description`，不要只藏在顶层 description 或 Skill
+正文里。跨工具通用红线只在 system prompt owner 中维护一次；单个工具不要复制整段全局政策。
+
+示例不是模糊描述的替代品。只有复杂嵌套、格式敏感参数或真实 bad case 证明有必要时才加；示例
+必须通过同一 schema，避免只覆盖目标样本，并遵守 `agent-eval-governance` 的 leakage 边界。
+
+## JSON Schema 是行为约束，不只是类型提示
+
+- 根对象、嵌套对象和互斥分支都要显式建模；对象默认使用 `additionalProperties: false`，除非
+  业务确实需要开放键，并有相应验证和消费方式。
+- 每个非自解释字段都要有 `description`，至少说明语义、来源、格式/单位、允许值和与相邻字段
+  的区别。ID 字段必须写明从哪个先前结果或可信 catalog 取得，禁止填入哪些相似 ID。
+- 用 `enum`、`const`、范围、长度、pattern、`oneOf`/`anyOf` 和条件结构让非法状态不可表达；
+  不用多个布尔值组合互斥模式，也不把互斥关系只写在自然语言里。
+- required、optional、null 和默认值必须与实现一致。JSON Schema 的 `default` 通常只是 annotation，
+  不得假设 validator 会自动补值；默认行为由宿主代码确定并在 description 中说明。
+- 若当前 provider wire 支持 strict schema 且兼容性测试已覆盖，应启用 strict；否则明确记录限制，
+  并在宿主边界执行同等严格的二次校验。任何情况下都不信任模型参数已经合法。
+- 声明并核对实际 schema dialect。引入 provider 不支持的关键字前先验证投影后的真实 wire schema，
+  不能因为本地字典看起来像 JSON Schema 就认为模型端会执行它。
+- schema 与实现只保留一个事实源。能从 typed model 可靠生成时优先生成；手写 schema 时必须有
+  contract test 防止解析器、校验器和 description 漂移。
+
+## 标识符、scope 与跨工具数据流
+
+跨工具引用是高风险边界，必须把“模型用来推理的语义标识符”和“宿主内部的临时能力句柄”分开。
+
+- 模型后续需要引用的值，使用稳定、有语义且高信号的字段返回；不要只返回 opaque UUID、绝对
+  物化路径或内部对象地址。
+- 临时 scope、approval request、process handle 等必须在字段名和 description 中写清生命周期、
+  唯一消费者和禁止用途。不能把 `scope_id` 暴露成看似可用于所有 `id` 字段的通用凭据。
+- 同一轮同时存在相似标识符时，下游 schema 必须明确写出正确来源；错误结果也要指出模型混用了
+  哪两类标识符。必要时由宿主直接绑定，不让模型搬运。
+- 宿主能够从当前 run、已激活 Skill、用户选择或隐藏上下文唯一推导的参数，不再暴露给模型填写；
+  权限事实始终由宿主注入和校验，绝不由模型自报。
+- 有结构化 binding 时，不再要求模型读取或猜测绝对安装路径。模型可见路径应相对稳定根解释，
+  物化路径只用于宿主内部执行。
+
+## 结果与错误必须支持下一步判断
+
+- 正常结果只返回完成下一步所需的高信号字段，保留稳定语义 ID、来源边界、截断/分页状态和必要
+  证据；不要把原始 provider payload、trace 或大量无关列表直接塞回上下文。
+- 当前协议支持 structured result / output schema 时，为稳定结果定义并验证输出 schema；尚未支持时，
+  返回结构稳定的文本或 JSON，并用测试锁定模型可见形状。
+- 业务失败和可修正的参数错误使用 `ToolResult(is_error=True)` 返回给模型；实现 bug 才走异常兜底。
+- 错误同时包含稳定 machine code 和可行动的模型说明。说明至少回答：哪个字段/前置条件错了、收到
+  什么类别、期望什么格式或来源、有哪些安全可公开的有效选择、下一步应修正参数还是停止。
+- 不只返回 `invalid arguments`、opaque code、traceback 或“权限不足”。若不可重试，明确终止原因；
+  若可重试，说明什么输入或外部状态发生变化后才值得重试，避免原样循环。
+- 错误不得泄漏 secret、内部绝对路径或越权候选值。可以回显模型本轮已经见过的稳定 ID；不能为了
+  帮助恢复而扩张 capability。
+- `is_error`、error code、终态和结果正文必须贯穿持久化、实时 push、历史投影与 UI；不得出现后端
+  已拒绝但历史卡片显示成功、pending 或等待授权的状态分叉。
+
+## 权限与执行边界
+
+- 所有模型输入在确定性边界重新校验：schema validation 不替代路径、权限、所有权、生命周期、
+  side effect 和 TOCTOU 检查。
+- 审批必须展示实际将执行的规范化对象；用户批准的命令、目录、文件范围、网络与身份在启动前
+  再核对，不能批准 A、执行 B。
+- 工具描述只能解释授权流程，不能授予权限。Skill、prompt、模型参数和工具结果都不能扩张宿主
+  capability。
+- 长任务、取消、超时、失联和重连必须有互斥终态；模型与 UI 都能区分“尚未审批”“运行中”
+  “已拒绝”“执行失败”和“运行时失联”。
+
+## 实现前与交付前验证
+
+修改工具时，至少完成以下与改动相称的验证：
+
+1. **契约检查**：打开 provider 最终收到的 tool definition，核对名称、description、schema dialect、
+   required、`additionalProperties`、枚举和隐藏参数投影，不只测试源码常量。
+2. **确定性测试**：覆盖合法输入、每类非法/歧义输入、权限拒绝、模型可见错误、结果序列化和历史
+   恢复。跨工具 ID 流至少有一组正确值和一组最易混淆的近似值。
+3. **调用链测试**：上游结果中的可引用字段必须能原样驱动下游工具；宿主已知字段不得要求模型
+   重填。失败后若声称可恢复，要有测试证明错误提示指向的修正调用能够通过下一道门。
+4. **行为评测**：真实 bad case 推动 description、schema 或结果变化时，按 `agent-eval-governance`
+   固化目标 case，并使用未参与设计的相邻/holdout 任务检查工具选择、参数、冗余调用、错误恢复和
+   最终回答。单次 smoke 不能证明泛化。
+5. **可观测性**：trace 能关联 run、tool call、规范化参数摘要、错误码和终态；日志不记录 secret，
+   UI 能解释当前是否真的需要用户动作。
+
+发现 Agent 反复填错参数时，先检查工具面、字段命名、schema、宿主可推导参数和错误可恢复性；
+不得先在 system prompt 或 Skill 里逐个追加 bad case 答案。只有稳定契约仍无法表达的策略才上移到
+prompt，并用 eval 证明必要性。
+
+## 提交前自检
+
+- 一个不了解实现的新工程师，仅看模型实际收到的工具定义，能否选对工具并构造合法调用？
+- 是否存在两个名字不同但职责重叠的工具，或两个长得相似却没有区分说明的 ID？
+- schema 是否机械拒绝已知非法状态，还是只靠模型“记住不要这样做”？
+- 宿主已经知道的参数是否仍被要求模型复制？
+- 错误是否让 Agent 知道准确修正方式，并阻止无变化重试？
+- 结果是否只包含下一步需要的高信号上下文，并保持错误/终态跨层一致？
+- 是否有真实事故回归和未污染的相邻/holdout，而不是只验证 happy path？
+
+## 参考依据
+
+以下来源最近核验于 2026-08-18；实现时以当前官方文档和本仓库真实 provider 能力为准：
+
+- OpenAI Function Calling：清晰描述每个参数与输出、用 enum/对象结构消除非法状态、让代码承担
+  已知参数、减少初始工具数，并在支持时启用 strict schema。
+  https://developers.openai.com/api/docs/guides/function-calling
+- Anthropic Define Tools / Writing effective tools for agents：详细 description、schema-valid examples、
+  语义 ID、高信号结果、可行动错误和基于真实任务的 eval。
+  https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools
+  https://www.anthropic.com/engineering/writing-tools-for-agents
+- MCP Tools Specification：输入/输出 schema、`isError` 的模型自修复语义、输入校验、确认、超时与审计。
+  https://modelcontextprotocol.io/specification/2025-11-25/server/tools
+- JSON Schema：`description`/`examples`/`default` 是 annotation，必须与实际 validation 语义区分。
+  https://json-schema.org/understanding-json-schema/reference/annotations

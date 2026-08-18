@@ -5,7 +5,9 @@ import {
   type CommandApprovalRequest,
   type CommandProcessSnapshot,
   type CommandRuntimeStatus,
+  type SandboxCapabilitySnapshot,
 } from "@/services/api/commandRuntime";
+import { friendlyErrorMessage } from "@/services/http";
 import type { PushEnvelope } from "@/types/push";
 import { isTauri } from "@/utils/tauri";
 
@@ -20,7 +22,7 @@ interface CommandRuntimeState {
   handlePush: (envelope: PushEnvelope) => void;
   decide: (requestId: string, allow: boolean) => Promise<void>;
   cancel: (processId: string) => Promise<void>;
-  setupWindowsSandbox: () => Promise<void>;
+  setupWindowsSandbox: () => Promise<CommandRuntimeStatus | null>;
   markDisconnected: () => void;
   clear: () => void;
 }
@@ -46,6 +48,29 @@ function validProcess(value: unknown): value is CommandProcessSnapshot {
     && typeof item.version === "number";
 }
 
+function validSandboxCapability(value: unknown): value is SandboxCapabilitySnapshot {
+  const item = value as Partial<SandboxCapabilitySnapshot> | undefined;
+  return typeof item?.state === "string"
+    && typeof item.supported === "boolean"
+    && typeof item.ready === "boolean"
+    && typeof item.version === "number";
+}
+
+export function preferNewerCommandRuntimeStatus(
+  current: CommandRuntimeStatus | null,
+  incoming: CommandRuntimeStatus,
+): CommandRuntimeStatus {
+  if (!current) return incoming;
+  if (current.sandbox_capability.version <= incoming.sandbox_capability.version) return incoming;
+  const capability = current.sandbox_capability;
+  return {
+    ...incoming,
+    sandbox_capability: capability,
+    windows_sandbox_ready: capability.ready,
+    requires_windows_sandbox_setup: capability.supported && !capability.ready,
+  };
+}
+
 export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => ({
   approvals: {},
   processes: {},
@@ -68,7 +93,7 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         ...state.processes,
         ...Object.fromEntries(processes.map((item) => [item.process_id, item])),
       },
-      runtimeStatus,
+      runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
     }));
   },
   handlePush(envelope) {
@@ -94,6 +119,32 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         },
       }));
     }
+    if (
+      envelope.kind === "sandbox_capability_changed"
+      && validSandboxCapability(envelope.sandbox_capability)
+    ) {
+      const capability = envelope.sandbox_capability;
+      set((state) => {
+        const current = state.runtimeStatus?.sandbox_capability;
+        if (current && current.version > capability.version) return {};
+        return {
+          runtimeStatus: state.runtimeStatus
+            ? {
+                ...state.runtimeStatus,
+                sandbox_capability: capability,
+                windows_sandbox_ready: capability.ready,
+                requires_windows_sandbox_setup: !capability.ready,
+              }
+            : {
+                available: capability.supported,
+                platform: capability.supported ? "windows" : "other",
+                sandbox_capability: capability,
+                windows_sandbox_ready: capability.ready,
+                requires_windows_sandbox_setup: capability.supported && !capability.ready,
+              },
+        };
+      });
+    }
   },
   async decide(requestId, allow) {
     const request = get().approvals[requestId];
@@ -115,13 +166,17 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
     await commandRuntimeApi.cancel(process);
   },
   async setupWindowsSandbox() {
-    if (get().settingUpSandbox) return;
+    if (get().settingUpSandbox) return null;
     set({ settingUpSandbox: true, setupError: null });
     try {
       const runtimeStatus = await commandRuntimeApi.setupWindowsSandbox();
-      set({ runtimeStatus });
+      set((state) => ({
+        runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
+      }));
+      return runtimeStatus;
     } catch (error) {
-      set({ setupError: error instanceof Error ? error.message : String(error) });
+      set({ setupError: friendlyErrorMessage(error) });
+      return null;
     } finally {
       set({ settingUpSandbox: false });
     }
@@ -168,17 +223,26 @@ export function startCommandRuntimeSync(): () => void {
   let disposed = false;
   const unlisteners: UnlistenFn[] = [];
   const refresh = () => useCommandRuntimeStore.getState().refresh().catch(() => undefined);
+  const refreshWhenVisible = () => {
+    if (!disposed && document.visibilityState !== "hidden") void refresh();
+  };
   if (isTauri()) {
     void listen<PushEnvelope>("session://command-runtime", (event) => {
-      if (!disposed) useCommandRuntimeStore.getState().handlePush(event.payload);
+      if (disposed) return;
+      useCommandRuntimeStore.getState().handlePush(event.payload);
+      if (event.payload.kind === "approval_changed") void refresh();
     }).then((unlisten) => disposed ? unlisten() : unlisteners.push(unlisten));
     void listen("session://push-reconnected", () => {
       if (!disposed) void refresh();
     }).then((unlisten) => disposed ? unlisten() : unlisteners.push(unlisten));
   }
+  window.addEventListener("focus", refreshWhenVisible);
+  document.addEventListener("visibilitychange", refreshWhenVisible);
   void refresh();
   return () => {
     disposed = true;
+    window.removeEventListener("focus", refreshWhenVisible);
+    document.removeEventListener("visibilitychange", refreshWhenVisible);
     unlisteners.forEach((unlisten) => unlisten());
   };
 }

@@ -18,7 +18,7 @@ vi.mock("@/services", () => ({
 }));
 vi.mock("@/lib/persistence/chatUi", () => ({ setLastChatSessionId: vi.fn() }));
 
-import { sessionsApi } from "@/services";
+import { runsApi, sessionsApi } from "@/services";
 import { useConversationStore } from "./conversation";
 import {
   handlePushReconnectedForSync,
@@ -102,6 +102,33 @@ describe("sessionSync", () => {
     await vi.runAllTimersAsync();
     expect(sessionsApi.list).toHaveBeenCalledTimes(1);
     expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("calibrates active runs immediately after the subscriber starts", async () => {
+    vi.mocked(runsApi.list).mockResolvedValueOnce({
+      runs: [{
+        run_id: "run-awaiting-approval",
+        session_id: "s1",
+        status: "running",
+        outcome: null,
+        reason_code: "",
+        channel: "text",
+        origin: "ag_ui",
+        control_scope: "desktop_text",
+        created_at: "2026-08-18T00:00:00Z",
+        started_at: "2026-08-18T00:00:01Z",
+        finished_at: null,
+        version: 1,
+      }],
+    });
+
+    const stop = startSessionSyncSubscriber();
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState().activeRunIdBySession.s1).toBe(
+        "run-awaiting-approval",
+      );
+    });
+    stop();
   });
 
   it("run_changed updates only the matching session run projection", () => {

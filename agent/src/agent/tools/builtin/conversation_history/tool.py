@@ -139,6 +139,7 @@ class ConversationHistoryTool:
                 "default": _DEFAULT_LIMIT,
             },
         },
+        "additionalProperties": False,
     }
 
     def __init__(

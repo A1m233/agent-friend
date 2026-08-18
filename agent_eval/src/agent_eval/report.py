@@ -56,6 +56,11 @@ def render_failure_details(
         console.print(f"  reason: {item.verdict.reason}")
         names = [tool_call.name for tool_call in item.trace.tool_calls] or "(none)"
         console.print(f"  tool_calls: {names}")
+        if item.trace.skill_activations:
+            console.print(
+                "  skill_activations: "
+                f"{[(activation.name, activation.status) for activation in item.trace.skill_activations]}"
+            )
         if item.trace.assistant_segments:
             console.print("  assistant_segments:")
             for index, segment in enumerate(item.trace.assistant_segments, start=1):

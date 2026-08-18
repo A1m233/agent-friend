@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from llm_providers import (
+    LLMActivity,
     LLMClient,
     LLMContextWindowError,
     LLMRetryScheduled,
@@ -102,6 +103,7 @@ from .prompt_cache_trace import PromptCacheTraceTracker, PromptRequestTrace
 from .prompts import PromptBuilder
 from .sessions import Event, Session, SessionStore
 from .skills import (
+    ActivatedSkill,
     SkillCatalogService,
     SkillSelection,
     SkillTurnSnapshot,
@@ -149,6 +151,16 @@ def _is_explicit_run_cancellation(exc: BaseException | None) -> bool:
 
     cancellation = getattr(exc, "cancellation", None)
     return getattr(cancellation, "reason", None) == "explicit_request"
+
+
+def _interruption_reason_code(exc: BaseException | None) -> str | None:
+    if exc is None:
+        return None
+    cancellation = getattr(exc, "cancellation", None)
+    cancellation_reason = getattr(cancellation, "reason", None)
+    if cancellation_reason is not None:
+        return str(cancellation_reason)
+    return type(exc).__name__
 
 
 PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
@@ -612,6 +624,16 @@ class Conversation:
             ),
             None,
         )
+        selection_history = (
+            self._session.events[: self._session.events.index(existing_user_event)]
+            if existing_user_event is not None
+            else self._session.active_events
+        )
+        effective_skill_selections = self._resolve_turn_skill_selections(
+            user_input,
+            skill_selections,
+            history_events=selection_history,
+        )
         if existing_user_event is not None:
             existing_attachments = existing_user_event.payload.get("attachments", [])
             requested_attachments = [item.to_dict() for item in turn_attachments]
@@ -620,9 +642,7 @@ class Conversation:
                 or existing_attachments != requested_attachments
             ):
                 raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
-            if self._persisted_skill_selections(existing_user_event) != self._normalize_selections(
-                skill_selections
-            ):
+            if self._persisted_skill_selections(existing_user_event) != effective_skill_selections:
                 raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同 Skill 选择。")
         user_event_appended = existing_user_event is not None
         completed_replay_text: str | None = None
@@ -636,7 +656,7 @@ class Conversation:
                     completed_parts.append(str(event.payload.get("content", "")))
             if completed_parts:
                 completed_replay_text = "".join(completed_parts)
-        self._active_skill_selections = self._normalize_selections(skill_selections)
+        self._active_skill_selections = effective_skill_selections
         self._active_skill_turn_snapshot = (
             self._skill_service.begin_turn(
                 self._active_skill_selections,
@@ -710,6 +730,7 @@ class Conversation:
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
                     persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
+                    interruption_reason=_interruption_reason_code(exc_info[1]),
                 )
             else:
                 if not self._post_turn_external:
@@ -776,7 +797,11 @@ class Conversation:
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
         model_snapshot = self._active_model_id()
-        self._active_skill_selections = self._normalize_selections(skill_selections)
+        self._active_skill_selections = self._resolve_turn_skill_selections(
+            user_input,
+            skill_selections,
+            history_events=plan.prefix_events,
+        )
         self._active_skill_turn_snapshot = (
             self._skill_service.begin_turn(
                 self._active_skill_selections,
@@ -857,6 +882,7 @@ class Conversation:
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
                     persist_empty_partial=_is_explicit_run_cancellation(exc_info[1]),
+                    interruption_reason=_interruption_reason_code(exc_info[1]),
                 )
             else:
                 if not self._post_turn_external:
@@ -923,6 +949,11 @@ class Conversation:
                 if isinstance(ev, LLMTextDelta):
                     current_text_buf.append(ev.text)
                     yield TextDelta(text=ev.text)
+                elif isinstance(ev, LLMActivity):
+                    yield ModelResponseStatus(
+                        phase=ev.kind,
+                        after_tool=True,
+                    )
                 elif isinstance(ev, LLMRetryScheduled):
                     yield ModelResponseStatus(
                         phase="retrying",
@@ -1076,6 +1107,7 @@ class Conversation:
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
                     persist_empty_partial=_is_explicit_run_cancellation(exc),
+                    interruption_reason=_interruption_reason_code(exc),
                 )
             elif not self._post_turn_external:
                 self._observe_turn(turn_start_idx)
@@ -1422,6 +1454,32 @@ class Conversation:
             and SKILL_READ_TOOL_NAME in self._tool_registry
         )
 
+    def _resolve_turn_skill_selections(
+        self,
+        user_input: str,
+        selections: tuple[SkillSelection, ...],
+        *,
+        history_events: list[Event],
+    ) -> tuple[SkillSelection, ...]:
+        structured = self._normalize_selections(selections)
+        if self._skill_service is None:
+            return structured
+        prior_assistant_text = next(
+            (
+                str(event.payload.get("content", ""))
+                for event in reversed(history_events)
+                if event.type == "assistant_message"
+                and not event.payload.get("partial", False)
+                and str(event.payload.get("content", "")).strip()
+            ),
+            None,
+        )
+        inferred = self._skill_service.resolve_explicit_selections(
+            user_input,
+            prior_assistant_text=prior_assistant_text,
+        )
+        return self._normalize_selections((*structured, *inferred))
+
     def _persisted_skill_selections(self, user_event: Event) -> tuple[SkillSelection, ...]:
         start = self._session.events.index(user_event) + 1
         selections: list[SkillSelection] = []
@@ -1537,7 +1595,7 @@ class Conversation:
                 skill_id=str(payload.get("skill_id", "")),
                 name=str(payload.get("name", "")),
                 source=str(payload.get("source", "")),
-                reason="由调用方为当前用户轮选择",
+                reason="由宿主从当前用户轮的显式选择中解析",
                 error_code=str(payload.get("error_code", "")),
                 error_message=str(payload.get("error_message", "")),
                 order=int(payload.get("order", 0)),
@@ -1741,6 +1799,7 @@ class Conversation:
         persona_name: str,
         persona_id: str | None,
         model: str,
+        interruption_reason: str | None = None,
     ) -> None:
         meta: dict[str, Any] = self._run_event_meta({"persona": persona_name, "model": model})
         if persona_id is not None:
@@ -1750,11 +1809,14 @@ class Conversation:
             self._pending_context_usage = None
         if self._active_tool_run_state is not None:
             meta["tool_run"] = self._active_tool_run_state.diagnostics()
+        payload: dict[str, Any] = {"content": content, "partial": partial}
+        if partial and interruption_reason:
+            payload["interruption_reason"] = interruption_reason
         event = Event(
             type="assistant_message",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={"content": content, "partial": partial},
+            payload=payload,
             meta=meta,
         )
         self._store.append_event(self._session.session_id, event)
@@ -2852,8 +2914,8 @@ class Conversation:
     def _finalize_tool_calls(self, acc: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
         """把累积好的 tool_call dict 转成最终列表（按 index 顺序）。
 
-        ``args_json`` 字段反序列化为 ``args`` 字典。LLM 偶发吐出
-        非法 JSON 时降级为空 dict（让工具自己处理空入参或返回 is_error）。
+        ``args_json`` 字段反序列化为 ``args`` 字典。损坏的 provider 增量必须
+        在产生工具卡片或授权请求前失败，不能降级为空对象后进入执行层。
         """
         import json
 
@@ -2861,13 +2923,15 @@ class Conversation:
         for idx in sorted(acc.keys()):
             slot = acc[idx]
             if not slot["id"] or not slot["name"]:
-                continue  # 损坏 / 不完整的 tool_call，丢弃
+                raise ValueError(f"tool call {idx} is missing id or name")
             try:
-                args = json.loads(slot["args_json"]) if slot["args_json"] else {}
+                if not slot["args_json"]:
+                    raise ValueError(f"tool call {idx} has no argument payload")
+                args = json.loads(slot["args_json"])
                 if not isinstance(args, dict):
-                    args = {}
-            except json.JSONDecodeError:
-                args = {}
+                    raise ValueError(f"tool call {idx} arguments are not an object")
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"tool call {idx} arguments are invalid JSON") from exc
             args = {
                 key: value for key, value in args.items() if not key.startswith("__agent_friend_")
             }
@@ -2880,6 +2944,20 @@ class Conversation:
                 }
             )
         return result
+
+    def _tool_call_validation_error(self, calls: list[dict[str, Any]]) -> str | None:
+        """Return a model-facing reason before any invalid call is published."""
+
+        if self._tool_registry is None:
+            return None
+        for call in calls:
+            try:
+                error = self._tool_registry.validate(call["name"], call["args"])
+            except Exception as exc:
+                return f"{call.get('name') or 'unknown'}: {exc}"
+            if error is not None:
+                return f"{call['name']}: {error.text}"
+        return None
 
     def _invoke_tool_safely(
         self,
@@ -3095,6 +3173,8 @@ class Conversation:
         """Run the common model/tool continuation loop for send and edit-resend."""
 
         turn_idx = 0
+        malformed_tool_call_retries = 0
+        tool_call_recovery_instruction: str | None = None
         while True:
             self._check_cancel(cancel_check)
             if turn_idx > 0:
@@ -3127,9 +3207,14 @@ class Conversation:
                     yield from first_turn_prelude()
             else:
                 reminder = runtime.soft_reminder()
+                trailing_system = (
+                    "\n\n".join(part for part in (reminder, tool_call_recovery_instruction) if part)
+                    or None
+                )
+                tool_call_recovery_instruction = None
                 openai_messages = (
-                    self._assemble(trailing_system=reminder, tool_specs=tool_specs)
-                    if reminder
+                    self._assemble(trailing_system=trailing_system, tool_specs=tool_specs)
+                    if trailing_system
                     else self._build_openai_messages_continuation()
                 )
 
@@ -3144,13 +3229,12 @@ class Conversation:
                 tools=bool(tool_specs),
             )
             first_text_seen = False
-            if turn_idx > 0:
-                yield ModelResponseStatus(
-                    phase="waiting",
-                    after_tool=True,
-                    attempt=1,
-                    max_attempts=2,
-                )
+            yield ModelResponseStatus(
+                phase="waiting",
+                after_tool=turn_idx > 0,
+                attempt=1,
+                max_attempts=2,
+            )
             for event in self._iter_traced_model_stream(
                 openai_messages,
                 tools=tool_specs,
@@ -3174,6 +3258,11 @@ class Conversation:
                         )
                     frame.current_text_buf.append(event.text)
                     yield TextDelta(text=event.text)
+                elif isinstance(event, LLMActivity):
+                    yield ModelResponseStatus(
+                        phase=event.kind,
+                        after_tool=turn_idx > 0,
+                    )
                 elif isinstance(event, LLMToolCallDelta):
                     self._accumulate_tool_call_delta(current_tc_acc, event)
                 elif isinstance(event, LLMRetryScheduled):
@@ -3187,17 +3276,54 @@ class Conversation:
                     stop_reason = event.stop_reason
                     self._consume_usage(event)
 
-            tool_calls = self._finalize_tool_calls(current_tc_acc)
-            self._append_assistant_event(
-                "".join(frame.current_text_buf),
-                partial=False,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model=model_snapshot,
-            )
-            frame.current_text_persisted = True
+            malformed_reason: str | None = None
+            try:
+                tool_calls = self._finalize_tool_calls(current_tc_acc)
+                malformed_reason = self._tool_call_validation_error(tool_calls)
+            except ValueError as exc:
+                tool_calls = []
+                malformed_reason = str(exc)
+
+            current_text = "".join(frame.current_text_buf)
+            if current_text:
+                self._append_assistant_event(
+                    current_text,
+                    partial=False,
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model=model_snapshot,
+                )
+                frame.current_text_persisted = True
+
+            if malformed_reason is not None:
+                logger.warning(
+                    "Rejected malformed tool-call batch before execution: %s",
+                    malformed_reason,
+                )
+                if malformed_tool_call_retries < 1:
+                    malformed_tool_call_retries += 1
+                    tool_call_recovery_instruction = (
+                        "上一轮工具调用参数损坏或不符合公开 schema，宿主没有执行，也没有向用户"
+                        "发起授权。请重新根据当前工具 schema 生成完整、合法的参数；不要复用空对象，"
+                        "也不要声称上一轮已经执行。"
+                    )
+                    turn_idx += 1
+                    continue
+                runtime.mark_stopped("malformed_tool_call", "tool_arguments")
+                yield from self._finalize_on_tool_run_stop(
+                    persona_name=persona_name,
+                    persona_id=persona_id,
+                    model_snapshot=model_snapshot,
+                    runtime=runtime,
+                    cancel_check=cancel_check,
+                )
+                return
 
             if not tool_calls or stop_reason != "tool_use":
+                if not frame.current_text_persisted:
+                    # A tool-free empty turn is handled by provider recovery before this
+                    # point. Keep the session free of zero-content assistant messages.
+                    self._pending_context_usage = None
                 yield self._turn_done(runtime)
                 return
             yield from self._execute_tool_calls(
@@ -3309,6 +3435,7 @@ class Conversation:
         by_id = {item.call["id"]: item for item in executed}
         runtime.total_tool_calls += len(tool_calls)
         no_progress = False
+        requires_user_action = False
         for tc in tool_calls:
             item = by_id.get(tc["id"])
             if item is None:
@@ -3342,7 +3469,11 @@ class Conversation:
                     source="skill",
                     label=f"Skill {result.meta.get('skill_activation', {}).get('name', '')}",
                 )
+            self._adopt_runtime_skill_activation(result)
             no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
+            requires_user_action = (
+                result.meta.get("requires_user_action") is True or requires_user_action
+            )
             runtime.new_evidence_count = progress.new_evidence_count
             runtime.reused_evidence_count = progress.reused_evidence_count
             runtime.last_intent_signature = progress.last_intent_signature
@@ -3370,12 +3501,31 @@ class Conversation:
 
         if allowed_count < len(tool_calls):
             runtime.mark_stopped("budget_exhausted", "total_tool_calls")
+        elif requires_user_action:
+            runtime.mark_stopped("user_action_required")
         elif no_progress:
             runtime.mark_stopped("no_progress")
         else:
             dimension = runtime.hard_limit()
             if dimension is not None:
                 runtime.mark_stopped("budget_exhausted", dimension)
+
+    def _adopt_runtime_skill_activation(self, result: ToolResult) -> None:
+        """Make a successful semantic Skill activation available to later tools this turn."""
+
+        activation = result.meta.get("_activated_skill")
+        snapshot = self._active_skill_turn_snapshot
+        if not isinstance(activation, ActivatedSkill) or snapshot is None:
+            return
+        existing = tuple(
+            item for item in snapshot.activations if item.record.id != activation.record.id
+        )
+        self._active_skill_turn_snapshot = SkillTurnSnapshot(
+            catalog=snapshot.catalog,
+            rendered_catalog=snapshot.rendered_catalog,
+            activations=(*existing, activation),
+            activation_issues=snapshot.activation_issues,
+        )
 
     @staticmethod
     def _turn_done(runtime: ToolRunState, reason: str = "end_turn") -> TurnDone:
@@ -3445,6 +3595,7 @@ class Conversation:
         persona_id: str | None,
         model_snapshot: str,
         persist_empty_partial: bool = False,
+        interruption_reason: str | None = None,
     ) -> None:
         """被异常 / KeyboardInterrupt 中断时的落盘策略。
 
@@ -3472,10 +3623,20 @@ class Conversation:
             persona_name=persona_name,
             persona_id=persona_id,
             model=model_snapshot,
+            interruption_reason=interruption_reason,
         )
 
     def _append_tool_call_request_event(self, tc: dict[str, Any]) -> None:
         """落 ``tool_call_request`` 事件。"""
+        meta = self._run_event_meta({"tool_call_origin": tc.get("origin", "model")})
+        if self._pending_context_usage is not None:
+            # Tool-only model turns have no user-visible assistant message. Preserve
+            # their usage diagnostics on the first durable tool request instead of
+            # creating a zero-content assistant event.
+            meta["context_usage"] = dict(self._pending_context_usage)
+            self._pending_context_usage = None
+        if self._active_tool_run_state is not None:
+            meta["tool_run"] = self._active_tool_run_state.diagnostics()
         event = Event(
             type="tool_call_request",
             uuid=str(uuid4()),
@@ -3486,7 +3647,7 @@ class Conversation:
                 "tool_name": tc["name"],
                 "args": tc["args"],
             },
-            meta=self._run_event_meta({"tool_call_origin": tc.get("origin", "model")}),
+            meta=meta,
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -3515,7 +3676,7 @@ class Conversation:
             diagnostic_extra = {
                 key: value
                 for key, value in result.meta.items()
-                if key not in {"source_urls", "ephemeral_evidence"}
+                if key not in {"source_urls", "ephemeral_evidence"} and not key.startswith("_")
             }
             if diagnostic_extra:
                 meta["extra"] = diagnostic_extra

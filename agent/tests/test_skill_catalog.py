@@ -43,7 +43,7 @@ def test_catalog_is_deterministic_and_escapes_metadata() -> None:
     assert "allow_implicit_invocation=true" in first.content
 
 
-def test_catalog_marks_disabled_implicit_policy_and_tool_unavailability() -> None:
+def test_catalog_hides_explicit_only_skill_from_model_visible_implicit_entries() -> None:
     record = _record(1, "Explicit only")
     record = replace(record, allow_implicit_invocation=False)
     snapshot = SkillCatalogSnapshot(generation=1, fingerprint="snapshot", entries=(record,))
@@ -54,7 +54,9 @@ def test_catalog_marks_disabled_implicit_policy_and_tool_unavailability() -> Non
         semantic_activation_available=False,
     )
 
-    assert "allow_implicit_invocation=false" in rendered.content
+    assert "skill-1" not in rendered.content
+    assert 'explicit_only_entries="1"' in rendered.content
+    assert "available through host selection" in rendered.content
     assert "reader is unavailable" in rendered.content
 
 

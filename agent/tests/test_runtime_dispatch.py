@@ -207,9 +207,9 @@ def test_dispatch_user_event_runs_stream_and_falls_to_listener(tmp_path: Path) -
         assert env.session_id == conv.session.session_id
         assert env.source_kind is None
         assert env.seq == 1
-        # events 内含 TextDelta * 2 + TurnDone
+        # events 内含初始等待状态 + TextDelta * 2 + TurnDone
         types = [e["type"] for e in env.events]
-        assert types == ["text_delta", "text_delta", "done"]
+        assert types == ["model_response_status", "text_delta", "text_delta", "done"]
         texts = [e["text"] for e in env.events if e["type"] == "text_delta"]
         assert texts == ["hi ", "there"]
 
@@ -440,7 +440,11 @@ def test_submit_runs_conversation_and_correlates_session_events(
             channel="text",
         )
         events = cast(list[ConversationEvent], list(handle.events()))
-        assert [event.type for event in events] == ["text_delta", "done"]
+        assert [event.type for event in events] == [
+            "model_response_status",
+            "text_delta",
+            "done",
+        ]
         assert handle.terminal is not None
         assert handle.terminal.outcome is RunOutcome.COMPLETED
         user = next(event for event in conv.session.events if event.type == "user_message")
@@ -663,13 +667,19 @@ def test_conversation_cooperative_cancel_persists_seen_partial(tmp_path: Path) -
         run_id=request.run_id,
         cancel_check=handle.token.raise_if_cancelled,
     )
+    waiting = next(stream)
+    assert waiting.type == "model_response_status"
     first = next(stream)
     assert first.type == "text_delta"
     assert handle.cancel(CancelReason.CLIENT_DISCONNECTED)
     with pytest.raises(RunCancelled):
         next(stream)
     assistant = next(event for event in conv.session.events if event.type == "assistant_message")
-    assert assistant.payload == {"content": "partial", "partial": True}
+    assert assistant.payload == {
+        "content": "partial",
+        "partial": True,
+        "interruption_reason": "client_disconnected",
+    }
     assert assistant.meta["run_id"] == request.run_id
 
 
@@ -708,7 +718,11 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
     assert len(errors) == 1
     assert isinstance(errors[0], RunCancelled)
     assistant = next(event for event in conv.session.events if event.type == "assistant_message")
-    assert assistant.payload == {"content": "", "partial": True}
+    assert assistant.payload == {
+        "content": "",
+        "partial": True,
+        "interruption_reason": "explicit_request",
+    }
     assert assistant.meta["run_id"] == request.run_id
 
 

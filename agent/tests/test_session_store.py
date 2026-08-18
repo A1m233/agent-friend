@@ -9,7 +9,8 @@ from threading import Thread
 from uuid import uuid4
 
 import portalocker
-from agent.sessions import Event, EventType, JsonlSessionStore, Session
+from agent.command_runtime.workspace import session_workspace_path
+from agent.sessions import Event, EventType, JsonlSessionStore, Session, SessionManager
 
 
 def _session(session_id: str) -> Session:
@@ -81,6 +82,24 @@ def test_delete_unsafe_session_id_removes_encoded_file(tmp_path: Path) -> None:
 
     assert not created[0].exists()
     assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_session_manager_hard_delete_removes_managed_command_workspace(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    workspaces = tmp_path / "command-workspaces"
+    store = JsonlSessionStore(sessions)
+    session_id = "im:qq:OPENID-A"
+    store.create(_session(session_id))
+    workspace = session_workspace_path(workspaces, session_id)
+    workspace.mkdir(parents=True)
+    (workspace / "kept-across-archive.txt").write_text("content", encoding="utf-8")
+    manager = SessionManager(store=store, command_workspaces_root=workspaces)
+
+    manager.archive(session_id)
+    assert workspace.exists()
+    manager.delete(session_id)
+
+    assert not workspace.exists()
 
 
 def test_load_waits_for_in_progress_writer(tmp_path: Path) -> None:

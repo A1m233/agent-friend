@@ -37,6 +37,48 @@ def test_no_progress_counts_only_repeated_errors_or_empty_results() -> None:
     assert tracker.observe("web_search", args, ToolResult("useful result")) is False
 
 
+def test_no_progress_groups_same_error_across_changed_arguments() -> None:
+    tracker = NoProgressTracker(3)
+    blocked = ToolResult(
+        "sandbox setup required",
+        is_error=True,
+        meta={
+            "error_kind": "windows_sandbox_setup_required",
+            "no_progress_family": "windows_sandbox_setup_required",
+        },
+    )
+    assert tracker.observe("exec_command", {"cmd": "git clone"}, blocked) is False
+    assert tracker.observe("exec_command", {"cmd": "pwsh download"}, blocked) is False
+    assert tracker.observe("exec_command", {"cmd": "python download"}, blocked) is True
+
+
+def test_no_progress_does_not_group_unspecified_errors_across_changed_arguments() -> None:
+    tracker = NoProgressTracker(3)
+    failed = ToolResult("exit 1", is_error=True, meta={"error_kind": None})
+
+    assert tracker.observe("exec_command", {"cmd": "maa --help"}, failed) is False
+    assert tracker.observe("exec_command", {"cmd": "maa version"}, failed) is False
+    assert tracker.observe("exec_command", {"cmd": "maa dir"}, failed) is False
+
+
+def test_no_progress_still_stops_an_identical_failing_command() -> None:
+    tracker = NoProgressTracker(3)
+    failed = ToolResult("exit 1", is_error=True)
+    args = {"cmd": "maa --help"}
+
+    assert tracker.observe("exec_command", args, failed) is False
+    assert tracker.observe("exec_command", args, failed) is False
+    assert tracker.observe("exec_command", args, failed) is True
+
+
+def test_success_resets_cross_argument_error_family() -> None:
+    tracker = NoProgressTracker(2)
+    failed = ToolResult("failed", is_error=True, meta={"error_kind": "network"})
+    assert tracker.observe("web_fetch", {"url": "a"}, failed) is False
+    assert tracker.observe("web_fetch", {"url": "ok"}, ToolResult("page")) is False
+    assert tracker.observe("web_fetch", {"url": "b"}, failed) is False
+
+
 def test_no_progress_uses_evidence_delta_and_keeps_intents_independent() -> None:
     tracker = NoProgressTracker(2)
     first = ToolResult("page", meta={"evidence_keys": ["https://example.com/a"]})

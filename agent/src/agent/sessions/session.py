@@ -340,9 +340,9 @@ class Session:
 
         - ``user_message`` → 一条 ``role="user"`` 消息
         - ``assistant_message`` → 一条 ``role="assistant"`` 消息
-        - ``tool_call_request`` → **不直接产消息**，依附到上一条 assistant
-          消息的 ``meta["tool_calls"]`` 列表里（OpenAI 协议要求 assistant
-          消息携带 ``tool_calls`` 字段）
+        - ``tool_call_request`` → 依附到上一条 assistant 的
+          ``meta["tool_calls"]``；纯工具轮没有持久化 assistant 时，投影层
+          生成一条只供协议使用的空 assistant 容器。
         - ``tool_call_result`` → 一条 ``role="tool"`` 消息
         - ``todo_reminder`` → 一条只读 ``role="system"`` 历史状态裁决；修复前
           只有 ``system_trigger`` 的 IM Reminder 会合成等价 fallback
@@ -355,8 +355,8 @@ class Session:
         002 design §4.6）。``Event.meta`` 复制到 ``Message.meta``；
         ``partial`` 标志合并进 ``Message.meta``。
 
-        损坏数据的容忍：``tool_call_request`` 找不到上一条 assistant 时
-        **静默忽略**——避免历史读取爆炸；新写入不会出现这种情况。
+        纯工具轮的协议 assistant 仅在投影中存在，不会向原始事件流
+        写入零内容 ``assistant_message``。
 
         Note:
             009 起的 ``compaction`` 事件**不参与本投影**（不产 Message）——它只是
@@ -444,7 +444,14 @@ class Session:
                 pending_reminder_fact = False
             elif ev.type == "tool_call_request":
                 if last_assistant is None:
-                    continue  # 数据损坏，静默忽略
+                    last_assistant = Message(
+                        role="assistant",
+                        content="",
+                        timestamp=ev.ts,
+                        meta={**ev.meta, "synthetic": "tool_call_container"},
+                        uuid=f"tool_container_{ev.uuid}",
+                    )
+                    result.append(last_assistant)
                 tool_calls = list(last_assistant.meta.get("tool_calls", []))
                 tool_calls.append(
                     {
@@ -468,6 +475,9 @@ class Session:
                         uuid=ev.uuid,
                     )
                 )
+                # 后续再出现 request 时属于新的模型工具轮，不能继续
+                # 挂到上一轮的协议 assistant 容器上。
+                last_assistant = None
                 pending_reminder_fact = False
             elif ev.type == "todo_reminder":
                 reminder_message = _reminder_history_message(ev)

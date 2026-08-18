@@ -43,6 +43,8 @@ class Tool(Protocol):
             失败或空结果时如何继续，以及是否需要用户确认。
         parameters_schema: JSON Schema (draft-07) 描述 :meth:`invoke` 入参；
             遵循 OpenAI tool calling spec 中 ``function.parameters`` 的格式。
+            :class:`ToolRegistry` 在调用前会对剔除宿主隐藏字段后的模型参数执行同一
+            schema 校验；工具实现仍负责权限、路径、所有权和业务不变量检查。
 
     Note:
         Tool 实现不手写 namespace。注册时 :class:`ToolRegistry` 根据实现类相对于
@@ -72,9 +74,9 @@ class Tool(Protocol):
         """同步执行工具。
 
         Args:
-            args: 已由 LLM 按 ``parameters_schema`` 生成的入参字典。
-                注意：本期**不强制**实现方做二次 schema 校验，
-                信任 LLM 的输出；未来如需严格校验由各 Tool 自行实现。
+            args: 经 :class:`ToolRegistry` 按 ``parameters_schema`` 校验、并附加了必要
+                宿主隐藏上下文的入参字典。直接单测实现时仍应传合法 public 参数；
+                工具不得把 schema validation 当作权限或副作用校验的替代品。
 
         Returns:
             统一的 :class:`ToolResult`。

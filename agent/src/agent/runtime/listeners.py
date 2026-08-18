@@ -36,6 +36,7 @@ EnvelopeKind = Literal[
     "filesystem_approval_changed",
     "approval_changed",
     "command_process_changed",
+    "sandbox_capability_changed",
     "heartbeat",
 ]
 
@@ -71,6 +72,7 @@ class PushEnvelope:
     filesystem_approval: dict[str, Any] | None = None
     approval: dict[str, Any] | None = None
     command_process: dict[str, Any] | None = None
+    sandbox_capability: dict[str, Any] | None = None
 
 
 def _serialize_conversation_event(cev: ConversationEvent) -> dict[str, Any]:
@@ -383,6 +385,26 @@ class ListenerRegistry:
                         events=[],
                         run_id=str(process.get("run_id") or "") or None,
                         command_process=dict(process),
+                    ),
+                )
+
+    def publish_sandbox_capability_change(self, capability: dict[str, object]) -> None:
+        """Push one global command-sandbox readiness fact without a model turn."""
+
+        with self._lock:
+            for sub in list(self._subs.values()):
+                if "sandbox_capability_changed" not in sub.accept_kinds:
+                    continue
+                self._seq[sub.id] += 1
+                self._safe_push(
+                    sub,
+                    PushEnvelope(
+                        kind="sandbox_capability_changed",
+                        session_id="",
+                        seq=self._seq[sub.id],
+                        source_kind=None,
+                        events=[],
+                        sandbox_capability=dict(capability),
                     ),
                 )
 

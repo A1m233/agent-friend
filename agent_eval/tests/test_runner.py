@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from agent.skills import SkillSelection
 from agent.tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SkillReadTool
 from agent_eval.runner import (
     _AssistantTextTrace,
@@ -187,19 +188,19 @@ def test_fixture_skills_use_production_catalog_and_reader(tmp_path: Path) -> Non
     record = next(item for item in service.snapshot.entries if item.name == "experiment-review")
     assert record.allow_implicit_invocation is False
 
-    turn = service.begin_turn()
+    turn = service.begin_turn((SkillSelection(record.id, expected_version=record.version),))
+    assert len(turn.activations) == 1
     result = SkillReadTool(service).invoke(
         {
-            "id": record.id,
-            "invocation_kind": "named",
+            "skill_id": record.id,
             "reason": "fixture direct-name test",
             SKILL_CATALOG_SNAPSHOT_ARG: turn.catalog,
         }
     )
 
-    assert result.is_error is False
-    assert "Always compare baseline and candidate blindly." in result.text
-    assert result.meta["skill_activation"]["status"] == "activated"
+    assert result.is_error is True
+    assert result.meta["error_kind"] == "implicit_invocation_disabled"
+    assert "Always compare baseline and candidate blindly." in turn.activations[0].contents
 
 
 def test_fixture_skills_can_exercise_shared_production_discovery(tmp_path: Path) -> None:
@@ -218,6 +219,29 @@ def test_fixture_skills_can_exercise_shared_production_discovery(tmp_path: Path)
     record = next(item for item in service.snapshot.entries if item.name == "shared-release-helper")
     assert record.source == "shared"
     assert record.entry_path == tmp_path / "shared" / "shared-release-helper" / "SKILL.md"
+
+
+def test_package_fixture_skill_preserves_real_package_resources(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "package-helper"
+    source.joinpath("references").mkdir(parents=True)
+    source.joinpath("SKILL.md").write_text(
+        "---\nname: package-helper\ndescription: Use for package fixtures.\n---\n\n"
+        "Read references/guide.md.\n",
+        encoding="utf-8",
+    )
+    source.joinpath("references", "guide.md").write_text("package evidence\n", encoding="utf-8")
+
+    service = _build_fixture_skill_service(
+        tmp_path / "discovery",
+        [FixtureSkill(name="package-helper", package_path=source)],
+    )
+
+    record = next(item for item in service.snapshot.entries if item.name == "package-helper")
+    assert record.allow_implicit_invocation is True
+    assert (
+        record.package_root.joinpath("references", "guide.md").read_text(encoding="utf-8")
+        == "package evidence\n"
+    )
 
 
 def test_skill_catalog_request_guard_records_actual_unified_catalog(tmp_path: Path) -> None:
@@ -394,9 +418,9 @@ def test_fixture_skill_read_failure_keeps_production_tool_spec() -> None:
         FakeTool(name="skill_read", result_text="Skill 读取失败，未激活。", is_error=True)
     )
 
-    assert tool.parameters_schema["required"] == ["id", "invocation_kind", "reason"]
+    assert tool.parameters_schema["required"] == ["skill_id", "reason"]
     assert "成功结果才代表 Skill 已激活" in tool.description
-    assert tool.invoke({"id": "skill_1"}).is_error is True
+    assert tool.invoke({"skill_id": "skill_1"}).is_error is True
 
 
 def test_assistant_text_trace_preserves_tool_continuation_segments() -> None:

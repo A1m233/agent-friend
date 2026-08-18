@@ -185,6 +185,13 @@ export function startSessionSyncSubscriber(): () => void {
     }
   });
 
+  // A desktop reload can happen while a detached run is waiting for approval.
+  // Push only carries future changes, so rebuild the active-run ownership map
+  // from the bridge immediately; otherwise the durable tool card says
+  // "waiting for approval" while ApprovalDock has no run id to match and hides
+  // its buttons until another reconnect happens.
+  void useConversationStore.getState().calibrateRuns();
+
   return () => {
     if (stopped) return;
     stopped = true;

@@ -154,6 +154,26 @@ def test_encode_stream_maps_model_response_status_to_custom_event() -> None:
     assert b'"attempt":2' in body
 
 
+def test_encode_stream_maps_reasoning_activity_without_private_content() -> None:
+    class StatusConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield ModelResponseStatus(phase="reasoning", after_tool=True)
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, StatusConversation()),
+            "hello",
+            thread_id="session-a",
+            run_id="run-a",
+            accept="text/event-stream",
+        )
+    )
+
+    assert b'"phase":"reasoning"' in body
+    assert b"reasoning_content" not in body
+
+
 def test_encode_stream_maps_skill_activation_to_custom_event() -> None:
     class SkillConversation(_ConversationStub):
         def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
