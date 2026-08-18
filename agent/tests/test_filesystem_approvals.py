@@ -61,6 +61,10 @@ def test_non_desktop_surface_fails_closed(tmp_path: Path) -> None:
     )
     assert result.is_error is True
     assert json.loads(result.text)["status"] == "unavailable"
+    assert result.meta == {
+        "error_kind": "approval_surface_unavailable",
+        "no_progress_family": "approval_surface_unavailable",
+    }
 
 
 def test_instruction_directory_requires_exact_file_for_content_or_write(tmp_path: Path) -> None:

@@ -78,10 +78,14 @@ _LOCATOR_SCHEMA: dict[str, Any] = {
 
 
 def _json_result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
+    error_kind = payload.get("error")
+    meta: dict[str, object] = {"error_kind": error_kind} if error else {}
+    if error and error_kind == "approval_surface_unavailable":
+        meta["no_progress_family"] = error_kind
     return ToolResult(
         text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
         is_error=error,
-        meta={"error_kind": payload.get("error")} if error else {},
+        meta=meta,
     )
 
 

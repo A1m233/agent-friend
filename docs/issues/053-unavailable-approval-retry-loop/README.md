@@ -1,6 +1,6 @@
 # 053 · 不可用审批入口会被 Agent 重复请求多次才停止
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-19
 - **关联需求**：[065-trustworthy-read-tools-and-tool-runtime](../../requirements/065-trustworthy-read-tools-and-tool-runtime/)
@@ -45,3 +45,6 @@
 - 检查同一模型批次内多个等价失败调用的终止时机，避免达到阈值后仍执行批次中的后续重复项。
 - 增加确定性回归：参数完全相同、只改 reason、只改 item ID/roots、同批并发重复，以及桌面入口
   后续真正具备审批 surface 时的正常正例。
+
+---
+已在 commit `7c54416` 修复。
