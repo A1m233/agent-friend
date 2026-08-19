@@ -83,14 +83,6 @@ $lastRuntimeGuardExitCode = 0
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Error "未检测到 uv。先跑 .\scripts\setup\run.ps1 初始化环境。"
 }
-$codexExecutable = (& uv run python scripts/command-runtime/run.py path 2>$null)
-if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($codexExecutable)) {
-    $env:AGENT_FRIEND_CODEX_EXECUTABLE = $codexExecutable.Trim()
-}
-else {
-    Remove-Item Env:AGENT_FRIEND_CODEX_EXECUTABLE -ErrorAction SilentlyContinue
-    Write-Host "  [INFO] 命令运行时尚未准备；需要时运行 .\scripts\command-runtime\run.ps1 prepare"
-}
 
 function Get-DevRuntimePorts {
     $ports = @(1420, 1421, 18800, 18900)
@@ -116,6 +108,16 @@ if ($devCommand -eq "stop") {
     if ($lastRuntimeGuardExitCode -ne 0) { exit $lastRuntimeGuardExitCode }
     return
 }
+
+Write-Host "===> 确保命令运行时"
+$commandRuntimeOutput = @(& uv run python scripts/command-runtime/run.py ensure)
+$commandRuntimeExitCode = $LASTEXITCODE
+$codexExecutable = (($commandRuntimeOutput | ForEach-Object { "$_" }) -join [Environment]::NewLine).Trim()
+if ($commandRuntimeExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($codexExecutable)) {
+    Write-Error "命令运行时准备失败，dev 未启动：$codexExecutable"
+}
+$env:AGENT_FRIEND_CODEX_EXECUTABLE = $codexExecutable
+Write-Host "  [OK] $codexExecutable"
 
 $guardCommand = if ($devCommand -eq "takeover") { "takeover" } else { "acquire" }
 $runtimePortsText = (Get-DevRuntimePorts) -join ","

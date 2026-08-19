@@ -59,12 +59,6 @@ while [ "$#" -gt 0 ]; do
 done
 export AGENT_FRIEND_CONFIG_MODE="$CONFIG_MODE"
 export AGENT_FRIEND_REPO_ROOT="$ROOT"
-if CODEX_EXECUTABLE="$(uv run python scripts/command-runtime/run.py path 2>/dev/null)"; then
-    export AGENT_FRIEND_CODEX_EXECUTABLE="$CODEX_EXECUTABLE"
-else
-    unset AGENT_FRIEND_CODEX_EXECUTABLE || true
-    echo "  [INFO] 命令运行时尚未准备；需要时运行 ./scripts/command-runtime/run.sh prepare"
-fi
 if [ -z "${AGENT_FRIEND_LOG_DIR:-}" ]; then
     case "$(uname -s)" in
         Darwin)
@@ -135,6 +129,17 @@ if [ "$DEV_COMMAND" = "stop" ]; then
     run_runtime_guard stop
     exit $?
 fi
+echo "===> 确保命令运行时"
+if ! CODEX_EXECUTABLE="$(uv run python scripts/command-runtime/run.py ensure)"; then
+    echo "  [ERROR] 命令运行时准备失败，dev 未启动：$CODEX_EXECUTABLE" >&2
+    exit 1
+fi
+if [ -z "$CODEX_EXECUTABLE" ]; then
+    echo "  [ERROR] 命令运行时准备成功但未返回可执行文件路径，dev 未启动" >&2
+    exit 1
+fi
+export AGENT_FRIEND_CODEX_EXECUTABLE="$CODEX_EXECUTABLE"
+echo "  [OK] $CODEX_EXECUTABLE"
 if [ "$DEV_COMMAND" = "takeover" ]; then
     run_runtime_guard takeover --owner-pid "$$"
 else

@@ -333,14 +333,24 @@ package runner 只把通过 lock 校验的制品放入 staging。payload manifes
 
 Bridge 启动 `CommandRuntime` 前再次核对以下事实：
 
-- 路径来自 launcher 明确传入的 active payload 或 source-mode project cache，不从用户 PATH 搜索；
+- 路径来自 launcher 明确传入的 active payload 或 source-mode user cache，不从用户 PATH 搜索；
 - 文件哈希和版本与产品 lock 匹配；
 - `codex exec-server --listen stdio` 与所需 initialize、sandbox、output/exited/closed capability 可用；
 - 使用产品隔离的 `CODEX_HOME`，目录内不包含 auth 文件，也不读取用户主目录的 `.codex`。
 
-任一检查失败时只把命令工具标记为 `unavailable`，Bridge 的普通聊天和其它 Tool 继续可用。runtime 不执行 Codex login、不调用 Codex Agent、不访问远程 exec-server，也不在产品运行期下载或更新二进制。
+正式安装形态中，任一检查失败时只把命令工具标记为 `unavailable`，Bridge 的普通聊天和其它 Tool 继续可用；产品运行期不下载或更新二进制。源码开发形态由标准 launcher 在创建开发 runtime 之前完成 ensure，因此下载、哈希、许可证或身份校验失败直接阻止本次 `dev` / 独立 `bridge` 启动，避免形成“聊天可用但高频命令能力缺失”的混合开发运行态。runtime 不执行 Codex login、不调用 Codex Agent，也不访问远程 exec-server。
 
-source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `prepare`、`doctor` 和测试入口；两端使用同一 vendor lock，把二进制放到项目管理的 cache，不做系统级安装。Windows 正式 package 首期携带对应制品；macOS/Linux source 接口与协议保持一致，正式安装包留待后续。
+source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `ensure`、`prepare`、`doctor` 和测试入口，并由以下标准入口复用同一 ensure：
+
+- `scripts/setup/run.*` 在 `uv sync` 后把固定命令运行时作为标准开发依赖准备；失败时 setup 失败。
+- `scripts/dev/run.*` 仅在真正启动或 takeover 前 ensure，`status/stop` 保持只读；失败时不获取 runtime lease、不启动部分服务。
+- `scripts/bridge/run.*` 独立启动前 ensure；失败时不启动 Bridge。
+
+ensure 使用 vendor lock 文件内容的 SHA-256 作为 source cache identity，并由既有 vendor 校验继续绑定版本、平台、架构、制品 SHA-256、许可证 SHA-256 和协议 floor。Windows 默认根为 `%LOCALAPPDATA%/agent-friend/dev-cache/command-runtime`，macOS 为 `~/Library/Caches/agent-friend/command-runtime`，Linux 为 `${XDG_CACHE_HOME:-~/.cache}/agent-friend/command-runtime`；最终 payload 目录继续包含版本与平台键。不同 worktree 只要 lock 内容相同就复用同一只读制品，lock 变化落入新 identity 目录，不覆盖旧版本。
+
+首次准备和损坏后重建在每个 lock identity 上使用进程内 mutex 与跨进程文件锁串行化，并在锁内再次校验；下载、解包、哈希和许可证校验全部完成后才发布 prepared 目录，等待者只会看到未就绪或完整制品。cache 不包含 `CODEX_HOME`、auth、配置或会话。`ensure` 只准备二进制，不调用 Windows sandbox setup；后续 Bridge readiness 仍可以返回 `setup_required`，由用户在全局设置或显式 `command-runtime setup` 中触发 UAC。
+
+Windows 正式 package 首期携带对应制品；macOS/Linux source 接口与协议保持一致，正式安装包留待后续。
 
 ### 前端交互
 
@@ -388,7 +398,8 @@ source 模式通过 `scripts/command-runtime/run.sh|run.ps1` 提供 `prepare`、
 | `frontend/src-tauri/src/runtime_services/` | 修改 | packaged/source 启动时向 Bridge 注入经过身份校验的 Codex 路径；不新增第三个长期服务槽 |
 | `scripts/package/vendor/` | 新增 | Codex 制品与 license lock |
 | `scripts/package/` | 修改 | 下载、校验、staging、payload capability 和 frozen smoke |
-| `scripts/command-runtime/run.sh` / `run.ps1` | 新增 | 跨平台 prepare、doctor 和确定性 smoke 入口 |
+| `scripts/command-runtime/run.py`、`run.sh` / `run.ps1` | 新增/修改 | 跨平台共享 source cache、并发安全 ensure、prepare、doctor 和确定性 smoke 入口 |
+| `scripts/setup/run.*`、`scripts/dev/run.*`、`scripts/bridge/run.*` | 修改 | 标准依赖准备、启动前失败关闭 ensure 与只读 status/stop 边界 |
 | `scripts/README.md` | 修改 | 登记新的开发者入口 |
 | 各受影响模块 tests | 修改/新增 | 公共审批、协议、沙箱、模式、取消、Skill identity、push、UI 和 packaging 回归 |
 
@@ -522,6 +533,7 @@ sequenceDiagram
 
 ### 项目与跨平台入口
 
+- 空 cache、cache hit、lock identity 变化、两个并发 prepare、下载失败和两个 worktree 复用同一 payload 均使用确定性 fixture 验证；入口契约测试固定 setup/dev/bridge 都调用 `ensure`，并固定 dev 的 `status/stop` 早于 ensure 返回。
 - `scripts/command-runtime/run.* doctor` 验证 source-mode 锁定二进制、隔离 CODEX_HOME、exec-server handshake 和 sandbox capability。
 - `scripts/command-runtime/run.* smoke` 使用无网络、无真实 LLM、无 MAA 的本地 fixture 覆盖 buffered、streaming、write、cancel 和输出边界。
 - source Windows 真实沙箱测试使用受控本地 HTTP/TLS fixture 与网络阶段 probe，先固定环境、Winsock、DNS/连接、代理和禁网边界；不依赖公开服务证明确定性机制。
@@ -546,3 +558,4 @@ sequenceDiagram
 | 2026-08-17 | 根据真实 Skill 安装失败补齐闭环：把沙箱初始化拆为全局 provisioning 与逐命令非提权 refresh，并将全局操作移到系统权限；Skill-bound 命令使用包内相对 cwd；增加 Windows 网络阶段诊断、真实 HTTPS 与完整 Skill 安装旅程验收。 | 是，现有实现需按新状态机和完整链路修订 |
 | 2026-08-18 | 对齐 Codex thread-scoped cwd：普通命令 workdir 改为可选，省略时使用跨 run 持久的 session-managed 默认目录；run TEMP 与 Skill 快照继续隔离。模型权限值改为 read_only/read_write，宿主派生 PATH 程序根进入同一次授权，并补齐路径/沙箱错误分流和 UI 语义。 | 是，需要重做普通命令 schema、session 目录生命周期、沙箱映射、授权指纹、错误与前端展示 |
 | 2026-08-18 | 增加显式 `host_user` 执行级别：只接受结构化 argv，经现有一次性审批展示 unrestricted 能力，exec-server 不传 sandbox；普通命令继续默认 sandboxed，二者不静默回退。 | 是，需要扩展 Tool/approval wire、runtime start、前端展示与回归 |
+| 2026-08-19 | 将 source 命令运行时从“项目 cache + 手工 prepare + 启动时可选探针”改为“标准 setup + dev/bridge 幂等 ensure + 用户级 lock-identity cache”；准备失败阻止开发 runtime，dev status/stop 保持只读，Windows UAC setup 继续显式。 | 是，需要重构 source bootstrap 与跨平台入口并新增 AC-23 回归；不改变正式 package payload 或产品运行期下载策略 |
