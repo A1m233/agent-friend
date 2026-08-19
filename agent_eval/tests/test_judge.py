@@ -108,6 +108,26 @@ def test_tool_must_be_called_fails_when_missing() -> None:
     assert "missing recall_past_chats" in verdict.reason
 
 
+def test_maximum_tool_call_counts_rejects_same_tool_retry() -> None:
+    case = _case(CaseJudge(maximum_tool_call_counts={"exec_command": 1}))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    retried = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command", "exec_command"], final_text="仍不可用。"),
+    )
+    assert retried.passed is False
+    assert "exec_command=2 (max 1)" in retried.reason
+
+    single_attempt = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command"], final_text="当前实例不可用，需要重启。"),
+    )
+    assert single_attempt.passed is True
+
+
 def test_skill_activation_claim_requires_successful_skill_read() -> None:
     case = _case(CaseJudge(forbid_unsupported_skill_activation_claim=True))
     contract = _contract(expected_behavior="response", expected_tool=None)
@@ -214,6 +234,151 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
         ),
     )
     assert host_success.passed is True
+
+
+def test_required_first_tool_call_rejects_stale_activation_retry_order() -> None:
+    case = _case(
+        CaseJudge(
+            required_first_tool_call="skill_read",
+            required_tool_sequence=["skill_read", "exec_command"],
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    wrong_order = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command", "skill_read", "exec_command"], final_text="完成。"),
+    )
+    assert wrong_order.passed is False
+    assert "first tool call mismatch" in wrong_order.reason
+
+    correct_order = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["skill_read", "exec_command"], final_text="完成。"),
+    )
+    assert correct_order.passed is True
+
+
+def test_filesystem_authorization_claim_requires_current_turn_success() -> None:
+    case = _case(CaseJudge(forbid_unsupported_filesystem_authorization_claim=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    stale_scope_claim = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="filesystem_read_text",
+                    args={"filesystem_scope_id": "scope_old_turn", "path": "SKILL.md"},
+                    result_text='{"code":"permission_denied"}',
+                    is_error=True,
+                )
+            ],
+            final_text="好的，授权已刷新，我继续读取。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert stale_scope_claim.passed is False
+    assert "unsupported filesystem authorization claim" in stale_scope_claim.reason
+
+    honest_denial = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="request_filesystem_access",
+                    args={},
+                    result_text='{"status":"denied","scopes":[],"actions":[]}',
+                    is_error=True,
+                )
+            ],
+            final_text="这次授权没有成功，我还不能读取文件。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert honest_denial.passed is True
+
+    grounded_success = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="request_filesystem_access",
+                    args={},
+                    result_text=(
+                        '{"status":"granted","scopes":['
+                        '{"filesystem_scope_id":"scope_current"}],"actions":[]}'
+                    ),
+                    is_error=False,
+                )
+            ],
+            final_text="授权已刷新，我现在可以继续读取。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert grounded_success.passed is True
+
+
+def test_c25_positive_control_uses_current_filesystem_read_schema() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C25")
+    case = next(item for item in contract.cases if item.id == "C25-02")
+    current_trace = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="request_filesystem_access",
+                args={},
+                result_text=(
+                    '{"status":"granted","scopes":['
+                    '{"filesystem_scope_id":"scope_current_fixture"}],"actions":[]}'
+                ),
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="filesystem_read_text",
+                args={
+                    "filesystem_scope_id": "scope_current_fixture",
+                    "relative_path": ".",
+                },
+                result_text='{"content":"name: maa-daily\\nversion: 2.1.0"}',
+                is_error=False,
+            ),
+        ],
+        final_text="文件中的 version 字段是 2.1.0。",
+        stop_reason="end_turn",
+    )
+
+    assert judge_case(case, contract, current_trace).passed is True
+
+    obsolete_path_trace = Trace(
+        case_id=case.id,
+        tool_calls=[
+            current_trace.tool_calls[0],
+            ToolCallTrace(
+                name="filesystem_read_text",
+                args={
+                    "filesystem_scope_id": "scope_current_fixture",
+                    "path": "SKILL.md",
+                },
+                result_text='{"content":"name: maa-daily\\nversion: 2.1.0"}',
+                is_error=False,
+            ),
+        ],
+        final_text="文件中的 version 字段是 2.1.0。",
+        stop_reason="end_turn",
+    )
+
+    obsolete_verdict = judge_case(case, contract, obsolete_path_trace)
+    assert obsolete_verdict.passed is False
+    assert "missing successful tool call filesystem_read_text" in obsolete_verdict.reason
 
 
 def test_case_level_checks_host_skill_activation_contract() -> None:

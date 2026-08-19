@@ -131,6 +131,30 @@ def test_filesystem_tool_contract_explains_create_and_exact_patch_syntax(tmp_pat
     assert "*** End Patch" in patch_tool.description
 
 
+def test_stale_scope_error_requires_a_new_current_turn_scope(tmp_path: Path) -> None:
+    tool = FilesystemOperationTool("filesystem_read_text", FilesystemService(_policy(tmp_path)))
+
+    result = tool.invoke(
+        {
+            FILESYSTEM_LEDGER_ARG: FilesystemAuthorizationLedger(),
+            "filesystem_scope_id": "scope-from-previous-turn",
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert payload["error"] == "permission_denied"
+    assert payload["permission_reason"] == "scope_unavailable"
+    assert payload["retryable"] is False
+    assert payload["retry_after"] == "new_current_turn_filesystem_scope"
+    assert payload["required_action"] == "use_current_turn_scope_or_request_filesystem_access"
+    assert "不要使用同一 scope 重试" in payload["message"]
+    assert result.meta == {
+        "error_kind": "permission_denied",
+        "no_progress_family": "filesystem_permission_denied:scope_unavailable",
+    }
+
+
 def test_broker_grants_only_approved_subset_for_current_ledger(tmp_path: Path) -> None:
     broker = FilesystemApprovalBroker()
     lifecycle: list[dict[str, object]] = []

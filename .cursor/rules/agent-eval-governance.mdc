@@ -101,8 +101,9 @@ manifest 和最终报告都要记录模型选择依据，而不只记录最终 m
 
 ## 失败先归因门禁
 
-任一真实 eval case 未通过后，当前动作默认停在归因，不得把“跑 eval”自动延伸为修改产品行为、
-prompt、case、judge、fixture 或 runner。该门禁适用于所有失败，不只适用于疑似 judge 假阳性。
+任一真实 eval case 未通过后，先停在归因，不得把“跑 eval”自动延伸为修改产品行为、prompt、
+case、judge、fixture 或 runner。除下文“确定的 judge 假阴一致性修复”外，该门禁适用于所有失败，
+不只适用于疑似 judge 假阳性。
 
 归因至少区分并给出 transcript / trace / report 证据：
 
@@ -116,3 +117,23 @@ prompt、case、judge、fixture 或 runner。该门禁适用于所有失败，�
 置信度、影响范围和建议方向；只有用户明确授权修改后，才进入对应实现。不得为清空单个失败而
 立即追加答案式 prompt 或放宽 judge；需要修改时仍遵守 leakage audit、确定性 control 和必要的
 相邻/holdout 复验。
+
+### 确定的 judge 假阴一致性修复
+
+仅当 report 中的 transcript、tool trace 和当前产品工具 schema 能共同证明：模型行为已经满足现有
+契约，失败完全来自 case、fixture、judge 或 harness 与同一份现行协议之间的机械不一致时，可以
+不等待额外授权，直接做最小一致性修复。典型范围包括过期字段名、参数形状、结果字段或 harness
+解析与当前 schema 漂移；证据存在歧义、契约本身需要重新定义，或修改会触及产品 prompt、runtime、
+工具行为和期望行为时，不适用本例外，仍停在归因门禁等待用户决定。
+
+使用本例外时必须同时满足：
+
+- 修改只对齐已经确定的协议真相，不降低 judge 强度、不删除原有行为要求、不加入答案提示，也不
+  顺手处理其它评测问题；
+- 用原失败 trace 对应的参数与结果补充或更新确定性测试，证明有效行为会通过，同时保留至少一个
+  违反原契约的失败断言，并运行受影响的 `agent_eval` 确定性门禁；
+- 不重跑同一个真实 LLM case。保留原 report 和 raw fail，把人工复核结论记录为“judge 假阴，已完成
+  一致性修复”，以 trace、协议来源和确定性测试作为闭环证据；
+- 从冻结清单恢复时，把该项记为 `completed_false_negative_reconciled`，直接继续原清单中的 pending
+  case。因为没有增加真实调用，原 `llm-api-confirm` 授权仍有效；若新增 case、重复次数、模型或调用量，
+  仍按原规则重新告知或取得授权。

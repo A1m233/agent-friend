@@ -307,6 +307,44 @@ def test_deterministic_command_contract_failure_publishes_no_progress_family() -
     assert result.meta["no_progress_family"] == "windows_powershell_unsupported"
 
 
+def test_command_runtime_unavailable_requires_new_runtime_instead_of_retry(
+    tmp_path: Path,
+) -> None:
+    unavailable_runtime = CommandRuntime(
+        None,
+        codex_home=tmp_path / "codex-home",
+        execution_root=tmp_path / "execution",
+    )
+    try:
+        result = ExecCommandTool(unavailable_runtime, ApprovalBroker()).invoke(
+            {COMMAND_SURFACE_ARG: "desktop_chat"}
+        )
+    finally:
+        unavailable_runtime.close()
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert result.meta == {
+        "error_kind": "command_runtime_unavailable",
+        "requires_user_action": True,
+        "no_progress_family": "command_runtime_unavailable",
+    }
+    assert payload["status"] == "unavailable"
+    assert payload["retryable"] is False
+    assert payload["retry_after"] == "new_runtime_with_command_runtime_available"
+    assert payload["required_action"] == "restart_runtime_then_update_or_repair_if_unavailable"
+    assert payload["blocking_scope"] == "current_app_runtime"
+    assert "重启当前运行实例" in payload["message"]
+    assert "更新或修复产品安装" in payload["message"]
+    assert "全局系统权限" in payload["message"]
+
+
+def test_exec_command_description_explains_runtime_unavailable_recovery() -> None:
+    assert "command_runtime_unavailable" in ExecCommandTool.description
+    assert "停止重试" in ExecCommandTool.description
+    assert "更新或修复安装" in ExecCommandTool.description
+
+
 def test_child_environment_does_not_inherit_credentials(runtime: CommandRuntime) -> None:
     tool = ExecCommandTool(
         runtime,
@@ -1330,6 +1368,30 @@ def test_skill_binding_error_distinguishes_filesystem_scope_from_skill_id(
     assert payload["error"] == "skill_not_active"
     assert "filesystem_scope_id" in payload["message"]
     assert activation.record.id in payload["message"]
+    assert "call skill_read once" in payload["message"]
+    assert "earlier turn's activation" in payload["message"]
+
+
+def test_skill_binding_without_current_turn_activation_directs_skill_read(
+    runtime: CommandRuntime,
+) -> None:
+    result = ExecCommandTool(runtime, ApprovalBroker()).invoke(
+        {
+            "cmd": "python run.py",
+            "skill": {"entry": "run.py", "workdir": "."},
+            "reason": "run helper",
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "call-a",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: ToolRunContext.create(""),
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert payload["error"] == "skill_id_required"
+    assert "call skill_read once" in payload["message"]
+    assert "earlier user turn is not valid" in payload["message"]
 
 
 def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
@@ -1338,6 +1400,8 @@ def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
     schema = ExecCommandTool.parameters_schema
     assert schema["not"] == {"required": ["workdir", "skill"]}
     skill_schema = schema["properties"]["skill"]
+    assert "上一用户轮的激活不会沿用" in skill_schema["description"]
+    assert "先调用 skill_read" in skill_schema["description"]
     assert "skill_id" in skill_schema["properties"]
     assert "id" not in skill_schema["properties"]
     assert skill_schema["required"] == ["entry"]

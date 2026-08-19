@@ -475,8 +475,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 8831
-        assert estimate_tokens([Message(role="system", content=output)]) == 6623
+        assert len(output) == 9034
+        assert estimate_tokens([Message(role="system", content=output)]) == 6775
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -561,6 +561,9 @@ class TestLoadDefaultStaticSection:
         assert "只有本轮确实准备调用或已经调用" in section.text
         assert "同一回合可以多次更新进展" in section.text
         assert "每次都要带来新状态" in section.text
+        assert "历史用户轮的成功记录" in section.text
+        assert "当前状态已经改变" in section.text
+        assert "进入下一用户轮后必须重新取得" in section.text
         assert "不要只轮换“查 / 搜 / 看”等同义词" in section.text
         assert "不把内部工具名或调用过程当成来源说明" in section.text
         assert "正常讨论 API、缓存等技术主题时可以照常回答" in section.text

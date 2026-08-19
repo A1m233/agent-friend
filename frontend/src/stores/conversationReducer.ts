@@ -82,6 +82,8 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       const result = isError ? e.content.slice(TOOL_ERROR_PREFIX.length) : e.content;
       return {
         ...msg,
+        status: "streaming",
+        runStatus: afterToolWaitingStatus(msg.runStatus),
         blocks: patchTool(msg.blocks, e.toolCallId, (t) => ({
           ...t,
           result,
@@ -203,6 +205,8 @@ export function applyPushConversationEvent(
       if (!toolCallId) return msg;
       return {
         ...msg,
+        status: "streaming",
+        runStatus: afterToolWaitingStatus(msg.runStatus),
         blocks: patchTool(msg.blocks, toolCallId, (tool) => ({
           ...tool,
           result: pushString(evt.text),
@@ -249,6 +253,18 @@ export function applyPushConversationEvent(
     default:
       return msg;
   }
+}
+
+function afterToolWaitingStatus(
+  previous: ModelResponseProgress | undefined,
+): ModelResponseProgress {
+  return {
+    phase: "waiting",
+    afterTool: true,
+    attempt: 1,
+    maxAttempts: 1,
+    activityVersion: (previous?.activityVersion ?? 0) + 1,
+  };
 }
 
 function pushString(value: unknown): string {

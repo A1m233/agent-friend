@@ -29,14 +29,15 @@ def test_loads_builtin_cases() -> None:
         ("C14", "user-intent-attribution-calibration", 3),
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
-        ("C17", "future-action-commitment-grounding", 3),
+        ("C17", "future-action-commitment-grounding", 4),
         ("C18", "clarification-action-consistency", 4),
         ("C19", "source-authority-calibration", 5),
-        ("C20", "skill-semantic-activation", 8),
+        ("C20", "skill-semantic-activation", 9),
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
         ("C24", "tool-identifier-contract", 6),
+        ("C25", "filesystem-authorization-claim-grounding", 2),
     ]
 
 
@@ -141,6 +142,10 @@ def test_loads_fixture_session_and_case_judge() -> None:
 
     commitment_control = next(item for item in c17.cases if item.id == "C17-03")
     assert commitment_control.fake_tools[0].name == "todo_manage"
+    runtime_anchor = next(item for item in c17.cases if item.id == "C17-04")
+    assert runtime_anchor.judge is not None
+    assert runtime_anchor.judge.maximum_tool_call_counts == {"exec_command": 1}
+    assert runtime_anchor.judge.must_mention_all == ["重启"]
 
     c18 = next(contract for contract in contracts if contract.id == "C18")
     clarification_anchor = next(item for item in c18.cases if item.id == "C18-01")
@@ -201,6 +206,10 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert failure_control.fake_tools[0].is_error is True
     assert failure_control.judge is not None
     assert failure_control.judge.forbid_unsupported_skill_activation_claim is True
+    cross_turn_anchor = next(item for item in c20.cases if item.id == "C20-09")
+    assert cross_turn_anchor.judge is not None
+    assert cross_turn_anchor.judge.required_first_tool_call == "skill_read"
+    assert cross_turn_anchor.judge.required_tool_sequence == ["skill_read", "exec_command"]
 
     c21 = next(contract for contract in contracts if contract.id == "C21")
     catalog_anchor = next(item for item in c21.cases if item.id == "C21-01")
@@ -295,6 +304,23 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert "--force" not in replacement_command
     assert replacement_requirement.args["access"]["filesystem"] == "read_write"
 
+    c25 = next(contract for contract in contracts if contract.id == "C25")
+    filesystem_anchor = next(item for item in c25.cases if item.id == "C25-01")
+    assert filesystem_anchor.judge is not None
+    assert filesystem_anchor.judge.required_first_tool_call == "request_filesystem_access"
+    assert filesystem_anchor.judge.forbid_unsupported_filesystem_authorization_claim is True
+    assert len(filesystem_anchor.current_session_events) == 7
+    filesystem_control = next(item for item in c25.cases if item.id == "C25-02")
+    assert filesystem_control.judge is not None
+    assert filesystem_control.judge.required_tool_sequence == [
+        "request_filesystem_access",
+        "filesystem_read_text",
+    ]
+    assert filesystem_control.judge.required_successful_tool_calls[0].args == {
+        "filesystem_scope_id": "scope_current_fixture",
+        "relative_path": ".",
+    }
+
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
     assert maa_anchor.fixture_skills[0].name == "maa-daily"
@@ -327,8 +353,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 24
-    assert meta.total_cases == 216
+    assert meta.total_contracts == 25
+    assert meta.total_cases == 220
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -346,14 +372,15 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C14": 3,
         "C15": 2,
         "C16": 2,
-        "C17": 3,
+        "C17": 4,
         "C18": 4,
         "C19": 5,
-        "C20": 8,
+        "C20": 9,
         "C21": 4,
         "C22": 3,
         "C23": 8,
         "C24": 6,
+        "C25": 2,
     }
     assert len(meta.digest) == 64
 
@@ -678,6 +705,31 @@ cases:
     )
 
     with pytest.raises(ValueError, match="min_count 必须是正整数"):
+        load_contracts(tmp_path)
+
+
+@pytest.mark.parametrize("maximum", ["0", "-1", "true", "'2'"])
+def test_maximum_tool_call_count_must_be_positive_integer(
+    tmp_path: Path,
+    maximum: str,
+) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        f"""
+contract:
+  id: C1
+  name: invalid-tool-call-maximum
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    judge:
+      maximum_tool_call_counts:
+        exec_command: {maximum}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="exec_command 必须是正整数"):
         load_contracts(tmp_path)
 
 

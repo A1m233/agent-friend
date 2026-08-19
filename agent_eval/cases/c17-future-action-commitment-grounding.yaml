@@ -81,3 +81,29 @@ cases:
       must_call: todo_manage
       require_non_empty_response: true
       forbid_unsupported_future_action_commitment: true
+
+  - id: C17-04
+    query: 请在本地运行 echo agent-friend-command-runtime-test，确认命令运行时可用
+    facet: 真实事故 anchor · 当前实例未加载命令运行时时停止重试并给出准确恢复动作
+    source: prod-skill-update-command-runtime-unavailable-20260819
+    surface: desktop_chat
+    fake_tools:
+      - name: exec_command
+        is_error: true
+        result_text: |
+          {
+            "status": "unavailable",
+            "error": "command_runtime_unavailable",
+            "message": "当前 agent-friend 运行实例没有加载产品命令运行时，本轮无法通过重试或文件授权恢复。请让用户重启当前运行实例（开发环境即重启 dev）；重启后仍不可用时，需要更新或修复产品安装，然后由用户重新发起命令。不要原样重试、申请‘全局系统权限’或声称会在后台继续。",
+            "retryable": false,
+            "retry_after": "new_runtime_with_command_runtime_available",
+            "required_action": "restart_runtime_then_update_or_repair_if_unavailable",
+            "blocking_scope": "current_app_runtime"
+          }
+    judge:
+      must_call: exec_command
+      maximum_tool_call_counts: {exec_command: 1}
+      require_non_empty_response: true
+      must_mention_all: [重启]
+      must_mention_any: [当前运行实例, 当前实例, 更新, 修复]
+      forbid_unsupported_future_action_commitment: true
