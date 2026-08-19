@@ -108,7 +108,7 @@ def _result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
     meta: dict[str, object] = {}
     if error and isinstance(error_kind, str) and error_kind:
         meta["error_kind"] = error_kind
-    if error_kind == "windows_sandbox_setup_required":
+    if error_kind in {"windows_sandbox_setup_required", "command_runtime_unavailable"}:
         meta["requires_user_action"] = True
         meta["no_progress_family"] = error_kind
     elif error_kind in {
@@ -130,6 +130,39 @@ def _result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
         text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
         is_error=error,
         meta=meta,
+    )
+
+
+def _command_runtime_unavailable_result() -> ToolResult:
+    return _result(
+        {
+            "status": "unavailable",
+            "error": "command_runtime_unavailable",
+            "message": (
+                "当前 agent-friend 运行实例没有加载产品命令运行时，本轮无法通过重试或"
+                "文件授权恢复。请让用户重启当前运行实例（开发环境即重启 dev）；重启后仍"
+                "不可用时，需要更新或修复产品安装，然后由用户重新发起命令。不要原样重试、"
+                "申请‘全局系统权限’或声称会在后台继续。"
+            ),
+            "retryable": False,
+            "retry_after": "new_runtime_with_command_runtime_available",
+            "required_action": "restart_runtime_then_update_or_repair_if_unavailable",
+            "blocking_scope": "current_app_runtime",
+        },
+        error=True,
+    )
+
+
+def _command_runtime_error_result(
+    exc: CommandRuntimeError,
+    *,
+    fallback_status: str,
+) -> ToolResult:
+    if exc.code == "command_runtime_unavailable":
+        return _command_runtime_unavailable_result()
+    return _result(
+        {"status": fallback_status, "error": exc.code, "message": str(exc)},
+        error=True,
     )
 
 
@@ -181,6 +214,8 @@ class ExecCommandTool:
         "宿主会解析能够确定的 PATH 启动程序，并自动把必要的最小程序目录作为只读派生"
         "范围纳入同一次授权；不要猜测安装目录或为此修改 workdir。首次使用 Windows 沙箱时，原命令会保持等待，直到用户完成初始化"
         "并批准、拒绝、超时或取消；不要改写命令来绕过初始化。"
+        "若结果为 command_runtime_unavailable，当前运行实例内不可恢复：停止重试，说明需"
+        "重启运行实例，若仍不可用则更新或修复安装；不要改申请文件权限或所谓全局系统权限。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -438,21 +473,16 @@ class ExecCommandTool:
                 error=True,
             )
         if not self._runtime.available:
-            return _result(
-                {
-                    "status": "unavailable",
-                    "error": "command_runtime_unavailable",
-                    "message": "产品内置的 Codex 命令运行时不可用。",
-                },
-                error=True,
-            )
+            return _command_runtime_unavailable_result()
         try:
             context = self._context(args)
             session_id, run_id, tool_call_id = self._ownership(args)
             details, workdir, roots, run_temp, path_identities = self._parse(
                 args, context, session_id=session_id, run_id=run_id
             )
-        except (TypeError, ValueError, CommandRuntimeError) as exc:
+        except CommandRuntimeError as exc:
+            return _command_runtime_error_result(exc, fallback_status="denied")
+        except (TypeError, ValueError) as exc:
             return _result(
                 {
                     "status": "denied",
@@ -513,7 +543,7 @@ class ExecCommandTool:
         try:
             self._validate_path_identities(path_identities)
         except CommandRuntimeError as exc:
-            return _result({"status": "failed", "error": exc.code, "message": str(exc)}, error=True)
+            return _command_runtime_error_result(exc, fallback_status="failed")
         sandbox = (
             sandbox_context(
                 workdir=workdir,
@@ -550,7 +580,7 @@ class ExecCommandTool:
                 sandbox=sandbox,
             )
         except CommandRuntimeError as exc:
-            return _result({"status": "failed", "error": exc.code, "message": str(exc)}, error=True)
+            return _command_runtime_error_result(exc, fallback_status="failed")
 
         def terminate(reason: str) -> None:
             self._terminate_for_context(snapshot.process_id, session_id, run_id, reason)

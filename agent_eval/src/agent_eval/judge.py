@@ -565,6 +565,23 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             f"forbidden successful tool calls: {forbidden_successes}",
         )
 
+    excessive_calls = {
+        name: names.count(name)
+        for name, maximum in spec.maximum_tool_call_counts.items()
+        if names.count(name) > maximum
+    }
+    if excessive_calls:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            "tool call count exceeded: "
+            + ", ".join(
+                f"{name}={count} (max {spec.maximum_tool_call_counts[name]})"
+                for name, count in sorted(excessive_calls.items())
+            ),
+        )
+
     contract_tool_forbidden = bool(
         contract.expected_tool and contract.expected_tool in spec.must_not_call_any
     )

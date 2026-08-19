@@ -108,6 +108,26 @@ def test_tool_must_be_called_fails_when_missing() -> None:
     assert "missing recall_past_chats" in verdict.reason
 
 
+def test_maximum_tool_call_counts_rejects_same_tool_retry() -> None:
+    case = _case(CaseJudge(maximum_tool_call_counts={"exec_command": 1}))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    retried = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command", "exec_command"], final_text="仍不可用。"),
+    )
+    assert retried.passed is False
+    assert "exec_command=2 (max 1)" in retried.reason
+
+    single_attempt = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command"], final_text="当前实例不可用，需要重启。"),
+    )
+    assert single_attempt.passed is True
+
+
 def test_skill_activation_claim_requires_successful_skill_read() -> None:
     case = _case(CaseJudge(forbid_unsupported_skill_activation_claim=True))
     contract = _contract(expected_behavior="response", expected_tool=None)

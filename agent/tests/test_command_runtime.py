@@ -307,6 +307,44 @@ def test_deterministic_command_contract_failure_publishes_no_progress_family() -
     assert result.meta["no_progress_family"] == "windows_powershell_unsupported"
 
 
+def test_command_runtime_unavailable_requires_new_runtime_instead_of_retry(
+    tmp_path: Path,
+) -> None:
+    unavailable_runtime = CommandRuntime(
+        None,
+        codex_home=tmp_path / "codex-home",
+        execution_root=tmp_path / "execution",
+    )
+    try:
+        result = ExecCommandTool(unavailable_runtime, ApprovalBroker()).invoke(
+            {COMMAND_SURFACE_ARG: "desktop_chat"}
+        )
+    finally:
+        unavailable_runtime.close()
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert result.meta == {
+        "error_kind": "command_runtime_unavailable",
+        "requires_user_action": True,
+        "no_progress_family": "command_runtime_unavailable",
+    }
+    assert payload["status"] == "unavailable"
+    assert payload["retryable"] is False
+    assert payload["retry_after"] == "new_runtime_with_command_runtime_available"
+    assert payload["required_action"] == "restart_runtime_then_update_or_repair_if_unavailable"
+    assert payload["blocking_scope"] == "current_app_runtime"
+    assert "重启当前运行实例" in payload["message"]
+    assert "更新或修复产品安装" in payload["message"]
+    assert "全局系统权限" in payload["message"]
+
+
+def test_exec_command_description_explains_runtime_unavailable_recovery() -> None:
+    assert "command_runtime_unavailable" in ExecCommandTool.description
+    assert "停止重试" in ExecCommandTool.description
+    assert "更新或修复安装" in ExecCommandTool.description
+
+
 def test_child_environment_does_not_inherit_credentials(runtime: CommandRuntime) -> None:
     tool = ExecCommandTool(
         runtime,
