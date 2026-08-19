@@ -535,6 +535,7 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
     data = _mapping(raw, label=label)
     return CaseJudge(
         must_call=_optional_str(data, "must_call"),
+        required_first_tool_call=_optional_str(data, "required_first_tool_call"),
         must_not_call_any=_str_list(
             data.get("must_not_call_any"),
             label=f"{label}.must_not_call_any",
@@ -628,6 +629,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         forbid_unsupported_skill_activation_claim=_bool(
             data.get("forbid_unsupported_skill_activation_claim"),
             label=f"{label}.forbid_unsupported_skill_activation_claim",
+        ),
+        forbid_unsupported_filesystem_authorization_claim=_bool(
+            data.get("forbid_unsupported_filesystem_authorization_claim"),
+            label=f"{label}.forbid_unsupported_filesystem_authorization_claim",
         ),
         forbid_tool_identifier_confusion=_bool(
             data.get("forbid_tool_identifier_confusion"),

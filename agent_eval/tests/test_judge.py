@@ -216,6 +216,97 @@ def test_skill_activation_claim_requires_successful_skill_read() -> None:
     assert host_success.passed is True
 
 
+def test_required_first_tool_call_rejects_stale_activation_retry_order() -> None:
+    case = _case(
+        CaseJudge(
+            required_first_tool_call="skill_read",
+            required_tool_sequence=["skill_read", "exec_command"],
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    wrong_order = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["exec_command", "skill_read", "exec_command"], final_text="完成。"),
+    )
+    assert wrong_order.passed is False
+    assert "first tool call mismatch" in wrong_order.reason
+
+    correct_order = judge_case(
+        case,
+        contract,
+        _trace(tool_names=["skill_read", "exec_command"], final_text="完成。"),
+    )
+    assert correct_order.passed is True
+
+
+def test_filesystem_authorization_claim_requires_current_turn_success() -> None:
+    case = _case(CaseJudge(forbid_unsupported_filesystem_authorization_claim=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    stale_scope_claim = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="filesystem_read_text",
+                    args={"filesystem_scope_id": "scope_old_turn", "path": "SKILL.md"},
+                    result_text='{"code":"permission_denied"}',
+                    is_error=True,
+                )
+            ],
+            final_text="好的，授权已刷新，我继续读取。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert stale_scope_claim.passed is False
+    assert "unsupported filesystem authorization claim" in stale_scope_claim.reason
+
+    honest_denial = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="request_filesystem_access",
+                    args={},
+                    result_text='{"status":"denied","scopes":[],"actions":[]}',
+                    is_error=True,
+                )
+            ],
+            final_text="这次授权没有成功，我还不能读取文件。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert honest_denial.passed is True
+
+    grounded_success = judge_case(
+        case,
+        contract,
+        Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="request_filesystem_access",
+                    args={},
+                    result_text=(
+                        '{"status":"granted","scopes":['
+                        '{"filesystem_scope_id":"scope_current"}],"actions":[]}'
+                    ),
+                    is_error=False,
+                )
+            ],
+            final_text="授权已刷新，我现在可以继续读取。",
+            stop_reason="end_turn",
+        ),
+    )
+    assert grounded_success.passed is True
+
+
 def test_case_level_checks_host_skill_activation_contract() -> None:
     activation = SkillActivationTrace(
         status="activated",

@@ -336,7 +336,8 @@ class ExecCommandTool:
                 "type": "object",
                 "description": (
                     "运行当前用户轮已激活 Skill 中的脚本。只有一个 Skill 已激活时可省略 "
-                    "skill_id 由宿主绑定；多个 Skill 已激活时必须提供精确 skill_id。"
+                    "skill_id 由宿主绑定；多个 Skill 已激活时必须提供精确 skill_id。上一用户轮的"
+                    "激活不会沿用；当前轮尚未激活目标 Skill 时先调用 skill_read。"
                 ),
                 "properties": {
                     "skill_id": {
@@ -785,7 +786,9 @@ class ExecCommandTool:
                     raise CommandRuntimeError(
                         "skill_id_required",
                         "skill.skill_id is required when the current turn does not have exactly "
-                        f"one activated Skill. Active Skill IDs: {visible}",
+                        f"one activated Skill. Active Skill IDs: {visible}. If none is active, "
+                        "call skill_read once for the intended Skill in this user turn before "
+                        "retrying exec_command; activation from an earlier user turn is not valid.",
                     )
             if not isinstance(skill_id, str):
                 raise ValueError("skill.skill_id 必须是字符串")
@@ -800,7 +803,9 @@ class ExecCommandTool:
                     "skill_not_active",
                     "skill.skill_id must be copied from the current turn's activated Skill "
                     f"<skill_id>; received {skill_id!r}. filesystem_scope_id and request_id are "
-                    f"not Skill IDs. Active Skill IDs: {visible}",
+                    f"not Skill IDs. Active Skill IDs: {visible}. Do not retry this binding or use "
+                    "an earlier turn's activation; call skill_read once for the intended Skill in "
+                    "the current user turn, then use its successful result.",
                 )
             skill_snapshot = prepare_skill_snapshot(
                 context,

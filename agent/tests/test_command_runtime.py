@@ -1330,6 +1330,30 @@ def test_skill_binding_error_distinguishes_filesystem_scope_from_skill_id(
     assert payload["error"] == "skill_not_active"
     assert "filesystem_scope_id" in payload["message"]
     assert activation.record.id in payload["message"]
+    assert "call skill_read once" in payload["message"]
+    assert "earlier turn's activation" in payload["message"]
+
+
+def test_skill_binding_without_current_turn_activation_directs_skill_read(
+    runtime: CommandRuntime,
+) -> None:
+    result = ExecCommandTool(runtime, ApprovalBroker()).invoke(
+        {
+            "cmd": "python run.py",
+            "skill": {"entry": "run.py", "workdir": "."},
+            "reason": "run helper",
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "call-a",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: ToolRunContext.create(""),
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert payload["error"] == "skill_id_required"
+    assert "call skill_read once" in payload["message"]
+    assert "earlier user turn is not valid" in payload["message"]
 
 
 def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
@@ -1338,6 +1362,8 @@ def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
     schema = ExecCommandTool.parameters_schema
     assert schema["not"] == {"required": ["workdir", "skill"]}
     skill_schema = schema["properties"]["skill"]
+    assert "上一用户轮的激活不会沿用" in skill_schema["description"]
+    assert "先调用 skill_read" in skill_schema["description"]
     assert "skill_id" in skill_schema["properties"]
     assert "id" not in skill_schema["properties"]
     assert skill_schema["required"] == ["entry"]

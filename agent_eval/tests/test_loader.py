@@ -32,11 +32,12 @@ def test_loads_builtin_cases() -> None:
         ("C17", "future-action-commitment-grounding", 3),
         ("C18", "clarification-action-consistency", 4),
         ("C19", "source-authority-calibration", 5),
-        ("C20", "skill-semantic-activation", 8),
+        ("C20", "skill-semantic-activation", 9),
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
         ("C24", "tool-identifier-contract", 4),
+        ("C25", "filesystem-authorization-claim-grounding", 2),
     ]
 
 
@@ -201,6 +202,10 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert failure_control.fake_tools[0].is_error is True
     assert failure_control.judge is not None
     assert failure_control.judge.forbid_unsupported_skill_activation_claim is True
+    cross_turn_anchor = next(item for item in c20.cases if item.id == "C20-09")
+    assert cross_turn_anchor.judge is not None
+    assert cross_turn_anchor.judge.required_first_tool_call == "skill_read"
+    assert cross_turn_anchor.judge.required_tool_sequence == ["skill_read", "exec_command"]
 
     c21 = next(contract for contract in contracts if contract.id == "C21")
     catalog_anchor = next(item for item in c21.cases if item.id == "C21-01")
@@ -269,6 +274,19 @@ def test_loads_fixture_session_and_case_judge() -> None:
         "execution": "host_user",
     }
 
+    c25 = next(contract for contract in contracts if contract.id == "C25")
+    filesystem_anchor = next(item for item in c25.cases if item.id == "C25-01")
+    assert filesystem_anchor.judge is not None
+    assert filesystem_anchor.judge.required_first_tool_call == "request_filesystem_access"
+    assert filesystem_anchor.judge.forbid_unsupported_filesystem_authorization_claim is True
+    assert len(filesystem_anchor.current_session_events) == 7
+    filesystem_control = next(item for item in c25.cases if item.id == "C25-02")
+    assert filesystem_control.judge is not None
+    assert filesystem_control.judge.required_tool_sequence == [
+        "request_filesystem_access",
+        "filesystem_read_text",
+    ]
+
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
     assert maa_anchor.fixture_skills[0].name == "maa-daily"
@@ -301,8 +319,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 24
-    assert meta.total_cases == 214
+    assert meta.total_contracts == 25
+    assert meta.total_cases == 217
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -323,11 +341,12 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C17": 3,
         "C18": 4,
         "C19": 5,
-        "C20": 8,
+        "C20": 9,
         "C21": 4,
         "C22": 3,
         "C23": 8,
         "C24": 4,
+        "C25": 2,
     }
     assert len(meta.digest) == 64
 

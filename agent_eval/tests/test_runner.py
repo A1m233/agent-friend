@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from agent.filesystem.tools import make_filesystem_tools
 from agent.skills import SkillSelection
 from agent.tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SkillReadTool
 from agent_eval.runner import (
@@ -171,6 +172,21 @@ def test_fixture_weather_and_todo_tools_keep_production_specs() -> None:
         in todo.parameters_schema["properties"]["operation"]["description"]
     )
     assert "不得省略" in todo.parameters_schema["properties"]["reminders"]["description"]
+
+
+def test_fixture_filesystem_tool_inherits_production_spec_from_registry_template() -> None:
+    template = next(
+        tool for tool in make_filesystem_tools() if tool.name == "request_filesystem_access"
+    )
+    fixture = _FixtureTool(
+        FakeTool(name="request_filesystem_access", result_text='{"status":"denied"}'),
+        template,
+    )
+
+    assert fixture.description == template.description
+    assert fixture.parameters_schema == template.parameters_schema
+    assert fixture.parameters_schema["required"] == ["reason", "items"]
+    assert "当前用户轮" in fixture.description
 
 
 def test_fixture_skills_use_production_catalog_and_reader(tmp_path: Path) -> None:
