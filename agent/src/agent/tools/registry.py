@@ -14,14 +14,25 @@ from html import escape
 from typing import Any
 
 from jsonschema import Draft7Validator, FormatChecker
+from jsonschema.exceptions import ValidationError
 
 from .errors import ToolDuplicateError, ToolNotFoundError
 from .identity import ToolId, tool_id_from_implementation
 from .protocol import Tool, ToolResult
 
 
-def _schema_error_message(rule: object, field: str) -> str:
+def _schema_error_message(error: ValidationError, field: str) -> str:
+    rule = error.validator
     if rule == "required":
+        required = error.validator_value
+        instance = error.instance
+        missing = (
+            [name for name in required if isinstance(name, str) and name not in instance]
+            if isinstance(required, list) and isinstance(instance, dict)
+            else []
+        )
+        if missing:
+            return f"缺少必填参数：{', '.join(missing)}。请按工具 schema 补齐后重试。"
         return f"缺少必填参数；请按工具 schema 补齐 {field} 所在对象的必填字段。"
     if rule == "additionalProperties":
         return f"{field} 含工具 schema 未声明的字段；请删除未知字段后重试。"
@@ -171,7 +182,7 @@ class ToolRegistry:
         if errors:
             error = errors[0]
             field = ".".join(str(part) for part in error.absolute_path) or "$"
-            message = _schema_error_message(error.validator, field)
+            message = _schema_error_message(error, field)
             return ToolResult(
                 text=json.dumps(
                     {

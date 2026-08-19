@@ -81,7 +81,7 @@ from .conversation_events import (
     ToolCallResult,
     TurnDone,
 )
-from .errors import AgentError
+from .errors import AgentError, MalformedToolCallError
 from .filesystem.tools import (
     FILESYSTEM_LEDGER_ARG,
     FILESYSTEM_RUN_ID_ARG,
@@ -2945,6 +2945,86 @@ class Conversation:
             )
         return result
 
+    @staticmethod
+    def _json_value_kind(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, list):
+            return "array"
+        if isinstance(value, dict):
+            return "object"
+        return "unknown"
+
+    def _tool_call_shape_summary(
+        self,
+        acc: dict[int, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Summarize malformed arguments without logging model-provided values."""
+
+        summaries: list[dict[str, Any]] = []
+        for index in sorted(acc):
+            slot = acc[index]
+            raw_name = slot.get("name")
+            tool_name = (
+                raw_name
+                if isinstance(raw_name, str)
+                and raw_name
+                and self._tool_registry is not None
+                and raw_name in self._tool_registry
+                else "unregistered_or_missing"
+            )
+            payload = slot.get("args_json")
+            payload_text = payload if isinstance(payload, str) else ""
+            summary: dict[str, Any] = {
+                "index": index,
+                "tool_name": tool_name,
+                "tool_call_id_present": bool(slot.get("id")),
+                "argument_payload_chars": len(payload_text),
+            }
+            if not payload_text:
+                summary["argument_state"] = "missing"
+                summaries.append(summary)
+                continue
+            try:
+                decoded = json.loads(payload_text)
+            except json.JSONDecodeError:
+                summary["argument_state"] = "invalid_json"
+                summaries.append(summary)
+                continue
+            if not isinstance(decoded, dict):
+                summary["argument_state"] = "non_object"
+                summary["argument_type"] = self._json_value_kind(decoded)
+                summaries.append(summary)
+                continue
+
+            summary["argument_state"] = "object"
+            summary["argument_field_count"] = len(decoded)
+            if tool_name == "unregistered_or_missing" or self._tool_registry is None:
+                summaries.append(summary)
+                continue
+            schema = self._tool_registry.get(tool_name).parameters_schema
+            properties = schema.get("properties")
+            known_fields = set(properties) if isinstance(properties, dict) else set()
+            provided_known_fields = sorted(key for key in decoded if key in known_fields)
+            summary["provided_known_fields"] = provided_known_fields
+            summary["known_field_types"] = {
+                key: self._json_value_kind(decoded[key]) for key in provided_known_fields
+            }
+            summary["unknown_field_count"] = sum(key not in known_fields for key in decoded)
+            required = schema.get("required")
+            if isinstance(required, list):
+                summary["missing_root_required_fields"] = sorted(
+                    key for key in required if isinstance(key, str) and key not in decoded
+                )
+            summaries.append(summary)
+        return summaries
+
     def _tool_call_validation_error(self, calls: list[dict[str, Any]]) -> str | None:
         """Return a model-facing reason before any invalid call is published."""
 
@@ -3297,27 +3377,29 @@ class Conversation:
 
             if malformed_reason is not None:
                 logger.warning(
-                    "Rejected malformed tool-call batch before execution: %s",
+                    "Rejected malformed tool-call batch before execution: session_id=%s "
+                    "run_id=%s model=%s reason=%s argument_shapes=%s",
+                    self._session.session_id,
+                    self._run_id_override or "none",
+                    getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
                     malformed_reason,
+                    json.dumps(
+                        self._tool_call_shape_summary(current_tc_acc),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                 )
                 if malformed_tool_call_retries < 1:
                     malformed_tool_call_retries += 1
                     tool_call_recovery_instruction = (
                         "上一轮工具调用参数损坏或不符合公开 schema，宿主没有执行，也没有向用户"
                         "发起授权。请重新根据当前工具 schema 生成完整、合法的参数；不要复用空对象，"
-                        "也不要声称上一轮已经执行。"
+                        f"也不要声称上一轮已经执行。宿主拒绝原因：{malformed_reason}"
                     )
                     turn_idx += 1
                     continue
-                runtime.mark_stopped("malformed_tool_call", "tool_arguments")
-                yield from self._finalize_on_tool_run_stop(
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    runtime=runtime,
-                    cancel_check=cancel_check,
-                )
-                return
+                runtime.mark_stopped("tool_runtime_failed", "tool_arguments")
+                raise MalformedToolCallError(malformed_reason)
 
             if not tool_calls or stop_reason != "tool_use":
                 if not frame.current_text_persisted:

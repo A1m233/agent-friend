@@ -563,6 +563,8 @@ class Session:
                     "content": (
                         "上一轮因模型安全限制未能完成，受限内容不再重放。"
                         if error_event.payload.get("code") == "content_policy"
+                        else "上一轮工具参数连续无效，宿主没有执行工具或发起授权。"
+                        if error_event.payload.get("code") == "malformed_tool_call"
                         else "上一轮工具结果未被模型接受，相关内容不再重放。"
                     ),
                     "partial": False,
