@@ -32,7 +32,7 @@ import logging
 import math
 import os
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -64,6 +64,7 @@ from .command_runtime.tools import (
 from .context import (
     BuildResult,
     CompactionRecord,
+    ContextCompactionProgress,
     ContextManager,
     PriorSummary,
     PriorToolContextEdit,
@@ -71,8 +72,10 @@ from .context import (
     ToolContextEditRecord,
     estimate_tool_schema_tokens,
     make_budget_snapshot,
+    stream_build_messages,
 )
 from .conversation_events import (
+    ContextCompactionStatus,
     ConversationEvent,
     ModelResponseStatus,
     SkillActivationStatus,
@@ -682,15 +685,17 @@ class Conversation:
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
         turn_start_idx = len(self._session.events)
 
-        def prepare_first_turn() -> list[dict[str, Any]]:
+        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
             if existing_user_event is not None:
-                return self._build_openai_messages_continuation()
-            return self._build_openai_messages_first_turn(
-                user_input,
-                attachments=turn_attachments,
-                history_override=prefix_history,
-                prior_summary_override=prefix_prior_summary,
-                catalog_message_override=first_turn_catalog_message,
+                return (yield from self._build_openai_messages_continuation_stream())
+            return (
+                yield from self._build_openai_messages_first_turn_stream(
+                    user_input,
+                    attachments=turn_attachments,
+                    history_override=prefix_history,
+                    prior_summary_override=prefix_prior_summary,
+                    catalog_message_override=first_turn_catalog_message,
+                )
             )
 
         try:
@@ -836,7 +841,7 @@ class Conversation:
         no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
         turn_start_idx = len(self._session.events)
 
-        def prepare_first_turn() -> list[dict[str, Any]]:
+        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
             nonlocal rewrite_event_appended, user_event_appended
             if not rewrite_event_appended:
                 self._append_turn_rewrite_event(plan, replacement_text=user_input)
@@ -849,13 +854,15 @@ class Conversation:
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
-            return self._build_openai_messages_first_turn(
-                user_input,
-                attachments=replacement_attachments,
-                history_override=prefix_history,
-                prior_summary_override=prefix_prior_summary,
-                persist_compaction=False,
-                catalog_message_override=first_turn_catalog_message,
+            return (
+                yield from self._build_openai_messages_first_turn_stream(
+                    user_input,
+                    attachments=replacement_attachments,
+                    history_override=prefix_history,
+                    prior_summary_override=prefix_prior_summary,
+                    persist_compaction=False,
+                    catalog_message_override=first_turn_catalog_message,
+                )
             )
 
         try:
@@ -946,7 +953,9 @@ class Conversation:
 
         try:
             self._check_cancel(cancel_check)
-            openai_messages = self._build_openai_messages_continuation(tool_specs=None)
+            openai_messages = yield from self._build_openai_messages_continuation_stream(
+                tool_specs=None
+            )
             yield ModelResponseStatus(
                 phase="waiting",
                 after_tool=True,
@@ -955,7 +964,9 @@ class Conversation:
             )
             for ev in self._iter_model_stream(openai_messages, tools=None):
                 self._check_cancel(cancel_check)
-                if isinstance(ev, LLMTextDelta):
+                if isinstance(ev, ContextCompactionStatus):
+                    yield ev
+                elif isinstance(ev, LLMTextDelta):
                     current_text_buf.append(ev.text)
                     yield TextDelta(text=ev.text)
                 elif isinstance(ev, LLMActivity):
@@ -1071,10 +1082,10 @@ class Conversation:
         turn_start_idx = len(self._session.events)
         trigger_appended = False
 
-        def prepare_first_turn() -> list[dict[str, Any]]:
+        def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
             nonlocal trigger_appended
             tool_specs = self._tool_registry.to_openai_tools() if self._tool_registry else None
-            messages = self._assemble(
+            messages = yield from self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=tool_specs,
             )
@@ -1242,18 +1253,30 @@ class Conversation:
         )
 
         # 2. 跑 LLM stream（注入引导话作 trailing user，021：role=user 才是 turn 切换信号）
-        openai_messages = self._assemble(trailing_user=system_prompt_addendum, tool_specs=None)
+        if output_visibility == "user":
+            openai_messages = yield from self._assemble_stream(
+                trailing_user=system_prompt_addendum,
+                tool_specs=None,
+            )
+        else:
+            openai_messages = self._assemble(
+                trailing_user=system_prompt_addendum,
+                tool_specs=None,
+            )
         text_buf: list[str] = []
         for ev in self._iter_model_stream(
             openai_messages,
             tools=None,
-            recovery_builder=lambda: self._assemble(
+            recovery_builder=lambda: self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
             ),
         ):
             self._check_cancel(cancel_check)
-            if isinstance(ev, LLMTextDelta):
+            if isinstance(ev, ContextCompactionStatus):
+                if output_visibility == "user":
+                    yield ev
+            elif isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 if output_visibility == "user":
                     yield TextDelta(text=ev.text)
@@ -1864,6 +1887,16 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+    @staticmethod
+    def _drain_assembled_messages(
+        stream: Generator[ConversationEvent, None, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        while True:
+            try:
+                next(stream)
+            except StopIteration as stopped:
+                return cast(list[dict[str, Any]], stopped.value)
+
     def _build_openai_messages_first_turn(
         self,
         user_input: str,
@@ -1875,6 +1908,29 @@ class Conversation:
         persist_compaction: bool = True,
         catalog_message_override: Message | None | object = _UNSET,
     ) -> list[dict[str, Any]]:
+        return self._drain_assembled_messages(
+            self._build_openai_messages_first_turn_stream(
+                user_input,
+                attachments=attachments,
+                extra_context=extra_context,
+                history_override=history_override,
+                prior_summary_override=prior_summary_override,
+                persist_compaction=persist_compaction,
+                catalog_message_override=catalog_message_override,
+            )
+        )
+
+    def _build_openai_messages_first_turn_stream(
+        self,
+        user_input: str,
+        *,
+        attachments: list[AttachmentRef] | None = None,
+        extra_context: list[Message] | None = None,
+        history_override: list[Message] | None = None,
+        prior_summary_override: PriorSummary | None | object = _UNSET,
+        persist_compaction: bool = True,
+        catalog_message_override: Message | None | object = _UNSET,
+    ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
 
@@ -1936,7 +1992,7 @@ class Conversation:
             if catalog_message_override is _UNSET
             else cast(Message | None, catalog_message_override)
         )
-        result = self._assemble(
+        result = yield from self._assemble_stream(
             new_user_input=(
                 user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
             ),
@@ -1957,7 +2013,10 @@ class Conversation:
         )
         return result
 
-    def _assemble(
+    def _assemble(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._drain_assembled_messages(self._assemble_stream(**kwargs))
+
+    def _assemble_stream(
         self,
         *,
         new_user_input: str | None = None,
@@ -1971,7 +2030,7 @@ class Conversation:
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
-    ) -> list[dict[str, Any]]:
+    ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         """统一所有发往 LLM 的上下文组装入口（009 R-0.3）。
 
         首轮 / 工具续轮 / 触上限兜底收尾都经此处，确保上下文管理（度量 /
@@ -2025,7 +2084,8 @@ class Conversation:
             "present" if self._active_tool_run_context is not None else "none",
             len(system_prompt),
         )
-        build = self._context_manager.build_messages(
+        context_stream = stream_build_messages(
+            self._context_manager,
             history=history_for_llm,
             system_prompt=system_prompt,
             new_user_input=user_input_for_llm,
@@ -2037,6 +2097,17 @@ class Conversation:
             trailing_system=trailing_system,
             runtime=runtime,
         )
+        while True:
+            try:
+                progress = next(context_stream)
+            except StopIteration as stopped:
+                build = stopped.value
+                break
+            if persist_compaction and isinstance(progress, ContextCompactionProgress):
+                yield ContextCompactionStatus(
+                    activity_id=progress.activity_id,
+                    phase=progress.phase,
+                )
         self._pending_compaction = (
             build.new_compaction
             if persist_compaction and build.new_compaction is not None
@@ -2188,7 +2259,7 @@ class Conversation:
             policy_version=int(checkpoint.payload.get("policy_version", 1)),
         )
 
-    def _append_compaction_event(self, record: CompactionRecord) -> None:
+    def _append_compaction_event(self, record: CompactionRecord) -> str:
         """把本轮新生成的摘要落为 ``compaction`` 事件（append-only，不动原始消息）。
 
         原始 user/assistant/tool 事件一条不删不改；compaction 只是流上叠加的折叠点
@@ -2196,7 +2267,7 @@ class Conversation:
         """
         event = Event(
             type="compaction",
-            uuid=str(uuid4()),
+            uuid=record.activity_id or str(uuid4()),
             ts=datetime.now(UTC),
             payload={
                 "summary": record.summary,
@@ -2220,6 +2291,7 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        return event.uuid
 
     def _append_tool_context_edit_event(self, record: ToolContextEditRecord) -> None:
         """追加 tool result 低水位投影 checkpoint；原始结果保持不变。"""
@@ -2339,16 +2411,35 @@ class Conversation:
             ):
                 self._last_input_tokens = prompt_tokens
 
-    def _commit_pending_context_checkpoints(self) -> None:
+    def _commit_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
         """幂等提交本次被 provider 接受的上下文投影候选。"""
         compaction = self._pending_compaction
         tool_context_edit = self._pending_tool_context_edit
         self._pending_compaction = None
         self._pending_tool_context_edit = None
+        completed: ContextCompactionStatus | None = None
         if compaction is not None:
-            self._append_compaction_event(compaction)
+            activity_id = self._append_compaction_event(compaction)
+            completed = ContextCompactionStatus(
+                activity_id=activity_id,
+                phase="completed",
+            )
         if tool_context_edit is not None:
             self._append_tool_context_edit_event(tool_context_edit)
+        return completed
+
+    def _discard_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
+        """丢弃尚未被 provider 接受的候选，并返回可清理 UI 的活动事件。"""
+
+        compaction = self._pending_compaction
+        self._pending_compaction = None
+        self._pending_tool_context_edit = None
+        if compaction is None or not compaction.activity_id:
+            return None
+        return ContextCompactionStatus(
+            activity_id=compaction.activity_id,
+            phase="discarded",
+        )
 
     def _iter_model_stream(
         self,
@@ -2356,7 +2447,11 @@ class Conversation:
         *,
         tools: list[dict[str, Any]] | None,
         overrides: dict[str, Any] | None = None,
-        recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+        recovery_builder: Callable[
+            [],
+            list[dict[str, Any]] | Generator[ConversationEvent, None, list[dict[str, Any]]],
+        ]
+        | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         request_observer: Callable[[list[dict[str, Any]], int, dict[str, Any]], None] | None = None,
         cancel_check: Callable[[], None] | None = None,
@@ -2366,7 +2461,7 @@ class Conversation:
         request_overrides = dict(overrides or {})
         if self._uses_kimi_prompt_cache():
             request_overrides.setdefault("prompt_cache_key", self._session.session_id)
-        recovery_builder = recovery_builder or (lambda: self._assemble(tool_specs=tools))
+        recovery_builder = recovery_builder or (lambda: self._assemble_stream(tool_specs=tools))
         for recovery_attempt in range(2):
             request_accepted = False
             if request_observer is not None:
@@ -2387,13 +2482,18 @@ class Conversation:
                 for event in stream:
                     if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
                         request_accepted = True
-                        self._commit_pending_context_checkpoints()
+                        completed = self._commit_pending_context_checkpoints()
+                        if completed is not None:
+                            yield completed
                     yield event
-                self._commit_pending_context_checkpoints()
+                completed = self._commit_pending_context_checkpoints()
+                if completed is not None:
+                    yield completed
                 return
             except LLMContextWindowError:
-                self._pending_compaction = None
-                self._pending_tool_context_edit = None
+                discarded = self._discard_pending_context_checkpoints()
+                if discarded is not None:
+                    yield discarded
                 if request_accepted or recovery_attempt > 0:
                     raise
                 previous_ratio = self._context_emergency_ratio
@@ -2401,10 +2501,18 @@ class Conversation:
                 self._context_emergency_ratio = 0.8
                 self._context_trigger_reason = "provider_context_exceeded"
                 try:
-                    current_messages = recovery_builder()
+                    rebuilt = recovery_builder()
+                    current_messages = (
+                        rebuilt if isinstance(rebuilt, list) else (yield from rebuilt)
+                    )
                 finally:
                     self._context_emergency_ratio = previous_ratio
                     self._context_trigger_reason = previous_reason
+            except Exception:
+                discarded = self._discard_pending_context_checkpoints()
+                if discarded is not None:
+                    yield discarded
+                raise
 
         raise AssertionError("context recovery loop should always return or raise")
 
@@ -2416,7 +2524,11 @@ class Conversation:
         call_kind: str,
         turn_idx: int,
         overrides: dict[str, Any] | None = None,
-        recovery_builder: Callable[[], list[dict[str, Any]]] | None = None,
+        recovery_builder: Callable[
+            [],
+            list[dict[str, Any]] | Generator[ConversationEvent, None, list[dict[str, Any]]],
+        ]
+        | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Wrap every provider stream with run-correlated, content-free timings."""
@@ -2908,6 +3020,23 @@ class Conversation:
             turn_context=turn_context,
         )
 
+    def _build_openai_messages_continuation_stream(
+        self,
+        *,
+        tool_specs: list[dict[str, Any]] | None | object = _UNSET,
+    ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
+        turn_context = (
+            [Message(role="system", content=self._turn_context_override)]
+            if self._turn_context_override
+            else None
+        )
+        return (
+            yield from self._assemble_stream(
+                tool_specs=tool_specs,
+                turn_context=turn_context,
+            )
+        )
+
     def _accumulate_tool_call_delta(
         self,
         acc: dict[int, dict[str, Any]],
@@ -3251,7 +3380,7 @@ class Conversation:
     def _run_tool_loop(
         self,
         *,
-        prepare_first_turn: Callable[[], list[dict[str, Any]]],
+        prepare_first_turn: Callable[[], Generator[ConversationEvent, None, list[dict[str, Any]]]],
         first_turn_prelude: Callable[[], Iterator[ConversationEvent]] | None = None,
         persona_name: str,
         persona_id: str | None,
@@ -3295,7 +3424,7 @@ class Conversation:
                 else None
             )
             if turn_idx == 0:
-                openai_messages = prepare_first_turn()
+                openai_messages = yield from prepare_first_turn()
                 if first_turn_prelude is not None:
                     yield from first_turn_prelude()
             else:
@@ -3306,9 +3435,14 @@ class Conversation:
                 )
                 tool_call_recovery_instruction = None
                 openai_messages = (
-                    self._assemble(trailing_system=trailing_system, tool_specs=tool_specs)
+                    (
+                        yield from self._assemble_stream(
+                            trailing_system=trailing_system,
+                            tool_specs=tool_specs,
+                        )
+                    )
                     if trailing_system
-                    else self._build_openai_messages_continuation()
+                    else (yield from self._build_openai_messages_continuation_stream())
                 )
 
             stop_reason = ""
@@ -3337,7 +3471,9 @@ class Conversation:
                 cancel_check=cancel_check,
             ):
                 self._check_cancel(cancel_check)
-                if isinstance(event, LLMTextDelta):
+                if isinstance(event, ContextCompactionStatus):
+                    yield event
+                elif isinstance(event, LLMTextDelta):
                     if not first_text_seen:
                         first_text_seen = True
                         log_voice_latency(
@@ -3648,7 +3784,10 @@ class Conversation:
         )
         # 009 R-0.3：兜底收尾也走统一入口，收尾指令作为 trailing_system 注入，
         # 不再手拼消息（消除与续轮组装的重复）。
-        openai_messages = self._assemble(trailing_system=extra_system, tool_specs=None)
+        openai_messages = yield from self._assemble_stream(
+            trailing_system=extra_system,
+            tool_specs=None,
+        )
 
         text_buf: list[str] = []
         for ev in self._iter_traced_model_stream(
@@ -3656,14 +3795,16 @@ class Conversation:
             tools=None,
             call_kind="tool_finalization",
             turn_idx=runtime.model_continuations + 1,
-            recovery_builder=lambda: self._assemble(
+            recovery_builder=lambda: self._assemble_stream(
                 trailing_system=extra_system,
                 tool_specs=None,
             ),
             cancel_check=cancel_check,
         ):
             self._check_cancel(cancel_check)
-            if isinstance(ev, LLMTextDelta):
+            if isinstance(ev, ContextCompactionStatus):
+                yield ev
+            elif isinstance(ev, LLMTextDelta):
                 text_buf.append(ev.text)
                 yield TextDelta(text=ev.text)
             elif isinstance(ev, LLMTurnDone):

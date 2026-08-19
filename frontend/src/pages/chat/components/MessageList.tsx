@@ -21,7 +21,12 @@ import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
 import { isAttachmentAssetAvailable } from "@/services";
-import type { ChatAttachment, ChatMessage, ModelResponseProgress } from "@/types/chat";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  CompactionBlock,
+  ModelResponseProgress,
+} from "@/types/chat";
 import type { SearchNavigationTarget } from "@/types/search";
 import { cn } from "@/utils/cn";
 import {
@@ -168,6 +173,16 @@ function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
     <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
       <StatusDot tone="muted" pulse />
       {label}
+    </p>
+  );
+}
+
+function CompactionStatus({ block }: { block: CompactionBlock }) {
+  const running = block.status === "running";
+  return (
+    <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
+      <StatusDot tone="muted" pulse={running} />
+      {running ? "正在整理较长对话…" : "已整理较长对话"}
     </p>
   );
 }
@@ -395,6 +410,9 @@ function MessageContent({
       if (b.kind === "reminder") {
         if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
         return <ReminderCard key={`r:${b.occurrenceId || i}`} block={b} />;
+      }
+      if (b.kind === "compaction") {
+        return <CompactionStatus key={`x:${b.activityId || i}`} block={b} />;
       }
       return null;
     })

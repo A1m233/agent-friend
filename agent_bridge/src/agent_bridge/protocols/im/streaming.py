@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from .content import OutboundTextFormat
 
@@ -14,6 +14,7 @@ __all__ = [
     "IMStreamSession",
     "IMTextStreamingProvider",
     "OutboundStreamContext",
+    "StreamProgressUpdate",
     "StreamRelay",
 ]
 
@@ -32,6 +33,13 @@ class OutboundStreamContext:
     run_id: str | None = None
     session_id: str = ""
     latency_started_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class StreamProgressUpdate:
+    """不进入最终回答正文的临时流式进度。"""
+
+    phase: Literal["started", "completed", "discarded"]
 
 
 class IMStreamSession(Protocol):
@@ -91,6 +99,8 @@ class StreamRelay:
         self._parts: list[str] = []
         self._last_attempt_at: float | None = None
         self._last_sent_text = ""
+        self._transient_progress_active = False
+        self._last_progress_phase: str | None = None
 
     @property
     def full_text(self) -> str:
@@ -108,7 +118,7 @@ class StreamRelay:
             return
 
         now = time.monotonic()
-        should_send = not self._session.has_started
+        should_send = self._transient_progress_active or not self._session.has_started
         if self._last_attempt_at is not None:
             should_send = should_send or now - self._last_attempt_at >= self._throttle_seconds
         if not should_send:
@@ -124,6 +134,26 @@ class StreamRelay:
         await self._session.update(snapshot)
         if not self._session.is_failed:
             self._last_sent_text = snapshot
+            self._transient_progress_active = False
+            self._last_progress_phase = None
+
+    async def show_progress(self, update: StreamProgressUpdate) -> None:
+        """Replace the visible placeholder without appending it to ``full_text``."""
+
+        if self.full_text or self._session.is_failed:
+            return
+        if self._transient_progress_active and self._last_progress_phase == update.phase:
+            return
+        label = {
+            "started": "正在整理较长对话…",
+            "completed": "已整理好，正在准备回复…",
+            "discarded": "正在继续处理…",
+        }[update.phase]
+        self._last_attempt_at = time.monotonic()
+        await self._session.update(label)
+        if not self._session.is_failed:
+            self._transient_progress_active = True
+            self._last_progress_phase = update.phase
 
     async def flush(self) -> None:
         """Send a coalesced trailing snapshot before the terminal update."""
@@ -135,6 +165,8 @@ class StreamRelay:
         await self._session.update(snapshot)
         if not self._session.is_failed:
             self._last_sent_text = snapshot
+            self._transient_progress_active = False
+            self._last_progress_phase = None
 
     def _trailing_flush_delay(self) -> float | None:
         if self._session.is_failed or not self.full_text:
@@ -165,10 +197,7 @@ class StreamRelay:
                 continue
             if item is end_marker:
                 return
-            if not isinstance(item, str):
-                continue
-
-            parts = [item]
+            items = [item]
             reached_end = False
             while True:
                 try:
@@ -178,8 +207,19 @@ class StreamRelay:
                 if queued is end_marker:
                     reached_end = True
                     break
+                items.append(queued)
+
+            pending_text: list[str] = []
+            for queued in items:
                 if isinstance(queued, str):
-                    parts.append(queued)
-            await self.feed("".join(parts))
+                    pending_text.append(queued)
+                    continue
+                if pending_text:
+                    await self.feed("".join(pending_text))
+                    pending_text = []
+                if isinstance(queued, StreamProgressUpdate):
+                    await self.show_progress(queued)
+            if pending_text:
+                await self.feed("".join(pending_text))
             if reached_end:
                 return

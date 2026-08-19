@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -781,9 +781,11 @@ def test_edit_resend_latest_commits_new_branch_before_context_build(
         store=store,
         llm=cast(LLMClient, fake),
     )
-    original_build = conv._build_openai_messages_first_turn
+    original_build = conv._build_openai_messages_first_turn_stream
 
-    def assert_committed_before_build(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    def assert_committed_before_build(
+        *args: Any, **kwargs: Any
+    ) -> Generator[Any, None, list[dict[str, Any]]]:
         assert [event.type for event in conv.session.events][-2:] == [
             "turn_rewrite",
             "user_message",
@@ -791,11 +793,11 @@ def test_edit_resend_latest_commits_new_branch_before_context_build(
         assert [(message.role, message.content) for message in conv.session.messages] == [
             ("user", "new question"),
         ]
-        return original_build(*args, **kwargs)
+        return (yield from original_build(*args, **kwargs))
 
     monkeypatch.setattr(
         conv,
-        "_build_openai_messages_first_turn",
+        "_build_openai_messages_first_turn_stream",
         assert_committed_before_build,
     )
 

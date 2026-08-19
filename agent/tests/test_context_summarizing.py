@@ -42,6 +42,7 @@ from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
+    ContextCompactionStatus,
     Conversation,
     Event,
     JsonlSessionStore,
@@ -372,6 +373,47 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert "压缩后的结构化摘要" in joined
     assert "U0-" not in joined
     assert "U5-" in joined
+
+
+def test_stream_build_yields_started_before_summary_call() -> None:
+    llm = _FakeLLM()
+    cm = SummarizingContextManager()
+    stream = cm.stream_build_messages(
+        history=_turns(6, 100),
+        system_prompt="sys",
+        runtime=_runtime(llm, window=1000),
+    )
+
+    started = next(stream)
+
+    assert started.phase == "started"
+    assert started.activity_id
+    assert llm.complete_calls == 0
+    with pytest.raises(StopIteration) as stopped:
+        next(stream)
+    result = stopped.value.value
+    assert llm.complete_calls == 1
+    assert result.new_compaction is not None
+    assert result.new_compaction.activity_id == started.activity_id
+
+
+def test_stream_build_discards_failed_summary_activity() -> None:
+    llm = _FakeLLM(fail=True)
+    cm = SummarizingContextManager()
+    stream = cm.stream_build_messages(
+        history=_turns(6, 100),
+        system_prompt="sys",
+        runtime=_runtime(llm, window=1000),
+    )
+
+    started = next(stream)
+    discarded = next(stream)
+
+    assert discarded.phase == "discarded"
+    assert discarded.activity_id == started.activity_id
+    with pytest.raises(StopIteration) as stopped:
+        next(stream)
+    assert stopped.value.value.new_compaction is None
 
 
 def test_prior_summary_folds_without_resummarizing() -> None:
@@ -736,6 +778,22 @@ def test_ac34_35_compaction_persisted_and_reused(
     assert any(
         "prior_summary=True" in message and "folded=True" in message for message in diagnostics
     )
+
+
+def test_conversation_emits_completed_only_after_compaction_is_persisted(tmp_path: Path) -> None:
+    llm = _FakeLLM(context_window=9000)
+    conv, session, store = _make_conversation(
+        tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
+    )
+    _seed_turns(session, store, n=60, size=100)
+
+    events = list(conv.stream("触发压缩"))
+    statuses = [event for event in events if isinstance(event, ContextCompactionStatus)]
+    compaction = session.latest_compaction()
+
+    assert [event.phase for event in statuses] == ["started", "completed"]
+    assert compaction is not None
+    assert statuses[0].activity_id == statuses[1].activity_id == compaction.uuid
 
 
 def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:

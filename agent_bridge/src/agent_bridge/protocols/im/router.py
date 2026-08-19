@@ -44,7 +44,7 @@ from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
-from agent import Conversation, TextDelta, ToolCallResult
+from agent import ContextCompactionStatus, Conversation, TextDelta, ToolCallResult
 from llm_providers import model_capabilities
 
 from ...errors import map_exception
@@ -58,6 +58,7 @@ from .streaming import (
     IMStreamSession,
     IMTextStreamingProvider,
     OutboundStreamContext,
+    StreamProgressUpdate,
     StreamRelay,
 )
 
@@ -251,6 +252,7 @@ class IMRouter:
         delta_queue: asyncio.Queue[object] | None = None
         relay_task: asyncio.Task[None] | None = None
         on_text_delta: Callable[[str], None] | None = None
+        on_compaction_progress: Callable[[StreamProgressUpdate], None] | None = None
         if stream_session is not None:
             delta_queue = asyncio.Queue()
             relay = StreamRelay(stream_session, stream_trace=stream_trace)
@@ -261,6 +263,11 @@ class IMRouter:
                 loop.call_soon_threadsafe(delta_queue.put_nowait, delta)
 
             on_text_delta = publish_delta
+
+            def publish_progress(update: StreamProgressUpdate) -> None:
+                loop.call_soon_threadsafe(delta_queue.put_nowait, update)
+
+            on_compaction_progress = publish_progress
             if reply_prefix:
                 delta_queue.put_nowait(reply_prefix)
             logger.info(
@@ -286,6 +293,7 @@ class IMRouter:
                 boot,
                 attachments,
                 on_text_delta,
+                on_compaction_progress,
                 run_id,
                 model_media_context,
                 surface,
@@ -433,6 +441,7 @@ class IMRouter:
         boot: PersistentBootstrap,
         attachments: tuple[AttachmentRef, ...] = (),
         on_text_delta: Callable[[str], None] | None = None,
+        on_compaction_progress: Callable[[StreamProgressUpdate], None] | None = None,
         run_id: str | None = None,
         turn_context: str | None = None,
         surface: InteractionSurfaceId | None = None,
@@ -461,6 +470,10 @@ class IMRouter:
         def consume_event(ev: object) -> None:
             nonlocal tool_boundary_pending
 
+            if isinstance(ev, ContextCompactionStatus):
+                if on_compaction_progress is not None:
+                    on_compaction_progress(StreamProgressUpdate(phase=ev.phase))
+                return
             if isinstance(ev, ToolCallResult):
                 tool_boundary_pending = bool(buf)
                 return

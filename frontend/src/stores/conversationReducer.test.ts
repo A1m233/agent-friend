@@ -111,6 +111,79 @@ describe("applyAguiEvent", () => {
     expect(content.runStatus).toBeUndefined();
   });
 
+  it("压缩活动按同一 id 从进行中转为完成，discard 与终态只清理未完成项", () => {
+    const running = applyAguiEvent(
+      base,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.context_compaction",
+        value: { activityId: "compact-1", phase: "started" },
+      }),
+    );
+    expect(running.blocks).toContainEqual({
+      kind: "compaction",
+      activityId: "compact-1",
+      status: "running",
+    });
+
+    const completed = applyAguiEvent(
+      running,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.context_compaction",
+        value: { activityId: "compact-1", phase: "completed" },
+      }),
+    );
+    expect(completed.blocks).toContainEqual({
+      kind: "compaction",
+      activityId: "compact-1",
+      status: "complete",
+    });
+
+    const second = applyAguiEvent(
+      completed,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.context_compaction",
+        value: { activityId: "compact-2", phase: "started" },
+      }),
+    );
+    const terminal = applyAguiEvent(
+      second,
+      emit({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" }),
+    );
+    expect(terminal.blocks).toContainEqual(expect.objectContaining({ activityId: "compact-1" }));
+    expect(terminal.blocks).not.toContainEqual(expect.objectContaining({ activityId: "compact-2" }));
+
+    const discarded = applyAguiEvent(
+      running,
+      emit({
+        type: EventType.CUSTOM,
+        name: "agent_friend.context_compaction",
+        value: { activityId: "compact-1", phase: "discarded" },
+      }),
+    );
+    expect(discarded.blocks).toEqual(base.blocks);
+  });
+
+  it("push 压缩活动使用 snake_case 字段投影", () => {
+    const running = applyPushConversationEvent(
+      base,
+      {
+        type: "context_compaction_status",
+        activity_id: "compact-push",
+        phase: "started",
+      },
+      "run-1",
+    );
+
+    expect(running.blocks).toContainEqual({
+      kind: "compaction",
+      activityId: "compact-push",
+      status: "running",
+    });
+  });
+
   it("不可见推理活动会刷新活动版本，但不暴露推理正文", () => {
     const first = applyAguiEvent(
       base,

@@ -24,6 +24,25 @@ describe("projectSessionEvents", () => {
     expect(out[0].status).toBe("complete");
   });
 
+  it("把持久化 compaction 恢复为按顺序排列的完成活动块", () => {
+    const first = ev("compaction", { summary: "不得进入 UI" });
+    const second = ev("compaction", { summary: "也不得进入 UI" });
+    const out = projectSessionEvents([
+      ev("user_message", { content: "继续" }),
+      first,
+      second,
+      ev("assistant_message", { content: "回答", partial: false }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[1].blocks).toEqual([
+      { kind: "compaction", activityId: first.uuid, status: "complete" },
+      { kind: "compaction", activityId: second.uuid, status: "complete" },
+      expect.objectContaining({ kind: "text", text: "回答" }),
+    ]);
+    expect(JSON.stringify(out)).not.toContain("不得进入 UI");
+  });
+
   it("把 user event 的稳定附件引用投影到历史消息", () => {
     const out = projectSessionEvents([
       ev("user_message", {

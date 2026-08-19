@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -676,13 +676,14 @@ class TestAgUiRunChannelBoundary:
 
         def _fail_context_build(
             self: Conversation, *args: Any, **kwargs: Any
-        ) -> list[dict[str, Any]]:
+        ) -> Generator[Any, None, list[dict[str, Any]]]:
             del self, args, kwargs
             raise RuntimeError("attachment provider render failed")
+            yield  # pragma: no cover
 
         monkeypatch.setattr(
             Conversation,
-            "_build_openai_messages_first_turn",
+            "_build_openai_messages_first_turn_stream",
             _fail_context_build,
         )
 

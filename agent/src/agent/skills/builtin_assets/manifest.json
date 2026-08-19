@@ -39,10 +39,10 @@
     },
     "agent-friend-guide": {
       "source_repository": "https://github.com/A1m233/agent-friend-guide",
-      "source_commit": "edcb0ef749bd5cce2d8ccdee6b5b11e30eb82d0c",
+      "source_commit": "8ce3280ad4328aaf2a1f0a5f194b31c09a85b3e2",
       "source_path": "skills/agent-friend-guide",
       "license": "Apache-2.0",
-      "snapshot_sha256": "26fb4d7aa4659c19b71e280278a1d9854e37991feef99f46537e7961f99837b1"
+      "snapshot_sha256": "a78d417addcebb9cc213239d7a3a986a69b0f563f4d09e832162d94fc161abde"
     }
   }
 }
