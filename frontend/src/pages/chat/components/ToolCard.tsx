@@ -19,7 +19,11 @@ import type {
   FilesystemApprovalRequest,
   FilesystemPermission,
 } from "@/services/api/filesystem";
-import { commandNeedsSandboxPreparation } from "./commandRuntimePresentation";
+import {
+  commandExitedLabel,
+  commandNeedsSandboxPreparation,
+  parseCommandToolResult,
+} from "./commandRuntimePresentation";
 
 /**
  * 工具调用卡片（自写，AC-M3.2）。
@@ -319,19 +323,16 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
   if (block.status === "running" && !approval && !process && currentRunActive) {
     return null;
   }
-  let resultError = "";
-  let resultMessage = "";
-  try {
-    const result = JSON.parse(block.result || "{}") as { error?: unknown; message?: unknown };
-    resultError = typeof result.error === "string" ? result.error : "";
-    resultMessage = typeof result.message === "string" ? result.message : "";
-  } catch {
-    // The card falls back to the tool status when the result is not JSON.
-  }
+  const result = parseCommandToolResult(block.result);
+  const resultError = result.error;
+  const resultMessage = result.message;
   const sandboxCapability = runtimeStatus?.sandbox_capability;
   const execution = details?.execution || args.execution || "sandboxed";
   const needsSandboxSetup = commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
-  const status = process?.status;
+  const status = process?.status ?? result.status;
+  const exitCode = process?.exit_code ?? result.exitCode;
+  const sandboxDenied = process?.sandbox_denied ?? result.sandboxDenied;
+  const durationSeconds = process?.duration_seconds ?? result.durationSeconds;
   let label = approval?.status === "pending" ? "等待授权" : "准备运行";
   let tone: StatusDotProps["tone"] = "warning";
   let pulse = approval?.status === "pending" && runActive;
@@ -340,10 +341,8 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
     tone = "accent";
     pulse = true;
   } else if (status === "exited") {
-    label = process?.sandbox_denied
-      ? "沙箱拒绝"
-      : process?.exit_code === 0 ? "已完成" : `退出码 ${process?.exit_code ?? "未知"}`;
-    tone = process?.exit_code === 0 && !process?.sandbox_denied ? "success" : "danger";
+    label = commandExitedLabel(exitCode, sandboxDenied);
+    tone = exitCode === 0 && !sandboxDenied ? "success" : "danger";
     pulse = false;
   } else if (status === "timed_out") {
     label = "已超时";
@@ -381,9 +380,14 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
     tone = "danger";
     pulse = false;
   }
-  const output = [process?.pty, process?.stdout, process?.stderr]
+  const output = [
+    process?.pty || result.pty,
+    process?.stdout || result.stdout,
+    process?.stderr || result.stderr,
+  ]
     .filter((value): value is string => Boolean(value))
     .join("");
+  const droppedBytes = Math.max(process?.dropped_bytes ?? 0, result.droppedBytes ?? 0);
   const roots = details?.additional_roots ?? args.access?.additional_roots ?? [];
   const derivedRoots = details?.host_derived_roots ?? [];
   const cwdLabel = details?.cwd_source === "session_managed"
@@ -412,8 +416,8 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
         <p>
           模式：{(details?.mode || args.mode || "buffered") === "streaming" ? "交互式" : "普通"}
           {` · 超时 ${details?.timeout_seconds || args.timeout_seconds || 900} 秒`}
-          {process?.duration_seconds != null
-            ? ` · 已运行 ${process.duration_seconds.toFixed(1)} 秒`
+          {durationSeconds != null
+            ? ` · 已运行 ${durationSeconds.toFixed(1)} 秒`
             : ""}
         </p>
         <p>
@@ -455,8 +459,8 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
           </p>
         ))}
       </div>
-      {process?.dropped_bytes ? (
-        <p className="mt-2 text-warning">较早输出已截断 {process.dropped_bytes} 字节</p>
+      {droppedBytes ? (
+        <p className="mt-2 text-warning">较早输出已截断 {droppedBytes} 字节</p>
       ) : null}
       {output ? (
         <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded bg-bg/80 p-2 text-fg">

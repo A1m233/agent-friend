@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CommandRuntimeStatus } from "@/services/api/commandRuntime";
-import { commandNeedsSandboxPreparation } from "./commandRuntimePresentation";
+import {
+  commandExitedLabel,
+  commandNeedsSandboxPreparation,
+  parseCommandToolResult,
+} from "./commandRuntimePresentation";
 
 function status(ready: boolean): CommandRuntimeStatus {
   return {
@@ -29,5 +33,53 @@ describe("commandNeedsSandboxPreparation", () => {
 
   it("never routes an approved host-user command through sandbox preparation", () => {
     expect(commandNeedsSandboxPreparation("", status(false), "host_user")).toBe(false);
+  });
+});
+
+describe("commandExitedLabel", () => {
+  it("describes the command process terminal state without implying the whole task completed", () => {
+    expect(commandExitedLabel(0, false)).toBe("退出码 0");
+    expect(commandExitedLabel(7, false)).toBe("退出码 7");
+    expect(commandExitedLabel(null, false)).toBe("退出码 未知");
+  });
+
+  it("keeps sandbox denial more prominent than an exit code", () => {
+    expect(commandExitedLabel(0, true)).toBe("沙箱拒绝");
+  });
+});
+
+describe("parseCommandToolResult", () => {
+  it("restores terminal process facts from the persisted tool result", () => {
+    expect(parseCommandToolResult(JSON.stringify({
+      status: "exited",
+      exit_code: 0,
+      sandbox_denied: false,
+      duration_seconds: 0.1,
+      dropped_bytes: 12,
+      stdout: "ready",
+      stderr: "",
+      pty: "",
+    }))).toEqual({
+      error: "",
+      message: "",
+      status: "exited",
+      exitCode: 0,
+      sandboxDenied: false,
+      durationSeconds: 0.1,
+      droppedBytes: 12,
+      stdout: "ready",
+      stderr: "",
+      pty: "",
+    });
+  });
+
+  it("ignores malformed and unknown process state without inventing completion", () => {
+    expect(parseCommandToolResult("not-json")).toMatchObject({
+      error: "",
+      message: "",
+      status: undefined,
+      stdout: "",
+    });
+    expect(parseCommandToolResult('{"status":"completed"}').status).toBeUndefined();
   });
 });
