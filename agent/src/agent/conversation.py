@@ -584,10 +584,11 @@ class Conversation:
             :class:`TurnDone`。
 
         Raises:
-            llm_providers.LLMError: 任意子类。**第一轮初始化阶段抛**（如认证错）
-                则事件完全不落盘；**迭代中途抛 / 后续轮抛** 则会落本轮已经累积
-                的部分内容为 ``partial=True`` 的 assistant_message
-                （已成功完成的前几轮 tool 调用都已落盘，不受影响）。
+            llm_providers.LLMError: 任意子类。用户输入通过本地接纳后会先落盘；
+                **第一轮上下文构建 / 模型初始化阶段抛**时保留 user 事件，
+                **迭代中途抛 / 后续轮抛**时还会落本轮已经累积的部分内容为
+                ``partial=True`` 的 assistant_message（已成功完成的前几轮 tool
+                调用都已落盘，不受影响）。
             SessionPersistError: 事件落盘失败。
 
         Note:
@@ -629,6 +630,11 @@ class Conversation:
             if existing_user_event is not None
             else self._session.active_events
         )
+        # Freeze the pre-turn model view before committing the durable user event.  The
+        # first request still receives ``new_user_input`` separately, so reading live
+        # session history after the append would send the same query twice.
+        prefix_history = self._messages_from_events(selection_history)
+        prefix_prior_summary = self._derive_prior_summary_from_events(selection_history)
         effective_skill_selections = self._resolve_turn_skill_selections(
             user_input,
             skill_selections,
@@ -666,6 +672,7 @@ class Conversation:
             if existing_user_event is None and self._skill_service is not None
             else None
         )
+        first_turn_catalog_message = self._skill_catalog_message()
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = self._make_tool_run_context(user_input)
         previous_tool_run_context = self._active_tool_run_context
@@ -676,16 +683,19 @@ class Conversation:
         turn_start_idx = len(self._session.events)
 
         def prepare_first_turn() -> list[dict[str, Any]]:
-            nonlocal user_event_appended
-            messages = (
-                self._build_openai_messages_continuation()
-                if user_event_appended
-                else self._build_openai_messages_first_turn(
-                    user_input,
-                    attachments=turn_attachments,
-                )
+            if existing_user_event is not None:
+                return self._build_openai_messages_continuation()
+            return self._build_openai_messages_first_turn(
+                user_input,
+                attachments=turn_attachments,
+                history_override=prefix_history,
+                prior_summary_override=prefix_prior_summary,
+                catalog_message_override=first_turn_catalog_message,
             )
-            # Persist only after local context assembly has accepted the request.
+
+        try:
+            # Once execution accepts the turn, the query is durable before cancellation,
+            # memory/context assembly, or provider-specific attachment rendering can fail.
             if not user_event_appended:
                 self._append_skill_catalog_state_event()
                 appended_user_id = self._append_user_event(
@@ -695,9 +705,6 @@ class Conversation:
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
-            return messages
-
-        try:
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
                 if completed_replay_text:
@@ -811,6 +818,7 @@ class Conversation:
             if self._skill_service is not None
             else None
         )
+        first_turn_catalog_message = self._skill_catalog_message()
 
         self._invalidate_rewrite_memory(plan.inactive_event_uuids)
 
@@ -847,6 +855,7 @@ class Conversation:
                 history_override=prefix_history,
                 prior_summary_override=prefix_prior_summary,
                 persist_compaction=False,
+                catalog_message_override=first_turn_catalog_message,
             )
 
         try:
@@ -1864,6 +1873,7 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
+        catalog_message_override: Message | None | object = _UNSET,
     ) -> list[dict[str, Any]]:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
@@ -1921,14 +1931,17 @@ class Conversation:
                 Message(role="system", content=self._voice_latency_short_reply_hint)
             )
         assemble_start_ms = monotonic_ms()
+        catalog_message = (
+            self._skill_catalog_message()
+            if catalog_message_override is _UNSET
+            else cast(Message | None, catalog_message_override)
+        )
         result = self._assemble(
             new_user_input=(
                 user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
             ),
             new_user_attachments=attachments,
-            pre_user_context=(
-                [catalog_message] if (catalog_message := self._skill_catalog_message()) else None
-            ),
+            pre_user_context=[catalog_message] if catalog_message is not None else None,
             turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
