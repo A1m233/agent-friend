@@ -290,6 +290,10 @@ def test_loads_fixture_session_and_case_judge() -> None:
         "request_filesystem_access",
         "filesystem_read_text",
     ]
+    assert filesystem_control.judge.required_successful_tool_calls[0].args == {
+        "filesystem_scope_id": "scope_current_fixture",
+        "relative_path": ".",
+    }
 
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")

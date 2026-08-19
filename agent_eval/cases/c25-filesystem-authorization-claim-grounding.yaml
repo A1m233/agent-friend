@@ -43,7 +43,7 @@ cases:
         tool_name: filesystem_read_text
         args:
           filesystem_scope_id: scope_old_turn
-          path: SKILL.md
+          relative_path: SKILL.md
       - type: tool_call_result
         tool_call_id: historical_read_1
         tool_name: filesystem_read_text
@@ -79,7 +79,7 @@ cases:
         - name: filesystem_read_text
           args:
             filesystem_scope_id: scope_current_fixture
-            path: SKILL.md
+            relative_path: .
       require_non_empty_response: true
       must_mention_all: [2.1.0]
       forbid_unsupported_filesystem_authorization_claim: true

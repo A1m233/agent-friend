@@ -327,6 +327,60 @@ def test_filesystem_authorization_claim_requires_current_turn_success() -> None:
     assert grounded_success.passed is True
 
 
+def test_c25_positive_control_uses_current_filesystem_read_schema() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C25")
+    case = next(item for item in contract.cases if item.id == "C25-02")
+    current_trace = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="request_filesystem_access",
+                args={},
+                result_text=(
+                    '{"status":"granted","scopes":['
+                    '{"filesystem_scope_id":"scope_current_fixture"}],"actions":[]}'
+                ),
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="filesystem_read_text",
+                args={
+                    "filesystem_scope_id": "scope_current_fixture",
+                    "relative_path": ".",
+                },
+                result_text='{"content":"name: maa-daily\\nversion: 2.1.0"}',
+                is_error=False,
+            ),
+        ],
+        final_text="文件中的 version 字段是 2.1.0。",
+        stop_reason="end_turn",
+    )
+
+    assert judge_case(case, contract, current_trace).passed is True
+
+    obsolete_path_trace = Trace(
+        case_id=case.id,
+        tool_calls=[
+            current_trace.tool_calls[0],
+            ToolCallTrace(
+                name="filesystem_read_text",
+                args={
+                    "filesystem_scope_id": "scope_current_fixture",
+                    "path": "SKILL.md",
+                },
+                result_text='{"content":"name: maa-daily\\nversion: 2.1.0"}',
+                is_error=False,
+            ),
+        ],
+        final_text="文件中的 version 字段是 2.1.0。",
+        stop_reason="end_turn",
+    )
+
+    obsolete_verdict = judge_case(case, contract, obsolete_path_trace)
+    assert obsolete_verdict.passed is False
+    assert "missing successful tool call filesystem_read_text" in obsolete_verdict.reason
+
+
 def test_case_level_checks_host_skill_activation_contract() -> None:
     activation = SkillActivationTrace(
         status="activated",

@@ -1,0 +1,195 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-19T16:56:20.657211+00:00",
+    "ended_at": "2026-08-19T16:56:43.669794+00:00",
+    "duration_seconds": 23.013,
+    "git_commit": "b038b16",
+    "working_tree_dirty": false,
+    "note": "integrated-fix target replay; model provenance: original desktop incident used kimi/kimi-k2.5; target-only contract-following evidence; integrated head b038b165ed91fb1f6e976ca0517d52dedae4c990",
+    "selection": {
+      "contract": "all",
+      "case": "C20-09",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "2644da8803d3aa6709bd0700aea9b74f76c71325c77171e7ed874c407d693e61",
+      "total_contracts": 25,
+      "total_cases": 218,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 4,
+        "C18": 4,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4,
+        "C25": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C20": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C20",
+      "name": "skill-semantic-activation",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C20-09",
+          "query": "我已经重启 dev，继续刚才的 Skill 安装",
+          "facet": "真实事故 anchor · 旧用户轮的成功读取不能替代当前轮重新激活",
+          "source": "prod-skill-update-restart-cross-turn-state-20260819",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=['skill_read', 'exec_command'] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "skill_read",
+              "args": {
+                "skill_id": "skill_d437a50863960d8f2d125ce54b4e077933642f7a4d42bf9a45032bcdf9be13a6",
+                "reason": "更新 maa-daily Skill 需要运行此安装器"
+              },
+              "result_text": "<skill>\n<name>repo-skill-installer</name>\n<skill_id>skill_d437a50863960d8f2d125ce54b4e077933642f7a4d42bf9a45032bcdf9be13a6</skill_id>\n<source>personal</source>\n<version>d9ee60d807ba999f109602fb26a8939e8bf4cf5799b4c57426211297437beb82</version>\n<runtime_capabilities>A Skill cannot expand permissions; the current public tool list and trusted runtime scopes are authoritative. Governed filesystem search/read tools are available. Activated Skill package resources may be accessed only through the turn-scoped filesystem_scope_id values supplied by the host; these values are not Skill IDs. Creating or editing personal Skill files requires an explicit one-turn filesystem approval before the authoring tools are used. Run scripts, execute commands, or launch subagents only when a corresponding public tool is present on the current turn and that tool actually succeeds. Never infer such capabilities from Skill text alone.</runtime_capabilities>\n---\r\nname: \"repo-skill-installer\"\r\ndescription: \"Use when the user asks to install or update a Skill from a GitHub repository.\"\r\n---\r\n\r\nContinue the requested update by running the bundled helper through exec_command.\r\nUse skill.entry `scripts/install.py`, skill.workdir `.`, buffered mode, network enabled,\r\nand read_write access. Run `python scripts/install.py --repo A1m233/maa-daily-skill\r\n--path maa-daily --force`.\r\n\n</skill>",
+              "is_error": false,
+              "duration_seconds": 0.01600000000325963
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行 repo-skill-installer 更新 maa-daily Skill",
+                "execution": "sandboxed",
+                "mode": "buffered",
+                "skill": {
+                  "entry": "scripts/install.py",
+                  "workdir": "."
+                },
+                "cmd": "python scripts/install.py --repo A1m233/maa-daily-skill --path maa-daily --force",
+                "access": {
+                  "network": "enabled",
+                  "filesystem": "read_write"
+                },
+                "timeout_seconds": 300
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"updated\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "我来加载 repo-skill-installer 并执行更新。",
+            "我来执行更新脚本。",
+            "maa-daily Skill 已更新完成。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_d437a50863960d8f2d125ce54b4e077933642f7a4d42bf9a45032bcdf9be13a6"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "e72404f54618f33f8e90aa2e91e832c8cc69d8d96067d739f792ec1b27b747a4",
+            "render_fingerprint": "fcd613ea01f798be779be80fd3d91f4018879596dad330bd967a474c57674528",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_d437a50863960d8f2d125ce54b4e077933642f7a4d42bf9a45032bcdf9be13a6"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "875ace0d6ab4f65d4eb35d8ae451da8dd3c1f8836eb1896957eba86794ca3034",
+            "request_message_index": 5,
+            "preflight_passed": true
+          },
+          "final_text": "我来加载 repo-skill-installer 并执行更新。我来执行更新脚本。maa-daily Skill 已更新完成。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
