@@ -19,6 +19,7 @@ from agent import (
     Conversation,
     JsonlSessionStore,
     MarkdownPromptBuilder,
+    Message,
     NaiveContextManager,
     PersonaCatalog,
     PromptBuilder,
@@ -99,6 +100,7 @@ def _conversation(
     llm_factory: Any | None = None,
     tool_registry: ToolRegistry | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
+    message_renderer: Any | None = None,
 ) -> Conversation:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -127,6 +129,7 @@ def _conversation(
         catalog=catalog,
         tool_registry=tool_registry,
         tool_run_policy=tool_run_policy,
+        message_renderer=message_renderer,
     )
 
 
@@ -592,6 +595,97 @@ def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     assert [(m.role, m.content) for m in conv.session.messages] == [
         ("user", "question before failure"),
     ]
+
+
+def test_stream_context_render_failure_persists_user_before_failure(tmp_path: Path) -> None:
+    def fail_renderer(message: Message, client: LLMClient) -> dict[str, Any]:
+        del client
+        if message.attachments:
+            raise RuntimeError("attachment render failed")
+        return message.to_openai()
+
+    conv = _conversation(
+        tmp_path,
+        llm=cast(LLMClient, _ScriptedLLMClient()),
+        message_renderer=fail_renderer,
+    )
+    attachment = AttachmentRef(
+        asset_id="a" * 64,
+        display_name="evidence.png",
+        kind="image",
+        media_type="image/png",
+        size_bytes=8,
+        sha256="a" * 64,
+    )
+
+    with pytest.raises(RuntimeError, match="attachment render failed"):
+        list(
+            conv.stream(
+                "question survives context failure",
+                attachments=[attachment],
+                user_event_id="stable-user-id",
+            )
+        )
+
+    assert [ev.type for ev in conv.session.events] == [
+        "session_meta",
+        "user_message",
+    ]
+    user = conv.session.events[-1]
+    assert user.uuid == "stable-user-id"
+    assert user.payload == {
+        "content": "question survives context failure",
+        "attachments": [attachment.to_dict()],
+    }
+
+
+def test_stream_commits_user_before_first_cancel_check(tmp_path: Path) -> None:
+    from agent.runtime.cancellation import CancellationToken, CancelReason, RunCancelled
+
+    token = CancellationToken()
+    assert token.cancel(CancelReason.EXPLICIT_REQUEST)
+    conv = _conversation(
+        tmp_path,
+        llm=cast(LLMClient, _ScriptedLLMClient()),
+    )
+
+    with pytest.raises(RunCancelled):
+        list(
+            conv.stream(
+                "keep this cancelled question",
+                user_event_id="cancelled-user-id",
+                cancel_check=token.raise_if_cancelled,
+            )
+        )
+
+    assert [ev.type for ev in conv.session.events] == [
+        "session_meta",
+        "user_message",
+        "assistant_message",
+    ]
+    assert conv.session.events[1].uuid == "cancelled-user-id"
+    assert conv.session.events[1].payload == {"content": "keep this cancelled question"}
+    assert conv.session.events[2].payload == {
+        "content": "",
+        "partial": True,
+        "interruption_reason": "explicit_request",
+    }
+
+
+def test_stream_persist_before_build_does_not_duplicate_model_user_input(
+    tmp_path: Path,
+) -> None:
+    fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
+    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+
+    list(conv.stream("exactly once"))
+
+    matching = [
+        message
+        for message in fake.received[0]
+        if message.get("role") == "user" and message.get("content") == "exactly once"
+    ]
+    assert len(matching) == 1
 
 
 def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(

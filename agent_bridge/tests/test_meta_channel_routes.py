@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from agent import (
     AttachmentStore,
+    Conversation,
     Event,
     JsonlSessionStore,
     MarkdownPromptBuilder,
@@ -667,6 +668,55 @@ class TestAgUiRunChannelBoundary:
             "source": "ag_ui",
             "run_id": "run-error-1",
         }
+
+    def test_text_context_build_error_keeps_user_before_run_error(
+        self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+
+        def _fail_context_build(
+            self: Conversation, *args: Any, **kwargs: Any
+        ) -> list[dict[str, Any]]:
+            del self, args, kwargs
+            raise RuntimeError("attachment provider render failed")
+
+        monkeypatch.setattr(
+            Conversation,
+            "_build_openai_messages_first_turn",
+            _fail_context_build,
+        )
+
+        resp = client.post(
+            "/ag-ui/run",
+            json={
+                "thread_id": sid,
+                "run_id": "run-context-error",
+                "messages": [
+                    {
+                        "id": "user-context-error",
+                        "role": "user",
+                        "content": "这条 query 不能消失",
+                    }
+                ],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+                "state": {},
+            },
+            headers={"accept": "text/event-stream"},
+        )
+
+        assert resp.status_code == 200
+        assert "RUN_ERROR" in resp.text
+        loaded = runtime.persistent_session_manager.open(sid)
+        assert [event.type for event in loaded.events] == [
+            "session_meta",
+            "user_message",
+            "run_error",
+        ]
+        assert loaded.events[1].uuid == "user-context-error"
+        assert loaded.events[1].payload == {"content": "这条 query 不能消失"}
+        assert loaded.events[2].payload["run_id"] == "run-context-error"
 
 
 # ===== POST /v1/sessions/{id}/model =====
