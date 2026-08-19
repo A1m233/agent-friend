@@ -40,6 +40,7 @@ from agent import (
     SkillActivationStatus,
     SkillCatalogService,
     TextDelta,
+    Tool,
     ToolCallRequest,
     ToolCallResult,
     ToolRegistry,
@@ -267,9 +268,12 @@ class _CatalogGuardedLLMClient:
 class _FixtureTool:
     """agent_eval case 专用固定结果工具。"""
 
-    def __init__(self, fixture: FakeTool) -> None:
+    def __init__(self, fixture: FakeTool, template: Tool | None = None) -> None:
         self.name = fixture.name
-        if fixture.name == "web_search":
+        if template is not None:
+            self.description = template.description
+            self.parameters_schema = template.parameters_schema
+        elif fixture.name == "web_search":
             self.description = WebSearchTool.description
             self.parameters_schema = WebSearchTool.parameters_schema
         elif fixture.name == "web_fetch":
@@ -366,8 +370,11 @@ def _build_manager(
     )
     if fake_tools:
         fixture_names = {fixture.name for fixture in fake_tools}
+        templates = {tool.name: tool for tool in registry.all_tools()}
         tools = [tool for tool in registry.all_tools() if tool.name not in fixture_names]
-        tools.extend(cast(Any, _FixtureTool(fixture)) for fixture in fake_tools)
+        tools.extend(
+            cast(Any, _FixtureTool(fixture, templates.get(fixture.name))) for fixture in fake_tools
+        )
         registry = ToolRegistry(tools)
 
     return SessionManager(

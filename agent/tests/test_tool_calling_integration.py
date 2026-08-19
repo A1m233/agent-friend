@@ -21,8 +21,8 @@ from typing import Any, ClassVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from agent.filesystem import ProtectedPathPolicy
-from agent.filesystem.tools import RequestFilesystemAccessTool
+from agent.filesystem import FilesystemService, ProtectedPathPolicy
+from agent.filesystem.tools import FilesystemOperationTool, RequestFilesystemAccessTool
 from agent.latency import RunLatencyContext, monotonic_ms
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
@@ -52,6 +52,7 @@ from agent import (
     AttachmentRef,
     Conversation,
     JsonlSessionStore,
+    MalformedToolCallError,
     MarkdownPromptBuilder,
     ModelResponseStatus,
     NaiveContextManager,
@@ -59,6 +60,7 @@ from agent import (
     PromptBuilder,
     Session,
     TextDelta,
+    Tool,
     ToolCallRequest,
     ToolCallResult,
     ToolRegistry,
@@ -709,8 +711,64 @@ def test_malformed_tool_call_is_retried_before_publish_or_invoke(
         message.get("role") == "system" and "工具调用参数损坏" in message.get("content", "")
         for message in fake.received[1]
     )
+    if broken_args == "{}":
+        assert any(
+            "缺少必填参数：message" in message.get("content", "") for message in fake.received[1]
+        )
     assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
     assert [event.payload["content"] for event in assistant_events] == ["done"]
+
+
+def test_repeated_malformed_tool_call_fails_without_publish_or_finalization(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    echo = EchoTool()
+    sensitive_marker = "credential-value-must-not-appear"
+    broken_args = json.dumps({"message": [sensitive_marker]})
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "broken-1", "echo", broken_args),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(0, "broken-2", "echo", broken_args),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+    events: list[Any] = []
+    caplog.set_level(logging.WARNING)
+
+    with pytest.raises(MalformedToolCallError, match="echo"):
+        for event in conv.stream("repeat malformed tool args", run_id="run-malformed"):
+            events.append(event)
+
+    assert not any(isinstance(event, (ToolCallRequest, ToolCallResult)) for event in events)
+    assert not any(isinstance(event, TurnDone) for event in events)
+    assert echo.call_count == 0
+    assert len(fake.received) == 2
+    assert any(
+        message.get("role") == "system"
+        and "message 的 JSON 类型不符合工具 schema" in message.get("content", "")
+        for message in fake.received[1]
+    )
+    diagnostic_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "run_id=run-malformed" in diagnostic_text
+    assert '"provided_known_fields": ["message"]' in diagnostic_text
+    assert '"known_field_types": {"message": "array"}' in diagnostic_text
+    assert sensitive_marker not in diagnostic_text
+    assert all(
+        "运行边界" not in str(message.get("content", ""))
+        for turn in fake.received
+        for message in turn
+    )
 
 
 def test_normal_system_turn_reuses_full_tool_loop(tmp_path: Path) -> None:
@@ -2068,6 +2126,55 @@ def test_unavailable_filesystem_approval_groups_changed_requests_as_no_progress(
     done = next(event for event in events if isinstance(event, TurnDone))
     assert len(results) == 3
     assert all(event.is_error for event in results)
+    assert done.stop_reason == "no_progress"
+    assert done.total_tool_calls == 3
+
+
+def test_stale_filesystem_scope_groups_changed_reads_as_no_progress(tmp_path: Path) -> None:
+    policy = ProtectedPathPolicy(
+        product_roots=((tmp_path / "product").resolve(),),
+        personal_skill_roots=((tmp_path / "personal-skills").resolve(),),
+    )
+    tool = FilesystemOperationTool("filesystem_read_text", FilesystemService(policy))
+    attempts = [
+        {"filesystem_scope_id": "scope-from-previous-turn"},
+        {"filesystem_scope_id": "scope-from-previous-turn", "max_lines": 50},
+        {
+            "filesystem_scope_id": "scope-from-previous-turn",
+            "max_lines": 30,
+            "encoding": "utf-8",
+        },
+    ]
+    repeated: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(
+                0,
+                f"stale-scope-{index}",
+                tool.name,
+                json.dumps(args),
+            ),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+        for index, args in enumerate(attempts)
+    ]
+    fake = _ScriptedLLMClient(
+        script=[*repeated, [LLMTextDelta(text="需要重新授权。"), LLMTurnDone("end_turn")]]
+    )
+
+    events = list(
+        _make_conversation(
+            tmp_path,
+            fake_llm=fake,
+            registry=ToolRegistry([cast(Tool, tool)]),
+        ).stream("继续读取文件")
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert len(results) == 3
+    assert all(
+        json.loads(event.text)["permission_reason"] == "scope_unavailable" for event in results
+    )
     assert done.stop_reason == "no_progress"
     assert done.total_tool_calls == 3
 

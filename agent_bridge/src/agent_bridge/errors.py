@@ -24,6 +24,7 @@ from agent import (
     AttachmentError,
     ContextBaseOverBudgetError,
     ContextInputTooLargeError,
+    MalformedToolCallError,
     PersonaAmbiguousError,
     PersonaNotFoundError,
     SessionCorruptError,
@@ -118,6 +119,17 @@ def map_exception(exc: BaseException) -> ProtocolError:
             code=exc.code,
             message="当前输入超过模型上下文预算，请缩短内容或减少附件后重试。",
             recoverable=False,
+        )
+    if isinstance(exc, MalformedToolCallError):
+        return ProtocolError(
+            http_status=502,
+            code="malformed_tool_call",
+            message=(
+                "模型连续生成了无效的工具参数；工具没有执行，也没有发起授权。"
+                "请重试，仍失败时可以切换模型。"
+            ),
+            recoverable=True,
+            sanitize_failed_model_call=True,
         )
     if isinstance(exc, LLMModelMetadataError):
         return ProtocolError(

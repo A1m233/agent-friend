@@ -84,7 +84,7 @@ from .conversation_events import (
     ToolCallResult,
     TurnDone,
 )
-from .errors import AgentError
+from .errors import AgentError, MalformedToolCallError
 from .filesystem.tools import (
     FILESYSTEM_LEDGER_ARG,
     FILESYSTEM_RUN_ID_ARG,
@@ -587,10 +587,11 @@ class Conversation:
             :class:`TurnDone`。
 
         Raises:
-            llm_providers.LLMError: 任意子类。**第一轮初始化阶段抛**（如认证错）
-                则事件完全不落盘；**迭代中途抛 / 后续轮抛** 则会落本轮已经累积
-                的部分内容为 ``partial=True`` 的 assistant_message
-                （已成功完成的前几轮 tool 调用都已落盘，不受影响）。
+            llm_providers.LLMError: 任意子类。用户输入通过本地接纳后会先落盘；
+                **第一轮上下文构建 / 模型初始化阶段抛**时保留 user 事件，
+                **迭代中途抛 / 后续轮抛**时还会落本轮已经累积的部分内容为
+                ``partial=True`` 的 assistant_message（已成功完成的前几轮 tool
+                调用都已落盘，不受影响）。
             SessionPersistError: 事件落盘失败。
 
         Note:
@@ -632,6 +633,11 @@ class Conversation:
             if existing_user_event is not None
             else self._session.active_events
         )
+        # Freeze the pre-turn model view before committing the durable user event.  The
+        # first request still receives ``new_user_input`` separately, so reading live
+        # session history after the append would send the same query twice.
+        prefix_history = self._messages_from_events(selection_history)
+        prefix_prior_summary = self._derive_prior_summary_from_events(selection_history)
         effective_skill_selections = self._resolve_turn_skill_selections(
             user_input,
             skill_selections,
@@ -669,6 +675,7 @@ class Conversation:
             if existing_user_event is None and self._skill_service is not None
             else None
         )
+        first_turn_catalog_message = self._skill_catalog_message()
         loop_frame = _ToolLoopFrame(current_text_buf=[])
         tool_run_context = self._make_tool_run_context(user_input)
         previous_tool_run_context = self._active_tool_run_context
@@ -679,18 +686,21 @@ class Conversation:
         turn_start_idx = len(self._session.events)
 
         def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-            nonlocal user_event_appended
-            messages = (
-                (yield from self._build_openai_messages_continuation_stream())
-                if user_event_appended
-                else (
-                    yield from self._build_openai_messages_first_turn_stream(
-                        user_input,
-                        attachments=turn_attachments,
-                    )
+            if existing_user_event is not None:
+                return (yield from self._build_openai_messages_continuation_stream())
+            return (
+                yield from self._build_openai_messages_first_turn_stream(
+                    user_input,
+                    attachments=turn_attachments,
+                    history_override=prefix_history,
+                    prior_summary_override=prefix_prior_summary,
+                    catalog_message_override=first_turn_catalog_message,
                 )
             )
-            # Persist only after local context assembly has accepted the request.
+
+        try:
+            # Once execution accepts the turn, the query is durable before cancellation,
+            # memory/context assembly, or provider-specific attachment rendering can fail.
             if not user_event_appended:
                 self._append_skill_catalog_state_event()
                 appended_user_id = self._append_user_event(
@@ -700,9 +710,6 @@ class Conversation:
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
-            return messages
-
-        try:
             self._check_cancel(cancel_check)
             if completed_replay_text is not None:
                 if completed_replay_text:
@@ -816,6 +823,7 @@ class Conversation:
             if self._skill_service is not None
             else None
         )
+        first_turn_catalog_message = self._skill_catalog_message()
 
         self._invalidate_rewrite_memory(plan.inactive_event_uuids)
 
@@ -853,6 +861,7 @@ class Conversation:
                     history_override=prefix_history,
                     prior_summary_override=prefix_prior_summary,
                     persist_compaction=False,
+                    catalog_message_override=first_turn_catalog_message,
                 )
             )
 
@@ -1897,6 +1906,7 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
+        catalog_message_override: Message | None | object = _UNSET,
     ) -> list[dict[str, Any]]:
         return self._drain_assembled_messages(
             self._build_openai_messages_first_turn_stream(
@@ -1906,6 +1916,7 @@ class Conversation:
                 history_override=history_override,
                 prior_summary_override=prior_summary_override,
                 persist_compaction=persist_compaction,
+                catalog_message_override=catalog_message_override,
             )
         )
 
@@ -1918,6 +1929,7 @@ class Conversation:
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
         persist_compaction: bool = True,
+        catalog_message_override: Message | None | object = _UNSET,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
         """工具调用循环第 0 轮：通过统一入口 :meth:`_assemble` 把 ``user_input``
         作为最新一条 user 消息组装。
@@ -1975,14 +1987,17 @@ class Conversation:
                 Message(role="system", content=self._voice_latency_short_reply_hint)
             )
         assemble_start_ms = monotonic_ms()
+        catalog_message = (
+            self._skill_catalog_message()
+            if catalog_message_override is _UNSET
+            else cast(Message | None, catalog_message_override)
+        )
         result = yield from self._assemble_stream(
             new_user_input=(
                 user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
             ),
             new_user_attachments=attachments,
-            pre_user_context=(
-                [catalog_message] if (catalog_message := self._skill_catalog_message()) else None
-            ),
+            pre_user_context=[catalog_message] if catalog_message is not None else None,
             turn_context=turn_context or None,
             history_override=history_override,
             prior_summary_override=prior_summary_override,
@@ -3072,6 +3087,86 @@ class Conversation:
             )
         return result
 
+    @staticmethod
+    def _json_value_kind(value: Any) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, bool):
+            return "boolean"
+        if isinstance(value, (int, float)):
+            return "number"
+        if isinstance(value, str):
+            return "string"
+        if isinstance(value, list):
+            return "array"
+        if isinstance(value, dict):
+            return "object"
+        return "unknown"
+
+    def _tool_call_shape_summary(
+        self,
+        acc: dict[int, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Summarize malformed arguments without logging model-provided values."""
+
+        summaries: list[dict[str, Any]] = []
+        for index in sorted(acc):
+            slot = acc[index]
+            raw_name = slot.get("name")
+            tool_name = (
+                raw_name
+                if isinstance(raw_name, str)
+                and raw_name
+                and self._tool_registry is not None
+                and raw_name in self._tool_registry
+                else "unregistered_or_missing"
+            )
+            payload = slot.get("args_json")
+            payload_text = payload if isinstance(payload, str) else ""
+            summary: dict[str, Any] = {
+                "index": index,
+                "tool_name": tool_name,
+                "tool_call_id_present": bool(slot.get("id")),
+                "argument_payload_chars": len(payload_text),
+            }
+            if not payload_text:
+                summary["argument_state"] = "missing"
+                summaries.append(summary)
+                continue
+            try:
+                decoded = json.loads(payload_text)
+            except json.JSONDecodeError:
+                summary["argument_state"] = "invalid_json"
+                summaries.append(summary)
+                continue
+            if not isinstance(decoded, dict):
+                summary["argument_state"] = "non_object"
+                summary["argument_type"] = self._json_value_kind(decoded)
+                summaries.append(summary)
+                continue
+
+            summary["argument_state"] = "object"
+            summary["argument_field_count"] = len(decoded)
+            if tool_name == "unregistered_or_missing" or self._tool_registry is None:
+                summaries.append(summary)
+                continue
+            schema = self._tool_registry.get(tool_name).parameters_schema
+            properties = schema.get("properties")
+            known_fields = set(properties) if isinstance(properties, dict) else set()
+            provided_known_fields = sorted(key for key in decoded if key in known_fields)
+            summary["provided_known_fields"] = provided_known_fields
+            summary["known_field_types"] = {
+                key: self._json_value_kind(decoded[key]) for key in provided_known_fields
+            }
+            summary["unknown_field_count"] = sum(key not in known_fields for key in decoded)
+            required = schema.get("required")
+            if isinstance(required, list):
+                summary["missing_root_required_fields"] = sorted(
+                    key for key in required if isinstance(key, str) and key not in decoded
+                )
+            summaries.append(summary)
+        return summaries
+
     def _tool_call_validation_error(self, calls: list[dict[str, Any]]) -> str | None:
         """Return a model-facing reason before any invalid call is published."""
 
@@ -3431,27 +3526,29 @@ class Conversation:
 
             if malformed_reason is not None:
                 logger.warning(
-                    "Rejected malformed tool-call batch before execution: %s",
+                    "Rejected malformed tool-call batch before execution: session_id=%s "
+                    "run_id=%s model=%s reason=%s argument_shapes=%s",
+                    self._session.session_id,
+                    self._run_id_override or "none",
+                    getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
                     malformed_reason,
+                    json.dumps(
+                        self._tool_call_shape_summary(current_tc_acc),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                 )
                 if malformed_tool_call_retries < 1:
                     malformed_tool_call_retries += 1
                     tool_call_recovery_instruction = (
                         "上一轮工具调用参数损坏或不符合公开 schema，宿主没有执行，也没有向用户"
                         "发起授权。请重新根据当前工具 schema 生成完整、合法的参数；不要复用空对象，"
-                        "也不要声称上一轮已经执行。"
+                        f"也不要声称上一轮已经执行。宿主拒绝原因：{malformed_reason}"
                     )
                     turn_idx += 1
                     continue
-                runtime.mark_stopped("malformed_tool_call", "tool_arguments")
-                yield from self._finalize_on_tool_run_stop(
-                    persona_name=persona_name,
-                    persona_id=persona_id,
-                    model_snapshot=model_snapshot,
-                    runtime=runtime,
-                    cancel_check=cancel_check,
-                )
-                return
+                runtime.mark_stopped("tool_runtime_failed", "tool_arguments")
+                raise MalformedToolCallError(malformed_reason)
 
             if not tool_calls or stop_reason != "tool_use":
                 if not frame.current_text_persisted:

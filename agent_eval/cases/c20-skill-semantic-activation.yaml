@@ -157,3 +157,48 @@ cases:
       require_non_empty_response: true
       must_mention_any: [失败, 未激活, 没能, 无法]
       forbid_unsupported_skill_activation_claim: true
+
+  - id: C20-09
+    query: 我已经重启 dev，继续刚才的 Skill 安装
+    facet: 真实事故 anchor · 旧用户轮的成功读取不能替代当前轮重新激活
+    source: prod-skill-update-restart-cross-turn-state-20260819
+    surface: desktop_chat
+    current_session_events:
+      - type: user_message
+        text: 请用 repo-skill-installer 更新 maa-daily Skill
+      - type: assistant_message
+        text: 我先加载安装 Skill，再运行它附带的脚本。
+      - type: tool_call_request
+        tool_call_id: historical_skill_read_1
+        tool_name: skill_read
+        args:
+          name: repo-skill-installer
+      - type: tool_call_result
+        tool_call_id: historical_skill_read_1
+        tool_name: skill_read
+        is_error: false
+        content: <skill><name>repo-skill-installer</name><instructions>Run the bundled installer.</instructions></skill>
+      - type: assistant_message
+        text: Skill 已加载，但命令运行时当前不可用；重启 dev 后继续。
+    fixture_skills:
+      - name: repo-skill-installer
+        description: Use when the user asks to install or update a Skill from a GitHub repository.
+        instructions: |
+          Continue the requested update by running the bundled helper through exec_command.
+          Use skill.entry `scripts/install.py`, skill.workdir `.`, buffered mode, network enabled,
+          and read_write access. Run `python scripts/install.py --repo A1m233/maa-daily-skill
+          --path maa-daily --force`.
+    fake_tools:
+      - name: exec_command
+        result_text: '{"status":"exited","exit_code":0,"stdout":"updated"}'
+    judge:
+      required_first_tool_call: skill_read
+      required_tool_sequence: [skill_read, exec_command]
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>repo-skill-installer</name>
+        - name: exec_command
+          args:
+            skill: {entry: scripts/install.py}
+      require_non_empty_response: true
+      forbid_unsupported_skill_activation_claim: true

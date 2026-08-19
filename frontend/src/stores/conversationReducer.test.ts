@@ -47,6 +47,8 @@ describe("applyAguiEvent", () => {
     expect(tool.args).toBe('{"q":"x"}');
     expect(tool.result).toBe("结果");
     expect(tool.status).toBe("done");
+    expect(out.status).toBe("streaming");
+    expect(out.runStatus).toMatchObject({ phase: "waiting", afterTool: true });
   });
 
   it("工具结果 [error] 前缀 → 状态 error 且剥离前缀", () => {
@@ -57,6 +59,7 @@ describe("applyAguiEvent", () => {
     const tool = out.blocks[0] as ToolBlock;
     expect(tool.status).toBe("error");
     expect(tool.result).toBe("炸了");
+    expect(out.runStatus).toMatchObject({ phase: "waiting", afterTool: true });
   });
 
   it("RUN_ERROR → 消息标记 error 并保留错误码", () => {
@@ -318,6 +321,36 @@ describe("applyPushConversationEvent", () => {
       applyPushConversationEvent(waiting, { type: "text_delta", text: "恢复" }, "run-1")
         .runStatus,
     ).toBeUndefined();
+  });
+
+  it("projects post-tool waiting immediately and clears it when the pushed run finishes", () => {
+    const requested = applyPushConversationEvent(
+      base,
+      {
+        type: "tool_call_request",
+        tool_call_id: "tool-1",
+        tool_name: "exec_command",
+        args: { cmd: "echo ok" },
+      },
+      "run-1",
+    );
+    const completed = applyPushConversationEvent(
+      requested,
+      {
+        type: "tool_call_result",
+        tool_call_id: "tool-1",
+        tool_name: "exec_command",
+        text: "ok",
+        is_error: false,
+      },
+      "run-1",
+    );
+
+    expect(completed.runStatus).toMatchObject({ phase: "waiting", afterTool: true });
+    expect(applyPushConversationEvent(completed, { type: "done" }, "run-1")).toMatchObject({
+      status: "complete",
+      runStatus: undefined,
+    });
   });
 
   it("projects pushed caller Skill failures truthfully", () => {

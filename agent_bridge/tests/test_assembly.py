@@ -18,7 +18,12 @@ from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
-from agent import AttachmentError, ContextBaseOverBudgetError, ContextInputTooLargeError
+from agent import (
+    AttachmentError,
+    ContextBaseOverBudgetError,
+    ContextInputTooLargeError,
+    MalformedToolCallError,
+)
 from llm_providers import LLMOutputBudgetExhaustedError
 from runtime_config import (
     CredentialMissingError,
@@ -286,6 +291,16 @@ def test_content_policy_error_has_honest_message_and_sanitizes_failed_call() -> 
     assert error.http_status == 400
     assert error.code == "content_policy"
     assert "安全限制" in error.message
+    assert error.sanitize_failed_model_call is True
+
+
+def test_malformed_tool_call_error_is_recoverable_and_honest() -> None:
+    error = map_exception(MalformedToolCallError("exec_command: missing reason"))
+
+    assert error.http_status == 502
+    assert error.code == "malformed_tool_call"
+    assert "工具没有执行，也没有发起授权" in error.message
+    assert error.recoverable is True
     assert error.sanitize_failed_model_call is True
 
 

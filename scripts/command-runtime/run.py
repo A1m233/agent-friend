@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -11,13 +12,140 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "package"))
 
-from vendor.codex import load_lock, prepare, verify_prepared  # noqa: E402
+from vendor.codex import LOCK_PATH, load_lock, prepare  # noqa: E402
+
+_CACHE_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_THREAD_LOCKS_GUARD = threading.Lock()
+_CACHE_LOCK_TIMEOUT_SECONDS = 300.0
+
+
+def _source_cache_root() -> Path:
+    """Return the user-level cache used only for pinned source-mode payloads."""
+
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            raise RuntimeError("LOCALAPPDATA is required for the command runtime dev cache")
+        return Path(local_app_data) / "agent-friend" / "dev-cache" / "command-runtime"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "agent-friend" / "command-runtime"
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME", "").strip()
+    cache_home = Path(xdg_cache_home) if xdg_cache_home else Path.home() / ".cache"
+    return cache_home / "agent-friend" / "command-runtime"
+
+
+def _source_cache_base() -> Path:
+    lock_identity = hashlib.sha256(LOCK_PATH.read_bytes()).hexdigest()
+    return _source_cache_root() / "codex" / lock_identity
+
+
+def _verify_source_runtime(repo_root: Path = ROOT) -> Path:
+    # vendor.prepare verifies the complete identity before returning. Offline mode
+    # turns it into a verify-only operation when the prepared payload is absent.
+    return prepare(repo_root, cache_base=_source_cache_base(), offline=True)
+
+
+def _try_acquire_platform_lock(handle: Any) -> bool:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _release_platform_lock(handle: Any) -> None:
+    handle.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _exclusive_cache_lock(
+    path: Path,
+    *,
+    timeout_seconds: float = _CACHE_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[None]:
+    """Serialize prepares across threads and worktree processes."""
+
+    key = str(path.resolve())
+    with _CACHE_THREAD_LOCKS_GUARD:
+        thread_lock = _CACHE_THREAD_LOCKS.setdefault(key, threading.Lock())
+    if not thread_lock.acquire(timeout=timeout_seconds):
+        raise RuntimeError(f"timed out waiting for command runtime cache lock: {path}")
+
+    handle = None
+    platform_lock_acquired = False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a+b")
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+
+        deadline = time.monotonic() + timeout_seconds
+        while not _try_acquire_platform_lock(handle):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"timed out waiting for command runtime cache lock: {path}")
+            time.sleep(0.1)
+        platform_lock_acquired = True
+        yield
+    finally:
+        if handle is not None:
+            if platform_lock_acquired:
+                with suppress(OSError):
+                    _release_platform_lock(handle)
+            handle.close()
+        thread_lock.release()
+
+
+def ensure_source_runtime(repo_root: Path = ROOT) -> Path:
+    """Return a verified pinned runtime, preparing it once when necessary."""
+
+    try:
+        return _verify_source_runtime(repo_root)
+    except RuntimeError:
+        pass
+
+    cache_base = _source_cache_base()
+    lock_path = cache_base.parent / f".{cache_base.name}.lock"
+    with _exclusive_cache_lock(lock_path):
+        try:
+            return _verify_source_runtime(repo_root)
+        except RuntimeError:
+            return prepare(repo_root, cache_base=cache_base)
+
+
+def _concise_error(error: Exception) -> str:
+    detail = " ".join(str(error).splitlines()).strip() or "unknown error"
+    return f"{type(error).__name__}: {detail}"
 
 
 def smoke(executable: Path) -> dict[str, object]:
@@ -719,11 +847,12 @@ def setup_windows(executable: Path) -> None:
     runtime.setup_windows_sandbox()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "action",
         choices=(
+            "ensure",
             "prepare",
             "doctor",
             "path",
@@ -734,8 +863,17 @@ def main() -> int:
             "skill-install-smoke",
         ),
     )
-    args = parser.parse_args()
-    executable = prepare(ROOT) if args.action == "prepare" else verify_prepared(ROOT)
+    args = parser.parse_args(argv)
+    if args.action in {"ensure", "prepare", "setup"}:
+        try:
+            executable = ensure_source_runtime(ROOT)
+        except Exception as error:
+            if args.action == "ensure":
+                print(_concise_error(error))
+                return 1
+            raise
+    else:
+        executable = _verify_source_runtime(ROOT)
     if args.action == "path":
         print(executable)
         return 0

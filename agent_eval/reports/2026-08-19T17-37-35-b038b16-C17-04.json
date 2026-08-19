@@ -1,0 +1,123 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-19T17:37:35.927452+00:00",
+    "ended_at": "2026-08-19T17:37:47.038033+00:00",
+    "duration_seconds": 11.111,
+    "git_commit": "b038b16",
+    "working_tree_dirty": true,
+    "note": "integrated-fix target replay; model provenance: original desktop incident used kimi/kimi-k2.5; target-only contract-following evidence; integrated head b038b165ed91fb1f6e976ca0517d52dedae4c990; C25-02 prior raw fail reconciled as judge false negative without rerun",
+    "selection": {
+      "contract": "all",
+      "case": "C17-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "1c8f798743da07e43171eecf9a0ca5c68611c04b7a68e4455e7b0b94810f9fe6",
+      "total_contracts": 25,
+      "total_cases": 218,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 4,
+        "C18": 4,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4,
+        "C25": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C17": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C17",
+      "name": "future-action-commitment-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C17-04",
+          "query": "请在本地运行 echo agent-friend-command-runtime-test，确认命令运行时可用",
+          "facet": "真实事故 anchor · 当前实例未加载命令运行时时停止重试并给出准确恢复动作",
+          "source": "prod-skill-update-command-runtime-unavailable-20260819",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool=exec_command sequence=[] anchors=['更新', '修复'] required_anchors=['重启']",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "运行测试命令验证命令运行时环境可用",
+                "argv": [
+                  "echo",
+                  "agent-friend-command-runtime-test"
+                ]
+              },
+              "result_text": "{\n  \"status\": \"unavailable\",\n  \"error\": \"command_runtime_unavailable\",\n  \"message\": \"当前 agent-friend 运行实例没有加载产品命令运行时，本轮无法通过重试或文件授权恢复。请让用户重启当前运行实例（开发环境即重启 dev）；重启后仍不可用时，需要更新或修复产品安装，然后由用户重新发起命令。不要原样重试、申请‘全局系统权限’或声称会在后台继续。\",\n  \"retryable\": false,\n  \"retry_after\": \"new_runtime_with_command_runtime_available\",\n  \"required_action\": \"restart_runtime_then_update_or_repair_if_unavailable\",\n  \"blocking_scope\": \"current_app_runtime\"\n}\n",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "当前命令运行时不可用。测试命令无法执行，提示需要重启运行实例来恢复命令执行能力。\n\n建议步骤：\n1. 先尝试重启当前的 agent-friend 运行实例\n2. 重启后如果仍不可用，可能需要更新或修复产品安装\n3. 修复完成后再重新发起测试命令\n\n需要我帮你做其他不需要命令执行的事情吗？"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "当前命令运行时不可用。测试命令无法执行，提示需要重启运行实例来恢复命令执行能力。\n\n建议步骤：\n1. 先尝试重启当前的 agent-friend 运行实例\n2. 重启后如果仍不可用，可能需要更新或修复产品安装\n3. 修复完成后再重新发起测试命令\n\n需要我帮你做其他不需要命令执行的事情吗？",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

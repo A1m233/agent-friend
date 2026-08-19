@@ -22,9 +22,10 @@ Usage: scripts/setup/run.sh [--clean]
   1. 检查 uv 是否已安装（未安装则提示安装命令并退出）
   2. （可选）--clean 时清理缓存
   3. 跑 uv sync 安装后端依赖
-  4. 提示使用 scripts/credentials 配置本机系统凭据
-  5. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
-  6. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
+  4. 准备并校验固定版本的命令运行时
+  5. 提示使用 scripts/credentials 配置本机系统凭据
+  6. 尽力装前端依赖（node 22+/pnpm 在则 pnpm install；缺则只提示、不报错）
+  7. 检查 Rust/cargo（桌面端 Tauri 需要；缺则只提示）
 EOF
             exit 0
             ;;
@@ -66,6 +67,18 @@ fi
 echo
 echo "==> 安装依赖（uv sync）"
 uv sync
+
+echo
+echo "==> 准备固定命令运行时"
+if ! COMMAND_RUNTIME_EXECUTABLE="$(uv run python scripts/command-runtime/run.py ensure)"; then
+    echo "  [ERROR] 命令运行时准备失败：$COMMAND_RUNTIME_EXECUTABLE" >&2
+    exit 1
+fi
+if [ -z "$COMMAND_RUNTIME_EXECUTABLE" ]; then
+    echo "  [ERROR] 命令运行时准备成功但未返回可执行文件路径" >&2
+    exit 1
+fi
+echo "  [OK] $COMMAND_RUNTIME_EXECUTABLE"
 
 echo
 echo "==> 凭据配置"

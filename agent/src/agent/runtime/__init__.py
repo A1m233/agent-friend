@@ -39,7 +39,7 @@ from ..sessions.changes import reset_session_mutation_context, set_session_mutat
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
 from ..tools import ToolResult
-from .errors import SessionBusyError
+from .errors import SessionBusyError, run_failure_reason_code
 from .hooks import (
     PRE_TOOL_PROCEED,
     PRE_TURN_PROCEED,
@@ -624,7 +624,11 @@ class AgentRuntime:
                     request.event,
                     run_id=request.run_id,
                     outcome=outcome,
-                    reason_code=type(error).__name__ if error is not None else "",
+                    reason_code=(
+                        run_failure_reason_code(error, default=type(error).__name__)
+                        if error is not None
+                        else ""
+                    ),
                 )
             finally:
                 log_run_latency(

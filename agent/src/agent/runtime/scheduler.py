@@ -15,7 +15,7 @@ from itertools import count
 
 from ..latency import RunLatencyContext, log_run_latency, monotonic_ms
 from .cancellation import CancelReason, RunCancelled
-from .errors import SessionBusyError
+from .errors import SessionBusyError, run_failure_reason_code
 from .models import (
     InteractiveBusyPolicy,
     RunCancelResult,
@@ -486,7 +486,11 @@ class RunScheduler:
             )
         except BaseException as exc:
             logger.exception("run executor failed: %s", request.run_id)
-            handle.finish_once(RunOutcome.FAILED, reason_code="executor_error", error=exc)
+            handle.finish_once(
+                RunOutcome.FAILED,
+                reason_code=run_failure_reason_code(exc, default="executor_error"),
+                error=exc,
+            )
         finally:
             terminal = handle.terminal
             log_run_latency(

@@ -82,6 +82,10 @@ def _json_result(payload: dict[str, object], *, error: bool = False) -> ToolResu
     meta: dict[str, object] = {"error_kind": error_kind} if error else {}
     if error and error_kind == "approval_surface_unavailable":
         meta["no_progress_family"] = error_kind
+    elif error and error_kind == "permission_denied":
+        permission_reason = payload.get("permission_reason")
+        if isinstance(permission_reason, str) and permission_reason:
+            meta["no_progress_family"] = f"filesystem_permission_denied:{permission_reason}"
     return ToolResult(
         text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
         is_error=error,
@@ -92,8 +96,21 @@ def _json_result(payload: dict[str, object], *, error: bool = False) -> ToolResu
 def _ledger(args: dict[str, Any]) -> FilesystemAuthorizationLedger:
     value = args.get(FILESYSTEM_LEDGER_ARG)
     if not isinstance(value, FilesystemAuthorizationLedger):
-        raise FilesystemError("permission_denied", "当前用户轮没有文件授权上下文。")
+        raise FilesystemError(
+            "permission_denied",
+            "当前用户轮没有文件授权上下文。",
+            permission_reason="authorization_context_unavailable",
+        )
     return value
+
+
+def _permission_recovery_fields() -> dict[str, object]:
+    return {
+        "retryable": False,
+        "retry_after": "new_current_turn_filesystem_scope",
+        "required_action": "use_current_turn_scope_or_request_filesystem_access",
+        "scope_lifetime": "current_user_turn",
+    }
 
 
 class RequestFilesystemAccessTool:
@@ -438,14 +455,25 @@ class FilesystemOperationTool:
             return _json_result({"ok": True, **payload})
         except FilesystemError as exc:
             message = str(exc)
+            recovery: dict[str, object] = {}
             if exc.code == "permission_denied":
                 message = (
                     f"{message} filesystem_scope_id 必须来自当前用户轮 request_filesystem_access "
                     "成功结果的 scopes[].filesystem_scope_id，或宿主提供的当前 Skill 文件 scope；"
-                    "不能填 skill_id、request_id 或其它会话的 scope。"
+                    "不能填 skill_id、request_id、旧用户轮或其它会话的 scope。不要使用同一 scope "
+                    "重试，也不要只修改 max_lines、路径等其它参数；请改用当前用户轮已有的有效 "
+                    "scope，若没有则调用一次 request_filesystem_access。只有真实授权成功结果才能"
+                    "称为授权已刷新。"
                 )
+                recovery = _permission_recovery_fields()
             return _json_result(
-                {"ok": False, "error": exc.code, "message": message, **exc.details},
+                {
+                    "ok": False,
+                    "error": exc.code,
+                    "message": message,
+                    **exc.details,
+                    **recovery,
+                },
                 error=True,
             )
         except (TypeError, ValueError) as exc:
@@ -505,8 +533,25 @@ class FilesystemOperationTool:
         status = (
             "success" if success_count == len(results) else "partial" if success_count else "failed"
         )
+        summary: dict[str, object] = {}
+        if (
+            status == "failed"
+            and results
+            and all(item.get("error") == "permission_denied" for item in results)
+        ):
+            permission_reasons = {
+                str(item["permission_reason"])
+                for item in results
+                if isinstance(item.get("permission_reason"), str)
+            }
+            if len(permission_reasons) == 1:
+                summary = {
+                    "error": "permission_denied",
+                    "permission_reason": permission_reasons.pop(),
+                    **_permission_recovery_fields(),
+                }
         return _json_result(
-            {"ok": status == "success", "status": status, "items": results},
+            {"ok": status == "success", "status": status, "items": results, **summary},
             error=status != "success",
         )
 
@@ -543,7 +588,8 @@ _FILESYSTEM_SCOPE_PROPERTY = {
     "description": (
         "当前用户轮 request_filesystem_access 成功结果的 "
         "scopes[].filesystem_scope_id，或宿主提供的当前 Skill 文件 scope。"
-        "只能用于 filesystem_* 工具；不能填 skill_id、request_id、action_id 或旧会话 scope。"
+        "只能用于 filesystem_* 工具；不能填 skill_id、request_id、action_id、旧用户轮或其它会话 "
+        "scope。失效后不能原样重试或通过修改其它参数恢复，必须使用当前用户轮的新 scope。"
     ),
 }
 _SCOPE_PATH_PROPERTIES = {

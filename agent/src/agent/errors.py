@@ -12,6 +12,16 @@ class AgentError(Exception):
     """所有 ``agent`` 模块异常的基类。"""
 
 
+class MalformedToolCallError(AgentError):
+    """模型连续生成不符合公开 schema 的工具调用参数。"""
+
+    reason_code = "malformed_tool_call"
+
+    def __init__(self, validation_reason: str) -> None:
+        super().__init__(validation_reason)
+        self.validation_reason = validation_reason
+
+
 class PersonaNotFoundError(AgentError):
     """指定 persona（按 name 或 id 查）在 external_dir 与内置 personas 都找不到。"""
 

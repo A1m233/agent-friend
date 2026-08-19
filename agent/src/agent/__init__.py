@@ -31,6 +31,7 @@ from .conversation_events import (
 )
 from .errors import (
     AgentError,
+    MalformedToolCallError,
     PersonaAlreadyExistsError,
     PersonaAmbiguousError,
     PersonaContentInvalidError,
@@ -159,6 +160,7 @@ __all__ = [
     "EventType",
     "FifoContextManager",
     "JsonlSessionStore",
+    "MalformedToolCallError",
     "MarkdownPromptBuilder",
     "Message",
     "ModelResponseStatus",
