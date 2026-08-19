@@ -736,6 +736,7 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     assert skill_check["builtin"] == "skill-creator"
     assert skill_check["installer"] == "skill-installer"
     assert skill_check["installer_validation"] == "fail-closed"
+    assert skill_check["installer_managed_transaction"] == "rollback-ok"
     assert skill_check["watcher_status"] == "healthy"
     assert skill_check["activated"] == "frozen-watcher-smoke"
 

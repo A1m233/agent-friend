@@ -1,0 +1,216 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-19T17:32:22.773581+00:00",
+    "ended_at": "2026-08-19T17:33:09.111915+00:00",
+    "duration_seconds": 46.338,
+    "git_commit": "3188766",
+    "working_tree_dirty": true,
+    "note": "feature-088 managed GitHub Skill update",
+    "selection": {
+      "contract": "all",
+      "case": "C24-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "b53d78a7fbda37416684c020c79e39ef21769f053d38fff9245b974861351639",
+      "total_contracts": 24,
+      "total_cases": 216,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C24-05",
+          "query": "请把已经由 agent-friend 管理的 GitHub Skill maa-daily 更新到它记录的同源最新内容； 不要改变来源，目前也没有本地修改",
+          "facet": "issue 054 残余 anchor · 更新已有 Skill 必须调用 production builtin 的真实更新入口",
+          "source": "issue-054-managed-github-skill-update-gap",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "missing successful tool call exec_command: need at least 1, found 0, with args containing {'cmd': 'python scripts/install-skill-from-github.py --update maa-daily', 'skill': {'entry': 'scripts/install-skill-from-github.py', 'workdir': '.'}} and result containing 'Updated maa-daily' (actual: none)",
+          "tool_calls": [
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "查找并更新已安装的 maa-daily GitHub Skill，需要访问 Skills 目录查看当前状态",
+                "items": [
+                  {
+                    "item_id": "shared_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "shared_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  },
+                  {
+                    "item_id": "personal_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "查找已安装的 maa-daily GitHub Skill 并更新到最新版本",
+                "items": [
+                  {
+                    "item_id": "personal_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  },
+                  {
+                    "item_id": "shared_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "shared_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "查找已安装的 maa-daily GitHub Skill 并更新到最新版本",
+                "items": [
+                  {
+                    "item_id": "personal_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  },
+                  {
+                    "item_id": "shared_skills_dir",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "shared_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "search_metadata",
+                      "read_text"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "我来帮你更新 maa-daily Skill。先让我查看一下当前已安装 Skill 的状态。",
+            "让我重新尝试获取授权：",
+            "我尝试查找并更新 maa-daily Skill，但在请求访问 Skills 目录时遇到了授权限制，提示当前入口无法展示本地文件授权。\n\n你可能需要在**桌面端的聊天窗口**里重新发起这个请求，我才能访问到你的 Skills 目录并检查 maa-daily 的当前版本和来源信息，然后执行更新。\n\n或者，如果你现在就在桌面端，可能是权限授权界面没有弹出来——你可以检查一下是否有待处理的授权请求需要确认。\n\n一旦获得访问权限，我会：\n1. 找到 maa-daily Skill 的位置和当前记录的 GitHub 来源\n2. 检查上游仓库的最新提交\n3. 在确认没有本地修改的前提下，将其更新到同源最新版本\n\n需要你在桌面端重试或确认授权吗？"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "我来帮你更新 maa-daily Skill。先让我查看一下当前已安装 Skill 的状态。让我重新尝试获取授权：我尝试查找并更新 maa-daily Skill，但在请求访问 Skills 目录时遇到了授权限制，提示当前入口无法展示本地文件授权。\n\n你可能需要在**桌面端的聊天窗口**里重新发起这个请求，我才能访问到你的 Skills 目录并检查 maa-daily 的当前版本和来源信息，然后执行更新。\n\n或者，如果你现在就在桌面端，可能是权限授权界面没有弹出来——你可以检查一下是否有待处理的授权请求需要确认。\n\n一旦获得访问权限，我会：\n1. 找到 maa-daily Skill 的位置和当前记录的 GitHub 来源\n2. 检查上游仓库的最新提交\n3. 在确认没有本地修改的前提下，将其更新到同源最新版本\n\n需要你在桌面端重试或确认授权吗？",
+          "stop_reason": "no_progress",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

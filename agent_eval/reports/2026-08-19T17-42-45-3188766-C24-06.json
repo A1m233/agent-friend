@@ -1,0 +1,165 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-19T17:42:45.572582+00:00",
+    "ended_at": "2026-08-19T17:42:56.395203+00:00",
+    "duration_seconds": 10.823,
+    "git_commit": "3188766",
+    "working_tree_dirty": true,
+    "note": "feature-088 confirmed local change replacement",
+    "selection": {
+      "contract": "all",
+      "case": "C24-06",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "8b694f4e18a03e61123a3dee1b407506548e5ded55671afeef43f786ddcc574f",
+      "total_contracts": 24,
+      "total_cases": 216,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C24-06",
+          "query": "确认，放弃 maa-daily 的这些本地修改，按刚才记录的同源继续更新",
+          "facet": "本地修改恢复 · 只有用户看到冲突后明确确认，才使用正式显式覆盖参数",
+          "source": "issue-054-managed-github-skill-update-gap",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "missing successful tool call skill_read: need at least 1, found 0, with args containing {'skill_id': 'builtin/skill-installer'} and result containing '<name>skill-installer</name>' (actual: none)",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "skill": {
+                  "entry": "scripts/install-skill-from-github.py",
+                  "workdir": "."
+                },
+                "cmd": "python scripts/install-skill-from-github.py --update --replace-local-changes maa-daily",
+                "reason": "用户确认放弃 maa-daily 的本地修改，按记录的同源继续更新"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"Updated maa-daily from fixture/repo:maa-daily@main old_sha256=333 new_sha256=222\"}",
+              "is_error": false,
+              "duration_seconds": 0.0
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "更新完成了。ma a-daily 的本地修改已被覆盖，现在已是最新版本 (sha256=222)，与同源记录一致。"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "a1d744e8077f7b7188d96bd29e81d5c3989a0ffee2fe2044a4baf3d2c14f5c92",
+            "render_fingerprint": "89cb6a231c794634da2afb74e8a000749bb1153d0a8dcf74b2d1f79ecc492bce",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "024c7fc48c9184a37a28f2b7e57e4a00f61368923ec6d821a9e811158bcc124f",
+            "request_message_index": 4,
+            "preflight_passed": true
+          },
+          "final_text": "更新完成了。ma a-daily 的本地修改已被覆盖，现在已是最新版本 (sha256=222)，与同源记录一致。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

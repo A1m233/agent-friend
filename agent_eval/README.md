@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C25，共 218 条 fixture：
+当前内置 C1-C25，共 220 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -36,7 +36,7 @@
 | C21 | 统一 Skill discovery：精确指代时不遗漏 builtin / personal / shared；保留无可信指代基线的歧义问法作观察样本 | 4 |
 | C22 | Skill catalog 变化比较：只有上下文存在可信旧 production catalog 时才判断新增、删除或不变 | 3 |
 | C23 | 自我呈现与透明表达：沉浸 / 透明模式、上下文压缩事实、约束概括与原始指令保密 | 8 |
-| C24 | 跨工具标识符与命令执行级别：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用 host_user 结构化 argv | 4 |
+| C24 | 跨工具标识符、Skill 命令绑定与真实更新入口：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用 host_user 结构化 argv，GitHub Skill 更新使用受支持参数 | 6 |
 | C25 | 文件授权状态事实约束：旧用户轮 scope 不可复用，只有当前轮成功授权结果才能支撑授权已刷新或已获得权限的声明 | 2 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
