@@ -20,6 +20,7 @@ from .context import (
 )
 from .conversation import MAX_TOOL_TURNS_DEFAULT, Conversation
 from .conversation_events import (
+    ContextCompactionStatus,
     ConversationEvent,
     ModelResponseStatus,
     SkillActivationStatus,
@@ -146,6 +147,7 @@ __all__ = [
     "ChannelSection",
     "CompactionRecord",
     "ContextBaseOverBudgetError",
+    "ContextCompactionStatus",
     "ContextInputTooLargeError",
     "ContextManager",
     "Conversation",

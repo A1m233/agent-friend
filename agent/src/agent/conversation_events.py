@@ -98,6 +98,15 @@ class ModelResponseStatus:
 
 
 @dataclass(frozen=True)
+class ContextCompactionStatus:
+    """上下文压缩活动的实时生命周期；完成事实由 compaction session event 持久化。"""
+
+    activity_id: str = ""
+    phase: Literal["started", "completed", "discarded"] = "started"
+    type: Literal["context_compaction_status"] = "context_compaction_status"
+
+
+@dataclass(frozen=True)
 class SkillActivationStatus:
     """调用方为当前用户轮预选 Skill 后产生的瞬态加载状态。
 
@@ -144,6 +153,7 @@ ConversationEvent = (
     | ToolCallRequest
     | ToolCallResult
     | ModelResponseStatus
+    | ContextCompactionStatus
     | SkillActivationStatus
     | TurnDone
 )

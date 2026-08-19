@@ -67,7 +67,19 @@ export interface ReminderBlock {
   todoStatus: string;
 }
 
-export type MessageBlock = TextBlock | ToolBlock | ThinkingBlock | ReminderBlock;
+/** 上下文压缩活动；完成事实来自持久化 compaction session event。 */
+export interface CompactionBlock {
+  kind: "compaction";
+  activityId: string;
+  status: "running" | "complete";
+}
+
+export type MessageBlock =
+  | TextBlock
+  | ToolBlock
+  | ThinkingBlock
+  | ReminderBlock
+  | CompactionBlock;
 
 export interface ChatAttachment {
   assetId: string;

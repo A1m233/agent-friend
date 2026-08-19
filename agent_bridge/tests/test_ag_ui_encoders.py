@@ -12,6 +12,7 @@ from agent_bridge.protocols.ag_ui.encoders import encode_stream
 from agent_bridge.session_turns import SessionTurnCoordinator
 
 from agent import (
+    ContextCompactionStatus,
     Conversation,
     ConversationEvent,
     ModelResponseStatus,
@@ -152,6 +153,29 @@ def test_encode_stream_maps_model_response_status_to_custom_event() -> None:
     assert b"agent_friend.run_status" in body
     assert b'"afterTool":true' in body
     assert b'"attempt":2' in body
+
+
+def test_encode_stream_maps_context_compaction_without_summary_payload() -> None:
+    class CompactionConversation(_ConversationStub):
+        def stream(self, _user_input: str, **_kwargs: Any) -> Iterator[ConversationEvent]:
+            yield ContextCompactionStatus(activity_id="activity-1", phase="started")
+            yield ContextCompactionStatus(activity_id="activity-1", phase="completed")
+            yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
+
+    body = b"".join(
+        encode_stream(
+            lambda: cast(Conversation, CompactionConversation()),
+            "hello",
+            thread_id="session-a",
+            run_id="run-a",
+            accept="text/event-stream",
+        )
+    )
+
+    assert b"agent_friend.context_compaction" in body
+    assert b'"activityId":"activity-1"' in body
+    assert b'"phase":"completed"' in body
+    assert b"summary" not in body
 
 
 def test_encode_stream_maps_reasoning_activity_without_private_content() -> None:

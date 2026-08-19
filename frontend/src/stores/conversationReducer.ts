@@ -23,6 +23,7 @@ import {
 } from "@ag-ui/core";
 import type {
   ChatMessage,
+  CompactionBlock,
   MessageBlock,
   ModelResponseProgress,
   TextBlock,
@@ -109,6 +110,10 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
           },
         } : msg;
       }
+      if (e.name === "agent_friend.context_compaction") {
+        const progress = parseCompactionProgress(e.value, "camel");
+        return progress ? applyCompactionProgress(msg, progress) : msg;
+      }
       if (e.name === "agent_friend.skill_activation") {
         const block = skillActivationBlock(e.value, "caller-skill");
         return block ? appendUniqueTool(msg, block) : msg;
@@ -122,6 +127,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
         ...msg,
         status: isCancelledRunResult(e.result) ? "interrupted" : "complete",
         runStatus: undefined,
+        blocks: removeRunningCompactions(msg.blocks),
       };
     }
 
@@ -134,6 +140,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
         error: e.message,
         errorCode: e.code,
         runStatus: undefined,
+        blocks: removeRunningCompactions(msg.blocks),
       };
     }
 
@@ -228,6 +235,11 @@ export function applyPushConversationEvent(
       } : msg;
     }
 
+    case "context_compaction_status": {
+      const progress = parseCompactionProgress(evt, "snake");
+      return progress ? applyCompactionProgress(msg, progress) : msg;
+    }
+
     case "skill_activation_status": {
       const block = skillActivationBlock({
         status: evt.status,
@@ -244,7 +256,12 @@ export function applyPushConversationEvent(
     }
 
     case "done":
-      return { ...msg, status: "complete", runStatus: undefined };
+      return {
+        ...msg,
+        status: "complete",
+        runStatus: undefined,
+        blocks: removeRunningCompactions(msg.blocks),
+      };
 
     default:
       return msg;
@@ -274,6 +291,67 @@ function parseRunStatus(value: unknown): ModelResponseProgress | null {
     || typeof maxAttempts !== "number"
   ) return null;
   return { phase, afterTool, attempt, maxAttempts, activityVersion: 0 };
+}
+
+type CompactionProgress = {
+  activityId: string;
+  phase: "started" | "completed" | "discarded";
+};
+
+function parseCompactionProgress(
+  value: unknown,
+  casing: "camel" | "snake",
+): CompactionProgress | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const activityId = pushString(
+    casing === "camel" ? candidate.activityId : candidate.activity_id,
+  );
+  const phase = candidate.phase;
+  if (
+    !activityId
+    || (phase !== "started" && phase !== "completed" && phase !== "discarded")
+  ) return null;
+  return { activityId, phase };
+}
+
+function applyCompactionProgress(
+  msg: ChatMessage,
+  progress: CompactionProgress,
+): ChatMessage {
+  if (progress.phase === "discarded") {
+    return {
+      ...msg,
+      blocks: msg.blocks.filter((block) => (
+        block.kind !== "compaction" || block.activityId !== progress.activityId
+      )),
+    };
+  }
+  const status: CompactionBlock["status"] = progress.phase === "started"
+    ? "running"
+    : "complete";
+  const index = msg.blocks.findIndex((block) => (
+    block.kind === "compaction" && block.activityId === progress.activityId
+  ));
+  if (index < 0) {
+    return {
+      ...msg,
+      status: "streaming",
+      blocks: [
+        ...msg.blocks,
+        { kind: "compaction", activityId: progress.activityId, status },
+      ],
+    };
+  }
+  const current = msg.blocks[index];
+  if (current.kind !== "compaction" || current.status === status) return msg;
+  const blocks = [...msg.blocks];
+  blocks[index] = { ...current, status };
+  return { ...msg, blocks };
+}
+
+function removeRunningCompactions(blocks: MessageBlock[]): MessageBlock[] {
+  return blocks.filter((block) => block.kind !== "compaction" || block.status === "complete");
 }
 
 function skillActivationBlock(value: unknown, idPrefix: string): ToolBlock | null {

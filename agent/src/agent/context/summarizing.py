@@ -21,7 +21,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Generator
 from dataclasses import dataclass
+from typing import cast
+from uuid import uuid4
 
 from llm_providers import LLMContextWindowError
 
@@ -32,6 +35,7 @@ from .fifo import FifoContextManager
 from .protocol import (
     BuildResult,
     CompactionRecord,
+    ContextCompactionProgress,
     ContextManager,
     PriorSummary,
     RuntimeContext,
@@ -123,6 +127,37 @@ class SummarizingContextManager:
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
     ) -> BuildResult:
+        stream = self.stream_build_messages(
+            history=history,
+            system_prompt=system_prompt,
+            new_user_input=new_user_input,
+            new_user_attachments=new_user_attachments,
+            extra_context=extra_context,
+            pre_user_context=pre_user_context,
+            turn_context=turn_context,
+            trailing_user=trailing_user,
+            trailing_system=trailing_system,
+            runtime=runtime,
+        )
+        while True:
+            try:
+                next(stream)
+            except StopIteration as stopped:
+                return cast(BuildResult, stopped.value)
+
+    def stream_build_messages(
+        self,
+        history: list[Message],
+        system_prompt: str,
+        new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
+        extra_context: list[Message] | None = None,
+        pre_user_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
+        trailing_user: str | None = None,
+        trailing_system: str | None = None,
+        runtime: RuntimeContext | None = None,
+    ) -> Generator[ContextCompactionProgress, None, BuildResult]:
         parts = _AssembleParts(
             system_prompt=system_prompt,
             new_user_input=new_user_input,
@@ -191,14 +226,20 @@ class SummarizingContextManager:
             allow_new_edit=False,
             additional_cleared_result_uuids=projection.effective_cleared_result_uuids,
         )
-        return self._compact(
+        activity_id = str(uuid4())
+        yield ContextCompactionProgress(activity_id=activity_id, phase="started")
+        result = self._compact(
             full_projected_history,
             parts,
             runtime,
             threshold,
             full_projection,
             projection.new_edit,
+            activity_id,
         )
+        if result.new_compaction is None:
+            yield ContextCompactionProgress(activity_id=activity_id, phase="discarded")
+        return result
 
     # ----- 触发摘要 -----
 
@@ -210,6 +251,7 @@ class SummarizingContextManager:
         threshold: int,
         projection: ToolProjectionStats,
         new_tool_context_edit: ToolContextEditRecord | None,
+        activity_id: str,
     ) -> BuildResult:
         summary_output_budget = max(512, min(4096, int(runtime.budget.effective_window * 0.05)))
         cut = self._recent_tail_cut(history, parts, runtime, summary_output_budget)
@@ -280,6 +322,7 @@ class SummarizingContextManager:
             trigger_reason=runtime.trigger_reason,
             summary_attempts=attempts,
             tool_results_truncated=projection.truncated,
+            activity_id=activity_id,
         )
         return BuildResult(
             messages=msgs,

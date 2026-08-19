@@ -152,6 +152,16 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       continue;
     }
 
+    if (ev.type === "compaction") {
+      if (pendingSkipAssistant) continue;
+      ensureAssistant(ev.uuid, ev.ts).blocks.push({
+        kind: "compaction",
+        activityId: ev.uuid,
+        status: "complete",
+      });
+      continue;
+    }
+
     if (ev.type === "user_message") {
       const message = textMessage(ev.uuid, "user", asString(p.content), ev.ts);
       message.attachments = attachmentsOf(p.attachments);

@@ -32,12 +32,15 @@ from .protocol import (
     BudgetSnapshot,
     BuildResult,
     CompactionRecord,
+    ContextCompactionProgress,
     ContextManager,
     PriorSummary,
     PriorToolContextEdit,
     RuntimeContext,
+    StreamingContextManager,
     ToolContextEditRecord,
     assemble_messages,
+    stream_build_messages,
 )
 from .summarizing import (
     MAX_CONSECUTIVE_FAILURES,
@@ -67,6 +70,7 @@ __all__ = [
     "BuildResult",
     "CompactionRecord",
     "ContextBaseOverBudgetError",
+    "ContextCompactionProgress",
     "ContextInputTooLargeError",
     "ContextManager",
     "FifoContextManager",
@@ -74,6 +78,7 @@ __all__ = [
     "PriorSummary",
     "PriorToolContextEdit",
     "RuntimeContext",
+    "StreamingContextManager",
     "SummarizingContextManager",
     "ToolContextEditRecord",
     "assemble_messages",
@@ -82,4 +87,5 @@ __all__ = [
     "estimate_tokens",
     "estimate_tool_schema_tokens",
     "make_budget_snapshot",
+    "stream_build_messages",
 ]

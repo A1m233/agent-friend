@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 from agent.latency import monotonic_ms
 from agent_bridge.protocols.im.adapters.qq_streaming import QQC2CStreamSession
-from agent_bridge.protocols.im.streaming import OutboundStreamContext, StreamRelay
+from agent_bridge.protocols.im.streaming import (
+    OutboundStreamContext,
+    StreamProgressUpdate,
+    StreamRelay,
+)
 
 
 class StubStreamSession:
@@ -67,6 +71,23 @@ async def test_relay_flushes_trailing_coalesced_snapshot() -> None:
     await relay.flush()
 
     assert session.updates == ["你", "你要我 fetch 的完整回答"]
+
+
+@pytest.mark.asyncio
+async def test_relay_progress_is_replaced_by_first_text_without_entering_full_text() -> None:
+    session = StubStreamSession()
+    relay = StreamRelay(session, stream_trace="trace-progress", throttle_seconds=60)
+
+    await relay.show_progress(StreamProgressUpdate(phase="started"))
+    await relay.show_progress(StreamProgressUpdate(phase="completed"))
+    await relay.feed("最终回答")
+
+    assert session.updates == [
+        "正在整理较长对话…",
+        "已整理好，正在准备回复…",
+        "最终回答",
+    ]
+    assert relay.full_text == "最终回答"
 
 
 @pytest.mark.asyncio

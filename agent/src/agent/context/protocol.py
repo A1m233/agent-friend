@@ -18,8 +18,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from ..attachments import AttachmentRef
 from ..messages import Message
@@ -105,6 +106,7 @@ class CompactionRecord:
     summary_attempts: int = 1
     tool_results_truncated: int = 0
     tool_results_omitted: int = 0
+    activity_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,14 @@ class BuildResult:
     notes: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class ContextCompactionProgress:
+    """一次上下文压缩在构建阶段产生的内部实时进度。"""
+
+    activity_id: str
+    phase: Literal["started", "discarded"]
+
+
 class ContextManager(Protocol):
     """上下文管理器的接口契约。
 
@@ -224,6 +234,70 @@ class ContextManager(Protocol):
         trailing_system: str | None = None,
         runtime: RuntimeContext | None = None,
     ) -> BuildResult: ...
+
+
+@runtime_checkable
+class StreamingContextManager(Protocol):
+    """可在同步上下文构建中先交还压缩进度的可选能力。"""
+
+    def stream_build_messages(
+        self,
+        history: list[Message],
+        system_prompt: str,
+        new_user_input: str | None = None,
+        new_user_attachments: list[AttachmentRef] | None = None,
+        extra_context: list[Message] | None = None,
+        pre_user_context: list[Message] | None = None,
+        turn_context: list[Message] | None = None,
+        trailing_user: str | None = None,
+        trailing_system: str | None = None,
+        runtime: RuntimeContext | None = None,
+    ) -> Generator[ContextCompactionProgress, None, BuildResult]: ...
+
+
+def stream_build_messages(
+    manager: ContextManager,
+    *,
+    history: list[Message],
+    system_prompt: str,
+    new_user_input: str | None = None,
+    new_user_attachments: list[AttachmentRef] | None = None,
+    extra_context: list[Message] | None = None,
+    pre_user_context: list[Message] | None = None,
+    turn_context: list[Message] | None = None,
+    trailing_user: str | None = None,
+    trailing_system: str | None = None,
+    runtime: RuntimeContext | None = None,
+) -> Generator[ContextCompactionProgress, None, BuildResult]:
+    """统一适配支持进度和仅支持同步返回的 context manager。"""
+
+    if isinstance(manager, StreamingContextManager):
+        return (
+            yield from manager.stream_build_messages(
+                history=history,
+                system_prompt=system_prompt,
+                new_user_input=new_user_input,
+                new_user_attachments=new_user_attachments,
+                extra_context=extra_context,
+                pre_user_context=pre_user_context,
+                turn_context=turn_context,
+                trailing_user=trailing_user,
+                trailing_system=trailing_system,
+                runtime=runtime,
+            )
+        )
+    return manager.build_messages(
+        history=history,
+        system_prompt=system_prompt,
+        new_user_input=new_user_input,
+        new_user_attachments=new_user_attachments,
+        extra_context=extra_context,
+        pre_user_context=pre_user_context,
+        turn_context=turn_context,
+        trailing_user=trailing_user,
+        trailing_system=trailing_system,
+        runtime=runtime,
+    )
 
 
 def assemble_messages(

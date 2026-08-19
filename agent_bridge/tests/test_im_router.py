@@ -30,7 +30,7 @@ from agent_bridge.protocols.im.media import InboundMedia
 from agent_bridge.protocols.im.router import FALLBACK_TEXT, IMRouter
 from agent_bridge.session_bridge import PersistentBootstrap
 
-from agent import TextDelta, ToolCallRequest, ToolCallResult, TurnDone
+from agent import ContextCompactionStatus, TextDelta, ToolCallRequest, ToolCallResult, TurnDone
 from llm_providers import LLMTransientProviderError
 
 
@@ -634,6 +634,37 @@ async def test_native_stream_sends_body_once_then_separate_menu(
     assert sleep_delays[-1] == pytest.approx(0.8)
     assert provider.contexts[0].session_id == "im:qq:OPENID-USER-A"
     assert isinstance(provider.contexts[0].latency_started_ms, int)
+
+
+@pytest.mark.asyncio
+async def test_native_stream_replaces_compaction_progress_with_answer(
+    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_bridge.bind_persistent.return_value = _make_conv(
+        [
+            ContextCompactionStatus(activity_id="activity-1", phase="started"),
+            ContextCompactionStatus(activity_id="activity-1", phase="completed"),
+            TextDelta(text="最终回答"),
+            TurnDone(),
+        ]
+    )
+    stream = StubStreamSession()
+    provider = StubStreamingProvider(stream)
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("agent_bridge.protocols.im.router.asyncio.sleep", fake_sleep)
+
+    await router.handle_inbound("qq", _make_event(), provider)
+
+    assert stream.updates == [
+        "正在整理较长对话…",
+        "已整理好，正在准备回复…",
+        "最终回答",
+    ]
+    assert stream.finishes == ["最终回答"]
+    assert all(item.text != "最终回答" for item in provider.sent)
 
 
 @pytest.mark.asyncio

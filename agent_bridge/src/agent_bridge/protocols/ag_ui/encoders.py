@@ -53,6 +53,7 @@ from agent.system_prompt.sections import PromptChannel
 from agent.system_prompt.surfaces import InteractionSurfaceId
 
 from agent import (
+    ContextCompactionStatus,
     Conversation,
     ConversationEvent,
     ModelResponseStatus,
@@ -228,6 +229,18 @@ def encode_stream(
                                 "afterTool": ev.after_tool,
                                 "attempt": ev.attempt,
                                 "maxAttempts": ev.max_attempts,
+                            },
+                        )
+                    )
+
+                elif isinstance(ev, ContextCompactionStatus):
+                    yield _encode(
+                        CustomEvent(
+                            type=EventType.CUSTOM,
+                            name="agent_friend.context_compaction",
+                            value={
+                                "activityId": ev.activity_id,
+                                "phase": ev.phase,
                             },
                         )
                     )
