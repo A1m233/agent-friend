@@ -21,8 +21,8 @@ from typing import Any, ClassVar, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from agent.filesystem import ProtectedPathPolicy
-from agent.filesystem.tools import RequestFilesystemAccessTool
+from agent.filesystem import FilesystemService, ProtectedPathPolicy
+from agent.filesystem.tools import FilesystemOperationTool, RequestFilesystemAccessTool
 from agent.latency import RunLatencyContext, monotonic_ms
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
@@ -60,6 +60,7 @@ from agent import (
     PromptBuilder,
     Session,
     TextDelta,
+    Tool,
     ToolCallRequest,
     ToolCallResult,
     ToolRegistry,
@@ -2125,6 +2126,55 @@ def test_unavailable_filesystem_approval_groups_changed_requests_as_no_progress(
     done = next(event for event in events if isinstance(event, TurnDone))
     assert len(results) == 3
     assert all(event.is_error for event in results)
+    assert done.stop_reason == "no_progress"
+    assert done.total_tool_calls == 3
+
+
+def test_stale_filesystem_scope_groups_changed_reads_as_no_progress(tmp_path: Path) -> None:
+    policy = ProtectedPathPolicy(
+        product_roots=((tmp_path / "product").resolve(),),
+        personal_skill_roots=((tmp_path / "personal-skills").resolve(),),
+    )
+    tool = FilesystemOperationTool("filesystem_read_text", FilesystemService(policy))
+    attempts = [
+        {"filesystem_scope_id": "scope-from-previous-turn"},
+        {"filesystem_scope_id": "scope-from-previous-turn", "max_lines": 50},
+        {
+            "filesystem_scope_id": "scope-from-previous-turn",
+            "max_lines": 30,
+            "encoding": "utf-8",
+        },
+    ]
+    repeated: list[list[LLMStreamEvent]] = [
+        [
+            LLMToolCallDelta(
+                0,
+                f"stale-scope-{index}",
+                tool.name,
+                json.dumps(args),
+            ),
+            LLMTurnDone(stop_reason="tool_use"),
+        ]
+        for index, args in enumerate(attempts)
+    ]
+    fake = _ScriptedLLMClient(
+        script=[*repeated, [LLMTextDelta(text="需要重新授权。"), LLMTurnDone("end_turn")]]
+    )
+
+    events = list(
+        _make_conversation(
+            tmp_path,
+            fake_llm=fake,
+            registry=ToolRegistry([cast(Tool, tool)]),
+        ).stream("继续读取文件")
+    )
+
+    results = [event for event in events if isinstance(event, ToolCallResult)]
+    done = next(event for event in events if isinstance(event, TurnDone))
+    assert len(results) == 3
+    assert all(
+        json.loads(event.text)["permission_reason"] == "scope_unavailable" for event in results
+    )
     assert done.stop_reason == "no_progress"
     assert done.total_tool_calls == 3
 
