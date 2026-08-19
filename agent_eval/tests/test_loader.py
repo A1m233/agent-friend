@@ -36,7 +36,7 @@ def test_loads_builtin_cases() -> None:
         ("C21", "unified-skill-catalog-discovery", 4),
         ("C22", "skill-catalog-change-comparison", 3),
         ("C23", "self-presentation-and-transparency", 8),
-        ("C24", "tool-identifier-contract", 4),
+        ("C24", "tool-identifier-contract", 6),
     ]
 
 
@@ -268,6 +268,32 @@ def test_loads_fixture_session_and_case_judge() -> None:
         "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
         "execution": "host_user",
     }
+    managed_update = next(item for item in c24.cases if item.id == "C24-05")
+    assert managed_update.judge is not None
+    assert [(item.name, item.source) for item in managed_update.expected_skill_catalog_entries] == [
+        ("skill-installer", "builtin")
+    ]
+    assert managed_update.judge.required_successful_tool_calls[0].args == {
+        "skill_id": "builtin/skill-installer"
+    }
+    assert (
+        managed_update.judge.required_successful_tool_calls[1]
+        .args["cmd"]
+        .endswith("--update maa-daily")
+    )
+    assert managed_update.judge.required_successful_tool_calls[1].args["access"]["network"] == (
+        "enabled"
+    )
+    confirmed_replacement = next(item for item in c24.cases if item.id == "C24-06")
+    assert confirmed_replacement.judge is not None
+    assert [
+        (item.name, item.source) for item in confirmed_replacement.expected_skill_catalog_entries
+    ] == [("skill-installer", "builtin")]
+    replacement_requirement = confirmed_replacement.judge.required_successful_tool_calls[0]
+    replacement_command = replacement_requirement.args["cmd"]
+    assert "--replace-local-changes" in replacement_command
+    assert "--force" not in replacement_command
+    assert replacement_requirement.args["access"]["filesystem"] == "read_write"
 
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
@@ -302,7 +328,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 24
-    assert meta.total_cases == 214
+    assert meta.total_cases == 216
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -327,7 +353,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C21": 4,
         "C22": 3,
         "C23": 8,
-        "C24": 4,
+        "C24": 6,
     }
     assert len(meta.digest) == 64
 

@@ -136,6 +136,123 @@ def _smoke_skill_catalog() -> dict[str, Any]:
             else:
                 raise RuntimeError("packaged skill-installer validation path did not fail closed")
 
+            managed_module = sys.modules.get("managed_install")
+            if managed_module is None:
+                raise RuntimeError("packaged skill-installer managed helper is unavailable")
+            managed_root = root / "managed-installs"
+            managed_source = root / "managed-source"
+            managed_source.mkdir()
+            managed_entry = managed_source / "SKILL.md"
+            managed_entry.write_text(
+                "---\n"
+                "name: frozen-managed-smoke\n"
+                "description: Validate the packaged managed installer.\n"
+                "---\n\n"
+                "version one\n",
+                encoding="utf-8",
+            )
+            stage_candidate = installer_namespace.get("stage_candidate")
+            commit_candidate = installer_namespace.get("commit_candidate")
+            make_record = installer_namespace.get("make_record")
+            load_records = installer_namespace.get("load_records")
+            package_digest = installer_namespace.get("package_digest")
+            remove_candidate = installer_namespace.get("remove_candidate")
+            if not all(
+                callable(value)
+                for value in (
+                    stage_candidate,
+                    commit_candidate,
+                    make_record,
+                    load_records,
+                    package_digest,
+                    remove_candidate,
+                )
+            ):
+                raise RuntimeError("packaged managed installer API is incomplete")
+            candidate, digest = stage_candidate(
+                managed_source,
+                managed_root,
+                "frozen-managed-smoke",
+            )
+            record = make_record(
+                repository="fixture/repo",
+                path="skills/frozen-managed-smoke",
+                ref="main",
+                content_sha256=digest,
+            )
+            commit_candidate(
+                root=managed_root,
+                skill_name="frozen-managed-smoke",
+                candidate=candidate,
+                record=record,
+                expected_mode="absent",
+                expected_record=None,
+                expected_current_sha256=None,
+            )
+            remove_candidate(candidate)
+            managed_target = managed_root / "frozen-managed-smoke"
+            if (
+                load_records(managed_root).get("frozen-managed-smoke") != record
+                or package_digest(managed_target) != digest
+            ):
+                raise RuntimeError("packaged managed installer did not commit its first install")
+
+            managed_entry.write_text(
+                "---\n"
+                "name: frozen-managed-smoke\n"
+                "description: Validate the packaged managed installer.\n"
+                "---\n\n"
+                "version two\n",
+                encoding="utf-8",
+            )
+            replacement, replacement_digest = stage_candidate(
+                managed_source,
+                managed_root,
+                "frozen-managed-smoke",
+            )
+            replacement_record = make_record(
+                repository="fixture/repo",
+                path="skills/frozen-managed-smoke",
+                ref="main",
+                content_sha256=replacement_digest,
+            )
+            original_writer = managed_module._write_records
+
+            def fail_lock_write(_root: Path, _records: object) -> None:
+                raise managed_module.ManagedInstallError(
+                    "lock_write_failed", "injected frozen smoke failure"
+                )
+
+            managed_module._write_records = fail_lock_write
+            try:
+                try:
+                    commit_candidate(
+                        root=managed_root,
+                        skill_name="frozen-managed-smoke",
+                        candidate=replacement,
+                        record=replacement_record,
+                        expected_mode="managed",
+                        expected_record=record,
+                        expected_current_sha256=digest,
+                    )
+                except Exception as exc:
+                    if getattr(exc, "code", None) != "lock_write_failed":
+                        raise RuntimeError(
+                            "packaged managed installer returned an unexpected rollback error"
+                        ) from exc
+                else:
+                    raise RuntimeError("packaged managed installer failure injection did not fail")
+            finally:
+                managed_module._write_records = original_writer
+                remove_candidate(replacement)
+            if (
+                load_records(managed_root).get("frozen-managed-smoke") != record
+                or package_digest(managed_target) != digest
+            ):
+                raise RuntimeError(
+                    "packaged managed installer did not restore the previous version"
+                )
+
             service.start()
             package = personal_root / "frozen-watcher-smoke"
             package.mkdir(parents=True)
@@ -177,6 +294,7 @@ def _smoke_skill_catalog() -> dict[str, Any]:
                 "builtin_resources": len(required_resources),
                 "installer": installer.name,
                 "installer_validation": "fail-closed",
+                "installer_managed_transaction": "rollback-ok",
                 "catalog_generation": turn.catalog.generation,
                 "watcher_status": service.watcher_state.status,
                 "activated": turn.activations[0].record.name,

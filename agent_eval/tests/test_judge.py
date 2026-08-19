@@ -795,6 +795,114 @@ def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_ar
     assert judge_case(case, contract, host_argv).passed is True
 
 
+def test_managed_skill_update_accepts_catalog_skill_read_without_host_activation() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
+    case = next(item for item in contract.cases if item.id == "C24-05")
+    observed = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={
+                    "skill_id": "builtin/skill-installer",
+                    "reason": "更新受管理的 GitHub Skill",
+                },
+                result_text="<skill><name>skill-installer</name></skill>",
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "cmd": "python scripts/install-skill-from-github.py --update maa-daily",
+                    "skill": {
+                        "entry": "scripts/install-skill-from-github.py",
+                        "workdir": ".",
+                    },
+                    "access": {
+                        "filesystem": "read_write",
+                        "additional_roots": [
+                            {
+                                "locator": {
+                                    "kind": "standard",
+                                    "name": "personal_skills",
+                                },
+                                "access": "read_write",
+                            }
+                        ],
+                        "network": "enabled",
+                    },
+                    "reason": "更新 maa-daily",
+                },
+                result_text="Updated maa-daily",
+                is_error=False,
+            ),
+        ],
+        final_text="maa-daily 已从记录的同源更新成功。",
+        stop_reason="end_turn",
+        skill_activations=[],
+    )
+
+    verdict = judge_case(case, contract, observed)
+
+    assert verdict.passed is True
+
+
+def test_confirmed_local_replacement_requires_exact_command_and_access() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
+    case = next(item for item in contract.cases if item.id == "C24-06")
+    access = {
+        "filesystem": "read_write",
+        "additional_roots": [
+            {
+                "locator": {
+                    "kind": "standard",
+                    "name": "personal_skills",
+                },
+                "access": "read_write",
+            }
+        ],
+        "network": "enabled",
+    }
+
+    def trace_for(args: dict[str, object]) -> Trace:
+        return Trace(
+            case_id=case.id,
+            tool_calls=[
+                ToolCallTrace(
+                    name="exec_command",
+                    args=args,
+                    result_text="Updated maa-daily",
+                    is_error=False,
+                )
+            ],
+            final_text="maa-daily 的本地修改已按确认覆盖，并完成同源更新。",
+            stop_reason="end_turn",
+        )
+
+    exact_args: dict[str, object] = {
+        "cmd": (
+            "python scripts/install-skill-from-github.py --update maa-daily --replace-local-changes"
+        ),
+        "skill": {
+            "entry": "scripts/install-skill-from-github.py",
+            "workdir": ".",
+        },
+        "access": access,
+        "reason": "覆盖已确认放弃的本地修改并更新 maa-daily",
+    }
+    wrong_order_args = {
+        **exact_args,
+        "cmd": (
+            "python scripts/install-skill-from-github.py --update --replace-local-changes maa-daily"
+        ),
+    }
+    missing_access_args = {key: value for key, value in exact_args.items() if key != "access"}
+
+    assert judge_case(case, contract, trace_for(exact_args)).passed is True
+    assert judge_case(case, contract, trace_for(wrong_order_args)).passed is False
+    assert judge_case(case, contract, trace_for(missing_access_args)).passed is False
+
+
 def test_required_successful_tool_call_can_match_result_evidence() -> None:
     case = _case(
         CaseJudge(

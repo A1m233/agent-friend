@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -24,6 +25,19 @@ def _write_skill(root: Path, name: str, body: str = "Follow this workflow.") -> 
         encoding="utf-8",
     )
     return entry
+
+
+def _package_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) -> None:
@@ -70,6 +84,10 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     assert (creator.package_root / "license.txt").is_file()
     assert (creator.package_root / "scripts" / "quick_validate.py").is_file()
     assert (installer.package_root / "scripts" / "install-skill-from-github.py").is_file()
+    assert (installer.package_root / "scripts" / "managed_install.py").is_file()
+    assert manifest["skills"]["skill-installer"]["snapshot_sha256"] == _package_digest(
+        installer.package_root
+    )
     builtin_text = creator.entry_path.read_text("utf-8")
     assert "cannot yet read bundled references" not in builtin_text
     assert "host-provided `<runtime_capabilities>`" in builtin_text

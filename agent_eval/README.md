@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C24，共 214 条 fixture：
+当前内置 C1-C24，共 216 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -36,7 +36,7 @@
 | C21 | 统一 Skill discovery：精确指代时不遗漏 builtin / personal / shared；保留无可信指代基线的歧义问法作观察样本 | 4 |
 | C22 | Skill catalog 变化比较：只有上下文存在可信旧 production catalog 时才判断新增、删除或不变 | 3 |
 | C23 | 自我呈现与透明表达：沉浸 / 透明模式、上下文压缩事实、约束概括与原始指令保密 | 8 |
-| C24 | 跨工具标识符与命令执行级别：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用 host_user 结构化 argv | 4 |
+| C24 | 跨工具标识符、Skill 命令绑定与真实更新入口：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用 host_user 结构化 argv，GitHub Skill 更新使用受支持参数 | 6 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -120,7 +120,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|C21|C22|C23|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|C21|C22|C23|C24|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |
