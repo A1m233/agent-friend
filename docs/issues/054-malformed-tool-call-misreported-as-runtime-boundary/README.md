@@ -1,6 +1,6 @@
 # 054 · 非法工具参数被误报为运行边界并正常完成
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：high
 - **发现日期**：2026-08-19
 - **关联需求**：085-governed-local-command-runtime
@@ -25,7 +25,7 @@
 
 这是核心执行体验问题：用户已经授权行动，系统既不执行，也不显示真实失败，还承诺未来自动继续，导致用户在同一目标上反复重述。问题不是 Windows、沙箱、审批或前端交互造成的；这些层级从未收到合法命令请求。
 
-当前先登记而不在本次合入中修复，避免把运行时错误模型、前端呈现与 Skill 更新能力三项边界未经设计直接混改。
+本次修复只闭环非法工具参数的运行时错误语义与前端投影，不扩张到同源 GitHub Skill 更新能力。后者仍是独立的产品能力边界。
 
 ## 可选修复方向
 
@@ -34,3 +34,19 @@
 - 记录不含凭据值的非法参数结构摘要与缺失字段，补足 Kimi 工具调用兼容性的可观测性。
 - 为同源 GitHub Skill 更新提供明确的确定性工作流；在能力未提供前，禁止编造 `--force` 或承诺下一轮自动执行。
 - 用原模型 Kimi K2.5 固化真实回归案例，覆盖连续 malformed、用户重复“开始”、无授权卡片及最终状态语义。
+
+## 修复结果
+
+- 首次非法工具参数仍允许一次带具体校验原因的模型自修复；连续第二次非法参数会直接抛出 `MalformedToolCallError`，不再进入通用“运行边界”模型收尾。
+- 非法调用不会发布工具请求、执行工具或发起授权；Runtime 以 `outcome=failed`、`reason_code=malformed_tool_call` 结束，AG-UI 投影为可恢复的 `RUN_ERROR`，不再发送 `RUN_FINISHED`。
+- 失败轮会从后续模型上下文中清理可能误导用户的执行声明，并替换为“工具参数连续无效、宿主未执行或授权”的稳定事实。
+- 日志新增不含参数值的结构摘要，记录工具名、已知字段、字段类型、未知字段数量和缺失必填字段，便于区分模型输出形态而不泄露凭据。
+
+## 验证
+
+- 合并最新主干后，backend 门禁通过：`1847 passed, 4 skipped`，ruff 与 mypy 同时通过。
+- frontend 门禁通过：98 个测试文件、554 条测试通过，lint、typecheck 和 production build 通过。
+- Rust 门禁通过：Tauri core 201 条测试与 installer helper 6 条测试通过，另有 1 条设备 smoke 测试按预期忽略；release check 通过。
+- 使用事故模型 Kimi K2.5 运行 `C24-01` 正常工具链 smoke 时，模型连续调用 `request_filesystem_access` 后以 `no_progress` 停止，未调用 `exec_command`，也未产生 malformed。该结果保存在 [`agent_eval` report](../../../agent_eval/reports/2026-08-19T14-10-05-335a0a5-C24-01.json)，只作为邻近失败证据，不作为本 issue 的通过证明。
+
+修复指向：commit `1b19a56`（`fix/054-malformed-tool-call-misreported-as-runtime-boundary`）。
