@@ -29,6 +29,8 @@ COMPLETED
 - [x] 实现 `sandboxed` / `host_user` 两级执行、结构化 argv、一次性审批展示与沙箱 readiness 分流
 - [x] 增加 Windows 命令形态预检、启动阶段说明、审批/启动耗时和 NTSTATUS 解释
 - [x] 将真实多账号旅程中的“重复追问”和“桌面程序误入沙箱”拆成脱敏 Agent Eval 回归
+- [x] 将固定命令运行时纳入 setup/dev/bridge，落地用户级跨 worktree cache、并发安全 ensure 与失败关闭诊断
+- [x] 补齐 source bootstrap 回归、跨平台入口契约和项目完整门禁
 
 ## AC 验证
 
@@ -54,6 +56,7 @@ COMPLETED
 - [x] AC-20 Skill 安装完整旅程
 - [x] AC-21 无工作区命令旅程
 - [x] AC-22 宿主用户执行级别（确定性实现、回归与 frozen `host_user` smoke 通过；用户于 2026-08-19 明确豁免真实桌面程序用户验收）
+- [x] AC-23 源码开发一键就绪
 
 ## 实现日志
 
@@ -85,6 +88,8 @@ COMPLETED
 | 2026-08-19 | 重新核对 issue 052 后确认：TanStack end-anchor 滚动重构只存在于当前工作区，不属于需求 085，也未进入当前分支或主干提交；合入前撤回该重构，恢复主干既有的用户滚动意图、主动离底和持续跟随语义。AC-17 因该用户可见回归重新打开，并在撤回后重新关闭。 | 滚动与 conversation store 定向回归 `3 files / 54 tests`；完整门禁 backend ruff/mypy、`1836 passed, 4 skipped`，frontend lint/typecheck、`98 files / 554 tests` 与 production build，Rust `197 passed, 1 ignored` + helper `6 passed` + release check。未升级 TanStack，未启用 `directDomUpdates`，未改动 issue 051。 |
 | 2026-08-19 | 用户确认需求收口：AC-13 的无用户级 Codex 物理 Windows 实机验证与 AC-22 的真实桌面程序验收均明确豁免，不再阻塞合入；对应自动化、frozen 和 installer 机制证据继续保留，未执行的人工场景不得表述为实测通过。总体状态切换为 `COMPLETED`。 | issue 053 记录不可用审批入口的重复请求，按用户决定延后处理；该问题已有通用 `no_progress` 止损，不阻塞本需求。当前提交范围已盘点，未跟踪项均来自本轮实现、测试、真实 eval 或 issue 记录，敏感凭据扫描无命中。 |
 | 2026-08-19 | 当前分支同步 `origin/main`，保留主干的 agent-friend-guide 新 pin 与显示恢复设置，同时保留本需求的 builtin `skill-installer`；issue 052 的 add/add 冲突按已确认结论保留 `resolved` 状态和需求 085 修复指向。 | 同步后完整门禁：backend ruff/mypy、`1837 passed, 4 skipped`；frontend lint/typecheck、`98 files / 554 tests` 与 production build；Rust `201 passed, 1 ignored` + helper `6 passed` + release check。 |
+| 2026-08-19 | 用户确认系统治理 source bootstrap：固定命令运行时成为 setup 标准依赖，dev/bridge 启动前幂等 ensure，用户级 lock-identity cache 跨 worktree 复用，准备失败阻止混合开发 runtime；Windows UAC setup 保持显式。需求重新进入实现。 | 新增 AC-23；当前工作分支 `fix/dev-command-runtime-probe`，先前“缺 cache 时静默禁用命令能力”的未提交探针方案不再作为最终方向。 |
+| 2026-08-19 | 完成 source bootstrap 系统治理并关闭 AC-23：`ensure` 使用 lock 内容身份的用户级共享 cache、进程内与跨进程锁及锁内复核；setup/dev/bridge 统一失败关闭，dev status/stop 只读，Windows UAC setup 仍显式。 | 确定性 bootstrap 回归 `17 passed`，覆盖 cache hit/miss、lock 变化、跨 worktree 复用、并发线程/进程、下载失败不发布半成品、简洁失败诊断与双端入口契约。Windows 空 cache 下 `dev status` 前后均未创建 cache；首次 ensure `27.4s`、再次 cache hit `1.6s`，doctor 确认 Codex `0.147.0`；PowerShell 5.1 对 setup/dev/bridge 解析通过，未触发 UAC。完整门禁：backend ruff/mypy、`1864 passed, 4 skipped`；frontend lint/typecheck、`98 files / 554 tests` 与 production build；Rust `201 passed, 1 ignored` + helper `6 passed` + release check。 |
 
 ## 验收豁免与剩余风险
 
