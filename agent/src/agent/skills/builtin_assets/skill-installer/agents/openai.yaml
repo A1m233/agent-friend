@@ -1,4 +1,4 @@
 interface:
-  display_name: "Skill Installer"
-  short_description: "从 GitHub 安装 Agent Skill"
-  default_prompt: "请把我指定的 GitHub Skill 安全安装到 agent-friend 的个人 skills 目录，并验证 catalog 能发现它。"
+  display_name: "Skill 安装与更新"
+  short_description: "从 GitHub 安装或安全更新 Agent Skill"
+  default_prompt: "请使用 $skill-installer 安装或安全更新我指定的 GitHub Skill，并确认确定性脚本的实际结果。"

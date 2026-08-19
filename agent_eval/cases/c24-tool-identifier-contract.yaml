@@ -3,7 +3,8 @@
 # 来源于 2026-08-17 的真实 Skill 安装事故：Skill 已成功激活，但模型把当前轮
 # filesystem_scope_id 填入 exec_command 的 Skill binding，随后又改猜内部绝对路径。
 # 本 contract 固化稳定边界：Skill 命令使用结构化 binding，单 Skill 时可由宿主绑定；
-# filesystem scope 只供 filesystem_* 工具使用，普通命令仍使用绝对 workdir。
+# filesystem scope 只供 filesystem_* 工具使用，普通命令仍使用绝对 workdir；更新已有
+# GitHub Skill 时必须调用 production builtin 的真实 --update / 显式覆盖参数。
 
 contract:
   id: C24
@@ -108,3 +109,115 @@ cases:
       require_non_empty_response: true
       forbid_question: true
       forbid_tool_identifier_confusion: true
+
+  - id: C24-05
+    query: >-
+      请把已经由 agent-friend 管理的 GitHub Skill maa-daily 更新到它记录的同源最新内容；
+      不要改变来源，目前也没有本地修改
+    facet: issue 054 残余 anchor · 更新已有 Skill 必须调用 production builtin 的真实更新入口
+    source: issue-054-managed-github-skill-update-gap
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: skill-installer
+        source: builtin
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              cmd: python scripts/install-skill-from-github.py --update maa-daily
+              skill:
+                entry: scripts/install-skill-from-github.py
+                workdir: .
+              access: &managed-update-access
+                filesystem: read_write
+                additional_roots:
+                  - locator:
+                      kind: standard
+                      name: personal_skills
+                    access: read_write
+                network: enabled
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"Updated maa-daily from fixture/repo:maa-daily@main old_sha256=111 new_sha256=222"}
+    judge:
+      required_successful_tool_calls:
+        - name: skill_read
+          args:
+            skill_id: builtin/skill-installer
+          result_contains: <name>skill-installer</name>
+        - name: exec_command
+          args:
+            cmd: python scripts/install-skill-from-github.py --update maa-daily
+            skill:
+              entry: scripts/install-skill-from-github.py
+              workdir: .
+            access: *managed-update-access
+          result_contains: Updated maa-daily
+      require_non_empty_response: true
+      forbid_question: true
+      forbid_tool_identifier_confusion: true
+      forbid_unsupported_skill_activation_claim: true
+      forbid_unsupported_future_action_commitment: true
+
+  - id: C24-06
+    query: 确认，放弃 maa-daily 的这些本地修改，按刚才记录的同源继续更新
+    facet: 本地修改恢复 · 只有用户看到冲突后明确确认，才使用正式显式覆盖参数
+    source: issue-054-managed-github-skill-update-gap
+    surface: desktop_chat
+    expected_skill_catalog_coverage: complete
+    expected_skill_catalog_entries:
+      - name: skill-installer
+        source: builtin
+    current_session_events:
+      - type: assistant_message
+        text: 我先按它记录的同源检查更新。
+      - type: tool_call_request
+        tool_call_id: prior_skill_update
+        tool_name: exec_command
+        args:
+          cmd: python scripts/install-skill-from-github.py --update maa-daily
+          skill:
+            entry: scripts/install-skill-from-github.py
+            workdir: .
+          access: *managed-update-access
+          reason: 检查并更新受管理的 GitHub Skill maa-daily
+      - type: tool_call_result
+        tool_call_id: prior_skill_update
+        tool_name: exec_command
+        is_error: true
+        content: >-
+          Error [local_changes_detected]: Skill 'maa-daily' has local changes. Source:
+          fixture/repo:maa-daily@main; recorded sha256=111; current sha256=333.
+          Continuing will discard those changes. Ask the user to confirm, then retry with this
+          option order: --update maa-daily --replace-local-changes.
+      - type: assistant_message
+        text: >-
+          检测到 maa-daily 偏离记录版本；来源仍是 fixture/repo:maa-daily@main。
+          继续会丢失本地修改。是否确认覆盖？
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              cmd: >-
+                python scripts/install-skill-from-github.py --update maa-daily --replace-local-changes
+              skill:
+                entry: scripts/install-skill-from-github.py
+                workdir: .
+              access: *managed-update-access
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"Updated maa-daily from fixture/repo:maa-daily@main old_sha256=333 new_sha256=222"}
+    judge:
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            cmd: >-
+              python scripts/install-skill-from-github.py --update maa-daily --replace-local-changes
+            skill:
+              entry: scripts/install-skill-from-github.py
+              workdir: .
+            access: *managed-update-access
+          result_contains: Updated maa-daily
+      require_non_empty_response: true
+      forbid_question: true
+      forbid_tool_identifier_confusion: true
+      forbid_unsupported_skill_activation_claim: true
