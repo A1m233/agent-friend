@@ -75,7 +75,7 @@ def test_service_installs_builtin_and_activates_three_sources(tmp_path: Path) ->
     )
     assert (
         manifest["skills"]["agent-friend-guide"]["source_commit"]
-        == "edcb0ef749bd5cce2d8ccdee6b5b11e30eb82d0c"
+        == "8ce3280ad4328aaf2a1f0a5f194b31c09a85b3e2"
     )
     assert (
         manifest["skills"]["skill-installer"]["source_commit"]

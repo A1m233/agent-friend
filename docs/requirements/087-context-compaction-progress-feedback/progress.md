@@ -43,3 +43,4 @@ COMPLETED
 | 2026-08-20 | 用户确认验收完成 | 用户要求合入主干并推送远端，进入发布收口 |
 | 2026-08-20 | 同步最新主干后重跑完整门禁 | backend：lint + mypy + 1884 passed、4 skipped；frontend：98 files / 562 tests + production build；Rust：201 lib tests + 6 helper tests passed、1 ignored + release check |
 | 2026-08-20 | 同步需求 088 的最新主干后完成最终门禁 | backend：lint + mypy + 1901 passed、4 skipped；frontend：98 files / 562 tests + production build；Rust：201 lib tests + 6 helper tests passed、1 ignored + release check |
+| 2026-08-20 | 发布并同步公开用户指南 | 公开 guide commit `8ce3280`已推送；builtin 与 manifest 已 pin 精确 commit；45 个局部测试通过，同步后 backend、frontend、Rust 完整门禁全绿 |
