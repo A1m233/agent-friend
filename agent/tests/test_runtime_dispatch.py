@@ -29,6 +29,7 @@ from agent.runtime import (
     AgentRuntime,
     PostTurnContext,
     PushEnvelope,
+    RunOutcome,
     Subscriber,
     SystemTriggerEvent,
     UserEvent,
@@ -41,6 +42,7 @@ from agent import (
     Conversation,
     ConversationEvent,
     JsonlSessionStore,
+    MalformedToolCallError,
     MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
@@ -424,8 +426,6 @@ def test_submit_runs_conversation_and_correlates_session_events(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from agent.runtime import RunOutcome
-
     fake = _ScriptedLLMClient(
         script=[[LLMTextDelta(text="runtime"), LLMTurnDone(stop_reason="end_turn")]]
     )
@@ -466,6 +466,57 @@ def test_submit_runs_conversation_and_correlates_session_events(
         assert "event=run_terminal" in latency_text
         assert "llm_calls=1" in latency_text
         assert "first_text_ms=" in latency_text
+    finally:
+        runtime.stop()
+
+
+def test_repeated_malformed_tool_call_finishes_runtime_as_failed(tmp_path: Path) -> None:
+    class RequiredTool:
+        name: ClassVar[str] = "required_tool"
+        description: ClassVar[str] = "需要完整参数。"
+        parameters_schema: ClassVar[dict[str, Any]] = {
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        }
+
+        def invoke(self, args: dict[str, Any]) -> ToolResult:
+            raise AssertionError(f"malformed call must not execute: {args}")
+
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "broken-1", "required_tool", "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(0, "broken-2", "required_tool", "{}"),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        tool_registry=ToolRegistry([RequiredTool()]),
+    )
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="run"),
+            run_id="run-malformed",
+        )
+        events = cast(list[ConversationEvent], list(handle.events()))
+
+        assert handle.terminal is not None
+        assert handle.terminal.outcome is RunOutcome.FAILED
+        assert handle.terminal.reason_code == "malformed_tool_call"
+        assert isinstance(handle.terminal.error, MalformedToolCallError)
+        assert not any(isinstance(event, (ToolCallRequest, ToolCallResult)) for event in events)
+        assert not any(isinstance(event, TurnDone) for event in events)
+        assert len(fake.received) == 2
     finally:
         runtime.stop()
 

@@ -375,6 +375,35 @@ def test_legacy_bad_request_after_tool_result_sanitizes_last_transaction() -> No
     ]
 
 
+def test_malformed_tool_call_sanitizes_false_execution_claim() -> None:
+    run_id = "run-malformed"
+    session = Session.new(title="t", persona="default", model="m")
+    session.events.extend(
+        [
+            _event("user_message", {"content": "开始执行"}, meta={"run_id": run_id}),
+            _event(
+                "assistant_message",
+                {"content": "我来执行", "partial": False},
+                meta={"run_id": run_id},
+            ),
+            _event(
+                "run_error",
+                {
+                    "code": "malformed_tool_call",
+                    "message": "工具没有执行",
+                    "run_id": run_id,
+                    "sanitize_failed_model_call": True,
+                },
+            ),
+        ]
+    )
+
+    assert [(message.role, message.content) for message in session.llm_messages] == [
+        ("user", "开始执行"),
+        ("assistant", "上一轮工具参数连续无效，宿主没有执行工具或发起授权。"),
+    ]
+
+
 def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(
         script=[

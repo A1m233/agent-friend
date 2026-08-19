@@ -52,6 +52,7 @@ from agent import (
     AttachmentRef,
     Conversation,
     JsonlSessionStore,
+    MalformedToolCallError,
     MarkdownPromptBuilder,
     ModelResponseStatus,
     NaiveContextManager,
@@ -709,8 +710,64 @@ def test_malformed_tool_call_is_retried_before_publish_or_invoke(
         message.get("role") == "system" and "工具调用参数损坏" in message.get("content", "")
         for message in fake.received[1]
     )
+    if broken_args == "{}":
+        assert any(
+            "缺少必填参数：message" in message.get("content", "") for message in fake.received[1]
+        )
     assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
     assert [event.payload["content"] for event in assistant_events] == ["done"]
+
+
+def test_repeated_malformed_tool_call_fails_without_publish_or_finalization(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    echo = EchoTool()
+    sensitive_marker = "credential-value-must-not-appear"
+    broken_args = json.dumps({"message": [sensitive_marker]})
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(0, "broken-1", "echo", broken_args),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [
+                LLMToolCallDelta(0, "broken-2", "echo", broken_args),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([echo]),
+    )
+    events: list[Any] = []
+    caplog.set_level(logging.WARNING)
+
+    with pytest.raises(MalformedToolCallError, match="echo"):
+        for event in conv.stream("repeat malformed tool args", run_id="run-malformed"):
+            events.append(event)
+
+    assert not any(isinstance(event, (ToolCallRequest, ToolCallResult)) for event in events)
+    assert not any(isinstance(event, TurnDone) for event in events)
+    assert echo.call_count == 0
+    assert len(fake.received) == 2
+    assert any(
+        message.get("role") == "system"
+        and "message 的 JSON 类型不符合工具 schema" in message.get("content", "")
+        for message in fake.received[1]
+    )
+    diagnostic_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "run_id=run-malformed" in diagnostic_text
+    assert '"provided_known_fields": ["message"]' in diagnostic_text
+    assert '"known_field_types": {"message": "array"}' in diagnostic_text
+    assert sensitive_marker not in diagnostic_text
+    assert all(
+        "运行边界" not in str(message.get("content", ""))
+        for turn in fake.received
+        for message in turn
+    )
 
 
 def test_normal_system_turn_reuses_full_tool_loop(tmp_path: Path) -> None:

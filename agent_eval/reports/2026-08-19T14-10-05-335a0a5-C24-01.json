@@ -1,0 +1,239 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-19T14:10:05.923387+00:00",
+    "ended_at": "2026-08-19T14:10:42.026664+00:00",
+    "duration_seconds": 36.103,
+    "git_commit": "335a0a5",
+    "working_tree_dirty": true,
+    "note": "issue 054 post-fix happy-path regression smoke; incident model provenance; fake tools; single run; report only",
+    "selection": {
+      "contract": "all",
+      "case": "C24-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "71cfdb3b175fd3bc7aa29e5fe2592b5f61edb58cf30b54b540c97961150dcab6",
+      "total_contracts": 24,
+      "total_cases": 214,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 3,
+        "C18": 4,
+        "C19": 5,
+        "C20": 8,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 4
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C24-01",
+          "query": "请用 repo-skill-installer 从 GitHub 安装 A1m233/maa-daily-skill 仓库里的 maa-daily 目录；已经确认该目录就是目标 Skill，只需要完成一次安装命令",
+          "facet": "真实事故 anchor · 激活 Skill 后不得把 filesystem scope 当成 Skill ID",
+          "source": "prod-skill-install-scope-as-skill-id-20260817",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "missing successful tool call exec_command: need at least 1, found 0, with args containing {'skill': {'entry': 'scripts/install.py'}} and result containing None (actual: none)",
+          "tool_calls": [
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "安装 Skill 到 personal_skills 目录需要写入权限",
+                "items": [
+                  {
+                    "item_id": "personal_skills_write",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "create"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "安装 Skill 到 personal_skills 目录需要写入权限",
+                "items": [
+                  {
+                    "item_id": "personal_skills_write",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "create"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            },
+            {
+              "name": "request_filesystem_access",
+              "args": {
+                "reason": "安装 Skill 到 personal_skills 目录需要写入权限",
+                "items": [
+                  {
+                    "item_id": "personal_skills_write",
+                    "locator": {
+                      "kind": "standard",
+                      "name": "personal_skills"
+                    },
+                    "root_kind": "directory",
+                    "permissions": [
+                      "create"
+                    ]
+                  }
+                ]
+              },
+              "result_text": "{\"error\": \"approval_surface_unavailable\", \"message\": \"当前入口不能展示本地文件授权，请在桌面聊天中继续。\", \"status\": \"unavailable\"}",
+              "is_error": true,
+              "duration_seconds": 0.0
+            }
+          ],
+          "skill_activations": [
+            {
+              "status": "activated",
+              "skill_id": "skill_26334b62a848e2ec28562742669f132696213563f33b67b5fa0456496f3cc5db",
+              "name": "repo-skill-installer",
+              "source": "personal",
+              "invocation_kind": "caller",
+              "reason": "由宿主从当前用户轮的显式选择中解析",
+              "error_code": "",
+              "error_message": ""
+            }
+          ],
+          "assistant_segments": [
+            "好的，我来用 repo-skill-installer 帮你安装这个 Skill。需要先申请写入 personal_skills 目录的权限，然后运行安装脚本。",
+            "我尝试申请 personal_skills 目录的写入权限来执行安装，但权限申请没有成功——系统返回提示说当前入口无法展示本地文件授权。\n\n从 GitHub 安装 Skill 需要写入你的个人 Skill 目录，但这个授权步骤卡住了。你可以试试：\n\n1. **换个入口重试**：如果你在网页端，可以切换到桌面客户端再试一次\n2. **手动安装**：直接把仓库 `A1m233/maa-daily-skill` 里的 `maa-daily` 目录下载后放到你的 personal_skills 文件夹里\n\n要我帮你查一下这个 Skill 的具体内容，或者你有别的安装方式想试试吗？"
+          ],
+          "skill_catalog_observation": {
+            "snapshot_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_26334b62a848e2ec28562742669f132696213563f33b67b5fa0456496f3cc5db"
+              }
+            ],
+            "snapshot_coverage": "complete",
+            "catalog_fingerprint": "c58729087993aee01569507471a500849152bf634cc38b56be566b16393b8e5c",
+            "render_fingerprint": "3833349eea837875454a4177b05e1dd1ef939912ef622065fb0a00cf2bce4393",
+            "request_entries": [
+              {
+                "name": "agent-friend-guide",
+                "source": "builtin",
+                "id": "builtin/agent-friend-guide"
+              },
+              {
+                "name": "skill-creator",
+                "source": "builtin",
+                "id": "builtin/skill-creator"
+              },
+              {
+                "name": "skill-installer",
+                "source": "builtin",
+                "id": "builtin/skill-installer"
+              },
+              {
+                "name": "repo-skill-installer",
+                "source": "personal",
+                "id": "skill_26334b62a848e2ec28562742669f132696213563f33b67b5fa0456496f3cc5db"
+              }
+            ],
+            "request_coverage": "complete",
+            "request_content_fingerprint": "097b3bd4f9ee71b2a1a1ec2182473d334f9127111e704c8aee806ee06977fa49",
+            "request_message_index": 1,
+            "preflight_passed": true
+          },
+          "final_text": "好的，我来用 repo-skill-installer 帮你安装这个 Skill。需要先申请写入 personal_skills 目录的权限，然后运行安装脚本。我尝试申请 personal_skills 目录的写入权限来执行安装，但权限申请没有成功——系统返回提示说当前入口无法展示本地文件授权。\n\n从 GitHub 安装 Skill 需要写入你的个人 Skill 目录，但这个授权步骤卡住了。你可以试试：\n\n1. **换个入口重试**：如果你在网页端，可以切换到桌面客户端再试一次\n2. **手动安装**：直接把仓库 `A1m233/maa-daily-skill` 里的 `maa-daily` 目录下载后放到你的 personal_skills 文件夹里\n\n要我帮你查一下这个 Skill 的具体内容，或者你有别的安装方式想试试吗？",
+          "stop_reason": "no_progress",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
