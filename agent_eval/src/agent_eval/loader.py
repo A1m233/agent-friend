@@ -529,12 +529,27 @@ def _parse_required_successful_tool_calls(
     return requirements
 
 
+def _parse_maximum_tool_call_counts(raw: Any, *, label: str) -> dict[str, int]:
+    if raw is None:
+        return {}
+    data = _mapping(raw, label=label)
+    counts: dict[str, int] = {}
+    for name, count in data.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{label} 的 key 必须是非空工具名")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError(f"{label}.{name} 必须是正整数")
+        counts[name] = count
+    return counts
+
+
 def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
     if raw is None:
         return None
     data = _mapping(raw, label=label)
     return CaseJudge(
         must_call=_optional_str(data, "must_call"),
+        required_first_tool_call=_optional_str(data, "required_first_tool_call"),
         must_not_call_any=_str_list(
             data.get("must_not_call_any"),
             label=f"{label}.must_not_call_any",
@@ -542,6 +557,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         must_not_succeed_any=_str_list(
             data.get("must_not_succeed_any"),
             label=f"{label}.must_not_succeed_any",
+        ),
+        maximum_tool_call_counts=_parse_maximum_tool_call_counts(
+            data.get("maximum_tool_call_counts"),
+            label=f"{label}.maximum_tool_call_counts",
         ),
         require_non_empty_response=_bool(
             data.get("require_non_empty_response"),
@@ -628,6 +647,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
         forbid_unsupported_skill_activation_claim=_bool(
             data.get("forbid_unsupported_skill_activation_claim"),
             label=f"{label}.forbid_unsupported_skill_activation_claim",
+        ),
+        forbid_unsupported_filesystem_authorization_claim=_bool(
+            data.get("forbid_unsupported_filesystem_authorization_claim"),
+            label=f"{label}.forbid_unsupported_filesystem_authorization_claim",
         ),
         forbid_tool_identifier_confusion=_bool(
             data.get("forbid_tool_identifier_confusion"),

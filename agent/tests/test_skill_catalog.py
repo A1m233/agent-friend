@@ -40,6 +40,8 @@ def test_catalog_is_deterministic_and_escapes_metadata() -> None:
     assert 'change_comparison="requires_trusted_prior_state"' in first.content
     assert '<catalog_coverage entries="complete" omitted_entries="0"/>' in first.content
     assert "call skill_read" in first.content
+    assert "Activations from earlier user turns do not remain active" in first.content
+    assert "call skill_read again" in first.content
     assert "allow_implicit_invocation=true" in first.content
 
 

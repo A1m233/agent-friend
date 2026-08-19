@@ -122,8 +122,10 @@ class CaseJudge:
     """case 级 deterministic 判分规则。"""
 
     must_call: str | None = None
+    required_first_tool_call: str | None = None
     must_not_call_any: list[str] = field(default_factory=list)
     must_not_succeed_any: list[str] = field(default_factory=list)
+    maximum_tool_call_counts: dict[str, int] = field(default_factory=dict)
     require_non_empty_response: bool = False
     forbid_question: bool = False
     forbid_question_with_scheduled_action: bool = False
@@ -147,6 +149,7 @@ class CaseJudge:
     forbid_unsupported_model_motive_story: bool = False
     forbid_unsupported_future_action_commitment: bool = False
     forbid_unsupported_skill_activation_claim: bool = False
+    forbid_unsupported_filesystem_authorization_claim: bool = False
     forbid_tool_identifier_confusion: bool = False
     forbid_unsupported_skill_catalog_change_claim: bool = False
     must_recognize_catalog_skills: list[str] = field(default_factory=list)

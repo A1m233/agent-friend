@@ -60,9 +60,18 @@ class FilesystemService:
     ) -> ResolvedPath:
         capability = ledger.scope(scope_id)
         if capability is None:
-            raise FilesystemError("permission_denied", "文件授权不存在或已失效。")
+            raise FilesystemError(
+                "permission_denied",
+                "文件授权不存在或已失效。",
+                permission_reason="scope_unavailable",
+            )
         if permission not in capability.permissions:
-            raise FilesystemError("permission_denied", f"当前授权不包含 {permission}。")
+            raise FilesystemError(
+                "permission_denied",
+                f"当前授权不包含 {permission}。",
+                permission_reason="insufficient_permission",
+                required_permission=permission,
+            )
         relative = Path(relative_path or ".")
         if relative.is_absolute() or any(part == ".." for part in relative.parts):
             raise FilesystemError("scope_escape", "只能使用授权范围内的相对路径。")
@@ -354,6 +363,8 @@ class FilesystemService:
                 raise FilesystemError(
                     "permission_denied",
                     "目标不存在；创建新文件或备份需要 create 权限，edit 不能创建目标。",
+                    permission_reason="insufficient_permission",
+                    required_permission="create",
                 ) from exc
             preliminary = self.resolve(ledger, scope_id, relative_path, "edit", write=True)
         existed = preliminary.path.exists()
