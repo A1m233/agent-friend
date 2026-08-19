@@ -1,9 +1,9 @@
 # 051 · 上下文压缩期间桌面端与 IM 缺少明确进度提示
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-18
-- **关联需求**：[063-context-compaction-reliability](../../requirements/063-context-compaction-reliability/)、[022-im-channel-and-qq-adapter](../../requirements/022-im-channel-and-qq-adapter/)
+- **关联需求**：[087-context-compaction-progress-feedback](../../requirements/087-context-compaction-progress-feedback/)、[063-context-compaction-reliability](../../requirements/063-context-compaction-reliability/)、[022-im-channel-and-qq-adapter](../../requirements/022-im-channel-and-qq-adapter/)
 
 ## 现象
 
@@ -33,3 +33,7 @@
 - 桌面端将该阶段明确呈现为“正在整理这段较长的对话……”一类用户可理解的提示，并在进入模型等待、推理、工具或终态时可靠清除或切换。
 - IM 在确认压缩会产生明显等待时尽早发送受控的进度提示；需限制频率并避免每轮普通上下文构建都发送额外消息。
 - 为桌面端和 IM 分别增加确定性测试，覆盖阶段开始、阶段切换、失败、取消以及终态清理，避免提示残留或重复发送。
+
+---
+
+已在 commit `299c9c1` / 需求 [087-context-compaction-progress-feedback](../../requirements/087-context-compaction-progress-feedback/) 修复。
