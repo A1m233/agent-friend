@@ -1,5 +1,9 @@
 export { useConnectionStore } from "./connection";
 export {
+  startRuntimeCredentialSync,
+  useRuntimeCredentialStore,
+} from "./runtimeCredentials";
+export {
   pendingCommandApprovalSessionIds,
   startCommandRuntimeSync,
   useCommandRuntimeStore,

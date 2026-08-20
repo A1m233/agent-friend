@@ -437,9 +437,18 @@ def _map_exception(e: Exception) -> LLMError:
             provider_request_id=provider_metadata.request_id,
         )
 
+    auth_error_types = {"authentication_error", "invalid_api_key", "permission_denied"}
+
     if any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
         return LLMStreamTimeoutError(str(e))
-    if any(isinstance(item, openai.AuthenticationError) for item in chain):
+    if (
+        provider_metadata.status_code in {401, 403}
+        or (provider_metadata.error_type or "").casefold() in auth_error_types
+        or any(
+            isinstance(item, (openai.AuthenticationError, openai.PermissionDeniedError))
+            for item in chain
+        )
+    ):
         return LLMAuthError(str(e))
     if any(isinstance(item, openai.RateLimitError) for item in chain):
         if _is_transient_provider_exception(e):

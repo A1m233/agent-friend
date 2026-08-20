@@ -20,6 +20,7 @@ import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
 import { useConversationStore } from "@/stores";
+import { runtimeCredentialGroupForModel } from "@/stores/conversation";
 import { isAttachmentAssetAvailable } from "@/services";
 import type {
   ChatAttachment,
@@ -35,6 +36,7 @@ import {
   CHAT_SCROLL_VIEWPORT_CLASS,
 } from "../layout";
 import { toMarkdownContent } from "../projection";
+import { openSettings } from "@/lib/settings/navigation";
 import { EditMessageHint } from "./EditMessageHint";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
@@ -426,6 +428,23 @@ function MessageContent({
       {message.status === "error" && message.error && (
         <div className="flex flex-col items-start gap-2">
           <TextBubble role="assistant" text={message.error} actionBar={actionBar} />
+          {message.errorCode === "auth_failed" && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                const model = useConversationStore.getState().currentModel;
+                const groupId = model ? runtimeCredentialGroupForModel(model) : null;
+                void openSettings({
+                  target: "runtime",
+                  runtime: groupId ? { groupId } : undefined,
+                });
+              }}
+            >
+              打开凭据设置
+            </Button>
+          )}
           {onContinueToolResult && (
             <Button type="button" variant="outline" size="xs" onClick={onContinueToolResult}>
               继续整理

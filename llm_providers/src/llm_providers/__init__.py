@@ -24,6 +24,11 @@ from .catalog import (
     public_provider_models,
 )
 from .client import LLMClient, ResolvedModelLimits
+from .credential_validation import (
+    CredentialValidationResult,
+    classify_credential_validation_error,
+    validate_provider_credential,
+)
 from .errors import (
     LLMAuthError,
     LLMBadRequestError,
@@ -60,6 +65,7 @@ __all__ = [
     "DEEPSEEK_PROVIDER_ID",
     "KIMI_API_KEY",
     "KIMI_PROVIDER_ID",
+    "CredentialValidationResult",
     "LLMActivity",
     "LLMAuthError",
     "LLMBadRequestError",
@@ -93,6 +99,7 @@ __all__ = [
     "ResolvedModelLimits",
     "all_model_ids",
     "build_provider_spec",
+    "classify_credential_validation_error",
     "default_model_for_provider",
     "infer_provider_id_from_model",
     "model_belongs_to_provider",
@@ -101,4 +108,5 @@ __all__ = [
     "provider_definition",
     "public_model_catalog",
     "public_provider_models",
+    "validate_provider_credential",
 ]

@@ -48,6 +48,51 @@ export interface RuntimeConfigMutation {
   effect: RuntimeConfigEffect;
 }
 
+export type RuntimeCredentialValidationStatus = "none" | "valid" | "invalid";
+export type RuntimeCredentialOperationPhase =
+  | "idle"
+  | "staging"
+  | "validating"
+  | "awaitingConfirmation"
+  | "persisting"
+  | "restarting"
+  | "applied"
+  | "applyBlocked"
+  | "failed";
+
+export interface RuntimeCredentialOperation {
+  operationId?: string | null;
+  phase: RuntimeCredentialOperationPhase;
+  safeCode?: string | null;
+  message?: string | null;
+  persisted: boolean;
+  applied: boolean;
+}
+
+export interface RuntimeCredentialGroupSnapshot {
+  group: RuntimeConfigGroup;
+  items: RuntimeConfigItemStatus[];
+  configured: boolean;
+  partiallyConfigured: boolean;
+  missingRequiredFields: RuntimeSecretName[];
+  validation: RuntimeCredentialValidationStatus;
+  validationCheckedAt?: string | null;
+  validationErrorCode?: string | null;
+  credentialRevision?: string | null;
+  effect: RuntimeConfigEffect;
+  operation: RuntimeCredentialOperation;
+}
+
+export interface RuntimeCredentialSnapshot {
+  groups: RuntimeCredentialGroupSnapshot[];
+}
+
+export interface RuntimeCredentialFieldMutation {
+  name: RuntimeSecretName;
+  action: "set" | "delete";
+  value?: string;
+}
+
 interface RuntimeConfigState {
   snapshot: RuntimeConfigSnapshot;
   loading: boolean;
@@ -83,6 +128,83 @@ export async function deleteRuntimeSecret(
   return invoke<RuntimeConfigMutation>("delete_runtime_secret", {
     payload: { name },
   });
+}
+
+export async function getRuntimeCredentialGroups(): Promise<RuntimeCredentialSnapshot> {
+  return invoke<RuntimeCredentialSnapshot>("get_runtime_credential_groups");
+}
+
+export async function applyRuntimeCredentialGroup(
+  group: RuntimeConfigGroup,
+  changes: RuntimeCredentialFieldMutation[],
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("apply_runtime_credential_group", {
+    payload: { group, changes },
+  });
+}
+
+export async function confirmRuntimeCredentialSave(
+  operationId: string,
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("confirm_runtime_credential_save", {
+    payload: { operationId },
+  });
+}
+
+export async function cancelRuntimeCredentialOperation(
+  operationId: string,
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("cancel_runtime_credential_operation", {
+    payload: { operationId },
+  });
+}
+
+export async function retryRuntimeCredentialApply(
+  group: RuntimeConfigGroup,
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("retry_runtime_credential_apply", {
+    payload: { group },
+  });
+}
+
+export async function retryRuntimeCredentialValidation(
+  group: RuntimeConfigGroup,
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("retry_runtime_credential_validation", {
+    payload: { group },
+  });
+}
+
+export async function reportRuntimeCredentialAuthFailure(
+  group: RuntimeConfigGroup,
+  credentialRevision: string,
+): Promise<RuntimeCredentialGroupSnapshot> {
+  return invoke<RuntimeCredentialGroupSnapshot>("report_runtime_credential_auth_failure", {
+    payload: { group, credentialRevision },
+  });
+}
+
+export function runtimeCredentialOperationBusy(
+  operation: RuntimeCredentialOperation,
+): boolean {
+  return ["staging", "validating", "persisting", "restarting"].includes(
+    operation.phase,
+  );
+}
+
+export function runtimeCredentialApplyReason(
+  groups: RuntimeCredentialGroupSnapshot[],
+  effect: RuntimeConfigEffect,
+): string | null {
+  const active = groups.find(
+    (group) =>
+      group.effect === effect && runtimeCredentialOperationBusy(group.operation),
+  );
+  if (!active) return null;
+  if (active.operation.message) return active.operation.message;
+  return effect === "restartBridge"
+    ? "正在应用凭据并重启对话服务"
+    : "正在应用凭据并重启语音服务";
 }
 
 function replaceItem(

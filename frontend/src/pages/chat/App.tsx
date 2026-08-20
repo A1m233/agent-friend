@@ -6,9 +6,11 @@ import {
   startCommandRuntimeSync,
   useCommandRuntimeStore,
   startFilesystemApprovalSync,
+  startRuntimeCredentialSync,
   useFilesystemApprovalsStore,
   useConnectionStore,
   useConversationStore,
+  useRuntimeCredentialStore,
   type ConnectionStatus,
 } from "@/stores";
 import {
@@ -29,6 +31,7 @@ import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "
 import { openFeedback } from "@/lib/settings/navigation";
 import { useModelCatalogStore } from "@/lib/model-config";
 import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
+import { runtimeCredentialApplyReason } from "@/lib/runtime-config";
 
 /**
  * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
@@ -43,6 +46,7 @@ export function ChatApp() {
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voicePhase = useVoiceStore((s) => s.phase);
+  const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
   const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
   const composerRef = useRef<ComposerHandle>(null);
   const loadModelCatalog = useModelCatalogStore((state) => state.load);
@@ -51,10 +55,14 @@ export function ChatApp() {
     isVoiceCallBlockingText(voicePhase);
   const runtimeUnavailable = status !== "online";
   const composerDisabled = runtimeUnavailable || voiceBlocksText || historyLoading;
+  const credentialApplyReason = runtimeCredentialApplyReason(
+    runtimeCredentialGroups,
+    "restartBridge",
+  );
   const composerDisabledReason = runtimeUnavailable
-    ? status === "unknown"
+    ? credentialApplyReason ?? (status === "unknown"
       ? "服务正在初始化..."
-      : "本机服务暂未连接"
+      : "本机服务暂未连接")
     : historyLoading
       ? "正在打开这段对话..."
       : "语音通话中，文字输入已暂时停用";
@@ -77,6 +85,7 @@ export function ChatApp() {
   }, [ping]);
 
   useEffect(() => startSessionSyncSubscriber(), []);
+  useEffect(() => startRuntimeCredentialSync(), []);
 
   useEffect(() => {
     if (status !== "online") {

@@ -180,7 +180,7 @@ def map_exception(exc: BaseException) -> ProtocolError:
         return ProtocolError(
             http_status=401,
             code="auth_failed",
-            message="后端身份校验失败，请联系管理员确认 API 凭证。",
+            message="模型凭据无效或已失效，请在“模型与凭据”设置中重新配置。",
             recoverable=False,
         )
     if isinstance(exc, LLMContentPolicyError):

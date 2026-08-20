@@ -39,9 +39,19 @@ import {
   useDraftStore,
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
+import { useRuntimeCredentialStore } from "./runtimeCredentials";
+import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 /** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
 const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。请稍后重试。";
+
+export function runtimeCredentialGroupForModel(
+  model: string,
+): Extract<RuntimeConfigGroup, "deepseek" | "kimi"> | null {
+  if (model.startsWith("deepseek/")) return "deepseek";
+  if (model.startsWith("kimi/")) return "kimi";
+  return null;
+}
 
 interface RunTransport {
   sessionId: string;
@@ -807,6 +817,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const sessionId = get().currentSessionId ?? newId();
     const runId = newId();
     const initialModel = get().currentModel ?? resolveDefaultConversationModel();
+    const credentialGroup = runtimeCredentialGroupForModel(initialModel);
+    const credentialRevision = credentialGroup
+      ? useRuntimeCredentialStore
+          .getState()
+          .groups.find((group) => group.group === credentialGroup)?.credentialRevision
+      : null;
     const assistantId = newId();
     const sentAt = new Date().toISOString();
     const userMessageId = newId();
@@ -895,6 +911,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           sawStreamEvent = true;
           if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
             sawTerminalEvent = true;
+          }
+          if (
+            evt.type === EventType.RUN_ERROR &&
+            evt.code === "auth_failed" &&
+            credentialGroup &&
+            credentialRevision
+          ) {
+            void useRuntimeCredentialStore
+              .getState()
+              .reportAuthFailure(credentialGroup, credentialRevision)
+              .catch(() => undefined);
           }
           streamUpdates.enqueue(evt);
         }

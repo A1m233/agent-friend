@@ -22,6 +22,7 @@ from openai.types.chat import ChatCompletionChunk
 
 from llm_providers import (
     LLMActivity,
+    LLMAuthError,
     LLMClient,
     LLMContentPolicyError,
     LLMContextWindowError,
@@ -957,6 +958,11 @@ def test_stream_retries_provider_503_before_first_event(
 
 def test_provider_503_maps_to_transient_provider_error() -> None:
     assert isinstance(_map_exception(_StatusError(503)), LLMTransientProviderError)
+
+
+def test_explicit_auth_status_maps_before_generic_provider_errors() -> None:
+    assert isinstance(_map_exception(_StatusError(401)), LLMAuthError)
+    assert isinstance(_map_exception(_StatusError(403)), LLMAuthError)
 
 
 def _openai_rate_limit_error(
