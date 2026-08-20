@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 实现任务
 
@@ -13,8 +13,8 @@ IN_PROGRESS
 - [x] 设置页改为 group 编辑并呈现保存、校验、重启和失败原因
 - [x] 对话及语音相关界面显示配置应用导致的临时不可用原因
 - [x] 补齐 Python、Rust 与前端回归测试
-- [ ] 通过受影响模块验证、`scripts/check` 和 full-matrix installer smoke
-- [ ] 完成用户验收
+- [x] 通过受影响模块验证、`scripts/check` 和 full-matrix installer smoke
+- [x] 完成用户验收
 
 ## 实现日志
 
@@ -30,7 +30,14 @@ IN_PROGRESS
 | 2026-08-20 | 产品来源提交 `8f60da7` 已形成；公开 guide 更新模型、搜索、地点、天气与语音凭据的校验、自动应用和重试说明，经 validator / verify 通过后发布为 `0fedf8b`，远端 `main` 已精确确认。 |
 | 2026-08-20 | 产品 builtin 已同步并 pin `0fedf8b`，快照摘要 `5406615d...` 匹配；完整门禁发现 `test_skill_service.py` 仍断言旧 guide pin，已随生成快照更新预期并进入复验。 |
 | 2026-08-20 | Builtin validator、guide 状态与局部 Skill Service 测试通过；同步后的完整门禁收口：Backend 1910 passed / 4 skipped，Frontend 573 passed 并通过 production build，Rust 210 passed / 1 ignored 并通过 release check。 |
+| 2026-08-20 | Full-matrix installer smoke 通过：`packageInputSha256=d9a0f7f16dadbbebfaf056a5706980368ce67fb9f8781b7e719fdfc15bfaca25`，candidate `20260820T023707Z-9812e9e20666-96a662b6`，14 个隔离场景全部成功并经 `installer-smoke-verify` 独立复核；production 未修改。 |
+| 2026-08-20 | 生成 production-profile `local-test` 安装包，build `20260820T030039Z-9812e9e20666-211d804e`，SHA-256 `b126a93f19bbad718c778b8e0f55ec1181cbb383a799c9153ed1b5361c7e345b`；release manifest 绑定干净源码 `9812e9e` 与上述 full-matrix 指纹。 |
+| 2026-08-20 | 真实 Windows Tauri 验收：确认 runtime lease 属于当前 worktree / feature 分支且 Tauri、Bridge、Voice、CDP 均为本次源码之后启动；原生窗口与 WebView DOM 均显示 group 编辑、来源、校验说明、语音跳过在线校验和中性“已配置”，不存在“未验证”。临时草稿使对应“保存此组”启用，清空后 13 个密码输入均为空、6 个保存按钮均恢复禁用；未保存、未修改 keyring、未调用 provider 校验。证据位于 `%LOCALAPPDATA%/Temp/agent-friend-089-visual`，验收后 dev runtime 与端口已清理。 |
+| 2026-08-20 | 用户确认验收完成；全部实现、自动化、公开知识、真实桌面观察与 full-matrix 安装器证据闭环，总体状态改为 `COMPLETED`，进入合入 `main` 并推送远端流程。 |
 
 ## 验收记录
 
-- 待实现完成后补充。
+- 自动化与打包门禁已通过，公开 guide 已发布并同步 builtin。
+- 已取得 `desktop screenshot`、`desktop DOM via CDP` 与不落盘的 `desktop interaction` 证据；真实设置页布局、文案、状态和草稿按钮行为符合设计。
+- 未执行真实凭据保存、在线校验与服务重启的产品 E2E：这些动作会替换当前用户凭据并访问供应商，本轮保持不落盘；事务、错误分支、重启与跨窗口反馈由 Python / Rust / 前端自动化及 frozen/full-matrix 门禁覆盖。
+- 用户已确认本需求验收完成。
