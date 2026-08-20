@@ -83,8 +83,7 @@ class Message:
           其中 ``arguments`` 是入参的 **JSON 字符串**（OpenAI 协议要求，不是 dict）。
 
         Returns:
-            可直接喂给 :meth:`llm_providers.LLMClient.stream` /
-            :meth:`llm_providers.LLMClient.complete` 的字典。
+            可直接放入 :class:`llm_providers.ModelRequest` 的消息字典。
 
         Note:
             返回类型从 005 起放宽为 ``dict[str, Any]``（原 ``dict[str, str]``）；

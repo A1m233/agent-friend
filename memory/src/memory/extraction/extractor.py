@@ -1,6 +1,6 @@
 """``Extractor``：用 LLM 从一段对话 fragment 抽出 episodic 摘要 + semantic 操作。
 
-复用注入的 :class:`llm_providers.LLMClient`（design §3.6：v1 与主对话同 client，
+复用注入的 :class:`llm_providers.LanguageModel`（design §3.6：v1 与主对话同 model，
 构造可换独立 client）。本组件**只负责"调 LLM + 解析"**，不碰存储——落库由
 :class:`Reconciler` 负责。
 
@@ -16,6 +16,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
 
+from llm_providers import ModelRequest
+
 from .context import ExtractionContext
 from .result import (
     CoreUpdate,
@@ -29,7 +31,7 @@ from .result import (
 )
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
 
     from ..contracts import ConversationFragment
     from ..store import SemanticRow
@@ -51,7 +53,7 @@ class Extractor:
 
     def __init__(
         self,
-        llm_client: LLMClient,
+        llm_client: LanguageModel,
         *,
         prompt: str | None = None,
         on_attempt: Callable[[ExtractionAttempt], None] | None = None,
@@ -86,7 +88,7 @@ class Extractor:
         ]
         started = perf_counter()
         try:
-            raw = self._llm.complete(messages)
+            raw = self._llm.generate(ModelRequest(messages=messages)).text
         except Exception as exc:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
             self._report_attempt(

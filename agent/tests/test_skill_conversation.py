@@ -4,7 +4,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from agent.command_runtime.tools import COMMAND_SKILL_SNAPSHOT_ARG
@@ -29,11 +29,12 @@ from agent import (
     ToolId,
 )
 from llm_providers import (
-    LLMClient,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -42,17 +43,14 @@ class _RecordingLLM:
     context_window: int = 128_000
     received: list[list[dict[str, Any]]] = field(default_factory=list)
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         yield LLMTextDelta("ok")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -100,7 +98,7 @@ def _conversation(
     conversation = Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, llm),
+        llm_client=llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder_factory(BUILTIN_DEFAULT_PERSONA_ID),
         prompt_builder_factory=builder_factory,
@@ -127,7 +125,7 @@ def _reopen_conversation(
     conversation = Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, llm),
+        llm_client=llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder_factory(BUILTIN_DEFAULT_PERSONA_ID),
         prompt_builder_factory=builder_factory,
@@ -228,18 +226,16 @@ class _SkillCallingLLM:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
+        messages = request.messages
         self.received.append(messages)
-        self.received_tools.append(tools)
+        self.received_tools.append(request.tools)
         if len(self.received) == 1:
             yield LLMTextDelta("我会使用 test-skill，因为你指的是列表中的第 2 个 Skill。")
             yield LLMToolCallDelta(
@@ -291,7 +287,7 @@ def test_model_can_implicitly_select_and_read_skill_in_tool_loop(tmp_path: Path)
     conversation = Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, llm),
+        llm_client=llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder_factory(BUILTIN_DEFAULT_PERSONA_ID),
         prompt_builder_factory=builder_factory,

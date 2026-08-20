@@ -8,20 +8,24 @@ import pytest
 from memory_eval.datasets import EvalCase, EvalQuestion, EvalTurn
 from memory_eval.harness.paired_extraction import run_paired_extraction_probe
 
+from llm_providers import ModelRequest, ModelResponse
+
 
 class PromptAwareLLM:
     def __init__(self) -> None:
         self.order: list[str] = []
 
-    def complete(self, messages: list[dict[str, str]], **_kwargs: object) -> str:
-        variant = messages[0]["content"]
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        variant = str(request.messages[0]["content"])
         self.order.append(variant)
         if variant == "pass1-prompt":
-            return (
-                '{"episodic_entries":[],"semantic_ops":['
-                '{"op":"add","statement":"用户喜欢缅因猫MaineCoon"}]}'
+            return ModelResponse(
+                text=(
+                    '{"episodic_entries":[],"semantic_ops":['
+                    '{"op":"add","statement":"用户喜欢缅因猫MaineCoon"}]}'
+                )
             )
-        return '{"episodic_entries":[],"semantic_ops":[]}'
+        return ModelResponse(text='{"episodic_entries":[],"semantic_ops":[]}')
 
 
 def _case() -> EvalCase:

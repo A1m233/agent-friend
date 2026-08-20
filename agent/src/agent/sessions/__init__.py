@@ -28,7 +28,6 @@ from .errors import (
 )
 from .events import ALLOWED_EVENT_TYPES, SCHEMA_VERSION, Event, EventType
 from .manager import (
-    LLMClientFactory,
     PromptBuilderFactory,
     SessionManager,
     TitleGenerator,
@@ -56,7 +55,6 @@ __all__ = [
     "Event",
     "EventType",
     "JsonlSessionStore",
-    "LLMClientFactory",
     "NotifyingSessionStore",
     "NullSessionStore",
     "PromptBuilderFactory",

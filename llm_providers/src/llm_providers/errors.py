@@ -44,6 +44,14 @@ class LLMContentPolicyError(LLMError):
     """请求内容被 Provider 的安全策略拒绝；原样重试通常仍会失败。"""
 
 
+class LLMPaymentRequiredError(LLMError):
+    """Credential is valid, but the account or key has insufficient quota."""
+
+
+class LLMPermissionError(LLMError):
+    """Credential is valid, but policy, region, or permission denied the call."""
+
+
 class LLMProviderError(LLMError):
     """其他 Provider 侧错误。CLI 层期望行为：兜底话术。"""
 
@@ -68,6 +76,25 @@ class LLMTransientProviderError(LLMProviderError):
         self.provider_error_type = provider_error_type
         self.status_code = status_code
         self.retry_after_seconds = retry_after_seconds
+        self.provider_request_id = provider_request_id
+
+
+class LLMModelUnavailableError(LLMProviderError):
+    """The selected model has no endpoint satisfying the required route policy."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        availability_code: str | None = None,
+        retryable: bool = False,
+        status_code: int | None = None,
+        provider_request_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.availability_code = availability_code
+        self.retryable = retryable
+        self.status_code = status_code
         self.provider_request_id = provider_request_id
 
 

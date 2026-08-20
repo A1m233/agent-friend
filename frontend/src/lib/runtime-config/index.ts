@@ -7,6 +7,7 @@ export type RuntimeConfigGroup =
   | "amap"
   | "deepseek"
   | "kimi"
+  | "openrouter"
   | "tavily"
   | "qWeather"
   | "volcVoice";
@@ -18,6 +19,7 @@ export type RuntimeSecretName =
   | "AMAP_WEBSERVICE_KEY"
   | "DEEPSEEK_API_KEY"
   | "KIMI_API_KEY"
+  | "OPENROUTER_API_KEY"
   | "TAVILY_API_KEY"
   | "QWEATHER_API_KEY"
   | "QWEATHER_API_HOST"

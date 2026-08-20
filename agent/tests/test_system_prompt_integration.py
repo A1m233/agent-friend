@@ -28,11 +28,12 @@ from agent import (
     ToolResult,
 )
 from llm_providers import (
-    LLMClient,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -49,18 +50,15 @@ class _FakeLLMClient:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        self.received.append(messages)
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.received.append(request.messages)
+        return ModelResponse(text=self.reply)
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         yield LLMTextDelta(text=self.reply)
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -96,7 +94,7 @@ def _make_conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake_llm),
+        llm_client=fake_llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
@@ -225,11 +223,9 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
 
         def stream(
             self,
-            messages: list[dict[str, Any]],
-            *,
-            tools: list[dict[str, Any]] | None = None,
-            **overrides: Any,
+            request: ModelRequest,
         ) -> Iterator[LLMStreamEvent]:
+            messages = request.messages
             self.received.append(messages)
             self.turn += 1
             if self.turn == 1:
@@ -274,7 +270,7 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
     conv = Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake),
+        llm_client=fake,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         tool_registry=registry,
@@ -320,11 +316,9 @@ def test_self_presentation_is_frozen_for_tool_loop_and_refreshes_next_turn(
 
         def stream(
             self,
-            messages: list[dict[str, Any]],
-            *,
-            tools: list[dict[str, Any]] | None = None,
-            **overrides: Any,
+            request: ModelRequest,
         ) -> Iterator[LLMStreamEvent]:
+            messages = request.messages
             self.received.append(messages)
             self.turn += 1
             if self.turn == 1:
@@ -365,7 +359,7 @@ def test_self_presentation_is_frozen_for_tool_loop_and_refreshes_next_turn(
     conv = Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake),
+        llm_client=fake,
         context_manager=NaiveContextManager(),
         prompt_builder=MarkdownPromptBuilder(
             persona_id=BUILTIN_DEFAULT_PERSONA_ID,

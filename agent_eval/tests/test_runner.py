@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from agent.tools.builtin.skills import SKILL_CATALOG_SNAPSHOT_ARG, SkillReadTool
 from agent_eval.runner import (
     _AssistantTextTrace,
     _build_fixture_skill_service,
-    _CatalogGuardedLLMClient,
+    _CatalogGuardedLanguageModel,
     _FixtureTool,
     _import_fixture_attachment,
     _inject_current_session_events,
@@ -35,6 +36,7 @@ from agent_eval.schema import (
 )
 
 from agent import AttachmentStore, JsonlSessionStore, Session
+from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
 
 FIXTURE_IMAGE = (
     Path(__file__).resolve().parents[1]
@@ -330,16 +332,21 @@ def test_skill_catalog_request_guard_blocks_before_delegate_call(tmp_path: Path)
 
     class RecordingDelegate:
         called = False
+        context_window = 100_000
 
-        def stream(self, messages: list[dict[str, object]]) -> list[object]:
+        def generate(self, request: ModelRequest) -> ModelResponse:
             self.called = True
-            return []
+            return ModelResponse(text="")
+
+        def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+            self.called = True
+            return iter(())
 
     delegate = RecordingDelegate()
-    client = _CatalogGuardedLLMClient(delegate, guard)  # type: ignore[arg-type]
+    client = _CatalogGuardedLanguageModel(delegate, guard)
 
     with pytest.raises(ValueError, match="missing the production Skill catalog"):
-        client.stream([{"role": "user", "content": "q"}])
+        client.stream(ModelRequest(messages=[{"role": "user", "content": "q"}]))
     assert delegate.called is False
 
 

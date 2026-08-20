@@ -1,6 +1,6 @@
 """``Conversation``：绑定 :class:`Session` 跑对话的运行时执行器。
 
-负责把 :class:`PromptBuilder` / :class:`ContextManager` / :class:`LLMClient` /
+负责把 :class:`PromptBuilder` / :class:`ContextManager` / :class:`LanguageModel` /
 :class:`Memory` 串起来，并在每轮对话/切换时把事件 append 到 :class:`Session`
 和 :class:`SessionStore`：
 
@@ -12,7 +12,7 @@
                                     ↓
     ContextManager.build_messages(session.messages, system, user, extra)
                                     ↓
-    LLMClient.complete(...) / .stream(...)
+    LanguageModel.stream(ModelRequest(...))
                                     ↓
     Event(user_message)  +  Event(assistant_message)
                                     ↓
@@ -41,14 +41,17 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from llm_providers import (
+    LanguageModel,
+    LanguageModelFactory,
     LLMActivity,
-    LLMClient,
     LLMContextWindowError,
     LLMRetryScheduled,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTransportDiagnostic,
     LLMTurnDone,
+    ModelCallControl,
+    ModelRequest,
 )
 from memory import ConversationFragment, Memory, MemoryContext, Utterance
 
@@ -134,7 +137,6 @@ from .tools.builtin.skills import (
 )
 
 if TYPE_CHECKING:
-    LLMClientFactory = Callable[[str], LLMClient]
     PromptBuilderFactory = Callable[[str], PromptBuilder]
 
 
@@ -167,7 +169,7 @@ def _interruption_reason_code(exc: BaseException | None) -> str | None:
 
 
 PostToolHook = Callable[[str, dict[str, Any], ToolResult], None]
-MessageRenderer = Callable[[Message, LLMClient], dict[str, Any]]
+MessageRenderer = Callable[[Message, LanguageModel], dict[str, Any]]
 
 
 MAX_TOOL_TURNS_DEFAULT = 5
@@ -235,7 +237,7 @@ class _RewritePlan:
 @dataclass(frozen=True)
 class _RunModelSnapshot:
     model_id: str
-    llm_client: LLMClient
+    llm_client: LanguageModel
 
 
 @dataclass
@@ -298,11 +300,11 @@ class Conversation:
     Args:
         session: 已加载或新建的会话。历史从 ``session.events`` 派生。
         store: 持久化实现，每次 send / stream / switch_* 都会写盘。
-        llm_client: 当前激活 model 对应的 :class:`LLMClient`。
+        llm_client: 当前激活 model 对应的 :class:`LanguageModel`。
         context_manager: 上下文管理策略，如 :class:`agent.NaiveContextManager`。
         prompt_builder: 当前激活 persona 对应的 :class:`PromptBuilder`。
             **构造时立刻 build 一次**并缓存；切换 persona 时会通过工厂重建。
-        llm_client_factory: 接 model 名 → :class:`LLMClient`，用于 :meth:`switch_model`。
+        llm_client_factory: 接 model 名 → :class:`LanguageModel`，用于 :meth:`switch_model`。
             未注入时调 :meth:`switch_model` 会抛 :class:`AgentError`。
         prompt_builder_factory: 接 **persona_id** → :class:`PromptBuilder`，用于
             :meth:`switch_persona`。未注入时调 :meth:`switch_persona` 会抛 :class:`AgentError`。
@@ -321,10 +323,10 @@ class Conversation:
         self,
         session: Session,
         store: SessionStore,
-        llm_client: LLMClient,
+        llm_client: LanguageModel,
         context_manager: ContextManager,
         prompt_builder: PromptBuilder,
-        llm_client_factory: LLMClientFactory | None = None,
+        llm_client_factory: LanguageModelFactory | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
         catalog: PersonaCatalog | None = None,
         memory: Memory | None = None,
@@ -473,7 +475,7 @@ class Conversation:
             llm_client=self._llm_client,
         )
 
-    def _active_llm_client(self) -> LLMClient:
+    def _active_llm_client(self) -> LanguageModel:
         snapshot = self._run_model_snapshot
         return snapshot.llm_client if snapshot is not None else self._llm_client
 
@@ -1385,7 +1387,7 @@ class Conversation:
         self._prompt_builder = new_builder
 
     def switch_model(self, name: str) -> None:
-        """切换 model：落盘 ``model_change`` 事件 + 重建 :class:`LLMClient`。
+        """切换 model：落盘 ``model_change`` 事件 + 重建 :class:`LanguageModel`。
 
         若新 model 与当前相同则**无操作直接返回**。
 
@@ -1394,8 +1396,8 @@ class Conversation:
 
         Raises:
             AgentError: ``llm_client_factory`` 未注入。
-            LLMAuthError / ValueError: 工厂构造 LLMClient 失败。**事件未落盘**，状态不变。
-            SessionPersistError: 事件落盘失败。**LLMClient 已构造但未替换**，状态不变。
+            LLMAuthError / ValueError: 工厂构造 LanguageModel 失败。**事件未落盘**，状态不变。
+            SessionPersistError: 事件落盘失败。**LanguageModel 已构造但未替换**，状态不变。
         """
         if self._llm_client_factory is None:
             raise AgentError(
@@ -1425,7 +1427,7 @@ class Conversation:
         若新 channel 与当前相同则**无操作直接返回**（幂等）。
 
         与 :meth:`switch_persona` / :meth:`switch_model` 不同，channel 切换不
-        重建 LLMClient 也不重建 PromptBuilder——通道差异化通过
+        重建 LanguageModel 也不重建 PromptBuilder——通道差异化通过
         :class:`agent.system_prompt.ChannelSection` 在每轮 :class:`SystemPromptComposer`
         compose 时根据 ``session.current_channel`` 动态生效，无需 conversation
         持有的依赖动手术。
@@ -2044,7 +2046,7 @@ class Conversation:
         收尾指令。详见 021 design §5。
 
         Returns:
-            可直接喂给 :meth:`LLMClient.stream` / ``complete`` 的 OpenAI 风格 dict 列表。
+            可直接放入 :class:`llm_providers.ModelRequest` 的 OpenAI 风格 dict 列表。
         """
         build_started_ms = monotonic_ms()
         actual_tool_specs = self._current_tool_specs() if tool_specs is _UNSET else tool_specs
@@ -2166,6 +2168,7 @@ class Conversation:
         return RuntimeContext(
             budget=budget,
             llm_client=self._active_llm_client(),
+            model_id=model_id,
             prior_summary=self._derive_prior_summary()
             if prior_summary_override is _UNSET
             else cast(PriorSummary | None, prior_summary_override),
@@ -2353,7 +2356,7 @@ class Conversation:
             "checkpoint_status=%s checkpoint_invalid_reason=%s trigger_reason=%s",
             self._session.session_id,
             self._run_id_override or "none",
-            getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
+            self._active_model_id(),
             len(build.messages),
             notes.get("token_estimate"),
             notes.get("effective_window"),
@@ -2459,8 +2462,7 @@ class Conversation:
         """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
         current_messages = messages
         request_overrides = dict(overrides or {})
-        if self._uses_kimi_prompt_cache():
-            request_overrides.setdefault("prompt_cache_key", self._session.session_id)
+        cache_key = self._session.session_id
         recovery_builder = recovery_builder or (lambda: self._assemble_stream(tool_specs=tools))
         for recovery_attempt in range(2):
             request_accepted = False
@@ -2468,16 +2470,17 @@ class Conversation:
                 request_observer(current_messages, recovery_attempt, request_overrides)
             try:
                 client = self._active_llm_client()
-                stream = (
-                    client.stream(
-                        current_messages,
+                stream = client.stream(
+                    ModelRequest(
+                        messages=current_messages,
                         tools=tools,
-                        _diagnostic_callback=diagnostic_callback,
-                        _cancel_check=cancel_check,
-                        **request_overrides,
+                        settings=request_overrides,
+                        cache_key=cache_key,
+                        control=ModelCallControl(
+                            cancel_check=cancel_check,
+                            diagnostic_callback=diagnostic_callback,
+                        ),
                     )
-                    if isinstance(client, LLMClient)
-                    else client.stream(current_messages, tools=tools, **request_overrides)
                 )
                 for event in stream:
                     if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
@@ -2546,10 +2549,7 @@ class Conversation:
         retry_count = 0
         turn_done: LLMTurnDone | None = None
         request_trace: PromptRequestTrace | None = None
-        client = self._active_llm_client()
-        spec = getattr(client, "spec", None)
-        provider_model = str(getattr(spec, "model", self._active_model_id()))
-        api_base = getattr(spec, "api_base", None)
+        provider_model = self._active_model_id()
 
         def observe_request(
             current_messages: list[dict[str, Any]],
@@ -2557,14 +2557,12 @@ class Conversation:
             request_overrides: dict[str, Any],
         ) -> None:
             nonlocal request_trace
-            raw_cache_key = request_overrides.get("prompt_cache_key")
-            cache_key = str(raw_cache_key) if raw_cache_key is not None else None
             request_trace = self._prompt_cache_trace_tracker.begin(
                 messages=current_messages,
                 tools=tools,
                 provider_model=provider_model,
-                api_base=str(api_base) if api_base is not None else None,
-                prompt_cache_key=cache_key,
+                api_base=None,
+                prompt_cache_key=self._session.session_id,
             )
             fields = request_trace.log_fields()
             log_run_latency(
@@ -2875,12 +2873,6 @@ class Conversation:
                 ),
             )
 
-    def _uses_kimi_prompt_cache(self) -> bool:
-        """Whether this run targets Kimi's OpenAI-compatible chat endpoint."""
-        model_id = self._active_model_id()
-        provider_model = str(getattr(getattr(self._active_llm_client(), "spec", None), "model", ""))
-        return model_id.startswith("kimi/") or provider_model.startswith("openai/kimi-")
-
     def _consume_usage(self, ev: LLMTurnDone) -> None:
         """消费 :class:`LLMTurnDone.usage`，更新下一轮估算的真实锚点（009 M1）。
 
@@ -2961,7 +2953,7 @@ class Conversation:
                 else "unavailable"
             ),
             usage.cache_miss_prompt_tokens_derived if usage is not None else False,
-            "present" if self._uses_kimi_prompt_cache() else "none",
+            "present",
             cache_diagnostics.get("cache_namespace", "unavailable"),
             cache_diagnostics.get("cache_lineage", "unavailable"),
             cache_diagnostics.get("cache_idle_ms", "unavailable"),
@@ -3530,7 +3522,7 @@ class Conversation:
                     "run_id=%s model=%s reason=%s argument_shapes=%s",
                     self._session.session_id,
                     self._run_id_override or "none",
-                    getattr(getattr(self._active_llm_client(), "spec", None), "model", "unknown"),
+                    self._active_model_id(),
                     malformed_reason,
                     json.dumps(
                         self._tool_call_shape_summary(current_tc_acc),

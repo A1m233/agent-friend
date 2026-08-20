@@ -8,6 +8,7 @@ from pathlib import Path
 from memory_eval.adapters import ingest_case, retrieve_for_question
 from memory_eval.datasets import EvalCase, EvalQuestion, EvalTurn
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import build_memory
 
 
@@ -15,8 +16,8 @@ class FakeLLM:
     def __init__(self, reply: str) -> None:
         self.reply = reply
 
-    def complete(self, messages: list[dict[str, object]], **_kw: object) -> str:
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text=self.reply)
 
 
 def _case() -> EvalCase:

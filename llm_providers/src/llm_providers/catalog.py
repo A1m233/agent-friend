@@ -19,13 +19,15 @@ from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
 
-CATALOG_REVISION = "2026-07-25.1"
+CATALOG_REVISION = "2026-08-20.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
+OPENROUTER_PROVIDER_ID = "openrouter"
 
 DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
 KIMI_API_KEY = "KIMI_API_KEY"
+OPENROUTER_API_KEY = "OPENROUTER_API_KEY"
 
 KIMI_API_BASE = "https://api.moonshot.cn/v1"
 KIMI_CONTEXT_WINDOW = 256 * 1024
@@ -84,6 +86,7 @@ class ProviderDefinition:
     provider_id: str
     display_name: str
     credential_name: str
+    credential_group: str
     models: tuple[ProviderModel, ...]
     default_model: str
     default_memory_model: str
@@ -102,6 +105,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         provider_id=DEEPSEEK_PROVIDER_ID,
         display_name="DeepSeek",
         credential_name=DEEPSEEK_API_KEY,
+        credential_group=DEEPSEEK_PROVIDER_ID,
         models=(
             ProviderModel(
                 id="deepseek/deepseek-v4-flash",
@@ -127,6 +131,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         provider_id=KIMI_PROVIDER_ID,
         display_name="Kimi",
         credential_name=KIMI_API_KEY,
+        credential_group=KIMI_PROVIDER_ID,
         models=(
             ProviderModel(
                 id="kimi/kimi-k2.6",
@@ -162,6 +167,37 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         api_base=KIMI_API_BASE,
         default_call_options={"timeout": DEFAULT_LLM_TIMEOUT_SECONDS},
     ),
+    OPENROUTER_PROVIDER_ID: ProviderDefinition(
+        provider_id=OPENROUTER_PROVIDER_ID,
+        display_name="OpenRouter",
+        credential_name=OPENROUTER_API_KEY,
+        credential_group=OPENROUTER_PROVIDER_ID,
+        models=(
+            ProviderModel(
+                id="openrouter/google/gemini-3.7-flash",
+                label="Google · Gemini 3.7 Flash",
+                litellm_model="openrouter/google/gemini-3.7-flash",
+                context_window=1_048_576,
+            ),
+            ProviderModel(
+                id="openrouter/openai/gpt-5.6-luna",
+                label="OpenAI · GPT-5.6 Luna",
+                litellm_model="openrouter/openai/gpt-5.6-luna",
+                context_window=1_050_000,
+            ),
+        ),
+        default_model="openrouter/google/gemini-3.7-flash",
+        default_memory_model="openrouter/openai/gpt-5.6-luna",
+        default_call_options={
+            "extra_body": {
+                "provider": {
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                }
+            },
+            "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
+        },
+    ),
 }
 
 
@@ -171,6 +207,8 @@ def normalize_provider_id(provider_id: str | None) -> str:
         return DEEPSEEK_PROVIDER_ID
     if value in ("kimi", "moonshot"):
         return KIMI_PROVIDER_ID
+    if value in ("openrouter", "open-router"):
+        return OPENROUTER_PROVIDER_ID
     raise ValueError(f"不支持的 LLM provider: {provider_id!r}")
 
 
@@ -196,6 +234,8 @@ def infer_provider_id_from_model(model_id: str) -> str:
         return DEEPSEEK_PROVIDER_ID
     if model.startswith("kimi/"):
         return KIMI_PROVIDER_ID
+    if model.startswith("openrouter/"):
+        return OPENROUTER_PROVIDER_ID
     raise ValueError(f"无法根据 model 推断 provider: {model_id!r}")
 
 
@@ -310,6 +350,7 @@ def public_model_catalog() -> dict[str, Any]:
             {
                 "id": provider.provider_id,
                 "label": provider.display_name,
+                "credentialGroup": provider.credential_group,
                 "defaultChatModel": provider.default_model,
                 "defaultMemoryModel": provider.default_memory_model,
                 "models": models,

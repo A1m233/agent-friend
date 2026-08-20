@@ -13,6 +13,7 @@ from memory_eval.harness.factorial import (
 from memory_eval.harness.judge import JudgeResult
 from memory_eval.harness.runner import CaseOutcome, QuestionOutcome
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import SqliteMemoryStore
 
 
@@ -20,11 +21,13 @@ class OrderedLLM:
     def __init__(self) -> None:
         self.order: list[str] = []
 
-    def complete(self, messages: list[dict[str, str]], **_kwargs: object) -> str:
-        prompt = messages[0]["content"]
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        prompt = str(request.messages[0]["content"])
         self.order.append(prompt)
         fact = "基线事实" if prompt == "E0-prompt" else "候选事实"
-        return f'{{"episodic_entries":[],"semantic_ops":[{{"op":"add","statement":"{fact}"}}]}}'
+        return ModelResponse(
+            text=f'{{"episodic_entries":[],"semantic_ops":[{{"op":"add","statement":"{fact}"}}]}}'
+        )
 
 
 def _case() -> EvalCase:

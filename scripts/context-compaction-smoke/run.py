@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 from agent.prompts import PromptBuilder
@@ -24,7 +25,12 @@ from agent import (
     Session,
     SummarizingContextManager,
 )
-from llm_providers import LLMClient, ProviderSpec
+from llm_providers import (
+    LanguageModel,
+    LLMStreamEvent,
+    ModelRequest,
+    ModelResponse,
+)
 from runtime_config import credential_source_for_mode
 
 CRITICAL_CODES = ("ORCHID-4729", "LANTERN-8831")
@@ -37,34 +43,36 @@ class _CallCounts:
 
 
 class _CountingClient:
-    def __init__(self, inner: LLMClient, counts: _CallCounts) -> None:
+    def __init__(
+        self,
+        inner: LanguageModel,
+        counts: _CallCounts,
+        *,
+        context_window: int,
+        max_output_tokens: int,
+    ) -> None:
         self._inner = inner
         self._counts = counts
-
-    @property
-    def spec(self) -> ProviderSpec:
-        return self._inner.spec
+        self._context_window = context_window
+        self._max_output_tokens = max_output_tokens
 
     @property
     def context_window(self) -> int:
-        return self._inner.context_window
+        return self._context_window
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        self._counts.complete += 1
-        return self._inner.complete(messages, **overrides)
-
-    def stream(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
-    ) -> Any:
-        self._counts.stream += 1
-        return cast(
-            "Any",
-            self._inner.stream(messages, tools=tools, **overrides),
+    def _request(self, request: ModelRequest) -> ModelRequest:
+        return replace(
+            request,
+            settings={**request.settings, "max_tokens": self._max_output_tokens},
         )
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self._counts.complete += 1
+        return self._inner.generate(self._request(request))
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        self._counts.stream += 1
+        return self._inner.stream(self._request(request))
 
 
 def _client(
@@ -75,12 +83,12 @@ def _client(
     counts: _CallCounts,
 ) -> _CountingClient:
     base = runtime_config.llm_client_factory(runtime_config.default_model)
-    spec = replace(
-        base.spec,
+    return _CountingClient(
+        base,
+        counts,
         context_window=context_window,
-        defaults={**base.spec.defaults, "max_tokens": max_output_tokens},
+        max_output_tokens=max_output_tokens,
     )
-    return _CountingClient(LLMClient(spec), counts)
 
 
 def _builder_factory(catalog: PersonaCatalog) -> Any:
@@ -100,7 +108,7 @@ def _conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, client),
+        llm_client=client,
         context_manager=SummarizingContextManager(),
         prompt_builder=builder_factory(BUILTIN_DEFAULT_PERSONA_ID),
         prompt_builder_factory=builder_factory,

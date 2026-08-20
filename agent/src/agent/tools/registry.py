@@ -207,7 +207,7 @@ class ToolRegistry:
         ``{"type": "function", "function": {"name", "description", "parameters"}}``。
 
         Returns:
-            可直接传给 :meth:`llm_providers.LLMClient.stream` 的 ``tools`` 参数。
+            可直接放入 :class:`llm_providers.ModelRequest` 的 ``tools`` 参数。
             空 registry 返回空列表。
         """
         # The shared OpenAI-compatible wire intentionally omits provider-specific

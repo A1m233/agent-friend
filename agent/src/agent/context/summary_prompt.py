@@ -11,7 +11,7 @@
 不适合本项目）：用户画像 / 关键事实与承诺 / 当前话题与未决事项 / 情绪与关系基调 /
 用户原话关键片段 / 最近上下文。
 
-摘要调用走 :meth:`llm_providers.LLMClient.complete`（单轮、纯文本、天然不带 tools）。
+摘要调用走 :class:`llm_providers.LanguageModel`（单轮、纯文本、天然不带 tools）。
 详见 docs/requirements/009-engine-context-management/design.md §6.2。
 """
 

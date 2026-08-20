@@ -120,7 +120,7 @@ class SessionBridge:
 
         Raises:
             agent.PersonaNotFoundError: ``boot.persona`` 在 catalog 找不到。
-            llm_providers.LLMAuthError: 工厂构造 :class:`LLMClient` 失败。
+            llm_providers.LLMAuthError: 工厂构造 :class:`LanguageModel` 失败。
         """
         mgr = self._runtime.make_transient_session_manager()
 
@@ -165,7 +165,7 @@ class SessionBridge:
         Raises:
             agent.PersonaNotFoundError: ``default_persona`` 在 catalog 找不到。
             agent.SessionCorruptError: 已存在的 jsonl 文件解析失败。
-            llm_providers.LLMAuthError: 工厂构造 :class:`LLMClient` 失败。
+            llm_providers.LLMAuthError: 工厂构造 :class:`LanguageModel` 失败。
         """
         mgr = self._runtime.persistent_session_manager
 

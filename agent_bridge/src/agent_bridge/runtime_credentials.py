@@ -12,6 +12,7 @@ from llm_providers import CredentialValidationResult, validate_provider_credenti
 from runtime_config import (
     DEEPSEEK_API_KEY,
     KIMI_API_KEY,
+    OPENROUTER_API_KEY,
     CredentialSource,
     KeyringSource,
     runtime_credential_bundle,
@@ -26,6 +27,7 @@ ValidationResult = Literal["valid", "invalid", "temporarily_unavailable", "unsup
 _REQUIRED_FIELDS: dict[str, frozenset[str]] = {
     "deepseek": frozenset({DEEPSEEK_API_KEY}),
     "kimi": frozenset({KIMI_API_KEY}),
+    "openrouter": frozenset({OPENROUTER_API_KEY}),
     "tavily": frozenset({"TAVILY_API_KEY"}),
     "amap": frozenset({"AMAP_WEBSERVICE_KEY"}),
     "qWeather": frozenset({"QWEATHER_API_KEY", "QWEATHER_API_HOST"}),
@@ -43,6 +45,7 @@ _REQUIRED_FIELDS: dict[str, frozenset[str]] = {
 _ONLINE_PROVIDERS = {
     "deepseek": (DEEPSEEK_API_KEY, "deepseek"),
     "kimi": (KIMI_API_KEY, "kimi"),
+    "openrouter": (OPENROUTER_API_KEY, "openrouter"),
 }
 
 

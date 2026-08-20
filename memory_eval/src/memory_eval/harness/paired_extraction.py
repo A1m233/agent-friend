@@ -17,7 +17,7 @@ from memory import Extractor
 from .stability import select_stability_fragments
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
     from memory import ConversationFragment, ExtractionAttempt, ExtractionOutput
     from memory_eval.datasets import EvalCase
 
@@ -30,7 +30,7 @@ _GENERIC_TOKENS = frozenset(
 
 def run_paired_extraction_probe(
     cases: list[EvalCase],
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     variants: dict[str, str],
     output_dir: Path,

@@ -50,6 +50,25 @@ def test_kimi_model_id_maps_to_litellm_openai_compatible_model() -> None:
     assert infer_provider_id_from_model("kimi/kimi-k2.7-code-highspeed") == "kimi"
 
 
+def test_openrouter_models_are_static_text_tool_routes_with_strict_defaults() -> None:
+    spec = build_provider_spec(provider_id="openrouter", api_key="k")
+
+    assert spec.model == "openrouter/google/gemini-3.7-flash"
+    assert spec.context_window == 1_048_576
+    assert spec.api_base is None
+    assert spec.defaults == {
+        "extra_body": {
+            "provider": {
+                "require_parameters": True,
+                "data_collection": "deny",
+            }
+        },
+        "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
+    }
+    assert default_model_for_provider("openrouter", "memory") == "openrouter/openai/gpt-5.6-luna"
+    assert infer_provider_id_from_model("openrouter/openai/gpt-5.6-luna") == "openrouter"
+
+
 def test_public_provider_models_are_safe_model_allowlists() -> None:
     models = public_provider_models()
 
@@ -65,6 +84,7 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     providers = {provider["id"]: provider for provider in catalog["providers"]}
     deepseek = {model["id"]: model for model in providers["deepseek"]["models"]}
     kimi = {model["id"]: model for model in providers["kimi"]["models"]}
+    openrouter = {model["id"]: model for model in providers["openrouter"]["models"]}
 
     assert catalog["schemaVersion"] == 1
     assert catalog["catalogRevision"]
@@ -85,6 +105,22 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
         "contextWindow": 256 * 1024,
         "contextWindowSource": "catalog",
     }
+    assert providers["openrouter"]["credentialGroup"] == "openrouter"
+    assert tuple(openrouter) == (
+        "openrouter/google/gemini-3.7-flash",
+        "openrouter/openai/gpt-5.6-luna",
+    )
+    assert openrouter["openrouter/google/gemini-3.7-flash"]["label"] == (
+        "Google · Gemini 3.7 Flash"
+    )
+    assert openrouter["openrouter/google/gemini-3.7-flash"]["limits"]["contextWindow"] == 1_048_576
+    assert openrouter["openrouter/openai/gpt-5.6-luna"]["limits"]["contextWindow"] == 1_050_000
+    for model in openrouter.values():
+        assert model["processingProfile"] == "text-only-v1"
+        assert model["capabilities"]["inputModalities"] == ("text",)
+        assert model["capabilities"]["attachments"] is False
+        assert model["capabilities"]["toolCalling"] is True
+        assert model["capabilities"]["parallelToolCalls"] is True
     for provider in providers.values():
         for model in provider["models"]:
             assert model["limits"]["contextWindow"] > 0

@@ -44,9 +44,9 @@ from agent.tools.registry import ToolRegistry
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 from agent_bridge.social_auth import SocialAuthOrchestrator
-from llm_providers.client import LLMClient
-from llm_providers.spec import ProviderSpec
 from runtime_config.policy import credential_source_for_mode
+
+from llm_providers import LanguageModel, ModelRequest, ModelResponse
 
 
 @dataclass(frozen=True)
@@ -141,30 +141,23 @@ class _AuthHandler:
 
 
 class _CountingClient:
-    def __init__(self, inner: LLMClient) -> None:
+    def __init__(self, inner: LanguageModel) -> None:
         self._inner = inner
         self.stream_calls = 0
-
-    @property
-    def spec(self) -> ProviderSpec:
-        return self._inner.spec
 
     @property
     def context_window(self) -> int:
         return cast(int, self._inner.context_window)
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return cast(str, self._inner.complete(messages, **overrides))
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return self._inner.generate(request)
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Any:
         self.stream_calls += 1
-        return self._inner.stream(messages, tools=tools, **overrides)
+        return self._inner.stream(request)
 
 
 class _IMRuntime:
@@ -201,7 +194,7 @@ def _conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, client),
+        llm_client=client,
         context_manager=NaiveContextManager(),
         prompt_builder=prompt_factory(BUILTIN_DEFAULT_PERSONA_ID),
         prompt_builder_factory=prompt_factory,

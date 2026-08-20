@@ -68,6 +68,7 @@ from agent import (
     TurnDone,
 )
 from llm_providers import (
+    LanguageModel,
     LLMActivity,
     LLMClient,
     LLMNetworkError,
@@ -76,6 +77,8 @@ from llm_providers import (
     LLMToolCallDelta,
     LLMTurnDone,
     LLMUsage,
+    ModelRequest,
+    ModelResponse,
     ProviderSpec,
 )
 from memory import ConversationFragment, MemoryContext
@@ -305,23 +308,20 @@ class _ScriptedLLMClient:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     received_overrides: list[dict[str, Any]] = field(default_factory=list)
     received_tools: list[list[dict[str, Any]] | None] = field(default_factory=list)
+    received_cache_keys: list[str | None] = field(default_factory=list)
     context_window: int = 128000  # 009：Conversation 经此推导预算阈值
 
-    def complete(
-        self, messages: list[dict[str, Any]], **overrides: Any
-    ) -> str:  # pragma: no cover - send 路径不测
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
-        self.received_overrides.append(dict(overrides))
-        self.received_tools.append(tools)
+        self.received.append(request.messages)
+        self.received_overrides.append(dict(request.settings))
+        self.received_tools.append(request.tools)
+        self.received_cache_keys.append(request.cache_key)
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -344,7 +344,7 @@ class _DynamicMemory:
 def _make_conversation(
     tmp_path: Path,
     *,
-    fake_llm: LLMClient | _ScriptedLLMClient,
+    fake_llm: LanguageModel,
     registry: ToolRegistry | None = None,
     llm_client_factory: Any | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
@@ -371,7 +371,7 @@ def _make_conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake_llm),
+        llm_client=fake_llm,
         llm_client_factory=llm_client_factory,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
@@ -430,7 +430,7 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
     ]
 
 
-def test_kimi_turn_uses_stable_session_prompt_cache_key(tmp_path: Path) -> None:
+def test_turn_uses_stable_provider_neutral_cache_key(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(
         script=[
             [LLMTextDelta(text="one"), LLMTurnDone(stop_reason="end_turn")],
@@ -446,13 +446,13 @@ def test_kimi_turn_uses_stable_session_prompt_cache_key(tmp_path: Path) -> None:
     list(conv.stream("first"))
     list(conv.stream("second"))
 
-    assert [item["prompt_cache_key"] for item in fake.received_overrides] == [
+    assert fake.received_cache_keys == [
         conv.session.session_id,
         conv.session.session_id,
     ]
 
 
-def test_non_kimi_turn_does_not_send_prompt_cache_key(tmp_path: Path) -> None:
+def test_cache_key_does_not_leak_into_provider_settings(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(
         script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="end_turn")]]
     )
@@ -461,6 +461,7 @@ def test_non_kimi_turn_does_not_send_prompt_cache_key(tmp_path: Path) -> None:
     list(conv.stream("first"))
 
     assert "prompt_cache_key" not in fake.received_overrides[0]
+    assert fake.received_cache_keys == [conv.session.session_id]
 
 
 def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) -> None:
@@ -488,7 +489,7 @@ def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) 
         tmp_path,
         fake_llm=old_client,
         registry=ToolRegistry([switch_tool]),
-        llm_client_factory=lambda _model: cast(LLMClient, new_client),
+        llm_client_factory=lambda _model: new_client,
     )
     switch_tool.conversation = conv
 
@@ -508,7 +509,7 @@ def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) 
 def test_switch_model_factory_failure_is_atomic(tmp_path: Path) -> None:
     old_client = _ScriptedLLMClient()
 
-    def unavailable_factory(_model: str) -> LLMClient:
+    def unavailable_factory(_model: str) -> LanguageModel:
         raise RuntimeError("credential unavailable")
 
     conv = _make_conversation(
@@ -991,19 +992,16 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
         received_messages: list[list[dict[str, Any]]] = field(default_factory=list)
         context_window: int = 128000
 
-        def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-            return ""
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            return ModelResponse(text="")
 
         def stream(
             self,
-            messages: list[dict[str, Any]],
-            *,
-            tools: list[dict[str, Any]] | None = None,
-            **overrides: Any,
+            request: ModelRequest,
         ) -> Iterator[LLMStreamEvent]:
             self.calls += 1
-            self.received_tools.append(tools)
-            self.received_messages.append(messages)
+            self.received_tools.append(request.tools)
+            self.received_messages.append(request.messages)
             if self.calls == 1:
                 yield LLMToolCallDelta(
                     index=0,
@@ -1021,7 +1019,7 @@ def test_continue_after_tool_error_reuses_result_without_reinvoking_tool(tmp_pat
     fake = RecoverableFollowupClient()
     conv = _make_conversation(
         tmp_path,
-        fake_llm=cast(LLMClient, fake),
+        fake_llm=fake,
         registry=ToolRegistry([echo]),
     )
     image = AttachmentRef(
@@ -1777,7 +1775,7 @@ def test_public_evidence_survives_conversation_restart_for_next_open(tmp_path: P
     restarted = Conversation(
         session=loaded,
         store=store,
-        llm_client=cast(LLMClient, second_llm),
+        llm_client=second_llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(

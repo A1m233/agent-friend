@@ -9,6 +9,7 @@ from runtime_config.seed import SEED_AAD, SEED_MAGIC, SEED_NONCE_SIZE
 from runtime_config import (
     ALL_CREDENTIAL_NAMES,
     AMAP_WEBSERVICE_KEY,
+    OPENROUTER_API_KEY,
     OPTIONAL_CREDENTIAL_NAMES,
     QWEATHER_API_HOST,
     QWEATHER_API_KEY,
@@ -136,6 +137,11 @@ def test_amap_key_is_managed_but_optional_for_trusted_seed() -> None:
     assert AMAP_WEBSERVICE_KEY in ALL_CREDENTIAL_NAMES
     assert AMAP_WEBSERVICE_KEY in OPTIONAL_CREDENTIAL_NAMES
     assert AMAP_WEBSERVICE_KEY not in REQUIRED_CREDENTIAL_NAMES
+
+
+def test_openrouter_key_is_a_managed_model_credential() -> None:
+    assert OPENROUTER_API_KEY in ALL_CREDENTIAL_NAMES
+    assert OPENROUTER_API_KEY in REQUIRED_CREDENTIAL_NAMES
 
 
 @pytest.mark.parametrize("name", [QWEATHER_API_KEY, QWEATHER_API_HOST])

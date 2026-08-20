@@ -56,12 +56,13 @@ from agent import (
     TurnDone,
 )
 from llm_providers import (
-    LLMClient,
+    LanguageModel,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
-    ProviderSpec,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -72,17 +73,14 @@ class _ScriptedLLMClient:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     context_window: int = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -91,27 +89,20 @@ class _ScriptedLLMClient:
         yield from events
 
 
-class _CancelAwareBlockingLLMClient(LLMClient):
+class _CancelAwareBlockingLanguageModel:
+    context_window = 128000
+
     def __init__(self) -> None:
-        super().__init__(
-            ProviderSpec(
-                model="openai/kimi-k2.7-code-highspeed",
-                api_key="test",
-                api_base="https://api.moonshot.cn/v1",
-                context_window=128000,
-            )
-        )
         self.request_started = threading.Event()
+
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        del messages, tools
-        cancel_check = overrides.get("_cancel_check")
+        cancel_check = request.control.cancel_check
         self.request_started.set()
         assert callable(cancel_check)
         while True:
@@ -123,7 +114,7 @@ class _CancelAwareBlockingLLMClient(LLMClient):
 def _make_conversation(
     tmp_path: Path,
     *,
-    fake_llm: LLMClient | _ScriptedLLMClient,
+    fake_llm: LanguageModel,
     tool_registry: ToolRegistry | None = None,
 ) -> Conversation:
     """与 AgentRuntime 装配的 Conversation 一致：post_turn_external=True，
@@ -146,7 +137,7 @@ def _make_conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake_llm),
+        llm_client=fake_llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
@@ -741,7 +732,7 @@ def test_conversation_forwards_cancel_check_while_waiting_for_model_stream(
     from agent.runtime.cancellation import CancelReason, RunCancelled
     from agent.runtime.models import RunHandle
 
-    fake = _CancelAwareBlockingLLMClient()
+    fake = _CancelAwareBlockingLanguageModel()
     conv = _make_conversation(tmp_path, fake_llm=fake)
     request = RunRequest(event=UserEvent(session_id=conv.session.session_id, user_input="hello"))
     handle = RunHandle(request)

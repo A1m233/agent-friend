@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui";
 import {
+  credentialGroupForModel,
   defaultModelSelection,
   modelProvidersFromCatalog,
   providerModelsFromCatalog,
@@ -28,6 +29,7 @@ import {
   type ModelProvider,
   type ModelSelection,
 } from "@/lib/settings";
+import { modelsApi, type FriendlyError } from "@/services";
 import {
   startRuntimeCredentialSync,
   useRuntimeCredentialStore,
@@ -40,6 +42,7 @@ import { SettingsRow } from "./SettingsRow";
 const GROUP_HELP: Record<RuntimeConfigGroup, string> = {
   deepseek: "保存新值时会调用模型列表接口校验，不会生成模型回答。",
   kimi: "保存新值时会调用模型列表接口校验，不会生成模型回答。",
+  openrouter: "保存新值时只调用 OpenRouter Key 鉴权接口，不会生成模型回答。",
   tavily: "保存时不发送搜索请求；凭据将在实际使用时检查。",
   amap: "保存时不发送地图请求；凭据将在实际使用时检查。",
   qWeather: "只检查字段完整性，不发送真实天气查询。",
@@ -65,7 +68,7 @@ function ModelSelectionRows({
 
   return (
     <>
-      <SettingsRow label="供应商">
+      <SettingsRow label="调用渠道">
         <Select
           value={selection.provider}
           disabled={disabled}
@@ -232,6 +235,7 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
   ): Promise<void> {
     setSavingModel(key);
     try {
+      await modelsApi.validate(selection.model);
       const result = await persistBridgeRuntimeSetting(() => setSetting(key, selection));
       if (result.applied) {
         toast.success("模型设置已保存并生效", { description: "对话服务已自动重启" });
@@ -241,7 +245,21 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
         });
       }
     } catch (saveError) {
-      toast.error("模型设置保存失败", { description: String(saveError) });
+      const friendly = saveError as Partial<FriendlyError>;
+      const credentialGroup = credentialGroupForModel(selection.model);
+      toast.error("模型设置未保存", {
+        description: friendly.friendly ?? String(saveError),
+        action:
+          friendly.code === "credential_missing" && credentialGroup
+            ? {
+                label: "配置凭据",
+                onClick: () =>
+                  document
+                    .getElementById(`runtime-credential-${credentialGroup}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+              }
+            : undefined,
+      });
     } finally {
       setSavingModel(null);
     }
@@ -297,6 +315,13 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
       </SettingsGroup>
       <SettingsGroup id="runtime-credential-kimi" title="Kimi 凭据">
         <CredentialEditor group="kimi" snapshot={group("kimi")} {...editorProps} />
+      </SettingsGroup>
+      <SettingsGroup id="runtime-credential-openrouter" title="OpenRouter 凭据">
+        <CredentialEditor
+          group="openrouter"
+          snapshot={group("openrouter")}
+          {...editorProps}
+        />
       </SettingsGroup>
 
       {error ? <div className="text-sm text-danger">{error}</div> : null}

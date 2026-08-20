@@ -90,6 +90,30 @@ def test_deepseek_validation_reads_staging_and_returns_safe_result() -> None:
     assert seen == [("deepseek", "fixture-secret")]
 
 
+def test_openrouter_validation_uses_staged_key_and_provider_route() -> None:
+    seen: list[tuple[str, str]] = []
+
+    def record_validation(provider: str, value: str) -> CredentialValidationResult:
+        seen.append((provider, value))
+        return CredentialValidationResult("valid", "credential_accepted")
+
+    client, operation_id = _client(
+        "openrouter",
+        {"OPENROUTER_API_KEY": "fixture-secret"},
+        validator=record_validation,
+    )
+
+    response = client.post(
+        "/internal/runtime-credentials/validate",
+        json={"groupId": "openrouter", "operationId": operation_id},
+        headers={"X-Agent-Friend-Lifecycle-Token": "owner-token"},
+    )
+
+    assert response.json() == {"result": "valid", "safeCode": "credential_accepted"}
+    assert seen == [("openrouter", "fixture-secret")]
+    assert "fixture-secret" not in response.text
+
+
 def test_unsupported_group_is_truthful_without_online_validator() -> None:
     client, operation_id = _client(
         "tavily",

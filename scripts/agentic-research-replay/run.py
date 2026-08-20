@@ -40,7 +40,6 @@ from agent.tools.builtin.social_platforms import (
 from agent.tools.factory import make_default_registry, make_default_social_platform_service
 from agent.tools.registry import ToolRegistry
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
-from llm_providers.client import LLMClient
 from llm_providers.stream_events import (
     LLMStreamEvent,
     LLMTextDelta,
@@ -48,6 +47,8 @@ from llm_providers.stream_events import (
     LLMTurnDone,
 )
 from runtime_config.policy import credential_source_for_mode
+
+from llm_providers import LanguageModel, ModelRequest, ModelResponse
 
 QUERY = "看看b站up开战斗机的虾米，他有什么代表作"
 CREATOR_UID = 8741868
@@ -149,18 +150,13 @@ class _FixtureLlm:
     def __init__(self) -> None:
         self.turn = 0
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        del messages, overrides
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        del messages, tools, overrides
         self.turn += 1
         if self.turn == 1:
             yield LLMToolCallDelta(
@@ -199,7 +195,7 @@ class _FixtureLlm:
 def _conversation(
     root: Path,
     *,
-    client: LLMClient,
+    client: LanguageModel,
     registry: ToolRegistry,
     model: str,
     session_id: str,
@@ -331,7 +327,7 @@ def fixture() -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="agent-friend-073-fixture-") as temp:
             conversation = _conversation(
                 Path(temp),
-                client=cast(LLMClient, _FixtureLlm()),
+                client=_FixtureLlm(),
                 registry=registry,
                 model="fixture/073",
                 session_id="agentic-research-fixture",

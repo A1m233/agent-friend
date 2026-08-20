@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  credentialGroupForModel,
   defaultModelSelection,
   modelOption,
   modelProviders,
@@ -18,6 +19,7 @@ const catalog: ModelCatalog = {
     {
       id: "deepseek",
       label: "DeepSeek",
+      credentialGroup: "deepseek",
       defaultChatModel: "deepseek/chat",
       defaultMemoryModel: "deepseek/memory",
       models: [
@@ -66,6 +68,7 @@ const catalog: ModelCatalog = {
     {
       id: "kimi",
       label: "Kimi",
+      credentialGroup: "kimi",
       defaultChatModel: "kimi/vision",
       defaultMemoryModel: "kimi/vision",
       models: [{
@@ -89,6 +92,33 @@ const catalog: ModelCatalog = {
         },
       }],
     },
+    {
+      id: "openrouter",
+      label: "OpenRouter",
+      credentialGroup: "openrouter",
+      defaultChatModel: "openrouter/google/gemini-3.7-flash",
+      defaultMemoryModel: "openrouter/openai/gpt-5.6-luna",
+      models: [{
+        id: "openrouter/google/gemini-3.7-flash",
+        label: "Google · Gemini 3.7 Flash",
+        routeId: "openrouter:gemini",
+        transportProfile: "openai-compatible",
+        processingProfile: "text-only-v1",
+        capabilities: {
+          inputModalities: ["text"],
+          acceptedMediaTypes: [],
+          maxAttachmentBytes: 0,
+          maxTotalAttachmentBytes: 0,
+          maxAttachmentsPerTurn: 0,
+          attachments: false,
+          toolCalling: true,
+          parallelToolCalls: true,
+          structuredOutput: false,
+          multimodalToolResults: false,
+          reasoningReplay: false,
+        },
+      }],
+    },
   ],
 };
 
@@ -97,12 +127,25 @@ describe("model config", () => {
   afterEach(() => setModelCatalogForTests(null));
 
   it("uses the runtime catalog as the capability source", () => {
-    expect(modelProviders().map((provider) => provider.id)).toEqual(["deepseek", "kimi"]);
+    expect(modelProviders().map((provider) => provider.id)).toEqual([
+      "deepseek",
+      "kimi",
+      "openrouter",
+    ]);
     expect(modelOption("kimi/vision")?.capabilities.inputModalities).toEqual([
       "text",
       "image",
       "document",
     ]);
+  });
+
+  it("derives credential groups from catalog ownership", () => {
+    expect(credentialGroupForModel("deepseek/chat")).toBe("deepseek");
+    expect(credentialGroupForModel("kimi/vision")).toBe("kimi");
+    expect(credentialGroupForModel("openrouter/google/gemini-3.7-flash")).toBe(
+      "openrouter",
+    );
+    expect(credentialGroupForModel("custom/model")).toBeNull();
   });
 
   it("keeps empty catalog selections referentially stable for external-store consumers", () => {

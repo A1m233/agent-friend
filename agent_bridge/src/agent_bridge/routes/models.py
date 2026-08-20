@@ -38,14 +38,13 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
                 raise UnsupportedModelError(body.model)
             if runtime is None or runtime.llm_client_factory is None:
                 raise RuntimeError("llm client factory unavailable")
-            client = runtime.llm_client_factory(body.model)
-            limits = client.model_limits
+            model = runtime.llm_client_factory(body.model)
             system_prompt = runtime.prompt_builder_factory(BUILTIN_DEFAULT_PERSONA_ID).build()
             tool_specs = runtime.tool_registry.to_openai_tools()
             baseline_tokens = estimate_tokens(
                 [Message(role="system", content=system_prompt)]
             ) + estimate_tool_schema_tokens(tool_specs)
-            threshold = make_budget_snapshot(limits.context_window, None).trigger_threshold
+            threshold = make_budget_snapshot(model.context_window, None).trigger_threshold
             if baseline_tokens > threshold:
                 raise ContextBaseOverBudgetError(
                     "default persona and tool schemas exceed the model context budget"
@@ -60,8 +59,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
             "model": body.model,
             "available": True,
             "limits": {
-                "contextWindow": limits.context_window,
-                "contextWindowSource": limits.context_window_source,
+                "contextWindow": model.context_window,
+                "contextWindowSource": "language_model",
                 "safeInputThreshold": threshold,
                 "baselineRequestTokens": baseline_tokens,
                 "baselineHeadroomTokens": threshold - baseline_tokens,

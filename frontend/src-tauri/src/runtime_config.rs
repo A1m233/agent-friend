@@ -26,16 +26,18 @@ pub enum RuntimeConfigGroup {
     Amap,
     Deepseek,
     Kimi,
+    Openrouter,
     Tavily,
     QWeather,
     VolcVoice,
 }
 
 impl RuntimeConfigGroup {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Amap,
         Self::Deepseek,
         Self::Kimi,
+        Self::Openrouter,
         Self::Tavily,
         Self::QWeather,
         Self::VolcVoice,
@@ -46,6 +48,7 @@ impl RuntimeConfigGroup {
             Self::Amap => "amap",
             Self::Deepseek => "deepseek",
             Self::Kimi => "kimi",
+            Self::Openrouter => "openrouter",
             Self::Tavily => "tavily",
             Self::QWeather => "qWeather",
             Self::VolcVoice => "volcVoice",
@@ -133,6 +136,12 @@ pub(crate) const SECRET_REGISTRY: &[SecretSpec] = &[
         name: "KIMI_API_KEY",
         aliases: &[],
         group: RuntimeConfigGroup::Kimi,
+        effect: RuntimeConfigEffect::RestartBridge,
+    },
+    SecretSpec {
+        name: "OPENROUTER_API_KEY",
+        aliases: &[],
+        group: RuntimeConfigGroup::Openrouter,
         effect: RuntimeConfigEffect::RestartBridge,
     },
     SecretSpec {
@@ -798,6 +807,7 @@ mod tests {
         assert!(find_secret("AMAP_WEBSERVICE_KEY").is_some());
         assert!(find_secret("DEEPSEEK_API_KEY").is_some());
         assert!(find_secret("KIMI_API_KEY").is_some());
+        assert!(find_secret("OPENROUTER_API_KEY").is_some());
         assert!(find_secret("TAVILY_API_KEY").is_some());
         assert!(find_secret("QWEATHER_API_KEY").is_some());
         assert!(find_secret("QWEATHER_API_HOST").is_some());
@@ -913,6 +923,12 @@ mod tests {
         );
         assert_eq!(
             require_secret("KIMI_API_KEY").expect("kimi").effect,
+            RuntimeConfigEffect::RestartBridge
+        );
+        assert_eq!(
+            require_secret("OPENROUTER_API_KEY")
+                .expect("openrouter")
+                .effect,
             RuntimeConfigEffect::RestartBridge
         );
         assert_eq!(

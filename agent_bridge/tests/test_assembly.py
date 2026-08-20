@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import agent_bridge.runtime_config as bridge_runtime_config_module
 import pytest
 from agent.tools.builtin.conversation_history import ConversationHistoryTool
 from agent.tools.builtin.nearby_place_search import NearbyPlaceSearchTool
@@ -16,7 +17,6 @@ from agent_bridge.errors import map_exception
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 from agent_bridge.settings import BridgeSettings
 from fastapi.testclient import TestClient
-from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from agent import (
     AttachmentError,
@@ -24,7 +24,12 @@ from agent import (
     ContextInputTooLargeError,
     MalformedToolCallError,
 )
-from llm_providers import LLMOutputBudgetExhaustedError
+from llm_providers import (
+    LLMModelUnavailableError,
+    LLMOutputBudgetExhaustedError,
+    LLMPaymentRequiredError,
+    LLMPermissionError,
+)
 from runtime_config import (
     CredentialMissingError,
     DesktopSettingsReader,
@@ -304,28 +309,45 @@ def test_malformed_tool_call_error_is_recoverable_and_honest() -> None:
     assert error.sanitize_failed_model_call is True
 
 
-def test_memory_spec_defaults_to_v4_pro_with_thinking_disabled(
+@pytest.mark.parametrize(
+    ("exc", "status", "code"),
+    [
+        (LLMPaymentRequiredError("quota"), 402, "payment_required"),
+        (LLMPermissionError("policy"), 403, "permission_denied"),
+        (
+            LLMModelUnavailableError("no route", retryable=False),
+            503,
+            "model_route_unavailable",
+        ),
+    ],
+)
+def test_openrouter_errors_keep_actionable_protocol_categories(
+    exc: Exception,
+    status: int,
+    code: str,
+) -> None:
+    error = map_exception(exc)
+
+    assert error.http_status == status
+    assert error.code == code
+
+
+def test_memory_model_defaults_to_v4_pro(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.delenv("DEEPSEEK_MEMORY_MODEL", raising=False)
 
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
-    spec = runtime_config.memory_spec
-
-    assert spec.model == "deepseek/deepseek-v4-pro"
-    assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
-    assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
+    assert runtime_config.memory_model == "deepseek/deepseek-v4-pro"
 
 
-def test_memory_spec_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_memory_model_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.setenv("DEEPSEEK_MEMORY_MODEL", "deepseek/custom-memory")
 
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
-    spec = runtime_config.memory_spec
-
-    assert spec.model == "deepseek/custom-memory"
+    assert runtime_config.memory_model == "deepseek/custom-memory"
 
 
 def test_runtime_config_allows_provider_timeout_override(
@@ -334,11 +356,22 @@ def test_runtime_config_allows_provider_timeout_override(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
     monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
 
-    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
-    client = runtime_config.llm_client_factory(runtime_config.default_model)
+    captured: list[dict[str, Any]] = []
 
-    assert runtime_config.memory_spec.defaults["timeout"] == 12.5
-    assert client.spec.defaults["timeout"] == 12.5
+    def capture_model(**kwargs: Any) -> object:
+        captured.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        bridge_runtime_config_module,
+        "create_language_model",
+        capture_model,
+    )
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
+    runtime_config.memory_client_factory()
+    runtime_config.llm_client_factory(runtime_config.default_model)
+
+    assert [item["timeout_seconds"] for item in captured] == [12.5, 12.5]
 
 
 def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -348,13 +381,24 @@ def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("LLM_MEMORY_PROVIDER", "kimi")
     monkeypatch.setenv("LLM_MEMORY_MODEL", "kimi/kimi-k2.6")
 
+    captured: list[dict[str, Any]] = []
+
+    def capture_model(**kwargs: Any) -> object:
+        captured.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        bridge_runtime_config_module,
+        "create_language_model",
+        capture_model,
+    )
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
-    client = runtime_config.llm_client_factory(runtime_config.default_model)
+    runtime_config.memory_client_factory()
+    runtime_config.llm_client_factory(runtime_config.default_model)
 
     assert runtime_config.default_model == "kimi/kimi-k2.7-code-highspeed"
-    assert runtime_config.memory_spec.model == "openai/kimi-k2.6"
-    assert runtime_config.memory_spec.api_base == "https://api.moonshot.cn/v1"
-    assert runtime_config.memory_spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
-    assert client.spec.model == "openai/kimi-k2.7-code-highspeed"
-    assert client.spec.api_base == "https://api.moonshot.cn/v1"
-    assert client.spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
+    assert runtime_config.memory_model == "kimi/kimi-k2.6"
+    assert [(item["provider_id"], item["model_id"], item["purpose"]) for item in captured] == [
+        ("kimi", "kimi/kimi-k2.6", "memory"),
+        ("kimi", "kimi/kimi-k2.7-code-highspeed", "chat"),
+    ]

@@ -8,16 +8,18 @@ from pathlib import Path
 from memory_eval.datasets import EvalCase, EvalQuestion, EvalTurn
 from memory_eval.harness.stability import run_stability_probe, select_stability_fragments
 
+from llm_providers import ModelRequest, ModelResponse
+
 
 class AlternatingLLM:
     def __init__(self) -> None:
         self.calls = 0
 
-    def complete(self, *_args: object, **_kwargs: object) -> str:
+    def generate(self, request: ModelRequest) -> ModelResponse:
         self.calls += 1
         statement = "用户喜欢猫" if self.calls % 2 else "用户喜欢小猫"
-        return (
-            f'{{"episodic_entries":[],"semantic_ops":[{{"op":"add","statement":"{statement}"}}]}}'
+        return ModelResponse(
+            text=f'{{"episodic_entries":[],"semantic_ops":[{{"op":"add","statement":"{statement}"}}]}}'
         )
 
 

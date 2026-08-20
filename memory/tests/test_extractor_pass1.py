@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import ConversationFragment, Extractor, Utterance
 
 # 张小红 dialogue block 4_0_1#1 的连续 3 道零分题的 anchor 集合
@@ -116,8 +117,8 @@ class _CassetteLLM:
     def __init__(self, reply: str) -> None:
         self.reply = reply
 
-    def complete(self, messages: list[dict[str, object]], **_kw: object) -> str:
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text=self.reply)
 
 
 def _fragment_from_turns(turns: tuple[tuple[str, str], ...]) -> ConversationFragment:

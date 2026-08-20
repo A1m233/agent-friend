@@ -8,7 +8,7 @@ import json
 import re
 import shutil
 import tempfile
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -49,7 +49,15 @@ from agent import (
     default_context_manager,
     make_default_registry,
 )
-from llm_providers import LLMClient, MultimodalInputAdapter, ProviderSpec
+from llm_providers import (
+    LanguageModel,
+    LLMClient,
+    LLMStreamEvent,
+    ModelRequest,
+    ModelResponse,
+    MultimodalInputAdapter,
+    ProviderSpec,
+)
 
 from .schema import (
     Case,
@@ -250,19 +258,24 @@ class _SkillCatalogRequestGuard:
         )
 
 
-class _CatalogGuardedLLMClient:
+class _CatalogGuardedLanguageModel:
     """Eval-only proxy that checks final messages before delegating a real request."""
 
-    def __init__(self, delegate: LLMClient, guard: _SkillCatalogRequestGuard) -> None:
+    def __init__(self, delegate: LanguageModel, guard: _SkillCatalogRequestGuard) -> None:
         self._delegate = delegate
         self._guard = guard
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._delegate, name)
+    @property
+    def context_window(self) -> int:
+        return self._delegate.context_window
 
-    def stream(self, messages: list[dict[str, Any]], *args: Any, **kwargs: Any) -> Any:
-        self._guard.observe(messages)
-        return self._delegate.stream(messages, *args, **kwargs)
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self._guard.observe(request.messages)
+        return self._delegate.generate(request)
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        self._guard.observe(request.messages)
+        return self._delegate.stream(request)
 
 
 class _FixtureTool:
@@ -347,11 +360,11 @@ def _build_manager(
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
-    def _llm_factory(_model: str) -> LLMClient:
+    def _llm_factory(_model: str) -> LanguageModel:
         client = LLMClient(spec)
         if skill_catalog_request_guard is None:
             return client
-        return cast(LLMClient, _CatalogGuardedLLMClient(client, skill_catalog_request_guard))
+        return _CatalogGuardedLanguageModel(client, skill_catalog_request_guard)
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(

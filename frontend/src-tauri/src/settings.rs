@@ -60,6 +60,7 @@ pub enum DeepseekModel {
 pub enum ModelProvider {
     Deepseek,
     Kimi,
+    Openrouter,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

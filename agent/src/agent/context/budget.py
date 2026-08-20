@@ -7,7 +7,7 @@
 - 产出 :class:`BudgetSnapshot` 供 M2/M3 共享
 
 本模块**不 import litellm**——窗口数值由 ``llm_providers`` 经
-``LLMClient.context_window`` 提供（保持分层隔离，见 009 design §2.2）。
+``LanguageModel.context_window`` 提供（保持分层隔离，见 009 design §2.2）。
 
 详见 docs/requirements/009-engine-context-management/design.md §3。
 """
@@ -96,7 +96,7 @@ def make_budget_snapshot(
     """按 model 窗口动态推导本轮预算快照（009 R-1.3）。
 
     Args:
-        effective_window: 当前 model 的有效输入窗口（= ``LLMClient.context_window``）。
+        effective_window: 当前 model 的有效输入窗口（= ``LanguageModel.context_window``）。
         last_input_tokens: 上轮真实 ``usage.prompt_tokens`` 锚点；无则 ``None``。
 
     Returns:

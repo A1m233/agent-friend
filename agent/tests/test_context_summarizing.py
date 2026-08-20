@@ -58,6 +58,8 @@ from llm_providers import (
     LLMTextDelta,
     LLMTurnDone,
     LLMUsage,
+    ModelRequest,
+    ModelResponse,
 )
 
 # ===================== fake LLM =====================
@@ -74,22 +76,18 @@ class _FakeLLM:
     cached_prompt_tokens: int | None = None
     complete_calls: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
-    spec: Any = field(default_factory=lambda: SimpleNamespace(model="deepseek/test"))
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
+    def generate(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
         if self.fail:
             raise RuntimeError("boom")
-        return self.summary_text
+        return ModelResponse(text=self.summary_text)
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         yield LLMTextDelta(text="ok")
         usage = (
             LLMUsage(
@@ -115,10 +113,7 @@ class _ContextRejectOnceLLM(_FakeLLM):
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
         self.stream_calls += 1
         if self.stream_calls == 1:
@@ -132,13 +127,13 @@ class _SummaryContextRetryLLM(_FakeLLM):
     remaining_context_failures: int = 2
     summary_input_lengths: list[int] = field(default_factory=list)
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
+    def generate(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
-        self.summary_input_lengths.append(len(str(messages[-1]["content"])))
+        self.summary_input_lengths.append(len(str(request.messages[-1]["content"])))
         if self.remaining_context_failures > 0:
             self.remaining_context_failures -= 1
             raise LLMContextWindowError("summary input too large")
-        return self.summary_text
+        return ModelResponse(text=self.summary_text)
 
 
 def _runtime(
@@ -151,6 +146,7 @@ def _runtime(
     return RuntimeContext(
         budget=make_budget_snapshot(window, last_input_tokens),
         llm_client=cast(Any, llm),
+        model_id="deepseek/test",
         prior_summary=prior,
         calibration_factor=calibration_factor,
     )

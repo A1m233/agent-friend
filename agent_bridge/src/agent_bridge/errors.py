@@ -4,7 +4,7 @@
 
 - OpenAI 出口和 AG-UI 出口对**同一类内部错误**的协议形态不同，但**分类规则**
   应该一致——只在一处维护，两个出口分别取用，避免分歧
-- ``Conversation`` / ``SessionStore`` / ``LLMClient`` 内部 raise 的异常信息往
+- ``Conversation`` / ``SessionStore`` / ``LanguageModel`` 内部 raise 的异常信息往
   往含 IO / API key 细节，**不可**原样回给客户端；统一在这里清洗一道
 
 映射表见 docs/requirements/006-agent-bridge/design.md §4.6.1。
@@ -37,8 +37,11 @@ from llm_providers import (
     LLMContentPolicyError,
     LLMEmptyResponseError,
     LLMModelMetadataError,
+    LLMModelUnavailableError,
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
+    LLMPaymentRequiredError,
+    LLMPermissionError,
     LLMProviderError,
     LLMRateLimitError,
     LLMTransientProviderError,
@@ -168,6 +171,27 @@ def map_exception(exc: BaseException) -> ProtocolError:
             code="rate_limit",
             message="模型服务暂时限制了请求频率，这次没能生成回答。请稍后再试。",
             recoverable=True,
+        )
+    if isinstance(exc, LLMPaymentRequiredError):
+        return ProtocolError(
+            http_status=402,
+            code="payment_required",
+            message="OpenRouter 账户或当前 Key 额度不足，请充值或更换 Key 后重试。",
+            recoverable=False,
+        )
+    if isinstance(exc, LLMPermissionError):
+        return ProtocolError(
+            http_status=403,
+            code="permission_denied",
+            message="当前 Key 或路由策略不允许这次模型调用，请检查权限或更换模型。",
+            recoverable=False,
+        )
+    if isinstance(exc, LLMModelUnavailableError):
+        return ProtocolError(
+            http_status=503,
+            code="model_route_unavailable",
+            message="当前模型没有满足必要能力与隐私约束的可用路由，请稍后重试或切换模型。",
+            recoverable=exc.retryable,
         )
     if isinstance(exc, (LLMNetworkError, LLMProviderError)):
         return ProtocolError(

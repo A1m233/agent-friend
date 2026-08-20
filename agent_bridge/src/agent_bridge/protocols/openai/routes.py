@@ -41,7 +41,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     """把 ``POST /v1/chat/completions`` 挂到 :class:`FastAPI` 实例。
 
     路由函数是普通同步函数 —— :class:`agent.Conversation` 的 ``stream`` 是
-    同步生成器（基于 :class:`llm_providers.LLMClient.stream`），FastAPI 在
+    同步生成器（基于 :class:`llm_providers.LanguageModel`），FastAPI 在
     StreamingResponse 里能正确驱动同步迭代器。
 
     Args:

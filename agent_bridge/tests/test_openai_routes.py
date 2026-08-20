@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import agent_bridge.assembly as assembly
 import pytest
@@ -24,9 +24,16 @@ from agent import (
     SkillCatalogService,
     make_default_registry,
 )
-from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LanguageModel,
+    LanguageModelFactory,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
+)
 
-LLMClientFactory = Callable[[str], LLMClient]
 type ScriptedLLMItem = LLMStreamEvent | BaseException
 
 
@@ -39,20 +46,17 @@ class _ScriptedLLMClient:
     turn_idx: int = 0
     context_window: int = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
-        self.seen_messages.append(messages)
+        self.seen_messages.append(request.messages)
         events = self.script[self.turn_idx]
         self.turn_idx += 1
         for event in events:
@@ -66,7 +70,7 @@ def _build_runtime(
     *,
     llm_script: list[list[ScriptedLLMItem]],
     skill_service: SkillCatalogService | None = None,
-) -> tuple[BridgeRuntime, LLMClientFactory]:
+) -> tuple[BridgeRuntime, LanguageModelFactory]:
     _ScriptedLLMClient.seen_messages = []
     settings = BridgeSettings(sessions_dir=tmp_path / "sessions", memory_enabled=False)
     persistent_store = JsonlSessionStore(settings.sessions_dir)
@@ -75,8 +79,8 @@ def _build_runtime(
 
     fake_llm = _ScriptedLLMClient(script=llm_script)
 
-    def _llm_factory(model: str) -> LLMClient:
-        return cast(LLMClient, fake_llm)
+    def _llm_factory(model: str) -> LanguageModel:
+        return fake_llm
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)

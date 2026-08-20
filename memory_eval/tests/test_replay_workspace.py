@@ -13,6 +13,7 @@ from memory_eval.harness import AnchorRecallJudge
 from memory_eval.harness.runner import evaluate_case_database, ingest_case_database
 from memory_eval.harness.workspace import EvalWorkspace, WorkspaceManifest
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import ExtractionAttempt
 
 
@@ -20,17 +21,19 @@ class FakeLLM:
     def __init__(self) -> None:
         self.calls = 0
 
-    def complete(self, *_args: object, **_kwargs: object) -> str:
+    def generate(self, request: ModelRequest) -> ModelResponse:
         self.calls += 1
-        return (
-            '{"episodic_entries": [], "semantic_ops": '
-            '[{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+        return ModelResponse(
+            text=(
+                '{"episodic_entries": [], "semantic_ops": '
+                '[{"op": "add", "statement": "用户养了一只叫Tom的猫"}]}'
+            )
         )
 
 
 class EmptyLLM:
-    def complete(self, *_args: object, **_kwargs: object) -> str:
-        return '{"episodic_entries": [], "semantic_ops": []}'
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text='{"episodic_entries": [], "semantic_ops": []}')
 
 
 class FakeProvider:

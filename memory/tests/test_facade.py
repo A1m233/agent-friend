@@ -11,6 +11,7 @@ from uuid import uuid4
 from memory.contracts import RecallTrace
 from memory.core_profile import normalize_core_value
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import (
     ConversationFragment,
     CoreProfileEntry,
@@ -27,8 +28,8 @@ class FakeLLM:
     def __init__(self, reply: str) -> None:
         self.reply = reply
 
-    def complete(self, messages: list[dict[str, object]], **_kw: object) -> str:
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text=self.reply)
 
 
 def _fragment(text: str) -> ConversationFragment:

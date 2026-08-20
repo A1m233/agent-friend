@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from agent_bridge.app import create_app_with_runtime
 from agent_bridge.assembly import BridgeRuntime
@@ -20,24 +20,28 @@ from agent import (
     SkillCatalogService,
     make_default_registry,
 )
-from llm_providers import LLMClient, LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LanguageModel,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
+)
 
 
 class _RecordingLLM:
     context_window = 128_000
     seen_messages: ClassVar[list[list[dict[str, Any]]]] = []
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.seen_messages.append(messages)
+        self.seen_messages.append(request.messages)
         yield LLMTextDelta("ok")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -64,8 +68,8 @@ def test_structured_skill_selection_reaches_ag_ui_model_context(tmp_path: Path) 
     tool_registry = make_default_registry()
     _RecordingLLM.seen_messages = []
 
-    def llm_factory(model: str) -> LLMClient:
-        return cast(LLMClient, _RecordingLLM())
+    def llm_factory(model: str) -> LanguageModel:
+        return _RecordingLLM()
 
     def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
+from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
 from memory import (
     Extractor,
     KeywordRetrieval,
@@ -22,7 +24,7 @@ from memory_eval.adapters import case_history_source, ingest_case, retrieve_for_
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
     from memory import EmbeddingProvider, ExtractionAttempt, MemoryItem, RecallTrace, VectorIndex
     from memory_eval.datasets import EvalCase, EvalQuestion
     from memory_eval.harness.judge import Judge, JudgeResult
@@ -79,13 +81,19 @@ class CaseOutcome:
 class _NoCallLLM:
     """重放检索时的防误调用桩；任何抽取调用都说明 evaluator 越界。"""
 
-    def complete(self, *_args: object, **_kwargs: object) -> str:
+    context_window = 1
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
         raise RuntimeError("检索重放不得调用 LLM")
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        raise RuntimeError("检索重放不得调用 LLM")
+        yield  # pragma: no cover
 
 
 def ingest_case_database(
     case: EvalCase,
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     db_path: Path | str,
     memory_config: MemoryConfig | None = None,
@@ -154,7 +162,7 @@ def evaluate_case_database(
 
 def run_case(
     case: EvalCase,
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     db_path: Path | str,
     judge: Judge,
@@ -185,7 +193,7 @@ def _build_replay_memory(
     traces: list[RecallTrace],
     search_service: MemorySearchService | None,
 ) -> Memory:
-    no_call_llm = cast("LLMClient", _NoCallLLM())
+    no_call_llm = _NoCallLLM()
     if retrieval_mode == "legacy-keyword":
         if search_service is not None:
             raise ValueError("legacy-keyword 不支持统一 history source")

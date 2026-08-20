@@ -15,12 +15,13 @@ from typing import Any
 
 import pytest
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import build_memory
 
 
 class _FakeLLM:
-    def complete(self, *_a: object, **_kw: object) -> str:
-        return '{"episodic_entries": [], "semantic_ops": []}'
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text='{"episodic_entries": [], "semantic_ops": []}')
 
 
 def test_build_memory_default_is_pass1_full() -> None:
