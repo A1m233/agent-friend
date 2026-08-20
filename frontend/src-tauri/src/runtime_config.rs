@@ -20,7 +20,7 @@ pub enum RuntimeConfigKind {
     Secret,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeConfigGroup {
     Amap,
@@ -31,7 +31,29 @@ pub enum RuntimeConfigGroup {
     VolcVoice,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+impl RuntimeConfigGroup {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Amap,
+        Self::Deepseek,
+        Self::Kimi,
+        Self::Tavily,
+        Self::QWeather,
+        Self::VolcVoice,
+    ];
+
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Amap => "amap",
+            Self::Deepseek => "deepseek",
+            Self::Kimi => "kimi",
+            Self::Tavily => "tavily",
+            Self::QWeather => "qWeather",
+            Self::VolcVoice => "volcVoice",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum RuntimeConfigSource {
     #[serde(rename = "env")]
     Env,
@@ -41,7 +63,7 @@ pub enum RuntimeConfigSource {
     LegacyDotenv,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RuntimeConfigEffect {
     RestartBridge,
@@ -87,14 +109,14 @@ pub struct DeleteRuntimeSecretPayload {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SecretSpec {
-    name: &'static str,
-    aliases: &'static [&'static str],
-    group: RuntimeConfigGroup,
-    effect: RuntimeConfigEffect,
+pub(crate) struct SecretSpec {
+    pub(crate) name: &'static str,
+    pub(crate) aliases: &'static [&'static str],
+    pub(crate) group: RuntimeConfigGroup,
+    pub(crate) effect: RuntimeConfigEffect,
 }
 
-const SECRET_REGISTRY: &[SecretSpec] = &[
+pub(crate) const SECRET_REGISTRY: &[SecretSpec] = &[
     SecretSpec {
         name: "AMAP_WEBSERVICE_KEY",
         aliases: &[],
@@ -175,11 +197,11 @@ const SECRET_REGISTRY: &[SecretSpec] = &[
     },
 ];
 
-fn find_secret(name: &str) -> Option<&'static SecretSpec> {
+pub(crate) fn find_secret(name: &str) -> Option<&'static SecretSpec> {
     SECRET_REGISTRY.iter().find(|spec| spec.name == name)
 }
 
-fn require_secret(name: &str) -> Result<&'static SecretSpec, String> {
+pub(crate) fn require_secret(name: &str) -> Result<&'static SecretSpec, String> {
     find_secret(name).ok_or_else(|| format!("unknown runtime secret: {name}"))
 }
 
@@ -197,7 +219,7 @@ fn rust_keyring_default_target(name: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
-fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
+pub(crate) fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
     let target = python_keyring_compound_target(name);
     let service = keyring_service();
     keyring::Entry::new_with_target(&target, &service, name)
@@ -205,7 +227,7 @@ fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
+pub(crate) fn keyring_entry(name: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(&keyring_service(), name)
         .map_err(|e| format!("runtime config keyring entry failed for {name}: {e}"))
 }
@@ -478,6 +500,7 @@ pub(crate) fn migration_replace_managed_secrets(
     for name in next.keys() {
         require_secret(name)?;
     }
+    crate::runtime_credentials::clear_all_validation_bindings()?;
     let apply = || -> Result<(), String> {
         for spec in SECRET_REGISTRY {
             let entry = keyring_entry(spec.name)?;
@@ -509,6 +532,7 @@ pub(crate) fn migration_replace_managed_secrets(
 pub(crate) fn migration_restore_managed_secrets(
     snapshot: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    crate::runtime_credentials::clear_all_validation_bindings()?;
     for spec in SECRET_REGISTRY {
         let entry = keyring_entry(spec.name)?;
         if let Some(value) = snapshot.get(spec.name) {
@@ -558,7 +582,116 @@ fn push_unique_secret(values: &mut Vec<String>, value: String) {
     }
 }
 
-fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
+pub(crate) fn group_specs(group: RuntimeConfigGroup) -> Vec<&'static SecretSpec> {
+    SECRET_REGISTRY
+        .iter()
+        .filter(|spec| spec.group == group)
+        .collect()
+}
+
+pub(crate) fn managed_secret_value(name: &str) -> Result<Option<String>, String> {
+    let entry = keyring_entry(name)?;
+    match entry.get_password() {
+        Ok(value) if !value.trim().is_empty() => Ok(Some(value)),
+        Ok(_) | Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(format!(
+            "runtime config keyring read failed for {name}: {error}"
+        )),
+    }
+}
+
+pub(crate) fn keyring_secret_value(name: &str) -> Result<Option<String>, String> {
+    if let Some(value) = managed_secret_value(name)? {
+        return Ok(Some(value));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for entry in [
+            python_service_keyring_entry(name)?,
+            legacy_rust_keyring_entry(name)?,
+        ] {
+            match entry.get_password() {
+                Ok(value) if !value.trim().is_empty() => return Ok(Some(value)),
+                Ok(_) | Err(keyring::Error::NoEntry) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "runtime config keyring compatibility read failed for {name}: {error}"
+                    ))
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn effective_secret_value(
+    spec: &SecretSpec,
+) -> Result<Option<(String, RuntimeConfigSource)>, String> {
+    for name in std::iter::once(spec.name).chain(spec.aliases.iter().copied()) {
+        match std::env::var(name) {
+            Ok(value) if !value.trim().is_empty() => {
+                return Ok(Some((value.trim().to_string(), RuntimeConfigSource::Env)))
+            }
+            Ok(_) | Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(format!(
+                    "environment credential {name} is not valid Unicode"
+                ))
+            }
+        }
+    }
+    if let Some(value) = keyring_secret_value(spec.name)? {
+        return Ok(Some((value, RuntimeConfigSource::Keyring)));
+    }
+    for path in legacy_dotenv_paths() {
+        for name in std::iter::once(spec.name).chain(spec.aliases.iter().copied()) {
+            if let Some(value) = dotenv_value(&path, name)? {
+                return Ok(Some((value, RuntimeConfigSource::LegacyDotenv)));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn write_managed_secret(name: &str, value: &str) -> Result<(), String> {
+    keyring_entry(name)?
+        .set_password(value)
+        .map_err(|error| format!("runtime config keyring set failed for {name}: {error}"))?;
+    #[cfg(target_os = "windows")]
+    if let Err(error) = delete_legacy_rust_keyring_entry(name) {
+        log::warn!("{error}");
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(error) = delete_python_service_keyring_entry(name) {
+        log::warn!("{error}");
+    }
+    Ok(())
+}
+
+pub(crate) fn delete_managed_secret(name: &str) -> Result<(), String> {
+    let mut errors = Vec::new();
+    match keyring_entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(error) => errors.push(format!(
+            "runtime config keyring delete failed for {name}: {error}"
+        )),
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(error) = delete_legacy_rust_keyring_entry(name) {
+        errors.push(error);
+    }
+    #[cfg(target_os = "windows")]
+    if let Err(error) = delete_python_service_keyring_entry(name) {
+        errors.push(error);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+pub(crate) fn status_for(spec: &SecretSpec) -> RuntimeConfigItemStatus {
     let mut error = None;
 
     let env_configured = std::iter::once(spec.name)
@@ -621,19 +754,8 @@ pub fn set_runtime_secret(
         return Err(format!("runtime secret {} cannot be empty", spec.name));
     }
 
-    let entry = keyring_entry(spec.name)?;
-    entry
-        .set_password(value)
-        .map_err(|e| format!("runtime config keyring set failed for {}: {e}", spec.name))?;
-
-    #[cfg(target_os = "windows")]
-    if let Err(e) = delete_legacy_rust_keyring_entry(spec.name) {
-        log::warn!("{e}");
-    }
-    #[cfg(target_os = "windows")]
-    if let Err(e) = delete_python_service_keyring_entry(spec.name) {
-        log::warn!("{e}");
-    }
+    crate::runtime_credentials::invalidate_group_binding(spec.group)?;
+    write_managed_secret(spec.name, value)?;
 
     log::info!(
         "runtime_config: secret saved name={} effect={:?}",
@@ -652,26 +774,8 @@ pub fn delete_runtime_secret(
     payload: DeleteRuntimeSecretPayload,
 ) -> Result<RuntimeConfigMutation, String> {
     let spec = require_secret(&payload.name)?;
-    let entry = keyring_entry(spec.name)?;
-    let mut errors = Vec::new();
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(e) => errors.push(format!(
-            "runtime config keyring delete failed for {}: {e}",
-            spec.name
-        )),
-    }
-    #[cfg(target_os = "windows")]
-    if let Err(e) = delete_legacy_rust_keyring_entry(spec.name) {
-        errors.push(e);
-    }
-    #[cfg(target_os = "windows")]
-    if let Err(e) = delete_python_service_keyring_entry(spec.name) {
-        errors.push(e);
-    }
-    if !errors.is_empty() {
-        return Err(errors.join("; "));
-    }
+    crate::runtime_credentials::invalidate_group_binding(spec.group)?;
+    delete_managed_secret(spec.name)?;
 
     log::info!(
         "runtime_config: secret deleted name={} effect={:?}",

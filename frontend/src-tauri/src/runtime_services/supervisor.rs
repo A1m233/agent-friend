@@ -292,6 +292,44 @@ impl RuntimeServiceSupervisor {
             .map_err(|error| format!("bridge_demand_unavailable: invalid response: {error}"))
     }
 
+    pub async fn validate_runtime_credential(
+        &self,
+        group_id: &str,
+        operation_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let slot_ref = self.slot(RuntimeServiceKind::Bridge);
+        let slot = slot_ref.lock().await;
+        let token = slot
+            .token
+            .as_deref()
+            .ok_or_else(|| "credential_validation_bridge_not_ready".to_string())?;
+        let response = self
+            .client
+            .post(format!(
+                "{}/internal/runtime-credentials/validate",
+                self.launch_context.base_url(RuntimeServiceKind::Bridge)
+            ))
+            .header("X-Agent-Friend-Lifecycle-Token", token)
+            .json(&serde_json::json!({
+                "groupId": group_id,
+                "operationId": operation_id,
+            }))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| format!("credential_validation_unavailable: {error}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "credential_validation_unavailable: HTTP {}",
+                response.status()
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| format!("credential_validation_invalid_response: {error}"))
+    }
+
     pub async fn migration_snapshot_im_credentials(&self) -> Result<serde_json::Value, String> {
         let slot_ref = self.slot(RuntimeServiceKind::Bridge);
         let slot = slot_ref.lock().await;

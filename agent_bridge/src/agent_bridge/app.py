@@ -55,6 +55,7 @@ from .routes.skills import register_routes as register_skill_routes
 from .routes.social_auth import register_routes as register_social_auth_routes
 from .routes.todos import register_routes as register_todo_routes
 from .runtime_config import resolve_bridge_runtime_config
+from .runtime_credentials import register_runtime_credential_routes
 from .settings import BridgeSettings
 
 TAURI_PRODUCTION_ORIGINS = [
@@ -179,6 +180,7 @@ def create_app_with_runtime(
         app.state.lifecycle_controller = controller
         register_lifecycle_routes(app, controller)
         register_migration_routes(app, runtime, controller)
+        register_runtime_credential_routes(app, controller)
 
     return app
 

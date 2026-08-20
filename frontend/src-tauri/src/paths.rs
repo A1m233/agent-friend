@@ -12,6 +12,7 @@ pub const SETTINGS_STORE_PATH: &str = "settings.json";
 pub const OWNER_CAPABILITIES_FILE: &str = "owner-capabilities.json";
 pub const UI_STATE_STORE_PATH: &str = "ui-state.json";
 pub const PERMISSION_STATE_FILE: &str = "permission-state.json";
+pub const RUNTIME_CREDENTIAL_STATE_FILE: &str = "runtime-credential-state.json";
 pub const AVATAR_MODELS_DIR: &str = "avatar-models";
 pub const AVATAR_MODEL_CATALOG_FILE: &str = "catalog.json";
 pub const PERSONA_EDITABLE_DIR: &str = "personas/default";
@@ -56,6 +57,13 @@ pub fn permission_state_path() -> Option<PathBuf> {
     dirs::config_dir().map(|base| {
         base.join(profile().settings_namespace)
             .join(PERMISSION_STATE_FILE)
+    })
+}
+
+pub fn runtime_credential_state_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|base| {
+        base.join(profile().settings_namespace)
+            .join(RUNTIME_CREDENTIAL_STATE_FILE)
     })
 }
 

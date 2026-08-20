@@ -30,13 +30,38 @@ describe("locateSettings", () => {
         target: "feedback",
         feedback: { preselectSessionId: "session-1" },
       }),
-    ).toEqual({ section: "feedback", preselectSessionId: "session-1" });
+    ).toEqual({
+      section: "feedback",
+      preselectSessionId: "session-1",
+      runtimeGroupId: undefined,
+    });
     expect(
       locateSettings({
         target: "general",
         feedback: { preselectSessionId: "session-1" },
       }),
-    ).toEqual({ section: "general", preselectSessionId: undefined });
+    ).toEqual({
+      section: "general",
+      preselectSessionId: undefined,
+      runtimeGroupId: undefined,
+    });
+  });
+
+  it("keeps a credential group target only for runtime settings", () => {
+    expect(
+      locateSettings({ target: "runtime", runtime: { groupId: "kimi" } }),
+    ).toEqual({
+      section: "runtime",
+      preselectSessionId: undefined,
+      runtimeGroupId: "kimi",
+    });
+    expect(
+      locateSettings({ target: "general", runtime: { groupId: "kimi" } }),
+    ).toEqual({
+      section: "general",
+      preselectSessionId: undefined,
+      runtimeGroupId: undefined,
+    });
   });
 
   it("falls back safely for missing or unknown targets", () => {

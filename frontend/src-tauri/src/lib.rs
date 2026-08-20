@@ -27,6 +27,7 @@ mod power_policy;
 mod presence;
 mod push_subscriber;
 mod runtime_config;
+mod runtime_credentials;
 mod runtime_observability;
 mod runtime_services;
 mod settings;
@@ -65,7 +66,14 @@ struct SettingsNavigationStateInner {
 #[serde(rename_all = "camelCase")]
 struct SettingsOpenRequest {
     target: Option<String>,
+    runtime: Option<SettingsRuntimeContext>,
     feedback: Option<SettingsFeedbackContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsRuntimeContext {
+    group_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -666,6 +674,7 @@ pub(crate) fn show_permission_settings(app: &tauri::AppHandle) -> Result<(), Str
     let state = app.state::<SettingsNavigationState>();
     let envelope = state.set_pending(SettingsOpenRequest {
         target: Some("permissions".to_string()),
+        runtime: None,
         feedback: None,
     })?;
     show_and_focus(app, "settings")?;
@@ -1085,6 +1094,8 @@ pub fn run() {
     let settings_state = Arc::new(Mutex::new(bootstrap_settings));
     let runtime_service_supervisor =
         Arc::new(runtime_services::RuntimeServiceSupervisor::from_environment(resource_dir));
+    let runtime_credential_coordinator =
+        Arc::new(runtime_credentials::RuntimeCredentialCoordinator::default());
     let migration_coordinator = Arc::new(data_migration::MigrationCoordinator::default());
     let avatar_model_manager = Arc::new(avatar_models::AvatarModelManager::new());
     let shell_diagnostics_manager = shell_diagnostics::create_manager();
@@ -1160,6 +1171,7 @@ pub fn run() {
         .manage(webview_diagnostics_manager)
         .manage(settings_state.clone())
         .manage(runtime_service_supervisor.clone())
+        .manage(runtime_credential_coordinator)
         .manage(migration_coordinator)
         .manage(avatar_model_manager)
         .plugin(navigation_guard())
@@ -1221,6 +1233,13 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        runtime_credentials::get_runtime_credential_groups,
+        runtime_credentials::apply_runtime_credential_group,
+        runtime_credentials::confirm_runtime_credential_save,
+        runtime_credentials::cancel_runtime_credential_operation,
+        runtime_credentials::retry_runtime_credential_apply,
+        runtime_credentials::retry_runtime_credential_validation,
+        runtime_credentials::report_runtime_credential_auth_failure,
         runtime_services::get_runtime_service_snapshot,
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
@@ -1293,6 +1312,13 @@ pub fn run() {
         runtime_config::get_runtime_config_status,
         runtime_config::set_runtime_secret,
         runtime_config::delete_runtime_secret,
+        runtime_credentials::get_runtime_credential_groups,
+        runtime_credentials::apply_runtime_credential_group,
+        runtime_credentials::confirm_runtime_credential_save,
+        runtime_credentials::cancel_runtime_credential_operation,
+        runtime_credentials::retry_runtime_credential_apply,
+        runtime_credentials::retry_runtime_credential_validation,
+        runtime_credentials::report_runtime_credential_auth_failure,
         runtime_services::get_runtime_service_snapshot,
         runtime_services::start_runtime_service,
         runtime_services::stop_runtime_service,
@@ -1493,6 +1519,9 @@ pub fn run() {
             )?;
 
             setup_runtime_observer.record("lifecycle", "logger-attached", serde_json::json!({}));
+            if let Err(error) = runtime_credentials::cleanup_all_staging() {
+                log::error!("runtime credential staging cleanup failed: {error}");
+            }
             log::info!(
                 "desktop lifecycle: logger attached; process_session_id={}",
                 setup_runtime_observer.process_session_id()
@@ -1756,12 +1785,14 @@ mod tests {
         let first = state
             .set_pending(SettingsOpenRequest {
                 target: Some("general".into()),
+                runtime: None,
                 feedback: None,
             })
             .expect("set first navigation");
         let second = state
             .set_pending(SettingsOpenRequest {
                 target: Some("feedback".into()),
+                runtime: None,
                 feedback: Some(SettingsFeedbackContext {
                     preselect_session_id: Some("session-1".into()),
                 }),

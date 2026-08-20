@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Mic, MicOff, Phone, PhoneOff } from "lucide-react";
 
 import { MicActivityFrame } from "@/components/voice/MicActivityFrame";
@@ -5,6 +6,11 @@ import { VoiceTunnelConsentDialog } from "@/components/voice/VoiceTunnelConsentD
 import { hasMicActivity, voiceVolumeLabel } from "@/components/voice/micActivity";
 import { Button, TooltipButton, TooltipProvider } from "@/components/ui";
 import { useVoiceStore } from "@/stores/voice";
+import {
+  startRuntimeCredentialSync,
+  useRuntimeCredentialStore,
+} from "@/stores";
+import { runtimeCredentialApplyReason } from "@/lib/runtime-config";
 import {
   voiceActivityLabel,
   voiceFailureStageLabel,
@@ -33,15 +39,34 @@ export function VoiceCallApp() {
   const requestCancelTunnel = useVoiceStore((s) => s.requestCancelTunnelConsent);
   const requestHangUp = useVoiceStore((s) => s.requestHangUp);
   const requestToggleMute = useVoiceStore((s) => s.requestToggleMute);
+  const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
+  const credentialApplyReason = runtimeCredentialApplyReason(
+    runtimeCredentialGroups,
+    "restartVoice",
+  );
+
+  useEffect(() => startRuntimeCredentialSync(), []);
 
   const awaitingConsent = phase === "confirming_tunnel";
-  const canDial = phase === "idle" || phase === "ended" || phase === "error";
+  const canDial =
+    !credentialApplyReason &&
+    (phase === "idle" || phase === "ended" || phase === "error");
   const inCall = phase === "active";
   const canToggleMute =
     phase === "connecting_agent" || phase === "starting_agent" || phase === "active";
   const micWaveActive = canToggleMute && hasMicActivity(volumeLevel, muted);
-  const headline = inCall ? voiceActivityLabel(activity, muted) : voicePhaseLabel(phase);
-  const secondaryText = inCall ? formatDuration(durationMs) : muted ? "已静音" : voiceVolumeLabel(volumeLevel);
+  const headline = credentialApplyReason
+    ? "正在应用语音凭据"
+    : inCall
+      ? voiceActivityLabel(activity, muted)
+      : voicePhaseLabel(phase);
+  const secondaryText = credentialApplyReason
+    ? credentialApplyReason
+    : inCall
+      ? formatDuration(durationMs)
+      : muted
+        ? "已静音"
+        : voiceVolumeLabel(volumeLevel);
   const muteTooltip = muted
     ? "取消静音"
     : canToggleMute

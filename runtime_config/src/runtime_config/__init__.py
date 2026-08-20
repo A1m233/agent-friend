@@ -16,6 +16,7 @@ from .credentials import (
     QWEATHER_API_HOST,
     QWEATHER_API_KEY,
     REQUIRED_CREDENTIAL_NAMES,
+    RUNTIME_CREDENTIAL_GROUP_ALIASES,
     RUNTIME_ONLY_NAMES,
     TAVILY_API_KEY,
     VOICE_BRIDGE_PUBLIC_URL,
@@ -30,6 +31,9 @@ from .credentials import (
     CredentialValue,
     ToolCredentials,
     VoiceCredentialConfig,
+    runtime_credential_bundle,
+    runtime_credential_stage_name,
+    runtime_credential_stage_operation_name,
 )
 from .policy import (
     CONFIG_MODE_ENV,
@@ -79,6 +83,7 @@ __all__ = [
     "QWEATHER_API_HOST",
     "QWEATHER_API_KEY",
     "REQUIRED_CREDENTIAL_NAMES",
+    "RUNTIME_CREDENTIAL_GROUP_ALIASES",
     "RUNTIME_ONLY_NAMES",
     "TAVILY_API_KEY",
     "VOICE_BRIDGE_PUBLIC_URL",
@@ -113,5 +118,8 @@ __all__ = [
     "normalize_config_mode",
     "optional_secret",
     "require_secret",
+    "runtime_credential_bundle",
+    "runtime_credential_stage_name",
+    "runtime_credential_stage_operation_name",
     "settings_kwargs_for_mode",
 ]

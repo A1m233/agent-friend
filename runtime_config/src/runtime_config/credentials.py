@@ -82,6 +82,35 @@ CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+RUNTIME_CREDENTIAL_GROUP_ALIASES: dict[str, str] = {
+    "amap": "amap",
+    "deepseek": "deepseek",
+    "kimi": "kimi",
+    "tavily": "tavily",
+    "qWeather": "qweather",
+    "volcVoice": "volc-voice",
+}
+RUNTIME_CREDENTIAL_STAGE_PREFIX = "__agent_friend_runtime_credential_stage__"
+
+
+def runtime_credential_bundle(group_id: str) -> tuple[str, ...] | None:
+    """Return the canonical fields for one desktop credential group."""
+
+    bundle_id = RUNTIME_CREDENTIAL_GROUP_ALIASES.get(group_id)
+    return CREDENTIAL_BUNDLES.get(bundle_id) if bundle_id is not None else None
+
+
+def runtime_credential_stage_name(group_id: str, field_name: str) -> str:
+    """Return a reserved keyring account used only for one candidate field."""
+
+    return f"{RUNTIME_CREDENTIAL_STAGE_PREFIX}:{group_id}:{field_name}"
+
+
+def runtime_credential_stage_operation_name(group_id: str) -> str:
+    """Return the reserved account that binds staged fields to an operation."""
+
+    return f"{RUNTIME_CREDENTIAL_STAGE_PREFIX}:{group_id}:operation"
+
 
 @dataclass(frozen=True)
 class CredentialValue:

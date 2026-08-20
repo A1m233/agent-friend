@@ -46,8 +46,13 @@ import {
 import type { SessionDetail } from "@/types/meta";
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
-import { useConversationStore, type SendStartResult } from "./conversation";
+import {
+  runtimeCredentialGroupForModel,
+  useConversationStore,
+  type SendStartResult,
+} from "./conversation";
 import { useDraftStore } from "./drafts";
+import { useRuntimeCredentialStore } from "./runtimeCredentials";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockRunGet = vi.mocked(runsApi.get);
@@ -62,6 +67,16 @@ const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
 /** 技术细节特征：HTTP 状态码 / 英文异常字样等——拟人文案里**不应**出现任何一项。 */
 const TECH_LEAK = /http|error|exception|status|\b[1-5]\d{2}\b|undefined|null|stack/i;
+
+describe("runtime credential group inference", () => {
+  it("maps supported model routes without guessing unrelated providers", () => {
+    expect(runtimeCredentialGroupForModel("deepseek/deepseek-v4-flash")).toBe(
+      "deepseek",
+    );
+    expect(runtimeCredentialGroupForModel("kimi/kimi-k2.5")).toBe("kimi");
+    expect(runtimeCredentialGroupForModel("custom/model")).toBeNull();
+  });
+});
 
 function ev(e: Record<string, unknown>): BaseEvent {
   return e as unknown as BaseEvent;
@@ -168,6 +183,7 @@ beforeEach(() => {
     searchTarget: null,
   });
   useDraftStore.setState({ workspaces: {}, submissions: {} });
+  useRuntimeCredentialStore.setState({ groups: [], error: null, loading: false });
   mockSetLastChatSessionId.mockClear();
   mockValidateModel.mockImplementation(async (model) => ({ model, available: true }));
   mockSwitchModel.mockImplementation(async (sessionId, model) => ({
@@ -363,6 +379,43 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(m.error!).not.toMatch(TECH_LEAK);
     expect(m.errorCode).toBe("rate_limit");
     expect(outcome).toBe("failed");
+  });
+
+  it("auth_failed uses the revision captured before the request", async () => {
+    const reportAuthFailure = vi
+      .fn()
+      .mockResolvedValue({ group: "deepseek", validation: "invalid" });
+    useRuntimeCredentialStore.setState({
+      groups: [
+        {
+          group: "deepseek",
+          items: [],
+          configured: true,
+          partiallyConfigured: false,
+          missingRequiredFields: [],
+          validation: "valid",
+          credentialRevision: "revision-at-request-start",
+          effect: "restartBridge",
+          operation: { phase: "idle", persisted: true, applied: true },
+        },
+      ],
+      reportAuthFailure,
+    });
+    useConversationStore.setState({ currentModel: "deepseek/deepseek-v4-flash" });
+    mockStream.mockImplementation(async function* () {
+      yield ev({
+        type: EventType.RUN_ERROR,
+        message: "模型凭据无效，请重新配置。",
+        code: "auth_failed",
+      });
+    });
+
+    await finishAcceptedSend(useConversationStore.getState().send("hi"));
+
+    expect(reportAuthFailure).toHaveBeenCalledWith(
+      "deepseek",
+      "revision-at-request-start",
+    );
   });
 
   it("历史会话加载失败 → 拟人兜底，不漏技术细节", async () => {

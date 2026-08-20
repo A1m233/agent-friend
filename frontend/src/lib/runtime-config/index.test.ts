@@ -9,7 +9,10 @@ import {
   deleteRuntimeSecret,
   persistBridgeRuntimeSetting,
   persistRuntimeConfigChange,
+  runtimeCredentialApplyReason,
+  runtimeCredentialOperationBusy,
   setRuntimeSecret,
+  type RuntimeCredentialGroupSnapshot,
   type RuntimeConfigMutation,
 } from "./index";
 
@@ -149,5 +152,44 @@ describe("runtime config changes", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(order).toEqual(["persist-first", "persist-second"]);
+  });
+});
+
+function credentialGroup(
+  phase: RuntimeCredentialGroupSnapshot["operation"]["phase"],
+): RuntimeCredentialGroupSnapshot {
+  return {
+    group: "deepseek",
+    items: [],
+    configured: true,
+    partiallyConfigured: false,
+    missingRequiredFields: [],
+    validation: "none",
+    effect: "restartBridge",
+    operation: {
+      phase,
+      persisted: phase === "restarting",
+      applied: false,
+      message: phase === "restarting" ? "正在重启对话服务" : null,
+    },
+  };
+}
+
+describe("runtime credential presentation", () => {
+  it("treats only active operation phases as busy", () => {
+    expect(runtimeCredentialOperationBusy(credentialGroup("validating").operation)).toBe(true);
+    expect(runtimeCredentialOperationBusy(credentialGroup("restarting").operation)).toBe(true);
+    expect(runtimeCredentialOperationBusy(credentialGroup("awaitingConfirmation").operation)).toBe(
+      false,
+    );
+    expect(runtimeCredentialOperationBusy(credentialGroup("failed").operation)).toBe(false);
+  });
+
+  it("projects the concrete credential apply reason to affected windows", () => {
+    expect(runtimeCredentialApplyReason([credentialGroup("restarting")], "restartBridge")).toBe(
+      "正在重启对话服务",
+    );
+    expect(runtimeCredentialApplyReason([credentialGroup("idle")], "restartBridge")).toBeNull();
+    expect(runtimeCredentialApplyReason([credentialGroup("restarting")], "restartVoice")).toBeNull();
   });
 });

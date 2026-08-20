@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { isTauri } from "@/utils/tauri";
+import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 export const SETTINGS_NAVIGATE_EVENT = "settings://navigate";
 
@@ -37,6 +38,9 @@ export const DEFAULT_SETTINGS_TARGET: PrimarySettingsTarget =
 
 export interface SettingsOpenRequest {
   target?: SettingsTarget;
+  runtime?: {
+    groupId?: RuntimeConfigGroup;
+  };
   feedback?: {
     preselectSessionId?: string;
   };
@@ -54,6 +58,7 @@ export interface SettingsNavigationEnvelope {
 export interface ResolvedSettingsLocation {
   section: SettingsTarget;
   preselectSessionId?: string;
+  runtimeGroupId?: RuntimeConfigGroup;
 }
 
 const SETTINGS_TARGETS = new Set<SettingsTarget>([
@@ -75,6 +80,8 @@ export function locateSettings(
       section === "feedback"
         ? request?.feedback?.preselectSessionId || undefined
         : undefined,
+    runtimeGroupId:
+      section === "runtime" ? request?.runtime?.groupId || undefined : undefined,
   };
 }
 

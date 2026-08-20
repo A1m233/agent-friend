@@ -41,6 +41,7 @@ import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
 import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
 import { startCommandRuntimeSync } from "@/stores";
+import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 /**
  * 028 · 设置中心：左侧分类导航 + 右侧滚动内容的两栏 shell。
@@ -53,6 +54,7 @@ export function SettingsApp() {
     requestId: number;
     sessionId?: string;
   } | null>(null);
+  const [runtimeGroup, setRuntimeGroup] = useState<RuntimeConfigGroup | undefined>();
   const lastNavigationRequestId = useRef(0);
   const [theme, setTheme] = useSetting("theme");
   const [voiceTunnelConsentAccepted, setVoiceTunnelConsentAccepted] = useSetting(
@@ -65,6 +67,7 @@ export function SettingsApp() {
       if (requestId) lastNavigationRequestId.current = requestId;
       const location = locateSettings(request);
       setSection(location.section);
+      setRuntimeGroup(location.runtimeGroupId);
       setFeedbackPrefill(
         location.section === "feedback" && requestId
           ? { requestId, sessionId: location.preselectSessionId }
@@ -166,7 +169,7 @@ export function SettingsApp() {
           ) : section === "archived" ? (
             <ArchivedSessionsPanel />
           ) : section === "runtime" ? (
-            <RuntimeConfigPanel />
+            <RuntimeConfigPanel focusGroup={runtimeGroup} />
           ) : section === "pet" ? (
             <AvatarModelPanel />
           ) : section === "feedback" ? (
