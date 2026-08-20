@@ -156,11 +156,11 @@ def _build_bundle(
         "renderEvidence": {
             "supported": True,
             "includeRequested": True,
-            "automaticIncidentIncluded": False,
+            "automaticIncidentIncluded": True,
             "pendingCapture": {
                 "captureId": "capture-1",
                 "capturedAt": "2026-08-01T00:00:02+00:00",
-                "trigger": "pet-page-visible-after-hidden",
+                "trigger": "webview2-gpu-presented-probe",
                 "complete": True,
                 "webview2Available": True,
                 "desktopAvailable": True,
@@ -315,7 +315,7 @@ def _build_bundle(
             "schemaVersion": 1,
             "supported": True,
             "includeRequested": True,
-            "automaticIncidentIncluded": False,
+            "automaticIncidentIncluded": True,
             "status": {
                 "supported": True,
                 "armed": False,
@@ -324,7 +324,7 @@ def _build_bundle(
                 "pending": {
                     "captureId": "capture-1",
                     "capturedAt": "2026-08-01T00:00:02+00:00",
-                    "trigger": "pet-page-visible-after-hidden",
+                    "trigger": "webview2-gpu-presented-probe",
                     "complete": True,
                     "webview2Available": True,
                     "desktopAvailable": True,
@@ -333,10 +333,10 @@ def _build_bundle(
                 "storageError": None,
             },
             "capture": {
-                "schemaVersion": 1,
+                "schemaVersion": 2,
                 "captureId": "capture-1",
-                "trigger": "pet-page-visible-after-hidden",
-                "hiddenDurationMs": 30000,
+                "trigger": "webview2-gpu-presented-probe",
+                "hiddenDurationMs": 1500,
                 "captureStartedAt": "2026-08-01T00:00:01+00:00",
                 "captureCompletedAt": "2026-08-01T00:00:02+00:00",
                 "startDeltaMs": 12,
@@ -361,6 +361,8 @@ def _build_bundle(
                         "opaquePixelCount": 80000,
                         "nearBlackOpaquePixelCount": 100,
                         "nearBlackOpaqueRatio": 0.00125,
+                        "nearWhiteOpaquePixelCount": 50,
+                        "nearWhiteOpaqueRatio": 0.000625,
                         "averageOpaqueLuma": 120.0,
                     },
                 },
@@ -378,13 +380,27 @@ def _build_bundle(
                         "opaquePixelCount": 2073600,
                         "nearBlackOpaquePixelCount": 2000000,
                         "nearBlackOpaqueRatio": 0.9645,
+                        "nearWhiteOpaquePixelCount": 100,
+                        "nearWhiteOpaqueRatio": 0.000048,
                         "averageOpaqueLuma": 3.0,
                     },
                 },
                 "errors": [],
-                "automaticIncident": False,
-                "recoveryGeneration": None,
-                "recoveryAssessment": None,
+                "automaticIncident": True,
+                "recoveryGeneration": 1,
+                "recoveryAssessment": {
+                    "generation": 1,
+                    "baselineCaptureId": "baseline-1",
+                    "verdict": "unsafe",
+                    "reasons": ["presented desktop near-black ratio increased"],
+                    "baselineDesktopNearBlackRatio": 0.1,
+                    "presentedDesktopNearBlackRatio": 0.9645,
+                    "nearBlackRatioDelta": 0.8645,
+                    "baselineDesktopNearWhiteRatio": 0.001,
+                    "presentedDesktopNearWhiteRatio": 0.000048,
+                    "nearWhiteRatioDelta": -0.000952,
+                    "baselineWebviewTransparentRatio": 0.833333,
+                },
             },
             "includedArtifacts": [
                 "render-evidence/webview2-pet.png",
@@ -461,9 +477,13 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["webView2"]["processFailureKinds"] == {"gpu-process-exited": 1}
     assert summary["webView2"]["droppedEventCount"] == 1
     assert summary["webView2RenderEvidence"]["captureId"] == "capture-1"
+    assert summary["webView2RenderEvidence"]["trigger"] == "webview2-gpu-presented-probe"
+    assert summary["webView2RenderEvidence"]["automaticIncident"] is True
     assert summary["webView2RenderEvidence"]["startDeltaMs"] == 12
     assert summary["webView2RenderEvidence"]["webView2Image"]["nearBlackOpaqueRatio"] == 0.00125
+    assert summary["webView2RenderEvidence"]["webView2Image"]["nearWhiteOpaqueRatio"] == 0.000625
     assert summary["webView2RenderEvidence"]["desktopImage"]["nearBlackOpaqueRatio"] == 0.9645
+    assert summary["webView2RenderEvidence"]["recoveryAssessment"]["verdict"] == "unsafe"
     assert summary["webView2RenderEvidence"]["missingArtifacts"] == []
     assert summary["manifest"]["renderEvidenceSummary"]["artifacts"] == [
         "render-evidence/webview2-pet.png",
@@ -548,6 +568,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                 for capability in (
                     "webview2-render-evidence-v1",
                     "webview2-render-evidence-v2",
+                    "webview2-render-evidence-v3",
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
@@ -592,6 +613,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
                 for capability in (
                     "webview2-render-evidence-v1",
                     "webview2-render-evidence-v2",
+                    "webview2-render-evidence-v3",
                 ):
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)

@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 6,
+  "schemaRevision": 7,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "id": "webview2-render-evidence-v2",
+      "id": "webview2-render-evidence-v3",
       "manifestFields": [
         "renderEvidence"
       ],
