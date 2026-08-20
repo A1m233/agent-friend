@@ -7,6 +7,10 @@ description: 在 agent-friend 仓库的 docs/issues/ 下登记一个"已知但�
 
 把一个"暂不修复"的问题落成 `docs/issues/<NNN>-<slug>/README.md`（一个 issue 一个文件夹）。**仅用于暂缓处理的问题**——马上修的直接改代码、不登记。
 
+## Activation Gate
+
+必须已经有“本次不修、暂停修复或把剩余问题延期”的明确决定，才能进入本 skill。问题在当前任务中首次发现并当场修复时，不得为了归档、关联历史上下文或补一个 `resolved` 记录而登记 issue；修复留痕由 commit、测试和诊断证据承担。
+
 ## 前置：先读管理规则
 
 动手前先读 `docs/issues/README.md`，确认命名、格式、字段约定没有变化（README 是 single source of truth，本 skill 只是操作流程）。
