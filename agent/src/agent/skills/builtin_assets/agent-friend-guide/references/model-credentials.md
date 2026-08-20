@@ -4,7 +4,7 @@ agent-friend 当前提供 DeepSeek 与 Kimi 模型选项。使用某个供应商
 
 初始默认对话模型是 Kimi 2.5，初始默认记忆模型是 DeepSeek Flash。已经在设置中主动选择过模型时，升级不会覆盖已有选择。
 
-设置页显示“已配置”只表示 Key 已保存到系统凭据存储，不代表供应商已经验证它可用。保存或更换 Key 后，应选择对应模型发起一次普通对话；如果立即失败，先到供应商控制台确认 Key 未被撤销、复制完整且属于对应平台。
+保存或更换 DeepSeek、Kimi API Key 时，agent-friend 会先在线校验候选 Key。校验成功后才替换原配置，并自动应用到对话服务；明确校验失败时会保留原配置并显示失败原因。如果网络或供应商服务暂时不可用，页面会让你选择稍后重试，或确认“仍然保存”。确认保存的 Key 会显示“已配置”，可以之后点击“校验当前凭据”；校验成功时显示“已配置 · 已验证”。
 
 ## DeepSeek API Key
 
@@ -12,7 +12,7 @@ agent-friend 当前提供 DeepSeek 与 Kimi 模型选项。使用某个供应商
 2. 打开 [API Keys](https://platform.deepseek.com/api_keys)。
 3. 创建一个新 Key，并在页面只显示完整值时立即妥善保存。
 4. 在 agent-friend 打开“设置 → 模型与凭据 → DeepSeek”，粘贴并保存。
-5. 按界面提示重启对话服务，然后选择 DeepSeek 模型测试。
+5. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 DeepSeek 模型使用。
 
 官方文档：[DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/)。
 
@@ -22,7 +22,7 @@ agent-friend 当前提供 DeepSeek 与 Kimi 模型选项。使用某个供应商
 2. 打开 [API Keys](https://platform.kimi.ai/console/api-keys)。
 3. 选择项目并创建 Key，保存页面展示的完整值。
 4. 在 agent-friend 打开“设置 → 模型与凭据 → Kimi”，粘贴并保存。
-5. 按界面提示重启对话服务，然后选择 Kimi 模型测试。
+5. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 Kimi 模型使用。
 
 `platform.kimi.ai` 与其他 Kimi 平台的 Key 不一定通用，应从上面的开放平台创建。官方文档：[Kimi API 概览](https://platform.kimi.ai/docs/api/overview)。
 

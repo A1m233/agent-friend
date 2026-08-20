@@ -15,7 +15,7 @@ agent-friend 的“语音输入”和“语音通话”是两种能力。先确�
 2. 进入豆包语音控制台，创建应用并开通与语音识别匹配的服务。
 3. 新版控制台到 [API Key 管理](https://console.volcengine.com/speech/new/setting/apikeys?projectName=default) 获取 APP Key；旧版控制台在应用详情中查看 APP ID 与 Access Token。
 4. 在 agent-friend 打开“设置 → 模型与凭据 → 语音通话与语音输入 / 火山”，填写对应字段并保存。
-5. 按提示重启语音服务，再点击输入区麦克风测试。
+5. 保存后等待语音服务自动应用，再点击输入区麦克风测试。语音凭据当前只检查字段完整性，不做在线校验。
 
 火山官方说明：[控制台使用 FAQ](https://www.volcengine.com/docs/6561/196768)；[新旧控制台凭据差异示例](https://www.volcengine.com/docs/6561/1631584)。
 
@@ -37,7 +37,7 @@ agent-friend 的“语音输入”和“语音通话”是两种能力。先确�
 1. 在火山引擎访问控制中创建并妥善保存 AK/SK；优先使用权限受限的独立身份，不要共享主账号密钥。
 2. 进入 [实时音视频控制台](https://console.volcengine.com/rtc/listRTC)，创建应用并查看 AppID 与 AppKey。
 3. 在豆包语音控制台创建应用、开通服务并获取语音 APP ID 与 Access Token。
-4. 把六个字段填入 agent-friend 的火山凭据区域，保存并重启语音服务。
+4. 把六个字段填入 agent-friend 的火山凭据区域，保存并等待语音服务自动应用。
 5. 发起语音通话，按界面说明确认麦克风和公网连接。
 
 RTC AppKey 是生成通话鉴权信息的私钥，必须保密。官方概念说明：[RTC 基础概念](https://www.volcengine.com/docs/6348/70120)。
@@ -47,5 +47,5 @@ RTC AppKey 是生成通话鉴权信息的私钥，必须保密。官方概念说
 1. 确认配置的是“语音输入”还是“语音通话”所需的完整组合。
 2. 确认相关火山服务已经开通且账号未欠费、未停服。
 3. 确认系统麦克风权限已允许。
-4. 保存凭据后重启语音服务。
+4. 保存凭据后等待语音服务自动应用；通话占用服务时，结束通话后点击“重试应用”。
 5. 仍失败时记录界面错误，再按 `troubleshooting.md` 生成本地诊断包。

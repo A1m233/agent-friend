@@ -27,6 +27,9 @@ IN_PROGRESS
 | 2026-08-20 | installer contract 判定 `full-matrix`、`packageRequired=true`，触发路径为 `runtime_services/supervisor.rs`；按 package-release 门禁等待用户决定是否先做公开 guide 知识检查，再构建 local-test 隔离候选。 |
 | 2026-08-20 | Feature 分支快进同步最新 `main`（`cea42a2`），恢复工作区时无冲突；重新执行完整分阶段门禁：Backend 1910 passed / 4 skipped，Frontend 100 个测试文件、573 项测试及 production build，Rust 210 passed / 1 ignored 并通过 release check。 |
 | 2026-08-20 | 公开 guide 基线与产品 builtin 已同步，但 `model-credentials.md`、`settings-reference.md`、`troubleshooting.md` 仍描述“只保存不校验、手动测试并重启”的旧行为；用户已授权更新公开 guide、发布后同步 builtin。 |
+| 2026-08-20 | 产品来源提交 `8f60da7` 已形成；公开 guide 更新模型、搜索、地点、天气与语音凭据的校验、自动应用和重试说明，经 validator / verify 通过后发布为 `0fedf8b`，远端 `main` 已精确确认。 |
+| 2026-08-20 | 产品 builtin 已同步并 pin `0fedf8b`，快照摘要 `5406615d...` 匹配；完整门禁发现 `test_skill_service.py` 仍断言旧 guide pin，已随生成快照更新预期并进入复验。 |
+| 2026-08-20 | Builtin validator、guide 状态与局部 Skill Service 测试通过；同步后的完整门禁收口：Backend 1910 passed / 4 skipped，Frontend 573 passed 并通过 production build，Rust 210 passed / 1 ignored 并通过 release check。 |
 
 ## 验收记录
 
