@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { CommandApprovalRequest, CommandRuntimeStatus } from "@/services/api/commandRuntime";
+import type {
+  CommandApprovalRequest,
+  CommandProcessSnapshot,
+  CommandRuntimeStatus,
+} from "@/services/api/commandRuntime";
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
-import { buildPendingApprovalQueue } from "./ApprovalDock";
+import { buildPendingApprovalQueue, buildRunningCommandQueue } from "./ApprovalDock";
 
 function command(overrides: Partial<CommandApprovalRequest> = {}): CommandApprovalRequest {
   return {
@@ -54,6 +58,29 @@ function filesystem(overrides: Partial<FilesystemApprovalEntry> = {}): Filesyste
     status: "pending",
     version: 1,
     recoverable: false,
+    ...overrides,
+  };
+}
+
+function commandProcess(
+  overrides: Partial<CommandProcessSnapshot> = {},
+): CommandProcessSnapshot {
+  return {
+    process_id: "process-1",
+    session_id: "session-a",
+    run_id: "run-a",
+    tool_call_id: "tool-a",
+    mode: "buffered",
+    status: "running",
+    started_at: "2026-08-21T00:00:00Z",
+    duration_seconds: 3.5,
+    output_seq: 0,
+    dropped_bytes: 0,
+    sandbox_denied: false,
+    version: 1,
+    stdout: "",
+    stderr: "",
+    pty: "",
     ...overrides,
   };
 }
@@ -145,7 +172,55 @@ describe("buildPendingApprovalQueue", () => {
 
     expect(queue[0]).toMatchObject({
       needsSandboxSetup: false,
-      detail: expect.stringContaining("宿主用户（文件和网络不受限）"),
+      command: "maa version",
+      detailLines: expect.arrayContaining([
+        "执行级别：宿主用户（文件和网络不受限）",
+        "文件：不受限 · 网络：不受限",
+      ]),
     });
+  });
+
+  it("keeps the complete command decision context in the dock model", () => {
+    const queue = buildPendingApprovalQueue({
+      currentSessionId: "session-a",
+      activeRunIdBySession: { "session-a": "run-a" },
+      commandApprovals: { current: command() },
+      commandSubmitting: new Set(),
+      commandRuntimeStatus: runtimeReady,
+      filesystemEntries: {},
+    });
+
+    expect(queue[0]).toMatchObject({
+      reason: "检查环境",
+      command: "maa version",
+      detailLines: [
+        "工作目录：C:\\tools",
+        "模式：普通 · 超时 30 秒",
+        "执行级别：Codex 沙箱",
+        "文件：只读 · 网络：禁止",
+      ],
+    });
+  });
+});
+
+describe("buildRunningCommandQueue", () => {
+  it("shows only running commands owned by the active run", () => {
+    const queue = buildRunningCommandQueue({
+      currentSessionId: "session-a",
+      activeRunIdBySession: { "session-a": "run-a" },
+      commandApprovals: { current: command({ status: "approved" }) },
+      commandProcesses: {
+        current: commandProcess(),
+        terminal: commandProcess({ process_id: "process-done", status: "exited" }),
+        stale: commandProcess({ process_id: "process-old", run_id: "run-old" }),
+      },
+    });
+
+    expect(queue).toEqual([{
+      processId: "process-1",
+      reason: "检查环境",
+      command: "maa version",
+      detail: "普通 · 已运行 3.5 秒",
+    }]);
   });
 });

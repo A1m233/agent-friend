@@ -57,6 +57,10 @@ interface SkillCardDetails {
   reason: string;
 }
 
+function cardWidthClass(embedded: boolean): string {
+  return embedded ? "w-full max-w-none" : "max-w-[85%]";
+}
+
 function skillCardDetails(block: ToolBlock): SkillCardDetails {
   let id = "";
   let name = "";
@@ -80,7 +84,7 @@ function skillCardDetails(block: ToolBlock): SkillCardDetails {
   return { name: name || id || "未知 Skill", source, reason };
 }
 
-function SkillStatusCard({ block }: { block: ToolBlock }) {
+function SkillStatusCard({ block, embedded = false }: { block: ToolBlock; embedded?: boolean }) {
   const baseMeta = STATUS_META[block.status];
   const meta = block.status === "running"
     ? { ...baseMeta, label: "加载中" }
@@ -90,7 +94,10 @@ function SkillStatusCard({ block }: { block: ToolBlock }) {
   const details = skillCardDetails(block);
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+    <div className={cn(
+      cardWidthClass(embedded),
+      "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
+    )}>
       <div className="flex items-center gap-2">
         <StatusDot tone={meta.tone} pulse={meta.pulse} />
         <span className="font-medium text-fg">Skill · {details.name}</span>
@@ -157,7 +164,13 @@ function locatorLabel(locator?: { path?: string; name?: string }): string {
   return locator?.path || (locator?.name ? `标准位置：${locator.name}` : "未提供位置");
 }
 
-function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
+function FilesystemApprovalCard({
+  block,
+  embedded = false,
+}: {
+  block: ToolBlock;
+  embedded?: boolean;
+}) {
   const entry = useFilesystemApprovalsStore((state) =>
     Object.values(state.entries).find((value) => value.request.tool_call_id === block.toolCallId),
   );
@@ -235,7 +248,10 @@ function FilesystemApprovalCard({ block }: { block: ToolBlock }) {
   }));
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+    <div className={cn(
+      cardWidthClass(embedded),
+      "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
+    )}>
       <div className="flex items-center gap-2">
         <StatusDot tone={tone} pulse={pulse} />
         <span className="font-medium text-fg">本地文件访问</span>
@@ -296,7 +312,13 @@ interface CommandArgs {
   skill?: { id?: string; entry?: string; workdir?: string };
 }
 
-function CommandRuntimeCard({ block }: { block: ToolBlock }) {
+function CommandRuntimeCard({
+  block,
+  embedded = false,
+}: {
+  block: ToolBlock;
+  embedded?: boolean;
+}) {
   const approval = useCommandRuntimeStore((state) =>
     Object.values(state.approvals).find((item) => item.tool_call_id === block.toolCallId),
   );
@@ -399,7 +421,10 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
         : "执行目录";
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+    <div className={cn(
+      cardWidthClass(embedded),
+      "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
+    )}>
       <div className="flex items-center gap-2">
         <StatusDot tone={tone} pulse={pulse} />
         <span className="font-medium text-fg">本地命令</span>
@@ -505,31 +530,54 @@ function CommandRuntimeCard({ block }: { block: ToolBlock }) {
   );
 }
 
-export function ToolCard({ block }: { block: ToolBlock }) {
+export function ToolCard({
+  block,
+  embedded = false,
+}: {
+  block: ToolBlock;
+  embedded?: boolean;
+}) {
   if (block.name === "request_filesystem_access") {
-    return <FilesystemApprovalCard block={block} />;
+    return <FilesystemApprovalCard block={block} embedded={embedded} />;
   }
   if (block.name === "request_social_auth" && block.status === "done") {
     return <SocialAuthCard block={block} />;
   }
   if (block.name === "exec_command") {
-    return <CommandRuntimeCard block={block} />;
+    return <CommandRuntimeCard block={block} embedded={embedded} />;
   }
   if (block.name === "skill_read") {
-    return <SkillStatusCard block={block} />;
+    return <SkillStatusCard block={block} embedded={embedded} />;
   }
   const meta = STATUS_META[block.status];
   const args = prettyArgs(block.args);
   const hasDetails = Boolean(args || block.result);
 
   return (
-    <div className="max-w-[85%] rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs">
+    <div className={cn(
+      cardWidthClass(embedded),
+      "rounded-lg border border-border bg-surface/60 px-3 py-2 text-xs",
+    )}>
       <div className="flex items-center gap-2">
         <StatusDot tone={meta.tone} pulse={meta.pulse} />
         <span className="font-medium text-fg">{block.name}</span>
         <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
       </div>
-      {hasDetails && (
+      {hasDetails && embedded && (
+        <div className="max-h-80 overflow-y-auto overscroll-contain">
+          {args && (
+            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
+              {args}
+            </pre>
+          )}
+          {block.result && (
+            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
+              {block.result}
+            </pre>
+          )}
+        </div>
+      )}
+      {hasDetails && !embedded && (
         <Collapsible className="mt-1.5">
           <CollapsibleTrigger className="cursor-pointer select-none text-muted transition-colors hover:text-fg">
             参数 / 结果
