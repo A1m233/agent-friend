@@ -29,6 +29,7 @@ CAPABILITY_HANDLERS = {
     "webview2-process-health-v1": "webView2",
     "webview2-render-evidence-v1": "webView2RenderEvidence",
     "webview2-render-evidence-v2": "webView2RenderEvidence",
+    "webview2-render-evidence-v3": "webView2RenderEvidence",
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
 }
@@ -306,6 +307,7 @@ def summarize_webview2_render_evidence(
             "transparentPixelCount": metrics.get("transparentPixelCount"),
             "opaquePixelCount": metrics.get("opaquePixelCount"),
             "nearBlackOpaqueRatio": metrics.get("nearBlackOpaqueRatio"),
+            "nearWhiteOpaqueRatio": metrics.get("nearWhiteOpaqueRatio"),
             "averageOpaqueLuma": metrics.get("averageOpaqueLuma"),
         }
 
@@ -573,6 +575,7 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             )
             if "webview2-render-evidence-v1" in capabilities
             or "webview2-render-evidence-v2" in capabilities
+            or "webview2-render-evidence-v3" in capabilities
             or "diagnostics/webview2-render-evidence.json" in names
             else None
         )

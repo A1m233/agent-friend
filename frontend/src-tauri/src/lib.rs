@@ -1209,6 +1209,7 @@ pub fn run() {
         webview_diagnostics::capture_webview_render_evidence_now,
         webview_diagnostics::clear_webview_render_evidence,
         webview_diagnostics::record_pet_webview_visibility,
+        webview_diagnostics::simulate_webview2_gpu_process_failure,
         data_migration::coordinator::get_migration_inventory,
         data_migration::coordinator::export_migration_package,
         data_migration::coordinator::preflight_migration_package,

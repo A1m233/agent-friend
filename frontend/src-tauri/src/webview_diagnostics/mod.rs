@@ -1,6 +1,6 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, VecDeque},
@@ -19,7 +19,7 @@ mod windows;
 mod windows_capture;
 
 const EVENT_BUFFER_LIMIT: usize = 128;
-const RENDER_EVIDENCE_SCHEMA_VERSION: u32 = 1;
+const RENDER_EVIDENCE_SCHEMA_VERSION: u32 = 2;
 const RENDER_EVIDENCE_LATEST_DIR: &str = "latest";
 const RENDER_EVIDENCE_METADATA_FILE: &str = "capture.json";
 const RENDER_EVIDENCE_WEBVIEW_FILE: &str = "webview2-pet.png";
@@ -27,7 +27,9 @@ const RENDER_EVIDENCE_DESKTOP_FILE: &str = "windows-desktop.png";
 const RENDER_EVIDENCE_MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 const MIN_ARMED_HIDDEN_DURATION_MS: u64 = 500;
 const FAILURE_REPORT_LIMIT: usize = 16;
-const PRESENTED_RECOVERY_PROBE_TIMEOUT_MS: u64 = 750;
+const DISPLAY_PRESENTED_RECOVERY_PROBE_TIMEOUT_MS: u64 = 750;
+const GPU_PRESENTED_RECOVERY_PROBE_TIMEOUT_MS: u64 = 2_500;
+const GPU_PROCESS_FAILURE_DEDUP_WINDOW_MS: u64 = 1_000;
 
 fn unix_time_ms() -> u64 {
     SystemTime::now()
@@ -44,6 +46,10 @@ pub(crate) struct RenderPixelMetrics {
     opaque_pixel_count: u64,
     near_black_opaque_pixel_count: u64,
     near_black_opaque_ratio: Option<f64>,
+    #[serde(default)]
+    near_white_opaque_pixel_count: u64,
+    #[serde(default)]
+    near_white_opaque_ratio: Option<f64>,
     average_opaque_luma: Option<f64>,
 }
 
@@ -79,7 +85,49 @@ pub(crate) struct RecoveryRenderAssessment {
     baseline_desktop_near_black_ratio: Option<f64>,
     presented_desktop_near_black_ratio: Option<f64>,
     near_black_ratio_delta: Option<f64>,
+    #[serde(default)]
+    baseline_desktop_near_white_ratio: Option<f64>,
+    #[serde(default)]
+    presented_desktop_near_white_ratio: Option<f64>,
+    #[serde(default)]
+    near_white_ratio_delta: Option<f64>,
     baseline_webview_transparent_ratio: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RenderRecoveryTrigger {
+    DisplayResume,
+    WebView2GpuProcessExit,
+}
+
+impl RenderRecoveryTrigger {
+    pub(crate) fn hidden_capture_trigger(self) -> &'static str {
+        match self {
+            Self::DisplayResume => "display-resume-hidden-baseline",
+            Self::WebView2GpuProcessExit => "webview2-gpu-hidden-baseline",
+        }
+    }
+
+    pub(crate) fn presented_capture_trigger(self) -> &'static str {
+        match self {
+            Self::DisplayResume => "display-resume-presented-probe",
+            Self::WebView2GpuProcessExit => "webview2-gpu-presented-probe",
+        }
+    }
+
+    pub(crate) fn observer_prefix(self) -> &'static str {
+        match self {
+            Self::DisplayResume => "display-recovery",
+            Self::WebView2GpuProcessExit => "gpu-recovery",
+        }
+    }
+
+    fn presented_probe_timeout_ms(self) -> u64 {
+        match self {
+            Self::DisplayResume => DISPLAY_PRESENTED_RECOVERY_PROBE_TIMEOUT_MS,
+            Self::WebView2GpuProcessExit => GPU_PRESENTED_RECOVERY_PROBE_TIMEOUT_MS,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -229,6 +277,7 @@ struct Inner {
     render_capture_armed: bool,
     render_hidden_since_unix_ms: Option<u64>,
     render_capture_in_progress: bool,
+    last_gpu_process_failure_unix_ms: Option<u64>,
 }
 
 pub(crate) struct WebViewDiagnosticsManager {
@@ -342,7 +391,26 @@ impl WebViewDiagnosticsManager {
         reason: Option<String>,
         exit_code: Option<i32>,
         process_description: Option<String>,
-    ) {
+    ) -> bool {
+        self.record_process_failed_at(
+            window_label,
+            process_failed_kind,
+            reason,
+            exit_code,
+            process_description,
+            unix_time_ms(),
+        )
+    }
+
+    fn record_process_failed_at(
+        &self,
+        window_label: &str,
+        process_failed_kind: String,
+        reason: Option<String>,
+        exit_code: Option<i32>,
+        process_description: Option<String>,
+        recorded_at_unix_ms: u64,
+    ) -> bool {
         log::error!(
             "webview2 process failed: window={} kind={} reason={} exitCode={}",
             window_label,
@@ -365,6 +433,26 @@ impl WebViewDiagnosticsManager {
                 }),
             );
         }
+        let should_begin_gpu_recovery = if process_failed_kind == "gpu-process-exited" {
+            self.inner
+                .lock()
+                .map(|mut inner| {
+                    let duplicate =
+                        inner
+                            .last_gpu_process_failure_unix_ms
+                            .is_some_and(|previous| {
+                                recorded_at_unix_ms.saturating_sub(previous)
+                                    <= GPU_PROCESS_FAILURE_DEDUP_WINDOW_MS
+                            });
+                    if !duplicate {
+                        inner.last_gpu_process_failure_unix_ms = Some(recorded_at_unix_ms);
+                    }
+                    !duplicate
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
         self.push_event(WebView2DiagnosticEvent {
             sequence: 0,
             captured_at: Local::now().to_rfc3339(),
@@ -378,6 +466,7 @@ impl WebViewDiagnosticsManager {
             browser_process_id: None,
             visibility_state: None,
         });
+        should_begin_gpu_recovery
     }
 
     fn record_browser_process_exited(&self, exit_kind: String, process_id: u32) {
@@ -414,6 +503,25 @@ impl WebViewDiagnosticsManager {
             browser_process_id: Some(process_id),
             visibility_state: None,
         });
+    }
+
+    pub(crate) fn record_recovery_event(
+        &self,
+        trigger: RenderRecoveryTrigger,
+        event: &str,
+        generation: u64,
+        details: Value,
+    ) {
+        if let Some(observer) = &self.runtime_observer {
+            observer.record(
+                "webview2",
+                &format!("{}-{event}", trigger.observer_prefix()),
+                json!({
+                    "generation": generation,
+                    "details": details,
+                }),
+            );
+        }
     }
 
     fn record_page_visibility(
@@ -592,7 +700,7 @@ impl WebViewDiagnosticsManager {
             .map_err(|error| format!("read render evidence metadata failed: {error}"))?;
         let record: RenderEvidenceRecord = serde_json::from_slice(&bytes)
             .map_err(|error| format!("parse render evidence metadata failed: {error}"))?;
-        if record.schema_version != RENDER_EVIDENCE_SCHEMA_VERSION {
+        if !(1..=RENDER_EVIDENCE_SCHEMA_VERSION).contains(&record.schema_version) {
             return Err(format!(
                 "unsupported render evidence schema version {}",
                 record.schema_version
@@ -857,18 +965,19 @@ impl WebViewDiagnosticsManager {
         }
     }
 
-    pub(crate) async fn capture_display_recovery_baseline(
+    pub(crate) async fn capture_recovery_baseline(
         &self,
         app: &AppHandle,
         generation: u64,
         hidden_duration_ms: u64,
+        trigger: RenderRecoveryTrigger,
     ) -> Result<RenderEvidenceRecord, String> {
         self.begin_manual_render_capture()?;
         #[cfg(target_os = "windows")]
         let result = windows_capture::capture_and_store(
             app,
             &self.render_evidence_dir,
-            "display-resume-hidden-baseline",
+            trigger.hidden_capture_trigger(),
             Some(hidden_duration_ms),
             true,
             Some(generation),
@@ -876,13 +985,13 @@ impl WebViewDiagnosticsManager {
         .await;
         #[cfg(not(target_os = "windows"))]
         let result: Result<RenderEvidenceRecord, String> =
-            Err("display recovery evidence is only supported on Windows".into());
+            Err("render recovery evidence is only supported on Windows".into());
         self.finish_render_capture();
         if let Some(observer) = &self.runtime_observer {
             match &result {
                 Ok(record) => observer.record(
                     "webview2",
-                    "display-recovery-baseline-captured",
+                    &format!("{}-baseline-captured", trigger.observer_prefix()),
                     json!({
                         "generation": generation,
                         "captureId": record.capture_id,
@@ -893,7 +1002,7 @@ impl WebViewDiagnosticsManager {
                 ),
                 Err(error) => observer.record(
                     "webview2",
-                    "display-recovery-baseline-failed",
+                    &format!("{}-baseline-failed", trigger.observer_prefix()),
                     json!({"generation": generation, "message": error}),
                 ),
             }
@@ -901,7 +1010,7 @@ impl WebViewDiagnosticsManager {
         result
     }
 
-    pub(crate) fn validate_display_recovery_baseline(
+    pub(crate) fn validate_recovery_baseline(
         &self,
         record: &RenderEvidenceRecord,
     ) -> Result<(), Vec<String>> {
@@ -909,45 +1018,44 @@ impl WebViewDiagnosticsManager {
         return windows_capture::validate_hidden_recovery_baseline(record);
         #[cfg(not(target_os = "windows"))]
         Err(vec![
-            "display recovery evidence is only supported on Windows".into(),
+            "render recovery evidence is only supported on Windows".into(),
         ])
     }
 
-    pub(crate) async fn capture_display_recovery_presented(
+    pub(crate) async fn capture_recovery_presented(
         &self,
         app: &AppHandle,
         baseline: &RenderEvidenceRecord,
         generation: u64,
         hidden_duration_ms: u64,
+        trigger: RenderRecoveryTrigger,
     ) -> Result<bool, String> {
         self.begin_manual_render_capture()?;
+        let timeout_ms = trigger.presented_probe_timeout_ms();
         #[cfg(target_os = "windows")]
         let result = tokio::time::timeout(
-            std::time::Duration::from_millis(PRESENTED_RECOVERY_PROBE_TIMEOUT_MS),
+            std::time::Duration::from_millis(timeout_ms),
             windows_capture::capture_presented_recovery_and_store(
                 app,
                 &self.render_evidence_dir,
                 baseline,
                 generation,
                 Some(hidden_duration_ms),
+                trigger.presented_capture_trigger(),
             ),
         )
         .await
-        .map_err(|_| {
-            format!(
-                "presented desktop recovery probe timed out after {PRESENTED_RECOVERY_PROBE_TIMEOUT_MS} ms"
-            )
-        })
+        .map_err(|_| format!("presented desktop recovery probe timed out after {timeout_ms} ms"))
         .and_then(|result| result);
         #[cfg(not(target_os = "windows"))]
         let result: Result<(RenderEvidenceRecord, bool), String> =
-            Err("display recovery evidence is only supported on Windows".into());
+            Err("render recovery evidence is only supported on Windows".into());
         self.finish_render_capture();
         if let Some(observer) = &self.runtime_observer {
             match &result {
                 Ok((record, safe)) => observer.record(
                     "webview2",
-                    "display-recovery-presented-probed",
+                    &format!("{}-presented-probed", trigger.observer_prefix()),
                     json!({
                         "generation": generation,
                         "captureId": record.capture_id,
@@ -957,7 +1065,7 @@ impl WebViewDiagnosticsManager {
                 ),
                 Err(error) => observer.record(
                     "webview2",
-                    "display-recovery-presented-probe-failed",
+                    &format!("{}-presented-probe-failed", trigger.observer_prefix()),
                     json!({"generation": generation, "message": error}),
                 ),
             }
@@ -1169,6 +1277,25 @@ pub(crate) async fn record_pet_webview_visibility(
     Ok(manager.render_evidence_status())
 }
 
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub(crate) fn simulate_webview2_gpu_process_failure(
+    app: AppHandle,
+    manager: State<'_, Arc<WebViewDiagnosticsManager>>,
+) -> bool {
+    let should_begin_recovery = manager.record_process_failed(
+        "debug-simulation",
+        "gpu-process-exited".to_string(),
+        Some("crashed".to_string()),
+        Some(34),
+        Some("debug-only simulated GPU process failure".to_string()),
+    );
+    if should_begin_recovery {
+        crate::pet_display_recovery::handle_gpu_process_failure(&app, Some("crashed"), Some(34));
+    }
+    should_begin_recovery
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,6 +1325,8 @@ mod tests {
                 opaque_pixel_count: 1,
                 near_black_opaque_pixel_count: 1,
                 near_black_opaque_ratio: Some(1.0),
+                near_white_opaque_pixel_count: 0,
+                near_white_opaque_ratio: Some(0.0),
                 average_opaque_luma: Some(0.0),
             },
         };
@@ -1248,6 +1377,63 @@ mod tests {
         assert!(!manager.claim_window_registration("pet"));
         assert!(manager.claim_environment_registration());
         assert!(!manager.claim_environment_registration());
+    }
+
+    #[test]
+    fn gpu_presented_probe_has_a_larger_budget_than_display_resume() {
+        assert_eq!(
+            RenderRecoveryTrigger::DisplayResume.presented_probe_timeout_ms(),
+            750
+        );
+        assert_eq!(
+            RenderRecoveryTrigger::WebView2GpuProcessExit.presented_probe_timeout_ms(),
+            2_500
+        );
+    }
+
+    #[test]
+    fn shared_gpu_process_failure_starts_only_one_recovery_per_burst() {
+        let manager = test_manager("webview-gpu-process-dedup");
+
+        assert!(manager.record_process_failed_at(
+            "pet",
+            "gpu-process-exited".to_string(),
+            Some("crashed".to_string()),
+            Some(34),
+            None,
+            10_000,
+        ));
+        assert!(!manager.record_process_failed_at(
+            "chat",
+            "gpu-process-exited".to_string(),
+            Some("crashed".to_string()),
+            Some(34),
+            None,
+            10_500,
+        ));
+        assert!(manager.record_process_failed_at(
+            "settings",
+            "gpu-process-exited".to_string(),
+            Some("crashed".to_string()),
+            Some(34),
+            None,
+            11_001,
+        ));
+        assert_eq!(manager.snapshot().events.len(), 3);
+    }
+
+    #[test]
+    fn non_gpu_process_failure_does_not_start_gpu_recovery() {
+        let manager = test_manager("webview-render-process-no-gpu-recovery");
+
+        assert!(!manager.record_process_failed_at(
+            "chat",
+            "render-process-exited".to_string(),
+            Some("crashed".to_string()),
+            Some(1),
+            None,
+            10_000,
+        ));
     }
 
     #[test]

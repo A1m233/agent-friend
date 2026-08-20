@@ -37,11 +37,15 @@ pub(super) fn install_existing_windows(app: &AppHandle, manager: &Arc<WebViewDia
     let mut windows = app.webview_windows().into_values().collect::<Vec<_>>();
     windows.sort_by_key(|window| (window.label() != "pet", window.label().to_string()));
     for window in windows {
-        install_window(&window, manager);
+        install_window(app, &window, manager);
     }
 }
 
-fn install_window(window: &WebviewWindow<Wry>, manager: &Arc<WebViewDiagnosticsManager>) {
+fn install_window(
+    app: &AppHandle,
+    window: &WebviewWindow<Wry>,
+    manager: &Arc<WebViewDiagnosticsManager>,
+) {
     let label = window.label().to_string();
     if !manager.claim_window_registration(&label) {
         return;
@@ -49,10 +53,11 @@ fn install_window(window: &WebviewWindow<Wry>, manager: &Arc<WebViewDiagnosticsM
 
     let closure_manager = manager.clone();
     let closure_label = label.clone();
+    let closure_app = app.clone();
     let scheduled = window.with_webview(move |webview| {
         let result = (|| -> webview2_com::Result<()> {
             let core = unsafe { webview.controller().CoreWebView2()? };
-            install_process_failed_handler(&core, &closure_label, &closure_manager)?;
+            install_process_failed_handler(&core, &closure_label, &closure_manager, &closure_app)?;
             closure_manager.mark_window_registered(&closure_label);
 
             if closure_manager.claim_environment_registration() {
@@ -77,19 +82,28 @@ fn install_process_failed_handler(
     core: &ICoreWebView2,
     window_label: &str,
     manager: &Arc<WebViewDiagnosticsManager>,
+    app: &AppHandle,
 ) -> webview2_com::Result<()> {
     let callback_manager = manager.clone();
     let callback_label = window_label.to_string();
+    let callback_app = app.clone();
     let handler = ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
         if let Some(args) = args {
             let (kind, reason, exit_code, description) = read_process_failure(&args);
-            callback_manager.record_process_failed(
+            let should_begin_recovery = callback_manager.record_process_failed(
                 &callback_label,
                 kind,
-                reason,
+                reason.clone(),
                 exit_code,
                 description,
             );
+            if should_begin_recovery {
+                crate::pet_display_recovery::handle_gpu_process_failure(
+                    &callback_app,
+                    reason.as_deref(),
+                    exit_code,
+                );
+            }
         } else {
             callback_manager.record_registration_failure(
                 Some(&callback_label),

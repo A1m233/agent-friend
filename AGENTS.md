@@ -30,7 +30,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: bb99bebae5a18cec7ab7181256cd25e07a103d5bd11eb2031d8b31479eb3aef3 -->
+<!-- codex-adapter-source-sha256: f0a5c1483d2c03f9179a9241e31bce3fb495eb9f07c3902136b2e5f2eb00bdd1 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -311,14 +311,24 @@ issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只�
 
 临场修复没有 issue README 入口，但只要本质是修复既有行为（而不是新增产品能力），仍按本节判断分支策略。不要因为没有 issue 编号就默认在 `main` 上改生产代码。
 
+### Issue 归属门禁
+
+`docs/issues/` 是“当下不修、流到后续处理”的 backlog，不是所有 bug 的历史档案。修复任务默认按以下规则路由：
+
+- 问题在本次任务中首次确认，并决定当场修复 → 走**临场修复**；即使仓库里存在症状相似、范围更宽或只有假设性关联的历史 issue，也不得自动绑定、扩写或关闭那个 issue。
+- 只有用户明确点名某个已登记 issue（编号、路径或无歧义的“修这个 issue”上下文），或在看到“确属同一个已登记问题”的证据后明确同意绑定，才进入 `fix-issue` 闭环。
+- 历史 issue、主干提交和旧诊断可以作为调查上下文；“症状相似”“issue 里提过一种可能性”或“修复顺便覆盖它”都不是 issue 归属证据。
+- 本次已经修复的问题不得为了留痕再补建一个 `resolved` issue。修复历史由 commit、回归测试、诊断证据或需求验收记录承载。
+- 本次决定不修、暂停修复或把剩余问题延期时，才使用 `add-issue` 登记；以后真正从该 backlog 项启动修复时再进入 `fix-issue`。
+
 ### 分支策略（修复）
 
 - **只补充 issue 文档 / 附带复现资料**：可直接在 `main` 上提交。例如补 README、放 issue-local replay / smoke 脚本、记录调查结论。
 - **只新增小型回归测试、不改生产代码**：可作为 test/hotfix 直接在 `main` 上提交；若测试覆盖核心运行链路、改动范围较大、或会显著影响 CI，推荐开 fix 分支。
 - **修复生产代码**：必须从最新 `main` 开 fix 分支。
 - **已登记 issue 的 fix 分支命名**：`fix/<NNN>-<slug>`，编号与 `docs/issues/` 目录一致。
-- **无 issue 编号的临场修复分支命名**：`fix/<kebab-case slug>`，slug 应描述被修复的问题，例如 `fix/memory-inconsistency-preflight`；如果修复过程中决定登记 issue，再按新 issue 编号重命名为 `fix/<NNN>-<slug>`。
-- **同一 fix 分支只修一个问题**：除非用户明确要求合并处理；调查时发现的新问题应登记新 issue 或另开 fix 分支，不顺手混修。
+- **无 issue 编号的临场修复分支命名**：`fix/<kebab-case slug>`，slug 应描述被修复的问题，例如 `fix/memory-inconsistency-preflight`。临场修复完成后不补 issue 编号；若后来决定把未完成部分延期，先登记 backlog，未来处理时再使用带编号的 fix 分支。
+- **同一 fix 分支只修一个问题**：除非用户明确要求合并处理；调查时发现的新问题，当场修复则另开无编号 fix 分支，决定延期才登记新 issue，不顺手混修。
 
 ### 关闭标准（issue）
 
@@ -353,6 +363,8 @@ issue 修复以 `docs/issues/<NNN>-slug/README.md` 为入口。登记 issue 只�
 
 - 多个需求的实现在同一条分支上累积。
 - 多个 issue 的修复在同一条分支上累积。
+- 因为历史 issue 症状相似，就把本次首次发现且当场修复的问题自动绑定、扩写或关闭到该 issue。
+- 为了给本次已完成修复留档，事后补建一个 `resolved` issue。
 - 在 main 上直接开发，事后再"补一条分支"圈历史。
 - 需求 AC 未跑通就合入 main，留待"以后再补"。
 - issue 未跑对应测试 / smoke / 人工验收就标 `resolved`。
@@ -506,7 +518,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `agent-handoff` | 把 feature-delivery 流程中当前 session 的工作交接给下一个 agent。产出 transfer prompt（给对方粘贴）+ 当前 session 收尾 list（… |
 | `clean-agent-friend-worktrees` | 显式盘点并安全删除 agent-friend 的 Git/Codex worktree。仅当用户明确调用 `$clean-agent-friend-worktrees` 时使用；检查 dir… |
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
-| `fix-issue` | 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验… |
+| `fix-issue` | 把用户明确点名的 docs/issues/NNN-slug/ 已登记 issue 闭环——读 issue、核对现状、落地修复、验证、标记 resolved 并提交。仅当用户给出 issue… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
 | `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，并维护、验证、发布 agent-friend-guide 与同步产品 builtin。显式触发：用户直接要求检查、维护、发布… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |

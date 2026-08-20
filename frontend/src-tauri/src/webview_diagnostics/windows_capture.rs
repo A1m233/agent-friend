@@ -57,8 +57,11 @@ const MAX_IMAGE_BYTES: usize = 48 * 1024 * 1024;
 const MAX_DECODED_IMAGE_BYTES: usize = MAX_IMAGE_BYTES * 4;
 const MIN_WEBVIEW_TRANSPARENT_RATIO: f64 = 0.50;
 const MAX_WEBVIEW_NEAR_BLACK_OPAQUE_RATIO: f64 = 0.98;
+const MAX_WEBVIEW_NEAR_WHITE_OPAQUE_RATIO: f64 = 0.98;
 const PRESENTED_BLACK_RATIO_THRESHOLD: f64 = 0.90;
 const PRESENTED_BLACK_RATIO_DELTA_THRESHOLD: f64 = 0.35;
+const PRESENTED_WHITE_RATIO_THRESHOLD: f64 = 0.90;
+const PRESENTED_WHITE_RATIO_DELTA_THRESHOLD: f64 = 0.35;
 
 struct CapturedImage {
     bytes: Vec<u8>,
@@ -265,6 +268,13 @@ pub(super) fn validate_hidden_recovery_baseline(
     {
         reasons.push("WebView2 opaque pixels are almost entirely near-black".into());
     }
+    if webview
+        .pixel_metrics
+        .near_white_opaque_ratio
+        .is_some_and(|ratio| ratio >= MAX_WEBVIEW_NEAR_WHITE_OPAQUE_RATIO)
+    {
+        reasons.push("WebView2 opaque pixels are almost entirely near-white".into());
+    }
     if reasons.is_empty() {
         Ok(())
     } else {
@@ -275,24 +285,46 @@ pub(super) fn validate_hidden_recovery_baseline(
 fn presented_desktop_assessment(
     baseline: &RenderImageEvidence,
     presented: &RenderImageEvidence,
-) -> (bool, Vec<String>, Option<f64>) {
-    let baseline_ratio = baseline.pixel_metrics.near_black_opaque_ratio;
-    let presented_ratio = presented.pixel_metrics.near_black_opaque_ratio;
-    let delta = baseline_ratio
-        .zip(presented_ratio)
+) -> (bool, Vec<String>, Option<f64>, Option<f64>) {
+    let baseline_black_ratio = baseline.pixel_metrics.near_black_opaque_ratio;
+    let presented_black_ratio = presented.pixel_metrics.near_black_opaque_ratio;
+    let black_delta = baseline_black_ratio
+        .zip(presented_black_ratio)
         .map(|(baseline, presented)| presented - baseline);
-    let suspicious = presented_ratio.is_some_and(|ratio| ratio >= PRESENTED_BLACK_RATIO_THRESHOLD)
-        && delta.is_some_and(|value| value >= PRESENTED_BLACK_RATIO_DELTA_THRESHOLD);
-    let reasons = suspicious
-        .then(|| {
-            vec![format!(
-                "presented desktop near-black ratio increased from {:.4} to {:.4}",
-                baseline_ratio.unwrap_or_default(),
-                presented_ratio.unwrap_or_default()
-            )]
-        })
-        .unwrap_or_default();
-    (!suspicious, reasons, delta)
+    let suspicious_black = presented_black_ratio
+        .is_some_and(|ratio| ratio >= PRESENTED_BLACK_RATIO_THRESHOLD)
+        && black_delta.is_some_and(|value| value >= PRESENTED_BLACK_RATIO_DELTA_THRESHOLD);
+
+    let baseline_white_ratio = baseline.pixel_metrics.near_white_opaque_ratio;
+    let presented_white_ratio = presented.pixel_metrics.near_white_opaque_ratio;
+    let white_delta = baseline_white_ratio
+        .zip(presented_white_ratio)
+        .map(|(baseline, presented)| presented - baseline);
+    let suspicious_white = presented_white_ratio
+        .is_some_and(|ratio| ratio >= PRESENTED_WHITE_RATIO_THRESHOLD)
+        && white_delta.is_some_and(|value| value >= PRESENTED_WHITE_RATIO_DELTA_THRESHOLD);
+
+    let mut reasons = Vec::new();
+    if suspicious_black {
+        reasons.push(format!(
+            "presented desktop near-black ratio increased from {:.4} to {:.4}",
+            baseline_black_ratio.unwrap_or_default(),
+            presented_black_ratio.unwrap_or_default()
+        ));
+    }
+    if suspicious_white {
+        reasons.push(format!(
+            "presented desktop near-white ratio increased from {:.4} to {:.4}",
+            baseline_white_ratio.unwrap_or_default(),
+            presented_white_ratio.unwrap_or_default()
+        ));
+    }
+    (
+        !suspicious_black && !suspicious_white,
+        reasons,
+        black_delta,
+        white_delta,
+    )
 }
 
 pub(super) async fn capture_presented_recovery_and_store(
@@ -301,6 +333,7 @@ pub(super) async fn capture_presented_recovery_and_store(
     baseline: &RenderEvidenceRecord,
     generation: u64,
     hidden_duration_ms: Option<u64>,
+    presented_trigger: &str,
 ) -> Result<(RenderEvidenceRecord, bool), String> {
     let window = app
         .get_webview_window("pet")
@@ -342,7 +375,7 @@ pub(super) async fn capture_presented_recovery_and_store(
     fs::write(staging.join(RENDER_EVIDENCE_WEBVIEW_FILE), &webview_bytes)
         .map_err(|error| format!("persist hidden WebView2 baseline failed: {error}"))?;
 
-    let (safe, reasons, near_black_ratio_delta) =
+    let (safe, reasons, near_black_ratio_delta, near_white_ratio_delta) =
         presented_desktop_assessment(baseline_desktop, &desktop);
     let assessment = RecoveryRenderAssessment {
         generation,
@@ -352,12 +385,15 @@ pub(super) async fn capture_presented_recovery_and_store(
         baseline_desktop_near_black_ratio: baseline_desktop.pixel_metrics.near_black_opaque_ratio,
         presented_desktop_near_black_ratio: desktop.pixel_metrics.near_black_opaque_ratio,
         near_black_ratio_delta,
+        baseline_desktop_near_white_ratio: baseline_desktop.pixel_metrics.near_white_opaque_ratio,
+        presented_desktop_near_white_ratio: desktop.pixel_metrics.near_white_opaque_ratio,
+        near_white_ratio_delta,
         baseline_webview_transparent_ratio: baseline_webview.transparent_ratio(),
     };
     let record = RenderEvidenceRecord {
         schema_version: RENDER_EVIDENCE_SCHEMA_VERSION,
         capture_id: capture_id.clone(),
-        trigger: "display-resume-presented-probe".into(),
+        trigger: presented_trigger.into(),
         hidden_duration_ms,
         capture_started_at,
         capture_completed_at: Local::now().to_rfc3339(),
@@ -749,6 +785,7 @@ fn metrics_from_rgba(rgba: &[u8]) -> RenderPixelMetrics {
     let mut transparent_pixel_count = 0_u64;
     let mut opaque_pixel_count = 0_u64;
     let mut near_black_opaque_pixel_count = 0_u64;
+    let mut near_white_opaque_pixel_count = 0_u64;
     let mut luma_sum = 0_f64;
     for pixel in rgba.chunks_exact(4) {
         if pixel[3] < 16 {
@@ -761,6 +798,9 @@ fn metrics_from_rgba(rgba: &[u8]) -> RenderPixelMetrics {
         if luma <= 8.0 {
             near_black_opaque_pixel_count += 1;
         }
+        if luma >= 247.0 {
+            near_white_opaque_pixel_count += 1;
+        }
     }
     RenderPixelMetrics {
         total_pixels,
@@ -769,6 +809,9 @@ fn metrics_from_rgba(rgba: &[u8]) -> RenderPixelMetrics {
         near_black_opaque_pixel_count,
         near_black_opaque_ratio: (opaque_pixel_count > 0)
             .then_some(near_black_opaque_pixel_count as f64 / opaque_pixel_count as f64),
+        near_white_opaque_pixel_count,
+        near_white_opaque_ratio: (opaque_pixel_count > 0)
+            .then_some(near_white_opaque_pixel_count as f64 / opaque_pixel_count as f64),
         average_opaque_luma: (opaque_pixel_count > 0)
             .then_some(luma_sum / opaque_pixel_count as f64),
     }
@@ -807,9 +850,22 @@ mod tests {
                 near_black_opaque_pixel_count: (near_black_opaque_ratio * opaque_pixel_count as f64)
                     as u64,
                 near_black_opaque_ratio: Some(near_black_opaque_ratio),
+                near_white_opaque_pixel_count: 0,
+                near_white_opaque_ratio: Some(0.0),
                 average_opaque_luma: Some(32.0),
             },
         }
+    }
+
+    fn image_with_white_metrics(
+        transparent_ratio: f64,
+        near_white_opaque_ratio: f64,
+    ) -> RenderImageEvidence {
+        let mut image = image_with_metrics(transparent_ratio, 0.0);
+        image.pixel_metrics.near_white_opaque_pixel_count =
+            (near_white_opaque_ratio * image.pixel_metrics.opaque_pixel_count as f64) as u64;
+        image.pixel_metrics.near_white_opaque_ratio = Some(near_white_opaque_ratio);
+        image
     }
 
     fn recovery_record(webview: RenderImageEvidence) -> RenderEvidenceRecord {
@@ -842,6 +898,8 @@ mod tests {
         assert_eq!(metrics.opaque_pixel_count, 2);
         assert_eq!(metrics.near_black_opaque_pixel_count, 1);
         assert_eq!(metrics.near_black_opaque_ratio, Some(0.5));
+        assert_eq!(metrics.near_white_opaque_pixel_count, 1);
+        assert_eq!(metrics.near_white_opaque_ratio, Some(0.5));
     }
 
     #[test]
@@ -851,6 +909,7 @@ mod tests {
 
         assert_eq!((width, height), (2, 1));
         assert_eq!(metrics.near_black_opaque_ratio, Some(0.5));
+        assert_eq!(metrics.near_white_opaque_ratio, Some(0.5));
     }
 
     #[test]
@@ -858,7 +917,7 @@ mod tests {
         let baseline = image_with_metrics(0.0, 0.10);
         let presented = image_with_metrics(0.0, 0.96);
 
-        let (safe, reasons, delta) = presented_desktop_assessment(&baseline, &presented);
+        let (safe, reasons, delta, _) = presented_desktop_assessment(&baseline, &presented);
 
         assert!(!safe);
         assert!(!reasons.is_empty());
@@ -870,10 +929,22 @@ mod tests {
         let baseline = image_with_metrics(0.0, 0.94);
         let presented = image_with_metrics(0.0, 0.95);
 
-        let (safe, reasons, _) = presented_desktop_assessment(&baseline, &presented);
+        let (safe, reasons, _, _) = presented_desktop_assessment(&baseline, &presented);
 
         assert!(safe);
         assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn presented_probe_rejects_a_new_near_white_full_desktop_layer() {
+        let baseline = image_with_white_metrics(0.0, 0.10);
+        let presented = image_with_white_metrics(0.0, 0.96);
+
+        let (safe, reasons, _, delta) = presented_desktop_assessment(&baseline, &presented);
+
+        assert!(!safe);
+        assert!(reasons.iter().any(|reason| reason.contains("near-white")));
+        assert!((delta.expect("ratio delta") - 0.86).abs() < f64::EPSILON * 4.0);
     }
 
     #[test]
@@ -887,5 +958,9 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("transparent ratio")));
         assert!(reasons.iter().any(|reason| reason.contains("near-black")));
+
+        let opaque_white = recovery_record(image_with_white_metrics(0.0, 1.0));
+        let reasons = validate_hidden_recovery_baseline(&opaque_white).unwrap_err();
+        assert!(reasons.iter().any(|reason| reason.contains("near-white")));
     }
 }

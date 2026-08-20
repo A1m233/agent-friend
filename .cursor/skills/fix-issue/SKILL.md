@@ -1,11 +1,20 @@
 ---
 name: fix-issue
-description: 把 docs/issues/<NNN>-<slug>/ 下已登记的 issue 闭环——读 issue → 核对现状 → 选定修复方向 → 按 dev-workflow 分支策略落地 → 验证通过 → 状态改 resolved → 调 gen-commit-message 出 commit。当用户说"修 issue X"、"解决 issue X"、"close issue X"、"fix issue"时触发。
+description: 把用户明确点名的 docs/issues/NNN-slug/ 已登记 issue 闭环——读 issue、核对现状、落地修复、验证、标记 resolved 并提交。仅当用户给出 issue 编号/路径，或上下文无歧义地要求修/关某个已登记 issue 时使用；不得因症状相似、历史 issue 可参考或本次修复覆盖其假设而自动触发。
 ---
 
 # 修 issue（docs/issues/）
 
 承接 `docs/issues/<NNN>-<slug>/README.md` 已经写好的"现象 / 根因 / 修复方向"，把分析落成代码 + 闭环 issue 状态。**只处理已登记的 issue**——临场发现的小问题不走本 skill，但仍按 `dev-workflow.mdc` 的临场修复分支策略判断是否需要 fix 分支。
+
+## Activation Gate
+
+进入本 skill 前必须同时满足：
+
+1. 目标是 `docs/issues/` 下已经存在的具体 issue；
+2. 用户明确给出编号 / 路径，或当前上下文无歧义地指向并要求修复 / 关闭该 issue。
+
+只搜索到相似 issue、从主干历史看到相同症状、旧 issue 列过相关假设，或本次修复可能顺带覆盖旧 issue，都不构成触发。此时把旧 issue 当调查上下文，本次仍按临场修复推进，不修改旧 issue 状态；若证据确认二者确属同一问题，也要先让用户明确同意绑定。
 
 ## 前置：先读管理规则
 
