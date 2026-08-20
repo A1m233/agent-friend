@@ -59,7 +59,9 @@ import {
   type MessageScrollFollowEvent,
 } from "./messageScrollFollow";
 import { ReminderCard } from "./ReminderCard";
+import { ToolActivity } from "./ToolActivity";
 import { ToolCard } from "./ToolCard";
+import { buildMessagePresentationSegments } from "./toolActivityPresentation";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
 import {
@@ -388,8 +390,19 @@ function MessageContent({
   const hasErrorBubble = message.status === "error" && !!message.error;
   const actionBarBlockIndex = hasErrorBubble ? -1 : lastRenderableBlockIndex(message);
   let shouldRenderExternalActionBar = false;
-  const rendered = message.blocks
-    .map((b, i) => {
+  const rendered = buildMessagePresentationSegments(message.blocks)
+    .map((segment) => {
+      if (segment.kind === "toolActivity") {
+        if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
+        return <ToolActivity key={segment.id} blocks={segment.blocks} />;
+      }
+      if (segment.kind === "interactiveTool") {
+        if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
+        return <ToolCard key={`c:${segment.block.toolCallId}`} block={segment.block} />;
+      }
+
+      const b = segment.block;
+      const i = segment.startIndex;
       if (b.kind === "text") {
         return (
           message.status === "streaming" ? (
@@ -404,10 +417,6 @@ function MessageContent({
             />
           )
         );
-      }
-      if (b.kind === "tool") {
-        if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
-        return <ToolCard key={`c:${b.toolCallId || i}`} block={b} />;
       }
       if (b.kind === "reminder") {
         if (i === actionBarBlockIndex) shouldRenderExternalActionBar = true;
