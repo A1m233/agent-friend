@@ -3,7 +3,7 @@
 把 ``agent-cli`` ``__main__.py`` 已经在用的装配模式抽取出来，让 bridge 进程
 也能跑同一套：``SessionManager`` + ``PersonaCatalog`` + 上下文管理工厂
 （``default_context_manager``，009 起默认摘要压缩 + FIFO 兜底）
-+ ``ToolRegistry`` + ``LLMClientFactory`` + ``PromptBuilderFactory``。
++ ``ToolRegistry`` + ``LanguageModelFactory`` + ``PromptBuilderFactory``。
 
 bridge 进程是**单实例多请求**模型——这些组件在进程启动时装配一次，所有请求
 共享同一份；不能在每个 HTTP 请求里重装。
@@ -60,7 +60,7 @@ from agent import (
     make_default_registry,
     make_default_social_platform_service,
 )
-from llm_providers import LLMClient, MultimodalInputAdapter
+from llm_providers import LanguageModel, LanguageModelFactory, MultimodalInputAdapter
 from memory import Memory, MemorySearchService, build_memory
 from runtime_config import DesktopSettingsReader, config_mode_from_env, credential_source_for_mode
 
@@ -68,7 +68,11 @@ from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
 from .presence import PresenceRegistry
 from .reminders import ReminderDeliveryOrchestrator
-from .runtime_config import BridgeRuntimeConfig, DeferredLLMClient, resolve_bridge_runtime_config
+from .runtime_config import (
+    BridgeRuntimeConfig,
+    DeferredLanguageModel,
+    resolve_bridge_runtime_config,
+)
 from .session_models import SessionModelService
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
@@ -84,7 +88,7 @@ from .self_presentation import DesktopSelfPresentationModeProvider
 logger = logging.getLogger(__name__)
 
 
-def _llm_factory(model: str) -> LLMClient:
+def _llm_factory(model: str) -> LanguageModel:
     raise RuntimeError("BridgeRuntime.llm_client_factory is required before creating sessions")
 
 
@@ -146,7 +150,7 @@ class BridgeRuntime:
     default_persona: str
     default_model: str
     attachment_store: AttachmentStore | None = None
-    llm_client_factory: Callable[[str], LLMClient] | None = None
+    llm_client_factory: LanguageModelFactory | None = None
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
     skill_service: SkillCatalogService | None = None
@@ -235,7 +239,7 @@ def _make_persistent_session_manager(
     tool_registry: ToolRegistry,
     memory: Memory | None,
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder],
-    llm_client_factory: Callable[[str], LLMClient],
+    llm_client_factory: LanguageModelFactory,
     metadata_store: SessionMetadataStore | None = None,
     session_change_broker: SessionChangeBroker | None = None,
     multimodal_adapter: MultimodalInputAdapter | None = None,
@@ -262,7 +266,7 @@ def make_persona_editor_session_manager(
     *,
     store: EffectivePersonaStore,
     sessions_dir: Path,
-    llm_client_factory: Callable[[str], LLMClient],
+    llm_client_factory: LanguageModelFactory,
     workspace: PersonaEditorWorkspace,
 ) -> SessionManager:
     """构造人格编辑专用 manager；目录、prompt、工具均不与正式会话共享。"""
@@ -389,7 +393,7 @@ def build_runtime(
         recall_buffer = RecallBuffer()
         memory = build_memory(
             settings.memory_db,
-            cast(LLMClient, DeferredLLMClient(runtime_config.memory_client_factory)),
+            DeferredLanguageModel(runtime_config.memory_client_factory),
             on_retrieved=recall_buffer.record,
             search_service=memory_search,
             dense_model_dir=settings.memory_model_dir,

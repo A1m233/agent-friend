@@ -1,7 +1,7 @@
 """``build_memory``：把记忆系统的各组件装配成可用的 :class:`Memory` 门面。
 
 调用方（``tools.cli`` / 未来 HTTP backend / 桌宠前端）只需提供"库路径 + 一个
-LLMClient"，不必关心 store / extractor / reconciler / retrieval / renderer 怎么拼。
+LanguageModel"，不必关心 store / extractor / reconciler / retrieval / renderer 怎么拼。
 换召回策略（向量）、换打分权重等都在此集中调整，调用方不动（design §3 / §10）。
 
 Pass-1（013 M13.4）：加两个 ablation 切片开关供 evaluator 跑切片 baseline。
@@ -30,7 +30,7 @@ from .store import SqliteMemoryStore
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
 
     from .contracts import RecallTrace
     from .extraction import ExtractionAttempt, ExtractionResult
@@ -46,7 +46,7 @@ _DENSE_MODEL_FILE = Path("onnx") / "model_quantized.onnx"
 
 def build_memory(
     db_path: Path | str,
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     on_extracted: Callable[[ExtractionResult], None] | None = None,
     on_extraction_attempt: Callable[[ExtractionAttempt], None] | None = None,

@@ -14,6 +14,7 @@ from openai import OpenAI
 from ..catalog import infer_provider_id_from_model, model_capabilities
 from ..client import LLMClient
 from ..errors import LLMBadRequestError, LLMProviderError
+from ..protocol import LanguageModel
 
 OpenAsset = Callable[[str], BinaryIO]
 
@@ -28,12 +29,13 @@ class MultimodalInputAdapter:
         self._locks_guard = threading.Lock()
         self._locks: dict[str, threading.Lock] = {}
 
-    def render_message(self, message: Any, client: LLMClient) -> dict[str, Any]:
+    def render_message(self, message: Any, client: LanguageModel) -> dict[str, Any]:
         attachments = list(getattr(message, "attachments", []) or [])
         if not attachments or getattr(message, "role", None) != "user":
             return cast(dict[str, Any], message.to_openai())
 
-        model_id = self._canonical_model_id(client)
+        concrete_client = self._concrete_client(client)
+        model_id = self._canonical_model_id(concrete_client)
         capabilities = model_capabilities(model_id)
         if not capabilities.attachments:
             if getattr(message, "meta", {}).get("current_input"):
@@ -58,11 +60,11 @@ class MultimodalInputAdapter:
         for attachment in attachments:
             if attachment.media_type not in capabilities.accepted_media_types:
                 raise LLMBadRequestError("attachment_type_unsupported: 当前模型不支持此附件类型。")
-            prepared = self._prepare_kimi(attachment, client)
+            prepared = self._prepare_kimi(attachment, concrete_client)
             if attachment.kind == "image":
                 content.append({"type": "image_url", "image_url": {"url": prepared["url"]}})
             else:
-                if int(len(prepared["content"]) * 0.75) > int(client.context_window * 0.6):
+                if int(len(prepared["content"]) * 0.75) > int(concrete_client.context_window * 0.6):
                     raise LLMBadRequestError(
                         "attachment_context_too_large: 附件抽取内容超过当前模型的上下文容量。"
                     )
@@ -88,6 +90,12 @@ class MultimodalInputAdapter:
         if model.startswith("openai/kimi-"):
             return "kimi/" + model.removeprefix("openai/")
         return model
+
+    @staticmethod
+    def _concrete_client(client: LanguageModel) -> LLMClient:
+        if not isinstance(client, LLMClient):
+            raise LLMBadRequestError("attachment_model_unsupported: 当前模型路由没有附件适配器。")
+        return client
 
     def _prepare_kimi(self, attachment: Any, client: LLMClient) -> dict[str, str]:
         account_scope = hashlib.sha256(client.spec.api_key.encode("utf-8")).hexdigest()[:16]

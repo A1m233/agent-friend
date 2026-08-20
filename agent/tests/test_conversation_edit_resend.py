@@ -6,7 +6,7 @@ from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import pytest
@@ -31,11 +31,13 @@ from agent import (
     TurnDone,
 )
 from llm_providers import (
-    LLMClient,
+    LanguageModel,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -46,17 +48,14 @@ class _ScriptedLLMClient:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     context_window: int = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -68,15 +67,12 @@ class _ScriptedLLMClient:
 class _FailingLLMClient:
     context_window = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
         raise RuntimeError("llm init failed")
         yield  # pragma: no cover
@@ -96,7 +92,7 @@ def _conversation(
     *,
     session: Session | None = None,
     store: JsonlSessionStore | None = None,
-    llm: LLMClient,
+    llm: LanguageModel,
     llm_factory: Any | None = None,
     tool_registry: ToolRegistry | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
@@ -159,7 +155,7 @@ def test_edit_resend_preserves_later_model_change(tmp_path: Path) -> None:
     llm = _ScriptedLLMClient(
         script=[[LLMTextDelta(text="new answer"), LLMTurnDone(stop_reason="end_turn")]]
     )
-    conv = _conversation(tmp_path, session=session, store=store, llm=cast(LLMClient, llm))
+    conv = _conversation(tmp_path, session=session, store=store, llm=llm)
 
     list(conv.edit_resend_latest("new question", expected_user_content="old question"))
 
@@ -299,7 +295,7 @@ def test_content_policy_failure_sanitizes_only_the_last_model_call(
     ]
 
     fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
-    conv = _conversation(tmp_path, session=session, store=store, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, session=session, store=store, llm=fake)
     list(conv.stream("fresh question"))
 
     sent = "\n".join(str(message.get("content", "")) for message in fake.received[0])
@@ -411,7 +407,7 @@ def test_edit_resend_latest_uses_prefix_context_and_appends_rewrite(tmp_path: Pa
             [LLMTextDelta(text="new answer"), LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
 
     list(conv.stream("old question"))
     list(conv.edit_resend_latest("new question", expected_user_content="old question"))
@@ -448,7 +444,7 @@ def test_edit_resend_uses_the_same_tool_budget_stop_semantics(tmp_path: Path) ->
     )
     conv = _conversation(
         tmp_path,
-        llm=cast(LLMClient, fake),
+        llm=fake,
         tool_registry=ToolRegistry([_EchoTool()]),
         tool_run_policy=ToolRunPolicy(max_model_continuations=1),
     )
@@ -468,7 +464,7 @@ def test_edit_resend_latest_preserves_attachments(tmp_path: Path) -> None:
             [LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     attachment = AttachmentRef(
         asset_id="a" * 64,
         display_name="report.pdf",
@@ -495,7 +491,7 @@ def test_edit_resend_latest_replaces_attachments_and_allows_attachment_only(
             [LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     original = AttachmentRef(
         asset_id="c" * 64,
         display_name="original.txt",
@@ -540,7 +536,7 @@ def test_edit_resend_latest_explicit_empty_attachments_removes_original(
             [LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     original = AttachmentRef(
         asset_id="e" * 64,
         display_name="original.pdf",
@@ -566,7 +562,7 @@ def test_edit_resend_latest_explicit_empty_attachments_removes_original(
 
 def test_edit_resend_latest_rejects_stale_user_uuid(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     list(conv.stream("old"))
 
     with pytest.raises(AgentError, match="最后一条用户消息已变化"):
@@ -586,7 +582,7 @@ def test_edit_resend_latest_reinjects_image_evidence_boundary(tmp_path: Path) ->
             [LLMTurnDone(stop_reason="end_turn")],
         ]
     )
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     image = AttachmentRef(
         asset_id="b" * 64,
         display_name="screenshot.png",
@@ -611,7 +607,7 @@ def test_edit_resend_latest_reinjects_image_evidence_boundary(tmp_path: Path) ->
 def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
     conv = _conversation(
         tmp_path,
-        llm=cast(LLMClient, _FailingLLMClient()),
+        llm=_FailingLLMClient(),
     )
 
     with pytest.raises(RuntimeError, match="llm init failed"):
@@ -627,7 +623,7 @@ def test_stream_first_llm_failure_persists_user_turn(tmp_path: Path) -> None:
 
 
 def test_stream_context_render_failure_persists_user_before_failure(tmp_path: Path) -> None:
-    def fail_renderer(message: Message, client: LLMClient) -> dict[str, Any]:
+    def fail_renderer(message: Message, client: LanguageModel) -> dict[str, Any]:
         del client
         if message.attachments:
             raise RuntimeError("attachment render failed")
@@ -635,7 +631,7 @@ def test_stream_context_render_failure_persists_user_before_failure(tmp_path: Pa
 
     conv = _conversation(
         tmp_path,
-        llm=cast(LLMClient, _ScriptedLLMClient()),
+        llm=_ScriptedLLMClient(),
         message_renderer=fail_renderer,
     )
     attachment = AttachmentRef(
@@ -675,7 +671,7 @@ def test_stream_commits_user_before_first_cancel_check(tmp_path: Path) -> None:
     assert token.cancel(CancelReason.EXPLICIT_REQUEST)
     conv = _conversation(
         tmp_path,
-        llm=cast(LLMClient, _ScriptedLLMClient()),
+        llm=_ScriptedLLMClient(),
     )
 
     with pytest.raises(RunCancelled):
@@ -705,7 +701,7 @@ def test_stream_persist_before_build_does_not_duplicate_model_user_input(
     tmp_path: Path,
 ) -> None:
     fake = _ScriptedLLMClient(script=[[LLMTurnDone(stop_reason="end_turn")]])
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
 
     list(conv.stream("exactly once"))
 
@@ -736,7 +732,7 @@ def test_edit_resend_latest_first_llm_failure_persists_rewrite_and_user(
         tmp_path,
         session=session,
         store=store,
-        llm=cast(LLMClient, _FailingLLMClient()),
+        llm=_FailingLLMClient(),
     )
 
     with pytest.raises(RuntimeError, match="llm init failed"):
@@ -779,7 +775,7 @@ def test_edit_resend_latest_commits_new_branch_before_context_build(
         tmp_path,
         session=session,
         store=store,
-        llm=cast(LLMClient, fake),
+        llm=fake,
     )
     original_build = conv._build_openai_messages_first_turn_stream
 
@@ -811,7 +807,7 @@ def test_edit_resend_latest_commits_new_branch_before_context_build(
 
 def test_user_event_id_retry_rejects_different_content(tmp_path: Path) -> None:
     fake = _ScriptedLLMClient(script=[[LLMTextDelta(text="ok"), LLMTurnDone(stop_reason="stop")]])
-    conv = _conversation(tmp_path, llm=cast(LLMClient, fake))
+    conv = _conversation(tmp_path, llm=fake)
     list(conv.stream("first", user_event_id="stable-message-id"))
     replay = list(conv.stream("first", user_event_id="stable-message-id"))
 

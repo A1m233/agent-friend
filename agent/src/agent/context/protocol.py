@@ -26,7 +26,7 @@ from ..attachments import AttachmentRef
 from ..messages import Message
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class BudgetSnapshot:
     """本轮 token 预算快照（009 M1；M2/M3 共享的预算账本）。
 
     Attributes:
-        effective_window: 当前 model 的有效输入窗口（= ``LLMClient.context_window``）。
+        effective_window: 当前 model 的有效输入窗口（= ``LanguageModel.context_window``）。
         last_input_tokens: 上一轮真实 ``usage.prompt_tokens`` 锚点；首轮 / provider
             不透出时为 ``None``，估算退化到纯字符。
         output_reserve: 给本轮输出预留的 token（按窗口比例算）。
@@ -148,7 +148,8 @@ class RuntimeContext:
     """
 
     budget: BudgetSnapshot
-    llm_client: LLMClient
+    llm_client: LanguageModel
+    model_id: str = ""
     prior_summary: PriorSummary | None = None
     prior_tool_context_edit: PriorToolContextEdit | None = None
     request_overhead_tokens: int = 0

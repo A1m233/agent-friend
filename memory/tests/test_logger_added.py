@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import (
     ConversationFragment,
     Extractor,
@@ -42,8 +43,8 @@ class _FakeLLM:
     def __init__(self, reply: str) -> None:
         self.reply = reply
 
-    def complete(self, messages: list[dict[str, object]], **_kw: object) -> str:
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text=self.reply)
 
 
 def _capture_memory_logs() -> _ListHandler:

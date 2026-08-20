@@ -53,6 +53,8 @@ from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 # ===================== 单测辅助 =====================
@@ -345,17 +347,14 @@ class _RecordingLLM:
     turn_idx: int = 0
     calls: list[list[dict[str, Any]]] = field(default_factory=list)
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.calls.append(messages)
+        self.calls.append(request.messages)
         if self.turn_idx >= len(self.script):
             yield LLMTextDelta(text="ok")
             yield LLMTurnDone(stop_reason="end_turn")

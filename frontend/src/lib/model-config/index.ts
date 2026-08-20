@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { getSettingsSnapshot, type ModelProvider, type ModelSelection, type Settings } from "@/lib/settings";
+import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 import { http } from "@/services/http";
 
 export type InputModality = "text" | "image" | "document";
@@ -30,6 +31,7 @@ export interface ProviderModelOption {
 export interface ProviderOption {
   id: ModelProvider;
   label: string;
+  credentialGroup: RuntimeConfigGroup;
   defaultChatModel: string;
   defaultMemoryModel: string;
   models: ProviderModelOption[];
@@ -103,6 +105,15 @@ export function modelOption(modelId: string): ProviderModelOption | null {
   for (const provider of modelProviders()) {
     const model = provider.models.find((item) => item.id === modelId);
     if (model) return model;
+  }
+  return null;
+}
+
+export function credentialGroupForModel(modelId: string): RuntimeConfigGroup | null {
+  for (const provider of modelProviders()) {
+    if (provider.models.some((model) => model.id === modelId)) {
+      return provider.credentialGroup;
+    }
   }
   return null;
 }

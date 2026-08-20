@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import pytest
 from agent_bridge.app import create_app_with_runtime
@@ -24,11 +24,13 @@ from agent import (
     ToolRegistry,
 )
 from llm_providers import (
-    LLMClient,
+    LanguageModel,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -39,22 +41,21 @@ class FakeLLM:
     def __init__(self) -> None:
         self.stream_calls = 0
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        return json.dumps(
-            {"kind": "candidate", "content": "更简短的朋友", "summary": ["回复更短"]},
-            ensure_ascii=False,
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(
+            text=json.dumps(
+                {"kind": "candidate", "content": "更简短的朋友", "summary": ["回复更短"]},
+                ensure_ascii=False,
+            )
         )
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received_streams.append(messages)
+        self.received_streams.append(request.messages)
         self.stream_calls += 1
-        if tools and self.stream_calls == 1:
+        if request.tools and self.stream_calls == 1:
             yield LLMToolCallDelta(
                 index=0,
                 tool_call_id="proposal-1",
@@ -66,11 +67,11 @@ class FakeLLM:
             )
             yield LLMTurnDone(stop_reason="tool_use")
             return
-        if tools:
+        if request.tools:
             yield LLMTextDelta(text="候选版本已经准备好了。")
             yield LLMTurnDone(stop_reason="end_turn")
             return
-        assert not tools
+        assert not request.tools
         yield LLMTextDelta(text="试聊回复")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -88,8 +89,8 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     registry = ToolRegistry([])
 
-    def llm_factory(model: str) -> LLMClient:
-        return cast(LLMClient, FakeLLM())
+    def llm_factory(model: str) -> LanguageModel:
+        return FakeLLM()
 
     def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id, catalog=catalog)

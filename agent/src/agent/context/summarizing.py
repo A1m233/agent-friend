@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
-from llm_providers import LLMContextWindowError
+from llm_providers import LLMContextWindowError, ModelRequest
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
@@ -276,10 +276,12 @@ class SummarizingContextManager:
                 )
             summary_text = render_transcript(summary_source)
             try:
-                raw = runtime.llm_client.complete(
-                    build_summary_messages(summary_text),
-                    max_tokens=summary_output_budget,
-                )
+                raw = runtime.llm_client.generate(
+                    ModelRequest(
+                        messages=build_summary_messages(summary_text),
+                        settings={"max_tokens": summary_output_budget},
+                    )
+                ).text
                 break
             except LLMContextWindowError:
                 if attempt >= MAX_SUMMARY_CONTEXT_RETRIES:
@@ -308,7 +310,7 @@ class SummarizingContextManager:
             covered_through_uuid=older[-1].uuid,
             tokens_before=estimate_request_tokens(parts.assemble(history), runtime),
             tokens_after=tokens_after,
-            model=getattr(getattr(runtime.llm_client, "spec", None), "model", ""),
+            model=runtime.model_id,
             summary_prompt_version=SUMMARY_PROMPT_VERSION,
             summary_source_from_uuid=summary_source[0].uuid,
             retained_from_uuid=tail[0].uuid if tail else "",

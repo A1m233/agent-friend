@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from memory.retrieval import pinned_gate
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import SemanticRow, SqliteMemoryStore
 
 
@@ -196,8 +197,8 @@ def test_facade_retrieve_with_gate_drops_unrelated_pinned() -> None:
     from memory import Memory
 
     class _FakeLLM:
-        def complete(self, *_a: object, **_kw: object) -> str:
-            return '{"episodic_entries": [], "semantic_ops": []}'
+        def generate(self, request: ModelRequest) -> ModelResponse:
+            return ModelResponse(text='{"episodic_entries": [], "semantic_ops": []}')
 
     store = SqliteMemoryStore(":memory:")
     try:

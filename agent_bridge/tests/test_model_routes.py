@@ -8,7 +8,7 @@ from agent_bridge.routes.models import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from llm_providers import LLMModelMetadataError, ResolvedModelLimits
+from llm_providers import LLMModelMetadataError
 from runtime_config import CredentialMissingError
 
 
@@ -48,7 +48,7 @@ def test_model_validation_preflights_client_without_creating_session() -> None:
 
     def factory(model: str) -> object:
         seen.append(model)
-        return SimpleNamespace(model_limits=ResolvedModelLimits(256 * 1024, "catalog"))
+        return SimpleNamespace(context_window=256 * 1024)
 
     client = _validation_client(factory)
 
@@ -60,7 +60,7 @@ def test_model_validation_preflights_client_without_creating_session() -> None:
         "available": True,
         "limits": {
             "contextWindow": 256 * 1024,
-            "contextWindowSource": "catalog",
+            "contextWindowSource": "language_model",
             "safeInputThreshold": 209716,
             "baselineRequestTokens": 4,
             "baselineHeadroomTokens": 209712,
@@ -90,7 +90,7 @@ def test_model_validation_returns_stable_errors() -> None:
 def test_model_validation_rejects_unresolved_runtime_limits() -> None:
     class InvalidClient:
         @property
-        def model_limits(self) -> object:
+        def context_window(self) -> int:
             raise LLMModelMetadataError("missing context window")
 
     response = _validation_client(lambda _model: InvalidClient()).post(

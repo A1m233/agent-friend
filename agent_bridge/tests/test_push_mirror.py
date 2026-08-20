@@ -41,10 +41,12 @@ from agent import (
     make_default_registry,
 )
 from llm_providers import (
-    LLMClient,
+    LanguageModel,
     LLMStreamEvent,
     LLMTextDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 from memory import ConversationFragment, Memory, MemoryContext
 
@@ -63,15 +65,12 @@ class _ScriptedLLMClient:
     turn_idx: int = 0
     context_window: int = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
@@ -140,8 +139,8 @@ def _build_runtime(
 
     fake_llm = _ScriptedLLMClient(script=llm_script)
 
-    def _llm_factory(model: str) -> LLMClient:
-        return cast(LLMClient, fake_llm)
+    def _llm_factory(model: str) -> LanguageModel:
+        return fake_llm
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)

@@ -7,7 +7,7 @@ import asyncio
 from collections.abc import AsyncIterator, Generator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import pytest
 from agent_bridge.app import create_app_with_runtime
@@ -28,11 +28,14 @@ from agent import (
     SessionNotFoundError,
     make_default_registry,
 )
-
-if TYPE_CHECKING:
-    from llm_providers import LLMClient
-
-from llm_providers import LLMStreamEvent, LLMTextDelta, LLMTurnDone
+from llm_providers import (
+    LanguageModel,
+    LLMStreamEvent,
+    LLMTextDelta,
+    LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
+)
 
 
 class _RouteLLM:
@@ -40,18 +43,15 @@ class _RouteLLM:
     seen_tools: ClassVar[list[list[dict[str, Any]] | None]] = []
     context_window = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.seen_messages.append(messages)
-        self.seen_tools.append(tools)
+        self.seen_messages.append(request.messages)
+        self.seen_tools.append(request.tools)
         yield LLMTextDelta(text="new answer")
         yield LLMTurnDone(stop_reason="end_turn")
 
@@ -69,8 +69,8 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
 
-    def _llm_factory(model: str) -> LLMClient:
-        return cast("LLMClient", _RouteLLM())
+    def _llm_factory(model: str) -> LanguageModel:
+        return _RouteLLM()
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)

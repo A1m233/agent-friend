@@ -17,7 +17,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui";
 import { openSettings } from "@/lib/settings/navigation";
-import { useModelCatalogStore } from "@/lib/model-config";
+import {
+  credentialGroupForModel,
+  useModelCatalogStore,
+} from "@/lib/model-config";
 import { useConversationStore } from "@/stores/conversation";
 import { cn } from "@/utils/cn";
 
@@ -70,12 +73,17 @@ export function ConversationModelSelector({
       toast.success(message);
       return;
     }
+    const credentialGroup = credentialGroupForModel(modelId);
     toast.error("模型没有切换", {
       description: result.error.friendly,
       action: result.error.code === "credential_missing"
         ? {
             label: "模型与凭据",
-            onClick: () => void openSettings({ target: "runtime" }),
+            onClick: () =>
+              void openSettings({
+                target: "runtime",
+                runtime: credentialGroup ? { groupId: credentialGroup } : undefined,
+              }),
           }
         : undefined,
     });

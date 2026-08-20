@@ -39,10 +39,11 @@ from agent import (
     Session,
 )
 from llm_providers import (
-    LLMClient,
     LLMStreamEvent,
     LLMTextDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 from memory import ConversationFragment, MemoryContext
 
@@ -54,17 +55,14 @@ class _ScriptedLLMClient:
     received: list[list[dict[str, Any]]] = field(default_factory=list)
     context_window: int = 128000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:  # pragma: no cover
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        self.received.append(messages)
+        self.received.append(request.messages)
         if self.turn_idx >= len(self.script):
             yield LLMTurnDone(stop_reason="end_turn")
             return
@@ -111,7 +109,7 @@ def _make_conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, fake_llm),
+        llm_client=fake_llm,
         context_manager=NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,

@@ -8,7 +8,7 @@ import { syncDocumentTheme } from "@/lib/settings/theme";
 export type ThemeMode = "light" | "dark";
 export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
-export type ModelProvider = "deepseek" | "kimi";
+export type ModelProvider = "deepseek" | "kimi" | "openrouter";
 export interface ModelSelection {
   provider: ModelProvider;
   model: string;

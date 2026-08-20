@@ -25,7 +25,7 @@ from memory import (
 from memory_eval.adapters import case_fragments
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
     from memory import ConversationFragment
     from memory_eval.datasets import EvalCase
 
@@ -36,7 +36,7 @@ __all__ = ["build_factorial_corpora", "summarize_factorial"]
 
 def build_factorial_corpora(
     cases: list[EvalCase],
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     variants: dict[str, str],
     output_dir: Path,

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from llm_providers import (
-    LLMClient,
+    LanguageModel,
+    LLMStreamEvent,
     ModelPurpose,
-    ProviderSpec,
-    build_provider_spec,
+    ModelRequest,
+    ModelResponse,
+    create_language_model,
     default_model_for_provider,
     infer_provider_id_from_model,
     provider_definition,
@@ -35,17 +37,13 @@ class BridgeRuntimeConfig:
     """Credentials and provider-aware model assembly used by the bridge."""
 
     default_model: str
-    memory_client_factory: Callable[[], LLMClient]
-    llm_client_factory: Callable[[str], LLMClient]
+    memory_model: str
+    memory_client_factory: Callable[[], LanguageModel]
+    llm_client_factory: Callable[[str], LanguageModel]
     tool_credentials: ToolCredentials
 
-    @property
-    def memory_spec(self) -> ProviderSpec:
-        """Resolve the memory provider only when an LLM capability is requested."""
-        return self.memory_client_factory().spec
 
-
-class DeferredLLMClient:
+class DeferredLanguageModel:
     """Delay credential resolution until code actually invokes the LLM.
 
     Bridge startup also owns local-only control-plane capabilities such as persona
@@ -53,34 +51,24 @@ class DeferredLLMClient:
     the destination machine has imported any provider credentials.
     """
 
-    def __init__(self, factory: Callable[[], LLMClient]) -> None:
+    def __init__(self, factory: Callable[[], LanguageModel]) -> None:
         self._factory = factory
-        self._client: LLMClient | None = None
+        self._model: LanguageModel | None = None
 
-    def _get(self) -> LLMClient:
-        if self._client is None:
-            self._client = self._factory()
-        return self._client
-
-    @property
-    def spec(self) -> ProviderSpec:
-        return self._get().spec
+    def _get(self) -> LanguageModel:
+        if self._model is None:
+            self._model = self._factory()
+        return self._model
 
     @property
     def context_window(self) -> int:
         return self._get().context_window
 
-    def complete(self, messages: list[dict[str, object]], **overrides: object) -> str:
-        return self._get().complete(messages, **overrides)
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return self._get().generate(request)
 
-    def stream(
-        self,
-        messages: list[dict[str, object]],
-        *,
-        tools: list[dict[str, object]] | None = None,
-        **overrides: object,
-    ) -> object:
-        return self._get().stream(messages, tools=tools, **overrides)
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        return self._get().stream(request)
 
 
 def _optional_int(source: CredentialSource, name: str) -> int | None:
@@ -125,16 +113,16 @@ def _model_selection(
     return provider_id, model_id
 
 
-def _provider_spec(
+def _language_model(
     source: CredentialSource,
     *,
     provider_id: str,
     model_id: str,
     purpose: ModelPurpose,
-) -> ProviderSpec:
+) -> LanguageModel:
     provider = provider_definition(provider_id)
     prefix = _provider_prefix(provider.provider_id)
-    return build_provider_spec(
+    return create_language_model(
         provider_id=provider.provider_id,
         api_key=require_secret(source, provider.credential_name),
         model_id=model_id,
@@ -160,32 +148,29 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         purpose="memory",
     )
 
-    def memory_client_factory() -> LLMClient:
-        return LLMClient(
-            _provider_spec(
-                source,
-                provider_id=memory_provider_id,
-                model_id=memory_model,
-                purpose="memory",
-            )
+    def memory_client_factory() -> LanguageModel:
+        return _language_model(
+            source,
+            provider_id=memory_provider_id,
+            model_id=memory_model,
+            purpose="memory",
         )
 
-    def llm_client_factory(model_id: str) -> LLMClient:
+    def llm_client_factory(model_id: str) -> LanguageModel:
         try:
             provider_id = infer_provider_id_from_model(model_id)
         except ValueError:
             provider_id = chat_provider_id
-        return LLMClient(
-            _provider_spec(
-                source,
-                provider_id=provider_id,
-                model_id=model_id,
-                purpose="chat",
-            )
+        return _language_model(
+            source,
+            provider_id=provider_id,
+            model_id=model_id,
+            purpose="chat",
         )
 
     return BridgeRuntimeConfig(
         default_model=default_model,
+        memory_model=memory_model,
         memory_client_factory=memory_client_factory,
         llm_client_factory=llm_client_factory,
         tool_credentials=ToolCredentials(

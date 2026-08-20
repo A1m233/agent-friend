@@ -16,33 +16,23 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import random
-import ssl
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from functools import cached_property
 from typing import Any, cast
 
 import litellm
-import openai
 
-from .cancellable_stream import StreamIdleTimeoutExceeded
+from .error_normalization import map_provider_error as _normalize_provider_error
 from .errors import (
-    LLMAuthError,
-    LLMBadRequestError,
-    LLMContentPolicyError,
-    LLMContextWindowError,
     LLMEmptyResponseError,
     LLMError,
     LLMModelMetadataError,
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
-    LLMRateLimitError,
     LLMStreamTimeoutError,
     LLMTransientProviderError,
 )
@@ -52,6 +42,7 @@ from .kimi_transport import (
     uses_kimi_stream_transport,
 )
 from .litellm_transport import open_cancellable_litellm_stream
+from .protocol import ModelRequest, ModelResponse
 from .spec import ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -64,6 +55,8 @@ from .stream_events import (
     LLMTurnDone,
     LLMUsage,
 )
+from .usage import extract_stream_usage, extract_usage
+from .usage import usage_field as _usage_field
 
 DEFAULT_NETWORK_RETRIES = 1
 """Provider 尚未产出任何结果时，网络错误的默认重试次数。"""
@@ -89,10 +82,15 @@ DEFAULT_STREAM_TIMEOUT_SECONDS = 45.0
 _HIDDEN_ACTIVITY_EMIT_INTERVAL_SECONDS = 2.0
 """不可见上游增量的状态事件节流间隔，避免把推理 token 逐个推给 UI。"""
 
-_TRANSIENT_PROVIDER_ERROR_TYPES = frozenset({"engine_overloaded_error"})
-"""Provider 用非 5xx 状态码表达的、可安全有限重试的明确瞬时错误。"""
-
 logger = logging.getLogger(__name__)
+
+
+def _extract_usage(response: Any) -> LLMUsage | None:
+    return extract_usage(response)
+
+
+def _extract_stream_usage(chunk: Any) -> LLMUsage | None:
+    return extract_stream_usage(chunk)
 
 
 @dataclass(frozen=True)
@@ -103,14 +101,31 @@ class ResolvedModelLimits:
     context_window_source: str
 
 
-@dataclass(frozen=True)
-class _ProviderErrorMetadata:
-    """从 Provider 异常中抽取的无内容诊断信息。"""
+class _ProviderStreamChunkError(RuntimeError):
+    """Content-free wrapper for an HTTP-200 stream error payload."""
 
-    error_type: str | None = None
-    status_code: int | None = None
-    retry_after_seconds: float | None = None
-    request_id: str | None = None
+    def __init__(self, payload: Any) -> None:
+        super().__init__("Provider returned an error event in the response stream.")
+        error = payload if isinstance(payload, dict) else {}
+        self.body = {"error": error}
+        code = error.get("code")
+        self.status_code = code if isinstance(code, int) and 400 <= code <= 599 else None
+
+
+def _provider_id_for_spec(spec: ProviderSpec) -> str | None:
+    if spec.model.startswith("openrouter/"):
+        return "openrouter"
+    if spec.model.startswith("deepseek/"):
+        return "deepseek"
+    if spec.model.startswith("openai/kimi-"):
+        return "kimi"
+    return None
+
+
+def _raise_stream_chunk_error(chunk: Any) -> None:
+    error = _usage_field(chunk, "error")
+    if error:
+        raise _ProviderStreamChunkError(error)
 
 
 def _present_delta_field_names(delta: Any) -> set[str]:
@@ -139,230 +154,6 @@ def _present_delta_field_names(delta: Any) -> set[str]:
             continue
         present.add(str(key))
     return present
-
-
-def _exception_chain(error: BaseException) -> Iterator[BaseException]:
-    """沿 ``raise ... from ...`` 因果链遍历异常，避免只看到最外层包装。"""
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        yield current
-        current = current.__cause__ or current.__context__
-
-
-def _is_network_exception(error: Exception) -> bool:
-    """识别被 LiteLLM / provider 包装过的连接、TLS 与超时错误。"""
-    chain = tuple(_exception_chain(error))
-    known_types = (
-        openai.APIConnectionError,
-        openai.APITimeoutError,
-        litellm.APIConnectionError,
-        litellm.Timeout,
-        litellm.CompletionTimeout,
-        ssl.SSLError,
-        ConnectionError,
-        TimeoutError,
-    )
-    if any(isinstance(item, known_types) for item in chain):
-        return True
-
-    # 部分 provider adapter 会丢掉原始 cause，把 TLS 错误包装成 5xx。
-    # 只兜底匹配明确的网络错误特征，避免把普通 InternalServerError 误判为网络错。
-    message = " | ".join(str(item) for item in chain)
-    return any(
-        marker in message
-        for marker in (
-            "SSL: UNEXPECTED_EOF_WHILE_READING",
-            "EOF occurred in violation of protocol",
-            "getaddrinfo failed",
-        )
-    )
-
-
-def _parse_retry_after_seconds(value: object) -> float | None:
-    """解析 RFC ``Retry-After`` 的秒数或 HTTP-date 形态。"""
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        seconds = float(text)
-    except ValueError:
-        try:
-            retry_at = parsedate_to_datetime(text)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if retry_at.tzinfo is None:
-            retry_at = retry_at.replace(tzinfo=UTC)
-        seconds = (retry_at - datetime.now(UTC)).total_seconds()
-    if not math.isfinite(seconds):
-        return None
-    return max(0.0, seconds)
-
-
-def _header_text(headers: object, *names: str) -> str | None:
-    getter = getattr(headers, "get", None)
-    if not callable(getter):
-        return None
-    for name in names:
-        try:
-            value = getter(name)
-        except Exception:
-            continue
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
-
-
-def _provider_error_metadata(error: Exception) -> _ProviderErrorMetadata:
-    """抽取错误类型、状态码、退避提示和请求 ID，不记录响应正文。"""
-    error_type: str | None = None
-    status_code: int | None = None
-    retry_after_seconds: float | None = None
-    request_id: str | None = None
-
-    for item in _exception_chain(error):
-        item_status = getattr(item, "status_code", None)
-        if status_code is None and isinstance(item_status, int):
-            status_code = item_status
-
-        body = getattr(item, "body", None)
-        if isinstance(body, dict):
-            payload = body.get("error", body)
-            if isinstance(payload, dict):
-                item_error_type = payload.get("type")
-                if error_type is None and isinstance(item_error_type, str):
-                    error_type = item_error_type.casefold()
-
-        item_request_id = getattr(item, "request_id", None)
-        if request_id is None and isinstance(item_request_id, str) and item_request_id:
-            request_id = item_request_id
-
-        response = getattr(item, "response", None)
-        if response is None:
-            continue
-        response_status = getattr(response, "status_code", None)
-        if status_code is None and isinstance(response_status, int):
-            status_code = response_status
-        headers = getattr(response, "headers", None)
-        if request_id is None:
-            request_id = _header_text(
-                headers,
-                "x-request-id",
-                "x-moonshot-request-id",
-                "request-id",
-            )
-        if retry_after_seconds is None:
-            retry_after_seconds = _parse_retry_after_seconds(_header_text(headers, "retry-after"))
-
-    return _ProviderErrorMetadata(
-        error_type=error_type,
-        status_code=status_code,
-        retry_after_seconds=retry_after_seconds,
-        request_id=request_id,
-    )
-
-
-def _is_transient_provider_exception(error: Exception) -> bool:
-    """识别明确的瞬时 Provider 故障，避免把普通限流或参数错误纳入重试。"""
-    metadata = _provider_error_metadata(error)
-    if metadata.status_code is not None and 500 <= metadata.status_code <= 599:
-        return True
-    return metadata.status_code == 429 and metadata.error_type in _TRANSIENT_PROVIDER_ERROR_TYPES
-
-
-def _extract_usage(response: Any) -> LLMUsage | None:
-    """从 litellm 响应对象 / 尾 chunk 抽取 token 用量（009 起）。
-
-    litellm 把 OpenAI 风格的 ``usage`` 透到 ``response.usage``（非流式）或带
-    ``stream_options={"include_usage": True}`` 时的尾 chunk 上。Provider 不支持
-    时该字段缺失 / 为 ``None`` → 返回 ``None``，上层退化到字符估算。
-    """
-    return _normalize_usage(_usage_field(response, "usage"), usage_source="top_level")
-
-
-def _extract_stream_usage(chunk: Any) -> LLMUsage | None:
-    """Extract top-level usage or Kimi's provider-specific choice usage."""
-    usage = _extract_usage(chunk)
-    if usage is not None:
-        return usage
-
-    choices = _usage_field(chunk, "choices") or []
-    for choice in choices:
-        choice_usage = _usage_field(choice, "usage")
-        if choice_usage is None:
-            model_dump = getattr(choice, "model_dump", None)
-            if callable(model_dump):
-                dumped = model_dump()
-                if isinstance(dumped, dict):
-                    choice_usage = dumped.get("usage")
-        usage = _normalize_usage(choice_usage, usage_source="choice")
-        if usage is not None:
-            return usage
-    return None
-
-
-def _normalize_usage(usage: Any, *, usage_source: str | None = None) -> LLMUsage | None:
-    """Normalize a provider usage object or mapping into :class:`LLMUsage`."""
-    if usage is None:
-        return None
-    prompt = _usage_field(usage, "prompt_tokens")
-    completion = _usage_field(usage, "completion_tokens")
-    total = _usage_field(usage, "total_tokens")
-    if prompt is None and completion is None and total is None:
-        return None
-    prompt_tokens = int(prompt or 0)
-    cached, cached_source = _first_usage_int_with_source(
-        usage,
-        "cached_tokens",
-        "prompt_cache_hit_tokens",
-        "cache_read_input_tokens",
-        "_cache_read_input_tokens",
-    )
-    if cached is None:
-        prompt_details = _usage_field(usage, "prompt_tokens_details")
-        cached, detail_source = _first_usage_int_with_source(prompt_details, "cached_tokens")
-        if detail_source is not None:
-            cached_source = f"prompt_tokens_details.{detail_source}"
-    cache_miss, cache_miss_source = _first_usage_int_with_source(usage, "prompt_cache_miss_tokens")
-    cache_miss_derived = False
-    if cache_miss is None and cached is not None:
-        cache_miss = max(0, prompt_tokens - cached)
-        cache_miss_source = "derived_prompt_minus_cached"
-        cache_miss_derived = True
-    return LLMUsage(
-        prompt_tokens=prompt_tokens,
-        completion_tokens=int(completion or 0),
-        total_tokens=int(total or 0),
-        cached_prompt_tokens=cached,
-        cache_miss_prompt_tokens=cache_miss,
-        usage_source=usage_source,
-        cached_prompt_tokens_source=cached_source,
-        cache_miss_prompt_tokens_source=cache_miss_source,
-        cache_miss_prompt_tokens_derived=cache_miss_derived,
-    )
-
-
-def _first_usage_int_with_source(value: Any, *names: str) -> tuple[int | None, str | None]:
-    """Return the first non-negative provider counter and its source field."""
-    if value is None:
-        return None, None
-    for name in names:
-        raw = _usage_field(value, name)
-        if isinstance(raw, bool):
-            continue
-        if isinstance(raw, (int, float)) and raw >= 0:
-            return int(raw), name
-    return None, None
-
-
-def _usage_field(value: Any, name: str) -> Any:
-    """Read a usage field from provider objects and raw dictionaries alike."""
-    if isinstance(value, dict):
-        return value.get(name)
-    return getattr(value, name, None)
 
 
 def _response_text_field(value: Any, name: str) -> str | None:
@@ -418,99 +209,9 @@ def _emit_transport_diagnostic(
         logger.warning("LLM transport diagnostic callback failed", exc_info=True)
 
 
-def _map_exception(e: Exception) -> LLMError:
-    """把 LiteLLM / openai 的底层异常映射成本项目的 ``LLMError`` 子类。
-
-    在 :meth:`LLMClient.complete` / :meth:`LLMClient.stream` 内统一调用，
-    确保上层（``Conversation`` / CLI）只需 ``catch LLMError`` 体系，
-    不需要 import LiteLLM 或 openai。
-    """
-    chain = tuple(_exception_chain(e))
-    provider_metadata = _provider_error_metadata(e)
-
-    def transient_provider_error() -> LLMTransientProviderError:
-        return LLMTransientProviderError(
-            str(e),
-            provider_error_type=provider_metadata.error_type,
-            status_code=provider_metadata.status_code,
-            retry_after_seconds=provider_metadata.retry_after_seconds,
-            provider_request_id=provider_metadata.request_id,
-        )
-
-    auth_error_types = {"authentication_error", "invalid_api_key", "permission_denied"}
-
-    if any(isinstance(item, StreamIdleTimeoutExceeded) for item in chain):
-        return LLMStreamTimeoutError(str(e))
-    if (
-        provider_metadata.status_code in {401, 403}
-        or (provider_metadata.error_type or "").casefold() in auth_error_types
-        or any(
-            isinstance(item, (openai.AuthenticationError, openai.PermissionDeniedError))
-            for item in chain
-        )
-    ):
-        return LLMAuthError(str(e))
-    if any(isinstance(item, openai.RateLimitError) for item in chain):
-        if _is_transient_provider_exception(e):
-            return transient_provider_error()
-        return LLMRateLimitError(str(e))
-    if _is_network_exception(e):
-        return LLMNetworkError(str(e))
-    if _is_content_policy_exception(e):
-        return LLMContentPolicyError(str(e))
-    if _is_context_window_exception(e):
-        return LLMContextWindowError(str(e))
-    if any(isinstance(item, openai.BadRequestError) for item in chain):
-        return LLMBadRequestError(str(e))
-    if _is_transient_provider_exception(e):
-        return transient_provider_error()
-    if isinstance(e, openai.APIError):
-        return LLMProviderError(str(e))
-    return LLMProviderError(f"未预料的错误: {e}")
-
-
-_CONTEXT_WINDOW_ERROR_CODES = frozenset(
-    {
-        "context_length_exceeded",
-        "context_window_exceeded",
-        "input_too_long",
-        "prompt_too_long",
-    }
-)
-
-
-def _is_context_window_exception(e: Exception) -> bool:
-    """识别明确的上下文窗口错误，不把普通 bad request 纳入恢复重试。"""
-    for item in _exception_chain(e):
-        if isinstance(item, litellm.ContextWindowExceededError):
-            return True
-        code = getattr(item, "code", None)
-        if isinstance(code, str) and code.casefold() in _CONTEXT_WINDOW_ERROR_CODES:
-            return True
-        body = getattr(item, "body", None)
-        if isinstance(body, dict):
-            error = body.get("error", body)
-            if isinstance(error, dict):
-                body_code = error.get("code")
-                if (
-                    isinstance(body_code, str)
-                    and body_code.casefold() in _CONTEXT_WINDOW_ERROR_CODES
-                ):
-                    return True
-    return False
-
-
-def _is_content_policy_exception(e: Exception) -> bool:
-    """识别 Provider 明确返回的内容安全拒绝，不把它误报成参数错误。"""
-    if any(isinstance(item, litellm.ContentPolicyViolationError) for item in _exception_chain(e)):
-        return True
-    markers = (
-        "content exists risk",
-        "content_policy_violation",
-        "content policy violation",
-        "content_filter",
-    )
-    return any(marker in str(item).casefold() for item in _exception_chain(e) for marker in markers)
+def _map_exception(e: Exception, *, provider_id: str | None = None) -> LLMError:
+    """Compatibility alias for tests that imported the former private helper."""
+    return _normalize_provider_error(e, provider_id=provider_id)
 
 
 def _map_finish_reason(finish_reason: str | None) -> str:
@@ -643,10 +344,22 @@ class LLMClient:
             本方法**不支持工具调用**——仅做单次同步问答。如需工具调用走
             :meth:`stream`（``Conversation.send`` 内部走 stream 拼接得到完整文本）。
         """
+        return self.generate(ModelRequest(messages=messages, settings=overrides)).text
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        """Execute one provider-neutral non-streaming model request."""
+
         max_retries = max(self._network_retries, self._engine_overload_retries)
         for attempt in range(max_retries + 1):
             try:
-                return self._call_once(self.spec, messages, **overrides)
+                settings = dict(request.settings)
+                if request.tools:
+                    settings["tools"] = request.tools
+                return self._call_once(
+                    self.spec,
+                    request.messages,
+                    **settings,
+                )
             except (LLMNetworkError, LLMTransientProviderError) as exc:
                 retry_limit = self._retry_limit(exc)
                 if attempt >= retry_limit:
@@ -657,7 +370,7 @@ class LLMClient:
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
+        request: ModelRequest | list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None = None,
         **overrides: Any,
@@ -689,14 +402,26 @@ class LLMClient:
         Raises:
             同 :meth:`complete`，异常可能在初始化或迭代中任一时机抛出。
         """
-        diagnostic_callback = cast(
-            Callable[[LLMTransportDiagnostic], None] | None,
-            overrides.pop("_diagnostic_callback", None),
-        )
-        cancel_check = cast(
-            Callable[[], None] | None,
-            overrides.pop("_cancel_check", None),
-        )
+        if isinstance(request, ModelRequest):
+            if tools is not None or overrides:
+                raise TypeError("ModelRequest 已包含 tools/settings，不能再传 legacy stream 参数")
+            messages = request.messages
+            tools = request.tools
+            overrides = dict(request.settings)
+            diagnostic_callback = request.control.diagnostic_callback
+            cancel_check = request.control.cancel_check
+            if request.cache_key and uses_kimi_stream_transport(self.spec):
+                overrides.setdefault("prompt_cache_key", request.cache_key)
+        else:
+            messages = request
+            diagnostic_callback = cast(
+                Callable[[LLMTransportDiagnostic], None] | None,
+                overrides.pop("_diagnostic_callback", None),
+            )
+            cancel_check = cast(
+                Callable[[], None] | None,
+                overrides.pop("_cancel_check", None),
+            )
         return self._stream_with_network_retries(
             self.spec,
             messages,
@@ -843,7 +568,7 @@ class LLMClient:
         spec: ProviderSpec,
         messages: list[dict[str, Any]],
         **overrides: Any,
-    ) -> str:
+    ) -> ModelResponse:
         """单次同步调用 LiteLLM。
 
         Note:
@@ -866,12 +591,12 @@ class LLMClient:
                 **kwargs,
             )
         except Exception as e:
-            raise _map_exception(e) from e
+            raise _map_exception(e, provider_id=_provider_id_for_spec(spec)) from e
 
         content = response.choices[0].message.content
         if content is None:
             raise LLMProviderError("LLM 返回了空 content。")
-        return content
+        return ModelResponse(text=content, usage=_extract_usage(response))
 
     def _stream_once(
         self,
@@ -973,7 +698,7 @@ class LLMClient:
                 cancel_check()
             if not isinstance(e, Exception):
                 raise
-            mapped_error = _map_exception(e)
+            mapped_error = _map_exception(e, provider_id=_provider_id_for_spec(spec))
             _emit_transport_diagnostic(
                 diagnostic_callback,
                 LLMTransportDiagnostic(
@@ -1038,6 +763,7 @@ class LLMClient:
             for chunk in response:
                 if cancel_check is not None:
                     cancel_check()
+                _raise_stream_chunk_error(chunk)
                 chunk_count += 1
                 response_id = response_id or _response_text_field(chunk, "id")
                 response_model = response_model or _response_text_field(chunk, "model")
@@ -1139,7 +865,7 @@ class LLMClient:
                 cancel_check()
             if not isinstance(e, Exception):
                 raise
-            raise _map_exception(e) from e
+            raise _map_exception(e, provider_id=_provider_id_for_spec(spec)) from e
         finally:
             # 下游 SSE 客户端断开时，上层 generator 会收到 GeneratorExit 并关闭本
             # generator。显式关闭 LiteLLM / provider 的流，避免 HTTP 请求继续在后台

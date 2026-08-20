@@ -22,6 +22,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from llm_providers import LanguageModelFactory
+
 from ..command_runtime.workspace import session_workspace_path
 from ..errors import AgentError
 from .changes import SessionChangeBroker
@@ -30,7 +32,6 @@ from .session import Session
 from .store import SessionStore, SessionSummary
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
     from memory import Memory
 
     from ..context import ContextManager
@@ -48,7 +49,6 @@ if TYPE_CHECKING:
 
 
 TitleGenerator = Callable[[Session], str]
-LLMClientFactory = Callable[[str], "LLMClient"]
 PromptBuilderFactory = Callable[[str], "PromptBuilder"]
 ContextManagerFactory = Callable[[], "ContextManager"]
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class SessionManager:
 
     Args:
         store: 持久化实现（如 :class:`JsonlSessionStore`）。
-        llm_client_factory: 接 model 名 → :class:`LLMClient`。M2.1 阶段可不传，
+        llm_client_factory: 接 model 名 → :class:`LanguageModel`。M2.1 阶段可不传，
             M2.2 接 Conversation 后必须注入。
         prompt_builder_factory: 接 persona 名 → :class:`PromptBuilder`。同上。
         context_manager_factory: 接 0 参 → :class:`ContextManager`，**每个会话独立
@@ -88,7 +88,7 @@ class SessionManager:
     def __init__(
         self,
         store: SessionStore,
-        llm_client_factory: LLMClientFactory | None = None,
+        llm_client_factory: LanguageModelFactory | None = None,
         prompt_builder_factory: PromptBuilderFactory | None = None,
         context_manager_factory: ContextManagerFactory | None = None,
         title_generator: TitleGenerator | None = None,

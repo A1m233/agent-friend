@@ -20,6 +20,7 @@ from memory.extraction.extractor import _PROMPT_PATH, _parse_output
 from memory.extraction.reconciler import ExtractionApplyError
 from memory.store import SemanticRow
 
+from llm_providers import ModelRequest, ModelResponse
 from memory import ConversationFragment, SqliteMemoryStore, Utterance
 
 _REASON = "测试中的分类理由"
@@ -28,11 +29,11 @@ _REASON = "测试中的分类理由"
 class FakeLLM:
     def __init__(self, reply: str) -> None:
         self.reply = reply
-        self.messages: list[dict[str, str]] = []
+        self.messages: list[dict[str, object]] = []
 
-    def complete(self, messages: list[dict[str, str]]) -> str:
-        self.messages = messages
-        return self.reply
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.messages = request.messages
+        return ModelResponse(text=self.reply)
 
 
 def _fragment(text: str = "以后叫我小陈，我目前住在深圳") -> ConversationFragment:
@@ -113,7 +114,7 @@ def test_extractor_renders_full_core_and_reference_addressable_semantic() -> Non
     context = ExtractionContextBuilder(store).build(_fragment())
     llm = FakeLLM('{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}')
     Extractor(llm, prompt="prompt").extract(_fragment(), context)  # type: ignore[arg-type]
-    rendered = llm.messages[1]["content"]
+    rendered = str(llm.messages[1]["content"])
     assert "[M001] 用户目前在腾讯工作" in rendered
     assert "当前完整 Core Profile" in rendered
 

@@ -13,7 +13,7 @@ from memory import ExtractionAttempt, Extractor
 from memory_eval.adapters import case_fragments
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LanguageModel
     from memory import ConversationFragment, ExtractionOutput
     from memory_eval.datasets import EvalCase
 
@@ -31,7 +31,7 @@ def select_stability_fragments(
 
 def run_stability_probe(
     cases: list[EvalCase],
-    llm_client: LLMClient,
+    llm_client: LanguageModel,
     *,
     output_dir: Path,
     fragment_count: int,

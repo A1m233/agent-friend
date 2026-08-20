@@ -52,11 +52,12 @@ from agent import (
     ToolRegistry,
 )
 from llm_providers import (
-    LLMClient,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
+    ModelRequest,
+    ModelResponse,
 )
 
 
@@ -156,19 +157,14 @@ class _ScriptedLLM:
     turn_index: int = 0
     context_window: int = 128_000
 
-    def complete(self, messages: list[dict[str, Any]], **overrides: Any) -> str:
-        del messages, overrides
-        return ""
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        return ModelResponse(text="")
 
     def stream(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        tools: list[dict[str, Any]] | None = None,
-        **overrides: Any,
+        request: ModelRequest,
     ) -> Iterator[LLMStreamEvent]:
-        del tools, overrides
-        self.received.append(messages)
+        self.received.append(request.messages)
         events = self.script[self.turn_index]
         self.turn_index += 1
         yield from events
@@ -223,7 +219,7 @@ def _conversation(
     return Conversation(
         session=session,
         store=store,
-        llm_client=cast(LLMClient, llm),
+        llm_client=llm,
         context_manager=NaiveContextManager(),
         prompt_builder=prompt_builder,
         prompt_builder_factory=prompt_factory,

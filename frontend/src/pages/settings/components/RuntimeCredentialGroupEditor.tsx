@@ -13,6 +13,7 @@ export const RUNTIME_SECRET_LABELS: Record<RuntimeSecretName, string> = {
   AMAP_WEBSERVICE_KEY: "高德 Web Service Key",
   DEEPSEEK_API_KEY: "DeepSeek API Key",
   KIMI_API_KEY: "Kimi API Key",
+  OPENROUTER_API_KEY: "OpenRouter API Key",
   TAVILY_API_KEY: "Tavily API Key",
   QWEATHER_API_KEY: "QWeather API Key",
   QWEATHER_API_HOST: "QWeather API Host",

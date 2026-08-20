@@ -34,6 +34,7 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 }));
 
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
+import { setModelCatalogForTests } from "@/lib/model-config";
 import {
   continueToolResultStream,
   editResendLatestStream,
@@ -47,7 +48,6 @@ import type { SessionDetail } from "@/types/meta";
 import type { CancelRunResponse, RunSnapshot } from "@/types/run";
 import type { SessionMessageSearchResult } from "@/types/search";
 import {
-  runtimeCredentialGroupForModel,
   useConversationStore,
   type SendStartResult,
 } from "./conversation";
@@ -67,16 +67,6 @@ const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
 /** 技术细节特征：HTTP 状态码 / 英文异常字样等——拟人文案里**不应**出现任何一项。 */
 const TECH_LEAK = /http|error|exception|status|\b[1-5]\d{2}\b|undefined|null|stack/i;
-
-describe("runtime credential group inference", () => {
-  it("maps supported model routes without guessing unrelated providers", () => {
-    expect(runtimeCredentialGroupForModel("deepseek/deepseek-v4-flash")).toBe(
-      "deepseek",
-    );
-    expect(runtimeCredentialGroupForModel("kimi/kimi-k2.5")).toBe("kimi");
-    expect(runtimeCredentialGroupForModel("custom/model")).toBeNull();
-  });
-});
 
 function ev(e: Record<string, unknown>): BaseEvent {
   return e as unknown as BaseEvent;
@@ -184,6 +174,7 @@ beforeEach(() => {
   });
   useDraftStore.setState({ workspaces: {}, submissions: {} });
   useRuntimeCredentialStore.setState({ groups: [], error: null, loading: false });
+  setModelCatalogForTests(null);
   mockSetLastChatSessionId.mockClear();
   mockValidateModel.mockImplementation(async (model) => ({ model, available: true }));
   mockSwitchModel.mockImplementation(async (sessionId, model) => ({
@@ -382,6 +373,37 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
   });
 
   it("auth_failed uses the revision captured before the request", async () => {
+    setModelCatalogForTests({
+      schemaVersion: 1,
+      catalogRevision: "test",
+      providers: [{
+        id: "deepseek",
+        label: "DeepSeek",
+        credentialGroup: "deepseek",
+        defaultChatModel: "deepseek/deepseek-v4-flash",
+        defaultMemoryModel: "deepseek/deepseek-v4-pro",
+        models: [{
+          id: "deepseek/deepseek-v4-flash",
+          label: "DeepSeek Flash",
+          routeId: "deepseek:test",
+          transportProfile: "openai-compatible",
+          processingProfile: "text-only-v1",
+          capabilities: {
+            inputModalities: ["text"],
+            acceptedMediaTypes: [],
+            maxAttachmentBytes: 0,
+            maxTotalAttachmentBytes: 0,
+            maxAttachmentsPerTurn: 0,
+            attachments: false,
+            toolCalling: true,
+            parallelToolCalls: true,
+            structuredOutput: false,
+            multimodalToolResults: false,
+            reasoningReplay: false,
+          },
+        }],
+      }],
+    });
     const reportAuthFailure = vi
       .fn()
       .mockResolvedValue({ group: "deepseek", validation: "invalid" });

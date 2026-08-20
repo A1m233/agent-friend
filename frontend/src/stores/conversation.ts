@@ -9,7 +9,10 @@
 import { create } from "zustand";
 import { EventType } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { resolveDefaultConversationModel } from "@/lib/model-config";
+import {
+  credentialGroupForModel,
+  resolveDefaultConversationModel,
+} from "@/lib/model-config";
 import {
   continueToolResultStream,
   editResendLatestStream,
@@ -40,17 +43,14 @@ import {
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
-import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 /** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
 const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。请稍后重试。";
 
 export function runtimeCredentialGroupForModel(
   model: string,
-): Extract<RuntimeConfigGroup, "deepseek" | "kimi"> | null {
-  if (model.startsWith("deepseek/")) return "deepseek";
-  if (model.startsWith("kimi/")) return "kimi";
-  return null;
+): ReturnType<typeof credentialGroupForModel> {
+  return credentialGroupForModel(model);
 }
 
 interface RunTransport {

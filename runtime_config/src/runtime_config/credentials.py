@@ -9,6 +9,7 @@ DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
 DEEPSEEK_MODEL = "DEEPSEEK_MODEL"
 DEEPSEEK_MEMORY_MODEL = "DEEPSEEK_MEMORY_MODEL"
 KIMI_API_KEY = "KIMI_API_KEY"
+OPENROUTER_API_KEY = "OPENROUTER_API_KEY"
 LLM_CHAT_PROVIDER = "LLM_CHAT_PROVIDER"
 LLM_CHAT_MODEL = "LLM_CHAT_MODEL"
 LLM_MEMORY_PROVIDER = "LLM_MEMORY_PROVIDER"
@@ -42,6 +43,7 @@ ALL_CREDENTIAL_NAMES: tuple[str, ...] = (
     AMAP_WEBSERVICE_KEY,
     DEEPSEEK_API_KEY,
     KIMI_API_KEY,
+    OPENROUTER_API_KEY,
     TAVILY_API_KEY,
     QWEATHER_API_KEY,
     QWEATHER_API_HOST,
@@ -69,6 +71,7 @@ CREDENTIAL_BUNDLES: dict[str, tuple[str, ...]] = {
     "amap": (AMAP_WEBSERVICE_KEY,),
     "deepseek": (DEEPSEEK_API_KEY,),
     "kimi": (KIMI_API_KEY,),
+    "openrouter": (OPENROUTER_API_KEY,),
     "tavily": (TAVILY_API_KEY,),
     "qweather": (QWEATHER_API_KEY, QWEATHER_API_HOST),
     "volc-voice": (
@@ -86,6 +89,7 @@ RUNTIME_CREDENTIAL_GROUP_ALIASES: dict[str, str] = {
     "amap": "amap",
     "deepseek": "deepseek",
     "kimi": "kimi",
+    "openrouter": "openrouter",
     "tavily": "tavily",
     "qWeather": "qweather",
     "volcVoice": "volc-voice",

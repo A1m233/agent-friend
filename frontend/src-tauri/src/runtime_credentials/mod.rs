@@ -182,6 +182,7 @@ fn required_fields(group: RuntimeConfigGroup) -> &'static [&'static str] {
         RuntimeConfigGroup::Amap => &["AMAP_WEBSERVICE_KEY"],
         RuntimeConfigGroup::Deepseek => &["DEEPSEEK_API_KEY"],
         RuntimeConfigGroup::Kimi => &["KIMI_API_KEY"],
+        RuntimeConfigGroup::Openrouter => &["OPENROUTER_API_KEY"],
         RuntimeConfigGroup::Tavily => &["TAVILY_API_KEY"],
         RuntimeConfigGroup::QWeather => &["QWEATHER_API_KEY", "QWEATHER_API_HOST"],
         RuntimeConfigGroup::VolcVoice => &[
@@ -198,7 +199,7 @@ fn required_fields(group: RuntimeConfigGroup) -> &'static [&'static str] {
 fn validation_supported(group: RuntimeConfigGroup) -> bool {
     matches!(
         group,
-        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi
+        RuntimeConfigGroup::Deepseek | RuntimeConfigGroup::Kimi | RuntimeConfigGroup::Openrouter
     )
 }
 
@@ -1244,6 +1245,11 @@ mod tests {
         assert!(
             required_fields(RuntimeConfigGroup::VolcVoice).contains(&"VOLC_SPEECH_ACCESS_TOKEN")
         );
+        assert_eq!(
+            required_fields(RuntimeConfigGroup::Openrouter),
+            &["OPENROUTER_API_KEY"]
+        );
+        assert!(validation_supported(RuntimeConfigGroup::Openrouter));
     }
 
     #[test]
