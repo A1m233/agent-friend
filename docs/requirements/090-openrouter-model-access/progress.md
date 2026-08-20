@@ -38,3 +38,5 @@ COMPLETED
 | 2026-08-20 | 用户授权后完成真实 Tauri 桌面验收。 | 运行实例绑定当前 worktree / `feature/090-openrouter-model-access` / Tauri / CDP 9222；通过真实 WebView2 screenshot、DOM 与交互确认“调用渠道”、OpenRouter 凭据组、两款模型可见、缺凭据拦截和精确设置跳转。 |
 | 2026-08-20 | 交叉核对缺凭据拦截的持久化结果。 | 设置页与会话页尝试选择 OpenRouter 后仍保持 `kimi/kimi-k2.5`；桌面 `settings.json` 中 chat/memory model 字段未变化。未填写、保存或读取任何 OpenRouter Key，未调用真实 LLM。 |
 | 2026-08-20 | 用户确认验收并要求合入主干、推送远端。 | 进入 `merge-main-and-push` 收口；先维护公开 guide 与 builtin，再合入 `main`。 |
+| 2026-08-20 | 发布公开 OpenRouter 用户知识。 | 产品来源提交 `bb2675d7` 形成后，公开 guide 更新模型渠道、凭据、选择与排障说明；validator / verify 通过并发布为 `6a295874`，远端 `main` 已精确确认。 |
+| 2026-08-20 | 同步产品 builtin 并完成最终门禁。 | builtin、manifest 与公开 guide snapshot 完全一致；Backend 1932 passed / 4 skipped，Frontend 573 tests 与 production build，Rust 204 passed / 1 ignored、helper 6 passed 与 release check 均通过。 |

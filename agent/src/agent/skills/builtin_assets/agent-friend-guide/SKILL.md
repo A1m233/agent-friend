@@ -1,6 +1,6 @@
 ---
 name: agent-friend-guide
-description: 查询和解答 agent-friend 的产品功能、使用方法、设置、模型与在线工具凭据、语音凭据、数据隐私和常见故障。Use when 用户询问 agent-friend 能做什么、某项功能怎么用、某类 API Key 或服务凭据如何申请和配置、数据存在哪里或如何迁移、以及功能不可用时如何排查。
+description: 查询和解答 agent-friend 的产品功能、使用方法、设置、模型与在线工具凭据、语音凭据、数据隐私和常见故障。Use when 用户询问 agent-friend 能做什么、某项功能怎么用、DeepSeek、Kimi、OpenRouter 或其它服务凭据如何申请和配置、数据存在哪里或如何迁移、以及功能不可用时如何排查。
 ---
 
 # agent-friend 使用指南
@@ -22,7 +22,7 @@ description: 查询和解答 agent-friend 的产品功能、使用方法、设�
 | 产品是什么、能做什么、能力边界 | `references/product-overview.md` |
 | 对话、会话、搜索、附件、人格、桌宠、Skill 等怎么用 | `references/using-agent-friend.md` |
 | 设置页在哪里、设置何时生效 | `references/settings-reference.md` |
-| DeepSeek / Kimi 模型与 API Key | `references/model-credentials.md` |
+| DeepSeek / Kimi / OpenRouter 模型与 API Key | `references/model-credentials.md` |
 | 联网搜索、Tavily Key | `references/web-search-credentials.md` |
 | 附近地点、高德 Web 服务 Key | `references/nearby-place-credentials.md` |
 | 天气、和风天气 API Key 与 API Host | `references/weather-credentials.md` |
