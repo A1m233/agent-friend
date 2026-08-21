@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from llm_providers import LLMBadRequestError, LLMClient, MultimodalInputAdapter, ProviderSpec
+from llm_providers import (
+    LLMBadRequestError,
+    LLMClient,
+    LLMProviderError,
+    MultimodalInputAdapter,
+    ProviderSpec,
+)
 
 
 class _Message:
     role = "user"
 
-    def __init__(self, attachment: object, *, current: bool = False) -> None:
-        self.content = "look"
+    def __init__(self, attachment: object, *, current: bool = False, content: str = "look") -> None:
+        self.content = content
         self.attachments = [attachment]
         self.meta = {"current_input": current}
 
@@ -27,11 +34,18 @@ class _Files:
         self.purposes: list[str] = []
         self.retrievals = 0
         self.retrieve_error = False
+        self.expires_after: list[dict[str, object]] = []
+        self.expires_at = 2_000_000
+        self.create_error = False
 
     def create(self, **kwargs):  # type: ignore[no-untyped-def]
         self.uploads += 1
+        if self.create_error:
+            raise RuntimeError("secret upstream body")
         self.purposes.append(kwargs["purpose"])
-        return SimpleNamespace(id="remote-file")
+        if "expires_after" in kwargs:
+            self.expires_after.append(kwargs["expires_after"])
+        return SimpleNamespace(id="remote-file", expires_at=self.expires_at)
 
     def content(self, _file_id: str):  # type: ignore[no-untyped-def]
         return SimpleNamespace(text="extracted document")
@@ -43,12 +57,19 @@ class _Files:
         return SimpleNamespace(id=file_id)
 
 
-def _attachment(*, kind: str, media_type: str):  # type: ignore[no-untyped-def]
+def _attachment(
+    *,
+    kind: str,
+    media_type: str,
+    asset_id: str = "a" * 64,
+    size_bytes: int = 3,
+) -> SimpleNamespace:
     return SimpleNamespace(
-        asset_id="a" * 64,
+        asset_id=asset_id,
         display_name="sample.png" if kind == "image" else "sample.pdf",
         kind=kind,
         media_type=media_type,
+        size_bytes=size_bytes,
     )
 
 
@@ -182,3 +203,194 @@ def test_kimi_rejects_extracted_document_that_cannot_fit_context(
             _Message(_attachment(kind="document", media_type="application/pdf"), current=True),
             client,
         )
+
+
+def test_deepseek_image_upload_uses_finite_ttl_and_nested_file_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _Files()
+    monkeypatch.setattr("llm_providers.multimodal.adapter.time.time", lambda: 1_000_000)
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
+    message = _Message(
+        _attachment(kind="image", media_type="image/png"),
+        current=True,
+        content="",
+    )
+    client = _client("openai/deepseek-v4-flash-vision-exp", context_window=1_000_000)
+
+    first = adapter.render_message(message, client)
+    second = adapter.render_message(message, client)
+
+    assert first == second
+    assert first == {
+        "role": "user",
+        "content": [{"type": "file", "file": {"file_id": "remote-file"}}],
+    }
+    assert files.uploads == 1
+    assert files.retrievals == 1
+    assert files.purposes == ["user_data"]
+    assert files.expires_after == [{"anchor": "created_at", "seconds": 86_400}]
+
+
+def test_deepseek_cache_is_isolated_by_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _Files()
+    monkeypatch.setattr("llm_providers.multimodal.adapter.time.time", lambda: 1_000_000)
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
+    message = _Message(_attachment(kind="image", media_type="image/webp"), current=True)
+    first_client = _client("openai/deepseek-v4-flash-vision-exp")
+    second_client = LLMClient(
+        ProviderSpec(
+            model="openai/deepseek-v4-flash-vision-exp",
+            api_key="other-secret",
+            api_base="https://example.test",
+            context_window=1_000_000,
+        )
+    )
+
+    adapter.render_message(message, first_client)
+    adapter.render_message(message, second_client)
+
+    assert files.uploads == 2
+    assert files.retrievals == 0
+    assert len(list(tmp_path.glob("*.json"))) == 2
+
+
+def test_deepseek_remote_failure_reuploads_from_local_asset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _Files()
+    monkeypatch.setattr("llm_providers.multimodal.adapter.time.time", lambda: 1_000_000)
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"jpeg"), cache_dir=tmp_path)
+    message = _Message(_attachment(kind="image", media_type="image/jpeg"), current=True)
+    client = _client("openai/deepseek-v4-flash-vision-exp")
+
+    adapter.render_message(message, client)
+    files.retrieve_error = True
+    adapter.render_message(message, client)
+
+    assert files.retrievals == 1
+    assert files.uploads == 2
+
+
+def test_deepseek_near_expiry_cache_reuploads_without_reusing_remote_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 1_000_000
+    files = _Files()
+    monkeypatch.setattr("llm_providers.multimodal.adapter.time.time", lambda: now)
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
+    message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
+    client = _client("openai/deepseek-v4-flash-vision-exp")
+
+    adapter.render_message(message, client)
+    now = files.expires_at - 299
+    files.expires_at = now + 86_400
+    adapter.render_message(message, client)
+
+    assert files.retrievals == 0
+    assert files.uploads == 2
+
+
+def test_deepseek_single_flight_uploads_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _Files()
+    monkeypatch.setattr("llm_providers.multimodal.adapter.time.time", lambda: 1_000_000)
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
+    message = _Message(_attachment(kind="image", media_type="image/png"), current=True)
+    client = _client("openai/deepseek-v4-flash-vision-exp")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _index: adapter.render_message(message, client), range(2)))
+
+    assert results[0] == results[1]
+    assert files.uploads == 1
+    assert files.retrievals == 1
+
+
+@pytest.mark.parametrize(
+    ("kind", "media_type"),
+    (
+        ("document", "application/pdf"),
+        ("document", "text/plain"),
+        ("image", "image/gif"),
+    ),
+)
+def test_deepseek_rejects_unsupported_attachment_types(
+    tmp_path: Path,
+    kind: str,
+    media_type: str,
+) -> None:
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"x"), cache_dir=tmp_path)
+
+    with pytest.raises(LLMBadRequestError, match="attachment_type_unsupported"):
+        adapter.render_message(
+            _Message(_attachment(kind=kind, media_type=media_type), current=True),
+            _client("openai/deepseek-v4-flash-vision-exp"),
+        )
+
+
+def test_deepseek_rejects_file_over_64_mib(tmp_path: Path) -> None:
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"x"), cache_dir=tmp_path)
+
+    with pytest.raises(LLMBadRequestError, match="attachment_size_limit_exceeded"):
+        adapter.render_message(
+            _Message(
+                _attachment(
+                    kind="image",
+                    media_type="image/png",
+                    size_bytes=64 * 1024 * 1024 + 1,
+                ),
+                current=True,
+            ),
+            _client("openai/deepseek-v4-flash-vision-exp"),
+        )
+
+
+def test_deepseek_upload_failure_uses_safe_project_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _Files()
+    files.create_error = True
+    monkeypatch.setattr(
+        "llm_providers.multimodal.adapter.OpenAI",
+        lambda **_kwargs: SimpleNamespace(files=files),
+    )
+    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"png"), cache_dir=tmp_path)
+
+    with pytest.raises(LLMProviderError) as caught:
+        adapter.render_message(
+            _Message(_attachment(kind="image", media_type="image/png"), current=True),
+            _client("openai/deepseek-v4-flash-vision-exp"),
+        )
+
+    assert "attachment_provider_upload_failed" in str(caught.value)
+    assert "secret upstream body" not in str(caught.value)

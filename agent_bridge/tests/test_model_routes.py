@@ -27,6 +27,23 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
     assert k26["capabilities"]["attachments"] is True
     assert "application/pdf" in k26["capabilities"]["acceptedMediaTypes"]
     assert k26["limits"]["contextWindow"] == 256 * 1024
+    deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
+    vision = next(
+        model
+        for model in deepseek["models"]
+        if model["id"] == "deepseek/deepseek-v4-flash-vision-exp"
+    )
+    assert vision["label"] == "DeepSeek V4 Flash Vision"
+    assert vision["processingProfile"] == "deepseek-vision-files-v1"
+    assert vision["capabilities"]["inputModalities"] == ["text", "image"]
+    assert vision["capabilities"]["acceptedMediaTypes"] == [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    ]
+    assert vision["capabilities"]["maxAttachmentBytes"] == 64 * 1024 * 1024
+    assert deepseek["defaultChatModel"] == "deepseek/deepseek-v4-flash"
+    assert deepseek["defaultMemoryModel"] == "deepseek/deepseek-v4-pro"
 
 
 def _validation_client(factory: object) -> TestClient:

@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import litellm
 
+from .deepseek_vision_compat import is_deepseek_vision_spec, prepare_litellm_request
 from .error_normalization import map_provider_error as _normalize_provider_error
 from .errors import (
     LLMEmptyResponseError,
@@ -117,6 +118,8 @@ def _provider_id_for_spec(spec: ProviderSpec) -> str | None:
         return "openrouter"
     if spec.model.startswith("deepseek/"):
         return "deepseek"
+    if is_deepseek_vision_spec(spec):
+        return "deepseek"
     if spec.model.startswith("openai/kimi-"):
         return "kimi"
     return None
@@ -175,8 +178,15 @@ def _request_size_bytes(
         "messages": messages,
         "stream": True,
     }
+    extra_body = kwargs.get("extra_body")
+    if isinstance(extra_body, dict) and "messages" in extra_body:
+        payload["messages"] = extra_body["messages"]
+        remaining_extra_body = {
+            key: value for key, value in extra_body.items() if key != "messages"
+        }
+        if remaining_extra_body:
+            payload["extra_body"] = remaining_extra_body
     for key in (
-        "extra_body",
         "max_tokens",
         "response_format",
         "stream_options",
@@ -581,13 +591,14 @@ class LLMClient:
         # LiteLLM/OpenAI SDK 自带重试会与本层的有界重试相乘。统一关闭内层重试，
         # 让 attempt 数、总等待时间与可观测状态只有一个所有者。
         kwargs.setdefault("max_retries", 0)
+        request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
 
         try:
             response = litellm.completion(
                 model=spec.model,
                 api_key=spec.api_key,
                 api_base=spec.api_base,
-                messages=messages,
+                messages=request_messages,
                 **kwargs,
             )
         except Exception as e:
@@ -647,8 +658,9 @@ class LLMClient:
             kwargs["tools"] = tools
         # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖
         kwargs.setdefault("stream_options", {"include_usage": True})
+        request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
         transport = "kimi_direct" if uses_kimi_stream_transport(spec) else "litellm"
-        request_bytes = _request_size_bytes(spec, messages, kwargs)
+        request_bytes = _request_size_bytes(spec, request_messages, kwargs)
         attempt_started = time.perf_counter()
         _emit_transport_diagnostic(
             diagnostic_callback,
@@ -668,18 +680,18 @@ class LLMClient:
                 response = (
                     open_cancellable_kimi_stream(
                         spec,
-                        messages,
+                        request_messages,
                         kwargs,
                         cancel_check,
                         timeout_seconds=self._stream_timeout_seconds,
                     )
                     if cancel_check is not None
-                    else open_kimi_stream(spec, messages, kwargs)
+                    else open_kimi_stream(spec, request_messages, kwargs)
                 )
             elif cancel_check is not None:
                 response = open_cancellable_litellm_stream(
                     spec,
-                    messages,
+                    request_messages,
                     kwargs,
                     cancel_check,
                     timeout_seconds=self._stream_timeout_seconds,
@@ -689,7 +701,7 @@ class LLMClient:
                     model=spec.model,
                     api_key=spec.api_key,
                     api_base=spec.api_base,
-                    messages=messages,
+                    messages=request_messages,
                     stream=True,
                     **kwargs,
                 )

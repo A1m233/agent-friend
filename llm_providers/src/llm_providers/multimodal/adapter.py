@@ -5,18 +5,26 @@ import json
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
 from openai import OpenAI
 
-from ..catalog import infer_provider_id_from_model, model_capabilities
+from ..catalog import (
+    DEEPSEEK_VISION_LITELLM_MODEL,
+    model_capabilities,
+    model_processing_profile,
+)
 from ..client import LLMClient
 from ..errors import LLMBadRequestError, LLMProviderError
 from ..protocol import LanguageModel
 
 OpenAsset = Callable[[str], BinaryIO]
+
+DEEPSEEK_FILE_TTL_SECONDS = 24 * 60 * 60
+DEEPSEEK_FILE_EXPIRY_MARGIN_SECONDS = 5 * 60
 
 
 class MultimodalInputAdapter:
@@ -48,9 +56,14 @@ class MultimodalInputAdapter:
             return {"role": "user", "content": f"{text}\n{markers}".strip()}
         if len(attachments) > capabilities.max_attachments_per_turn:
             raise LLMBadRequestError("attachment_turn_limit_exceeded: 单轮附件数量超过限制。")
+        sizes = [int(getattr(item, "size_bytes", 0)) for item in attachments]
+        if any(size > capabilities.max_attachment_bytes for size in sizes):
+            raise LLMBadRequestError("attachment_size_limit_exceeded: 单个附件大小超过限制。")
+        if sum(sizes) > capabilities.max_total_attachment_bytes:
+            raise LLMBadRequestError("attachment_total_limit_exceeded: 本轮附件总大小超过限制。")
 
-        provider_id = infer_provider_id_from_model(model_id)
-        if provider_id != "kimi":
+        processing_profile = model_processing_profile(model_id)
+        if processing_profile not in ("kimi-multimodal-v1", "deepseek-vision-files-v1"):
             raise LLMBadRequestError("attachment_model_unsupported: 当前模型路由没有附件适配器。")
 
         content: list[dict[str, Any]] = []
@@ -60,6 +73,15 @@ class MultimodalInputAdapter:
         for attachment in attachments:
             if attachment.media_type not in capabilities.accepted_media_types:
                 raise LLMBadRequestError("attachment_type_unsupported: 当前模型不支持此附件类型。")
+            if processing_profile == "deepseek-vision-files-v1":
+                if attachment.kind != "image":
+                    raise LLMBadRequestError(
+                        "attachment_type_unsupported: DeepSeek 视觉模型仅支持图片附件。"
+                    )
+                prepared = self._prepare_deepseek(attachment, concrete_client)
+                content.append({"type": "file", "file": {"file_id": prepared["_file_id"]}})
+                continue
+
             prepared = self._prepare_kimi(attachment, concrete_client)
             if attachment.kind == "image":
                 content.append({"type": "image_url", "image_url": {"url": prepared["url"]}})
@@ -87,6 +109,8 @@ class MultimodalInputAdapter:
     @staticmethod
     def _canonical_model_id(client: LLMClient) -> str:
         model = client.spec.model
+        if model == DEEPSEEK_VISION_LITELLM_MODEL:
+            return "deepseek/deepseek-v4-flash-vision-exp"
         if model.startswith("openai/kimi-"):
             return "kimi/" + model.removeprefix("openai/")
         return model
@@ -141,6 +165,66 @@ class MultimodalInputAdapter:
                         else:
                             extracted = str(raw)
                     result = {"content": extracted}
+            except Exception as exc:
+                raise LLMProviderError(
+                    "attachment_provider_upload_failed: 附件交给模型处理失败。"
+                ) from exc
+            self._write_cache(path, {**result, "_asset_id": attachment.asset_id})
+            return result
+
+    def _prepare_deepseek(self, attachment: Any, client: LLMClient) -> dict[str, str]:
+        account_scope = hashlib.sha256(client.spec.api_key.encode("utf-8")).hexdigest()[:16]
+        key = hashlib.sha256(
+            (
+                f"{attachment.asset_id}|deepseek|{account_scope}|openai-compatible|"
+                "deepseek-vision-files-v1|user_data"
+            ).encode()
+        ).hexdigest()
+        path = self._cache_dir / f"{key}.json"
+        lock = self._lock_for(key)
+        with lock:
+            cached = self._read_cache(path)
+            if cached is not None:
+                file_id = cached.get("_file_id")
+                try:
+                    expires_at = float(cached.get("_expires_at", ""))
+                except (TypeError, ValueError):
+                    expires_at = 0
+                if file_id and expires_at - time.time() > DEEPSEEK_FILE_EXPIRY_MARGIN_SECONDS:
+                    try:
+                        sdk = OpenAI(api_key=client.spec.api_key, base_url=client.spec.api_base)
+                        cached_files_api: Any = sdk.files
+                        cached_files_api.retrieve(file_id)
+                        return cached
+                    except Exception:
+                        pass
+                path.unlink(missing_ok=True)
+
+            try:
+                sdk = OpenAI(api_key=client.spec.api_key, base_url=client.spec.api_base)
+                with self._open_asset(attachment.asset_id) as source:
+                    files_api: Any = sdk.files
+                    uploaded = files_api.create(
+                        file=(attachment.display_name, source, attachment.media_type),
+                        purpose="user_data",
+                        expires_after={
+                            "anchor": "created_at",
+                            "seconds": DEEPSEEK_FILE_TTL_SECONDS,
+                        },
+                    )
+                uploaded_expires_at = getattr(uploaded, "expires_at", None)
+                try:
+                    if not isinstance(uploaded_expires_at, (int, float, str)):
+                        raise TypeError
+                    expires_at = float(uploaded_expires_at)
+                except (TypeError, ValueError):
+                    expires_at = time.time() + DEEPSEEK_FILE_TTL_SECONDS
+                if expires_at <= time.time():
+                    expires_at = time.time() + DEEPSEEK_FILE_TTL_SECONDS
+                result = {
+                    "_file_id": str(uploaded.id),
+                    "_expires_at": str(int(expires_at)),
+                }
             except Exception as exc:
                 raise LLMProviderError(
                     "attachment_provider_upload_failed: 附件交给模型处理失败。"

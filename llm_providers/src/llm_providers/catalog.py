@@ -19,7 +19,7 @@ from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
 
-CATALOG_REVISION = "2026-08-20.1"
+CATALOG_REVISION = "2026-08-21.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -31,6 +31,9 @@ OPENROUTER_API_KEY = "OPENROUTER_API_KEY"
 
 KIMI_API_BASE = "https://api.moonshot.cn/v1"
 KIMI_CONTEXT_WINDOW = 256 * 1024
+DEEPSEEK_API_BASE = "https://api.deepseek.com"
+DEEPSEEK_VISION_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
+DEEPSEEK_VISION_LITELLM_MODEL = "openai/deepseek-v4-flash-vision-exp"
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,13 @@ KIMI_MULTIMODAL_CAPABILITIES = ModelRouteCapabilities(
     max_total_attachment_bytes=100 * 1024 * 1024,
     max_attachments_per_turn=10,
 )
+DEEPSEEK_VISION_CAPABILITIES = ModelRouteCapabilities(
+    input_modalities=("text", "image"),
+    accepted_media_types=("image/jpeg", "image/png", "image/webp"),
+    max_attachment_bytes=64 * 1024 * 1024,
+    max_total_attachment_bytes=100 * 1024 * 1024,
+    max_attachments_per_turn=10,
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +86,8 @@ class ProviderModel:
     label: str
     litellm_model: str
     context_window: int
+    processing_profile: str = "text-only-v1"
+    api_base: str | None = None
     capabilities: ModelRouteCapabilities = TEXT_ONLY_CAPABILITIES
 
 
@@ -119,6 +131,15 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 litellm_model="deepseek/deepseek-v4-pro",
                 context_window=1_000_000,
             ),
+            ProviderModel(
+                id=DEEPSEEK_VISION_MODEL_ID,
+                label="DeepSeek V4 Flash Vision",
+                litellm_model=DEEPSEEK_VISION_LITELLM_MODEL,
+                context_window=1_000_000,
+                processing_profile="deepseek-vision-files-v1",
+                api_base=DEEPSEEK_API_BASE,
+                capabilities=DEEPSEEK_VISION_CAPABILITIES,
+            ),
         ),
         default_model="deepseek/deepseek-v4-flash",
         default_memory_model="deepseek/deepseek-v4-pro",
@@ -138,6 +159,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.6",
                 litellm_model="openai/kimi-k2.6",
                 context_window=KIMI_CONTEXT_WINDOW,
+                processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
@@ -145,6 +167,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.5",
                 litellm_model="openai/kimi-k2.5",
                 context_window=KIMI_CONTEXT_WINDOW,
+                processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
@@ -152,6 +175,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.7-code",
                 litellm_model="openai/kimi-k2.7-code",
                 context_window=KIMI_CONTEXT_WINDOW,
+                processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
             ProviderModel(
@@ -159,6 +183,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="kimi-k2.7-code-highspeed",
                 litellm_model="openai/kimi-k2.7-code-highspeed",
                 context_window=KIMI_CONTEXT_WINDOW,
+                processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
             ),
         ),
@@ -255,6 +280,12 @@ def model_capabilities(model_id: str) -> ModelRouteCapabilities:
     return model.capabilities if model is not None else TEXT_ONLY_CAPABILITIES
 
 
+def model_processing_profile(model_id: str) -> str:
+    provider = provider_definition(infer_provider_id_from_model(model_id))
+    model = provider.model(model_id)
+    return model.processing_profile if model is not None else "text-only-v1"
+
+
 def _fallback_litellm_model(provider: ProviderDefinition, model_id: str) -> str:
     if provider.provider_id == KIMI_PROVIDER_ID and model_id.startswith("kimi/"):
         return "openai/" + model_id.removeprefix("kimi/")
@@ -291,7 +322,7 @@ def build_provider_spec(
     return ProviderSpec(
         model=litellm_model,
         api_key=key,
-        api_base=provider.api_base,
+        api_base=model.api_base if model and model.api_base is not None else provider.api_base,
         defaults=defaults,
         context_window=context_window or model_window,
         context_window_source=(
@@ -324,9 +355,7 @@ def public_model_catalog() -> dict[str, Any]:
                     "label": model.label,
                     "routeId": f"{provider.provider_id}:{model.id}:openai-compatible",
                     "transportProfile": "openai-compatible",
-                    "processingProfile": (
-                        "kimi-multimodal-v1" if model.capabilities.attachments else "text-only-v1"
-                    ),
+                    "processingProfile": model.processing_profile,
                     "limits": {
                         "contextWindow": model.context_window,
                         "contextWindowSource": "catalog",
@@ -375,7 +404,7 @@ def replace_spec_model(spec: ProviderSpec, model_id: str) -> ProviderSpec:
     return dataclasses.replace(
         spec,
         model=model.litellm_model if model else _fallback_litellm_model(provider, model_id),
-        api_base=provider.api_base,
+        api_base=model.api_base if model and model.api_base is not None else provider.api_base,
         defaults=defaults,
         context_window=model.context_window if model else spec.context_window,
         context_window_source="catalog" if model else spec.context_window_source,

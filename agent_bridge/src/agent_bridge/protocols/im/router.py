@@ -201,6 +201,7 @@ class IMRouter:
                 or len(attachments) > capabilities.max_attachments_per_turn
                 or sum(item.size_bytes for item in attachments)
                 > capabilities.max_total_attachment_bytes
+                or any(item.size_bytes > capabilities.max_attachment_bytes for item in attachments)
                 or any(
                     item.media_type not in capabilities.accepted_media_types for item in attachments
                 )

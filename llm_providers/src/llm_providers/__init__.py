@@ -5,7 +5,10 @@
 
 from .catalog import (
     CATALOG_REVISION,
+    DEEPSEEK_API_BASE,
     DEEPSEEK_PROVIDER_ID,
+    DEEPSEEK_VISION_LITELLM_MODEL,
+    DEEPSEEK_VISION_MODEL_ID,
     KIMI_API_KEY,
     KIMI_PROVIDER_ID,
     OPENROUTER_API_KEY,
@@ -20,10 +23,12 @@ from .catalog import (
     infer_provider_id_from_model,
     model_belongs_to_provider,
     model_capabilities,
+    model_processing_profile,
     normalize_provider_id,
     provider_definition,
     public_model_catalog,
     public_provider_models,
+    replace_spec_model,
 )
 from .client import LLMClient, ResolvedModelLimits
 from .credential_validation import (
@@ -75,7 +80,10 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CATALOG_REVISION",
+    "DEEPSEEK_API_BASE",
     "DEEPSEEK_PROVIDER_ID",
+    "DEEPSEEK_VISION_LITELLM_MODEL",
+    "DEEPSEEK_VISION_MODEL_ID",
     "KIMI_API_KEY",
     "KIMI_PROVIDER_ID",
     "OPENROUTER_API_KEY",
@@ -128,9 +136,11 @@ __all__ = [
     "infer_provider_id_from_model",
     "model_belongs_to_provider",
     "model_capabilities",
+    "model_processing_profile",
     "normalize_provider_id",
     "provider_definition",
     "public_model_catalog",
     "public_provider_models",
+    "replace_spec_model",
     "validate_provider_credential",
 ]

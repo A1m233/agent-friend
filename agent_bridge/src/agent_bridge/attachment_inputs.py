@@ -136,6 +136,14 @@ def prepare_attachment_input(
                     "message": "当前模型不支持此附件类型。",
                 },
             )
+        if ref.size_bytes > capabilities.max_attachment_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "attachment_size_limit_exceeded",
+                    "message": "单个附件大小超过当前模型限制。",
+                },
+            )
         prepared.append(_PreparedAttachment(ref, draft_index))
 
     if (
