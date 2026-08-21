@@ -47,33 +47,13 @@
       {
         "label": "chat",
         "url": "chat.html",
-        "title": "agent-friend · 对话",
-        "width": 720,
-        "height": 640,
-        "minWidth": 720,
-        "minHeight": 560,
+        "title": "agent-friend",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 640,
         "resizable": true,
         "dragDropEnabled": false,
-        "visible": false,
-        "fullscreen": false
-      },
-      {
-        "label": "settings",
-        "url": "settings.html",
-        "title": "agent-friend · 设置",
-        "width": 720,
-        "height": 640,
-        "resizable": true,
-        "visible": false,
-        "fullscreen": false
-      },
-      {
-        "label": "im-connect",
-        "url": "im-connect.html",
-        "title": "agent-friend · 接入 IM",
-        "width": 420,
-        "height": 560,
-        "resizable": true,
         "visible": false,
         "fullscreen": false
       },
@@ -84,18 +64,6 @@
         "width": 360,
         "height": 520,
         "resizable": false,
-        "visible": false,
-        "fullscreen": false
-      },
-      {
-        "label": "memory-inspector",
-        "url": "memory-inspector.html",
-        "title": "agent-friend · 记忆面板",
-        "width": 1024,
-        "height": 720,
-        "minWidth": 800,
-        "minHeight": 560,
-        "resizable": true,
         "visible": false,
         "fullscreen": false
       }

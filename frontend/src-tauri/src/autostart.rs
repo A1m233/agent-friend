@@ -11,7 +11,7 @@ use tauri_plugin_autostart::ManagerExt;
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
-const SETTINGS_WINDOW: &str = "settings";
+const MAIN_WORKSPACE_WINDOW: &str = "chat";
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 const WINDOWS_RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
@@ -72,11 +72,11 @@ trait AutostartBackend {
     fn disable(&self) -> Result<(), String>;
 }
 
-fn ensure_settings_window(label: &str) -> Result<(), String> {
-    if label == SETTINGS_WINDOW {
+fn ensure_main_workspace_window(label: &str) -> Result<(), String> {
+    if label == MAIN_WORKSPACE_WINDOW {
         Ok(())
     } else {
-        Err("autostart_forbidden: only the settings window may manage autostart".to_string())
+        Err("autostart_forbidden: only the main workspace may manage autostart".to_string())
     }
 }
 
@@ -148,7 +148,7 @@ pub fn get_autostart_status<R: Runtime>(
     window: WebviewWindow<R>,
     app: AppHandle<R>,
 ) -> Result<AutostartStatus, String> {
-    ensure_settings_window(window.label())?;
+    ensure_main_workspace_window(window.label())?;
 
     #[cfg(all(target_os = "windows", not(debug_assertions)))]
     {
@@ -170,7 +170,7 @@ pub fn set_autostart_enabled<R: Runtime>(
     app: AppHandle<R>,
     enabled: bool,
 ) -> Result<AutostartStatus, String> {
-    ensure_settings_window(window.label())?;
+    ensure_main_workspace_window(window.label())?;
 
     #[cfg(all(target_os = "windows", not(debug_assertions)))]
     {
@@ -234,9 +234,9 @@ mod tests {
     }
 
     #[test]
-    fn only_settings_window_can_manage_autostart() {
-        assert!(ensure_settings_window("settings").is_ok());
-        assert!(ensure_settings_window("chat")
+    fn only_main_workspace_can_manage_autostart() {
+        assert!(ensure_main_workspace_window("chat").is_ok());
+        assert!(ensure_main_workspace_window("pet")
             .unwrap_err()
             .starts_with("autostart_forbidden:"));
     }

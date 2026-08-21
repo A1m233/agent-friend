@@ -1,6 +1,6 @@
 # frontend
 
-`agent-friend` 的**桌面前端**模块（Tauri 2 桌宠外壳 + 对话界面）。
+`agent-friend` 的**桌面前端**模块（Tauri 2 桌宠外壳 + 统一主窗口）。
 
 它既是当前可用的"正经前端"，也是未来桌宠形态的前端层。详见需求 [`docs/requirements/010-desktop-shell-and-chat-ui`](../docs/requirements/010-desktop-shell-and-chat-ui)。
 
@@ -36,7 +36,7 @@ frontend/
 ├── index.html / pet.html / chat.html   # 多窗口 = 多 entry（单 build）
 ├── vite.config.ts                      # 多 entry + tailwind 插件
 ├── src/
-│   ├── pages/{pet,chat,devhub}/        # 各窗口入口（main.tsx + App.tsx）
+│   ├── pages/{pet,chat,...}/            # 窗口入口与主窗口内容 surface
 │   ├── components/ui/                  # shadcn/ui copy-in 纯 UI 组件
 │   ├── stores/                         # Zustand store（会话 / 历史 / persona / 连接）
 │   ├── services/                       # 基础请求层（axios + fetch-SSE）
@@ -48,12 +48,14 @@ frontend/
 
 ## 窗口模型
 
-两个 Tauri 窗口（解耦、便于调试）：
+产品窗口按交互形态拆分：
 
-- **pet**（`pet.html`）：桌宠悬浮窗，后续透明 / 置顶 / 无边框 / 鼠标穿透（M10.2）。
-- **chat**（`chat.html`）：常规对话窗，承载传统对话页（M10.3）。
+- **pet**（`pet.html`）：透明、置顶、无边框的桌宠悬浮窗。
+- **bubble**（`bubble.html`）：跟随桌宠的独立气泡窗。
+- **chat**（`chat.html`）：统一主窗口；左侧切换会话、设置、IM 接入和 owner-mode 记忆面板，右侧展示对应内容。
+- **voice-call**（`voice-call.html`）：独立的语音通话小窗。
 
-跨窗口状态以 bridge 为唯一真相源，前端 store 仅为各窗口视图缓存，靠 Tauri 事件做失效通知后各自重新拉取。
+设置、IM 接入和 Memory Inspector 作为 `chat` 主窗口内的平级内容 surface，不再各自创建普通内容窗口。跨窗口状态以 bridge / Tauri 主进程为真相源，前端 store 仅为视图缓存。
 
 ## 与后端通信
 

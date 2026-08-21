@@ -97,7 +97,7 @@ export function PermissionPanel() {
               requestId: requestId(),
               reason: "manual",
               permissionIds: ["microphone"],
-              sourceWindow: "settings",
+              sourceWindow: "chat",
             });
             if (ticket.flowId) {
               flow = (await refreshPermissions()).activeFlow;

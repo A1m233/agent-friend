@@ -175,7 +175,7 @@ pub(crate) fn spawn_platform_probe(app: tauri::AppHandle) {
 
         if let Ok(origin) = std::env::var("AGENT_FRIEND_PERMISSION_SPIKE_ROUNDTRIP_ORIGIN") {
             let window = app
-                .get_webview_window("settings")
+                .get_webview_window("chat")
                 .or_else(|| app.webview_windows().into_values().next());
             match window {
                 Some(window) => match platform::windows::probe_microphone_permission_round_trip(

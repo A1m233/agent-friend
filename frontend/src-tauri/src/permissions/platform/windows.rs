@@ -41,7 +41,7 @@ impl WindowsPermissionAdapter {
 
     fn microphone_window(&self) -> Result<WebviewWindow<Wry>, PermissionPlatformError> {
         self.app
-            .get_webview_window("settings")
+            .get_webview_window("chat")
             .or_else(|| self.app.webview_windows().into_values().next())
             .ok_or_else(|| PermissionPlatformError {
                 code: "permission_webview_missing".to_string(),
