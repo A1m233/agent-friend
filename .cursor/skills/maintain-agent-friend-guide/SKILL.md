@@ -9,25 +9,25 @@ description: 检查 agent-friend 产品变更是否需要更新公开用户知�
 
 - `manual`：用户直接请求后进入。默认只做检查，后续写入与 Git 操作按用户明确授权推进。
 - `merge-main-and-push`：仅由 `dev-workflow` 在用户明确要求合入 `main` 并推送时调用。按本 Skill 的自动事务完成必要更新、正常 commit/push 与 immutable release，不逐步询问。
-- `package-baseline`：由 package-release 在当前工作流第一次实际构建前自动调用，或在用户直接要求刷新安装包离线 Guide 时进入，无需额外询问。先完成只读知识检查，再把已发布的最新兼容 immutable release 同步为产品 builtin；不编辑公开知识、不创建 release、不自动提交产品仓库。
+- `package-baseline`：由 package-release 在当前工作流第一次实际构建前自动调用，或在用户直接要求解析安装包离线 Guide 时进入，无需额外询问。只读解析并验证最新兼容 immutable release，把 checkout、commit 和 snapshot 返回给 package runner；是否临时应用或要求持久提交由 package-release 按渠道负责。本模式不编辑公开知识、不创建 release、不自动提交产品仓库。
 
 ## 工作流
 
 1. 读取 `references/reference-map.md`，确定产品变化可能影响哪些用户知识。
 2. 运行 `scripts/agent-friend-guide/run.* prepare --json` 准备默认受管 checkout，再运行 `status --json` 获取基线、两仓状态和部分完成阶段。用户已明确提供 checkout 时可传 `--guide-repo <path>`。
 3. 按 `references/review-workflow.md` 阅读从公开 metadata 基线到目标产品状态的真实 diff，并沿用户可见入口核实语义。
-4. 得出“需要更新 / 无需更新 / 无法判断”以及证据、受影响 reference 和未决项。`manual` 模式输出后保持只读；`merge-main-and-push` 模式无需更新则返回交付流程，需要更新则继续，无法判断则停止；`package-baseline` 模式记录结论后直接转到“离线基线刷新”，不执行下方公开写入与发布步骤。发现公开内容需要更新时只报告，不把自动进入 baseline 视为公开写入或 release 授权。
+4. 得出“需要更新 / 无需更新 / 无法判断”以及证据、受影响 reference 和未决项。`manual` 模式输出后保持只读；`merge-main-and-push` 模式无需更新则返回交付流程，需要更新则继续，无法判断则停止；`package-baseline` 模式记录结论后直接转到“离线基线解析”，不执行下方公开写入与发布步骤。发现公开内容需要更新时只报告，不把自动入口视为公开写入或 release 授权。
 5. `manual` 模式只有用户明确同意更新后才写；`merge-main-and-push` 模式直接按 `references/content-quality.md` 修改已确认的公开知识。不得直接编辑产品内置快照。
 6. 运行公开 Skill validator 与项目 `verify`。验证通过后，按 `references/cross-repo-publish.md` 推进公开提交与 release 事务。
 7. 公开提交已推送且能从 origin 精确确认后，为下一单调 release sequence 生成完整 ZIP 与兼容 manifest；先 draft、上传两项 asset，再 publish，并确认 GitHub API 报告 `immutable=true` 与 asset digest 一致。正常 Guide 发布到此结束，不修改产品 builtin。
 
-## 离线基线刷新
+## 离线基线解析
 
 1. 运行 `prepare`，确认受管 checkout clean、origin 正确并 fast-forward 到 `origin/main`。
 2. 用 GitHub Releases API 确认 checkout `HEAD` 对应已发布、非 draft、非 prerelease、`immutable=true` 的最高兼容 release；不得从尚未发布的 main 内容生成 builtin。
-3. 运行 `verify`，再运行 `sync --guide-commit <HEAD>`。复核 builtin manifest source commit 与 snapshot digest。
-4. 运行 Guide 脚本测试和项目规定检查。同步只改变离线 baseline；客户端自动更新仍以 immutable release 为线上来源。
-5. 不自动 commit/push。若构建渠道要求 clean worktree，向 package-release 返回精确变更，先按用户当前 Git 授权完成提交或停止。
+3. 运行 `verify`，向 package-release 返回 checkout、精确 HEAD、snapshot digest 和兼容 release 证据；package 命令必须通过 `--guide-repo`、`--guide-commit` 绑定该输入。客户端自动更新仍以 immutable release 为线上来源。
+4. `local-test` / installer smoke 不在本 Skill 中运行 `sync`；package runner 临时应用并负责恢复。stable / 可分发 trusted-beta 若 baseline 不匹配，由 package runner 在写入前返回 `baseline-update-required`。
+5. 只有用户直接要求持久刷新，或 formal package 已获得覆盖产品提交的当前 Git 授权时，才运行 `sync --guide-commit <HEAD>` materialize changeset；随后运行 Guide 脚本测试和项目规定检查。本 Skill 不自动 commit/push。
 
 ## 只读检查边界
 
@@ -43,7 +43,7 @@ description: 检查 agent-friend 产品变更是否需要更新公开用户知�
 - “更新知识”授权修改已列出的公开知识与生成文件，不自动授权任何仓库 commit 或 push。
 - 两个仓库的 commit 和 push 分别核对范围；创建不可变 release 也是独立外部写入，`manual` 模式必须有明确发布授权。存在来源不明的 dirty 文件时暂停并列出精确路径。
 - 不 force-push、不自动 amend 已推送的公开提交、不删除已经成功发布的远端提交。
-- `sync` 只生成 builtin 和 manifest，不执行 Git 操作。
+- `sync` 只 materialize builtin 和 manifest，不执行 Git 操作；package-baseline 自动入口本身不调用持久化 `sync`。
 
 ### `merge-main-and-push` 自动授权
 

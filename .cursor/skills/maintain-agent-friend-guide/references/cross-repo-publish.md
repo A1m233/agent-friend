@@ -13,8 +13,9 @@
 9. 运行 `publish-release --release-sequence N --min-product-version X --max-product-version-exclusive Y`。命令先构建 deterministic ZIP/manifest，再创建 draft、上传 assets、publish，并复核 `immutable=true` 和两个 asset digest。
 10. 确认 release tag、source commit、manifest 与 `G` 一致后，返回产品交付流程。日常 Guide 发布不再同步 builtin，也不产生后续 builtin pin 产品提交。
 
-公开工作区、未提交内容或只存在于本地的 commit 不能作为 release 来源。桌面离线 builtin 只在
-`package-baseline` 模式从已经发布的兼容 immutable release 刷新。
+公开工作区、未提交内容或只存在于本地的 commit 不能作为 release 来源。`package-baseline`
+模式只从已经发布的兼容 immutable release 解析桌面离线 builtin 输入；local-test / installer
+smoke 由 package runner 临时应用并恢复，可分发构建则要求精确 baseline 已提交。
 
 ## 两仓预检
 
