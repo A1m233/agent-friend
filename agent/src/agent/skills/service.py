@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 SnapshotSubscriber = Callable[[SkillCatalogSnapshot], None]
+BuiltinOverrideProvider = Callable[[], Mapping[str, Path | None]]
 
 
 def default_shared_skills_dir() -> Path:
@@ -49,12 +50,14 @@ class SkillCatalogService:
         builtin_installer: BuiltinSkillInstaller | None = None,
         loader: SkillLoader | None = None,
         watcher_enabled: bool = True,
+        builtin_override_provider: BuiltinOverrideProvider | None = None,
     ) -> None:
         self.personal_root = personal_root or skills_dir()
         self.shared_root = shared_root or default_shared_skills_dir()
         self._installer = builtin_installer or BuiltinSkillInstaller(target_root=self.personal_root)
         self._loader = loader or SkillLoader()
         self._watcher_enabled = watcher_enabled
+        self._builtin_override_provider = builtin_override_provider
         self._lock = threading.RLock()
         self._snapshot = SkillCatalogSnapshot(generation=0, fingerprint="", entries=())
         self._watcher_state = SkillWatcherState()
@@ -110,7 +113,7 @@ class SkillCatalogService:
             self._builtin_root = self._installer.install()
         previous = self.snapshot
         roots = (
-            SkillRoot("builtin", self._builtin_root),
+            *self._effective_builtin_roots(),
             SkillRoot("personal", self.personal_root),
             SkillRoot("shared", self.shared_root),
         )
@@ -136,6 +139,33 @@ class SkillCatalogService:
             except Exception:
                 logger.warning("Skill catalog subscriber failed", exc_info=True)
         return candidate
+
+    def _effective_builtin_roots(self) -> tuple[SkillRoot, ...]:
+        """Return one immutable root per builtin package, applying managed overlays."""
+
+        if self._builtin_root is None:
+            return ()
+        overrides = (
+            dict(self._builtin_override_provider())
+            if self._builtin_override_provider is not None
+            else {}
+        )
+        roots: list[SkillRoot] = []
+        try:
+            packages = sorted(
+                (
+                    child
+                    for child in self._builtin_root.iterdir()
+                    if child.is_dir() and (child / "SKILL.md").is_file()
+                ),
+                key=lambda path: path.name.casefold(),
+            )
+        except OSError:
+            return (SkillRoot("builtin", self._builtin_root),)
+        for packaged_root in packages:
+            override = overrides.get(packaged_root.name)
+            roots.append(SkillRoot("builtin", override or packaged_root))
+        return tuple(roots)
 
     def subscribe(self, callback: SnapshotSubscriber) -> Callable[[], None]:
         with self._lock:

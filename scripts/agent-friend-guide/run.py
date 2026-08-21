@@ -6,14 +6,18 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
+import zipfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import yaml
+from agent.skills import SkillLoader, SkillRoot
 
 SCHEMA_VERSION = 1
 SKILL_NAME = "agent-friend-guide"
@@ -36,6 +40,10 @@ EXPECTED_REFERENCES = {
     "web-search-credentials.md",
 }
 ROUTED_REFERENCES = EXPECTED_REFERENCES - {"getting-started.md"}
+RELEASE_MANIFEST_ASSET = f"{SKILL_NAME}.manifest.json"
+RELEASE_PACKAGE_ASSET = f"{SKILL_NAME}.zip"
+RELEASE_TAG_RE = re.compile(rf"^{re.escape(SKILL_NAME)}-r([1-9][0-9]*)$")
+SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 REQUIRED_CONTENT = {
     "model-credentials.md": (
         "DeepSeek",
@@ -335,21 +343,25 @@ def verify_package(root: Path) -> dict[str, Any]:
 
     skill = root / "SKILL.md"
     metadata = frontmatter(skill)
-    if metadata.get("name") != SKILL_NAME or set(metadata) != {"name", "description"}:
-        raise GuideError("SKILL.md frontmatter must contain only name and description")
+    if metadata.get("name") != SKILL_NAME:
+        raise GuideError(f"SKILL.md frontmatter name must be {SKILL_NAME}")
     if root.name != SKILL_NAME:
         raise GuideError("Skill directory and frontmatter name differ")
     description = metadata.get("description")
     if not isinstance(description, str) or not description.strip():
         raise GuideError("SKILL.md description is required")
+    catalog = SkillLoader().load((SkillRoot("builtin", root),), generation=0)
+    records = [record for record in catalog.entries if record.name == SKILL_NAME]
+    if len(records) != 1 or catalog.issues:
+        issue_codes = ",".join(issue.code for issue in catalog.issues) or "missing_skill"
+        raise GuideError(f"Skill loader validation failed: {issue_codes}")
 
     references = root / "references"
     actual_references = {path.name for path in references.glob("*.md") if path.is_file()}
-    if actual_references != EXPECTED_REFERENCES:
+    missing_references = EXPECTED_REFERENCES - actual_references
+    if missing_references:
         raise GuideError(
-            "reference set mismatch: "
-            f"missing={sorted(EXPECTED_REFERENCES - actual_references)}, "
-            f"extra={sorted(actual_references - EXPECTED_REFERENCES)}"
+            f"required reference set is incomplete: missing={sorted(missing_references)}"
         )
     if (references / "getting-started.md").stat().st_size == 0:
         raise GuideError("getting-started.md must be a non-empty placeholder")
@@ -360,10 +372,10 @@ def verify_package(root: Path) -> dict[str, Any]:
         for match in ROUTED_REFERENCE_RE.findall(skill_text)
         if Path(match).name != "getting-started.md"
     }
-    if routed != ROUTED_REFERENCES:
+    missing_routes = ROUTED_REFERENCES - routed
+    if missing_routes:
         raise GuideError(
-            f"SKILL.md routes mismatch: missing={sorted(ROUTED_REFERENCES - routed)}, "
-            f"extra={sorted(routed - ROUTED_REFERENCES)}"
+            f"SKILL.md required routes are incomplete: missing={sorted(missing_routes)}"
         )
     for reference, required_terms in REQUIRED_CONTENT.items():
         text = (references / reference).read_text(encoding="utf-8")
@@ -437,16 +449,16 @@ def status_payload(product_repo: Path, guide_repo: Path) -> dict[str, Any]:
         and builtin.get("snapshotSha256") == verified["snapshotSha256"]
     )
     remote_visible = origin_contains_exact_ref(guide_repo, guide_head)
-    if guide_changes:
+    if verify_error is not None:
+        phase = "guide-package-invalid"
+    elif guide_changes:
         phase = "guide-working-tree-dirty"
     elif not remote_visible:
         phase = "guide-commit-not-visible-on-origin"
-    elif not builtin.get("present"):
-        phase = "guide-published-builtin-missing"
-    elif not matches:
-        phase = "guide-published-builtin-stale"
+    elif matches:
+        phase = "guide-and-baseline-aligned"
     else:
-        phase = "guide-and-builtin-synchronized"
+        phase = "guide-commit-ready"
     return {
         "schemaVersion": SCHEMA_VERSION,
         "product": {
@@ -466,6 +478,7 @@ def status_payload(product_repo: Path, guide_repo: Path) -> dict[str, Any]:
             "snapshotSha256": verified["snapshotSha256"] if verified else None,
         },
         "builtin": builtin,
+        "baselineMatchesGuide": matches,
         "matches": matches,
         "phase": phase,
     }
@@ -537,6 +550,211 @@ def verify_builtin(product_repo: Path, guide_commit: str, expected_digest: str) 
     verify_package(builtin_root(product_repo) / SKILL_NAME)
 
 
+def parse_semver(value: str, *, field: str) -> tuple[int, int, int]:
+    match = SEMVER_RE.fullmatch(value)
+    if match is None:
+        raise GuideError(f"{field} must use MAJOR.MINOR.PATCH")
+    return tuple(int(part) for part in match.groups())  # type: ignore[return-value]
+
+
+def build_release_assets(
+    guide_repo: Path,
+    *,
+    release_sequence: int,
+    min_product_version: str,
+    max_product_version_exclusive: str,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Build the two deterministic assets consumed by the runtime updater."""
+
+    if release_sequence < 1:
+        raise GuideError("--release-sequence must be a positive integer")
+    minimum = parse_semver(min_product_version, field="--min-product-version")
+    maximum = parse_semver(
+        max_product_version_exclusive,
+        field="--max-product-version-exclusive",
+    )
+    if maximum <= minimum:
+        raise GuideError("release product compatibility range must be non-empty")
+    if git_changes(guide_repo):
+        raise GuideError("guide repository must be clean before building release assets")
+    source_commit = git_head(guide_repo)
+    if not origin_contains_exact_ref(guide_repo, source_commit):
+        raise GuideError("guide release commit is not visible on an origin branch or tag")
+    package = package_root(guide_repo)
+    verified = verify_package(package)
+    tag = f"{SKILL_NAME}-r{release_sequence}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    package_target = output_dir / RELEASE_PACKAGE_ASSET
+    manifest_target = output_dir / RELEASE_MANIFEST_ASSET
+    temporary_package = output_dir / f".{RELEASE_PACKAGE_ASSET}.{uuid4().hex}.tmp"
+    temporary_manifest = output_dir / f".{RELEASE_MANIFEST_ASSET}.{uuid4().hex}.tmp"
+    try:
+        with zipfile.ZipFile(temporary_package, "w", compression=zipfile.ZIP_STORED) as bundle:
+            for path in regular_files(package):
+                relative = path.relative_to(package).as_posix()
+                info = zipfile.ZipInfo(relative, (1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_STORED
+                info.create_system = 3
+                info.external_attr = (stat.S_IFREG | 0o644) << 16
+                bundle.writestr(info, path.read_bytes())
+        package_bytes = temporary_package.read_bytes()
+        manifest = {
+            "schema_version": 1,
+            "skill_name": SKILL_NAME,
+            "release_sequence": release_sequence,
+            "release_tag": tag,
+            "source_commit": source_commit,
+            "package_sha256": hashlib.sha256(package_bytes).hexdigest(),
+            "package_snapshot_sha256": verified["snapshotSha256"],
+            "package_size": len(package_bytes),
+            "min_product_version": min_product_version,
+            "max_product_version_exclusive": max_product_version_exclusive,
+        }
+        temporary_manifest.write_bytes(
+            (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        )
+        os.replace(temporary_package, package_target)
+        os.replace(temporary_manifest, manifest_target)
+    finally:
+        temporary_package.unlink(missing_ok=True)
+        temporary_manifest.unlink(missing_ok=True)
+    return {
+        "releaseSequence": release_sequence,
+        "releaseTag": tag,
+        "sourceCommit": source_commit,
+        "manifest": str(manifest_target.resolve()),
+        "package": str(package_target.resolve()),
+        "packageSha256": manifest["package_sha256"],
+        "packageSnapshotSha256": manifest["package_snapshot_sha256"],
+        "packageSize": manifest["package_size"],
+        "minProductVersion": min_product_version,
+        "maxProductVersionExclusive": max_product_version_exclusive,
+    }
+
+
+def gh(*args: str, check: bool = True) -> str:
+    completed = subprocess.run(
+        ["gh", *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if check and completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise GuideError(f"gh {' '.join(args)} failed: {detail}")
+    return completed.stdout.strip()
+
+
+def publish_release(
+    guide_repo: Path,
+    *,
+    release_sequence: int,
+    min_product_version: str,
+    max_product_version_exclusive: str,
+) -> dict[str, Any]:
+    """Create a draft with both assets, publish it, then require immutability."""
+
+    origin = git(guide_repo, "remote", "get-url", "origin")
+    if normalized_repository_url(origin) != normalized_repository_url(SOURCE_REPOSITORY):
+        raise GuideError(f"guide release origin differs from {SOURCE_REPOSITORY}: {origin}")
+    tag = f"{SKILL_NAME}-r{release_sequence}"
+    raw_immutability = gh(
+        "api",
+        f"repos/A1m233/{SKILL_NAME}/immutable-releases",
+        "--header",
+        "X-GitHub-Api-Version: 2026-03-10",
+    )
+    try:
+        immutability = json.loads(raw_immutability)
+    except json.JSONDecodeError as exc:
+        raise GuideError("release immutability response is invalid JSON") from exc
+    if not isinstance(immutability, dict) or immutability.get("enabled") is not True:
+        raise GuideError(
+            "repository release immutability must be enabled before creating a release"
+        )
+    existing = gh(
+        "release",
+        "view",
+        tag,
+        "--repo",
+        f"A1m233/{SKILL_NAME}",
+        "--json",
+        "tagName",
+        check=False,
+    )
+    if existing:
+        raise GuideError(f"release tag already exists: {tag}")
+    with tempfile.TemporaryDirectory(prefix=f"{SKILL_NAME}-release-") as temporary:
+        built = build_release_assets(
+            guide_repo,
+            release_sequence=release_sequence,
+            min_product_version=min_product_version,
+            max_product_version_exclusive=max_product_version_exclusive,
+            output_dir=Path(temporary),
+        )
+        gh(
+            "release",
+            "create",
+            tag,
+            str(built["manifest"]),
+            str(built["package"]),
+            "--repo",
+            f"A1m233/{SKILL_NAME}",
+            "--target",
+            str(built["sourceCommit"]),
+            "--title",
+            tag,
+            "--notes",
+            f"Managed first-party Skill release {tag}.",
+            "--draft",
+        )
+        gh(
+            "release",
+            "edit",
+            tag,
+            "--repo",
+            f"A1m233/{SKILL_NAME}",
+            "--draft=false",
+        )
+        raw_release = gh(
+            "api",
+            f"repos/A1m233/{SKILL_NAME}/releases/tags/{tag}",
+            "--header",
+            "X-GitHub-Api-Version: 2026-03-10",
+        )
+        try:
+            release = json.loads(raw_release)
+        except json.JSONDecodeError as exc:
+            raise GuideError("published release response is invalid JSON") from exc
+        if not isinstance(release, dict) or release.get("immutable") is not True:
+            raise GuideError(
+                "release was published but is not immutable; enable repository release "
+                "immutability before publishing another sequence"
+            )
+        assets = release.get("assets")
+        if not isinstance(assets, list):
+            raise GuideError("published release assets are missing")
+        digests = {
+            asset.get("name"): asset.get("digest") for asset in assets if isinstance(asset, dict)
+        }
+        expected_package_digest = f"sha256:{built['packageSha256']}"
+        if digests.get(RELEASE_PACKAGE_ASSET) != expected_package_digest:
+            raise GuideError("published package asset digest differs from local release asset")
+        manifest_digest = (
+            "sha256:" + hashlib.sha256(Path(str(built["manifest"])).read_bytes()).hexdigest()
+        )
+        if digests.get(RELEASE_MANIFEST_ASSET) != manifest_digest:
+            raise GuideError("published manifest asset digest differs from local release asset")
+    return {
+        **built,
+        "immutable": True,
+        "releaseUrl": release.get("html_url"),
+    }
+
+
 def sync(product_repo: Path, guide_repo: Path, guide_commit: str) -> dict[str, Any]:
     if not COMMIT_RE.fullmatch(guide_commit):
         raise GuideError("--guide-commit must be a 40-character lowercase commit")
@@ -576,6 +794,19 @@ def parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--guide-repo", type=Path)
     sync_parser.add_argument("--guide-commit", required=True)
     sync_parser.add_argument("--json", action="store_true")
+    build_parser = subparsers.add_parser("build-release")
+    build_parser.add_argument("--guide-repo", type=Path)
+    build_parser.add_argument("--release-sequence", type=int, required=True)
+    build_parser.add_argument("--min-product-version", required=True)
+    build_parser.add_argument("--max-product-version-exclusive", required=True)
+    build_parser.add_argument("--output-dir", type=Path, required=True)
+    build_parser.add_argument("--json", action="store_true")
+    publish_parser = subparsers.add_parser("publish-release")
+    publish_parser.add_argument("--guide-repo", type=Path)
+    publish_parser.add_argument("--release-sequence", type=int, required=True)
+    publish_parser.add_argument("--min-product-version", required=True)
+    publish_parser.add_argument("--max-product-version-exclusive", required=True)
+    publish_parser.add_argument("--json", action="store_true")
     return value
 
 
@@ -590,7 +821,10 @@ def print_result(command: str, payload: dict[str, Any], *, as_json: bool) -> Non
             f"guide: {payload['guide']['head']} dirty={payload['guide']['dirty']} "
             f"origin={payload['guide']['originHasExactRef']} verified={payload['guide']['verified']}"
         )
-        print(f"builtin: present={payload['builtin']['present']} matches={payload['matches']}")
+        print(
+            f"builtin baseline: present={payload['builtin']['present']} "
+            f"matches={payload['baselineMatchesGuide']}"
+        )
         return
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -606,8 +840,23 @@ def main(argv: list[str] | None = None) -> int:
             payload = status_payload(product_repo, guide_repo)
         elif args.command == "verify":
             payload = verify_package(package_root(guide_repo))
-        else:
+        elif args.command == "sync":
             payload = sync(product_repo, guide_repo, args.guide_commit)
+        elif args.command == "build-release":
+            payload = build_release_assets(
+                guide_repo,
+                release_sequence=args.release_sequence,
+                min_product_version=args.min_product_version,
+                max_product_version_exclusive=args.max_product_version_exclusive,
+                output_dir=args.output_dir.resolve(),
+            )
+        else:
+            payload = publish_release(
+                guide_repo,
+                release_sequence=args.release_sequence,
+                min_product_version=args.min_product_version,
+                max_product_version_exclusive=args.max_product_version_exclusive,
+            )
     except GuideError as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))

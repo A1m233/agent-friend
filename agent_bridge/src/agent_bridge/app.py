@@ -193,6 +193,8 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
         reconcile_attachments(runtime)
         if runtime.skill_service is not None:
             runtime.skill_service.start()
+        if runtime.first_party_skill_updater is not None:
+            runtime.first_party_skill_updater.start()
         if runtime.agent_runtime is not None:
             runtime.agent_runtime.start()
         if runtime.im_runtime is not None:

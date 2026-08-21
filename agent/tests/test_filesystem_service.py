@@ -19,8 +19,27 @@ def _policy(tmp_path: Path) -> ProtectedPathPolicy:
     return ProtectedPathPolicy(
         product_roots=((tmp_path / "product").resolve(),),
         personal_skill_roots=((tmp_path / "product" / "skills").resolve(),),
-        builtin_skill_roots=((tmp_path / "product" / "skills" / ".builtin").resolve(),),
+        builtin_skill_roots=(
+            (tmp_path / "product" / "skills" / ".builtin").resolve(),
+            (tmp_path / "product" / "skills" / ".system").resolve(),
+        ),
     )
+
+
+def test_managed_skill_system_root_is_never_generically_writable(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    managed = (
+        tmp_path
+        / "product"
+        / "skills"
+        / ".system"
+        / "first-party"
+        / "agent-friend-guide"
+        / "state.json"
+    ).resolve()
+
+    assert policy.is_protected(managed)
+    assert not policy.generic_write_allowed(managed)
 
 
 def _grant(

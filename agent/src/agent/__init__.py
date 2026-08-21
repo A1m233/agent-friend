@@ -95,7 +95,12 @@ from .sessions import (
     SessionSummary,
     session_mutation_context,
 )
-from .skills import SkillCatalogService, SkillSelection
+from .skills import (
+    FirstPartySkillStore,
+    FirstPartySkillUpdateService,
+    SkillCatalogService,
+    SkillSelection,
+)
 from .system_prompt import (
     ChannelSection,
     PersonaSection,
@@ -159,6 +164,8 @@ __all__ = [
     "Event",
     "EventType",
     "FifoContextManager",
+    "FirstPartySkillStore",
+    "FirstPartySkillUpdateService",
     "JsonlSessionStore",
     "MalformedToolCallError",
     "MarkdownPromptBuilder",

@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from agent.skills import SkillCatalogService
+from agent.skills import (
+    FirstPartySkillStore,
+    FirstPartySkillUpdateService,
+    SkillCatalogService,
+)
 from agent_bridge.assembly import BridgeRuntime
 from agent_bridge.routes.skills import register_routes
 from fastapi import FastAPI
@@ -25,6 +29,11 @@ def test_catalog_route_returns_metadata_without_skill_body(tmp_path: Path) -> No
         watcher_enabled=False,
     )
     service.initialize()
+    updater = FirstPartySkillUpdateService(
+        store=FirstPartySkillStore(personal),
+        catalog=service,
+        product_version=None,
+    )
     runtime = BridgeRuntime(
         settings=MagicMock(),
         persistent_store=MagicMock(),
@@ -36,6 +45,7 @@ def test_catalog_route_returns_metadata_without_skill_body(tmp_path: Path) -> No
         default_persona="default",
         default_model="test/model",
         skill_service=service,
+        first_party_skill_updater=updater,
     )
     app = FastAPI()
     register_routes(app, runtime)
@@ -46,4 +56,14 @@ def test_catalog_route_returns_metadata_without_skill_body(tmp_path: Path) -> No
     payload = response.json()
     assert payload["generation"] == 1
     assert any(item["name"] == "route-skill" for item in payload["skills"])
+    assert payload["firstPartyUpdates"] == {
+        "enabled": False,
+        "source": "baseline",
+        "activeSequence": None,
+        "activePackageSha256": None,
+        "highestSeenSequence": 0,
+        "lastCheckedAt": None,
+        "lastResult": "host_version_unavailable",
+        "lastDetail": None,
+    }
     assert secret_body not in response.text

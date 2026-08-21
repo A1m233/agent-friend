@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 from types import ModuleType
 
@@ -243,6 +244,30 @@ def test_verify_package_rejects_linked_entries(
         guide.verify_package(package)
 
 
+def test_verify_package_allows_additional_references_scripts_and_assets(tmp_path: Path) -> None:
+    repo = tmp_path / "guide"
+    repo.mkdir()
+    package = _write_package(repo)
+    (package / "references" / "new-guide.md").write_text(
+        "# New Guide\nAdditional first-party knowledge.\n",
+        encoding="utf-8",
+    )
+    scripts = package / "scripts"
+    scripts.mkdir()
+    (scripts / "helper.py").write_text("print('not executed by validation')\n", encoding="utf-8")
+    assets = package / "assets"
+    assets.mkdir()
+    (assets / "payload.bin").write_bytes(b"\x00\x01resource")
+    source_path = package / "metadata" / "source.json"
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source["content_sha256"] = guide.package_digest(package, exclude_source_metadata=True)
+    source_path.write_text(json.dumps(source), encoding="utf-8")
+
+    result = guide.verify_package(package)
+
+    assert result["fileCount"] == 18
+
+
 def test_sync_requires_published_clean_exact_commit(tmp_path: Path) -> None:
     guide_repo, commit = _init_guide_repo(tmp_path, publish=False)
     product_repo = _init_product_repo(tmp_path)
@@ -273,7 +298,100 @@ def test_sync_copies_exact_snapshot_and_updates_manifest(tmp_path: Path) -> None
     assert manifest["skills"]["skill-creator"]["source_commit"] == "2" * 40
 
 
-def test_status_reports_published_then_synchronized_phase(tmp_path: Path) -> None:
+def test_build_release_assets_is_deterministic_and_contains_complete_package(
+    tmp_path: Path,
+) -> None:
+    guide_repo, _commit = _init_guide_repo(tmp_path)
+    package = guide.package_root(guide_repo)
+    scripts = package / "scripts"
+    scripts.mkdir()
+    (scripts / "helper.py").write_text("print('resource only')\n", encoding="utf-8")
+    source_path = package / "metadata" / "source.json"
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    source["content_sha256"] = guide.package_digest(package, exclude_source_metadata=True)
+    source_path.write_text(json.dumps(source), encoding="utf-8")
+    _git(guide_repo, "add", ".")
+    _git(guide_repo, "commit", "-m", "add script resource")
+    _git(guide_repo, "push", "origin", "main")
+    commit = _git(guide_repo, "rev-parse", "HEAD")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+
+    first_result = guide.build_release_assets(
+        guide_repo,
+        release_sequence=3,
+        min_product_version="0.2.0",
+        max_product_version_exclusive="0.3.0",
+        output_dir=first,
+    )
+    second_result = guide.build_release_assets(
+        guide_repo,
+        release_sequence=3,
+        min_product_version="0.2.0",
+        max_product_version_exclusive="0.3.0",
+        output_dir=second,
+    )
+
+    first_zip = first / guide.RELEASE_PACKAGE_ASSET
+    second_zip = second / guide.RELEASE_PACKAGE_ASSET
+    assert first_zip.read_bytes() == second_zip.read_bytes()
+    assert (first / guide.RELEASE_MANIFEST_ASSET).read_bytes() == (
+        second / guide.RELEASE_MANIFEST_ASSET
+    ).read_bytes()
+    manifest = json.loads((first / guide.RELEASE_MANIFEST_ASSET).read_text(encoding="utf-8"))
+    assert manifest["release_tag"] == "agent-friend-guide-r3"
+    assert manifest["source_commit"] == commit
+    assert manifest["package_sha256"] == first_result["packageSha256"]
+    assert first_result["packageSha256"] == second_result["packageSha256"]
+    with zipfile.ZipFile(first_zip) as bundle:
+        assert "SKILL.md" in bundle.namelist()
+        assert "scripts/helper.py" in bundle.namelist()
+
+
+def test_build_release_assets_rejects_invalid_compatibility_range(tmp_path: Path) -> None:
+    guide_repo, _commit = _init_guide_repo(tmp_path)
+
+    with pytest.raises(guide.GuideError, match="non-empty"):
+        guide.build_release_assets(
+            guide_repo,
+            release_sequence=1,
+            min_product_version="0.3.0",
+            max_product_version_exclusive="0.3.0",
+            output_dir=tmp_path / "release",
+        )
+
+
+def test_publish_release_rejects_disabled_immutability_before_writing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_gh(*args: str, **_kwargs: object) -> str:
+        calls.append(args)
+        return json.dumps({"enabled": False, "enforced_by_owner": False})
+
+    monkeypatch.setattr(guide, "git", lambda *_args: guide.SOURCE_REPOSITORY)
+    monkeypatch.setattr(guide, "gh", fake_gh)
+
+    with pytest.raises(guide.GuideError, match="must be enabled"):
+        guide.publish_release(
+            Path("unused"),
+            release_sequence=1,
+            min_product_version="0.2.0",
+            max_product_version_exclusive="0.3.0",
+        )
+
+    assert calls == [
+        (
+            "api",
+            "repos/A1m233/agent-friend-guide/immutable-releases",
+            "--header",
+            "X-GitHub-Api-Version: 2026-03-10",
+        )
+    ]
+
+
+def test_status_treats_builtin_as_optional_packaged_baseline(tmp_path: Path) -> None:
     guide_repo, commit = _init_guide_repo(tmp_path)
     product_repo = _init_product_repo(tmp_path)
 
@@ -281,8 +399,10 @@ def test_status_reports_published_then_synchronized_phase(tmp_path: Path) -> Non
     guide.sync(product_repo, guide_repo, commit)
     after = guide.status_payload(product_repo, guide_repo)
 
-    assert before["phase"] == "guide-published-builtin-missing"
-    assert after["phase"] == "guide-and-builtin-synchronized"
+    assert before["phase"] == "guide-commit-ready"
+    assert after["phase"] == "guide-and-baseline-aligned"
+    assert before["baselineMatchesGuide"] is False
+    assert after["baselineMatchesGuide"] is True
     assert after["matches"] is True
 
 
