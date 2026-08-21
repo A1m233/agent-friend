@@ -716,12 +716,19 @@ async def test_native_stream_agent_error_aborts_partial_without_static_duplicate
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model_id",
+    ("kimi/kimi-k2.7-code", "deepseek/deepseek-v4-flash-vision-exp"),
+)
 async def test_inbound_attachments_allow_text_output_streaming(
-    router: IMRouter, session_bridge: MagicMock, monkeypatch: pytest.MonkeyPatch
+    router: IMRouter,
+    session_bridge: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    model_id: str,
 ) -> None:
     from agent.attachments import AttachmentRef
 
-    session_bridge.persistent_model.return_value = "kimi/kimi-k2.7-code"
+    session_bridge.persistent_model.return_value = model_id
     session_bridge.bind_persistent.return_value = _make_conv(
         [TextDelta(text="attachment answer"), TurnDone()]
     )
@@ -763,6 +770,31 @@ async def test_unsupported_inbound_attachment_does_not_open_stream(
         media_type="image/png",
         display_name="a.png",
         size_bytes=10,
+        sha256="0" * 64,
+    )
+
+    await router.handle_inbound("qq", _make_event(), provider, attachments=(attachment,))
+
+    assert provider.contexts == []
+    assert [item.text for item in provider.sent] == [
+        "当前会话使用的模型不支持这类附件，请先切换到支持图片或文档的模型。"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_vision_rejects_oversized_inbound_image_before_stream(
+    router: IMRouter, session_bridge: MagicMock
+) -> None:
+    from agent.attachments import AttachmentRef
+
+    session_bridge.persistent_model.return_value = "deepseek/deepseek-v4-flash-vision-exp"
+    provider = StubStreamingProvider(StubStreamSession())
+    attachment = AttachmentRef(
+        asset_id="asset-oversized",
+        kind="image",
+        media_type="image/png",
+        display_name="large.png",
+        size_bytes=64 * 1024 * 1024 + 1,
         sha256="0" * 64,
     )
 

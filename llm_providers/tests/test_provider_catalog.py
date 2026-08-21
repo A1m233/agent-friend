@@ -4,12 +4,15 @@ import pytest
 from llm_providers.spec import DEFAULT_LLM_TIMEOUT_SECONDS
 
 from llm_providers import (
+    DEEPSEEK_VISION_LITELLM_MODEL,
+    DEEPSEEK_VISION_MODEL_ID,
     LLMAuthError,
     build_provider_spec,
     default_model_for_provider,
     infer_provider_id_from_model,
     public_model_catalog,
     public_provider_models,
+    replace_spec_model,
 )
 
 
@@ -21,6 +24,26 @@ def test_deepseek_defaults_keep_existing_models_and_thinking_disabled() -> None:
     assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
     assert spec.defaults["timeout"] == DEFAULT_LLM_TIMEOUT_SECONDS
     assert default_model_for_provider("deepseek", "memory") == "deepseek/deepseek-v4-pro"
+
+
+def test_deepseek_vision_uses_generic_openai_route_and_model_level_base() -> None:
+    spec = build_provider_spec(
+        provider_id="deepseek",
+        api_key="k",
+        model_id=DEEPSEEK_VISION_MODEL_ID,
+    )
+
+    assert spec.model == DEEPSEEK_VISION_LITELLM_MODEL
+    assert spec.api_base == "https://api.deepseek.com"
+    assert spec.context_window == 1_000_000
+    assert spec.defaults["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert infer_provider_id_from_model(DEEPSEEK_VISION_MODEL_ID) == "deepseek"
+
+    rebound = replace_spec_model(
+        build_provider_spec(provider_id="deepseek", api_key="k"), DEEPSEEK_VISION_MODEL_ID
+    )
+    assert rebound.model == DEEPSEEK_VISION_LITELLM_MODEL
+    assert rebound.api_base == "https://api.deepseek.com"
 
 
 def test_kimi_defaults_use_official_openai_compatible_base_url() -> None:
@@ -75,6 +98,7 @@ def test_public_provider_models_are_safe_model_allowlists() -> None:
     assert models["deepseek"] == (
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-pro",
+        DEEPSEEK_VISION_MODEL_ID,
     )
     assert "kimi/kimi-k2.6" in models["kimi"]
 
@@ -89,6 +113,19 @@ def test_public_model_catalog_is_the_capability_source_of_truth() -> None:
     assert catalog["schemaVersion"] == 1
     assert catalog["catalogRevision"]
     assert deepseek["deepseek/deepseek-v4-flash"]["capabilities"]["attachments"] is False
+    vision = deepseek[DEEPSEEK_VISION_MODEL_ID]
+    assert vision["label"] == "DeepSeek V4 Flash Vision"
+    assert vision["processingProfile"] == "deepseek-vision-files-v1"
+    assert vision["capabilities"]["inputModalities"] == ("text", "image")
+    assert vision["capabilities"]["acceptedMediaTypes"] == (
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    )
+    assert vision["capabilities"]["maxAttachmentBytes"] == 64 * 1024 * 1024
+    assert vision["capabilities"]["maxTotalAttachmentBytes"] == 100 * 1024 * 1024
+    assert vision["capabilities"]["maxAttachmentsPerTurn"] == 10
+    assert vision["capabilities"]["multimodalToolResults"] is False
     assert kimi["kimi/kimi-k2.6"]["capabilities"]["inputModalities"] == (
         "text",
         "image",

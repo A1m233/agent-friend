@@ -63,6 +63,26 @@ const catalog: ModelCatalog = {
             reasoningReplay: false,
           },
         },
+        {
+          id: "deepseek/deepseek-v4-flash-vision-exp",
+          label: "DeepSeek V4 Flash Vision",
+          routeId: "deepseek:vision",
+          transportProfile: "openai-compatible",
+          processingProfile: "deepseek-vision-files-v1",
+          capabilities: {
+            inputModalities: ["text", "image"],
+            acceptedMediaTypes: ["image/jpeg", "image/png", "image/webp"],
+            maxAttachmentBytes: 64 * 1024 * 1024,
+            maxTotalAttachmentBytes: 100 * 1024 * 1024,
+            maxAttachmentsPerTurn: 10,
+            attachments: true,
+            toolCalling: true,
+            parallelToolCalls: true,
+            structuredOutput: false,
+            multimodalToolResults: false,
+            reasoningReplay: false,
+          },
+        },
       ],
     },
     {
@@ -137,6 +157,15 @@ describe("model config", () => {
       "image",
       "document",
     ]);
+    expect(modelOption("deepseek/deepseek-v4-flash-vision-exp")).toMatchObject({
+      label: "DeepSeek V4 Flash Vision",
+      processingProfile: "deepseek-vision-files-v1",
+      capabilities: {
+        inputModalities: ["text", "image"],
+        acceptedMediaTypes: ["image/jpeg", "image/png", "image/webp"],
+        attachments: true,
+      },
+    });
   });
 
   it("derives credential groups from catalog ownership", () => {
