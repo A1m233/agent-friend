@@ -1,0 +1,109 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-21T05:28:41.501976+00:00",
+    "ended_at": "2026-08-21T05:29:01.934819+00:00",
+    "duration_seconds": 20.433,
+    "git_commit": "1393fc1",
+    "working_tree_dirty": true,
+    "note": "first validation; incident model from 2026-08-20 production run metadata; no product-guidance literal leakage; target-sample result only",
+    "selection": {
+      "contract": "all",
+      "case": "C17-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.6",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "1c171053aeb7c14b055ca4a87c411c312842d8ad6d1768e843be5caa63d9aad0",
+      "total_contracts": 25,
+      "total_cases": 222,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C17": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C17",
+      "name": "future-action-commitment-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C17-05",
+          "query": "刚才 adb connect 的 exit_code 是 0，但 stdout 明确写着 cannot connect / connection refused。 这算连接成功吗，接下来还能跑两个账号吗？",
+          "facet": "真实事故 isolation · 退出码为零但输出明确失败时不得误判成功或承诺继续执行",
+          "source": "prod-maa-log-discovery-device-unavailable-20260820",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "required anchors missing: ['连接失败', '未开始']",
+          "tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "不算成功。exit_code 为 0 只是说明 `adb` 命令本身执行了，但 stdout 里的 **\"cannot connect\"** 和 **\"actively refused (10061)\"** 明确表示连接被拒绝，模拟器并没有响应这个 ADB 端口。\n\n接下来两个账号还跑不了，得先把连接问题解决。\n\n常见的原因和排查方向：\n\n1. **MuMu 模拟器没开 ADB 调试**：在 MuMu 的设置里找到「开发者选项」或「ADB 调试」，确认它是开启状态。\n2. **端口号不对**：16384 是 MuMu 常见的默认端口，但不同版本或安装配置可能会变。可以在 MuMu 的「设置 → 关于」或「诊断信息」里确认当前 ADB 端口。\n3. **模拟器没启动或刚启动还没准备好**：确保模拟器完全启动到了桌面，有时候刚打开时 ADB 服务还没起来。\n4. **被防火墙或安全软件拦截**：本地回环地址一般不会被拦，但如果开了某些网络隔离工具，可以临时关掉试试。\n\n你可以先检查 MuMu 里的 ADB 端口号，确认模拟器已经启动，然后再试一次 `adb connect`。连接成功后 `adb devices` 应该能看到 `127.0.0.1:xxxxx device` 的状态是 **device** 而不是 **offline** 或空白。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "不算成功。exit_code 为 0 只是说明 `adb` 命令本身执行了，但 stdout 里的 **\"cannot connect\"** 和 **\"actively refused (10061)\"** 明确表示连接被拒绝，模拟器并没有响应这个 ADB 端口。\n\n接下来两个账号还跑不了，得先把连接问题解决。\n\n常见的原因和排查方向：\n\n1. **MuMu 模拟器没开 ADB 调试**：在 MuMu 的设置里找到「开发者选项」或「ADB 调试」，确认它是开启状态。\n2. **端口号不对**：16384 是 MuMu 常见的默认端口，但不同版本或安装配置可能会变。可以在 MuMu 的「设置 → 关于」或「诊断信息」里确认当前 ADB 端口。\n3. **模拟器没启动或刚启动还没准备好**：确保模拟器完全启动到了桌面，有时候刚打开时 ADB 服务还没起来。\n4. **被防火墙或安全软件拦截**：本地回环地址一般不会被拦，但如果开了某些网络隔离工具，可以临时关掉试试。\n\n你可以先检查 MuMu 里的 ADB 端口号，确认模拟器已经启动，然后再试一次 `adb connect`。连接成功后 `adb devices` 应该能看到 `127.0.0.1:xxxxx device` 的状态是 **device** 而不是 **offline** 或空白。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
