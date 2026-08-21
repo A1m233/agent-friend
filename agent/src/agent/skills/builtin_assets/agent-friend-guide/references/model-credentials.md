@@ -31,10 +31,13 @@ OpenRouter 是调用渠道；模型名称前的 Google 或 OpenAI 表示模型�
 ## OpenRouter API Key
 
 1. 登录 [OpenRouter](https://openrouter.ai/)。
-2. 打开 [API Keys](https://openrouter.ai/settings/keys) 并创建一枚 Key。
-3. 保存页面展示的完整值。
-4. 在 agent-friend 打开“设置 → 模型与凭据 → OpenRouter 凭据”，粘贴并保存。
-5. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 OpenRouter 模型。
+2. 如需使用付费模型，先在 [Credits](https://openrouter.ai/settings/credits) 页面购买额度。OpenRouter 官方列出的支付方式包括主流银行卡、支付宝（AliPay）和 USDC。
+3. 打开 [API Keys](https://openrouter.ai/settings/keys) 并创建一枚 Key。
+4. 保存页面展示的完整值。
+5. 在 agent-friend 打开“设置 → 模型与凭据 → OpenRouter 凭据”，粘贴并保存。
+6. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 OpenRouter 模型。
+
+如果当前页面标题是“Add a payment method”，且只显示银行卡、银行、加密货币等选项，你可能进入了保存支付方式或自动充值的配置流程。要使用支付宝，可返回 Credits 页面发起手动购买，在结账页展开“更多支付方式”（如果页面提供）；不要为了显示某种支付方式填写虚假的国家或账单信息。实际展示方式可能随账户、地区和支付渠道变化。如果按真实信息结账时仍没有支付宝，请联系 [OpenRouter 账单支持](mailto:support@openrouter.ai)。
 
 agent-friend 当前只开放以下两个 OpenRouter 模型：
 
@@ -43,7 +46,7 @@ agent-friend 当前只开放以下两个 OpenRouter 模型：
 
 这两款模型当前支持文本对话和工具调用，不支持在 agent-friend 中添加图片、文件、音频或视频。请求会要求使用不进行数据收集的上游端点；如果当前没有满足条件的端点，agent-friend 会明确提示模型路由不可用，不会静默切换到另一模型或放宽该限制。
 
-官方文档：[OpenRouter API Key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)。
+官方文档：[OpenRouter API Key](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-key)、[OpenRouter FAQ：Credits 与支付方式](https://openrouter.ai/docs/faq#credit-and-billing-systems)。
 
 ## 安全建议
 
