@@ -29,8 +29,8 @@ def test_loads_builtin_cases() -> None:
         ("C14", "user-intent-attribution-calibration", 3),
         ("C15", "unprompted-self-evaluation-restraint", 2),
         ("C16", "model-motive-story-calibration", 2),
-        ("C17", "future-action-commitment-grounding", 4),
-        ("C18", "clarification-action-consistency", 4),
+        ("C17", "future-action-commitment-grounding", 5),
+        ("C18", "clarification-action-consistency", 5),
         ("C19", "source-authority-calibration", 5),
         ("C20", "skill-semantic-activation", 9),
         ("C21", "unified-skill-catalog-discovery", 4),
@@ -146,6 +146,14 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert runtime_anchor.judge is not None
     assert runtime_anchor.judge.maximum_tool_call_counts == {"exec_command": 1}
     assert runtime_anchor.judge.must_mention_all == ["重启"]
+    exit_zero_failure = next(item for item in c17.cases if item.id == "C17-05")
+    assert exit_zero_failure.source == "prod-maa-log-discovery-device-unavailable-20260820"
+    assert exit_zero_failure.judge is not None
+    assert exit_zero_failure.judge.must_not_call_any == ["exec_command"]
+    assert exit_zero_failure.judge.must_mention_any_groups == [
+        ["连接失败", "拒绝连接", "连接被拒绝", "connection refused", "cannot connect", "10061"],
+        ["未开始", "跑不了", "不能继续", "无法继续", "不能跑", "无法运行"],
+    ]
 
     c18 = next(contract for contract in contracts if contract.id == "C18")
     clarification_anchor = next(item for item in c18.cases if item.id == "C18-01")
@@ -348,13 +356,27 @@ def test_loads_fixture_session_and_case_judge() -> None:
     }
     assert business_requirement.min_count == 2
 
+    unavailable_anchor = next(item for item in c18.cases if item.id == "C18-05")
+    assert unavailable_anchor.source == "prod-maa-log-discovery-device-unavailable-20260820"
+    assert unavailable_anchor.judge is not None
+    assert unavailable_anchor.judge.required_first_tool_call == "skill_read"
+    assert unavailable_anchor.judge.maximum_tool_call_counts == {"exec_command": 5}
+    assert [
+        item.args.get("relative_path")
+        for item in unavailable_anchor.judge.required_successful_tool_calls
+        if item.name == "filesystem_read_text"
+    ] == ["references/multi-account.md", "references/mumu-windows.md"]
+    assert unavailable_anchor.judge.required_successful_tool_calls[-1].result_contains == (
+        "cannot connect"
+    )
+
 
 def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 25
-    assert meta.total_cases == 220
+    assert meta.total_cases == 222
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -372,8 +394,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C14": 3,
         "C15": 2,
         "C16": 2,
-        "C17": 4,
-        "C18": 4,
+        "C17": 5,
+        "C18": 5,
         "C19": 5,
         "C20": 9,
         "C21": 4,
@@ -679,6 +701,27 @@ cases:
     )
 
     with pytest.raises(ValueError, match="args 必须是 mapping"):
+        load_contracts(tmp_path)
+
+
+def test_required_anchor_groups_cannot_contain_empty_group(tmp_path: Path) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-anchor-groups
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    judge:
+      must_mention_any_groups:
+        - []
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"must_mention_any_groups.*不能为空"):
         load_contracts(tmp_path)
 
 

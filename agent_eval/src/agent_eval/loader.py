@@ -87,6 +87,20 @@ def _str_list(raw: Any, *, label: str) -> list[str]:
     return out
 
 
+def _str_groups(raw: Any, *, label: str) -> list[list[str]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} 必须是 list")
+    groups: list[list[str]] = []
+    for index, item in enumerate(raw):
+        group = _str_list(item, label=f"{label}[{index}]")
+        if not group:
+            raise ValueError(f"{label}[{index}] 不能为空")
+        groups.append(group)
+    return groups
+
+
 def _bool(raw: Any, *, label: str) -> bool:
     if raw is None:
         return False
@@ -575,6 +589,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             label=f"{label}.forbid_question_with_scheduled_action",
         ),
         must_mention_any=_str_list(data.get("must_mention_any"), label=f"{label}.must_mention_any"),
+        must_mention_any_groups=_str_groups(
+            data.get("must_mention_any_groups"),
+            label=f"{label}.must_mention_any_groups",
+        ),
         must_mention_all=_str_list(data.get("must_mention_all"), label=f"{label}.must_mention_all"),
         must_not_mention_any=_str_list(
             data.get("must_not_mention_any"),

@@ -205,3 +205,83 @@ cases:
       require_non_empty_response: true
       forbid_question: true
       forbid_unsupported_future_action_commitment: true
+
+  - id: C18-05
+    query: 去日志里查吧
+    facet: 真实事故 anchor · 用户已指定日志发现后应重读 Skill，设备不可用时停止并准确汇报
+    source: prod-maa-log-discovery-device-unavailable-20260820
+    surface: desktop_chat
+    current_session_events:
+      - type: user_message
+        text: 那估计就是 daily-business 了。帮我把两个号都跑一遍日常。
+      - type: assistant_message
+        text: 需要确认两个账号名，以及 MuMu 是否已经打开。
+      - type: user_message
+        text: >-
+          账号你直接去现有 MAA 日志里看；MuMu 没开，你帮我开。
+          先前已确认目标是实例 2，启动程序是 C:\fixture\MuMuPlayer.exe，对应 ADB 127.0.0.1:16384。
+      - type: assistant_message
+        text: 把两个账号名发我，或者我从日志里找。
+    fixture_skills:
+      - name: maa-daily
+        package_path: fixtures/skills/maa-daily
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [maa, dir, log]
+            result_text: '{"status":"exited","exit_code":0,"stdout":"C:\\fixture\\maa\\logs"}'
+          - match_args:
+              argv: [rg, -n, -g, '*.log', 'account_name|CurrentAccount|AccountSwitch', 'C:\fixture\maa\logs']
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"recent successful accounts=[account-a,account-b]; order=account-a->account-b"}
+          - match_args:
+              argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
+              execution: host_user
+            result_text: '{"status":"exited","exit_code":0,"execution":"host_user","stdout":"launch request accepted"}'
+          - match_args:
+              argv: ['C:\fixture\adb.exe', devices]
+            result_text: '{"status":"exited","exit_code":0,"stdout":"List of devices attached\n\n"}'
+          - match_args:
+              argv: ['C:\fixture\adb.exe', connect, '127.0.0.1:16384']
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"cannot connect to 127.0.0.1:16384: No connection could be made because the target machine actively refused it. (10061)","stderr":""}
+    judge:
+      required_first_tool_call: skill_read
+      maximum_tool_call_counts: {exec_command: 5}
+      required_tool_sequence:
+        [skill_read, filesystem_read_text, filesystem_read_text, exec_command, exec_command, exec_command, exec_command, exec_command]
+      required_successful_tool_calls:
+        - name: skill_read
+          result_contains: <name>maa-daily</name>
+        - name: filesystem_read_text
+          args:
+            relative_path: references/multi-account.md
+          result_contains: maa dir log
+        - name: filesystem_read_text
+          args:
+            relative_path: references/mumu-windows.md
+          result_contains: 连接失败时
+        - name: exec_command
+          args:
+            argv: [maa, dir, log]
+        - name: exec_command
+          args:
+            argv: [rg, -n, -g, '*.log', 'account_name|CurrentAccount|AccountSwitch', 'C:\fixture\maa\logs']
+        - name: exec_command
+          args:
+            argv: ['C:\fixture\MuMuPlayer.exe', '-v', '2']
+            execution: host_user
+        - name: exec_command
+          args:
+            argv: ['C:\fixture\adb.exe', devices]
+        - name: exec_command
+          args:
+            argv: ['C:\fixture\adb.exe', connect, '127.0.0.1:16384']
+          result_contains: cannot connect
+      require_non_empty_response: true
+      forbid_question: true
+      must_mention_any_groups:
+        - [连接失败, 拒绝连接, 连接被拒绝, connection refused, cannot connect, "10061"]
+        - [未开始, 跑不了, 不能继续, 无法继续, 不能跑, 无法运行]
+      forbid_unsupported_future_action_commitment: true

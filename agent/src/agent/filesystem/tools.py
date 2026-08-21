@@ -659,11 +659,22 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                 "minimum": 1,
                 "description": "从 1 开始的首行行号；省略时从文件开头读取。",
             },
+            "start_column": {
+                "type": "integer",
+                "minimum": 0,
+                "description": (
+                    "start_line 内从 0 开始的字符偏移；通常省略。只有上一页返回了非零 "
+                    "next_start_column 时，才把它与 next_start_line 一起原样复用。"
+                ),
+            },
             "max_lines": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 2000,
-                "description": "本次最多返回的文本行数。",
+                "description": (
+                    "本次最多返回的文本行数；结果还受单次 10000 字符上限约束。"
+                    "truncated=true 时按 next_start_line/next_start_column 继续。"
+                ),
             },
             "encoding": {
                 "type": "string",
@@ -862,10 +873,10 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     },
 }
 _DESCRIPTIONS = {
-    "filesystem_search": "在已授权目录中按名称/相对路径或文本正文做有界搜索；search_metadata 不返回正文。",
+    "filesystem_search": "在已授权目录中按名称/相对路径或文本正文做有界搜索；content 模式返回命中行、列和短片段，search_metadata 不返回正文。",
     "filesystem_list_directory": "列举已授权目录的直接子项，稳定排序并支持 continuation。",
     "filesystem_stat": "查询已授权相对路径的类型、大小、mtime、身份摘要和保护分类。",
-    "filesystem_read_text": "严格解码并分段读取已授权文本；返回 SHA-256 供后续并发安全编辑。",
+    "filesystem_read_text": "严格解码并有界分段读取已授权文本；单次正文最多 10000 字符，按返回的行/列游标继续；返回 SHA-256 供后续并发安全编辑。",
     "filesystem_write_text": "原子写入 UTF-8 文本。缺失目标需要 create；已有目标需要 edit、expected_sha256 和准确 overwrite action。edit 不包含 create。",
     "filesystem_apply_patch": "对单个已有文本应用严格 patch。必须使用字面量 *** Begin Patch / *** Update File: / @@ / *** End Patch，hunk 行以空格、+ 或 - 开头，并提供 expected_sha256。",
     "filesystem_create_directory": "在 create scope 内创建目录；edit 不能创建目录，也不会扩大授权范围。",

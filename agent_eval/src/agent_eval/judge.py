@@ -739,6 +739,19 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
                 f"no anchor matched (need any of {spec.must_mention_any})",
             )
 
+    missing_anchor_groups = [
+        group
+        for group in spec.must_mention_any_groups
+        if not any(keyword.lower() in text_lc for keyword in group)
+    ]
+    if missing_anchor_groups:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"required anchor groups missing (need any from each group): {missing_anchor_groups}",
+        )
+
     required_anchor_hits = [kw for kw in spec.must_mention_all if kw.lower() in text_lc]
     missing_required_anchors = [kw for kw in spec.must_mention_all if kw.lower() not in text_lc]
     if missing_required_anchors:

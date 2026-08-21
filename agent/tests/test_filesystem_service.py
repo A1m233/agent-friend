@@ -4,6 +4,7 @@ import hashlib
 import os
 import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 from agent.filesystem import (
@@ -108,6 +109,48 @@ def test_search_metadata_does_not_return_file_content(tmp_path: Path) -> None:
     assert content_denied.value.code == "permission_denied"
 
 
+def test_content_search_returns_bounded_line_snippets(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "notes.txt").write_text(
+        "header\n"
+        "first Needle result\n"
+        "second needle result\n"
+        "third needle result\n"
+        "fourth needle result\n"
+        "fifth needle result\n"
+        "sixth needle result\n",
+        encoding="utf-8",
+    )
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "read_text")
+
+    payload = FilesystemService(_policy(tmp_path)).search(
+        ledger,
+        scope_id=scope_id,
+        mode="content",
+        query="needle",
+    )
+
+    matches = cast(list[dict[str, object]], payload["matches"])
+    assert len(matches) == 1
+    match = matches[0]
+    assert match["path"] == "notes.txt"
+    assert match["content_match"] is True
+    assert match["content_matches_truncated"] is True
+    content_matches = cast(list[dict[str, object]], match["content_matches"])
+    assert content_matches == [
+        {"line": 2, "column": 7, "snippet": "first Needle result"},
+        {"line": 3, "column": 8, "snippet": "second needle result"},
+        {"line": 4, "column": 7, "snippet": "third needle result"},
+        {"line": 5, "column": 8, "snippet": "fourth needle result"},
+        {"line": 6, "column": 7, "snippet": "fifth needle result"},
+    ]
+    assert payload["content_snippet_chars"] == sum(
+        len(cast(str, item["snippet"])) for item in content_matches
+    )
+
+
 def test_read_text_is_chunked_and_binary_is_rejected(tmp_path: Path) -> None:
     root = tmp_path / "root"
     root.mkdir()
@@ -126,11 +169,50 @@ def test_read_text_is_chunked_and_binary_is_rejected(tmp_path: Path) -> None:
     )
     assert payload["content"] == "two\n"
     assert payload["truncated"] is True
+    assert payload["truncation_reason"] == "max_lines"
     assert payload["next_start_line"] == 3
+    assert payload["next_start_column"] == 0
+    assert payload["returned_chars"] == 4
+    assert payload["output_char_limit"] == 10_000
+    assert payload["total_lines"] == 3
 
     with pytest.raises(FilesystemError) as binary:
         service.read_text(ledger, scope_id=scope_id, relative_path="blob.bin")
     assert binary.value.code == "unsupported_content"
+
+
+def test_read_text_bounds_large_single_line_without_losing_continuation(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "long.txt").write_bytes(("x" * 15_000 + "\ntail\n").encode())
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "read_text")
+    service = FilesystemService(_policy(tmp_path))
+
+    first = service.read_text(ledger, scope_id=scope_id, relative_path="long.txt")
+
+    assert first["content"] == "x" * 10_000
+    assert first["truncated"] is True
+    assert first["truncation_reason"] == "max_output_chars"
+    assert first["next_start_line"] == 1
+    assert first["next_start_column"] == 10_000
+    assert first["end_line"] == 1
+    assert first["end_column"] == 10_000
+
+    remainder = service.read_text(
+        ledger,
+        scope_id=scope_id,
+        relative_path="long.txt",
+        start_line=first["next_start_line"],
+        start_column=first["next_start_column"],
+    )
+
+    assert remainder["content"] == "x" * 5_000 + "\ntail\n"
+    assert remainder["start_line"] == 1
+    assert remainder["start_column"] == 10_000
+    assert remainder["truncated"] is False
+    assert remainder["next_start_line"] is None
+    assert remainder["next_start_column"] is None
 
 
 def test_atomic_create_overwrite_and_patch_require_current_version(tmp_path: Path) -> None:

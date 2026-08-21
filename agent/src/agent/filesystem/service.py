@@ -6,6 +6,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -23,11 +24,14 @@ from .models import (
 )
 from .policy import ProtectedPathPolicy, canonical_path, is_within
 
-MAX_READ_BYTES = 512 * 1024
+MAX_READ_CHARS = 10_000
 MAX_TEXT_FILE_BYTES = 8 * 1024 * 1024
 MAX_SEARCH_ENTRIES = 50_000
 MAX_CONTENT_SEARCH_FILES = 2_000
 MAX_CONTENT_SEARCH_BYTES = 32 * 1024 * 1024
+MAX_CONTENT_MATCHES_PER_FILE = 5
+MAX_CONTENT_SNIPPET_CHARS = 240
+MAX_CONTENT_SEARCH_SNIPPET_CHARS = 10_000
 SKIPPED_DIRECTORY_NAMES = frozenset({".git", ".hg", ".svn", "node_modules", "__pycache__"})
 
 
@@ -196,6 +200,7 @@ class FilesystemService:
         scanned_entries = 0
         content_files = 0
         content_bytes = 0
+        content_snippet_chars = 0
         skipped_matches = 0
         stopped_early = False
         stack = [resolved.path]
@@ -233,6 +238,8 @@ class FilesystemService:
                         or query.casefold() in relative.casefold()
                     )
                     content_match = False
+                    content_matches: list[dict[str, object]] = []
+                    content_matches_truncated = False
                     if mode == "content" and entry.is_file(follow_symlinks=False):
                         if (
                             content_files >= MAX_CONTENT_SEARCH_FILES
@@ -244,19 +251,43 @@ class FilesystemService:
                         content_files += 1
                         size = entry.stat(follow_symlinks=False).st_size
                         content_bytes += min(size, MAX_TEXT_FILE_BYTES)
-                        content_match = self._file_contains(entry_path, query)
+                        content_matches, content_matches_truncated = self._file_content_matches(
+                            entry_path, query
+                        )
+                        content_match = bool(content_matches)
                         matched = content_match
                     if not matched:
                         continue
                     if skipped_matches < offset:
                         skipped_matches += 1
                         continue
+                    match_snippet_chars = sum(
+                        len(str(item.get("snippet", ""))) for item in content_matches
+                    )
+                    if (
+                        mode == "content"
+                        and matches
+                        and content_snippet_chars + match_snippet_chars
+                        > MAX_CONTENT_SEARCH_SNIPPET_CHARS
+                    ):
+                        stopped_early = True
+                        stack.clear()
+                        break
+                    content_snippet_chars += match_snippet_chars
                     matches.append(
                         {
                             **self._entry_payload(
                                 entry, resolved.capability.root, resolved.capability
                             ),
-                            **({"content_match": True} if content_match else {}),
+                            **(
+                                {
+                                    "content_match": True,
+                                    "content_matches": content_matches,
+                                    "content_matches_truncated": content_matches_truncated,
+                                }
+                                if content_match
+                                else {}
+                            ),
                         }
                     )
                     if len(matches) >= bounded_limit:
@@ -271,6 +302,7 @@ class FilesystemService:
             "truncated": stopped_early,
             "continuation": self._continuation(scope_id, next_offset) if stopped_early else None,
             "scanned_entries": min(scanned_entries, MAX_SEARCH_ENTRIES),
+            **({"content_snippet_chars": content_snippet_chars} if mode == "content" else {}),
         }
 
     def read_text(
@@ -280,6 +312,7 @@ class FilesystemService:
         scope_id: str,
         relative_path: str = ".",
         start_line: int = 1,
+        start_column: int = 0,
         max_lines: int = 200,
         encoding: str = "auto",
     ) -> dict[str, object]:
@@ -293,24 +326,67 @@ class FilesystemService:
         text, detected = self._decode_text(raw, encoding)
         lines = text.splitlines(keepends=True)
         first = max(1, start_line)
+        if start_column < 0:
+            raise FilesystemError("invalid_arguments", "start_column 不能小于 0。")
+        if start_column and (first > len(lines) or start_column >= len(lines[first - 1])):
+            raise FilesystemError(
+                "invalid_arguments",
+                "start_column 超出 start_line 对应行；只能复用上一页返回的 next_start_column。",
+            )
         count = max(1, min(max_lines, 2_000))
-        chunk_lines = lines[first - 1 : first - 1 + count]
-        chunk = "".join(chunk_lines)
-        encoded_chunk = chunk.encode("utf-8")
-        if len(encoded_chunk) > MAX_READ_BYTES:
-            while chunk_lines and len("".join(chunk_lines).encode("utf-8")) > MAX_READ_BYTES:
-                chunk_lines.pop()
-            chunk = "".join(chunk_lines)
-        end_line = first + len(chunk_lines) - 1
-        truncated = first - 1 + len(chunk_lines) < len(lines)
+        line_index = first - 1
+        line_limit = min(len(lines), line_index + count)
+        column = start_column
+        returned_chars = 0
+        chunk_parts: list[str] = []
+        end_line = first - 1
+        end_column = 0
+        next_line: int | None = None
+        next_column: int | None = None
+        while line_index < line_limit and returned_chars < MAX_READ_CHARS:
+            line = lines[line_index]
+            fragment = line[column:]
+            remaining = MAX_READ_CHARS - returned_chars
+            take = min(len(fragment), remaining)
+            if take:
+                chunk_parts.append(fragment[:take])
+                returned_chars += take
+                end_line = line_index + 1
+                end_column = column + take
+            if take < len(fragment):
+                next_line = line_index + 1
+                next_column = column + take
+                break
+            line_index += 1
+            column = 0
+
+        if next_line is None and line_index < len(lines):
+            next_line = line_index + 1
+            next_column = 0
+        chunk = "".join(chunk_parts)
+        truncated = next_line is not None
+        truncation_reason = (
+            "max_output_chars"
+            if truncated and returned_chars >= MAX_READ_CHARS
+            else "max_lines"
+            if truncated
+            else None
+        )
         return {
             "path": self._relative_text(resolved.path, resolved.capability.root),
             "content": chunk,
             "encoding": detected,
             "start_line": first,
-            "end_line": max(first - 1, end_line),
+            "start_column": start_column,
+            "end_line": end_line,
+            "end_column": end_column,
             "truncated": truncated,
-            "next_start_line": end_line + 1 if truncated else None,
+            "truncation_reason": truncation_reason,
+            "next_start_line": next_line,
+            "next_start_column": next_column,
+            "returned_chars": returned_chars,
+            "output_char_limit": MAX_READ_CHARS,
+            "total_lines": len(lines),
             "size": size,
             "sha256": hashlib.sha256(raw).hexdigest(),
         }
@@ -774,14 +850,42 @@ class FilesystemService:
             return False
 
     @classmethod
-    def _file_contains(cls, path: Path, query: str) -> bool:
+    def _file_content_matches(cls, path: Path, query: str) -> tuple[list[dict[str, object]], bool]:
         try:
             if path.stat().st_size > MAX_TEXT_FILE_BYTES:
-                return False
+                return [], False
             text, _ = cls._decode_text(path.read_bytes(), "auto")
-            return query.casefold() in text.casefold()
-        except (OSError, FilesystemError):
-            return False
+            pattern = re.compile(re.escape(query), re.IGNORECASE)
+            matches: list[dict[str, object]] = []
+            truncated = False
+            for match in pattern.finditer(text):
+                if len(matches) >= MAX_CONTENT_MATCHES_PER_FILE:
+                    truncated = True
+                    break
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                line_end = text.find("\n", match.start())
+                if line_end < 0:
+                    line_end = len(text)
+                snippet_start = max(line_start, match.start() - 80)
+                snippet_end = min(line_end, snippet_start + MAX_CONTENT_SNIPPET_CHARS)
+                if match.start() >= snippet_end:
+                    snippet_start = match.start()
+                    snippet_end = min(line_end, snippet_start + MAX_CONTENT_SNIPPET_CHARS)
+                snippet = text[snippet_start:snippet_end].rstrip("\r")
+                if snippet_start > line_start:
+                    snippet = "…" + snippet
+                if snippet_end < line_end:
+                    snippet += "…"
+                matches.append(
+                    {
+                        "line": text.count("\n", 0, match.start()) + 1,
+                        "column": match.start() - line_start + 1,
+                        "snippet": snippet,
+                    }
+                )
+            return matches, truncated
+        except (OSError, FilesystemError, re.error):
+            return [], False
 
     def _entry_payload(
         self,
