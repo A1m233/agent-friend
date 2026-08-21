@@ -19,15 +19,13 @@ import {
 } from "@/components/ui";
 import { useSetting, type ThemeMode } from "@/lib/settings";
 import {
-  consumePendingSettingsNavigation,
   DEFAULT_SETTINGS_TARGET,
-  listenSettingsNavigation,
   locateSettings,
   PRIMARY_SETTINGS_SECTIONS,
-  type SettingsNavigationEnvelope,
   type SettingsOpenRequest,
   type SettingsTarget,
 } from "@/lib/settings/navigation";
+import type { WorkspaceNavigationEnvelope } from "@/lib/workspace/navigation";
 import { AvatarModelPanel } from "./components/AvatarModelPanel";
 import { ArchivedSessionsPanel } from "./components/ArchivedSessionsPanel";
 import { RuntimeConfigPanel } from "./components/RuntimeConfigPanel";
@@ -40,7 +38,6 @@ import { AutostartSetting } from "./components/AutostartSetting";
 import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
 import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
-import { startCommandRuntimeSync } from "@/stores";
 import type { RuntimeConfigGroup } from "@/lib/runtime-config";
 
 /**
@@ -48,7 +45,11 @@ import type { RuntimeConfigGroup } from "@/lib/runtime-config";
  *
  * 后续新增设置项按 design.md 扩展点接入。
  */
-export function SettingsApp() {
+export function SettingsApp({
+  navigation,
+}: {
+  navigation?: WorkspaceNavigationEnvelope | null;
+}) {
   const [section, setSection] = useState<SettingsTarget>(DEFAULT_SETTINGS_TARGET);
   const [feedbackPrefill, setFeedbackPrefill] = useState<{
     requestId: number;
@@ -78,26 +79,16 @@ export function SettingsApp() {
   );
 
   useEffect(() => {
-    const applyEnvelope = (envelope: SettingsNavigationEnvelope) => {
-      navigate(envelope.request, envelope.requestId);
-    };
-    void consumePendingSettingsNavigation().then((pending) => {
-      if (pending) applyEnvelope(pending);
-    });
-    const unlistenPromise = listenSettingsNavigation(applyEnvelope);
-    return () => {
-      void unlistenPromise.then((unlisten) => unlisten());
-    };
-  }, [navigate]);
-
-  useEffect(() => startCommandRuntimeSync(), []);
+    if (navigation?.target !== "settings" || !navigation.settings) return;
+    navigate(navigation.settings, navigation.requestId);
+  }, [navigate, navigation]);
 
   const selectSection = (target: SettingsTarget) => navigate({ target });
 
   return (
     <TooltipProvider delayDuration={0}>
       <SidebarProvider
-        className="h-screen bg-bg text-fg"
+        className="h-full bg-bg text-fg"
         style={{ "--sidebar-width": "200px" } as CSSProperties}
       >
         <Sidebar collapsible="none" className="border-r border-border">

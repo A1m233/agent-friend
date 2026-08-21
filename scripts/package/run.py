@@ -126,14 +126,11 @@ MODEL_REVISION = "9507db33464b5da99a532ac26b2a251767cbc62b"
 REQUIRED_FRONTEND_ENTRYPOINTS = {
     "index.html",
     "bubble.html",
-    "im-connect.html",
-    "memory-inspector.html",
     "spine-spike.html",
     "live2d-debugger.html",
     "voice-call.html",
     "chat.html",
     "pet.html",
-    "settings.html",
 }
 DESKTOP_SHELL_ROLE_MARKER = b"agent-friend-executable-role:desktop-shell-v1"
 SECRET_NAMES = {

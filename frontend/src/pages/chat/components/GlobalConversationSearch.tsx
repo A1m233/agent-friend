@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { Badge, Button, Spinner } from "@/components/ui";
 import { sessionsApi } from "@/services";
 import { useConversationStore } from "@/stores";
+import { useWorkspaceNavigationStore } from "@/lib/workspace/navigation";
 import type {
   SearchTextSegment,
   SessionSearchResponse,
@@ -62,6 +63,7 @@ export function GlobalConversationSearchProvider({ children }: { children: React
 function GlobalConversationSearch() {
   const { searchQuery } = useKBar((state) => ({ searchQuery: state.searchQuery }));
   const openSearchResult = useConversationStore((state) => state.openSearchResult);
+  const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
   const [view, setView] = useState<SearchViewState>({ status: "idle" });
   const [retrySequence, setRetrySequence] = useState(0);
   const requestSequenceRef = useRef(0);
@@ -104,6 +106,7 @@ function GlobalConversationSearch() {
   const handleOpenResult = useCallback(
     (result: SessionSearchResult) => {
       const query = response?.query ?? normalizedQuery;
+      navigateWorkspace("chat");
       void openSearchResult(result, query).then((opened) => {
         if (!opened) {
           toast.error("这条搜索结果已经发生变化，请重新搜索。", {
@@ -112,7 +115,7 @@ function GlobalConversationSearch() {
         }
       });
     },
-    [normalizedQuery, openSearchResult, response?.query],
+    [navigateWorkspace, normalizedQuery, openSearchResult, response?.query],
   );
   const actions = useMemo<Action[]>(
     () =>

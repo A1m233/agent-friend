@@ -9,14 +9,7 @@ use tauri_plugin_store::StoreExt;
 use crate::paths;
 
 const WINDOW_PLACEMENTS_KEY: &str = "windowPlacements";
-const MANAGED_WINDOW_LABELS: &[&str] = &[
-    "chat",
-    "settings",
-    "im-connect",
-    "voice-call",
-    "memory-inspector",
-    "live2d-debugger",
-];
+const MANAGED_WINDOW_LABELS: &[&str] = &["chat", "voice-call", "live2d-debugger"];
 const DEFAULT_WINDOW_WIDTH: u32 = 720;
 const DEFAULT_WINDOW_HEIGHT: u32 = 640;
 

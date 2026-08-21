@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{
-    menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WebviewWindow,
 };
 #[cfg(debug_assertions)]
@@ -40,8 +40,7 @@ mod window_placement;
 mod windows_display_state;
 
 const EVENT_WINDOW_SHOWN: &str = "window://shown";
-const EVENT_WINDOW_HIDDEN: &str = "window://hidden";
-const EVENT_SETTINGS_NAVIGATE: &str = "settings://navigate";
+const EVENT_WORKSPACE_NAVIGATE: &str = "workspace://navigate";
 const EVENT_PET_DISPLAY_TOPOLOGY_CHANGED: &str = "pet://display-topology-changed";
 const PET_OVERLAY_RECONCILE_INTERVAL_MS: u64 = 1000;
 const PET_OVERLAY_BOUNDS_SETTLE_MS: u64 = 1200;
@@ -52,14 +51,23 @@ struct VoiceLaunchState {
 }
 
 #[derive(Default)]
-struct SettingsNavigationState {
-    inner: Mutex<SettingsNavigationStateInner>,
+struct WorkspaceNavigationState {
+    inner: Mutex<WorkspaceNavigationStateInner>,
 }
 
 #[derive(Default)]
-struct SettingsNavigationStateInner {
+struct WorkspaceNavigationStateInner {
     next_request_id: u64,
-    pending: Option<SettingsNavigationEnvelope>,
+    pending: Option<WorkspaceNavigationEnvelope>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum WorkspaceTarget {
+    Chat,
+    Settings,
+    ImConnect,
+    MemoryInspector,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -84,9 +92,17 @@ struct SettingsFeedbackContext {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SettingsNavigationEnvelope {
+struct WorkspaceNavigationEnvelope {
     request_id: u64,
-    request: SettingsOpenRequest,
+    target: WorkspaceTarget,
+    chat: Option<ChatOpenRequest>,
+    settings: Option<SettingsOpenRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatOpenRequest {
+    new_conversation: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -96,29 +112,33 @@ enum PersonaOpenTarget {
     Folder,
 }
 
-impl SettingsNavigationState {
+impl WorkspaceNavigationState {
     fn set_pending(
         &self,
-        request: SettingsOpenRequest,
-    ) -> Result<SettingsNavigationEnvelope, String> {
+        target: WorkspaceTarget,
+        chat: Option<ChatOpenRequest>,
+        settings: Option<SettingsOpenRequest>,
+    ) -> Result<WorkspaceNavigationEnvelope, String> {
         let mut inner = self
             .inner
             .lock()
-            .map_err(|e| format!("settings navigation state poisoned: {e}"))?;
+            .map_err(|e| format!("workspace navigation state poisoned: {e}"))?;
         inner.next_request_id = inner.next_request_id.saturating_add(1);
-        let envelope = SettingsNavigationEnvelope {
+        let envelope = WorkspaceNavigationEnvelope {
             request_id: inner.next_request_id,
-            request,
+            target,
+            chat,
+            settings,
         };
         inner.pending = Some(envelope.clone());
         Ok(envelope)
     }
 
-    fn take_pending(&self) -> Result<Option<SettingsNavigationEnvelope>, String> {
+    fn take_pending(&self) -> Result<Option<WorkspaceNavigationEnvelope>, String> {
         let mut inner = self
             .inner
             .lock()
-            .map_err(|e| format!("settings navigation state poisoned: {e}"))?;
+            .map_err(|e| format!("workspace navigation state poisoned: {e}"))?;
         Ok(inner.pending.take())
     }
 }
@@ -649,43 +669,71 @@ fn should_focus_existing_instance(args: &[String]) -> bool {
 
 #[tauri::command]
 fn open_chat(app: tauri::AppHandle) -> Result<(), String> {
-    show_and_focus(&app, "chat")
+    navigate_workspace(&app, WorkspaceTarget::Chat, None)
 }
 
-/// 打开设置并投递一次性语义定位请求；无请求时保持兼容，仅打开窗口。
+#[tauri::command]
+fn open_new_conversation(app: tauri::AppHandle) -> Result<(), String> {
+    navigate_new_conversation(&app)
+}
+
+fn navigate_workspace(
+    app: &tauri::AppHandle,
+    target: WorkspaceTarget,
+    settings: Option<SettingsOpenRequest>,
+) -> Result<(), String> {
+    navigate_workspace_with_context(app, target, None, settings)
+}
+
+fn navigate_new_conversation(app: &tauri::AppHandle) -> Result<(), String> {
+    navigate_workspace_with_context(
+        app,
+        WorkspaceTarget::Chat,
+        Some(ChatOpenRequest {
+            new_conversation: true,
+        }),
+        None,
+    )
+}
+
+fn navigate_workspace_with_context(
+    app: &tauri::AppHandle,
+    target: WorkspaceTarget,
+    chat: Option<ChatOpenRequest>,
+    settings: Option<SettingsOpenRequest>,
+) -> Result<(), String> {
+    let state = app.state::<WorkspaceNavigationState>();
+    let envelope = state.set_pending(target, chat, settings)?;
+    show_and_focus(app, "chat")?;
+    app.emit_to("chat", EVENT_WORKSPACE_NAVIGATE, envelope)
+        .map_err(|error| format!("emit workspace navigation failed: {error}"))
+}
+
+/// 打开主窗口中的设置，并投递可选的一次性语义定位请求。
 #[tauri::command]
 fn open_settings(
     app: tauri::AppHandle,
-    state: tauri::State<'_, SettingsNavigationState>,
     request: Option<SettingsOpenRequest>,
 ) -> Result<(), String> {
-    let envelope = request
-        .map(|request| state.set_pending(request))
-        .transpose()?;
-    show_and_focus(&app, "settings")?;
-    if let Some(envelope) = envelope {
-        app.emit_to("settings", EVENT_SETTINGS_NAVIGATE, envelope)
-            .map_err(|e| format!("emit settings navigation failed: {e}"))?;
-    }
-    Ok(())
+    navigate_workspace(&app, WorkspaceTarget::Settings, request)
 }
 
 pub(crate) fn show_permission_settings(app: &tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<SettingsNavigationState>();
-    let envelope = state.set_pending(SettingsOpenRequest {
-        target: Some("permissions".to_string()),
-        runtime: None,
-        feedback: None,
-    })?;
-    show_and_focus(app, "settings")?;
-    app.emit_to("settings", EVENT_SETTINGS_NAVIGATE, envelope)
-        .map_err(|error| format!("emit permission settings navigation failed: {error}"))
+    navigate_workspace(
+        app,
+        WorkspaceTarget::Settings,
+        Some(SettingsOpenRequest {
+            target: Some("permissions".to_string()),
+            runtime: None,
+            feedback: None,
+        }),
+    )
 }
 
 #[tauri::command]
-fn consume_pending_settings_navigation(
-    state: tauri::State<'_, SettingsNavigationState>,
-) -> Result<Option<SettingsNavigationEnvelope>, String> {
+fn consume_pending_workspace_navigation(
+    state: tauri::State<'_, WorkspaceNavigationState>,
+) -> Result<Option<WorkspaceNavigationEnvelope>, String> {
     state.take_pending()
 }
 
@@ -720,7 +768,7 @@ fn open_persona_target(app: tauri::AppHandle, target: PersonaOpenTarget) -> Resu
 /// 022 · 桌宠 ActionBar "接入 IM" 按钮调用。
 #[tauri::command]
 fn open_im_connect(app: tauri::AppHandle) -> Result<(), String> {
-    show_and_focus(&app, "im-connect")
+    navigate_workspace(&app, WorkspaceTarget::ImConnect, None)
 }
 
 /// 029 · 打开独立语音通话小窗。
@@ -754,7 +802,7 @@ fn open_memory_inspector(app: tauri::AppHandle) -> Result<(), String> {
     if !owner_capabilities::local_capabilities().memory_inspector {
         return Err("memory_inspector_disabled".to_string());
     }
-    show_and_focus(&app, "memory-inspector")
+    navigate_workspace(&app, WorkspaceTarget::MemoryInspector, None)
 }
 
 /// 033 · dev-only Live2D 调试器窗口。
@@ -867,16 +915,112 @@ fn set_pet_webview_dpr(state: tauri::State<PetWebviewState>, dpr: f64) {
     }
 }
 
-/// 注册托盘图标与菜单：打开对话 / 显示隐藏桌宠 / 退出。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TrayMenuAction {
+    OpenWorkspace,
+    NewConversation,
+    OpenImConnect,
+    OpenSettings,
+    OpenHelp,
+    TogglePet,
+    Quit,
+}
+
+fn tray_menu_action(id: &str) -> Option<TrayMenuAction> {
+    match id {
+        "open_workspace" => Some(TrayMenuAction::OpenWorkspace),
+        "new_conversation" => Some(TrayMenuAction::NewConversation),
+        "open_im_connect" => Some(TrayMenuAction::OpenImConnect),
+        "open_settings" => Some(TrayMenuAction::OpenSettings),
+        "open_help" => Some(TrayMenuAction::OpenHelp),
+        "toggle_pet" => Some(TrayMenuAction::TogglePet),
+        "quit" => Some(TrayMenuAction::Quit),
+        _ => None,
+    }
+}
+
+fn pet_visibility_menu_text(visible: bool) -> &'static str {
+    if visible {
+        "隐藏桌宠"
+    } else {
+        "显示桌宠"
+    }
+}
+
+fn refresh_pet_visibility_menu_item(app: &tauri::AppHandle, item: &MenuItem<tauri::Wry>) {
+    let visible = app
+        .get_webview_window("pet")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if let Err(error) = item.set_text(pet_visibility_menu_text(visible)) {
+        log::warn!("refresh tray pet visibility label failed: {error}");
+    }
+}
+
+fn open_help_and_feedback(app: &tauri::AppHandle) -> Result<(), String> {
+    navigate_workspace(
+        app,
+        WorkspaceTarget::Settings,
+        Some(SettingsOpenRequest {
+            target: Some("feedback".to_string()),
+            runtime: None,
+            feedback: None,
+        }),
+    )
+}
+
+/// 注册托盘图标与菜单：统一主窗口快捷入口 / 桌宠显隐 / 退出。
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let open_chat_i = MenuItem::with_id(app, "open_chat", "打开对话", true, None::<&str>)?;
-    let toggle_pet_i = MenuItem::with_id(app, "toggle_pet", "显示/隐藏桌宠", true, None::<&str>)?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_chat_i, &toggle_pet_i, &quit_i])?;
+    let open_workspace_i = MenuItem::with_id(
+        app,
+        "open_workspace",
+        "打开 agent-friend",
+        true,
+        None::<&str>,
+    )?;
+    let new_conversation_i =
+        MenuItem::with_id(app, "new_conversation", "新对话", true, None::<&str>)?;
+    let primary_separator = PredefinedMenuItem::separator(app)?;
+    let open_im_connect_i =
+        MenuItem::with_id(app, "open_im_connect", "IM 接入", true, None::<&str>)?;
+    let open_settings_i = MenuItem::with_id(app, "open_settings", "设置", true, None::<&str>)?;
+    let open_help_i = MenuItem::with_id(app, "open_help", "帮助与反馈", true, None::<&str>)?;
+    let utility_separator = PredefinedMenuItem::separator(app)?;
+    let pet_visible = app
+        .get_webview_window("pet")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let toggle_pet_i = MenuItem::with_id(
+        app,
+        "toggle_pet",
+        pet_visibility_menu_text(pet_visible),
+        true,
+        None::<&str>,
+    )?;
+    let quit_separator = PredefinedMenuItem::separator(app)?;
+    let quit_i = MenuItem::with_id(app, "quit", "退出 agent-friend", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_workspace_i,
+            &new_conversation_i,
+            &primary_separator,
+            &open_im_connect_i,
+            &open_settings_i,
+            &open_help_i,
+            &utility_separator,
+            &toggle_pet_i,
+            &quit_separator,
+            &quit_i,
+        ],
+    )?;
+
+    let toggle_pet_menu_item = toggle_pet_i.clone();
+    let toggle_pet_tray_item = toggle_pet_i.clone();
 
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
         .tooltip("agent-friend")
         // 菜单栏文字标签，避免纯图标在拥挤/刘海屏下找不到
         .title("🐾");
@@ -886,16 +1030,46 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
 
     builder
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open_chat" => {
-                let _ = show_and_focus(app, "chat");
-            }
-            "toggle_pet" => {
-                if let Err(error) = pet_display_recovery::toggle_visibility(app) {
-                    log::warn!("toggle pet visibility failed: {error}");
+        .on_menu_event(
+            move |app, event| match tray_menu_action(event.id.as_ref()) {
+                Some(TrayMenuAction::OpenWorkspace) => {
+                    let _ = navigate_workspace(app, WorkspaceTarget::Chat, None);
                 }
+                Some(TrayMenuAction::NewConversation) => {
+                    let _ = navigate_new_conversation(app);
+                }
+                Some(TrayMenuAction::OpenImConnect) => {
+                    let _ = navigate_workspace(app, WorkspaceTarget::ImConnect, None);
+                }
+                Some(TrayMenuAction::OpenSettings) => {
+                    let _ = navigate_workspace(app, WorkspaceTarget::Settings, None);
+                }
+                Some(TrayMenuAction::OpenHelp) => {
+                    let _ = open_help_and_feedback(app);
+                }
+                Some(TrayMenuAction::TogglePet) => {
+                    if let Err(error) = pet_display_recovery::toggle_visibility(app) {
+                        log::warn!("toggle pet visibility failed: {error}");
+                    }
+                    refresh_pet_visibility_menu_item(app, &toggle_pet_menu_item);
+                }
+                Some(TrayMenuAction::Quit) => app.exit(0),
+                None => {}
+            },
+        )
+        .on_tray_icon_event(move |tray, event| match event {
+            TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let _ = navigate_workspace(tray.app_handle(), WorkspaceTarget::Chat, None);
             }
-            "quit" => app.exit(0),
+            TrayIconEvent::Click {
+                button: MouseButton::Right,
+                ..
+            } => {
+                refresh_pet_visibility_menu_item(tray.app_handle(), &toggle_pet_tray_item);
+            }
             _ => {}
         })
         .build(app)?;
@@ -1131,7 +1305,7 @@ pub fn run() {
             );
             if should_focus_existing_instance(&args) {
                 log::info!("second instance launch received; focusing chat window");
-                if let Err(error) = show_and_focus(app, "chat") {
+                if let Err(error) = navigate_workspace(app, WorkspaceTarget::Chat, None) {
                     log::warn!("second instance focus failed: {error}");
                     single_instance_runtime_observer.record(
                         "instance-governance",
@@ -1165,7 +1339,7 @@ pub fn run() {
         .manage(PetOverlayState::default())
         .manage(PetWebviewState::default())
         .manage(VoiceLaunchState::default())
-        .manage(SettingsNavigationState::default())
+        .manage(WorkspaceNavigationState::default())
         .manage(window_placement::WindowPlacementState::default())
         .manage(shell_diagnostics_manager)
         .manage(webview_diagnostics_manager)
@@ -1200,8 +1374,9 @@ pub fn run() {
     #[cfg(debug_assertions)]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_new_conversation,
         open_settings,
-        consume_pending_settings_navigation,
+        consume_pending_workspace_navigation,
         open_persona_target,
         diagnostics::generate_diagnostic_bundle,
         webview_diagnostics::get_webview_render_evidence_status,
@@ -1281,8 +1456,9 @@ pub fn run() {
     #[cfg(not(debug_assertions))]
     let builder = builder.invoke_handler(tauri::generate_handler![
         open_chat,
+        open_new_conversation,
         open_settings,
-        consume_pending_settings_navigation,
+        consume_pending_workspace_navigation,
         data_migration::coordinator::get_migration_inventory,
         data_migration::coordinator::export_migration_package,
         data_migration::coordinator::preflight_migration_package,
@@ -1388,9 +1564,7 @@ pub fn run() {
                     _ => {}
                 }
             }
-            // 对话窗 / 设置窗 / IM 窗 / dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
-            // 019 · settings 窗加入复用 chat 同款"关闭即隐藏"语义。
-            // 026 · memory-inspector 窗同语义。
+            // 主窗口、语音通话和 dev 工具窗按需显隐：点关闭只隐藏不销毁，便于再次打开。
             if window_placement::is_managed_window_label(window.label()) {
                 if matches!(
                     event,
@@ -1419,11 +1593,6 @@ pub fn run() {
                                 "window placement: remember failed for {}: {e}",
                                 window.label()
                             );
-                        }
-                    }
-                    if window.label() == "im-connect" {
-                        if let Err(e) = window.emit(EVENT_WINDOW_HIDDEN, ()) {
-                            log::warn!("im-connect emit hidden failed: {e}");
                         }
                     }
                     let _ = window.hide();
@@ -1781,26 +1950,44 @@ mod tests {
     }
 
     #[test]
-    fn settings_navigation_is_ordered_and_consumed_once() {
-        let state = SettingsNavigationState::default();
+    fn workspace_navigation_is_ordered_and_consumed_once() {
+        let state = WorkspaceNavigationState::default();
         let first = state
-            .set_pending(SettingsOpenRequest {
-                target: Some("general".into()),
-                runtime: None,
-                feedback: None,
-            })
+            .set_pending(
+                WorkspaceTarget::Chat,
+                Some(ChatOpenRequest {
+                    new_conversation: true,
+                }),
+                None,
+            )
             .expect("set first navigation");
         let second = state
-            .set_pending(SettingsOpenRequest {
-                target: Some("feedback".into()),
-                runtime: None,
-                feedback: Some(SettingsFeedbackContext {
-                    preselect_session_id: Some("session-1".into()),
+            .set_pending(
+                WorkspaceTarget::Settings,
+                None,
+                Some(SettingsOpenRequest {
+                    target: Some("feedback".into()),
+                    runtime: None,
+                    feedback: Some(SettingsFeedbackContext {
+                        preselect_session_id: Some("session-1".into()),
+                    }),
                 }),
-            })
+            )
             .expect("set second navigation");
 
         assert!(second.request_id > first.request_id);
+        assert!(first
+            .chat
+            .as_ref()
+            .is_some_and(|request| request.new_conversation));
+        assert_eq!(second.target, WorkspaceTarget::Settings);
+        assert_eq!(
+            second
+                .settings
+                .as_ref()
+                .and_then(|settings| settings.target.as_deref()),
+            Some("feedback")
+        );
         assert_eq!(
             state
                 .take_pending()
@@ -1810,6 +1997,38 @@ mod tests {
             second.request_id
         );
         assert!(state.take_pending().expect("take again").is_none());
+    }
+
+    #[test]
+    fn tray_menu_actions_and_pet_labels_are_explicit() {
+        assert_eq!(
+            tray_menu_action("open_workspace"),
+            Some(TrayMenuAction::OpenWorkspace)
+        );
+        assert_eq!(
+            tray_menu_action("new_conversation"),
+            Some(TrayMenuAction::NewConversation)
+        );
+        assert_eq!(
+            tray_menu_action("open_im_connect"),
+            Some(TrayMenuAction::OpenImConnect)
+        );
+        assert_eq!(
+            tray_menu_action("open_settings"),
+            Some(TrayMenuAction::OpenSettings)
+        );
+        assert_eq!(
+            tray_menu_action("open_help"),
+            Some(TrayMenuAction::OpenHelp)
+        );
+        assert_eq!(
+            tray_menu_action("toggle_pet"),
+            Some(TrayMenuAction::TogglePet)
+        );
+        assert_eq!(tray_menu_action("quit"), Some(TrayMenuAction::Quit));
+        assert_eq!(tray_menu_action("unknown"), None);
+        assert_eq!(pet_visibility_menu_text(true), "隐藏桌宠");
+        assert_eq!(pet_visibility_menu_text(false), "显示桌宠");
     }
 
     #[test]
@@ -1856,7 +2075,7 @@ mod tests {
             &tauri::Url::parse("http://tauri.localhost/pet.html").unwrap()
         ));
         assert!(is_allowed_app_navigation(
-            &tauri::Url::parse("https://tauri.localhost/settings.html").unwrap()
+            &tauri::Url::parse("https://tauri.localhost/voice-call.html").unwrap()
         ));
         assert!(is_allowed_app_navigation(
             &tauri::Url::parse("http://localhost:1420/chat.html").unwrap()

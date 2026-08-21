@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Circle, CircleAlert, Clock3, MoreVertical, Search, ShieldAlert, SquarePen } from "lucide-react";
+import {
+  Brain,
+  Circle,
+  CircleAlert,
+  Clock3,
+  MoreVertical,
+  Plug,
+  Search,
+  Settings,
+  ShieldAlert,
+  SquarePen,
+} from "lucide-react";
 import { useKBar } from "kbar";
 import {
   Badge,
@@ -44,6 +55,10 @@ import {
 import type { RunSnapshot } from "@/types/run";
 import { isTauri } from "@/utils/tauri";
 import {
+  useWorkspaceNavigationStore,
+  type WorkspaceTarget,
+} from "@/lib/workspace/navigation";
+import {
   createSessionMenuActions,
   SessionContextMenuItems,
   SessionDropdownMenuItems,
@@ -53,6 +68,8 @@ const WINDOW_SHOWN_EVENT = "window://shown";
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const NAVIGATION_BUTTON_CLASS =
+  "px-2 text-sm font-normal data-[active=true]:bg-bg transition-none";
 
 interface MissingCurrentSessionResetInput {
   sessionsLoaded: boolean;
@@ -112,6 +129,21 @@ export function shouldResetMissingCurrentSession({
   return messageCount === 0;
 }
 
+export function isNewConversationNavigationActive(
+  target: WorkspaceTarget,
+  currentSessionId: string | null,
+): boolean {
+  return target === "chat" && currentSessionId === null;
+}
+
+export function isSessionNavigationActive(
+  target: WorkspaceTarget,
+  currentSessionId: string | null,
+  sessionId: string,
+): boolean {
+  return target === "chat" && currentSessionId === sessionId;
+}
+
 function formatSessionAge(input: string, now = Date.now()): string {
   const timestamp = new Date(input).getTime();
   if (!Number.isFinite(timestamp)) return "";
@@ -137,7 +169,11 @@ function formatSessionAge(input: string, now = Date.now()): string {
  * ready → fetch 失败 list 留空；之后 bridge 起来也不会重拉。改为 status === "online" 时
  * refresh，让连接 unknown→online / offline→online 转换都自动重拉历史列表。
  */
-export function HistorySidebar() {
+export function HistorySidebar({
+  memoryInspectorEnabled,
+}: {
+  memoryInspectorEnabled: boolean;
+}) {
   const list = useSessionsStore((s) => s.list);
   const imTypesBySession = useSessionsStore((s) => s.imTypesBySession);
   const refresh = useSessionsStore((s) => s.refresh);
@@ -192,6 +228,8 @@ export function HistorySidebar() {
   const restoreAttemptedRef = useRef(false);
   const restoreBlockedRef = useRef(false);
   const { query: searchPalette } = useKBar();
+  const workspaceTarget = useWorkspaceNavigationStore((state) => state.target);
+  const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
   const searchShortcutLabel = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
     ? "⌘ F"
     : "Ctrl F";
@@ -202,15 +240,17 @@ export function HistorySidebar() {
 
   const handleNewSession = useCallback(() => {
     blockAutoRestore();
+    navigateWorkspace("chat");
     newSession();
-  }, [blockAutoRestore, newSession]);
+  }, [blockAutoRestore, navigateWorkspace, newSession]);
 
   const handleOpenSession = useCallback(
     (sessionId: string) => {
       blockAutoRestore();
+      navigateWorkspace("chat");
       void openSession(sessionId);
     },
-    [blockAutoRestore, openSession],
+    [blockAutoRestore, navigateWorkspace, openSession],
   );
 
   const handleOpenRename = useCallback((sessionId: string, title: string) => {
@@ -393,11 +433,47 @@ export function HistorySidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleNewSession}>
+            <SidebarMenuButton
+              isActive={isNewConversationNavigationActive(workspaceTarget, currentSessionId)}
+              className={NAVIGATION_BUTTON_CLASS}
+              onClick={handleNewSession}
+            >
               <SquarePen />
               <span>新对话</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={workspaceTarget === "im-connect"}
+              className={NAVIGATION_BUTTON_CLASS}
+              onClick={() => navigateWorkspace("im-connect")}
+            >
+              <Plug />
+              <span>IM 接入</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={workspaceTarget === "settings"}
+              className={NAVIGATION_BUTTON_CLASS}
+              onClick={() => navigateWorkspace("settings")}
+            >
+              <Settings />
+              <span>设置</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {memoryInspectorEnabled ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={workspaceTarget === "memory-inspector"}
+                className={NAVIGATION_BUTTON_CLASS}
+                onClick={() => navigateWorkspace("memory-inspector")}
+              >
+                <Brain />
+                <span>记忆面板</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : null}
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
@@ -470,8 +546,12 @@ export function HistorySidebar() {
                       >
                         <ContextMenuTrigger asChild>
                           <SidebarMenuButton
-                            isActive={s.session_id === currentSessionId}
-                            className="px-2 text-sm font-normal data-[active=true]:bg-bg transition-none"
+                            isActive={isSessionNavigationActive(
+                              workspaceTarget,
+                              currentSessionId,
+                              s.session_id,
+                            )}
+                            className={NAVIGATION_BUTTON_CLASS}
                             onContextMenu={(event) => {
                               pointerContextMenuSessionRef.current =
                                 event.button === 2 ? s.session_id : null;

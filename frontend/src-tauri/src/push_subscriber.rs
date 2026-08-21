@@ -197,14 +197,8 @@ async fn run_connection(
                         || env.kind == "command_process_changed"
                         || env.kind == "sandbox_capability_changed" =>
                 {
-                    let is_sandbox_capability = env.kind == "sandbox_capability_changed";
                     if let Err(e) = app.emit_to("chat", "session://command-runtime", &env) {
                         log::warn!("emit command runtime event failed: {e}");
-                    }
-                    if is_sandbox_capability {
-                        if let Err(e) = app.emit_to("settings", "session://command-runtime", &env) {
-                            log::warn!("emit sandbox capability to settings failed: {e}");
-                        }
                     }
                 }
                 Some(env) => {

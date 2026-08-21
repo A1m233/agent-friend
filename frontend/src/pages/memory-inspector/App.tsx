@@ -12,7 +12,7 @@ export function MemoryInspectorApp() {
   const [highlight, setHighlight] = useState<{ layer: Layer; source_ref: string } | null>(null);
 
   return (
-    <div className="h-screen bg-bg text-fg overflow-hidden">
+    <div className="h-full bg-bg text-fg overflow-hidden">
       <div className="grid grid-cols-2 divide-x divide-border h-full">
         <div className="h-full overflow-hidden">
           <MemoryList

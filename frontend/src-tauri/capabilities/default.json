@@ -6,10 +6,7 @@
     "pet",
     "chat",
     "bubble",
-    "settings",
-    "im-connect",
     "voice-call",
-    "memory-inspector",
     "live2d-debugger"
   ],
   "permissions": [

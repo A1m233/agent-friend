@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  isNewConversationNavigationActive,
+  isSessionNavigationActive,
   resolveOpenSessionActionMenu,
   sessionRunIndicator,
   shouldClearSessionActionFocusOnOpen,
   shouldResetMissingCurrentSession,
 } from "./HistorySidebar";
+
+describe("HistorySidebar workspace selection", () => {
+  it("selects exactly the chat destination represented by the current session", () => {
+    expect(isNewConversationNavigationActive("chat", null)).toBe(true);
+    expect(isSessionNavigationActive("chat", "session-1", "session-1")).toBe(true);
+    expect(isNewConversationNavigationActive("chat", "session-1")).toBe(false);
+  });
+
+  it("clears chat selection while a utility surface is active", () => {
+    expect(isNewConversationNavigationActive("settings", null)).toBe(false);
+    expect(isSessionNavigationActive("im-connect", "session-1", "session-1")).toBe(false);
+  });
+});
 
 const queuedRun = {
   run_id: "run-1",

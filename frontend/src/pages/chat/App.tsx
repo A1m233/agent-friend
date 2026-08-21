@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { SidebarProvider, StatusDot, Button, type StatusDotProps } from "@/components/ui";
-import { FeedbackIcon } from "@/components/app/FeedbackIcon";
+import {
+  Activity,
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { SidebarProvider, Spinner } from "@/components/ui";
 import {
   startSessionSyncSubscriber,
   startCommandRuntimeSync,
@@ -10,64 +18,51 @@ import {
   useFilesystemApprovalsStore,
   useConnectionStore,
   useConversationStore,
-  useRuntimeCredentialStore,
-  type ConnectionStatus,
 } from "@/stores";
-import {
-  focusVoiceCallWindow,
-  useVoiceStore,
-} from "@/stores/voice";
 import {
   publishActiveChatSession,
   subscribeActiveChatSessionRequests,
 } from "@/lib/active-chat-session";
-import { isVoiceCallBlockingText } from "@/stores/voiceStateMachine";
 import { HistorySidebar } from "./components/HistorySidebar";
-import { MessageList } from "./components/MessageList";
-import { Composer, type ComposerHandle } from "./components/Composer";
-import { ApprovalDock } from "./components/ApprovalDock";
 import { GlobalConversationSearchProvider } from "./components/GlobalConversationSearch";
-import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "./layout";
-import { openFeedback } from "@/lib/settings/navigation";
 import { useModelCatalogStore } from "@/lib/model-config";
 import { startDesktopPresenceReporter } from "@/lib/desktop-presence";
-import { runtimeCredentialApplyReason } from "@/lib/runtime-config";
+import {
+  startWorkspaceNavigationSync,
+  useWorkspaceNavigationStore,
+} from "@/lib/workspace/navigation";
+import { ChatContentSurface } from "./components/ChatContentSurface";
+
+const SettingsApp = lazy(() =>
+  import("@/pages/settings/App").then((module) => ({ default: module.SettingsApp })),
+);
+const IMConnectPanel = lazy(() =>
+  import("@/components/im/IMConnectPanel").then((module) => ({
+    default: module.IMConnectPanel,
+  })),
+);
+const MemoryInspectorApp = lazy(() =>
+  import("@/pages/memory-inspector/App").then((module) => ({
+    default: module.MemoryInspectorApp,
+  })),
+);
 
 /**
- * 对话窗（常规不透明）。M10.3：接 agent-bridge 跑通流式对话。
- * 左侧历史会话，右侧 header（连接态）+ 消息列表 + 输入条。
- * 注：persona 选择/切换暂不在前端呈现——待前端补齐人格增删改查后再接入。
+ * 093 · 统一主窗口：左侧工作区导航 + 右侧平级内容 surface。
  */
 export function ChatApp() {
   const status = useConnectionStore((s) => s.status);
   const ping = useConnectionStore((s) => s.ping);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
-  const messageCount = useConversationStore((s) => s.messages.length);
-  const historyLoading = useConversationStore((s) => s.historyLoading);
-  const voiceSessionId = useVoiceStore((s) => s.sessionId);
-  const voicePhase = useVoiceStore((s) => s.phase);
-  const runtimeCredentialGroups = useRuntimeCredentialStore((state) => state.groups);
-  const [composerHeight, setComposerHeight] = useState(CHAT_COMPOSER_FALLBACK_HEIGHT_PX);
-  const composerRef = useRef<ComposerHandle>(null);
+  const newSession = useConversationStore((s) => s.newSession);
   const loadModelCatalog = useModelCatalogStore((state) => state.load);
-  const voiceBlocksText =
-    Boolean(currentSessionId && voiceSessionId === currentSessionId) &&
-    isVoiceCallBlockingText(voicePhase);
-  const runtimeUnavailable = status !== "online";
-  const composerDisabled = runtimeUnavailable || voiceBlocksText || historyLoading;
-  const credentialApplyReason = runtimeCredentialApplyReason(
-    runtimeCredentialGroups,
-    "restartBridge",
+  const target = useWorkspaceNavigationStore((state) => state.target);
+  const visitedTargets = useWorkspaceNavigationStore((state) => state.visitedTargets);
+  const chatNavigation = useWorkspaceNavigationStore((state) => state.chatNavigation);
+  const settingsNavigation = useWorkspaceNavigationStore(
+    (state) => state.settingsNavigation,
   );
-  const composerDisabledReason = runtimeUnavailable
-    ? credentialApplyReason ?? (status === "unknown"
-      ? "服务正在初始化..."
-      : "本机服务暂未连接")
-    : historyLoading
-      ? "正在打开这段对话..."
-      : "语音通话中，文字输入已暂时停用";
-  const isHome = !currentSessionId && messageCount === 0 && !historyLoading;
-  const focusComposer = useCallback(() => composerRef.current?.focus(), []);
+  const [memoryInspectorEnabled, setMemoryInspectorEnabled] = useState(import.meta.env.DEV);
 
   useEffect(() => {
     if (status === "online") void loadModelCatalog();
@@ -86,6 +81,18 @@ export function ChatApp() {
 
   useEffect(() => startSessionSyncSubscriber(), []);
   useEffect(() => startRuntimeCredentialSync(), []);
+  useEffect(() => startWorkspaceNavigationSync(), []);
+
+  useEffect(() => {
+    if (!chatNavigation?.chat?.newConversation) return;
+    newSession();
+  }, [chatNavigation, newSession]);
+
+  useEffect(() => {
+    void invoke<{ memoryInspector: boolean }>("get_local_capabilities")
+      .then((capabilities) => setMemoryInspectorEnabled(capabilities.memoryInspector))
+      .catch(() => setMemoryInspectorEnabled(false));
+  }, []);
 
   useEffect(() => {
     if (status !== "online") {
@@ -126,88 +133,53 @@ export function ChatApp() {
       style={{ "--sidebar-width": "15rem" } as CSSProperties}
     >
       <GlobalConversationSearchProvider>
-        <HistorySidebar />
-        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              void openFeedback(
-                currentSessionId
-                  ? { preselectSessionId: currentSessionId }
-                  : undefined,
-              )
-            }
-          >
-            <FeedbackIcon className="size-4" />
-            反馈问题
-          </Button>
-          <ConnectionDot status={status} />
-        </header>
-        {voiceBlocksText && (
-          <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-2 text-sm">
-            <span className="text-muted">这段对话正在语音通话中</span>
-            <Button size="xs" variant="outline" onClick={() => void focusVoiceCallWindow()}>
-              查看通话
-            </Button>
-          </div>
-        )}
-        {isHome ? (
-          <HomeStart
-            disabled={composerDisabled}
-            disabledReason={composerDisabledReason}
-          />
-        ) : (
-          <>
-            <MessageList
-              composerHeight={composerHeight}
-              onFocusComposer={focusComposer}
-            />
-            <Composer
-              ref={composerRef}
-              disabled={composerDisabled}
-              disabledReason={composerDisabledReason}
-              onHeightChange={setComposerHeight}
-              topSlot={<ApprovalDock />}
-            />
-          </>
-        )}
+        <HistorySidebar memoryInspectorEnabled={memoryInspectorEnabled} />
+        <div className="relative min-w-0 flex-1 overflow-hidden bg-bg text-fg">
+          <WorkspaceSurface active={target === "chat"}>
+            <ChatContentSurface />
+          </WorkspaceSurface>
+          {visitedTargets.includes("settings") ? (
+            <WorkspaceSurface active={target === "settings"}>
+              <SettingsApp navigation={settingsNavigation} />
+            </WorkspaceSurface>
+          ) : null}
+          {visitedTargets.includes("im-connect") ? (
+            <WorkspaceSurface active={target === "im-connect"}>
+              <IMConnectPanel active={target === "im-connect"} />
+            </WorkspaceSurface>
+          ) : null}
+          {memoryInspectorEnabled && visitedTargets.includes("memory-inspector") ? (
+            <WorkspaceSurface active={target === "memory-inspector"}>
+              <MemoryInspectorApp />
+            </WorkspaceSurface>
+          ) : null}
         </div>
       </GlobalConversationSearchProvider>
     </SidebarProvider>
   );
 }
 
-function HomeStart({
-  disabled,
-  disabledReason,
+function WorkspaceSurface({
+  active,
+  children,
 }: {
-  disabled: boolean;
-  disabledReason: string;
+  active: boolean;
+  children: ReactNode;
 }) {
   return (
-    <div className="grid min-h-0 flex-1 place-items-center">
-      <div className={`${CHAT_CONTENT_CONTAINER_CLASS} -translate-y-10`}>
-        <h1 className="mb-8 text-center text-xl font-medium text-fg">今天想聊点什么？</h1>
-        <Composer placement="inline" disabled={disabled} disabledReason={disabledReason} />
-      </div>
-    </div>
+    <Activity mode={active ? "visible" : "hidden"}>
+      <section className="absolute inset-0 min-h-0 min-w-0 overflow-hidden">
+        <Suspense fallback={<WorkspaceSurfaceLoading />}>{children}</Suspense>
+      </section>
+    </Activity>
   );
 }
 
-const CONNECTION_TONE: Record<ConnectionStatus, StatusDotProps["tone"]> = {
-  online: "success",
-  offline: "danger",
-  unknown: "warning",
-};
-
-function ConnectionDot({ status }: { status: ConnectionStatus }) {
-  const label = status === "online" ? "已连接" : status === "offline" ? "未连接" : "连接中";
+function WorkspaceSurfaceLoading() {
   return (
-    <span className="flex items-center gap-1.5 text-xs text-muted">
-      <StatusDot tone={CONNECTION_TONE[status]} size="md" />
-      {label}
-    </span>
+    <div className="flex h-full items-center justify-center text-muted" role="status">
+      <Spinner />
+      <span className="ml-2 text-sm">正在打开...</span>
+    </div>
   );
 }

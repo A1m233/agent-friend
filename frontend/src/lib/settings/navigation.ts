@@ -1,10 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import { isTauri } from "@/utils/tauri";
 import type { RuntimeConfigGroup } from "@/lib/runtime-config";
-
-export const SETTINGS_NAVIGATE_EVENT = "settings://navigate";
 
 export type SettingsTarget =
   | "general"
@@ -50,11 +47,6 @@ export interface OpenFeedbackOptions {
   preselectSessionId?: string;
 }
 
-export interface SettingsNavigationEnvelope {
-  requestId: number;
-  request: SettingsOpenRequest;
-}
-
 export interface ResolvedSettingsLocation {
   section: SettingsTarget;
   preselectSessionId?: string;
@@ -97,23 +89,5 @@ export async function openFeedback(options?: OpenFeedbackOptions): Promise<void>
     feedback: options?.preselectSessionId
       ? { preselectSessionId: options.preselectSessionId }
       : undefined,
-  });
-}
-
-export async function consumePendingSettingsNavigation(): Promise<
-  SettingsNavigationEnvelope | null
-> {
-  if (!isTauri()) return null;
-  return invoke<SettingsNavigationEnvelope | null>(
-    "consume_pending_settings_navigation",
-  );
-}
-
-export async function listenSettingsNavigation(
-  listener: (envelope: SettingsNavigationEnvelope) => void,
-): Promise<UnlistenFn> {
-  if (!isTauri()) return () => {};
-  return listen<SettingsNavigationEnvelope>(SETTINGS_NAVIGATE_EVENT, (event) => {
-    listener(event.payload);
   });
 }
