@@ -45,6 +45,8 @@ from llm_providers import (
     LanguageModelFactory,
     LLMActivity,
     LLMContextWindowError,
+    LLMEmptyResponseError,
+    LLMOutputBudgetExhaustedError,
     LLMRetryScheduled,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -87,7 +89,7 @@ from .conversation_events import (
     ToolCallResult,
     TurnDone,
 )
-from .errors import AgentError, MalformedToolCallError
+from .errors import AgentError
 from .filesystem.tools import (
     FILESYSTEM_LEDGER_ARG,
     FILESYSTEM_RUN_ID_ARG,
@@ -123,8 +125,8 @@ from .system_prompt.surfaces import (
     InteractionSurfaceId,
 )
 from .tool_runtime import (
-    NoProgressTracker,
     ToolBatchExecutor,
+    ToolProgressTracker,
     ToolRunContext,
     ToolRunPolicy,
     ToolRunState,
@@ -290,7 +292,7 @@ def _resolve_tool_run_policy() -> ToolRunPolicy:
         max_elapsed_seconds=optional_float("AGENT_TOOL_MAX_ELAPSED_SECONDS"),
         default_tool_timeout_seconds=optional_float("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS") or 60.0,
         max_parallel_read_tools=optional_int("AGENT_TOOL_MAX_PARALLEL_READS") or 4,
-        repeated_no_progress_limit=optional_int("AGENT_TOOL_NO_PROGRESS_LIMIT") or 3,
+        no_progress_advisory_threshold=optional_int("AGENT_TOOL_NO_PROGRESS_LIMIT") or 3,
     )
 
 
@@ -684,7 +686,7 @@ class Conversation:
         self._active_tool_run_context = tool_run_context
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
-        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
+        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
         turn_start_idx = len(self._session.events)
 
         def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
@@ -840,7 +842,7 @@ class Conversation:
         self._active_tool_run_context = tool_run_context
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
-        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
+        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
         turn_start_idx = len(self._session.events)
 
         def prepare_first_turn() -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
@@ -1080,7 +1082,7 @@ class Conversation:
         self._active_tool_run_context = tool_run_context
         tool_run_state = ToolRunState(self._tool_run_policy)
         self._active_tool_run_state = tool_run_state
-        no_progress = NoProgressTracker(self._tool_run_policy.repeated_no_progress_limit)
+        no_progress = ToolProgressTracker(self._tool_run_policy.no_progress_advisory_threshold)
         turn_start_idx = len(self._session.events)
         trigger_appended = False
 
@@ -2459,16 +2461,21 @@ class Conversation:
         request_observer: Callable[[list[dict[str, Any]], int, dict[str, Any]], None] | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
-        """提交候选 checkpoint，并在输出前超窗时收紧预算恢复一次。"""
+        """Stream one model response with context and incomplete-output recovery."""
         current_messages = messages
         request_overrides = dict(overrides or {})
         cache_key = self._session.session_id
         recovery_builder = recovery_builder or (lambda: self._assemble_stream(tool_specs=tools))
-        for recovery_attempt in range(2):
+        context_recovery_used = False
+        response_recovery_used = False
+        request_attempt = 0
+        while True:
             request_accepted = False
             if request_observer is not None:
-                request_observer(current_messages, recovery_attempt, request_overrides)
+                request_observer(current_messages, request_attempt, request_overrides)
             try:
+                if self._active_tool_run_state is not None:
+                    self._active_tool_run_state.model_calls += 1
                 client = self._active_llm_client()
                 stream = client.stream(
                     ModelRequest(
@@ -2483,7 +2490,7 @@ class Conversation:
                     )
                 )
                 for event in stream:
-                    if isinstance(event, (LLMTextDelta, LLMToolCallDelta, LLMTurnDone)):
+                    if isinstance(event, (LLMTextDelta, LLMTurnDone)):
                         request_accepted = True
                         completed = self._commit_pending_context_checkpoints()
                         if completed is not None:
@@ -2497,8 +2504,10 @@ class Conversation:
                 discarded = self._discard_pending_context_checkpoints()
                 if discarded is not None:
                     yield discarded
-                if request_accepted or recovery_attempt > 0:
+                if request_accepted or context_recovery_used:
                     raise
+                context_recovery_used = True
+                request_attempt += 1
                 previous_ratio = self._context_emergency_ratio
                 previous_reason = self._context_trigger_reason
                 self._context_emergency_ratio = 0.8
@@ -2511,13 +2520,36 @@ class Conversation:
                 finally:
                     self._context_emergency_ratio = previous_ratio
                     self._context_trigger_reason = previous_reason
+            except LLMEmptyResponseError as exc:
+                if request_accepted or response_recovery_used:
+                    discarded = self._discard_pending_context_checkpoints()
+                    if discarded is not None:
+                        yield discarded
+                    raise
+                response_recovery_used = True
+                request_attempt += 1
+                recovery_instruction = (
+                    "上一轮模型请求把输出预算耗尽在不可见推理中，没有产生可用响应项。"
+                    "请保留当前目标，立即生成简洁的用户可见回答或合法工具调用；"
+                    "不要只输出隐藏推理。"
+                    if isinstance(exc, LLMOutputBudgetExhaustedError)
+                    else "上一轮模型请求没有产生任何可用响应项。请保留当前目标，"
+                    "直接生成用户可见回答或合法工具调用。"
+                )
+                current_messages = [
+                    *current_messages,
+                    {"role": "system", "content": recovery_instruction},
+                ]
+                yield LLMRetryScheduled(
+                    attempt=request_attempt + 1,
+                    max_attempts=request_attempt + 1,
+                    delay_seconds=0.0,
+                )
             except Exception:
                 discarded = self._discard_pending_context_checkpoints()
                 if discarded is not None:
                     yield discarded
                 raise
-
-        raise AssertionError("context recovery loop should always return or raise")
 
     def _iter_traced_model_stream(
         self,
@@ -3046,37 +3078,106 @@ class Conversation:
         slot["args_json"] += delta.args_json_delta
 
     def _finalize_tool_calls(self, acc: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
-        """把累积好的 tool_call dict 转成最终列表（按 index 顺序）。
+        """Build every provider tool item independently.
 
-        ``args_json`` 字段反序列化为 ``args`` 字典。损坏的 provider 增量必须
-        在产生工具卡片或授权请求前失败，不能降级为空对象后进入执行层。
+        A model-correctable build or schema error becomes a rejected item instead
+        of raising.  Only items marked ``execute`` may cross the invocation and
+        approval boundary.
         """
-        import json
 
         result: list[dict[str, Any]] = []
+        seen_call_ids: set[str] = set()
         for idx in sorted(acc.keys()):
             slot = acc[idx]
-            if not slot["id"] or not slot["name"]:
-                raise ValueError(f"tool call {idx} is missing id or name")
-            try:
-                if not slot["args_json"]:
-                    raise ValueError(f"tool call {idx} has no argument payload")
-                args = json.loads(slot["args_json"])
-                if not isinstance(args, dict):
-                    raise ValueError(f"tool call {idx} arguments are not an object")
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"tool call {idx} arguments are invalid JSON") from exc
-            args = {
-                key: value for key, value in args.items() if not key.startswith("__agent_friend_")
+            raw_call_id = slot.get("id")
+            raw_name = slot.get("name")
+            call_id = raw_call_id if isinstance(raw_call_id, str) else ""
+            name = raw_name if isinstance(raw_name, str) else ""
+            raw_args_json = slot.get("args_json")
+            arguments_json = raw_args_json if isinstance(raw_args_json, str) else ""
+            item: dict[str, Any] = {
+                "id": call_id,
+                "event_id": f"tool_{uuid4().hex}",
+                "name": name,
+                "args": {},
+                "arguments_json": arguments_json,
+                "arguments_state": "missing",
+                "execution_disposition": "rejected_before_execution",
+                "response_item_index": idx,
+                "error_code": "",
+                "validation_reason": "",
+                "bindable": bool(call_id and name),
             }
-            result.append(
-                {
-                    "id": slot["id"],
-                    "event_id": f"tool_{uuid4().hex}",
-                    "name": slot["name"],
-                    "args": args,
-                }
-            )
+
+            if not call_id or not name:
+                item["error_code"] = "missing_tool_identity"
+                missing_identity = (
+                    "call id and tool name"
+                    if not call_id and not name
+                    else "call id"
+                    if not call_id
+                    else "tool name"
+                )
+                item["validation_reason"] = f"tool call {idx} is missing {missing_identity}"
+                result.append(item)
+                continue
+            if call_id in seen_call_ids:
+                item["bindable"] = False
+                item["error_code"] = "duplicate_tool_call_id"
+                item["validation_reason"] = (
+                    f"tool call {idx} reuses call id {call_id!r}; generate a unique call id"
+                )
+                result.append(item)
+                continue
+            seen_call_ids.add(call_id)
+
+            if not arguments_json:
+                item["error_code"] = "missing_tool_arguments"
+                item["validation_reason"] = f"{name}: tool arguments are missing"
+                result.append(item)
+                continue
+            try:
+                decoded_args = json.loads(arguments_json)
+            except json.JSONDecodeError:
+                item["arguments_state"] = "invalid_json"
+                item["error_code"] = "invalid_tool_arguments_json"
+                item["validation_reason"] = f"{name}: tool arguments are invalid JSON"
+                result.append(item)
+                continue
+            if not isinstance(decoded_args, dict):
+                item["arguments_state"] = "non_object"
+                item["error_code"] = "invalid_tool_arguments_shape"
+                item["validation_reason"] = f"{name}: tool arguments must be a JSON object"
+                result.append(item)
+                continue
+
+            args = {
+                key: value
+                for key, value in decoded_args.items()
+                if not key.startswith("__agent_friend_")
+            }
+            item["args"] = args
+            item["arguments_state"] = "valid_object"
+            try:
+                validation_error = (
+                    self._tool_registry.validate(name, args)
+                    if self._tool_registry is not None
+                    else None
+                )
+            except Exception as exc:
+                item["error_code"] = "unknown_or_unavailable_tool"
+                item["validation_reason"] = f"{name}: {exc}"
+                result.append(item)
+                continue
+            if validation_error is not None:
+                item["error_code"] = "invalid_tool_arguments"
+                item["validation_reason"] = f"{name}: {validation_error.text}"
+                result.append(item)
+                continue
+
+            item["execution_disposition"] = "execute"
+            item["bindable"] = True
+            result.append(item)
         return result
 
     @staticmethod
@@ -3159,19 +3260,34 @@ class Conversation:
             summaries.append(summary)
         return summaries
 
-    def _tool_call_validation_error(self, calls: list[dict[str, Any]]) -> str | None:
-        """Return a model-facing reason before any invalid call is published."""
+    @staticmethod
+    def _rejected_tool_result(tc: dict[str, Any]) -> ToolResult:
+        """Return a stable model-visible failure without echoing argument values."""
 
-        if self._tool_registry is None:
-            return None
-        for call in calls:
-            try:
-                error = self._tool_registry.validate(call["name"], call["args"])
-            except Exception as exc:
-                return f"{call.get('name') or 'unknown'}: {exc}"
-            if error is not None:
-                return f"{call['name']}: {error.text}"
-        return None
+        error_code = str(tc.get("error_code") or "tool_call_rejected")
+        reason = str(tc.get("validation_reason") or "tool call was rejected")
+        return ToolResult(
+            text=json.dumps(
+                {
+                    "status": "rejected",
+                    "error": {
+                        "code": error_code,
+                        "message": reason,
+                        "retryable": True,
+                    },
+                    "executed": False,
+                    "authorization_requested": False,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            is_error=True,
+            meta={
+                "error_kind": error_code,
+                "executed": False,
+                "authorization_requested": False,
+            },
+        )
 
     def _invoke_tool_safely(
         self,
@@ -3379,7 +3495,7 @@ class Conversation:
         model_snapshot: str,
         runtime: ToolRunState,
         context: ToolRunContext,
-        progress: NoProgressTracker,
+        progress: ToolProgressTracker,
         frame: _ToolLoopFrame,
         current_turn_start_idx: int,
         cancel_check: Callable[[], None] | None,
@@ -3387,8 +3503,6 @@ class Conversation:
         """Run the common model/tool continuation loop for send and edit-resend."""
 
         turn_idx = 0
-        malformed_tool_call_retries = 0
-        tool_call_recovery_instruction: str | None = None
         while True:
             self._check_cancel(cancel_check)
             if turn_idx > 0:
@@ -3421,11 +3535,10 @@ class Conversation:
                     yield from first_turn_prelude()
             else:
                 reminder = runtime.soft_reminder()
+                progress_advisory = progress.take_advisory()
                 trailing_system = (
-                    "\n\n".join(part for part in (reminder, tool_call_recovery_instruction) if part)
-                    or None
+                    "\n\n".join(part for part in (reminder, progress_advisory) if part) or None
                 )
-                tool_call_recovery_instruction = None
                 openai_messages = (
                     (
                         yield from self._assemble_stream(
@@ -3437,7 +3550,6 @@ class Conversation:
                     else (yield from self._build_openai_messages_continuation_stream())
                 )
 
-            stop_reason = ""
             llm_start_ms = monotonic_ms()
             log_voice_latency(
                 logger,
@@ -3487,6 +3599,7 @@ class Conversation:
                 elif isinstance(event, LLMToolCallDelta):
                     self._accumulate_tool_call_delta(current_tc_acc, event)
                 elif isinstance(event, LLMRetryScheduled):
+                    current_tc_acc.clear()
                     yield ModelResponseStatus(
                         phase="retrying",
                         after_tool=turn_idx > 0,
@@ -3494,16 +3607,9 @@ class Conversation:
                         max_attempts=event.max_attempts,
                     )
                 elif isinstance(event, LLMTurnDone):
-                    stop_reason = event.stop_reason
                     self._consume_usage(event)
 
-            malformed_reason: str | None = None
-            try:
-                tool_calls = self._finalize_tool_calls(current_tc_acc)
-                malformed_reason = self._tool_call_validation_error(tool_calls)
-            except ValueError as exc:
-                tool_calls = []
-                malformed_reason = str(exc)
+            tool_calls = self._finalize_tool_calls(current_tc_acc)
 
             current_text = "".join(frame.current_text_buf)
             if current_text:
@@ -3516,33 +3622,28 @@ class Conversation:
                 )
                 frame.current_text_persisted = True
 
-            if malformed_reason is not None:
+            rejected_calls = [
+                item
+                for item in tool_calls
+                if item.get("execution_disposition") == "rejected_before_execution"
+            ]
+            if rejected_calls:
                 logger.warning(
-                    "Rejected malformed tool-call batch before execution: session_id=%s "
-                    "run_id=%s model=%s reason=%s argument_shapes=%s",
+                    "Rejected model tool-call items before execution: session_id=%s "
+                    "run_id=%s model=%s rejected=%d error_codes=%s argument_shapes=%s",
                     self._session.session_id,
                     self._run_id_override or "none",
                     self._active_model_id(),
-                    malformed_reason,
+                    len(rejected_calls),
+                    sorted({str(item.get("error_code") or "unknown") for item in rejected_calls}),
                     json.dumps(
                         self._tool_call_shape_summary(current_tc_acc),
                         ensure_ascii=False,
                         sort_keys=True,
                     ),
                 )
-                if malformed_tool_call_retries < 1:
-                    malformed_tool_call_retries += 1
-                    tool_call_recovery_instruction = (
-                        "上一轮工具调用参数损坏或不符合公开 schema，宿主没有执行，也没有向用户"
-                        "发起授权。请重新根据当前工具 schema 生成完整、合法的参数；不要复用空对象，"
-                        f"也不要声称上一轮已经执行。宿主拒绝原因：{malformed_reason}"
-                    )
-                    turn_idx += 1
-                    continue
-                runtime.mark_stopped("tool_runtime_failed", "tool_arguments")
-                raise MalformedToolCallError(malformed_reason)
 
-            if not tool_calls or stop_reason != "tool_use":
+            if not tool_calls:
                 if not frame.current_text_persisted:
                     # A tool-free empty turn is handled by provider recovery before this
                     # point. Keep the session free of zero-content assistant messages.
@@ -3574,12 +3675,15 @@ class Conversation:
         *,
         runtime: ToolRunState,
         context: ToolRunContext,
-        progress: NoProgressTracker,
+        progress: ToolProgressTracker,
         current_turn_start_idx: int,
         cancel_check: Callable[[], None] | None,
     ) -> Iterator[ConversationEvent]:
         """Execute a model- or deterministic-router-emitted call list in stable order."""
+        runtime.tool_call_items += len(tool_calls)
         for tc in tool_calls:
+            if not tc.get("bindable", True):
+                continue
             self._check_cancel(cancel_check)
             self._append_tool_call_request_event(tc)
             yield ToolCallRequest(
@@ -3587,22 +3691,29 @@ class Conversation:
                 event_tool_call_id=tc["event_id"],
                 tool_name=tc["name"],
                 args=tc["args"],
+                arguments_json=tc.get("arguments_json", ""),
+                arguments_state=tc.get("arguments_state", "valid_object"),
+                execution_disposition=tc.get("execution_disposition", "execute"),
                 origin=tc.get("origin", "model"),
             )
 
+        executable = [
+            tc for tc in tool_calls if tc.get("execution_disposition", "execute") == "execute"
+        ]
         remaining = runtime.remaining_tool_calls()
-        allowed_count = len(tool_calls) if remaining is None else min(len(tool_calls), remaining)
-        allowed = tool_calls[:allowed_count]
+        allowed_count = len(executable) if remaining is None else min(len(executable), remaining)
+        allowed = executable[:allowed_count]
         legacy_hooks = (
             self._tool_hook_invoker
             if self._tool_pre_hook is None and self._tool_post_hook is None
             else None
         )
-        runtime.parallel_batch_count += self._tool_batch_executor.parallel_batch_count(
-            allowed,
-            registry=self._tool_registry,
-            force_serial=legacy_hooks is not None,
-        )
+        if allowed:
+            runtime.parallel_batch_count += self._tool_batch_executor.parallel_batch_count(
+                allowed,
+                registry=self._tool_registry,
+                force_serial=legacy_hooks is not None,
+            )
         batch_started_ms = monotonic_ms()
         batch_index = (
             self._run_latency_context.next_tool_batch_index(len(tool_calls))
@@ -3614,27 +3725,32 @@ class Conversation:
             self._run_latency_context,
             "tool_batch_start",
             batch_index=batch_index,
-            requested=len(tool_calls),
+            requested=len(executable),
             allowed=len(allowed),
+            rejected=len(tool_calls) - len(executable),
         )
         try:
-            executed = self._tool_batch_executor.execute(
-                allowed,
-                registry=self._tool_registry,
-                default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
-                invocation_args=lambda name, args, tool_call_id: (
-                    self._tool_args_with_invocation_context(
-                        name,
-                        args,
-                        current_turn_start_idx=current_turn_start_idx,
-                        tool_run_context=context,
-                        tool_call_id=tool_call_id,
-                    )
-                ),
-                cancel_check=(lambda: self._check_cancel(cancel_check)),
-                legacy_hook_invoker=legacy_hooks,
-                pre_hook=self._tool_pre_hook,
-                post_hook=self._tool_post_hook,
+            executed = (
+                self._tool_batch_executor.execute(
+                    allowed,
+                    registry=self._tool_registry,
+                    default_timeout_seconds=runtime.policy.default_tool_timeout_seconds,
+                    invocation_args=lambda name, args, tool_call_id: (
+                        self._tool_args_with_invocation_context(
+                            name,
+                            args,
+                            current_turn_start_idx=current_turn_start_idx,
+                            tool_run_context=context,
+                            tool_call_id=tool_call_id,
+                        )
+                    ),
+                    cancel_check=(lambda: self._check_cancel(cancel_check)),
+                    legacy_hook_invoker=legacy_hooks,
+                    pre_hook=self._tool_pre_hook,
+                    post_hook=self._tool_post_hook,
+                )
+                if allowed
+                else []
             )
         except BaseException as exc:
             log_run_latency(
@@ -3655,22 +3771,40 @@ class Conversation:
             executed=len(executed),
             errors=sum(1 for item in executed if item.result.is_error),
         )
-        by_id = {item.call["id"]: item for item in executed}
-        runtime.total_tool_calls += len(tool_calls)
-        no_progress = False
-        requires_user_action = False
+        by_event_id = {item.call["event_id"]: item for item in executed}
+        runtime.total_tool_calls += len(allowed)
         for tc in tool_calls:
-            item = by_id.get(tc["id"])
-            if item is None:
+            if not tc.get("bindable", True):
+                self._append_model_output_rejection_event(tc)
+                yield ModelResponseStatus(
+                    phase="retrying",
+                    after_tool=True,
+                    attempt=1,
+                    max_attempts=1,
+                )
+                continue
+
+            item = by_event_id.get(tc["event_id"])
+            if tc.get("execution_disposition") == "rejected_before_execution":
+                result = self._rejected_tool_result(tc)
+                duration = 0.0
+                executed_call = False
+            elif item is None:
                 result = ToolResult(
                     text="本轮工具调用预算已经用尽，这个调用没有执行。",
                     is_error=True,
-                    meta={"error_kind": "tool_budget_exhausted"},
+                    meta={
+                        "error_kind": "tool_budget_exhausted",
+                        "executed": False,
+                        "authorization_requested": False,
+                    },
                 )
                 duration = 0.0
+                executed_call = False
             else:
                 result = item.result
                 duration = item.duration_seconds
+                executed_call = True
             if result.meta.get("error_kind") == "timeout":
                 runtime.timeout_count += 1
             if result.meta.get("error_kind") == "blocked":
@@ -3693,10 +3827,7 @@ class Conversation:
                     label=f"Skill {result.meta.get('skill_activation', {}).get('name', '')}",
                 )
             self._adopt_runtime_skill_activation(result)
-            no_progress = progress.observe(tc["name"], tc["args"], result) or no_progress
-            requires_user_action = (
-                result.meta.get("requires_user_action") is True or requires_user_action
-            )
+            progress.observe(tc["name"], tc["args"], result)
             runtime.new_evidence_count = progress.new_evidence_count
             runtime.reused_evidence_count = progress.reused_evidence_count
             runtime.last_intent_signature = progress.last_intent_signature
@@ -3718,16 +3849,15 @@ class Conversation:
                 tool_name=tc["name"],
                 text=result.text,
                 is_error=result.is_error,
+                executed=executed_call,
+                authorization_requested=result.meta.get("authorization_requested") is True,
+                error_code=str(result.meta.get("error_kind") or ""),
                 duration_seconds=duration,
                 origin=tc.get("origin", "model"),
             )
 
-        if allowed_count < len(tool_calls):
+        if allowed_count < len(executable):
             runtime.mark_stopped("budget_exhausted", "total_tool_calls")
-        elif requires_user_action:
-            runtime.mark_stopped("user_action_required")
-        elif no_progress:
-            runtime.mark_stopped("no_progress")
         else:
             dimension = runtime.hard_limit()
             if dimension is not None:
@@ -3755,6 +3885,8 @@ class Conversation:
         return TurnDone(
             stop_reason=reason,
             total_tool_calls=runtime.total_tool_calls,
+            tool_call_items=runtime.tool_call_items,
+            model_calls=runtime.model_calls,
             model_continuations=runtime.model_continuations,
             elapsed_seconds=runtime.elapsed_seconds,
             budget_dimension=runtime.stop_dimension,
@@ -3769,7 +3901,7 @@ class Conversation:
         runtime: ToolRunState,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
-        """Finalize once with tools disabled after a policy or progress stop."""
+        """Finalize once with tools disabled after an explicit resource-policy stop."""
         extra_system = (
             "当前工具执行已经到达运行边界。请只基于已经取得的工具结果直接回复用户，"
             "不要再调用任何工具；证据不足或尚未完成的部分必须明确说明。"
@@ -3874,6 +4006,10 @@ class Conversation:
                 "event_tool_call_id": tc["event_id"],
                 "tool_name": tc["name"],
                 "args": tc["args"],
+                "arguments_json": tc.get("arguments_json", ""),
+                "arguments_state": tc.get("arguments_state", "valid_object"),
+                "execution_disposition": tc.get("execution_disposition", "execute"),
+                "response_item_index": tc.get("response_item_index"),
             },
             meta=meta,
         )
@@ -3895,7 +4031,7 @@ class Conversation:
         )
         context_retention = "pinned"
         recovery_available = False
-        if self._tool_registry is not None:
+        if self._tool_registry is not None and tc["name"] in self._tool_registry:
             recovery_available = _RECOVER_TOOL_RESULT_TOOL_NAME in self._tool_registry
             context_retention = self._tool_registry.result_context_retention(tc["name"])
             if not recovery_available:
@@ -3926,6 +4062,49 @@ class Conversation:
                 "tool_name": tc["name"],
                 "content": result.text,
                 "is_error": result.is_error,
+                "executed": result.meta.get("executed", True),
+                "authorization_requested": result.meta.get("authorization_requested", False),
+                "error_code": result.meta.get("error_kind", ""),
+            },
+            meta=meta,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_model_output_rejection_event(self, tc: dict[str, Any]) -> None:
+        """Persist an unbindable model output without inventing a tool transaction."""
+
+        meta = self._run_event_meta({"model": self._active_model_id()})
+        if self._pending_context_usage is not None:
+            meta["context_usage"] = dict(self._pending_context_usage)
+            self._pending_context_usage = None
+        if self._active_tool_run_state is not None:
+            meta["tool_run"] = self._active_tool_run_state.diagnostics()
+        args = tc.get("args")
+        safe_argument_shape = {
+            "state": tc.get("arguments_state", "missing"),
+            "payload_chars": len(str(tc.get("arguments_json") or "")),
+            "fields": sorted(args) if isinstance(args, dict) else [],
+            "field_types": (
+                {key: self._json_value_kind(value) for key, value in args.items()}
+                if isinstance(args, dict)
+                else {}
+            ),
+        }
+        event = Event(
+            type="model_output_rejection",
+            uuid=tc["event_id"],
+            ts=datetime.now(UTC),
+            payload={
+                "response_item_id": tc["event_id"],
+                "response_item_index": tc.get("response_item_index", 0),
+                "provider_call_id": tc.get("id") or None,
+                "tool_name": tc.get("name") or None,
+                "arguments_json": tc.get("arguments_json") or None,
+                "arguments_state": tc.get("arguments_state", "missing"),
+                "error_code": tc.get("error_code") or "model_output_rejected",
+                "model_message": tc.get("validation_reason") or "模型输出无法组成可靠工具调用。",
+                "safe_argument_shape": safe_argument_shape,
             },
             meta=meta,
         )

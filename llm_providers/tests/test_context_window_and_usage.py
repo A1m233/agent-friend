@@ -33,6 +33,8 @@ from llm_providers import (
     LLMProviderError,
     LLMRateLimitError,
     LLMRetryScheduled,
+    LLMStreamInterruptedAfterOutputError,
+    LLMStreamTimeoutError,
     LLMTextDelta,
     LLMTransientProviderError,
     LLMTurnDone,
@@ -875,6 +877,12 @@ def test_stream_retries_network_error_before_first_event(
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
 
 
+def test_stream_timeout_uses_configured_pre_output_retry_budget() -> None:
+    client = LLMClient(_spec(), network_retries=2, network_retry_backoff_seconds=0)
+
+    assert client._retry_limit(LLMStreamTimeoutError("stalled")) == 2
+
+
 def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = 0
 
@@ -911,9 +919,15 @@ def test_stream_does_not_retry_after_first_event(monkeypatch: pytest.MonkeyPatch
     first = next(stream)
     assert isinstance(first, LLMTextDelta)
     assert first.text == "partial"
-    with pytest.raises(LLMNetworkError):
+    with pytest.raises(LLMStreamInterruptedAfterOutputError) as captured:
         next(stream)
+    assert captured.value.reason_code == "stream_interrupted_after_output"
     assert calls == 1
+
+
+def test_incomplete_response_errors_expose_stable_runtime_reason_codes() -> None:
+    assert LLMEmptyResponseError.reason_code == "empty_model_response"
+    assert LLMOutputBudgetExhaustedError.reason_code == "output_budget_exhausted"
 
 
 class _StatusError(RuntimeError):

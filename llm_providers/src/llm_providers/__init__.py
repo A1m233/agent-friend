@@ -51,6 +51,7 @@ from .errors import (
     LLMPermissionError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMStreamInterruptedAfterOutputError,
     LLMStreamTimeoutError,
     LLMTransientProviderError,
 )
@@ -108,6 +109,7 @@ __all__ = [
     "LLMResponseDiagnostics",
     "LLMRetryScheduled",
     "LLMStreamEvent",
+    "LLMStreamInterruptedAfterOutputError",
     "LLMStreamTimeoutError",
     "LLMTextDelta",
     "LLMToolCallDelta",

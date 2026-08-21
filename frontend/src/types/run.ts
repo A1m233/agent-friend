@@ -1,4 +1,5 @@
 export type RunStatus = "queued" | "running" | "terminal";
+export type TurnStatus = "in_progress" | "completed" | "interrupted" | "failed";
 export type RunOutcome =
   | "completed"
   | "failed"
@@ -20,6 +21,12 @@ export interface RunSnapshot {
   started_at: string | null;
   finished_at: string | null;
   version: number;
+  turn_status?: TurnStatus | null;
+  total_tool_calls?: number;
+  tool_call_items?: number;
+  model_calls?: number;
+  model_continuations?: number;
+  budget_dimension?: string | null;
 }
 
 export interface RunListResponse {

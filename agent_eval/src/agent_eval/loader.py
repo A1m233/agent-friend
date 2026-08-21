@@ -26,6 +26,8 @@ from .schema import (
     FixtureSkill,
     FixtureToolCallRequest,
     FixtureToolCallResult,
+    FixtureToolRunPolicy,
+    RequiredPriorToolRejection,
     RequiredSuccessfulToolCall,
     SelfPresentationMode,
 )
@@ -375,7 +377,7 @@ def _parse_current_session_events(
         raise ValueError(f"{label} 必须是 list")
 
     events: list[FixtureCurrentEvent] = []
-    pending_requests: dict[str, str] = {}
+    pending_requests: dict[str, FixtureToolCallRequest] = {}
     last_type = ""
     for index, event_raw in enumerate(raw):
         item_label = f"{label}[{index}]"
@@ -409,33 +411,77 @@ def _parse_current_session_events(
                 raise ValueError(f"{item_label}.args 必须是 mapping")
             if tool_call_id in pending_requests:
                 raise ValueError(f"{item_label}.tool_call_id 重复: {tool_call_id}")
-            pending_requests[tool_call_id] = tool_name
-            events.append(
-                FixtureToolCallRequest(
-                    tool_call_id=tool_call_id,
-                    tool_name=tool_name,
-                    args=dict(args),
-                )
+            request = FixtureToolCallRequest(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=dict(args),
+                arguments_json=_optional_str(event, "arguments_json") or "",
+                arguments_state=cast(
+                    Any,
+                    _optional_choice(
+                        event,
+                        "arguments_state",
+                        choices=frozenset(
+                            {"valid_object", "invalid_json", "non_object", "missing"}
+                        ),
+                        label=item_label,
+                    )
+                    or "valid_object",
+                ),
+                execution_disposition=cast(
+                    Any,
+                    _optional_choice(
+                        event,
+                        "execution_disposition",
+                        choices=frozenset({"execute", "rejected_before_execution"}),
+                        label=item_label,
+                    )
+                    or "execute",
+                ),
             )
+            pending_requests[tool_call_id] = request
+            events.append(request)
         elif event_type == "tool_call_result":
             tool_call_id = _required_str(event, "tool_call_id", label=item_label)
             tool_name = _required_str(event, "tool_name", label=item_label)
-            expected_name = pending_requests.pop(tool_call_id, None)
-            if expected_name is None:
+            matched_request = (
+                pending_requests.pop(tool_call_id) if tool_call_id in pending_requests else None
+            )
+            if matched_request is None:
                 raise ValueError(f"{item_label} 没有匹配的 tool_call_request: {tool_call_id}")
-            if expected_name != tool_name:
+            if matched_request.tool_name != tool_name:
                 raise ValueError(
-                    f"{item_label}.tool_name 与 request 不一致: {tool_name!r} != {expected_name!r}"
+                    f"{item_label}.tool_name 与 request 不一致: "
+                    f"{tool_name!r} != {matched_request.tool_name!r}"
                 )
             content = event.get("content", "")
             if not isinstance(content, str):
                 raise ValueError(f"{item_label}.content 必须是字符串")
+            is_error = _bool(event.get("is_error"), label=f"{item_label}.is_error")
+            executed = event.get("executed", True)
+            if not isinstance(executed, bool):
+                raise ValueError(f"{item_label}.executed 必须是 bool")
+            authorization_requested = _bool(
+                event.get("authorization_requested"),
+                label=f"{item_label}.authorization_requested",
+            )
+            error_code = _optional_str(event, "error_code") or ""
+            if matched_request.execution_disposition == "rejected_before_execution" and (
+                not is_error or executed or authorization_requested
+            ):
+                raise ValueError(
+                    f"{item_label} 的 pre-execution rejection 必须是 "
+                    "is_error=true、executed=false、authorization_requested=false"
+                )
             events.append(
                 FixtureToolCallResult(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     content=content,
-                    is_error=_bool(event.get("is_error"), label=f"{item_label}.is_error"),
+                    is_error=is_error,
+                    executed=executed,
+                    authorization_requested=authorization_requested,
+                    error_code=error_code,
                 )
             )
         else:
@@ -543,6 +589,50 @@ def _parse_required_successful_tool_calls(
     return requirements
 
 
+def _parse_required_prior_tool_rejections(
+    raw: Any,
+    *,
+    label: str,
+) -> list[RequiredPriorToolRejection]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{label} 必须是 list")
+    requirements: list[RequiredPriorToolRejection] = []
+    for index, item in enumerate(raw):
+        item_label = f"{label}[{index}]"
+        data = _mapping(item, label=item_label)
+        requirements.append(
+            RequiredPriorToolRejection(
+                name=_required_str(data, "name", label=item_label),
+                error_codes=_str_list(
+                    data.get("error_codes"),
+                    label=f"{item_label}.error_codes",
+                ),
+                min_count=_optional_positive_int(data, "min_count", label=item_label) or 1,
+            )
+        )
+    return requirements
+
+
+def _parse_tool_run_policy(raw: Any, *, label: str) -> FixtureToolRunPolicy | None:
+    if raw is None:
+        return None
+    data = _mapping(raw, label=label)
+    elapsed = data.get("max_elapsed_seconds")
+    if elapsed is not None and (
+        isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or elapsed <= 0
+    ):
+        raise ValueError(f"{label}.max_elapsed_seconds 必须是正数或 null")
+    return FixtureToolRunPolicy(
+        max_model_continuations=_optional_positive_int(
+            data, "max_model_continuations", label=label
+        ),
+        max_total_tool_calls=_optional_positive_int(data, "max_total_tool_calls", label=label),
+        max_elapsed_seconds=float(elapsed) if elapsed is not None else None,
+    )
+
+
 def _parse_maximum_tool_call_counts(raw: Any, *, label: str) -> dict[str, int]:
     if raw is None:
         return {}
@@ -622,6 +712,11 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("required_successful_tool_calls"),
             label=f"{label}.required_successful_tool_calls",
         ),
+        required_prior_tool_rejections=_parse_required_prior_tool_rejections(
+            data.get("required_prior_tool_rejections"),
+            label=f"{label}.required_prior_tool_rejections",
+        ),
+        required_stop_reason=_optional_str(data, "required_stop_reason"),
         required_skill_activations=_str_list(
             data.get("required_skill_activations"),
             label=f"{label}.required_skill_activations",
@@ -814,6 +909,10 @@ def _load_contract_file(path: Path) -> Contract:
                     case_data.get("fake_tools"),
                     legacy_raw=case_data.get("fake_tool"),
                     label=label,
+                ),
+                tool_run_policy=_parse_tool_run_policy(
+                    case_data.get("tool_run_policy"),
+                    label=f"{label}.tool_run_policy",
                 ),
                 judge=_parse_judge(case_data.get("judge"), label=f"{label}.judge"),
             )

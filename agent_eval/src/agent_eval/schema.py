@@ -34,6 +34,11 @@ class FixtureToolCallRequest:
     tool_call_id: str
     tool_name: str
     args: dict[str, Any] = field(default_factory=dict)
+    arguments_json: str = ""
+    arguments_state: Literal["valid_object", "invalid_json", "non_object", "missing"] = (
+        "valid_object"
+    )
+    execution_disposition: Literal["execute", "rejected_before_execution"] = "execute"
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,9 @@ class FixtureToolCallResult:
     tool_name: str
     content: str
     is_error: bool = False
+    executed: bool = True
+    authorization_requested: bool = False
+    error_code: str = ""
 
 
 FixtureCurrentEvent = FixtureMessage | FixtureToolCallRequest | FixtureToolCallResult
@@ -108,12 +116,30 @@ class FakeTool:
 
 
 @dataclass(frozen=True)
+class FixtureToolRunPolicy:
+    """Case-local explicit resource limits passed to the production tool loop."""
+
+    max_model_continuations: int | None = None
+    max_total_tool_calls: int | None = None
+    max_elapsed_seconds: float | None = None
+
+
+@dataclass(frozen=True)
 class RequiredSuccessfulToolCall:
     """Successful tool calls matching public args and optional result evidence."""
 
     name: str
     args: dict[str, Any] = field(default_factory=dict)
     result_contains: str | None = None
+    min_count: int = 1
+
+
+@dataclass(frozen=True)
+class RequiredPriorToolRejection:
+    """Pre-evaluated-turn rejection that must be non-executed and non-authorizing."""
+
+    name: str
+    error_codes: list[str] = field(default_factory=list)
     min_count: int = 1
 
 
@@ -139,6 +165,8 @@ class CaseJudge:
     forbid_unsupported_source_attribution: bool = False
     required_tool_sequence: list[str] = field(default_factory=list)
     required_successful_tool_calls: list[RequiredSuccessfulToolCall] = field(default_factory=list)
+    required_prior_tool_rejections: list[RequiredPriorToolRejection] = field(default_factory=list)
+    required_stop_reason: str | None = None
     required_skill_activations: list[str] = field(default_factory=list)
     must_not_activate_skills: list[str] = field(default_factory=list)
     require_progress_continuity: bool = False
@@ -183,6 +211,7 @@ class Case:
     current_session_events: list[FixtureCurrentEvent] = field(default_factory=list)
     query_attachments: list[FixtureAttachment] = field(default_factory=list)
     fake_tools: list[FakeTool] = field(default_factory=list)
+    tool_run_policy: FixtureToolRunPolicy | None = None
     judge: CaseJudge | None = None
 
 
@@ -207,6 +236,9 @@ class ToolCallTrace:
     result_text: str
     is_error: bool
     duration_seconds: float | None = None
+    executed: bool | None = None
+    authorization_requested: bool | None = None
+    error_code: str = ""
 
 
 @dataclass(frozen=True)
@@ -257,6 +289,7 @@ class Trace:
     stop_reason: str
     assistant_segments: list[str] = field(default_factory=list)
     skill_activations: list[SkillActivationTrace] = field(default_factory=list)
+    prior_tool_calls: list[ToolCallTrace] = field(default_factory=list)
     error: str | None = None
     skill_catalog_observation: SkillCatalogObservation | None = None
 

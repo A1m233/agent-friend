@@ -1,0 +1,142 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-21T15:52:55.890193+00:00",
+    "ended_at": "2026-08-21T15:53:04.392426+00:00",
+    "duration_seconds": 8.502,
+    "git_commit": "5508e83",
+    "working_tree_dirty": true,
+    "note": "095 first-real explicit-budget holdout; current-model provenance: 2026-08-21 desktop session selected deepseek/deepseek-v4-flash-vision-exp; product base=5508e832df8e; product-diff=f765e290686b01e031fd119637e9bdf8af686db8; post-reconciliation case-digest=5f55b5ec40a2fac3202f2943f86e1baf62e252e872fee123a31d78cf01b6cedf; frozen-list continuation after C26-05 false-negative reconciliation; leakage-audited; report-only",
+    "selection": {
+      "contract": "all",
+      "case": "C26-06",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5f55b5ec40a2fac3202f2943f86e1baf62e252e872fee123a31d78cf01b6cedf",
+      "total_contracts": 26,
+      "total_cases": 228,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C26": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C26",
+      "name": "agent-run-recovery",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C26-06",
+          "query": "请搜索两个独立的最新主题：Agent 恢复策略和工具 schema 校验，并分别汇总。两个主题都必须依赖搜索结果，不能凭已有知识回答。",
+          "facet": "显式通用工具预算仍然终止新动作",
+          "source": "requirement-095-resource-budget-holdout",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "web_search",
+              "args": {
+                "query": "Agent 恢复策略 最新 2026"
+              },
+              "result_text": "{\"status\":\"ok\",\"items\":[{\"title\":\"budget_probe\",\"snippet\":\"first bounded result\"}]}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "web_search",
+              "args": {
+                "query": "工具 schema 校验 AI agent 最新 2026"
+              },
+              "result_text": "本轮工具调用预算已经用尽，这个调用没有执行。",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "tool_budget_exhausted"
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "我来搜索这两个主题。它们互相独立，我同时搜索。",
+            "两个搜索都没有拿到有效结果。第一个搜索返回的是一条不包含任何实际内容的结果（只显示“first bounded result”，没有标题正文、来源或可采信的信息），第二个搜索因为本轮工具调用预算用尽而根本没有执行。\n\n所以现在的真实情况是：我没有任何可用的搜索结果来支撑这两个主题的汇总。按你要求的前提，这两个主题都必须依赖搜索结果，我不能用已有知识替你补一份“看起来像查过”的汇总。\n\n如果你愿意，下一轮可以重新发起搜索，我再各查一遍；或者你告诉我更具体的关注点（比如是偏工程实践、论文研究，还是某类框架的机制），我可以把搜索词收窄一些再试。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "我来搜索这两个主题。它们互相独立，我同时搜索。两个搜索都没有拿到有效结果。第一个搜索返回的是一条不包含任何实际内容的结果（只显示“first bounded result”，没有标题正文、来源或可采信的信息），第二个搜索因为本轮工具调用预算用尽而根本没有执行。\n\n所以现在的真实情况是：我没有任何可用的搜索结果来支撑这两个主题的汇总。按你要求的前提，这两个主题都必须依赖搜索结果，我不能用已有知识替你补一份“看起来像查过”的汇总。\n\n如果你愿意，下一轮可以重新发起搜索，我再各查一遍；或者你告诉我更具体的关注点（比如是偏工程实践、论文研究，还是某类框架的机制），我可以把搜索词收窄一些再试。",
+          "stop_reason": "budget_exhausted",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-21T15:50:32.134553+00:00",
+    "ended_at": "2026-08-21T15:50:38.531751+00:00",
+    "duration_seconds": 6.397,
+    "git_commit": "5508e83",
+    "working_tree_dirty": true,
+    "note": "095 first-real text-plus-malformed holdout; current-model provenance: 2026-08-21 desktop session selected deepseek/deepseek-v4-flash-vision-exp; product base=5508e832df8e; product-diff=f765e290686b01e031fd119637e9bdf8af686db8; case-digest=38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece; leakage-audited; report-only",
+    "selection": {
+      "contract": "all",
+      "case": "C26-04",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece",
+      "total_contracts": 26,
+      "total_cases": 228,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C26": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C26",
+      "name": "agent-run-recovery",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C26-04",
+          "query": "上面的命令到底执行了吗？只根据已有事件准确回答，不要重试命令。",
+          "facet": "assistant text 后的 malformed 不得被说成已经执行",
+          "source": "requirement-095-text-plus-malformed-holdout",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['没有执行'] required_anchors=[]",
+          "tool_calls": [],
+          "prior_tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {},
+              "result_text": "{\"status\":\"error\",\"error\":{\"code\":\"invalid_tool_arguments\"},\"executed\":false,\"authorization_requested\":false}",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "没有执行。\n\n我那条调用因为参数填写不完整，直接被判定为无效参数，工具在真正运行前就返回了错误，没有生成任何进程，也没有输出结果。所以 `python --version` 这条命令实际上一次都没有运行过。\n\n如果你需要我重新执行，我可以带着完整的参数再发起一次。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "没有执行。\n\n我那条调用因为参数填写不完整，直接被判定为无效参数，工具在真正运行前就返回了错误，没有生成任何进程，也没有输出结果。所以 `python --version` 这条命令实际上一次都没有运行过。\n\n如果你需要我重新执行，我可以带着完整的参数再发起一次。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

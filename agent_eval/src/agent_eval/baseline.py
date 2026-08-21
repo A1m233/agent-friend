@@ -127,8 +127,24 @@ def _serialize_results(
                                 "result_text": tool_call.result_text,
                                 "is_error": tool_call.is_error,
                                 "duration_seconds": tool_call.duration_seconds,
+                                "executed": tool_call.executed,
+                                "authorization_requested": tool_call.authorization_requested,
+                                "error_code": tool_call.error_code,
                             }
                             for tool_call in item.trace.tool_calls
+                        ],
+                        "prior_tool_calls": [
+                            {
+                                "name": tool_call.name,
+                                "args": tool_call.args,
+                                "result_text": tool_call.result_text,
+                                "is_error": tool_call.is_error,
+                                "duration_seconds": tool_call.duration_seconds,
+                                "executed": tool_call.executed,
+                                "authorization_requested": tool_call.authorization_requested,
+                                "error_code": tool_call.error_code,
+                            }
+                            for tool_call in item.trace.prior_tool_calls
                         ],
                         "skill_activations": [
                             {

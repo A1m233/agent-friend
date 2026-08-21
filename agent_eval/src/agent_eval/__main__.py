@@ -40,10 +40,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--contract",
         default="all",
-        help=(
-            "只跑指定契约，如 C1 / C2 / C3 / C4 / C5 / C6 / C7 / C8 / "
-            "C9 / C10 / C11 / C12 / C13 / C14 / C15 / C16；默认 all"
-        ),
+        help="只跑指定契约，如 C1 或 C26；默认 all",
     )
     parser.add_argument(
         "--case",

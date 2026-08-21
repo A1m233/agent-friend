@@ -33,13 +33,14 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from memory import Memory
 
 from ..conversation import Conversation
+from ..conversation_events import TurnDone
 from ..latency import RunLatencyContext, log_run_latency
 from ..memory_feed import project_turn
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
 from ..tools import ToolResult
-from .errors import SessionBusyError, run_failure_reason_code
+from .errors import MissingTurnTerminalError, SessionBusyError, run_failure_reason_code
 from .hooks import (
     PRE_TOOL_PROCEED,
     PRE_TURN_PROCEED,
@@ -60,12 +61,14 @@ from .models import (
     InteractiveBusyPolicy,
     RunCancelResult,
     RunErrorCallback,
+    RunExecutionResult,
     RunHandle,
     RunOutcome,
     RunPriority,
     RunRequest,
     RunSnapshot,
     RunStatus,
+    TurnStatus,
 )
 from .scheduler import RunScheduler, RuntimeActivitySnapshot, RuntimeDrainReport
 
@@ -86,6 +89,7 @@ __all__ = [
     "PreTurnDecision",
     "PushEnvelope",
     "RunCancelResult",
+    "RunExecutionResult",
     "RunHandle",
     "RunOutcome",
     "RunPriority",
@@ -97,6 +101,7 @@ __all__ = [
     "SessionBusyError",
     "Subscriber",
     "SystemTriggerEvent",
+    "TurnStatus",
     "UserEvent",
     "pre_tool_block",
 ]
@@ -262,7 +267,7 @@ class AgentRuntime:
     def start(self) -> None:
         """启动各 EventSource + dispatch thread；idempotent。"""
         if self._thread is not None:
-            return
+            return None
         self._scheduler.start()
         for src in self._sources:
             src.start(self._inbox)
@@ -505,12 +510,20 @@ class AgentRuntime:
             except Exception:
                 logger.exception("dispatch failed for %r", ev)
 
-    def _execute_request(self, request: RunRequest, handle: RunHandle) -> None:
+    def _execute_request(
+        self,
+        request: RunRequest,
+        handle: RunHandle,
+    ) -> RunExecutionResult | None:
         """Scheduler worker 执行一轮；terminal 由 Scheduler finish-once。"""
         with self._session_turn_guard(request.session_id):
-            self._execute_request_guarded(request, handle)
+            return self._execute_request_guarded(request, handle)
 
-    def _execute_request_guarded(self, request: RunRequest, handle: RunHandle) -> None:
+    def _execute_request_guarded(
+        self,
+        request: RunRequest,
+        handle: RunHandle,
+    ) -> RunExecutionResult | None:
         """Execute one run while the caller holds the persistent session guard."""
         decision = self._hooks.run_pre_turn(request.event)
         if decision.skip:
@@ -521,7 +534,7 @@ class AgentRuntime:
                 outcome=RunOutcome.SKIPPED,
                 reason_code=decision.reason or "pre_turn_skip",
             )
-            return
+            return None
 
         origin = request.metadata.get("protocol")
         if isinstance(request.event, SystemTriggerEvent):
@@ -557,6 +570,7 @@ class AgentRuntime:
         turn_start_idx = len(session.events)
         outcome = RunOutcome.FAILED
         error: BaseException | None = None
+        execution_result: RunExecutionResult | None = None
         try:
             if request.conversation_runner is not None:
                 events_iter = request.conversation_runner(conv, request, handle.token)
@@ -591,11 +605,42 @@ class AgentRuntime:
                     run_id=request.run_id,
                     cancel_check=handle.token.raise_if_cancelled,
                 )
+            terminal_event: TurnDone | None = None
             for cev in events_iter:
                 handle.token.raise_if_cancelled()
                 handle.emit(cev)
                 self._listeners.fan_out_event(request.event, cev, run_id=request.run_id)
-            outcome = RunOutcome.COMPLETED
+                if isinstance(cev, TurnDone):
+                    terminal_event = cev
+            if terminal_event is None:
+                silent_completion = (
+                    isinstance(request.event, SystemTriggerEvent)
+                    and request.event.output_visibility == "memory_only"
+                )
+                if not silent_completion:
+                    raise MissingTurnTerminalError(f"run {request.run_id} ended without TurnDone")
+                execution_result = RunExecutionResult(
+                    turn_status=TurnStatus.COMPLETED,
+                    reason_code="end_turn",
+                )
+            else:
+                execution_result = RunExecutionResult(
+                    turn_status=TurnStatus(terminal_event.status),
+                    reason_code=terminal_event.stop_reason or "end_turn",
+                    total_tool_calls=terminal_event.total_tool_calls,
+                    tool_call_items=terminal_event.tool_call_items,
+                    model_calls=terminal_event.model_calls,
+                    model_continuations=terminal_event.model_continuations,
+                    budget_dimension=terminal_event.budget_dimension,
+                )
+            outcome = (
+                RunOutcome.COMPLETED
+                if execution_result.turn_status is TurnStatus.COMPLETED
+                else RunOutcome.CANCELLED
+                if execution_result.turn_status is TurnStatus.INTERRUPTED
+                else RunOutcome.FAILED
+            )
+            return execution_result
         except BaseException as exc:
             error = exc
             from .cancellation import RunCancelled
@@ -627,6 +672,8 @@ class AgentRuntime:
                     reason_code=(
                         run_failure_reason_code(error, default=type(error).__name__)
                         if error is not None
+                        else execution_result.reason_code
+                        if execution_result is not None
                         else ""
                     ),
                 )

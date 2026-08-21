@@ -530,6 +530,51 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
     assert spec is not None
     names = [tc.name for tc in trace.tool_calls]
 
+    if spec.required_stop_reason is not None and trace.stop_reason != spec.required_stop_reason:
+        return Verdict(
+            case.id,
+            contract.id,
+            False,
+            f"stop reason mismatch: expected {spec.required_stop_reason}, "
+            f"actual {trace.stop_reason}",
+        )
+
+    for prior_requirement in spec.required_prior_tool_rejections:
+        matching = [
+            call
+            for call in trace.prior_tool_calls
+            if (
+                call.name == prior_requirement.name
+                and call.is_error
+                and call.executed is False
+                and call.authorization_requested is False
+                and (
+                    not prior_requirement.error_codes
+                    or call.error_code in prior_requirement.error_codes
+                )
+            )
+        ]
+        if len(matching) < prior_requirement.min_count:
+            prior_actual = [
+                {
+                    "name": call.name,
+                    "error_code": call.error_code,
+                    "is_error": call.is_error,
+                    "executed": call.executed,
+                    "authorization_requested": call.authorization_requested,
+                }
+                for call in trace.prior_tool_calls
+            ]
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                f"missing prior pre-execution rejection {prior_requirement.name}: need at least "
+                f"{prior_requirement.min_count}, found {len(matching)}, error_codes="
+                f"{prior_requirement.error_codes or 'any'} "
+                f"(actual: {prior_actual or 'none'})",
+            )
+
     if spec.required_first_tool_call:
         actual_first_call = names[0] if names else None
         if actual_first_call != spec.required_first_tool_call:

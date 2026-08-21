@@ -20,17 +20,19 @@ from .models import (
     InteractiveBusyPolicy,
     RunCancelResult,
     RunChangeCallback,
+    RunExecutionResult,
     RunHandle,
     RunOutcome,
     RunPriority,
     RunRequest,
     RunSnapshot,
     RunStatus,
+    TurnStatus,
 )
 
 logger = logging.getLogger(__name__)
 
-RunExecutor = Callable[[RunRequest, RunHandle], None]
+RunExecutor = Callable[[RunRequest, RunHandle], RunExecutionResult | None]
 
 
 @dataclass(frozen=True)
@@ -469,9 +471,36 @@ class RunScheduler:
         )
         try:
             handle.token.raise_if_cancelled()
-            self._execute(request, handle)
+            result = self._execute(request, handle)
             handle.token.raise_if_cancelled()
-            handle.finish_once(RunOutcome.COMPLETED)
+            if handle.terminal is not None:
+                return
+            if result is None:
+                # Preserve the generic scheduler's legacy executor contract. The
+                # AgentRuntime adapter enforces user-visible TurnDone before it
+                # reaches this boundary and returns a structured result.
+                result = RunExecutionResult(
+                    turn_status=TurnStatus.COMPLETED,
+                    reason_code="end_turn",
+                )
+            if result.turn_status is TurnStatus.COMPLETED:
+                outcome = RunOutcome.COMPLETED
+            elif result.turn_status is TurnStatus.INTERRUPTED:
+                outcome = RunOutcome.CANCELLED
+            elif result.turn_status is TurnStatus.FAILED:
+                outcome = RunOutcome.FAILED
+            else:  # pragma: no cover - execution result is terminal by contract
+                raise RuntimeError(f"non-terminal execution result: {result.turn_status}")
+            handle.finish_once(
+                outcome,
+                reason_code=result.reason_code,
+                turn_status=result.turn_status,
+                total_tool_calls=result.total_tool_calls,
+                tool_call_items=result.tool_call_items,
+                model_calls=result.model_calls,
+                model_continuations=result.model_continuations,
+                budget_dimension=result.budget_dimension,
+            )
         except RunCancelled as exc:
             logger.info(
                 "run cancelled: run_id=%s session_id=%s reason=%s",
@@ -483,6 +512,7 @@ class RunScheduler:
                 RunOutcome.CANCELLED,
                 reason_code=str(exc.cancellation.reason),
                 error=exc,
+                turn_status=TurnStatus.INTERRUPTED,
             )
         except BaseException as exc:
             logger.exception("run executor failed: %s", request.run_id)
@@ -490,6 +520,7 @@ class RunScheduler:
                 RunOutcome.FAILED,
                 reason_code=run_failure_reason_code(exc, default="executor_error"),
                 error=exc,
+                turn_status=TurnStatus.FAILED,
             )
         finally:
             terminal = handle.terminal

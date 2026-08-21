@@ -56,7 +56,8 @@ class Message:
               assistant 消息中的 ``tool_calls[*].id``（005）
             - ``tool_name`` (str) — ``role="tool"`` 携带，便于调试观测（005）
             - ``tool_calls`` (list) — ``role="assistant"`` 决定调工具时携带；
-              元素形如 ``{"id": str, "name": str, "args": dict}``，
+              元素形如 ``{"id": str, "name": str, "args": dict}``，可选
+              ``arguments_json`` 保留模型原始参数字符串，
               :meth:`to_openai` 会转成 OpenAI 协议格式（005）
         uuid: 消息级唯一标识（uuid4 字符串）。默认值由工厂自动生成，
             构造时**无需显式传入**——现有调用代码（CLI / 测试）保持兼容。
@@ -109,7 +110,12 @@ class Message:
                         "type": "function",
                         "function": {
                             "name": tc["name"],
-                            "arguments": json.dumps(tc.get("args", {}), ensure_ascii=False),
+                            "arguments": (
+                                tc["arguments_json"]
+                                if isinstance(tc.get("arguments_json"), str)
+                                and tc["arguments_json"]
+                                else json.dumps(tc.get("args", {}), ensure_ascii=False)
+                            ),
                         },
                     }
                     for tc in tool_calls
