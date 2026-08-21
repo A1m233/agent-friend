@@ -453,13 +453,15 @@ class Session:
                     )
                     result.append(last_assistant)
                 tool_calls = list(last_assistant.meta.get("tool_calls", []))
-                tool_calls.append(
-                    {
-                        "id": ev.payload.get("tool_call_id", ""),
-                        "name": ev.payload.get("tool_name", ""),
-                        "args": ev.payload.get("args", {}),
-                    }
-                )
+                tool_call = {
+                    "id": ev.payload.get("tool_call_id", ""),
+                    "name": ev.payload.get("tool_name", ""),
+                    "args": ev.payload.get("args", {}),
+                }
+                arguments_json = ev.payload.get("arguments_json")
+                if isinstance(arguments_json, str) and arguments_json:
+                    tool_call["arguments_json"] = arguments_json
+                tool_calls.append(tool_call)
                 last_assistant.meta["tool_calls"] = tool_calls
             elif ev.type == "tool_call_result":
                 tool_meta: dict[str, Any] = dict(ev.meta)
@@ -477,6 +479,33 @@ class Session:
                 )
                 # 后续再出现 request 时属于新的模型工具轮，不能继续
                 # 挂到上一轮的协议 assistant 容器上。
+                last_assistant = None
+                pending_reminder_fact = False
+            elif ev.type == "model_output_rejection":
+                if include_model_only:
+                    error_code = str(ev.payload.get("error_code", "model_output_rejected"))
+                    model_message = str(
+                        ev.payload.get(
+                            "model_message",
+                            "上一项模型输出无法组成可靠工具调用；宿主没有执行或授权。",
+                        )
+                    )
+                    result.append(
+                        Message(
+                            role="system",
+                            content=(
+                                "<model_output_rejection>\n"
+                                f"error_code={error_code}\n"
+                                f"{model_message}\n"
+                                "宿主没有执行工具，也没有请求授权。请根据当前工具 schema "
+                                "重新生成合法调用，或选择其它安全路线。\n"
+                                "</model_output_rejection>"
+                            ),
+                            timestamp=ev.ts,
+                            meta={**ev.meta, "synthetic": "model_output_rejection"},
+                            uuid=ev.uuid,
+                        )
+                    )
                 last_assistant = None
                 pending_reminder_fact = False
             elif ev.type == "todo_reminder":

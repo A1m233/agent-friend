@@ -28,6 +28,12 @@ class LLMStreamTimeoutError(LLMNetworkError):
     """A provider stream stopped making observable progress for too long."""
 
 
+class LLMStreamInterruptedAfterOutputError(LLMNetworkError):
+    """A stream failed after visible output crossed the replay-safe boundary."""
+
+    reason_code = "stream_interrupted_after_output"
+
+
 class LLMBadRequestError(LLMError):
     """请求格式错误。多半是 bug，CLI 层不重试。"""
 
@@ -101,6 +107,10 @@ class LLMModelUnavailableError(LLMProviderError):
 class LLMEmptyResponseError(LLMProviderError):
     """Provider 正常结束了请求，但没有返回正文或工具调用。"""
 
+    reason_code = "empty_model_response"
+
 
 class LLMOutputBudgetExhaustedError(LLMEmptyResponseError):
     """Provider 把输出预算耗尽在推理内容中，未产生可见正文。"""
+
+    reason_code = "output_budget_exhausted"

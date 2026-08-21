@@ -244,8 +244,8 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         // lets the matching result update the block below.
         toolCallId: eventToolCallId || ev.uuid,
         name: asString(p.tool_name) || "tool",
-        // 历史里 args 是对象；序列化成字符串与实时 ToolBlock.args 类型对齐（ToolCard 再美化）。
-        args: p.args === undefined ? "" : JSON.stringify(p.args),
+        // 095 起优先保留模型原始 arguments；旧事件继续从 args 对象重建。
+        args: asString(p.arguments_json) || (p.args === undefined ? "" : JSON.stringify(p.args)),
         status: "running",
       };
       toolBlocks.set(correlationId, block);

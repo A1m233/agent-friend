@@ -201,7 +201,8 @@ export function applyPushConversationEvent(
         kind: "tool",
         toolCallId,
         name: pushString(evt.tool_name) || "tool",
-        args: evt.args === undefined ? "" : JSON.stringify(evt.args),
+        args: pushString(evt.arguments_json)
+          || (evt.args === undefined ? "" : JSON.stringify(evt.args)),
         status: "running",
       };
       return { ...msg, status: "streaming", runStatus: undefined, blocks: [...msg.blocks, block] };

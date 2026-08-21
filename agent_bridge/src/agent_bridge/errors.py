@@ -44,6 +44,7 @@ from llm_providers import (
     LLMPermissionError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMStreamInterruptedAfterOutputError,
     LLMTransientProviderError,
 )
 from runtime_config import CredentialMissingError
@@ -192,6 +193,13 @@ def map_exception(exc: BaseException) -> ProtocolError:
             code="model_route_unavailable",
             message="当前模型没有满足必要能力与隐私约束的可用路由，请稍后重试或切换模型。",
             recoverable=exc.retryable,
+        )
+    if isinstance(exc, LLMStreamInterruptedAfterOutputError):
+        return ProtocolError(
+            http_status=502,
+            code="stream_interrupted_after_output",
+            message="模型连接在已经返回部分内容后中断；已返回内容不会被自动重放。",
+            recoverable=True,
         )
     if isinstance(exc, (LLMNetworkError, LLMProviderError)):
         return ProtocolError(

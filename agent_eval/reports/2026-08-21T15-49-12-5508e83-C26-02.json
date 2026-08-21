@@ -1,0 +1,156 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-21T15:49:12.809619+00:00",
+    "ended_at": "2026-08-21T15:49:22.932496+00:00",
+    "duration_seconds": 10.123,
+    "git_commit": "5508e83",
+    "working_tree_dirty": true,
+    "note": "095 first-real target; model provenance: issue 054 production incident used kimi/kimi-k2.5; product base=5508e832df8e; product-diff=f765e290686b01e031fd119637e9bdf8af686db8; case-digest=38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece; leakage-audited; report-only",
+    "selection": {
+      "contract": "all",
+      "case": "C26-02",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/kimi-k2.5",
+      "api_base": "https://api.moonshot.cn/v1",
+      "defaults": {
+        "timeout": 90.0
+      },
+      "context_window": 262144
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece",
+      "total_contracts": 26,
+      "total_cases": 228,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C26": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C26",
+      "name": "agent-run-recovery",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C26-02",
+          "query": "继续完成刚才的 Python 版本检查。请直接按 exec_command 的真实 schema 修正并执行，不要再让我重复“开始”。",
+          "facet": "Kimi 连续缺失必填参数后修正 exec_command",
+          "source": "issue-054-kimi-k2.5-malformed-command",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=['Python 3.13.5']",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "检查当前 Python 版本",
+                "argv": [
+                  "python",
+                  "--version"
+                ]
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"Python 3.13.5\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "python",
+                  "--version"
+                ]
+              },
+              "result_text": "{\"status\":\"error\",\"error\":{\"code\":\"invalid_tool_arguments\",\"message\":\"reason is required\"},\"executed\":false,\"authorization_requested\":false}",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "reason": "检查当前 Python 版本"
+              },
+              "result_text": "{\"status\":\"error\",\"error\":{\"code\":\"invalid_tool_arguments\",\"message\":\"exactly one of cmd or argv is required\"},\"executed\":false,\"authorization_requested\":false}",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "查到了：Python 3.13.5。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "查到了：Python 3.13.5。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

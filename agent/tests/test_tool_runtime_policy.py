@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.tool_runtime import NoProgressTracker, ToolRunPolicy, ToolRunState
+from agent.tool_runtime import ToolProgressTracker, ToolRunPolicy, ToolRunState
 from agent.tools import ToolResult
 
 
@@ -27,18 +27,20 @@ def test_budget_limit_and_soft_reminder() -> None:
     assert state.hard_limit(continuation=True) == "model_continuations"
 
 
-def test_no_progress_counts_only_repeated_errors_or_empty_results() -> None:
-    tracker = NoProgressTracker(3)
+def test_progress_tracker_advises_only_after_repeated_errors_or_empty_results() -> None:
+    tracker = ToolProgressTracker(3)
     args = {"query": "same"}
     failed = ToolResult("network failed", is_error=True, meta={"error_kind": "network"})
-    assert tracker.observe("web_search", args, failed) is False
-    assert tracker.observe("web_search", args, failed) is False
-    assert tracker.observe("web_search", args, failed) is True
-    assert tracker.observe("web_search", args, ToolResult("useful result")) is False
+    assert tracker.observe("web_search", args, failed).advisory_due is False
+    assert tracker.observe("web_search", args, failed).advisory_due is False
+    assert tracker.observe("web_search", args, failed).advisory_due is True
+    assert tracker.take_advisory() is not None
+    assert tracker.take_advisory() is None
+    assert tracker.observe("web_search", args, ToolResult("useful result")).advisory_due is False
 
 
-def test_no_progress_groups_same_error_across_changed_arguments() -> None:
-    tracker = NoProgressTracker(3)
+def test_progress_tracker_groups_same_error_across_changed_arguments() -> None:
+    tracker = ToolProgressTracker(3)
     blocked = ToolResult(
         "sandbox setup required",
         is_error=True,
@@ -47,60 +49,66 @@ def test_no_progress_groups_same_error_across_changed_arguments() -> None:
             "no_progress_family": "windows_sandbox_setup_required",
         },
     )
-    assert tracker.observe("exec_command", {"cmd": "git clone"}, blocked) is False
-    assert tracker.observe("exec_command", {"cmd": "pwsh download"}, blocked) is False
-    assert tracker.observe("exec_command", {"cmd": "python download"}, blocked) is True
+    assert tracker.observe("exec_command", {"cmd": "git clone"}, blocked).advisory_due is False
+    assert tracker.observe("exec_command", {"cmd": "pwsh download"}, blocked).advisory_due is False
+    assert tracker.observe("exec_command", {"cmd": "python download"}, blocked).advisory_due is True
 
 
-def test_no_progress_does_not_group_unspecified_errors_across_changed_arguments() -> None:
-    tracker = NoProgressTracker(3)
+def test_progress_tracker_does_not_group_unspecified_errors_across_changed_arguments() -> None:
+    tracker = ToolProgressTracker(3)
     failed = ToolResult("exit 1", is_error=True, meta={"error_kind": None})
 
-    assert tracker.observe("exec_command", {"cmd": "maa --help"}, failed) is False
-    assert tracker.observe("exec_command", {"cmd": "maa version"}, failed) is False
-    assert tracker.observe("exec_command", {"cmd": "maa dir"}, failed) is False
+    assert tracker.observe("exec_command", {"cmd": "maa --help"}, failed).advisory_due is False
+    assert tracker.observe("exec_command", {"cmd": "maa version"}, failed).advisory_due is False
+    assert tracker.observe("exec_command", {"cmd": "maa dir"}, failed).advisory_due is False
 
 
-def test_no_progress_still_stops_an_identical_failing_command() -> None:
-    tracker = NoProgressTracker(3)
+def test_progress_tracker_advises_but_never_returns_a_stop_signal() -> None:
+    tracker = ToolProgressTracker(3)
     failed = ToolResult("exit 1", is_error=True)
     args = {"cmd": "maa --help"}
 
-    assert tracker.observe("exec_command", args, failed) is False
-    assert tracker.observe("exec_command", args, failed) is False
-    assert tracker.observe("exec_command", args, failed) is True
+    assert tracker.observe("exec_command", args, failed).advisory_due is False
+    assert tracker.observe("exec_command", args, failed).advisory_due is False
+    observation = tracker.observe("exec_command", args, failed)
+    assert observation.advisory_due is True
+    assert observation.same_intent_count == 3
 
 
 def test_success_resets_cross_argument_error_family() -> None:
-    tracker = NoProgressTracker(2)
-    failed = ToolResult("failed", is_error=True, meta={"error_kind": "network"})
-    assert tracker.observe("web_fetch", {"url": "a"}, failed) is False
-    assert tracker.observe("web_fetch", {"url": "ok"}, ToolResult("page")) is False
-    assert tracker.observe("web_fetch", {"url": "b"}, failed) is False
+    tracker = ToolProgressTracker(2)
+    failed = ToolResult(
+        "failed",
+        is_error=True,
+        meta={"error_kind": "network", "no_progress_family": "network"},
+    )
+    assert tracker.observe("web_fetch", {"url": "a"}, failed).advisory_due is False
+    assert tracker.observe("web_fetch", {"url": "ok"}, ToolResult("page")).advisory_due is False
+    assert tracker.observe("web_fetch", {"url": "b"}, failed).advisory_due is False
 
 
 def test_no_progress_uses_evidence_delta_and_keeps_intents_independent() -> None:
-    tracker = NoProgressTracker(2)
+    tracker = ToolProgressTracker(2)
     first = ToolResult("page", meta={"evidence_keys": ["https://example.com/a"]})
     repeated = ToolResult("same page", meta={"evidence_keys": ["https://example.com/a"]})
 
-    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, first) is False
-    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated) is False
-    assert tracker.observe("web_fetch", {"evidence_ref": "b"}, repeated) is False
-    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated) is True
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, first).advisory_due is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated).advisory_due is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "b"}, repeated).advisory_due is False
+    assert tracker.observe("web_fetch", {"evidence_ref": "a"}, repeated).advisory_due is True
     assert tracker.new_evidence_count == 1
     assert tracker.reused_evidence_count == 3
     assert tracker.last_intent_signature is not None
 
 
 def test_new_evidence_resets_no_progress_for_same_intent() -> None:
-    tracker = NoProgressTracker(2)
+    tracker = ToolProgressTracker(2)
     args = {"query": "creator"}
     first = ToolResult("first", meta={"evidence_keys": ["creator:1"]})
     repeated = ToolResult("repeat", meta={"evidence_keys": ["creator:1"]})
     expanded = ToolResult("expanded", meta={"evidence_keys": ["creator:1", "video:2"]})
 
-    assert tracker.observe("social_search", args, first) is False
-    assert tracker.observe("social_search", args, repeated) is False
-    assert tracker.observe("social_search", args, expanded) is False
-    assert tracker.observe("social_search", args, repeated) is False
+    assert tracker.observe("social_search", args, first).advisory_due is False
+    assert tracker.observe("social_search", args, repeated).advisory_due is False
+    assert tracker.observe("social_search", args, expanded).advisory_due is False
+    assert tracker.observe("social_search", args, repeated).advisory_due is False

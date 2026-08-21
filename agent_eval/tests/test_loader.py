@@ -38,6 +38,7 @@ def test_loads_builtin_cases() -> None:
         ("C23", "self-presentation-and-transparency", 8),
         ("C24", "tool-identifier-contract", 6),
         ("C25", "filesystem-authorization-claim-grounding", 2),
+        ("C26", "agent-run-recovery", 6),
     ]
 
 
@@ -329,6 +330,19 @@ def test_loads_fixture_session_and_case_judge() -> None:
         "relative_path": ".",
     }
 
+    c26 = next(contract for contract in contracts if contract.id == "C26")
+    deepseek_anchor = next(item for item in c26.cases if item.id == "C26-01")
+    assert deepseek_anchor.judge is not None
+    assert deepseek_anchor.judge.required_prior_tool_rejections[0].min_count == 2
+    request = deepseek_anchor.current_session_events[2]
+    assert isinstance(request, FixtureToolCallRequest)
+    assert request.execution_disposition == "rejected_before_execution"
+    resource_holdout = next(item for item in c26.cases if item.id == "C26-06")
+    assert resource_holdout.tool_run_policy is not None
+    assert resource_holdout.tool_run_policy.max_total_tool_calls == 1
+    assert resource_holdout.judge is not None
+    assert resource_holdout.judge.required_stop_reason == "budget_exhausted"
+
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
     assert maa_anchor.fixture_skills[0].name == "maa-daily"
@@ -375,8 +389,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 25
-    assert meta.total_cases == 222
+    assert meta.total_contracts == 26
+    assert meta.total_cases == 228
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -403,6 +417,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C23": 8,
         "C24": 6,
         "C25": 2,
+        "C26": 6,
     }
     assert len(meta.digest) == 64
 
@@ -655,6 +670,41 @@ cases:
     )
 
     with pytest.raises(ValueError, match="未完成的 tool request"):
+        load_contracts(tmp_path)
+
+
+def test_pre_execution_rejection_requires_non_executed_non_authorizing_result(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "c1.yaml").write_text(
+        """
+contract:
+  id: C1
+  name: invalid-pre-execution-rejection
+  expected_behavior: response
+cases:
+  - id: X-1
+    query: q
+    current_session_events:
+      - type: assistant_message
+        text: trying
+      - type: tool_call_request
+        tool_call_id: call-1
+        tool_name: exec_command
+        args: {}
+        execution_disposition: rejected_before_execution
+      - type: tool_call_result
+        tool_call_id: call-1
+        tool_name: exec_command
+        content: rejected
+        is_error: true
+        executed: true
+        authorization_requested: false
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="pre-execution rejection"):
         load_contracts(tmp_path)
 
 

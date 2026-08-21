@@ -12,7 +12,13 @@ from .evidence import (
     platform_hint_for_url,
 )
 from .executor import ExecutedToolCall, ToolBatchExecutor, ToolExecutionKind
-from .policy import NoProgressTracker, ToolRunPolicy, ToolRunState
+from .policy import (
+    NoProgressTracker,
+    ToolProgressObservation,
+    ToolProgressTracker,
+    ToolRunPolicy,
+    ToolRunState,
+)
 
 __all__ = [
     "TOOL_INVOCATION_CONTROL_ARG",
@@ -23,6 +29,8 @@ __all__ = [
     "ToolBatchExecutor",
     "ToolExecutionKind",
     "ToolInvocationControl",
+    "ToolProgressObservation",
+    "ToolProgressTracker",
     "ToolRunContext",
     "ToolRunPolicy",
     "ToolRunState",

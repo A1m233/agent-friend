@@ -42,7 +42,6 @@ from agent import (
     Conversation,
     ConversationEvent,
     JsonlSessionStore,
-    MalformedToolCallError,
     MarkdownPromptBuilder,
     NaiveContextManager,
     PersonaCatalog,
@@ -461,7 +460,7 @@ def test_submit_runs_conversation_and_correlates_session_events(
         runtime.stop()
 
 
-def test_repeated_malformed_tool_call_finishes_runtime_as_failed(tmp_path: Path) -> None:
+def test_repeated_malformed_tool_call_recovers_in_same_runtime_run(tmp_path: Path) -> None:
     class RequiredTool:
         name: ClassVar[str] = "required_tool"
         description: ClassVar[str] = "需要完整参数。"
@@ -473,7 +472,8 @@ def test_repeated_malformed_tool_call_finishes_runtime_as_failed(tmp_path: Path)
         }
 
         def invoke(self, args: dict[str, Any]) -> ToolResult:
-            raise AssertionError(f"malformed call must not execute: {args}")
+            assert args == {"value": "ok"}
+            return ToolResult("ok")
 
     fake = _ScriptedLLMClient(
         script=[
@@ -485,6 +485,11 @@ def test_repeated_malformed_tool_call_finishes_runtime_as_failed(tmp_path: Path)
                 LLMToolCallDelta(0, "broken-2", "required_tool", "{}"),
                 LLMTurnDone(stop_reason="tool_use"),
             ],
+            [
+                LLMToolCallDelta(0, "fixed", "required_tool", '{"value":"ok"}'),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="done"), LLMTurnDone(stop_reason="end_turn")],
         ]
     )
     conv = _make_conversation(
@@ -502,12 +507,20 @@ def test_repeated_malformed_tool_call_finishes_runtime_as_failed(tmp_path: Path)
         events = cast(list[ConversationEvent], list(handle.events()))
 
         assert handle.terminal is not None
-        assert handle.terminal.outcome is RunOutcome.FAILED
-        assert handle.terminal.reason_code == "malformed_tool_call"
-        assert isinstance(handle.terminal.error, MalformedToolCallError)
-        assert not any(isinstance(event, (ToolCallRequest, ToolCallResult)) for event in events)
-        assert not any(isinstance(event, TurnDone) for event in events)
-        assert len(fake.received) == 2
+        assert handle.terminal.outcome is RunOutcome.COMPLETED
+        assert handle.terminal.reason_code == "end_turn"
+        assert handle.terminal.total_tool_calls == 1
+        assert handle.terminal.tool_call_items == 3
+        assert handle.terminal.model_calls == 4
+        assert handle.terminal.model_continuations == 3
+        results = [event for event in events if isinstance(event, ToolCallResult)]
+        assert [event.executed for event in results] == [False, False, True]
+        done = next(event for event in events if isinstance(event, TurnDone))
+        assert done.stop_reason == "end_turn"
+        assert done.total_tool_calls == 1
+        assert done.tool_call_items == 3
+        assert done.model_calls == 4
+        assert len(fake.received) == 4
     finally:
         runtime.stop()
 
@@ -801,5 +814,38 @@ def test_submit_failure_runs_post_turn_once_with_failed_outcome(tmp_path: Path) 
         assert len(seen) == 1
         assert seen[0].outcome is RunOutcome.FAILED
         assert isinstance(seen[0].error, RuntimeError)
+    finally:
+        runtime.stop()
+
+
+def test_user_visible_runner_without_turn_done_fails_with_stable_reason(tmp_path: Path) -> None:
+    from agent.runtime.cancellation import CancellationToken
+    from agent.runtime.models import RunRequest
+
+    conv = _make_conversation(tmp_path, fake_llm=_ScriptedLLMClient(script=[]))
+    runtime = AgentRuntime(conversation_factory=lambda _sid: conv)
+
+    def missing_terminal_runner(
+        _conv: Conversation,
+        _request: RunRequest,
+        _token: CancellationToken,
+    ) -> Iterator[ConversationEvent]:
+        yield TextDelta(text="partial")
+
+    runtime.start()
+    try:
+        handle = runtime.submit(
+            UserEvent(session_id=conv.session.session_id, user_input="hello"),
+            conversation_factory=lambda: conv,
+            conversation_runner=missing_terminal_runner,
+        )
+        assert [event.text for event in handle.events() if isinstance(event, TextDelta)] == [
+            "partial"
+        ]
+        terminal = handle.terminal
+        assert terminal is not None
+        assert terminal.outcome is RunOutcome.FAILED
+        assert terminal.reason_code == "missing_turn_terminal"
+        assert terminal.turn_status == "failed"
     finally:
         runtime.stop()

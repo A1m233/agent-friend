@@ -196,7 +196,7 @@ def encode_stream(
                         ToolCallArgsEvent(
                             type=EventType.TOOL_CALL_ARGS,
                             tool_call_id=wire_tool_call_id,
-                            delta=_dump_args(ev.args),
+                            delta=ev.arguments_json or _dump_args(ev.args),
                         )
                     )
                     yield _encode(
@@ -265,9 +265,8 @@ def encode_stream(
                     )
 
                 elif isinstance(ev, TurnDone):
-                    # TurnDone 仅作为"流结束"信号，AG-UI 用 RUN_FINISHED 承担。
-                    # max_turns_reached 等 stop_reason 信息本期不映射到 AG-UI 事件——
-                    # 客户端通过缺少 RUN_FINISHED 或后续 RunStartedEvent 推断异常。
+                    # TurnDone 仅作为流结束信号；结构化 status/reason/usage 在
+                    # Scheduler 完成 RunTerminal 后统一映射到 RUN_FINISHED。
                     pass
 
         except Exception as exc:
@@ -357,11 +356,30 @@ def encode_stream(
                 )
             )
 
+        terminal = run_handle.terminal if run_handle is not None else None
         yield _encode(
             RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
                 thread_id=thread_id,
                 run_id=run_id,
+                result=(
+                    {
+                        "outcome": "completed",
+                        "status": (
+                            str(terminal.turn_status)
+                            if terminal is not None and terminal.turn_status is not None
+                            else "completed"
+                        ),
+                        "reasonCode": terminal.reason_code if terminal is not None else "end_turn",
+                        "toolCallItems": terminal.tool_call_items,
+                        "executedToolCalls": terminal.total_tool_calls,
+                        "modelCalls": terminal.model_calls,
+                        "modelContinuations": terminal.model_continuations,
+                        "budgetDimension": terminal.budget_dimension,
+                    }
+                    if terminal is not None
+                    else None
+                ),
             )
         )
 

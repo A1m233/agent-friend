@@ -1,4 +1,4 @@
-"""Configurable per-turn budgets and no-progress detection."""
+"""Configurable per-turn budgets and advisory-only progress observations."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class ToolRunPolicy:
     soft_limit_ratio: float = 0.8
     default_tool_timeout_seconds: float = 60.0
     max_parallel_read_tools: int = 4
-    repeated_no_progress_limit: int = 3
+    no_progress_advisory_threshold: int = 3
 
     def __post_init__(self) -> None:
         for name in ("max_model_continuations", "max_total_tool_calls"):
@@ -36,8 +36,14 @@ class ToolRunPolicy:
             raise ValueError("default_tool_timeout_seconds must be positive")
         if self.max_parallel_read_tools < 1:
             raise ValueError("max_parallel_read_tools must be at least 1")
-        if self.repeated_no_progress_limit < 2:
-            raise ValueError("repeated_no_progress_limit must be at least 2")
+        if self.no_progress_advisory_threshold < 2:
+            raise ValueError("no_progress_advisory_threshold must be at least 2")
+
+    @property
+    def repeated_no_progress_limit(self) -> int:
+        """Compatibility view for callers migrating to advisory-only semantics."""
+
+        return self.no_progress_advisory_threshold
 
 
 @dataclass
@@ -46,6 +52,8 @@ class ToolRunState:
     started_at: float = field(default_factory=time.monotonic)
     model_continuations: int = 0
     total_tool_calls: int = 0
+    tool_call_items: int = 0
+    model_calls: int = 0
     soft_notified_dimensions: set[str] = field(default_factory=set)
     stop_reason: str | None = None
     stop_dimension: str | None = None
@@ -119,6 +127,8 @@ class ToolRunState:
             "budget_dimension": self.stop_dimension,
             "model_continuations": self.model_continuations,
             "total_tool_calls": self.total_tool_calls,
+            "tool_call_items": self.tool_call_items,
+            "model_calls": self.model_calls,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "timeout_count": self.timeout_count,
             "blocked_count": self.blocked_count,
@@ -129,17 +139,35 @@ class ToolRunState:
         }
 
 
-class NoProgressTracker:
+@dataclass(frozen=True)
+class ToolProgressObservation:
+    intent_signature: str
+    error_family: str
+    same_intent_count: int
+    same_error_family_count: int
+    new_evidence_count: int
+    reused_evidence_count: int
+    advisory_due: bool
+
+
+class ToolProgressTracker:
     def __init__(self, limit: int) -> None:
         self._limit = limit
         self._counts: dict[str, int] = {}
         self._error_family_counts: dict[tuple[str, str], int] = {}
+        self._advised_keys: set[str] = set()
+        self._pending_advisory = False
         self._seen_evidence: set[str] = set()
         self.new_evidence_count = 0
         self.reused_evidence_count = 0
         self.last_intent_signature: str | None = None
 
-    def observe(self, name: str, args: dict[str, Any], result: ToolResult) -> bool:
+    def observe(
+        self,
+        name: str,
+        args: dict[str, Any],
+        result: ToolResult,
+    ) -> ToolProgressObservation:
         public_args = {key: value for key, value in args.items() if not key.startswith("__")}
         intent_payload = json.dumps(
             [name, public_args],
@@ -163,7 +191,7 @@ class NoProgressTracker:
         if delta:
             self._seen_evidence.update(delta)
             self._counts[signature] = 0
-            return False
+            return self._observation(name, signature, "", False)
 
         raw_error_kind = result.meta.get("error_kind")
         error_kind = raw_error_kind if isinstance(raw_error_kind, str) else ""
@@ -176,8 +204,6 @@ class NoProgressTracker:
             self._error_family_counts[error_family] = (
                 self._error_family_counts.get(error_family, 0) + 1
             )
-            if self._error_family_counts[error_family] >= self._limit:
-                return True
         elif not result.is_error:
             self._error_family_counts = {
                 key: count for key, count in self._error_family_counts.items() if key[0] != name
@@ -189,6 +215,64 @@ class NoProgressTracker:
         )
         if not result.is_error and not empty and not evidence_keys:
             self._counts[signature] = 0
-            return False
+            return self._observation(name, signature, no_progress_family, False)
         self._counts[signature] = self._counts.get(signature, 0) + 1
-        return self._counts[signature] >= self._limit
+        same_error_family_count = self._error_family_counts.get(
+            (name, no_progress_family),
+            0,
+        )
+        advisory_key = (
+            f"error:{name}:{no_progress_family}"
+            if no_progress_family and same_error_family_count >= self._limit
+            else f"intent:{signature}"
+            if self._counts[signature] >= self._limit
+            else ""
+        )
+        advisory_due = bool(advisory_key and advisory_key not in self._advised_keys)
+        if advisory_due:
+            self._advised_keys.add(advisory_key)
+            self._pending_advisory = True
+        return self._observation(name, signature, no_progress_family, advisory_due)
+
+    def take_advisory(self) -> str | None:
+        """Return one pending model reminder; never authorizes a host stop."""
+
+        if not self._pending_advisory:
+            return None
+        self._pending_advisory = False
+        return (
+            "最近的工具路线重复返回相同错误、空结果或已有证据。"
+            "这只是进展提示，不是运行终止条件。请检查当前 schema 和错误结果，"
+            "修正参数、改用其它安全工具、改变取证路线，或基于已有证据诚实回答；"
+            "不要原样重复已经失败的调用。"
+        )
+
+    def _observation(
+        self,
+        name: str,
+        signature: str,
+        error_family: str,
+        advisory_due: bool,
+    ) -> ToolProgressObservation:
+        same_error_family_count = max(
+            (
+                count
+                for (tool_name, family), count in self._error_family_counts.items()
+                if tool_name == name and family == error_family
+            ),
+            default=0,
+        )
+        return ToolProgressObservation(
+            intent_signature=signature,
+            error_family=error_family,
+            same_intent_count=self._counts.get(signature, 0),
+            same_error_family_count=same_error_family_count,
+            new_evidence_count=self.new_evidence_count,
+            reused_evidence_count=self.reused_evidence_count,
+            advisory_due=advisory_due,
+        )
+
+
+# Compatibility alias for callers importing the pre-095 name.  The object is now
+# advisory-only; its observations never stop a run.
+NoProgressTracker = ToolProgressTracker

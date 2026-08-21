@@ -29,6 +29,7 @@ from llm_providers import (
     LLMOutputBudgetExhaustedError,
     LLMPaymentRequiredError,
     LLMPermissionError,
+    LLMStreamInterruptedAfterOutputError,
 )
 from runtime_config import (
     CredentialMissingError,
@@ -286,6 +287,14 @@ def test_budget_failures_keep_specific_protocol_codes(exc: Exception, code: str)
 
     assert error.code == code
     assert error.http_status in {400, 502}
+
+
+def test_post_output_stream_interruption_keeps_specific_protocol_code() -> None:
+    error = map_exception(LLMStreamInterruptedAfterOutputError("interrupted"))
+
+    assert error.http_status == 502
+    assert error.code == "stream_interrupted_after_output"
+    assert error.recoverable is True
 
 
 def test_content_policy_error_has_honest_message_and_sanitizes_failed_call() -> None:

@@ -106,7 +106,15 @@ def test_encode_stream_consumes_run_handle_without_calling_conversation_factory(
     assert handle.mark_running()
     handle.emit(TextDelta(text="from runtime"))
     handle.emit(TurnDone(stop_reason="end_turn", total_tool_calls=0))
-    assert handle.finish_once(RunOutcome.COMPLETED)
+    assert handle.finish_once(
+        RunOutcome.COMPLETED,
+        reason_code="budget_exhausted",
+        total_tool_calls=1,
+        tool_call_items=2,
+        model_calls=3,
+        model_continuations=2,
+        budget_dimension="total_tool_calls",
+    )
     factory_called = False
 
     def factory() -> Conversation:
@@ -127,6 +135,11 @@ def test_encode_stream_consumes_run_handle_without_calling_conversation_factory(
     assert not factory_called
     assert b"from runtime" in body
     assert b"RUN_FINISHED" in body
+    assert b'"reasonCode":"budget_exhausted"' in body
+    assert b'"toolCallItems":2' in body
+    assert b'"executedToolCalls":1' in body
+    assert b'"modelCalls":3' in body
+    assert b'"budgetDimension":"total_tool_calls"' in body
 
 
 def test_encode_stream_maps_model_response_status_to_custom_event() -> None:

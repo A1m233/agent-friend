@@ -1,0 +1,163 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-21T15:48:26.978922+00:00",
+    "ended_at": "2026-08-21T15:48:38.011305+00:00",
+    "duration_seconds": 11.032,
+    "git_commit": "5508e83",
+    "working_tree_dirty": true,
+    "note": "095 first-real target; model provenance: 2026-08-21 desktop incident used deepseek/deepseek-v4-flash-vision-exp; product base=5508e832df8e; product-diff=f765e290686b01e031fd119637e9bdf8af686db8; case-digest=38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece; leakage-audited; report-only",
+    "selection": {
+      "contract": "all",
+      "case": "C26-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        },
+        "timeout": 90.0
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "38c9928dedfc5674eb29e5270edc5940cbd3585944ddb5eada61bb6d6a533ece",
+      "total_contracts": 26,
+      "total_cases": 228,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 1,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C26": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C26",
+      "name": "agent-run-recovery",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C26-01",
+          "query": "继续完成刚才的查找。请按真实工具 schema 修正参数，并基于成功结果回答；不要把前两次未执行的失败说成已经搜索过。",
+          "facet": "DeepSeek 连续未知字段后修正 filesystem_search",
+          "source": "prod-deepseek-filesystem-search-malformed-20260821",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=['notes/todo.txt']",
+          "tool_calls": [
+            {
+              "name": "filesystem_search",
+              "args": {
+                "filesystem_scope_id": "scope_current_fixture",
+                "mode": "name",
+                "query": "todo"
+              },
+              "result_text": "{\"matches\":[{\"relative_path\":\"notes/todo.txt\"}],\"truncated\":false}",
+              "is_error": false,
+              "duration_seconds": 0.01599999999962165,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [
+            {
+              "name": "filesystem_search",
+              "args": {
+                "filesystem_scope_id": "scope_current_fixture",
+                "mode": "name",
+                "query": "todo",
+                "path": "."
+              },
+              "result_text": "{\"status\":\"error\",\"error\":{\"code\":\"invalid_tool_arguments\",\"message\":\"Additional properties are not allowed: path\"},\"executed\":false,\"authorization_requested\":false}",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            },
+            {
+              "name": "filesystem_search",
+              "args": {
+                "filesystem_scope_id": "scope_current_fixture",
+                "mode": "name",
+                "query": "todo",
+                "root": "."
+              },
+              "result_text": "{\"status\":\"error\",\"error\":{\"code\":\"invalid_tool_arguments\",\"message\":\"Additional properties are not allowed: root\"},\"executed\":false,\"authorization_requested\":false}",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "invalid_tool_arguments"
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "确实，前两次调用都没真正执行。我按 schema 重新发起查找，这次对了。",
+            "找到了，在 `notes/todo.txt` 这个文件里。\n\n之前两次调用因为参数格式不对没有真正执行，这次按 schema 修正后成功返回，命中的是 `notes/todo.txt`。如果你需要，我可以继续读出这个文件的内容，或者按名称继续找其它叫 todo 的条目——目前名称匹配只命中了这一个文件。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "确实，前两次调用都没真正执行。我按 schema 重新发起查找，这次对了。找到了，在 `notes/todo.txt` 这个文件里。\n\n之前两次调用因为参数格式不对没有真正执行，这次按 schema 修正后成功返回，命中的是 `notes/todo.txt`。如果你需要，我可以继续读出这个文件的内容，或者按名称继续找其它叫 todo 的条目——目前名称匹配只命中了这一个文件。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

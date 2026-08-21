@@ -34,7 +34,7 @@ from .errors import (
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
     LLMProviderError,
-    LLMStreamTimeoutError,
+    LLMStreamInterruptedAfterOutputError,
     LLMTransientProviderError,
 )
 from .kimi_transport import (
@@ -471,13 +471,20 @@ class LLMClient:
                 for event in upstream:
                     # 活动信号不包含正文或工具调用；它不应改变“尚未产出可用结果”
                     # 的安全重试语义。
-                    if not isinstance(event, LLMActivity):
+                    # Tool-call deltas also remain transient until a terminal chunk
+                    # closes the response; Conversation resets their accumulator at
+                    # the retry boundary.
+                    if isinstance(event, (LLMTextDelta, LLMTurnDone)):
                         emitted = True
                     yield event
                 return
             except (LLMNetworkError, LLMTransientProviderError) as exc:
                 retry_limit = self._retry_limit(exc)
-                if emitted or attempt >= retry_limit:
+                if emitted:
+                    raise LLMStreamInterruptedAfterOutputError(
+                        "provider stream failed after visible output"
+                    ) from exc
+                if attempt >= retry_limit:
                     raise
                 should_retry = True
                 retry_error = exc
@@ -512,8 +519,6 @@ class LLMClient:
         )
 
     def _retry_limit(self, error: LLMError) -> int:
-        if isinstance(error, LLMStreamTimeoutError):
-            return 0
         if self._is_engine_overload(error):
             return self._engine_overload_retries
         return self._network_retries

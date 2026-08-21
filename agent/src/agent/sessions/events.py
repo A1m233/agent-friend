@@ -24,6 +24,7 @@ EventType = Literal[
     "channel_change",
     "tool_call_request",
     "tool_call_result",
+    "model_output_rejection",
     "compaction",
     "tool_context_edit",
     "system_trigger",
@@ -46,6 +47,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "channel_change",
         "tool_call_request",
         "tool_call_result",
+        "model_output_rejection",
         "compaction",
         "tool_context_edit",
         "system_trigger",
@@ -100,6 +102,10 @@ result uuid；原始 ``tool_call_result`` 仍完整保留，同样是纯加性�
     076 起新增 ``skill_catalog_state`` 与 ``skill_context`` 两类模型专用事件。
     它们不进入普通会话/UI/记忆投影，只进入 LLM history，仍是纯加性变更，故
     ``SCHEMA_VERSION`` **不递增**。
+
+    095 起新增 ``model_output_rejection``，记录无法组成可靠 tool request/result
+    对的模型输出失败。它只进入模型历史投影，不生成普通消息或工具卡片；同样是
+    纯加性事件，故 ``SCHEMA_VERSION`` **不递增**。
     """
 
 

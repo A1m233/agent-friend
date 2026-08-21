@@ -57,6 +57,11 @@ class ToolCallRequest:
     event_tool_call_id: str = ""
     tool_name: str = ""
     args: dict[str, Any] = field(default_factory=dict)
+    arguments_json: str = ""
+    arguments_state: Literal["valid_object", "invalid_json", "non_object", "missing"] = (
+        "valid_object"
+    )
+    execution_disposition: Literal["execute", "rejected_before_execution"] = "execute"
     origin: Literal["model", "deterministic_history_router"] = "model"
     type: Literal["tool_call_request"] = "tool_call_request"
 
@@ -81,6 +86,9 @@ class ToolCallResult:
     tool_name: str = ""
     text: str = ""
     is_error: bool = False
+    executed: bool = True
+    authorization_requested: bool = False
+    error_code: str = ""
     duration_seconds: float = 0.0
     origin: Literal["model", "deterministic_history_router"] = "model"
     type: Literal["tool_call_result"] = "tool_call_result"
@@ -128,20 +136,21 @@ class SkillActivationStatus:
 
 @dataclass(frozen=True)
 class TurnDone:
-    """本轮对话正常结束。
+    """本轮对话的显式终态。
 
     Attributes:
         stop_reason: 结束原因。常见值：
 
             - ``"end_turn"`` — LLM 主动结束（无工具调用 或 整合工具结果后结束）
             - ``"budget_exhausted"`` — 显式运行预算耗尽（已走收尾兜底逻辑）
-            - ``"no_progress"`` — 连续重复失败触发无进展保护
-            - ``"user_action_required"`` — 工具需要用户先完成外部动作，已停止继续调用
         total_tool_calls: 本轮累计执行的工具调用次数（含失败）。
     """
 
+    status: Literal["completed", "interrupted", "failed"] = "completed"
     stop_reason: str = ""
     total_tool_calls: int = 0
+    tool_call_items: int = 0
+    model_calls: int = 0
     model_continuations: int = 0
     elapsed_seconds: float = 0.0
     budget_dimension: str | None = None

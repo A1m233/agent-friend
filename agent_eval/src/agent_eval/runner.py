@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from agent.command_runtime.tools import ExecCommandTool
 from agent.system_prompt import InteractionSurfaceId
-from agent.tool_runtime import ToolRunContext
+from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.skills import SkillReadTool
 from agent.tools.builtin.social_platforms import SocialReadTool, SocialSearchTool
 from agent.tools.builtin.todo_manage import TodoManageTool
@@ -611,6 +611,9 @@ def _inject_current_session_events(
                 "event_tool_call_id": item.tool_call_id,
                 "tool_name": item.tool_name,
                 "args": dict(item.args),
+                "arguments_json": item.arguments_json,
+                "arguments_state": item.arguments_state,
+                "execution_disposition": item.execution_disposition,
             }
         elif isinstance(item, FixtureToolCallResult):
             event_type = "tool_call_result"
@@ -620,6 +623,9 @@ def _inject_current_session_events(
                 "tool_name": item.tool_name,
                 "content": item.content,
                 "is_error": item.is_error,
+                "executed": item.executed,
+                "authorization_requested": item.authorization_requested,
+                "error_code": item.error_code,
             }
         else:  # pragma: no cover - closed union, defensive for hand-built cases
             raise TypeError(f"unsupported current-session fixture event: {type(item).__name__}")
@@ -632,6 +638,30 @@ def _inject_current_session_events(
         )
         session.append(event)
         store.append_event(session.session_id, event)
+
+
+def _prior_tool_call_traces(events: list[FixtureCurrentEvent]) -> list[ToolCallTrace]:
+    """Pair trusted historical requests/results for recovery-oriented judges."""
+
+    requests: dict[str, FixtureToolCallRequest] = {}
+    traces: list[ToolCallTrace] = []
+    for item in events:
+        if isinstance(item, FixtureToolCallRequest):
+            requests[item.tool_call_id] = item
+        elif isinstance(item, FixtureToolCallResult):
+            request = requests.pop(item.tool_call_id)
+            traces.append(
+                ToolCallTrace(
+                    name=item.tool_name,
+                    args=dict(request.args),
+                    result_text=item.content,
+                    is_error=item.is_error,
+                    executed=item.executed,
+                    authorization_requested=item.authorization_requested,
+                    error_code=item.error_code,
+                )
+            )
+    return traces
 
 
 async def _file_chunks(path: Path) -> AsyncIterator[bytes]:
@@ -764,6 +794,15 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
 
             conversation = manager.start_conversation(
                 session,
+                tool_run_policy=(
+                    ToolRunPolicy(
+                        max_model_continuations=case.tool_run_policy.max_model_continuations,
+                        max_total_tool_calls=case.tool_run_policy.max_total_tool_calls,
+                        max_elapsed_seconds=case.tool_run_policy.max_elapsed_seconds,
+                    )
+                    if case.tool_run_policy is not None
+                    else None
+                ),
                 tool_run_context_factory=tool_run_context_factory,
             )
 
@@ -790,6 +829,9 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                             result_text=event.text,
                             is_error=event.is_error,
                             duration_seconds=event.duration_seconds,
+                            executed=event.executed,
+                            authorization_requested=event.authorization_requested,
+                            error_code=event.error_code,
                         )
                     )
                 elif isinstance(event, TextDelta):
@@ -820,6 +862,8 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                         result_text="",
                         is_error=False,
                         duration_seconds=None,
+                        executed=None,
+                        authorization_requested=None,
                     )
                 )
 
@@ -830,6 +874,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 stop_reason=stop_reason,
                 assistant_segments=assistant_text.segments,
                 skill_activations=skill_activations,
+                prior_tool_calls=_prior_tool_call_traces(case.current_session_events),
                 skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
             )
     except Exception as exc:
@@ -840,6 +885,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             stop_reason="error",
             assistant_segments=[],
             skill_activations=[],
+            prior_tool_calls=[],
             error=f"{type(exc).__name__}: {exc}",
             skill_catalog_observation=(catalog_guard.observation if catalog_guard else None),
         )

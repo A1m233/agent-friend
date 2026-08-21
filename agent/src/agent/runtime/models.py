@@ -44,6 +44,13 @@ class RunOutcome(StrEnum):
     REJECTED = "rejected"
 
 
+class TurnStatus(StrEnum):
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
+    FAILED = "failed"
+
+
 class ConsumerAbandonPolicy(StrEnum):
     """Primary event consumer disappears before the run reaches terminal."""
 
@@ -70,7 +77,13 @@ class RunCancelResult(StrEnum):
 @dataclass(frozen=True)
 class RunTerminal:
     outcome: RunOutcome
+    turn_status: TurnStatus | None = None
     reason_code: str = ""
+    total_tool_calls: int = 0
+    tool_call_items: int = 0
+    model_calls: int = 0
+    model_continuations: int = 0
+    budget_dimension: str | None = None
     error: BaseException | None = None
     finished_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -80,6 +93,17 @@ RunErrorCallback = Callable[["Conversation", BaseException, "RunRequest"], None]
 ConversationRunner = Callable[
     ["Conversation", "RunRequest", CancellationToken], Iterator["ConversationEvent"]
 ]
+
+
+@dataclass(frozen=True)
+class RunExecutionResult:
+    turn_status: TurnStatus
+    reason_code: str
+    total_tool_calls: int = 0
+    tool_call_items: int = 0
+    model_calls: int = 0
+    model_continuations: int = 0
+    budget_dimension: str | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +148,12 @@ class RunSnapshot:
     started_at: datetime | None
     finished_at: datetime | None
     version: int
+    turn_status: TurnStatus | None = None
+    total_tool_calls: int = 0
+    tool_call_items: int = 0
+    model_calls: int = 0
+    model_continuations: int = 0
+    budget_dimension: str | None = None
 
 
 RunChangeCallback = Callable[[RunSnapshot], None]
@@ -208,6 +238,12 @@ class RunHandle:
         *,
         reason_code: str = "",
         error: BaseException | None = None,
+        turn_status: TurnStatus | None = None,
+        total_tool_calls: int = 0,
+        tool_call_items: int = 0,
+        model_calls: int = 0,
+        model_continuations: int = 0,
+        budget_dimension: str | None = None,
     ) -> bool:
         with self._lock:
             if self._status is RunStatus.TERMINAL:
@@ -215,7 +251,13 @@ class RunHandle:
             self._status = RunStatus.TERMINAL
             self._terminal = RunTerminal(
                 outcome=outcome,
+                turn_status=turn_status,
                 reason_code=reason_code,
+                total_tool_calls=total_tool_calls,
+                tool_call_items=tool_call_items,
+                model_calls=model_calls,
+                model_continuations=model_continuations,
+                budget_dimension=budget_dimension,
                 error=error,
             )
             self._version += 1
@@ -292,6 +334,12 @@ class RunHandle:
             started_at=self._started_at,
             finished_at=terminal.finished_at if terminal is not None else None,
             version=self._version,
+            turn_status=terminal.turn_status if terminal is not None else None,
+            total_tool_calls=terminal.total_tool_calls if terminal is not None else 0,
+            tool_call_items=terminal.tool_call_items if terminal is not None else 0,
+            model_calls=terminal.model_calls if terminal is not None else 0,
+            model_continuations=terminal.model_continuations if terminal is not None else 0,
+            budget_dimension=terminal.budget_dimension if terminal is not None else None,
         )
 
     def _publish(self, snapshot: RunSnapshot) -> None:

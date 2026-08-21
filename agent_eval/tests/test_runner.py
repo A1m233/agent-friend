@@ -18,6 +18,7 @@ from agent_eval.runner import (
     _inject_current_session_messages,
     _inject_fixture_compaction,
     _inject_skill_catalog_state,
+    _prior_tool_call_traces,
     _replace_fixture_skills,
     _SkillCatalogRequestGuard,
 )
@@ -29,6 +30,7 @@ from agent_eval.schema import (
     FakeToolResponse,
     FixtureAttachment,
     FixtureCompaction,
+    FixtureCurrentEvent,
     FixtureMessage,
     FixtureSkill,
     FixtureToolCallRequest,
@@ -621,3 +623,31 @@ def test_inject_current_session_events_preserves_completed_tool_history(tmp_path
     ]
     assert messages[1].content == '{"status":"no_results"}'
     assert messages[1].meta["tool_call_id"] == "web_search_58"
+
+
+def test_prior_tool_call_trace_preserves_pre_execution_safety_facts() -> None:
+    events: list[FixtureCurrentEvent] = [
+        FixtureToolCallRequest(
+            tool_call_id="exec-bad",
+            tool_name="exec_command",
+            args={},
+            arguments_json="{}",
+            execution_disposition="rejected_before_execution",
+        ),
+        FixtureToolCallResult(
+            tool_call_id="exec-bad",
+            tool_name="exec_command",
+            content="rejected",
+            is_error=True,
+            executed=False,
+            authorization_requested=False,
+            error_code="invalid_tool_arguments",
+        ),
+    ]
+
+    trace = _prior_tool_call_traces(events)
+
+    assert len(trace) == 1
+    assert trace[0].executed is False
+    assert trace[0].authorization_requested is False
+    assert trace[0].error_code == "invalid_tool_arguments"
