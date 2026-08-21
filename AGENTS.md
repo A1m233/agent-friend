@@ -30,7 +30,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: 58872c7bed16485e7572a7cfbb03f26e2aca0a8c7816a95756c94049dade8327 -->
+<!-- codex-adapter-source-sha256: 2696ef76e915f3f788ea5a8fdfd96a57e58c4cc7033ecd6453bb9fee11a62e42 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -274,7 +274,7 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 - 用户明确确认验收完成；
 - 已 rebase / merge 最新 main，无遗留冲突。
 
-当用户的当前意图同时包含“合入 `main`”和“推送远端”，或完成合入后继续要求推送 `main` 时，在开始该组合 Git 流程前显式调用 `maintain-agent-friend-guide` 的 `merge-main-and-push` 自动模式。用户对该组合交付的明确要求，构成本次工作流内只读复核、必要知识修改与验证、公开 guide 正常 commit/push、创建下一条合规 immutable release、产品后续正常 commit/push 的有界授权；正常路径不再询问“是否检查 / 是否更新 / 是否提交 / 是否推送 / 是否发布 release”。无需更新时直接继续合入；需要更新时必须先完成公开提交与 immutable release，再继续合入和推送 `main`。日常 Guide 内容发布不再同步产品 builtin；离线 baseline 由 package-release 在首次实际构建前自动检查并刷新，无需单独询问。
+当用户的当前意图同时包含“合入 `main`”和“推送远端”，或完成合入后继续要求推送 `main` 时，在开始该组合 Git 流程前显式调用 `maintain-agent-friend-guide` 的 `merge-main-and-push` 自动模式。用户对该组合交付的明确要求，构成本次工作流内只读复核、必要知识修改与验证、公开 guide 正常 commit/push、创建下一条合规 immutable release、产品后续正常 commit/push 的有界授权；正常路径不再询问“是否检查 / 是否更新 / 是否提交 / 是否推送 / 是否发布 release”。无需更新时直接继续合入；需要更新时必须先完成公开提交与 immutable release，再继续合入和推送 `main`。日常 Guide 内容发布不再同步产品 builtin；离线 baseline 的渠道选择和工作树生命周期由 package-release 唯一负责：local-test 不得留下持久 overlay，可分发构建只接受已提交 baseline。
 
 该自动授权不覆盖普通 feature/fix 分支 push、普通 commit/rebase、只合入不推送、只推送非 `main` 分支、package-release 或独立的 guide 维护请求。任一仓库存在来源不明的 dirty 文件、基线或语义无法判断、公开内容有 secret/私有实现风险、远端分叉或需要非 fast-forward/force-push/amend/delete、验证或 push 失败、复核后产品状态变化，或跨仓部分完成状态无法唯一续跑时，立即停止并报告，不猜测处理。
 

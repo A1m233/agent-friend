@@ -24,6 +24,13 @@ from typing import Any
 
 import brotli
 from dependency_policy import validate_frozen_runtime_dependency_policy
+from guide_baseline import (
+    GuideBaseline,
+    exported_receipt,
+    inherited_baseline,
+    require_committed_baseline,
+    transient_baseline,
+)
 from install_contract import (
     ACTIVE_INSTALL_FILE,
     INSTALL_PROFILES,
@@ -111,6 +118,8 @@ from runtime_config import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
+GUIDE_BASELINE_BUILD_STEPS = {"runtime", "installer", "all", "installer-smoke-build"}
+_ACTIVE_GUIDE_BASELINE: GuideBaseline | None = None
 TAURI_DIR = REPO_ROOT / "frontend" / "src-tauri"
 SPEC_PATH = SCRIPT_DIR / "windows" / "agent_friend_runtime.spec"
 TAURI_CONFIG = SCRIPT_DIR / "windows" / "tauri.package.conf.json"
@@ -296,6 +305,16 @@ def _source_metadata() -> dict[str, Any]:
                 digest.update(path.read_bytes())
         tree_sha256 = digest.hexdigest()
     return {"commit": commit, "dirty": dirty, "tree_sha256": tree_sha256}
+
+
+def _active_guide_baseline_payload() -> dict[str, str]:
+    if _ACTIVE_GUIDE_BASELINE is None:
+        raise RuntimeError("package build is missing Guide baseline provenance")
+    return {
+        "source_commit": _ACTIVE_GUIDE_BASELINE.guide_commit,
+        "snapshot_sha256": _ACTIVE_GUIDE_BASELINE.snapshot_sha256,
+        "lifecycle": _ACTIVE_GUIDE_BASELINE.lifecycle,
+    }
 
 
 def _repository_paths() -> set[str]:
@@ -1293,6 +1312,7 @@ def _build_installer(
                 "commit": identity.source_commit,
                 "dirty": identity.dirty,
                 "tree_sha256": identity.source_tree_sha256,
+                "guide_baseline": _active_guide_baseline_payload(),
             },
             "toolchain": _toolchain_versions(pnpm),
             "installer_verification": verification_inputs.to_json_dict(),
@@ -2017,6 +2037,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dir", type=Path, help="override package cache/work root")
     parser.add_argument("--releases-dir", type=Path, help="override package releases root")
     parser.add_argument(
+        "--guide-repo",
+        type=Path,
+        help="verified managed agent-friend-guide checkout used by package builds",
+    )
+    parser.add_argument(
+        "--guide-commit",
+        help="exact origin-visible agent-friend-guide commit used by package builds",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="apply workspace-gc; without this flag cleanup is a dry-run",
@@ -2073,8 +2102,7 @@ def _validate_package_build_intent(
         raise RuntimeError("--trusted-beta requires the installer or all step")
 
 
-def main() -> int:
-    args = _parse_args()
+def _execute(args: argparse.Namespace) -> int:
     validate_profile_isolation()
     profile = resolve_install_profile(args.install_profile)
     if args.for_current_install and (
@@ -2436,6 +2464,59 @@ def main() -> int:
                 except (OSError, RuntimeError) as error:
                     print(f"warning: package workspace cleanup failed: {error}")
     return 0
+
+
+@contextmanager
+def _package_guide_baseline(args: argparse.Namespace):
+    if args.step not in GUIDE_BASELINE_BUILD_STEPS:
+        if args.guide_repo is not None or args.guide_commit is not None:
+            raise RuntimeError(
+                "--guide-repo and --guide-commit are only valid for actual package builds"
+            )
+        yield None
+        return
+
+    inherited = inherited_baseline(REPO_ROOT)
+    if inherited is not None:
+        if args.guide_repo is not None or args.guide_commit is not None:
+            raise RuntimeError("nested package builds inherit Guide baseline provenance")
+        yield inherited
+        return
+
+    if args.guide_repo is None or args.guide_commit is None:
+        raise RuntimeError(
+            "actual package builds require --guide-repo and --guide-commit from the "
+            "package-baseline preflight"
+        )
+
+    transient = args.local_test or args.step == "installer-smoke-build"
+    if transient:
+        with transient_baseline(REPO_ROOT, args.guide_repo, args.guide_commit) as baseline:
+            yield baseline
+        return
+
+    baseline = require_committed_baseline(REPO_ROOT, args.guide_repo, args.guide_commit)
+    with exported_receipt(REPO_ROOT, baseline):
+        yield baseline
+
+
+def main() -> int:
+    global _ACTIVE_GUIDE_BASELINE
+
+    args = _parse_args()
+    with _package_guide_baseline(args) as baseline:
+        _ACTIVE_GUIDE_BASELINE = baseline
+        if baseline is not None:
+            print(
+                "guide_baseline: "
+                f"commit={baseline.guide_commit} "
+                f"snapshot_sha256={baseline.snapshot_sha256} "
+                f"lifecycle={baseline.lifecycle}"
+            )
+        try:
+            return _execute(args)
+        finally:
+            _ACTIVE_GUIDE_BASELINE = None
 
 
 if __name__ == "__main__":
