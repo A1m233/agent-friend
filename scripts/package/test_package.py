@@ -10,7 +10,7 @@ import sys
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import brotli
 import pytest
@@ -48,6 +48,38 @@ def test_package_version_is_consistent() -> None:
         )
     )
     assert package._project_version() == tauri["version"]
+
+
+def test_actual_package_build_requires_explicit_guide_baseline() -> None:
+    package = _load("package_run_guide_required", PACKAGE_DIR / "run.py")
+    args = SimpleNamespace(
+        step="all",
+        local_test=True,
+        guide_repo=None,
+        guide_commit=None,
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="actual package builds require"),
+        package._package_guide_baseline(args),
+    ):
+        raise AssertionError("unreachable")
+
+
+def test_non_build_command_rejects_guide_baseline_arguments(tmp_path) -> None:
+    package = _load("package_run_guide_nonbuild", PACKAGE_DIR / "run.py")
+    args = SimpleNamespace(
+        step="version-status",
+        local_test=False,
+        guide_repo=tmp_path / "guide",
+        guide_commit="a" * 40,
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="only valid for actual package builds"),
+        package._package_guide_baseline(args),
+    ):
+        raise AssertionError("unreachable")
 
 
 def test_packaging_environment_removes_credentials(monkeypatch) -> None:
@@ -1371,6 +1403,18 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     tmp_path, monkeypatch
 ) -> None:
     package = _load("package_run_external_build", PACKAGE_DIR / "run.py")
+    guide_commit = "d" * 40
+    guide_snapshot = "e" * 64
+    monkeypatch.setattr(
+        package,
+        "_ACTIVE_GUIDE_BASELINE",
+        package.GuideBaseline(
+            guide_commit=guide_commit,
+            snapshot_sha256=guide_snapshot,
+            guide_repo=tmp_path / "guide",
+            lifecycle="transient",
+        ),
+    )
     repo = tmp_path / "repo"
     common_git = repo / ".git"
     home = tmp_path / "home"
@@ -1510,6 +1554,11 @@ def test_installer_build_uses_external_cargo_target_and_generated_resource_confi
     assert manifest["release_channel"] == "local-test"
     assert manifest["publishable"] is False
     assert manifest["installer_verification"]["packageInputSha256"] == "c" * 64
+    assert manifest["source"]["guide_baseline"] == {
+        "source_commit": guide_commit,
+        "snapshot_sha256": guide_snapshot,
+        "lifecycle": "transient",
+    }
     metadata = json.loads(package._package_metadata_path(build_paths).read_text("utf-8"))
     assert metadata["distribution"] == "ordinary"
 
