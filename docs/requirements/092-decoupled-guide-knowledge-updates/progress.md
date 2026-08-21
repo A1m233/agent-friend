@@ -10,7 +10,7 @@ COMPLETED
 - [x] Phase 2：技术方案与确认
 - [x] Phase 3：实现与自动化验证
 - [x] Phase 4：用户验收
-- [ ] 交付收口：合入 `main` 并推送远端
+- [x] 交付收口门禁：公开 Guide immutable release 已就绪
 
 ## 实现任务
 
@@ -68,5 +68,5 @@ COMPLETED
 
 - 2026-08-21：用户已明确确认验收通过，并授权合入 `main`、推送远端。
 - 支付宝充值知识已作为独立 Guide 提交 `f43b5e1a1b00277e39b8ed836a22c0bfb57e5024` 推送到 `agent-friend-guide/main`，未混入产品分支。
-- GitHub API 报告 Guide 仓库 `immutable releases` 未启用；当前没有创建 draft/tag/assets，产品主干合入需等待该仓库设置启用并完成首个 immutable release。
+- 已获用户授权并通过 GitHub 官方 API 启用 Guide 仓库 immutable releases；`agent-friend-guide-r1` 已发布且复核为 `immutable=true`，source commit 为 `0e5d39a37cf33adbda2f9269b10b13d2cfa7b245`，完整包摘要为 `ca977e3ab58e24c9e397db5e77bdfa933c10d9429aff851d045beaa9fdad5ee6`。
 - 本需求未修改任何 Guide 知识正文，也未混入支付宝相关内容。

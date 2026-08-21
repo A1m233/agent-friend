@@ -36,13 +36,14 @@ release，运行时不区分发起路径。客户端验证固定来源、immutab
 | E-011 | 2026-08-21 | 已实现候选是否保持完整包、回退和轮次边界 | 代码/测试 | 当前工作树；`agent/skills/first_party_updates/*`; `test_first_party_skill_updates.py` | 实现固定 repository、manifest/compatibility、safe ZIP、staging、版本目录、原子 state、active/previous/baseline、单调 sequence 与 effective builtin roots；测试覆盖完整资源、零执行、篡改、回退、重放、状态损坏、宿主升级和旧/新 turn。 | confirmed | active | [progress.md](./progress.md) |
 | E-012 | 2026-08-21 | 实现候选能否通过项目与冻结运行时门禁 | 构建/测试 | runtime package input `d55642aff6bc03782c188ea8fbbd03a8263d6f274b0247142fa2da342aaf2af4`; build `20260820T191424Z-d08e94e415c6-719d5dff`; post-hardening input `3a8324d0b4b9a5720ceac61c8d48e43dca3e77697a9f2ec7b81b15522114c1cd` | backend 1958 passed/4 skipped、frontend 590 passed + build、Rust 220 passed/1 ignored + release check；package-sensitive frozen runtime doctor/capability smoke 退出码 0。后续只加固非 frozen 的发布工具预检，installer contract 仍为 standard / packageRequired=false。 | confirmed | active | [progress.md](./progress.md) |
 | E-013 | 2026-08-21 | 首次真实发布能否在仓库设置不安全时先于写入失败关闭 | 外部状态/代码/测试 | GitHub `immutable-releases` API 返回 `enabled=false`; Guide commit `f43b5e1`; `test_publish_release_rejects_disabled_immutability_before_writing` | 真实预检暴露旧实现没有解析 enabled；修正后发布命令在任何 draft/tag/asset 写入前拒绝，支付宝知识已独立推送但未创建 release。 | confirmed | active | [progress.md](./progress.md) |
+| E-014 | 2026-08-21 | 启用仓库设置后首个真实 release 能否完成不可变发布闭环 | 外部状态/发布 | `agent-friend-guide-r1`; source `0e5d39a`; package `sha256:ca977e3ab58e24c9e397db5e77bdfa933c10d9429aff851d045beaa9fdad5ee6`; manifest `sha256:064cb2c386303b3d528ee839efac21fcd4f594630dc903b2957d71595f3b63cb` | 用户明确授权后通过官方 API 启用 immutability；发布命令成功，独立 API 回读确认非 draft/prerelease、`immutable=true`、source/tag/assets 与本地构建一致，兼容范围为 `>=0.2.1,<0.3.0`。 | confirmed | active | [release](https://github.com/A1m233/agent-friend-guide/releases/tag/agent-friend-guide-r1) |
 
 ## 未决问题
 
-方案与实现级阻塞已关闭。首次真实 Guide release 发布仍需有 admin 权限的维护者启用 repository release
-immutability；当前合入主干自动事务已获发布授权，但设置仍为 disabled，因此不会创建 draft/tag/assets。
-当前实现已经在发布前解析并检查该设置，不会先创建 mutable release 再把它当成功。真实发布不改变固定来源、
-完整包更新、单调 sequence、effective builtin root 和 baseline 回退契约。
+方案、实现与首次真实发布阻塞均已关闭。仓库 immutable releases 已在用户明确授权后启用，
+`agent-friend-guide-r1` 已完成不可变发布并验证 tag、source commit 和两项 asset digest。当前实现会在发布前解析并
+检查该设置，不会先创建 mutable release 再把它当成功。真实发布不改变固定来源、完整包更新、单调 sequence、
+effective builtin root 和 baseline 回退契约。
 
 ## 决策影响
 
@@ -67,7 +68,7 @@ immutability；当前合入主干自动事务已获发布授权，但设置仍�
 | E-007 | VS Code 官方文档页面 | 未另行归档 | 2026-08-21 页面取证；以官方现行页面为准 | 公开官方资料 |
 | E-008 | 当前需求确认与 `requirement.md` | 需求目录 | requirement 状态 `CONFIRMED` | 不包含私密输入或支付宝 Guide 内容 |
 | E-010 | GitHub 官方 release immutability 与 REST API 文档 | 未另行归档 | 2026-08-21 页面取证；以官方现行页面为准 | 公开官方资料 |
-| E-011–E-013 | 当前 feature 工作树、项目门禁、package build workspace、公开 Guide commit 与仓库 immutability 设置 | 需求目录 `progress.md` 记录摘要；构建缓存由 package workspace 治理 | source tree / package input digest / build ID / Guide commit 锚定 | 本机构建路径不含用户内容；不归档大体积 runtime；仓库设置只记录公开布尔状态 |
+| E-011–E-014 | 当前 feature 工作树、项目门禁、package build workspace、公开 Guide commit、仓库 immutability 设置与 release | 需求目录 `progress.md` 记录摘要；构建缓存由 package workspace 治理；release 由 GitHub 托管 | source tree / package input digest / build ID / Guide commit / immutable release digest 锚定 | 本机构建路径不含用户内容；不归档大体积 runtime；仓库设置只记录公开布尔状态 |
 
 ## 对账记录
 
@@ -77,3 +78,4 @@ immutability；当前合入主干自动事务已获发布授权，但设置仍�
 | 2026-08-21 | 已确认 design、GitHub immutable release/REST API、Bridge/catalog/命令 snapshot 实现 | 一致；确认受管首方 Skill、immutable release、版本化缓存、effective builtin root 和单调 sequence 回退。 |
 | 2026-08-21 | 实现 diff、完整项目门禁、项目 Skill/rule audit、package-sensitive frozen runtime | 一致；修正 `source.json` 责任归属，新增 E-011/E-012，真实 release 留待不可逆外部发布授权。 |
 | 2026-08-21 | 首次真实 Guide 发布预检、支付宝 Guide 独立提交、发布工具回归测试与 installer contract | 发现 repository immutability 未启用；加固为写入前失败关闭，新增 E-013；Guide 内容独立推送，未创建 release。 |
+| 2026-08-21 | 用户授权启用 repository immutability、真实 `r1` 发布与独立 API 回读 | 设置启用；新增 E-014；release source、compatibility、immutable 状态与两个 asset digest 全部一致。 |
