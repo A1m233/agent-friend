@@ -32,6 +32,7 @@ from agent.paths import log_dir
 from agent.runtime import AgentRuntime
 from agent.todos import ReminderScheduler, TodoService, TodoStore
 from agent.tools import ToolRegistry
+from runtime_config.build_identity import runtime_build_identity
 from runtime_config.sources import default_settings_path
 
 from agent import (
@@ -39,6 +40,8 @@ from agent import (
     AttachmentStore,
     EffectivePersonaCatalog,
     EffectivePersonaStore,
+    FirstPartySkillStore,
+    FirstPartySkillUpdateService,
     JsonlSessionStore,
     MarkdownPromptBuilder,
     NaiveContextManager,
@@ -62,7 +65,11 @@ from agent import (
 )
 from llm_providers import LanguageModel, LanguageModelFactory, MultimodalInputAdapter
 from memory import Memory, MemorySearchService, build_memory
-from runtime_config import DesktopSettingsReader, config_mode_from_env, credential_source_for_mode
+from runtime_config import (
+    DesktopSettingsReader,
+    config_mode_from_env,
+    credential_source_for_mode,
+)
 
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
@@ -154,6 +161,8 @@ class BridgeRuntime:
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
     skill_service: SkillCatalogService | None = None
+    first_party_skill_updater: FirstPartySkillUpdateService | None = None
+    """092：固定首方 Skill 的低频 release updater；源码运行时默认禁用网络。"""
     turn_coordinator: SessionTurnCoordinator = field(default_factory=SessionTurnCoordinator)
     """Per-session turn coordinator for persistent mutating channels."""
     agent_runtime: AgentRuntime | None = None
@@ -222,6 +231,8 @@ class BridgeRuntime:
 
     def close(self) -> None:
         """进程退出时调用：drain 抽取队列并关库（幂等）。"""
+        if self.first_party_skill_updater is not None:
+            self.first_party_skill_updater.stop()
         if self.skill_service is not None:
             self.skill_service.stop()
         if self.social_auth_orchestrator is not None:
@@ -337,10 +348,30 @@ def build_runtime(
         )
     default_persona = catalog.find_by_name("default").name
     default_model = runtime_config.default_model
+    personal_skills_root = settings.sessions_dir.parent / "skills"
+    first_party_skill_store = FirstPartySkillStore(personal_skills_root)
+
+    def builtin_overrides() -> dict[str, Path | None]:
+        root, _source, _reference, _state = first_party_skill_store.resolve_effective()
+        return {first_party_skill_store.config.skill_name: root}
+
     skill_service = SkillCatalogService(
-        personal_root=settings.sessions_dir.parent / "skills",
+        personal_root=personal_skills_root,
+        builtin_override_provider=builtin_overrides,
     )
     skill_service.initialize()
+    try:
+        build_identity = runtime_build_identity()
+    except RuntimeError:
+        logger.warning("invalid runtime build identity; first-party Skill updates disabled")
+        build_identity = None
+    raw_product_version = build_identity.get("productVersion") if build_identity else None
+    product_version = raw_product_version if isinstance(raw_product_version, str) else None
+    first_party_skill_updater = FirstPartySkillUpdateService(
+        store=first_party_skill_store,
+        catalog=skill_service,
+        product_version=product_version,
+    )
     filesystem_approval_broker = ApprovalBroker()
     codex_path_value = os.environ.get("AGENT_FRIEND_CODEX_EXECUTABLE")
     codex_executable: Path | None = None
@@ -355,11 +386,7 @@ def build_runtime(
         codex_home=command_runtime_root / "codex-home",
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
     )
-    builtin_skill_roots = tuple(
-        canonical_path(record.package_root)
-        for record in skill_service.snapshot.entries
-        if record.source == "builtin"
-    )
+    builtin_skill_roots = (canonical_path(skill_service.personal_root / ".system"),)
     product_paths = [
         settings.sessions_dir,
         settings.memory_db,
@@ -514,6 +541,7 @@ def build_runtime(
             memory=memory,
             recall_buffer=recall_buffer,
             skill_service=skill_service,
+            first_party_skill_updater=first_party_skill_updater,
             turn_coordinator=turn_coordinator,
             agent_runtime=agent_runtime,
             session_model_service=session_model_service,
@@ -618,6 +646,7 @@ def build_runtime(
         memory=memory,
         recall_buffer=recall_buffer,
         skill_service=skill_service,
+        first_party_skill_updater=first_party_skill_updater,
         turn_coordinator=turn_coordinator,
         agent_runtime=agent_runtime,
         session_model_service=session_model_service,

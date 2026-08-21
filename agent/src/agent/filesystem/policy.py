@@ -44,11 +44,13 @@ class ProtectedPathPolicy:
     def default(cls, *, shared_skill_root: Path | None = None) -> ProtectedPathPolicy:
         shared = shared_skill_root or Path.home() / ".agents" / "skills"
         builtin_env = os.environ.get("AGENT_FRIEND_BUILTIN_SKILLS_DIR")
-        builtin = (canonical_path(Path(builtin_env)),) if builtin_env else ()
+        builtin = [canonical_path(skills_dir() / ".system")]
+        if builtin_env:
+            builtin.append(canonical_path(Path(builtin_env)))
         return cls(
             product_roots=(canonical_path(user_data_dir()), canonical_path(log_dir())),
             personal_skill_roots=(canonical_path(skills_dir()), canonical_path(shared)),
-            builtin_skill_roots=builtin,
+            builtin_skill_roots=tuple(builtin),
         )
 
     def is_protected(self, path: Path) -> bool:

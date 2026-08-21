@@ -30,7 +30,7 @@
 
 <!-- codex-rule-loading:start -->
 <!-- codex-adapter-format: 2 -->
-<!-- codex-adapter-source-sha256: f0a5c1483d2c03f9179a9241e31bce3fb495eb9f07c3902136b2e5f2eb00bdd1 -->
+<!-- codex-adapter-source-sha256: edd7d91925f6093d44bdffc16bc963b13fb749c1b1978e052e41e3243e7ca223 -->
 ## Codex Rule Loading
 
 This section is generated from Cursor rule frontmatter. Cursor loads some rules automatically; Codex only sees AGENTS.md, so the adapter maps Cursor rule semantics into explicit Codex instructions.
@@ -274,7 +274,7 @@ worktree、branch 和端口匹配只证明运行实例的归属，不能证明�
 - 用户明确确认验收完成；
 - 已 rebase / merge 最新 main，无遗留冲突。
 
-当用户的当前意图同时包含“合入 `main`”和“推送远端”，或完成合入后继续要求推送 `main` 时，在开始该组合 Git 流程前显式调用 `maintain-agent-friend-guide` 的 `merge-main-and-push` 自动模式。用户对该组合交付的明确要求，构成本次工作流内只读复核、必要知识修改与验证、公开 guide 正常 commit/push、builtin sync、产品后续正常 commit/push 的有界授权；正常路径不再询问“是否检查 / 是否更新 / 是否提交 / 是否推送”。无需更新时直接继续合入；需要更新时必须先完成公开发布与 builtin pin，再继续合入和推送 `main`。
+当用户的当前意图同时包含“合入 `main`”和“推送远端”，或完成合入后继续要求推送 `main` 时，在开始该组合 Git 流程前显式调用 `maintain-agent-friend-guide` 的 `merge-main-and-push` 自动模式。用户对该组合交付的明确要求，构成本次工作流内只读复核、必要知识修改与验证、公开 guide 正常 commit/push、创建下一条合规 immutable release、产品后续正常 commit/push 的有界授权；正常路径不再询问“是否检查 / 是否更新 / 是否提交 / 是否推送 / 是否发布 release”。无需更新时直接继续合入；需要更新时必须先完成公开提交与 immutable release，再继续合入和推送 `main`。日常 Guide 内容发布不再同步产品 builtin；离线 baseline 只在 package-release 经用户同意后刷新。
 
 该自动授权不覆盖普通 feature/fix 分支 push、普通 commit/rebase、只合入不推送、只推送非 `main` 分支、package-release 或独立的 guide 维护请求。任一仓库存在来源不明的 dirty 文件、基线或语义无法判断、公开内容有 secret/私有实现风险、远端分叉或需要非 fast-forward/force-push/amend/delete、验证或 push 失败、复核后产品状态变化，或跨仓部分完成状态无法唯一续跑时，立即停止并报告，不猜测处理。
 
@@ -520,7 +520,7 @@ Before starting work that matches a trigger below, read the rule file and apply 
 | `desktop-visual-inspection` | 在 agent-friend 真实桌面端观察和验证视觉、DOM、交互与产品内 E2E 状态的标准流程。Use only when 用户明确要求真实桌面端视觉验收、截图、DOM、Playwri… |
 | `fix-issue` | 把用户明确点名的 docs/issues/NNN-slug/ 已登记 issue 闭环——读 issue、核对现状、落地修复、验证、标记 resolved 并提交。仅当用户给出 issue… |
 | `inspect-agent-friend-diagnostics` | Safely inspect and interpret agent-friend local diagnostic ZIP bundles. Use in the agent-friend… |
-| `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，并维护、验证、发布 agent-friend-guide 与同步产品 builtin。显式触发：用户直接要求检查、维护、发布… |
+| `maintain-agent-friend-guide` | 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builti… |
 | `package-release` | 在 agent-friend 项目中查询或设置桌面产品版本、构建受治理的 Windows 安装包，并盘点或清理打包工作区。Use when 用户说“打安装包”“构建安装包”“本地测试包”“查… |
 | `showcase-update` | Update the public agent-friend showcase repository from the private source repo. Use when the u… |
 | `tdesign-chat-style` | 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage… |

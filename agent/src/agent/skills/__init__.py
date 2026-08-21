@@ -1,6 +1,12 @@
 """Agent Skill discovery, catalog, activation, and watcher services."""
 
 from .catalog import render_catalog
+from .first_party_updates import (
+    FirstPartySkillConfig,
+    FirstPartySkillStore,
+    FirstPartySkillUpdateService,
+    GitHubReleaseClient,
+)
 from .loader import SkillLoader
 from .models import (
     ActivatedSkill,
@@ -27,6 +33,10 @@ from .service import SkillCatalogService, default_shared_skills_dir
 
 __all__ = [
     "ActivatedSkill",
+    "FirstPartySkillConfig",
+    "FirstPartySkillStore",
+    "FirstPartySkillUpdateService",
+    "GitHubReleaseClient",
     "RenderedSkillCatalog",
     "SkillActivationIssue",
     "SkillAlias",
