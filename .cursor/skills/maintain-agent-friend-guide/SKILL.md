@@ -1,22 +1,22 @@
 ---
 name: maintain-agent-friend-guide
-description: 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builtin 基线。显式触发：用户直接要求检查、维护、发布或同步 guide，package-release 提醒后用户同意，或 dev-workflow 以 merge-main-and-push 自动模式明确调用。不要因普通实现、打包、commit、push、合并或泛化的“看看是否完成”自行触发。
+description: 检查 agent-friend 产品变更是否需要更新公开用户知识，维护并发布 agent-friend-guide immutable release，或为新桌面安装包刷新离线 builtin 基线。显式触发：用户直接要求检查、维护、发布或同步 guide，package-release 在首次实际构建前自动调用，或 dev-workflow 以 merge-main-and-push 自动模式明确调用。不要因普通实现、未进入构建的打包查询、commit、push、合并或泛化的“看看是否完成”自行触发。
 ---
 
 # 维护 agent-friend 用户知识
 
 把公开 `agent-friend-guide` 与产品用户可见事实保持一致。先确定调用模式：
 
-- `manual`：用户直接请求或 package-release 提醒后进入。默认只做检查，后续写入与 Git 操作按用户明确授权推进。
+- `manual`：用户直接请求后进入。默认只做检查，后续写入与 Git 操作按用户明确授权推进。
 - `merge-main-and-push`：仅由 `dev-workflow` 在用户明确要求合入 `main` 并推送时调用。按本 Skill 的自动事务完成必要更新、正常 commit/push 与 immutable release，不逐步询问。
-- `package-baseline`：仅在 package-release 提醒后用户明确同意，或用户直接要求刷新安装包离线 Guide 时进入。只把已发布的最新兼容 immutable release 同步为产品 builtin；不编辑公开知识、不创建 release、不自动提交产品仓库。
+- `package-baseline`：由 package-release 在当前工作流第一次实际构建前自动调用，或在用户直接要求刷新安装包离线 Guide 时进入，无需额外询问。先完成只读知识检查，再把已发布的最新兼容 immutable release 同步为产品 builtin；不编辑公开知识、不创建 release、不自动提交产品仓库。
 
 ## 工作流
 
 1. 读取 `references/reference-map.md`，确定产品变化可能影响哪些用户知识。
-2. 运行 `scripts/agent-friend-guide/run.* prepare --json` 准备默认受管 checkout，再运行 `status --json` 获取基线、两仓状态和部分完成阶段。用户已明确提供 checkout 时可传 `--guide-repo <path>`。`package-baseline` 直接转到“离线基线刷新”。
+2. 运行 `scripts/agent-friend-guide/run.* prepare --json` 准备默认受管 checkout，再运行 `status --json` 获取基线、两仓状态和部分完成阶段。用户已明确提供 checkout 时可传 `--guide-repo <path>`。
 3. 按 `references/review-workflow.md` 阅读从公开 metadata 基线到目标产品状态的真实 diff，并沿用户可见入口核实语义。
-4. 得出“需要更新 / 无需更新 / 无法判断”以及证据、受影响 reference 和未决项。`manual` 模式输出后保持只读；`merge-main-and-push` 模式无需更新则返回交付流程，需要更新则继续，无法判断则停止。
+4. 得出“需要更新 / 无需更新 / 无法判断”以及证据、受影响 reference 和未决项。`manual` 模式输出后保持只读；`merge-main-and-push` 模式无需更新则返回交付流程，需要更新则继续，无法判断则停止；`package-baseline` 模式记录结论后直接转到“离线基线刷新”，不执行下方公开写入与发布步骤。发现公开内容需要更新时只报告，不把自动进入 baseline 视为公开写入或 release 授权。
 5. `manual` 模式只有用户明确同意更新后才写；`merge-main-and-push` 模式直接按 `references/content-quality.md` 修改已确认的公开知识。不得直接编辑产品内置快照。
 6. 运行公开 Skill validator 与项目 `verify`。验证通过后，按 `references/cross-repo-publish.md` 推进公开提交与 release 事务。
 7. 公开提交已推送且能从 origin 精确确认后，为下一单调 release sequence 生成完整 ZIP 与兼容 manifest；先 draft、上传两项 asset，再 publish，并确认 GitHub API 报告 `immutable=true` 与 asset digest 一致。正常 Guide 发布到此结束，不修改产品 builtin。
@@ -52,9 +52,9 @@ description: 检查 agent-friend 产品变更是否需要更新公开用户知�
 - 不覆盖 force-push、改写或删除已发布提交/release、复用或降低 release sequence、回滚远端、解决来源不明改动、发布可能含 secret/私有实现的内容，或在证据不足时选择基线、兼容范围或文案。
 - 命中上述边界、任一验证失败、push 非快进、产品状态在复核后改变，或部分完成状态无法唯一续跑时停止并报告。
 
-## 提醒去重
+## 自动入口去重
 
-当本 Skill 由打包提醒或合入主干自动流程进入时，在当前任务中记住：
+当本 Skill 由打包自动入口或合入主干自动流程进入时，在当前任务中记住：
 
 `product_state_summary + delivery_action`
 
