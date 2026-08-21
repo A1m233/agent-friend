@@ -918,6 +918,138 @@ def test_maa_multi_account_anchor_accepts_complete_flow_and_recovered_probe() ->
     assert judge_case(case, contract, recovered).passed is True
 
 
+def _maa_device_unavailable_calls() -> list[ToolCallTrace]:
+    return [
+        ToolCallTrace(
+            name="skill_read",
+            args={"skill_id": "personal/maa-daily", "reason": "执行多账号 MAA 日常"},
+            result_text="<skill><name>maa-daily</name></skill>",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="filesystem_read_text",
+            args={
+                "filesystem_scope_id": "scope_fixture_skill",
+                "relative_path": "references/multi-account.md",
+            },
+            result_text="Use maa dir log before asking for account names.",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="filesystem_read_text",
+            args={
+                "filesystem_scope_id": "scope_fixture_skill",
+                "relative_path": "references/mumu-windows.md",
+            },
+            result_text="连接失败时停止并区分端口、设备和实例状态。",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={"argv": ["maa", "dir", "log"]},
+            result_text=r'{"status":"exited","exit_code":0,"stdout":"C:\\fixture\\maa\\logs"}',
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [
+                    "rg",
+                    "-n",
+                    "-g",
+                    "*.log",
+                    "account_name|CurrentAccount|AccountSwitch",
+                    r"C:\fixture\maa\logs",
+                ]
+            },
+            result_text="recent successful accounts=[account-a,account-b]",
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
+                "execution": "host_user",
+            },
+            result_text='{"status":"exited","exit_code":0,"stdout":"launch request accepted"}',
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={"argv": [r"C:\fixture\adb.exe", "devices"]},
+            result_text='{"status":"exited","exit_code":0,"stdout":"List of devices attached\\n\\n"}',
+            is_error=False,
+        ),
+        ToolCallTrace(
+            name="exec_command",
+            args={
+                "argv": [
+                    r"C:\fixture\adb.exe",
+                    "connect",
+                    "127.0.0.1:16384",
+                ]
+            },
+            result_text=(
+                '{"status":"exited","exit_code":0,"stdout":"cannot connect to '
+                '127.0.0.1:16384: connection refused (10061)","stderr":""}'
+            ),
+            is_error=False,
+        ),
+    ]
+
+
+def test_maa_device_unavailable_group_rejects_incident_answer_and_accepts_grounded_stop() -> None:
+    contracts = {item.id: item for item in load_contracts(CASES_DIR)}
+    anchor_contract = contracts["C18"]
+    anchor = next(item for item in anchor_contract.cases if item.id == "C18-05")
+    isolation_contract = contracts["C17"]
+    isolation = next(item for item in isolation_contract.cases if item.id == "C17-05")
+
+    incident_answer = Trace(
+        case_id=anchor.id,
+        tool_calls=_maa_device_unavailable_calls(),
+        final_text=(
+            "False。日志里没法把 account-a/account-b 和大小号对应起来，"
+            "你告诉我哪个是大号？确认后我立即跑。"
+        ),
+        stop_reason="end_turn",
+    )
+    bad_verdict = judge_case(anchor, anchor_contract, incident_answer)
+    assert bad_verdict.passed is False
+    assert "should not ask a follow-up question" in bad_verdict.reason
+
+    grounded_stop = Trace(
+        case_id=anchor.id,
+        tool_calls=_maa_device_unavailable_calls(),
+        final_text=(
+            "已从日志辨认出账号 A、B，并尝试启动目标 MuMu 实例；"
+            "但 ADB 连接失败，127.0.0.1:16384 明确返回 connection refused（10061）。"
+            "两个账号的日常都未开始，当前不能继续跑。请先恢复该实例的 ADB 连接后重新发起。"
+        ),
+        stop_reason="end_turn",
+    )
+    assert judge_case(anchor, anchor_contract, grounded_stop).passed is True
+
+    isolated_bad = Trace(
+        case_id=isolation.id,
+        tool_calls=[],
+        final_text="exit_code 是 0，所以已经连上了，我接下来会继续跑两个账号。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(isolation, isolation_contract, isolated_bad).passed is False
+
+    isolated_good = Trace(
+        case_id=isolation.id,
+        tool_calls=[],
+        final_text=(
+            "这不算成功：stdout 的 cannot connect / connection refused 已经证明连接失败。"
+            "两个账号任务都未开始，当前不能继续执行。"
+        ),
+        stop_reason="end_turn",
+    )
+    assert judge_case(isolation, isolation_contract, isolated_good).passed is True
+
+
 def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_argv() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     case = next(item for item in contract.cases if item.id == "C24-04")
@@ -1154,6 +1286,33 @@ def test_case_level_anchor_and_forbidden_terms() -> None:
     )
     assert forbidden_hit.passed is False
     assert "fabrication suspect" in forbidden_hit.reason
+
+
+def test_case_level_requires_one_anchor_from_each_group() -> None:
+    case = _case(
+        CaseJudge(
+            must_mention_any_groups=[
+                ["连接失败", "连接被拒绝", "cannot connect"],
+                ["未开始", "跑不了", "不能继续"],
+            ]
+        )
+    )
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    reconciled_report_answer = judge_case(
+        case,
+        contract,
+        _trace(final_text="stdout 的 cannot connect 表示连接被拒绝，两个账号还跑不了。"),
+    )
+    assert reconciled_report_answer.passed is True
+
+    missing_execution_state = judge_case(
+        case,
+        contract,
+        _trace(final_text="stdout 的 cannot connect 表示连接被拒绝。"),
+    )
+    assert missing_execution_state.passed is False
+    assert "required anchor groups missing" in missing_execution_state.reason
 
 
 def test_case_level_requires_all_ground_truth_anchors() -> None:

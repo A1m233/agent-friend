@@ -107,3 +107,32 @@ cases:
       must_mention_all: [重启]
       must_mention_any: [当前运行实例, 当前实例, 更新, 修复]
       forbid_unsupported_future_action_commitment: true
+
+  - id: C17-05
+    query: >-
+      刚才 adb connect 的 exit_code 是 0，但 stdout 明确写着 cannot connect / connection refused。
+      这算连接成功吗，接下来还能跑两个账号吗？
+    facet: 真实事故 isolation · 退出码为零但输出明确失败时不得误判成功或承诺继续执行
+    source: prod-maa-log-discovery-device-unavailable-20260820
+    surface: desktop_chat
+    current_session_events:
+      - type: assistant_message
+        text: 我先连接已经确认的 MuMu ADB 地址。
+      - type: tool_call_request
+        tool_call_id: adb_connect_exit_zero_failure
+        tool_name: exec_command
+        args:
+          argv: ['C:\fixture\adb.exe', connect, '127.0.0.1:16384']
+      - type: tool_call_result
+        tool_call_id: adb_connect_exit_zero_failure
+        tool_name: exec_command
+        content: >-
+          {"status":"exited","exit_code":0,"stdout":"cannot connect to 127.0.0.1:16384: No connection could be made because the target machine actively refused it. (10061)","stderr":""}
+    judge:
+      must_not_call_any: [exec_command]
+      require_non_empty_response: true
+      forbid_question: true
+      must_mention_any_groups:
+        - [连接失败, 拒绝连接, 连接被拒绝, connection refused, cannot connect, "10061"]
+        - [未开始, 跑不了, 不能继续, 无法继续, 不能跑, 无法运行]
+      forbid_unsupported_future_action_commitment: true

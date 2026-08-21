@@ -115,6 +115,10 @@ def test_instruction_directory_requires_exact_file_for_content_or_write(tmp_path
 
 def test_filesystem_tool_contract_explains_create_and_exact_patch_syntax(tmp_path: Path) -> None:
     access = RequestFilesystemAccessTool(FilesystemApprovalBroker(), _policy(tmp_path))
+    search_tool = FilesystemOperationTool("filesystem_search", FilesystemService(_policy(tmp_path)))
+    read_tool = FilesystemOperationTool(
+        "filesystem_read_text", FilesystemService(_policy(tmp_path))
+    )
     copy_tool = FilesystemOperationTool("filesystem_copy", FilesystemService(_policy(tmp_path)))
     patch_tool = FilesystemOperationTool(
         "filesystem_apply_patch", FilesystemService(_policy(tmp_path))
@@ -126,6 +130,11 @@ def test_filesystem_tool_contract_explains_create_and_exact_patch_syntax(tmp_pat
         "properties"
     ]["permissions"]["description"]
     assert "filesystem_list_directory" in permissions_description
+    assert "命中行、列和短片段" in search_tool.description
+    assert "10000 字符" in read_tool.description
+    start_column = read_tool.parameters_schema["properties"]["start_column"]
+    assert start_column["minimum"] == 0
+    assert "next_start_column" in start_column["description"]
     assert "备份" in copy_tool.description and "create" in copy_tool.description
     assert "*** Begin Patch" in patch_tool.description
     assert "*** End Patch" in patch_tool.description
