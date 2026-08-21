@@ -3,7 +3,7 @@
  * 见 .cursor/rules/frontend-ui-conventions.mdc。 */
 :root {
   /* 字体栈 */
-  --font-sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
 
   /* 字号（值 = Tailwind v4 默认，保证视觉零变化） */
   --font-size-xs: 0.75rem;     /* 12px */
