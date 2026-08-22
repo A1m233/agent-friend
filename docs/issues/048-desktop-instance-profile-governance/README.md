@@ -1,6 +1,6 @@
 # 048 · 桌面实例身份与安装 Profile 缺少统一治理
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：medium
 - **发现日期**：2026-08-11
 - **关联需求**：077-windows-installer-integrity-and-localization
@@ -52,3 +52,7 @@ production 副本。
 
 - **2026-08-12**：登记问题。尚未选择 dev 身份或共存策略，也未开始代码治理；后续应先确认完整
   身份矩阵与验收边界，再在独立修复中实施。
+
+---
+
+已在 commit `dd45eab` / 需求 [081-desktop-instance-identity-governance](../../requirements/081-desktop-instance-identity-governance/) 修复。
