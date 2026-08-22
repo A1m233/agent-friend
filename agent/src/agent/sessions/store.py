@@ -106,6 +106,9 @@ class SessionSummary:
     persona: str
     model: str
     archived_at: datetime | None = None
+    origin_kind: str | None = None
+    origin_id: str | None = None
+    origin_occurrence_id: str | None = None
 
 
 class SessionStore(Protocol):
@@ -337,6 +340,17 @@ class JsonlSessionStore:
             updated_at=updated_at,
             persona=persona,
             model=model,
+            origin_kind=(
+                str(payload["origin_kind"]) if isinstance(payload.get("origin_kind"), str) else None
+            ),
+            origin_id=(
+                str(payload["origin_id"]) if isinstance(payload.get("origin_id"), str) else None
+            ),
+            origin_occurrence_id=(
+                str(payload["origin_occurrence_id"])
+                if isinstance(payload.get("origin_occurrence_id"), str)
+                else None
+            ),
         )
 
     @staticmethod

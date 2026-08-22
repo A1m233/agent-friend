@@ -51,6 +51,7 @@ from .routes.models import register_routes as register_model_routes
 from .routes.persona import register_routes as register_persona_routes
 from .routes.presence import register_routes as register_presence_routes
 from .routes.runs import register_routes as register_run_routes
+from .routes.scheduled_tasks import register_routes as register_scheduled_task_routes
 from .routes.skills import register_routes as register_skill_routes
 from .routes.social_auth import register_routes as register_social_auth_routes
 from .routes.todos import register_routes as register_todo_routes
@@ -159,6 +160,7 @@ def create_app_with_runtime(
     register_persona_routes(app, runtime)
     register_run_routes(app, runtime)
     register_todo_routes(app, runtime)
+    register_scheduled_task_routes(app, runtime)
     register_presence_routes(app, runtime)
     register_social_auth_routes(app, runtime)
     register_skill_routes(app, runtime)
@@ -199,17 +201,21 @@ def _make_lifespan(runtime: BridgeRuntime):  # type: ignore[no-untyped-def]
             runtime.agent_runtime.start()
         if runtime.im_runtime is not None:
             runtime.im_runtime.start()
-        if runtime.reminder_scheduler is not None:
-            runtime.reminder_scheduler.start()
+        if runtime.scheduled_run_tracker is not None:
+            runtime.scheduled_run_tracker.start()
+        if runtime.schedule_coordinator is not None:
+            runtime.schedule_coordinator.start()
         try:
             yield
         finally:
-            if runtime.reminder_scheduler is not None:
-                runtime.reminder_scheduler.stop(timeout=5.0)
+            if runtime.schedule_coordinator is not None:
+                runtime.schedule_coordinator.stop(timeout=5.0)
             if runtime.im_runtime is not None:
                 await runtime.im_runtime.stop(timeout=5.0)
             if runtime.agent_runtime is not None:
                 runtime.agent_runtime.stop(timeout=5.0)
+            if runtime.scheduled_run_tracker is not None:
+                runtime.scheduled_run_tracker.stop(timeout=5.0)
             runtime.close()
 
     return lifespan

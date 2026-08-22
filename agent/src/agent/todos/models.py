@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+
+from ..scheduling import OnceSchedule as OnceSchedule
+from ..scheduling import RecurringSchedule as RecurringSchedule
 
 
 class TodoStatus(StrEnum):
@@ -39,27 +42,6 @@ class AgentResponseStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
-
-
-@dataclass(frozen=True)
-class OnceSchedule:
-    local_datetime: datetime
-    timezone: str
-    fold: int = 0
-
-
-@dataclass(frozen=True)
-class RecurringSchedule:
-    frequency: str
-    interval: int
-    local_time: time
-    timezone: str
-    starts_on: date
-    weekdays: tuple[int, ...] = ()
-    month_days: tuple[int, ...] = ()
-    until_local: datetime | None = None
-    max_occurrences: int | None = None
-    fold: int = 0
 
 
 ReminderSchedule = OnceSchedule | RecurringSchedule

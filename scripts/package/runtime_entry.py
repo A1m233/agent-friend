@@ -337,6 +337,71 @@ def _smoke_tool_schema_validation() -> dict[str, Any]:
     }
 
 
+def _smoke_scheduled_tasks() -> dict[str, Any]:
+    """Exercise the frozen Scheduled Task tool, SQLite store, and recovery boundary."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from agent.scheduled_tasks import (
+        ScheduledOccurrenceOutcome,
+        ScheduledTaskService,
+        ScheduledTaskStore,
+    )
+    from agent.tools.builtin.scheduled_task_manage import ScheduledTaskManageTool
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    with tempfile.TemporaryDirectory(prefix="agent-friend-scheduled-task-smoke-") as temp_dir:
+        store = ScheduledTaskStore(Path(temp_dir) / "scheduled-tasks.db")
+        service = ScheduledTaskService(store, clock=lambda: now)
+        tool = ScheduledTaskManageTool(
+            service,
+            default_persona_id=None,
+            default_persona_name="default",
+            default_model_id="doctor/model",
+        )
+        created = tool.invoke(
+            {
+                "operation": "create",
+                "name": "Frozen scheduled task smoke",
+                "instruction": "Exercise deterministic frozen scheduling.",
+                "schedule": {
+                    "kind": "fixed_interval",
+                    "interval": 1,
+                    "unit": "hour",
+                },
+                "__agent_friend_runtime_now": now.isoformat(),
+            }
+        )
+        if created.is_error:
+            raise RuntimeError(f"frozen Scheduled Task create failed: {created.text}")
+        task_id = str(json.loads(created.text)["task"]["id"])
+        due_at = now + timedelta(hours=1, seconds=5)
+        created_occurrences = store.create_due_occurrences(due_at)
+        if len(created_occurrences) != 1:
+            raise RuntimeError("frozen Scheduled Task did not create one due occurrence")
+        claim = store.claim_pending(due_at)[0]
+        store.mark_submitted(
+            claim.occurrence.id,
+            now=due_at,
+            skill_source=None,
+            skill_version=None,
+        )
+        recovered = store.recover_startup(due_at + timedelta(seconds=1))
+        occurrence = store.get_occurrence(claim.occurrence.id)
+        history = tool.invoke({"operation": "history", "task_id": task_id})
+        if history.is_error or occurrence.outcome is not ScheduledOccurrenceOutcome.INTERRUPTED:
+            raise RuntimeError("frozen Scheduled Task recovery did not fail closed")
+        history_payload = json.loads(history.text)
+        if history_payload["occurrences"][0]["outcome"] != "interrupted":
+            raise RuntimeError("frozen Scheduled Task history lost the recovery outcome")
+        return {
+            "task_id": bool(task_id),
+            "scheduled_occurrence": len(created_occurrences),
+            "interrupted_runs": recovered["interrupted_runs"],
+            "history_outcome": "interrupted",
+        }
+
+
 def _smoke_filesystem_tools() -> dict[str, Any]:
     """Exercise frozen filesystem imports plus deterministic read/write/copy paths."""
     from agent.filesystem import (
@@ -971,6 +1036,17 @@ def _doctor() -> int:
         }
     else:
         checks["capability:tool_schema_validation"] = {"ok": True, **schema_details}
+
+    try:
+        scheduled_task_details = _smoke_scheduled_tasks()
+    except Exception as exc:
+        checks["capability:scheduled_tasks"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:scheduled_tasks"] = {"ok": True, **scheduled_task_details}
 
     try:
         skill_details = _smoke_skill_catalog()

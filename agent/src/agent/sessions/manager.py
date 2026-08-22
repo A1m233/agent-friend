@@ -131,6 +131,9 @@ class SessionManager:
         persona_id: str | None = None,
         session_id: str | None = None,
         channel: str = "text",
+        origin_kind: str | None = None,
+        origin_id: str | None = None,
+        origin_occurrence_id: str | None = None,
     ) -> Session:
         """创建新会话并落盘首行 ``session_meta`` 事件。
 
@@ -168,6 +171,9 @@ class SessionManager:
             persona_id=persona_id,
             session_id=session_id,
             channel=channel,  # type: ignore[arg-type]
+            origin_kind=origin_kind,
+            origin_id=origin_id,
+            origin_occurrence_id=origin_occurrence_id,
         )
         if title is None and self._title_generator is not None:
             generated = self._title_generator(session)
@@ -199,6 +205,7 @@ class SessionManager:
         *,
         archived: bool = False,
         query: str | None = None,
+        include_scheduled: bool = False,
     ) -> list[SessionSummary]:
         """列出会话摘要（按 ``updated_at`` 倒序）。
 
@@ -210,6 +217,8 @@ class SessionManager:
         query_text = query.strip().casefold() if query else ""
         result: list[SessionSummary] = []
         for summary in summaries:
+            if not include_scheduled and summary.origin_kind == "scheduled_task":
+                continue
             if (summary.archived_at is not None) != archived:
                 continue
             if query_text and query_text not in summary.title.casefold():
@@ -296,10 +305,10 @@ class SessionManager:
             会读全文件——CLI 的 ``--resume`` 默认值用，调用频率低，可以接受。
             列表展示场景请用 :meth:`list`（O(1) per 文件）。
         """
-        summary = self._store.latest()
-        if summary is None:
-            return None
-        return self._store.load(summary.session_id)
+        for summary in self._store.list():
+            if summary.origin_kind != "scheduled_task":
+                return self._store.load(summary.session_id)
+        return None
 
     def _summary(self, session_id: str) -> SessionSummary:
         for summary in self._store.list():
