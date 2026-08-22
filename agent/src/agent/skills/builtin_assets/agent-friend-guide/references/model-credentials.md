@@ -16,6 +16,14 @@ OpenRouter 是调用渠道；模型名称前的 Google 或 OpenAI 表示模型�
 4. 在 agent-friend 打开“设置 → 模型与凭据 → DeepSeek”，粘贴并保存。
 5. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 DeepSeek 模型使用。
 
+agent-friend 当前提供以下 DeepSeek 模型：
+
+- DeepSeek V4 Flash：文本对话和工具调用；
+- DeepSeek V4 Pro：文本对话和工具调用；
+- DeepSeek V4 Flash Vision：文本、工具调用以及 JPEG、PNG、WebP 图片。
+
+只有 DeepSeek V4 Flash Vision 可以添加图片。它不接受 PDF、TXT、GIF 或其它文件类型；单张图片最多 64 MiB，单轮最多 10 张且总计不超过 100 MiB。V4 Flash 与 V4 Pro 仍是纯文本模型。
+
 官方文档：[DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/)。
 
 ## Kimi API Key
