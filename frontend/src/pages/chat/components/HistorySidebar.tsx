@@ -476,10 +476,10 @@ export function HistorySidebar({
           ) : null}
         </SidebarMenu>
       </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
+      <SidebarContent className="overflow-hidden">
+        <SidebarGroup className="min-h-0 flex-1">
           <SidebarGroupLabel className="text-sm font-normal">对话</SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
             {list.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted">还没有历史会话</p>
             ) : (
