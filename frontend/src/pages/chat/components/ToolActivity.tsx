@@ -70,7 +70,7 @@ function ToolDisclosureRow({
           aria-hidden="true"
           className="size-3.5 shrink-0"
         />
-        <TextEllipsis className="min-w-0 text-fg">{summary}</TextEllipsis>
+        <TextEllipsis className="min-w-0">{summary}</TextEllipsis>
         <ChevronRight
           data-slot="tool-activity-chevron"
           aria-hidden="true"

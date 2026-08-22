@@ -91,15 +91,19 @@ describe("ToolActivity", () => {
     expect(container.querySelector("button > span.block.truncate")).not.toBeNull();
   });
 
-  it("uses category icons on the left and keeps the trailing chevron hover-only", async () => {
+  it("keeps icon and summary colors aligned while revealing the trailing chevron on hover", async () => {
     await render([tool("search", "web_search"), tool("read", "web_fetch")]);
 
     const groupTrigger = container.querySelector("button") as HTMLButtonElement;
     const groupIcon = groupTrigger.querySelector('[data-slot="tool-activity-icon"]');
+    const groupSummary = groupTrigger.querySelector("span.block.truncate");
     const groupChevron = groupTrigger.querySelector('[data-slot="tool-activity-chevron"]');
     expect(groupTrigger.firstElementChild).toBe(groupIcon);
     expect(groupTrigger.lastElementChild).toBe(groupChevron);
+    expect(groupTrigger.classList.contains("text-muted")).toBe(true);
+    expect(groupTrigger.classList.contains("hover:text-fg")).toBe(true);
     expect(groupIcon?.classList.contains("lucide-search")).toBe(true);
+    expect(groupSummary?.classList.contains("text-fg")).toBe(false);
     expect(groupChevron?.classList.contains("opacity-0")).toBe(true);
     expect(groupChevron?.classList.contains("group-hover:opacity-100")).toBe(true);
     expect(groupChevron?.classList.contains("group-focus-visible:opacity-100")).toBe(true);
