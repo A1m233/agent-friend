@@ -1,0 +1,163 @@
+---
+description: agent-friend 的 Agent 用户可见异常、真实 bad case、评测失败与运行时问题的根因归因门禁：区分模型、上下文、记忆、工具、编排、provider、环境、投影和评测侧故障
+alwaysApply: false
+codexLoad: preflight
+---
+
+# Agent 失败归因
+
+本 Rule 约束 agent-friend 中涉及 Agent 回答、工具行为、状态推进或任务结果的问题诊断。目标是找到
+最早未恢复的失败边界和真正需要修复的组件，避免因为错误最终由模型说出或做出，就把外围系统缺陷
+笼统归因为“模型不够聪明”。
+
+## 适用范围
+
+以下任一情况适用：
+
+- 用户报告 Agent 回答错误、遗漏、编造、循环、过早停止、错误追问或错误宣称完成；
+- Agent 选错工具、参数错误、忽略结果、无法恢复，或工具行为与界面展示不一致；
+- 问题可能涉及 prompt、上下文投影、压缩、记忆、run 编排、provider、环境或外部服务；
+- 真实 bad case、诊断包、trace、smoke 或 eval 暴露 Agent 行为失败；
+- 调查需要判断问题应修在模型行为、产品外围系统、外部依赖还是评测装置。
+
+纯确定性业务代码错误且不涉及模型可见输入、模型决策或 Agent 运行链路时，直接使用通用诊断流程，
+不必套用本 Rule 的完整分类。
+
+## 责任边界
+
+- `diagnose-bug` 负责通用的症状界定、证据收集、区分性检查、证据基础、置信度和停止条件；本 Rule
+  不复制那套流程，只增加 agent-friend 专用的组件归因与结论门槛。
+- `inspect-agent-friend-diagnostics` 负责诊断包格式、完整性、构建到源码绑定和隐私边界。
+- `agent-eval-governance` 负责 eval 的运行、judge/fixture/harness 复核与失败后门禁；eval 失败仍需
+  使用本 Rule 判断产品链路中的故障边界。
+- `agent-tool-contract-design` 负责工具契约的设计与修改；本 Rule 只判断问题是否落在工具边界。
+- `add-agent-eval-case-group` 负责把已诊断事故固化为行为契约；不得用 case 分类反向替代根因证据。
+- 本 Rule 只诊断和报告，不自行授权修改 prompt、runtime、工具、评测或其它产品行为。
+
+## 先区分症状位置、归因侧和修复位置
+
+每条问题链都要区分三个概念：
+
+- **症状位置**：用户或 grader 最终在哪里看到错误，例如最终回答、工具卡片或落盘状态。
+- **归因侧（fault side）**：最早未恢复的错误由哪一侧产生，或哪一侧丢失了本应传递的信息。
+- **修复位置（repair owner）**：为了稳定预防复发，实际应修改哪个组件或契约。
+
+三者可以不同。模型输出了错误答案，只证明症状经过模型输出；prompt workaround 能缓解问题，也不
+证明 prompt 原本就是根因。归因用于解释发生机制，修复位置用于选择最有效、最可控的工程动作。
+
+## 以交互边为归因单位
+
+Agent 行为由模型与周围组件共同产生。对每个独立的用户可见失败，从结果向前回溯因果链，找到
+**最早且此后没有被系统恢复的失败**，再记录它发生在哪条交互边以及 fault side。
+
+使用以下组件词汇，并按实际链路细化，不强迫每次覆盖所有类别：
+
+| 组件 | agent-friend 中的典型对象 |
+| --- | --- |
+| Owner / contract | 用户目标、已确认需求、产品行为契约和成功标准 |
+| Model | 当前模型在实际可见信息上的理解、规划、选择、恢复和表达 |
+| Context | system prompt、turn context、会话历史投影、压缩摘要、附件与当前 surface 状态 |
+| Memory | 写入、召回、排序、过期、来源、投影和跨会话状态 |
+| Tool | 模型可见名称、description、schema、参数、结果、错误与副作用反馈 |
+| Harness / orchestration | run/turn 状态、工具循环、重试、停止、授权、取消、预算和子任务编排 |
+| Provider boundary | model id/配置、消息与工具投影、序列化、流式事件、finish reason 和错误翻译 |
+| Local environment | 文件、shell、runtime、权限、进程、端口、缓存和本机依赖 |
+| External environment | 网络、第三方 API、远端服务、认证、限流和数据新鲜度 |
+| Projection / observability | 持久化事件、Bridge、UI、日志、trace、诊断包和报告展示 |
+| Evaluator | case、fixture、judge、grader、验收脚本和人工判定口径 |
+
+例如：
+
+- 工具 wrapper 吞掉业务失败并向模型报告成功，属于 `Tool → Model · fault: Tool`；模型收到明确失败
+  和可行动恢复提示后仍宣称成功，才属于 `Tool → Model · fault: Model`。
+- 压缩摘要删除了仍需遵守的约束，属于 `Context → Model · fault: Context`；约束仍完整可见但模型
+  忽略，属于 `Context → Model · fault: Model`。
+- 后端已经拒绝调用但 UI 显示成功，属于 Projection；不能据此认定模型或工具执行成功。
+- 外部服务不可恢复地失败，属于 External environment；存在明确安全替代路径但模型没有使用，才
+  可能属于模型恢复失败。
+
+一次回复可以包含多条独立失败链；分别归因，不为了得到单一根因而合并。每条链可以记录一个最早
+未恢复失败和多个 contributing factors。频率、相关性和发生顺序本身都不自动证明因果。
+
+## 模型可见事实优先
+
+归因时必须区分“系统内部知道什么”和“模型实际看到了什么”。至少核对：
+
+- 精确模型、配置、prompt/context、工具定义和相关 runtime/build 身份；
+- provider 最终发出的消息、工具 schema 与续接事件，而不只看源码中的预期结构；
+- 模型收到的工具结果、错误、截断/分页状态、权限状态和可恢复提示；
+- 最终环境状态、持久化状态和 UI 投影是否一致；
+- grader 使用的输入与产品实际输出是否一致。
+
+缺少相关 transcript、模型可见上下文、运行时身份或最终状态时，使用 `diagnose-bug` 的证据缺口和
+`unconfirmed` 结论，不从最终文案反推模型动机、隐藏思维或内部实现。
+
+## “模型行为失败”与“模型能力限制”的门槛
+
+单条具备完整证据的 trace 可以确认**本次模型行为失败**，但不能直接外推为模型稳定能力上限。
+
+只有以下条件得到与结论强度相称的证据后，才把问题报告为模型侧能力限制：
+
+1. 所需事实、约束和当前状态确实完整、正确地进入模型可见上下文；
+2. 所需能力或工具真实存在、可发现、可调用，参数与标识符契约没有不必要歧义；
+3. 错误和中间结果没有被吞掉、误译、过度截断或错误标记，且可恢复路径对模型可见；
+4. run 编排、权限、预算、停止条件、provider 投影和本地/外部环境没有先阻断正确路径；
+5. 产品结果没有被 UI、持久化投影、诊断包、fixture 或 judge 错误解释；
+6. 对稳定能力结论，已有重复试验、隔离 case、holdout 或其它受控比较，能够区分单次随机失败。
+
+在同一 harness 下更换更强模型后成功，只支持“结果对模型能力敏感”，不能单独证明原 harness 已经
+足够清晰或外围系统无需加固。反过来，同一模型在修正工具、上下文或环境后成功，支持该系统改动
+具有因果作用，但仍要按实际证据判断是否存在并存的模型侧弱点。
+
+## 用反事实区分剩余假设
+
+优先选择一次只改变一个关键变量的最低成本检查，例如：
+
+- 同一模型、同一任务，仅补回被压缩或遗漏的约束；
+- 同一模型，用忠实 mock 返回正确工具结果或明确错误，再观察选择与恢复；
+- 同一 trace 状态，分别验证 backend outcome、持久化事件和 UI projection；
+- 同一 harness 与输入重复运行，估计失败是否稳定；
+- 固定 harness、任务和预算更换模型，检查模型敏感性，但不把它当作唯一归因证据；
+- 隔离 grader/fixture，确认有效结果是否被错误判失败。
+
+真实 LLM 运行继续服从 `llm-api-confirm`；没有授权时先使用已有 trace、确定性 replay、mock、源码
+和状态证据，不把缺少付费实验当成猜测归因的理由。
+
+## 最小归因记录
+
+报告或持久化调查结论时，每条独立失败至少包含：
+
+1. **Observed failure**：用户实际看到什么，预期契约是什么；
+2. **Earliest unrecovered failure**：最后正确点、最早错误点及其因果链；
+3. **Interaction edge / fault side**：涉及哪两个组件，错误归到哪一侧；
+4. **Evidence / counterevidence**：直接证据、反证、运行身份和模型可见事实；
+5. **Trigger / contributors**：触发条件与只提高概率或放大影响的因素；
+6. **Counterfactual**：已执行或下一步最小区分性检查；
+7. **Repair owner**：建议修复位置及为什么能预防同类复发；
+8. **Confidence / gaps**：沿用 `diagnose-bug` 的置信度与证据缺口标签。
+
+## 禁止的归因捷径
+
+- 不因错误是自然语言、工具选择或最终回答，就默认写成“模型幻觉”“模型不聪明”。
+- 不因换模型后成功，就把问题直接关闭为模型差异。
+- 不因加一句 prompt 能缓解，就反推根因是 prompt 不够强。
+- 不因工具返回了 JSON 或进程退出码为 0，就假定语义成功、状态已落盘或用户可见投影正确。
+- 不把单次 eval fail、单次 smoke 或单次 pass 表述为稳定能力结论。
+- 不用一个总标签覆盖同一事故中的多条独立失败链，也不把 downstream symptom 当成 initiating cause。
+- 不把证据不足包装成单方责任；明确保留 `unconfirmed` 和所需的最小下一步证据。
+
+## 参考依据
+
+以下来源最近核验于 2026-08-22；它们提供方法依据，不替代本仓库实际协议与运行证据：
+
+- OpenAI Trace grading：用完整 trace 而非黑盒最终输出定位 Agent 决策、工具调用和中间步骤中的错误。
+  https://developers.openai.com/api/docs/guides/trace-grading
+- Anthropic Demystifying evals for AI agents：区分 transcript、outcome、agent harness、eval harness，
+  隔离环境噪声并通过多次 trial 处理模型非确定性。
+  https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents
+- Anthropic Trustworthy agents in practice：Agent 行为由 model、harness、tools 和 environment 共同产生。
+  https://www.anthropic.com/research/trustworthy-agents
+- Model or Harness?：用 interaction edge、fault side 和 earliest unrecovered failure 分配修复责任。
+  https://arxiv.org/abs/2607.28802
+- Google SRE Postmortem Culture：区分 trigger、contributing causes 与系统性改进行动，避免归责叙事。
+  https://sre.google/sre-book/postmortem-culture/
