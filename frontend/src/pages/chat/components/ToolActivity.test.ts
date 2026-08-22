@@ -79,12 +79,54 @@ describe("ToolActivity", () => {
     expect(container.textContent?.match(/执行了/g)).toHaveLength(1);
   });
 
-  it("uses the full activity width so ellipsis measures the actual available space", async () => {
+  it("lets the compact trigger fit its content while keeping the activity width available", async () => {
     await render([tool("search", "web_search")]);
 
     expect(container.firstElementChild?.classList.contains("w-full")).toBe(true);
     expect(container.firstElementChild?.classList.contains("max-w-[85%]")).toBe(false);
+    const trigger = container.querySelector("button");
+    expect(trigger?.classList.contains("inline-flex")).toBe(true);
+    expect(trigger?.classList.contains("max-w-full")).toBe(true);
+    expect(trigger?.classList.contains("w-full")).toBe(false);
     expect(container.querySelector("button > span.block.truncate")).not.toBeNull();
+  });
+
+  it("uses category icons on the left and keeps the trailing chevron hover-only", async () => {
+    await render([tool("search", "web_search"), tool("read", "web_fetch")]);
+
+    const groupTrigger = container.querySelector("button") as HTMLButtonElement;
+    const groupIcon = groupTrigger.querySelector('[data-slot="tool-activity-icon"]');
+    const groupChevron = groupTrigger.querySelector('[data-slot="tool-activity-chevron"]');
+    expect(groupTrigger.firstElementChild).toBe(groupIcon);
+    expect(groupTrigger.lastElementChild).toBe(groupChevron);
+    expect(groupIcon?.classList.contains("lucide-search")).toBe(true);
+    expect(groupChevron?.classList.contains("opacity-0")).toBe(true);
+    expect(groupChevron?.classList.contains("group-hover:opacity-100")).toBe(true);
+    expect(groupChevron?.classList.contains("group-focus-visible:opacity-100")).toBe(true);
+
+    await click(groupTrigger);
+
+    const itemTriggers = [...container.querySelectorAll("button")].slice(1);
+    expect(
+      itemTriggers[0]
+        .querySelector('[data-slot="tool-activity-icon"]')
+        ?.classList.contains("lucide-search"),
+    ).toBe(true);
+    expect(
+      itemTriggers[1]
+        .querySelector('[data-slot="tool-activity-icon"]')
+        ?.classList.contains("lucide-file-text"),
+    ).toBe(true);
+  });
+
+  it("uses the other-category icon for unknown tools", async () => {
+    await render([tool("unknown", "future_tool")]);
+
+    expect(
+      container
+        .querySelector('[data-slot="tool-activity-icon"]')
+        ?.classList.contains("lucide-wrench"),
+    ).toBe(true);
   });
 
   it("keeps the activity and first item open when streaming grows one tool into a group", async () => {
