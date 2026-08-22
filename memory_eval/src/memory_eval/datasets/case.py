@@ -50,6 +50,7 @@ class EvalQuestion:
         expected_memory_layer: 产品切片可声明 anchor 必须出现在哪个记忆层；普通基准为空。
         expected_core_field: Core 产品切片可进一步约束必须由哪个 Core 字段承载。
         forbidden_memory_layers: 出现等价 anchor 即判为分层违规的记忆层。
+        forbidden_anchors: 召回内容中不得出现的旧事实 anchor；用于纠错后旧事实仍活跃的回归。
     """
 
     question: str
@@ -60,6 +61,7 @@ class EvalQuestion:
     expected_memory_layer: str | None = None
     expected_core_field: str | None = None
     forbidden_memory_layers: list[str] = field(default_factory=list)
+    forbidden_anchors: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,8 @@ class EvalCase:
         speaker_b: 第二位说话人名（adapter 默认映射为 agent）。
         turns: 全部发言，按时间序。
         questions: 配套问答。
+        semantic_update_context_turns: 大于 0 时，adapter 给后续 fragment 附加此前完整
+            user/agent turns 的冻结 Semantic update context；普通基准默认关闭。
     """
 
     sample_id: str
@@ -79,3 +83,4 @@ class EvalCase:
     speaker_b: str
     turns: list[EvalTurn]
     questions: list[EvalQuestion]
+    semantic_update_context_turns: int = 0

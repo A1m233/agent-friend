@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
@@ -22,6 +24,7 @@ from .context import ExtractionContext
 from .result import (
     CoreUpdate,
     ExtractionAttempt,
+    ExtractionAttemptPhase,
     ExtractionAttemptStatus,
     ExtractionOutput,
     SemanticChange,
@@ -33,7 +36,7 @@ from .result import (
 if TYPE_CHECKING:
     from llm_providers import LanguageModel
 
-    from ..contracts import ConversationFragment
+    from ..contracts import ConversationFragment, SemanticUpdateTurn
     from ..store import SemanticRow
 
 __all__ = ["Extractor"]
@@ -41,6 +44,24 @@ __all__ = ["Extractor"]
 logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "extract.md"
+_RECONCILIATION_PROMPT_PATH = Path(__file__).parent / "prompts" / "reconcile_semantic.md"
+_CHARS_TO_TOKENS = 0.5
+_SAFE_INPUT_RATIO = 0.80
+_SEMANTIC_UPDATE_CONTEXT_RATIO = 0.25
+_SEMANTIC_UPDATE_CONTEXT_MAX_TOKENS = 64_000
+_FALLBACK_CONTEXT_WINDOW = 256 * 1024
+
+
+@dataclass(frozen=True)
+class _PackedSemanticUpdateContext:
+    turns: tuple[SemanticUpdateTurn, ...]
+    estimated_tokens: int
+    omitted_turns: int
+    fallback_reason: str | None = None
+
+    @property
+    def source_refs(self) -> tuple[str, ...]:
+        return tuple(utterance.source_ref for turn in self.turns for utterance in turn.utterances)
 
 
 class Extractor:
@@ -56,11 +77,17 @@ class Extractor:
         llm_client: LanguageModel,
         *,
         prompt: str | None = None,
+        reconciliation_prompt: str | None = None,
         on_attempt: Callable[[ExtractionAttempt], None] | None = None,
         normalize_metadata: bool = True,
     ) -> None:
         self._llm = llm_client
         self._prompt = prompt if prompt is not None else _PROMPT_PATH.read_text(encoding="utf-8")
+        self._reconciliation_prompt = (
+            reconciliation_prompt
+            if reconciliation_prompt is not None
+            else _RECONCILIATION_PROMPT_PATH.read_text(encoding="utf-8")
+        )
         self._on_attempt = on_attempt
         # Kept as an inert compatibility argument for older composition roots.  Core
         # classification is now exclusively an extractor schema decision.
@@ -109,18 +136,133 @@ class Extractor:
             raw_response=raw,
             output=output,
         )
-        return output
+        if output.validation_error is not None:
+            return output
+        return self._reconcile_semantic_changes(fragment, extraction_context, output)
+
+    def _reconcile_semantic_changes(
+        self,
+        fragment: ConversationFragment,
+        context: ExtractionContext,
+        base_output: ExtractionOutput,
+    ) -> ExtractionOutput:
+        semantic_update_context = fragment.semantic_update_context
+        if semantic_update_context is None or semantic_update_context.is_empty():
+            return base_output
+
+        mandatory_content = self._render_reconciliation_input(
+            fragment,
+            context,
+            base_output,
+            turns=(),
+        )
+        packed = _pack_semantic_update_turns(
+            semantic_update_context.turns,
+            context_window=_model_context_window(self._llm),
+            mandatory_tokens=_estimate_tokens(
+                self._reconciliation_prompt + "\n" + mandatory_content
+            ),
+        )
+        if not packed.turns:
+            logger.info(
+                "semantic reconciliation skipped session=%s reason=%s omitted_turns=%d",
+                fragment.session_id,
+                packed.fallback_reason or "empty_after_capacity_pack",
+                packed.omitted_turns,
+            )
+            return base_output
+
+        user_content = self._render_reconciliation_input(
+            fragment,
+            context,
+            base_output,
+            turns=packed.turns,
+        )
+        messages = [
+            {"role": "system", "content": self._reconciliation_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        started = perf_counter()
+        try:
+            raw = self._llm.generate(ModelRequest(messages=messages)).text
+        except Exception as exc:
+            logger.warning("Semantic reconciliation LLM 调用失败，回退基础抽取", exc_info=True)
+            self._report_attempt(
+                fragment,
+                context,
+                phase="semantic_reconciliation",
+                status="llm_error",
+                started=started,
+                error=exc,
+                semantic_update_source_refs=packed.source_refs,
+                semantic_update_selected_turns=len(packed.turns),
+                semantic_update_capacity_omitted_turns=packed.omitted_turns,
+                semantic_update_estimated_tokens=packed.estimated_tokens,
+                semantic_reconciliation_fallback_reason="llm_error",
+            )
+            return base_output
+
+        changes, status = _parse_reconciliation_with_status(raw)
+        fallback_reason = _semantic_change_validation_error(changes, context)
+        if status in ("empty_response", "invalid_json", "invalid_shape"):
+            fallback_reason = status
+        if fallback_reason is not None:
+            self._report_attempt(
+                fragment,
+                context,
+                phase="semantic_reconciliation",
+                status=status,
+                started=started,
+                raw_response=raw,
+                output=ExtractionOutput(semantic_changes=changes),
+                semantic_update_source_refs=packed.source_refs,
+                semantic_update_selected_turns=len(packed.turns),
+                semantic_update_capacity_omitted_turns=packed.omitted_turns,
+                semantic_update_estimated_tokens=packed.estimated_tokens,
+                semantic_reconciliation_fallback_reason=fallback_reason,
+            )
+            return base_output
+
+        reconciled = ExtractionOutput(
+            core_updates=base_output.core_updates,
+            semantic_changes=changes,
+            episodic_entries=base_output.episodic_entries,
+            output_contract_version=base_output.output_contract_version,
+        )
+        self._report_attempt(
+            fragment,
+            context,
+            phase="semantic_reconciliation",
+            status=status,
+            started=started,
+            raw_response=raw,
+            output=ExtractionOutput(
+                semantic_changes=changes,
+                output_contract_version=base_output.output_contract_version,
+            ),
+            semantic_update_source_refs=packed.source_refs,
+            semantic_update_selected_turns=len(packed.turns),
+            semantic_update_capacity_omitted_turns=packed.omitted_turns,
+            semantic_update_estimated_tokens=packed.estimated_tokens,
+        )
+        return reconciled
 
     def _report_attempt(
         self,
         fragment: ConversationFragment,
         context: ExtractionContext,
         *,
+        phase: ExtractionAttemptPhase = "base",
         status: ExtractionAttemptStatus,
         started: float,
         raw_response: str | None = None,
         output: ExtractionOutput | None = None,
         error: Exception | None = None,
+        semantic_update_source_refs: tuple[str, ...] = (),
+        semantic_update_selected_turns: int = 0,
+        semantic_update_capacity_omitted_turns: int = 0,
+        semantic_update_estimated_tokens: int = 0,
+        semantic_reconciliation_fallback_reason: str | None = None,
     ) -> None:
         if self._on_attempt is None:
             return
@@ -149,6 +291,12 @@ class Extractor:
             raw_response=raw_response,
             error_type=type(error).__name__ if error is not None else None,
             error_message=str(error) if error is not None else None,
+            phase=phase,
+            semantic_update_source_refs=semantic_update_source_refs,
+            semantic_update_selected_turns=semantic_update_selected_turns,
+            semantic_update_capacity_omitted_turns=semantic_update_capacity_omitted_turns,
+            semantic_update_estimated_tokens=semantic_update_estimated_tokens,
+            semantic_reconciliation_fallback_reason=(semantic_reconciliation_fallback_reason),
         )
         try:
             self._on_attempt(attempt)
@@ -180,6 +328,161 @@ class Extractor:
             who = "用户" if u.speaker == "user" else "AI"
             lines.append(f"{who}: {u.text}")
         return "\n".join(lines)
+
+    def _render_reconciliation_input(
+        self,
+        fragment: ConversationFragment,
+        context: ExtractionContext,
+        base_output: ExtractionOutput,
+        *,
+        turns: tuple[SemanticUpdateTurn, ...],
+    ) -> str:
+        lines: list[str] = ["## 当前有效普通 Semantic"]
+        if context.semantic_facts:
+            for ref, fact in context.semantic_facts:
+                lines.append(f"[{ref}] {fact.statement}")
+        else:
+            lines.append("（暂无）")
+        if context.semantic_omitted:
+            lines.append(f"（另有 {context.semantic_omitted} 条未展示；不可引用或猜测这些条目。）")
+
+        lines.extend(("", "## 只读邻近上下文"))
+        if turns:
+            for index, turn in enumerate(turns, start=1):
+                lines.append(f"### 邻近轮次 {index}")
+                for utterance in turn.utterances:
+                    who = "用户" if utterance.speaker == "user" else "AI"
+                    lines.append(f"{who}: {utterance.text}")
+        else:
+            lines.append("（容量计算占位；无正文）")
+
+        lines.extend(("", "## 目标对话片段（唯一可写证据）"))
+        for utterance in fragment.utterances:
+            who = "用户" if utterance.speaker == "user" else "AI"
+            lines.append(f"{who}: {utterance.text}")
+
+        lines.extend(("", "## 基础抽取提出的 Semantic changes"))
+        lines.append(
+            json.dumps(
+                {"semantic_changes": [asdict(change) for change in base_output.semantic_changes]},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return "\n".join(lines)
+
+
+def _model_context_window(llm: LanguageModel) -> int:
+    try:
+        context_window = llm.context_window
+    except (AttributeError, RuntimeError, ValueError):
+        return _FALLBACK_CONTEXT_WINDOW
+    return context_window if context_window > 0 else _FALLBACK_CONTEXT_WINDOW
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, math.ceil(len(text) * _CHARS_TO_TOKENS))
+
+
+def _turn_tokens(turn: SemanticUpdateTurn) -> int:
+    return sum(
+        _estimate_tokens(f"{'用户' if utterance.speaker == 'user' else 'AI'}: {utterance.text}")
+        for utterance in turn.utterances
+    )
+
+
+def _pack_semantic_update_turns(
+    turns: tuple[SemanticUpdateTurn, ...],
+    *,
+    context_window: int,
+    mandatory_tokens: int,
+) -> _PackedSemanticUpdateContext:
+    if not turns:
+        return _PackedSemanticUpdateContext((), 0, 0)
+
+    safe_input_limit = math.floor(context_window * _SAFE_INPUT_RATIO)
+    hard_budget = max(0, safe_input_limit - mandatory_tokens)
+    soft_budget = min(
+        _SEMANTIC_UPDATE_CONTEXT_MAX_TOKENS,
+        math.floor(context_window * _SEMANTIC_UPDATE_CONTEXT_RATIO),
+    )
+    newest_cost = _turn_tokens(turns[-1])
+    if newest_cost > hard_budget:
+        return _PackedSemanticUpdateContext(
+            (),
+            0,
+            len(turns),
+            "latest_turn_exceeds_hard_budget",
+        )
+
+    budget = min(hard_budget, soft_budget)
+    if newest_cost > budget:
+        return _PackedSemanticUpdateContext(
+            (turns[-1],),
+            newest_cost,
+            len(turns) - 1,
+        )
+
+    selected_reversed: list[SemanticUpdateTurn] = []
+    used = 0
+    for turn in reversed(turns):
+        cost = _turn_tokens(turn)
+        if used + cost > budget:
+            break
+        selected_reversed.append(turn)
+        used += cost
+    selected = tuple(reversed(selected_reversed))
+    return _PackedSemanticUpdateContext(
+        selected,
+        used,
+        len(turns) - len(selected),
+    )
+
+
+def _parse_reconciliation_with_status(
+    raw: str,
+) -> tuple[list[SemanticChange], ExtractionAttemptStatus]:
+    text = _strip_code_fence(raw).strip()
+    if not text:
+        return [], "empty_response"
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("Semantic reconciliation 返回非法 JSON，回退基础抽取：%s", text[:200])
+        return [], "invalid_json"
+    if not isinstance(obj, dict) or set(obj) != {"semantic_changes"}:
+        return [], "invalid_shape"
+    raw_changes = obj.get("semantic_changes")
+    if not isinstance(raw_changes, list):
+        return [], "invalid_shape"
+    changes: list[SemanticChange] = []
+    for item in raw_changes:
+        parsed = _parse_change(item)
+        if parsed is None:
+            return [], "invalid_shape"
+        changes.append(parsed)
+    return changes, "empty_output" if not changes else "success"
+
+
+def _semantic_change_validation_error(
+    changes: list[SemanticChange],
+    context: ExtractionContext,
+) -> str | None:
+    visible_refs = context.semantic_ref_map
+    retired_refs: set[str] = set()
+    new_statements: set[str] = set()
+    for change in changes:
+        for retirement in change.retirements:
+            if retirement.target_ref not in visible_refs:
+                return "unknown_semantic_ref"
+            if retirement.target_ref in retired_refs:
+                return "duplicate_semantic_target"
+            retired_refs.add(retirement.target_ref)
+        for fact in change.new_facts:
+            if fact.statement in new_statements:
+                return "duplicate_semantic_statement"
+            new_statements.add(fact.statement)
+    return None
 
 
 def _parse_output(raw: str) -> ExtractionOutput:

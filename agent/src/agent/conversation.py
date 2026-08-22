@@ -83,6 +83,7 @@ from .context import (
     ToolContextEditRecord,
     estimate_tool_schema_tokens,
     make_budget_snapshot,
+    resolve_prior_summary,
     stream_build_messages,
 )
 from .conversation_events import (
@@ -2211,54 +2212,10 @@ class Conversation:
 
     def _derive_prior_summary_from_events(self, events: list[Event]) -> PriorSummary | None:
         """从给定事件流里最近一条 ``compaction`` 派生 :class:`PriorSummary`。"""
-        comp: Event | None = None
-        for ev in reversed(events):
-            if ev.type == "compaction":
-                comp = ev
-                break
-        if comp is None:
-            self._checkpoint_status = "none"
-            self._checkpoint_invalid_reason = ""
-            return None
-        summary = comp.payload.get("summary", "")
-        covered = comp.payload.get("covered_through_uuid", "")
-        if not summary or not covered:
-            self._checkpoint_status = "invalid"
-            self._checkpoint_invalid_reason = "missing_summary_or_covered_boundary"
-            return None
-        messages = self._messages_from_events(events)
-        indices = {message.uuid: index for index, message in enumerate(messages)}
-        covered_index = indices.get(covered)
-        if covered_index is None:
-            self._checkpoint_status = "invalid"
-            self._checkpoint_invalid_reason = "covered_boundary_not_active"
-            return None
-        checkpoint_version = int(comp.payload.get("checkpoint_version", 1))
-        source_from = str(comp.payload.get("summary_source_from_uuid", ""))
-        retained_from = str(comp.payload.get("retained_from_uuid", ""))
-        if checkpoint_version >= 2:
-            source_index = indices.get(source_from)
-            retained_index = indices.get(retained_from) if retained_from else len(messages)
-            if (
-                source_index is None
-                or retained_index is None
-                or source_index > covered_index
-                or retained_index != covered_index + 1
-            ):
-                self._checkpoint_status = "invalid"
-                self._checkpoint_invalid_reason = "checkpoint_boundaries_not_contiguous"
-                return None
-        self._checkpoint_status = "valid" if checkpoint_version >= 2 else "legacy_revalidated"
-        self._checkpoint_invalid_reason = ""
-        return PriorSummary(
-            summary=summary,
-            covered_through_uuid=covered,
-            checkpoint_version=checkpoint_version,
-            summary_prompt_version=int(comp.payload.get("summary_prompt_version", 0)),
-            summary_source_from_uuid=source_from,
-            retained_from_uuid=retained_from,
-            omitted_before_count=int(comp.payload.get("omitted_before_count", 0)),
-        )
+        resolution = resolve_prior_summary(events, self._messages_from_events(events))
+        self._checkpoint_status = resolution.status
+        self._checkpoint_invalid_reason = resolution.invalid_reason
+        return resolution.prior_summary
 
     def _derive_prior_tool_context_edit(self) -> PriorToolContextEdit | None:
         """从最近一条 ``tool_context_edit`` 派生稳定的低水位投影。"""
@@ -3027,13 +2984,12 @@ class Conversation:
         """
         if self._memory is None:
             return
-        from .memory_feed import project_turn
+        from .memory_feed import project_post_turn_observation
 
         try:
-            new_events = self._session.events[start_idx:]
-            fragment = project_turn(
-                new_events,
-                session_id=self._session.session_id,
+            fragment = project_post_turn_observation(
+                self._session,
+                turn_start_idx=start_idx,
                 persona_id=self._session.current_persona_id or "",
             )
             self._memory.observe(fragment)

@@ -27,6 +27,7 @@ ExtractionAttemptStatus = Literal[
     "empty_output",
     "llm_error",
 ]
+ExtractionAttemptPhase = Literal["base", "semantic_reconciliation"]
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,19 @@ class ExtractionAttempt:
     raw_response: str | None = None
     error_type: str | None = None
     error_message: str | None = None
+    phase: ExtractionAttemptPhase = "base"
+    semantic_update_source_refs: tuple[str, ...] = ()
+    semantic_update_selected_turns: int = 0
+    semantic_update_capacity_omitted_turns: int = 0
+    semantic_update_estimated_tokens: int = 0
+    semantic_reconciliation_fallback_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "semantic_update_source_refs",
+            tuple(self.semantic_update_source_refs),
+        )
 
 
 @dataclass(frozen=True)

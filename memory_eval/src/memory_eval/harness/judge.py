@@ -123,10 +123,15 @@ class LayerConstrainedAnchorJudge:
             if item.layer in question.forbidden_memory_layers
             and any(anchor in item.text for anchor in question.anchors)
         ]
-        score = 0.0 if violations else len(hits) / len(question.anchors)
+        forbidden_hits = [
+            anchor for anchor in question.forbidden_anchors if anchor in context.rendered
+        ]
+        score = 0.0 if violations or forbidden_hits else len(hits) / len(question.anchors)
         detail = f"{len(hits)}/{len(question.anchors)} 在 {expected_layer} 命中"
         if misses:
             detail += f"；目标层未命中: {misses}"
         if violations:
             detail += f"；禁止层出现等价事实: {sorted(set(violations))}"
+        if forbidden_hits:
+            detail += f"；仍召回已纠正旧事实: {forbidden_hits}"
         return JudgeResult(correct=(score == 1.0), detail=detail, score=score)

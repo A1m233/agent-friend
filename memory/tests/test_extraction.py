@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
 from memory.extraction import (
     AsyncExtractionWorker,
     CoreUpdate,
+    ExtractionAttempt,
     ExtractionContextBuilder,
     ExtractionOutput,
     ExtractionResult,
@@ -20,8 +22,14 @@ from memory.extraction.extractor import _PROMPT_PATH, _parse_output
 from memory.extraction.reconciler import ExtractionApplyError
 from memory.store import SemanticRow
 
-from llm_providers import ModelRequest, ModelResponse
-from memory import ConversationFragment, SqliteMemoryStore, Utterance
+from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
+from memory import (
+    ConversationFragment,
+    SemanticUpdateContext,
+    SemanticUpdateTurn,
+    SqliteMemoryStore,
+    Utterance,
+)
 
 _REASON = "测试中的分类理由"
 
@@ -34,6 +42,25 @@ class FakeLLM:
     def generate(self, request: ModelRequest) -> ModelResponse:
         self.messages = request.messages
         return ModelResponse(text=self.reply)
+
+
+class ScriptedFakeLLM:
+    context_window = 256 * 1024
+
+    def __init__(self, replies: list[str | Exception]) -> None:
+        self.replies = list(replies)
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return ModelResponse(text=reply)
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        raise AssertionError(f"unexpected stream request: {request}")
+        yield  # pragma: no cover
 
 
 def _fragment(text: str = "以后叫我小陈，我目前住在深圳") -> ConversationFragment:
@@ -61,6 +88,237 @@ def _semantic(row_id: str, statement: str) -> SemanticRow:
         updated_at=now,
         valid_from=now,
     )
+
+
+def _fragment_with_semantic_context() -> ConversationFragment:
+    prior_user = Utterance(
+        speaker="user",
+        text="我问的是另一本指南，不是你刚才理解的那份",
+        ts=datetime(2026, 8, 15, 0, 0, tzinfo=UTC),
+        source_ref="s1#prior-user",
+    )
+    prior_agent = Utterance(
+        speaker="agent",
+        text="我先前把它理解成了上下文工程指南",
+        ts=datetime(2026, 8, 15, 0, 1, tzinfo=UTC),
+        source_ref="s1#prior-agent",
+    )
+    return ConversationFragment(
+        session_id="s1",
+        persona_id="p1",
+        utterances=[
+            Utterance(
+                speaker="agent",
+                text="我之前理解错了，你指的是结直肠癌筛查指南。",
+                ts=datetime(2026, 8, 15, 0, 2, tzinfo=UTC),
+                source_ref="s1#target-agent",
+            )
+        ],
+        semantic_update_context=SemanticUpdateContext(
+            turns=(SemanticUpdateTurn(utterances=(prior_user, prior_agent)),),
+            candidate_first_source_ref=prior_user.source_ref,
+            candidate_last_source_ref=prior_agent.source_ref,
+        ),
+    )
+
+
+_BASE_OUTPUT = (
+    '{"core_updates":[{"op":"add","field":"user.preferred_name","value":"小陈",'
+    '"reason":"目标片段明确给出用户称呼"}],'
+    '"semantic_changes":[{"retirements":[],"new_facts":['
+    '{"statement":"用户指的是结直肠癌筛查指南","importance":0.7,'
+    '"speaker_origin":"agent","reason":"目标片段给出了正确方向"}]}],'
+    '"episodic_entries":["AI承认此前理解错误并说明正确指南"]}'
+)
+
+
+def test_semantic_reconciliation_only_replaces_semantic_changes() -> None:
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_semantic("wrong-guide", "用户指的是上下文工程指南"))
+    fragment = _fragment_with_semantic_context()
+    context = ExtractionContextBuilder(store).build(fragment)
+    attempts: list[ExtractionAttempt] = []
+    llm = ScriptedFakeLLM(
+        [
+            _BASE_OUTPUT,
+            '{"semantic_changes":[{"retirements":['
+            '{"target_ref":"M001","reason":"目标片段明确承认此前理解错误"}],'
+            '"new_facts":[{"statement":"用户指的是结直肠癌筛查指南",'
+            '"importance":0.7,"speaker_origin":"agent",'
+            '"reason":"正确方向由目标片段明确给出"}]}]}',
+        ]
+    )
+
+    output = Extractor(
+        llm,
+        prompt="base prompt",
+        reconciliation_prompt="reconciliation prompt",
+        on_attempt=attempts.append,
+    ).extract(fragment, context)
+
+    assert len(llm.requests) == 2
+    assert "只读邻近上下文" not in str(llm.requests[0].messages[1]["content"])
+    assert "我问的是另一本指南" in str(llm.requests[1].messages[1]["content"])
+    assert output.core_updates[0].value == "小陈"
+    assert output.episodic_entries == ["AI承认此前理解错误并说明正确指南"]
+    assert output.semantic_changes[0].retirements[0].target_ref == "M001"
+    assert [attempt.phase for attempt in attempts] == ["base", "semantic_reconciliation"]
+    assert attempts[1].semantic_update_source_refs == (
+        "s1#prior-user",
+        "s1#prior-agent",
+    )
+
+
+def test_user_correction_can_retire_visible_semantic_with_target_user_origin() -> None:
+    store = SqliteMemoryStore(":memory:")
+    store.add_semantic(_semantic("wrong-frequency", "用户每周游泳三次"))
+    prior = SemanticUpdateTurn(
+        utterances=(
+            Utterance(
+                speaker="user",
+                text="我每周游泳三次",
+                ts=datetime(2026, 8, 15, tzinfo=UTC),
+                source_ref="s1#prior-user",
+            ),
+            Utterance(
+                speaker="agent",
+                text="记住了",
+                ts=datetime(2026, 8, 15, 0, 1, tzinfo=UTC),
+                source_ref="s1#prior-agent",
+            ),
+        )
+    )
+    fragment = ConversationFragment(
+        session_id="s1",
+        persona_id="p1",
+        utterances=[
+            Utterance(
+                speaker="user",
+                text="刚才说错了，其实我每周只游一次。",
+                ts=datetime(2026, 8, 15, 0, 2, tzinfo=UTC),
+                source_ref="s1#target-user",
+            )
+        ],
+        semantic_update_context=SemanticUpdateContext(turns=(prior,)),
+    )
+    llm = ScriptedFakeLLM(
+        [
+            '{"core_updates":[],"semantic_changes":[],"episodic_entries":[]}',
+            '{"semantic_changes":[{"retirements":['
+            '{"target_ref":"M001","reason":"用户明确纠正频率"}],'
+            '"new_facts":[{"statement":"用户每周游泳一次","importance":0.6,'
+            '"speaker_origin":"user","reason":"目标用户消息明确给出实际频率"}]}]}',
+        ]
+    )
+
+    output = Extractor(
+        llm,
+        prompt="base prompt",
+        reconciliation_prompt="reconciliation prompt",
+    ).extract(fragment, ExtractionContextBuilder(store).build(fragment))
+
+    assert output.semantic_changes[0].retirements[0].target_ref == "M001"
+    assert output.semantic_changes[0].new_facts[0].speaker_origin == "user"
+
+
+def test_semantic_reconciliation_failure_falls_back_to_base_changes() -> None:
+    store = SqliteMemoryStore(":memory:")
+    fragment = _fragment_with_semantic_context()
+    context = ExtractionContextBuilder(store).build(fragment)
+    attempts: list[ExtractionAttempt] = []
+    llm = ScriptedFakeLLM([_BASE_OUTPUT, '{"semantic_changes":"bad"}'])
+
+    output = Extractor(
+        llm,
+        prompt="base prompt",
+        reconciliation_prompt="reconciliation prompt",
+        on_attempt=attempts.append,
+    ).extract(fragment, context)
+
+    assert output.semantic_changes[0].new_facts[0].statement == "用户指的是结直肠癌筛查指南"
+    assert attempts[-1].phase == "semantic_reconciliation"
+    assert attempts[-1].semantic_reconciliation_fallback_reason == "invalid_shape"
+
+
+def test_semantic_reconciliation_unknown_ref_falls_back_to_base() -> None:
+    store = SqliteMemoryStore(":memory:")
+    fragment = _fragment_with_semantic_context()
+    context = ExtractionContextBuilder(store).build(fragment)
+    attempts: list[ExtractionAttempt] = []
+    llm = ScriptedFakeLLM(
+        [
+            _BASE_OUTPUT,
+            '{"semantic_changes":[{"retirements":['
+            '{"target_ref":"M404","reason":"错误引用"}],"new_facts":[]}]}',
+        ]
+    )
+
+    output = Extractor(
+        llm,
+        prompt="base prompt",
+        reconciliation_prompt="reconciliation prompt",
+        on_attempt=attempts.append,
+    ).extract(fragment, context)
+
+    assert output.semantic_changes[0].retirements == []
+    assert attempts[-1].semantic_reconciliation_fallback_reason == "unknown_semantic_ref"
+
+
+def test_valid_empty_reconciliation_can_remove_base_semantic_changes() -> None:
+    fragment = _fragment_with_semantic_context()
+    llm = ScriptedFakeLLM([_BASE_OUTPUT, '{"semantic_changes":[]}'])
+
+    output = Extractor(
+        llm,
+        prompt="base prompt",
+        reconciliation_prompt="reconciliation prompt",
+    ).extract(fragment, [])
+
+    assert output.semantic_changes == []
+    assert output.core_updates
+    assert output.episodic_entries
+
+
+def test_context_sources_never_enter_reconciler_provenance_or_observation_identity() -> None:
+    store = SqliteMemoryStore(":memory:")
+    fragment = _fragment_with_semantic_context()
+    output = ExtractionOutput(
+        semantic_changes=[
+            SemanticChange(
+                new_facts=[
+                    SemanticFactDraft(
+                        "用户指的是结直肠癌筛查指南",
+                        "目标片段明确给出",
+                        speaker_origin="agent",
+                    )
+                ]
+            )
+        ],
+        episodic_entries=["AI纠正了指南理解"],
+    )
+
+    result = Reconciler(store).apply(
+        output,
+        fragment,
+        ExtractionContextBuilder(store).build(fragment),
+    )
+
+    semantic = store.list_semantic(owner_user_id="local")[0]
+    episodic = store.list_episodic(owner_user_id="local")[0]
+    assert semantic.provenance == ["s1#target-agent", episodic.id]
+    assert episodic.source_ref == "s1#target-agent..target-agent"
+    without_context = ConversationFragment(
+        session_id=fragment.session_id,
+        persona_id=fragment.persona_id,
+        utterances=fragment.utterances,
+    )
+    duplicate = Reconciler(store).apply(
+        ExtractionOutput(),
+        without_context,
+        ExtractionContextBuilder(store).build(without_context),
+    )
+    assert duplicate.duplicate is True
+    assert duplicate.observation_id == result.observation_id
 
 
 def test_core_relationship_prompt_uses_semantic_boundary_examples() -> None:

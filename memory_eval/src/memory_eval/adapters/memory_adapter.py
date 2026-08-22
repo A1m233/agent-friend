@@ -14,7 +14,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from memory import ConversationFragment, Utterance
+from memory import (
+    ConversationFragment,
+    SemanticUpdateContext,
+    SemanticUpdateTurn,
+    Utterance,
+)
 
 if TYPE_CHECKING:
     from memory import Memory, MemoryContext, Speaker
@@ -42,6 +47,7 @@ def case_fragments(case: EvalCase) -> list[ConversationFragment]:
         by_session.setdefault(turn.session_index, []).append(turn)
 
     fragments: list[ConversationFragment] = []
+    prior_context_turns: list[SemanticUpdateTurn] = []
     for idx in sorted(by_session):
         utterances = [
             Utterance(
@@ -54,14 +60,44 @@ def case_fragments(case: EvalCase) -> list[ConversationFragment]:
         ]
         if not utterances:
             continue
+        context_turn_limit = case.semantic_update_context_turns
+        semantic_update_context = (
+            SemanticUpdateContext(turns=tuple(prior_context_turns[-context_turn_limit:]))
+            if context_turn_limit > 0 and prior_context_turns
+            else None
+        )
         fragments.append(
             ConversationFragment(
                 session_id=case.sample_id,
                 utterances=utterances,
                 persona_id=BENCHMARK_PERSONA_ID,
+                semantic_update_context=semantic_update_context,
             )
         )
+        if context_turn_limit > 0:
+            prior_context_turns.extend(_complete_context_turns(utterances))
     return fragments
+
+
+def _complete_context_turns(utterances: list[Utterance]) -> list[SemanticUpdateTurn]:
+    turns: list[SemanticUpdateTurn] = []
+    current: list[Utterance] = []
+    for utterance in utterances:
+        if utterance.speaker == "user":
+            _append_complete_turn(turns, current)
+            current = [utterance]
+        elif current:
+            current.append(utterance)
+    _append_complete_turn(turns, current)
+    return turns
+
+
+def _append_complete_turn(
+    turns: list[SemanticUpdateTurn],
+    utterances: list[Utterance],
+) -> None:
+    if utterances and any(utterance.speaker == "agent" for utterance in utterances):
+        turns.append(SemanticUpdateTurn(utterances=tuple(utterances)))
 
 
 def ingest_case(memory: Memory, case: EvalCase) -> None:

@@ -90,4 +90,55 @@ def load_semantic_change_cases(*, limit_samples: int | None = None) -> list[Eval
                 ],
             )
         )
+
+    assistant_correction_turns = [
+        EvalTurn(
+            speaker="用户",
+            text="帮我找之前提到的原始指南。",
+            ts=base + timedelta(days=10),
+            dia_id="semantic-context-assistant-correction#0-0",
+            session_index=0,
+        ),
+        EvalTurn(
+            speaker="AI助手",
+            text="你说的是上下文工程指南。",
+            ts=base + timedelta(days=10),
+            dia_id="semantic-context-assistant-correction#0-1",
+            session_index=0,
+        ),
+        EvalTurn(
+            speaker="用户",
+            text="图片文字显示这是国家卫生健康委的结直肠癌筛查流程。",
+            ts=base + timedelta(days=11),
+            dia_id="semantic-context-assistant-correction#1-0",
+            session_index=1,
+        ),
+        EvalTurn(
+            speaker="AI助手",
+            text="我之前理解错了，你指的是结直肠癌筛查指南。",
+            ts=base + timedelta(days=11),
+            dia_id="semantic-context-assistant-correction#1-1",
+            session_index=1,
+        ),
+    ]
+    cases.append(
+        EvalCase(
+            sample_id="semantic-context-assistant-correction",
+            speaker_a="用户",
+            speaker_b="AI助手",
+            turns=assistant_correction_turns,
+            questions=[
+                EvalQuestion(
+                    question="用户实际指的是结直肠癌筛查指南还是上下文工程指南？",
+                    answer="结直肠癌筛查指南",
+                    category="semantic-change-context",
+                    evidence=[turn.dia_id for turn in assistant_correction_turns],
+                    anchors=["结直肠癌", "筛查指南"],
+                    forbidden_anchors=["上下文工程指南"],
+                    expected_memory_layer="semantic",
+                )
+            ],
+            semantic_update_context_turns=10,
+        )
+    )
     return cases[:limit_samples] if limit_samples is not None else cases

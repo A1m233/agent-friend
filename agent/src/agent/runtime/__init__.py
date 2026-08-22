@@ -35,7 +35,7 @@ from memory import Memory
 from ..conversation import Conversation
 from ..conversation_events import TurnDone
 from ..latency import RunLatencyContext, log_run_latency
-from ..memory_feed import project_turn
+from ..memory_feed import project_post_turn_observation
 from ..sessions.changes import reset_session_mutation_context, set_session_mutation_context
 from ..system_prompt.sections import PromptChannel
 from ..system_prompt.surfaces import InteractionSurfaceId
@@ -470,10 +470,9 @@ class AgentRuntime:
             and ctx.event.output_visibility == "memory_only"
         ):
             return
-        new_events = ctx.session.events[ctx.turn_start_idx :]
-        fragment = project_turn(
-            new_events,
-            session_id=ctx.session.session_id,
+        fragment = project_post_turn_observation(
+            ctx.session,
+            turn_start_idx=ctx.turn_start_idx,
             persona_id=ctx.session.current_persona_id or "",
         )
         try:
