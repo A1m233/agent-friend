@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 from uuid import uuid4
 
 import pytest
+from agent.context import BuildResult, CompactionRecord, PriorSummary, assemble_messages
 from agent.sessions import Event
 
 from agent import (
@@ -39,6 +40,7 @@ from llm_providers import (
     ModelRequest,
     ModelResponse,
 )
+from memory import MemoryContext
 
 
 @dataclass
@@ -97,6 +99,8 @@ def _conversation(
     tool_registry: ToolRegistry | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
     message_renderer: Any | None = None,
+    memory: Any | None = None,
+    context_manager: Any | None = None,
 ) -> Conversation:
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
     persona_id = BUILTIN_DEFAULT_PERSONA_ID
@@ -119,14 +123,51 @@ def _conversation(
         store=store,
         llm_client=llm,
         llm_client_factory=llm_factory,
-        context_manager=NaiveContextManager(),
+        context_manager=context_manager or NaiveContextManager(),
         prompt_builder=builder,
         prompt_builder_factory=builder_factory,
         catalog=catalog,
         tool_registry=tool_registry,
         tool_run_policy=tool_run_policy,
         message_renderer=message_renderer,
+        memory=memory,
     )
+
+
+class _RecordingMemory:
+    def __init__(self) -> None:
+        self.retrieve_kwargs: list[dict[str, Any]] = []
+
+    def retrieve(self, query: str, **kwargs: Any) -> MemoryContext:
+        del query
+        self.retrieve_kwargs.append(kwargs)
+        return MemoryContext.empty()
+
+    def observe(self, fragment: object) -> None:
+        del fragment
+
+
+class _CompactOnceContextManager:
+    def __init__(self, covered_through_uuid: str) -> None:
+        self._covered_through_uuid = covered_through_uuid
+        self._calls = 0
+
+    def build_messages(self, **kwargs: Any) -> BuildResult:
+        self._calls += 1
+        runtime = kwargs.pop("runtime", None)
+        del runtime
+        return BuildResult(
+            messages=assemble_messages(**kwargs),
+            new_compaction=(
+                CompactionRecord(
+                    summary="seed summary",
+                    covered_through_uuid=self._covered_through_uuid,
+                    checkpoint_version=1,
+                )
+                if self._calls == 1
+                else None
+            ),
+        )
 
 
 def test_edit_resend_preserves_later_model_change(tmp_path: Path) -> None:
@@ -164,6 +205,75 @@ def test_edit_resend_preserves_later_model_change(tmp_path: Path) -> None:
     assert len(active_changes) == 1
     assistants = [event for event in session.active_events if event.type == "assistant_message"]
     assert assistants[-1].meta["model"] == "kimi/kimi-k2.6"
+
+
+def test_memory_scope_uses_same_prior_summary_override_as_context(tmp_path: Path) -> None:
+    memory = _RecordingMemory()
+    conv = _conversation(
+        tmp_path,
+        llm=_ScriptedLLMClient(),
+        memory=memory,
+    )
+
+    conv._build_openai_messages_first_turn(
+        "no checkpoint",
+        prior_summary_override=None,
+        persist_compaction=False,
+    )
+    conv._build_openai_messages_first_turn(
+        "prefix checkpoint",
+        prior_summary_override=PriorSummary(
+            summary="prefix",
+            covered_through_uuid="prefix-assistant",
+        ),
+        persist_compaction=False,
+    )
+
+    empty_scope = memory.retrieve_kwargs[0]["automatic_recall_scope"]
+    prefix_scope = memory.retrieve_kwargs[1]["automatic_recall_scope"]
+    assert empty_scope.current_session_id == conv.session.session_id
+    assert empty_scope.recall_through_event_uuid is None
+    assert prefix_scope.current_session_id == conv.session.session_id
+    assert prefix_scope.recall_through_event_uuid == "prefix-assistant"
+
+
+def test_new_compaction_advances_memory_scope_only_on_the_next_turn(tmp_path: Path) -> None:
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="deepseek/deepseek-chat",
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    _append(store, session, _event("user_message", {"content": "seed question"}))
+    seed_assistant = _event(
+        "assistant_message",
+        {"content": "seed answer", "partial": False},
+    )
+    _append(store, session, seed_assistant)
+    memory = _RecordingMemory()
+    conv = _conversation(
+        tmp_path,
+        session=session,
+        store=store,
+        llm=_ScriptedLLMClient(
+            script=[
+                [LLMTurnDone(stop_reason="end_turn")],
+                [LLMTurnDone(stop_reason="end_turn")],
+            ]
+        ),
+        memory=memory,
+        context_manager=_CompactOnceContextManager(seed_assistant.uuid),
+    )
+
+    list(conv.stream("first after seed"))
+    list(conv.stream("second after seed"))
+
+    first_scope = memory.retrieve_kwargs[0]["automatic_recall_scope"]
+    second_scope = memory.retrieve_kwargs[1]["automatic_recall_scope"]
+    assert first_scope.recall_through_event_uuid is None
+    assert second_scope.recall_through_event_uuid == seed_assistant.uuid
 
 
 def _event(

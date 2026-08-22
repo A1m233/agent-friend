@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from agent.memory_search import SessionHistorySource
+from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
 from agent.sessions.events import SCHEMA_VERSION, Event
 from agent.sessions.session import Session
 from agent.sessions.store import SessionSummary
@@ -265,3 +265,26 @@ def test_user_match_does_not_pull_previous_turn_assistant() -> None:
         "当前轮不要被召回",
         "当前轮对应回答",
     ]
+
+
+def test_source_order_provider_projects_only_completed_active_conversation_messages() -> None:
+    events = list(_session().events)
+    events.extend(
+        [
+            Event(
+                type="assistant_message",
+                uuid="partial",
+                ts=_NOW,
+                payload={"content": "未完成", "partial": True},
+            ),
+            Event(
+                type="compaction",
+                uuid="compaction",
+                ts=_NOW + timedelta(seconds=1),
+                payload={"summary": "摘要", "covered_through_uuid": "a1"},
+            ),
+        ]
+    )
+    provider = SessionStoreSourceOrderProvider(_Store(Session.from_events(events)))
+
+    assert provider.active_conversation_event_uuids("session-1") == ("u1", "a1", "u2")

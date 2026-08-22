@@ -322,4 +322,7 @@ def _trace_payload(trace: RecallTrace | None) -> dict[str, object] | None:
         "candidates": trace.candidates,
         "budget": trace.budget,
         "index_state": trace.index_state,
+        "automatic_recall_scope": trace.automatic_recall_scope,
+        "scope_order_status": trace.scope_order_status,
+        "core_profile_exempt_count": trace.core_profile_exempt_count,
     }

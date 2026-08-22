@@ -55,7 +55,13 @@ from llm_providers import (
     ModelCallControl,
     ModelRequest,
 )
-from memory import ConversationFragment, Memory, MemoryContext, Utterance
+from memory import (
+    ConversationFragment,
+    CurrentSessionRecallScope,
+    Memory,
+    MemoryContext,
+    Utterance,
+)
 
 from .attachments import AttachmentRef
 from .command_runtime.tools import (
@@ -1947,6 +1953,11 @@ class Conversation:
         if extra_context:
             turn_context.extend(extra_context)
         if self._memory is not None:
+            effective_prior_summary = (
+                self._derive_prior_summary()
+                if prior_summary_override is _UNSET
+                else cast(PriorSummary | None, prior_summary_override)
+            )
             memory_start_ms = monotonic_ms()
             log_voice_latency(
                 logger,
@@ -1958,6 +1969,14 @@ class Conversation:
                 user_input,
                 persona_id=self._session.current_persona_id or "",
                 session_id=self._session.session_id,
+                automatic_recall_scope=CurrentSessionRecallScope(
+                    current_session_id=self._session.session_id,
+                    recall_through_event_uuid=(
+                        effective_prior_summary.covered_through_uuid
+                        if effective_prior_summary is not None
+                        else None
+                    ),
+                ),
             )
             log_voice_latency(
                 logger,

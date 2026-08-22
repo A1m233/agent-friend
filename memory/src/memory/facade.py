@@ -27,7 +27,7 @@ from .contracts import (
 from .core_profile import CoreProfileError, CoreProfileRenderer
 from .extraction import AsyncExtractionWorker
 from .retrieval import Renderer, ScoreWeights, rank
-from .search import MemorySearchService, SearchRequest
+from .search import CurrentSessionRecallScope, MemorySearchService, SearchRequest
 from .store import SemanticRow
 
 logger = logging.getLogger(__name__)
@@ -185,6 +185,7 @@ class Memory:
         owner_user_id: str | None = None,
         top_k: int | None = None,
         source: Literal["natural", "probe"] = "natural",
+        automatic_recall_scope: CurrentSessionRecallScope | None = None,
     ) -> MemoryContext:
         """召回与 ``query`` 相关的记忆，渲染成可注入的 :class:`MemoryContext`。
 
@@ -192,6 +193,8 @@ class Memory:
         :meth:`MemoryContext.is_empty` 决定是否注入（如实反馈，R-4.5.3）。
         """
         owner = owner_user_id or self._owner
+        if source == "probe" and automatic_recall_scope is not None:
+            raise ValueError("probe retrieve 不接受 automatic_recall_scope")
         effective_top_k = top_k if top_k is not None else self._top_k
         now = datetime.now(UTC)
 
@@ -213,6 +216,7 @@ class Memory:
                 top_k=effective_top_k,
                 source=source,
                 now=now,
+                automatic_recall_scope=automatic_recall_scope,
             )
 
         # v5 no longer has a pinned Semantic tier. Core is a separate, complete
@@ -223,7 +227,7 @@ class Memory:
 
         recalled: list[tuple[Candidate, float]] = []
         candidates_count = 0
-        if self._retrieval is not None and query.strip():
+        if automatic_recall_scope is None and self._retrieval is not None and query.strip():
             cands = self._retrieval.search(
                 query, owner_user_id=owner, persona_id=persona_id, limit=effective_top_k
             )
@@ -266,6 +270,9 @@ class Memory:
                     )
                     for item in ctx.items
                 ],
+                automatic_recall_scope=_scope_trace(automatic_recall_scope),
+                scope_order_status=("unavailable" if automatic_recall_scope is not None else None),
+                core_profile_exempt_count=sum(item.layer == "core" for item in ctx.items),
             )
             try:
                 self._on_retrieved(trace)
@@ -284,6 +291,7 @@ class Memory:
         top_k: int,
         source: Literal["natural", "probe"],
         now: datetime,
+        automatic_recall_scope: CurrentSessionRecallScope | None,
     ) -> MemoryContext:
         assert self._search_service is not None
         mode: Literal["automatic", "probe"] = "probe" if source == "probe" else "automatic"
@@ -295,6 +303,7 @@ class Memory:
                 mode=mode,
                 session_id=session_id,
                 top_k=top_k,
+                automatic_recall_scope=automatic_recall_scope,
             )
         )
         ctx = self._renderer.render_search(result.evidence, now=now)
@@ -309,6 +318,60 @@ class Memory:
                     "until": _iso(result.query.time_range.until),
                 }
             decisions = {item.evidence_id: item for item in result.decisions}
+            scope_decisions = {item.evidence_id: item for item in result.scope_decisions}
+            ranked_candidates = {item.evidence_id: item for item in result.evidence}
+            core_trace: list[dict[str, object]] = [
+                {
+                    "evidence_id": f"core:{item.source_ref}",
+                    "kind": "core",
+                    "source": "core_profile",
+                    "keyword_rank": None,
+                    "dense_rank": None,
+                    "fused_score": None,
+                    "scope_status": "eligible",
+                    "scope_reason": "core_profile_exempt",
+                    "current_session_source_refs": [],
+                    "decision": "injected",
+                    "decision_reason": "core_profile",
+                }
+                for item in ctx.items
+                if item.layer == "core"
+            ]
+            candidate_trace: list[dict[str, object]] = []
+            for candidate in result.candidates:
+                scope_decision = scope_decisions.get(candidate.evidence_id)
+                final_decision = decisions.get(candidate.evidence_id)
+                ranked_candidate = ranked_candidates.get(candidate.evidence_id)
+                candidate_trace.append(
+                    {
+                        "evidence_id": candidate.evidence_id,
+                        "kind": candidate.kind,
+                        "source": candidate.source_name,
+                        "keyword_rank": candidate.keyword_rank,
+                        "dense_rank": candidate.dense_rank,
+                        "fused_score": (
+                            ranked_candidate.fused_score if ranked_candidate is not None else None
+                        ),
+                        "scope_status": (
+                            scope_decision.status if scope_decision is not None else None
+                        ),
+                        "scope_reason": (
+                            scope_decision.reason if scope_decision is not None else None
+                        ),
+                        "current_session_source_refs": (
+                            list(scope_decision.current_session_source_refs)
+                            if scope_decision is not None
+                            else []
+                        ),
+                        "decision": (
+                            final_decision.decision if final_decision is not None else None
+                        ),
+                        "decision_reason": (
+                            final_decision.reason if final_decision is not None else None
+                        ),
+                    }
+                )
+            candidate_trace.extend(core_trace)
             trace = RecallTrace(
                 timestamp=now,
                 query=query,
@@ -339,24 +402,16 @@ class Memory:
                     {
                         "source": run.source_name,
                         "candidate_count": run.candidate_count,
+                        "raw_candidate_count": run.raw_candidate_count,
+                        "suppressed_count": run.suppressed_count,
                         "limit": run.limit,
                         "status": run.status,
+                        "scope_scan_attempts": run.scope_scan_attempts,
+                        "scope_scan_truncated": run.scope_scan_truncated,
                     }
                     for run in result.source_runs
                 ],
-                candidates=[
-                    {
-                        "evidence_id": candidate.evidence_id,
-                        "kind": candidate.kind,
-                        "source": candidate.source_name,
-                        "keyword_rank": candidate.keyword_rank,
-                        "dense_rank": candidate.dense_rank,
-                        "fused_score": candidate.fused_score,
-                        "decision": decisions[candidate.evidence_id].decision,
-                        "decision_reason": decisions[candidate.evidence_id].reason,
-                    }
-                    for candidate in result.evidence
-                ],
+                candidates=candidate_trace,
                 budget={
                     "semantic": top_k,
                     "episodic": top_k,
@@ -364,6 +419,9 @@ class Memory:
                     "total": top_k + (4 if mode == "automatic" else 0),
                 },
                 index_state=self._dense_index_state(),
+                automatic_recall_scope=_scope_trace(automatic_recall_scope),
+                scope_order_status=result.scope_order_status,
+                core_profile_exempt_count=len(core_trace),
             )
             try:
                 self._on_retrieved(trace)
@@ -438,3 +496,14 @@ class Memory:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _scope_trace(
+    scope: CurrentSessionRecallScope | None,
+) -> dict[str, str | None] | None:
+    if scope is None:
+        return None
+    return {
+        "current_session_id": scope.current_session_id,
+        "recall_through_event_uuid": scope.recall_through_event_uuid,
+    }

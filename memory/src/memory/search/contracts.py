@@ -25,6 +25,44 @@ SearchIntent = Literal[
 EvidenceKind = Literal["core", "semantic", "episodic", "utterance"]
 EvidenceSpeaker = Literal["user", "agent"]
 SaidBy = Literal["user", "agent"]
+RecallScopeStatus = Literal["eligible", "suppressed"]
+RecallScopeOrderStatus = Literal[
+    "not_applied",
+    "not_required",
+    "ready",
+    "unavailable",
+    "cutoff_unresolved",
+]
+
+
+@dataclass(frozen=True)
+class CurrentSessionRecallScope:
+    """Automatic recall range for one active conversation session.
+
+    Object presence enables the scope.  A ``None`` boundary deliberately means
+    that no ordinary evidence from the current session is eligible yet.
+    """
+
+    current_session_id: str
+    recall_through_event_uuid: str | None
+
+    def __post_init__(self) -> None:
+        if not self.current_session_id.strip():
+            raise ValueError("current_session_id 不能为空")
+        if (
+            self.recall_through_event_uuid is not None
+            and not self.recall_through_event_uuid.strip()
+        ):
+            raise ValueError("recall_through_event_uuid 不能为空字符串")
+
+
+class SessionSourceOrderProvider(Protocol):
+    """Project an active conversation lineage without exposing session types."""
+
+    def active_conversation_event_uuids(
+        self,
+        session_id: str,
+    ) -> tuple[str, ...] | None: ...
 
 
 @dataclass(frozen=True)
@@ -59,12 +97,21 @@ class SearchRequest:
     current_turn_start_index: int | None = None
     target_session_ids: tuple[str, ...] = ()
     retrieval_goal: RetrievalGoal = "search"
+    automatic_recall_scope: CurrentSessionRecallScope | None = None
 
     def __post_init__(self) -> None:
         if self.top_k is not None and self.top_k <= 0:
             raise ValueError("top_k 必须大于 0")
         if self.current_turn_start_index is not None and self.current_turn_start_index < 0:
             raise ValueError("current_turn_start_index 不能小于 0")
+        if self.automatic_recall_scope is not None:
+            if self.mode != "automatic":
+                raise ValueError("automatic_recall_scope 只允许用于 automatic mode")
+            if (
+                self.session_id is not None
+                and self.session_id != self.automatic_recall_scope.current_session_id
+            ):
+                raise ValueError("session_id 与 automatic_recall_scope 不一致")
 
 
 @dataclass(frozen=True)
@@ -142,6 +189,20 @@ class SourceRun:
     limit: int
     status: Literal["ok", "failed", "skipped"] = "ok"
     truncated: bool = False
+    raw_candidate_count: int | None = None
+    suppressed_count: int = 0
+    scope_scan_attempts: int = 1
+    scope_scan_truncated: bool = False
+
+
+@dataclass(frozen=True)
+class RecallScopeDecision:
+    """Automatic scope decision, independent from final fusion/quota."""
+
+    evidence_id: str
+    status: RecallScopeStatus
+    reason: str
+    current_session_source_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,4 +224,7 @@ class SearchResult:
     failures: tuple[SourceFailure, ...] = field(default_factory=tuple)
     source_runs: tuple[SourceRun, ...] = field(default_factory=tuple)
     decisions: tuple[CandidateDecision, ...] = field(default_factory=tuple)
+    candidates: tuple[EvidenceCandidate, ...] = field(default_factory=tuple)
+    scope_decisions: tuple[RecallScopeDecision, ...] = field(default_factory=tuple)
+    scope_order_status: RecallScopeOrderStatus = "not_applied"
     truncated: bool = False

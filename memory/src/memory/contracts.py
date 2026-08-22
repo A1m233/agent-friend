@@ -201,3 +201,6 @@ class RecallTrace:
     candidates: list[dict[str, object]] | None = None
     budget: dict[str, int] | None = None
     index_state: dict[str, object] | None = None
+    automatic_recall_scope: dict[str, str | None] | None = None
+    scope_order_status: str | None = None
+    core_profile_exempt_count: int = 0

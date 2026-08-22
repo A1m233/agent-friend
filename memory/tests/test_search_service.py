@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from memory.search import (
     AnalyzedQuery,
+    CurrentSessionRecallScope,
     EvidenceCandidate,
     MemorySearchService,
     SearchRequest,
@@ -57,6 +58,22 @@ class _Source:
         if self._error is not None:
             raise self._error
         return self._candidates[:limit]
+
+
+class _Order:
+    def __init__(self, event_uuids: tuple[str, ...] | None) -> None:
+        self._event_uuids = event_uuids
+
+    def active_conversation_event_uuids(self, session_id: str) -> tuple[str, ...] | None:
+        assert session_id == "current"
+        return self._event_uuids
+
+
+def _scope(cutoff: str | None) -> CurrentSessionRecallScope:
+    return CurrentSessionRecallScope(
+        current_session_id="current",
+        recall_through_event_uuid=cutoff,
+    )
 
 
 def _request(**kwargs: object) -> SearchRequest:
@@ -316,3 +333,320 @@ def test_structured_source_distinguishes_current_and_historical_fact_versions() 
     assert [item.evidence_id for item in current.evidence] == ["semantic:new-job"]
     assert [item.evidence_id for item in historical.evidence] == ["semantic:old-job"]
     store.close()
+
+
+def test_automatic_recall_scope_distinguishes_omitted_empty_and_bounded_states() -> None:
+    current_old = replace(
+        _candidate("old", "structured_memory", 2),
+        provenance=("current#B",),
+    )
+    current_new = replace(
+        _candidate("new", "structured_memory", 1),
+        provenance=("current#F",),
+    )
+    other = replace(
+        _candidate("other", "structured_memory", 3),
+        provenance=("other#X",),
+    )
+    source = _Source("structured_memory", [current_new, current_old, other])
+    service = MemorySearchService(
+        [source],
+        source_order_provider=_Order(("A", "B", "C", "D", "E", "F", "G")),
+    )
+
+    omitted = service.search(_request(mode="automatic", top_k=8))
+    empty = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope(None),
+        )
+    )
+    bounded = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+
+    assert {item.evidence_id for item in omitted.evidence} == {"old", "new", "other"}
+    assert [item.evidence_id for item in empty.evidence] == ["other"]
+    assert {item.evidence_id for item in bounded.evidence} == {"old", "other"}
+    assert {decision.evidence_id: decision.reason for decision in bounded.scope_decisions} == {
+        "new": "current_session_after_boundary",
+        "old": "current_session_at_or_before_boundary",
+        "other": "other_session",
+    }
+
+
+def test_scope_applies_same_boundary_to_semantic_episodic_and_utterance() -> None:
+    candidates = [
+        replace(
+            _candidate("semantic", "a-semantic", 1),
+            kind="semantic",
+            provenance=("current#F",),
+        ),
+        replace(
+            _candidate("episodic", "b-episodic", 1),
+            kind="episodic",
+            provenance=("current#F",),
+        ),
+        replace(
+            _candidate("utterance", "c-utterance", 1),
+            kind="utterance",
+            provenance=("current#F",),
+            session_id="current",
+        ),
+    ]
+    service = MemorySearchService(
+        [_Source(candidate.source_name, [candidate]) for candidate in candidates],
+        source_order_provider=_Order(("A", "B", "C", "D", "E", "F", "G")),
+    )
+
+    through_d = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+    through_g = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("G"),
+        )
+    )
+
+    assert through_d.evidence == ()
+    assert {item.evidence_id for item in through_g.evidence} == {
+        "semantic",
+        "episodic",
+        "utterance",
+    }
+
+
+def test_scope_uses_all_current_session_provenance_and_fails_closed_when_unresolved() -> None:
+    multi = replace(
+        _candidate("multi", "structured_memory", 1),
+        provenance=("current#B", "current#F"),
+    )
+    unresolved = replace(
+        _candidate("unresolved", "structured_memory", 2),
+        provenance=("current#missing",),
+    )
+    legacy = replace(
+        _candidate("legacy", "structured_memory", 3),
+        provenance=("opaque-id",),
+    )
+    service = MemorySearchService(
+        [_Source("structured_memory", [multi, unresolved, legacy])],
+        source_order_provider=_Order(("A", "B", "C", "D", "E", "F", "G")),
+    )
+
+    through_d = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+    through_g = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("G"),
+        )
+    )
+
+    assert [item.evidence_id for item in through_d.evidence] == ["legacy"]
+    assert {item.evidence_id for item in through_g.evidence} == {"multi", "legacy"}
+    assert {decision.evidence_id: decision.reason for decision in through_g.scope_decisions}[
+        "unresolved"
+    ] == "current_session_source_unresolved"
+
+
+def test_scope_provider_unavailable_suppresses_only_known_current_session_candidates() -> None:
+    current = replace(
+        _candidate("current", "structured_memory", 1),
+        provenance=("current#B",),
+    )
+    other = replace(
+        _candidate("other", "structured_memory", 2),
+        provenance=("other#B",),
+    )
+    unscoped = _candidate("unscoped", "structured_memory", 3)
+    service = MemorySearchService([_Source("structured_memory", [current, other, unscoped])])
+
+    result = service.search(
+        _request(
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+
+    assert {item.evidence_id for item in result.evidence} == {"other", "unscoped"}
+    assert result.scope_order_status == "unavailable"
+    assert {decision.evidence_id: decision.reason for decision in result.scope_decisions} == {
+        "current": "current_session_source_unresolved",
+        "other": "other_session",
+        "unscoped": "legacy_unscoped",
+    }
+
+
+def test_scope_filters_structured_before_history_fallback_and_progressively_backfills() -> None:
+    recent = [
+        replace(
+            _candidate(f"recent-{index}", "structured_memory", index + 1),
+            text="日语",
+            provenance=(f"current#N{index}",),
+        )
+        for index in range(30)
+    ]
+    old = replace(
+        _candidate("old", "structured_memory", 31),
+        text="日语旧记忆",
+        provenance=("current#D",),
+    )
+    history = replace(
+        _candidate("history", "session_history", 1),
+        kind="utterance",
+        text="日语历史原话",
+        provenance=("current#C",),
+        session_id="current",
+    )
+    order = ("A", "B", "C", "D", *(f"N{index}" for index in range(30)))
+    service = MemorySearchService(
+        [
+            _Source("structured_memory", [*recent, old]),
+            _Source("session_history", [history]),
+        ],
+        source_order_provider=_Order(tuple(order)),
+    )
+
+    result = service.search(
+        _request(
+            text="日语",
+            mode="automatic",
+            top_k=1,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+
+    assert {item.evidence_id for item in result.evidence} == {"old"}
+    structured_run = result.source_runs[0]
+    assert structured_run.scope_scan_attempts >= 2
+    assert structured_run.suppressed_count == 30
+    # The eligible structured result covers the query, so raw fallback remains skipped.
+    assert result.source_runs[-1].status == "skipped"
+
+
+def test_scope_suppressed_structured_candidate_does_not_block_history_fallback() -> None:
+    structured = replace(
+        _candidate("new", "structured_memory", 1),
+        text="日语",
+        provenance=("current#F",),
+    )
+    history = replace(
+        _candidate("history", "session_history", 1),
+        kind="utterance",
+        text="日语历史原话",
+        provenance=("current#C",),
+        session_id="current",
+    )
+    service = MemorySearchService(
+        [
+            _Source("structured_memory", [structured]),
+            _Source("session_history", [history]),
+        ],
+        source_order_provider=_Order(("A", "B", "C", "D", "E", "F")),
+    )
+
+    result = service.search(
+        _request(
+            text="日语",
+            mode="automatic",
+            top_k=8,
+            session_id="current",
+            automatic_recall_scope=_scope("D"),
+        )
+    )
+
+    assert [item.evidence_id for item in result.evidence] == ["history"]
+    assert result.source_runs[-1].status == "ok"
+
+
+def test_scope_is_rejected_for_nonautomatic_mode_and_mismatched_session() -> None:
+    for kwargs in (
+        {"mode": "explicit", "automatic_recall_scope": _scope("D")},
+        {
+            "mode": "automatic",
+            "session_id": "different",
+            "automatic_recall_scope": _scope("D"),
+        },
+    ):
+        try:
+            _request(**kwargs)
+        except ValueError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("invalid automatic recall scope should fail")
+
+
+def test_structured_source_expands_legacy_episodic_provenance_without_migration() -> None:
+    store = SqliteMemoryStore(":memory:")
+    try:
+        store.add_episodic(
+            EpisodicRow(
+                id="episode-source",
+                summary="日语学习经历",
+                source_ref="current#B..C",
+                persona_id="p1",
+                occurred_at=_NOW,
+                created_at=_NOW,
+            )
+        )
+        store.add_semantic(
+            SemanticRow(
+                id="legacy-semantic",
+                statement="用户正在学习日语",
+                persona_id="p1",
+                created_at=_NOW,
+                updated_at=_NOW,
+                valid_from=_NOW,
+                provenance=["episode-source"],
+            )
+        )
+        service = MemorySearchService(
+            [StructuredMemorySource(store)],
+            source_order_provider=_Order(("A", "B", "C", "D")),
+        )
+
+        result = service.search(
+            _request(
+                mode="automatic",
+                top_k=8,
+                session_id="current",
+                automatic_recall_scope=_scope("D"),
+            )
+        )
+
+        semantic = next(
+            item for item in result.evidence if item.evidence_id == "semantic:legacy-semantic"
+        )
+        assert "current#B..C" in semantic.provenance
+        assert {decision.evidence_id: decision.reason for decision in result.scope_decisions}[
+            "semantic:legacy-semantic"
+        ] == "current_session_at_or_before_boundary"
+    finally:
+        store.close()

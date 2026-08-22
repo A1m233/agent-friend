@@ -148,6 +148,7 @@ def test_memory_enabled_registers_history_and_structured_sources(
             "session_history",
             "structured_memory",
         )
+        assert history_tool._search_service.has_source_order_provider is True
     finally:
         runtime.close()
 
