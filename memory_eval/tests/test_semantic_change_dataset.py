@@ -9,8 +9,9 @@ def test_semantic_change_slice_covers_add_retract_merge_and_split() -> None:
         "semantic-retract",
         "semantic-many-to-one",
         "semantic-one-to-many",
+        "semantic-context-assistant-correction",
     ]
-    assert [len(case_fragments(case)) for case in cases] == [1, 2, 3, 2]
+    assert [len(case_fragments(case)) for case in cases] == [1, 2, 3, 2, 2]
     assert {case.questions[0].expected_memory_layer for case in cases} == {
         "semantic",
         "episodic",
@@ -24,3 +25,17 @@ def test_semantic_change_slice_is_deterministic_and_uses_holdout_entities() -> N
     assert "青柠" in rendered
     assert "合唱团" in rendered
     assert "游泳" not in rendered
+
+
+def test_contextual_semantic_change_case_freezes_prior_complete_turn() -> None:
+    case = load_semantic_change_cases()[-1]
+    fragments = case_fragments(case)
+
+    assert fragments[0].semantic_update_context is None
+    assert fragments[1].semantic_update_context is not None
+    assert fragments[1].semantic_update_context.source_refs == (
+        "semantic-context-assistant-correction#semantic-context-assistant-correction#0-0",
+        "semantic-context-assistant-correction#semantic-context-assistant-correction#0-1",
+    )
+    question = case.questions[0]
+    assert question.forbidden_anchors == ["上下文工程指南"]

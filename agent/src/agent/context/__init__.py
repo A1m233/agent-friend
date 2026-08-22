@@ -25,6 +25,11 @@ from .budget import (
     estimate_tool_schema_tokens,
     make_budget_snapshot,
 )
+from .checkpoints import (
+    CheckpointStatus,
+    PriorSummaryResolution,
+    resolve_prior_summary,
+)
 from .errors import ContextBaseOverBudgetError, ContextInputTooLargeError
 from .fifo import RECENT_PROTECT_TURNS, FifoContextManager
 from .naive import NaiveContextManager
@@ -68,6 +73,7 @@ __all__ = [
     "SUMMARY_RECENT_TAIL_TURNS",
     "BudgetSnapshot",
     "BuildResult",
+    "CheckpointStatus",
     "CompactionRecord",
     "ContextBaseOverBudgetError",
     "ContextCompactionProgress",
@@ -76,6 +82,7 @@ __all__ = [
     "FifoContextManager",
     "NaiveContextManager",
     "PriorSummary",
+    "PriorSummaryResolution",
     "PriorToolContextEdit",
     "RuntimeContext",
     "StreamingContextManager",
@@ -87,5 +94,6 @@ __all__ = [
     "estimate_tokens",
     "estimate_tool_schema_tokens",
     "make_budget_snapshot",
+    "resolve_prior_summary",
     "stream_build_messages",
 ]

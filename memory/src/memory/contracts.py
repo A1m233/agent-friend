@@ -78,6 +78,38 @@ class Utterance:
 
 
 @dataclass(frozen=True)
+class SemanticUpdateTurn:
+    """One complete prior user/agent turn used only for Semantic reconciliation."""
+
+    utterances: tuple[Utterance, ...]
+
+    def __post_init__(self) -> None:
+        if not self.utterances or self.utterances[0].speaker != "user":
+            raise ValueError("semantic update turn must start with a user utterance")
+        if not any(utterance.speaker == "agent" for utterance in self.utterances):
+            raise ValueError("semantic update turn must include an agent utterance")
+
+
+@dataclass(frozen=True)
+class SemanticUpdateContext:
+    """Frozen caller projection that may only assist ordinary Semantic changes."""
+
+    turns: tuple[SemanticUpdateTurn, ...] = ()
+    covered_through_source_ref: str | None = None
+    candidate_first_source_ref: str | None = None
+    candidate_last_source_ref: str | None = None
+    range_omitted_turn_count: int = 0
+    range_omitted_through_source_ref: str | None = None
+
+    @property
+    def source_refs(self) -> tuple[str, ...]:
+        return tuple(utterance.source_ref for turn in self.turns for utterance in turn.utterances)
+
+    def is_empty(self) -> bool:
+        return not self.turns
+
+
+@dataclass(frozen=True)
 class ConversationFragment:
     """一段待抽取的对话素材（v1 = 一轮 user+assistant）。
 
@@ -94,6 +126,7 @@ class ConversationFragment:
     utterances: list[Utterance]
     persona_id: str
     owner_user_id: str = DEFAULT_OWNER_USER_ID
+    semantic_update_context: SemanticUpdateContext | None = None
 
     def is_empty(self) -> bool:
         """没有任何可抽取发言时为真（worker 可直接跳过）。"""

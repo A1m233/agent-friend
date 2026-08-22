@@ -25,6 +25,8 @@ from .contracts import (
     MemoryItem,
     RecallTrace,
     RecallTraceItem,
+    SemanticUpdateContext,
+    SemanticUpdateTurn,
     Speaker,
     Utterance,
 )
@@ -148,6 +150,8 @@ __all__ = [
     "SemanticOp",
     "SemanticRetirement",
     "SemanticRow",
+    "SemanticUpdateContext",
+    "SemanticUpdateTurn",
     "SessionSourceOrderProvider",
     "Speaker",
     "SqliteMemoryStore",

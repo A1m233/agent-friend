@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 from memory_eval.datasets import EvalQuestion
-from memory_eval.harness import AnchorRecallJudge
+from memory_eval.harness import AnchorRecallJudge, LayerConstrainedAnchorJudge
 
-from memory import MemoryContext
+from memory import MemoryContext, MemoryItem
 
 
 def _question(anchors: list[str]) -> EvalQuestion:
@@ -83,3 +83,38 @@ def test_anchor_judge_empty_anchors_skipped() -> None:
     assert result.score is None
     assert result.correct is None
     assert "跳过判分" in result.detail
+
+
+def test_layer_judge_rejects_recalled_forbidden_old_fact() -> None:
+    question = EvalQuestion(
+        question="用户指哪份指南？",
+        answer="结直肠癌筛查指南",
+        category="semantic-change-context",
+        evidence=[],
+        anchors=["结直肠癌", "筛查指南"],
+        expected_memory_layer="semantic",
+        forbidden_anchors=["上下文工程指南"],
+    )
+    context = MemoryContext(
+        rendered="用户指的是结直肠癌筛查指南\n用户指的是上下文工程指南",
+        items=[
+            MemoryItem(
+                text="用户指的是结直肠癌筛查指南",
+                layer="semantic",
+                source_ref="correct",
+                score=1.0,
+            ),
+            MemoryItem(
+                text="用户指的是上下文工程指南",
+                layer="semantic",
+                source_ref="wrong",
+                score=0.9,
+            ),
+        ],
+    )
+
+    result = LayerConstrainedAnchorJudge().judge(question, context)
+
+    assert result.correct is False
+    assert result.score == 0.0
+    assert "仍召回已纠正旧事实" in result.detail
