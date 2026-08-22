@@ -2,7 +2,9 @@ import {
   Activity,
   lazy,
   Suspense,
+  useCallback,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -57,12 +59,29 @@ export function ChatApp() {
   const newSession = useConversationStore((s) => s.newSession);
   const loadModelCatalog = useModelCatalogStore((state) => state.load);
   const target = useWorkspaceNavigationStore((state) => state.target);
+  const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
   const visitedTargets = useWorkspaceNavigationStore((state) => state.visitedTargets);
   const chatNavigation = useWorkspaceNavigationStore((state) => state.chatNavigation);
   const settingsNavigation = useWorkspaceNavigationStore(
     (state) => state.settingsNavigation,
   );
   const [memoryInspectorEnabled, setMemoryInspectorEnabled] = useState(import.meta.env.DEV);
+  const autoRestoreBlockedRef = useRef(false);
+
+  const blockAutoRestore = useCallback(() => {
+    autoRestoreBlockedRef.current = true;
+  }, []);
+
+  const isAutoRestoreBlocked = useCallback(
+    () => autoRestoreBlockedRef.current,
+    [],
+  );
+
+  const startNewConversation = useCallback(() => {
+    blockAutoRestore();
+    navigateWorkspace("chat");
+    newSession();
+  }, [blockAutoRestore, navigateWorkspace, newSession]);
 
   useEffect(() => {
     if (status === "online") void loadModelCatalog();
@@ -85,8 +104,8 @@ export function ChatApp() {
 
   useEffect(() => {
     if (!chatNavigation?.chat?.newConversation) return;
-    newSession();
-  }, [chatNavigation, newSession]);
+    startNewConversation();
+  }, [chatNavigation, startNewConversation]);
 
   useEffect(() => {
     void invoke<{ memoryInspector: boolean }>("get_local_capabilities")
@@ -133,7 +152,12 @@ export function ChatApp() {
       style={{ "--sidebar-width": "15rem" } as CSSProperties}
     >
       <GlobalConversationSearchProvider>
-        <HistorySidebar memoryInspectorEnabled={memoryInspectorEnabled} />
+        <HistorySidebar
+          memoryInspectorEnabled={memoryInspectorEnabled}
+          onNewConversation={startNewConversation}
+          blockAutoRestore={blockAutoRestore}
+          isAutoRestoreBlocked={isAutoRestoreBlocked}
+        />
         <div className="relative min-w-0 flex-1 overflow-hidden bg-bg text-fg">
           <WorkspaceSurface active={target === "chat"}>
             <ChatContentSurface />

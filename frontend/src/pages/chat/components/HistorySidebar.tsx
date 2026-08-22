@@ -26,6 +26,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -35,6 +36,9 @@ import {
   SidebarMenuItem,
   Spinner,
   TextEllipsis,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@/components/ui";
 import type { IMType } from "@/services";
 import {
@@ -171,8 +175,14 @@ function formatSessionAge(input: string, now = Date.now()): string {
  */
 export function HistorySidebar({
   memoryInspectorEnabled,
+  onNewConversation,
+  blockAutoRestore,
+  isAutoRestoreBlocked,
 }: {
   memoryInspectorEnabled: boolean;
+  onNewConversation: () => void;
+  blockAutoRestore: () => void;
+  isAutoRestoreBlocked: () => boolean;
 }) {
   const list = useSessionsStore((s) => s.list);
   const imTypesBySession = useSessionsStore((s) => s.imTypesBySession);
@@ -226,23 +236,12 @@ export function HistorySidebar({
   >();
   const [now, setNow] = useState(() => Date.now());
   const restoreAttemptedRef = useRef(false);
-  const restoreBlockedRef = useRef(false);
   const { query: searchPalette } = useKBar();
   const workspaceTarget = useWorkspaceNavigationStore((state) => state.target);
   const navigateWorkspace = useWorkspaceNavigationStore((state) => state.navigate);
   const searchShortcutLabel = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
     ? "⌘ F"
     : "Ctrl F";
-
-  const blockAutoRestore = useCallback(() => {
-    restoreBlockedRef.current = true;
-  }, []);
-
-  const handleNewSession = useCallback(() => {
-    blockAutoRestore();
-    navigateWorkspace("chat");
-    newSession();
-  }, [blockAutoRestore, navigateWorkspace, newSession]);
 
   const handleOpenSession = useCallback(
     (sessionId: string) => {
@@ -388,7 +387,7 @@ export function HistorySidebar({
   useEffect(() => {
     if (
       restoreAttemptedRef.current ||
-      restoreBlockedRef.current ||
+      isAutoRestoreBlocked() ||
       persistedSessionId === undefined ||
       !sessionsLoaded ||
       currentSessionId
@@ -405,12 +404,19 @@ export function HistorySidebar({
 
     void openSession(restorableSessionId, { failureMode: "home", remember: false }).then(
       (opened) => {
-        if (!opened && !restoreBlockedRef.current) {
+        if (!opened && !isAutoRestoreBlocked()) {
           void setLastChatSessionId(null);
         }
       },
     );
-  }, [currentSessionId, list, openSession, persistedSessionId, sessionsLoaded]);
+  }, [
+    currentSessionId,
+    isAutoRestoreBlocked,
+    list,
+    openSession,
+    persistedSessionId,
+    sessionsLoaded,
+  ]);
 
   const openActionSessionId = openActionMenu?.sessionId ?? null;
 
@@ -436,7 +442,7 @@ export function HistorySidebar({
             <SidebarMenuButton
               isActive={isNewConversationNavigationActive(workspaceTarget, currentSessionId)}
               className={NAVIGATION_BUTTON_CLASS}
-              onClick={handleNewSession}
+              onClick={onNewConversation}
             >
               <SquarePen />
               <span>新对话</span>
@@ -479,6 +485,16 @@ export function HistorySidebar({
       <SidebarContent className="overflow-hidden">
         <SidebarGroup className="min-h-0 flex-1">
           <SidebarGroupLabel className="text-sm font-normal">对话</SidebarGroupLabel>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarGroupAction aria-label="新对话" onClick={onNewConversation}>
+                <span className="flex size-3.5 items-center justify-center">
+                  <SquarePen className="size-full" strokeWidth={1.5} />
+                </span>
+              </SidebarGroupAction>
+            </TooltipTrigger>
+            <TooltipContent side="right">新对话</TooltipContent>
+          </Tooltip>
           <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
             {list.length === 0 ? (
               <p className="px-2 py-2 text-xs text-muted">还没有历史会话</p>
