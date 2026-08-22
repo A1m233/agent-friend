@@ -4,6 +4,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
   Button,
+  ScrollArea,
   StatusDot,
   type StatusDotProps,
 } from "@/components/ui";
@@ -24,6 +25,10 @@ import {
   commandNeedsSandboxPreparation,
   parseCommandToolResult,
 } from "./commandRuntimePresentation";
+import {
+  presentFilesystemReadTextResult,
+  presentToolPayload,
+} from "./toolPayloadPresentation";
 
 /**
  * 工具调用卡片（自写，AC-M3.2）。
@@ -42,15 +47,6 @@ const STATUS_META: Record<
   error: { label: "失败", tone: "danger", text: "text-danger" },
 };
 
-function prettyArgs(args: string): string {
-  if (!args) return "";
-  try {
-    return JSON.stringify(JSON.parse(args), null, 2);
-  } catch {
-    return args;
-  }
-}
-
 interface SkillCardDetails {
   name: string;
   source: string;
@@ -59,6 +55,52 @@ interface SkillCardDetails {
 
 function cardWidthClass(embedded: boolean): string {
   return embedded ? "w-full max-w-none" : "max-w-[85%]";
+}
+
+function ToolDetailSection({
+  title,
+  content,
+  metadata,
+}: {
+  title: string;
+  content: string;
+  metadata?: string;
+}) {
+  return (
+    <section aria-label={title} className="space-y-1">
+      <div className="font-medium text-muted">{title}</div>
+      {metadata ? <div className="break-all text-muted">{metadata}</div> : null}
+      <ScrollArea
+        className="max-h-52 rounded bg-bg/60"
+        viewportClassName="max-h-52 overscroll-auto"
+      >
+        <pre className="overflow-x-auto whitespace-pre-wrap break-words p-2 text-xs text-fg">
+          {content}
+        </pre>
+      </ScrollArea>
+    </section>
+  );
+}
+
+function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
+  const filesystemResult = block.name === "filesystem_read_text" && block.result
+    ? presentFilesystemReadTextResult(block.result)
+    : null;
+  const result = filesystemResult?.content
+    ?? (block.result ? presentToolPayload(block.result).text : "");
+
+  return (
+    <div className="mt-2 space-y-2">
+      {args ? <ToolDetailSection title="参数" content={args} /> : null}
+      {block.result ? (
+        <ToolDetailSection
+          title="结果"
+          content={result}
+          metadata={filesystemResult?.metadata}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 function skillCardDetails(block: ToolBlock): SkillCardDetails {
@@ -550,7 +592,7 @@ export function ToolCard({
     return <SkillStatusCard block={block} embedded={embedded} />;
   }
   const meta = STATUS_META[block.status];
-  const args = prettyArgs(block.args);
+  const args = presentToolPayload(block.args).text;
   const hasDetails = Boolean(args || block.result);
 
   return (
@@ -564,35 +606,15 @@ export function ToolCard({
         <span className={cn("ml-auto", meta.text)}>{meta.label}</span>
       </div>
       {hasDetails && embedded && (
-        <div className="max-h-80 overflow-y-auto overscroll-contain">
-          {args && (
-            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
-              {args}
-            </pre>
-          )}
-          {block.result && (
-            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
-              {block.result}
-            </pre>
-          )}
-        </div>
+        <ToolDetails block={block} args={args} />
       )}
       {hasDetails && !embedded && (
         <Collapsible className="mt-1.5">
           <CollapsibleTrigger className="cursor-pointer select-none text-muted transition-colors hover:text-fg">
             参数 / 结果
           </CollapsibleTrigger>
-          <CollapsibleContent className="max-h-80 overflow-y-auto overscroll-contain">
-            {args && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
-                {args}
-              </pre>
-            )}
-            {block.result && (
-              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded bg-bg/60 p-2 text-xs text-fg">
-                {block.result}
-              </pre>
-            )}
+          <CollapsibleContent>
+            <ToolDetails block={block} args={args} />
           </CollapsibleContent>
         </Collapsible>
       )}

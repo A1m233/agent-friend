@@ -103,12 +103,12 @@ export function ConversationModelSelector({
                   disabled={unavailable}
                   loading={modelSwitching}
                   aria-label={reason ? `当前模型：${selectedLabel}。${reason}` : `当前模型：${selectedLabel}`}
-                  className="max-w-52 px-2 text-muted hover:text-fg"
+                  className="max-w-52 gap-1 px-2 text-muted hover:text-fg"
                 >
-                  <TextEllipsis className="min-w-0" showTooltip={false}>
+                  <TextEllipsis className="min-w-0 leading-snug" showTooltip={false}>
                     {selectedLabel}
                   </TextEllipsis>
-                  {!modelSwitching && <ChevronDown className="size-3.5" aria-hidden="true" />}
+                  {!modelSwitching && <ChevronDown className="size-4" aria-hidden="true" />}
                 </Button>
               </DropdownMenuTrigger>
             </span>
