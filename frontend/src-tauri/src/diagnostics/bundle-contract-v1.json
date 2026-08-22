@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 7,
+  "schemaRevision": 8,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -123,6 +123,16 @@
       ],
       "entryPatterns": [
         "diagnostics/desktop-instance.json"
+      ]
+    },
+    {
+      "id": "managed-execution-environment-v1",
+      "manifestFields": [],
+      "requiredEntries": [
+        "diagnostics/execution-environments.json"
+      ],
+      "entryPatterns": [
+        "diagnostics/execution-environments.json"
       ]
     }
   ]

@@ -917,7 +917,16 @@ fn discover_packaged_runtime(
     let runtime_root = active.runtime_root;
     let launcher = runtime_root.join("python").join("agent-friend-runtime.exe");
     let memory_model_dir = runtime_root.join("models").join("bge-small-zh-v1.5");
-    if launcher.is_file() && memory_model_dir.is_dir() {
+    let managed_python_root = runtime_root.join("execution-environments").join("python");
+    if launcher.is_file()
+        && memory_model_dir.is_dir()
+        && managed_python_root.join("identity.json").is_file()
+        && managed_python_root
+            .join("base")
+            .join("python.exe")
+            .is_file()
+        && managed_python_root.join("bin").join("uv.exe").is_file()
+    {
         Ok(Some(RuntimeLaunchContext::Packaged {
             launcher,
             memory_model_dir,
@@ -955,11 +964,16 @@ fn spawn_service(
 ) -> Result<Child, String> {
     let mut command = match context {
         RuntimeLaunchContext::Source(root) => {
-            let mut command = Command::new("uv");
+            let uv_executable = resolve_path_executable("uv").ok_or_else(|| {
+                "managed_execution_environment_unavailable: uv is not available for source runtime"
+                    .to_string()
+            })?;
+            let mut command = Command::new(&uv_executable);
             command
                 .args(["run", "python", "-m", service.module()])
                 .current_dir(root)
                 .env("AGENT_BRIDGE_DEV_MODE", "true")
+                .env("AGENT_FRIEND_UV_EXECUTABLE", uv_executable)
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit());
             command
@@ -980,11 +994,20 @@ fn spawn_service(
                 .join("codex")
                 .join("bin")
                 .join("codex.exe");
+            let execution_environment_root = launcher
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or_else(|| Path::new("."))
+                .join("execution-environments");
             command
                 .args([service.command(), "--config-mode", "desktop"])
                 .current_dir(launcher.parent().unwrap_or_else(|| Path::new(".")))
                 .env("AGENT_FRIEND_MEMORY_MODEL_DIR", memory_model_dir)
                 .env("AGENT_FRIEND_CODEX_EXECUTABLE", codex_executable)
+                .env(
+                    "AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT",
+                    execution_environment_root,
+                )
                 .env("AGENT_BRIDGE_DEV_MODE", "false")
                 .env("AGENT_BRIDGE_PORT", profile.bridge_port.to_string())
                 .env("VOICE_BRIDGE_PORT", profile.voice_port.to_string())
@@ -1047,6 +1070,23 @@ fn spawn_service(
         }
     }
     Ok(child)
+}
+
+fn resolve_path_executable(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    #[cfg(windows)]
+    let suffixes = ["", ".exe", ".cmd", ".bat"];
+    #[cfg(not(windows))]
+    let suffixes = [""];
+    for directory in std::env::split_paths(&path) {
+        for suffix in suffixes {
+            let candidate = directory.join(format!("{name}{suffix}"));
+            if candidate.is_file() {
+                return candidate.canonicalize().ok().or(Some(candidate));
+            }
+        }
+    }
+    None
 }
 
 fn packaged_runtime_stdio(service: RuntimeServiceKind) -> Option<(Stdio, Stdio)> {

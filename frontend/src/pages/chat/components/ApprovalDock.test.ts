@@ -201,6 +201,38 @@ describe("buildPendingApprovalQueue", () => {
       ],
     });
   });
+
+  it("labels managed Python without exposing internal paths", () => {
+    const managed = command({
+      details: {
+        ...command().details,
+        cmd: "pip install orjson==3.11.3",
+        execution_environment: {
+          provider: "python",
+          runtime_version: "3.12.14",
+          identity: "0123456789abcdef",
+          platform: "windows",
+          architecture: "x86_64",
+          status: "ready",
+          environment_revision: 2,
+          package_operation: true,
+        },
+      },
+    });
+    const queue = buildPendingApprovalQueue({
+      currentSessionId: "session-a",
+      activeRunIdBySession: { "session-a": "run-a" },
+      commandApprovals: { managed },
+      commandSubmitting: new Set(),
+      commandRuntimeStatus: runtimeReady,
+      filesystemEntries: {},
+    });
+
+    expect(queue[0].detailLines).toContain(
+      "执行环境：产品 Python 3.12.14 · 当前会话隔离环境 · 依赖操作",
+    );
+    expect(JSON.stringify(queue[0])).not.toContain("execution-environments");
+  });
 });
 
 describe("buildRunningCommandQueue", () => {

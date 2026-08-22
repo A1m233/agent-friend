@@ -18,6 +18,9 @@ Windows 使用：
 .\scripts\package\run.ps1 version-set <semver>
 .\scripts\package\run.ps1 trusted-beta-configure <next-stable-semver>
 .\scripts\package\run.ps1 installer-contract
+.\scripts\package\run.ps1 installer-smoke-build --guide-repo <PATH> --guide-commit <SHA>
+.\scripts\package\run.ps1 installer-smoke --guide-repo <PATH> --guide-commit <SHA> --smoke-build-report <PATH>
+.\scripts\package\run.ps1 installer-smoke-verify --guide-repo <PATH> --guide-commit <SHA> --smoke-report <PATH> --candidate-build-id <ID> --candidate-installer <PATH>
 .\scripts\package\run.ps1 all --release --guide-repo <PATH> --guide-commit <SHA> --smoke-report <PATH>
 .\scripts\package\run.ps1 all --trusted-beta --guide-repo <PATH> --guide-commit <SHA> [--verification-level <LEVEL>] [--smoke-report <PATH>]
 .\scripts\package\run.ps1 all --local-test --guide-repo <PATH> --guide-commit <SHA> [--trusted-beta] [--verification-level <LEVEL>] [--smoke-report <PATH>]
@@ -36,9 +39,9 @@ macOS/Linux 使用同语义的 `./scripts/package/run.sh`。当前真正的 inst
 4. 按最低验证等级执行：
    - `standard`：如果决定产包，执行一次标准完整构建及其内置确定性检查；普通需求未要求包时不打包。
    - `package-sensitive`：合入前至少构建真实 frozen candidate，并以 doctor/capability smoke 为证据；用户需要完整包时再继续 installer。语义上需要但脚本未自动识别时用 `--verification-level package-sensitive` 升档。
-   - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，不能跳过矩阵。
+   - `full-matrix`：先确定是否已有当前工作流明确记录且指纹匹配的 smoke report；不得搜索或猜测“最近报告”。无匹配报告时运行 `installer-smoke-build` → `installer-smoke` → `installer-smoke-verify`，三个步骤都传入本次 package-baseline 的同一组 `--guide-repo` / `--guide-commit`，确保构建和验证重算的是同一 package input。默认只构建一次 candidate 并由它提供受校验 fixture；只有显式给出已验证 baseline build ID 时才复用历史 baseline。矩阵覆盖升级/修复、降级拒绝、目录漂移/迁移/回滚、进程占用、失败恢复和身份错配。stable release 自动升到该级，不能跳过矩阵。
    - 安装器语言发生变化时，`installer-contract` 必须报告交互式 selector 为 `always`。可见 UI 验收同时覆盖无历史语言与已保存 English 的身份；仅在全新隔离身份看到一次 selector，不能证明真实产品升级仍允许选语言。
-5. 在当前工作流第一次执行任何实际构建前，自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime`、`installer`、`all`、`installer-smoke-build` 构建；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不触发。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
+5. 在当前工作流第一次执行任何实际构建前，自动显式调用 `maintain-agent-friend-guide` 的 `package-baseline` 模式，完成只读知识检查并解析最新兼容、已发布且 immutable 的 Guide checkout、commit 与 snapshot；不要再询问用户是否进入该流程。把返回的 checkout 和 commit 作为 `--guide-repo`、`--guide-commit` 传给每次 `runtime`、`installer`、`all`、`installer-smoke-build`、`installer-smoke` 和 `installer-smoke-verify`；内部 candidate 子构建通过受校验 receipt 继承，不自行重新选择版本。`version-status`、`version-set`、`trusted-beta-configure`、`installer-contract`、`workspace-status` 和 `workspace-gc` 等只读/配置动作不触发。自动入口不授权修改公开知识、创建 release 或提交产品仓库；发现公开内容需要更新时只报告。
    - `local-test` 与 installer smoke 的 baseline 是临时打包输入。package runner 负责在同一事务内应用并在成功、失败或正常中断后恢复进入前 Git 状态；无关 dirty 必须原样保留，Guide 管理路径预先 dirty 时 fail closed。Agent 不直接运行持久化 `sync`，也不在收尾时留下 baseline overlay。
    - stable release 与可分发 trusted-beta 只接受已经提交的精确 baseline。package runner 发现不匹配时在构建前返回 `baseline-update-required` 且不修改工作树；随后只有在当前 Git 授权覆盖时，才在任务自有分支用 maintainer `sync` 生成独立 baseline changeset，完成提交后从 clean commit 重新构建。
 6. 调用脚本完成目标构建。准备安装到当前机器时，production `installer|all` 必须附带 `--for-current-install`，让脚本在创建 build workspace 和冻结 runtime 前重新执行同一安装计划并 fail closed；`--trusted-beta --local-test` 使用受治理的下一 beta 版本，`--local-test` 只改变可发布性，不得把候选版本降回项目稳定版本。脚本计算 `effective_verification_level=max(代码 floor, release floor, 用户升档)`；用户传入较低等级不会降档。`full-matrix` production `installer|all` 必须传入已验证的 `--smoke-report <PATH>`。打包 smoke 使用 fake/missing credential，不调用真实 LLM 或 provider API；凭据值或 hash 不进入验证指纹。若另行执行真实对话/语音验收，遵守 `llm-api-confirm`。

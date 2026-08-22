@@ -61,6 +61,11 @@ def command_workspaces_dir() -> Path:
     return user_data_dir() / "command-workspaces"
 
 
+def execution_environments_dir() -> Path:
+    """受管执行环境根：``<user_data_dir>/execution-environments``。"""
+    return user_data_dir() / "execution-environments"
+
+
 def memory_db_path() -> Path:
     """记忆 SQLite 文件：``<user_data_dir>/memory/memory.db``。"""
     return user_data_dir() / "memory" / "memory.db"
@@ -122,6 +127,7 @@ __all__ = [
     "cli_history_path",
     "command_workspaces_dir",
     "editable_persona_path",
+    "execution_environments_dir",
     "log_dir",
     "memory_db_path",
     "persona_internal_dir",

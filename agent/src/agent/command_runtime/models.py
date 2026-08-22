@@ -6,10 +6,13 @@ import locale
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from ..approvals.models import ApprovalLifetime, ApprovalStatus
+
+if TYPE_CHECKING:
+    from ..execution_environment import ResolvedManagedCommand
 
 CommandMode = Literal["buffered", "streaming"]
 CommandExecution = Literal["sandboxed", "host_user"]
@@ -78,9 +81,13 @@ class CommandApprovalDetails:
     interactive: bool
     execution: CommandExecution = "sandboxed"
     skill: CommandSkillBinding | None = None
+    execution_environment: dict[str, object] | None = None
+    launch_argv: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
+    environment_overrides: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    managed_command: ResolvedManagedCommand | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "cmd": self.cmd,
             "argv": list(self.argv),
             "execution": self.execution,
@@ -95,6 +102,9 @@ class CommandApprovalDetails:
             "interactive": self.interactive,
             "skill": self.skill.to_dict() if self.skill is not None else None,
         }
+        if self.execution_environment is not None:
+            result["execution_environment"] = self.execution_environment
+        return result
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,7 @@ from install_contract import (  # noqa: E402
     build_identity,
     build_installer_verification_inputs,
     canonical_json_bytes,
+    capability_for_path,
     classify_install_root_transition,
     classify_installed_version,
     classify_installer_impact,
@@ -404,3 +405,14 @@ def test_installer_verification_fingerprint_keeps_binary_line_endings_exact(
         build_environment=environment,
     )
     assert lf.package_input_sha256 != crlf.package_input_sha256
+
+
+def test_managed_python_payload_has_dedicated_install_capability() -> None:
+    assert (
+        capability_for_path("runtime/execution-environments/python/base/python.exe")
+        == "runtime-managed-execution-python"
+    )
+    assert (
+        capability_for_path("runtime/execution-environments/python/bin/uv.exe")
+        == "runtime-managed-execution-python"
+    )

@@ -16,9 +16,10 @@ The settings feedback panel invokes the Tauri `generate_diagnostic_bundle` comma
 8. snapshots shell, active receipt, payload hashes, observed runtime readiness, Job Object assignment, legacy layout, and incomplete installer transactions;
 9. snapshots the current desktop instance domain and its safely attributable owner evidence;
 10. flushes the independent Windows Shell event journal and adds its bounded history plus a current snapshot;
-11. redacts managed credentials and replaces the user home path;
-12. validates the manifest and every archive entry against the producer-owned bundle contract;
-13. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
+11. requests the Bridge's already-sanitized managed execution environment health and resource summary;
+12. redacts managed credentials and replaces the user home path;
+13. validates the manifest and every archive entry against the producer-owned bundle contract;
+14. writes a `.zip.part` file in Downloads and atomically renames it after closing and syncing the ZIP.
 
 The generator does not upload the bundle or intentionally call an external provider.
 
@@ -32,6 +33,7 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/environment.json` | OS, architecture, locale, timezone | No hostname or full environment dump |
 | `diagnostics/runtime-services.json` | Bridge/voice lifecycle snapshots | Snapshot at bundle generation time, not the whole incident history |
 | `diagnostics/runtime-config.json` | Config item name, group, configured/source/effect/error | Contains configuration presence, never intended credential values |
+| `diagnostics/execution-environments.json` | Managed provider status, runtime/version identity, prepare duration bucket, overlay/cache size buckets, recent GC state and packaged-payload validation | Present when `managed-execution-environment-v1` is declared; deliberately excludes session ids/keys, paths, package names, scripts, file content, environment values, commands and output |
 | `diagnostics/desktop-instance.json` | Resolved runtime kind, shared instance domain, process session, and current owner evidence | Present when `desktop-instance-governance-v1` is declared; paths are home-redacted and no command-line or environment content is included |
 | `install/integrity.json` | Embedded shell identity, active receipt, verified payload/runtime hashes, observed readiness identity, Job Object state, and installer residue | Present when `install-integrity-v1` is declared; uses relative paths and stable error codes, never credential values |
 | `diagnostics/webview2.json` | WebView2 runtime version, recent crash-report metadata, handler registration coverage, graphics inventory, and a bounded process-failure event buffer | `supported: false` on non-Windows; raw dump files are never included; `gpu-process-exited` can trigger the product's bounded recovery flow |
@@ -64,6 +66,7 @@ The generator does not upload the bundle or intentionally call an external provi
 - `renderEvidence.includeRequested` remains the second consent boundary for manual captures. `automaticIncidentIncluded` means the latest bounded display- or GPU-recovery incident was included by the user's diagnostic-bundle export without a separate checkbox. `pendingCapture` means a local capture existed; `artifacts` lists only screenshots actually included. Missing referenced screenshots, hash/size mismatch, partial capture errors, or a large `startDeltaMs` are explicit evidence gaps.
 - `install-integrity-v1` means `install/integrity.json` was collected. Older bundles without the capability remain valid; the inspector reports `evidence: not-collected` and must not infer either consistency or corruption.
 - `desktop-instance-governance-v1` means the bundle records the running shell's resolved domain and current owner. A missing owner is an evidence gap, not proof that no competing historical launch occurred; correlate `tauri.log.runtime*` instance-governance events for recent arbitration.
+- `managed-execution-environment-v1` means the bundle records a bounded, privacy-preserving execution environment summary. `runtimePayload.declared: true` with `validated: false` is strong current-payload failure evidence; `declared: false` is expected in source mode and does not itself mean Python is unavailable. Size and duration values are coarse buckets, not exact disk accounting. Older bundles without this capability remain valid and establish no managed-environment state.
 
 Format v1 permits additive fields. Ignore unknown fields safely and do not require newer optional fields when reading an older v1 bundle.
 
@@ -163,6 +166,6 @@ The pixel metrics intentionally treat alpha below 16 as transparent, so a transp
 
 ## Redaction and Privacy Boundary
 
-The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Install-integrity evidence emits stable identity hashes, relative paths, counts, and status codes rather than install-root paths or process command lines. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
+The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Install-integrity evidence emits stable identity hashes, relative paths, counts, and status codes rather than install-root paths or process command lines. Managed execution environment evidence emits only provider identity summaries, stable errors, counts and coarse buckets; it excludes session identities, package inventories, paths, scripts, file content, environment values, commands and output. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
 
 This is credential protection, not general content review. Selected sessions, problem text, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import platform
 import sys
 import tempfile
 from collections.abc import Callable
@@ -25,11 +26,24 @@ from typing import TYPE_CHECKING, cast
 
 from agent.approvals import ApprovalBroker
 from agent.command_runtime import CodexIdentityError, CommandRuntime, verify_codex_executable
+from agent.execution_environment import (
+    ExecutionEnvironmentManager,
+    ManagedEnvironmentError,
+    ProviderIdentity,
+    PythonEnvironmentProvider,
+)
 from agent.filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource
 from agent.paths import log_dir
-from agent.runtime import AgentRuntime
+from agent.runtime import (
+    PRE_TURN_PROCEED,
+    AgentEvent,
+    AgentRuntime,
+    HookKind,
+    PostTurnContext,
+    PreTurnDecision,
+)
 from agent.todos import ReminderScheduler, TodoService, TodoStore
 from agent.tools import ToolRegistry
 from runtime_config.build_identity import runtime_build_identity
@@ -210,6 +224,8 @@ class BridgeRuntime:
     """078：桌面文件授权请求与一次性决定的进程级 broker。"""
     command_runtime: CommandRuntime | None = None
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
+    execution_environment_manager: ExecutionEnvironmentManager | None = None
+    """096：共享 base、session overlay 与 run snapshot 的进程级 owner。"""
 
     def make_transient_session_manager(self) -> SessionManager:
         """构造 OpenAI 无状态分支用的临时 :class:`SessionManager`。
@@ -241,6 +257,8 @@ class BridgeRuntime:
             self.social_platform_service.close()
         if self.command_runtime is not None:
             self.command_runtime.close()
+        if self.execution_environment_manager is not None:
+            self.execution_environment_manager.close()
         if self.memory is not None:
             self.memory.close()
 
@@ -386,6 +404,29 @@ def build_runtime(
         codex_home=command_runtime_root / "codex-home",
         execution_root=Path(tempfile.gettempdir()) / "agent-friend-command-execution",
     )
+    execution_environment_root = settings.sessions_dir.parent / "execution-environments"
+    try:
+        python_environment_provider = PythonEnvironmentProvider.from_runtime(
+            data_root=execution_environment_root
+        )
+    except ManagedEnvironmentError:
+        logger.warning(
+            "managed Python payload rejected; ordinary chat remains available", exc_info=True
+        )
+        python_environment_provider = PythonEnvironmentProvider(
+            data_root=execution_environment_root,
+            base_executable=execution_environment_root / "unavailable" / "python",
+            uv_executable=None,
+            identity=ProviderIdentity(
+                provider="python",
+                runtime_version="unknown",
+                identity="unavailable",
+                platform=sys.platform,
+                architecture=platform.machine().casefold(),
+            ),
+        )
+    execution_environment_manager = ExecutionEnvironmentManager((python_environment_provider,))
+    execution_environment_manager.start()
     builtin_skill_roots = (canonical_path(skill_service.personal_root / ".system"),)
     product_paths = [
         settings.sessions_dir,
@@ -450,6 +491,7 @@ def build_runtime(
         filesystem_approval_broker=filesystem_approval_broker,
         filesystem_policy=filesystem_policy,
         command_runtime=command_runtime,
+        execution_environment_manager=execution_environment_manager,
     )
 
     llm_client_factory = runtime_config.llm_client_factory
@@ -482,6 +524,21 @@ def build_runtime(
         memory=memory,
         session_turn_guard=turn_coordinator.hold,
     )
+
+    def prepare_execution_environment(event: AgentEvent) -> PreTurnDecision:
+        if event.session_id:
+            execution_environment_manager.prepare_before_turn(event.session_id)
+        return PRE_TURN_PROCEED
+
+    def release_execution_environment(context: PostTurnContext) -> None:
+        if context.event.session_id and context.run_id:
+            execution_environment_manager.release_run(
+                context.event.session_id,
+                context.run_id,
+            )
+
+    agent_runtime.register_hook(HookKind.PRE_TURN, prepare_execution_environment)
+    agent_runtime.register_hook(HookKind.POST_TURN, release_execution_environment)
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
     filesystem_approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
     command_runtime.add_listener(agent_runtime.listeners.publish_command_process_change)
@@ -555,6 +612,7 @@ def build_runtime(
             social_platform_service=social_platform_service,
             filesystem_approval_broker=filesystem_approval_broker,
             command_runtime=command_runtime,
+            execution_environment_manager=execution_environment_manager,
         )
         session_bridge = _SessionBridge(pre_runtime)
         im_router = IMRouter(
@@ -662,4 +720,5 @@ def build_runtime(
         social_auth_orchestrator=social_auth_orchestrator,
         filesystem_approval_broker=filesystem_approval_broker,
         command_runtime=command_runtime,
+        execution_environment_manager=execution_environment_manager,
     )

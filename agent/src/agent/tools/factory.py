@@ -63,6 +63,7 @@ from .registry import ToolRegistry
 
 if TYPE_CHECKING:
     from ..command_runtime import CommandRuntime
+    from ..execution_environment import ExecutionEnvironmentManager
     from ..filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
@@ -85,6 +86,7 @@ def make_default_registry(
     filesystem_approval_broker: FilesystemApprovalBroker | None = None,
     filesystem_policy: ProtectedPathPolicy | None = None,
     command_runtime: CommandRuntime | None = None,
+    execution_environment_manager: ExecutionEnvironmentManager | None = None,
     stderr_warn: bool = True,
 ) -> ToolRegistry:
     """构造默认 registry，确定性本地工具始终注册，网络/记忆工具按资源注册。
@@ -131,7 +133,13 @@ def make_default_registry(
     if command_runtime is not None:
         from ..command_runtime import make_command_tools
 
-        tools.extend(make_command_tools(command_runtime, filesystem_approval_broker))
+        tools.extend(
+            make_command_tools(
+                command_runtime,
+                filesystem_approval_broker,
+                execution_environment_manager,
+            )
+        )
 
     if skill_service is not None:
         from .builtin.skills import SkillReadTool

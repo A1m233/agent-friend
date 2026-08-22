@@ -14,6 +14,11 @@ from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from ..approvals import ApprovalBroker
+from ..execution_environment import (
+    ExecutionEnvironmentManager,
+    ManagedEnvironmentError,
+    ResolvedManagedCommand,
+)
 from ..filesystem.policy import resolve_locator
 from ..paths import command_workspaces_dir, skills_dir
 from ..skills.models import SkillTurnSnapshot
@@ -166,6 +171,19 @@ def _command_runtime_error_result(
     )
 
 
+def _managed_environment_error_result(exc: ManagedEnvironmentError) -> ToolResult:
+    return _result(
+        {
+            "status": "unavailable",
+            "error": exc.code,
+            "message": str(exc),
+            "executed": False,
+            "provider": "python",
+        },
+        error=True,
+    )
+
+
 def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, object]:
     payload = snapshot.to_dict(include_output=False)
     streams = [
@@ -206,6 +224,11 @@ class ExecCommandTool:
         "PowerShell cmdlet；确需 PowerShell 时必须在 cmd 中显式调用可用的 pwsh.exe。"
         "直接启动一个程序及其参数时优先使用 argv；只有确实需要 shell 内建命令、管道、"
         "重定向、变量展开等 shell 解释，或运行 Skill-bound 脚本时才使用 cmd。"
+        "sandboxed 模式中的 python/python3 会稳定解析到产品管理、按会话隔离的 Python，"
+        "不依赖用户 PATH；pip/pip3/python -m pip/uv pip 会规范化为同一受管 package"
+        " operation。registry 安装必须申请 read_write 和 network=enabled；已授权本地 .whl"
+        " 只需 read_write。包操作首期只接受 wheel，不支持源码构建、editable、VCS、URL 或"
+        "自定义 index；复合 shell 包命令必须改用 argv。"
         "系统 powershell.exe 在当前 Codex Windows 沙箱中存在已知启动故障，宿主会在"
         "执行前明确拒绝，不能把脚本回显和退出码 0 当作成功。pwsh.exe 由宿主转换成"
         "直接 argv，避免 cmd.exe 与 exec-server 二次解析引号。"
@@ -453,6 +476,7 @@ class ExecCommandTool:
         base_env: dict[str, str] | None = None,
         personal_skills_root: Path | None = None,
         session_workspaces_root: Path | None = None,
+        execution_environment_manager: ExecutionEnvironmentManager | None = None,
     ) -> None:
         self._runtime = runtime
         self._broker = broker
@@ -461,6 +485,7 @@ class ExecCommandTool:
         self._session_workspaces_root = (
             session_workspaces_root or command_workspaces_dir()
         ).resolve()
+        self._execution_environment_manager = execution_environment_manager
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
         if args.get(COMMAND_SURFACE_ARG) != "desktop_chat" or self._broker is None:
@@ -480,6 +505,8 @@ class ExecCommandTool:
             details, workdir, roots, run_temp, path_identities = self._parse(
                 args, context, session_id=session_id, run_id=run_id
             )
+        except ManagedEnvironmentError as exc:
+            return _managed_environment_error_result(exc)
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="denied")
         except (TypeError, ValueError) as exc:
@@ -563,7 +590,7 @@ class ExecCommandTool:
             ):
                 self._runtime.prepare_owned_read_only_workdir(workdir, sandbox)
             snapshot = self._runtime.start_process(
-                argv=details.argv,
+                argv=details.launch_argv or details.argv,
                 workdir=workdir,
                 env=(
                     self._host_user_env()
@@ -571,6 +598,7 @@ class ExecCommandTool:
                     else self._child_env(
                         run_temp,
                         network_enabled=details.network_access == "enabled",
+                        overrides=details.environment_overrides,
                     )
                 ),
                 mode=details.mode,
@@ -603,6 +631,7 @@ class ExecCommandTool:
                     "approval_wait_seconds": round(approval_wait_seconds, 3),
                     "launch_seconds": round(time.monotonic() - launch_started, 3),
                     **self._host_path_evidence(details),
+                    **self._execution_environment_evidence(details),
                 }
             )
         try:
@@ -638,10 +667,60 @@ class ExecCommandTool:
         )
         result_payload.update(self._host_path_evidence(details))
         result_error = snapshot.status not in {"exited"} or snapshot.exit_code != 0
+        execution_environment = details.execution_environment
+        if (
+            not result_error
+            and details.managed_command is not None
+            and details.managed_command.package_operation
+            and details.managed_command.requires_write
+            and self._execution_environment_manager is not None
+        ):
+            try:
+                updated = self._execution_environment_manager.record_command_success(
+                    session_id,
+                    run_id,
+                    details.managed_command,
+                )
+            except ManagedEnvironmentError as exc:
+                result_payload.update(
+                    {
+                        "error": exc.code,
+                        "message": str(exc),
+                        "executed": True,
+                    }
+                )
+                result_error = True
+            else:
+                execution_environment = {
+                    **updated.public_summary(),
+                    "package_operation": True,
+                }
+                if details.managed_command.cache_hit is not None:
+                    execution_environment["cache_hit"] = details.managed_command.cache_hit
+        result_payload.update(
+            self._execution_environment_evidence(
+                details,
+                summary=execution_environment,
+            )
+        )
         if snapshot.sandbox_denied:
             result_payload["error"] = "sandbox_denied"
         elif snapshot.status == "exited" and snapshot.exit_code != 0:
-            self._annotate_windows_exit(result_payload, snapshot, details)
+            classified = (
+                self._execution_environment_manager.classify_failure(
+                    details.managed_command,
+                    "\n".join(
+                        str(result_payload.get(name, "")) for name in ("stdout", "stderr", "pty")
+                    ),
+                )
+                if details.managed_command is not None
+                and self._execution_environment_manager is not None
+                else None
+            )
+            if classified is None:
+                self._annotate_windows_exit(result_payload, snapshot, details)
+            else:
+                result_payload["error"], result_payload["message"] = classified
         elif snapshot.status != "exited":
             result_payload["error"] = snapshot.terminal_reason or snapshot.status
         elif self._looks_like_unexecuted_powershell(details.argv, result_payload):
@@ -655,6 +734,17 @@ class ExecCommandTool:
             result_payload,
             error=result_error,
         )
+
+    @staticmethod
+    def _execution_environment_evidence(
+        details: CommandApprovalDetails,
+        *,
+        summary: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        value = details.execution_environment if summary is None else summary
+        if value is None:
+            return {}
+        return {"execution_environment": value}
 
     @staticmethod
     def _looks_like_unexecuted_powershell(
@@ -864,8 +954,16 @@ class ExecCommandTool:
         if cwd_source == "session_managed" and filesystem == "read_write":
             self._check_session_workspace_budget(workdir)
         derived_roots: tuple[tuple[Path, bool], ...]
+        managed: ResolvedManagedCommand | None = None
         if parsed_argv is not None:
-            argv = self._structured_argv(tuple(parsed_argv))
+            semantic_argv = tuple(parsed_argv)
+            managed = self._resolve_managed_command(
+                semantic_argv,
+                execution=execution,
+                session_id=session_id,
+                run_id=run_id,
+            )
+            argv = managed.argv if managed is not None else self._structured_argv(semantic_argv)
             if execution == "sandboxed" and Path(argv[0]).name.casefold() in {
                 "powershell",
                 "powershell.exe",
@@ -875,28 +973,72 @@ class ExecCommandTool:
                     "系统 Windows PowerShell 5.1 在当前 Codex 沙箱中无法可靠启动；"
                     "请改用宿主 PATH 中可用的 pwsh.exe（PowerShell 7），或改写为 cmd 命令。",
                 )
-            display_cmd = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+            display_cmd = (
+                subprocess.list2cmdline(semantic_argv)
+                if os.name == "nt"
+                else shlex.join(semantic_argv)
+            )
             derived_roots = (
                 self._derive_resolved_executable_roots(Path(argv[0]), workdir, roots)
-                if execution == "sandboxed"
+                if execution == "sandboxed" and managed is None
                 else ()
             )
         else:
             assert isinstance(cmd, str)
             self._validate_windows_cmd_shape(cmd)
-            argv = self._shell_argv(cmd, mode)
+            direct_managed_argv = self._direct_managed_shell_argv(cmd)
+            managed = (
+                self._resolve_managed_command(
+                    direct_managed_argv,
+                    execution=execution,
+                    session_id=session_id,
+                    run_id=run_id,
+                )
+                if direct_managed_argv is not None
+                else None
+            )
+            argv = managed.argv if managed is not None else self._shell_argv(cmd, mode)
             display_cmd = cmd
-            derived_roots = self._derive_host_executable_roots(cmd, workdir, roots)
+            derived_roots = (
+                ()
+                if managed is not None
+                else self._derive_host_executable_roots(cmd, workdir, roots)
+            )
+        if managed is not None:
+            if managed.package_operation and mode != "buffered":
+                raise ManagedEnvironmentError(
+                    "managed_package_requires_buffered_mode",
+                    "受管 package operation 必须使用 buffered 模式，以便原子更新环境 revision。",
+                )
+            if managed.requires_write and filesystem != "read_write":
+                raise ManagedEnvironmentError(
+                    "managed_package_requires_write_access",
+                    "受管 package operation 必须显式申请 filesystem=read_write。",
+                )
+            if managed.requires_network and network != "enabled":
+                raise ManagedEnvironmentError(
+                    "managed_package_requires_network_access",
+                    "registry package 安装必须显式申请 network=enabled。",
+                )
+            roots = (
+                *roots,
+                *((path, False) for path in managed.read_only_roots),
+                *((path, True) for path in managed.writable_roots),
+            )
         roots = (*roots, *derived_roots)
         if execution == "sandboxed":
             roots = (*roots, (run_temp, True))
         derived_paths: set[Path] = {path for path, _writable in derived_roots}
+        internal_paths: set[Path] = (
+            {*managed.read_only_roots, *managed.writable_roots} if managed is not None else set()
+        )
         root_details = tuple(
             CommandAdditionalRoot(path=str(path), access="read_write" if writable else "read_only")
             for path, writable in roots
             if path != run_temp
             and (skill_binding is None or path != skill_snapshot.snapshot_root)
             and path not in derived_paths
+            and path not in internal_paths
         )
         derived_root_details = tuple(
             CommandAdditionalRoot(path=str(path), access="read_only")
@@ -905,7 +1047,7 @@ class ExecCommandTool:
         return (
             CommandApprovalDetails(
                 cmd=display_cmd,
-                argv=argv,
+                argv=managed.display_argv if managed is not None else argv,
                 execution=cast(CommandExecution, execution),
                 workdir=display_workdir,
                 cwd_source=cwd_source,  # type: ignore[arg-type]
@@ -917,12 +1059,74 @@ class ExecCommandTool:
                 network_access=network,
                 interactive=mode == "streaming",
                 skill=skill_binding,
+                execution_environment=(managed.public_summary() if managed is not None else None),
+                launch_argv=(managed.argv if managed is not None else None),
+                environment_overrides=(dict(managed.environment) if managed is not None else {}),
+                managed_command=managed,
             ),
             workdir,
             roots,
             run_temp,
             tuple((path, self._path_identity(path)) for path in {workdir, *[p for p, _ in roots]}),
         )
+
+    def _resolve_managed_command(
+        self,
+        argv: tuple[str, ...],
+        *,
+        execution: object,
+        session_id: str,
+        run_id: str,
+    ) -> ResolvedManagedCommand | None:
+        manager = self._execution_environment_manager
+        if manager is None or not manager.matches_command(argv):
+            return None
+        if execution != "sandboxed":
+            raise ManagedEnvironmentError(
+                "managed_environment_requires_sandbox",
+                "产品管理的执行环境只能通过 sandboxed 命令运行；显式绝对宿主程序不受此限制。",
+            )
+        snapshot = manager.snapshot_for_tool(session_id, run_id)
+        return manager.resolve_command(snapshot, argv)
+
+    def _direct_managed_shell_argv(self, cmd: str) -> tuple[str, ...] | None:
+        manager = self._execution_environment_manager
+        if manager is None:
+            return None
+        try:
+            raw_tokens = shlex.split(cmd, posix=os.name != "nt")
+        except ValueError:
+            return None
+        tokens = tuple(
+            self._strip_windows_token_quotes(token) if os.name == "nt" else token
+            for token in raw_tokens
+        )
+        if not tokens or not manager.matches_command(tokens):
+            return None
+        if any(character in cmd for character in "&|<>\r\n"):
+            package_like = (
+                Path(tokens[0]).name.casefold() in {"pip", "pip.exe", "pip3", "pip3.exe"}
+                or (
+                    Path(tokens[0]).name.casefold() in {"uv", "uv.exe"}
+                    and len(tokens) > 1
+                    and tokens[1].casefold() == "pip"
+                )
+                or (
+                    Path(tokens[0]).name.casefold()
+                    in {"python", "python.exe", "python3", "python3.exe"}
+                    and len(tokens) > 2
+                    and tokens[1:3] == ("-m", "pip")
+                )
+            )
+            raise ManagedEnvironmentError(
+                (
+                    "managed_package_command_requires_direct_invocation"
+                    if package_like
+                    else "managed_environment_command_requires_direct_invocation"
+                ),
+                "包含 shell 控制符的受管命令必须改用结构化 argv，不能经 shell 猜测重写。",
+            )
+        return tokens
 
     def _derive_host_executable_roots(
         self,
@@ -1351,7 +1555,13 @@ class ExecCommandTool:
             raise ValueError("缺少命令运行归属")
         return session_id, run_id, tool_call_id
 
-    def _child_env(self, run_temp: Path, *, network_enabled: bool = False) -> dict[str, str]:
+    def _child_env(
+        self,
+        run_temp: Path,
+        *,
+        network_enabled: bool = False,
+        overrides: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         canonical_names = {
             "PATH": "PATH",
             "PATHEXT": "PATHEXT",
@@ -1377,6 +1587,14 @@ class ExecCommandTool:
             for key, canonical in canonical_names.items()
             if key in casefolded
         }
+        managed_overrides = dict(overrides or {})
+        managed_path = managed_overrides.pop("PATH", None)
+        env.update(managed_overrides)
+        if managed_path is not None:
+            existing_path = env.get("PATH", "")
+            env["PATH"] = (
+                os.pathsep.join((managed_path, existing_path)) if existing_path else managed_path
+            )
         env.update(
             {
                 "TEMP": str(run_temp),
@@ -1497,8 +1715,13 @@ class WriteStdinTool:
 def make_command_tools(
     runtime: CommandRuntime,
     broker: ApprovalBroker | None,
+    execution_environment_manager: ExecutionEnvironmentManager | None = None,
 ) -> list[Tool]:
     return [
-        ExecCommandTool(runtime, broker),
+        ExecCommandTool(
+            runtime,
+            broker,
+            execution_environment_manager=execution_environment_manager,
+        ),
         WriteStdinTool(runtime),
     ]

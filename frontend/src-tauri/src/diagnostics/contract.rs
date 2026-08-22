@@ -263,6 +263,7 @@ mod tests {
                     "diagnostics/runtime-services.json",
                     "diagnostics/runtime-config.json",
                     "diagnostics/desktop-instance.json",
+                    "diagnostics/execution-environments.json",
                     "install/integrity.json",
                     "diagnostics/webview2.json",
                     "diagnostics/webview2-render-evidence.json",

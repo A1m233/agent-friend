@@ -769,6 +769,9 @@ def test_exec_command_contract_explains_windows_shell_and_host_path_derivation()
         in ExecCommandTool.parameters_schema["properties"]["cmd"]["description"]
     )
     assert "execution=host_user" in ExecCommandTool.description
+    assert "python/python3" in ExecCommandTool.description
+    assert "不依赖用户 PATH" in ExecCommandTool.description
+    assert "package operation" in ExecCommandTool.description
     assert "argv" in ExecCommandTool.parameters_schema["properties"]
     assert (
         "直接启动单个 CLI" in ExecCommandTool.parameters_schema["properties"]["argv"]["description"]

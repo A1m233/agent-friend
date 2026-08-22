@@ -196,6 +196,30 @@ def _build_bundle(
         },
         "diagnostics/runtime-services.json": {},
         "diagnostics/runtime-config.json": {"items": []},
+        "diagnostics/execution-environments.json": {
+            "schemaVersion": 1,
+            "status": "ready",
+            "providers": [
+                {
+                    "provider": "python",
+                    "status": "ready",
+                    "runtimeVersion": "3.12.14",
+                    "identity": "0123456789abcdef",
+                    "platform": "windows",
+                    "architecture": "x86_64",
+                    "errorCode": None,
+                    "prepareDurationBucket": "1s_to_5s",
+                    "sessionOverlays": {
+                        "activeCount": 1,
+                        "inactiveCount": 2,
+                        "totalBytesBucket": "10_to_100_mib",
+                    },
+                    "sharedCache": {"bytesBucket": "lt_10_mib"},
+                    "lastGc": {"status": "not-run"},
+                    "runtimePayload": {"declared": True, "validated": True},
+                }
+            ],
+        },
         "diagnostics/desktop-instance.json": {
             "schemaVersion": 1,
             "identity": {
@@ -496,6 +520,12 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["desktopInstance"]["runtimeKind"] == "production"
     assert summary["desktopInstance"]["instanceDomain"] == "agent-friend-production"
     assert summary["desktopInstance"]["owner"]["pid"] == 1234
+    assert summary["executionEnvironments"]["status"] == "ready"
+    assert summary["executionEnvironments"]["providerCount"] == 1
+    assert summary["executionEnvironments"]["providerStatuses"] == {"ready": 1}
+    assert summary["executionEnvironments"]["activeOverlayCount"] == 1
+    assert summary["executionEnvironments"]["inactiveOverlayCount"] == 2
+    assert summary["executionEnvironments"]["validatedPayloadCount"] == 1
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:
@@ -556,6 +586,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
             if info.filename in (
                 "diagnostics/webview2.json",
                 "install/integrity.json",
+                "diagnostics/execution-environments.json",
             ) or info.filename.startswith(
                 ("diagnostics/webview2-render-evidence.json", "render-evidence/")
             ):
@@ -573,6 +604,7 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
                 manifest["capabilities"].remove("install-integrity-v1")
+                manifest["capabilities"].remove("managed-execution-environment-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
             target.writestr(info.filename, data)
@@ -583,6 +615,10 @@ def test_inspector_accepts_older_v1_without_webview2_capability(tmp_path: Path) 
     assert summary["webView2"] is None
     assert summary["webView2RenderEvidence"] is None
     assert summary["installIntegrity"] == {
+        "status": "unavailable",
+        "evidence": "not-collected",
+    }
+    assert summary["executionEnvironments"] == {
         "status": "unavailable",
         "evidence": "not-collected",
     }
@@ -603,6 +639,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
             if (
                 info.filename == "diagnostics/webview2-render-evidence.json"
                 or info.filename == "install/integrity.json"
+                or info.filename == "diagnostics/execution-environments.json"
                 or info.filename.startswith("render-evidence/")
             ):
                 continue
@@ -618,6 +655,7 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
                     if capability in manifest["capabilities"]:
                         manifest["capabilities"].remove(capability)
                 manifest["capabilities"].remove("install-integrity-v1")
+                manifest["capabilities"].remove("managed-execution-environment-v1")
                 manifest.pop("renderEvidence")
                 data = json.dumps(manifest).encode()
             target.writestr(info.filename, data)
@@ -630,6 +668,10 @@ def test_inspector_accepts_schema_v2_without_render_evidence(tmp_path: Path) -> 
     assert summary["webView2"]["newestFailureReportUnixSeconds"] == 1785523202
     assert summary["webView2RenderEvidence"] is None
     assert summary["installIntegrity"] == {
+        "status": "unavailable",
+        "evidence": "not-collected",
+    }
+    assert summary["executionEnvironments"] == {
         "status": "unavailable",
         "evidence": "not-collected",
     }
