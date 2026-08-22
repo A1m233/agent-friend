@@ -22,6 +22,7 @@ design §6.2（弱稳定，本期落地后默认不变）。
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -58,6 +59,8 @@ from ..attachment_reconciliation import reconcile_attachments
 from ..errors import build_openai_error_envelope, map_exception
 from ..protocols.ag_ui.encoders import encode_stream
 from .runs import DESKTOP_TEXT_CONTROL_SCOPE
+
+logger = logging.getLogger(__name__)
 
 
 class PersonaSwitchBody(BaseModel):
@@ -167,6 +170,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         except SessionPersistError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
+    @router.get("/execution-environments/diagnostics")
+    def execution_environment_diagnostics() -> dict[str, object]:
+        """返回不含 session id、路径、包名、脚本和输出的受管环境摘要。"""
+        manager = runtime.execution_environment_manager
+        if manager is None:
+            return {"schemaVersion": 1, "status": "unavailable", "providers": []}
+        return manager.collect_diagnostics()
+
     @router.post("/sessions")
     def create_session(body: CreateSessionBody) -> dict[str, Any]:
         """显式创建 session（007 起新增；voice_bridge 拨打通话时调用）。
@@ -190,6 +201,8 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if runtime.execution_environment_manager is not None:
+            runtime.execution_environment_manager.schedule_session(session.session_id)
         return {
             "session_id": session.session_id,
             "persona": session.current_persona,
@@ -543,6 +556,15 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 content=build_openai_error_envelope(error),
             )
         reconcile_attachments(runtime)
+        if runtime.execution_environment_manager is not None:
+            for session_id in deleted:
+                try:
+                    runtime.execution_environment_manager.delete_session(session_id)
+                except Exception:
+                    logger.warning(
+                        "execution environment cleanup failed for deleted archived session",
+                        exc_info=True,
+                    )
         return {"deleted": len(deleted), "session_ids": deleted}
 
     @router.delete("/sessions/{session_id}")
@@ -570,6 +592,14 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 content=build_openai_error_envelope(error),
             )
         reconcile_attachments(runtime)
+        if runtime.execution_environment_manager is not None:
+            try:
+                runtime.execution_environment_manager.delete_session(session_id)
+            except Exception:
+                logger.warning(
+                    "execution environment cleanup failed for deleted session",
+                    exc_info=True,
+                )
         return {"session_id": session_id, "deleted": True}
 
     @router.post("/sessions/{session_id}/persona")

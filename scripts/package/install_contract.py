@@ -849,6 +849,8 @@ def capability_for_path(path: str) -> str:
         return "runtime-models"
     if path.startswith("runtime/vendor/"):
         return "runtime-vendor"
+    if path.startswith("runtime/execution-environments/python/"):
+        return "runtime-managed-execution-python"
     if path.startswith("runtime/connectors/"):
         return "runtime-connectors"
     if path.startswith("avatar-seed/"):

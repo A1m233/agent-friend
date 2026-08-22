@@ -89,6 +89,8 @@ from releases import (
 )
 from vendor.codex import load_lock as load_codex_lock
 from vendor.codex import stage_for_package as stage_codex_for_package
+from vendor.managed_python import load_lock as load_managed_python_lock
+from vendor.managed_python import stage_for_package as stage_managed_python_for_package
 from versioning import (
     ProjectVersion,
     SemVer,
@@ -118,7 +120,14 @@ from runtime_config import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_DIR = Path(__file__).resolve().parent
-GUIDE_BASELINE_BUILD_STEPS = {"runtime", "installer", "all", "installer-smoke-build"}
+GUIDE_BASELINE_STEPS = {
+    "runtime",
+    "installer",
+    "all",
+    "installer-smoke-build",
+    "installer-smoke",
+    "installer-smoke-verify",
+}
 _ACTIVE_GUIDE_BASELINE: GuideBaseline | None = None
 TAURI_DIR = REPO_ROOT / "frontend" / "src-tauri"
 SPEC_PATH = SCRIPT_DIR / "windows" / "agent_friend_runtime.spec"
@@ -667,6 +676,16 @@ def _stage_runtime(
     if not codex_executable.is_file():
         raise RuntimeError("staged Codex executable is missing")
     codex_lock = load_codex_lock()
+    managed_python_root = stage_dir / "execution-environments" / "python"
+    managed_python_executable = stage_managed_python_for_package(
+        REPO_ROOT,
+        managed_python_root,
+        cache_base=cache_dir,
+        offline=offline,
+    )
+    if not managed_python_executable.is_file():
+        raise RuntimeError("staged managed Python executable is missing")
+    managed_python_lock = load_managed_python_lock()
 
     xhs_dir = stage_dir / "connectors" / "xiaohongshu"
     xhs_dir.mkdir(parents=True)
@@ -696,6 +715,15 @@ def _stage_runtime(
         f"Version: {codex_lock['version']}\n"
         f"Source: {codex_lock['release_url']}\n"
         "License: Apache License 2.0 (see vendor/codex/LICENSE-CODEX)\n\n"
+        "managed-python\n"
+        f"Version: {managed_python_lock['runtime_version']}\n"
+        f"Source: {managed_python_lock['python']['url']}\n"
+        "Distribution: python-build-standalone; includes CPython and bundled notices\n"
+        "Licenses: see execution-environments/python/licenses/\n\n"
+        "astral-uv\n"
+        f"Version: {managed_python_lock['uv']['version']}\n"
+        f"Source: {managed_python_lock['uv']['url']}\n"
+        "License: Apache-2.0 OR MIT; see execution-environments/python/licenses/\n\n"
         "xiaohongshu-mcp\n"
         f"Version: {xhs_version}\n"
         "Source: https://github.com/xpzouying/xiaohongshu-mcp\n"
@@ -710,6 +738,9 @@ def _stage_runtime(
 
     doctor_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(stage_dir / MODEL_RELATIVE_DIR)
     doctor_env["AGENT_FRIEND_CODEX_EXECUTABLE"] = str(codex_executable)
+    doctor_env["AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"] = str(
+        stage_dir / "execution-environments"
+    )
     doctor_env["AGENT_FRIEND_COMMAND_RUNTIME_CODEX_HOME"] = str(
         user_data_dir() / "command-runtime" / "codex-home"
     )
@@ -1385,6 +1416,9 @@ def _smoke_installed_runtime(
         xhs_dir / "LICENSE.txt",
         xhs_dir / "BUILD-LOCK.json",
         xhs_dir / "COMPATIBILITY.patch",
+        runtime_dir / "execution-environments" / "python" / "identity.json",
+        runtime_dir / "execution-environments" / "python" / "base" / "python.exe",
+        runtime_dir / "execution-environments" / "python" / "bin" / "uv.exe",
     )
     missing = [path for path in required if not path.exists()]
     if missing:
@@ -1393,6 +1427,9 @@ def _smoke_installed_runtime(
 
     smoke_env = _sanitized_env()
     smoke_env["AGENT_FRIEND_MEMORY_MODEL_DIR"] = str(model_dir)
+    smoke_env["AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT"] = str(
+        runtime_dir / "execution-environments"
+    )
     smoke_env["AGENT_FRIEND_KEYRING_SERVICE"] = profile.keyring_service
     smoke_env["AGENT_FRIEND_SETTINGS_BUNDLE_ID"] = profile.settings_namespace
     if profile.profile_id == "installer-smoke":
@@ -2039,11 +2076,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--guide-repo",
         type=Path,
-        help="verified managed agent-friend-guide checkout used by package builds",
+        help="verified managed agent-friend-guide checkout used by package build/verification",
     )
     parser.add_argument(
         "--guide-commit",
-        help="exact origin-visible agent-friend-guide commit used by package builds",
+        help="exact origin-visible agent-friend-guide commit used by package build/verification",
     )
     parser.add_argument(
         "--apply",
@@ -2468,10 +2505,11 @@ def _execute(args: argparse.Namespace) -> int:
 
 @contextmanager
 def _package_guide_baseline(args: argparse.Namespace):
-    if args.step not in GUIDE_BASELINE_BUILD_STEPS:
+    if args.step not in GUIDE_BASELINE_STEPS:
         if args.guide_repo is not None or args.guide_commit is not None:
             raise RuntimeError(
-                "--guide-repo and --guide-commit are only valid for actual package builds"
+                "--guide-repo and --guide-commit are only valid for package "
+                "build/verification steps"
             )
         yield None
         return
@@ -2485,11 +2523,15 @@ def _package_guide_baseline(args: argparse.Namespace):
 
     if args.guide_repo is None or args.guide_commit is None:
         raise RuntimeError(
-            "actual package builds require --guide-repo and --guide-commit from the "
-            "package-baseline preflight"
+            "package build/verification steps require --guide-repo and --guide-commit "
+            "from the package-baseline preflight"
         )
 
-    transient = args.local_test or args.step == "installer-smoke-build"
+    transient = args.local_test or args.step in {
+        "installer-smoke-build",
+        "installer-smoke",
+        "installer-smoke-verify",
+    }
     if transient:
         with transient_baseline(REPO_ROOT, args.guide_repo, args.guide_commit) as baseline:
             yield baseline

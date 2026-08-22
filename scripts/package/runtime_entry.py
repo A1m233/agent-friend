@@ -7,10 +7,12 @@ import importlib
 import json
 import os
 import runpy
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zipfile
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
@@ -1006,6 +1008,20 @@ def _doctor() -> int:
     else:
         checks["capability:governed_command_runtime"] = {"ok": True, **command_details}
 
+    try:
+        managed_environment_details = _smoke_managed_execution_environment()
+    except Exception as exc:
+        checks["capability:managed_execution_python"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    else:
+        checks["capability:managed_execution_python"] = {
+            "ok": True,
+            **managed_environment_details,
+        }
+
     model_dir = os.environ.get("AGENT_FRIEND_MEMORY_MODEL_DIR", "").strip()
     if model_dir:
         model_path = Path(model_dir)
@@ -1066,6 +1082,116 @@ def _doctor() -> int:
         )
     )
     return 0 if ok else 1
+
+
+def _smoke_managed_execution_environment() -> dict[str, Any]:
+    from agent.execution_environment import EnvironmentStatus, PythonEnvironmentProvider
+
+    configured_root = os.environ.get("AGENT_FRIEND_EXECUTION_ENVIRONMENT_ROOT", "").strip()
+    if not configured_root:
+        return {"status": "not-configured", "source_mode": True}
+    with tempfile.TemporaryDirectory(prefix="agent-friend-managed-environment-doctor-") as value:
+        temporary = Path(value)
+        provider = PythonEnvironmentProvider.from_runtime(
+            data_root=temporary / "data",
+            environment_root=Path(configured_root),
+        )
+        health = provider.prepare_global()
+        if health.status is not EnvironmentStatus.READY:
+            raise RuntimeError(health.error_code or "managed environment global health failed")
+        environment = provider.prepare_session("doctor", health)
+        if environment.status is not EnvironmentStatus.READY:
+            raise RuntimeError(
+                environment.error_code or "managed environment session prepare failed"
+            )
+        script = temporary / "data" / "doctor-script.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(
+            "import csv,json,sqlite3,ssl,tarfile,zipfile\n"
+            "print(json.dumps({'managed': True}, sort_keys=True))\n",
+            encoding="utf-8",
+        )
+        resolved = provider.resolve_command(environment, ("python", str(script)))
+        if resolved is None:
+            raise RuntimeError("managed Python alias did not resolve")
+        script_result = subprocess.run(
+            resolved.argv,
+            env=resolved.environment,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=15,
+            text=True,
+            encoding="utf-8",
+        )
+        if json.loads(script_result.stdout) != {"managed": True}:
+            raise RuntimeError("managed Python standard library smoke returned unexpected output")
+
+        wheel = temporary / "managed_fixture-1.0-py3-none-any.whl"
+        _write_doctor_wheel(wheel)
+        package = provider.resolve_command(
+            environment,
+            ("pip", "install", str(wheel)),
+        )
+        if package is None or package.requires_network:
+            raise RuntimeError("managed local wheel command was not normalized offline")
+        subprocess.run(
+            package.argv,
+            env=package.environment,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=30,
+            text=True,
+            encoding="utf-8",
+        )
+        import_result = subprocess.run(
+            [
+                str(environment.executable_aliases["python"]),
+                "-I",
+                "-B",
+                "-c",
+                "import managed_fixture",
+            ],
+            env=environment.environment,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=15,
+            text=True,
+            encoding="utf-8",
+        )
+        if import_result.returncode != 0:
+            raise RuntimeError("managed local wheel import failed")
+        return {
+            "status": environment.status.value,
+            "runtime_version": environment.identity.runtime_version,
+            "identity": environment.identity.identity[:16],
+            "environment_revision": environment.revision,
+            "local_wheel": True,
+        }
+
+
+def _write_doctor_wheel(path: Path) -> None:
+    distribution = "managed_fixture-1.0.dist-info"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("managed_fixture/__init__.py", "VALUE = 'doctor'\n")
+        bundle.writestr(
+            f"{distribution}/METADATA",
+            "Metadata-Version: 2.1\nName: managed-fixture\nVersion: 1.0\n",
+        )
+        bundle.writestr(
+            f"{distribution}/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: agent-friend-doctor\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        bundle.writestr(
+            f"{distribution}/RECORD",
+            "managed_fixture/__init__.py,,\n"
+            f"{distribution}/METADATA,,\n"
+            f"{distribution}/WHEEL,,\n"
+            f"{distribution}/RECORD,,\n",
+        )
 
 
 def _seed_credentials(

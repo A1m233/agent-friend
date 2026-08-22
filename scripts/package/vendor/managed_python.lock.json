@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "provider": "python",
+  "runtime_version": "3.12.14",
+  "platform": "windows",
+  "architecture": "x86_64",
+  "python": {
+    "distribution": "python-build-standalone",
+    "release_tag": "20260814",
+    "filename": "cpython-3.12.14+20260814-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260814/cpython-3.12.14%2B20260814-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+    "sha256": "89f18f6932917163b74339ebcec2645c8e47ae7f1c5f2ac37f2b4f4cf3beb647",
+    "size": 21976599,
+    "archive_root": "python"
+  },
+  "uv": {
+    "version": "0.12.5",
+    "release_tag": "0.12.5",
+    "filename": "uv-x86_64-pc-windows-msvc.zip",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-pc-windows-msvc.zip",
+    "sha256": "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a",
+    "size": 20329591,
+    "executable": "uv.exe"
+  },
+  "licenses": [
+    {
+      "name": "LICENSE-PYTHON-BUILD-STANDALONE.txt",
+      "url": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260814/LICENSE",
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+      "size": 16725
+    },
+    {
+      "name": "LICENSE-UV-APACHE.txt",
+      "url": "https://raw.githubusercontent.com/astral-sh/uv/0.12.5/LICENSE-APACHE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "size": 11357
+    },
+    {
+      "name": "LICENSE-UV-MIT.txt",
+      "url": "https://raw.githubusercontent.com/astral-sh/uv/0.12.5/LICENSE-MIT",
+      "sha256": "860e3d7a86b84e6a7012c7a635fc64df475cebc6cce34dfeb73a5982ec58176c",
+      "size": 1077
+    }
+  ],
+  "capabilities": {
+    "venv": true,
+    "stdlib": ["csv", "json", "sqlite3", "ssl", "tarfile", "zipfile"],
+    "package_policy": "wheel-only-no-build",
+    "link_mode": "copy",
+    "runtime_downloads": false
+  }
+}

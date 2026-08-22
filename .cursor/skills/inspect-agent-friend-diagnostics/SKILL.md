@@ -50,6 +50,7 @@ Before diagnosing, establish:
 - Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
 - explicit exclusions.
+- managed execution environment provider status, runtime/version identity, overlay/cache size buckets, payload validation and recent stable error codes; never expect session ids, paths, package names, scripts or command output in this evidence family.
 
 `outcome: complete` means the configured collectors reported no failure. It does not prove that the user selected the relevant session, that the retained log tail covers the occurrence, or that an excluded source was unnecessary.
 

@@ -58,6 +58,16 @@ function commandDetailLines(request: CommandApprovalRequest): string[] {
   if (details.skill) {
     lines.push(`Skill：${details.skill.skill_id} · ${details.skill.entry}`);
   }
+  if (details.execution_environment) {
+    const environment = details.execution_environment;
+    const provider = environment.provider === "python"
+      ? `产品 Python ${environment.runtime_version}`
+      : `${environment.provider} ${environment.runtime_version}`;
+    lines.push(
+      `执行环境：${provider} · 当前会话隔离环境`
+      + (environment.package_operation ? " · 依赖操作" : ""),
+    );
+  }
   for (const root of details.additional_roots) {
     lines.push(`附加范围：${root.path}（${root.access === "read_write" ? "可写" : "只读"}）`);
   }

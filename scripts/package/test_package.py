@@ -50,17 +50,26 @@ def test_package_version_is_consistent() -> None:
     assert package._project_version() == tauri["version"]
 
 
-def test_actual_package_build_requires_explicit_guide_baseline() -> None:
+@pytest.mark.parametrize(
+    "step",
+    [
+        "all",
+        "installer-smoke-build",
+        "installer-smoke",
+        "installer-smoke-verify",
+    ],
+)
+def test_package_build_and_verification_require_explicit_guide_baseline(step: str) -> None:
     package = _load("package_run_guide_required", PACKAGE_DIR / "run.py")
     args = SimpleNamespace(
-        step="all",
-        local_test=True,
+        step=step,
+        local_test=step == "all",
         guide_repo=None,
         guide_commit=None,
     )
 
     with (
-        pytest.raises(RuntimeError, match="actual package builds require"),
+        pytest.raises(RuntimeError, match="package build/verification steps require"),
         package._package_guide_baseline(args),
     ):
         raise AssertionError("unreachable")
@@ -76,7 +85,7 @@ def test_non_build_command_rejects_guide_baseline_arguments(tmp_path) -> None:
     )
 
     with (
-        pytest.raises(RuntimeError, match="only valid for actual package builds"),
+        pytest.raises(RuntimeError, match="only valid for package build/verification steps"),
         package._package_guide_baseline(args),
     ):
         raise AssertionError("unreachable")
@@ -763,6 +772,11 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
     assert payload["checks"]["capability:tool_schema_validation"]["ok"] is True
     assert payload["checks"]["capability:governed_filesystem"]["ok"] is True
+    assert payload["checks"]["capability:managed_execution_python"] == {
+        "ok": True,
+        "status": "not-configured",
+        "source_mode": True,
+    }
     skill_check = payload["checks"]["capability:skill_catalog_hot_reload"]
     assert skill_check["ok"] is True
     assert skill_check["builtin"] == "skill-creator"

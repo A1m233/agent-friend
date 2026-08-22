@@ -16,6 +16,16 @@ export interface CommandApprovalDetails {
   host_derived_roots: Array<{ path: string; access: "read_only" }>;
   network_access: "disabled" | "enabled" | "unrestricted";
   interactive: boolean;
+  execution_environment?: {
+    provider: string;
+    runtime_version: string;
+    identity: string;
+    platform: string;
+    architecture: string;
+    status: "ready" | "degraded" | "unavailable";
+    environment_revision: number;
+    package_operation: boolean;
+  };
   skill?: {
     skill_id: string;
     entry: string;

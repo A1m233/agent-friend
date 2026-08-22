@@ -32,11 +32,16 @@ CAPABILITY_HANDLERS = {
     "webview2-render-evidence-v3": "webView2RenderEvidence",
     "install-integrity-v1": "installIntegrity",
     "desktop-instance-governance-v1": "desktopInstance",
+    "managed-execution-environment-v1": "executionEnvironments",
 }
 
 
 class BundleError(Exception):
     """Raised when the archive cannot be safely interpreted."""
+
+
+def _safe_int(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -272,6 +277,78 @@ def summarize_desktop_instance(value: Any, *, collected: bool) -> dict[str, Any]
         }
         if owner
         else None,
+    }
+
+
+def summarize_execution_environments(value: Any, *, collected: bool) -> dict[str, Any]:
+    if value is None:
+        return {
+            "status": "unavailable",
+            "evidence": "missing" if collected else "not-collected",
+        }
+    if not isinstance(value, dict):
+        return {
+            "status": "unavailable",
+            "evidence": "invalid",
+            "error": "execution environments root is not an object",
+        }
+    providers = value.get("providers") if isinstance(value.get("providers"), list) else []
+    provider_items = [item for item in providers if isinstance(item, dict)]
+    statuses = Counter(str(item.get("status", "<missing>")) for item in provider_items)
+    error_codes = Counter(
+        str(item["errorCode"]) for item in provider_items if item.get("errorCode") not in (None, "")
+    )
+    active_overlays = 0
+    inactive_overlays = 0
+    validated_payloads = 0
+    declared_payloads = 0
+    provider_summaries = []
+    for item in provider_items:
+        overlays = (
+            item.get("sessionOverlays") if isinstance(item.get("sessionOverlays"), dict) else {}
+        )
+        payload = item.get("runtimePayload") if isinstance(item.get("runtimePayload"), dict) else {}
+        active_overlays += _safe_int(overlays.get("activeCount"))
+        inactive_overlays += _safe_int(overlays.get("inactiveCount"))
+        declared_payloads += int(payload.get("declared") is True)
+        validated_payloads += int(payload.get("validated") is True)
+        provider_summaries.append(
+            {
+                "provider": item.get("provider"),
+                "status": item.get("status"),
+                "runtimeVersion": item.get("runtimeVersion"),
+                "identity": item.get("identity"),
+                "platform": item.get("platform"),
+                "architecture": item.get("architecture"),
+                "errorCode": item.get("errorCode"),
+                "prepareDurationBucket": item.get("prepareDurationBucket"),
+                "totalOverlayBytesBucket": overlays.get("totalBytesBucket"),
+                "sharedCacheBytesBucket": (
+                    item.get("sharedCache", {}).get("bytesBucket")
+                    if isinstance(item.get("sharedCache"), dict)
+                    else None
+                ),
+                "lastGcStatus": (
+                    item.get("lastGc", {}).get("status")
+                    if isinstance(item.get("lastGc"), dict)
+                    else None
+                ),
+                "runtimePayloadDeclared": payload.get("declared"),
+                "runtimePayloadValidated": payload.get("validated"),
+            }
+        )
+    return {
+        "status": value.get("status", "unavailable"),
+        "evidence": "collected",
+        "schemaVersion": value.get("schemaVersion"),
+        "providerCount": len(provider_items),
+        "providerStatuses": dict(sorted(statuses.items())),
+        "errorCodes": dict(sorted(error_codes.items())),
+        "activeOverlayCount": active_overlays,
+        "inactiveOverlayCount": inactive_overlays,
+        "declaredPayloadCount": declared_payloads,
+        "validatedPayloadCount": validated_payloads,
+        "providers": provider_summaries,
     }
 
 
@@ -596,6 +673,19 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
             if desktop_instance_collected
             else None
         )
+        execution_environments_collected = (
+            "managed-execution-environment-v1" in capabilities
+            or "diagnostics/execution-environments.json" in names
+        )
+        execution_environments = (
+            optional_json(
+                archive,
+                "diagnostics/execution-environments.json",
+                warnings,
+            )
+            if execution_environments_collected
+            else None
+        )
         render_evidence_summary = summarize_webview2_render_evidence(
             webview2_render_evidence,
             set(names),
@@ -788,6 +878,10 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 desktop_instance,
                 collected=desktop_instance_collected,
             ),
+            "executionEnvironments": summarize_execution_environments(
+                execution_environments,
+                collected=execution_environments_collected,
+            ),
             "warnings": warnings,
         }
 
@@ -894,6 +988,17 @@ def print_human(summary: dict[str, Any]) -> None:
         f"ownerKind={desktop_owner.get('runtimeKind')} "
         f"ownerPid={desktop_owner.get('pid')} "
         f"session={desktop_owner.get('processSessionId')}"
+    )
+    execution_environments = summary["executionEnvironments"]
+    print(
+        "Managed execution environments: "
+        f"evidence={execution_environments.get('evidence')} "
+        f"status={execution_environments.get('status')} "
+        f"providers={execution_environments.get('providerCount')} "
+        f"statuses={json.dumps(execution_environments.get('providerStatuses', {}), ensure_ascii=False, sort_keys=True)} "
+        f"activeOverlays={execution_environments.get('activeOverlayCount')} "
+        f"inactiveOverlays={execution_environments.get('inactiveOverlayCount')} "
+        f"payloadValidated={execution_environments.get('validatedPayloadCount')}"
     )
     print(
         f"Problem text: {'present' if summary['problem']['present'] else 'absent'} "
