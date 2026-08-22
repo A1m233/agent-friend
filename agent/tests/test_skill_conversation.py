@@ -360,6 +360,24 @@ def test_explicit_name_is_host_activated_before_the_model(tmp_path: Path) -> Non
     assert not any(event.type == "tool_call_result" for event in events)
 
 
+def test_host_provided_skill_snapshot_stays_frozen_after_catalog_refresh(tmp_path: Path) -> None:
+    conversation, llm, service, selection = _conversation(tmp_path)
+    frozen = service.begin_turn((selection,))
+    _write_skill(service.personal_root, "test-skill", "SECOND VERSION")
+    service.refresh()
+
+    list(
+        conversation.stream(
+            "执行已计划任务",
+            skill_selections=(selection,),
+            skill_turn_snapshot=frozen,
+        )
+    )
+
+    assert any("FIRST VERSION" in item.get("content", "") for item in llm.received[0])
+    assert not any("SECOND VERSION" in item.get("content", "") for item in llm.received[0])
+
+
 def test_reactivation_reads_current_version_and_idempotency_checks_selection(
     tmp_path: Path,
 ) -> None:

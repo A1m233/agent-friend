@@ -56,6 +56,8 @@ class SessionCatalog:
         metadata = self._metadata_store.load_all() if self._metadata_store is not None else {}
         descriptors: list[SessionDescriptor] = []
         for summary in self._store.list():
+            if summary.origin_kind == "scheduled_task":
+                continue
             item = metadata.get(summary.session_id)
             title = item.display_title if item is not None and item.display_title else summary.title
             descriptors.append(

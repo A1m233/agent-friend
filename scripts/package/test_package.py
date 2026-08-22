@@ -771,6 +771,13 @@ def test_doctor_without_configured_model_checks_static_html_extraction(monkeypat
     payload = json.loads(capsys.readouterr().out)
     assert payload["checks"]["capability:web_fetch_static_html"]["ok"] is True
     assert payload["checks"]["capability:tool_schema_validation"]["ok"] is True
+    assert payload["checks"]["capability:scheduled_tasks"] == {
+        "ok": True,
+        "task_id": True,
+        "scheduled_occurrence": 1,
+        "interrupted_runs": 1,
+        "history_outcome": "interrupted",
+    }
     assert payload["checks"]["capability:governed_filesystem"]["ok"] is True
     assert payload["checks"]["capability:managed_execution_python"] == {
         "ok": True,
@@ -824,6 +831,24 @@ def test_doctor_fails_closed_when_packaged_skill_runtime_is_broken(monkeypatch, 
         "ok": False,
         "error_type": "RuntimeError",
         "error": "missing packaged builtin Skill resource",
+    }
+
+
+def test_doctor_fails_closed_when_scheduled_task_runtime_is_broken(monkeypatch, capsys) -> None:
+    runtime_entry = _load("runtime_entry_broken_scheduled_tasks", PACKAGE_DIR / "runtime_entry.py")
+    monkeypatch.delenv("AGENT_FRIEND_MEMORY_MODEL_DIR", raising=False)
+
+    def fail_scheduled_task_smoke() -> dict[str, object]:
+        raise RuntimeError("missing packaged Scheduled Task module")
+
+    monkeypatch.setattr(runtime_entry, "_smoke_scheduled_tasks", fail_scheduled_task_smoke)
+
+    assert runtime_entry._doctor() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["checks"]["capability:scheduled_tasks"] == {
+        "ok": False,
+        "error_type": "RuntimeError",
+        "error": "missing packaged Scheduled Task module",
     }
 
 

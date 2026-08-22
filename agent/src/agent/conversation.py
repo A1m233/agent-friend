@@ -559,6 +559,7 @@ class Conversation:
         run_id: str | None = None,
         cancel_check: Callable[[], None] | None = None,
         skill_selections: tuple[SkillSelection, ...] = (),
+        skill_turn_snapshot: SkillTurnSnapshot | None = None,
         turn_context: str | None = None,
     ) -> Iterator[ConversationEvent]:
         """流式发送一轮对话，按 :class:`ConversationEvent` discriminated union
@@ -649,11 +650,20 @@ class Conversation:
         # session history after the append would send the same query twice.
         prefix_history = self._messages_from_events(selection_history)
         prefix_prior_summary = self._derive_prior_summary_from_events(selection_history)
-        effective_skill_selections = self._resolve_turn_skill_selections(
-            user_input,
-            skill_selections,
-            history_events=selection_history,
-        )
+        if skill_turn_snapshot is not None:
+            effective_skill_selections = self._normalize_selections(skill_selections)
+            activated_ids = tuple(item.record.id for item in skill_turn_snapshot.activations)
+            selected_ids = tuple(item.id for item in effective_skill_selections)
+            if skill_turn_snapshot.activation_issues or activated_ids != selected_ids:
+                raise ValueError(
+                    "skill_turn_snapshot_conflict: frozen Skill snapshot 与选择不一致。"
+                )
+        else:
+            effective_skill_selections = self._resolve_turn_skill_selections(
+                user_input,
+                skill_selections,
+                history_events=selection_history,
+            )
         if existing_user_event is not None:
             existing_attachments = existing_user_event.payload.get("attachments", [])
             requested_attachments = [item.to_dict() for item in turn_attachments]
@@ -678,7 +688,9 @@ class Conversation:
                 completed_replay_text = "".join(completed_parts)
         self._active_skill_selections = effective_skill_selections
         self._active_skill_turn_snapshot = (
-            self._skill_service.begin_turn(
+            skill_turn_snapshot
+            if skill_turn_snapshot is not None
+            else self._skill_service.begin_turn(
                 self._active_skill_selections,
                 model_window=self._active_llm_client().context_window,
                 semantic_activation_available=self._skill_read_available(),

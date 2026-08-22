@@ -17,6 +17,8 @@
 
 > `package` 必须显式声明渠道：`--release` 生成无凭据稳定正式包；`--trusted-beta` 生成定向内测包；`--local-test` 生成不可分发的本机测试包，裸 `all` 会 fail closed。`--trusted-beta` 会从当前 Windows 用户的系统凭据库读取完整 provider 凭据，生成文件名带 `trusted-beta-SENSITIVE` 的敏感 installer。该安装包可被提取凭据，不得公开发布；如泄露，必须在各 provider 侧更换全部凭据并重新打包。
 
+> frozen runtime 的 doctor/capability smoke 包含 Scheduled Task 的 Agent 工具、SQLite 到期生成和提交后中断恢复路径；该 smoke 使用确定性本地数据，不调用 LLM 或外部服务。
+
 > 打包缓存和中间构建默认写入 `%LOCALAPPDATA%\agent-friend\packaging\`，最终制品写入 `%USERPROFILE%\agent-friend-releases\`，均不依赖仓库或 worktree。可用 `AGENT_FRIEND_PACKAGE_STATE_DIR` / `--state-dir` 和 `AGENT_FRIEND_RELEASES_DIR` / `--releases-dir` 覆盖。所有 worktree 的 package build 使用仓库级互斥锁，开始构建前要求 state 所在卷至少有 40 GiB 可用空间；成功完成 installer/all 后自动删除本次 build-id，runtime 与 installer-smoke 中间态按复用契约暂存。`workspace-status` 只读盘点，`workspace-gc` 默认 dry-run、显式 `--apply` 后回收超过 48 小时的 build-id 与超过 7 天未使用的 per-worktree 增量 cache，不触碰 source worktree 或 releases。`version-status` 查询稳定产品版本、本机最新有效正式制品和下一 trusted-beta 版本；准备安装到当前机器时先用 `production-install-plan` 读取真实 production 注册表、active receipt 与 build identity，实际构建再附带 `--for-current-install`，降级会在创建 build workspace 前被拒绝。`version-set <semver>` 显式同步稳定产品版本。每个开发周期用 `trusted-beta-configure <next-stable-semver>` 配置一次下一稳定版本，之后脚本自动生成 `<target>-beta.<UTC YYYYMMDD>.<sequence>`；`--trusted-beta --local-test` 沿用该下一 beta 版本，只把制品标记为不可发布。正式 release 与可分发 trusted-beta 都要求 clean worktree 且同一制品不可覆盖；验证未提交代码时使用 `--local-test`，产物会标记 `NOT-FOR-DISTRIBUTION`。
 
 > 桌面端额外需要 **Node 22+ / pnpm（`corepack enable pnpm`）/ Rust（[rustup.rs](https://rustup.rs)）**；`setup` 会检测并提示，但不替你装系统级工具。只想跑后端 CLI 可忽略这三项。

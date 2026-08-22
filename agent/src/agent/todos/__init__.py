@@ -29,7 +29,7 @@ from .recurrence import (
     schedule_to_dict,
     validate_schedule,
 )
-from .scheduler import ReminderScheduler
+from .scheduler import ReminderDriver
 from .service import TodoService
 from .store import TodoStore
 
@@ -41,12 +41,12 @@ __all__ = [
     "OnceSchedule",
     "RecurringSchedule",
     "Reminder",
+    "ReminderDriver",
     "ReminderFacts",
     "ReminderKind",
     "ReminderOccurrence",
     "ReminderPatch",
     "ReminderSchedule",
-    "ReminderScheduler",
     "ReminderStatus",
     "Todo",
     "TodoDetails",

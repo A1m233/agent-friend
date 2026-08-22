@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import os
 import sys
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from memory.search import MemorySearchService, QueryAnalyzer
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     from ..command_runtime import CommandRuntime
     from ..execution_environment import ExecutionEnvironmentManager
     from ..filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
+    from ..scheduled_tasks import ScheduledTaskService
     from ..sessions.catalog import SessionCatalog
     from ..sessions.store import SessionStore
     from ..skills import SkillCatalogService
@@ -76,6 +78,10 @@ def make_default_registry(
     *,
     memory_search: MemorySearchService | None = None,
     todo_service: TodoService | None = None,
+    scheduled_task_service: ScheduledTaskService | None = None,
+    scheduled_task_persona_id: str | None = None,
+    scheduled_task_persona_name: str = "default",
+    scheduled_task_model_id: str | None = None,
     session_catalog: SessionCatalog | None = None,
     tavily_api_key: str | None = None,
     amap_webservice_key: str | None = None,
@@ -162,6 +168,20 @@ def make_default_registry(
 
         tools.append(TodoManageTool(todo_service))
 
+    if scheduled_task_service is not None and scheduled_task_model_id is not None:
+        from .builtin.scheduled_task_manage import ScheduledTaskManageTool
+
+        tools.append(
+            ScheduledTaskManageTool(
+                scheduled_task_service,
+                default_persona_id=scheduled_task_persona_id,
+                default_persona_name=scheduled_task_persona_name,
+                default_model_id=scheduled_task_model_id,
+                skill_service=skill_service,
+                approval_pending=_scheduled_task_approval_pending(filesystem_approval_broker),
+            )
+        )
+
     api_key = tavily_api_key or os.environ.get("TAVILY_API_KEY")
     if api_key:
         provider = TavilyProvider(api_key=api_key)
@@ -237,6 +257,18 @@ def make_default_registry(
         tools.append(ToolResultRecoveryTool(session_store))
 
     return ToolRegistry(tools)
+
+
+def _scheduled_task_approval_pending(
+    broker: FilesystemApprovalBroker | None,
+) -> Callable[[str, str], bool] | None:
+    if broker is None:
+        return None
+
+    def pending(session_id: str, run_id: str) -> bool:
+        return bool(broker.pending(session_id=session_id, run_id=run_id))
+
+    return pending
 
 
 def make_default_social_platform_service(

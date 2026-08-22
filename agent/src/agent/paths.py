@@ -76,6 +76,11 @@ def todos_db_path() -> Path:
     return user_data_dir() / "todos" / "todos.db"
 
 
+def scheduled_tasks_db_path() -> Path:
+    """Scheduled Task SQLite：``<user_data_dir>/scheduled-tasks/scheduled-tasks.db``。"""
+    return user_data_dir() / "scheduled-tasks" / "scheduled-tasks.db"
+
+
 def personas_dir() -> Path:
     """用户自定义 persona 目录：``<user_data_dir>/personas``。"""
     return user_data_dir() / "personas"
@@ -132,6 +137,7 @@ __all__ = [
     "memory_db_path",
     "persona_internal_dir",
     "personas_dir",
+    "scheduled_tasks_db_path",
     "sessions_dir",
     "skills_dir",
     "todos_db_path",

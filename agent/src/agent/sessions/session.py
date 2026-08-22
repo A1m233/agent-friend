@@ -152,6 +152,9 @@ class Session:
         session_id: str | None = None,
         created_at: datetime | None = None,
         channel: Channel = "text",
+        origin_kind: str | None = None,
+        origin_id: str | None = None,
+        origin_occurrence_id: str | None = None,
     ) -> Session:
         """创建一个**全新**的 :class:`Session`，并自动生成首行 ``session_meta`` 事件。
 
@@ -187,6 +190,15 @@ class Session:
             payload["initial_persona_id"] = persona_id
         if channel != "text":
             payload["initial_channel"] = channel
+        if origin_kind is not None:
+            normalized_origin = origin_kind.strip()
+            if not normalized_origin:
+                raise ValueError("origin_kind 不能为空")
+            payload["origin_kind"] = normalized_origin
+            if origin_id is not None:
+                payload["origin_id"] = origin_id
+            if origin_occurrence_id is not None:
+                payload["origin_occurrence_id"] = origin_occurrence_id
         meta_event = Event(
             type="session_meta",
             uuid=sid,
@@ -202,6 +214,21 @@ class Session:
             initial_model=model,
             events=[meta_event],
         )
+
+    @property
+    def origin_kind(self) -> str | None:
+        value = self.events[0].payload.get("origin_kind") if self.events else None
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def origin_id(self) -> str | None:
+        value = self.events[0].payload.get("origin_id") if self.events else None
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def origin_occurrence_id(self) -> str | None:
+        value = self.events[0].payload.get("origin_occurrence_id") if self.events else None
+        return value if isinstance(value, str) and value else None
 
     @classmethod
     def from_events(cls, events: list[Event]) -> Session:

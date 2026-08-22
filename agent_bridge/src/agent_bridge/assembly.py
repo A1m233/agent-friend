@@ -44,7 +44,13 @@ from agent.runtime import (
     PostTurnContext,
     PreTurnDecision,
 )
-from agent.todos import ReminderScheduler, TodoService, TodoStore
+from agent.scheduled_tasks import (
+    ScheduledTaskDriver,
+    ScheduledTaskService,
+    ScheduledTaskStore,
+)
+from agent.scheduling import ScheduleCoordinator
+from agent.todos import ReminderDriver, TodoService, TodoStore
 from agent.tools import ToolRegistry
 from runtime_config.build_identity import runtime_build_identity
 from runtime_config.sources import default_settings_path
@@ -94,6 +100,7 @@ from .runtime_config import (
     DeferredLanguageModel,
     resolve_bridge_runtime_config,
 )
+from .scheduled_tasks import ScheduledRunTracker, ScheduledTaskRunOrchestrator
 from .session_models import SessionModelService
 from .session_turns import SessionTurnCoordinator
 from .settings import BridgeSettings
@@ -214,8 +221,14 @@ class BridgeRuntime:
     """070：Agent tool、REST 与调度共享的领域服务。"""
     presence_registry: PresenceRegistry | None = None
     """070：桌面/IM 活跃信号和最近路由诊断。"""
-    reminder_scheduler: ReminderScheduler | None = None
-    """070：Bridge lifespan 内运行的可恢复 Reminder scheduler。"""
+    scheduled_task_store: ScheduledTaskStore | None = None
+    """099：全局 Scheduled Agent Task SQLite store。"""
+    scheduled_task_service: ScheduledTaskService | None = None
+    """099：Agent tool、REST 与调度共享的 Scheduled Task 应用服务。"""
+    scheduled_run_tracker: ScheduledRunTracker | None = None
+    """099：把 AgentRuntime handle 终态持久化回 occurrence。"""
+    schedule_coordinator: ScheduleCoordinator | None = None
+    """099：Reminder 与 Scheduled Task 共享的进程级时间 coordinator。"""
     social_platform_service: SocialPlatformService | None = None
     """072：共享的本地只读平台 connector 与 opaque resource 生命周期。"""
     social_auth_orchestrator: SocialAuthOrchestrator | None = None
@@ -364,7 +377,8 @@ def build_runtime(
         runtime_config = resolve_bridge_runtime_config(
             credential_source_for_mode(config_mode_from_env())
         )
-    default_persona = catalog.find_by_name("default").name
+    default_persona_info = catalog.find_by_name("default")
+    default_persona = default_persona_info.name
     default_model = runtime_config.default_model
     personal_skills_root = settings.sessions_dir.parent / "skills"
     first_party_skill_store = FirstPartySkillStore(personal_skills_root)
@@ -437,6 +451,8 @@ def build_runtime(
         settings.im_resume_dir,
         settings.im_state_path,
         settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db",
+        settings.scheduled_tasks_db
+        or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db",
         log_dir(),
         default_settings_path(),
     ]
@@ -476,6 +492,11 @@ def build_runtime(
 
     todo_store = TodoStore(settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db")
     todo_service = TodoService(todo_store)
+    scheduled_task_store = ScheduledTaskStore(
+        settings.scheduled_tasks_db
+        or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db"
+    )
+    scheduled_task_service = ScheduledTaskService(scheduled_task_store)
     presence_registry = PresenceRegistry()
     social_platform_service = make_default_social_platform_service()
 
@@ -484,6 +505,10 @@ def build_runtime(
         persistent_store,
         memory_search=memory_search,
         todo_service=todo_service,
+        scheduled_task_service=scheduled_task_service,
+        scheduled_task_persona_id=default_persona_info.id,
+        scheduled_task_persona_name=default_persona,
+        scheduled_task_model_id=default_model,
         session_catalog=session_catalog,
         tavily_api_key=runtime_config.tool_credentials.tavily_api_key,
         amap_webservice_key=runtime_config.tool_credentials.amap_webservice_key,
@@ -554,6 +579,30 @@ def build_runtime(
         agent_runtime,
     )
 
+    def make_schedule_runtime(
+        reminder_delivery: ReminderDeliveryOrchestrator,
+    ) -> tuple[ScheduledRunTracker, ScheduleCoordinator]:
+        tracker = ScheduledRunTracker(scheduled_task_store)
+        orchestrator = ScheduledTaskRunOrchestrator(
+            store=scheduled_task_store,
+            sessions=persistent_session_manager,
+            agent_runtime=agent_runtime,
+            tracker=tracker,
+            skill_service=skill_service,
+        )
+        coordinator = ScheduleCoordinator(
+            (
+                ScheduledTaskDriver(
+                    scheduled_task_store,
+                    orchestrator.dispatch_batch,
+                ),
+                ReminderDriver(todo_store, reminder_delivery.deliver_batch),
+            )
+        )
+        scheduled_task_service.add_wake_listener(coordinator.wake)
+        todo_service.add_wake_listener(coordinator.wake)
+        return tracker, coordinator
+
     # 022:IM 通道装配(SessionBridge 复用现有 persistent path,session_id 由 IMRouter 决定)
     im_runtime: IMRuntime | None = None
     im_onboard_registry: OnboardSessionRegistry | None = None
@@ -611,6 +660,8 @@ def build_runtime(
             persona_editor_workspace=persona_editor_workspace,
             todo_store=todo_store,
             todo_service=todo_service,
+            scheduled_task_store=scheduled_task_store,
+            scheduled_task_service=scheduled_task_service,
             presence_registry=presence_registry,
             social_platform_service=social_platform_service,
             filesystem_approval_broker=filesystem_approval_broker,
@@ -669,14 +720,14 @@ def build_runtime(
             presence_registry=presence_registry,
             im_runtime=im_runtime,
         )
-        reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver_batch)
-        todo_service.add_wake_listener(reminder_scheduler.wake)
+        scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
         # final BridgeRuntime = pre_runtime + IM 字段
         return dataclasses.replace(
             pre_runtime,
             im_runtime=im_runtime,
             im_onboard_registry=im_onboard_registry,
-            reminder_scheduler=reminder_scheduler,
+            scheduled_run_tracker=scheduled_run_tracker,
+            schedule_coordinator=schedule_coordinator,
             social_auth_orchestrator=social_auth_orchestrator,
         )
 
@@ -686,8 +737,7 @@ def build_runtime(
         agent_runtime=agent_runtime,
         presence_registry=presence_registry,
     )
-    reminder_scheduler = ReminderScheduler(todo_store, reminder_delivery.deliver_batch)
-    todo_service.add_wake_listener(reminder_scheduler.wake)
+    scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
     social_auth_orchestrator = SocialAuthOrchestrator(
         service=social_platform_service,
         agent_runtime=agent_runtime,
@@ -717,8 +767,11 @@ def build_runtime(
         persona_editor_workspace=persona_editor_workspace,
         todo_store=todo_store,
         todo_service=todo_service,
+        scheduled_task_store=scheduled_task_store,
+        scheduled_task_service=scheduled_task_service,
         presence_registry=presence_registry,
-        reminder_scheduler=reminder_scheduler,
+        scheduled_run_tracker=scheduled_run_tracker,
+        schedule_coordinator=schedule_coordinator,
         social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
         filesystem_approval_broker=filesystem_approval_broker,
