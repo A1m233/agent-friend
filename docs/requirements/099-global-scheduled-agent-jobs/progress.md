@@ -44,9 +44,10 @@ COMPLETED — 用户已验收本期后端范围
 | 2026-08-23 | 完成 Windows `package-sensitive` frozen runtime 验证 | build `20260822T193203Z-a11e0d425afd-a433a8b9`；staged doctor `ok: true`；`capability:scheduled_tasks` 真实覆盖工具、SQLite 到期生成、claim/submitted、interrupted 恢复与 history |
 | 2026-08-23 | 只读完成 Guide package-baseline | Guide `9ef875b` / immutable `agent-friend-guide-r5` / snapshot `1d4051…`；当前 builtin 匹配；新能力后续需更新公开 product overview、using、data/privacy 与 troubleshooting，本次未修改或发布 Guide |
 | 2026-08-23 | 用户确认本期后端范围验收通过 | 授权继续合入主干并推送远端；进入受管 Guide 与 Git 组合交付流程 |
+| 2026-08-23 | 完成公开 Guide 更新与不可变发布 | Guide commit `cb4c253`；release `agent-friend-guide-r6`；snapshot `82c0ea5c…`；兼容范围 `[0.2.1, 0.3.0)` |
 
 ## 剩余收口
 
 - [x] 用户确认并完成关闭顺序的方案文档校正：coordinator 停止后先 drain AgentRuntime，再停止 run tracker，以保留清洁关闭产生的真实终态。
 - [x] 用户完成本期后端范围验收。
-- [ ] 后续合入并推送 main 时，按受管 Guide 工作流更新并发布公开知识；不在本次 package-baseline 中越权写入。
+- [x] 合入流程中已按受管 Guide 工作流更新公开知识并发布 immutable `agent-friend-guide-r6`。
