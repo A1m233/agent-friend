@@ -73,7 +73,7 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const NAVIGATION_BUTTON_CLASS =
-  "px-2 text-sm font-normal data-[active=true]:bg-bg transition-none";
+  "px-2 text-sm font-normal data-[active=true]:bg-bg data-[active=true]:font-semibold transition-none";
 
 interface MissingCurrentSessionResetInput {
   sessionsLoaded: boolean;
