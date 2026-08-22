@@ -1,6 +1,6 @@
 # 047 · 模型凭证保存时不校验可用性，鉴权失败提示错误
 
-- **状态**：open
+- **状态**：resolved
 - **严重度**：high
 - **发现日期**：2026-08-10
 - **关联需求**：032-runtime-env-credential-config、036-desktop-runtime-config-management、043-kimi-provider-integration
@@ -30,3 +30,7 @@
 3. 修正 LLM 异常归类：优先依据 HTTP 401、provider `authentication_error` 等稳定元数据映射为 `LLMAuthError` / `auth_failed`，不要受 LiteLLM 外层 `BadRequestError` 包装影响。
 4. 运行时收到 `auth_failed` 时，给出不泄露凭证的设置入口和重新配置提示，覆盖 Key 被撤销、过期或保存后状态变化的场景。
 5. 使用 mock provider 响应覆盖有效 Key、401、403、超时、网络失败和 LiteLLM 错误包装回归；自动化测试不调用真实第三方 API。
+
+---
+
+已在 commit `8f60da7` / 需求 [089-runtime-credential-validation-and-apply-feedback](../../requirements/089-runtime-credential-validation-and-apply-feedback/) 修复。
