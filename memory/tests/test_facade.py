@@ -15,11 +15,15 @@ from llm_providers import ModelRequest, ModelResponse
 from memory import (
     ConversationFragment,
     CoreProfileEntry,
+    CurrentSessionRecallScope,
     Extractor,
     KeywordRetrieval,
     Memory,
+    MemorySearchService,
     Reconciler,
+    SemanticRow,
     SqliteMemoryStore,
+    StructuredMemorySource,
     Utterance,
 )
 
@@ -189,4 +193,81 @@ def test_on_retrieved_exception_does_not_break_retrieve() -> None:
     mem._on_retrieved = _boom
     ctx = mem.retrieve("还记得Tom吗", persona_id="p1")
     assert not ctx.is_empty()
+    mem.close()
+
+
+def test_automatic_scope_suppresses_ordinary_memory_but_keeps_core_and_trace() -> None:
+    class _Order:
+        def active_conversation_event_uuids(self, session_id: str) -> tuple[str, ...] | None:
+            assert session_id == "s1"
+            return ("u0", "u1")
+
+    store = SqliteMemoryStore(":memory:")
+    now = datetime.now(UTC)
+    store.add_semantic(
+        SemanticRow(
+            id="semantic-new",
+            statement="用户养了一只叫Tom的猫",
+            persona_id="p1",
+            created_at=now,
+            updated_at=now,
+            valid_from=now,
+            provenance=["s1#u1"],
+        )
+    )
+    store.add_core_profile_entry(
+        CoreProfileEntry(
+            id="core-name",
+            owner_user_id="local",
+            scope_kind="user",
+            persona_id="",
+            field_key="user.preferred_name",
+            value="小陈",
+            normalized_value=normalize_core_value("小陈"),
+            valid_from=now,
+            valid_until=None,
+            supersedes_id=None,
+            provenance=("s1#u1",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    traces: list[RecallTrace] = []
+    mem = Memory(
+        store,
+        Extractor(FakeLLM('{"semantic_ops":[]}'), prompt="x"),  # type: ignore[arg-type]
+        Reconciler(store),
+        retrieval=KeywordRetrieval(store),
+        search_service=MemorySearchService(
+            [StructuredMemorySource(store)],
+            source_order_provider=_Order(),
+        ),
+        on_retrieved=traces.append,
+    )
+
+    empty_boundary = mem.retrieve(
+        "还记得Tom吗",
+        persona_id="p1",
+        session_id="s1",
+        automatic_recall_scope=CurrentSessionRecallScope("s1", None),
+    )
+    through_u1 = mem.retrieve(
+        "还记得Tom吗",
+        persona_id="p1",
+        session_id="s1",
+        automatic_recall_scope=CurrentSessionRecallScope("s1", "u1"),
+    )
+
+    assert "Tom" not in empty_boundary.rendered
+    assert "小陈" in empty_boundary.rendered
+    assert "Tom" in through_u1.rendered
+    assert traces[0].automatic_recall_scope == {
+        "current_session_id": "s1",
+        "recall_through_event_uuid": None,
+    }
+    assert traces[0].core_profile_exempt_count == 1
+    assert {item["evidence_id"]: item["scope_reason"] for item in traces[0].candidates or []} == {
+        "semantic:semantic-new": "current_session_empty_boundary",
+        "core:core-name": "core_profile_exempt",
+    }
     mem.close()

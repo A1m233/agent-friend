@@ -34,7 +34,7 @@ from agent.execution_environment import (
 )
 from agent.filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
-from agent.memory_search import SessionHistorySource
+from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
 from agent.paths import log_dir
 from agent.runtime import (
     PRE_TURN_PROCEED,
@@ -454,7 +454,10 @@ def build_runtime(
 
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
-    memory_search = MemorySearchService([SessionHistorySource(persistent_store)])
+    memory_search = MemorySearchService(
+        [SessionHistorySource(persistent_store)],
+        source_order_provider=SessionStoreSourceOrderProvider(persistent_store),
+    )
     if settings.memory_enabled:
         # 048：core 使用独立小预算始终在场，priority / normal 统一走相关性召回；
         # bridge 与 CLI 不再通过 pinned gate hot-fix 产生入口差异。

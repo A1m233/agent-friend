@@ -60,8 +60,13 @@ class StructuredMemorySource:
             persona_id=request.persona_id,
             limit=limit,
         )
+        expanded_provenance = self._expanded_semantic_provenance([row for row, _ in semantic])
         semantic_candidates = [
-            _semantic_candidate(row, rank)
+            _semantic_candidate(
+                row,
+                rank,
+                provenance=expanded_provenance.get(row.id),
+            )
             for rank, (row, _) in enumerate(semantic, start=1)
             if _semantic_in_range(row, query.time_range)
         ]
@@ -114,13 +119,21 @@ class StructuredMemorySource:
         ]
         semantic = self._store.semantic_by_ids(semantic_ids)
         episodic = self._store.episodic_by_ids(episodic_ids)
+        expanded_provenance = self._expanded_semantic_provenance(list(semantic.values()))
         candidates: list[EvidenceCandidate] = []
         for rank, hit in enumerate(hits, start=1):
             if hit.evidence_id.startswith("semantic:"):
                 semantic_row = semantic.get(hit.evidence_id.removeprefix("semantic:"))
                 if semantic_row is not None and _semantic_visible(semantic_row, query, request):
                     candidates.append(
-                        replace(_semantic_candidate(semantic_row, None), dense_rank=rank)
+                        replace(
+                            _semantic_candidate(
+                                semantic_row,
+                                None,
+                                provenance=expanded_provenance.get(semantic_row.id),
+                            ),
+                            dense_rank=rank,
+                        )
                     )
             elif hit.evidence_id.startswith("episodic:"):
                 episodic_row = episodic.get(hit.evidence_id.removeprefix("episodic:"))
@@ -136,8 +149,32 @@ class StructuredMemorySource:
                     )
         return candidates
 
+    def _expanded_semantic_provenance(
+        self,
+        rows: list[SemanticRow],
+    ) -> dict[str, tuple[str, ...]]:
+        """Resolve legacy Episodic IDs into conversation source refs at read time."""
+        episodic_ids = sorted(
+            {value for row in rows for value in row.provenance if value and "#" not in value}
+        )
+        episodic = self._store.episodic_by_ids(episodic_ids)
+        expanded: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            values = list(row.provenance)
+            for value in row.provenance:
+                episodic_row = episodic.get(value)
+                if episodic_row is not None and episodic_row.source_ref not in values:
+                    values.append(episodic_row.source_ref)
+            expanded[row.id] = tuple(values)
+        return expanded
 
-def _semantic_candidate(row: SemanticRow, rank: int | None) -> EvidenceCandidate:
+
+def _semantic_candidate(
+    row: SemanticRow,
+    rank: int | None,
+    *,
+    provenance: tuple[str, ...] | None = None,
+) -> EvidenceCandidate:
     return EvidenceCandidate(
         evidence_id=f"semantic:{row.id}",
         source_name=StructuredMemorySource.name,
@@ -149,7 +186,7 @@ def _semantic_candidate(row: SemanticRow, rank: int | None) -> EvidenceCandidate
         valid_from=row.valid_from,
         valid_until=row.valid_until,
         importance=row.importance,
-        provenance=tuple(row.provenance),
+        provenance=provenance if provenance is not None else tuple(row.provenance),
         keyword_rank=rank,
     )
 
