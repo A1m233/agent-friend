@@ -46,3 +46,4 @@ COMPLETED
 | 2026-08-23 | 项目统一检查全部通过 | backend：2119 passed / 4 skipped；frontend：604 passed + production build；Rust：216 passed / 1 ignored + release check；未调用真实 LLM、QQ 或外部服务 |
 | 2026-08-23 | 完成真实 Tauri 设置页视觉与交互验收 | 当前 feature worktree 的真实 WebView DOM、CDP 截图与 Windows 桌面同步截图均确认布局、下拉选项及两套帮助文案；切换为“所有位置”后完整重启桌面进程仍保留选择，验收结束后已恢复默认“智能选择（推荐）”并核对落盘 |
 | 2026-08-23 | 用户确认验收并授权合入主干、推送远端 | 需求状态更新为 `COMPLETED`，进入 Guide 维护与合入流程 |
+| 2026-08-23 | rebase 最新 `origin/main` 后重跑项目统一检查 | backend：2126 passed / 4 skipped；frontend：604 passed + production build；Rust：216 passed / 1 ignored + installer helper tests + release check；三个 stage 均通过 |
