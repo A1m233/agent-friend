@@ -22,6 +22,8 @@ agent-friend 当前提供以下 DeepSeek 模型：
 - DeepSeek V4 Pro：文本对话和工具调用；
 - DeepSeek V4 Flash Vision：文本、工具调用以及 JPEG、PNG、WebP 图片。
 
+这三款模型都可在当前会话选择“关闭 / 低 / 高 / 最高”推理强度，默认关闭。切换模型时会先采用目标模型的默认档位，之后可以继续调整。
+
 只有 DeepSeek V4 Flash Vision 可以添加图片。它不接受 PDF、TXT、GIF 或其它文件类型；单张图片最多 64 MiB，单轮最多 10 张且总计不超过 100 MiB。V4 Flash 与 V4 Pro 仍是纯文本模型。
 
 官方文档：[DeepSeek API 文档](https://api-docs.deepseek.com/zh-cn/)。
@@ -35,6 +37,8 @@ agent-friend 当前提供以下 DeepSeek 模型：
 5. 等待页面完成校验和应用。显示“已配置 · 已验证”后即可选择 Kimi 模型使用。
 
 `platform.kimi.ai` 与其他 Kimi 平台的 Key 不一定通用，应从上面的开放平台创建。官方文档：[Kimi API 概览](https://platform.kimi.ai/docs/api/overview)。
+
+Kimi 2.6 与 Kimi 2.5 支持在当前会话关闭或开启推理，默认开启；Kimi 2.7 Code 与 Kimi 2.7 Code Highspeed 固定开启推理，不提供关闭或强度档位。
 
 ## OpenRouter API Key
 
@@ -51,6 +55,8 @@ agent-friend 当前只开放以下两个 OpenRouter 模型：
 
 - Google · Gemini 3.7 Flash；
 - OpenAI · GPT-5.6 Luna。
+
+Google · Gemini 3.7 Flash 支持“低 / 中 / 高”，默认“中”；OpenAI · GPT-5.6 Luna 支持“关闭 / 低 / 中 / 高 / 极高 / 最高”，默认“中”。这些档位只影响当前会话，从下一条回复开始生效。
 
 这两款模型当前支持文本对话和工具调用，不支持在 agent-friend 中添加图片、文件、音频或视频。请求会要求使用不进行数据收集的上游端点；如果当前没有满足条件的端点，agent-friend 会明确提示模型路由不可用，不会静默切换到另一模型或放宽该限制。
 
