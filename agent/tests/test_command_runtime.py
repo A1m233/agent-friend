@@ -31,6 +31,7 @@ from agent.command_runtime.models import (
 from agent.command_runtime.runtime import (
     _windows_setup_process_detail,
     managed_network_request,
+    path_to_file_uri,
     safe_loopback_proxy_environment,
     safe_loopback_proxy_port,
     sandbox_context,
@@ -1015,6 +1016,49 @@ def test_windows_sandbox_context_preserves_global_proxy_setup(
     )
 
     assert context["windowsSandboxProxySettingsMode"] == "preserve"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path URIs are Windows-specific")
+@pytest.mark.parametrize(
+    ("raw_path", "expected"),
+    [
+        (
+            r"\\?\C:\Users\Example User\.local\bin",
+            "file:///C:/Users/Example%20User/.local/bin",
+        ),
+        (
+            r"\\?\UNC\server\shared tools\bin",
+            "file://server/shared%20tools/bin",
+        ),
+        (
+            r"\\server\shared tools\bin",
+            "file://server/shared%20tools/bin",
+        ),
+    ],
+)
+def test_windows_path_to_file_uri_normalizes_native_and_extended_paths(
+    raw_path: str, expected: str
+) -> None:
+    assert path_to_file_uri(Path(raw_path)) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox roots are Windows-specific")
+def test_windows_sandbox_context_normalizes_extended_additional_root(tmp_path: Path) -> None:
+    extended_root = Path(r"\\?\C:\Users\Example User\.local\bin")
+
+    context = sandbox_context(
+        workdir=tmp_path,
+        writable=True,
+        additional_roots=((extended_root, False),),
+        network_enabled=False,
+    )
+
+    expected = "file:///C:/Users/Example%20User/.local/bin"
+    assert context["workspaceRoots"][1] == expected
+    assert context["permissions"]["file_system"]["entries"][1] == {
+        "path": {"type": "path", "path": expected},
+        "access": "read",
+    }
 
 
 def test_windows_setup_process_detail_extracts_errors_and_drops_progress() -> None:
