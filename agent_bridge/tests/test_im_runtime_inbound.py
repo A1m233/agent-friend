@@ -109,6 +109,10 @@ async def test_runtime_routes_resolved_event(tmp_path: Path) -> None:
     assert router.handle_inbound.await_args.kwargs["provider_or_send"] is provider
     assert router.handle_inbound.await_args.kwargs["session_id"] == "SESSION-BOUND"
     assert provider.sent == []
+    snapshot = runtime.presence_snapshots()[0]
+    assert snapshot.last_interaction_at is not None
+    assert snapshot.last_interaction_at.isoformat() == "2026-06-29T10:00:00+00:00"
+    assert snapshot.binding_updated_at is not None
 
 
 @pytest.mark.asyncio

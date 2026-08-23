@@ -36,6 +36,7 @@ import { SettingsPageLayout } from "./components/SettingsPageLayout";
 import { SettingsRow } from "./components/SettingsRow";
 import { AutostartSetting } from "./components/AutostartSetting";
 import { BackgroundOnlineSetting } from "./components/BackgroundOnlineSetting";
+import { ReminderNotificationSetting } from "./components/ReminderNotificationSetting";
 import { PermissionPanel } from "./permissions/PermissionPanel";
 import { DataMigrationPanel } from "./data-migration/DataMigrationPanel";
 import type { RuntimeConfigGroup } from "@/lib/runtime-config";
@@ -149,6 +150,9 @@ export function SettingsApp({
               </SettingsGroup>
               <SettingsGroup title="启动">
                 <AutostartSetting />
+              </SettingsGroup>
+              <SettingsGroup title="提醒">
+                <ReminderNotificationSetting />
               </SettingsGroup>
               <SettingsGroup
                 title="后台运行"

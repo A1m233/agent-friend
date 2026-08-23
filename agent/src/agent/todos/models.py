@@ -44,6 +44,25 @@ class AgentResponseStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class ReminderNotificationMode(StrEnum):
+    SMART = "smart"
+    ALL = "all"
+
+
+class ReminderProjectionKind(StrEnum):
+    IM_FIXED = "im_fixed"
+    IM_AGENT = "im_agent"
+    PET_FIXED = "pet_fixed"
+
+
+class ReminderDeliveryState(StrEnum):
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+    SKIPPED = "skipped"
+
+
 ReminderSchedule = OnceSchedule | RecurringSchedule
 
 
@@ -75,6 +94,7 @@ class Reminder:
     revision: int
     created_at: datetime
     updated_at: datetime
+    origin_session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +136,24 @@ class ReminderOccurrence:
     updated_at: datetime
     invalidated_at: datetime | None = None
     invalidation_reason: str | None = None
+    persistence_session_id: str | None = None
+    persistence_destination_id: str | None = None
+    persistence_reason: str | None = None
+    notification_mode: ReminderNotificationMode | None = None
+    notification_decision_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class ReminderDelivery:
+    occurrence_id: str
+    projection_kind: ReminderProjectionKind
+    destination_id: str | None
+    state: ReminderDeliveryState
+    receipt: str | None
+    error_kind: str | None
+    attempt_count: int
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True)

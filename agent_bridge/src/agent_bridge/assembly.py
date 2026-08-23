@@ -94,6 +94,7 @@ from runtime_config import (
 from .agent_runtime_factory import build_agent_runtime
 from .dev.recall_buffer import RecallBuffer
 from .presence import PresenceRegistry
+from .reminder_settings import DesktopReminderNotificationModeProvider
 from .reminders import ReminderDeliveryOrchestrator
 from .runtime_config import (
     BridgeRuntimeConfig,
@@ -366,8 +367,12 @@ def build_runtime(
     # 暴露成用户需要理解的“默认 / 自定义”产品状态。
     persona_store.materialize()
     prompt_catalog = EffectivePersonaCatalog(persona_store, catalog)
+    resolved_desktop_settings_reader = desktop_settings_reader or DesktopSettingsReader()
     self_presentation_mode_provider = DesktopSelfPresentationModeProvider(
-        desktop_settings_reader or DesktopSettingsReader()
+        resolved_desktop_settings_reader
+    )
+    reminder_notification_mode_provider = DesktopReminderNotificationModeProvider(
+        resolved_desktop_settings_reader
     )
     prompt_builder_factory = _make_prompt_factory(
         prompt_catalog,
@@ -719,6 +724,7 @@ def build_runtime(
             agent_runtime=agent_runtime,
             presence_registry=presence_registry,
             im_runtime=im_runtime,
+            notification_mode_provider=reminder_notification_mode_provider,
         )
         scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
         # final BridgeRuntime = pre_runtime + IM 字段
@@ -736,6 +742,7 @@ def build_runtime(
         session_store=persistent_store,
         agent_runtime=agent_runtime,
         presence_registry=presence_registry,
+        notification_mode_provider=reminder_notification_mode_provider,
     )
     scheduled_run_tracker, schedule_coordinator = make_schedule_runtime(reminder_delivery)
     social_auth_orchestrator = SocialAuthOrchestrator(

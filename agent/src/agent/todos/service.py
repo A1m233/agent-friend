@@ -59,7 +59,11 @@ class TodoService:
         self.store.create_todo(todo)
         try:
             for schedule in reminders:
-                self.add_reminder(todo.id, schedule=schedule)
+                self.add_reminder(
+                    todo.id,
+                    schedule=schedule,
+                    origin_session_id=(origin_id if origin_kind == "session" else None),
+                )
         except Exception:
             # The Todo is still a valid user record. Keep it visible rather than hiding a
             # partial success; callers receive the precise reminder error and may retry.
@@ -114,7 +118,13 @@ class TodoService:
         )
         return self.store.get_todo(todo_id)
 
-    def add_reminder(self, todo_id: str, *, schedule: ReminderSchedule) -> Reminder:
+    def add_reminder(
+        self,
+        todo_id: str,
+        *,
+        schedule: ReminderSchedule,
+        origin_session_id: str | None = None,
+    ) -> Reminder:
         validate_schedule(schedule)
         now = self._now()
         next_fire = first_fire_at(schedule)
@@ -134,6 +144,7 @@ class TodoService:
             revision=1,
             created_at=now,
             updated_at=now,
+            origin_session_id=origin_session_id,
         )
         result = self.store.create_reminder(reminder)
         self._notify_wake()
