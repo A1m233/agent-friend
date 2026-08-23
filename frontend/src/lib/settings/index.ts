@@ -7,6 +7,7 @@ import { syncDocumentTheme } from "@/lib/settings/theme";
 
 export type ThemeMode = "light" | "dark";
 export type BackgroundOnlinePolicy = "followSystem" | "pluggedIn" | "always";
+export type ReminderNotificationMode = "smart" | "all";
 export type DeepseekModel = "deepseek/deepseek-v4-flash" | "deepseek/deepseek-v4-pro";
 export type ModelProvider = "deepseek" | "kimi" | "openrouter";
 export interface ModelSelection {
@@ -20,6 +21,7 @@ type LegacyPetDisplayMode = "normal" | "edgeRecall";
 export interface Settings {
   theme: ThemeMode;
   backgroundOnlinePolicy: BackgroundOnlinePolicy;
+  reminderNotificationMode: ReminderNotificationMode;
   voiceTunnelConsentAccepted: boolean;
   immersiveMode: boolean;
   displayRecoveryProtectionEnabled: boolean;
@@ -34,6 +36,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   backgroundOnlinePolicy: "followSystem",
+  reminderNotificationMode: "smart",
   voiceTunnelConsentAccepted: false,
   immersiveMode: true,
   displayRecoveryProtectionEnabled: false,
@@ -80,6 +83,12 @@ function normalizeSettingsSnapshot(payload?: SettingsSnapshotPayload): Settings 
   const { petDisplayMode, deepseekModel, deepseekMemoryModel, ...current } =
     payload ?? {};
   const settings = { ...DEFAULT_SETTINGS, ...current };
+  if (
+    settings.reminderNotificationMode !== "smart" &&
+    settings.reminderNotificationMode !== "all"
+  ) {
+    settings.reminderNotificationMode = "smart";
+  }
   if (!payload?.chatModel && deepseekModel) {
     settings.chatModel = { provider: "deepseek", model: deepseekModel };
   }

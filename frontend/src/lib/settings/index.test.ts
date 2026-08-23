@@ -8,6 +8,7 @@ import {
 describe("avatar scale settings", () => {
   it("uses product defaults", () => {
     expect(DEFAULT_SETTINGS.immersiveMode).toBe(true);
+    expect(DEFAULT_SETTINGS.reminderNotificationMode).toBe("smart");
     expect(DEFAULT_SETTINGS.displayRecoveryProtectionEnabled).toBe(false);
     expect(DEFAULT_SETTINGS.chatModel).toEqual({
       provider: "kimi",

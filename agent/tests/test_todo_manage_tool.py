@@ -94,6 +94,9 @@ def test_create_list_update_and_complete(tmp_path: Path) -> None:
         },
     )["todo"]
     assert created["reminders"][0]["next_fire_at_utc"] == "2026-07-29T01:00:00Z"
+    assert (
+        service.store.get_reminder(created["reminders"][0]["id"]).origin_session_id == "session-1"
+    )
 
     listed = _payload(tool, {"operation": "list"})["todos"]
     assert [item["id"] for item in listed] == [created["id"]]
@@ -352,11 +355,13 @@ def test_add_reminder_to_existing_todo_does_not_require_revision(tmp_path: Path)
             "operation": "add_reminder",
             "todo_id": created["id"],
             "reminder": _once_schedule(),
+            "__agent_friend_current_session_id": "session-2",
         },
     )["reminder"]
 
     assert added["todo_id"] == created["id"]
     assert added["next_fire_at_utc"] == "2026-07-29T01:00:00Z"
+    assert service.store.get_reminder(added["id"]).origin_session_id == "session-2"
     fetched = _payload(tool, {"operation": "get", "todo_id": created["id"]})["todo"]
     assert len(fetched["reminders"]) == 1
 

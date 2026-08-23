@@ -133,8 +133,6 @@ class IMRuntime:
         # 持有 fire-and-forget stop tasks 引用,防 GC 提前回收(RUF006)
         self._background_stops: set[asyncio.Task[None]] = set()
         self._event_loop: asyncio.AbstractEventLoop | None = None
-        self._last_inbound: dict[IMBindingKey, datetime] = {}
-        self._presence_lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -198,22 +196,8 @@ class IMRuntime:
 
     def presence_snapshots(self) -> tuple[IMPresenceSnapshot, ...]:
         result: list[IMPresenceSnapshot] = []
-        payload = self._state.snapshot()
-        with self._presence_lock:
-            activity = dict(self._last_inbound)
-        for raw in payload.get("bindings", []):
-            if not isinstance(raw, dict):
-                continue
-            try:
-                key = IMBindingKey(
-                    im_type=str(raw["im_type"]),
-                    provider_bind_id=str(raw["provider_bind_id"]),
-                    chat_scope=str(raw["chat_scope"]),
-                    chat_id=str(raw["chat_id"]),
-                )
-                session_id = str(raw["session_id"])
-            except KeyError:
-                continue
+        for binding in self._state.list_bindings():
+            key = binding.key
             provider = self._providers.get((key.im_type, key.provider_bind_id))
             result.append(
                 IMPresenceSnapshot(
@@ -221,9 +205,10 @@ class IMRuntime:
                     provider_bind_id=key.provider_bind_id,
                     chat_scope=key.chat_scope,
                     chat_id=key.chat_id,
-                    session_id=session_id,
+                    session_id=binding.session_id,
                     online=provider is not None and provider.status() == "active",
-                    last_interaction_at=activity.get(key),
+                    last_interaction_at=binding.last_interaction_at,
+                    binding_updated_at=binding.updated_at,
                 )
             )
         return tuple(result)
@@ -566,8 +551,7 @@ class IMRuntime:
         )
         if observed_at.tzinfo is None:
             observed_at = observed_at.replace(tzinfo=UTC)
-        with self._presence_lock:
-            self._last_inbound[binding_key] = observed_at.astimezone(UTC)
+        self._state.record_interaction(binding_key, observed_at)
 
         result = await self._resolve_inbound(provider, event)
         resolved_event = result.event or event

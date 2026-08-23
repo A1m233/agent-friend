@@ -19,9 +19,13 @@ from .models import (
     DeliveryUpdate,
     OccurrenceState,
     Reminder,
+    ReminderDelivery,
+    ReminderDeliveryState,
     ReminderFacts,
     ReminderKind,
+    ReminderNotificationMode,
     ReminderOccurrence,
+    ReminderProjectionKind,
     ReminderStatus,
     Todo,
     TodoDetails,
@@ -191,8 +195,8 @@ class TodoStore:
                 """
                 INSERT INTO reminders (
                     id, todo_id, kind, timezone, schedule_json, next_fire_at_utc,
-                    status, fire_count, revision, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, fire_count, revision, created_at, updated_at, origin_session_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     reminder.id,
@@ -206,6 +210,7 @@ class TodoStore:
                     reminder.revision,
                     _dump_dt(reminder.created_at),
                     _dump_dt(reminder.updated_at),
+                    reminder.origin_session_id,
                 ),
             )
         return reminder
@@ -476,6 +481,166 @@ class TodoStore:
                 raise TodoError("not_found", f"Occurrence 不存在: {occurrence_id}")
         return self.get_occurrence(occurrence_id)
 
+    def freeze_occurrence_context(
+        self,
+        occurrence_id: str,
+        *,
+        persistence_session_id: str,
+        persistence_destination_id: str | None,
+        persistence_reason: str,
+        notification_mode: ReminderNotificationMode,
+        notification_decision_kind: str,
+        now: datetime,
+    ) -> ReminderOccurrence:
+        """Persist the first routing decision and never overwrite it on retries."""
+        with self._transaction() as conn:
+            row = conn.execute(
+                "SELECT persistence_session_id FROM reminder_occurrences WHERE id = ?",
+                (occurrence_id,),
+            ).fetchone()
+            if row is None:
+                raise TodoError("not_found", f"Occurrence 不存在: {occurrence_id}")
+            if row["persistence_session_id"] is None:
+                conn.execute(
+                    """
+                    UPDATE reminder_occurrences
+                    SET persistence_session_id = ?, persistence_destination_id = ?,
+                        persistence_reason = ?, notification_mode = ?,
+                        notification_decision_kind = ?, updated_at = ?
+                    WHERE id = ? AND persistence_session_id IS NULL
+                    """,
+                    (
+                        persistence_session_id,
+                        persistence_destination_id,
+                        persistence_reason,
+                        notification_mode.value,
+                        notification_decision_kind,
+                        _dump_dt(now),
+                        occurrence_id,
+                    ),
+                )
+        return self.get_occurrence(occurrence_id)
+
+    def ensure_delivery(
+        self,
+        occurrence_id: str,
+        projection_kind: ReminderProjectionKind,
+        *,
+        destination_id: str | None,
+        now: datetime,
+    ) -> ReminderDelivery:
+        with self._transaction() as conn:
+            if (
+                conn.execute(
+                    "SELECT 1 FROM reminder_occurrences WHERE id = ?", (occurrence_id,)
+                ).fetchone()
+                is None
+            ):
+                raise TodoError("not_found", f"Occurrence 不存在: {occurrence_id}")
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO reminder_occurrence_deliveries (
+                    occurrence_id, projection_kind, destination_id, state, receipt,
+                    error_kind, attempt_count, created_at, updated_at
+                ) VALUES (?, ?, ?, 'pending', NULL, NULL, 0, ?, ?)
+                """,
+                (
+                    occurrence_id,
+                    projection_kind.value,
+                    destination_id,
+                    _dump_dt(now),
+                    _dump_dt(now),
+                ),
+            )
+        return self.get_delivery(occurrence_id, projection_kind)
+
+    def update_delivery(
+        self,
+        occurrence_id: str,
+        projection_kind: ReminderProjectionKind,
+        *,
+        state: ReminderDeliveryState,
+        receipt: str | None = None,
+        error_kind: str | None = None,
+        now: datetime,
+        increment_attempt: bool = True,
+    ) -> ReminderDelivery:
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE reminder_occurrence_deliveries
+                SET state = ?, receipt = ?, error_kind = ?,
+                    attempt_count = attempt_count + ?, updated_at = ?
+                WHERE occurrence_id = ? AND projection_kind = ?
+                """,
+                (
+                    state.value,
+                    receipt,
+                    error_kind,
+                    1 if increment_attempt else 0,
+                    _dump_dt(now),
+                    occurrence_id,
+                    projection_kind.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise TodoError(
+                    "not_found",
+                    f"Reminder delivery 不存在: {occurrence_id}/{projection_kind.value}",
+                )
+        return self.get_delivery(occurrence_id, projection_kind)
+
+    def begin_delivery_attempt(
+        self,
+        occurrence_id: str,
+        projection_kind: ReminderProjectionKind,
+        *,
+        now: datetime,
+    ) -> tuple[ReminderDelivery, bool]:
+        """Claim one at-most-once external send and persist uncertainty first."""
+        with self._transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE reminder_occurrence_deliveries
+                SET state = 'unknown', receipt = NULL, error_kind = 'send_in_progress',
+                    attempt_count = attempt_count + 1, updated_at = ?
+                WHERE occurrence_id = ? AND projection_kind = ? AND state = 'pending'
+                """,
+                (_dump_dt(now), occurrence_id, projection_kind.value),
+            )
+        return self.get_delivery(occurrence_id, projection_kind), cursor.rowcount == 1
+
+    def get_delivery(
+        self,
+        occurrence_id: str,
+        projection_kind: ReminderProjectionKind,
+    ) -> ReminderDelivery:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM reminder_occurrence_deliveries
+                WHERE occurrence_id = ? AND projection_kind = ?
+                """,
+                (occurrence_id, projection_kind.value),
+            ).fetchone()
+        if row is None:
+            raise TodoError(
+                "not_found",
+                f"Reminder delivery 不存在: {occurrence_id}/{projection_kind.value}",
+            )
+        return _delivery_from_row(row)
+
+    def list_deliveries(self, occurrence_id: str) -> tuple[ReminderDelivery, ...]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM reminder_occurrence_deliveries
+                WHERE occurrence_id = ? ORDER BY projection_kind
+                """,
+                (occurrence_id,),
+            ).fetchall()
+        return tuple(_delivery_from_row(row) for row in rows)
+
     def get_occurrence(self, occurrence_id: str) -> ReminderOccurrence:
         with self._connect() as conn:
             row = conn.execute(
@@ -553,7 +718,8 @@ class TodoStore:
                     fire_count INTEGER NOT NULL,
                     revision INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    origin_session_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_reminders_due
                     ON reminders(status, next_fire_at_utc);
@@ -581,12 +747,51 @@ class TodoStore:
                     updated_at TEXT NOT NULL,
                     invalidated_at TEXT,
                     invalidation_reason TEXT,
+                    persistence_session_id TEXT,
+                    persistence_destination_id TEXT,
+                    persistence_reason TEXT,
+                    notification_mode TEXT CHECK (
+                        notification_mode IS NULL OR notification_mode IN ('smart', 'all')
+                    ),
+                    notification_decision_kind TEXT,
                     UNIQUE(reminder_id, scheduled_at_utc)
                 );
                 CREATE INDEX IF NOT EXISTS idx_occurrences_pending
                     ON reminder_occurrences(state, next_attempt_at, scheduled_at_utc);
+
+                CREATE TABLE IF NOT EXISTS reminder_occurrence_deliveries (
+                    occurrence_id TEXT NOT NULL REFERENCES reminder_occurrences(id),
+                    projection_kind TEXT NOT NULL CHECK (
+                        projection_kind IN ('im_fixed', 'im_agent', 'pet_fixed')
+                    ),
+                    destination_id TEXT,
+                    state TEXT NOT NULL CHECK (
+                        state IN ('pending', 'delivered', 'failed', 'unknown', 'skipped')
+                    ),
+                    receipt TEXT,
+                    error_kind TEXT,
+                    attempt_count INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (occurrence_id, projection_kind)
+                );
                 """
             )
+            reminder_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(reminders)").fetchall()
+            }
+            if "origin_session_id" not in reminder_columns:
+                conn.execute("ALTER TABLE reminders ADD COLUMN origin_session_id TEXT")
+                conn.execute(
+                    """
+                    UPDATE reminders
+                    SET origin_session_id = (
+                        SELECT origin_id FROM todos WHERE todos.id = reminders.todo_id
+                            AND todos.origin_kind = 'session'
+                    )
+                    WHERE origin_session_id IS NULL
+                    """
+                )
             columns = {
                 str(row[1])
                 for row in conn.execute("PRAGMA table_info(reminder_occurrences)").fetchall()
@@ -595,6 +800,22 @@ class TodoStore:
                 conn.execute("ALTER TABLE reminder_occurrences ADD COLUMN invalidated_at TEXT")
             if "invalidation_reason" not in columns:
                 conn.execute("ALTER TABLE reminder_occurrences ADD COLUMN invalidation_reason TEXT")
+            if "persistence_session_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE reminder_occurrences ADD COLUMN persistence_session_id TEXT"
+                )
+            if "persistence_destination_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE reminder_occurrences ADD COLUMN persistence_destination_id TEXT"
+                )
+            if "persistence_reason" not in columns:
+                conn.execute("ALTER TABLE reminder_occurrences ADD COLUMN persistence_reason TEXT")
+            if "notification_mode" not in columns:
+                conn.execute("ALTER TABLE reminder_occurrences ADD COLUMN notification_mode TEXT")
+            if "notification_decision_kind" not in columns:
+                conn.execute(
+                    "ALTER TABLE reminder_occurrences ADD COLUMN notification_decision_kind TEXT"
+                )
             conn.commit()
 
     @contextmanager
@@ -693,6 +914,9 @@ def _reminder_from_row(row: sqlite3.Row) -> Reminder:
         revision=int(row["revision"]),
         created_at=_required_dt(row["created_at"]),
         updated_at=_required_dt(row["updated_at"]),
+        origin_session_id=(
+            str(row["origin_session_id"]) if row["origin_session_id"] is not None else None
+        ),
     )
 
 
@@ -730,6 +954,43 @@ def _occurrence_from_row(row: sqlite3.Row) -> ReminderOccurrence:
         invalidation_reason=(
             str(row["invalidation_reason"]) if row["invalidation_reason"] is not None else None
         ),
+        persistence_session_id=(
+            str(row["persistence_session_id"])
+            if row["persistence_session_id"] is not None
+            else None
+        ),
+        persistence_destination_id=(
+            str(row["persistence_destination_id"])
+            if row["persistence_destination_id"] is not None
+            else None
+        ),
+        persistence_reason=(
+            str(row["persistence_reason"]) if row["persistence_reason"] is not None else None
+        ),
+        notification_mode=(
+            ReminderNotificationMode(str(row["notification_mode"]))
+            if row["notification_mode"] is not None
+            else None
+        ),
+        notification_decision_kind=(
+            str(row["notification_decision_kind"])
+            if row["notification_decision_kind"] is not None
+            else None
+        ),
+    )
+
+
+def _delivery_from_row(row: sqlite3.Row) -> ReminderDelivery:
+    return ReminderDelivery(
+        occurrence_id=str(row["occurrence_id"]),
+        projection_kind=ReminderProjectionKind(str(row["projection_kind"])),
+        destination_id=(str(row["destination_id"]) if row["destination_id"] is not None else None),
+        state=ReminderDeliveryState(str(row["state"])),
+        receipt=str(row["receipt"]) if row["receipt"] is not None else None,
+        error_kind=str(row["error_kind"]) if row["error_kind"] is not None else None,
+        attempt_count=int(row["attempt_count"]),
+        created_at=_required_dt(row["created_at"]),
+        updated_at=_required_dt(row["updated_at"]),
     )
 
 

@@ -378,7 +378,11 @@ class TodoManageTool:
             return _success(operation, todo=_details(self._service.get(todo_id)))
         if operation == "add_reminder":
             schedule = _schedule_from_input(_mapping(args.get("reminder"), "reminder"), args)
-            added_reminder = self._service.add_reminder(todo_id, schedule=schedule)
+            added_reminder = self._service.add_reminder(
+                todo_id,
+                schedule=schedule,
+                origin_session_id=_optional_string(args, _RUNTIME_SESSION_ID),
+            )
             return _success(operation, reminder=_reminder(added_reminder))
 
         revision = _integer(args, "revision")

@@ -21,6 +21,8 @@ pub struct Settings {
     #[serde(default)]
     pub background_online_policy: BackgroundOnlinePolicy,
     #[serde(default)]
+    pub reminder_notification_mode: ReminderNotificationMode,
+    #[serde(default)]
     pub voice_tunnel_consent_accepted: bool,
     #[serde(default = "default_immersive_mode")]
     pub immersive_mode: bool,
@@ -45,6 +47,14 @@ pub struct Settings {
 pub enum ThemeMode {
     Light,
     Dark,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReminderNotificationMode {
+    #[default]
+    Smart,
+    All,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +166,7 @@ impl Default for Settings {
         Self {
             theme: ThemeMode::Light,
             background_online_policy: BackgroundOnlinePolicy::FollowSystem,
+            reminder_notification_mode: ReminderNotificationMode::Smart,
             voice_tunnel_consent_accepted: false,
             immersive_mode: default_immersive_mode(),
             display_recovery_protection_enabled: false,
@@ -575,6 +586,11 @@ pub fn set_setting(
                 .map_err(|e| format!("invalid backgroundOnlinePolicy: {e}"))?;
             s.background_online_policy = policy;
         }
+        "reminderNotificationMode" => {
+            let mode: ReminderNotificationMode = serde_json::from_value(payload.value.clone())
+                .map_err(|e| format!("invalid reminderNotificationMode: {e}"))?;
+            s.reminder_notification_mode = mode;
+        }
         "voiceTunnelConsentAccepted" => {
             let accepted: bool = serde_json::from_value(payload.value.clone())
                 .map_err(|e| format!("invalid voiceTunnelConsentAccepted: {e}"))?;
@@ -861,6 +877,34 @@ mod tests {
         assert!(serde_json::to_string(&settings)
             .expect("serialize settings")
             .contains(r#""immersiveMode":false"#));
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reminder_notification_mode_defaults_to_smart_and_all_round_trips() {
+        let dir = temp_settings_dir("reminder-notification-mode");
+        let legacy = dir.join("legacy.json");
+        write_raw(&legacy, r#"{"settings":{"theme":"light"}}"#);
+        assert_eq!(
+            read_settings_file(&legacy)
+                .expect("read legacy settings")
+                .reminder_notification_mode,
+            ReminderNotificationMode::Smart
+        );
+
+        let all = dir.join("all.json");
+        write_raw(
+            &all,
+            r#"{"settings":{"theme":"light","reminderNotificationMode":"all"}}"#,
+        );
+        let settings = read_settings_file(&all).expect("read all settings");
+        assert_eq!(
+            settings.reminder_notification_mode,
+            ReminderNotificationMode::All
+        );
+        assert!(serde_json::to_string(&settings)
+            .expect("serialize settings")
+            .contains(r#""reminderNotificationMode":"all""#));
         fs::remove_dir_all(dir).expect("cleanup");
     }
 
