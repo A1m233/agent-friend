@@ -257,10 +257,15 @@ def test_state_snapshot_round_trip_preserves_binding_and_capability(tmp_path: Pa
     key = IMBindingKey("qq", "OPENID-USER", "c2c", "OPENID-USER")
     source = IMStateStore(tmp_path / "source.json")
     source.set_binding(key, "SESSION-A")
+    interaction_at = datetime(2026, 8, 23, 1, 2, tzinfo=UTC)
+    source.record_interaction(key, interaction_at)
     source.set_capability("qq", "OPENID-USER", "supported")
 
     restored = IMStateStore(tmp_path / "restored.json")
     restored.replace(source.snapshot())
 
-    assert restored.get_binding(key).session_id == "SESSION-A"  # type: ignore[union-attr]
+    binding = restored.get_binding(key)
+    assert binding is not None
+    assert binding.session_id == "SESSION-A"
+    assert binding.last_interaction_at == interaction_at
     assert restored.capability("qq", "OPENID-USER").status == "supported"

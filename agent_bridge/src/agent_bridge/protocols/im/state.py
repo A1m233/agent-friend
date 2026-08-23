@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -37,6 +37,7 @@ class IMSessionBinding:
     key: IMBindingKey
     session_id: str
     updated_at: datetime
+    last_interaction_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,36 @@ class IMStateStore:
             payload["bindings"].append(_binding_to_dict(binding))
             self._save(payload)
         return binding
+
+    def list_bindings(self) -> tuple[IMSessionBinding, ...]:
+        with self._lock:
+            return tuple(_binding_from_dict(raw) for raw in self._load()["bindings"])
+
+    def record_interaction(
+        self,
+        key: IMBindingKey,
+        observed_at: datetime,
+    ) -> IMSessionBinding | None:
+        if observed_at.tzinfo is None:
+            raise ValueError("IM interaction timestamp must include timezone")
+        normalized = observed_at.astimezone(UTC)
+        with self._lock:
+            payload = self._load()
+            updated: IMSessionBinding | None = None
+            next_bindings: list[dict[str, Any]] = []
+            for raw in payload["bindings"]:
+                binding = _binding_from_dict(raw)
+                if binding.key == key:
+                    current = binding.last_interaction_at
+                    if current is None or normalized >= current.astimezone(UTC):
+                        binding = replace(binding, last_interaction_at=normalized)
+                    updated = binding
+                next_bindings.append(_binding_to_dict(binding))
+            if updated is None:
+                return None
+            payload["bindings"] = next_bindings
+            self._save(payload)
+            return updated
 
     def delete_binding(self, key: IMBindingKey) -> None:
         with self._lock:
@@ -206,6 +237,9 @@ def _binding_to_dict(binding: IMSessionBinding) -> dict[str, Any]:
         **asdict(binding.key),
         "session_id": binding.session_id,
         "updated_at": binding.updated_at.isoformat(),
+        "last_interaction_at": (
+            binding.last_interaction_at.isoformat() if binding.last_interaction_at else None
+        ),
     }
 
 
@@ -221,6 +255,11 @@ def _binding_from_dict(raw: object) -> IMSessionBinding:
         ),
         session_id=str(raw["session_id"]),
         updated_at=datetime.fromisoformat(str(raw["updated_at"])),
+        last_interaction_at=(
+            datetime.fromisoformat(str(raw["last_interaction_at"]))
+            if raw.get("last_interaction_at") is not None
+            else None
+        ),
     )
 
 

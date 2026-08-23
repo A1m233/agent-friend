@@ -32,6 +32,7 @@ class IMPresenceSnapshot:
     session_id: str
     online: bool
     last_interaction_at: datetime | None
+    binding_updated_at: datetime | None = None
 
     @property
     def destination_id(self) -> str:
@@ -107,6 +108,9 @@ class PresenceRegistry:
                     "online": item.online,
                     "lastInteractionAt": (
                         item.last_interaction_at.isoformat() if item.last_interaction_at else None
+                    ),
+                    "bindingUpdatedAt": (
+                        item.binding_updated_at.isoformat() if item.binding_updated_at else None
                     ),
                 }
                 for item in state.im_bindings

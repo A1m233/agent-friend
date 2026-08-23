@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from agent.todos import (
     OccurrenceState,
     OnceSchedule,
     RecurringSchedule,
+    ReminderDeliveryState,
+    ReminderNotificationMode,
+    ReminderProjectionKind,
     TodoError,
     TodoListQuery,
     TodoService,
@@ -193,3 +197,137 @@ def test_reminder_update_invalidates_old_pending_occurrence(
     invalidated = service.store.get_occurrence(occurrence_id)
     assert invalidated.invalidation_reason == "reminder_updated"
     assert service.store.claim_pending(clock.value) == []
+
+
+def test_occurrence_context_freezes_once_and_delivery_states_are_independent(
+    service: TodoService,
+    clock: MutableClock,
+) -> None:
+    todo = service.create(title="冻结测试")
+    service.add_reminder(
+        todo.todo.id,
+        schedule=OnceSchedule(datetime(2026, 7, 28, 9, 1), "Asia/Shanghai"),
+        origin_session_id="origin",
+    )
+    clock.value += timedelta(minutes=2)
+    occurrence_id = service.store.create_due_occurrences(clock.value)[0]
+    service.store.claim_pending(clock.value)
+
+    first = service.store.freeze_occurrence_context(
+        occurrence_id,
+        persistence_session_id="session-c",
+        persistence_destination_id="qq|bind-c|c2c|chat-c|session-c",
+        persistence_reason="latest_im_interaction",
+        notification_mode=ReminderNotificationMode.ALL,
+        notification_decision_kind="all",
+        now=clock.value,
+    )
+    second = service.store.freeze_occurrence_context(
+        occurrence_id,
+        persistence_session_id="session-b",
+        persistence_destination_id="qq|bind-b|c2c|chat-b|session-b",
+        persistence_reason="latest_im_binding",
+        notification_mode=ReminderNotificationMode.SMART,
+        notification_decision_kind="im",
+        now=clock.value + timedelta(seconds=1),
+    )
+
+    assert first.persistence_session_id == "session-c"
+    assert second.persistence_session_id == "session-c"
+    assert second.notification_mode is ReminderNotificationMode.ALL
+    assert second.notification_decision_kind == "all"
+
+    service.store.ensure_delivery(
+        occurrence_id,
+        ReminderProjectionKind.IM_FIXED,
+        destination_id=first.persistence_destination_id,
+        now=clock.value,
+    )
+    service.store.ensure_delivery(
+        occurrence_id,
+        ReminderProjectionKind.PET_FIXED,
+        destination_id="pet",
+        now=clock.value,
+    )
+    service.store.ensure_delivery(
+        occurrence_id,
+        ReminderProjectionKind.IM_AGENT,
+        destination_id=first.persistence_destination_id,
+        now=clock.value,
+    )
+    first_attempt, first_started = service.store.begin_delivery_attempt(
+        occurrence_id,
+        ReminderProjectionKind.IM_AGENT,
+        now=clock.value,
+    )
+    second_attempt, second_started = service.store.begin_delivery_attempt(
+        occurrence_id,
+        ReminderProjectionKind.IM_AGENT,
+        now=clock.value + timedelta(seconds=1),
+    )
+    service.store.update_delivery(
+        occurrence_id,
+        ReminderProjectionKind.IM_FIXED,
+        state=ReminderDeliveryState.DELIVERED,
+        receipt="message-1",
+        now=clock.value,
+    )
+    service.store.update_delivery(
+        occurrence_id,
+        ReminderProjectionKind.PET_FIXED,
+        state=ReminderDeliveryState.FAILED,
+        error_kind="pet_unavailable",
+        now=clock.value,
+    )
+
+    deliveries = {
+        item.projection_kind: item for item in service.store.list_deliveries(occurrence_id)
+    }
+    assert deliveries[ReminderProjectionKind.IM_FIXED].state is ReminderDeliveryState.DELIVERED
+    assert deliveries[ReminderProjectionKind.IM_FIXED].receipt == "message-1"
+    assert deliveries[ReminderProjectionKind.PET_FIXED].state is ReminderDeliveryState.FAILED
+    assert deliveries[ReminderProjectionKind.PET_FIXED].error_kind == "pet_unavailable"
+    assert first_started
+    assert not second_started
+    assert first_attempt.state is ReminderDeliveryState.UNKNOWN
+    assert second_attempt.state is ReminderDeliveryState.UNKNOWN
+    assert second_attempt.error_kind == "send_in_progress"
+    assert second_attempt.attempt_count == 1
+
+
+def test_legacy_reminder_origin_is_backfilled_once_from_todo_origin(tmp_path: Path) -> None:
+    path = tmp_path / "legacy.db"
+    timestamp = "2026-07-28T01:00:00Z"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE todos (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
+                status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                completed_at TEXT, cancelled_at TEXT, revision INTEGER NOT NULL,
+                origin_kind TEXT, origin_id TEXT
+            );
+            CREATE TABLE reminders (
+                id TEXT PRIMARY KEY, todo_id TEXT NOT NULL, kind TEXT NOT NULL,
+                timezone TEXT NOT NULL, schedule_json TEXT NOT NULL, next_fire_at_utc TEXT,
+                status TEXT NOT NULL, fire_count INTEGER NOT NULL, revision INTEGER NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO todos VALUES (?, ?, '', 'open', ?, ?, NULL, NULL, 1, 'session', ?)",
+            ("todo-1", "旧 Todo", timestamp, timestamp, "origin-session"),
+        )
+        conn.execute(
+            "INSERT INTO reminders VALUES (?, ?, 'once', 'UTC', '{}', NULL, 'active', 0, 1, ?, ?)",
+            ("reminder-1", "todo-1", timestamp, timestamp),
+        )
+
+    TodoStore(path)
+
+    with sqlite3.connect(path) as conn:
+        value = conn.execute(
+            "SELECT origin_session_id FROM reminders WHERE id = 'reminder-1'"
+        ).fetchone()
+    assert value == ("origin-session",)
