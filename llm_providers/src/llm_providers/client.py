@@ -44,6 +44,7 @@ from .kimi_transport import (
 )
 from .litellm_transport import open_cancellable_litellm_stream
 from .protocol import ModelRequest, ModelResponse
+from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
 from .spec import ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -767,6 +768,8 @@ class LLMClient:
         tool_call_delta_count = 0
         reasoning_delta_count = 0
         reasoning_chars = 0
+        reasoning_content_parts: list[str] = []
+        reasoning_details: list[dict[str, Any]] = []
         finish_reason_raw = ""
         delta_fields: set[str] = set()
         first_chunk_ms: int | None = None
@@ -825,10 +828,15 @@ class LLMClient:
                     text_chars += len(content)
                     yield LLMTextDelta(text=content)
 
-                reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning is None:
-                    reasoning = getattr(delta, "reasoning", None)
+                reasoning_raw = getattr(delta, "reasoning_content", None)
+                if reasoning_raw is None:
+                    reasoning_raw = getattr(delta, "reasoning", None)
+                reasoning = reasoning_raw if isinstance(reasoning_raw, str) else ""
+                detail_chunks = reasoning_detail_objects(getattr(delta, "reasoning_details", None))
+                if detail_chunks:
+                    reasoning_details.extend(detail_chunks)
                 if reasoning:
+                    reasoning_content_parts.append(reasoning)
                     reasoning_delta_count += 1
                     reasoning_chars += len(reasoning)
                     if first_reasoning_delta_ms is None:
@@ -876,7 +884,9 @@ class LLMClient:
                         >= _HIDDEN_ACTIVITY_EMIT_INTERVAL_SECONDS
                     ):
                         last_hidden_activity_emit_at = activity_now
-                        yield LLMActivity(kind="reasoning" if reasoning else "processing")
+                        yield LLMActivity(
+                            kind="reasoning" if reasoning or detail_chunks else "processing"
+                        )
         except BaseException as e:
             if cancel_check is not None:
                 cancel_check()
@@ -926,6 +936,11 @@ class LLMClient:
         yield LLMTurnDone(
             stop_reason=stop_reason,
             usage=usage,
+            reasoning_state=build_provider_reasoning_state(
+                spec,
+                reasoning_content="".join(reasoning_content_parts),
+                reasoning_details=reasoning_details,
+            ),
             diagnostics=LLMResponseDiagnostics(
                 transport=transport,
                 request_bytes=request_bytes,

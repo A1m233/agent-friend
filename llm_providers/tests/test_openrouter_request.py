@@ -58,7 +58,8 @@ def test_openrouter_request_keeps_exact_model_and_route_constraints(
         "provider": {
             "require_parameters": True,
             "data_collection": "deny",
-        }
+        },
+        "reasoning": {"effort": "medium"},
     }
     assert "models" not in seen
 

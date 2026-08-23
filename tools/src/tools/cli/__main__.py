@@ -91,7 +91,10 @@ from llm_providers import (
     LLMNetworkError,
     LLMProviderError,
     LLMRateLimitError,
+    ModelRuntimeConfig,
     ProviderSpec,
+    model_belongs_to_provider,
+    replace_spec_model,
 )
 from memory import ExtractionResult, Memory, build_memory
 
@@ -182,8 +185,19 @@ def _disable_deepseek_thinking(spec: ProviderSpec) -> ProviderSpec:
     return spec
 
 
-def _llm_factory(model: str) -> LLMClient:
-    return LLMClient(make_spec_with_thinking_off(model))
+def _llm_factory(model: ModelRuntimeConfig) -> LLMClient:
+    base = make_spec_with_thinking_off()
+    if model_belongs_to_provider("deepseek", model.model_id):
+        return LLMClient(
+            replace_spec_model(
+                base,
+                model.model_id,
+                reasoning_preset=model.reasoning_preset,
+            )
+        )
+    # Legacy in-process CLI model ids are kept readable; new product catalog ids
+    # use the runtime config path above.
+    return LLMClient(make_spec_with_thinking_off(model.model_id))
 
 
 def _memory_llm_client() -> LLMClient:

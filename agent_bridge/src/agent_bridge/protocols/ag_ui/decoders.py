@@ -29,7 +29,14 @@ from ag_ui.core import (
 )
 from agent.skills import SkillSelection, decode_skill_selections
 
-from llm_providers import all_model_ids, model_belongs_to_provider, normalize_provider_id
+from llm_providers import (
+    ModelRuntimeConfig,
+    all_model_ids,
+    default_model_runtime_config,
+    model_belongs_to_provider,
+    normalize_provider_id,
+    validate_model_runtime_config,
+)
 
 
 class DecodeError(ValueError):
@@ -53,8 +60,13 @@ class DecodedRequest:
     new_user_input: str
     user_message_id: str
     draft_attachments: tuple[DecodedDraftAttachment, ...] = ()
-    requested_model: str | None = None
+    requested_model_config: ModelRuntimeConfig | None = None
     skills: tuple[SkillSelection, ...] = ()
+
+    @property
+    def requested_model(self) -> str | None:
+        config = self.requested_model_config
+        return config.model_id if config is not None else None
 
 
 @dataclass(frozen=True)
@@ -82,7 +94,7 @@ def _draft_id_from_source(part: ImageInputContent | DocumentInputContent) -> str
     return match.group(1)
 
 
-def resolve_requested_model(payload: RunAgentInput) -> str | None:
+def resolve_requested_model_config(payload: RunAgentInput) -> ModelRuntimeConfig | None:
     """Resolve optional desktop-requested model from ``forwarded_props``.
 
     The canonical wire value is a model id string such as
@@ -94,6 +106,19 @@ def resolve_requested_model(payload: RunAgentInput) -> str | None:
     if not isinstance(forwarded_props, dict):
         return None
 
+    raw_config = forwarded_props.get("modelConfig")
+    if raw_config not in (None, ""):
+        if not isinstance(raw_config, dict):
+            raise DecodeError("forwarded_props.modelConfig 必须是对象")
+        model = raw_config.get("model")
+        preset = raw_config.get("reasoningPreset")
+        if not isinstance(model, str) or not isinstance(preset, str):
+            raise DecodeError("forwarded_props.modelConfig model/reasoningPreset 必须是字符串")
+        try:
+            return validate_model_runtime_config(ModelRuntimeConfig(model.strip(), preset.strip()))
+        except ValueError as exc:
+            raise DecodeError(str(exc)) from exc
+
     raw = forwarded_props.get("model")
     if raw in (None, ""):
         return None
@@ -102,7 +127,7 @@ def resolve_requested_model(payload: RunAgentInput) -> str | None:
         model = raw.strip()
         if model not in all_model_ids():
             raise DecodeError(f"不支持的桌面模型：{model}")
-        return model
+        return default_model_runtime_config(model)
 
     if isinstance(raw, dict):
         provider_raw = raw.get("provider")
@@ -113,9 +138,16 @@ def resolve_requested_model(payload: RunAgentInput) -> str | None:
         model = model_raw.strip()
         if not model_belongs_to_provider(provider_id, model):
             raise DecodeError(f"不支持的桌面模型：{model}")
-        return model
+        return default_model_runtime_config(model)
 
     raise DecodeError("forwarded_props.model 必须是字符串或 provider/model 对象")
+
+
+def resolve_requested_model(payload: RunAgentInput) -> str | None:
+    """Compatibility projection for older decoder callers."""
+
+    config = resolve_requested_model_config(payload)
+    return config.model_id if config is not None else None
 
 
 def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
@@ -167,6 +199,6 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         new_user_input=content,
         user_message_id=last.id,
         draft_attachments=tuple(drafts),
-        requested_model=resolve_requested_model(payload),
+        requested_model_config=resolve_requested_model_config(payload),
         skills=skills,
     )

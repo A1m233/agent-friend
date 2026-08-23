@@ -22,6 +22,7 @@ CORE_ENTRIES = (
 )
 CAPABILITY_HANDLERS = {
     "selected-sessions-v1": "sessions",
+    "selected-sessions-v2": "sessions",
     "model-catalog-v1": "modelCatalog",
     "bounded-log-tail-v1": "logs",
     "attachment-integrity-v1": "attachments",
@@ -557,6 +558,9 @@ def summarize_session(value: Any, entry: str) -> dict[str, Any]:
     run_ids: set[str] = set()
     attachment_references = 0
     malformed_events = 0
+    provider_reasoning_state_count = 0
+    provider_reasoning_redacted_count = 0
+    provider_reasoning_payload_leak_count = 0
     for event in events:
         if not isinstance(event, dict):
             malformed_events += 1
@@ -568,6 +572,12 @@ def summarize_session(value: Any, entry: str) -> dict[str, Any]:
         payload = event.get("payload")
         if isinstance(payload, dict) and isinstance(payload.get("attachments"), list):
             attachment_references += len(payload["attachments"])
+        if event.get("type") == "provider_reasoning_state":
+            provider_reasoning_state_count += 1
+            if isinstance(payload, dict) and payload.get("redacted") is True:
+                provider_reasoning_redacted_count += 1
+            if isinstance(payload, dict) and "data" in payload:
+                provider_reasoning_payload_leak_count += 1
 
     return {
         "entry": entry,
@@ -577,6 +587,9 @@ def summarize_session(value: Any, entry: str) -> dict[str, Any]:
         "runIdCount": len(run_ids),
         "attachmentReferenceCount": attachment_references,
         "malformedEventCount": malformed_events,
+        "providerReasoningStateCount": provider_reasoning_state_count,
+        "providerReasoningRedactedCount": provider_reasoning_redacted_count,
+        "providerReasoningPayloadLeakCount": provider_reasoning_payload_leak_count,
         "activeEventsPresent": "active_events" in value,
     }
 
@@ -743,6 +756,17 @@ def inspect_bundle(path: Path, verify_crc: bool) -> dict[str, Any]:
                 sessions.append(summarize_session(read_json(archive, name), name))
             except BundleError as error:
                 sessions.append({"entry": name, "error": str(error)})
+        if "selected-sessions-v2" in capabilities:
+            leaked_reasoning_entries = [
+                item["entry"]
+                for item in sessions
+                if item.get("providerReasoningPayloadLeakCount", 0) > 0
+            ]
+            if leaked_reasoning_entries:
+                warnings.append(
+                    "selected-sessions-v2 contains unredacted provider reasoning payloads: "
+                    + ", ".join(leaked_reasoning_entries)
+                )
 
         attachment_integrity = None
         attachment_statuses: dict[str, int] = {}

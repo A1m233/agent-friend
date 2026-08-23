@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from llm_providers import LanguageModelFactory
+from llm_providers import LanguageModelFactory, ModelRuntimeConfig, default_model_runtime_config
 
 from ..command_runtime.workspace import session_workspace_path
 from ..errors import AgentError
@@ -128,6 +128,7 @@ class SessionManager:
         model: str,
         title: str | None = None,
         *,
+        reasoning_preset: str | None = None,
         persona_id: str | None = None,
         session_id: str | None = None,
         channel: str = "text",
@@ -164,10 +165,18 @@ class SessionManager:
         """
         if channel not in ("voice", "text"):
             raise ValueError(f"channel 必须是 voice / text，实际: {channel!r}")
+        if reasoning_preset is not None:
+            runtime_config = ModelRuntimeConfig(model, reasoning_preset)
+        else:
+            try:
+                runtime_config = default_model_runtime_config(model)
+            except ValueError:
+                runtime_config = ModelRuntimeConfig(model, "none")
         session = Session.new(
             title=title or _default_title(),
             persona=persona,
-            model=model,
+            model=runtime_config.model_id,
+            reasoning_preset=runtime_config.reasoning_preset,
             persona_id=persona_id,
             session_id=session_id,
             channel=channel,  # type: ignore[arg-type]
@@ -402,7 +411,7 @@ class SessionManager:
                 )
                 persona_id = BUILTIN_DEFAULT_PERSONA_ID
 
-        llm_client = self._llm_client_factory(session.current_model)
+        llm_client = self._llm_client_factory(session.current_model_config)
 
         # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session，
         # 使 ChannelSection 槽位能读 session.current_channel。如果 builder 没有

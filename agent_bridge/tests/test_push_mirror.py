@@ -47,6 +47,7 @@ from llm_providers import (
     LLMTurnDone,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
 )
 from memory import ConversationFragment, Memory, MemoryContext
 
@@ -139,7 +140,7 @@ def _build_runtime(
 
     fake_llm = _ScriptedLLMClient(script=llm_script)
 
-    def _llm_factory(model: str) -> LanguageModel:
+    def _llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
         return fake_llm
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:

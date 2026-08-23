@@ -14,6 +14,12 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+from llm_providers import (
+    ModelRuntimeConfig,
+    default_model_runtime_config,
+    validate_model_runtime_config,
+)
+
 from ..attachments import AttachmentRef
 from ..messages import Message
 from .errors import SessionCorruptError
@@ -139,6 +145,7 @@ class Session:
     initial_title: str
     initial_persona: str
     initial_model: str
+    initial_reasoning_preset: str | None = None
     events: list[Event] = field(default_factory=list)
 
     @classmethod
@@ -148,6 +155,7 @@ class Session:
         persona: str,
         model: str,
         *,
+        reasoning_preset: str | None = None,
         persona_id: str | None = None,
         session_id: str | None = None,
         created_at: datetime | None = None,
@@ -186,6 +194,18 @@ class Session:
             "initial_persona": persona,
             "initial_model": model,
         }
+        if reasoning_preset is not None:
+            try:
+                validate_model_runtime_config(ModelRuntimeConfig(model, reasoning_preset))
+            except ValueError:
+                try:
+                    default_model_runtime_config(model)
+                except ValueError:
+                    if reasoning_preset != "none":
+                        raise
+                else:
+                    raise
+            payload["initial_reasoning_preset"] = reasoning_preset
         if persona_id is not None:
             payload["initial_persona_id"] = persona_id
         if channel != "text":
@@ -212,6 +232,7 @@ class Session:
             initial_title=title,
             initial_persona=persona,
             initial_model=model,
+            initial_reasoning_preset=reasoning_preset,
             events=[meta_event],
         )
 
@@ -259,6 +280,11 @@ class Session:
             initial_title=payload["initial_title"],
             initial_persona=payload["initial_persona"],
             initial_model=payload["initial_model"],
+            initial_reasoning_preset=(
+                payload.get("initial_reasoning_preset")
+                if isinstance(payload.get("initial_reasoning_preset"), str)
+                else None
+            ),
             events=list(events),
         )
 
@@ -332,12 +358,49 @@ class Session:
     @property
     def current_model(self) -> str:
         """当前激活 model：同 :attr:`current_persona`，model 维度。"""
-        for ev in reversed(self.active_events):
-            if ev.type == "model_change":
-                to = ev.payload.get("to")
-                if isinstance(to, str):
-                    return to
-        return self.initial_model
+        return self.current_model_config.model_id
+
+    @property
+    def current_model_config(self) -> ModelRuntimeConfig:
+        """当前 session 下一次 run 使用的完整模型配置。"""
+
+        try:
+            default_initial = default_model_runtime_config(self.initial_model)
+        except ValueError:
+            default_initial = ModelRuntimeConfig(self.initial_model, "none")
+        initial = ModelRuntimeConfig(
+            self.initial_model,
+            self.initial_reasoning_preset or default_initial.reasoning_preset,
+        )
+        try:
+            current = validate_model_runtime_config(initial)
+        except ValueError:
+            current = default_initial
+
+        for event in self.active_events:
+            if event.type == "model_change":
+                target = event.payload.get("to")
+                if isinstance(target, str):
+                    try:
+                        current = default_model_runtime_config(target)
+                    except ValueError:
+                        continue
+            elif event.type == "model_config_change":
+                target = event.payload.get("to")
+                if not isinstance(target, dict):
+                    continue
+                model = target.get("model")
+                preset = target.get("reasoningPreset")
+                if not isinstance(model, str) or not isinstance(preset, str):
+                    continue
+                try:
+                    current = validate_model_runtime_config(ModelRuntimeConfig(model, preset))
+                except ValueError:
+                    try:
+                        current = default_model_runtime_config(model)
+                    except ValueError:
+                        continue
+        return current
 
     @property
     def current_channel(self) -> Channel:
@@ -469,6 +532,21 @@ class Session:
                 result.append(msg)
                 last_assistant = msg
                 pending_reminder_fact = False
+            elif ev.type == "provider_reasoning_state":
+                if include_model_only:
+                    if last_assistant is None:
+                        last_assistant = Message(
+                            role="assistant",
+                            content="",
+                            timestamp=ev.ts,
+                            meta={**ev.meta, "synthetic": "tool_call_container"},
+                            uuid=f"reasoning_container_{ev.uuid}",
+                        )
+                        result.append(last_assistant)
+                    last_assistant.meta["provider_reasoning_state"] = dict(ev.payload)
+                    run_id = ev.meta.get("run_id")
+                    if isinstance(run_id, str):
+                        last_assistant.meta["provider_reasoning_run_id"] = run_id
             elif ev.type == "tool_call_request":
                 if last_assistant is None:
                     last_assistant = Message(
@@ -803,6 +881,7 @@ class Session:
             "initial_title": self.initial_title,
             "initial_persona": self.initial_persona,
             "initial_model": self.initial_model,
+            "initial_reasoning_preset": self.initial_reasoning_preset,
             "events": [
                 {
                     "type": ev.type,

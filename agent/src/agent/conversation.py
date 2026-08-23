@@ -54,6 +54,11 @@ from llm_providers import (
     LLMTurnDone,
     ModelCallControl,
     ModelRequest,
+    ModelRuntimeConfig,
+    ProviderReasoningState,
+    default_model_runtime_config,
+    render_provider_reasoning_state,
+    validate_model_runtime_config,
 )
 from memory import (
     ConversationFragment,
@@ -191,7 +196,9 @@ _CURRENT_URL_AUTHORIZATIONS_ARG = "__agent_friend_url_authorizations"
 _CURRENT_TURN_START_INDEX_ARG = "__agent_friend_current_turn_start_index"
 _CURRENT_PERSONA_ID_ARG = "__agent_friend_current_persona_id"
 _RUNTIME_NOW_ARG = "__agent_friend_runtime_now"
-_SESSION_CONTROL_EVENT_TYPES = frozenset({"persona_change", "model_change", "channel_change"})
+_SESSION_CONTROL_EVENT_TYPES = frozenset(
+    {"persona_change", "model_change", "model_config_change", "channel_change"}
+)
 logger = logging.getLogger(__name__)
 
 _IMAGE_EVIDENCE_TURN_CONTEXT = """<image_evidence_boundary>
@@ -245,7 +252,7 @@ class _RewritePlan:
 
 @dataclass(frozen=True)
 class _RunModelSnapshot:
-    model_id: str
+    config: ModelRuntimeConfig
     llm_client: LanguageModel
 
 
@@ -478,9 +485,13 @@ class Conversation:
         """当前激活 model 名（从 session 派生）。"""
         return self._session.current_model
 
+    @property
+    def current_model_config(self) -> ModelRuntimeConfig:
+        return self._session.current_model_config
+
     def _capture_run_model_snapshot(self) -> _RunModelSnapshot:
         return _RunModelSnapshot(
-            model_id=self._session.current_model,
+            config=self._session.current_model_config,
             llm_client=self._llm_client,
         )
 
@@ -490,7 +501,11 @@ class Conversation:
 
     def _active_model_id(self) -> str:
         snapshot = self._run_model_snapshot
-        return snapshot.model_id if snapshot is not None else self._session.current_model
+        return snapshot.config.model_id if snapshot is not None else self._session.current_model
+
+    def _active_model_config(self) -> ModelRuntimeConfig:
+        snapshot = self._run_model_snapshot
+        return snapshot.config if snapshot is not None else self._session.current_model_config
 
     @property
     def last_memory_context(self) -> MemoryContext | None:
@@ -985,6 +1000,7 @@ class Conversation:
                 attempt=1,
                 max_attempts=2,
             )
+            turn_done: LLMTurnDone | None = None
             for ev in self._iter_model_stream(openai_messages, tools=None):
                 self._check_cancel(cancel_check)
                 if isinstance(ev, ContextCompactionStatus):
@@ -1006,6 +1022,7 @@ class Conversation:
                     )
                 elif isinstance(ev, LLMTurnDone):
                     self._consume_usage(ev)
+                    turn_done = ev
 
             self._append_assistant_event(
                 "".join(current_text_buf),
@@ -1015,6 +1032,8 @@ class Conversation:
                 model=model_snapshot,
             )
             current_text_persisted = True
+            if turn_done is not None and turn_done.reasoning_state is not None:
+                self._append_provider_reasoning_event(turn_done.reasoning_state)
             yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
         finally:
             interrupted = sys.exc_info()[0] is not None
@@ -1287,6 +1306,7 @@ class Conversation:
                 tool_specs=None,
             )
         text_buf: list[str] = []
+        turn_done: LLMTurnDone | None = None
         for ev in self._iter_model_stream(
             openai_messages,
             tools=None,
@@ -1305,6 +1325,7 @@ class Conversation:
                     yield TextDelta(text=ev.text)
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
+                turn_done = ev
             # silent / system 触发轮不开 tool，不处理 LLMToolCallDelta
 
         full_text = "".join(text_buf)
@@ -1318,6 +1339,8 @@ class Conversation:
                 persona_id=persona_id,
                 model=model_snapshot,
             )
+            if turn_done is not None and turn_done.reasoning_state is not None:
+                self._append_provider_reasoning_event(turn_done.reasoning_state)
             yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
             self._run_id_override = previous_run_id
             return
@@ -1425,21 +1448,38 @@ class Conversation:
                 "switch_model 需要 llm_client_factory 注入（请通过 SessionManager 装配）"
             )
 
-        from_model = self._session.current_model
-        if from_model == name:
+        self.switch_model_config(default_model_runtime_config(name))
+
+    def switch_model_config(self, target: ModelRuntimeConfig) -> None:
+        """Atomically persist and activate one validated model runtime config."""
+
+        if self._llm_client_factory is None:
+            raise AgentError(
+                "switch_model_config 需要 llm_client_factory 注入（请通过 SessionManager 装配）"
+            )
+        target = validate_model_runtime_config(target)
+        current = self._session.current_model_config
+        if current == target:
             return
 
-        new_client = self._llm_client_factory(name)
-
+        new_client = self._llm_client_factory(target)
         event = Event(
-            type="model_change",
+            type="model_config_change",
             uuid=str(uuid4()),
             ts=datetime.now(UTC),
-            payload={"from": from_model, "to": name},
+            payload={
+                "from": {
+                    "model": current.model_id,
+                    "reasoningPreset": current.reasoning_preset,
+                },
+                "to": {
+                    "model": target.model_id,
+                    "reasoningPreset": target.reasoning_preset,
+                },
+            },
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
-
         self._llm_client = new_client
 
     def switch_channel(self, to: str) -> None:
@@ -1856,7 +1896,13 @@ class Conversation:
         model: str,
         interruption_reason: str | None = None,
     ) -> None:
-        meta: dict[str, Any] = self._run_event_meta({"persona": persona_name, "model": model})
+        meta: dict[str, Any] = self._run_event_meta(
+            {
+                "persona": persona_name,
+                "model": model,
+                "reasoning_preset": self._active_model_config().reasoning_preset,
+            }
+        )
         if persona_id is not None:
             meta["persona_id"] = persona_id
         if self._pending_context_usage is not None:
@@ -1873,6 +1919,22 @@ class Conversation:
             ts=datetime.now(UTC),
             payload=payload,
             meta=meta,
+        )
+        self._store.append_event(self._session.session_id, event)
+        self._session.append(event)
+
+    def _append_provider_reasoning_event(self, state: ProviderReasoningState) -> None:
+        event = Event(
+            type="provider_reasoning_state",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload=state.to_event_payload(),
+            meta=self._run_event_meta(
+                {
+                    "model": self._active_model_id(),
+                    "reasoning_preset": self._active_model_config().reasoning_preset,
+                }
+            ),
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -2155,13 +2217,26 @@ class Conversation:
             else None
         )
         self._record_context_notes(build, runtime)
-        if self._message_renderer is None:
-            rendered_messages = [message.to_openai() for message in build.messages]
-        else:
-            client = self._active_llm_client()
-            rendered_messages = [
-                self._message_renderer(message, client) for message in build.messages
-            ]
+        client = self._active_llm_client()
+        rendered_messages: list[dict[str, Any]] = []
+        for message in build.messages:
+            rendered = (
+                message.to_openai()
+                if self._message_renderer is None
+                else self._message_renderer(message, client)
+            )
+            raw_reasoning = message.meta.get("provider_reasoning_state")
+            if isinstance(raw_reasoning, dict):
+                state = ProviderReasoningState.from_event_payload(raw_reasoning)
+                state_run_id = message.meta.get("provider_reasoning_run_id")
+                rendered = render_provider_reasoning_state(
+                    rendered,
+                    state,
+                    config=self._active_model_config(),
+                    state_run_id=state_run_id if isinstance(state_run_id, str) else None,
+                    active_run_id=self._run_id_override,
+                )
+            rendered_messages.append(rendered)
         context_index = (
             self._run_latency_context.next_context_build_index()
             if self._run_latency_context is not None
@@ -3553,6 +3628,7 @@ class Conversation:
                 attempt=1,
                 max_attempts=2,
             )
+            turn_done: LLMTurnDone | None = None
             for event in self._iter_traced_model_stream(
                 openai_messages,
                 tools=tool_specs,
@@ -3595,6 +3671,7 @@ class Conversation:
                     )
                 elif isinstance(event, LLMTurnDone):
                     self._consume_usage(event)
+                    turn_done = event
 
             tool_calls = self._finalize_tool_calls(current_tc_acc)
 
@@ -3608,6 +3685,9 @@ class Conversation:
                     model=model_snapshot,
                 )
                 frame.current_text_persisted = True
+
+            if turn_done is not None and turn_done.reasoning_state is not None:
+                self._append_provider_reasoning_event(turn_done.reasoning_state)
 
             rejected_calls = [
                 item
@@ -3901,6 +3981,7 @@ class Conversation:
         )
 
         text_buf: list[str] = []
+        turn_done: LLMTurnDone | None = None
         for ev in self._iter_traced_model_stream(
             openai_messages,
             tools=None,
@@ -3920,6 +4001,7 @@ class Conversation:
                 yield TextDelta(text=ev.text)
             elif isinstance(ev, LLMTurnDone):
                 self._consume_usage(ev)
+                turn_done = ev
             # 触上限兜底中不再处理 tool_call_delta（tools=None，理论上 LLM 不该返回）
 
         self._append_assistant_event(
@@ -3929,6 +4011,8 @@ class Conversation:
             persona_id=persona_id,
             model=model_snapshot,
         )
+        if turn_done is not None and turn_done.reasoning_state is not None:
+            self._append_provider_reasoning_event(turn_done.reasoning_state)
         yield self._turn_done(runtime, runtime.stop_reason or "tool_runtime_failed")
 
     def _on_interrupt(

@@ -289,6 +289,7 @@ pub async fn generate_diagnostic_bundle(
             Ok((session_id, mut value)) => {
                 collect_attachment_candidates(&session_id, &value, &mut attachment_candidates);
                 let mut count = 0;
+                redact_provider_reasoning_states(&mut value, &mut count);
                 redact_json(&mut value, &credentials, home.as_deref(), &mut count);
                 let entry_name = format!("sessions/session-{:03}.json", index + 1);
                 entries.push(json_entry(&entry_name, &value)?);
@@ -1042,6 +1043,63 @@ fn redact_json(value: &mut Value, credentials: &[String], home: Option<&Path>, c
     }
 }
 
+fn redact_provider_reasoning_states(session: &mut Value, count: &mut u64) {
+    let Some(root) = session.as_object_mut() else {
+        return;
+    };
+    for field in ["events", "active_events"] {
+        let Some(events) = root.get_mut(field).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for event in events {
+            let Some(event_object) = event.as_object_mut() else {
+                continue;
+            };
+            if event_object.get("type").and_then(Value::as_str) != Some("provider_reasoning_state")
+            {
+                continue;
+            }
+            let Some(payload) = event_object
+                .get_mut("payload")
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+            let data = payload.remove("data");
+            let data_char_count = data
+                .as_ref()
+                .and_then(Value::as_str)
+                .map(|text| text.chars().count());
+            let detail_count = data.as_ref().and_then(Value::as_array).map(Vec::len);
+            let mut redacted = serde_json::Map::new();
+            for key in ["provider", "model", "format", "replayScope"] {
+                if let Some(value) = payload.remove(key) {
+                    redacted.insert(key.to_string(), value);
+                }
+            }
+            redacted.insert("redacted".into(), Value::Bool(true));
+            if let Some(value) = data_char_count.or_else(|| {
+                payload
+                    .get("dataCharCount")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize)
+            }) {
+                redacted.insert("dataCharCount".into(), json!(value));
+            }
+            if let Some(value) = detail_count.or_else(|| {
+                payload
+                    .get("detailCount")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize)
+            }) {
+                redacted.insert("detailCount".into(), json!(value));
+            }
+            *payload = redacted;
+            *count += 1;
+        }
+    }
+}
+
 fn is_sensitive_key(key: &str) -> bool {
     let compact = key
         .chars()
@@ -1470,15 +1528,29 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         let mut session = json!({
-            "events": [{
-                "payload": {
-                    "content": "ordinary private conversation",
-                    "apiKey": "managed-secret",
-                    "accessToken": "other-secret"
+            "events": [
+                {
+                    "type": "assistant_message",
+                    "payload": {
+                        "content": "ordinary private conversation",
+                        "apiKey": "managed-secret",
+                        "accessToken": "other-secret"
+                    }
+                },
+                {
+                    "type": "provider_reasoning_state",
+                    "payload": {
+                        "provider": "kimi",
+                        "model": "kimi/kimi-k2.7-code",
+                        "format": "reasoning_content",
+                        "replayScope": "conversation",
+                        "data": "private chain of thought"
+                    }
                 }
-            }]
+            ]
         });
         let mut count = 0;
+        redact_provider_reasoning_states(&mut session, &mut count);
         redact_json(&mut session, &["managed-secret".into()], None, &mut count);
         let path = write_archive_atomically(
             &dir,
@@ -1498,7 +1570,10 @@ mod tests {
         assert!(contents.contains("ordinary private conversation"));
         assert!(!contents.contains("managed-secret"));
         assert!(!contents.contains("other-secret"));
+        assert!(!contents.contains("private chain of thought"));
         assert!(contents.contains("<REDACTED:CREDENTIAL>"));
+        assert!(contents.contains("\"redacted\": true"));
+        assert!(contents.contains("\"dataCharCount\": 24"));
 
         fs::remove_file(path).unwrap();
         fs::remove_dir(dir).unwrap();

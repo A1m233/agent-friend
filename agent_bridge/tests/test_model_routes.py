@@ -8,7 +8,7 @@ from agent_bridge.routes.models import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from llm_providers import LLMModelMetadataError
+from llm_providers import LLMModelMetadataError, ModelRuntimeConfig
 from runtime_config import CredentialMissingError
 
 
@@ -20,13 +20,14 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["schemaVersion"] == 1
+    assert body["schemaVersion"] == 2
     assert body["catalogRevision"]
     kimi = next(provider for provider in body["providers"] if provider["id"] == "kimi")
     k26 = next(model for model in kimi["models"] if model["id"] == "kimi/kimi-k2.6")
     assert k26["capabilities"]["attachments"] is True
     assert "application/pdf" in k26["capabilities"]["acceptedMediaTypes"]
     assert k26["limits"]["contextWindow"] == 256 * 1024
+    assert k26["reasoning"]["defaultPreset"] == "on"
     deepseek = next(provider for provider in body["providers"] if provider["id"] == "deepseek")
     vision = next(
         model
@@ -42,6 +43,16 @@ def test_model_catalog_route_projects_provider_capabilities() -> None:
         "image/webp",
     ]
     assert vision["capabilities"]["maxAttachmentBytes"] == 64 * 1024 * 1024
+    assert vision["reasoning"] == {
+        "control": "effort",
+        "defaultPreset": "off",
+        "presets": [
+            {"id": "off", "label": "关闭"},
+            {"id": "low", "label": "低"},
+            {"id": "high", "label": "高"},
+            {"id": "max", "label": "最高"},
+        ],
+    }
     assert deepseek["defaultChatModel"] == "deepseek/deepseek-v4-flash"
     assert deepseek["defaultMemoryModel"] == "deepseek/deepseek-v4-pro"
 
@@ -61,9 +72,9 @@ def _validation_client(factory: object) -> TestClient:
 
 
 def test_model_validation_preflights_client_without_creating_session() -> None:
-    seen: list[str] = []
+    seen: list[ModelRuntimeConfig] = []
 
-    def factory(model: str) -> object:
+    def factory(model: ModelRuntimeConfig) -> object:
         seen.append(model)
         return SimpleNamespace(context_window=256 * 1024)
 
@@ -75,6 +86,7 @@ def test_model_validation_preflights_client_without_creating_session() -> None:
     assert response.json() == {
         "model": "kimi/kimi-k2.6",
         "available": True,
+        "runtimeConfig": {"model": "kimi/kimi-k2.6", "reasoningPreset": "on"},
         "limits": {
             "contextWindow": 256 * 1024,
             "contextWindowSource": "language_model",
@@ -83,7 +95,17 @@ def test_model_validation_preflights_client_without_creating_session() -> None:
             "baselineHeadroomTokens": 209712,
         },
     }
-    assert seen == ["kimi/kimi-k2.6"]
+    assert seen == [ModelRuntimeConfig("kimi/kimi-k2.6", "on")]
+
+
+def test_model_validation_rejects_unsupported_reasoning_preset() -> None:
+    response = _validation_client(lambda _config: SimpleNamespace(context_window=100_000)).post(
+        "/v1/models/validate",
+        json={"model": "kimi/kimi-k2.6", "reasoningPreset": "high"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_reasoning_preset"
 
 
 def test_model_validation_returns_stable_errors() -> None:

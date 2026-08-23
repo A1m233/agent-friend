@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   credentialGroupForModel,
+  defaultModelRuntimeConfig,
   defaultModelSelection,
   modelOption,
   modelProviders,
   modelProvidersFromCatalog,
   normalizeModelSelection,
   providerModelsFromCatalog,
+  modelRuntimeConfigLabel,
   resolveDefaultConversationModel,
   setModelCatalogForTests,
   type ModelCatalog,
@@ -41,6 +43,16 @@ const catalog: ModelCatalog = {
             structuredOutput: false,
             multimodalToolResults: false,
             reasoningReplay: false,
+          },
+          reasoning: {
+            control: "effort",
+            defaultPreset: "off",
+            presets: [
+              { id: "off", label: "关闭" },
+              { id: "low", label: "低" },
+              { id: "high", label: "高" },
+              { id: "max", label: "最高" },
+            ],
           },
         },
         {
@@ -82,6 +94,16 @@ const catalog: ModelCatalog = {
             multimodalToolResults: false,
             reasoningReplay: false,
           },
+          reasoning: {
+            control: "effort",
+            defaultPreset: "off",
+            presets: [
+              { id: "off", label: "关闭" },
+              { id: "low", label: "低" },
+              { id: "high", label: "高" },
+              { id: "max", label: "最高" },
+            ],
+          },
         },
       ],
     },
@@ -109,6 +131,14 @@ const catalog: ModelCatalog = {
           structuredOutput: false,
           multimodalToolResults: false,
           reasoningReplay: false,
+        },
+        reasoning: {
+          control: "toggle",
+          defaultPreset: "on",
+          presets: [
+            { id: "off", label: "关闭" },
+            { id: "on", label: "开启" },
+          ],
         },
       }],
     },
@@ -165,6 +195,20 @@ describe("model config", () => {
         acceptedMediaTypes: ["image/jpeg", "image/png", "image/webp"],
         attachments: true,
       },
+    });
+  });
+
+  it("derives an atomic runtime config and display label from the selected model", () => {
+    expect(defaultModelRuntimeConfig("kimi/vision")).toEqual({
+      model: "kimi/vision",
+      reasoningPreset: "on",
+    });
+    expect(modelRuntimeConfigLabel({ model: "kimi/vision", reasoningPreset: "off" })).toBe(
+      "vision · 关闭",
+    );
+    expect(defaultModelRuntimeConfig("deepseek/deepseek-v4-flash-vision-exp")).toEqual({
+      model: "deepseek/deepseek-v4-flash-vision-exp",
+      reasoningPreset: "off",
     });
   });
 

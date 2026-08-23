@@ -83,7 +83,12 @@ from agent import (
     make_default_registry,
     make_default_social_platform_service,
 )
-from llm_providers import LanguageModel, LanguageModelFactory, MultimodalInputAdapter
+from llm_providers import (
+    LanguageModel,
+    LanguageModelFactory,
+    ModelRuntimeConfig,
+    MultimodalInputAdapter,
+)
 from memory import Memory, MemorySearchService, build_memory
 from runtime_config import (
     DesktopSettingsReader,
@@ -117,7 +122,7 @@ from .self_presentation import DesktopSelfPresentationModeProvider
 logger = logging.getLogger(__name__)
 
 
-def _llm_factory(model: str) -> LanguageModel:
+def _llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
     raise RuntimeError("BridgeRuntime.llm_client_factory is required before creating sessions")
 
 

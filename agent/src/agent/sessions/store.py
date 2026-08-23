@@ -18,6 +18,12 @@ from typing import Protocol
 import portalocker
 from portalocker.exceptions import LockException
 
+from llm_providers import (
+    ModelRuntimeConfig,
+    default_model_runtime_config,
+    validate_model_runtime_config,
+)
+
 from .changes import SessionChangeBroker
 from .errors import (
     SessionCorruptError,
@@ -105,6 +111,7 @@ class SessionSummary:
     updated_at: datetime
     persona: str
     model: str
+    reasoning_preset: str | None = None
     archived_at: datetime | None = None
     origin_kind: str | None = None
     origin_id: str | None = None
@@ -333,13 +340,24 @@ class JsonlSessionStore:
         if not isinstance(title, str) or not isinstance(persona, str) or not isinstance(model, str):
             return None
         updated_at = self._last_conversation_event_at(path, fallback=head.ts)
+        initial_reasoning_preset = (
+            str(payload["initial_reasoning_preset"])
+            if isinstance(payload.get("initial_reasoning_preset"), str)
+            else None
+        )
+        runtime_config = self._latest_model_runtime_config(
+            path,
+            initial_model=model,
+            initial_reasoning_preset=initial_reasoning_preset,
+        )
         return SessionSummary(
             session_id=head.uuid,
             title=title,
             created_at=head.ts,
             updated_at=updated_at,
             persona=persona,
-            model=model,
+            model=runtime_config.model_id,
+            reasoning_preset=runtime_config.reasoning_preset,
             origin_kind=(
                 str(payload["origin_kind"]) if isinstance(payload.get("origin_kind"), str) else None
             ),
@@ -372,6 +390,59 @@ class JsonlSessionStore:
         except OSError:
             return fallback
         return fallback
+
+    @staticmethod
+    def _latest_model_runtime_config(
+        path: Path,
+        *,
+        initial_model: str,
+        initial_reasoning_preset: str | None,
+    ) -> ModelRuntimeConfig:
+        """Project the newest atomic model config without loading the full session."""
+        try:
+            initial_default = default_model_runtime_config(initial_model)
+        except ValueError:
+            initial_default = ModelRuntimeConfig(initial_model, "none")
+        initial = ModelRuntimeConfig(
+            initial_model,
+            initial_reasoning_preset or initial_default.reasoning_preset,
+        )
+        try:
+            initial = validate_model_runtime_config(initial)
+        except ValueError:
+            initial = initial_default
+
+        try:
+            for line in _iter_lines_reverse(path):
+                try:
+                    event = Event.from_jsonl(line)
+                except SessionCorruptError:
+                    continue
+                if event.type == "model_config_change":
+                    target = event.payload.get("to")
+                    if not isinstance(target, dict):
+                        continue
+                    model = target.get("model")
+                    preset = target.get("reasoningPreset")
+                    if not isinstance(model, str) or not isinstance(preset, str):
+                        continue
+                    try:
+                        return validate_model_runtime_config(ModelRuntimeConfig(model, preset))
+                    except ValueError:
+                        try:
+                            return default_model_runtime_config(model)
+                        except ValueError:
+                            continue
+                if event.type == "model_change":
+                    target = event.payload.get("to")
+                    if isinstance(target, str):
+                        try:
+                            return default_model_runtime_config(target)
+                        except ValueError:
+                            continue
+        except OSError:
+            return initial
+        return initial
 
 
 class NullSessionStore:

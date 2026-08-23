@@ -54,7 +54,7 @@ def prepare_litellm_request(
     messages: list[dict[str, Any]],
     options: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Add DeepSeek wire messages without mutating caller-owned inputs."""
+    """Add DeepSeek wire compatibility without mutating caller-owned inputs."""
 
     if not is_deepseek_vision_spec(spec):
         return messages, options
@@ -72,4 +72,19 @@ def prepare_litellm_request(
         )
     extra_body["messages"] = wire_messages
     prepared_options["extra_body"] = extra_body
+    if "reasoning_effort" in prepared_options:
+        raw_allowed = prepared_options.get("allowed_openai_params")
+        if raw_allowed is None:
+            allowed: list[str] = []
+        elif isinstance(raw_allowed, (list, tuple)) and all(
+            isinstance(item, str) for item in raw_allowed
+        ):
+            allowed = list(raw_allowed)
+        else:
+            raise LLMBadRequestError(
+                "provider_request_invalid: allowed_openai_params 必须是字符串序列。"
+            )
+        if "reasoning_effort" not in allowed:
+            allowed.append("reasoning_effort")
+        prepared_options["allowed_openai_params"] = allowed
     return messages, prepared_options

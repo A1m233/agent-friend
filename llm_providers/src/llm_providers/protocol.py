@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .stream_events import (
     LLMResponseDiagnostics,
@@ -18,6 +18,9 @@ from .stream_events import (
     LLMTransportDiagnostic,
     LLMUsage,
 )
+
+if TYPE_CHECKING:
+    from .catalog import ModelRuntimeConfig
 
 
 @dataclass(frozen=True)
@@ -62,7 +65,7 @@ class LanguageModel(Protocol):
         """Yield normalized events for one model response."""
 
 
-LanguageModelFactory = Callable[[str], LanguageModel]
+LanguageModelFactory = Callable[["ModelRuntimeConfig"], LanguageModel]
 
 
 __all__ = [

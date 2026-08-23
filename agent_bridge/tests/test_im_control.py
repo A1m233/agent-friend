@@ -15,6 +15,11 @@ from agent_bridge.protocols.im.state import ControlCapability, IMBindingKey, IMS
 from agent_bridge.session_models import SessionModelService
 
 from agent import SessionManager
+from llm_providers import (
+    ModelRuntimeConfig,
+    default_model_runtime_config,
+    validate_model_runtime_config,
+)
 
 
 class FakeProvider:
@@ -46,13 +51,18 @@ class FakeSessions:
             "SESSION-A": SimpleNamespace(
                 session_id="SESSION-A",
                 initial_title="Alpha",
-                current_model="model-a",
+                current_model="deepseek/deepseek-v4-flash",
+                current_model_config=ModelRuntimeConfig(
+                    "deepseek/deepseek-v4-flash",
+                    "high",
+                ),
                 messages=[],
             ),
             "SESSION-B": SimpleNamespace(
                 session_id="SESSION-B",
                 initial_title="Beta",
-                current_model="model-b",
+                current_model="kimi/kimi-k2.6",
+                current_model_config=ModelRuntimeConfig("kimi/kimi-k2.6", "on"),
                 messages=[SimpleNamespace(role="assistant", content="最近一条回复")],
             ),
         }
@@ -70,12 +80,39 @@ class FakeSessions:
 
 
 class FakeModels:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
+    def __init__(self, sessions: FakeSessions) -> None:
+        self._sessions = sessions
+        self.calls: list[dict[str, str | None]] = []
 
-    def switch(self, session_id: str, model_id: str) -> str:
-        self.calls.append((session_id, model_id))
-        return model_id
+    def update(
+        self,
+        session_id: str,
+        *,
+        model: str | None = None,
+        reasoning_preset: str | None = None,
+    ) -> ModelRuntimeConfig:
+        self.calls.append(
+            {
+                "session_id": session_id,
+                "model": model,
+                "reasoning_preset": reasoning_preset,
+            }
+        )
+        session = self._sessions.sessions[session_id]
+        current = session.current_model_config
+        if model is not None:
+            target = (
+                ModelRuntimeConfig(model, reasoning_preset)
+                if reasoning_preset is not None
+                else default_model_runtime_config(model)
+            )
+        else:
+            assert reasoning_preset is not None
+            target = ModelRuntimeConfig(current.model_id, reasoning_preset)
+        target = validate_model_runtime_config(target)
+        session.current_model = target.model_id
+        session.current_model_config = target
+        return target
 
 
 def interaction(payload: str) -> InboundInteraction:
@@ -105,7 +142,7 @@ def make_service(
         "SESSION-A",
     )
     coordinator = IMBindingCoordinator()
-    models = FakeModels()
+    models = FakeModels(sessions)
     service = IMControlService(
         sessions=cast(SessionManager, sessions),
         state_store=state,
@@ -123,11 +160,15 @@ async def test_menu_switches_future_session_without_routing_control_to_agent(
 
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
-    assert menu.text == "当前会话：Alpha\n当前模型：model-a"
+    assert menu.text == ("当前会话：Alpha\n当前模型：deepseek/deepseek-v4-flash\n当前推理强度：高")
     assert menu.text_format == "markdown"
     assert menu.controls is not None
     assert menu.controls.rows[0][0].click_limit is None
-    session_menu_payload = menu.controls.rows[0][0].payload
+    assert [[action.label for action in row] for row in menu.controls.rows] == [
+        ["切换模型", "调整推理强度"],
+        ["切换会话"],
+    ]
+    session_menu_payload = menu.controls.rows[1][0].payload
 
     await service.handle(cast(IMProvider, provider), interaction(session_menu_payload))
     session_page = provider.sent[-1]
@@ -154,7 +195,7 @@ async def test_dynamic_menu_button_can_be_reused_within_token_ttl(tmp_path: Path
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
     assert menu.controls is not None
-    session_menu_payload = menu.controls.rows[0][0].payload
+    session_menu_payload = menu.controls.rows[1][0].payload
 
     await service.handle(cast(IMProvider, provider), interaction(session_menu_payload))
     first_page = provider.sent[-1]
@@ -185,7 +226,7 @@ async def test_session_pagination_keeps_ids_unique_for_same_prefixes(tmp_path: P
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
     assert menu.controls is not None
-    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][0].payload))
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[1][0].payload))
     first_page = provider.sent[-1]
     assert first_page.controls is not None
     next_payload = next(
@@ -219,7 +260,7 @@ async def test_session_switch_is_rejected_while_im_reply_is_running(tmp_path: Pa
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
     assert menu.controls is not None
-    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][0].payload))
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[1][0].payload))
     page = provider.sent[-1]
     assert page.controls is not None
     beta_payload = next(
@@ -240,7 +281,7 @@ async def test_menu_switches_model_for_bound_session(tmp_path: Path) -> None:
     await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
     menu = provider.sent[-1]
     assert menu.controls is not None
-    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][0].payload))
     page = provider.sent[-1]
     assert page.controls is not None
     model_payload = page.controls.rows[0][0].payload
@@ -248,9 +289,166 @@ async def test_menu_switches_model_for_bound_session(tmp_path: Path) -> None:
     await service.handle(cast(IMProvider, provider), interaction(model_payload))
 
     assert len(models.calls) == 1
-    assert models.calls[0][0] == "SESSION-A"
-    assert provider.sent[-1].text.startswith("模型已切换为 ")
+    assert models.calls[0] == {
+        "session_id": "SESSION-A",
+        "model": "deepseek/deepseek-v4-flash",
+        "reasoning_preset": None,
+    }
+    assert provider.sent[-1].text == (
+        "配置已切换\n模型：deepseek/deepseek-v4-flash\n推理强度：关闭\n下一条回复开始生效。"
+    )
     assert provider.sent[-1].controls is None
+
+
+@pytest.mark.asyncio
+async def test_stale_model_menu_cannot_mutate_a_new_binding(tmp_path: Path) -> None:
+    service, provider, state, _coordinator, models = make_service(tmp_path)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][0].payload))
+    page = provider.sent[-1]
+    assert page.controls is not None
+    model_payload = page.controls.rows[0][0].payload
+    key = IMBindingKey("qq", "OPENID-USER", "c2c", "OPENID-USER")
+    state.set_binding(key, "SESSION-B")
+
+    await service.handle(cast(IMProvider, provider), interaction(model_payload))
+
+    assert models.calls == []
+    assert provider.sent[-1].text == "当前绑定会话已变化，请重新打开最新菜单。"
+
+
+@pytest.mark.asyncio
+async def test_menu_switches_reasoning_for_bound_session(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, models = make_service(tmp_path)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    page = provider.sent[-1]
+    assert page.text == "选择推理强度（deepseek/deepseek-v4-flash，第 1/1 页）"
+    assert page.controls is not None
+    labels = [action.label for row in page.controls.rows for action in row]
+    assert labels == ["关闭", "低", "当前 · 高", "最高", "返回"]
+    low_payload = next(
+        action.payload for row in page.controls.rows for action in row if action.label == "低"
+    )
+
+    await service.handle(cast(IMProvider, provider), interaction(low_payload))
+
+    assert models.calls[-1] == {
+        "session_id": "SESSION-A",
+        "model": None,
+        "reasoning_preset": "low",
+    }
+    assert provider.sent[-1].text == (
+        "推理强度已切换\n模型：deepseek/deepseek-v4-flash\n推理强度：低\n下一条回复开始生效。"
+    )
+    assert provider.sent[-1].controls is None
+
+
+@pytest.mark.asyncio
+async def test_reasoning_menu_paginates_catalog_presets(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, _models = make_service(tmp_path)
+    sessions = cast(Any, service._sessions)
+    sessions.sessions["SESSION-A"].current_model = "openrouter/openai/gpt-5.6-luna"
+    sessions.sessions["SESSION-A"].current_model_config = ModelRuntimeConfig(
+        "openrouter/openai/gpt-5.6-luna",
+        "medium",
+    )
+
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    first_page = provider.sent[-1]
+    assert first_page.text == "选择推理强度（openrouter/openai/gpt-5.6-luna，第 1/2 页）"
+    assert first_page.controls is not None
+    next_payload = next(
+        action.payload
+        for row in first_page.controls.rows
+        for action in row
+        if action.label == "下一页"
+    )
+
+    await service.handle(cast(IMProvider, provider), interaction(next_payload))
+
+    second_page = provider.sent[-1]
+    assert second_page.text == "选择推理强度（openrouter/openai/gpt-5.6-luna，第 2/2 页）"
+    assert second_page.controls is not None
+    labels = [action.label for row in second_page.controls.rows for action in row]
+    assert labels == ["极高", "最高", "上一页", "返回"]
+
+
+@pytest.mark.asyncio
+async def test_fixed_reasoning_menu_is_read_only(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, _models = make_service(tmp_path)
+    sessions = cast(Any, service._sessions)
+    sessions.sessions["SESSION-A"].current_model = "kimi/kimi-k2.7-code"
+    sessions.sessions["SESSION-A"].current_model_config = ModelRuntimeConfig(
+        "kimi/kimi-k2.7-code",
+        "on",
+    )
+
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+
+    page = provider.sent[-1]
+    assert page.text == (
+        "当前模型：kimi/kimi-k2.7-code\n当前推理强度：固定开启\n固定开启，不可调整"
+    )
+    assert page.controls is not None
+    assert [[action.label for action in row] for row in page.controls.rows] == [["返回"]]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_switch_is_rejected_while_im_reply_is_running(tmp_path: Path) -> None:
+    service, provider, _state, coordinator, models = make_service(tmp_path)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    page = provider.sent[-1]
+    assert page.controls is not None
+    low_payload = next(
+        action.payload for row in page.controls.rows for action in row if action.label == "低"
+    )
+    key = IMBindingKey("qq", "OPENID-USER", "c2c", "OPENID-USER")
+
+    async with coordinator.turn(key):
+        await service.handle(cast(IMProvider, provider), interaction(low_payload))
+
+    assert models.calls == []
+    assert provider.sent[-1].text == "请等待当前回复完成后再调整推理强度。"
+
+
+@pytest.mark.asyncio
+async def test_stale_reasoning_menu_cannot_mutate_a_new_model(tmp_path: Path) -> None:
+    service, provider, _state, _coordinator, models = make_service(tmp_path)
+    sessions = cast(Any, service._sessions)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    page = provider.sent[-1]
+    assert page.controls is not None
+    low_payload = next(
+        action.payload for row in page.controls.rows for action in row if action.label == "低"
+    )
+    sessions.sessions["SESSION-A"].current_model = "openrouter/google/gemini-3.7-flash"
+    sessions.sessions["SESSION-A"].current_model_config = ModelRuntimeConfig(
+        "openrouter/google/gemini-3.7-flash",
+        "medium",
+    )
+
+    await service.handle(cast(IMProvider, provider), interaction(low_payload))
+
+    assert models.calls == []
+    assert provider.sent[-1].text == "当前模型已变化，请重新打开推理强度菜单。"
 
 
 def test_state_snapshot_round_trip_preserves_binding_and_capability(tmp_path: Path) -> None:

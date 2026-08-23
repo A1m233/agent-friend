@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "schemaRevision": 8,
+  "schemaRevision": 9,
   "core": {
     "manifestFields": [
       "capabilities",
@@ -29,7 +29,7 @@
   },
   "capabilities": [
     {
-      "id": "selected-sessions-v1",
+      "id": "selected-sessions-v2",
       "manifestFields": [
         "requestedSessionIds",
         "includedSessionIds"

@@ -54,6 +54,14 @@ class UnsupportedModelError(ValueError):
     """A requested model is absent from the public model catalog."""
 
 
+class UnsupportedReasoningPresetError(ValueError):
+    """A reasoning preset is absent from the selected model definition."""
+
+
+class InvalidRuntimeConfigError(ValueError):
+    """A runtime-config mutation has no valid fields."""
+
+
 @dataclass(frozen=True)
 class ProtocolError:
     """协议层错误响应需要的全部信息。
@@ -94,6 +102,20 @@ def map_exception(exc: BaseException) -> ProtocolError:
             http_status=400,
             code="unsupported_model",
             message="找不到这个模型，请刷新模型列表后再试。",
+            recoverable=False,
+        )
+    if isinstance(exc, UnsupportedReasoningPresetError):
+        return ProtocolError(
+            http_status=400,
+            code="unsupported_reasoning_preset",
+            message="这个模型不支持所选推理强度，请刷新模型列表后再试。",
+            recoverable=False,
+        )
+    if isinstance(exc, InvalidRuntimeConfigError):
+        return ProtocolError(
+            http_status=400,
+            code="invalid_runtime_config",
+            message="请至少选择模型或推理强度中的一项。",
             recoverable=False,
         )
     if isinstance(exc, SessionBusyError):
@@ -280,8 +302,10 @@ def build_openai_error_envelope(err: ProtocolError) -> dict[str, Any]:
 
 
 __all__ = [
+    "InvalidRuntimeConfigError",
     "ProtocolError",
     "UnsupportedModelError",
+    "UnsupportedReasoningPresetError",
     "build_openai_error_envelope",
     "map_exception",
 ]

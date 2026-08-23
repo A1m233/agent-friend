@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .reasoning import ProviderReasoningState
+
 
 @dataclass(frozen=True)
 class LLMTextDelta:
@@ -161,6 +163,7 @@ class LLMTurnDone:
     stop_reason: str = ""
     usage: LLMUsage | None = None
     diagnostics: LLMResponseDiagnostics | None = None
+    reasoning_state: ProviderReasoningState | None = None
     type: Literal["done"] = "done"
 
 

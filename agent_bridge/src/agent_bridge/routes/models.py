@@ -9,21 +9,35 @@ from agent.context import (
 )
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
     ContextBaseOverBudgetError,
     Message,
 )
-from llm_providers import all_model_ids, public_model_catalog
+from llm_providers import (
+    ModelRuntimeConfig,
+    all_model_ids,
+    default_model_runtime_config,
+    public_model_catalog,
+    validate_model_runtime_config,
+)
 
 from ..assembly import BridgeRuntime
-from ..errors import UnsupportedModelError, build_openai_error_envelope, map_exception
+from ..errors import (
+    UnsupportedModelError,
+    UnsupportedReasoningPresetError,
+    build_openai_error_envelope,
+    map_exception,
+)
 
 
 class ModelValidateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     model: str = Field(..., description="目标 model id")
+    reasoning_preset: str | None = Field(None, alias="reasoningPreset")
 
 
 def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
@@ -36,9 +50,18 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
         try:
             if body.model not in all_model_ids():
                 raise UnsupportedModelError(body.model)
+            config = (
+                ModelRuntimeConfig(body.model, body.reasoning_preset)
+                if body.reasoning_preset is not None
+                else default_model_runtime_config(body.model)
+            )
+            try:
+                config = validate_model_runtime_config(config)
+            except ValueError as exc:
+                raise UnsupportedReasoningPresetError(str(exc)) from exc
             if runtime is None or runtime.llm_client_factory is None:
                 raise RuntimeError("llm client factory unavailable")
-            model = runtime.llm_client_factory(body.model)
+            model = runtime.llm_client_factory(config)
             system_prompt = runtime.prompt_builder_factory(BUILTIN_DEFAULT_PERSONA_ID).build()
             tool_specs = runtime.tool_registry.to_openai_tools()
             baseline_tokens = estimate_tokens(
@@ -58,6 +81,10 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime | None = None) -> None:
         return {
             "model": body.model,
             "available": True,
+            "runtimeConfig": {
+                "model": config.model_id,
+                "reasoningPreset": config.reasoning_preset,
+            },
             "limits": {
                 "contextWindow": model.context_window,
                 "contextWindowSource": "language_model",

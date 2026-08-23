@@ -55,6 +55,7 @@ from llm_providers import (
     LLMStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
     MultimodalInputAdapter,
     ProviderSpec,
 )
@@ -360,7 +361,7 @@ def _build_manager(
 ) -> SessionManager:
     """装配一个挂指定 store 的 SessionManager。"""
 
-    def _llm_factory(_model: str) -> LanguageModel:
+    def _llm_factory(_model: ModelRuntimeConfig) -> LanguageModel:
         client = LLMClient(spec)
         if skill_catalog_request_guard is None:
             return client

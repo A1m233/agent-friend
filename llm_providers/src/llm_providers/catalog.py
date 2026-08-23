@@ -18,8 +18,10 @@ from .spec import DEFAULT_LLM_TIMEOUT_SECONDS, ProviderSpec
 
 ModelPurpose = Literal["chat", "memory"]
 InputModality = Literal["text", "image", "document"]
+ReasoningControl = Literal["unsupported", "toggle", "effort", "fixed"]
+ReasoningReplayScope = Literal["none", "tool_turn", "conversation"]
 
-CATALOG_REVISION = "2026-08-21.1"
+CATALOG_REVISION = "2026-08-23.1"
 
 DEEPSEEK_PROVIDER_ID = "deepseek"
 KIMI_PROVIDER_ID = "kimi"
@@ -34,6 +36,140 @@ KIMI_CONTEXT_WINDOW = 256 * 1024
 DEEPSEEK_API_BASE = "https://api.deepseek.com"
 DEEPSEEK_VISION_MODEL_ID = "deepseek/deepseek-v4-flash-vision-exp"
 DEEPSEEK_VISION_LITELLM_MODEL = "openai/deepseek-v4-flash-vision-exp"
+
+
+@dataclass(frozen=True)
+class ModelRuntimeConfig:
+    """One validated, indivisible chat-model runtime selection."""
+
+    model_id: str
+    reasoning_preset: str
+
+
+@dataclass(frozen=True)
+class ReasoningPresetDefinition:
+    """One product-visible preset and its private provider call options."""
+
+    id: str
+    label: str
+    call_options: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ModelReasoningDefinition:
+    """Reasoning controls and replay requirements for one concrete model."""
+
+    control: ReasoningControl
+    presets: tuple[ReasoningPresetDefinition, ...]
+    default_preset: str
+    replay_scope: ReasoningReplayScope = "none"
+
+    def preset(self, preset_id: str) -> ReasoningPresetDefinition | None:
+        return next((item for item in self.presets if item.id == preset_id), None)
+
+
+UNSUPPORTED_REASONING = ModelReasoningDefinition(
+    control="unsupported",
+    presets=(ReasoningPresetDefinition("none", "不支持"),),
+    default_preset="none",
+)
+
+DEEPSEEK_REASONING = ModelReasoningDefinition(
+    control="effort",
+    presets=(
+        ReasoningPresetDefinition(
+            "off",
+            "关闭",
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        ),
+        ReasoningPresetDefinition(
+            "low",
+            "低",
+            {
+                "reasoning_effort": "low",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        ),
+        ReasoningPresetDefinition(
+            "high",
+            "高",
+            {
+                "reasoning_effort": "high",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        ),
+        ReasoningPresetDefinition(
+            "max",
+            "最高",
+            {
+                "reasoning_effort": "max",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        ),
+    ),
+    default_preset="off",
+    replay_scope="conversation",
+)
+
+KIMI_TOGGLE_REASONING = ModelReasoningDefinition(
+    control="toggle",
+    presets=(
+        ReasoningPresetDefinition(
+            "off",
+            "关闭",
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        ),
+        ReasoningPresetDefinition(
+            "on",
+            "开启",
+            {"extra_body": {"thinking": {"type": "enabled"}}},
+        ),
+    ),
+    default_preset="on",
+    replay_scope="tool_turn",
+)
+
+KIMI_FIXED_REASONING = ModelReasoningDefinition(
+    control="fixed",
+    presets=(ReasoningPresetDefinition("on", "固定开启"),),
+    default_preset="on",
+    replay_scope="conversation",
+)
+
+OPENROUTER_GEMINI_REASONING = ModelReasoningDefinition(
+    control="effort",
+    presets=tuple(
+        ReasoningPresetDefinition(
+            preset_id,
+            label,
+            {"extra_body": {"reasoning": {"effort": preset_id}}},
+        )
+        for preset_id, label in (("low", "低"), ("medium", "中"), ("high", "高"))
+    ),
+    default_preset="medium",
+    replay_scope="conversation",
+)
+
+OPENROUTER_LUNA_REASONING = ModelReasoningDefinition(
+    control="effort",
+    presets=tuple(
+        ReasoningPresetDefinition(
+            preset_id,
+            label,
+            {"extra_body": {"reasoning": {"effort": preset_id}}},
+        )
+        for preset_id, label in (
+            ("none", "关闭"),
+            ("low", "低"),
+            ("medium", "中"),
+            ("high", "高"),
+            ("xhigh", "极高"),
+            ("max", "最高"),
+        )
+    ),
+    default_preset="medium",
+    replay_scope="conversation",
+)
 
 
 @dataclass(frozen=True)
@@ -54,7 +190,6 @@ class ModelRouteCapabilities:
     parallel_tool_calls: bool = True
     structured_output: bool = False
     multimodal_tool_results: bool = False
-    reasoning_replay: bool = False
 
     @property
     def attachments(self) -> bool:
@@ -89,6 +224,7 @@ class ProviderModel:
     processing_profile: str = "text-only-v1"
     api_base: str | None = None
     capabilities: ModelRouteCapabilities = TEXT_ONLY_CAPABILITIES
+    reasoning: ModelReasoningDefinition = UNSUPPORTED_REASONING
 
 
 @dataclass(frozen=True)
@@ -124,12 +260,14 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="deepseek/deepseek-v4-flash",
                 litellm_model="deepseek/deepseek-v4-flash",
                 context_window=1_000_000,
+                reasoning=DEEPSEEK_REASONING,
             ),
             ProviderModel(
                 id="deepseek/deepseek-v4-pro",
                 label="deepseek/deepseek-v4-pro",
                 litellm_model="deepseek/deepseek-v4-pro",
                 context_window=1_000_000,
+                reasoning=DEEPSEEK_REASONING,
             ),
             ProviderModel(
                 id=DEEPSEEK_VISION_MODEL_ID,
@@ -139,12 +277,12 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 processing_profile="deepseek-vision-files-v1",
                 api_base=DEEPSEEK_API_BASE,
                 capabilities=DEEPSEEK_VISION_CAPABILITIES,
+                reasoning=DEEPSEEK_REASONING,
             ),
         ),
         default_model="deepseek/deepseek-v4-flash",
         default_memory_model="deepseek/deepseek-v4-pro",
         default_call_options={
-            "extra_body": {"thinking": {"type": "disabled"}},
             "timeout": DEFAULT_LLM_TIMEOUT_SECONDS,
         },
     ),
@@ -161,6 +299,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 context_window=KIMI_CONTEXT_WINDOW,
                 processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
+                reasoning=KIMI_TOGGLE_REASONING,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.5",
@@ -169,6 +308,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 context_window=KIMI_CONTEXT_WINDOW,
                 processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
+                reasoning=KIMI_TOGGLE_REASONING,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.7-code",
@@ -177,6 +317,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 context_window=KIMI_CONTEXT_WINDOW,
                 processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
+                reasoning=KIMI_FIXED_REASONING,
             ),
             ProviderModel(
                 id="kimi/kimi-k2.7-code-highspeed",
@@ -185,6 +326,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 context_window=KIMI_CONTEXT_WINDOW,
                 processing_profile="kimi-multimodal-v1",
                 capabilities=KIMI_MULTIMODAL_CAPABILITIES,
+                reasoning=KIMI_FIXED_REASONING,
             ),
         ),
         default_model="kimi/kimi-k2.6",
@@ -203,12 +345,14 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
                 label="Google · Gemini 3.7 Flash",
                 litellm_model="openrouter/google/gemini-3.7-flash",
                 context_window=1_048_576,
+                reasoning=OPENROUTER_GEMINI_REASONING,
             ),
             ProviderModel(
                 id="openrouter/openai/gpt-5.6-luna",
                 label="OpenAI · GPT-5.6 Luna",
                 litellm_model="openrouter/openai/gpt-5.6-luna",
                 context_window=1_050_000,
+                reasoning=OPENROUTER_LUNA_REASONING,
             ),
         ),
         default_model="openrouter/google/gemini-3.7-flash",
@@ -280,6 +424,26 @@ def model_capabilities(model_id: str) -> ModelRouteCapabilities:
     return model.capabilities if model is not None else TEXT_ONLY_CAPABILITIES
 
 
+def model_reasoning(model_id: str) -> ModelReasoningDefinition:
+    provider = provider_definition(infer_provider_id_from_model(model_id))
+    model = provider.model(model_id)
+    if model is None:
+        raise ValueError(f"不支持的 model: {model_id!r}")
+    return model.reasoning
+
+
+def default_model_runtime_config(model_id: str) -> ModelRuntimeConfig:
+    reasoning = model_reasoning(model_id)
+    return ModelRuntimeConfig(model_id=model_id, reasoning_preset=reasoning.default_preset)
+
+
+def validate_model_runtime_config(config: ModelRuntimeConfig) -> ModelRuntimeConfig:
+    reasoning = model_reasoning(config.model_id)
+    if reasoning.preset(config.reasoning_preset) is None:
+        raise ValueError(f"模型 {config.model_id!r} 不支持推理档位 {config.reasoning_preset!r}")
+    return config
+
+
 def model_processing_profile(model_id: str) -> str:
     provider = provider_definition(infer_provider_id_from_model(model_id))
     model = provider.model(model_id)
@@ -292,11 +456,26 @@ def _fallback_litellm_model(provider: ProviderDefinition, model_id: str) -> str:
     return model_id
 
 
+def _merge_mappings(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
+    """Recursively merge provider options without discarding sibling policies."""
+
+    merged = dict(base)
+    for key, value in overlay.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _merge_mappings(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def build_provider_spec(
     *,
     provider_id: str,
     api_key: str,
     model_id: str | None = None,
+    reasoning_preset: str | None = None,
+    runtime_config: ModelRuntimeConfig | None = None,
     purpose: ModelPurpose = "chat",
     context_window: int | None = None,
     timeout_seconds: float | None = None,
@@ -308,14 +487,49 @@ def build_provider_spec(
     if not key:
         raise LLMAuthError(f"{provider.credential_name} 未配置。请先配置 provider credential。")
 
-    selected_model = model_id or default_model_for_provider(provider.provider_id, purpose)
+    selected_config: ModelRuntimeConfig | None
+    if runtime_config is not None:
+        if model_id is not None and model_id != runtime_config.model_id:
+            raise ValueError("model_id 与 runtime_config.model_id 不一致")
+        if reasoning_preset is not None and reasoning_preset != runtime_config.reasoning_preset:
+            raise ValueError("reasoning_preset 与 runtime_config.reasoning_preset 不一致")
+        selected_config = validate_model_runtime_config(runtime_config)
+        selected_model = selected_config.model_id
+    else:
+        selected_model = model_id or default_model_for_provider(provider.provider_id, purpose)
+        selected_definition = provider.model(selected_model)
+        selected_config = (
+            validate_model_runtime_config(
+                ModelRuntimeConfig(
+                    model_id=selected_model,
+                    reasoning_preset=(
+                        reasoning_preset or selected_definition.reasoning.default_preset
+                    ),
+                )
+            )
+            if selected_definition is not None
+            else None
+        )
+        if selected_definition is None and reasoning_preset is not None:
+            raise ValueError("目录外 model 不能指定产品 reasoning preset")
     model = provider.model(selected_model)
+    if model is None and selected_model in all_model_ids():
+        raise ValueError(f"模型 {selected_model!r} 不属于 provider {provider.provider_id!r}")
     litellm_model = (
         model.litellm_model if model else _fallback_litellm_model(provider, selected_model)
     )
     model_window = model.context_window if model else None
 
     defaults = dict(provider.default_call_options)
+    replay_scope: ReasoningReplayScope = "none"
+    effective_preset: str | None = None
+    if model is not None and selected_config is not None:
+        preset = model.reasoning.preset(selected_config.reasoning_preset)
+        assert preset is not None
+        defaults = _merge_mappings(defaults, preset.call_options)
+        effective_preset = preset.id
+        if preset.id not in {"off", "none"}:
+            replay_scope = model.reasoning.replay_scope
     if timeout_seconds is not None:
         defaults["timeout"] = timeout_seconds
 
@@ -328,6 +542,10 @@ def build_provider_spec(
         context_window_source=(
             "runtime_override" if context_window is not None else "catalog" if model else None
         ),
+        provider_id=provider.provider_id,
+        product_model_id=selected_model,
+        reasoning_preset=effective_preset,
+        reasoning_replay_scope=replay_scope,
     )
 
 
@@ -371,7 +589,14 @@ def public_model_catalog() -> dict[str, Any]:
                         "parallelToolCalls": capabilities["parallel_tool_calls"],
                         "structuredOutput": capabilities["structured_output"],
                         "multimodalToolResults": capabilities["multimodal_tool_results"],
-                        "reasoningReplay": capabilities["reasoning_replay"],
+                    },
+                    "reasoning": {
+                        "control": model.reasoning.control,
+                        "defaultPreset": model.reasoning.default_preset,
+                        "presets": [
+                            {"id": preset.id, "label": preset.label}
+                            for preset in model.reasoning.presets
+                        ],
                     },
                 }
             )
@@ -385,10 +610,14 @@ def public_model_catalog() -> dict[str, Any]:
                 "models": models,
             }
         )
-    return {"schemaVersion": 1, "catalogRevision": CATALOG_REVISION, "providers": providers}
+    return {"schemaVersion": 2, "catalogRevision": CATALOG_REVISION, "providers": providers}
 
 
-def replace_spec_model(spec: ProviderSpec, model_id: str) -> ProviderSpec:
+def replace_spec_model(
+    spec: ProviderSpec,
+    model_id: str,
+    reasoning_preset: str | None = None,
+) -> ProviderSpec:
     """Return ``spec`` with model/api_base/defaults adjusted for ``model_id``.
 
     This helper keeps compatibility with places that have already resolved the
@@ -396,16 +625,22 @@ def replace_spec_model(spec: ProviderSpec, model_id: str) -> ProviderSpec:
     """
 
     provider = provider_definition(infer_provider_id_from_model(model_id))
-    model = provider.model(model_id)
-    defaults = dict(provider.default_call_options)
-    if "timeout" in spec.defaults:
-        defaults["timeout"] = spec.defaults["timeout"]
-
+    timeout = spec.defaults.get("timeout")
+    rebuilt = build_provider_spec(
+        provider_id=provider.provider_id,
+        api_key=spec.api_key,
+        model_id=model_id,
+        reasoning_preset=reasoning_preset,
+        timeout_seconds=float(timeout) if isinstance(timeout, (int, float)) else None,
+    )
     return dataclasses.replace(
-        spec,
-        model=model.litellm_model if model else _fallback_litellm_model(provider, model_id),
-        api_base=model.api_base if model and model.api_base is not None else provider.api_base,
-        defaults=defaults,
-        context_window=model.context_window if model else spec.context_window,
-        context_window_source="catalog" if model else spec.context_window_source,
+        rebuilt,
+        context_window=(
+            rebuilt.context_window if rebuilt.context_window is not None else spec.context_window
+        ),
+        context_window_source=(
+            rebuilt.context_window_source
+            if rebuilt.context_window is not None
+            else spec.context_window_source
+        ),
     )

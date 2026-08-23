@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from agent import Conversation, Message, Session, SessionNotFoundError
+from llm_providers import ModelRuntimeConfig, default_model_runtime_config
 
 from .assembly import BridgeRuntime
 
@@ -47,6 +48,13 @@ class PersistentBootstrap:
     new_user_input: str
     default_persona: str
     default_model: str
+    default_reasoning_preset: str | None = None
+
+    @property
+    def default_model_config(self) -> ModelRuntimeConfig:
+        if self.default_reasoning_preset is None:
+            return default_model_runtime_config(self.default_model)
+        return ModelRuntimeConfig(self.default_model, self.default_reasoning_preset)
 
 
 @dataclass(frozen=True)
@@ -176,6 +184,7 @@ class SessionBridge:
             session = mgr.create(
                 persona=persona_info.name,
                 model=boot.default_model,
+                reasoning_preset=boot.default_reasoning_preset,
                 persona_id=persona_info.id,
                 session_id=boot.thread_id,
             )

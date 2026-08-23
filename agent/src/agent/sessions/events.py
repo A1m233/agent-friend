@@ -21,6 +21,7 @@ EventType = Literal[
     "assistant_message",
     "persona_change",
     "model_change",
+    "model_config_change",
     "channel_change",
     "tool_call_request",
     "tool_call_result",
@@ -33,6 +34,7 @@ EventType = Literal[
     "run_error",
     "todo_reminder",
     "model_context",
+    "provider_reasoning_state",
     "skill_catalog_state",
     "skill_context",
 ]
@@ -44,6 +46,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "assistant_message",
         "persona_change",
         "model_change",
+        "model_config_change",
         "channel_change",
         "tool_call_request",
         "tool_call_result",
@@ -56,6 +59,7 @@ ALLOWED_EVENT_TYPES: Final[frozenset[str]] = frozenset(
         "run_error",
         "todo_reminder",
         "model_context",
+        "provider_reasoning_state",
         "skill_catalog_state",
         "skill_context",
     }
