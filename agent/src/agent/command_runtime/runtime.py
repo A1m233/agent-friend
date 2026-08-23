@@ -189,7 +189,15 @@ def windows_sandbox_setup_command(
 def path_to_file_uri(path: Path) -> str:
     resolved = path.resolve()
     if os.name == "nt":
-        value = resolved.as_posix()
+        value = str(resolved)
+        folded = value.casefold()
+        if folded.startswith("\\\\?\\unc\\"):
+            value = "\\\\" + value[8:]
+        elif folded.startswith("\\\\?\\") and len(value) >= 6 and value[5] == ":":
+            value = value[4:]
+        value = value.replace("\\", "/")
+        if value.startswith("//"):
+            return f"file:{quote(value, safe='/:')}"
         return f"file:///{quote(value, safe='/:')}"
     return f"file://{quote(str(resolved), safe='/')}"
 
