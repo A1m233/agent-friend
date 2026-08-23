@@ -16,12 +16,16 @@ from llm_providers.deepseek_vision_compat import (
 from llm_providers import LLMBadRequestError, LLMClient, LLMTextDelta, ProviderSpec
 
 
-def _spec(model: str = "openai/deepseek-v4-flash-vision-exp") -> ProviderSpec:
+def _spec(
+    model: str = "openai/deepseek-v4-flash-vision-exp",
+    *,
+    defaults: dict[str, Any] | None = None,
+) -> ProviderSpec:
     return ProviderSpec(
         model=model,
         api_key="secret",
         api_base="https://api.deepseek.com",
-        defaults={"extra_body": {"thinking": {"type": "disabled"}}},
+        defaults=defaults or {"extra_body": {"thinking": {"type": "disabled"}}},
         context_window=1_000_000,
     )
 
@@ -98,18 +102,23 @@ def test_flatten_rejects_file_block_outside_user_message() -> None:
 
 def test_prepare_request_is_exact_model_gated_and_non_mutating() -> None:
     messages = _messages()
-    options = {"extra_body": {"thinking": {"type": "disabled"}}, "temperature": 0.2}
+    options = {
+        "extra_body": {"thinking": {"type": "enabled"}},
+        "reasoning_effort": "high",
+        "temperature": 0.2,
+    }
     original_options = copy.deepcopy(options)
 
     prepared_messages, prepared_options = prepare_litellm_request(_spec(), messages, options)
 
     assert prepared_messages is messages
     assert options == original_options
-    assert prepared_options["extra_body"]["thinking"] == {"type": "disabled"}
+    assert prepared_options["extra_body"]["thinking"] == {"type": "enabled"}
     assert prepared_options["extra_body"]["messages"][1]["content"][1] == {
         "type": "file",
         "file_id": "file-one",
     }
+    assert prepared_options["allowed_openai_params"] == ["reasoning_effort"]
 
     other_messages, other_options = prepare_litellm_request(
         _spec("deepseek/deepseek-v4-flash"), messages, options
@@ -145,6 +154,7 @@ def test_client_sync_keeps_litellm_safe_messages_and_adds_flat_wire_override(
         "file_id": "file-one",
     }
     assert seen["extra_body"]["thinking"] == {"type": "disabled"}
+    assert "allowed_openai_params" not in seen
 
 
 def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
@@ -183,7 +193,16 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
     ]
     with httpx.Client(transport=httpx.MockTransport(handler)) as session:
         monkeypatch.setattr(litellm, "client_session", session)
-        events = list(LLMClient(_spec()).stream(_messages(), tools=tools))
+        events = list(
+            LLMClient(
+                _spec(
+                    defaults={
+                        "extra_body": {"thinking": {"type": "enabled"}},
+                        "reasoning_effort": "high",
+                    }
+                )
+            ).stream(_messages(), tools=tools)
+        )
 
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
     assert captured["url"] == "https://api.deepseek.com/chat/completions"
@@ -192,7 +211,8 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
     assert body["model"] == "deepseek-v4-flash-vision-exp"
     assert body["stream"] is True
     assert body["stream_options"] == {"include_usage": True}
-    assert body["thinking"] == {"type": "disabled"}
+    assert body["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
     assert body["tools"] == tools
     assert body["messages"][1]["content"] == [
         {"type": "text", "text": "first"},

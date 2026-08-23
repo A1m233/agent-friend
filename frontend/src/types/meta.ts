@@ -14,6 +14,7 @@ export interface SessionSummary {
   updated_at: string;
   persona: string;
   model: string;
+  reasoningPreset?: string;
   archived_at?: string | null;
 }
 
@@ -31,6 +32,7 @@ interface SessionDetailBase {
   title: string;
   persona: string;
   model: string;
+  reasoningPreset?: string;
   revision?: number;
 }
 

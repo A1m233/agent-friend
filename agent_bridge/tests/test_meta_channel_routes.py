@@ -35,6 +35,7 @@ from llm_providers import (
     LLMTurnDone,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
 )
 
 
@@ -69,7 +70,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     catalog = PersonaCatalog()
     tool_registry = make_default_registry()
 
-    def _llm_factory(model: str) -> LanguageModel:
+    def _llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
         return _RouteLLM()
 
     def _prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
@@ -167,6 +168,44 @@ class TestGetSessionEndpoint:
         assert detail["session_id"] == sid
         assert detail["active_events"]
         assert "events" not in detail
+
+    def test_provider_reasoning_state_is_redacted_from_rest(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post("/v1/sessions", json={}).json()["session_id"]
+        runtime.persistent_store.append_event(
+            sid,
+            Event(
+                type="provider_reasoning_state",
+                uuid="reasoning-state",
+                ts=datetime.now(UTC),
+                payload={
+                    "provider": "deepseek",
+                    "model": "deepseek/deepseek-v4-flash",
+                    "format": "text",
+                    "replayScope": "conversation",
+                    "data": "private-reasoning-continuation",
+                },
+            ),
+        )
+
+        response = client.get(f"/v1/sessions/{sid}")
+
+        assert response.status_code == 200
+        assert "private-reasoning-continuation" not in response.text
+        reasoning_event = next(
+            event
+            for event in response.json()["events"]
+            if event["type"] == "provider_reasoning_state"
+        )
+        assert reasoning_event["payload"] == {
+            "provider": "deepseek",
+            "model": "deepseek/deepseek-v4-flash",
+            "format": "text",
+            "replayScope": "conversation",
+            "dataCharCount": len("private-reasoning-continuation"),
+            "redacted": True,
+        }
 
     def test_unknown_view_returns_422(self, client: TestClient) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
@@ -736,9 +775,12 @@ class TestSwitchModelEndpoint:
         assert response.json() == {"session_id": sid, "model": "kimi/kimi-k2.6"}
         loaded = runtime.persistent_session_manager.open(sid)
         assert loaded.current_model == "kimi/kimi-k2.6"
-        changes = [event for event in loaded.events if event.type == "model_change"]
+        changes = [event for event in loaded.events if event.type == "model_config_change"]
         assert len(changes) == 1
-        assert changes[0].payload["to"] == "kimi/kimi-k2.6"
+        assert changes[0].payload["to"] == {
+            "model": "kimi/kimi-k2.6",
+            "reasoningPreset": "on",
+        }
 
     def test_switch_model_is_idempotent(self, client: TestClient, runtime: BridgeRuntime) -> None:
         sid = client.post("/v1/sessions", json={}).json()["session_id"]
@@ -775,6 +817,79 @@ class TestSwitchModelEndpoint:
             busy = client.post(
                 f"/v1/sessions/{sid}/model",
                 json={"model": "kimi/kimi-k2.6"},
+            )
+        assert busy.status_code == 409
+        assert busy.json()["error"]["code"] == "session_busy"
+
+
+class TestRuntimeConfigEndpoint:
+    def test_create_and_partial_update_persist_atomic_config(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        created = client.post(
+            "/v1/sessions",
+            json={"model": "kimi/kimi-k2.6", "reasoningPreset": "off"},
+        )
+        assert created.status_code == 200
+        sid = created.json()["session_id"]
+        assert created.json()["reasoningPreset"] == "off"
+
+        response = client.patch(
+            f"/v1/sessions/{sid}/runtime-config",
+            json={"reasoningPreset": "on"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["runtimeConfig"] == {
+            "model": "kimi/kimi-k2.6",
+            "reasoningPreset": "on",
+        }
+        loaded = runtime.persistent_session_manager.open(sid)
+        assert loaded.current_model_config == ModelRuntimeConfig("kimi/kimi-k2.6", "on")
+        assert loaded.events[-1].type == "model_config_change"
+        summary = next(
+            item for item in client.get("/v1/sessions").json() if item["session_id"] == sid
+        )
+        assert summary["model"] == "kimi/kimi-k2.6"
+        assert summary["reasoningPreset"] == "on"
+        assert "reasoning_preset" not in summary
+
+    def test_model_only_update_uses_target_default(self, client: TestClient) -> None:
+        sid = client.post(
+            "/v1/sessions",
+            json={"model": "kimi/kimi-k2.6", "reasoningPreset": "off"},
+        ).json()["session_id"]
+
+        response = client.patch(
+            f"/v1/sessions/{sid}/runtime-config",
+            json={"model": "openrouter/openai/gpt-5.6-luna"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["runtimeConfig"] == {
+            "model": "openrouter/openai/gpt-5.6-luna",
+            "reasoningPreset": "medium",
+        }
+
+    def test_invalid_preset_and_busy_use_stable_errors(
+        self, client: TestClient, runtime: BridgeRuntime
+    ) -> None:
+        sid = client.post(
+            "/v1/sessions",
+            json={"model": "kimi/kimi-k2.6"},
+        ).json()["session_id"]
+
+        unsupported = client.patch(
+            f"/v1/sessions/{sid}/runtime-config",
+            json={"reasoningPreset": "max"},
+        )
+        assert unsupported.status_code == 400
+        assert unsupported.json()["error"]["code"] == "unsupported_reasoning_preset"
+
+        with runtime.turn_coordinator.hold(sid):
+            busy = client.patch(
+                f"/v1/sessions/{sid}/runtime-config",
+                json={"reasoningPreset": "off"},
             )
         assert busy.status_code == 409
         assert busy.json()["error"]["code"] == "session_busy"

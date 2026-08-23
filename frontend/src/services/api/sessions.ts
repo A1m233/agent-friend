@@ -6,6 +6,7 @@
 import { http } from "../http";
 import type { SessionDetail, SessionSummary } from "@/types/meta";
 import type { SessionSearchResponse } from "@/types/search";
+import type { ModelRuntimeConfig } from "@/lib/model-config";
 
 interface ListSessionsOptions {
   archived?: boolean;
@@ -39,8 +40,20 @@ function hasArchivedOption(
 }
 
 export const sessionsApi = {
-  create(): Promise<{ session_id: string; persona: string; model: string; channel: string }> {
-    return http.post<unknown, { session_id: string; persona: string; model: string; channel: string }>(
+  create(): Promise<{
+    session_id: string;
+    persona: string;
+    model: string;
+    reasoningPreset: string;
+    channel: string;
+  }> {
+    return http.post<unknown, {
+      session_id: string;
+      persona: string;
+      model: string;
+      reasoningPreset: string;
+      channel: string;
+    }>(
       "/v1/sessions",
       { channel: "text" },
     );
@@ -74,6 +87,16 @@ export const sessionsApi = {
     return http.post<unknown, { session_id: string; model: string }>(
       `/v1/sessions/${encodeURIComponent(sessionId)}/model`,
       { model },
+    );
+  },
+
+  updateRuntimeConfig(
+    sessionId: string,
+    config: ModelRuntimeConfig,
+  ): Promise<{ sessionId: string; runtimeConfig: ModelRuntimeConfig }> {
+    return http.patch<unknown, { sessionId: string; runtimeConfig: ModelRuntimeConfig }>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/runtime-config`,
+      config,
     );
   },
 

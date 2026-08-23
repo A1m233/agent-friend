@@ -12,6 +12,7 @@ import { type BaseEvent, type RunAgentInput } from "@ag-ui/core";
 import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
 import { ensureLocalServiceReady } from "@/services/runtime";
 import type { AttachmentDraft } from "./attachments";
+import type { ModelRuntimeConfig } from "@/lib/model-config";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -19,7 +20,7 @@ export interface RunStreamInput {
   /** 客户端预生成的稳定 run id；用于后台状态和精确停止。 */
   runId: string;
   /** 本轮在接纳消息时冻结的会话模型；新 session 用它初始化。 */
-  model: string;
+  modelConfig: ModelRuntimeConfig;
   /** 本轮 user 新输入。 */
   text: string;
   messageId?: string;
@@ -117,7 +118,7 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
     context: [],
     state: {},
     forwardedProps: {
-      model: input.model,
+      modelConfig: input.modelConfig,
     },
   };
 }

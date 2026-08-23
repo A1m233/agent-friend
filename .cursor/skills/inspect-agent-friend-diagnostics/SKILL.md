@@ -47,6 +47,7 @@ Before diagnosing, establish:
 - generated time, timezone, application version, distribution, build mode, commit, and dirty state;
 - log source, modification time, original size, tail start offset, and included size;
 - attachment request, inclusion status, integrity flags, and byte limits;
+- selected-session provider reasoning state count, redaction count, and any v2 payload-leak contract violation; never print the payload;
 - Windows Shell current snapshot and journal coverage, including dropped/truncated event counts and referenced-artifact gaps;
 - WebView2 render-evidence consent, manual/display/GPU recovery trigger and timing, internal-versus-desktop black/white pixel metrics, included/missing screenshot artifacts, and capture/recovery errors;
 - explicit exclusions.

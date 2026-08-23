@@ -78,6 +78,10 @@ class ProviderSpec:
     defaults: dict[str, Any] = field(default_factory=dict)
     context_window: int | None = None
     context_window_source: str | None = None
+    provider_id: str | None = None
+    product_model_id: str | None = None
+    reasoning_preset: str | None = None
+    reasoning_replay_scope: str = "none"
 
     @classmethod
     def from_config(

@@ -26,7 +26,7 @@ from agent import (
 )
 
 if TYPE_CHECKING:
-    from llm_providers import LLMClient
+    from llm_providers import LLMClient, ModelRuntimeConfig
 
 
 def _runtime(tmp_path: Path) -> BridgeRuntime:
@@ -35,10 +35,10 @@ def _runtime(tmp_path: Path) -> BridgeRuntime:
     catalog = PersonaCatalog()
     tools = make_default_registry()
 
-    def llm_factory(model: str) -> LLMClient:
+    def llm_factory(model: ModelRuntimeConfig) -> LLMClient:
         from llm_providers import LLMClient, ProviderSpec
 
-        return LLMClient(ProviderSpec(model=model, api_key="sk-test"))
+        return LLMClient(ProviderSpec(model=model.model_id, api_key="sk-test"))
 
     def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:
         return MarkdownPromptBuilder(persona_id=persona_id)

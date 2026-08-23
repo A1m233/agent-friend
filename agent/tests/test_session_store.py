@@ -152,6 +152,38 @@ def test_summary_activity_uses_last_conversation_message_not_control_event(
     assert store.list()[0].updated_at == message_at
 
 
+def test_summary_projects_latest_atomic_model_runtime_config(tmp_path: Path) -> None:
+    store = JsonlSessionStore(tmp_path)
+    session = Session.new(
+        title="t",
+        persona="default",
+        model="kimi/kimi-k2.6",
+        reasoning_preset="off",
+        session_id="session-runtime-config",
+    )
+    store.create(session)
+    store.append_event(
+        session.session_id,
+        Event(
+            type="model_config_change",
+            uuid=str(uuid4()),
+            ts=datetime.now(UTC),
+            payload={
+                "from": {"model": "kimi/kimi-k2.6", "reasoningPreset": "off"},
+                "to": {
+                    "model": "openrouter/openai/gpt-5.6-luna",
+                    "reasoningPreset": "xhigh",
+                },
+            },
+        ),
+    )
+
+    summary = store.list()[0]
+
+    assert summary.model == "openrouter/openai/gpt-5.6-luna"
+    assert summary.reasoning_preset == "xhigh"
+
+
 def test_summary_activity_falls_back_to_created_at_and_sorts_by_latest_message(
     tmp_path: Path,
 ) -> None:

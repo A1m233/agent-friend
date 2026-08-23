@@ -75,11 +75,19 @@ class ModelSwitchBody(BaseModel):
     model: str = Field(..., description="目标 model 名（LiteLLM 风格）")
 
 
+class RuntimeConfigPatchBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    model: str | None = Field(None, description="目标 model id")
+    reasoning_preset: str | None = Field(None, alias="reasoningPreset")
+
+
 class CreateSessionBody(BaseModel):
     """``POST /v1/sessions`` 请求体（007 起新增）。"""
 
     persona: str | None = Field(None, description="目标 persona name；不传走 bridge 默认")
     model: str | None = Field(None, description="目标 model 名；不传走 bridge 默认")
+    reasoning_preset: str | None = Field(None, alias="reasoningPreset")
     channel: Literal["voice", "text"] = Field(
         "text", description="初始 channel；voice_bridge 拨打通话时传 voice"
     )
@@ -166,7 +174,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     ) -> list[dict[str, Any]]:
         """返回 ``list[SessionSummary]``（按最近活跃时间倒序）。"""
         try:
-            return [_dataclass_to_dict(s) for s in mgr.list(archived=archived, query=q)]
+            return [_session_summary_to_dict(s) for s in mgr.list(archived=archived, query=q)]
         except SessionPersistError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -196,6 +204,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             session = mgr.create(
                 persona=persona_info.name,
                 model=model_name,
+                reasoning_preset=body.reasoning_preset,
                 persona_id=persona_info.id,
                 channel=body.channel,
             )
@@ -207,6 +216,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "session_id": session.session_id,
             "persona": session.current_persona,
             "model": session.current_model,
+            "reasoningPreset": session.current_model_config.reasoning_preset,
             "channel": session.current_channel,
         }
 
@@ -254,19 +264,20 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 revision = mgr.current_revision(session_id)
         except SessionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
-        active_events = [_dataclass_to_dict(ev) for ev in session.active_events]
+        active_events = [_public_event_dict(ev) for ev in session.active_events]
         detail = {
             "session_id": session.session_id,
             "title": session.initial_title,
             "persona": session.current_persona,
             "model": session.current_model,
+            "reasoningPreset": session.current_model_config.reasoning_preset,
             "revision": revision,
         }
         if view == "active":
             return {**detail, "active_events": active_events}
         return {
             **detail,
-            "events": [_dataclass_to_dict(ev) for ev in session.events],
+            "events": [_public_event_dict(ev) for ev in session.events],
             "active_events": active_events,
         }
 
@@ -302,7 +313,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
         if summary is None:  # 防御：前面已检查至少一个字段。
             raise HTTPException(status_code=400, detail="没有可更新字段")
-        return _dataclass_to_dict(summary)
+        return _session_summary_to_dict(summary)
 
     @router.post("/sessions/{session_id}/edit-resend-latest")
     async def edit_resend_latest(
@@ -658,6 +669,36 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             "model": model,
         }
 
+    @router.patch("/sessions/{session_id}/runtime-config")
+    def update_runtime_config(session_id: str, body: RuntimeConfigPatchBody) -> Any:
+        try:
+            from ..session_models import SessionModelService
+
+            service = runtime.session_model_service or SessionModelService(
+                mgr,
+                runtime.turn_coordinator,
+                runtime.agent_runtime,
+            )
+            config = service.update(
+                session_id,
+                model=body.model,
+                reasoning_preset=body.reasoning_preset,
+            )
+        except Exception as exc:
+            error = map_exception(exc)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=build_openai_error_envelope(error),
+            )
+
+        return {
+            "sessionId": session_id,
+            "runtimeConfig": {
+                "model": config.model_id,
+                "reasoningPreset": config.reasoning_preset,
+            },
+        }
+
     @router.post("/sessions/{session_id}/channel")
     def switch_channel(session_id: str, body: ChannelSwitchBody) -> Any:
         """切换 session 当前 channel（007 起新增）；落盘 ``channel_change`` 事件。
@@ -709,3 +750,38 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
     if isinstance(obj, dict):
         return obj
     return {"value": obj}
+
+
+def _public_event_dict(obj: Any) -> dict[str, Any]:
+    """Serialize an event without exposing provider reasoning continuation payloads."""
+    event = _dataclass_to_dict(obj)
+    if event.get("type") != "provider_reasoning_state":
+        return event
+
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        event["payload"] = {"redacted": True}
+        return event
+
+    public_payload = {
+        key: payload[key]
+        for key in ("provider", "model", "format", "replayScope")
+        if key in payload
+    }
+    data = payload.get("data")
+    if isinstance(data, str):
+        public_payload["dataCharCount"] = len(data)
+    elif isinstance(data, list):
+        public_payload["detailCount"] = len(data)
+    for key in ("dataCharCount", "detailCount"):
+        if key in payload and key not in public_payload:
+            public_payload[key] = payload[key]
+    public_payload["redacted"] = True
+    event["payload"] = public_payload
+    return event
+
+
+def _session_summary_to_dict(obj: Any) -> dict[str, Any]:
+    summary = _dataclass_to_dict(obj)
+    summary["reasoningPreset"] = summary.pop("reasoning_preset", None)
+    return summary

@@ -30,7 +30,7 @@ describe("buildRunAgentInput", () => {
     const payload = buildRunAgentInput({
       threadId: "session-1",
       runId: "run-1",
-      model: "kimi/kimi-k2.6",
+      modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "on" },
       messageId: "user-message-1",
       text: "请分析",
       attachments: [
@@ -71,7 +71,9 @@ describe("buildRunAgentInput", () => {
       { type: "text", text: "请分析" },
     ]);
     expect(payload.forwardedProps).not.toHaveProperty("attachments");
-    expect(payload.forwardedProps).toMatchObject({ model: "kimi/kimi-k2.6" });
+    expect(payload.forwardedProps).toEqual({
+      modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "on" },
+    });
   });
 });
 

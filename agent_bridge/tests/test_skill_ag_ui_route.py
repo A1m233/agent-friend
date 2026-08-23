@@ -27,6 +27,7 @@ from llm_providers import (
     LLMTurnDone,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
 )
 
 
@@ -68,7 +69,7 @@ def test_structured_skill_selection_reaches_ag_ui_model_context(tmp_path: Path) 
     tool_registry = make_default_registry()
     _RecordingLLM.seen_messages = []
 
-    def llm_factory(model: str) -> LanguageModel:
+    def llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
         return _RecordingLLM()
 
     def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:

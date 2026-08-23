@@ -26,7 +26,7 @@ vi.mock("@/services", () => ({
     list: vi.fn(async () => ({ runs: [] })),
     cancel: vi.fn(),
   },
-  sessionsApi: { get: vi.fn(), switchModel: vi.fn() },
+  sessionsApi: { get: vi.fn(), switchModel: vi.fn(), updateRuntimeConfig: vi.fn() },
 }));
 
 vi.mock("@/lib/persistence/chatUi", () => ({
@@ -61,7 +61,7 @@ const mockRunCancel = vi.mocked(runsApi.cancel);
 const mockEditStream = vi.mocked(editResendLatestStream);
 const mockContinueStream = vi.mocked(continueToolResultStream);
 const mockGet = vi.mocked(sessionsApi.get);
-const mockSwitchModel = vi.mocked(sessionsApi.switchModel);
+const mockUpdateRuntimeConfig = vi.mocked(sessionsApi.updateRuntimeConfig);
 const mockValidateModel = vi.mocked(modelsApi.validate);
 const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
@@ -157,6 +157,7 @@ beforeEach(() => {
   useConversationStore.setState({
     currentSessionId: null,
     currentModel: null,
+    currentReasoningPreset: null,
     messages: [],
     streaming: false,
     historyLoading: false,
@@ -176,10 +177,15 @@ beforeEach(() => {
   useRuntimeCredentialStore.setState({ groups: [], error: null, loading: false });
   setModelCatalogForTests(null);
   mockSetLastChatSessionId.mockClear();
-  mockValidateModel.mockImplementation(async (model) => ({ model, available: true }));
-  mockSwitchModel.mockImplementation(async (sessionId, model) => ({
-    session_id: sessionId,
-    model,
+  mockValidateModel.mockImplementation(async (configOrModel) => {
+    const runtimeConfig = typeof configOrModel === "string"
+      ? { model: configOrModel, reasoningPreset: "none" }
+      : configOrModel;
+    return { model: runtimeConfig.model, available: true, runtimeConfig };
+  });
+  mockUpdateRuntimeConfig.mockImplementation(async (sessionId, runtimeConfig) => ({
+    sessionId,
+    runtimeConfig,
   }));
 });
 
@@ -1140,6 +1146,7 @@ describe("conversation store · background detail refresh", () => {
         "sid-stale": {
           messages: [],
           currentModel: "test",
+          currentReasoningPreset: "none",
           streaming: true,
           historyLoading: false,
           historyLoadSeq: 0,
@@ -1199,6 +1206,7 @@ describe("conversation store · bounded caches", () => {
     const emptyView = {
       messages: [],
       currentModel: null,
+      currentReasoningPreset: null,
       streaming: false,
       historyLoading: false,
       historyLoadSeq: 0,
@@ -1240,13 +1248,22 @@ describe("conversation store · session model selection", () => {
     });
 
     const selection = await useConversationStore.getState().selectModel("kimi/kimi-k2.6");
-    expect(selection).toEqual({ status: "applied", model: "kimi/kimi-k2.6" });
-    expect(mockValidateModel).toHaveBeenCalledWith("kimi/kimi-k2.6");
+    expect(selection).toEqual({
+      status: "applied",
+      model: "kimi/kimi-k2.6",
+      reasoningPreset: "none",
+    });
+    expect(mockValidateModel).toHaveBeenCalledWith({
+      model: "kimi/kimi-k2.6",
+      reasoningPreset: "none",
+    });
     expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.6");
 
     await finishAcceptedSend(useConversationStore.getState().send("hello"));
     expect(mockStream).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "kimi/kimi-k2.6" }),
+      expect.objectContaining({
+        modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "none" },
+      }),
       expect.any(Object),
     );
   });
@@ -1268,15 +1285,25 @@ describe("conversation store · session model selection", () => {
   it("已有会话只在后端成功后提交 effective model", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
     await useConversationStore.getState().openSession("sid-1");
-    const pending = deferred<{ session_id: string; model: string }>();
-    mockSwitchModel.mockReturnValueOnce(pending.promise);
+    const pending = deferred<{
+      sessionId: string;
+      runtimeConfig: { model: string; reasoningPreset: string };
+    }>();
+    mockUpdateRuntimeConfig.mockReturnValueOnce(pending.promise);
 
     const switching = useConversationStore.getState().selectModel("kimi/kimi-k2.6");
     expect(useConversationStore.getState().currentModel).toBe("deepseek/old");
     expect(useConversationStore.getState().modelSwitching).toBe(true);
-    pending.resolve({ session_id: "sid-1", model: "kimi/kimi-k2.6" });
+    pending.resolve({
+      sessionId: "sid-1",
+      runtimeConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "none" },
+    });
 
-    expect(await switching).toEqual({ status: "applied", model: "kimi/kimi-k2.6" });
+    expect(await switching).toEqual({
+      status: "applied",
+      model: "kimi/kimi-k2.6",
+      reasoningPreset: "none",
+    });
     expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.6");
     expect(useConversationStore.getState().modelSwitching).toBe(false);
   });
@@ -1284,15 +1311,31 @@ describe("conversation store · session model selection", () => {
   it("连续切换的迟到响应不会覆盖最后一次选择", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-1", "hello", "deepseek/old"));
     await useConversationStore.getState().openSession("sid-1");
-    const older = deferred<{ session_id: string; model: string }>();
-    const newer = deferred<{ session_id: string; model: string }>();
-    mockSwitchModel.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const older = deferred<{
+      sessionId: string;
+      runtimeConfig: { model: string; reasoningPreset: string };
+    }>();
+    const newer = deferred<{
+      sessionId: string;
+      runtimeConfig: { model: string; reasoningPreset: string };
+    }>();
+    mockUpdateRuntimeConfig.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
 
     const olderRun = useConversationStore.getState().selectModel("kimi/older");
     const newerRun = useConversationStore.getState().selectModel("kimi/newer");
-    newer.resolve({ session_id: "sid-1", model: "kimi/newer" });
-    expect(await newerRun).toEqual({ status: "applied", model: "kimi/newer" });
-    older.resolve({ session_id: "sid-1", model: "kimi/older" });
+    newer.resolve({
+      sessionId: "sid-1",
+      runtimeConfig: { model: "kimi/newer", reasoningPreset: "none" },
+    });
+    expect(await newerRun).toEqual({
+      status: "applied",
+      model: "kimi/newer",
+      reasoningPreset: "none",
+    });
+    older.resolve({
+      sessionId: "sid-1",
+      runtimeConfig: { model: "kimi/older", reasoningPreset: "none" },
+    });
     expect(await olderRun).toEqual({ status: "stale" });
     expect(useConversationStore.getState().currentModel).toBe("kimi/newer");
   });
@@ -1305,15 +1348,25 @@ describe("conversation store · session model selection", () => {
     expect(useConversationStore.getState().currentModel).toBe("kimi/external");
 
     const refreshDetail = deferred<SessionDetail>();
-    const switchResponse = deferred<{ session_id: string; model: string }>();
+    const switchResponse = deferred<{
+      sessionId: string;
+      runtimeConfig: { model: string; reasoningPreset: string };
+    }>();
     mockGet.mockReturnValueOnce(refreshDetail.promise);
-    mockSwitchModel.mockReturnValueOnce(switchResponse.promise);
+    mockUpdateRuntimeConfig.mockReturnValueOnce(switchResponse.promise);
     const refresh = useConversationStore.getState().refreshCurrentSession("sid-1");
     const switching = useConversationStore.getState().selectModel("kimi/final");
     refreshDetail.resolve(sessionDetail("sid-1", "late", "deepseek/stale"));
     expect(await refresh).toBe("stale");
-    switchResponse.resolve({ session_id: "sid-1", model: "kimi/final" });
-    expect(await switching).toEqual({ status: "applied", model: "kimi/final" });
+    switchResponse.resolve({
+      sessionId: "sid-1",
+      runtimeConfig: { model: "kimi/final", reasoningPreset: "none" },
+    });
+    expect(await switching).toEqual({
+      status: "applied",
+      model: "kimi/final",
+      reasoningPreset: "none",
+    });
     expect(useConversationStore.getState().currentModel).toBe("kimi/final");
   });
 
@@ -1338,6 +1391,7 @@ describe("conversation store · session model selection", () => {
     expect(await useConversationStore.getState().selectModel("kimi/new")).toEqual({
       status: "applied",
       model: "kimi/new",
+      reasoningPreset: "none",
     });
     expect(useConversationStore.getState().currentModel).toBe("kimi/new");
     expect(useConversationStore.getState().editingMessage?.messageId).toBe("user-1");

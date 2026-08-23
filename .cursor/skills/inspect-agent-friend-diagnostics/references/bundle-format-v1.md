@@ -44,7 +44,7 @@ The generator does not upload the bundle or intentionally call an external provi
 | `diagnostics/attachments.json` | Attachment references, integrity checks, and original inclusion status | Candidates come only from included sessions |
 | `diagnostics/windows-shell/current.json` | Current Windows foreground, taskbar, selected window, geometry, style, and Z-order snapshot | `capability: unsupported` on non-Windows; may be absent after a collector failure |
 | `diagnostics/windows-shell/events-NNN.jsonl` | Oldest-first bounded Windows Shell event batches with a post-event snapshot | Independent journal budget; each line is one record |
-| `sessions/session-NNN.json` | Selected session projection with ordered events | Complete private content may be present; `active_events` is removed |
+| `sessions/session-NNN.json` | Selected session projection with ordered events | Complete private content may be present; `active_events` is removed; `selected-sessions-v2` replaces provider reasoning payloads with content-free summaries |
 | `logs/<allowlisted-name>` | Bounded log content after redaction | Per file 5 MiB tail; total 20 MiB |
 | `attachments/NNN-<name>` | Optional verified attachment original | Total originals capped at 200 MiB |
 
@@ -80,6 +80,7 @@ Session files normally contain `session_id`, title, model, persona, and ordered 
 - `tool_call_request` / `tool_call_result`: tool ids, arguments/results, duration, and error state;
 - `compaction`: coverage boundary, summary, and token counts;
 - `turn_rewrite`: inactive event UUIDs and replacement relationship.
+- `provider_reasoning_state`: provider-private continuation metadata. Under `selected-sessions-v2`, `data` must be absent and `redacted: true` plus optional length/count fields describe the removed payload. Treat any retained `data` as a producer privacy-contract violation; do not display it.
 
 Use event order and stable ids, not array position alone, to correlate a turn. A session projection describes persisted events; it is not a direct dump of transient frontend state because `active_events` is deliberately removed.
 
@@ -168,4 +169,4 @@ The pixel metrics intentionally treat alpha below 16 as transparent, so a transp
 
 The producer constructs diagnostic JSON from allowlisted fields, recursively replaces sensitive-key values, replaces configured credential values in text, redacts lines containing common authorization/credential markers, and replaces the user's home path with `<USER_HOME>`. Install-integrity evidence emits stable identity hashes, relative paths, counts, and status codes rather than install-root paths or process command lines. Managed execution environment evidence emits only provider identity summaries, stable errors, counts and coarse buckets; it excludes session identities, package inventories, paths, scripts, file content, environment values, commands and output. Windows Shell evidence intentionally excludes window titles, window contents, command lines, and full executable paths; it retains executable basenames and window classes for correlation.
 
-This is credential protection, not general content review. Selected sessions, problem text, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.
+This is credential protection, not general content review. `selected-sessions-v2` additionally strips provider reasoning continuation bodies even when they are not credentials; the inspector reports only event/redaction counts. Selected sessions, problem text, ordinary assistant/user content, tool arguments/results, log messages, filenames, attachment originals, and render screenshots may still contain private or unknown-sensitive data. The full-desktop render artifact is especially sensitive because it can contain every visible monitor and other applications. Do not display, extract, or inspect either PNG unless its pixels are necessary to distinguish the rendering hypotheses; extract only the named artifact to an agent-created temporary directory and remove it afterward.

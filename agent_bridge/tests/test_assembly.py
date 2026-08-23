@@ -30,6 +30,7 @@ from llm_providers import (
     LLMPaymentRequiredError,
     LLMPermissionError,
     LLMStreamInterruptedAfterOutputError,
+    default_model_runtime_config,
 )
 from runtime_config import (
     CredentialMissingError,
@@ -252,7 +253,9 @@ def test_runtime_starts_without_llm_credentials_for_local_control_plane(
         assert reset.status_code == 200
 
         with pytest.raises(CredentialMissingError):
-            runtime.llm_client_factory(runtime.default_model)  # type: ignore[misc]
+            runtime.llm_client_factory(  # type: ignore[misc]
+                default_model_runtime_config(runtime.default_model)
+            )
     finally:
         runtime.close()
 
@@ -379,7 +382,7 @@ def test_runtime_config_allows_provider_timeout_override(
     )
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
     runtime_config.memory_client_factory()
-    runtime_config.llm_client_factory(runtime_config.default_model)
+    runtime_config.llm_client_factory(default_model_runtime_config(runtime_config.default_model))
 
     assert [item["timeout_seconds"] for item in captured] == [12.5, 12.5]
 
@@ -404,7 +407,7 @@ def test_runtime_config_builds_kimi_specs(monkeypatch: pytest.MonkeyPatch) -> No
     )
     runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("env-only"))
     runtime_config.memory_client_factory()
-    runtime_config.llm_client_factory(runtime_config.default_model)
+    runtime_config.llm_client_factory(default_model_runtime_config(runtime_config.default_model))
 
     assert runtime_config.default_model == "kimi/kimi-k2.7-code-highspeed"
     assert runtime_config.memory_model == "kimi/kimi-k2.6"

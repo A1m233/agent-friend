@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .catalog import ModelPurpose, build_provider_spec
+from .catalog import ModelPurpose, ModelRuntimeConfig, build_provider_spec
 from .client import LLMClient
 from .protocol import LanguageModel
 
@@ -12,6 +12,8 @@ def create_language_model(
     provider_id: str,
     api_key: str,
     model_id: str | None = None,
+    reasoning_preset: str | None = None,
+    runtime_config: ModelRuntimeConfig | None = None,
     purpose: ModelPurpose = "chat",
     context_window: int | None = None,
     timeout_seconds: float | None = None,
@@ -27,6 +29,8 @@ def create_language_model(
             provider_id=provider_id,
             api_key=api_key,
             model_id=model_id,
+            reasoning_preset=reasoning_preset,
+            runtime_config=runtime_config,
             purpose=purpose,
             context_window=context_window,
             timeout_seconds=timeout_seconds,

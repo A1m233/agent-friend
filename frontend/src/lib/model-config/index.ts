@@ -16,7 +16,26 @@ export interface ModelCapabilities {
   parallelToolCalls: boolean;
   structuredOutput: boolean;
   multimodalToolResults: boolean;
-  reasoningReplay: boolean;
+  /** schema v1 compatibility; schema v2 uses the model-level reasoning object. */
+  reasoningReplay?: boolean;
+}
+
+export type ReasoningControl = "unsupported" | "toggle" | "effort" | "fixed";
+
+export interface ReasoningPresetOption {
+  id: string;
+  label: string;
+}
+
+export interface ModelReasoningDefinition {
+  control: ReasoningControl;
+  defaultPreset: string;
+  presets: ReasoningPresetOption[];
+}
+
+export interface ModelRuntimeConfig {
+  model: string;
+  reasoningPreset: string;
 }
 
 export interface ProviderModelOption {
@@ -26,6 +45,7 @@ export interface ProviderModelOption {
   transportProfile: string;
   processingProfile: string;
   capabilities: ModelCapabilities;
+  reasoning?: ModelReasoningDefinition;
 }
 
 export interface ProviderOption {
@@ -109,6 +129,22 @@ export function modelOption(modelId: string): ProviderModelOption | null {
   return null;
 }
 
+export function defaultModelRuntimeConfig(modelId: string): ModelRuntimeConfig {
+  return {
+    model: modelId,
+    reasoningPreset: modelOption(modelId)?.reasoning?.defaultPreset ?? "none",
+  };
+}
+
+export function modelRuntimeConfigLabel(config: ModelRuntimeConfig): string {
+  const model = modelOption(config.model);
+  const modelLabel = model?.label ?? config.model;
+  const presetLabel = model?.reasoning?.presets.find(
+    (preset) => preset.id === config.reasoningPreset,
+  )?.label;
+  return presetLabel ? `${modelLabel} · ${presetLabel}` : modelLabel;
+}
+
 export function credentialGroupForModel(modelId: string): RuntimeConfigGroup | null {
   for (const provider of modelProviders()) {
     if (provider.models.some((model) => model.id === modelId)) {
@@ -146,6 +182,12 @@ export function resolveDefaultConversationModel(
   settings: Pick<Settings, "chatModel"> = getSettingsSnapshot(),
 ): string {
   return settings.chatModel.model;
+}
+
+export function resolveDefaultConversationRuntimeConfig(
+  settings: Pick<Settings, "chatModel"> = getSettingsSnapshot(),
+): ModelRuntimeConfig {
+  return defaultModelRuntimeConfig(settings.chatModel.model);
 }
 
 export function setModelCatalogForTests(catalog: ModelCatalog | null): void {

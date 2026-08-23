@@ -31,8 +31,10 @@ ControlActionKind = Literal[
     "menu",
     "session_page",
     "model_page",
+    "reasoning_page",
     "switch_session",
     "switch_model",
+    "switch_reasoning",
 ]
 
 
@@ -42,6 +44,8 @@ class _ControlAction:
     key: IMBindingKey
     target: str = ""
     page: int = 0
+    expected_session_id: str = ""
+    expected_model_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,10 +152,25 @@ class IMControlService:
             await self._send_session_page(provider, key, action.page)
         elif action.kind == "model_page":
             await self._send_model_page(provider, key, action.page)
+        elif action.kind == "reasoning_page":
+            await self._send_reasoning_page(provider, key, action.page)
         elif action.kind == "switch_session":
             await self._switch_session(provider, key, action.target)
         elif action.kind == "switch_model":
-            await self._switch_model(provider, key, action.target)
+            await self._switch_model(
+                provider,
+                key,
+                action.target,
+                expected_session_id=action.expected_session_id,
+            )
+        elif action.kind == "switch_reasoning":
+            await self._switch_reasoning(
+                provider,
+                key,
+                action.target,
+                expected_session_id=action.expected_session_id,
+                expected_model_id=action.expected_model_id,
+            )
 
     async def _send_main_menu(self, provider: IMProvider, key: IMBindingKey) -> None:
         current = self._bound_session(key)
@@ -163,13 +182,21 @@ class IMControlService:
             )
             return
         title = self._display_title(current.session_id, current.initial_title)
-        text = f"当前会话：{title}\n当前模型：{current.current_model}"
+        config = current.current_model_config
+        reasoning_label = _reasoning_label(config.model_id, config.reasoning_preset)
+        text = f"当前会话：{title}\n当前模型：{config.model_id}\n当前推理强度：{reasoning_label}"
         controls = OutboundControls(
             rows=(
                 (
-                    self._token_button("switch-session", "切换会话", key, "session_page"),
                     self._token_button("switch-model", "切换模型", key, "model_page"),
+                    self._token_button(
+                        "switch-reasoning",
+                        "调整推理强度",
+                        key,
+                        "reasoning_page",
+                    ),
                 ),
+                (self._token_button("switch-session", "切换会话", key, "session_page"),),
             )
         )
         await self._send(provider, key, text, controls)
@@ -228,9 +255,12 @@ class IMControlService:
         page = min(max(page, 0), total_pages - 1)
         start = page * _PAGE_SIZE
         current = self._bound_session(key)
+        if current is None:
+            await self._send_text(provider, key, "目标会话已经不存在，请重新打开菜单选择。")
+            return
         rows: list[tuple[OutboundAction, ...]] = []
         for model_id, label in models[start : start + _PAGE_SIZE]:
-            prefix = "当前 · " if current and current.current_model == model_id else ""
+            prefix = "当前 · " if current.current_model == model_id else ""
             rows.append(
                 (
                     self._token_button(
@@ -239,6 +269,7 @@ class IMControlService:
                         key,
                         "switch_model",
                         target=model_id,
+                        expected_session_id=current.session_id,
                     ),
                 )
             )
@@ -253,6 +284,80 @@ class IMControlService:
             provider,
             key,
             f"选择模型（第 {page + 1}/{total_pages} 页）",
+            OutboundControls(rows=tuple(rows)),
+        )
+
+    async def _send_reasoning_page(
+        self,
+        provider: IMProvider,
+        key: IMBindingKey,
+        page: int,
+    ) -> None:
+        current = self._bound_session(key)
+        if current is None:
+            await self._send_text(provider, key, "目标会话已经不存在，请重新打开菜单选择。")
+            return
+        config = current.current_model_config
+        control, presets = _reasoning_options(config.model_id)
+        current_label = _reasoning_label(config.model_id, config.reasoning_preset)
+        if control in {"fixed", "unsupported"}:
+            state_text = "固定开启，不可调整" if control == "fixed" else "不支持调整"
+            await self._send(
+                provider,
+                key,
+                f"当前模型：{config.model_id}\n当前推理强度：{current_label}\n{state_text}",
+                OutboundControls(
+                    rows=((self._token_button("reasoning-back", "返回", key, "menu"),),)
+                ),
+            )
+            return
+
+        total_pages = max(1, (len(presets) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        page = min(max(page, 0), total_pages - 1)
+        start = page * _PAGE_SIZE
+        rows: list[tuple[OutboundAction, ...]] = []
+        for preset_id, label in presets[start : start + _PAGE_SIZE]:
+            prefix = "当前 · " if preset_id == config.reasoning_preset else ""
+            rows.append(
+                (
+                    self._token_button(
+                        f"reasoning-{secrets.token_hex(4)}",
+                        _truncate(f"{prefix}{label}", 28),
+                        key,
+                        "switch_reasoning",
+                        target=preset_id,
+                        expected_session_id=current.session_id,
+                        expected_model_id=config.model_id,
+                    ),
+                )
+            )
+        nav: list[OutboundAction] = []
+        if page > 0:
+            nav.append(
+                self._token_button(
+                    "reasoning-prev",
+                    "上一页",
+                    key,
+                    "reasoning_page",
+                    page=page - 1,
+                )
+            )
+        if page + 1 < total_pages:
+            nav.append(
+                self._token_button(
+                    "reasoning-next",
+                    "下一页",
+                    key,
+                    "reasoning_page",
+                    page=page + 1,
+                )
+            )
+        nav.append(self._token_button("reasoning-back", "返回", key, "menu"))
+        rows.append(tuple(nav))
+        await self._send(
+            provider,
+            key,
+            f"选择推理强度（{config.model_id}，第 {page + 1}/{total_pages} 页）",
             OutboundControls(rows=tuple(rows)),
         )
 
@@ -294,14 +399,23 @@ class IMControlService:
         provider: IMProvider,
         key: IMBindingKey,
         model_id: str,
+        *,
+        expected_session_id: str,
     ) -> None:
         binding = self._state.get_binding(key)
         if binding is None:
             await self._send_text(provider, key, "还没有选择会话，请先在桌面端完成选择。")
             return
+        if binding.session_id != expected_session_id:
+            await self._send_text(provider, key, "当前绑定会话已变化，请重新打开最新菜单。")
+            return
         try:
             async with self._coordinator.try_mutation(key):
-                model = await asyncio.to_thread(self._models.switch, binding.session_id, model_id)
+                config = await asyncio.to_thread(
+                    self._models.update,
+                    binding.session_id,
+                    model=model_id,
+                )
         except IMBindingBusyError:
             await self._send_text(provider, key, "请等待当前回复完成后再切换模型。")
             return
@@ -309,7 +423,57 @@ class IMControlService:
             error = map_exception(exc)
             await self._send_text(provider, key, f"模型没有切换：{error.message}")
             return
-        await self._send_text(provider, key, f"模型已切换为 {model}，下一条回复开始生效。")
+        await self._send_text(
+            provider,
+            key,
+            "配置已切换\n"
+            f"模型：{config.model_id}\n"
+            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset)}\n"
+            "下一条回复开始生效。",
+        )
+
+    async def _switch_reasoning(
+        self,
+        provider: IMProvider,
+        key: IMBindingKey,
+        preset_id: str,
+        *,
+        expected_session_id: str,
+        expected_model_id: str,
+    ) -> None:
+        binding = self._state.get_binding(key)
+        if binding is None:
+            await self._send_text(provider, key, "还没有选择会话，请先在桌面端完成选择。")
+            return
+        if binding.session_id != expected_session_id:
+            await self._send_text(provider, key, "当前绑定会话已变化，请重新打开最新菜单。")
+            return
+        current = self._bound_session(key)
+        if current is None or current.current_model != expected_model_id:
+            await self._send_text(provider, key, "当前模型已变化，请重新打开推理强度菜单。")
+            return
+        try:
+            async with self._coordinator.try_mutation(key):
+                config = await asyncio.to_thread(
+                    self._models.update,
+                    binding.session_id,
+                    reasoning_preset=preset_id,
+                )
+        except IMBindingBusyError:
+            await self._send_text(provider, key, "请等待当前回复完成后再调整推理强度。")
+            return
+        except Exception as exc:
+            error = map_exception(exc)
+            await self._send_text(provider, key, f"推理强度没有切换：{error.message}")
+            return
+        await self._send_text(
+            provider,
+            key,
+            "推理强度已切换\n"
+            f"模型：{config.model_id}\n"
+            f"推理强度：{_reasoning_label(config.model_id, config.reasoning_preset)}\n"
+            "下一条回复开始生效。",
+        )
 
     def _token_button(
         self,
@@ -320,14 +484,29 @@ class IMControlService:
         *,
         target: str = "",
         page: int = 0,
+        expected_session_id: str = "",
+        expected_model_id: str = "",
     ) -> OutboundAction:
-        payload = self._tokens.issue(_ControlAction(kind=kind, key=key, target=target, page=page))
+        payload = self._tokens.issue(
+            _ControlAction(
+                kind=kind,
+                key=key,
+                target=target,
+                page=page,
+                expected_session_id=expected_session_id,
+                expected_model_id=expected_model_id,
+            )
+        )
         return OutboundAction(
             id=action_id,
             label=label,
             visited_label="已选择",
             payload=payload,
-            style="primary" if kind in ("switch_session", "switch_model") else "default",
+            style=(
+                "primary"
+                if kind in ("switch_session", "switch_model", "switch_reasoning")
+                else "default"
+            ),
         )
 
     def _bound_session(self, key: IMBindingKey) -> Session | None:
@@ -387,6 +566,36 @@ def _model_options() -> list[tuple[str, str]]:
                 if model_id:
                     result.append((model_id, str(model.get("label", model_id))))
     return result
+
+
+def _reasoning_options(model_id: str) -> tuple[str, list[tuple[str, str]]]:
+    for provider in public_model_catalog().get("providers", []):
+        if not isinstance(provider, dict):
+            continue
+        for model in provider.get("models", []):
+            if not isinstance(model, dict) or str(model.get("id", "")) != model_id:
+                continue
+            reasoning = model.get("reasoning")
+            if not isinstance(reasoning, dict):
+                return "unsupported", []
+            control = str(reasoning.get("control", "unsupported"))
+            presets: list[tuple[str, str]] = []
+            for preset in reasoning.get("presets", []):
+                if not isinstance(preset, dict):
+                    continue
+                preset_id = str(preset.get("id", ""))
+                if preset_id:
+                    presets.append((preset_id, str(preset.get("label", preset_id))))
+            return control, presets
+    return "unsupported", []
+
+
+def _reasoning_label(model_id: str, preset_id: str) -> str:
+    _control, presets = _reasoning_options(model_id)
+    for candidate_id, label in presets:
+        if candidate_id == preset_id:
+            return label
+    return preset_id
 
 
 def _session_button_id(session_id: str) -> str:

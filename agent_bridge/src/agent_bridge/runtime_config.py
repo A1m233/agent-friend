@@ -11,6 +11,7 @@ from llm_providers import (
     ModelPurpose,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
     create_language_model,
     default_model_for_provider,
     infer_provider_id_from_model,
@@ -39,7 +40,7 @@ class BridgeRuntimeConfig:
     default_model: str
     memory_model: str
     memory_client_factory: Callable[[], LanguageModel]
-    llm_client_factory: Callable[[str], LanguageModel]
+    llm_client_factory: Callable[[ModelRuntimeConfig], LanguageModel]
     tool_credentials: ToolCredentials
 
 
@@ -118,6 +119,7 @@ def _language_model(
     *,
     provider_id: str,
     model_id: str,
+    reasoning_preset: str | None = None,
     purpose: ModelPurpose,
 ) -> LanguageModel:
     provider = provider_definition(provider_id)
@@ -126,6 +128,7 @@ def _language_model(
         provider_id=provider.provider_id,
         api_key=require_secret(source, provider.credential_name),
         model_id=model_id,
+        reasoning_preset=reasoning_preset,
         purpose=purpose,
         context_window=_optional_int(source, f"{prefix}_CONTEXT_WINDOW"),
         timeout_seconds=_optional_float(source, f"{prefix}_TIMEOUT_SECONDS"),
@@ -156,15 +159,16 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
             purpose="memory",
         )
 
-    def llm_client_factory(model_id: str) -> LanguageModel:
+    def llm_client_factory(config: ModelRuntimeConfig) -> LanguageModel:
         try:
-            provider_id = infer_provider_id_from_model(model_id)
+            provider_id = infer_provider_id_from_model(config.model_id)
         except ValueError:
             provider_id = chat_provider_id
         return _language_model(
             source,
             provider_id=provider_id,
-            model_id=model_id,
+            model_id=config.model_id,
+            reasoning_preset=config.reasoning_preset,
             purpose="chat",
         )
 

@@ -80,6 +80,7 @@ from llm_providers import (
     LLMUsage,
     ModelRequest,
     ModelResponse,
+    ProviderReasoningState,
     ProviderSpec,
 )
 from memory import ConversationFragment, MemoryContext
@@ -371,6 +372,7 @@ def _make_conversation(
     tool_run_context_factory: Any | None = None,
     memory: Any | None = None,
     model: str = "deepseek/deepseek-chat",
+    reasoning_preset: str | None = None,
 ) -> Conversation:
     """组装最小可跑的 :class:`Conversation`：fake LLM + 真 catalog + 内存内 store。"""
     catalog = PersonaCatalog(external_dir=tmp_path / "personas")
@@ -380,6 +382,7 @@ def _make_conversation(
         title="t",
         persona="default",
         model=model,
+        reasoning_preset=reasoning_preset,
         persona_id=persona_id,
     )
     store.create(session)
@@ -527,6 +530,71 @@ def test_cache_key_does_not_leak_into_provider_settings(tmp_path: Path) -> None:
 
     assert "prompt_cache_key" not in fake.received_overrides[0]
     assert fake.received_cache_keys == [conv.session.session_id]
+
+
+def test_provider_reasoning_state_persists_privately_and_replays_for_tools(
+    tmp_path: Path,
+) -> None:
+    first_state = ProviderReasoningState(
+        provider_id="deepseek",
+        model_id="deepseek/deepseek-v4-flash",
+        format="reasoning_content",
+        replay_scope="conversation",
+        payload="private-thought-one",
+    )
+    second_state = ProviderReasoningState(
+        provider_id="deepseek",
+        model_id="deepseek/deepseek-v4-flash",
+        format="reasoning_content",
+        replay_scope="conversation",
+        payload="private-thought-two",
+    )
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="echo-1",
+                    tool_name="echo",
+                    args_json_delta='{"message":"hello"}',
+                ),
+                LLMTurnDone(stop_reason="tool_use", reasoning_state=first_state),
+            ],
+            [
+                LLMTextDelta(text="first answer"),
+                LLMTurnDone(stop_reason="end_turn", reasoning_state=second_state),
+            ],
+            [LLMTextDelta(text="second answer"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([EchoTool()]),
+        model="deepseek/deepseek-v4-flash",
+        reasoning_preset="high",
+    )
+
+    list(conv.stream("first", run_id="run-one"))
+    list(conv.stream("second", run_id="run-two"))
+
+    tool_continuation_assistants = [
+        message
+        for message in fake.received[1]
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    assert tool_continuation_assistants[-1]["reasoning_content"] == "private-thought-one"
+    replayed = [
+        message.get("reasoning_content")
+        for message in fake.received[2]
+        if message.get("role") == "assistant" and message.get("reasoning_content")
+    ]
+    assert replayed == ["private-thought-one", "private-thought-two"]
+    assert (
+        len([event for event in conv.session.events if event.type == "provider_reasoning_state"])
+        == 2
+    )
+    assert all("provider_reasoning_state" not in message.meta for message in conv.session.messages)
 
 
 def test_tool_loop_freezes_actual_llm_client_and_model_metadata(tmp_path: Path) -> None:

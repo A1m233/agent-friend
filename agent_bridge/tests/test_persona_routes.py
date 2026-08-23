@@ -31,6 +31,7 @@ from llm_providers import (
     LLMTurnDone,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeConfig,
 )
 
 
@@ -89,7 +90,7 @@ def runtime(tmp_path: Path) -> BridgeRuntime:
     catalog = PersonaCatalog(external_dir=settings.personas_dir)
     registry = ToolRegistry([])
 
-    def llm_factory(model: str) -> LanguageModel:
+    def llm_factory(model: ModelRuntimeConfig) -> LanguageModel:
         return FakeLLM()
 
     def prompt_factory(persona_id: str) -> MarkdownPromptBuilder:

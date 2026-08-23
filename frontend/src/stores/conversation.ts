@@ -11,7 +11,10 @@ import { EventType } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import {
   credentialGroupForModel,
+  defaultModelRuntimeConfig,
   resolveDefaultConversationModel,
+  resolveDefaultConversationRuntimeConfig,
+  type ModelRuntimeConfig,
 } from "@/lib/model-config";
 import {
   continueToolResultStream,
@@ -93,6 +96,7 @@ export interface EditingMessageDescriptor {
 interface ConversationState {
   currentSessionId: string | null;
   currentModel: string | null;
+  currentReasoningPreset: string | null;
   modelSwitching: boolean;
   modelSwitchTarget: string | null;
   editingMessage: EditingMessageDescriptor | null;
@@ -125,6 +129,7 @@ interface ConversationState {
   markSessionViewed: (sessionId: string) => void;
   pruneCaches: () => void;
   selectModel: (modelId: string) => Promise<ModelSelectionOutcome>;
+  selectRuntimeConfig: (config: ModelRuntimeConfig) => Promise<ModelSelectionOutcome>;
   beginEditingMessage: (messageId: string) => boolean;
   cancelEditing: () => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
@@ -144,6 +149,7 @@ interface ConversationState {
 interface SessionConversationView {
   messages: ChatMessage[];
   currentModel: string | null;
+  currentReasoningPreset: string | null;
   streaming: boolean;
   historyLoading: boolean;
   historyLoadSeq: number;
@@ -170,7 +176,7 @@ export type SendStartResult =
     };
 
 export type ModelSelectionOutcome =
-  | { status: "applied"; model: string }
+  | { status: "applied"; model: string; reasoningPreset: string }
   | { status: "stale" }
   | { status: "failed"; error: FriendlyError };
 
@@ -252,6 +258,7 @@ function currentViewSnapshot(state: ConversationState): SessionConversationView 
   return {
     messages: state.messages,
     currentModel: state.currentModel,
+    currentReasoningPreset: state.currentReasoningPreset,
     streaming: state.streaming,
     historyLoading: state.historyLoading,
     historyLoadSeq: state.historyLoadSeq,
@@ -264,6 +271,7 @@ function emptyView(): SessionConversationView {
   return {
     messages: [],
     currentModel: null,
+    currentReasoningPreset: null,
     streaming: false,
     historyLoading: false,
     historyLoadSeq: 0,
@@ -276,6 +284,7 @@ function viewFields(view: SessionConversationView) {
   return {
     messages: view.messages,
     currentModel: view.currentModel,
+    currentReasoningPreset: view.currentReasoningPreset,
     streaming: view.streaming,
     historyLoading: view.historyLoading,
     historyLoadSeq: view.historyLoadSeq,
@@ -286,6 +295,7 @@ function viewFields(view: SessionConversationView) {
 export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   currentModel: null,
+  currentReasoningPreset: null,
   modelSwitching: false,
   modelSwitchTarget: null,
   editingMessage: null,
@@ -378,6 +388,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const view = {
           messages: projectSessionDetail(detail),
           currentModel: detail.model,
+          currentReasoningPreset: detail.reasoningPreset
+            ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
           streaming: Boolean(s.activeRunIdBySession[sessionId]),
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
@@ -519,6 +531,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const view: SessionConversationView = {
           messages: projectSessionDetail(detail),
           currentModel: detail.model,
+          currentReasoningPreset: detail.reasoningPreset
+            ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
           streaming: false,
           historyLoading: false,
           historyLoadSeq: state.historyLoadSeq,
@@ -711,9 +725,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   async selectModel(modelId) {
+    return get().selectRuntimeConfig(defaultModelRuntimeConfig(modelId));
+  },
+
+  async selectRuntimeConfig(config) {
     const current = get();
     const effectiveModel = current.currentModel ?? resolveDefaultConversationModel();
-    if (modelId === effectiveModel) return { status: "applied", model: effectiveModel };
+    const effectiveReasoningPreset = current.currentReasoningPreset
+      ?? defaultModelRuntimeConfig(effectiveModel).reasoningPreset;
+    if (
+      config.model === effectiveModel
+      && config.reasoningPreset === effectiveReasoningPreset
+    ) {
+      return {
+        status: "applied",
+        model: effectiveModel,
+        reasoningPreset: effectiveReasoningPreset,
+      };
+    }
     if (
       current.streaming
       || current.historyLoading
@@ -730,11 +759,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     detailRefreshSeq += 1;
     const sessionId = current.currentSessionId;
     const openToken = openSessionToken;
-    set({ modelSwitching: true, modelSwitchTarget: modelId });
+    set({ modelSwitching: true, modelSwitchTarget: config.model });
     try {
-      const appliedModel = sessionId
-        ? (await sessionsApi.switchModel(sessionId, modelId)).model
-        : (await modelsApi.validate(modelId)).model;
+      const appliedConfig = sessionId
+        ? (await sessionsApi.updateRuntimeConfig(sessionId, config)).runtimeConfig
+        : (await modelsApi.validate(config)).runtimeConfig ?? config;
       if (
         seq !== modelMutationSeq ||
         openToken !== openSessionToken ||
@@ -742,8 +771,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       ) {
         return { status: "stale" };
       }
-      set({ currentModel: appliedModel });
-      return { status: "applied", model: appliedModel };
+      set({
+        currentModel: appliedConfig.model,
+        currentReasoningPreset: appliedConfig.reasoningPreset,
+      });
+      return { status: "applied", ...appliedConfig };
     } catch (error) {
       if (
         seq !== modelMutationSeq ||
@@ -816,7 +848,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const sessionId = get().currentSessionId ?? newId();
     const runId = newId();
-    const initialModel = get().currentModel ?? resolveDefaultConversationModel();
+    const initialConfig = get().currentModel
+      ? {
+          model: get().currentModel!,
+          reasoningPreset: get().currentReasoningPreset
+            ?? defaultModelRuntimeConfig(get().currentModel!).reasoningPreset,
+        }
+      : resolveDefaultConversationRuntimeConfig();
+    const initialModel = initialConfig.model;
     const credentialGroup = runtimeCredentialGroupForModel(initialModel);
     const credentialRevision = credentialGroup
       ? useRuntimeCredentialStore
@@ -849,6 +888,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const view: SessionConversationView = {
         messages,
         currentModel: initialModel,
+        currentReasoningPreset: initialConfig.reasoningPreset,
         streaming: true,
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq,
@@ -858,6 +898,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return {
         currentSessionId: sessionId,
         currentModel: initialModel,
+        currentReasoningPreset: initialConfig.reasoningPreset,
         streaming: true,
         messages,
         sessionViews: {
@@ -901,7 +942,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           {
             threadId: sessionId,
             runId,
-            model: initialModel,
+            modelConfig: initialConfig,
             text: trimmed,
             messageId: userMessageId,
             attachments,
@@ -1194,6 +1235,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 ...view,
                 messages: nextMessages,
                 currentModel: detail.model,
+                currentReasoningPreset: detail.reasoningPreset
+                  ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
                 streaming: false,
                 revision: detail.revision ?? view.revision,
                 historyLoadSeq: view.historyLoadSeq + 1,
@@ -1201,7 +1244,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               return {
                 sessionViews: { ...s.sessionViews, [sessionId]: nextView },
                 ...(s.currentSessionId === sessionId
-                  ? { ...viewFields(nextView), currentModel: detail.model }
+                  ? {
+                      ...viewFields(nextView),
+                      currentModel: detail.model,
+                      currentReasoningPreset: detail.reasoningPreset
+                        ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+                    }
                   : {}),
               };
             });

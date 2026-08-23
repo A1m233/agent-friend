@@ -444,7 +444,20 @@ def _build_bundle(
         "diagnostics/windows-shell/current.json": shell_snapshot,
         "sessions/session-001.json": {
             "session_id": "session-1",
-            "events": [{"type": "user_message", "payload": {"content": "private"}}],
+            "events": [
+                {"type": "user_message", "payload": {"content": "private"}},
+                {
+                    "type": "provider_reasoning_state",
+                    "payload": {
+                        "provider": "kimi",
+                        "model": "kimi/kimi-k2.7-code",
+                        "format": "reasoning_content",
+                        "replayScope": "conversation",
+                        "redacted": True,
+                        "dataCharCount": 24,
+                    },
+                },
+            ],
         },
     }
     text_entries = {
@@ -526,6 +539,9 @@ def test_current_producer_capabilities_have_real_inspector_handlers(tmp_path: Pa
     assert summary["executionEnvironments"]["activeOverlayCount"] == 1
     assert summary["executionEnvironments"]["inactiveOverlayCount"] == 2
     assert summary["executionEnvironments"]["validatedPayloadCount"] == 1
+    assert summary["sessions"][0]["providerReasoningStateCount"] == 1
+    assert summary["sessions"][0]["providerReasoningRedactedCount"] == 1
+    assert summary["sessions"][0]["providerReasoningPayloadLeakCount"] == 0
 
 
 def test_inspector_warns_when_render_evidence_artifact_is_missing(tmp_path: Path) -> None:

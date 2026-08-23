@@ -54,7 +54,16 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             thread_id=decoded.thread_id,
             new_user_input=decoded.new_user_input,
             default_persona=runtime.default_persona,
-            default_model=decoded.requested_model or runtime.default_model,
+            default_model=(
+                decoded.requested_model_config.model_id
+                if decoded.requested_model_config is not None
+                else runtime.default_model
+            ),
+            default_reasoning_preset=(
+                decoded.requested_model_config.reasoning_preset
+                if decoded.requested_model_config is not None
+                else None
+            ),
         )
 
         effective_model = boot.default_model
