@@ -56,6 +56,7 @@ MAX_STDIN_BYTES = 64 * 1024
 MAX_RESULT_OUTPUT_BYTES = 64 * 1024
 DEFAULT_TIMEOUT_SECONDS = 900.0
 MAX_TIMEOUT_SECONDS = 3600.0
+MAX_COMMAND_REASON_CHARS = 300
 MAX_SESSION_WORKSPACE_FILES = 2_000
 MAX_SESSION_WORKSPACE_FILE_BYTES = 25 * 1024 * 1024
 MAX_SESSION_WORKSPACE_BYTES = 100 * 1024 * 1024
@@ -182,6 +183,21 @@ def _managed_environment_error_result(exc: ManagedEnvironmentError) -> ToolResul
         },
         error=True,
     )
+
+
+def _optional_command_reason(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > MAX_COMMAND_REASON_CHARS:
+        raise ValueError("reason 无效")
+    normalized = value.strip()
+    return normalized or None
+
+
+def _default_command_reason(details: CommandApprovalDetails) -> str:
+    if details.execution == "host_user":
+        return "以宿主用户身份运行本地命令"
+    return "在 Codex 沙箱中运行本地命令"
 
 
 def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, object]:
@@ -423,12 +439,13 @@ class ExecCommandTool:
             },
             "reason": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 300,
-                "description": "展示给用户的简短执行理由，准确说明命令为何是当前任务所需。",
+                "maxLength": MAX_COMMAND_REASON_CHARS,
+                "description": (
+                    "可选的用户可见执行理由，准确说明命令为何是当前任务所需；"
+                    "省略或留空时由宿主根据规范化执行级别生成稳定展示文案。"
+                ),
             },
         },
-        "required": ["reason"],
         "oneOf": [
             {"required": ["cmd"], "not": {"required": ["argv"]}},
             {"required": ["argv"], "not": {"required": ["cmd"]}},
@@ -500,11 +517,13 @@ class ExecCommandTool:
         if not self._runtime.available:
             return _command_runtime_unavailable_result()
         try:
+            approval_reason = _optional_command_reason(args.get("reason"))
             context = self._context(args)
             session_id, run_id, tool_call_id = self._ownership(args)
             details, workdir, roots, run_temp, path_identities = self._parse(
                 args, context, session_id=session_id, run_id=run_id
             )
+            approval_reason = approval_reason or _default_command_reason(details)
         except ManagedEnvironmentError as exc:
             return _managed_environment_error_result(exc)
         except CommandRuntimeError as exc:
@@ -522,7 +541,7 @@ class ExecCommandTool:
             session_id=session_id,
             run_id=run_id,
             tool_call_id=tool_call_id,
-            reason=str(args["reason"]).strip(),
+            reason=approval_reason,
             details=details,
         )
         approval_started = time.monotonic()
@@ -803,7 +822,6 @@ class ExecCommandTool:
     ]:
         cmd = args.get("cmd")
         raw_argv = args.get("argv")
-        reason = args.get("reason")
         if (cmd is None) == (raw_argv is None):
             raise ValueError("cmd 与 argv 必须且只能提供一个")
         if cmd is not None and (
@@ -825,8 +843,6 @@ class ExecCommandTool:
                 "host_user_requires_argv",
                 "host_user 必须使用结构化 argv，不能执行 shell 命令字符串。",
             )
-        if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
-            raise ValueError("reason 无效")
         mode = args.get("mode", "buffered")
         if mode not in {"buffered", "streaming"}:
             raise ValueError("mode 无效")

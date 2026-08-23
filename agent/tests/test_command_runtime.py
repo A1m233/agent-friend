@@ -783,6 +783,102 @@ def test_exec_command_contract_explains_windows_shell_and_host_path_derivation()
     )
 
 
+def test_exec_command_schema_accepts_omitted_reason_and_rejects_invalid_reason(
+    runtime: CommandRuntime,
+) -> None:
+    registry = ToolRegistry([ExecCommandTool(runtime, ApprovalBroker())])
+    args = {
+        "argv": ["python3", "-c", "print('bounded check')"],
+        "access": {"filesystem": "read_only", "network": "disabled"},
+        "timeout_seconds": 300,
+    }
+
+    assert registry.validate("exec_command", args) is None
+    wire_schema = registry.to_openai_tools()[0]["function"]["parameters"]
+    assert "reason" not in wire_schema.get("required", [])
+    assert registry.validate("exec_command", {**args, "reason": {}}) is not None
+    assert registry.validate("exec_command", {**args, "reason": "x" * 301}) is not None
+
+
+@pytest.mark.parametrize(
+    ("execution", "raw_reason", "expected_reason"),
+    [
+        ("sandboxed", None, "在 Codex 沙箱中运行本地命令"),
+        ("sandboxed", "  \n", "在 Codex 沙箱中运行本地命令"),
+        ("host_user", None, "以宿主用户身份运行本地命令"),
+    ],
+)
+def test_exec_command_optional_reason_reaches_approval_with_host_fallback(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+    execution: str,
+    raw_reason: str | None,
+    expected_reason: str,
+) -> None:
+    broker = ApprovalBroker()
+    tool = ExecCommandTool(runtime, broker)
+    context = ToolRunContext.create("")
+    args: dict[str, object] = {
+        "argv": [sys.executable, "-c", "print('must not execute before approval')"],
+        "execution": execution,
+        "workdir": str(tmp_path.resolve()),
+        "timeout_seconds": 300,
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "call-a",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+    }
+    if execution == "sandboxed":
+        args["access"] = {"filesystem": "read_only", "network": "disabled"}
+    if raw_reason is not None:
+        args["reason"] = raw_reason
+    result_box = []
+
+    thread = threading.Thread(target=lambda: result_box.append(tool.invoke(args)))
+    thread.start()
+    request = _wait_for_request(broker)
+    assert request.reason == expected_reason
+    assert request.details.execution == execution
+    assert broker.decide(
+        request.request_id,
+        CommandApprovalDecision(allow=False),
+        session_id="session-a",
+        run_id="run-a",
+        expected_kind="command",
+    )
+    thread.join(timeout=3)
+    context.close_commands()
+
+    assert not thread.is_alive()
+    assert json.loads(result_box[0].text)["error"] == "approval_denied"
+    assert broker.pending(kind="command") == ()
+
+
+@pytest.mark.parametrize("reason", [{}, "x" * 301])
+def test_exec_command_rejects_invalid_explicit_reason_before_approval(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+    reason: object,
+) -> None:
+    broker = ApprovalBroker()
+    result = ExecCommandTool(runtime, broker).invoke(
+        {
+            "cmd": "fake:buffered",
+            "workdir": str(tmp_path.resolve()),
+            "reason": reason,
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "call-a",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: ToolRunContext.create(""),
+        }
+    )
+
+    assert json.loads(result.text)["error"] == "invalid_arguments"
+    assert broker.pending(kind="command") == ()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows command preflight is Windows-specific")
 def test_windows_cmd_rejects_powershell_call_operator_and_unquoted_executable_path() -> None:
     with pytest.raises(CommandRuntimeError) as powershell:
@@ -1169,7 +1265,7 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     args = {
         "cmd": "fake:buffered",
         "workdir": str(tmp_path.resolve()),
-        "reason": "test the governed command",
+        "reason": "  test the governed command\n",
         COMMAND_SESSION_ID_ARG: "session-a",
         COMMAND_RUN_ID_ARG: "run-a",
         COMMAND_TOOL_CALL_ID_ARG: "call-a",
@@ -1180,6 +1276,7 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     thread = threading.Thread(target=lambda: result_box.append(tool.invoke(args)))
     thread.start()
     request = _wait_for_request(broker)
+    assert request.reason == "test the governed command"
     from agent.command_runtime import CommandApprovalDecision
 
     assert broker.decide(
