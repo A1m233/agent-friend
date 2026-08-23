@@ -11,6 +11,10 @@ from agent.tools.builtin.web_fetch.provider import (
     WebContentNetworkError,
     WebContentResourceLimitError,
 )
+from agent.tools.builtin.web_fetch.url_safety import (
+    UnsafeUrlError,
+    UntrustedDnsResolutionError,
+)
 
 
 class _FakeProvider:
@@ -172,6 +176,130 @@ def test_evidence_ref_uses_hidden_resolved_url() -> None:
 
     assert not result.is_error
     assert provider.calls == [("https://example.com/resolved", None)]
+
+
+def test_search_evidence_dns_failure_uses_remote_provider_without_local_retry() -> None:
+    class _DnsFailingLocal:
+        name = "local"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            self.calls += 1
+            raise UntrustedDnsResolutionError("mixed DNS answers")
+
+    evidence_ref = "evidence_ref_search"
+    target = "https://example.com/source"
+    local = _DnsFailingLocal()
+    provider = _FakeProvider("remote body")
+    result = WebFetchTool(provider, html_reader=local).invoke(  # type: ignore[arg-type]
+        {
+            "evidence_ref": evidence_ref,
+            "__agent_friend_resolved_url": target,
+            "__agent_friend_url_authorization": {
+                **_authorization(target, "web_search_result"),
+                "source_call_id": "search-1",
+                "evidence_ref": evidence_ref,
+            },
+        }
+    )
+
+    assert not result.is_error
+    assert json.loads(result.text)["content"] == "remote body"
+    assert local.calls == 1
+    assert provider.calls == [(target, None)]
+    assert result.meta["body_provider"] == "fake"
+    assert result.meta["local_fetch_error_kind"] == "dns_untrusted"
+
+
+def test_search_evidence_pdf_dns_failure_uses_remote_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = "https://example.com/source.pdf"
+
+    def fail_local_pdf(
+        url: str, *, focus: str | None = None
+    ) -> tuple[ExtractedContent, dict[str, object]]:
+        raise UntrustedDnsResolutionError("mixed DNS answers")
+
+    monkeypatch.setattr(web_fetch_tool_module, "download_and_extract_pdf", fail_local_pdf)
+    provider = _FakeProvider("remote PDF body")
+    result = WebFetchTool(provider).invoke(
+        {
+            "url": target,
+            "__agent_friend_url_authorization": {
+                **_authorization(target, "web_search_result"),
+                "source_call_id": "search-1",
+                "evidence_ref": "evidence_ref_pdf",
+            },
+        }
+    )
+
+    assert not result.is_error
+    assert json.loads(result.text)["content"] == "remote PDF body"
+    assert provider.calls == [(target, None)]
+    assert result.meta["body_provider"] == "fake"
+    assert result.meta["local_fetch_error_kind"] == "dns_untrusted"
+
+
+@pytest.mark.parametrize(
+    ("source", "error", "expected_kind"),
+    [
+        ("user_input", UntrustedDnsResolutionError("mixed DNS answers"), "dns_untrusted"),
+        ("web_search_result", UnsafeUrlError("private target"), "unsafe_url"),
+    ],
+)
+def test_dns_remote_fallback_does_not_bypass_untrusted_sources_or_hard_rejections(
+    source: str,
+    error: Exception,
+    expected_kind: str,
+) -> None:
+    class _FailingLocal:
+        name = "local"
+
+        def open(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            raise error
+
+    target = "https://example.com/source"
+    provider = _FakeProvider("must not be called")
+    result = WebFetchTool(provider, html_reader=_FailingLocal()).invoke(  # type: ignore[arg-type]
+        {
+            "url": target,
+            "__agent_friend_url_authorization": {
+                **_authorization(target, source),
+                "evidence_ref": "evidence_ref_source",
+            },
+        }
+    )
+
+    assert result.is_error
+    assert result.meta["error_kind"] == expected_kind
+    assert provider.calls == []
+
+
+def test_search_evidence_dns_failure_without_remote_provider_is_actionable() -> None:
+    class _DnsFailingLocal:
+        name = "local"
+
+        def open(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            raise UntrustedDnsResolutionError("mixed DNS answers")
+
+    target = "https://example.com/source"
+    result = WebFetchTool(html_reader=_DnsFailingLocal()).invoke(  # type: ignore[arg-type]
+        {
+            "url": target,
+            "__agent_friend_url_authorization": {
+                **_authorization(target, "web_search_result"),
+                "evidence_ref": "evidence_ref_search",
+            },
+        }
+    )
+
+    assert result.is_error
+    assert result.meta["error_kind"] == "dns_untrusted"
+    assert "未发起本地请求" in result.text
+    assert "原样重试通常无效" in result.text
 
 
 def test_local_static_success_does_not_duplicate_request_through_provider() -> None:

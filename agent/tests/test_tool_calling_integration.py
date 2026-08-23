@@ -45,6 +45,7 @@ from agent.tools.builtin.social_platforms import (
     SocialSearchResponse,
 )
 from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
+from agent.tools.builtin.web_fetch.url_safety import UntrustedDnsResolutionError
 from litellm.exceptions import Timeout as LiteLLMTimeout
 
 from agent import (
@@ -1872,6 +1873,11 @@ def test_default_policy_can_complete_after_more_than_five_continuations(tmp_path
 
 def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: Path) -> None:
     target = "https://example.com/source"
+    evidence = make_public_evidence(
+        target,
+        source="web_search_result",
+        source_call_id="search-1",
+    )
 
     class SearchTool:
         name: ClassVar[str] = "web_search"
@@ -1879,7 +1885,23 @@ def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: 
         parameters_schema: ClassVar[dict[str, Any]] = {"type": "object"}
 
         def invoke(self, args: dict[str, Any]) -> ToolResult:
-            return ToolResult("search result", meta={"source_urls": [target]})
+            return ToolResult(
+                json.dumps({"results": [{"evidence_ref": evidence.evidence_ref, "url": target}]}),
+                meta={
+                    "source_urls": [target],
+                    **evidence_result_meta([evidence]),
+                },
+            )
+
+    class DnsFailingLocalReader:
+        name: ClassVar[str] = "local"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def open(self, url: str, *, focus: str | None = None) -> ExtractedContent:
+            self.calls += 1
+            raise UntrustedDnsResolutionError("mixed DNS answers")
 
     class FetchProvider:
         name: ClassVar[str] = "fake"
@@ -1892,7 +1914,13 @@ def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: 
             return ExtractedContent(url, url, "verified source")
 
     provider = FetchProvider()
-    registry = ToolRegistry([SearchTool(), WebFetchTool(provider)])
+    local_reader = DnsFailingLocalReader()
+    registry = ToolRegistry(
+        [
+            SearchTool(),
+            WebFetchTool(provider, html_reader=local_reader),  # type: ignore[arg-type]
+        ]
+    )
     fake = _ScriptedLLMClient(
         script=[
             [
@@ -1900,7 +1928,12 @@ def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: 
                 LLMTurnDone(stop_reason="tool_use"),
             ],
             [
-                LLMToolCallDelta(0, "fetch-1", "web_fetch", json.dumps({"url": target})),
+                LLMToolCallDelta(
+                    0,
+                    "fetch-1",
+                    "web_fetch",
+                    json.dumps({"evidence_ref": evidence.evidence_ref}),
+                ),
                 LLMTurnDone(stop_reason="tool_use"),
             ],
             [LLMTextDelta(text="verified"), LLMTurnDone(stop_reason="end_turn")],
@@ -1910,6 +1943,7 @@ def test_web_search_result_authorizes_web_fetch_only_within_same_turn(tmp_path: 
     events = list(conv.stream("check"))
     results = [event for event in events if isinstance(event, ToolCallResult)]
     assert provider.calls == 1
+    assert local_reader.calls == 1
     assert [event.is_error for event in results] == [False, False]
     search_event = next(
         event

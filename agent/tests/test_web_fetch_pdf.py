@@ -12,6 +12,7 @@ from agent.tools.builtin.web_fetch.provider import (
 )
 from agent.tools.builtin.web_fetch.url_safety import (
     UnsafeUrlError,
+    UntrustedDnsResolutionError,
     resolve_redirect,
     validate_public_url,
 )
@@ -53,10 +54,12 @@ def test_text_layer_pdf_returns_page_markers() -> None:
 
 
 def test_private_and_loopback_addresses_are_rejected() -> None:
-    with pytest.raises(UnsafeUrlError):
+    with pytest.raises(UnsafeUrlError) as private_error:
         validate_public_url("http://127.0.0.1/file.pdf")
-    with pytest.raises(UnsafeUrlError):
+    with pytest.raises(UnsafeUrlError) as localhost_error:
         validate_public_url("http://localhost/file.pdf")
+    assert not isinstance(private_error.value, UntrustedDnsResolutionError)
+    assert not isinstance(localhost_error.value, UntrustedDnsResolutionError)
 
 
 def test_nonstandard_port_is_rejected_before_dns() -> None:
@@ -75,7 +78,19 @@ def test_mixed_public_and_private_dns_answers_are_rejected(
             (2, 1, 6, "", ("10.0.0.2", 0)),
         ],
     )
-    with pytest.raises(UnsafeUrlError):
+    with pytest.raises(UntrustedDnsResolutionError):
+        validate_public_url("https://example.com/file.pdf")
+
+
+def test_dns_resolution_failure_is_distinct_from_hard_url_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dns(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        raise socket.gaierror("resolver unavailable")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
+
+    with pytest.raises(UntrustedDnsResolutionError):
         validate_public_url("https://example.com/file.pdf")
 
 
@@ -91,8 +106,9 @@ def test_redirect_target_is_resolved_and_revalidated(
         resolve_redirect("https://example.com/a/start.pdf", "../next.pdf")
         == "https://example.com/next.pdf"
     )
-    with pytest.raises(UnsafeUrlError):
+    with pytest.raises(UnsafeUrlError) as redirect_error:
         resolve_redirect("https://example.com/start.pdf", "https://internal.example/file.pdf")
+    assert not isinstance(redirect_error.value, UntrustedDnsResolutionError)
 
 
 def test_oversized_page_stream_is_reported_as_resource_limit(
