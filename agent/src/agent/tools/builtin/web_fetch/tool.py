@@ -23,7 +23,10 @@ from .provider import (
     WebContentError,
     WebContentProvider,
 )
-from .url_safety import UnsafeUrlError
+from .url_safety import (
+    UnsafeUrlError,
+    UntrustedDnsResolutionError,
+)
 
 _URL_AUTHORIZATION = "__agent_friend_url_authorization"
 _RESOLVED_URL = "__agent_friend_resolved_url"
@@ -95,13 +98,31 @@ class WebFetchTool:
         pdf_meta: dict[str, Any] = {}
         body_provider = ""
         link_provider: str | None = None
+        local_fetch_error_kind: str | None = None
         try:
             if urlsplit(normalized).path.lower().endswith(".pdf"):
-                content, pdf_meta = download_and_extract_pdf(normalized, focus=focus)
-                body_provider = "local_pdf"
+                try:
+                    content, pdf_meta = download_and_extract_pdf(normalized, focus=focus)
+                    body_provider = "local_pdf"
+                except UntrustedDnsResolutionError as local_error:
+                    content, body_provider = self._remote_after_untrusted_dns(
+                        normalized,
+                        focus=focus,
+                        authorization=authorization,
+                        local_error=local_error,
+                    )
+                    local_fetch_error_kind = "dns_untrusted"
             elif self._html_reader is not None:
                 try:
                     local_content = self._html_reader.open(normalized, focus=focus)
+                except UntrustedDnsResolutionError as local_error:
+                    content, body_provider = self._remote_after_untrusted_dns(
+                        normalized,
+                        focus=focus,
+                        authorization=authorization,
+                        local_error=local_error,
+                    )
+                    local_fetch_error_kind = "dns_untrusted"
                 except (UnsafeUrlError, WebContentError) as local_error:
                     if (
                         isinstance(local_error, UnsafeUrlError)
@@ -159,6 +180,12 @@ class WebFetchTool:
                         body_provider = "local_pdf"
                     except WebContentError as pdf_error:
                         raise provider_error from pdf_error
+        except UntrustedDnsResolutionError:
+            return _error(
+                "dns_untrusted",
+                "网页读取失败：本机 DNS 无法安全确认该地址属于公网，未发起本地请求，"
+                "且当前没有可用的安全远端正文回退。请改用搜索摘要或其它来源；原样重试通常无效。",
+            )
         except UnsafeUrlError:
             return _error("unsafe_url", "网页读取失败：目标地址不属于可访问的公网范围。")
         except WebContentError as exc:
@@ -208,7 +235,26 @@ class WebFetchTool:
             **evidence_result_meta(evidences),
             **pdf_meta,
         }
+        if local_fetch_error_kind is not None:
+            meta["local_fetch_error_kind"] = local_fetch_error_kind
         return ToolResult(text=rendered, meta=meta)
+
+    def _remote_after_untrusted_dns(
+        self,
+        url: str,
+        *,
+        focus: str | None,
+        authorization: dict[str, Any],
+        local_error: UntrustedDnsResolutionError,
+    ) -> tuple[ExtractedContent, str]:
+        provider = self._provider
+        if (
+            provider is None
+            or authorization.get("source") != "web_search_result"
+            or not isinstance(authorization.get("evidence_ref"), str)
+        ):
+            raise local_error
+        return provider.extract(url, focus=focus), provider.name
 
 
 def _render_content(

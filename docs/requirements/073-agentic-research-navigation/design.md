@@ -312,11 +312,19 @@ HTML DOM 解析；agent-friend 只遍历锚点、读取 href/有界文本并执�
 | 正文与链接均可用 | 直接返回，不调用 Tavily |
 | HTML 已下载，链接可用但正文为空/不可提取 | 保留本地链接，调用 Tavily 补正文；分别标记 provider |
 | 公网目标返回 403/429、网络失败或无法取得 HTML | 调用 Tavily 补正文；链接标为 unavailable，不虚构 |
-| URL/redirect 不安全、资源超限或协议不支持 | fail closed，不把目标交给 Tavily 绕过本地安全拒绝 |
+| `web_search_result` 的精确 URL 因本机 DNS 失败或混合解析而无法确认公网性 | 不发起本地请求；存在 Tavily 时只用 Extract 补正文，链接标为 unavailable |
+| URL 形状、字面量地址或 redirect 不安全，或资源超限、协议不支持 | fail closed，不把目标交给 Tavily 绕过本地安全拒绝 |
 | Tavily 也失败 | 返回精确错误和 evidence gap，不声称读过页面 |
 
 Tavily 只继续使用 Extract；不采用 Map 或 Crawl。Map 的递归站点遍历语义超出静态单页边界，且对原始
 萌娘百科页面的实测没有返回任何 URL。
+
+DNS 回退只读取运行时注入的精确 authorization：`source` 必须是 `web_search_result`，并且必须带有
+对应 `evidence_ref`。模型自报来源、用户输入 URL、页面链接、非公网 IP 字面量和 redirect target 都不能取得
+该能力。本地 reader 仍要求全部解析地址为 global；DNS 失败或出现任一非 global 结果时不建立本地连接。
+私网/保留 IP 字面量、localhost 和不安全 redirect 继续使用 `unsafe_url`；只有初始搜索 URL 的本机 DNS
+可信性不足使用 `dns_untrusted`。托管回退成功时在 meta 记录
+`local_fetch_error_kind=dns_untrusted`，便于诊断区分正文来源和本地环境触发条件。
 
 ### 6.4 跨工具下一跳
 
