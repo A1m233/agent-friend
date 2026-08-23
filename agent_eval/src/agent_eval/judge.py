@@ -91,6 +91,25 @@ FILESYSTEM_AUTHORIZATION_NEGATION_PATTERNS = (
     ),
     re.compile(r"(?:并)?不(?:代表|意味着)(?:文件)?(?:授权|权限)(?:已经|成功)?(?:刷新|更新|获得)"),
 )
+FINAL_RESPONSE_META_PLANNING_PATTERNS = (
+    re.compile(
+        r"(?:现在|接下来)?我(?:现在)?需要.{0,24}(?:向|给)用户"
+        r"(?:表达|说明|汇报|回复|回应|作答)"
+    ),
+    re.compile(r"我(?:应该|需要|会|将).{0,18}(?:告诉|回复|回应|说明|汇报)(?:给|向)?用户"),
+    re.compile(r"(?:给|向)用户(?:说明|汇报|回复|回应|表达)"),
+    re.compile(r"让我(?:组织|准备|构思|整理)(?:一下)?(?:回复|答案|回应|答复)"),
+    re.compile(
+        r"\bI\s+(?:now\s+)?(?:need|should|have)\s+to\s+.{0,40}"
+        r"(?:tell|answer|respond\s+to|explain\s+to)\s+the\s+user\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\blet\s+me\s+(?:organize|prepare|craft|compose)\s+(?:the\s+)?"
+        r"(?:response|answer|reply)\b",
+        re.IGNORECASE,
+    ),
+)
 SKILL_CATALOG_CHANGE_TERMS = (
     "都是之前",
     "之前就在",
@@ -723,6 +742,16 @@ def _judge_case_level(case: Case, contract: Contract, trace: Trace) -> Verdict:
             "empty final response",
         )
 
+    if spec.forbid_final_response_meta_planning:
+        meta_planning_hits = _final_response_meta_planning_hits(trace)
+        if meta_planning_hits:
+            return Verdict(
+                case.id,
+                contract.id,
+                False,
+                f"final response remains meta-planning: {meta_planning_hits}",
+            )
+
     if spec.forbid_question and any(mark in trace.final_text for mark in ("?", "？")):
         return Verdict(
             case.id,
@@ -1025,6 +1054,18 @@ def _progress_continuity_error(assistant_segments: list[str]) -> str | None:
                 f"text={segment!r}"
             )
     return None
+
+
+def _final_response_meta_planning_hits(trace: Trace) -> list[str]:
+    """Find internal response-construction notes left in the final visible segment."""
+
+    segments = [segment.strip() for segment in trace.assistant_segments if segment.strip()]
+    final_segment = segments[-1] if segments else trace.final_text.strip()
+    return [
+        match.group(0)
+        for pattern in FINAL_RESPONSE_META_PLANNING_PATTERNS
+        if (match := pattern.search(final_segment)) is not None
+    ]
 
 
 def _unsupported_lookup_claims(final_text: str, tool_names: list[str]) -> list[str]:

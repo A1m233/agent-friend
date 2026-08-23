@@ -24,7 +24,7 @@ def test_loads_builtin_cases() -> None:
         ("C9", "unsupported-source-attribution-resistance", 4),
         ("C10", "relative-calendar-grounding", 2),
         ("C11", "interaction-context-non-announcement", 3),
-        ("C12", "multi-step-progress-continuity", 1),
+        ("C12", "multi-step-progress-continuity", 2),
         ("C13", "image-evidence-calibration", 8),
         ("C14", "user-intent-attribution-calibration", 3),
         ("C15", "unprompted-self-evaluation-restraint", 2),
@@ -390,7 +390,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     meta = build_case_set_meta(CASES_DIR, contracts)
 
     assert meta.total_contracts == 26
-    assert meta.total_cases == 228
+    assert meta.total_cases == 229
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -403,7 +403,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C9": 4,
         "C10": 2,
         "C11": 3,
-        "C12": 1,
+        "C12": 2,
         "C13": 8,
         "C14": 3,
         "C15": 2,
@@ -486,6 +486,17 @@ def test_loads_multi_step_progress_case_with_multiple_fake_tools() -> None:
     assert case.judge.required_tool_sequence == ["web_search", "web_fetch"]
     assert case.judge.require_progress_continuity is True
     assert case.judge.forbid_tool_mechanism_terms is True
+
+    incident = next(item for item in c12.cases if item.id == "C12-02")
+    assert [tool.name for tool in incident.fake_tools] == [
+        "request_filesystem_access",
+        "filesystem_write_text",
+        "exec_command",
+        "web_search",
+    ]
+    assert incident.judge is not None
+    assert incident.judge.must_call == "exec_command"
+    assert incident.judge.forbid_final_response_meta_planning is True
 
 
 def test_duplicate_case_id_fails(tmp_path: Path) -> None:

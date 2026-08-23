@@ -1659,6 +1659,69 @@ def test_multi_step_progress_allows_silent_or_single_preamble_tool_execution() -
     assert one_preamble.passed is True
 
 
+def test_final_response_meta_planning_rejects_sanitized_incident_answer() -> None:
+    case = _case(CaseJudge(forbid_final_response_meta_planning=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    incident_final_segment = (
+        "搜索没有找到这个具体数字的已知分解答案。\n\n"
+        "现在我需要诚实地评估情况并向用户表达。\n\n"
+        "我应该诚实地告诉用户，这不是普通脚本能完成的。\n\n"
+        "让我组织回复。我不需要再跑更多。给用户说明实际尝试和为何不可行。"
+    )
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="我先写个程序做有界检查。" + incident_final_segment,
+            assistant_segments=["我先写个程序做有界检查。", incident_final_segment],
+        ),
+    )
+
+    assert verdict.passed is False
+    assert "final response remains meta-planning" in verdict.reason
+
+
+def test_final_response_meta_planning_allows_intermediate_preambles_and_direct_answer() -> None:
+    case = _case(CaseJudge(forbid_final_response_meta_planning=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+    direct_answer = (
+        "我没能在当前有界检查中找到这两个因子；这些结果不能证明因子的位数，"
+        "也不足以断言它一定是标准的 RSA 难例。"
+    )
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="我先确认位数。找到一个可检查的方向，我再跑一轮。" + direct_answer,
+            assistant_segments=[
+                "我先确认位数。",
+                "找到一个可检查的方向，我再跑一轮。",
+                direct_answer,
+            ],
+        ),
+    )
+
+    assert verdict.passed is True
+
+
+def test_final_response_meta_planning_allows_user_facing_answer_preamble() -> None:
+    case = _case(CaseJudge(forbid_final_response_meta_planning=True))
+    contract = _contract(expected_behavior="response", expected_tool=None)
+
+    verdict = judge_case(
+        case,
+        contract,
+        _trace(
+            final_text="让我直接说明结论：当前有界检查没有找到因子。",
+            assistant_segments=["让我直接说明结论：当前有界检查没有找到因子。"],
+        ),
+    )
+
+    assert verdict.passed is True
+
+
 def test_case_level_rejects_assertive_source_attribution_but_allows_uncertainty() -> None:
     case = _case(CaseJudge(forbid_unsupported_source_attribution=True))
     contract = _contract(expected_behavior="response", expected_tool=None)

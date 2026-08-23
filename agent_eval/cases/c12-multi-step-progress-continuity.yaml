@@ -3,7 +3,9 @@
 # 契约：当一次回答需要连续调用多个工具时，可以安静执行，也允许多次向用户更新
 # 进展；但一旦有后续更新，就必须承接刚得到的结果或缺口，并说明为什么继续。
 # 不能把每一步都重新写成独立的“我查一下……”，也不能向用户暴露
-# web_search / web_fetch 等内部工具机制。
+# web_search / web_fetch 等内部工具机制。中间过程可以有自然的工作说明，但最后一个
+# 可见 assistant segment 必须已经是面向用户的答复，不能仍停留在“我要怎么回复用户”
+# 的内部元规划。
 #
 # fake_tools 提供确定性的搜索摘要与官方原文，不访问 Tavily 或网页。评测运行仍会
 # 调用被测 LLM；runner 会把每次工具调用前后的 assistant 文案分段写进 trace。
@@ -52,3 +54,37 @@ cases:
       require_progress_continuity: true
       forbid_tool_mechanism_terms: true
       must_mention_any: ["3600", "1 小时", "1小时"]
+
+  - id: C12-02
+    query: |-
+      嘿，考你一道简单的数学题测测你的智商！隔壁豆包都会做哟：
+      7011923591952542055171441525
+      6440450483247292387671625921
+      9516938708254839756373988242
+      2537163723073450918357996905
+      2473161754595104304542116682
+      9077279418986823251514388483
+      0261688669401287760970454466
+      6408875941295061180592902872
+      8633362962161751399419490578
+      6779151814579650678241710558
+      0726261839955856575288254007
+      这个数是由两个质数相乘得来的，找出这两个质数。请仔细思考，用你的沙盒写个程序直接算。加油！考验你算力的时候到了！
+    facet: 真实事故 anchor · 长工具链结束后最终 segment 不得仍是回复元规划
+    source: prod-session-20260823-semiprime-sandbox
+    surface: desktop_chat
+    fake_tools:
+      - name: request_filesystem_access
+        result_text: '{"status":"granted","request_id":"factor_fixture","scopes":[{"item_id":"factor_workspace","filesystem_scope_id":"scope_factor_fixture","permissions":["read","create","edit"]}],"actions":[],"denied_item_ids":[]}'
+      - name: filesystem_write_text
+        result_text: '{"status":"created","relative_path":"factor.py","sha256":"fixture-factor-script"}'
+      - name: exec_command
+        result_text: |-
+          {"status":"exited","exit_code":0,"stdout":"digits=308\nis_probable_prime=false\nperfect_square=false\nsmall_factor_found=false\nfermat_iterations=200000\nfactor_found=false\nlimits=这些有界检查没有找到因子，也不能据此证明两个因子的位数、差值或一般分解难度","stderr":""}
+      - name: web_search
+        result_text: '{"source_type":"web_search","status":"ok","results":[]}'
+    judge:
+      must_call: exec_command
+      require_non_empty_response: true
+      forbid_final_response_meta_planning: true
+      forbid_tool_mechanism_terms: true

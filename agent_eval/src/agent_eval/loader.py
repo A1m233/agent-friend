@@ -729,6 +729,10 @@ def _parse_judge(raw: Any, *, label: str) -> CaseJudge | None:
             data.get("require_progress_continuity"),
             label=f"{label}.require_progress_continuity",
         ),
+        forbid_final_response_meta_planning=_bool(
+            data.get("forbid_final_response_meta_planning"),
+            label=f"{label}.forbid_final_response_meta_planning",
+        ),
         forbid_tool_mechanism_terms=_bool(
             data.get("forbid_tool_mechanism_terms"),
             label=f"{label}.forbid_tool_mechanism_terms",

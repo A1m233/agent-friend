@@ -170,6 +170,7 @@ class CaseJudge:
     required_skill_activations: list[str] = field(default_factory=list)
     must_not_activate_skills: list[str] = field(default_factory=list)
     require_progress_continuity: bool = False
+    forbid_final_response_meta_planning: bool = False
     forbid_tool_mechanism_terms: bool = False
     forbid_unsupported_collection_characterization: bool = False
     forbid_play_count_scope_inflation: bool = False
