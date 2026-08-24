@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from llm_providers import LanguageModelFactory, ModelRuntimeConfig, default_model_runtime_config
 
+from ..approvals.models import SessionApprovalModeState
 from ..command_runtime.workspace import session_workspace_path
 from ..errors import AgentError
 from .changes import SessionChangeBroker
@@ -121,6 +122,18 @@ class SessionManager:
         if self._session_change_broker is None:
             return 0
         return self._session_change_broker.current_revision(session_id)
+
+    def approval_mode_state(self, session_id: str) -> SessionApprovalModeState:
+        """Return host security metadata without adding it to conversation events."""
+
+        self._store.load(session_id)
+        if self._metadata_store is None:
+            return SessionApprovalModeState()
+        metadata = self._metadata_store.get(session_id)
+        return SessionApprovalModeState(
+            metadata.approval_mode,
+            metadata.approval_mode_version,
+        )
 
     def create(
         self,
@@ -336,6 +349,8 @@ class SessionManager:
             summary,
             title=title,
             archived_at=metadata.archived_at,
+            approval_mode=metadata.approval_mode,
+            approval_mode_version=metadata.approval_mode_version,
         )
 
     # ----- 装配 Conversation -----

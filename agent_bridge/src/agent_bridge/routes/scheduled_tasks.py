@@ -179,7 +179,7 @@ def _occurrence_payload(
     occurrence: ScheduledOccurrence,
 ) -> dict[str, Any]:
     waiting = False
-    broker = runtime.filesystem_approval_broker
+    broker = runtime.approval_broker
     if broker is not None and occurrence.session_id is not None and occurrence.run_id is not None:
         waiting = bool(
             broker.pending(

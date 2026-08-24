@@ -2,6 +2,19 @@ import { http } from "@/services/http";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 export type CommandProcessStatus = "running" | "exited" | "cancelled" | "timed_out" | "runtime_lost";
+export type ApprovalDecisionSource =
+  | "user_once"
+  | "user_enable_session_auto"
+  | "session_auto"
+  | "catastrophic_policy";
+
+export interface ApprovalRiskAssessment {
+  level: "normal" | "catastrophic";
+  fingerprint: string;
+  code?: string | null;
+  message?: string | null;
+  evidence: string[];
+}
 
 export interface CommandApprovalDetails {
   cmd: string;
@@ -45,6 +58,10 @@ export interface CommandApprovalRequest {
   requested_lifetime: "once";
   version: number;
   status: ApprovalStatus;
+  approval_mode?: "per_request" | "session_auto";
+  approval_mode_version?: number;
+  decision_source?: ApprovalDecisionSource | null;
+  risk?: ApprovalRiskAssessment | null;
 }
 
 export interface CommandProcessSnapshot {

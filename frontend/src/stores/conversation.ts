@@ -32,6 +32,10 @@ import type {
 } from "@/services";
 import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
 import type { SessionDetail } from "@/types/meta";
+import type {
+  SessionApprovalMode,
+  SessionApprovalModeState,
+} from "@/services/api/sessions";
 import type { PushEvent } from "@/types/push";
 import type { RunSnapshot } from "@/types/run";
 import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search";
@@ -69,6 +73,8 @@ const MAX_RUN_SNAPSHOTS = 512;
 let openSessionToken = 0;
 let detailRefreshSeq = 0;
 let modelMutationSeq = 0;
+let approvalModeMutationSeq = 0;
+let approvalModeRefreshSeq = 0;
 let searchNavigationToken = 0;
 
 type OpenSessionFailureMode = "message" | "home" | "previous";
@@ -97,6 +103,9 @@ interface ConversationState {
   currentSessionId: string | null;
   currentModel: string | null;
   currentReasoningPreset: string | null;
+  approvalMode: SessionApprovalMode;
+  approvalModeVersion: number;
+  approvalModeChanging: boolean;
   modelSwitching: boolean;
   modelSwitchTarget: string | null;
   editingMessage: EditingMessageDescriptor | null;
@@ -130,6 +139,12 @@ interface ConversationState {
   pruneCaches: () => void;
   selectModel: (modelId: string) => Promise<ModelSelectionOutcome>;
   selectRuntimeConfig: (config: ModelRuntimeConfig) => Promise<ModelSelectionOutcome>;
+  setApprovalMode: (
+    mode: SessionApprovalMode,
+    riskAcknowledged: boolean,
+  ) => Promise<ApprovalModeSelectionOutcome>;
+  applyApprovalModeState: (state: SessionApprovalModeState) => void;
+  refreshApprovalMode: (sessionId: string) => Promise<"applied" | "stale" | "failed">;
   beginEditingMessage: (messageId: string) => boolean;
   cancelEditing: () => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
@@ -150,6 +165,8 @@ interface SessionConversationView {
   messages: ChatMessage[];
   currentModel: string | null;
   currentReasoningPreset: string | null;
+  approvalMode: SessionApprovalMode;
+  approvalModeVersion: number;
   streaming: boolean;
   historyLoading: boolean;
   historyLoadSeq: number;
@@ -180,6 +197,11 @@ export type ModelSelectionOutcome =
   | { status: "stale" }
   | { status: "failed"; error: FriendlyError };
 
+export type ApprovalModeSelectionOutcome =
+  | { status: "applied"; mode: SessionApprovalMode; version: number }
+  | { status: "stale" }
+  | { status: "failed"; error: FriendlyError };
+
 function asFriendlyError(error: unknown): FriendlyError {
   if (error && typeof error === "object" && "friendly" in error) {
     const friendly = (error as { friendly?: unknown }).friendly;
@@ -189,6 +211,17 @@ function asFriendlyError(error: unknown): FriendlyError {
     }
   }
   return { friendly: "模型没能切换成功，稍后再试试？", code: "unknown" };
+}
+
+function asApprovalModeFriendlyError(error: unknown): FriendlyError {
+  if (error && typeof error === "object" && "friendly" in error) {
+    const friendly = (error as { friendly?: unknown }).friendly;
+    const code = (error as { code?: unknown }).code;
+    if (typeof friendly === "string") {
+      return { friendly, code: typeof code === "string" ? code : undefined };
+    }
+  }
+  return { friendly: "授权模式没有切换，请稍后重试。", code: "unknown" };
 }
 
 function newId(): string {
@@ -259,6 +292,8 @@ function currentViewSnapshot(state: ConversationState): SessionConversationView 
     messages: state.messages,
     currentModel: state.currentModel,
     currentReasoningPreset: state.currentReasoningPreset,
+    approvalMode: state.approvalMode,
+    approvalModeVersion: state.approvalModeVersion,
     streaming: state.streaming,
     historyLoading: state.historyLoading,
     historyLoadSeq: state.historyLoadSeq,
@@ -272,6 +307,8 @@ function emptyView(): SessionConversationView {
     messages: [],
     currentModel: null,
     currentReasoningPreset: null,
+    approvalMode: "per_request",
+    approvalModeVersion: 0,
     streaming: false,
     historyLoading: false,
     historyLoadSeq: 0,
@@ -285,6 +322,8 @@ function viewFields(view: SessionConversationView) {
     messages: view.messages,
     currentModel: view.currentModel,
     currentReasoningPreset: view.currentReasoningPreset,
+    approvalMode: view.approvalMode,
+    approvalModeVersion: view.approvalModeVersion,
     streaming: view.streaming,
     historyLoading: view.historyLoading,
     historyLoadSeq: view.historyLoadSeq,
@@ -296,6 +335,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   currentSessionId: null,
   currentModel: null,
   currentReasoningPreset: null,
+  approvalMode: "per_request",
+  approvalModeVersion: 0,
+  approvalModeChanging: false,
   modelSwitching: false,
   modelSwitchTarget: null,
   editingMessage: null,
@@ -319,6 +361,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     openSessionToken += 1;
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
+    approvalModeMutationSeq += 1;
+    approvalModeRefreshSeq += 1;
     searchNavigationToken += 1;
     rememberLastChatSession(null);
     set((state) => {
@@ -329,6 +373,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentSessionId: null,
         modelSwitching: false,
         modelSwitchTarget: null,
+        approvalModeChanging: false,
         editingMessage: null,
         detachedSessionId: null,
         searchTarget: null,
@@ -354,6 +399,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     openSessionToken = token;
     detailRefreshSeq += 1;
     modelMutationSeq += 1;
+    approvalModeMutationSeq += 1;
+    approvalModeRefreshSeq += 1;
     if (remember) rememberLastChatSession(sessionId);
     const cached = get().sessionViews[sessionId];
     const hasActiveRun = Boolean(get().activeRunIdBySession[sessionId]);
@@ -367,6 +414,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       historyLoading: cached?.streaming ? false : true,
       modelSwitching: false,
       modelSwitchTarget: null,
+      approvalModeChanging: false,
       editingMessage: null,
       detachedSessionId: detached ? sessionId : null,
       searchTarget: options?.searchTarget ?? null,
@@ -390,6 +438,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           currentModel: detail.model,
           currentReasoningPreset: detail.reasoningPreset
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+          approvalMode: detail.approval_mode ?? "per_request",
+          approvalModeVersion: detail.approval_mode_version ?? 0,
           streaming: Boolean(s.activeRunIdBySession[sessionId]),
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
@@ -414,6 +464,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             currentSessionId: null,
             modelSwitching: false,
             modelSwitchTarget: null,
+            approvalModeChanging: false,
             editingMessage: null,
             detachedSessionId: null,
             searchTarget: null,
@@ -433,6 +484,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             searchTarget: null,
             modelSwitching: false,
             modelSwitchTarget: null,
+            approvalModeChanging: false,
             editingMessage: null,
             historyLoadSeq: s.historyLoadSeq + 1,
           };
@@ -533,6 +585,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           currentModel: detail.model,
           currentReasoningPreset: detail.reasoningPreset
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+          approvalMode: detail.approval_mode ?? "per_request",
+          approvalModeVersion: detail.approval_mode_version ?? 0,
           streaming: false,
           historyLoading: false,
           historyLoadSeq: state.historyLoadSeq,
@@ -552,6 +606,51 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   invalidateBackgroundRefreshes() {
     detailRefreshSeq += 1;
+    approvalModeRefreshSeq += 1;
+  },
+
+  applyApprovalModeState(state) {
+    set((current) => {
+      const sessionId = state.session_id;
+      const existing = current.sessionViews[sessionId];
+      if (existing && existing.approvalModeVersion > state.approval_mode_version) return current;
+      const nextView = existing
+        ? {
+            ...existing,
+            approvalMode: state.approval_mode,
+            approvalModeVersion: state.approval_mode_version,
+          }
+        : existing;
+      return {
+        sessionViews: nextView
+          ? { ...current.sessionViews, [sessionId]: nextView }
+          : current.sessionViews,
+        ...(current.currentSessionId === sessionId
+          ? {
+              approvalMode: state.approval_mode,
+              approvalModeVersion: state.approval_mode_version,
+            }
+          : {}),
+      };
+    });
+  },
+
+  async refreshApprovalMode(sessionId) {
+    const seq = approvalModeRefreshSeq + 1;
+    approvalModeRefreshSeq = seq;
+    const openToken = openSessionToken;
+    try {
+      const state = await sessionsApi.getApprovalMode(sessionId);
+      if (
+        seq !== approvalModeRefreshSeq
+        || openToken !== openSessionToken
+        || get().currentSessionId !== sessionId
+      ) return "stale";
+      get().applyApprovalModeState(state);
+      return "applied";
+    } catch {
+      return seq === approvalModeRefreshSeq ? "failed" : "stale";
+    }
   },
 
   applyRunEvents(sessionId, runId, events) {
@@ -792,6 +891,53 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
+  async setApprovalMode(mode, riskAcknowledged) {
+    const current = get();
+    const sessionId = current.currentSessionId;
+    if (!sessionId) {
+      return {
+        status: "failed",
+        error: { friendly: "发送第一条消息创建会话后再调整授权模式。", code: "no_session" },
+      };
+    }
+    if (current.approvalMode === mode) {
+      return { status: "applied", mode, version: current.approvalModeVersion };
+    }
+    const seq = approvalModeMutationSeq + 1;
+    approvalModeMutationSeq = seq;
+    const openToken = openSessionToken;
+    set({ approvalModeChanging: true });
+    try {
+      const state = await sessionsApi.updateApprovalMode(
+        sessionId,
+        mode,
+        current.approvalModeVersion,
+        riskAcknowledged,
+      );
+      if (
+        seq !== approvalModeMutationSeq
+        || openToken !== openSessionToken
+        || get().currentSessionId !== sessionId
+      ) return { status: "stale" };
+      get().applyApprovalModeState(state);
+      return {
+        status: "applied",
+        mode: state.approval_mode,
+        version: state.approval_mode_version,
+      };
+    } catch (error) {
+      if (
+        seq !== approvalModeMutationSeq
+        || openToken !== openSessionToken
+        || get().currentSessionId !== sessionId
+      ) return { status: "stale" };
+      await get().refreshApprovalMode(sessionId);
+      return { status: "failed", error: asApprovalModeFriendlyError(error) };
+    } finally {
+      if (seq === approvalModeMutationSeq) set({ approvalModeChanging: false });
+    }
+  },
+
   beginEditingMessage(messageId) {
     const current = get();
     if (
@@ -889,6 +1035,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         messages,
         currentModel: initialModel,
         currentReasoningPreset: initialConfig.reasoningPreset,
+        approvalMode: "per_request",
+        approvalModeVersion: 0,
         streaming: true,
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq,
@@ -899,6 +1047,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentSessionId: sessionId,
         currentModel: initialModel,
         currentReasoningPreset: initialConfig.reasoningPreset,
+        approvalMode: "per_request",
+        approvalModeVersion: 0,
         streaming: true,
         messages,
         sessionViews: {
@@ -1237,6 +1387,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                 currentModel: detail.model,
                 currentReasoningPreset: detail.reasoningPreset
                   ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
+                approvalMode: detail.approval_mode ?? view.approvalMode,
+                approvalModeVersion: detail.approval_mode_version ?? view.approvalModeVersion,
                 streaming: false,
                 revision: detail.revision ?? view.revision,
                 historyLoadSeq: view.historyLoadSeq + 1,

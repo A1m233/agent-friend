@@ -126,6 +126,8 @@ def test_filesystem_tool_contract_explains_create_and_exact_patch_syntax(tmp_pat
 
     assert "edit 只修改已有目标" in access.description
     assert "同时申请 search_metadata 和 read_text" in access.description
+    assert "仅对该请求有效的一次性决定" in access.description
+    assert "catastrophic_action_blocked_in_session_auto" in access.description
     permissions_description = access.parameters_schema["properties"]["items"]["items"][
         "properties"
     ]["permissions"]["description"]

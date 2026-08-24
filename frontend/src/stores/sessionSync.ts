@@ -93,6 +93,9 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
     });
   }
   scheduleListRefresh(activeGeneration);
+  if (useConversationStore.getState().currentSessionId === env.session_id) {
+    void useConversationStore.getState().refreshApprovalMode(env.session_id);
+  }
   scheduleDetailRefresh(env.session_id, revision as number, activeGeneration);
 }
 
@@ -136,7 +139,10 @@ export function handlePushReconnectedForSync(activeGeneration = generation): voi
   scheduleListRefresh(activeGeneration);
   void useConversationStore.getState().calibrateRuns();
   const sessionId = useConversationStore.getState().currentSessionId;
-  if (sessionId) scheduleDetailRefresh(sessionId, undefined, activeGeneration);
+  if (sessionId) {
+    void useConversationStore.getState().refreshApprovalMode(sessionId);
+    scheduleDetailRefresh(sessionId, undefined, activeGeneration);
+  }
 }
 
 export function startSessionSyncSubscriber(): () => void {

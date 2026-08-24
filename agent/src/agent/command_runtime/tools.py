@@ -118,6 +118,8 @@ def _result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
         meta["requires_user_action"] = True
         meta["no_progress_family"] = error_kind
     elif error_kind in {
+        "approval_target_changed",
+        "catastrophic_action_blocked_in_session_auto",
         "host_path_not_found",
         "host_executable_not_found",
         "host_user_requires_argv",
@@ -137,6 +139,17 @@ def _result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
         is_error=error,
         meta=meta,
     )
+
+
+def _approval_audit(request: PendingCommandApproval) -> dict[str, object]:
+    risk = request.risk_assessment
+    return {
+        "decision_source": request.decision_source,
+        "approval_mode": request.approval_mode,
+        "approval_mode_version": request.approval_mode_version,
+        "risk_code": risk.code if risk is not None else None,
+        "risk_fingerprint": risk.fingerprint if risk is not None else None,
+    }
 
 
 def _command_runtime_unavailable_result() -> ToolResult:
@@ -231,7 +244,11 @@ class ExecCommandTool:
         "结构化 argv，不能提供 shell 命令字符串、Skill 绑定或 access。普通非交互命令使用 buffered："
         "调用保持 pending，直到退出、超时、取消或运行时失联，过程输出只推送给界面；"
         "交互式命令使用 streaming，尽早返回仅对当前 run 有效的 process_id。每次启动"
-        "都必须向用户申请一次准确的命令、目录、文件系统与网络权限；不得假设批准。"
+        "都必须提交一次准确的命令、目录、文件系统与网络权限请求；宿主可能按当前会话"
+        "设置自动给出仅对该请求有效的一次性决定，不能据此扩大后续命令。磁盘清除、"
+        "关键根递归删除或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
+        "catastrophic_action_blocked_in_session_auto，不要原样重试或改写命令绕过，"
+        "应请用户切回每次授权并重新检查准确请求。"
         "普通命令可省略 workdir，此时使用当前会话跨轮次保留的受治理目录；显式"
         " workdir 必须是已存在的绝对路径且只覆盖本次命令。Skill-bound 命令省略顶层"
         " workdir，并在 skill.workdir 使用包内相对目录（默认包根）；不要猜测或读取"
@@ -565,12 +582,45 @@ class ExecCommandTool:
                 },
                 error=True,
             )
+        if request.decision_source == "catastrophic_policy":
+            risk = request.risk_assessment
+            return _result(
+                {
+                    "status": "denied",
+                    "request_id": request.request_id,
+                    "error": "catastrophic_action_blocked_in_session_auto",
+                    "risk_code": risk.code if risk is not None else None,
+                    "message": (
+                        "该动作不会在本会话无需授权模式下执行。"
+                        "请让用户切回每次授权后重新检查并发起精确请求。"
+                    ),
+                    "retryable_without_user_change": False,
+                    "approval": _approval_audit(request),
+                },
+                error=True,
+            )
         if not decision.approved:
             return _result(
                 {
                     "status": "denied",
                     "request_id": request.request_id,
                     "error": "approval_denied",
+                },
+                error=True,
+            )
+        current_assessment = self._broker.reassess(request)
+        if (
+            request.risk_assessment is not None
+            and current_assessment is not None
+            and current_assessment.fingerprint != request.risk_assessment.fingerprint
+        ):
+            return _result(
+                {
+                    "status": "failed",
+                    "request_id": request.request_id,
+                    "error": "approval_target_changed",
+                    "message": "命令或风险目标在批准后发生变化，未启动进程；请重新发起请求。",
+                    "approval": _approval_audit(request),
                 },
                 error=True,
             )
@@ -647,6 +697,7 @@ class ExecCommandTool:
                     "output_seq": snapshot.output_seq,
                     "sandbox_type": snapshot.sandbox_type,
                     "execution": details.execution,
+                    "approval": _approval_audit(request),
                     "approval_wait_seconds": round(approval_wait_seconds, 3),
                     "launch_seconds": round(time.monotonic() - launch_started, 3),
                     **self._host_path_evidence(details),
@@ -675,6 +726,7 @@ class ExecCommandTool:
         result_payload.update(
             {
                 "execution": details.execution,
+                "approval": _approval_audit(request),
                 "approval_wait_seconds": round(approval_wait_seconds, 3),
                 "launch_seconds": round(
                     max(
@@ -1077,6 +1129,7 @@ class ExecCommandTool:
                 skill=skill_binding,
                 execution_environment=(managed.public_summary() if managed is not None else None),
                 launch_argv=(managed.argv if managed is not None else None),
+                launch_workdir=str(workdir),
                 environment_overrides=(dict(managed.environment) if managed is not None else {}),
                 managed_command=managed,
             ),

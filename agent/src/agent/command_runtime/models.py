@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from ..approvals.models import ApprovalLifetime, ApprovalStatus
+from ..approvals.models import (
+    ApprovalDecisionSource,
+    ApprovalLifetime,
+    ApprovalStatus,
+    RiskAssessment,
+    SessionApprovalMode,
+)
 
 if TYPE_CHECKING:
     from ..execution_environment import ResolvedManagedCommand
@@ -83,6 +89,7 @@ class CommandApprovalDetails:
     skill: CommandSkillBinding | None = None
     execution_environment: dict[str, object] | None = None
     launch_argv: tuple[str, ...] | None = field(default=None, repr=False, compare=False)
+    launch_workdir: str | None = field(default=None, repr=False, compare=False)
     environment_overrides: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
     managed_command: ResolvedManagedCommand | None = field(default=None, repr=False, compare=False)
 
@@ -129,6 +136,10 @@ class PendingCommandApproval:
     requested_lifetime: ApprovalLifetime = "once"
     version: int = 1
     status: ApprovalStatus = "pending"
+    approval_mode: SessionApprovalMode = "per_request"
+    approval_mode_version: int = 0
+    decision_source: ApprovalDecisionSource | None = None
+    risk_assessment: RiskAssessment | None = None
     _decision: CommandApprovalDecision | None = field(default=None, repr=False)
     _event: threading.Event = field(default_factory=threading.Event, repr=False)
 
@@ -163,11 +174,19 @@ class PendingCommandApproval:
             "requested_lifetime": self.requested_lifetime,
             "version": self.version,
             "status": self.status,
+            "approval_mode": self.approval_mode,
+            "approval_mode_version": self.approval_mode_version,
+            "decision_source": self.decision_source,
+            "risk": (self.risk_assessment.to_dict() if self.risk_assessment is not None else None),
         }
 
     @staticmethod
     def cancelled_decision() -> CommandApprovalDecision:
         return CommandApprovalDecision(allow=False)
+
+    @staticmethod
+    def fully_approved_decision() -> CommandApprovalDecision:
+        return CommandApprovalDecision(allow=True, lifetime="once")
 
 
 @dataclass

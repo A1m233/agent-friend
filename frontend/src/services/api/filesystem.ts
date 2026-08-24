@@ -27,6 +27,21 @@ export interface FilesystemApprovalRequest {
   actions: FilesystemApprovalAction[];
   version: number;
   status: "pending" | "approved" | "denied" | "expired" | "cancelled";
+  approval_mode?: "per_request" | "session_auto";
+  approval_mode_version?: number;
+  decision_source?:
+    | "user_once"
+    | "user_enable_session_auto"
+    | "session_auto"
+    | "catastrophic_policy"
+    | null;
+  risk?: {
+    level: "normal" | "catastrophic";
+    fingerprint: string;
+    code?: string | null;
+    message?: string | null;
+    evidence: string[];
+  } | null;
 }
 
 interface PendingApprovalResponse {

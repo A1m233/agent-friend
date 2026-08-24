@@ -34,6 +34,7 @@ import {
 import { ChatSenderBox } from "./ChatSenderBox";
 import { VoiceInputAction } from "./VoiceInputAction";
 import { ConversationModelSelector } from "./ConversationModelSelector";
+import { SessionApprovalModeControl } from "./SessionApprovalModeControl";
 import { ComposerEditStatus } from "./ComposerEditStatus";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
@@ -799,6 +800,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       disabled={disabled || streaming || cancelling || editSubmitting}
                       disabledReason={composerControlDisabledReason}
                     />
+                    <SessionApprovalModeControl />
                   </div>
                   <VoiceInputAction
                     phase={voiceInputPhase}

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from ..approvals.models import ApprovalLifetime, ApprovalStatus
+from ..approvals.models import (
+    ApprovalDecisionSource,
+    ApprovalLifetime,
+    ApprovalStatus,
+    RiskAssessment,
+    SessionApprovalMode,
+)
 
 FilesystemPermission = Literal["search_metadata", "read_text", "create", "edit"]
 DestructiveAction = Literal["overwrite", "move", "delete"]
@@ -33,6 +40,8 @@ class DestructiveActionGrant:
     target: Path
     recursive: bool = False
     expected_identity: str | None = None
+    risk_fingerprint: str | None = None
+    action_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,10 @@ class PendingFilesystemApproval:
     requested_lifetime: ApprovalLifetime = "once"
     version: int = 1
     status: FilesystemApprovalStatus = "pending"
+    approval_mode: SessionApprovalMode = "per_request"
+    approval_mode_version: int = 0
+    decision_source: ApprovalDecisionSource | None = None
+    risk_assessment: RiskAssessment | None = None
     _decision: ApprovalDecision | None = field(default=None, repr=False)
     _event: threading.Event = field(default_factory=threading.Event, repr=False)
 
@@ -129,11 +142,21 @@ class PendingFilesystemApproval:
             "requested_lifetime": self.requested_lifetime,
             "version": self.version,
             "status": self.status,
+            "approval_mode": self.approval_mode,
+            "approval_mode_version": self.approval_mode_version,
+            "decision_source": self.decision_source,
+            "risk": (self.risk_assessment.to_dict() if self.risk_assessment is not None else None),
         }
 
     @staticmethod
     def cancelled_decision() -> ApprovalDecision:
         return ApprovalDecision()
+
+    def fully_approved_decision(self) -> ApprovalDecision:
+        return ApprovalDecision(
+            approved_permissions={item.item_id: item.permissions for item in self.items},
+            approved_action_ids=frozenset(action.action_id for action in self.actions),
+        )
 
 
 class FilesystemAuthorizationLedger:
@@ -166,13 +189,25 @@ class FilesystemAuthorizationLedger:
         self._scopes[capability.scope_id] = capability
         return capability
 
-    def grant_action(self, action: ApprovalAction) -> DestructiveActionGrant:
+    def grant_action(
+        self,
+        action: ApprovalAction,
+        *,
+        risk_fingerprint: str | None = None,
+    ) -> DestructiveActionGrant:
         grant = DestructiveActionGrant(
             action_id=action.action_id,
             action=action.action,
             target=action.target,
             recursive=action.recursive,
             expected_identity=action.expected_identity,
+            risk_fingerprint=risk_fingerprint,
+            action_fingerprint=_destructive_action_fingerprint(
+                action.action,
+                action.target,
+                action.recursive,
+                action.expected_identity,
+            ),
         )
         self._actions[grant.action_id] = grant
         return grant
@@ -213,6 +248,13 @@ class FilesystemAuthorizationLedger:
             grant.action != action
             or grant.target != target
             or (action == "delete" and grant.recursive != recursive)
+            or grant.action_fingerprint
+            != _destructive_action_fingerprint(
+                action,
+                target,
+                recursive,
+                grant.expected_identity,
+            )
         ):
             return "missing"
         if grant.expected_identity is not None:
@@ -228,3 +270,13 @@ class FilesystemAuthorizationLedger:
 
     def scopes(self) -> tuple[FilesystemCapability, ...]:
         return tuple(self._scopes.values())
+
+
+def _destructive_action_fingerprint(
+    action: DestructiveAction,
+    target: Path,
+    recursive: bool,
+    expected_identity: str | None,
+) -> str:
+    value = "\0".join((action, str(target), str(recursive), expected_identity or ""))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
