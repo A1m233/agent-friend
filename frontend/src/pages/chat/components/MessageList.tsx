@@ -26,7 +26,6 @@ import type {
   ChatAttachment,
   ChatMessage,
   CompactionBlock,
-  ModelResponseProgress,
 } from "@/types/chat";
 import type { SearchNavigationTarget } from "@/types/search";
 import { cn } from "@/utils/cn";
@@ -40,6 +39,7 @@ import { openSettings } from "@/lib/settings/navigation";
 import { EditMessageHint } from "./EditMessageHint";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
+import { ModelResponseStatus } from "./ModelResponseStatus";
 import {
   getMessageVirtualItemKey,
   getScrollToBottomBehavior,
@@ -76,8 +76,6 @@ const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const USER_SCROLL_IDLE_MS = 160;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
-const SLOW_MODEL_RESPONSE_MS = 10_000;
-const STALE_MODEL_ACTIVITY_MS = 12_000;
 const SEARCH_FEEDBACK_MS = 2400;
 const SEARCH_ANCHOR_MOUNT_ATTEMPTS = 8;
 const GOLDEN_SECTION = (Math.sqrt(5) - 1) / 2;
@@ -136,48 +134,6 @@ function ScrollActivityRing({ running }: { running: boolean }) {
         transform={`rotate(${SCROLL_ACTIVITY_ARC_START_DEGREES} ${SCROLL_ACTIVITY_RING_CENTER} ${SCROLL_ACTIVITY_RING_CENTER})`}
       />
     </svg>
-  );
-}
-
-function ModelResponseStatus({ status }: { status: ModelResponseProgress }) {
-  const [slow, setSlow] = useState(false);
-  const [staleActivity, setStaleActivity] = useState(false);
-
-  useEffect(() => {
-    setSlow(false);
-    if (status.phase !== "waiting") return;
-    const timer = window.setTimeout(() => setSlow(true), SLOW_MODEL_RESPONSE_MS);
-    return () => window.clearTimeout(timer);
-  }, [status.phase, status.afterTool]);
-
-  useEffect(() => {
-    setStaleActivity(false);
-    if (status.phase !== "reasoning" && status.phase !== "processing") return;
-    const timer = window.setTimeout(() => setStaleActivity(true), STALE_MODEL_ACTIVITY_MS);
-    return () => window.clearTimeout(timer);
-  }, [status.phase, status.activityVersion]);
-
-  const label = status.phase === "retrying"
-    ? `连接不稳定，正在重试 ${Math.max(1, status.attempt - 1)}/${Math.max(1, status.maxAttempts - 1)}`
-    : status.phase === "reasoning"
-      ? staleActivity
-        ? "暂时没有收到新的推理活动，模型可能仍在处理，也可能已经停滞…"
-        : "模型仍在推理，连接正常…"
-      : status.phase === "processing"
-        ? staleActivity
-          ? "暂时没有收到新的模型活动，可能仍在处理，也可能已经停滞…"
-          : "模型仍在处理，连接正常…"
-        : slow
-          ? "暂未收到新的模型活动，可能仍在等待服务，也可能已经停滞…"
-          : status.afterTool
-            ? "正在整理工具结果…"
-            : "正在等待模型响应…";
-
-  return (
-    <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
-      <StatusDot tone="muted" pulse />
-      {label}
-    </p>
   );
 }
 
@@ -471,11 +427,7 @@ function MessageContent({
         <ModelResponseStatus status={message.runStatus} />
       )}
       {message.status === "streaming" && !hasContent && !message.runStatus && (
-        <div className="flex items-center gap-1 px-1">
-          <StatusDot tone="muted" pulse />
-          <StatusDot tone="muted" pulse className="[animation-delay:150ms]" />
-          <StatusDot tone="muted" pulse className="[animation-delay:300ms]" />
-        </div>
+        <ModelResponseStatus />
       )}
       {((message.status === "streaming" && !hasContent) || shouldRenderExternalActionBar) &&
         actionBar}
