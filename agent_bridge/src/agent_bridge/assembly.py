@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from agent.approvals import ApprovalBroker
+from agent.approvals import ApprovalBroker, CatastrophicActionPolicy
 from agent.command_runtime import CodexIdentityError, CommandRuntime, verify_codex_executable
 from agent.execution_environment import (
     ExecutionEnvironmentManager,
@@ -32,10 +32,10 @@ from agent.execution_environment import (
     ProviderIdentity,
     PythonEnvironmentProvider,
 )
-from agent.filesystem import FilesystemApprovalBroker, ProtectedPathPolicy
+from agent.filesystem import ProtectedPathPolicy
 from agent.filesystem.policy import canonical_path
 from agent.memory_search import SessionHistorySource, SessionStoreSourceOrderProvider
-from agent.paths import log_dir
+from agent.paths import command_workspaces_dir, log_dir
 from agent.runtime import (
     PRE_TURN_PROCEED,
     AgentEvent,
@@ -75,6 +75,7 @@ from agent import (
     SessionChangeBroker,
     SessionManager,
     SessionMetadataStore,
+    SessionNotFoundError,
     SessionRevisionStore,
     SessionSearchService,
     SessionStore,
@@ -239,8 +240,8 @@ class BridgeRuntime:
     """072：共享的本地只读平台 connector 与 opaque resource 生命周期。"""
     social_auth_orchestrator: SocialAuthOrchestrator | None = None
     """072：桌面批准登录、Agent continuation 与原 surface 投递编排。"""
-    filesystem_approval_broker: FilesystemApprovalBroker | None = None
-    """078：桌面文件授权请求与一次性决定的进程级 broker。"""
+    approval_broker: ApprovalBroker | None = None
+    """桌面文件与命令授权请求、会话决策模式及高危策略的进程级 broker。"""
     command_runtime: CommandRuntime | None = None
     """085：进程级 Codex exec-server 命令运行时；不可用时其它能力继续运行。"""
     execution_environment_manager: ExecutionEnvironmentManager | None = None
@@ -414,7 +415,6 @@ def build_runtime(
         catalog=skill_service,
         product_version=product_version,
     )
-    filesystem_approval_broker = ApprovalBroker()
     codex_path_value = os.environ.get("AGENT_FRIEND_CODEX_EXECUTABLE")
     codex_executable: Path | None = None
     if codex_path_value:
@@ -478,6 +478,40 @@ def build_runtime(
         builtin_skill_roots=builtin_skill_roots,
     )
 
+    def session_exists(session_id: str) -> bool:
+        try:
+            persistent_store.load(session_id)
+            return True
+        except SessionNotFoundError:
+            return False
+
+    def session_workspace_root(session_id: str) -> Path | None:
+        try:
+            from agent.command_runtime.workspace import session_workspace_path
+
+            return session_workspace_path(command_workspaces_dir(), session_id)
+        except ValueError:
+            return None
+
+    catastrophic_action_policy = CatastrophicActionPolicy(
+        critical_roots=product_roots,
+        workspace_root_provider=session_workspace_root,
+    )
+
+    def record_approval_mode_change(session_id: str, _state: object) -> None:
+        session_change_broker.record_change(
+            session_id,
+            change_kind="metadata",
+            origin="approval_mode",
+        )
+
+    approval_broker = ApprovalBroker(
+        mode_store=session_metadata_store,
+        risk_policy=catastrophic_action_policy,
+        session_exists=session_exists,
+        on_mode_changed=record_approval_mode_change,
+    )
+
     memory: Memory | None = None
     recall_buffer: RecallBuffer | None = None
     memory_search = MemorySearchService(
@@ -526,7 +560,7 @@ def build_runtime(
         qweather_api_host=runtime_config.tool_credentials.qweather_api_host,
         social_platform_service=social_platform_service,
         skill_service=skill_service,
-        filesystem_approval_broker=filesystem_approval_broker,
+        approval_broker=approval_broker,
         filesystem_policy=filesystem_policy,
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
@@ -578,7 +612,7 @@ def build_runtime(
     agent_runtime.register_hook(HookKind.PRE_TURN, prepare_execution_environment)
     agent_runtime.register_hook(HookKind.POST_TURN, release_execution_environment)
     session_change_broker.set_publisher(agent_runtime.listeners.publish_session_change)
-    filesystem_approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
+    approval_broker.add_listener(agent_runtime.listeners.publish_approval_change)
     command_runtime.add_listener(agent_runtime.listeners.publish_command_process_change)
     command_runtime.add_sandbox_capability_listener(
         agent_runtime.listeners.publish_sandbox_capability_change
@@ -674,7 +708,7 @@ def build_runtime(
             scheduled_task_service=scheduled_task_service,
             presence_registry=presence_registry,
             social_platform_service=social_platform_service,
-            filesystem_approval_broker=filesystem_approval_broker,
+            approval_broker=approval_broker,
             command_runtime=command_runtime,
             execution_environment_manager=execution_environment_manager,
         )
@@ -786,7 +820,7 @@ def build_runtime(
         schedule_coordinator=schedule_coordinator,
         social_platform_service=social_platform_service,
         social_auth_orchestrator=social_auth_orchestrator,
-        filesystem_approval_broker=filesystem_approval_broker,
+        approval_broker=approval_broker,
         command_runtime=command_runtime,
         execution_environment_manager=execution_environment_manager,
     )

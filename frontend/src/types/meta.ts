@@ -16,6 +16,8 @@ export interface SessionSummary {
   model: string;
   reasoningPreset?: string;
   archived_at?: string | null;
+  approval_mode?: "per_request" | "session_auto";
+  approval_mode_version?: number;
 }
 
 /** ``GET /v1/sessions/{id}`` 里的单条事件（调试用，结构随后端事件流）。 */
@@ -34,6 +36,8 @@ interface SessionDetailBase {
   model: string;
   reasoningPreset?: string;
   revision?: number;
+  approval_mode?: "per_request" | "session_auto";
+  approval_mode_version?: number;
 }
 
 /** ``GET /v1/sessions/{id}`` 返回；至少包含原始或 active 事件中的一种。 */

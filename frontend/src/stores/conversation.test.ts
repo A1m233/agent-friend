@@ -26,7 +26,13 @@ vi.mock("@/services", () => ({
     list: vi.fn(async () => ({ runs: [] })),
     cancel: vi.fn(),
   },
-  sessionsApi: { get: vi.fn(), switchModel: vi.fn(), updateRuntimeConfig: vi.fn() },
+  sessionsApi: {
+    get: vi.fn(),
+    getApprovalMode: vi.fn(),
+    switchModel: vi.fn(),
+    updateRuntimeConfig: vi.fn(),
+    updateApprovalMode: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/persistence/chatUi", () => ({
@@ -62,6 +68,8 @@ const mockEditStream = vi.mocked(editResendLatestStream);
 const mockContinueStream = vi.mocked(continueToolResultStream);
 const mockGet = vi.mocked(sessionsApi.get);
 const mockUpdateRuntimeConfig = vi.mocked(sessionsApi.updateRuntimeConfig);
+const mockGetApprovalMode = vi.mocked(sessionsApi.getApprovalMode);
+const mockUpdateApprovalMode = vi.mocked(sessionsApi.updateApprovalMode);
 const mockValidateModel = vi.mocked(modelsApi.validate);
 const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
@@ -158,6 +166,9 @@ beforeEach(() => {
     currentSessionId: null,
     currentModel: null,
     currentReasoningPreset: null,
+    approvalMode: "per_request",
+    approvalModeVersion: 0,
+    approvalModeChanging: false,
     messages: [],
     streaming: false,
     historyLoading: false,
@@ -187,6 +198,74 @@ beforeEach(() => {
     sessionId,
     runtimeConfig,
   }));
+  mockGetApprovalMode.mockImplementation(async (sessionId) => ({
+    session_id: sessionId,
+    approval_mode: "per_request",
+    approval_mode_version: 0,
+  }));
+  mockUpdateApprovalMode.mockImplementation(async (sessionId, mode, expectedVersion) => ({
+    session_id: sessionId,
+    approval_mode: mode,
+    approval_mode_version: expectedVersion + 1,
+  }));
+});
+
+describe("conversation store · session approval mode", () => {
+  it("restores the persisted risky mode when opening a session", async () => {
+    mockGet.mockResolvedValueOnce({
+      ...sessionDetail("sid-mode", "history"),
+      approval_mode: "session_auto",
+      approval_mode_version: 4,
+    });
+
+    await useConversationStore.getState().openSession("sid-mode");
+
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto",
+      approvalModeVersion: 4,
+    });
+  });
+
+  it("uses the current version and explicit acknowledgement when enabling", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    mockUpdateApprovalMode.mockResolvedValueOnce({
+      session_id: "sid-mode",
+      approval_mode: "session_auto",
+      approval_mode_version: 1,
+    });
+
+    const result = await useConversationStore.getState().setApprovalMode("session_auto", true);
+
+    expect(result).toEqual({ status: "applied", mode: "session_auto", version: 1 });
+    expect(mockUpdateApprovalMode).toHaveBeenCalledWith(
+      "sid-mode",
+      "session_auto",
+      0,
+      true,
+    );
+    expect(useConversationStore.getState().approvalMode).toBe("session_auto");
+  });
+
+  it("refreshes only the approval mode while a run is active", async () => {
+    mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
+    await useConversationStore.getState().openSession("sid-mode");
+    useConversationStore.setState({ streaming: true });
+    mockGetApprovalMode.mockResolvedValueOnce({
+      session_id: "sid-mode",
+      approval_mode: "session_auto",
+      approval_mode_version: 3,
+    });
+
+    await expect(
+      useConversationStore.getState().refreshApprovalMode("sid-mode"),
+    ).resolves.toBe("applied");
+    expect(useConversationStore.getState()).toMatchObject({
+      streaming: true,
+      approvalMode: "session_auto",
+      approvalModeVersion: 3,
+    });
+  });
 });
 
 describe("conversation store · cancel lifecycle", () => {
@@ -1147,6 +1226,8 @@ describe("conversation store · background detail refresh", () => {
           messages: [],
           currentModel: "test",
           currentReasoningPreset: "none",
+          approvalMode: "per_request",
+          approvalModeVersion: 0,
           streaming: true,
           historyLoading: false,
           historyLoadSeq: 0,
@@ -1207,6 +1288,8 @@ describe("conversation store · bounded caches", () => {
       messages: [],
       currentModel: null,
       currentReasoningPreset: null,
+      approvalMode: "per_request" as const,
+      approvalModeVersion: 0,
       streaming: false,
       historyLoading: false,
       historyLoadSeq: 0,

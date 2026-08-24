@@ -22,6 +22,22 @@ interface SearchSessionsOptions {
   titleLimit?: number;
 }
 
+export type SessionApprovalMode = "per_request" | "session_auto";
+
+export interface SessionApprovalModeState {
+  session_id: string;
+  approval_mode: SessionApprovalMode;
+  approval_mode_version: number;
+}
+
+export interface EnableSessionAutoForApprovalInput {
+  requestId: string;
+  sessionId: string;
+  runId: string;
+  requestVersion: number;
+  modeVersion: number;
+}
+
 function sessionQuery(options?: ListSessionsOptions | DeleteArchivedSessionsOptions): string {
   const params = new URLSearchParams();
   if (hasArchivedOption(options)) {
@@ -80,6 +96,43 @@ export const sessionsApi = {
   get(sessionId: string): Promise<SessionDetail> {
     return http.get<unknown, SessionDetail>(
       `/v1/sessions/${encodeURIComponent(sessionId)}?view=active`,
+    );
+  },
+
+  getApprovalMode(sessionId: string): Promise<SessionApprovalModeState> {
+    return http.get<unknown, SessionApprovalModeState>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/approval-mode`,
+    );
+  },
+
+  updateApprovalMode(
+    sessionId: string,
+    mode: SessionApprovalMode,
+    expectedVersion: number,
+    riskAcknowledged: boolean,
+  ): Promise<SessionApprovalModeState> {
+    return http.put<unknown, SessionApprovalModeState>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/approval-mode`,
+      {
+        mode,
+        expected_version: expectedVersion,
+        risk_acknowledged: riskAcknowledged,
+      },
+    );
+  },
+
+  enableSessionAutoForApproval(
+    input: EnableSessionAutoForApprovalInput,
+  ): Promise<SessionApprovalModeState & { accepted: true }> {
+    return http.post<unknown, SessionApprovalModeState & { accepted: true }>(
+      `/v1/approvals/${encodeURIComponent(input.requestId)}/enable-session-auto`,
+      {
+        session_id: input.sessionId,
+        run_id: input.runId,
+        expected_request_version: input.requestVersion,
+        expected_mode_version: input.modeVersion,
+        risk_acknowledged: true,
+      },
     );
   },
 

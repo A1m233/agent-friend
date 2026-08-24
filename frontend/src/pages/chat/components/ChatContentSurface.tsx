@@ -16,6 +16,7 @@ import { CHAT_COMPOSER_FALLBACK_HEIGHT_PX, CHAT_CONTENT_CONTAINER_CLASS } from "
 import { ApprovalDock } from "./ApprovalDock";
 import { Composer, type ComposerHandle } from "./Composer";
 import { MessageList } from "./MessageList";
+import { SessionApprovalModeController } from "./SessionApprovalModeController";
 
 /**
  * 093 · 原对话窗右侧内容的完整 surface。
@@ -52,7 +53,8 @@ export function ChatContentSurface() {
   const focusComposer = useCallback(() => composerRef.current?.focus(), []);
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+    <SessionApprovalModeController>
+      <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <header className="flex items-center justify-end gap-2 border-b border-border px-4 py-2.5">
         <Button
           size="sm"
@@ -90,7 +92,8 @@ export function ChatContentSurface() {
           />
         </>
       )}
-    </div>
+      </div>
+    </SessionApprovalModeController>
   );
 }
 

@@ -13,15 +13,20 @@ import type {
 } from "@/services/api/commandRuntime";
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
 import { CHAT_CONTENT_CONTAINER_CLASS } from "../layout";
+import { useSessionApprovalModeActions } from "./SessionApprovalModeController";
 
 type PendingApproval = {
   kind: "command" | "filesystem";
   requestId: string;
+  requestVersion: number;
+  sessionId: string;
+  runId: string;
   reason: string;
   command: string | null;
   detailLines: string[];
   submitting: boolean;
   needsSandboxSetup: boolean;
+  riskCode: string | null;
 };
 
 interface RunningCommand {
@@ -132,6 +137,9 @@ export function buildPendingApprovalQueue(input: {
     .map((request) => ({
       kind: "command" as const,
       requestId: request.request_id,
+      requestVersion: request.version,
+      sessionId: request.session_id,
+      runId: request.run_id,
       reason: request.reason,
       command: request.details.cmd,
       detailLines: commandDetailLines(request),
@@ -141,6 +149,7 @@ export function buildPendingApprovalQueue(input: {
         && commandRuntimeStatus?.sandbox_capability.supported
         && !commandRuntimeStatus.sandbox_capability.ready,
       ),
+      riskCode: request.risk?.code ?? null,
     }));
   const files: PendingApproval[] = Object.values(filesystemEntries)
     .filter((entry) => (
@@ -151,11 +160,15 @@ export function buildPendingApprovalQueue(input: {
     .map((entry) => ({
       kind: "filesystem" as const,
       requestId: entry.request.request_id,
+      requestVersion: entry.request.version,
+      sessionId: entry.request.session_id,
+      runId: entry.request.run_id,
       reason: entry.request.reason,
       command: null,
       detailLines: filesystemDetailLines(entry),
       submitting: entry.status === "submitting",
       needsSandboxSetup: false as const,
+      riskCode: entry.request.risk?.code ?? null,
     }));
   return [...commands, ...files];
 }
@@ -202,11 +215,18 @@ function PendingApprovalPanel({
   current,
   queuedCount,
   decide,
+  enableSessionAuto,
+  showSessionAuto,
+  sessionAutoSubmitting,
 }: {
   current: PendingApproval;
   queuedCount: number;
   decide: (approved: boolean) => void;
+  enableSessionAuto: () => void;
+  showSessionAuto: boolean;
+  sessionAutoSubmitting: boolean;
 }) {
+  const actionDisabled = current.submitting || sessionAutoSubmitting;
   return (
     <div className="w-full space-y-2 rounded-lg border border-warning/40 bg-bg px-3 py-3 shadow-md">
       <div className="flex items-center gap-2">
@@ -219,23 +239,43 @@ function PendingApprovalPanel({
           <Button
             size="xs"
             variant="outline"
-            disabled={current.submitting}
+            disabled={actionDisabled}
             onClick={() => decide(false)}
           >
             拒绝
           </Button>
           {current.needsSandboxSetup ? (
-            <Button size="xs" onClick={() => void openSettings({ target: "permissions" })}>
-              前往系统权限
-            </Button>
+            <>
+              {showSessionAuto ? (
+                <Button size="xs" variant="outline" disabled>
+                  本会话无需授权
+                </Button>
+              ) : null}
+              <Button size="xs" onClick={() => void openSettings({ target: "permissions" })}>
+                前往系统权限
+              </Button>
+            </>
           ) : (
-            <Button
-              size="xs"
-              disabled={current.submitting}
-              onClick={() => decide(true)}
-            >
-              {current.submitting ? "处理中…" : "仅本次允许"}
-            </Button>
+            <>
+              <Button
+                size="xs"
+                disabled={actionDisabled}
+                onClick={() => decide(true)}
+              >
+                {current.submitting ? "处理中…" : "仅本次允许"}
+              </Button>
+              {showSessionAuto ? (
+                <Button
+                  size="xs"
+                  variant="destructive"
+                  disabled={actionDisabled}
+                  loading={sessionAutoSubmitting}
+                  onClick={enableSessionAuto}
+                >
+                  本会话无需授权
+                </Button>
+              ) : null}
+            </>
           )}
         </div>
       </div>
@@ -246,6 +286,9 @@ function PendingApprovalPanel({
         </pre>
       ) : null}
       <div className="space-y-1 text-xs text-muted">
+        {current.riskCode ? (
+          <p className="text-warning">风险类别：{current.riskCode}</p>
+        ) : null}
         {current.detailLines.map((line) => (
           <p key={line} className="break-all">{line}</p>
         ))}
@@ -293,6 +336,11 @@ export function ApprovalDock() {
   const cancelCommand = useCommandRuntimeStore((state) => state.cancel);
   const filesystemEntries = useFilesystemApprovalsStore((state) => state.entries);
   const decideFilesystem = useFilesystemApprovalsStore((state) => state.decide);
+  const approvalMode = useConversationStore((state) => state.approvalMode);
+  const {
+    requestSessionAutoFromApproval,
+    submittingRequestId,
+  } = useSessionApprovalModeActions();
 
   const pending = useMemo(() => {
     return buildPendingApprovalQueue({
@@ -345,6 +393,16 @@ export function ApprovalDock() {
             current={current}
             queuedCount={pending.length - 1}
             decide={decide}
+            showSessionAuto={approvalMode === "per_request"}
+            sessionAutoSubmitting={submittingRequestId === current.requestId}
+            enableSessionAuto={() => requestSessionAutoFromApproval({
+              kind: current.kind,
+              requestId: current.requestId,
+              requestVersion: current.requestVersion,
+              sessionId: current.sessionId,
+              runId: current.runId,
+              riskCode: current.riskCode,
+            })}
           />
         ) : currentRunning ? (
           <RunningCommandPanel

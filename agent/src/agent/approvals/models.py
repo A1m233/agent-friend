@@ -9,6 +9,52 @@ from typing import Literal, Protocol, runtime_checkable
 ApprovalStatus = Literal["pending", "approved", "denied", "expired", "cancelled"]
 ApprovalLifetime = Literal["once", "turn", "session", "persistent"]
 ENABLED_APPROVAL_LIFETIMES: frozenset[ApprovalLifetime] = frozenset({"once"})
+SessionApprovalMode = Literal["per_request", "session_auto"]
+ApprovalDecisionSource = Literal[
+    "user_once",
+    "user_enable_session_auto",
+    "session_auto",
+    "catastrophic_policy",
+]
+RiskLevel = Literal["normal", "catastrophic"]
+
+
+@dataclass(frozen=True)
+class SessionApprovalModeState:
+    """Effective per-session approval routing state.
+
+    The mode controls how each new typed one-shot request is decided.  It is
+    deliberately separate from ``ApprovalLifetime`` so a session setting can
+    never turn one approved path or command into a reusable capability.
+    """
+
+    mode: SessionApprovalMode = "per_request"
+    version: int = 0
+
+    def to_dict(self) -> dict[str, object]:
+        return {"approval_mode": self.mode, "approval_mode_version": self.version}
+
+
+@dataclass(frozen=True)
+class RiskAssessment:
+    level: RiskLevel
+    fingerprint: str
+    code: str | None = None
+    message: str | None = None
+    evidence: tuple[str, ...] = ()
+
+    @property
+    def catastrophic(self) -> bool:
+        return self.level == "catastrophic"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "level": self.level,
+            "fingerprint": self.fingerprint,
+            "code": self.code,
+            "message": self.message,
+            "evidence": list(self.evidence),
+        }
 
 
 @runtime_checkable
@@ -29,10 +75,16 @@ class PendingApproval(Protocol):
     version: int
     _decision: object | None
     _event: threading.Event
+    approval_mode: SessionApprovalMode
+    approval_mode_version: int
+    decision_source: ApprovalDecisionSource | None
+    risk_assessment: RiskAssessment | None
 
     def to_dict(self) -> dict[str, object]: ...
 
     def cancelled_decision(self) -> ApprovalDecisionLike: ...
+
+    def fully_approved_decision(self) -> ApprovalDecisionLike: ...
 
 
 @dataclass

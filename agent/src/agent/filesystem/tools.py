@@ -126,9 +126,13 @@ class RequestFilesystemAccessTool:
         "必须在同一个目录 item 中同时申请 search_metadata 和 read_text，避免重复授权。"
         "create 用于新建文件、目录、备份及复制/移动目的地，edit 只修改已有目标且不"
         "包含 create。对 .git/.cursor/.codex/.claude 等配置目录只能申请目录级"
-        "search_metadata；读取或修改正文必须改为申请准确文件。用户批准前不会执行"
-        "文件操作。覆盖、移动、删除必须在 actions 中列出准确目标。非桌面交互端会"
-        "明确拒绝，不能假设获得权限。"
+        "search_metadata；读取或修改正文必须改为申请准确文件。每次调用都提交精确"
+        "请求；宿主可能按当前会话设置自动给出仅对该请求有效的一次性决定，不能据此"
+        "扩大后续范围。覆盖、移动、删除必须在 actions 中列出准确目标。关键根递归删除"
+        "或目标无法确定的强制递归删除仍受独立灾难性策略约束；若返回"
+        "catastrophic_action_blocked_in_session_auto，不要原样重试或改写目标绕过，"
+        "应请用户切回每次授权并重新检查准确请求。非桌面交互端会明确拒绝，不能假设"
+        "获得权限。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -286,6 +290,23 @@ class RequestFilesystemAccessTool:
                 },
                 error=True,
             )
+        if request.decision_source == "catastrophic_policy":
+            risk = request.risk_assessment
+            return _json_result(
+                {
+                    "status": "denied",
+                    "request_id": request.request_id,
+                    "error": "catastrophic_action_blocked_in_session_auto",
+                    "risk_code": risk.code if risk is not None else None,
+                    "message": (
+                        "该动作不会在本会话无需授权模式下执行。"
+                        "请让用户切回每次授权后重新检查并发起精确请求。"
+                    ),
+                    "retryable_without_user_change": False,
+                    "approval": _approval_audit(request),
+                },
+                error=True,
+            )
         scopes: list[dict[str, object]] = []
         denied_item_ids: list[str] = []
         for item in items:
@@ -312,7 +333,14 @@ class RequestFilesystemAccessTool:
         granted_actions: list[dict[str, str]] = []
         for action in actions:
             if action.action_id in decision.approved_action_ids:
-                ledger.grant_action(action)
+                ledger.grant_action(
+                    action,
+                    risk_fingerprint=(
+                        request.risk_assessment.fingerprint
+                        if request.risk_assessment is not None
+                        else None
+                    ),
+                )
                 granted_actions.append({"action_id": action.action_id, "item_id": action.action_id})
         status = (
             "granted"
@@ -328,6 +356,7 @@ class RequestFilesystemAccessTool:
                 "scopes": scopes,
                 "actions": granted_actions,
                 "denied_item_ids": denied_item_ids,
+                "approval": _approval_audit(request),
             },
             error=status == "denied",
         )
@@ -422,6 +451,17 @@ class RequestFilesystemAccessTool:
             )
             seen.add(action_id)
         return tuple(parsed)
+
+
+def _approval_audit(request: PendingFilesystemApproval) -> dict[str, object]:
+    risk = request.risk_assessment
+    return {
+        "decision_source": request.decision_source,
+        "approval_mode": request.approval_mode,
+        "approval_mode_version": request.approval_mode_version,
+        "risk_code": risk.code if risk is not None else None,
+        "risk_fingerprint": risk.fingerprint if risk is not None else None,
+    }
 
 
 class FilesystemOperationTool:

@@ -113,6 +113,8 @@ class SessionSummary:
     model: str
     reasoning_preset: str | None = None
     archived_at: datetime | None = None
+    approval_mode: str = "per_request"
+    approval_mode_version: int = 0
     origin_kind: str | None = None
     origin_id: str | None = None
     origin_occurrence_id: str | None = None

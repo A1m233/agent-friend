@@ -16,6 +16,7 @@ from typing import Any, TypeVar
 import portalocker
 from portalocker.exceptions import LockException
 
+from ..approvals.models import SessionApprovalMode, SessionApprovalModeState
 from .errors import SessionPersistError
 
 _LOCK_TIMEOUT_SECONDS = 10.0
@@ -29,6 +30,8 @@ class SessionMetadata:
 
     display_title: str | None = None
     archived_at: datetime | None = None
+    approval_mode: SessionApprovalMode = "per_request"
+    approval_mode_version: int = 0
 
 
 class SessionMetadataStore:
@@ -58,6 +61,8 @@ class SessionMetadataStore:
             next_item = SessionMetadata(
                 display_title=title,
                 archived_at=current.archived_at,
+                approval_mode=current.approval_mode,
+                approval_mode_version=current.approval_mode_version,
             )
             _set_or_delete(items, session_id, next_item)
             return next_item
@@ -74,9 +79,59 @@ class SessionMetadataStore:
             next_item = SessionMetadata(
                 display_title=current.display_title,
                 archived_at=archived_at,
+                approval_mode=current.approval_mode,
+                approval_mode_version=current.approval_mode_version,
             )
             _set_or_delete(items, session_id, next_item)
             return next_item
+
+        return self._mutate(mutate)
+
+    def compare_and_set_approval_mode(
+        self,
+        session_id: str,
+        *,
+        expected_version: int,
+        mode: SessionApprovalMode,
+    ) -> tuple[SessionApprovalModeState, bool]:
+        """Atomically update one session's approval mode.
+
+        Returns the effective state and whether this call changed it.  A stale
+        expected version returns the current state with ``False`` and never
+        writes, allowing callers to surface a deterministic conflict.
+        """
+
+        if expected_version < 0:
+            raise ValueError("approval mode version must be non-negative")
+        if mode not in {"per_request", "session_auto"}:
+            raise ValueError(f"invalid approval mode: {mode}")
+
+        def mutate(
+            items: dict[str, SessionMetadata],
+        ) -> tuple[SessionApprovalModeState, bool]:
+            current = items.get(session_id, SessionMetadata())
+            current_state = SessionApprovalModeState(
+                current.approval_mode,
+                current.approval_mode_version,
+            )
+            if current.approval_mode_version != expected_version:
+                return current_state, False
+            if current.approval_mode == mode:
+                return current_state, False
+            next_item = SessionMetadata(
+                display_title=current.display_title,
+                archived_at=current.archived_at,
+                approval_mode=mode,
+                approval_mode_version=current.approval_mode_version + 1,
+            )
+            _set_or_delete(items, session_id, next_item)
+            return (
+                SessionApprovalModeState(
+                    next_item.approval_mode,
+                    next_item.approval_mode_version,
+                ),
+                True,
+            )
 
         return self._mutate(mutate)
 
@@ -181,15 +236,32 @@ def _set_or_delete(
 
 
 def _is_empty(metadata: SessionMetadata) -> bool:
-    return metadata.display_title is None and metadata.archived_at is None
+    return (
+        metadata.display_title is None
+        and metadata.archived_at is None
+        and metadata.approval_mode == "per_request"
+        and metadata.approval_mode_version == 0
+    )
 
 
 def _parse_metadata(value: dict[str, Any]) -> SessionMetadata:
     display_title = value.get("display_title")
     archived_at = value.get("archived_at")
+    approval_mode = value.get("approval_mode")
+    approval_mode_version = value.get("approval_mode_version")
     return SessionMetadata(
         display_title=display_title if isinstance(display_title, str) else None,
         archived_at=_parse_datetime(archived_at) if isinstance(archived_at, str) else None,
+        approval_mode=(
+            approval_mode if approval_mode in {"per_request", "session_auto"} else "per_request"
+        ),
+        approval_mode_version=(
+            approval_mode_version
+            if isinstance(approval_mode_version, int)
+            and not isinstance(approval_mode_version, bool)
+            and approval_mode_version >= 0
+            else 0
+        ),
     )
 
 
@@ -199,6 +271,9 @@ def _metadata_to_json(metadata: SessionMetadata) -> dict[str, Any]:
         value["display_title"] = metadata.display_title
     if metadata.archived_at is not None:
         value["archived_at"] = _serialize_datetime(metadata.archived_at)
+    if metadata.approval_mode_version > 0 or metadata.approval_mode != "per_request":
+        value["approval_mode"] = metadata.approval_mode
+        value["approval_mode_version"] = metadata.approval_mode_version
     return value
 
 

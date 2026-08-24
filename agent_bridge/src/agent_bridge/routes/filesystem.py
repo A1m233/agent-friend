@@ -27,7 +27,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
     def pending_filesystem_approvals(
         session_id: str | None = Query(default=None, min_length=1),
     ) -> dict[str, object]:
-        broker = runtime.filesystem_approval_broker
+        broker = runtime.approval_broker
         if broker is None:
             raise HTTPException(status_code=503, detail="filesystem approval unavailable")
         return {
@@ -42,7 +42,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
         request_id: str,
         body: FilesystemApprovalDecisionBody,
     ) -> dict[str, object]:
-        broker = runtime.filesystem_approval_broker
+        broker = runtime.approval_broker
         if broker is None:
             raise HTTPException(status_code=503, detail="filesystem approval unavailable")
         decision = ApprovalDecision(

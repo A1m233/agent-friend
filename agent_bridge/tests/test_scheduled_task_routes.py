@@ -26,7 +26,7 @@ def _client(
         catalog=_Catalog(),
         default_persona="default",
         default_model="fake/model",
-        filesystem_approval_broker=broker,
+        approval_broker=broker,
     )
     app = FastAPI()
     register_routes(app, runtime)  # type: ignore[arg-type]

@@ -191,6 +191,9 @@ describe("buildPendingApprovalQueue", () => {
     });
 
     expect(queue[0]).toMatchObject({
+      requestVersion: 1,
+      sessionId: "session-a",
+      runId: "run-a",
       reason: "检查环境",
       command: "maa version",
       detailLines: [
@@ -200,6 +203,29 @@ describe("buildPendingApprovalQueue", () => {
         "文件：只读 · 网络：禁止",
       ],
     });
+  });
+
+  it("projects a backend risk code without classifying commands in the UI", () => {
+    const queue = buildPendingApprovalQueue({
+      currentSessionId: "session-a",
+      activeRunIdBySession: { "session-a": "run-a" },
+      commandApprovals: {
+        current: command({
+          risk: {
+            level: "catastrophic",
+            fingerprint: "risk-fingerprint",
+            code: "critical-root-recursive-delete",
+            message: "blocked in auto mode",
+            evidence: [],
+          },
+        }),
+      },
+      commandSubmitting: new Set(),
+      commandRuntimeStatus: runtimeReady,
+      filesystemEntries: {},
+    });
+
+    expect(queue[0].riskCode).toBe("critical-root-recursive-delete");
   });
 
   it("labels managed Python without exposing internal paths", () => {

@@ -44,7 +44,7 @@ def test_desktop_can_list_and_decide_pending_approval(tmp_path: Path) -> None:
         time.sleep(0.01)
 
     app = FastAPI()
-    register_routes(app, cast(Any, SimpleNamespace(filesystem_approval_broker=broker)))
+    register_routes(app, cast(Any, SimpleNamespace(approval_broker=broker)))
     client = TestClient(app)
     pending = client.get("/v1/filesystem/approvals", params={"session_id": "session-1"})
     assert pending.status_code == 200
@@ -81,7 +81,7 @@ def test_desktop_can_list_and_decide_pending_approval(tmp_path: Path) -> None:
 def test_expired_approval_cannot_be_decided() -> None:
     broker = FilesystemApprovalBroker()
     app = FastAPI()
-    register_routes(app, cast(Any, SimpleNamespace(filesystem_approval_broker=broker)))
+    register_routes(app, cast(Any, SimpleNamespace(approval_broker=broker)))
 
     response = TestClient(app).post(
         "/v1/filesystem/approvals/missing/decision",

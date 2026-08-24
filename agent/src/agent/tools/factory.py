@@ -89,7 +89,7 @@ def make_default_registry(
     qweather_api_host: str | None = None,
     social_platform_service: SocialPlatformService | None = None,
     skill_service: SkillCatalogService | None = None,
-    filesystem_approval_broker: FilesystemApprovalBroker | None = None,
+    approval_broker: FilesystemApprovalBroker | None = None,
     filesystem_policy: ProtectedPathPolicy | None = None,
     command_runtime: CommandRuntime | None = None,
     execution_environment_manager: ExecutionEnvironmentManager | None = None,
@@ -132,7 +132,7 @@ def make_default_registry(
     tools: list[Tool] = [CalculateTool(), DateTimeCalculateTool()]
     tools.extend(
         make_filesystem_tools(
-            broker=filesystem_approval_broker,
+            broker=approval_broker,
             policy=filesystem_policy,
         )
     )
@@ -142,7 +142,7 @@ def make_default_registry(
         tools.extend(
             make_command_tools(
                 command_runtime,
-                filesystem_approval_broker,
+                approval_broker,
                 execution_environment_manager,
             )
         )
@@ -178,7 +178,7 @@ def make_default_registry(
                 default_persona_name=scheduled_task_persona_name,
                 default_model_id=scheduled_task_model_id,
                 skill_service=skill_service,
-                approval_pending=_scheduled_task_approval_pending(filesystem_approval_broker),
+                approval_pending=_scheduled_task_approval_pending(approval_broker),
             )
         )
 

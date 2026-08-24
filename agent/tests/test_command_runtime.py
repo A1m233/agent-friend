@@ -344,6 +344,8 @@ def test_exec_command_description_explains_runtime_unavailable_recovery() -> Non
     assert "command_runtime_unavailable" in ExecCommandTool.description
     assert "停止重试" in ExecCommandTool.description
     assert "更新或修复安装" in ExecCommandTool.description
+    assert "仅对该请求有效的一次性决定" in ExecCommandTool.description
+    assert "catastrophic_action_blocked_in_session_auto" in ExecCommandTool.description
 
 
 def test_child_environment_does_not_inherit_credentials(runtime: CommandRuntime) -> None:

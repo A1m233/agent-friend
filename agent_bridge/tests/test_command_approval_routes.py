@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -10,6 +11,7 @@ from agent.command_runtime import (
     CommandApprovalDetails,
     PendingCommandApproval,
 )
+from agent.sessions.metadata import SessionMetadataStore
 from agent_bridge.routes.approvals import register_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -48,7 +50,7 @@ def test_command_approval_is_listed_and_decided_on_common_control_plane() -> Non
     app = FastAPI()
     register_routes(
         app,
-        cast(Any, SimpleNamespace(filesystem_approval_broker=broker, command_runtime=None)),
+        cast(Any, SimpleNamespace(approval_broker=broker, command_runtime=None)),
     )
     client = TestClient(app)
     pending = client.get("/v1/approvals", params={"kind": "command"})
@@ -112,7 +114,7 @@ def test_windows_sandbox_setup_requires_explicit_endpoint_call() -> None:
         cast(
             Any,
             SimpleNamespace(
-                filesystem_approval_broker=ApprovalBroker(),
+                approval_broker=ApprovalBroker(),
                 command_runtime=command_runtime,
             ),
         ),
@@ -173,7 +175,7 @@ def test_command_allow_is_rejected_while_global_sandbox_is_not_ready() -> None:
         cast(
             Any,
             SimpleNamespace(
-                filesystem_approval_broker=broker,
+                approval_broker=broker,
                 command_runtime=command_runtime,
             ),
         ),
@@ -232,7 +234,7 @@ def test_host_user_command_approval_does_not_require_windows_sandbox() -> None:
         cast(
             Any,
             SimpleNamespace(
-                filesystem_approval_broker=broker,
+                approval_broker=broker,
                 command_runtime=command_runtime,
             ),
         ),
@@ -250,3 +252,108 @@ def test_host_user_command_approval_does_not_require_windows_sandbox() -> None:
 
     assert response.status_code == 200
     worker.join(timeout=2)
+
+
+def test_session_approval_mode_requires_acknowledgement_and_version(tmp_path: Path) -> None:
+    broker = ApprovalBroker(
+        mode_store=SessionMetadataStore(tmp_path / "metadata.json"),
+        session_exists=lambda session_id: session_id == "session-1",
+    )
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(Any, SimpleNamespace(approval_broker=broker, command_runtime=None)),
+    )
+    client = TestClient(app)
+
+    missing_ack = client.put(
+        "/v1/sessions/session-1/approval-mode",
+        json={"mode": "session_auto", "expected_version": 0},
+    )
+    enabled = client.put(
+        "/v1/sessions/session-1/approval-mode",
+        json={
+            "mode": "session_auto",
+            "expected_version": 0,
+            "risk_acknowledged": True,
+        },
+    )
+    current = client.get("/v1/sessions/session-1/approval-mode")
+    stale = client.put(
+        "/v1/sessions/session-1/approval-mode",
+        json={"mode": "per_request", "expected_version": 0},
+    )
+    disabled = client.put(
+        "/v1/sessions/session-1/approval-mode",
+        json={"mode": "per_request", "expected_version": 1},
+    )
+
+    assert missing_ack.status_code == 422
+    assert enabled.json()["approval_mode"] == "session_auto"
+    assert enabled.json()["approval_mode_version"] == 1
+    assert current.json() == {
+        "session_id": "session-1",
+        "approval_mode": "session_auto",
+        "approval_mode_version": 1,
+    }
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["approval_mode_version"] == 1
+    assert disabled.json()["approval_mode"] == "per_request"
+    assert disabled.json()["approval_mode_version"] == 2
+
+
+def test_card_combination_approves_exact_request_and_switches_mode(tmp_path: Path) -> None:
+    broker = ApprovalBroker(
+        mode_store=SessionMetadataStore(tmp_path / "metadata.json"),
+        session_exists=lambda session_id: session_id == "session-1",
+    )
+    request = PendingCommandApproval.create(
+        session_id="session-1",
+        run_id="run-1",
+        tool_call_id="tool-1",
+        reason="launch desktop app",
+        details=CommandApprovalDetails(
+            cmd="app.exe",
+            argv=("app.exe",),
+            execution="host_user",
+            workdir="C:/workspace",
+            cwd_source="explicit",
+            mode="buffered",
+            timeout_seconds=30,
+            filesystem_access="unrestricted",
+            additional_roots=(),
+            host_derived_roots=(),
+            network_access="unrestricted",
+            interactive=False,
+        ),
+    )
+    decisions: list[Any] = []
+    worker = threading.Thread(
+        target=lambda: decisions.append(broker.request(request, timeout_seconds=2))
+    )
+    worker.start()
+    deadline = time.monotonic() + 1
+    while not broker.pending(kind="command") and time.monotonic() < deadline:
+        time.sleep(0.01)
+    app = FastAPI()
+    register_routes(
+        app,
+        cast(Any, SimpleNamespace(approval_broker=broker, command_runtime=None)),
+    )
+
+    response = TestClient(app).post(
+        f"/v1/approvals/{request.request_id}/enable-session-auto",
+        json={
+            "session_id": "session-1",
+            "run_id": "run-1",
+            "expected_request_version": 1,
+            "expected_mode_version": 0,
+            "risk_acknowledged": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["approval_mode"] == "session_auto"
+    worker.join(timeout=2)
+    assert decisions and decisions[0].approved is True
+    assert request.decision_source == "user_enable_session_auto"
