@@ -77,6 +77,7 @@ from .reasoning import (
     ReasoningStateFormat,
     render_provider_reasoning_state,
 )
+from .request_witness import ProviderRequestRelation, ProviderRequestWitness
 from .spec import ProviderConfig, ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -88,6 +89,8 @@ from .stream_events import (
     LLMTransportDiagnostic,
     LLMTurnDone,
     LLMUsage,
+    ProviderAssistantTurn,
+    ProviderToolCall,
 )
 
 __version__ = "0.1.0"
@@ -140,11 +143,15 @@ __all__ = [
     "ModelRouteCapabilities",
     "ModelRuntimeConfig",
     "MultimodalInputAdapter",
+    "ProviderAssistantTurn",
     "ProviderConfig",
     "ProviderDefinition",
     "ProviderModel",
     "ProviderReasoningState",
+    "ProviderRequestRelation",
+    "ProviderRequestWitness",
     "ProviderSpec",
+    "ProviderToolCall",
     "ReasoningControl",
     "ReasoningPresetDefinition",
     "ReasoningReplayScope",

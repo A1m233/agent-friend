@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .request_witness import ProviderRequestWitness
 from .stream_events import (
     LLMResponseDiagnostics,
     LLMStreamEvent,
@@ -29,6 +30,9 @@ class ModelCallControl:
 
     cancel_check: Callable[[], None] | None = None
     diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None
+    previous_request_witness: ProviderRequestWitness | None = None
+    continuation_disposition: str = "baseline"
+    rebase_reason: str | None = None
 
 
 @dataclass(frozen=True)

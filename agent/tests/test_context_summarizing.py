@@ -742,9 +742,9 @@ def test_ac34_35_compaction_persisted_and_reused(
     caplog: Any,
 ) -> None:
     """AC-3.4/3.5：超阈值触发即落 compaction 事件；下一轮复用 prior_summary 不重摘。"""
-    # window 9300 → threshold 7440；折叠后的 summary + tail 留有稳定余量，
+    # window 10000 → threshold 8000；折叠后的 summary + tail 留有稳定余量，
     # 故第二轮复用折叠不再触发；首轮 seed 大量历史仍会越过阈值触发一次。
-    llm = _FakeLLM(context_window=9300)
+    llm = _FakeLLM(context_window=10_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -777,7 +777,7 @@ def test_ac34_35_compaction_persisted_and_reused(
 
 
 def test_conversation_emits_completed_only_after_compaction_is_persisted(tmp_path: Path) -> None:
-    llm = _FakeLLM(context_window=9000)
+    llm = _FakeLLM(context_window=10_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -811,7 +811,7 @@ def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
 
 def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: Path) -> None:
     # Leave enough fixed-prompt headroom for the post-compaction summary + recent tail.
-    llm = _FakeLLM(context_window=9000)
+    llm = _FakeLLM(context_window=10_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -868,7 +868,7 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
 
 def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> None:
     # Leave enough fixed-prompt headroom for rebuilding a valid checkpoint.
-    llm = _FakeLLM(context_window=9000)
+    llm = _FakeLLM(context_window=10_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )

@@ -36,18 +36,28 @@ def _normalize_usage(usage: Any, *, usage_source: str | None = None) -> LLMUsage
     if prompt is None and completion is None and total is None:
         return None
     prompt_tokens = int(prompt or 0)
+    # Prefer provider-native/public counters over LiteLLM's private compatibility
+    # attributes.  LiteLLM's ``Usage`` object initializes
+    # ``_cache_read_input_tokens`` to zero even when an OpenAI-compatible
+    # provider reports the real value under ``prompt_tokens_details.cached_tokens``.
+    # Reading the private zero first therefore turns a real hit into a reported
+    # miss.  Native DeepSeek/Kimi counters remain authoritative when present.
     cached, cached_source = _first_usage_int_with_source(
         usage,
-        "cached_tokens",
         "prompt_cache_hit_tokens",
+        "cached_tokens",
         "cache_read_input_tokens",
-        "_cache_read_input_tokens",
     )
     if cached is None:
         prompt_details = usage_field(usage, "prompt_tokens_details")
         cached, detail_source = _first_usage_int_with_source(prompt_details, "cached_tokens")
         if detail_source is not None:
             cached_source = f"prompt_tokens_details.{detail_source}"
+    if cached is None:
+        cached, cached_source = _first_usage_int_with_source(
+            usage,
+            "_cache_read_input_tokens",
+        )
     cache_miss, cache_miss_source = _first_usage_int_with_source(usage, "prompt_cache_miss_tokens")
     cache_miss_derived = False
     if cache_miss is None and cached is not None:

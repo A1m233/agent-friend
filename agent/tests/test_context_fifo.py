@@ -477,7 +477,7 @@ def test_ac23_tool_loop_continuation_truncates(tmp_path: Path) -> None:
         ],
         # Keep the fixture above the default prompt + tool schema baseline so the
         # assertion stays about continuation FIFO trimming, not fixed-cost overflow.
-        context_window=9000,
+        context_window=10_000,
     )
     rec = _RecordingFifo()
     conv, session, store = _make_conversation(

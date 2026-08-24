@@ -431,7 +431,7 @@ def test_incomplete_model_response_recovers_with_same_run(
     )
     assert "".join(event.text for event in events if isinstance(event, TextDelta)) == "recovered"
     assert any(
-        message.get("role") == "system" and instruction_fragment in str(message.get("content", ""))
+        message.get("role") == "user" and instruction_fragment in str(message.get("content", ""))
         for message in fake.received[1]
     )
     assistants = [event for event in conv.session.events if event.type == "assistant_message"]
@@ -474,12 +474,12 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
     first_memory_index = next(
         index
         for index, message in enumerate(first_request)
-        if "memory-for:first" in message.get("content", "")
+        if "memory-for:first" in str(message.get("content") or "")
     )
     first_runtime_index = next(
         index
         for index, message in enumerate(first_request)
-        if message.get("content", "").startswith("<runtime_now")
+        if str(message.get("content") or "").startswith("<agent_friend_runtime_context")
     )
     assert first_user_index < first_memory_index < first_runtime_index
 
@@ -492,7 +492,9 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
         if "memory-for:second" in message.get("content", "")
     )
     assert second_user_index < second_memory_index
-    assert all("memory-for:first" not in message.get("content", "") for message in second_request)
+    assert all(
+        "memory-for:first" not in str(message.get("content") or "") for message in second_request
+    )
     assert [message.content for message in conv.session.messages if message.role == "user"] == [
         "first",
         "second",
@@ -855,7 +857,8 @@ def test_malformed_tool_call_is_closed_as_failed_item_before_recovery(
     assert any(message.get("role") == "tool" for message in fake.received[1])
     if broken_args == "{}":
         assert any(
-            "缺少必填参数：message" in message.get("content", "") for message in fake.received[1]
+            "缺少必填参数：message" in str(message.get("content") or "")
+            for message in fake.received[1]
         )
     assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
     assert [event.payload["content"] for event in assistant_events] == ["done"]
@@ -1119,7 +1122,8 @@ def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
     assert "cache_hit_ratio=0.9500" in latency_text
     assert "cache_reporting_state=reported_nonzero" in latency_text
     # 工具续轮会刷新逐次可信时间，因此上一轮完整 request prefix 不再保持不变。
-    assert "previous_request_prefix_preserved=false" in latency_text
+    assert "previous_request_prefix_preserved=true" in latency_text
+    assert "continuation_disposition=continued" in latency_text
     assert "tool_result_chars=" in latency_text
     assert trace.llm_call_count == 2
     assert trace.tool_call_count == 1
@@ -1133,7 +1137,7 @@ def test_run_latency_logs_stitch_llm_cache_tool_and_first_text_without_content(
         for event in diagnostic_events
     ]
     assert cache_diagnostics[0]["cache_lineage"] == "new"
-    assert cache_diagnostics[1]["previous_request_prefix_preserved"] is False
+    assert cache_diagnostics[1]["previous_request_prefix_preserved"] is True
     assert cache_diagnostics[1]["cache_state"] == "reported_nonzero"
     assert "PRIVATE_USER_TEXT" not in json.dumps(cache_diagnostics, ensure_ascii=False)
 
@@ -1834,10 +1838,10 @@ def test_explicit_continuation_budget_triggers_finalization(tmp_path: Path) -> N
 
     assert echo.call_count == 6
 
-    # 兜底调用（最后一次 LLM 调用）messages 应包含 "不要再调用任何工具" 的 system msg
+    # 兜底调用使用 trusted host user packet，避免改写稳定 system envelope。
     finalization_messages = fake.received[-1]
-    system_msgs = [m for m in finalization_messages if m.get("role") == "system"]
-    assert any("不要再调用任何工具" in m["content"] for m in system_msgs)
+    host_messages = [m for m in finalization_messages if m.get("role") == "user"]
+    assert any("不要再调用任何工具" in str(m.get("content") or "") for m in host_messages)
 
 
 def test_default_policy_can_complete_after_more_than_five_continuations(tmp_path: Path) -> None:
@@ -2177,15 +2181,37 @@ def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
     )
     assert (
         sum(
-            continuation.isoformat(timespec="seconds") in message.get("content", "")
+            continuation.isoformat(timespec="seconds") in str(message.get("content") or "")
             for message in fake.received[1]
         )
         == 1
     )
-    assert all(
-        first_inference.isoformat(timespec="seconds") not in message.get("content", "")
-        for message in fake.received[1]
+    # The prior snapshot remains byte-stable in the request prefix; the fresh
+    # sequence explicitly supersedes it at the tail.
+    assert (
+        sum(
+            first_inference.isoformat(timespec="seconds") in str(message.get("content") or "")
+            for message in fake.received[1]
+        )
+        == 1
     )
+    runtime_packets = [
+        str(message.get("content") or "")
+        for message in fake.received[1]
+        if str(message.get("content") or "").startswith("<agent_friend_runtime_context")
+    ]
+    assert len(runtime_packets) == 2
+    assert 'sequence="0" supersedes="-1"' in runtime_packets[0]
+    assert 'sequence="1" supersedes="0"' in runtime_packets[1]
+    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
+    first_appended_role = fake.received[1][len(fake.received[0])]["role"]
+    assert first_appended_role == "assistant"
+    tool_positions = [
+        index for index, message in enumerate(fake.received[1]) if message.get("role") == "tool"
+    ]
+    assert tool_positions
+    assert all(index < len(fake.received[1]) - 1 for index in tool_positions)
+    assert fake.received[1][-1]["role"] == "user"
     request = next(event for event in conv.session.events if event.type == "tool_call_request")
     assert "__agent_friend_runtime_now" not in request.payload["args"]
     assert all("<runtime_now" not in message.content for message in conv.session.messages)
@@ -2291,7 +2317,7 @@ def test_repeated_identical_failures_only_add_advisory_and_continue(tmp_path: Pa
     assert done.stop_reason == "end_turn"
     assert done.total_tool_calls == 3
     assert any(
-        message.get("role") == "system" and "这只是进展提示" in message.get("content", "")
+        message.get("role") == "user" and "这只是进展提示" in str(message.get("content") or "")
         for message in fake.received[3]
     )
 
@@ -2372,7 +2398,7 @@ def test_unavailable_filesystem_approval_only_advises_after_changed_requests(
     assert done.stop_reason == "end_turn"
     assert done.total_tool_calls == 3
     assert any(
-        message.get("role") == "system" and "这只是进展提示" in message.get("content", "")
+        message.get("role") == "user" and "这只是进展提示" in str(message.get("content") or "")
         for message in fake.received[3]
     )
 
@@ -2484,7 +2510,8 @@ def test_soft_budget_reminder_is_injected_once(tmp_path: Path) -> None:
         message["content"]
         for request in fake.received
         for message in request
-        if message.get("role") == "system" and "工具运行预算即将到达边界" in message["content"]
+        if message.get("role") == "user"
+        and "工具运行预算即将到达边界" in str(message.get("content") or "")
     ]
     assert len(reminders) == 1
 

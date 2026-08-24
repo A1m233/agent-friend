@@ -14,7 +14,6 @@ docs/requirements/005-engine-tool-calling-and-web-search/design.md §4.5。
 
 from __future__ import annotations
 
-import json
 import logging
 import random
 import time
@@ -42,9 +41,10 @@ from .kimi_transport import (
     open_kimi_stream,
     uses_kimi_stream_transport,
 )
-from .litellm_transport import open_cancellable_litellm_stream
+from .litellm_transport import open_cancellable_litellm_stream, open_litellm_stream
 from .protocol import ModelRequest, ModelResponse
 from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
+from .request_witness import ProviderRequestWitness
 from .spec import ProviderSpec
 from .stream_events import (
     LLMActivity,
@@ -56,6 +56,8 @@ from .stream_events import (
     LLMTransportDiagnostic,
     LLMTurnDone,
     LLMUsage,
+    ProviderAssistantTurn,
+    ProviderToolCall,
 )
 from .usage import extract_stream_usage, extract_usage
 from .usage import usage_field as _usage_field
@@ -166,46 +168,6 @@ def _response_text_field(value: Any, name: str) -> str | None:
         return None
     text = str(raw).strip()
     return text or None
-
-
-def _request_size_bytes(
-    spec: ProviderSpec,
-    messages: list[dict[str, Any]],
-    kwargs: dict[str, Any],
-) -> int:
-    """Estimate the model request JSON size without retaining or logging its content."""
-    payload: dict[str, Any] = {
-        "model": spec.model.removeprefix("openai/"),
-        "messages": messages,
-        "stream": True,
-    }
-    extra_body = kwargs.get("extra_body")
-    if isinstance(extra_body, dict) and "messages" in extra_body:
-        payload["messages"] = extra_body["messages"]
-        remaining_extra_body = {
-            key: value for key, value in extra_body.items() if key != "messages"
-        }
-        if remaining_extra_body:
-            payload["extra_body"] = remaining_extra_body
-    for key in (
-        "max_tokens",
-        "response_format",
-        "stream_options",
-        "temperature",
-        "tool_choice",
-        "tools",
-        "top_p",
-    ):
-        if key in kwargs:
-            payload[key] = kwargs[key]
-    rendered = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    )
-    return len(rendered.encode("utf-8"))
 
 
 def _emit_transport_diagnostic(
@@ -421,6 +383,7 @@ class LLMClient:
             overrides = dict(request.settings)
             diagnostic_callback = request.control.diagnostic_callback
             cancel_check = request.control.cancel_check
+            previous_request_witness = request.control.previous_request_witness
             if request.cache_key and uses_kimi_stream_transport(self.spec):
                 overrides.setdefault("prompt_cache_key", request.cache_key)
         else:
@@ -433,12 +396,17 @@ class LLMClient:
                 Callable[[], None] | None,
                 overrides.pop("_cancel_check", None),
             )
+            previous_request_witness = cast(
+                ProviderRequestWitness | None,
+                overrides.pop("_previous_request_witness", None),
+            )
         return self._stream_with_network_retries(
             self.spec,
             messages,
             tools=tools,
             diagnostic_callback=diagnostic_callback,
             cancel_check=cancel_check,
+            previous_request_witness=previous_request_witness,
             **overrides,
         )
 
@@ -450,22 +418,33 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         cancel_check: Callable[[], None] | None = None,
+        previous_request_witness: ProviderRequestWitness | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
         max_retries = max(self._network_retries, self._engine_overload_retries)
+        relation_witness = previous_request_witness
         for attempt in range(max_retries + 1):
             emitted = False
             should_retry = False
             retry_error: LLMNetworkError | LLMTransientProviderError | None = None
             retry_limit = 0
+            attempt_witness: ProviderRequestWitness | None = None
+
+            def observe_diagnostic(event: LLMTransportDiagnostic) -> None:
+                nonlocal attempt_witness
+                if event.request_witness is not None:
+                    attempt_witness = event.request_witness
+                _emit_transport_diagnostic(diagnostic_callback, event)
+
             upstream = self._stream_once(
                 spec,
                 messages,
                 tools=tools,
-                diagnostic_callback=diagnostic_callback,
+                diagnostic_callback=observe_diagnostic,
                 diagnostic_attempt=attempt + 1,
                 cancel_check=cancel_check,
+                previous_request_witness=relation_witness,
                 **overrides,
             )
             try:
@@ -508,6 +487,8 @@ class LLMClient:
                     delay,
                     cancel_check=cancel_check,
                 )
+                if attempt_witness is not None:
+                    relation_witness = attempt_witness
 
     def _network_retry_delay(self, attempt: int) -> float:
         return self._network_retry_backoff_seconds * (2**attempt)
@@ -624,6 +605,7 @@ class LLMClient:
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         diagnostic_attempt: int = 1,
         cancel_check: Callable[[], None] | None = None,
+        previous_request_witness: ProviderRequestWitness | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """单次流式调用 LiteLLM（generator function）。
@@ -666,7 +648,11 @@ class LLMClient:
         kwargs.setdefault("stream_options", {"include_usage": True})
         request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
         transport = "kimi_direct" if uses_kimi_stream_transport(spec) else "litellm"
-        request_bytes = _request_size_bytes(spec, request_messages, kwargs)
+        request_witness: ProviderRequestWitness | None = None
+        request_bytes: int | None = None
+        request_fingerprint: str | None = None
+        request_relation = "unavailable"
+        common_prefix_items: int | None = None
         attempt_started = time.perf_counter()
         _emit_transport_diagnostic(
             diagnostic_callback,
@@ -675,7 +661,6 @@ class LLMClient:
                 attempt=diagnostic_attempt,
                 attempt_elapsed_ms=0,
                 transport=transport,
-                request_bytes=request_bytes,
             ),
         )
 
@@ -703,19 +688,19 @@ class LLMClient:
                     timeout_seconds=self._stream_timeout_seconds,
                 )
             else:
-                response = litellm.completion(
-                    model=spec.model,
-                    api_key=spec.api_key,
-                    api_base=spec.api_base,
-                    messages=request_messages,
-                    stream=True,
-                    **kwargs,
-                )
+                response = open_litellm_stream(spec, request_messages, kwargs)
         except BaseException as e:
             if cancel_check is not None:
                 cancel_check()
             if not isinstance(e, Exception):
                 raise
+            failed_witness = getattr(e, "request_witness", None)
+            if isinstance(failed_witness, ProviderRequestWitness):
+                request_witness = failed_witness
+                request_bytes = failed_witness.request_bytes
+                request_fingerprint = failed_witness.request_fingerprint
+                request_relation = failed_witness.relation_to(previous_request_witness)
+                common_prefix_items = failed_witness.common_prefix_items(previous_request_witness)
             mapped_error = _map_exception(e, provider_id=_provider_id_for_spec(spec))
             _emit_transport_diagnostic(
                 diagnostic_callback,
@@ -725,6 +710,10 @@ class LLMClient:
                     attempt_elapsed_ms=round((time.perf_counter() - attempt_started) * 1000),
                     transport=transport,
                     request_bytes=request_bytes,
+                    request_fingerprint=request_fingerprint,
+                    request_relation=request_relation,
+                    common_prefix_items=common_prefix_items,
+                    request_witness=request_witness,
                     provider_request_id=getattr(
                         mapped_error,
                         "provider_request_id",
@@ -745,6 +734,13 @@ class LLMClient:
             )
             raise mapped_error from e
         stream_open_ms = round((time.perf_counter() - attempt_started) * 1000)
+        raw_witness = getattr(response, "request_witness", None)
+        if isinstance(raw_witness, ProviderRequestWitness):
+            request_witness = raw_witness
+            request_bytes = request_witness.request_bytes
+            request_fingerprint = request_witness.request_fingerprint
+            request_relation = request_witness.relation_to(previous_request_witness)
+            common_prefix_items = request_witness.common_prefix_items(previous_request_witness)
         provider_request_id = _response_text_field(response, "request_id")
         _emit_transport_diagnostic(
             diagnostic_callback,
@@ -754,6 +750,10 @@ class LLMClient:
                 attempt_elapsed_ms=stream_open_ms,
                 transport=transport,
                 request_bytes=request_bytes,
+                request_fingerprint=request_fingerprint,
+                request_relation=request_relation,
+                common_prefix_items=common_prefix_items,
+                request_witness=request_witness,
                 provider_request_id=provider_request_id,
             ),
         )
@@ -770,6 +770,8 @@ class LLMClient:
         reasoning_chars = 0
         reasoning_content_parts: list[str] = []
         reasoning_details: list[dict[str, Any]] = []
+        content_parts: list[str] = []
+        completed_tool_calls: dict[int, dict[str, str]] = {}
         finish_reason_raw = ""
         delta_fields: set[str] = set()
         first_chunk_ms: int | None = None
@@ -801,6 +803,7 @@ class LLMClient:
                             attempt_elapsed_ms=first_chunk_ms,
                             transport=transport,
                             request_bytes=request_bytes,
+                            request_fingerprint=request_fingerprint,
                             provider_request_id=provider_request_id,
                             response_id=response_id,
                             response_model=response_model,
@@ -826,6 +829,7 @@ class LLMClient:
                     visible_chunk = True
                     text_delta_count += 1
                     text_chars += len(content)
+                    content_parts.append(content)
                     yield LLMTextDelta(text=content)
 
                 reasoning_raw = getattr(delta, "reasoning_content", None)
@@ -851,6 +855,7 @@ class LLMClient:
                                 attempt_elapsed_ms=first_reasoning_delta_ms,
                                 transport=transport,
                                 request_bytes=request_bytes,
+                                request_fingerprint=request_fingerprint,
                                 provider_request_id=provider_request_id,
                                 response_id=response_id,
                                 response_model=response_model,
@@ -864,11 +869,24 @@ class LLMClient:
                     visible_chunk = True
                     tool_call_delta_count += 1
                     func = getattr(tc, "function", None)
+                    index = getattr(tc, "index", 0) or 0
+                    slot = completed_tool_calls.setdefault(
+                        index,
+                        {"id": "", "name": "", "arguments_json": ""},
+                    )
+                    raw_id = getattr(tc, "id", "") or ""
+                    raw_name = (getattr(func, "name", "") or "") if func else ""
+                    raw_arguments = (getattr(func, "arguments", "") or "") if func else ""
+                    if raw_id:
+                        slot["id"] = raw_id
+                    if raw_name:
+                        slot["name"] = raw_name
+                    slot["arguments_json"] += raw_arguments
                     yield LLMToolCallDelta(
-                        index=getattr(tc, "index", 0) or 0,
-                        tool_call_id=getattr(tc, "id", "") or "",
-                        tool_name=(getattr(func, "name", "") or "") if func else "",
-                        args_json_delta=(getattr(func, "arguments", "") or "") if func else "",
+                        index=index,
+                        tool_call_id=raw_id,
+                        tool_name=raw_name,
+                        args_json_delta=raw_arguments,
                     )
 
                 finish_reason = getattr(choice, "finish_reason", None)
@@ -933,17 +951,36 @@ class LLMClient:
                 )
             raise LLMEmptyResponseError("模型未返回可见正文或工具调用。")
 
+        reasoning_state = build_provider_reasoning_state(
+            spec,
+            reasoning_content="".join(reasoning_content_parts),
+            reasoning_details=reasoning_details,
+        )
+        assistant_turn = ProviderAssistantTurn(
+            content="".join(content_parts) if content_parts else None,
+            tool_calls=tuple(
+                ProviderToolCall(
+                    index=index,
+                    tool_call_id=item["id"],
+                    tool_name=item["name"],
+                    arguments_json=item["arguments_json"],
+                )
+                for index, item in sorted(completed_tool_calls.items())
+            ),
+            reasoning_state=reasoning_state,
+        )
         yield LLMTurnDone(
             stop_reason=stop_reason,
             usage=usage,
-            reasoning_state=build_provider_reasoning_state(
-                spec,
-                reasoning_content="".join(reasoning_content_parts),
-                reasoning_details=reasoning_details,
-            ),
+            reasoning_state=reasoning_state,
+            assistant_turn=assistant_turn,
             diagnostics=LLMResponseDiagnostics(
                 transport=transport,
                 request_bytes=request_bytes,
+                request_fingerprint=request_fingerprint,
+                request_relation=request_relation,
+                common_prefix_items=common_prefix_items,
+                request_witness=request_witness,
                 stream_open_ms=stream_open_ms,
                 first_chunk_ms=first_chunk_ms,
                 first_reasoning_delta_ms=first_reasoning_delta_ms,
