@@ -232,7 +232,7 @@ def test_deepseek_image_upload_uses_finite_ttl_and_nested_file_block(
         "content": [{"type": "file", "file": {"file_id": "remote-file"}}],
     }
     assert files.uploads == 1
-    assert files.retrievals == 1
+    assert files.retrievals == 0
     assert files.purposes == ["user_data"]
     assert files.expires_after == [{"anchor": "created_at", "seconds": 86_400}]
 
@@ -267,7 +267,7 @@ def test_deepseek_cache_is_isolated_by_api_key(
     assert len(list(tmp_path.glob("*.json"))) == 2
 
 
-def test_deepseek_remote_failure_reuploads_from_local_asset(
+def test_deepseek_unexpired_disk_cache_skips_remote_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -277,16 +277,22 @@ def test_deepseek_remote_failure_reuploads_from_local_asset(
         "llm_providers.multimodal.adapter.OpenAI",
         lambda **_kwargs: SimpleNamespace(files=files),
     )
-    adapter = MultimodalInputAdapter(open_asset=lambda _id: BytesIO(b"jpeg"), cache_dir=tmp_path)
+    first_adapter = MultimodalInputAdapter(
+        open_asset=lambda _id: BytesIO(b"jpeg"), cache_dir=tmp_path
+    )
     message = _Message(_attachment(kind="image", media_type="image/jpeg"), current=True)
     client = _client("openai/deepseek-v4-flash-vision-exp")
 
-    adapter.render_message(message, client)
+    first = first_adapter.render_message(message, client)
     files.retrieve_error = True
-    adapter.render_message(message, client)
+    second_adapter = MultimodalInputAdapter(
+        open_asset=lambda _id: BytesIO(b"jpeg"), cache_dir=tmp_path
+    )
+    second = second_adapter.render_message(message, client)
 
-    assert files.retrievals == 1
-    assert files.uploads == 2
+    assert second == first
+    assert files.retrievals == 0
+    assert files.uploads == 1
 
 
 def test_deepseek_near_expiry_cache_reuploads_without_reusing_remote_id(
@@ -332,7 +338,7 @@ def test_deepseek_single_flight_uploads_once(
 
     assert results[0] == results[1]
     assert files.uploads == 1
-    assert files.retrievals == 1
+    assert files.retrievals == 0
 
 
 @pytest.mark.parametrize(

@@ -191,13 +191,7 @@ class MultimodalInputAdapter:
                 except (TypeError, ValueError):
                     expires_at = 0
                 if file_id and expires_at - time.time() > DEEPSEEK_FILE_EXPIRY_MARGIN_SECONDS:
-                    try:
-                        sdk = OpenAI(api_key=client.spec.api_key, base_url=client.spec.api_base)
-                        cached_files_api: Any = sdk.files
-                        cached_files_api.retrieve(file_id)
-                        return cached
-                    except Exception:
-                        pass
+                    return cached
                 path.unlink(missing_ok=True)
 
             try:
