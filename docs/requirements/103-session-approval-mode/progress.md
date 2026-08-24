@@ -48,3 +48,4 @@ COMPLETED
 | 2026-08-25 | 在当前 feature worktree 的真实 Tauri/WebView2 中完成视觉与交互验收；验收发现模式菜单项选择后不关闭，移除错误的 `preventDefault()` 后复验通过 | `desktop DOM via CDP` + `desktop interaction` + mode API 交叉核对；菜单与 trigger 间隔约 3.8px，菜单项/确认按钮中心命中正确，选择后菜单关闭，取消后无浮层残留；真实确认落盘为 session_auto/version=1，页面重载保持橙色风险状态，退出后恢复 per_request/version=2；frontend 108 files / 619 tests 与 production build 复验通过 |
 | 2026-08-25 | 用 Vite dev-only store 注入临时高危命令卡片，检查 ApprovalDock 布局、风险标签、三按钮与共享确认弹窗，随后清理状态 | 仅证明真实 WebView UI/interaction 层，不是跨层 E2E；未调用真实 LLM、未执行命令，最终无临时卡片/菜单/dialog 残留 |
 | 2026-08-25 | 用户确认交付并要求合入主干、推送远端，需求状态收尾为 `COMPLETED` | 进入 feature commit → Guide 门禁 → merge commit → push 流程 |
+| 2026-08-25 | 以 merge commit `b6df45b` 同步最新 `origin/main`，在最终合入树上复跑全部门禁 | backend lint + mypy 579 source files + 2194 passed / 4 skipped；frontend 108 files / 619 tests + production build；Rust 217+6 tests + release check 全部通过 |
