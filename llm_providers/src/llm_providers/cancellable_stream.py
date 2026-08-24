@@ -60,6 +60,7 @@ class CancellableAsyncStream:
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.request_id: str | None = None
+        self.request_witness: Any = None
         self._source = source
         self._cancel_check = cancel_check
         self._items: queue.Queue[object] = queue.Queue()
@@ -151,6 +152,7 @@ class CancellableAsyncStream:
             if self._closed.is_set():
                 return
             self.request_id = self._source.request_id
+            self.request_witness = getattr(self._source, "request_witness", None)
             self._last_activity_at = time.monotonic()
             self._opened_successfully = True
             self._opened.set()

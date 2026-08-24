@@ -10,13 +10,47 @@ OpenAI SDK directly for canonical Kimi models.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
+from importlib.metadata import version
 from typing import Any, cast
 
+import httpx
 import openai
 
 from .cancellable_stream import CancellableAsyncStream, open_cancellable_stream
+from .request_witness import ProviderRequestCapture, ProviderRequestWitness
 from .spec import ProviderSpec
+
+_OPENAI_VERSION = version("openai")
+
+
+def _capture(spec: ProviderSpec) -> ProviderRequestCapture:
+    return ProviderRequestCapture(
+        provider_id="kimi",
+        transport="kimi_direct",
+        transform_identity=f"openai:{_OPENAI_VERSION}:{spec.model}",
+    )
+
+
+def _sync_client(spec: ProviderSpec, capture: ProviderRequestCapture) -> openai.OpenAI:
+    http_client = httpx.Client(event_hooks={"request": [capture.observe]})
+    return openai.OpenAI(
+        api_key=spec.api_key,
+        base_url=spec.api_base,
+        max_retries=0,
+        http_client=http_client,
+    )
+
+
+def _attach_request_witness(
+    error: BaseException,
+    witness: ProviderRequestWitness | None,
+) -> None:
+    if witness is None:
+        return
+    with suppress(Exception):
+        error.request_witness = witness  # type: ignore[attr-defined]
 
 
 def uses_kimi_stream_transport(spec: ProviderSpec) -> bool:
@@ -30,6 +64,7 @@ class KimiStream:
 
     response: Any
     client: openai.OpenAI
+    request_witness: ProviderRequestWitness | None = None
     request_id: str | None = None
     _closed: bool = field(default=False, init=False)
 
@@ -56,22 +91,37 @@ class KimiAsyncStreamSource:
     messages: list[dict[str, Any]]
     request_options: dict[str, Any]
     request_id: str | None = field(default=None, init=False)
+    request_witness: ProviderRequestWitness | None = field(default=None, init=False)
+    _capture: ProviderRequestCapture = field(init=False, repr=False)
     _client: openai.AsyncOpenAI | None = field(default=None, init=False)
     _response: Any = field(default=None, init=False)
 
-    async def open(self) -> AsyncIterator[Any]:
+    def __post_init__(self) -> None:
+        # Build local SDK clients before the cancellation bridge starts its idle
+        # clock.  Only the actual response-header wait counts as provider idle.
+        self._capture = _capture(self.spec)
+        http_client = httpx.AsyncClient(event_hooks={"request": [self._capture.observe_async]})
         self._client = openai.AsyncOpenAI(
             api_key=self.spec.api_key,
             base_url=self.spec.api_base,
             max_retries=0,
+            http_client=http_client,
         )
-        raw_response = await self._client.chat.completions.with_raw_response.create(
-            model=self.spec.model.removeprefix("openai/"),
-            messages=self.messages,  # type: ignore[arg-type]
-            stream=True,
-            **self.request_options,
-        )
+
+    async def open(self) -> AsyncIterator[Any]:
+        assert self._client is not None
+        try:
+            raw_response = await self._client.chat.completions.with_raw_response.create(
+                model=self.spec.model.removeprefix("openai/"),
+                messages=self.messages,  # type: ignore[arg-type]
+                stream=True,
+                **self.request_options,
+            )
+        except BaseException as exc:
+            _attach_request_witness(exc, self._capture.witness)
+            raise
         self._response = raw_response.parse()
+        self.request_witness = self._capture.witness
         self.request_id = getattr(raw_response, "request_id", None)
         return cast(AsyncIterator[Any], self._response)
 
@@ -99,11 +149,8 @@ def open_kimi_stream(
 
     options = dict(request_options)
     options.pop("max_retries", None)
-    client = openai.OpenAI(
-        api_key=spec.api_key,
-        base_url=spec.api_base,
-        max_retries=0,
-    )
+    capture = _capture(spec)
+    client = _sync_client(spec, capture)
     try:
         raw_response = client.chat.completions.with_raw_response.create(
             model=spec.model.removeprefix("openai/"),
@@ -112,12 +159,14 @@ def open_kimi_stream(
             **options,
         )
         response = raw_response.parse()
-    except Exception:
+    except Exception as exc:
+        _attach_request_witness(exc, capture.witness)
         client.close()
         raise
     return KimiStream(
         response=response,
         client=client,
+        request_witness=capture.witness,
         request_id=getattr(raw_response, "request_id", None),
     )
 

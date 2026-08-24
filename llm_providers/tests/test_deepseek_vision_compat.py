@@ -6,14 +6,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-import litellm
+import openai
 import pytest
 from llm_providers.deepseek_vision_compat import (
     flatten_deepseek_file_blocks,
     prepare_litellm_request,
 )
 
-from llm_providers import LLMBadRequestError, LLMClient, LLMTextDelta, ProviderSpec
+from llm_providers import LLMBadRequestError, LLMClient, LLMTextDelta, LLMTurnDone, ProviderSpec
 
 
 def _spec(
@@ -191,20 +191,40 @@ def test_client_stream_golden_http_body_uses_flat_deepseek_file_blocks(
             },
         }
     ]
-    with httpx.Client(transport=httpx.MockTransport(handler)) as session:
-        monkeypatch.setattr(litellm, "client_session", session)
-        events = list(
-            LLMClient(
-                _spec(
-                    defaults={
-                        "extra_body": {"thinking": {"type": "enabled"}},
-                        "reasoning_effort": "high",
-                    }
-                )
-            ).stream(_messages(), tools=tools)
+
+    def instrumented_client(spec: ProviderSpec, capture: Any) -> tuple[Any, Any]:
+        session = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            event_hooks={"request": [capture.observe]},
         )
+        client = openai.OpenAI(
+            api_key=spec.api_key,
+            base_url=spec.api_base,
+            max_retries=0,
+            http_client=session,
+        )
+        return client, client
+
+    monkeypatch.setattr("llm_providers.litellm_transport._sync_client", instrumented_client)
+    events = list(
+        LLMClient(
+            _spec(
+                defaults={
+                    "extra_body": {"thinking": {"type": "enabled"}},
+                    "reasoning_effort": "high",
+                }
+            )
+        ).stream(_messages(), tools=tools)
+    )
 
     assert [event.text for event in events if isinstance(event, LLMTextDelta)] == ["ok"]
+    done = next(event for event in events if isinstance(event, LLMTurnDone))
+    assert done.diagnostics is not None
+    assert done.diagnostics.request_witness is not None
+    assert done.diagnostics.request_relation == "baseline"
+    assert done.diagnostics.request_bytes == len(
+        json.dumps(captured["body"], ensure_ascii=False, separators=(",", ":")).encode()
+    )
     assert captured["url"] == "https://api.deepseek.com/chat/completions"
     assert captured["authorization"] == "Bearer secret"
     body = captured["body"]
