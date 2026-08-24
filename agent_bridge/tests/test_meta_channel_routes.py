@@ -647,7 +647,7 @@ class TestAgUiRunChannelBoundary:
             for index, message in enumerate(messages)
             if '<surface type="desktop_chat" />' in message.get("content", "")
         )
-        assert messages[context_index]["role"] == "system"
+        assert messages[context_index]["role"] == "user"
         user_index = next(
             index
             for index, message in enumerate(messages)

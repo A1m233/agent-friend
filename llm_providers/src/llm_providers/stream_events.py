@@ -20,6 +20,56 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .reasoning import ProviderReasoningState
+from .request_witness import ProviderRequestRelation, ProviderRequestWitness
+
+
+@dataclass(frozen=True, repr=False)
+class ProviderToolCall:
+    """One completed provider tool-call item with its original JSON arguments."""
+
+    index: int
+    tool_call_id: str
+    tool_name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True, repr=False)
+class ProviderAssistantTurn:
+    """Completed assistant response suitable for same-run provider replay."""
+
+    content: str | None
+    tool_calls: tuple[ProviderToolCall, ...] = ()
+    reasoning_state: ProviderReasoningState | None = None
+
+    def __repr__(self) -> str:
+        return (
+            "ProviderAssistantTurn("
+            f"content_chars={len(self.content or '')}, "
+            f"tool_calls={len(self.tool_calls)}, "
+            f"reasoning={self.reasoning_state is not None})"
+        )
+
+    def to_openai_message(self) -> dict[str, object]:
+        message: dict[str, object] = {"role": "assistant", "content": self.content}
+        if self.tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": item.tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.tool_name,
+                        "arguments": item.arguments_json,
+                    },
+                }
+                for item in self.tool_calls
+            ]
+        state = self.reasoning_state
+        if state is not None:
+            if state.format == "reasoning_content" and isinstance(state.payload, str):
+                message["reasoning_content"] = state.payload
+            elif state.format == "reasoning_details" and isinstance(state.payload, tuple):
+                message["reasoning_details"] = [dict(item) for item in state.payload]
+        return message
 
 
 @dataclass(frozen=True)
@@ -114,6 +164,10 @@ class LLMResponseDiagnostics:
 
     transport: str = "unknown"
     request_bytes: int | None = None
+    request_fingerprint: str | None = None
+    request_relation: ProviderRequestRelation = "unavailable"
+    common_prefix_items: int | None = None
+    request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     stream_open_ms: int | None = None
     first_chunk_ms: int | None = None
     first_reasoning_delta_ms: int | None = None
@@ -133,6 +187,10 @@ class LLMTransportDiagnostic:
     attempt_elapsed_ms: int
     transport: str
     request_bytes: int | None = None
+    request_fingerprint: str | None = None
+    request_relation: ProviderRequestRelation = "unavailable"
+    common_prefix_items: int | None = None
+    request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     provider_request_id: str | None = None
     response_id: str | None = None
     response_model: str | None = None
@@ -164,6 +222,7 @@ class LLMTurnDone:
     usage: LLMUsage | None = None
     diagnostics: LLMResponseDiagnostics | None = None
     reasoning_state: ProviderReasoningState | None = None
+    assistant_turn: ProviderAssistantTurn | None = field(default=None, repr=False, compare=False)
     type: Literal["done"] = "done"
 
 

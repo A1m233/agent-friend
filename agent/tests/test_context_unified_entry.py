@@ -3,7 +3,7 @@
 覆盖：
 
 - 首轮 / 工具续轮 / 触上限兜底收尾 **三入口都经过** ``ContextManager``
-- 续轮 ``new_user_input=None``、兜底带 ``trailing_system``、均传 ``runtime``
+- 续轮 ``new_user_input=None``、兜底带 trusted ``trailing_user``、均传 ``runtime``
 - ``LLMTurnDone.usage`` 被消费为下一轮估算锚点
 - ``Conversation.last_context_notes`` 暴露 token 估算 / 窗口 / 阈值
 """
@@ -190,15 +190,13 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     middle = spy.calls[1:-1]
     assert middle, "应至少有一次工具续轮"
     assert all(c["new_user_input"] is None for c in middle)
-    assert all(
-        c["trailing_system"] is None or "工具运行预算即将到达边界" in c["trailing_system"]
-        for c in middle
-    )
+    assert all(c["trailing_system"] is None for c in middle)
 
-    # 兜底收尾（最后一次）：无 new_user_input、带 trailing_system
+    # 兜底收尾（最后一次）：无 new_user_input、带 trusted host trailing_user
     last = spy.calls[-1]
     assert last["new_user_input"] is None
-    assert last["trailing_system"] is not None
+    assert last["trailing_system"] is None
+    assert "不要再调用任何工具" in str(last["trailing_user"] or "")
 
     # 所有入口都传了 runtime
     assert all(c["has_runtime"] for c in spy.calls)

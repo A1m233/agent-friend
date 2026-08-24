@@ -24,6 +24,10 @@ Role = Literal["system", "user", "assistant", "tool"]
 _INTERNAL_PROMPT_MARKERS = {
     "<system_trigger>": "&lt;system_trigger&gt;",
     "</system_trigger>": "&lt;/system_trigger&gt;",
+    "<agent_friend_runtime_context": "&lt;agent_friend_runtime_context",
+    "</agent_friend_runtime_context>": "&lt;/agent_friend_runtime_context&gt;",
+    "<agent_friend_host_advisory": "&lt;agent_friend_host_advisory",
+    "</agent_friend_host_advisory>": "&lt;/agent_friend_host_advisory&gt;",
 }
 
 

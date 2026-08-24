@@ -329,6 +329,47 @@ def test_extract_usage_preserves_cache_counter_provenance_and_zero_state() -> No
     assert usage.cache_miss_prompt_tokens_derived is True
 
 
+def test_extract_usage_does_not_let_litellm_private_zero_mask_openai_cache_details() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                _cache_read_input_tokens=0,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=80),
+            )
+        )
+    )
+
+    assert usage is not None
+    assert usage.cached_prompt_tokens == 80
+    assert usage.cached_prompt_tokens_source == "prompt_tokens_details.cached_tokens"
+    assert usage.cache_miss_prompt_tokens == 40
+
+
+def test_extract_usage_prefers_deepseek_native_cache_counters_on_conflict() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=2,
+                total_tokens=122,
+                prompt_cache_hit_tokens=70,
+                prompt_cache_miss_tokens=50,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=60),
+                _cache_read_input_tokens=0,
+            )
+        )
+    )
+
+    assert usage is not None
+    assert usage.cached_prompt_tokens == 70
+    assert usage.cached_prompt_tokens_source == "prompt_cache_hit_tokens"
+    assert usage.cache_miss_prompt_tokens == 50
+    assert usage.cache_miss_prompt_tokens_source == "prompt_cache_miss_tokens"
+
+
 def test_extract_stream_usage_reads_kimi_choice_usage() -> None:
     chunk = ChatCompletionChunk.model_validate(
         {
@@ -468,7 +509,10 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     assert done.usage.cache_miss_prompt_tokens_source == "derived_prompt_minus_cached"
     assert done.diagnostics is not None
     assert done.diagnostics.transport == "kimi_direct"
-    assert done.diagnostics.request_bytes is not None and done.diagnostics.request_bytes > 0
+    # This test replaces the SDK itself, so no HTTPX request hook runs.  Final-wire
+    # identity must stay unavailable instead of being guessed from SDK inputs.
+    assert done.diagnostics.request_bytes is None
+    assert done.diagnostics.request_fingerprint is None
     assert done.diagnostics.stream_open_ms is not None
     assert done.diagnostics.first_chunk_ms is not None
     assert done.diagnostics.first_reasoning_delta_ms is not None
@@ -483,6 +527,7 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
         "first_chunk",
         "first_reasoning_delta",
     ]
+    assert {event.request_fingerprint for event in transport_events} == {None}
     assert seen["model"] == "kimi-k2.6"
     assert seen["prompt_cache_key"] == "session-1"
     assert seen["stream"] is True
