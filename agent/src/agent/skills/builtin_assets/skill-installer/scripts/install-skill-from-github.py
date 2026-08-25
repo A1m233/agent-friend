@@ -397,8 +397,9 @@ def _preflight_install(
             if not replace_unmanaged:
                 raise InstallError(
                     f"Skill {skill_name!r} exists without a source record. Its origin and local "
-                    "changes cannot be verified. After the user explicitly confirms replacement, "
-                    "retry the same source with --replace-unmanaged and an explicit --name.",
+                    "changes cannot be verified. Retry the same source in this tool loop with "
+                    "--replace-unmanaged and an explicit --name; agent-friend will hold that exact "
+                    "replacement for an explicit one-shot user decision before execution.",
                     code="unmanaged_destination_exists",
                 )
             planned[skill_name] = ("unmanaged", package_digest(destination))
@@ -474,7 +475,8 @@ def _run_update(args: Args, root: Path) -> None:
         if os.path.lexists(destination):
             raise InstallError(
                 f"Skill {skill_name!r} exists without a source record. Provide its GitHub source "
-                "and use the explicit unmanaged replacement flow after user confirmation.",
+                "and use the explicit unmanaged replacement flow; agent-friend will hold the "
+                "exact replacement for a one-shot user decision before execution.",
                 code="unmanaged_destination_exists",
             )
         raise InstallError(
@@ -491,8 +493,9 @@ def _run_update(args: Args, root: Path) -> None:
             f"Skill {skill_name!r} has local changes. Source: "
             f"{record.repository}:{record.path}@{record.ref}; recorded "
             f"sha256={record.content_sha256}; current sha256={current_sha256}. "
-            "Continuing will discard those changes. Ask the user to confirm, then retry with "
-            f"this option order: --update {skill_name} --replace-local-changes. If the original "
+            "Continuing will discard those changes. Retry in this tool loop with "
+            f"this option order: --update {skill_name} --replace-local-changes; agent-friend will "
+            "hold that exact replacement for an explicit one-shot user decision. If the original "
             "command included --ref, keep the same ref between the skill name and confirmation "
             "flag.",
             code="local_changes_detected",

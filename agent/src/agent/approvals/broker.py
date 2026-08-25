@@ -129,7 +129,9 @@ class ApprovalBroker:
             request.approval_mode = mode_state.mode
             request.approval_mode_version = mode_state.version
             request.risk_assessment = assessment
-            if mode_state.mode == "session_auto":
+            if mode_state.mode == "session_auto" and not (
+                assessment is not None and assessment.requires_explicit_user
+            ):
                 immediate = True
                 if assessment is not None and assessment.catastrophic:
                     decision = request.cancelled_decision()
@@ -358,17 +360,25 @@ class ApprovalBroker:
         The caller holds both the per-session lock and ``self._lock``.  Normal
         requests receive their exact full decision; catastrophic requests are
         denied by the same deterministic policy used for newly-created requests.
+        Explicit-user requests remain pending even in session-auto mode.
         """
 
-        resolved = tuple(
+        candidates = tuple(
             request
             for request in self._pending.values()
             if request.session_id == session_id
             and request.request_id != exclude_request_id
             and not request._event.is_set()
         )
-        for request in resolved:
+        changed: list[Any] = []
+        for request in candidates:
             assessment = request.risk_assessment
+            request.approval_mode = state.mode
+            request.approval_mode_version = state.version
+            request.version += 1
+            changed.append(request)
+            if assessment is not None and assessment.requires_explicit_user:
+                continue
             if assessment is not None and assessment.catastrophic:
                 request._decision = request.cancelled_decision()
                 request.decision_source = "catastrophic_policy"
@@ -377,11 +387,8 @@ class ApprovalBroker:
                 request._decision = request.fully_approved_decision()
                 request.decision_source = "session_auto"
                 request.status = "approved"
-            request.approval_mode = state.mode
-            request.approval_mode_version = state.version
-            request.version += 1
             request._event.set()
-        return resolved
+        return tuple(changed)
 
     def _require_session(self, session_id: str) -> None:
         if self._session_exists is not None and not self._session_exists(session_id):

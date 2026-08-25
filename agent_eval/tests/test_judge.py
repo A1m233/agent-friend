@@ -1355,7 +1355,7 @@ def test_maa_device_unavailable_group_rejects_incident_answer_and_accepts_ground
     assert judge_case(isolation, isolation_contract, isolated_good).passed is True
 
 
-def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_argv() -> None:
+def test_host_launch_case_rejects_exec_command_and_accepts_dedicated_structured_tool() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     case = next(item for item in contract.cases if item.id == "C24-04")
     sandboxed_shell = Trace(
@@ -1378,10 +1378,9 @@ def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_ar
         case_id=case.id,
         tool_calls=[
             ToolCallTrace(
-                name="exec_command",
+                name="host_process_start",
                 args={
                     "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
-                    "execution": "host_user",
                 },
                 result_text='{"status":"exited","exit_code":0}',
                 is_error=False,
@@ -1393,7 +1392,7 @@ def test_host_user_launch_case_rejects_sandboxed_shell_and_accepts_structured_ar
 
     bad_verdict = judge_case(case, contract, sandboxed_shell)
     assert bad_verdict.passed is False
-    assert "missing successful tool call exec_command" in bad_verdict.reason
+    assert "missing successful tool call host_process_start" in bad_verdict.reason
     assert judge_case(case, contract, host_argv).passed is True
 
 
@@ -1449,7 +1448,7 @@ def test_managed_skill_update_accepts_catalog_skill_read_without_host_activation
     assert verdict.passed is True
 
 
-def test_confirmed_local_replacement_requires_exact_command_and_access() -> None:
+def test_same_turn_local_replacement_requires_activation_error_recovery_and_exact_command() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     case = next(item for item in contract.cases if item.id == "C24-06")
     access = {
@@ -1466,17 +1465,35 @@ def test_confirmed_local_replacement_requires_exact_command_and_access() -> None
         "network": "enabled",
     }
 
-    def trace_for(args: dict[str, object]) -> Trace:
-        return Trace(
-            case_id=case.id,
-            tool_calls=[
+    def trace_for(args: dict[str, object], *, include_initial_error: bool = True) -> Trace:
+        tool_calls = [
+            ToolCallTrace(
+                name="skill_read",
+                args={"skill_id": "builtin/skill-installer"},
+                result_text="<skill><name>skill-installer</name></skill>",
+                is_error=False,
+            )
+        ]
+        if include_initial_error:
+            tool_calls.append(
                 ToolCallTrace(
                     name="exec_command",
-                    args=args,
-                    result_text="Updated maa-daily",
-                    is_error=False,
+                    args={"cmd": "python scripts/install-skill-from-github.py --update maa-daily"},
+                    result_text="Error [local_changes_detected]",
+                    is_error=True,
                 )
-            ],
+            )
+        tool_calls.append(
+            ToolCallTrace(
+                name="exec_command",
+                args=args,
+                result_text="Updated maa-daily",
+                is_error=False,
+            )
+        )
+        return Trace(
+            case_id=case.id,
+            tool_calls=tool_calls,
             final_text="maa-daily 的本地修改已按确认覆盖，并完成同源更新。",
             stop_reason="end_turn",
         )
@@ -1500,9 +1517,42 @@ def test_confirmed_local_replacement_requires_exact_command_and_access() -> None
     }
     missing_access_args = {key: value for key, value in exact_args.items() if key != "access"}
 
+    original_cross_turn_bad = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="skill_read",
+                args={"skill_id": "builtin/skill-installer"},
+                result_text="<skill><name>skill-installer</name></skill>",
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"cmd": "python scripts/install-skill-from-github.py --update maa-daily"},
+                result_text="Error [local_changes_detected]",
+                is_error=True,
+            ),
+        ],
+        final_text="检测到本地修改，是否确认覆盖？",
+        stop_reason="end_turn",
+    )
+
+    original_verdict = judge_case(case, contract, original_cross_turn_bad)
+    assert original_verdict.passed is False
+    assert (
+        "tool sequence" in original_verdict.reason
+        or "missing successful" in original_verdict.reason
+    )
     assert judge_case(case, contract, trace_for(exact_args)).passed is True
     assert judge_case(case, contract, trace_for(wrong_order_args)).passed is False
     assert judge_case(case, contract, trace_for(missing_access_args)).passed is False
+    skipped_preflight = judge_case(
+        case,
+        contract,
+        trace_for(exact_args, include_initial_error=False),
+    )
+    assert skipped_preflight.passed is False
+    assert "tool sequence" in skipped_preflight.reason
 
 
 def test_required_successful_tool_call_can_match_result_evidence() -> None:

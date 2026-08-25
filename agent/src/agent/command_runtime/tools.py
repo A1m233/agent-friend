@@ -111,11 +111,21 @@ _WINDOWS_SHELL_OPERATORS = {"&", "&&", "|", "||", ">", ">>", "<"}
 _WINDOWS_POWERSHELL_EXECUTABLES = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 
 
-def _result(payload: dict[str, object], *, error: bool = False) -> ToolResult:
+def _result(
+    payload: dict[str, object],
+    *,
+    error: bool = False,
+    executed: bool | None = None,
+    authorization_requested: bool | None = None,
+) -> ToolResult:
     error_kind = payload.get("error")
     meta: dict[str, object] = {}
     if error and isinstance(error_kind, str) and error_kind:
         meta["error_kind"] = error_kind
+    if executed is not None:
+        meta["executed"] = executed
+    if authorization_requested is not None:
+        meta["authorization_requested"] = authorization_requested
     if error_kind in {"windows_sandbox_setup_required", "command_runtime_unavailable"}:
         meta["requires_user_action"] = True
         meta["no_progress_family"] = error_kind
@@ -240,10 +250,8 @@ class ExecCommandTool:
     result_context_retention: ClassVar[str] = "recoverable"
     supports_invocation_control: ClassVar[bool] = True
     description: ClassVar[str] = (
-        "运行经过产品治理和逐次授权的本地命令。默认 execution=sandboxed，在 Codex 沙箱中"
-        "执行；只有桌面程序或确实无法在受限沙箱工作的宿主能力才使用 execution=host_user。"
-        "host_user 会以当前桌面用户身份、不受文件系统和网络沙箱限制地启动，因此必须使用"
-        "结构化 argv，不能提供 shell 命令字符串、Skill 绑定或 access。普通非交互命令使用 buffered："
+        "在 Codex 沙箱中运行经过产品治理和逐次授权的本地命令。需要当前桌面用户会话，或已确认"
+        "无法在沙箱中工作的宿主程序时改用 host_process_start。普通非交互命令使用 buffered："
         "调用保持 pending，直到退出、超时、取消或运行时失联，过程输出只推送给界面；"
         "交互式命令使用 streaming，尽早返回仅对当前 run 有效的 process_id。每次启动"
         "都必须提交一次准确的命令、目录、文件系统与网络权限请求；宿主可能按当前会话"
@@ -285,9 +293,9 @@ class ExecCommandTool:
                 "items": {"type": "string", "minLength": 1},
                 "description": (
                     "结构化进程参数，第一个元素是绝对可执行文件或宿主 PATH 中的程序名。"
-                    "直接启动单个 CLI 或桌面程序时优先使用本字段；每个参数独立成一个数组"
+                    "直接启动单个 CLI 时优先使用本字段；每个参数独立成一个数组"
                     "元素，因此正则中的 |、含空格路径和引号不会被 shell 再解释。"
-                    "含空格的 Windows 路径必须用本字段；host_user 必须使用 argv。"
+                    "含空格的 Windows 路径必须用本字段。"
                 ),
             },
             "cmd": {
@@ -300,16 +308,7 @@ class ExecCommandTool:
                     "本字段由 cmd.exe 解释；PowerShell cmdlet 必须显式通过可用的"
                     " pwsh.exe -NoProfile -Command 调用，并把脚本作为一个带双引号的参数。"
                     "Skill-bound 命令必须引用 skill.entry 的包内相对路径，不能包含 Skill"
-                    "安装目录或其它内部绝对路径。host_user 禁止使用本字段。"
-                ),
-            },
-            "execution": {
-                "type": "string",
-                "enum": ["sandboxed", "host_user"],
-                "default": "sandboxed",
-                "description": (
-                    "sandboxed 使用受限 Codex 沙箱；host_user 以当前桌面用户身份运行且不受"
-                    "文件系统或网络沙箱限制，只用于用户明确可见且沙箱不兼容的宿主能力。"
+                    "安装目录或其它内部绝对路径。"
                 ),
             },
             "workdir": {
@@ -471,26 +470,9 @@ class ExecCommandTool:
         ],
         "allOf": [
             {
-                "if": {
-                    "properties": {"execution": {"const": "host_user"}},
-                    "required": ["execution"],
-                },
-                "then": {
-                    "required": ["argv"],
-                    "not": {
-                        "anyOf": [
-                            {"required": ["cmd"]},
-                            {"required": ["access"]},
-                            {"required": ["skill"]},
-                        ]
-                    },
-                },
-            },
-            {
                 "if": {"required": ["skill"]},
                 "then": {
                     "required": ["cmd"],
-                    "properties": {"execution": {"const": "sandboxed"}},
                     "not": {
                         "anyOf": [
                             {"required": ["argv"]},
@@ -524,6 +506,21 @@ class ExecCommandTool:
         self._execution_environment_manager = execution_environment_manager
 
     def invoke(self, args: dict[str, Any]) -> ToolResult:
+        if "execution" in args:
+            return _result(
+                {
+                    "status": "denied",
+                    "error": "invalid_arguments",
+                    "message": (
+                        "exec_command 固定使用 Codex 沙箱，不接受 execution；"
+                        "需要宿主用户进程时改用 host_process_start。"
+                    ),
+                },
+                error=True,
+            )
+        return self._invoke(args, execution="sandboxed")
+
+    def _invoke(self, args: dict[str, Any], *, execution: CommandExecution) -> ToolResult:
         if args.get(COMMAND_SURFACE_ARG) != "desktop_chat" or self._broker is None:
             return _result(
                 {
@@ -540,7 +537,11 @@ class ExecCommandTool:
             context = self._context(args)
             session_id, run_id, tool_call_id = self._ownership(args)
             details, workdir, roots, run_temp, path_identities = self._parse(
-                args, context, session_id=session_id, run_id=run_id
+                args,
+                context,
+                execution=execution,
+                session_id=session_id,
+                run_id=run_id,
             )
             approval_reason = approval_reason or _default_command_reason(details)
         except ManagedEnvironmentError as exc:
@@ -574,6 +575,8 @@ class ExecCommandTool:
                     "error": "approval_expired",
                 },
                 error=True,
+                executed=False,
+                authorization_requested=True,
             )
         if request.status == "cancelled":
             return _result(
@@ -583,6 +586,8 @@ class ExecCommandTool:
                     "error": "approval_cancelled",
                 },
                 error=True,
+                executed=False,
+                authorization_requested=True,
             )
         if request.decision_source == "catastrophic_policy":
             risk = request.risk_assessment
@@ -600,6 +605,8 @@ class ExecCommandTool:
                     "approval": _approval_audit(request),
                 },
                 error=True,
+                executed=False,
+                authorization_requested=False,
             )
         if not decision.approved:
             return _result(
@@ -609,6 +616,8 @@ class ExecCommandTool:
                     "error": "approval_denied",
                 },
                 error=True,
+                executed=False,
+                authorization_requested=True,
             )
         current_assessment = self._broker.reassess(request)
         if (
@@ -625,6 +634,8 @@ class ExecCommandTool:
                     "approval": _approval_audit(request),
                 },
                 error=True,
+                executed=False,
+                authorization_requested=True,
             )
         if details.execution == "sandboxed" and not self._runtime.windows_sandbox_ready:
             # The approval endpoint normally prevents this transition. Keep a
@@ -637,6 +648,8 @@ class ExecCommandTool:
                     "message": "Windows 命令沙箱在批准后失去就绪状态，请修复后重新发起命令。",
                 },
                 error=True,
+                executed=False,
+                authorization_requested=True,
             )
         try:
             self._validate_path_identities(path_identities)
@@ -886,6 +899,7 @@ class ExecCommandTool:
         args: dict[str, Any],
         context: ToolRunContext,
         *,
+        execution: CommandExecution = "sandboxed",
         session_id: str,
         run_id: str,
     ) -> tuple[
@@ -910,9 +924,6 @@ class ExecCommandTool:
         ):
             raise ValueError("argv 无效")
         parsed_argv = cast(list[str] | None, raw_argv)
-        execution = args.get("execution", "sandboxed")
-        if execution not in {"sandboxed", "host_user"}:
-            raise ValueError("execution 无效")
         if execution == "host_user" and raw_argv is None:
             raise CommandRuntimeError(
                 "host_user_requires_argv",
@@ -948,6 +959,7 @@ class ExecCommandTool:
         workdir: Path
         cwd_source: str
         skill_binding: CommandSkillBinding | None = None
+        skill_snapshot: SkillExecutionSnapshot | None = None
         raw_skill = args.get("skill")
         if execution == "host_user" and raw_skill is not None:
             raise CommandRuntimeError(
@@ -1123,11 +1135,12 @@ class ExecCommandTool:
         internal_paths: set[Path] = (
             {*managed.read_only_roots, *managed.writable_roots} if managed is not None else set()
         )
+        bound_snapshot_root = skill_snapshot.snapshot_root if skill_snapshot is not None else None
         root_details = tuple(
             CommandAdditionalRoot(path=str(path), access="read_write" if writable else "read_only")
             for path, writable in roots
             if path != run_temp
-            and (skill_binding is None or path != skill_snapshot.snapshot_root)
+            and path != bound_snapshot_root
             and path not in derived_paths
             and path not in internal_paths
         )
@@ -1135,11 +1148,22 @@ class ExecCommandTool:
             CommandAdditionalRoot(path=str(path), access="read_only")
             for path, _writable in derived_roots
         )
+        environment_overrides = dict(managed.environment) if managed is not None else {}
+        if (
+            managed is not None
+            and managed.provider.identity.provider == "python"
+            and skill_snapshot is not None
+        ):
+            # PYTHONSAFEPATH deliberately removes the script directory from
+            # sys.path. Re-introduce only the immutable Skill entry directory so
+            # bundled sibling helpers remain importable without inheriting an
+            # arbitrary host PYTHONPATH.
+            environment_overrides["PYTHONPATH"] = str(skill_snapshot.entry_path.parent)
         return (
             CommandApprovalDetails(
                 cmd=display_cmd,
                 argv=managed.display_argv if managed is not None else argv,
-                execution=cast(CommandExecution, execution),
+                execution=execution,
                 workdir=display_workdir,
                 cwd_source=cwd_source,  # type: ignore[arg-type]
                 mode=mode,
@@ -1153,7 +1177,7 @@ class ExecCommandTool:
                 execution_environment=(managed.public_summary() if managed is not None else None),
                 launch_argv=(managed.argv if managed is not None else None),
                 launch_workdir=str(workdir),
-                environment_overrides=(dict(managed.environment) if managed is not None else {}),
+                environment_overrides=environment_overrides,
                 managed_command=managed,
             ),
             workdir,
@@ -1562,7 +1586,7 @@ class ExecCommandTool:
                 payload["message"] = (
                     f"进程以 Windows fast-fail 状态 {code_hex} 终止；该状态不能单独证明具体根因。"
                     "当前进程运行在受限沙箱中；若这是需要桌面用户会话的可信 GUI/宿主程序，"
-                    "不要重复同一沙箱命令，应改为请求 host_user 并让用户确认。"
+                    "不要重复同一沙箱命令；确需宿主能力时改用 host_process_start 并让用户确认。"
                 )
             else:
                 payload["message"] = (
@@ -1716,13 +1740,80 @@ class ExecCommandTool:
         )
 
 
+class HostProcessStartTool(ExecCommandTool):
+    name: ClassVar[str] = "host_process_start"
+    description: ClassVar[str] = (
+        "以当前桌面用户身份启动一个经过逐次授权的结构化本地进程。该进程不受 Codex 文件系统"
+        "或网络沙箱限制，只用于用户可见桌面程序或已确认无法在沙箱中工作的宿主能力。必须把"
+        "可执行文件和每个参数分别放入 argv；本工具不接受 shell 命令字符串、access、Skill 绑定"
+        "或 execution。普通非交互进程用 buffered；只有需要后续输入或显式终止的交互进程才用"
+        " streaming，并把返回的 process_id 原样交给 write_stdin 或 terminate_command。"
+    )
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "argv": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 256,
+                "items": {"type": "string", "minLength": 1},
+                "description": (
+                    "结构化进程参数；第一个元素是绝对可执行文件或宿主 PATH 中的程序名，"
+                    "后续每个参数各占一个元素，不经过 shell 再解释。"
+                ),
+            },
+            "workdir": {
+                "type": "string",
+                "description": "可选的已存在绝对目录；省略时使用当前会话受治理目录。",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["buffered", "streaming"],
+                "default": "buffered",
+                "description": "非交互进程用 buffered；需要后续输入或终止时用 streaming。",
+            },
+            "timeout_seconds": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": MAX_TIMEOUT_SECONDS,
+                "default": DEFAULT_TIMEOUT_SECONDS,
+                "description": "进程最长运行秒数；最长 3600 秒。",
+            },
+            "reason": {
+                "type": "string",
+                "maxLength": MAX_COMMAND_REASON_CHARS,
+                "description": "可选的用户可见理由，准确说明为何必须绕过 Codex 沙箱。",
+            },
+        },
+        "required": ["argv"],
+        "additionalProperties": False,
+    }
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        forbidden = {"cmd", "access", "skill", "execution"}.intersection(args)
+        if forbidden:
+            return _result(
+                {
+                    "status": "denied",
+                    "error": "invalid_arguments",
+                    "message": (
+                        "host_process_start 只接受结构化 argv，不接受 "
+                        + ", ".join(sorted(forbidden))
+                        + "。"
+                    ),
+                },
+                error=True,
+            )
+        return self._invoke(args, execution="host_user")
+
+
 class WriteStdinTool:
     name: ClassVar[str] = "write_stdin"
     execution_kind: ClassVar[str] = "serial"
     timeout_seconds: ClassVar[float] = 65.0
     result_context_retention: ClassVar[str] = "recoverable"
     description: ClassVar[str] = (
-        "向当前 run 中由 exec_command(streaming) 创建的进程写入输入，或显式等待"
+        "向当前 run 中由 exec_command 或 host_process_start（streaming）创建的进程写入输入，或显式等待"
         "新输出/退出。不要为了观察进度高频轮询；只有进程需要真实输入，或界面推送"
         "表明状态需要再次判断时调用。只有原进程仍应继续运行并允许自然完成时，才用"
         " wait_for=exit 等待；已经决定重启、替换命令或切换执行路径时，不要用本工具"
@@ -1735,7 +1826,7 @@ class WriteStdinTool:
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "当前 run 中 exec_command(mode=streaming) 成功结果返回的 process_id；"
+                    "当前 run 中命令启动工具以 mode=streaming 成功返回的 process_id；"
                     "不能跨 run、会话或进程复用。"
                 ),
             },
@@ -1818,12 +1909,12 @@ class TerminateCommandTool:
     timeout_seconds: ClassVar[float] = TERMINATION_CONFIRMATION_TIMEOUT_SECONDS + 5
     result_context_retention: ClassVar[str] = "recoverable"
     description: ClassVar[str] = (
-        "终止当前 run 中由 exec_command(mode=streaming) 返回且仍受治理的进程，并等待"
+        "终止当前 run 中由命令启动工具以 mode=streaming 返回且仍受治理的进程，并等待"
         "它进入可信终态。只有已经决定不再让该进程继续运行时使用；当前任务已经明确要求"
         "重启、改用替代命令或切换执行路径，且原进程不应继续运行时，就属于这种情况，"
         "无需再询问用户是否可以停止。只有原进程仍应继续运行并允许自然完成时，才用"
         " write_stdin 等待；真实交互输入也应使用 write_stdin。process_id 必须原样来自"
-        "当前 run 的 streaming exec_command 成功结果，不能使用宿主 PID、进程名、其它 run"
+        "当前 run 的 streaming 启动结果，不能使用宿主 PID、进程名、其它 run"
         "或已释放的句柄。终止沿用原命令授权且不产生新审批，但不会授权任何替代命令。"
         "只有本工具返回 cancelled、exited 或 timed_out 等可信终态后，才可把后续路径视为"
         "已安全接管；cancelled 本身就是可信终态，不必继续等待 exited。失败或未确认时继续"
@@ -1836,7 +1927,7 @@ class TerminateCommandTool:
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "当前 run 中 exec_command(mode=streaming) 成功结果返回的 process_id；"
+                    "当前 run 中命令启动工具以 mode=streaming 成功返回的 process_id；"
                     "不能填写操作系统 PID、进程名、其它 run 的句柄或已释放句柄。"
                 ),
             }
@@ -1945,6 +2036,11 @@ def make_command_tools(
 ) -> list[Tool]:
     return [
         ExecCommandTool(
+            runtime,
+            broker,
+            execution_environment_manager=execution_environment_manager,
+        ),
+        HostProcessStartTool(
             runtime,
             broker,
             execution_environment_manager=execution_environment_manager,

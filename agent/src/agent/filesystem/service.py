@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import fnmatch
 import hashlib
 import json
@@ -10,6 +11,7 @@ import re
 import shutil
 import stat
 import tempfile
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,6 +34,8 @@ MAX_CONTENT_SEARCH_BYTES = 32 * 1024 * 1024
 MAX_CONTENT_MATCHES_PER_FILE = 5
 MAX_CONTENT_SNIPPET_CHARS = 240
 MAX_CONTENT_SEARCH_SNIPPET_CHARS = 10_000
+MAX_CONTENT_QUERY_CHARS = 4_096
+MAX_STREAM_FRAGMENT_CHARS = 64 * 1024
 SKIPPED_DIRECTORY_NAMES = frozenset({".git", ".hg", ".svn", "node_modules", "__pycache__"})
 
 
@@ -192,7 +196,11 @@ class FilesystemService:
         resolved = self.resolve(ledger, scope_id, ".", permission)
         if not resolved.path.is_dir():
             raise FilesystemError("not_directory", "搜索范围必须是目录。")
-        if mode not in {"name", "content"} or not query:
+        if (
+            mode not in {"name", "content"}
+            or not query
+            or (mode == "content" and len(query) > MAX_CONTENT_QUERY_CHARS)
+        ):
             raise FilesystemError("invalid_arguments", "mode 必须是 name/content，query 不能为空。")
         offset = self._parse_continuation(continuation, scope_id)
         bounded_limit = max(1, min(limit, 100))
@@ -240,6 +248,7 @@ class FilesystemService:
                     content_match = False
                     content_matches: list[dict[str, object]] = []
                     content_matches_truncated = False
+                    content_scan_exhausted = False
                     if mode == "content" and entry.is_file(follow_symlinks=False):
                         if (
                             content_files >= MAX_CONTENT_SEARCH_FILES
@@ -249,14 +258,29 @@ class FilesystemService:
                             stack.clear()
                             break
                         content_files += 1
-                        size = entry.stat(follow_symlinks=False).st_size
-                        content_bytes += min(size, MAX_TEXT_FILE_BYTES)
-                        content_matches, content_matches_truncated = self._file_content_matches(
-                            entry_path, query
+                        (
+                            content_matches,
+                            match_limit_reached,
+                            content_scan_truncated,
+                            scanned_bytes,
+                        ) = self._file_content_matches(
+                            entry_path,
+                            query,
+                            max_bytes=MAX_CONTENT_SEARCH_BYTES - content_bytes,
                         )
+                        content_bytes += scanned_bytes
+                        content_matches_truncated = match_limit_reached or content_scan_truncated
+                        content_scan_exhausted = (
+                            content_scan_truncated and content_bytes >= MAX_CONTENT_SEARCH_BYTES
+                        )
+                        if content_scan_exhausted:
+                            stopped_early = True
+                            stack.clear()
                         content_match = bool(content_matches)
                         matched = content_match
                     if not matched:
+                        if content_scan_exhausted:
+                            break
                         continue
                     if skipped_matches < offset:
                         skipped_matches += 1
@@ -294,6 +318,8 @@ class FilesystemService:
                         stopped_early = True
                         stack.clear()
                         break
+                    if content_scan_exhausted:
+                        break
                 except OSError:
                     continue
         next_offset = offset + len(matches)
@@ -302,6 +328,7 @@ class FilesystemService:
             "truncated": stopped_early,
             "continuation": self._continuation(scope_id, next_offset) if stopped_early else None,
             "scanned_entries": min(scanned_entries, MAX_SEARCH_ENTRIES),
+            **({"content_bytes_scanned": content_bytes} if mode == "content" else {}),
             **({"content_snippet_chars": content_snippet_chars} if mode == "content" else {}),
         }
 
@@ -321,7 +348,14 @@ class FilesystemService:
             raise FilesystemError("not_file", "目标不是文件。")
         size = resolved.path.stat().st_size
         if size > MAX_TEXT_FILE_BYTES:
-            raise FilesystemError("unsupported_content", "文本文件超过读取体积上限。", size=size)
+            return self._read_large_text(
+                resolved,
+                start_line=start_line,
+                start_column=start_column,
+                max_lines=max_lines,
+                encoding=encoding,
+                size=size,
+            )
         raw = resolved.path.read_bytes()
         text, detected = self._decode_text(raw, encoding)
         lines = text.splitlines(keepends=True)
@@ -389,6 +423,86 @@ class FilesystemService:
             "total_lines": len(lines),
             "size": size,
             "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+
+    def read_text_tail(
+        self,
+        ledger: FilesystemAuthorizationLedger,
+        *,
+        scope_id: str,
+        relative_path: str = ".",
+        max_lines: int = 200,
+        encoding: str = "auto",
+    ) -> dict[str, object]:
+        resolved = self.resolve(ledger, scope_id, relative_path, "read_text")
+        if not resolved.path.is_file():
+            raise FilesystemError("not_file", "目标不是文件。")
+        count = max(1, min(max_lines, 2_000))
+        detected = self._stream_text_encoding(resolved.path, encoding)
+        fragments: deque[tuple[int, int, str]] = deque()
+        retained_chars = 0
+        line_number = 1
+        column = 0
+        total_lines = 0
+        saw_content = False
+        dropped_for_lines = False
+        dropped_for_chars = False
+        try:
+            with resolved.path.open("r", encoding=detected, errors="strict", newline="") as handle:
+                while fragment := handle.readline(MAX_STREAM_FRAGMENT_CHARS):
+                    saw_content = True
+                    start_column = column
+                    fragments.append((line_number, start_column, fragment))
+                    retained_chars += len(fragment)
+                    if fragment.endswith(("\n", "\r")):
+                        total_lines = line_number
+                        line_number += 1
+                        column = 0
+                    else:
+                        column += len(fragment)
+                        total_lines = line_number
+                    minimum_line = max(1, total_lines - count + 1)
+                    while fragments and fragments[0][0] < minimum_line:
+                        retained_chars -= len(fragments.popleft()[2])
+                        dropped_for_lines = True
+                    while retained_chars > MAX_READ_CHARS and fragments:
+                        old_line, old_column, old_fragment = fragments[0]
+                        excess = retained_chars - MAX_READ_CHARS
+                        if excess >= len(old_fragment):
+                            retained_chars -= len(fragments.popleft()[2])
+                        else:
+                            fragments[0] = (
+                                old_line,
+                                old_column + excess,
+                                old_fragment[excess:],
+                            )
+                            retained_chars -= excess
+                        dropped_for_chars = True
+        except UnicodeDecodeError as exc:
+            raise FilesystemError("unsupported_content", "文本编码无法严格解码。") from exc
+        content = "".join(fragment for _line, _column, fragment in fragments)
+        start_line_value = fragments[0][0] if fragments else (1 if not saw_content else total_lines)
+        start_column_value = fragments[0][1] if fragments else 0
+        return {
+            "path": self._relative_text(resolved.path, resolved.capability.root),
+            "content": content,
+            "encoding": detected,
+            "start_line": start_line_value,
+            "start_column": start_column_value,
+            "end_line": total_lines,
+            "truncated": dropped_for_lines or dropped_for_chars,
+            "truncation_reason": (
+                "max_output_chars"
+                if dropped_for_chars
+                else "max_lines"
+                if dropped_for_lines
+                else None
+            ),
+            "returned_chars": len(content),
+            "output_char_limit": MAX_READ_CHARS,
+            "total_lines": total_lines,
+            "size": resolved.path.stat().st_size,
+            "sha256": self._sha256_file(resolved.path),
         }
 
     def create_directory(
@@ -839,6 +953,140 @@ class FilesystemService:
             raise FilesystemError("unsupported_content", "文本编码无法严格解码。") from exc
 
     @staticmethod
+    def _stream_text_encoding(path: Path, encoding: str) -> str:
+        with path.open("rb") as handle:
+            sample = handle.read(4096)
+        if b"\x00" in sample and not sample.startswith((b"\xff\xfe", b"\xfe\xff")):
+            raise FilesystemError("unsupported_content", "目标看起来是二进制文件。")
+        allowed = {"auto", "utf-8", "utf-8-sig", "utf-16", "gb18030"}
+        if encoding not in allowed:
+            raise FilesystemError("unsupported_encoding", "不支持该文本编码。")
+        if encoding != "auto":
+            return encoding
+        if sample.startswith(b"\xef\xbb\xbf"):
+            return "utf-8-sig"
+        if sample.startswith((b"\xff\xfe", b"\xfe\xff")):
+            return "utf-16"
+        return "utf-8"
+
+    def _read_large_text(
+        self,
+        resolved: ResolvedPath,
+        *,
+        start_line: int,
+        start_column: int,
+        max_lines: int,
+        encoding: str,
+        size: int,
+    ) -> dict[str, object]:
+        if start_column < 0:
+            raise FilesystemError("invalid_arguments", "start_column 不能小于 0。")
+        first = max(1, start_line)
+        count = max(1, min(max_lines, 2_000))
+        last_requested_line = first + count - 1
+        detected = self._stream_text_encoding(resolved.path, encoding)
+        line_number = 1
+        column = 0
+        total_lines = 0
+        target_line_length = 0
+        saw_content = False
+        returned_chars = 0
+        chunk_parts: list[str] = []
+        end_line = first - 1
+        end_column = 0
+        next_line: int | None = None
+        next_column: int | None = None
+        truncation_reason: str | None = None
+        try:
+            with resolved.path.open("r", encoding=detected, errors="strict", newline="") as handle:
+                while fragment := handle.readline(MAX_STREAM_FRAGMENT_CHARS):
+                    saw_content = True
+                    fragment_line = line_number
+                    fragment_column = column
+                    fragment_end_column = fragment_column + len(fragment)
+                    if fragment_line == first:
+                        target_line_length = fragment_end_column
+                    if fragment_line > last_requested_line and next_line is None:
+                        next_line = fragment_line
+                        next_column = 0
+                        truncation_reason = "max_lines"
+                    if (
+                        first <= fragment_line <= last_requested_line
+                        and next_line is None
+                        and returned_chars >= MAX_READ_CHARS
+                    ):
+                        next_line = fragment_line
+                        next_column = fragment_column
+                        truncation_reason = "max_output_chars"
+                    if (
+                        first <= fragment_line <= last_requested_line
+                        and next_line is None
+                        and returned_chars < MAX_READ_CHARS
+                    ):
+                        requested_column = start_column if fragment_line == first else 0
+                        if fragment_end_column > requested_column:
+                            offset = max(0, requested_column - fragment_column)
+                            available = fragment[offset:]
+                            remaining = MAX_READ_CHARS - returned_chars
+                            take = min(len(available), remaining)
+                            if take:
+                                chunk_parts.append(available[:take])
+                                returned_chars += take
+                                end_line = fragment_line
+                                end_column = fragment_column + offset + take
+                            if take < len(available):
+                                next_line = fragment_line
+                                next_column = fragment_column + offset + take
+                                truncation_reason = "max_output_chars"
+                    if fragment.endswith(("\n", "\r")):
+                        total_lines = fragment_line
+                        line_number += 1
+                        column = 0
+                    else:
+                        total_lines = fragment_line
+                        column = fragment_end_column
+        except UnicodeDecodeError as exc:
+            raise FilesystemError("unsupported_content", "文本编码无法严格解码。") from exc
+        if not saw_content:
+            total_lines = 0
+        if first <= total_lines and start_column >= target_line_length:
+            raise FilesystemError(
+                "invalid_arguments",
+                "start_column 超出 start_line 对应行；只能复用上一页返回的 next_start_column。",
+            )
+        if next_line is not None and next_line > total_lines:
+            next_line = None
+            next_column = None
+            truncation_reason = None
+        chunk = "".join(chunk_parts)
+        return {
+            "path": self._relative_text(resolved.path, resolved.capability.root),
+            "content": chunk,
+            "encoding": detected,
+            "start_line": first,
+            "start_column": start_column,
+            "end_line": end_line,
+            "end_column": end_column,
+            "truncated": next_line is not None,
+            "truncation_reason": truncation_reason,
+            "next_start_line": next_line,
+            "next_start_column": next_column,
+            "returned_chars": returned_chars,
+            "output_char_limit": MAX_READ_CHARS,
+            "total_lines": total_lines,
+            "size": size,
+            "sha256": self._sha256_file(resolved.path),
+        }
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
     def _text_candidate(path: Path) -> bool:
         try:
             sample = path.read_bytes()[:4096]
@@ -850,42 +1098,106 @@ class FilesystemService:
             return False
 
     @classmethod
-    def _file_content_matches(cls, path: Path, query: str) -> tuple[list[dict[str, object]], bool]:
+    def _file_content_matches(
+        cls, path: Path, query: str, *, max_bytes: int
+    ) -> tuple[list[dict[str, object]], bool, bool, int]:
+        if max_bytes <= 0:
+            return [], False, True, 0
         try:
-            if path.stat().st_size > MAX_TEXT_FILE_BYTES:
-                return [], False
-            text, _ = cls._decode_text(path.read_bytes(), "auto")
+            size = path.stat().st_size
+            detected = cls._stream_text_encoding(path, "auto")
             pattern = re.compile(re.escape(query), re.IGNORECASE)
             matches: list[dict[str, object]] = []
-            truncated = False
-            for match in pattern.finditer(text):
-                if len(matches) >= MAX_CONTENT_MATCHES_PER_FILE:
-                    truncated = True
-                    break
-                line_start = text.rfind("\n", 0, match.start()) + 1
-                line_end = text.find("\n", match.start())
-                if line_end < 0:
-                    line_end = len(text)
-                snippet_start = max(line_start, match.start() - 80)
-                snippet_end = min(line_end, snippet_start + MAX_CONTENT_SNIPPET_CHARS)
-                if match.start() >= snippet_end:
-                    snippet_start = match.start()
-                    snippet_end = min(line_end, snippet_start + MAX_CONTENT_SNIPPET_CHARS)
-                snippet = text[snippet_start:snippet_end].rstrip("\r")
-                if snippet_start > line_start:
-                    snippet = "…" + snippet
-                if snippet_end < line_end:
-                    snippet += "…"
-                matches.append(
-                    {
-                        "line": text.count("\n", 0, match.start()) + 1,
-                        "column": match.start() - line_start + 1,
-                        "snippet": snippet,
-                    }
-                )
-            return matches, truncated
-        except (OSError, FilesystemError, re.error):
-            return [], False
+            match_limit_reached = False
+            line_number = 1
+            line_column = 0
+            carry = ""
+            scanned = 0
+            decoder = codecs.getincrementaldecoder(detected)(errors="strict")
+            decoded = ""
+
+            def process_fragment(fragment: str) -> None:
+                nonlocal carry, line_column, line_number, match_limit_reached
+                combined = carry + fragment
+                combined_column = line_column - len(carry)
+                for match in pattern.finditer(combined):
+                    if match.end() <= len(carry):
+                        continue
+                    if len(matches) >= MAX_CONTENT_MATCHES_PER_FILE:
+                        match_limit_reached = True
+                        return
+                    snippet_start = max(0, match.start() - 80)
+                    snippet_end = min(len(combined), snippet_start + MAX_CONTENT_SNIPPET_CHARS)
+                    if match.start() >= snippet_end:
+                        snippet_start = match.start()
+                        snippet_end = min(len(combined), snippet_start + MAX_CONTENT_SNIPPET_CHARS)
+                    snippet = combined[snippet_start:snippet_end].rstrip("\r\n")
+                    if combined_column + snippet_start > 0:
+                        snippet = "…" + snippet
+                    if not combined.endswith(("\n", "\r")) or snippet_end < len(
+                        combined.rstrip("\r\n")
+                    ):
+                        snippet += "…"
+                    matches.append(
+                        {
+                            "line": line_number,
+                            "column": combined_column + match.start() + 1,
+                            "snippet": snippet,
+                        }
+                    )
+                if fragment.endswith(("\n", "\r")):
+                    line_number += 1
+                    line_column = 0
+                    carry = ""
+                else:
+                    line_column += len(fragment)
+                    carry_length = min(len(fragment), max(len(query) - 1, 80))
+                    carry = fragment[-carry_length:] if carry_length else ""
+
+            with path.open("rb") as raw:
+                while scanned < max_bytes and not match_limit_reached:
+                    chunk = raw.read(min(64 * 1024, max_bytes - scanned))
+                    if not chunk:
+                        break
+                    scanned += len(chunk)
+                    decoded += decoder.decode(chunk, final=False)
+                    while not match_limit_reached:
+                        fragment, decoded = cls._take_stream_fragment(decoded, final=False)
+                        if fragment is None:
+                            break
+                        process_fragment(fragment)
+                if scanned >= size:
+                    decoded += decoder.decode(b"", final=True)
+                while decoded and not match_limit_reached:
+                    fragment, decoded = cls._take_stream_fragment(decoded, final=True)
+                    if fragment is None:
+                        break
+                    process_fragment(fragment)
+            return matches, match_limit_reached, scanned < size, scanned
+        except (OSError, UnicodeDecodeError, FilesystemError, re.error):
+            return [], False, False, 0
+
+    @staticmethod
+    def _take_stream_fragment(text: str, *, final: bool) -> tuple[str | None, str]:
+        newline_indexes = [index for index in (text.find("\n"), text.find("\r")) if index >= 0]
+        newline_end: int | None = None
+        if newline_indexes:
+            index = min(newline_indexes)
+            if text[index] == "\r" and index + 1 == len(text) and not final:
+                newline_end = None
+            else:
+                newline_end = index + (2 if text[index : index + 2] == "\r\n" else 1)
+        if newline_end is not None:
+            take = min(newline_end, MAX_STREAM_FRAGMENT_CHARS)
+        elif len(text) >= MAX_STREAM_FRAGMENT_CHARS:
+            take = MAX_STREAM_FRAGMENT_CHARS
+            if not final and take == len(text) and text[take - 1] == "\r":
+                take -= 1
+        elif final and text:
+            take = len(text)
+        else:
+            return None, text
+        return text[:take], text[take:]
 
     def _entry_payload(
         self,

@@ -21,6 +21,7 @@ from agent.command_runtime import (
     CommandRuntime,
     CommandRuntimeError,
     ExecCommandTool,
+    HostProcessStartTool,
     PendingCommandApproval,
 )
 from agent.command_runtime.models import (
@@ -594,6 +595,8 @@ def test_command_tool_keeps_approval_pending_until_windows_setup(tmp_path: Path)
     thread.join(timeout=3)
     assert not thread.is_alive()
     assert json.loads(result_box[0].text)["error"] == "approval_denied"
+    assert result_box[0].meta["executed"] is False
+    assert result_box[0].meta["authorization_requested"] is True
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows sandbox setup is Windows-specific")
@@ -773,7 +776,8 @@ def test_exec_command_contract_explains_windows_shell_and_host_path_derivation()
         "可用的 pwsh.exe -NoProfile -Command"
         in ExecCommandTool.parameters_schema["properties"]["cmd"]["description"]
     )
-    assert "execution=host_user" in ExecCommandTool.description
+    assert "execution" not in ExecCommandTool.parameters_schema["properties"]
+    assert "不受 Codex 文件系统" in HostProcessStartTool.description
     assert "python/python3" in ExecCommandTool.description
     assert "不依赖用户 PATH" in ExecCommandTool.description
     assert "package operation" in ExecCommandTool.description
@@ -805,26 +809,26 @@ def test_exec_command_schema_accepts_omitted_reason_and_rejects_invalid_reason(
 
 
 @pytest.mark.parametrize(
-    ("execution", "raw_reason", "expected_reason"),
+    ("tool_type", "raw_reason", "expected_execution", "expected_reason"),
     [
-        ("sandboxed", None, "在 Codex 沙箱中运行本地命令"),
-        ("sandboxed", "  \n", "在 Codex 沙箱中运行本地命令"),
-        ("host_user", None, "以宿主用户身份运行本地命令"),
+        (ExecCommandTool, None, "sandboxed", "在 Codex 沙箱中运行本地命令"),
+        (ExecCommandTool, "  \n", "sandboxed", "在 Codex 沙箱中运行本地命令"),
+        (HostProcessStartTool, None, "host_user", "以宿主用户身份运行本地命令"),
     ],
 )
-def test_exec_command_optional_reason_reaches_approval_with_host_fallback(
+def test_command_start_optional_reason_reaches_approval_with_tool_specific_fallback(
     runtime: CommandRuntime,
     tmp_path: Path,
-    execution: str,
+    tool_type: type[ExecCommandTool],
     raw_reason: str | None,
+    expected_execution: str,
     expected_reason: str,
 ) -> None:
     broker = ApprovalBroker()
-    tool = ExecCommandTool(runtime, broker)
+    tool = tool_type(runtime, broker)
     context = ToolRunContext.create("")
     args: dict[str, object] = {
         "argv": [sys.executable, "-c", "print('must not execute before approval')"],
-        "execution": execution,
         "workdir": str(tmp_path.resolve()),
         "timeout_seconds": 300,
         COMMAND_SESSION_ID_ARG: "session-a",
@@ -833,7 +837,7 @@ def test_exec_command_optional_reason_reaches_approval_with_host_fallback(
         COMMAND_SURFACE_ARG: "desktop_chat",
         COMMAND_RUN_CONTEXT_ARG: context,
     }
-    if execution == "sandboxed":
+    if expected_execution == "sandboxed":
         args["access"] = {"filesystem": "read_only", "network": "disabled"}
     if raw_reason is not None:
         args["reason"] = raw_reason
@@ -843,7 +847,7 @@ def test_exec_command_optional_reason_reaches_approval_with_host_fallback(
     thread.start()
     request = _wait_for_request(broker)
     assert request.reason == expected_reason
-    assert request.details.execution == execution
+    assert request.details.execution == expected_execution
     assert broker.decide(
         request.request_id,
         CommandApprovalDecision(allow=False),
@@ -856,6 +860,8 @@ def test_exec_command_optional_reason_reaches_approval_with_host_fallback(
 
     assert not thread.is_alive()
     assert json.loads(result_box[0].text)["error"] == "approval_denied"
+    assert result_box[0].meta["executed"] is False
+    assert result_box[0].meta["authorization_requested"] is True
     assert broker.pending(kind="command") == ()
 
 
@@ -896,14 +902,13 @@ def test_windows_cmd_rejects_powershell_call_operator_and_unquoted_executable_pa
     assert unquoted.value.code == "windows_executable_path_requires_argv"
 
 
-def test_host_user_requires_structured_argv_and_rejects_fake_access(
+def test_host_process_start_requires_only_structured_argv(
     runtime: CommandRuntime,
 ) -> None:
-    tool = ExecCommandTool(runtime, ApprovalBroker())
+    tool = HostProcessStartTool(runtime, ApprovalBroker())
     context = ToolRunContext.create("")
     common = {
         "reason": "launch a desktop application",
-        "execution": "host_user",
         COMMAND_SESSION_ID_ARG: "session-a",
         COMMAND_RUN_ID_ARG: "run-a",
         COMMAND_TOOL_CALL_ID_ARG: "call-a",
@@ -912,7 +917,7 @@ def test_host_user_requires_structured_argv_and_rejects_fake_access(
     }
 
     shell_result = tool.invoke({**common, "cmd": "echo unsafe"})
-    assert json.loads(shell_result.text)["error"] == "host_user_requires_argv"
+    assert json.loads(shell_result.text)["error"] == "invalid_arguments"
 
     access_result = tool.invoke(
         {
@@ -921,18 +926,17 @@ def test_host_user_requires_structured_argv_and_rejects_fake_access(
             "access": {"filesystem": "read_only"},
         }
     )
-    assert json.loads(access_result.text)["error"] == "host_user_access_is_unrestricted"
+    assert json.loads(access_result.text)["error"] == "invalid_arguments"
 
 
 def test_host_user_tool_request_discloses_unrestricted_execution(
     runtime: CommandRuntime,
 ) -> None:
     broker = ApprovalBroker()
-    tool = ExecCommandTool(runtime, broker)
+    tool = HostProcessStartTool(runtime, broker)
     result_box = []
     args = {
         "argv": [sys.executable, "fake:buffered"],
-        "execution": "host_user",
         "reason": "launch a trusted desktop-user process",
         COMMAND_SESSION_ID_ARG: "session-a",
         COMMAND_RUN_ID_ARG: "run-a",
@@ -1388,7 +1392,7 @@ def test_terminate_command_exposes_one_owned_handle_parameter(runtime: CommandRu
                 "type": "string",
                 "minLength": 1,
                 "description": (
-                    "当前 run 中 exec_command(mode=streaming) 成功结果返回的 process_id；"
+                    "当前 run 中命令启动工具以 mode=streaming 成功返回的 process_id；"
                     "不能填写操作系统 PID、进程名、其它 run 的句柄或已释放句柄。"
                 ),
             }
@@ -1422,6 +1426,7 @@ def test_command_lifecycle_tool_descriptions_define_mutually_exclusive_routing(
 def test_default_command_tool_set_includes_explicit_termination(runtime: CommandRuntime) -> None:
     assert [tool.name for tool in make_command_tools(runtime, None)] == [
         "exec_command",
+        "host_process_start",
         "write_stdin",
         "terminate_command",
     ]
@@ -1870,17 +1875,26 @@ def test_exec_command_schema_mechanically_separates_workdir_and_skill_binding(
     assert invalid.is_error
 
 
-def test_exec_command_schema_mechanically_restricts_host_user_shape(
+def test_host_process_start_schema_is_separate_and_structured(
     runtime: CommandRuntime,
 ) -> None:
-    registry = ToolRegistry([ExecCommandTool(runtime, None)])
+    registry = ToolRegistry([ExecCommandTool(runtime, None), HostProcessStartTool(runtime, None)])
+    wire = {item["function"]["name"]: item["function"] for item in registry.to_openai_tools()}
+    assert "execution" not in wire["exec_command"]["parameters"]["properties"]
+    assert wire["host_process_start"]["parameters"]["required"] == ["argv"]
+    assert set(wire["host_process_start"]["parameters"]["properties"]) == {
+        "argv",
+        "workdir",
+        "mode",
+        "timeout_seconds",
+        "reason",
+    }
 
     assert (
         registry.validate(
-            "exec_command",
+            "host_process_start",
             {
                 "argv": ["C:/fixture/MuMuPlayer.exe", "-v", "2"],
-                "execution": "host_user",
                 "reason": "launch the desktop emulator",
             },
         )
@@ -1890,25 +1904,29 @@ def test_exec_command_schema_mechanically_restricts_host_user_shape(
     for invalid_args in (
         {
             "cmd": '"C:/fixture/MuMuPlayer.exe" -v 2',
-            "execution": "host_user",
             "reason": "invalid host shell",
         },
         {
             "argv": ["C:/fixture/MuMuPlayer.exe", "-v", "2"],
-            "execution": "host_user",
             "access": {"filesystem": "read_only"},
             "reason": "invalid fake host sandbox",
         },
         {
             "cmd": "python scripts/run.py",
-            "execution": "host_user",
             "skill": {"entry": "scripts/run.py"},
             "reason": "invalid host Skill binding",
         },
     ):
-        invalid = registry.validate("exec_command", invalid_args)
+        invalid = registry.validate("host_process_start", invalid_args)
         assert invalid is not None
         assert invalid.is_error
+    assert (
+        registry.validate(
+            "exec_command",
+            {"argv": ["maa", "dir"], "execution": "host_user"},
+        )
+        is not None
+    )
 
 
 def test_exec_command_schema_keeps_sandboxed_shell_and_direct_argv_distinct(
@@ -1919,12 +1937,10 @@ def test_exec_command_schema_keeps_sandboxed_shell_and_direct_argv_distinct(
     for valid_args in (
         {
             "cmd": "echo ready && echo done",
-            "execution": "sandboxed",
             "reason": "run shell builtins",
         },
         {
             "argv": ["maa", "dir", "log"],
-            "execution": "sandboxed",
             "reason": "run one CLI directly",
         },
         {

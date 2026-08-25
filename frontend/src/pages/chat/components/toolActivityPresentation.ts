@@ -58,6 +58,7 @@ const FILESYSTEM_READ_TOOLS = new Set([
   "filesystem_list_directory",
   "filesystem_stat",
   "filesystem_read_text",
+  "filesystem_read_text_tail",
 ]);
 
 const FILESYSTEM_WRITE_TOOLS = new Set([
@@ -134,6 +135,7 @@ function filesystemSummary(name: string, args: Record<string, unknown>): string 
     filesystem_list_directory: `浏览文件夹${target}`,
     filesystem_stat: `查看文件信息${target}`,
     filesystem_read_text: `读取文件${target}`,
+    filesystem_read_text_tail: `读取文件末尾${target}`,
     filesystem_write_text: `写入文件${target}`,
     filesystem_apply_patch: `修改文件${target}`,
     filesystem_create_directory: `创建文件夹${target}`,
@@ -171,6 +173,10 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
       const reason = asString(args.reason);
       return reason ? normalizedText(reason) : "运行本地命令";
     }
+    case "host_process_start": {
+      const reason = asString(args.reason);
+      return reason ? normalizedText(reason) : "启动宿主进程";
+    }
     case "write_stdin":
       return "与本地进程交互";
     case "terminate_command":
@@ -202,7 +208,7 @@ function categoryFor(name: string): ToolActivityCategory {
   if (["web_fetch", "social_read", "recall_past_chats"].includes(name)) return "read";
   if (FILESYSTEM_READ_TOOLS.has(name)) return "read";
   if (FILESYSTEM_WRITE_TOOLS.has(name) || name === "request_filesystem_access") return "write";
-  if (["exec_command", "write_stdin", "terminate_command"].includes(name)) return "command";
+  if (["exec_command", "host_process_start", "write_stdin", "terminate_command"].includes(name)) return "command";
   if (name === "skill_read") return "skill";
   if (name === "todo_manage") return "todo";
   if (["weather_query", "calculate", "datetime_calculate"].includes(name)) return "query";
@@ -219,7 +225,7 @@ function filesystemStatus(block: ToolBlock): ToolActivityStatus | null {
 }
 
 function commandStatus(block: ToolBlock): ToolActivityStatus | null {
-  if (block.name !== "exec_command" && block.name !== "terminate_command") return null;
+  if (!["exec_command", "host_process_start", "terminate_command"].includes(block.name)) return null;
   const result = parseCommandToolResult(block.result);
   if (block.name === "terminate_command") {
     if (result.status === "runtime_lost") return "error";

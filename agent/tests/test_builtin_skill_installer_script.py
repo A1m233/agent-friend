@@ -220,6 +220,7 @@ def test_local_changes_require_explicit_replacement(
     assert blocked == 1
     assert "Error [local_changes_detected]" in blocked_output.err
     assert "--update fixture-skill --replace-local-changes" in blocked_output.err
+    assert "explicit one-shot user decision" in blocked_output.err
     assert script.read_text("utf-8") == "local edit\n"
     assert (personal / ".agent-friend-skill-lock.json").read_bytes() == before_lock
 
@@ -270,6 +271,7 @@ def test_unmanaged_skill_requires_confirmation_before_adoption(
 
     assert blocked == 1
     assert "Error [unmanaged_destination_exists]" in blocked_output.err
+    assert "explicit one-shot user decision" in blocked_output.err
     assert (installed / "local.txt").is_file()
     assert not (personal / ".agent-friend-skill-lock.json").exists()
 

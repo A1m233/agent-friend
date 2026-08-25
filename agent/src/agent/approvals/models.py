@@ -16,7 +16,7 @@ ApprovalDecisionSource = Literal[
     "session_auto",
     "catastrophic_policy",
 ]
-RiskLevel = Literal["normal", "catastrophic"]
+RiskLevel = Literal["normal", "explicit", "catastrophic"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,10 @@ class RiskAssessment:
     @property
     def catastrophic(self) -> bool:
         return self.level == "catastrophic"
+
+    @property
+    def requires_explicit_user(self) -> bool:
+        return self.level == "explicit"
 
     def to_dict(self) -> dict[str, object]:
         return {

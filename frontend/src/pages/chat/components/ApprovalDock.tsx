@@ -26,7 +26,9 @@ type PendingApproval = {
   detailLines: string[];
   submitting: boolean;
   needsSandboxSetup: boolean;
+  approvalMode: "per_request" | "session_auto";
   riskCode: string | null;
+  riskMessage: string | null;
 };
 
 interface RunningCommand {
@@ -149,7 +151,9 @@ export function buildPendingApprovalQueue(input: {
         && commandRuntimeStatus?.sandbox_capability.supported
         && !commandRuntimeStatus.sandbox_capability.ready,
       ),
+      approvalMode: request.approval_mode ?? "per_request",
       riskCode: request.risk?.code ?? null,
+      riskMessage: request.risk?.message ?? null,
     }));
   const files: PendingApproval[] = Object.values(filesystemEntries)
     .filter((entry) => (
@@ -168,7 +172,9 @@ export function buildPendingApprovalQueue(input: {
       detailLines: filesystemDetailLines(entry),
       submitting: entry.status === "submitting",
       needsSandboxSetup: false as const,
+      approvalMode: entry.request.approval_mode ?? "per_request",
       riskCode: entry.request.risk?.code ?? null,
+      riskMessage: entry.request.risk?.message ?? null,
     }));
   return [...commands, ...files];
 }
@@ -251,6 +257,19 @@ function PendingApprovalPanel({
                 前往系统权限
               </Button>
             </>
+          ) : current.approvalMode === "session_auto" ? (
+            <>
+              <Button size="xs" variant="outline" disabled>
+                此操作仍需确认
+              </Button>
+              <Button
+                size="xs"
+                disabled={actionDisabled}
+                onClick={() => decide(true)}
+              >
+                {current.submitting ? "处理中…" : "仅本次允许"}
+              </Button>
+            </>
           ) : (
             <>
               <Button
@@ -282,6 +301,9 @@ function PendingApprovalPanel({
       <div className="space-y-1 text-xs text-muted">
         {current.riskCode ? (
           <p className="text-warning">风险类别：{current.riskCode}</p>
+        ) : null}
+        {current.riskMessage ? (
+          <p className="text-warning">{current.riskMessage}</p>
         ) : null}
         {current.detailLines.map((line) => (
           <p key={line} className="break-all">{line}</p>
@@ -330,7 +352,6 @@ export function ApprovalDock() {
   const cancelCommand = useCommandRuntimeStore((state) => state.cancel);
   const filesystemEntries = useFilesystemApprovalsStore((state) => state.entries);
   const decideFilesystem = useFilesystemApprovalsStore((state) => state.decide);
-  const approvalMode = useConversationStore((state) => state.approvalMode);
   const {
     requestSessionAutoFromApproval,
     submittingRequestId,
@@ -366,7 +387,7 @@ export function ApprovalDock() {
     currentSessionId,
   ]);
 
-  const current = approvalMode === "per_request" ? pending[0] : undefined;
+  const current = pending[0];
   const currentRunning = current ? null : running[0];
   if (!current && !currentRunning) return null;
 

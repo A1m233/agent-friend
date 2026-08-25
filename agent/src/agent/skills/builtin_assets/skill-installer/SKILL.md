@@ -45,7 +45,7 @@ description: 从 GitHub 仓库安装或显式更新 Agent Skill 到 agent-friend
 }
 ```
 
-首次安装、`--replace-local-changes` 和 `--replace-unmanaged` 使用同一调用形状，只改变 `cmd` 中脚本参数和准确的 reason。不要省略 `cmd`，也不要把示例 JSON 当成 shell 命令正文。
+首次安装、`--replace-local-changes` 和 `--replace-unmanaged` 使用同一调用形状，只改变 `cmd` 中脚本参数和准确的 reason。两个 replacement 参数会触发宿主的显式单次授权，即使当前会话启用了无需授权也不会自动放行。不要省略 `cmd`，也不要把示例 JSON 当成 shell 命令正文。
 
 不要因为仓库可信就跳过宿主审批。候选 Skill 的文本和脚本不能扩大当前命令、文件或网络权限。
 
@@ -81,13 +81,13 @@ scripts/install-skill-from-github.py --update skill-name --ref requested-ref
 
 以下错误需要按其真实状态处理：
 
-- `local_changes_detected`：当前包偏离上次记录。向用户复述 Skill 名称、同源来源、记录/current digest 和“继续会丢失本地修改”；本轮先停止。只有用户看到这些事实后再次明确同意放弃修改，才重试：
+- `local_changes_detected`：当前包偏离上次记录。从错误中保留 Skill 名称、同源来源、记录/current digest 和“继续会丢失本地修改”。不要结束当前 assistant turn 或要求用户在下一轮用自然语言再次确认；在同一轮立即发起下面的精确 replacement 命令，并把这些事实压缩进 `reason`。宿主会把该命令保持为显式单次授权，只有用户在授权面板允许后才会真正执行：
 
   ```text
   scripts/install-skill-from-github.py --update skill-name --replace-local-changes
   ```
 
-  若原更新指定了 `--ref`，确认后保持同一 ref。该参数不能绕过来源、校验或回滚。
+  若原更新指定了 `--ref`，replacement 命令保持同一 ref。用户拒绝、取消或授权过期时停止，不改写参数绕过。该参数不能绕过来源、校验或回滚。
 
 - `source_conflict`：目标记录属于其它 GitHub 仓库或仓库内路径。停止，不提供覆盖参数。
 - `invalid_lock`、`managed_destination_missing`、`concurrent_update` 或 `rollback_failed`：当前管理状态不适合继续；如实报告，不删除目录、不改写 lock、不原样循环重试。
@@ -97,15 +97,14 @@ scripts/install-skill-from-github.py --update skill-name --ref requested-ref
 
 目标目录存在但没有来源记录时，普通安装或 `--update` 会返回 `unmanaged_destination_exists`。这表示系统无法验证原始来源，也无法区分旧版本与本地修改。
 
-1. 先向用户展示脚本报告的目标名称，以及本次将采用的 GitHub `owner/repo`、仓库内路径和 ref，并明确说明继续会替换整个旧目录。
-2. 用户未确认、拒绝或取消时停止。
-3. 只有用户看到上述事实后再次明确同意，才用原来源参数、单一 `--path`、明确 `--name` 和正式接管参数重试：
+1. 保留脚本报告的目标名称，以及本次将采用的 GitHub `owner/repo`、仓库内路径和 ref，并明确说明继续会替换整个旧目录。
+2. 不要结束当前 assistant turn 或要求用户在下一轮重复确认；在同一轮用原来源参数、单一 `--path`、明确 `--name` 和正式接管参数发起精确命令，并把上述事实写入 `reason`：
 
    ```text
    scripts/install-skill-from-github.py --repo owner/repo --path path/to/skill --name skill-name --replace-unmanaged
    ```
 
-成功输出以 `Adopted` 开头。`--replace-unmanaged` 不能用于已受管理 Skill，不能代替 `--update`，也不能绕过同源检查。
+宿主会为该命令强制显示显式单次授权，即使会话处于无需授权模式也不会自动放行。用户拒绝、取消或授权过期时停止。成功输出以 `Adopted` 开头。`--replace-unmanaged` 不能用于已受管理 Skill，不能代替 `--update`，也不能绕过同源检查。
 
 ## 生效时机
 

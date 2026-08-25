@@ -69,6 +69,15 @@ def test_registers_unavailable_nearby_tool_when_no_api_key(
     assert isinstance(registry, ToolRegistry)
     tools = registry.all_tools()
     assert {tool.name for tool in tools} == BASE_TOOL_NAMES
+    tail = registry.get("filesystem_read_text_tail")
+    assert tail is not None
+    assert tail.parameters_schema["required"] == ["filesystem_scope_id"]
+    assert set(tail.parameters_schema["properties"]) == {
+        "filesystem_scope_id",
+        "relative_path",
+        "max_lines",
+        "encoding",
+    }
     nearby = registry.get("nearby_place_search")
     assert isinstance(nearby, NearbyPlaceSearchTool)
     assert isinstance(nearby._provider, UnavailableNearbyPlaceProvider)

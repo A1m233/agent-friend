@@ -83,7 +83,9 @@ function ToolDetailSection({
 }
 
 function ToolDetails({ block, args }: { block: ToolBlock; args: string }) {
-  const filesystemResult = block.name === "filesystem_read_text" && block.result
+  const filesystemResult = ["filesystem_read_text", "filesystem_read_text_tail"].includes(
+    block.name,
+  ) && block.result
     ? presentFilesystemReadTextResult(block.result)
     : null;
   const result = filesystemResult?.content
@@ -391,7 +393,8 @@ function CommandRuntimeCard({
   const resultError = result.error;
   const resultMessage = result.message;
   const sandboxCapability = runtimeStatus?.sandbox_capability;
-  const execution = details?.execution || args.execution || "sandboxed";
+  const execution = details?.execution
+    || (block.name === "host_process_start" ? "host_user" : args.execution || "sandboxed");
   const needsSandboxSetup = commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
   const status = process?.status ?? result.status;
   const exitCode = process?.exit_code ?? result.exitCode;
@@ -586,7 +589,7 @@ export function ToolCard({
   if (block.name === "request_social_auth" && block.status === "done") {
     return <SocialAuthCard block={block} />;
   }
-  if (block.name === "exec_command") {
+  if (block.name === "exec_command" || block.name === "host_process_start") {
     return <CommandRuntimeCard block={block} embedded={embedded} />;
   }
   if (block.name === "skill_read") {

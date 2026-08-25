@@ -205,17 +205,18 @@ describe("buildPendingApprovalQueue", () => {
     });
   });
 
-  it("projects a backend risk code without classifying commands in the UI", () => {
+  it("projects backend risk details and session-auto routing without classifying commands in the UI", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
       activeRunIdBySession: { "session-a": "run-a" },
       commandApprovals: {
         current: command({
+          approval_mode: "session_auto",
           risk: {
-            level: "catastrophic",
+            level: "explicit",
             fingerprint: "risk-fingerprint",
-            code: "critical-root-recursive-delete",
-            message: "blocked in auto mode",
+            code: "skill-local-changes-replacement",
+            message: "本次必须由用户显式确认。",
             evidence: [],
           },
         }),
@@ -225,7 +226,9 @@ describe("buildPendingApprovalQueue", () => {
       filesystemEntries: {},
     });
 
-    expect(queue[0].riskCode).toBe("critical-root-recursive-delete");
+    expect(queue[0].approvalMode).toBe("session_auto");
+    expect(queue[0].riskCode).toBe("skill-local-changes-replacement");
+    expect(queue[0].riskMessage).toBe("本次必须由用户显式确认。");
   });
 
   it("labels managed Python without exposing internal paths", () => {
