@@ -28,8 +28,8 @@ Reminder 由 `TodoScheduler` 创建并 claim occurrence，随后由
 - `Reminder` 没有来源 session；只有 `Todo.origin_id`，无法表达给既有 Todo 从新会话添加 Reminder。
 - `ReminderOccurrence` 只有一组 `destination_kind/id/receipt`，不能分别记录会话持久化、QQ 固定提醒、
   QQ Agent 回复和桌宠气泡。
-- IM binding 的 `updated_at` 已持久化，但 `last_interaction_at` 只保存在 `IMRuntime` 进程内，重启后
-  无法继续按真实用户交互排序。
+- IM binding 的 `last_interaction_at` 只表示对应 IM 入口的最近交互，无法覆盖同一会话中的桌面对话；
+  `updated_at` 只表示绑定关系变化，也不能代表会话级用户活跃度。
 - Reminder Agent run 是否进入会话历史由投递出口决定，QQ 分支使用 `presentation=none`。
 - Tauri `settings.json` 尚无 Reminder 通知模式；Bridge 只能通过现有 `DesktopSettingsReader` 读取其他
   非敏感设置。
@@ -103,7 +103,7 @@ session 中的 `todo_reminder` 事件与对应 Agent run 是用户可见事实�
 |---|---|
 | `persistence_session_id` | 该 occurrence 唯一持久化 session |
 | `persistence_destination_id` | 选中 IM binding 的稳定发送 destination；来源 session 兜底时为空 |
-| `persistence_reason` | `latest_im_interaction`、`latest_im_binding`、`origin_session` 等诊断原因 |
+| `persistence_reason` | `latest_session_user_interaction`、`origin_im_session_without_user_interaction`、`stable_im_session_without_user_interaction`、`origin_session` 等诊断原因 |
 | `notification_mode` | 首次执行时冻结的 `smart` 或 `all` |
 | `notification_decision_kind` | 智能策略首次执行结果；all 模式记为 `all` |
 
@@ -129,22 +129,33 @@ TodoStore 提供 compare-and-set 语义的冻结方法：只有字段尚未设�
 
 ## 5. 持久化会话选择
 
-### 5.1 IM binding recency
+### 5.1 会话级用户交互事实
 
-`IMSessionBinding` 增加可空 `last_interaction_at`。每次已验证 binding/session 的真实 inbound 在路由前
-调用 `IMStateStore.record_interaction` 原子更新；`updated_at` 仍只表示 binding 创建或变更。
+持久化会话排序不新增独立 activity sidecar，而是以候选 session 的 active event projection 中最新一条
+`user_message.ts` 为唯一事实源。桌面对话、QQ/IM 和其他真实用户入口最终都通过 `Conversation` 追加
+同一种 `user_message`，因此无需在各入口重复维护时间戳；`assistant_message`、`todo_reminder`、
+`system_trigger` 等系统输出不会参与排序。
 
-候选 recency 取 `last_interaction_at ?? updated_at`，按时间倒序、稳定 destination id 作最终 tie-break。
-候选不要求 provider 在线，但其 session 必须仍能由 `SessionStore` 加载。
+该派生方式直接兼容升级前会话：已有 JSONL 中的用户消息在下一次 occurrence 选择时即可生效，无需
+批量改写 session 或 `im_state.json`。`IMSessionBinding.last_interaction_at` 继续服务智能通知与同会话
+多 binding 的具体目的地选择；`updated_at` 仍只表示 binding 创建或变更，不进入持久化会话排序。
 
 ### 5.2 选择规则
 
 首次执行 occurrence 时：
 
-1. 枚举全部 persisted IM binding，并按 recency 排序。
-2. 从新到旧选择第一个 session 仍存在的 binding。
-3. 若无有效 binding，尝试 Reminder 的 `origin_session_id`。
-4. 两者均不可用时，occurrence 进入不可路由失败；不得使用当前桌面对话或其他最近 session。
+1. 枚举全部 persisted IM binding，跳过 session 已不存在的 binding，并按 `session_id` 分组。
+2. 读取各候选 session 最新 active `user_message.ts`；存在真实用户消息时，选择时间最新的 session，
+   同时间以稳定 session id tie-break。
+3. 所有候选都没有用户消息时，若 Reminder `origin_session_id` 也在候选中则选择它；否则按稳定
+   session id 做确定性兜底。该分支不宣称推断用户位置，也不读取 binding 更新时间。
+4. 选定 session 后，在其多个 binding 中优先使用 `last_interaction_at` 最新的目的地；仍相同时按稳定
+   destination id tie-break。该步骤只决定发送地址，不反向改变会话选择。
+5. 若无有效 binding，尝试 Reminder 的 `origin_session_id`。
+6. 两者均不可用时，occurrence 进入不可路由失败；不得使用当前桌面对话或其他最近 session。
+
+没有 IM binding 的普通 session 不进入第 2 步候选，即使它拥有全局最新用户消息。只要存在有效 IM
+binding，持久化会话就只在这些 binding 对应的 session 中产生。
 
 选中 IM binding 时，Agent surface 使用 `im:<im_type>`；来源 session 兜底时使用
 `desktop-chat`。surface 只影响 Agent 运行上下文，不影响其输出必须进入 conversation 历史。
@@ -258,7 +269,8 @@ system run 突然暴露；新测试固定 QQ 新路径不再产生 none。
 | 风险 | 处理 |
 |---|---|
 | 多 worker 同时选择不同 session | TodoStore compare-and-set 冻结并回读唯一结果 |
-| IM inbound 时间重启丢失 | 写入 `im_state.json`，不再只依赖内存字典 |
+| 桌面与 IM 活跃度形成两套时间 | 统一从 session active `user_message` 派生，不维护第二份会话 activity |
+| 旧 binding 缺少交互时间 | 直接读取历史 session 用户消息，无需迁移或使用 binding 更新时间猜测 |
 | session 写入失败后 QQ 已发送 | 强制 session 事实先落盘，外部发送后置 |
 | binding 在冻结后变化 | send_proactive 返回 binding_changed；不重新选择 |
 | 多出口覆盖同一状态 | projection table 分行记录固定 QQ、Agent QQ、桌宠 |
@@ -278,7 +290,10 @@ system run 突然暴露；新测试固定 QQ 新路径不再产生 none。
 
 ### 10.2 Bridge
 
-- 多 binding 选择最近真实 inbound；无 inbound 时选择最近 binding update。
+- 多 binding 对应的会话按最近真实用户消息选择，桌面对话与 IM 入站等价。
+- 历史 session 用户消息在 binding 交互时间缺失时仍可直接参与选择；binding 更新时间不参与。
+- Agent、Reminder 等系统输出不刷新会话排序；新 occurrence 在其他候选会话出现用户消息后重新选择。
+- 所有候选均无用户消息时优先来源候选，否则稳定确定性兜底。
 - 跳过缺失 session；无 binding 回退 Reminder origin；两者缺失不选任意 session。
 - offline binding 仍可选作 persistence target。
 - smart 的 desktop/im/pet/none 映射只改变投影计划。
@@ -305,3 +320,4 @@ system run 突然暴露；新测试固定 QQ 新路径不再产生 none。
 | 日期 | 变更内容 | 是否需要重新实现 |
 |---|---|---|
 | 2026-08-23 | 首次确认：分离 occurrence 持久化会话与 QQ/桌宠通知；冻结模式与 binding；保留同会话 Agent 批处理；逐投影持久化 | 是 |
+| 2026-08-25 | 修正持久化路由：从 binding recency 改为候选 session 最近真实用户消息；桌面与 IM 统一，系统输出和 binding 更新时间不参与 | 是 |
