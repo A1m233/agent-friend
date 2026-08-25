@@ -1,0 +1,181 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-25T14:34:00.574630+00:00",
+    "ended_at": "2026-08-25T14:34:19.004188+00:00",
+    "duration_seconds": 18.43,
+    "git_commit": "b12ddc3",
+    "working_tree_dirty": true,
+    "note": "post-contract-routing owned-handle control; incident model; reasoning off; user explicitly authorized remaining C27-05; verify exact target termination and unrelated-handle isolation; stop and attribute on failure",
+    "selection": {
+      "contract": "all",
+      "case": "C27-05",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "24c0db9d6046118422368c5599a71f7ed0175ceda47e34fd34da6c8c87ddaa89",
+      "total_contracts": 27,
+      "total_cases": 234,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C27": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C27",
+      "name": "command-lifecycle-handoff",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C27-05",
+          "query": "在同一 run 中按顺序启动两个独立任务：目标任务使用 argv [\"task-runner\", \"target\"] 和 mode=streaming，无关任务使用 argv [\"task-runner\", \"unrelated\"] 和 mode=streaming。 两者都返回 running 后，只放弃目标任务：终止目标任务返回的精确句柄，确认可信终态后运行 准确的替代 argv [\"task-runner\", \"target\", \"--replacement\"]；不要影响无关任务， 也不要自行编造其它命令。",
+          "facet": "control：当前 run 多句柄时精确终止目标并使用明确替代命令",
+          "source": "requirement-104-owned-handle-selection-control",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=['exec_command', 'exec_command', 'terminate_command', 'exec_command'] anchors=[] required_anchors=['target-replacement-complete']",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "target"
+                ],
+                "mode": "streaming"
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_target\",\"output_seq\":2}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "unrelated"
+                ],
+                "mode": "streaming"
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_unrelated\",\"output_seq\":5,\"stdout\":\"healthy\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "terminate_command",
+              "args": {
+                "process_id": "proc_target"
+              },
+              "result_text": "{\"status\":\"cancelled\",\"process_id\":\"proc_target\",\"terminal_reason\":\"agent_requested\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "target",
+                  "--replacement"
+                ],
+                "mode": "streaming"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"target-replacement-complete\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "Both tasks are running. Now I'll terminate the target task and wait for it to confirm a trusted terminal state.",
+            "The target process reached a trusted terminal state (`cancelled`). Now I'll start the replacement command while leaving the unrelated task untouched.",
+            "完成。按顺序处理如下：\n\n1. 目标任务 `[\"task-runner\", \"target\"]` 启动为 `running`，无关任务 `[\"task-runner\", \"unrelated\"]` 也启动为 `running`。\n2. 只终止了目标任务 `proc_target`，它返回了可信终态 `cancelled`。\n3. 在其后运行了准确的替代命令 `[\"task-runner\", \"target\", \"--replacement\"]`，正常退出，输出 `target-replacement-complete`。\n\n无关任务 `proc_unrelated` 没有受到任何影响，仍在运行中。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "Both tasks are running. Now I'll terminate the target task and wait for it to confirm a trusted terminal state.The target process reached a trusted terminal state (`cancelled`). Now I'll start the replacement command while leaving the unrelated task untouched.完成。按顺序处理如下：\n\n1. 目标任务 `[\"task-runner\", \"target\"]` 启动为 `running`，无关任务 `[\"task-runner\", \"unrelated\"]` 也启动为 `running`。\n2. 只终止了目标任务 `proc_target`，它返回了可信终态 `cancelled`。\n3. 在其后运行了准确的替代命令 `[\"task-runner\", \"target\", \"--replacement\"]`，正常退出，输出 `target-replacement-complete`。\n\n无关任务 `proc_unrelated` 没有受到任何影响，仍在运行中。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

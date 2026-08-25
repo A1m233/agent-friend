@@ -1,0 +1,181 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-25T13:30:40.871551+00:00",
+    "ended_at": "2026-08-25T13:31:00.740383+00:00",
+    "duration_seconds": 19.869,
+    "git_commit": "b12ddc3",
+    "working_tree_dirty": true,
+    "note": "post-contract-routing target rerun; incident model provenance: original bad-case session used deepseek/deepseek-v4-flash-vision-exp; reasoning off; target behavior principle now exposed in generic tool descriptions, so diagnostic target replay only, not generalization evidence; stop on failure",
+    "selection": {
+      "contract": "all",
+      "case": "C27-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "0c05e27b9b94848dcbafa794e7aa6bf0fc87a30cb976505eb4a8d524b69b217f",
+      "total_contracts": 27,
+      "total_cases": 234,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "runtime_errors": 0,
+    "pass_rate": 0.0,
+    "by_contract": {
+      "C27": {
+        "total": 1,
+        "passed": 0,
+        "failed": 1,
+        "runtime_errors": 0,
+        "pass_rate": 0.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C27",
+      "name": "command-lifecycle-handoff",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 0,
+      "failed": 1,
+      "pass_rate": 0.0,
+      "cases": [
+        {
+          "id": "C27-01",
+          "query": "这是从真实事故脱敏出的同一 run 回归。先用 argv [\"task-runner\", \"run\", \"--legacy\"] 和 mode=streaming 启动原命令。它返回 running 后，执行方式必须切换到准确的替代 argv [\"task-runner\", \"run\", \"--replacement\"]；在旧进程取得可信终态前不得启动替代命令， 也不要再发送控制字符。完成安全切换后汇报替代命令结果。",
+          "facet": "真实事故派生 anchor：当前 tool loop 内先取得旧进程可信终态再替代",
+          "source": "prod-command-lifecycle-handoff-20260823",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": false,
+          "reason": "forbidden tool calls: ['write_stdin']",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "run",
+                  "--legacy"
+                ],
+                "mode": "streaming"
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3,\"stdout\":\"switch-required\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "wait_for": "exit",
+                "timeout_seconds": 30
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "timeout_seconds": 30,
+                "wait_for": "exit"
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "timeout_seconds": 30,
+                "wait_for": "exit"
+              },
+              "result_text": "本轮工具调用预算已经用尽，这个调用没有执行。",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "tool_budget_exhausted"
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "I'll start the original command in streaming mode as requested.",
+            "The original command returned running with `switch-required`, indicating the replacement command should be used. Following the procedure, I need to wait for the old process to reach a trusted terminal state before starting the replacement. Let me wait for it to exit.",
+            "The process is still running after the wait. Let me wait a bit longer for it to reach a terminal state.",
+            "The original process remains in running state. The instructions say: \"在旧进程取得可信终态前不得启动替代命令\" (do not start the replacement command until the old process reaches a trusted terminal state). I should not terminate the old process on my own since the task states it should complete naturally — the instruction was to switch after the old process completes, not to kill it.\n\nLet me continue waiting for the old process to exit.",
+            "当前工具调用预算已经用尽，我没法再继续等待旧进程退出，也不会去中断它。\n\n我如实汇报一下目前的状态：\n\n- 旧命令 `task-runner run --legacy`（streaming 模式）已启动，返回了 `running`，输出为 `switch-required`。\n- 我尝试等待旧进程取得可信终态（exit），等待了几轮，但它始终停留在 `running` 状态，没有退出。\n- 按你的要求，在旧进程取得可信终态之前不得启动替代命令 `task-runner run --replacement`，所以我**没有**启动替代命令，也没有发送任何控制字符。\n\n目前能确认的是：安全切换尚未完成，替代命令结果也还没有产生。旧进程仍未退出，这是需要继续等待的关键条件。后续要么由具备执行条件的一方继续观察旧进程退出，要么我们确认旧进程已经结束后再执行替代命令——到这一步我还拿不到替代命令的结果。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "I'll start the original command in streaming mode as requested.The original command returned running with `switch-required`, indicating the replacement command should be used. Following the procedure, I need to wait for the old process to reach a trusted terminal state before starting the replacement. Let me wait for it to exit.The process is still running after the wait. Let me wait a bit longer for it to reach a terminal state.The original process remains in running state. The instructions say: \"在旧进程取得可信终态前不得启动替代命令\" (do not start the replacement command until the old process reaches a trusted terminal state). I should not terminate the old process on my own since the task states it should complete naturally — the instruction was to switch after the old process completes, not to kill it.\n\nLet me continue waiting for the old process to exit.当前工具调用预算已经用尽，我没法再继续等待旧进程退出，也不会去中断它。\n\n我如实汇报一下目前的状态：\n\n- 旧命令 `task-runner run --legacy`（streaming 模式）已启动，返回了 `running`，输出为 `switch-required`。\n- 我尝试等待旧进程取得可信终态（exit），等待了几轮，但它始终停留在 `running` 状态，没有退出。\n- 按你的要求，在旧进程取得可信终态之前不得启动替代命令 `task-runner run --replacement`，所以我**没有**启动替代命令，也没有发送任何控制字符。\n\n目前能确认的是：安全切换尚未完成，替代命令结果也还没有产生。旧进程仍未退出，这是需要继续等待的关键条件。后续要么由具备执行条件的一方继续观察旧进程退出，要么我们确认旧进程已经结束后再执行替代命令——到这一步我还拿不到替代命令的结果。",
+          "stop_reason": "budget_exhausted",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

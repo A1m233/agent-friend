@@ -396,6 +396,7 @@ function CommandRuntimeCard({
   const status = process?.status ?? result.status;
   const exitCode = process?.exit_code ?? result.exitCode;
   const sandboxDenied = process?.sandbox_denied ?? result.sandboxDenied;
+  const terminalReason = process?.terminal_reason ?? result.terminalReason;
   const durationSeconds = process?.duration_seconds ?? result.durationSeconds;
   let label = approval?.status === "pending" ? "等待授权" : "准备运行";
   let tone: StatusDotProps["tone"] = "warning";
@@ -412,7 +413,7 @@ function CommandRuntimeCard({
     label = "已超时";
     pulse = false;
   } else if (status === "cancelled" || approval?.status === "cancelled") {
-    label = "已取消";
+    label = terminalReason === "agent_requested" ? "Agent 已终止" : "已取消";
     pulse = false;
   } else if (status === "runtime_lost") {
     label = "运行时失联";

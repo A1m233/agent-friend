@@ -39,6 +39,7 @@ def test_loads_builtin_cases() -> None:
         ("C24", "tool-identifier-contract", 6),
         ("C25", "filesystem-authorization-claim-grounding", 2),
         ("C26", "agent-run-recovery", 6),
+        ("C27", "command-lifecycle-handoff", 5),
     ]
 
 
@@ -343,6 +344,46 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert resource_holdout.judge is not None
     assert resource_holdout.judge.required_stop_reason == "budget_exhausted"
 
+    c27 = next(contract for contract in contracts if contract.id == "C27")
+    command_anchor = next(item for item in c27.cases if item.id == "C27-01")
+    assert command_anchor.judge is not None
+    assert command_anchor.judge.required_first_tool_call == "exec_command"
+    assert command_anchor.judge.required_tool_sequence == [
+        "exec_command",
+        "terminate_command",
+        "exec_command",
+    ]
+    assert command_anchor.judge.required_successful_tool_calls[0].args == {
+        "argv": ["task-runner", "run", "--legacy"],
+        "mode": "streaming",
+    }
+    assert command_anchor.current_session_events == []
+    assert len(command_anchor.fake_tools[0].responses) == 2
+
+    stdin_isolation = next(item for item in c27.cases if item.id == "C27-02")
+    assert stdin_isolation.current_session_events == []
+    assert stdin_isolation.judge is not None
+    assert stdin_isolation.judge.must_not_call_any == ["write_stdin"]
+
+    normal_wait = next(item for item in c27.cases if item.id == "C27-03")
+    assert len(normal_wait.fake_tools[1].responses) == 2
+    assert {
+        response.match_args["wait_for"] for response in normal_wait.fake_tools[1].responses
+    } == {
+        "exit",
+        "output",
+    }
+    assert normal_wait.judge is not None
+    assert normal_wait.judge.required_successful_tool_calls[1].args == {
+        "process_id": "proc_healthy"
+    }
+
+    completed_control = next(item for item in c27.cases if item.id == "C27-04")
+    assert completed_control.judge is not None
+    assert completed_control.judge.must_mention_any_groups == [
+        ["original-complete", "已完成", "执行成功", "成功结束", "退出码为 0"]
+    ]
+
     c18 = next(contract for contract in contracts if contract.id == "C18")
     maa_anchor = next(item for item in c18.cases if item.id == "C18-04")
     assert maa_anchor.fixture_skills[0].name == "maa-daily"
@@ -389,8 +430,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 26
-    assert meta.total_cases == 229
+    assert meta.total_contracts == 27
+    assert meta.total_cases == 234
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -418,6 +459,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C24": 6,
         "C25": 2,
         "C26": 6,
+        "C27": 5,
     }
     assert len(meta.digest) == 64
 

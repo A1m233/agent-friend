@@ -46,9 +46,11 @@ from agent.command_runtime.tools import (
     COMMAND_SURFACE_ARG,
     COMMAND_TOOL_CALL_ID_ARG,
     MAX_RESULT_OUTPUT_BYTES,
+    TerminateCommandTool,
     WriteStdinTool,
     _bounded_process_result,
     _result,
+    make_command_tools,
 )
 from agent.skills.models import (
     ActivatedSkill,
@@ -1352,6 +1354,308 @@ def test_write_stdin_rejects_handle_from_other_context(runtime: CommandRuntime) 
     )
     assert result.is_error
     assert json.loads(result.text)["error"] == "invalid_arguments"
+
+
+def _register_command_handle(
+    context: ToolRunContext,
+    runtime: CommandRuntime,
+    process_id: str,
+    *,
+    session_id: str = "session-a",
+    run_id: str = "run-a",
+) -> None:
+    def terminate(reason: str) -> None:
+        runtime.terminate(
+            process_id,
+            session_id=session_id,
+            run_id=run_id,
+            reason=reason,
+            wait_for_terminal_seconds=0,
+        )
+
+    context.register_command_handle(process_id, terminate)
+
+
+def test_terminate_command_exposes_one_owned_handle_parameter(runtime: CommandRuntime) -> None:
+    registry = ToolRegistry([TerminateCommandTool(runtime)])
+    wire = registry.to_openai_tools()[0]["function"]
+
+    assert wire["name"] == "terminate_command"
+    assert wire["parameters"] == {
+        "type": "object",
+        "properties": {
+            "process_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "当前 run 中 exec_command(mode=streaming) 成功结果返回的 process_id；"
+                    "不能填写操作系统 PID、进程名、其它 run 的句柄或已释放句柄。"
+                ),
+            }
+        },
+        "required": ["process_id"],
+        "additionalProperties": False,
+    }
+    assert registry.validate("terminate_command", {"process_id": "proc_fixture"}) is None
+    assert registry.validate("terminate_command", {"process_id": "proc_fixture", "pid": 42})
+    assert "改用替代命令或切换执行路径" in wire["description"]
+    assert "无需再询问用户是否可以停止" in wire["description"]
+    assert "cancelled 本身就是可信终态" in wire["description"]
+
+
+def test_command_lifecycle_tool_descriptions_define_mutually_exclusive_routing(
+    runtime: CommandRuntime,
+) -> None:
+    registry = ToolRegistry(make_command_tools(runtime, None))
+    definitions = {
+        item["function"]["name"]: item["function"] for item in registry.to_openai_tools()
+    }
+
+    wait_description = definitions["write_stdin"]["description"]
+    terminate_description = definitions["terminate_command"]["description"]
+    assert "原进程仍应继续运行并允许自然完成" in wait_description
+    assert "改用 terminate_command" in wait_description
+    assert "原进程仍应继续运行并允许自然完成" in terminate_description
+    assert "才用 write_stdin 等待" in terminate_description
+
+
+def test_default_command_tool_set_includes_explicit_termination(runtime: CommandRuntime) -> None:
+    assert [tool.name for tool in make_command_tools(runtime, None)] == [
+        "exec_command",
+        "write_stdin",
+        "terminate_command",
+    ]
+
+
+def test_terminate_command_confirms_terminal_state_and_releases_handle(
+    runtime: CommandRuntime,
+) -> None:
+    started = _start(runtime, "fake:streaming", mode="streaming")
+    context = ToolRunContext.create("")
+    _register_command_handle(context, runtime, started.process_id)
+
+    result = TerminateCommandTool(runtime).invoke(
+        {
+            "process_id": started.process_id,
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "terminate-call",
+            COMMAND_RUN_CONTEXT_ARG: context,
+        }
+    )
+
+    assert not result.is_error
+    payload = json.loads(result.text)
+    assert payload["status"] == "cancelled"
+    assert payload["terminal_reason"] == "agent_requested"
+    assert payload["exit_code"] == 1
+    assert not context.owns_command_handle(started.process_id)
+
+
+def test_terminate_command_rejects_handle_from_other_context_without_side_effect(
+    runtime: CommandRuntime,
+) -> None:
+    started = _start(runtime, "fake:streaming", mode="streaming")
+
+    result = TerminateCommandTool(runtime).invoke(
+        {
+            "process_id": started.process_id,
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "terminate-call",
+            COMMAND_RUN_CONTEXT_ARG: ToolRunContext.create(""),
+        }
+    )
+
+    assert result.is_error
+    assert json.loads(result.text)["error"] == "process_not_owned"
+    assert (
+        runtime.wait(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            timeout_seconds=0,
+        ).status
+        == "running"
+    )
+
+
+def test_terminate_command_rejects_buffered_process_handle(runtime: CommandRuntime) -> None:
+    started = _start(runtime, "fake:terminate-stall")
+    context = ToolRunContext.create("")
+    _register_command_handle(context, runtime, started.process_id)
+
+    result = TerminateCommandTool(runtime).invoke(
+        {
+            "process_id": started.process_id,
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "terminate-call",
+            COMMAND_RUN_CONTEXT_ARG: context,
+        }
+    )
+
+    assert result.is_error
+    assert json.loads(result.text)["error"] == "process_not_streaming"
+    assert (
+        runtime.wait(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            timeout_seconds=0,
+        ).status
+        == "running"
+    )
+
+
+def test_terminate_command_keeps_handle_when_rpc_fails(runtime: CommandRuntime) -> None:
+    started = _start(runtime, "fake:terminate-error", mode="streaming")
+    context = ToolRunContext.create("")
+    _register_command_handle(context, runtime, started.process_id)
+
+    result = TerminateCommandTool(runtime).invoke(
+        {
+            "process_id": started.process_id,
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "terminate-call",
+            COMMAND_RUN_CONTEXT_ARG: context,
+        }
+    )
+
+    assert result.is_error
+    assert json.loads(result.text)["error"] == "process_termination_failed"
+    assert context.owns_command_handle(started.process_id)
+    assert (
+        runtime.wait(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            timeout_seconds=0,
+        ).status
+        == "running"
+    )
+
+
+def test_runtime_termination_timeout_does_not_publish_false_cancelled(
+    runtime: CommandRuntime,
+) -> None:
+    started = _start(runtime, "fake:terminate-stall", mode="streaming")
+
+    with pytest.raises(CommandRuntimeError) as raised:
+        runtime.terminate(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            reason="agent_requested",
+            wait_for_terminal_seconds=0.01,
+        )
+
+    assert raised.value.code == "process_termination_unconfirmed"
+    assert (
+        runtime.wait(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            timeout_seconds=0,
+        ).status
+        == "running"
+    )
+
+
+def test_runtime_marks_missing_remote_process_as_runtime_lost(runtime: CommandRuntime) -> None:
+    started = _start(runtime, "fake:terminate-missing", mode="streaming")
+
+    snapshot = runtime.terminate(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        reason="agent_requested",
+    )
+
+    assert snapshot.status == "runtime_lost"
+    assert snapshot.terminal_reason == "process_state_unavailable"
+
+
+def test_runtime_termination_keeps_first_reason_across_repeated_requests(
+    runtime: CommandRuntime,
+) -> None:
+    started = _start(runtime, "fake:terminate-stall", mode="streaming")
+
+    first = runtime.terminate(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        reason="agent_requested",
+        wait_for_terminal_seconds=0,
+    )
+    repeated = runtime.terminate(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        reason="timeout",
+        wait_for_terminal_seconds=0,
+    )
+    assert first.status == repeated.status == "running"
+
+    runtime._handle_notification(
+        "process/exited",
+        {"processId": started.process_id, "exitCode": 1, "sandboxDenied": False},
+    )
+    runtime._handle_notification("process/closed", {"processId": started.process_id})
+    finished = runtime.wait(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        timeout_seconds=0,
+    )
+
+    assert finished.status == "cancelled"
+    assert finished.terminal_reason == "agent_requested"
+
+
+def test_runtime_terminate_rejects_other_run_before_side_effect(runtime: CommandRuntime) -> None:
+    started = _start(runtime, "fake:streaming", mode="streaming")
+
+    with pytest.raises(CommandRuntimeError) as raised:
+        runtime.terminate(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-other",
+            reason="agent_requested",
+        )
+
+    assert raised.value.code == "process_owner_mismatch"
+    assert (
+        runtime.wait(
+            started.process_id,
+            session_id="session-a",
+            run_id="run-a",
+            timeout_seconds=0,
+        ).status
+        == "running"
+    )
+
+
+def test_runtime_terminate_preserves_existing_natural_exit(runtime: CommandRuntime) -> None:
+    started = _start(runtime, "fake:buffered")
+    finished = runtime.wait(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        timeout_seconds=2,
+    )
+    assert finished.status == "exited"
+
+    repeated = runtime.terminate(
+        started.process_id,
+        session_id="session-a",
+        run_id="run-a",
+        reason="agent_requested",
+    )
+
+    assert repeated.status == "exited"
+    assert repeated.terminal_reason == "exited"
 
 
 def test_skill_package_is_snapshotted_once_and_cleaned_with_run(

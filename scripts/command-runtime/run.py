@@ -149,8 +149,15 @@ def _concise_error(error: Exception) -> str:
 
 
 def smoke(executable: Path) -> dict[str, object]:
-    from agent.command_runtime import CommandRuntime, ExecCommandTool
+    from agent.command_runtime import CommandRuntime, ExecCommandTool, TerminateCommandTool
     from agent.command_runtime.runtime import sandbox_context
+    from agent.command_runtime.tools import (
+        COMMAND_RUN_CONTEXT_ARG,
+        COMMAND_RUN_ID_ARG,
+        COMMAND_SESSION_ID_ARG,
+        COMMAND_TOOL_CALL_ID_ARG,
+    )
+    from agent.tool_runtime import ToolRunContext
 
     with tempfile.TemporaryDirectory(prefix="agent-friend-command-runtime-") as temp_value:
         root = Path(temp_value).resolve()
@@ -258,14 +265,44 @@ def smoke(executable: Path) -> dict[str, object]:
             if streaming.exit_code != 0 or b"input:hello" not in streaming.pty_tail:
                 raise RuntimeError(f"streaming command failed: {streaming.to_dict()}")
 
-            cancelled = _start(runtime, root, writable, "smoke-cancel", "timeout /t 30 >nul")
-            cancelled = runtime.terminate(
-                cancelled.process_id,
+            cancelled = runtime.start_process(
+                argv=(_system_cmd(), "/D", "/Q"),
+                workdir=root,
+                env=_command_env(),
+                mode="streaming",
                 session_id="smoke",
                 run_id="smoke-cancel",
+                tool_call_id="smoke-cancel",
+                sandbox=writable,
             )
-            if cancelled.status != "cancelled":
-                raise RuntimeError("cancellation did not become terminal")
+            cancel_context = ToolRunContext.create("")
+            cancel_context.register_command_handle(
+                cancelled.process_id,
+                lambda reason: runtime.terminate(
+                    cancelled.process_id,
+                    session_id="smoke",
+                    run_id="smoke-cancel",
+                    reason=reason,
+                    wait_for_terminal_seconds=0,
+                ),
+            )
+            termination = TerminateCommandTool(runtime).invoke(
+                {
+                    "process_id": cancelled.process_id,
+                    COMMAND_SESSION_ID_ARG: "smoke",
+                    COMMAND_RUN_ID_ARG: "smoke-cancel",
+                    COMMAND_TOOL_CALL_ID_ARG: "smoke-terminate",
+                    COMMAND_RUN_CONTEXT_ARG: cancel_context,
+                }
+            )
+            termination_payload = json.loads(termination.text)
+            cancel_context.close_commands()
+            if (
+                termination.is_error
+                or termination_payload.get("status") != "cancelled"
+                or termination_payload.get("terminal_reason") != "agent_requested"
+            ):
+                raise RuntimeError(f"Agent termination Tool failed: {termination.text}")
 
             denied = _start(
                 runtime,
@@ -296,6 +333,7 @@ def smoke(executable: Path) -> dict[str, object]:
                 "powershell_argv": True,
                 "streaming": True,
                 "cancelled": True,
+                "agent_termination_tool": True,
                 "write_denied": True,
                 "skill_tool_path": True,
                 "skill_snapshot_fingerprint": skill_fingerprint,

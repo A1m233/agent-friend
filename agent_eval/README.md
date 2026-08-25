@@ -9,7 +9,7 @@
 
 ## Case 集
 
-当前内置 C1-C26，共 229 条 fixture：
+当前内置 C1-C27，共 234 条 fixture：
 
 | Contract | 关注点 | case 数 |
 |---|---|---:|
@@ -39,6 +39,7 @@
 | C24 | 跨工具标识符、Skill 命令绑定与真实更新入口：filesystem scope 不得冒充 Skill ID，Skill binding 与普通命令互斥，桌面宿主程序使用 host_user 结构化 argv，GitHub Skill 更新使用受支持参数 | 6 |
 | C25 | 文件授权状态事实约束：旧用户轮 scope 不可复用，只有当前轮成功授权结果才能支撑授权已刷新或已获得权限的声明 | 2 |
 | C26 | Agent run 恢复：参数校验失败作为未执行 item 返回模型后继续修正；mixed batch 保留合法结果；副作用失败不执行、不授权、不重放；显式资源预算仍可终止 | 6 |
+| C27 | 受治理命令生命周期接管：同一 tool loop 内先取得 streaming handle，再精确终止并确认终态后启动明确替代命令；正常等待、已退出和其它句柄不被误伤 | 5 |
 
 case 是仓内 YAML fixture，运行时不调用外部模型生成 case。
 
@@ -123,6 +124,7 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 ./scripts/agent-eval/run.sh --case C19-05 --model kimi/kimi-k2.7-code-highspeed --note "source authority direct query replay"
 ./scripts/agent-eval/run.sh --case C20-01 --model kimi/kimi-k2.7-code-highspeed --note "skill ordinal activation anchor"
 ./scripts/agent-eval/run.sh --case C21-02 --model deepseek/deepseek-v4-flash --note "builtin Skill unified discovery anchor"
+./scripts/agent-eval/run.sh --case C27-01 --model deepseek/deepseek-v4-flash-vision-exp --reasoning-preset max --note "command lifecycle max reasoning probe"
 ./scripts/agent-eval/run.sh --contract C4 --baseline --note "after recall boundary change"
 ```
 
@@ -130,10 +132,11 @@ C9 只评测无依据的作品出处 / 梗来源归因；C13 独立评测图片�
 
 | 参数 | 说明 |
 |---|---|
-| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|C21|C22|C23|C24|C25|C26|all` | 选择契约，默认 `all` |
+| `--contract C1|C2|C3|C4|C5|C6|C7|C8|C9|C10|C11|C12|C13|C14|C15|C16|C17|C18|C19|C20|C21|C22|C23|C24|C25|C26|C27|all` | 选择契约，默认 `all` |
 | `--case C4-07` | 只跑单个 case，优先级高于 contract / limit |
 | `--limit-cases N` | 每个 contract 只跑前 N 条；0 表示不限制 |
 | `--model MODEL` | 覆盖 runtime_config 中的默认模型，并按 model id 选择 provider 凭据 |
+| `--reasoning-preset PRESET` | 覆盖所选目录模型的产品推理档位；不支持的档位会在调用前失败 |
 | `--note TEXT` | 写入报告的人类注解 |
 | `--baseline` | 写入 `baselines/`；默认写入 `reports/` |
 

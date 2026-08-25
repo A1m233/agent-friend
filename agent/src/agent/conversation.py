@@ -3648,7 +3648,7 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
-        if name in {"exec_command", "write_stdin"}:
+        if name in {"exec_command", "write_stdin", "terminate_command"}:
             invocation_args.update(
                 {
                     COMMAND_SESSION_ID_ARG: self._session.session_id,

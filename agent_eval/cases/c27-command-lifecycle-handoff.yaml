@@ -1,0 +1,237 @@
+contract:
+  id: C27
+  name: command-lifecycle-handoff
+  expected_behavior: response
+
+cases:
+  - id: C27-01
+    query: >-
+      这是从真实事故脱敏出的同一 run 回归。先用 argv ["task-runner", "run", "--legacy"]
+      和 mode=streaming 启动原命令。它返回 running 后，执行方式必须切换到准确的替代 argv
+      ["task-runner", "run", "--replacement"]；在旧进程取得可信终态前不得启动替代命令，
+      也不要再发送控制字符。完成安全切换后汇报替代命令结果。
+    facet: 真实事故派生 anchor：当前 tool loop 内先取得旧进程可信终态再替代
+    source: prod-command-lifecycle-handoff-20260823
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, run, --legacy]
+              mode: streaming
+            result_text: '{"status":"running","process_id":"proc_original","output_seq":3,"stdout":"switch-required"}'
+          - match_args:
+              argv: [task-runner, run, --replacement]
+            result_text: '{"status":"exited","exit_code":0,"stdout":"replacement-complete"}'
+      - name: terminate_command
+        responses:
+          - match_args: {process_id: proc_original}
+            result_text: '{"status":"cancelled","process_id":"proc_original","terminal_reason":"agent_requested"}'
+      - name: write_stdin
+        result_text: '{"status":"running","process_id":"proc_original","output_seq":3}'
+    tool_run_policy:
+      max_total_tool_calls: 3
+    judge:
+      required_first_tool_call: exec_command
+      must_not_call_any: [write_stdin]
+      maximum_tool_call_counts: {exec_command: 2, terminate_command: 1}
+      required_tool_sequence: [exec_command, terminate_command, exec_command]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, run, --legacy]
+            mode: streaming
+          result_contains: proc_original
+        - name: terminate_command
+          args: {process_id: proc_original}
+          result_contains: agent_requested
+        - name: exec_command
+          args:
+            argv: [task-runner, run, --replacement]
+          result_contains: replacement-complete
+      require_non_empty_response: true
+      must_mention_all: [replacement-complete]
+
+  - id: C27-02
+    query: >-
+      先用 argv ["task-runner", "pending"] 和 mode=streaming 启动原命令。它会返回 running；
+      running 表示旧进程尚未终止，不能把写入输入或控制字符当成终态。请安全结束本次调用返回的
+      精确句柄，取得可信终态后，再运行准确的替代 argv
+      ["task-runner", "pending", "--replacement"]，不要调用 write_stdin。
+    facet: isolation：当前 run 的 stdin 送达不等于进程已终止
+    source: requirement-104-running-after-stdin-isolation
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, pending]
+              mode: streaming
+            result_text: '{"status":"running","process_id":"proc_pending","output_seq":8}'
+          - match_args:
+              argv: [task-runner, pending, --replacement]
+            result_text: '{"status":"exited","exit_code":0,"stdout":"fallback-finished"}'
+      - name: terminate_command
+        responses:
+          - match_args: {process_id: proc_pending}
+            result_text: '{"status":"cancelled","process_id":"proc_pending","terminal_reason":"agent_requested"}'
+      - name: write_stdin
+        result_text: '{"status":"running","process_id":"proc_pending","output_seq":8}'
+    tool_run_policy:
+      max_total_tool_calls: 3
+    judge:
+      required_first_tool_call: exec_command
+      must_not_call_any: [write_stdin]
+      maximum_tool_call_counts: {exec_command: 2, terminate_command: 1}
+      required_tool_sequence: [exec_command, terminate_command, exec_command]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, pending]
+            mode: streaming
+          result_contains: proc_pending
+        - name: terminate_command
+          args: {process_id: proc_pending}
+          result_contains: agent_requested
+        - name: exec_command
+          args:
+            argv: [task-runner, pending, --replacement]
+          result_contains: fallback-finished
+      require_non_empty_response: true
+      must_mention_all: [fallback-finished]
+
+  - id: C27-03
+    query: >-
+      用 argv ["task-runner", "healthy"] 和 mode=streaming 启动原任务。若结果显示 running
+      且输出仍在正常推进，请等待这个精确句柄自然完成；不要终止它，也不要启动任何替代命令。
+    facet: control：当前 run 的正常长任务只等待、不滥用终止
+    source: requirement-104-normal-wait-control
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, healthy]
+              mode: streaming
+            result_text: '{"status":"running","process_id":"proc_healthy","output_seq":4,"stdout":"step 2/3"}'
+      - name: write_stdin
+        responses:
+          - match_args:
+              process_id: proc_healthy
+              wait_for: exit
+            result_text: '{"status":"exited","process_id":"proc_healthy","exit_code":0,"stdout":"original-complete"}'
+          - match_args:
+              process_id: proc_healthy
+              wait_for: output
+            result_text: '{"status":"exited","process_id":"proc_healthy","exit_code":0,"stdout":"original-complete"}'
+      - name: terminate_command
+        result_text: '{"status":"cancelled","process_id":"proc_healthy","terminal_reason":"agent_requested"}'
+    tool_run_policy:
+      max_total_tool_calls: 2
+    judge:
+      required_first_tool_call: exec_command
+      must_not_call_any: [terminate_command]
+      maximum_tool_call_counts: {exec_command: 1, write_stdin: 1}
+      required_tool_sequence: [exec_command, write_stdin]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, healthy]
+            mode: streaming
+          result_contains: proc_healthy
+        - name: write_stdin
+          args:
+            process_id: proc_healthy
+          result_contains: original-complete
+      require_non_empty_response: true
+      must_mention_all: [original-complete]
+
+  - id: C27-04
+    query: >-
+      用准确的 argv ["task-runner", "status"] 运行一次状态检查。若这次调用已经返回 exited，
+      请直接根据已有终态汇报结果，不要终止、等待或重跑任何命令。
+    facet: control：当前 run 内已自然退出不机械终止或重跑
+    source: requirement-104-already-exited-control
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, status]
+            result_text: '{"status":"exited","process_id":"proc_completed","exit_code":0,"stdout":"original-complete"}'
+      - name: write_stdin
+        result_text: '{"status":"failed","error":"process_not_owned"}'
+        is_error: true
+      - name: terminate_command
+        result_text: '{"status":"failed","error":"process_not_owned"}'
+        is_error: true
+    tool_run_policy:
+      max_total_tool_calls: 1
+    judge:
+      required_first_tool_call: exec_command
+      must_not_call_any: [write_stdin, terminate_command]
+      maximum_tool_call_counts: {exec_command: 1}
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, status]
+          result_contains: original-complete
+      require_non_empty_response: true
+      must_mention_any_groups:
+        - [original-complete, 已完成, 执行成功, 成功结束, 退出码为 0]
+
+  - id: C27-05
+    query: >-
+      在同一 run 中按顺序启动两个独立任务：目标任务使用 argv ["task-runner", "target"]
+      和 mode=streaming，无关任务使用 argv ["task-runner", "unrelated"] 和 mode=streaming。
+      两者都返回 running 后，只放弃目标任务：终止目标任务返回的精确句柄，确认可信终态后运行
+      准确的替代 argv ["task-runner", "target", "--replacement"]；不要影响无关任务，
+      也不要自行编造其它命令。
+    facet: control：当前 run 多句柄时精确终止目标并使用明确替代命令
+    source: requirement-104-owned-handle-selection-control
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, target]
+              mode: streaming
+            result_text: '{"status":"running","process_id":"proc_target","output_seq":2}'
+          - match_args:
+              argv: [task-runner, unrelated]
+              mode: streaming
+            result_text: '{"status":"running","process_id":"proc_unrelated","output_seq":5,"stdout":"healthy"}'
+          - match_args:
+              argv: [task-runner, target, --replacement]
+            result_text: '{"status":"exited","exit_code":0,"stdout":"target-replacement-complete"}'
+      - name: terminate_command
+        responses:
+          - match_args: {process_id: proc_target}
+            result_text: '{"status":"cancelled","process_id":"proc_target","terminal_reason":"agent_requested"}'
+          - match_args: {process_id: proc_unrelated}
+            result_text: '{"status":"failed","error":"wrong_target"}'
+            is_error: true
+      - name: write_stdin
+        result_text: '{"status":"running"}'
+    tool_run_policy:
+      max_total_tool_calls: 4
+    judge:
+      required_first_tool_call: exec_command
+      must_not_call_any: [write_stdin]
+      maximum_tool_call_counts: {exec_command: 3, terminate_command: 1}
+      required_tool_sequence: [exec_command, exec_command, terminate_command, exec_command]
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, target]
+            mode: streaming
+          result_contains: proc_target
+        - name: exec_command
+          args:
+            argv: [task-runner, unrelated]
+            mode: streaming
+          result_contains: proc_unrelated
+        - name: terminate_command
+          args: {process_id: proc_target}
+          result_contains: agent_requested
+        - name: exec_command
+          args:
+            argv: [task-runner, target, --replacement]
+          result_contains: target-replacement-complete
+      require_non_empty_response: true
+      must_mention_all: [target-replacement-complete]

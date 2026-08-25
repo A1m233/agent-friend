@@ -62,6 +62,11 @@ def _parse_args() -> argparse.Namespace:
         help="覆盖被测 agent 用的 model；默认取 runtime_config 中的 DEEPSEEK_MODEL",
     )
     parser.add_argument(
+        "--reasoning-preset",
+        default=None,
+        help="覆盖被测 model 的产品推理档位（如 off / low / high / max）",
+    )
+    parser.add_argument(
         "--note",
         default="",
         help="写入 report / baseline 的人工注解",
@@ -100,7 +105,11 @@ def _optional_int(source: CredentialSource, name: str) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _provider_spec(model: str | None, source: CredentialSource) -> ProviderSpec:
+def _provider_spec(
+    model: str | None,
+    source: CredentialSource,
+    reasoning_preset: str | None = None,
+) -> ProviderSpec:
     from llm_providers import (
         build_provider_spec,
         default_model_for_provider,
@@ -122,6 +131,7 @@ def _provider_spec(model: str | None, source: CredentialSource) -> ProviderSpec:
         provider_id=provider_id,
         api_key=require_secret(source, provider.credential_name),
         model_id=model_id,
+        reasoning_preset=reasoning_preset,
         context_window=_optional_int(source, f"{prefix}_CONTEXT_WINDOW"),
     )
     return replace(
@@ -168,7 +178,7 @@ def main() -> int:
 
     try:
         source = _credential_source()
-        spec = _provider_spec(args.model, source)
+        spec = _provider_spec(args.model, source, args.reasoning_preset)
     except (CredentialMissingError, LLMAuthError, ValueError) as exc:
         print(
             f"[配置错误] {exc}\n"
@@ -191,7 +201,8 @@ def main() -> int:
 
     out_dir = _BASELINES_DIR if args.baseline else _REPORTS_DIR
     console.print(
-        f"[dim]model={spec.model} baseline={args.baseline} "
+        f"[dim]model={spec.product_model_id or spec.model} "
+        f"reasoning_preset={spec.reasoning_preset or 'none'} baseline={args.baseline} "
         f"selection={selected.label} total_cases={selected.total_cases}[/dim]\n"
     )
 

@@ -7,8 +7,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent.command_runtime.tools import COMMAND_SKILL_SNAPSHOT_ARG
+from agent.command_runtime.tools import (
+    COMMAND_RUN_CONTEXT_ARG,
+    COMMAND_RUN_ID_ARG,
+    COMMAND_SESSION_ID_ARG,
+    COMMAND_SKILL_SNAPSHOT_ARG,
+    COMMAND_TOOL_CALL_ID_ARG,
+)
 from agent.skills import SkillCatalogService, SkillSelection
+from agent.tool_runtime import ToolRunContext
 from agent.tools import ToolRegistry
 from agent.tools.builtin.skills import (
     SKILL_CATALOG_SNAPSHOT_ARG,
@@ -345,6 +352,26 @@ def test_semantic_skill_activation_is_available_to_later_command_binding(
         0,
     )
     assert "_activated_skill" not in conversation.session.events[-1].meta["extra"]
+
+
+def test_terminate_command_receives_hidden_current_run_ownership(tmp_path: Path) -> None:
+    conversation, _, _, _ = _conversation(tmp_path)
+    context = ToolRunContext.create("")
+    conversation._run_id_override = "run-a"
+
+    invocation_args = conversation._tool_args_with_invocation_context(
+        "terminate_command",
+        {"process_id": "proc_fixture"},
+        current_turn_start_idx=None,
+        tool_run_context=context,
+        tool_call_id="terminate-call",
+    )
+
+    assert invocation_args["process_id"] == "proc_fixture"
+    assert invocation_args[COMMAND_SESSION_ID_ARG] == conversation.session.session_id
+    assert invocation_args[COMMAND_RUN_ID_ARG] == "run-a"
+    assert invocation_args[COMMAND_TOOL_CALL_ID_ARG] == "terminate-call"
+    assert invocation_args[COMMAND_RUN_CONTEXT_ARG] is context
 
 
 def test_explicit_name_is_host_activated_before_the_model(tmp_path: Path) -> None:

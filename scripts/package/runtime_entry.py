@@ -478,6 +478,7 @@ def _smoke_command_runtime() -> dict[str, Any]:
         CommandApprovalDecision,
         CommandRuntime,
         ExecCommandTool,
+        TerminateCommandTool,
         verify_codex_executable,
     )
     from agent.command_runtime.runtime import sandbox_context
@@ -917,20 +918,41 @@ def _smoke_command_runtime() -> dict[str, Any]:
                 ),
                 workdir=root,
                 env=command_env,
-                mode="buffered",
+                mode="streaming",
                 session_id="doctor",
                 run_id="doctor-cancel",
                 tool_call_id="doctor-cancel",
                 sandbox=sandbox,
             )
             time.sleep(0.5)
-            cancelled = runtime.terminate(
+            cancel_context = ToolRunContext.create("")
+            cancel_context.register_command_handle(
                 long_process.process_id,
-                session_id="doctor",
-                run_id="doctor-cancel",
+                lambda reason: runtime.terminate(
+                    long_process.process_id,
+                    session_id="doctor",
+                    run_id="doctor-cancel",
+                    reason=reason,
+                    wait_for_terminal_seconds=0,
+                ),
             )
-            if cancelled.status != "cancelled":
-                raise RuntimeError("packaged command cancellation did not become terminal")
+            termination = TerminateCommandTool(runtime).invoke(
+                {
+                    "process_id": long_process.process_id,
+                    COMMAND_SESSION_ID_ARG: "doctor",
+                    COMMAND_RUN_ID_ARG: "doctor-cancel",
+                    COMMAND_TOOL_CALL_ID_ARG: "doctor-terminate",
+                    COMMAND_RUN_CONTEXT_ARG: cancel_context,
+                }
+            )
+            termination_payload = json.loads(termination.text)
+            cancel_context.close_commands()
+            if (
+                termination.is_error
+                or termination_payload.get("status") != "cancelled"
+                or termination_payload.get("terminal_reason") != "agent_requested"
+            ):
+                raise RuntimeError("packaged Agent termination Tool failed: " + termination.text)
             time.sleep(6)
             if child_marker.exists():
                 raise RuntimeError("packaged command cancellation left a child process running")
@@ -946,6 +968,7 @@ def _smoke_command_runtime() -> dict[str, Any]:
                 "skill_snapshot_fingerprint": skill_fingerprint,
                 "skill_tool_path": True,
                 "cancelled": True,
+                "agent_termination_tool": True,
                 "child_tree_cleaned": True,
             }
         finally:
