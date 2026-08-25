@@ -82,4 +82,14 @@ describe("parseCommandToolResult", () => {
     });
     expect(parseCommandToolResult('{"status":"completed"}').status).toBeUndefined();
   });
+
+  it("preserves the terminal reason used to explain Agent-requested termination", () => {
+    expect(parseCommandToolResult(JSON.stringify({
+      status: "cancelled",
+      terminal_reason: "agent_requested",
+    }))).toMatchObject({
+      status: "cancelled",
+      terminalReason: "agent_requested",
+    });
+  });
 });

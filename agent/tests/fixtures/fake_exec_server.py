@@ -10,6 +10,7 @@ import time
 
 write_lock = threading.Lock()
 live: set[str] = set()
+commands: dict[str, str] = {}
 
 
 def send(value: dict[str, object]) -> None:
@@ -41,6 +42,7 @@ def finish(process_id: str, text: bytes, *, delay: float = 0.02) -> None:
     )
     notify("process/closed", {"processId": process_id})
     live.discard(process_id)
+    commands.pop(process_id, None)
 
 
 for raw_line in sys.stdin:
@@ -59,6 +61,7 @@ for raw_line in sys.stdin:
             sys.stdout.close()
             break
         live.add(process_id)
+        commands[process_id] = command
         sandbox_type = (
             "none" if command == "fake:none-sandbox" or "sandbox" not in params else "windows"
         )
@@ -92,8 +95,24 @@ for raw_line in sys.stdin:
         threading.Thread(target=finish, args=(process_id, b"input:" + chunk), daemon=True).start()
     elif method == "process/terminate":
         process_id = params["processId"]
+        command = commands.get(process_id)
+        if command == "fake:terminate-error":
+            send({"id": request_id, "error": {"code": -32603, "message": "terminate failed"}})
+            continue
+        if command == "fake:terminate-stall":
+            send({"id": request_id, "result": {"running": True}})
+            continue
+        if command == "fake:terminate-missing":
+            live.discard(process_id)
+            commands.pop(process_id, None)
+            send({"id": request_id, "result": {"running": False}})
+            continue
+        was_running = process_id in live
         live.discard(process_id)
-        send({"id": request_id, "result": {}})
+        commands.pop(process_id, None)
+        send({"id": request_id, "result": {"running": was_running}})
+        if not was_running:
+            continue
         notify(
             "process/exited",
             {"processId": process_id, "exitCode": 1, "sandboxDenied": False},

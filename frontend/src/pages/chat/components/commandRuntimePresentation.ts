@@ -21,6 +21,7 @@ export interface CommandToolResultPresentation {
   status?: CommandProcessStatus;
   exitCode?: number | null;
   sandboxDenied?: boolean;
+  terminalReason?: string | null;
   durationSeconds?: number;
   droppedBytes?: number;
   stdout: string;
@@ -70,6 +71,9 @@ export function parseCommandToolResult(result: string | undefined): CommandToolR
     exitCode,
     sandboxDenied: typeof payload.sandbox_denied === "boolean"
       ? payload.sandbox_denied
+      : undefined,
+    terminalReason: payload.terminal_reason === null || typeof payload.terminal_reason === "string"
+      ? payload.terminal_reason
       : undefined,
     durationSeconds: typeof payload.duration_seconds === "number"
       ? payload.duration_seconds

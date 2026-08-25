@@ -176,6 +176,35 @@ describe("tool activity presentation", () => {
     expect(toolPresentation(command).summary).not.toContain("…");
   });
 
+  it("presents confirmed agent termination as a successful command action", () => {
+    const termination = tool("terminate", "terminate_command", {
+      args: JSON.stringify({ process_id: "proc_fixture" }),
+      result: JSON.stringify({ status: "cancelled", terminal_reason: "agent_requested" }),
+    });
+
+    expect(toolPresentation(termination)).toMatchObject({
+      summary: "终止本地命令",
+      category: "command",
+      status: "done",
+    });
+  });
+
+  it("does not present unconfirmed termination as success", () => {
+    const termination = tool("terminate", "terminate_command", {
+      status: "error",
+      result: JSON.stringify({
+        status: "failed",
+        error: "process_termination_unconfirmed",
+      }),
+    });
+
+    expect(toolPresentation(termination)).toMatchObject({
+      summary: "终止本地命令",
+      category: "command",
+      status: "error",
+    });
+  });
+
   it("aggregates categories and running state for a multi-tool activity", () => {
     const blocks = [
       tool("search", "web_search"),

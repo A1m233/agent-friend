@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar, cast
 from uuid import uuid4
@@ -54,6 +55,7 @@ COMMAND_SKILL_SNAPSHOT_ARG = "__agent_friend_skill_turn_snapshot"
 MAX_COMMAND_CHARS = 32 * 1024
 MAX_STDIN_BYTES = 64 * 1024
 MAX_RESULT_OUTPUT_BYTES = 64 * 1024
+TERMINATION_CONFIRMATION_TIMEOUT_SECONDS = 5.0
 DEFAULT_TIMEOUT_SECONDS = 900.0
 MAX_TIMEOUT_SECONDS = 3600.0
 MAX_COMMAND_REASON_CHARS = 300
@@ -704,6 +706,7 @@ class ExecCommandTool:
                     **self._execution_environment_evidence(details),
                 }
             )
+        runtime_error: CommandRuntimeError | None = None
         try:
             snapshot = self._runtime.wait(
                 snapshot.process_id,
@@ -718,10 +721,30 @@ class ExecCommandTool:
                     run_id=run_id,
                     reason="timeout",
                 )
+        except CommandRuntimeError as exc:
+            runtime_error = exc
+            with suppress(CommandRuntimeError):
+                snapshot = self._runtime.wait(
+                    snapshot.process_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                    timeout_seconds=0,
+                )
         finally:
-            context.release_command_handle(snapshot.process_id)
+            if snapshot.terminal():
+                context.release_command_handle(snapshot.process_id)
             if callback_token is not None and isinstance(control, ToolInvocationControl):
                 control.remove_cancel_callback(callback_token)
+        if runtime_error is not None:
+            return _result(
+                {
+                    "status": "failed",
+                    "error": runtime_error.code,
+                    "message": str(runtime_error),
+                    "process": _bounded_process_result(snapshot),
+                },
+                error=True,
+            )
         result_payload = _bounded_process_result(snapshot)
         result_payload.update(
             {
@@ -1684,7 +1707,13 @@ class ExecCommandTool:
     def _terminate_for_context(
         self, process_id: str, session_id: str, run_id: str, reason: str
     ) -> None:
-        self._runtime.terminate(process_id, session_id=session_id, run_id=run_id, reason=reason)
+        self._runtime.terminate(
+            process_id,
+            session_id=session_id,
+            run_id=run_id,
+            reason=reason,
+            wait_for_terminal_seconds=0,
+        )
 
 
 class WriteStdinTool:
@@ -1695,7 +1724,9 @@ class WriteStdinTool:
     description: ClassVar[str] = (
         "向当前 run 中由 exec_command(streaming) 创建的进程写入输入，或显式等待"
         "新输出/退出。不要为了观察进度高频轮询；只有进程需要真实输入，或界面推送"
-        "表明状态需要再次判断时调用。process_id 不能跨 run 使用。"
+        "表明状态需要再次判断时调用。只有原进程仍应继续运行并允许自然完成时，才用"
+        " wait_for=exit 等待；已经决定重启、替换命令或切换执行路径时，不要用本工具"
+        "反复等待，改用 terminate_command。process_id 不能跨 run 使用。"
     )
     parameters_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
@@ -1781,6 +1812,132 @@ class WriteStdinTool:
             )
 
 
+class TerminateCommandTool:
+    name: ClassVar[str] = "terminate_command"
+    execution_kind: ClassVar[str] = "serial"
+    timeout_seconds: ClassVar[float] = TERMINATION_CONFIRMATION_TIMEOUT_SECONDS + 5
+    result_context_retention: ClassVar[str] = "recoverable"
+    description: ClassVar[str] = (
+        "终止当前 run 中由 exec_command(mode=streaming) 返回且仍受治理的进程，并等待"
+        "它进入可信终态。只有已经决定不再让该进程继续运行时使用；当前任务已经明确要求"
+        "重启、改用替代命令或切换执行路径，且原进程不应继续运行时，就属于这种情况，"
+        "无需再询问用户是否可以停止。只有原进程仍应继续运行并允许自然完成时，才用"
+        " write_stdin 等待；真实交互输入也应使用 write_stdin。process_id 必须原样来自"
+        "当前 run 的 streaming exec_command 成功结果，不能使用宿主 PID、进程名、其它 run"
+        "或已释放的句柄。终止沿用原命令授权且不产生新审批，但不会授权任何替代命令。"
+        "只有本工具返回 cancelled、exited 或 timed_out 等可信终态后，才可把后续路径视为"
+        "已安全接管；cancelled 本身就是可信终态，不必继续等待 exited。失败或未确认时继续"
+        "观察原句柄，不要直接启动替代命令。"
+    )
+    parameters_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "process_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "当前 run 中 exec_command(mode=streaming) 成功结果返回的 process_id；"
+                    "不能填写操作系统 PID、进程名、其它 run 的句柄或已释放句柄。"
+                ),
+            }
+        },
+        "required": ["process_id"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, runtime: CommandRuntime) -> None:
+        self._runtime = runtime
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        try:
+            context = ExecCommandTool._context(args)
+            session_id, run_id, _ = ExecCommandTool._ownership(args)
+            process_id = args.get("process_id")
+            if not isinstance(process_id, str) or not process_id:
+                raise ValueError("process_id 必须来自当前 run 的 streaming exec_command 成功结果")
+            if not context.owns_command_handle(process_id):
+                return _result(
+                    {
+                        "status": "failed",
+                        "error": "process_not_owned",
+                        "message": (
+                            "process_id 不是当前 run 仍持有的命令句柄；不要使用宿主 PID、"
+                            "其它 run 的句柄或已经释放的终态句柄。"
+                        ),
+                    },
+                    error=True,
+                )
+            current = self._runtime.wait(
+                process_id,
+                session_id=session_id,
+                run_id=run_id,
+                timeout_seconds=0,
+            )
+            if current.mode != "streaming":
+                return _result(
+                    {
+                        "status": "failed",
+                        "error": "process_not_streaming",
+                        "message": (
+                            "terminate_command 只接受 exec_command(mode=streaming) 返回的句柄；"
+                            "buffered 命令由原调用的超时、取消和 run 收尾负责。"
+                        ),
+                    },
+                    error=True,
+                )
+            try:
+                snapshot = self._runtime.terminate(
+                    process_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                    reason="agent_requested",
+                    wait_for_terminal_seconds=TERMINATION_CONFIRMATION_TIMEOUT_SECONDS,
+                )
+            except CommandRuntimeError as exc:
+                payload: dict[str, object] = {
+                    "status": "failed",
+                    "error": exc.code,
+                    "message": str(exc),
+                }
+                if exc.code == "process_termination_unconfirmed":
+                    try:
+                        current = self._runtime.wait(
+                            process_id,
+                            session_id=session_id,
+                            run_id=run_id,
+                            timeout_seconds=0,
+                        )
+                    except CommandRuntimeError:
+                        pass
+                    else:
+                        payload["process"] = _bounded_process_result(current)
+                return _result(payload, error=True)
+
+            if snapshot.terminal():
+                context.release_command_handle(process_id)
+            payload = _bounded_process_result(snapshot)
+            if snapshot.status == "runtime_lost":
+                payload.update(
+                    {
+                        "error": "process_runtime_lost",
+                        "message": ("命令运行时已失联，无法把该终态当作替代命令安全接管的依据。"),
+                    }
+                )
+                return _result(payload, error=True)
+            return _result(payload)
+        except CommandRuntimeError as exc:
+            return _command_runtime_error_result(exc, fallback_status="failed")
+        except (TypeError, ValueError) as exc:
+            return _result(
+                {
+                    "status": "failed",
+                    "error": "invalid_arguments",
+                    "message": str(exc),
+                },
+                error=True,
+            )
+
+
 def make_command_tools(
     runtime: CommandRuntime,
     broker: ApprovalBroker | None,
@@ -1793,4 +1950,5 @@ def make_command_tools(
             execution_environment_manager=execution_environment_manager,
         ),
         WriteStdinTool(runtime),
+        TerminateCommandTool(runtime),
     ]

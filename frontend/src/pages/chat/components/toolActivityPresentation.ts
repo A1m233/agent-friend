@@ -173,6 +173,8 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
     }
     case "write_stdin":
       return "与本地进程交互";
+    case "terminate_command":
+      return "终止本地命令";
     case "request_social_auth":
       return "处理平台登录";
     case "todo_manage":
@@ -200,7 +202,7 @@ function categoryFor(name: string): ToolActivityCategory {
   if (["web_fetch", "social_read", "recall_past_chats"].includes(name)) return "read";
   if (FILESYSTEM_READ_TOOLS.has(name)) return "read";
   if (FILESYSTEM_WRITE_TOOLS.has(name) || name === "request_filesystem_access") return "write";
-  if (name === "exec_command" || name === "write_stdin") return "command";
+  if (["exec_command", "write_stdin", "terminate_command"].includes(name)) return "command";
   if (name === "skill_read") return "skill";
   if (name === "todo_manage") return "todo";
   if (["weather_query", "calculate", "datetime_calculate"].includes(name)) return "query";
@@ -217,8 +219,13 @@ function filesystemStatus(block: ToolBlock): ToolActivityStatus | null {
 }
 
 function commandStatus(block: ToolBlock): ToolActivityStatus | null {
-  if (block.name !== "exec_command") return null;
+  if (block.name !== "exec_command" && block.name !== "terminate_command") return null;
   const result = parseCommandToolResult(block.result);
+  if (block.name === "terminate_command") {
+    if (result.status === "runtime_lost") return "error";
+    if (["cancelled", "exited", "timed_out"].includes(result.status ?? "")) return "done";
+    return null;
+  }
   if (result.sandboxDenied || result.status === "runtime_lost" || result.status === "timed_out") {
     return "error";
   }

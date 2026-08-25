@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from agent.command_runtime.tools import ExecCommandTool
+from agent.command_runtime.tools import ExecCommandTool, TerminateCommandTool, WriteStdinTool
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.skills import SkillReadTool
@@ -87,6 +87,15 @@ _CATALOG_ENTRY_RE = re.compile(
     re.MULTILINE,
 )
 _CATALOG_COVERAGE_RE = re.compile(r'<catalog_coverage entries="(?P<coverage>complete|truncated)"')
+
+
+def _session_runtime_config(spec: ProviderSpec) -> ModelRuntimeConfig:
+    """Bind eval session metadata to the same product config as the provider call."""
+
+    return ModelRuntimeConfig(
+        model_id=spec.product_model_id or spec.model,
+        reasoning_preset=spec.reasoning_preset or "none",
+    )
 
 
 @dataclass
@@ -311,6 +320,12 @@ class _FixtureTool:
         elif fixture.name == "exec_command":
             self.description = ExecCommandTool.description
             self.parameters_schema = ExecCommandTool.parameters_schema
+        elif fixture.name == "write_stdin":
+            self.description = WriteStdinTool.description
+            self.parameters_schema = WriteStdinTool.parameters_schema
+        elif fixture.name == "terminate_command":
+            self.description = TerminateCommandTool.description
+            self.parameters_schema = TerminateCommandTool.parameters_schema
         else:
             self.description = "读取完成当前请求所需的数据。"
             self.parameters_schema = {"type": "object", "properties": {}}
@@ -691,6 +706,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             store = JsonlSessionStore(temp_root / "sessions")
             attachment_store = AttachmentStore(temp_root / "attachments")
             attachment_cache: dict[tuple[Path, str], AttachmentRef] = {}
+            runtime_config = _session_runtime_config(spec)
             needs_skill_catalog = bool(
                 case.fixture_skills
                 or case.prior_fixture_skills
@@ -737,7 +753,7 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
                 _inject_fixture(
                     store,
                     case.fixture_session,
-                    spec.model,
+                    runtime_config.model_id,
                     resolve_attachments=resolve_attachments,
                 )
 
@@ -753,7 +769,8 @@ def run_case(case: Case, spec: ProviderSpec, *, tavily_api_key: str | None = Non
             )
             session = manager.create(
                 persona="default",
-                model=spec.model,
+                model=runtime_config.model_id,
+                reasoning_preset=runtime_config.reasoning_preset,
                 persona_id=BUILTIN_DEFAULT_PERSONA_ID,
             )
             if case.prior_fixture_skills:

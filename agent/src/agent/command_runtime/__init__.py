@@ -7,7 +7,7 @@ from .models import (
     PendingCommandApproval,
 )
 from .runtime import CommandRuntime, CommandRuntimeError
-from .tools import ExecCommandTool, WriteStdinTool, make_command_tools
+from .tools import ExecCommandTool, TerminateCommandTool, WriteStdinTool, make_command_tools
 from .vendor import CodexIdentityError, verify_codex_executable
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "CommandRuntimeError",
     "ExecCommandTool",
     "PendingCommandApproval",
+    "TerminateCommandTool",
     "WriteStdinTool",
     "make_command_tools",
     "verify_codex_executable",

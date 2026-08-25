@@ -52,6 +52,9 @@ class _ProcessState:
         self.last_published_monotonic = self.started_monotonic
         self.pending_publish_bytes = 0
         self.publish_timer: threading.Timer | None = None
+        self.termination_reason: str | None = None
+        self.termination_rpc_status: str | None = None
+        self.termination_error: str | None = None
 
 
 def _powershell_literal(value: str) -> str:
@@ -830,20 +833,81 @@ class CommandRuntime:
         session_id: str,
         run_id: str,
         reason: str = "cancelled",
+        wait_for_terminal_seconds: float = 5.0,
     ) -> CommandProcessSnapshot:
+        if wait_for_terminal_seconds < 0:
+            raise CommandRuntimeError(
+                "invalid_termination_wait", "termination wait must be non-negative"
+            )
         state = self._owned_state(process_id, session_id=session_id, run_id=run_id)
-        if not state.snapshot.terminal():
-            status: CommandProcessStatus = "timed_out" if reason == "timeout" else "cancelled"
-            # The product cancellation is authoritative.  Publish it before the RPC so
-            # a fast process/exited notification cannot rewrite the terminal reason.
-            self._finish(state, status, reason)
+        normalized_reason = reason.strip() or "cancelled"
+        should_request = False
+        with state.condition:
+            if state.snapshot.terminal():
+                return self._copy_snapshot(state.snapshot)
+            if state.termination_reason is None:
+                state.termination_reason = normalized_reason
+                state.termination_rpc_status = "requesting"
+                state.termination_error = None
+                should_request = True
+
+        if should_request:
             client = self._client
-            if client is not None:
-                with suppress(ExecServerError):
-                    client.request(
+            if client is None:
+                with state.condition:
+                    if not state.snapshot.terminal():
+                        state.termination_rpc_status = "failed"
+                        state.termination_error = "exec-server is unavailable"
+                        state.condition.notify_all()
+            else:
+                try:
+                    response = client.request(
                         "process/terminate", {"processId": process_id}, timeout_seconds=5
                     )
-        return self._copy_snapshot(state.snapshot)
+                except ExecServerError as exc:
+                    with state.condition:
+                        if not state.snapshot.terminal():
+                            state.termination_rpc_status = "failed"
+                            state.termination_error = str(exc)
+                            state.condition.notify_all()
+                else:
+                    running = response.get("running") if isinstance(response, dict) else None
+                    if running is False:
+                        # The exec-server no longer owns this process, but the local
+                        # adapter missed its terminal notification.  The process cannot
+                        # remain managed, yet its exact exit fact is unavailable.
+                        self._finish(state, "runtime_lost", "process_state_unavailable")
+                    else:
+                        # Older pinned exec-server builds returned an empty object.  A
+                        # successful RPC response is still an accepted termination
+                        # request; process/closed remains the terminal confirmation.
+                        with state.condition:
+                            if not state.snapshot.terminal():
+                                state.termination_rpc_status = "accepted"
+                                state.condition.notify_all()
+
+        deadline = time.monotonic() + wait_for_terminal_seconds
+        with state.condition:
+            while not state.snapshot.terminal():
+                if state.termination_rpc_status == "failed":
+                    raise CommandRuntimeError(
+                        "process_termination_failed",
+                        "exec-server could not accept the termination request: "
+                        f"{state.termination_error or 'unknown error'}",
+                    )
+                remaining = deadline - time.monotonic()
+                if wait_for_terminal_seconds == 0 or remaining <= 0:
+                    break
+                state.condition.wait(remaining)
+            snapshot = self._copy_snapshot(state.snapshot)
+
+        if wait_for_terminal_seconds > 0 and not snapshot.terminal():
+            raise CommandRuntimeError(
+                "process_termination_unconfirmed",
+                "termination was requested but the managed process has not reached a terminal "
+                "state; keep observing this process before starting a replacement",
+            )
+        return snapshot
 
     def terminate_run(self, session_id: str, run_id: str, *, reason: str = "cancelled") -> None:
         with self._lock:
@@ -856,7 +920,13 @@ class CommandRuntime:
             ]
         for process_id in ids:
             with suppress(CommandRuntimeError):
-                self.terminate(process_id, session_id=session_id, run_id=run_id, reason=reason)
+                self.terminate(
+                    process_id,
+                    session_id=session_id,
+                    run_id=run_id,
+                    reason=reason,
+                    wait_for_terminal_seconds=0,
+                )
 
     def snapshots(
         self, *, session_id: str | None = None, include_terminal: bool = True
@@ -965,8 +1035,21 @@ class CommandRuntime:
                 process_state.snapshot.version += 1
                 process_state.condition.notify_all()
         elif method == "process/closed":
-            reason = "sandbox_denied" if process_state.snapshot.sandbox_denied else "exited"
-            self._finish(process_state, "exited", reason)
+            with process_state.condition:
+                termination_reason = (
+                    process_state.termination_reason
+                    if process_state.termination_rpc_status in {"requesting", "accepted"}
+                    else None
+                )
+                sandbox_denied = process_state.snapshot.sandbox_denied
+            if termination_reason is not None:
+                status: CommandProcessStatus = (
+                    "timed_out" if termination_reason == "timeout" else "cancelled"
+                )
+                self._finish(process_state, status, termination_reason)
+            else:
+                reason = "sandbox_denied" if sandbox_denied else "exited"
+                self._finish(process_state, "exited", reason)
 
     def _handle_output(self, state: _ProcessState, params: dict[str, Any]) -> None:
         raw = params.get("chunk")

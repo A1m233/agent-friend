@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ToolBlock } from "@/types/chat";
+import { useCommandRuntimeStore } from "@/stores/commandRuntime";
 import { ToolCard } from "./ToolCard";
 
 (
@@ -18,6 +19,7 @@ describe("ToolCard", () => {
   const originalResizeObserver = globalThis.ResizeObserver;
 
   beforeEach(() => {
+    useCommandRuntimeStore.getState().clear();
     globalThis.ResizeObserver = class ResizeObserverStub implements ResizeObserver {
       readonly observe = () => undefined;
       readonly unobserve = () => undefined;
@@ -98,5 +100,46 @@ describe("ToolCard", () => {
     expect(result?.textContent).toContain("已截断；下一段从第 3 行开始");
     expect(result?.textContent).not.toContain('"content"');
     expect(result?.textContent).not.toContain("\\n");
+  });
+
+  it("labels an agent-requested command termination without changing the card layout", async () => {
+    useCommandRuntimeStore.setState({
+      processes: {
+        proc_fixture: {
+          process_id: "proc_fixture",
+          session_id: "session-a",
+          run_id: "run-a",
+          tool_call_id: "command",
+          mode: "streaming",
+          status: "cancelled",
+          started_at: "2026-08-24T00:00:00Z",
+          finished_at: "2026-08-24T00:00:01Z",
+          duration_seconds: 1,
+          output_seq: 0,
+          dropped_bytes: 0,
+          exit_code: 1,
+          sandbox_denied: false,
+          terminal_reason: "agent_requested",
+          sandbox_type: "windows",
+          version: 2,
+          stdout: "",
+          stderr: "",
+          pty: "",
+        },
+      },
+    });
+    const block: ToolBlock = {
+      kind: "tool",
+      toolCallId: "command",
+      name: "exec_command",
+      args: JSON.stringify({ mode: "streaming" }),
+      result: JSON.stringify({ status: "running", process_id: "proc_fixture" }),
+      status: "done",
+    };
+
+    await act(async () => root.render(createElement(ToolCard, { block, embedded: true })));
+
+    expect(container.textContent).toContain("Agent 已终止");
+    expect(container.textContent).not.toContain("交互式进程运行中");
   });
 });

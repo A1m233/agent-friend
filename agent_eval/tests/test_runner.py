@@ -20,6 +20,7 @@ from agent_eval.runner import (
     _inject_skill_catalog_state,
     _prior_tool_call_traces,
     _replace_fixture_skills,
+    _session_runtime_config,
     _SkillCatalogRequestGuard,
 )
 from agent_eval.schema import (
@@ -38,7 +39,7 @@ from agent_eval.schema import (
 )
 
 from agent import AttachmentStore, JsonlSessionStore, Session
-from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
+from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse, ProviderSpec
 
 FIXTURE_IMAGE = (
     Path(__file__).resolve().parents[1]
@@ -78,6 +79,35 @@ def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> Non
         {"required": ["evidence_ref"]},
     ]
     assert "官方原文" in fetch.description
+
+
+def test_fixture_command_lifecycle_tools_keep_production_specs() -> None:
+    write = _FixtureTool(FakeTool(name="write_stdin", result_text='{"status":"running"}'))
+    terminate = _FixtureTool(
+        FakeTool(name="terminate_command", result_text='{"status":"cancelled"}')
+    )
+
+    assert write.parameters_schema["required"] == ["process_id"]
+    assert "等待" in write.description
+    assert terminate.parameters_schema["required"] == ["process_id"]
+    assert terminate.parameters_schema["additionalProperties"] is False
+    assert "可信终态" in terminate.description
+    assert "改用替代命令或切换执行路径" in terminate.description
+    assert "cancelled 本身就是可信终态" in terminate.description
+
+
+def test_session_runtime_config_matches_provider_product_selection() -> None:
+    config = _session_runtime_config(
+        ProviderSpec(
+            model="openai/deepseek-v4-flash-vision-exp",
+            api_key="test-key",
+            product_model_id="deepseek/deepseek-v4-flash-vision-exp",
+            reasoning_preset="max",
+        )
+    )
+
+    assert config.model_id == "deepseek/deepseek-v4-flash-vision-exp"
+    assert config.reasoning_preset == "max"
 
 
 def test_fixture_tool_selects_response_by_argument_subset() -> None:

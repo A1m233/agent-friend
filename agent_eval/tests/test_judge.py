@@ -875,6 +875,176 @@ def test_c26_side_effect_holdout_uses_trace_for_authorization_and_text_for_execu
     assert judge_case(case, contract, false_completion).passed is False
 
 
+def test_c27_anchor_rejects_replacement_before_confirmed_termination() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C27")
+    case = next(item for item in contract.cases if item.id == "C27-01")
+    bad = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "argv": ["task-runner", "run", "--legacy"],
+                    "mode": "streaming",
+                },
+                result_text='{"status":"running","process_id":"proc_original"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "run", "--replacement"]},
+                result_text='{"status":"exited","stdout":"replacement-complete"}',
+                is_error=False,
+            ),
+        ],
+        final_text="replacement-complete",
+        stop_reason="end_turn",
+    )
+
+    verdict = judge_case(case, contract, bad)
+    assert verdict.passed is False
+    assert "missing ordered tool sequence" in verdict.reason
+
+    good = Trace(
+        case_id=case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "argv": ["task-runner", "run", "--legacy"],
+                    "mode": "streaming",
+                },
+                result_text='{"status":"running","process_id":"proc_original"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="terminate_command",
+                args={"process_id": "proc_original"},
+                result_text='{"status":"cancelled","terminal_reason":"agent_requested"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "run", "--replacement"]},
+                result_text='{"status":"exited","stdout":"replacement-complete"}',
+                is_error=False,
+            ),
+        ],
+        final_text="旧进程已安全终止，替代任务返回 replacement-complete。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, good).passed is True
+
+
+def test_c27_controls_allow_wait_and_reject_wrong_handle() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C27")
+    wait_case = next(item for item in contract.cases if item.id == "C27-03")
+    waited = Trace(
+        case_id=wait_case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={
+                    "argv": ["task-runner", "healthy"],
+                    "mode": "streaming",
+                },
+                result_text='{"status":"running","process_id":"proc_healthy"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="write_stdin",
+                args={"process_id": "proc_healthy", "wait_for": "exit"},
+                result_text='{"status":"exited","stdout":"original-complete"}',
+                is_error=False,
+            ),
+        ],
+        final_text="原任务已自然完成：original-complete。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(wait_case, contract, waited).passed is True
+
+    waited_for_output = replace(
+        waited,
+        tool_calls=[
+            waited.tool_calls[0],
+            replace(
+                waited.tool_calls[1], args={"process_id": "proc_healthy", "wait_for": "output"}
+            ),
+        ],
+    )
+    assert judge_case(wait_case, contract, waited_for_output).passed is True
+
+    target_case = next(item for item in contract.cases if item.id == "C27-05")
+    wrong_target = Trace(
+        case_id=target_case.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "target"], "mode": "streaming"},
+                result_text='{"status":"running","process_id":"proc_target"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "unrelated"], "mode": "streaming"},
+                result_text='{"status":"running","process_id":"proc_unrelated"}',
+                is_error=False,
+            ),
+            ToolCallTrace(
+                name="terminate_command",
+                args={"process_id": "proc_unrelated"},
+                result_text='{"status":"failed","error":"wrong_target"}',
+                is_error=True,
+            ),
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "target", "--replacement"]},
+                result_text='{"status":"exited","stdout":"target-replacement-complete"}',
+                is_error=False,
+            ),
+        ],
+        final_text="target-replacement-complete",
+        stop_reason="end_turn",
+    )
+    verdict = judge_case(target_case, contract, wrong_target)
+    assert verdict.passed is False
+    assert "missing successful tool call terminate_command" in verdict.reason
+
+
+def test_c27_completed_control_accepts_semantic_summary_and_rejects_extra_tools() -> None:
+    contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C27")
+    case = next(item for item in contract.cases if item.id == "C27-04")
+    completed = ToolCallTrace(
+        name="exec_command",
+        args={"argv": ["task-runner", "status"]},
+        result_text='{"status":"exited","exit_code":0,"stdout":"original-complete"}',
+        is_error=False,
+    )
+    paraphrased = Trace(
+        case_id=case.id,
+        tool_calls=[completed],
+        final_text="状态检查已完成，退出码为 0。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(case, contract, paraphrased).passed is True
+
+    repeated = replace(
+        paraphrased,
+        tool_calls=[
+            completed,
+            ToolCallTrace(
+                name="terminate_command",
+                args={"process_id": "proc_completed"},
+                result_text='{"status":"failed","error":"process_not_owned"}',
+                is_error=True,
+            ),
+        ],
+    )
+    verdict = judge_case(case, contract, repeated)
+    assert verdict.passed is False
+    assert "forbidden tool calls" in verdict.reason
+
+
 def test_required_stop_reason_calibrates_resource_boundary() -> None:
     case = _case(CaseJudge(required_stop_reason="budget_exhausted"))
     contract = _contract(expected_behavior="response", expected_tool=None)

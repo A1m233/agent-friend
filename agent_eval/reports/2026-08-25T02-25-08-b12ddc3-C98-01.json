@@ -1,0 +1,151 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-25T02:25:08.674814+00:00",
+    "ended_at": "2026-08-25T02:25:19.294405+00:00",
+    "duration_seconds": 10.62,
+    "git_commit": "b12ddc3",
+    "working_tree_dirty": true,
+    "note": "neutral postmortem probe reconstructed from report 2026-08-24T16-33-25; same incident model and off preset; no tool execution requested; post-hoc self-report only",
+    "selection": {
+      "contract": "all",
+      "case": "C98-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "34b9ea76a5405992a3f90cf7acccb88832327465174e3b3ecb58001dec09dfd4",
+      "total_contracts": 1,
+      "total_cases": 2,
+      "contract_counts": {
+        "C98": 2
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C98": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C98",
+      "name": "command-choice-postmortem",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C98-01",
+          "query": "请只回答一个问题：你在刚才那一步中为什么选择了 write_stdin(wait_for=exit)， 而没有选择 terminate_command？不要执行任何工具；不要预设哪一种选择更正确， 只陈述你当时采用的判断依据。",
+          "facet": "off 档运行的中性事后自述",
+          "source": "report-2026-08-24T16-33-25-b12ddc3-C27-01",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [],
+          "prior_tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "run",
+                  "--legacy"
+                ],
+                "mode": "streaming"
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3,\"stdout\":\"switch-required\"}",
+              "is_error": false,
+              "duration_seconds": null,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "wait_for": "exit",
+                "timeout_seconds": 30
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3}",
+              "is_error": false,
+              "duration_seconds": null,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "wait_for": "exit",
+                "timeout_seconds": 30
+              },
+              "result_text": "{\"status\":\"running\",\"process_id\":\"proc_original\",\"output_seq\":3}",
+              "is_error": false,
+              "duration_seconds": null,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "write_stdin",
+              "args": {
+                "process_id": "proc_original",
+                "wait_for": "exit",
+                "timeout_seconds": 30
+              },
+              "result_text": "本轮工具调用预算已经用尽，这个调用没有执行。",
+              "is_error": true,
+              "duration_seconds": null,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "tool_budget_exhausted"
+            }
+          ],
+          "skill_activations": [],
+          "assistant_segments": [
+            "我当时采用 write_stdin(wait_for=exit) 的判断依据是：\n\n这个任务的核心流程是\"先启动旧命令，等它到达可信终态后再切换替代命令\"。所以我需要的是观察旧进程的自然退出状态，来判断它是否已经满足\"可信终态\"这个切换条件。\n\n在当时的判断里，write_stdin 的 wait_for=exit 正是用来\"等待进程进入终态\"的操作，它不改变进程本身，只是观察它自然结束。而 terminate_command 是一个主动终止动作，意味着我自己介入去结束这个进程——我在当时并不想主动终止它，因为任务明确要求\"旧进程取得可信终态\"这一条件，我理解成应该等待它自己走到终态。\n\n也就是说，我采用 write_stdin 的依据是：任务要求的是\"等到/观察到\"旧进程可信终态，而不是\"我主动把它终止掉\"，所以我选择了观察性质的 wait_for=exit，而没有选择会主动打断进程的 terminate_command。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "我当时采用 write_stdin(wait_for=exit) 的判断依据是：\n\n这个任务的核心流程是\"先启动旧命令，等它到达可信终态后再切换替代命令\"。所以我需要的是观察旧进程的自然退出状态，来判断它是否已经满足\"可信终态\"这个切换条件。\n\n在当时的判断里，write_stdin 的 wait_for=exit 正是用来\"等待进程进入终态\"的操作，它不改变进程本身，只是观察它自然结束。而 terminate_command 是一个主动终止动作，意味着我自己介入去结束这个进程——我在当时并不想主动终止它，因为任务明确要求\"旧进程取得可信终态\"这一条件，我理解成应该等待它自己走到终态。\n\n也就是说，我采用 write_stdin 的依据是：任务要求的是\"等到/观察到\"旧进程可信终态，而不是\"我主动把它终止掉\"，所以我选择了观察性质的 wait_for=exit，而没有选择会主动打断进程的 terminate_command。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
