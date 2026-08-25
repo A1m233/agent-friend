@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -42,3 +42,4 @@ IN_PROGRESS
 | 2026-08-25 | 完成 reasoning `off` / `max` 对照与中性 postmortem probe。 | `max` 将单例耗时从约 17 秒增至约 79 秒，但仍重复 `write_stdin(wait_for=exit)`；两档事后自述均把“可信终态”收窄成自然退出，并未把“必须切换”识别为放弃旧进程。结果只支持本样本模型选路解释，不代表隐藏推理或稳定能力上限。 |
 | 2026-08-25 | 收紧 `write_stdin` / `terminate_command` 通用互斥路由并复验目标与 controls。 | 新说明明确重启/替换/切换路径属于终止场景、`cancelled` 是可信终态；C27-01 仍等待至预算耗尽，C27-02 将直接执行请求误判为假设而未调用工具。C27-03 安全选择 `wait_for=output`，原 fixture 机械拒绝该合法路径，已修正且不重跑；C27-04 已退出 control 通过；C27-05 精确终止目标句柄、保留无关句柄并完成替代命令。`scripts/test agent_eval` 为 136 passed。 |
 | 2026-08-25 | 用户确认接受隐式终止意图模型选路失败为残余风险，并授权推进合入主干与远端。 | AC-8 调整为确定性契约、显式真实成功和安全 controls 的硬门槛；保留 C27-01/02 原始失败报告，不追加业务词、全局 gate 或特定模型 prompt 补丁。总体状态继续保持 `IN_PROGRESS`，待同步主干和最终门禁后转 `COMPLETED`。 |
+| 2026-08-25 | 两次同步期间前进的远端主干，最终以 `ae733de2` 为 base 完成复验并关闭实现阶段。 | feature commit `2a05fe14`；backend lint/format/mypy 通过、pytest `2224 passed, 4 skipped`；frontend `108 files / 626 tests` 与 production build 通过；Rust `216 passed, 1 ignored`、installer helper `6 passed`、release check 通过；agent_eval `136 passed`。Windows frozen `package-sensitive` local-test build `20260825T150020Z-2a05fe14cb79-e83a8a4b` 的 doctor 与命令 capability smoke 通过，确认 `agent_termination_tool=true`、`cancelled=true`、`child_tree_cleaned=true`；Guide baseline 为 immutable `agent-friend-guide-r12` / `ba1aff7d`，且 transient overlay 已恢复。 |
