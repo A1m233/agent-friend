@@ -194,13 +194,44 @@ class ReminderDeliveryOrchestrator:
         occurrence: ReminderOccurrence,
         candidates: tuple[IMPresenceSnapshot, ...],
     ) -> _PersistenceTarget:
-        ranked = sorted(candidates, key=_im_routing_key, reverse=True)
-        if ranked:
-            selected = ranked[0]
-            reason = (
-                "latest_im_interaction"
-                if selected.last_interaction_at is not None
-                else "latest_im_binding"
+        candidates_by_session: dict[str, list[IMPresenceSnapshot]] = {}
+        for candidate in candidates:
+            candidates_by_session.setdefault(candidate.session_id, []).append(candidate)
+
+        session_interactions = {
+            session_id: self._latest_user_interaction_at(session_id)
+            for session_id in candidates_by_session
+        }
+        interacted_sessions = {
+            session_id: interaction_at
+            for session_id, interaction_at in session_interactions.items()
+            if interaction_at is not None
+        }
+        reason: str
+        selected_session_id: str | None = None
+        if interacted_sessions:
+            selected_session_id = max(
+                interacted_sessions,
+                key=lambda session_id: (
+                    interacted_sessions[session_id],
+                    session_id,
+                ),
+            )
+            reason = "latest_session_user_interaction"
+        elif candidates_by_session:
+            reminder = self._todos.get_reminder(occurrence.reminder_id)
+            origin_session_id = reminder.origin_session_id
+            if origin_session_id in candidates_by_session:
+                selected_session_id = origin_session_id
+                reason = "origin_im_session_without_user_interaction"
+            else:
+                selected_session_id = max(candidates_by_session)
+                reason = "stable_im_session_without_user_interaction"
+
+        if selected_session_id is not None:
+            selected = max(
+                candidates_by_session[selected_session_id],
+                key=_im_destination_key,
             )
             return _PersistenceTarget(
                 session_id=selected.session_id,
@@ -221,6 +252,13 @@ class ReminderDeliveryOrchestrator:
         raise ReminderRoutingError(
             f"Reminder occurrence has no valid IM binding or origin session: {occurrence.id}"
         )
+
+    def _latest_user_interaction_at(self, session_id: str) -> datetime | None:
+        session = self._sessions.load(session_id)
+        for event in reversed(session.active_events):
+            if event.type == "user_message":
+                return event.ts.astimezone(UTC)
+        return None
 
     def _deliver_fixed_projections(
         self,
@@ -603,11 +641,9 @@ def _target_from_frozen(occurrence: ReminderOccurrence) -> _PersistenceTarget:
     )
 
 
-def _im_routing_key(item: IMPresenceSnapshot) -> tuple[datetime, str]:
-    recency = item.last_interaction_at or item.binding_updated_at
-    if recency is None:
-        recency = datetime.min.replace(tzinfo=UTC)
-    return recency.astimezone(UTC), item.destination_id
+def _im_destination_key(item: IMPresenceSnapshot) -> tuple[datetime, str]:
+    interaction_at = item.last_interaction_at or datetime.min.replace(tzinfo=UTC)
+    return interaction_at.astimezone(UTC), item.destination_id
 
 
 def _fixed_text(occurrence: ReminderOccurrence) -> str:

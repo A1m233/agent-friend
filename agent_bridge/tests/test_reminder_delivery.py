@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as datetime_time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agent.conversation_events import TextDelta
 from agent.runtime import AgentRuntime, RunOutcome
 from agent.todos import (
     OnceSchedule,
+    RecurringSchedule,
     ReminderDeliveryState,
     ReminderNotificationMode,
     ReminderOccurrence,
@@ -24,7 +26,7 @@ from agent_bridge.protocols.im.content import OutboundTextFormat
 from agent_bridge.protocols.im.provider import OutboundSendResult
 from agent_bridge.reminders import ReminderDeliveryOrchestrator
 
-from agent import JsonlSessionStore, Session
+from agent import Event, JsonlSessionStore, Session
 
 NOW = datetime(2026, 7, 28, 1, 5, tzinfo=UTC)
 
@@ -152,6 +154,47 @@ def _sessions(tmp_path: Path, *session_ids: str) -> JsonlSessionStore:
     return store
 
 
+def _append_user_message(
+    store: JsonlSessionStore,
+    session_id: str,
+    *,
+    at: datetime,
+    content: str = "hello",
+) -> None:
+    store.append_event(
+        session_id,
+        Event(
+            type="user_message",
+            uuid=f"user-{session_id}-{at.isoformat()}",
+            ts=at,
+            payload={"content": content},
+        ),
+    )
+
+
+def _append_system_output(
+    store: JsonlSessionStore,
+    session_id: str,
+    *,
+    event_type: Literal["assistant_message", "todo_reminder"],
+    at: datetime,
+) -> None:
+    payload = (
+        {"content": "system output", "partial": False}
+        if event_type == "assistant_message"
+        else {"title": "reminder output"}
+    )
+    store.append_event(
+        session_id,
+        Event(
+            type=event_type,
+            uuid=f"system-{event_type}-{session_id}-{at.isoformat()}",
+            ts=at,
+            payload=payload,
+        ),
+    )
+
+
 def _desktop_presence(session_id: str = "other-desktop") -> PresenceRegistry:
     presence = PresenceRegistry()
     presence.update_desktop(
@@ -239,21 +282,25 @@ def test_same_session_batch_submits_one_structured_agent_turn(tmp_path: Path) ->
     assert str(runtime.submit_kwargs[0]["surface"]) == "desktop_chat"
 
 
-def test_latest_valid_im_binding_owns_history_even_when_offline(tmp_path: Path) -> None:
+def test_latest_session_user_interaction_owns_history_even_when_binding_recency_disagrees(
+    tmp_path: Path,
+) -> None:
     todo_store, occurrence = _claimed(tmp_path)
     session_store = _sessions(tmp_path, "origin-session", "im-b", "im-c")
+    _append_user_message(session_store, "im-b", at=NOW - timedelta(minutes=1))
+    _append_user_message(session_store, "im-c", at=NOW - timedelta(minutes=10))
     b = _im(
         "im-b",
         bind="b",
-        last_interaction_at=NOW - timedelta(minutes=10),
+        online=False,
+        last_interaction_at=NOW - timedelta(minutes=30),
         binding_updated_at=NOW - timedelta(days=1),
     )
     c = _im(
         "im-c",
         bind="c",
-        online=False,
-        last_interaction_at=NOW - timedelta(minutes=1),
-        binding_updated_at=NOW - timedelta(days=2),
+        last_interaction_at=NOW,
+        binding_updated_at=NOW,
     )
     im_runtime = FakeIMRuntime((b, c), outcome="failed", error_kind="provider_unavailable")
     runtime = FakeAgentRuntime()
@@ -270,22 +317,24 @@ def test_latest_valid_im_binding_owns_history_even_when_offline(tmp_path: Path) 
     orchestrator.deliver(occurrence)
 
     saved = todo_store.get_occurrence(occurrence.id)
-    assert saved.persistence_session_id == "im-c"
-    assert saved.persistence_destination_id == c.destination_id
-    assert saved.persistence_reason == "latest_im_interaction"
-    assert any(event.type == "todo_reminder" for event in session_store.load("im-c").events)
-    assert not any(event.type == "todo_reminder" for event in session_store.load("im-b").events)
+    assert saved.persistence_session_id == "im-b"
+    assert saved.persistence_destination_id == b.destination_id
+    assert saved.persistence_reason == "latest_session_user_interaction"
+    assert any(event.type == "todo_reminder" for event in session_store.load("im-b").events)
+    assert not any(event.type == "todo_reminder" for event in session_store.load("im-c").events)
     assert not any(
         event.type == "todo_reminder" for event in session_store.load("origin-session").events
     )
-    assert runtime.submitted[0].session_id == "im-c"
+    assert runtime.submitted[0].session_id == "im-b"
     assert str(runtime.submit_kwargs[0]["surface"]) == "im:qq"
 
 
-def test_binding_update_is_recency_fallback_when_no_im_has_interaction(tmp_path: Path) -> None:
+def test_existing_session_history_repairs_missing_binding_interaction_data(tmp_path: Path) -> None:
     todo_store, occurrence = _claimed(tmp_path)
     session_store = _sessions(tmp_path, "im-b", "im-c")
-    b = _im("im-b", bind="b", binding_updated_at=NOW - timedelta(hours=1))
+    _append_user_message(session_store, "im-b", at=NOW - timedelta(minutes=1))
+    _append_user_message(session_store, "im-c", at=NOW - timedelta(days=1))
+    b = _im("im-b", bind="b", binding_updated_at=NOW - timedelta(days=2))
     c = _im("im-c", bind="c", binding_updated_at=NOW)
     runtime = FakeAgentRuntime()
     orchestrator = ReminderDeliveryOrchestrator(
@@ -300,8 +349,130 @@ def test_binding_update_is_recency_fallback_when_no_im_has_interaction(tmp_path:
     orchestrator.deliver(occurrence)
 
     saved = todo_store.get_occurrence(occurrence.id)
+    assert saved.persistence_session_id == "im-b"
+    assert saved.persistence_reason == "latest_session_user_interaction"
+
+
+def test_origin_bound_session_is_deterministic_fallback_without_user_history(
+    tmp_path: Path,
+) -> None:
+    todo_store, occurrence = _claimed(tmp_path)
+    session_store = _sessions(tmp_path, "origin-session", "im-c")
+    origin = _im(
+        "origin-session",
+        bind="origin",
+        binding_updated_at=NOW - timedelta(days=2),
+    )
+    c = _im("im-c", bind="c", binding_updated_at=NOW)
+    runtime = FakeAgentRuntime()
+    orchestrator = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=session_store,
+        agent_runtime=cast(AgentRuntime, runtime),
+        presence_registry=PresenceRegistry(),
+        im_runtime=cast(Any, FakeIMRuntime((origin, c))),
+        clock=lambda: NOW,
+    )
+
+    orchestrator.deliver(occurrence)
+
+    saved = todo_store.get_occurrence(occurrence.id)
+    assert saved.persistence_session_id == "origin-session"
+    assert saved.persistence_destination_id == origin.destination_id
+    assert saved.persistence_reason == "origin_im_session_without_user_interaction"
+
+
+def test_agent_and_reminder_outputs_do_not_change_session_activity(tmp_path: Path) -> None:
+    todo_store, occurrence = _claimed(tmp_path)
+    session_store = _sessions(tmp_path, "im-b", "im-c")
+    _append_user_message(session_store, "im-b", at=NOW - timedelta(minutes=20))
+    _append_user_message(session_store, "im-c", at=NOW - timedelta(minutes=10))
+    _append_system_output(
+        session_store,
+        "im-b",
+        event_type="assistant_message",
+        at=NOW - timedelta(minutes=1),
+    )
+    _append_system_output(
+        session_store,
+        "im-b",
+        event_type="todo_reminder",
+        at=NOW,
+    )
+    b = _im("im-b", bind="b", last_interaction_at=NOW)
+    c = _im("im-c", bind="c", last_interaction_at=NOW - timedelta(days=1))
+    runtime = FakeAgentRuntime()
+    orchestrator = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=session_store,
+        agent_runtime=cast(AgentRuntime, runtime),
+        presence_registry=PresenceRegistry(),
+        im_runtime=cast(Any, FakeIMRuntime((b, c))),
+        clock=lambda: NOW,
+    )
+
+    orchestrator.deliver(occurrence)
+
+    saved = todo_store.get_occurrence(occurrence.id)
     assert saved.persistence_session_id == "im-c"
-    assert saved.persistence_reason == "latest_im_binding"
+    assert saved.persistence_reason == "latest_session_user_interaction"
+
+
+def test_new_occurrence_reselects_after_another_session_gets_a_user_message(
+    tmp_path: Path,
+) -> None:
+    todo_store = TodoStore(tmp_path / "todos.db")
+    service = TodoService(todo_store, clock=lambda: NOW - timedelta(minutes=5))
+    todo = service.create(title="每日检查")
+    service.add_reminder(
+        todo.todo.id,
+        schedule=RecurringSchedule(
+            frequency="daily",
+            interval=1,
+            local_time=datetime_time(1, 5),
+            timezone="UTC",
+            starts_on=date(2026, 7, 28),
+        ),
+        origin_session_id="origin-session",
+    )
+    todo_store.create_due_occurrences(NOW)
+    first = todo_store.claim_pending(NOW)[0]
+
+    session_store = _sessions(tmp_path, "origin-session", "im-b", "im-c")
+    _append_user_message(session_store, "im-b", at=NOW - timedelta(minutes=1))
+    _append_user_message(session_store, "im-c", at=NOW - timedelta(minutes=10))
+    b = _im("im-b", bind="b", last_interaction_at=NOW - timedelta(minutes=1))
+    c = _im("im-c", bind="c", last_interaction_at=NOW - timedelta(minutes=10))
+    im_runtime = FakeIMRuntime((b, c))
+    runtime = FakeAgentRuntime()
+    clock = [NOW]
+    orchestrator = ReminderDeliveryOrchestrator(
+        todo_store=todo_store,
+        session_store=session_store,
+        agent_runtime=cast(AgentRuntime, runtime),
+        presence_registry=PresenceRegistry(),
+        im_runtime=cast(Any, im_runtime),
+        clock=lambda: clock[0],
+    )
+
+    orchestrator.deliver(first)
+    assert todo_store.get_occurrence(first.id).persistence_session_id == "im-b"
+
+    next_fire = NOW + timedelta(days=1)
+    _append_user_message(session_store, "im-c", at=next_fire - timedelta(minutes=1))
+    todo_store.create_due_occurrences(next_fire)
+    second = todo_store.claim_pending(next_fire)[0]
+    clock[0] = next_fire
+    orchestrator.deliver(second)
+
+    assert second.id != first.id
+    assert todo_store.get_occurrence(first.id).persistence_session_id == "im-b"
+    saved_second = todo_store.get_occurrence(second.id)
+    assert saved_second.persistence_session_id == "im-c"
+    assert saved_second.persistence_destination_id == c.destination_id
+    assert saved_second.persistence_reason == "latest_session_user_interaction"
+    assert runtime.submitted[0].session_id == "im-b"
+    assert runtime.submitted[1].session_id == "im-c"
 
 
 def test_smart_desktop_presence_suppresses_extra_notifications_but_not_im_history(
