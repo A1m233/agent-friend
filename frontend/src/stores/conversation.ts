@@ -895,10 +895,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const current = get();
     const sessionId = current.currentSessionId;
     if (!sessionId) {
-      return {
-        status: "failed",
-        error: { friendly: "发送第一条消息创建会话后再调整授权模式。", code: "no_session" },
-      };
+      if (mode === "session_auto" && !riskAcknowledged) {
+        return {
+          status: "failed",
+          error: {
+            friendly: "进入本会话无需授权前必须重新确认风险。",
+            code: "approval_risk_acknowledgement_required",
+          },
+        };
+      }
+      if (current.approvalMode === mode) {
+        return { status: "applied", mode, version: current.approvalModeVersion };
+      }
+      set({ approvalMode: mode, approvalModeVersion: 0 });
+      return { status: "applied", mode, version: 0 };
     }
     if (current.approvalMode === mode) {
       return { status: "applied", mode, version: current.approvalModeVersion };
@@ -992,8 +1002,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
     if (get().editingMessage) return { accepted: false, reason: "editing" };
 
-    const sessionId = get().currentSessionId ?? newId();
+    const existingSessionId = get().currentSessionId;
+    const sessionId = existingSessionId ?? newId();
     const runId = newId();
+    const initialApprovalMode = get().approvalMode;
+    const shouldBootstrapApprovalMode = initialApprovalMode === "session_auto"
+      && get().messages.length === 0;
+    const initialApprovalModeVersion = shouldBootstrapApprovalMode
+      ? Math.max(1, get().approvalModeVersion)
+      : get().approvalModeVersion;
     const initialConfig = get().currentModel
       ? {
           model: get().currentModel!,
@@ -1035,8 +1052,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         messages,
         currentModel: initialModel,
         currentReasoningPreset: initialConfig.reasoningPreset,
-        approvalMode: "per_request",
-        approvalModeVersion: 0,
+        approvalMode: initialApprovalMode,
+        approvalModeVersion: initialApprovalModeVersion,
         streaming: true,
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq,
@@ -1047,8 +1064,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentSessionId: sessionId,
         currentModel: initialModel,
         currentReasoningPreset: initialConfig.reasoningPreset,
-        approvalMode: "per_request",
-        approvalModeVersion: 0,
+        approvalMode: initialApprovalMode,
+        approvalModeVersion: initialApprovalModeVersion,
         streaming: true,
         messages,
         sessionViews: {
@@ -1093,6 +1110,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             threadId: sessionId,
             runId,
             modelConfig: initialConfig,
+            initialApprovalMode: shouldBootstrapApprovalMode
+              ? initialApprovalMode
+              : undefined,
             text: trimmed,
             messageId: userMessageId,
             attachments,

@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED
+COMPLETED · `fix/session-approval-mode-ux`
 
 ## 任务列表
 
@@ -17,6 +17,10 @@ COMPLETED
 - [x] 运行定向 Python/frontend 测试并修复回归
 - [x] 运行 `scripts/check` 全量门禁
 - [x] 按用户选择完成真实桌面或用户自有视觉验收
+- [x] 修正首条消息前授权模式草稿与首轮 Bridge bootstrap
+- [x] 修正模式切换时旧 pending 收敛与 auto 状态卡片渲染
+- [x] 修正 Composer 左右布局、菜单对比度与风险态背景
+- [x] 完成 follow-up fix 的真实 Tauri 视觉与交互复验
 
 ## AC 验证
 
@@ -25,7 +29,7 @@ COMPLETED
 - [x] AC-3 每次进入都二次确认
 - [x] AC-4 普通请求自动允许
 - [x] AC-5 授权卡片切换
-- [x] AC-6 已挂起请求不被批量批准
+- [x] AC-6 已挂起请求随模式收敛
 - [x] AC-7 高危模式退出
 - [x] AC-8 灾难性动作兜底
 - [x] AC-9 局部删除不过度拦截
@@ -49,3 +53,7 @@ COMPLETED
 | 2026-08-25 | 用 Vite dev-only store 注入临时高危命令卡片，检查 ApprovalDock 布局、风险标签、三按钮与共享确认弹窗，随后清理状态 | 仅证明真实 WebView UI/interaction 层，不是跨层 E2E；未调用真实 LLM、未执行命令，最终无临时卡片/菜单/dialog 残留 |
 | 2026-08-25 | 用户确认交付并要求合入主干、推送远端，需求状态收尾为 `COMPLETED` | 进入 feature commit → Guide 门禁 → merge commit → push 流程 |
 | 2026-08-25 | 以 merge commit `b6df45b` 同步最新 `origin/main`，在最终合入树上复跑全部门禁 | backend lint + mypy 579 source files + 2194 passed / 4 skipped；frontend 108 files / 619 tests + production build；Rust 217+6 tests + release check 全部通过 |
+| 2026-08-25 | 从最新主干建立 `fix/session-approval-mode-ux`，修正首页模式草稿/首轮初始化、旧 pending 收敛、auto 卡片隐藏、模型右置、菜单对比度和风险态中性背景 | 定向 backend 29 passed、frontend 61+46 passed；完整 backend lint + mypy 579 source files + 2201 passed / 4 skipped；frontend 108 files / 621 tests + production build；Rust 216+6 tests + release check 通过 |
+| 2026-08-25 | follow-up fix 真实桌面验收等待安装版退出 | production owner PID 18168 正在运行；按 runtime governance 未擅自结束用户实例 |
+| 2026-08-25 | 在当前 fix worktree 的真实 Tauri/WebView2 中完成视觉与交互复验，并按本轮生命周期停止 dev runtime | `desktop screenshot` + `desktop DOM via CDP` + `desktop interaction`：首页 mode trigger 可点击；模型位于右侧并与麦克风相邻；菜单与 trigger 间隔约 3.8px、中心命中正确；hover 选中态标题/副文案均为白色；auto trigger 为 warning 文字且背景透明；确认弹窗可达、取消后无残留。dev-only 注入一条 pending 命令时 auto 状态授权卡片为 0，随后已清理；该项只证明 UI 层，真实 pending 收敛由 Broker 测试覆盖。最终 frontend 108 files / 622 tests + production build 复验通过；未调用真实 LLM、未执行命令 |
+| 2026-08-25 | 以 merge commit `a23aad1` 同步最新 `origin/main`，在最终组合树上复跑全部门禁 | backend lint + mypy 579 source files + 2204 passed / 4 skipped；frontend 108 files / 622 tests + production build；Rust 216+6 tests + release check 全部通过；仅保留既有构建/第三方 warning |

@@ -27,6 +27,7 @@ from ag_ui.core import (
     TextInputContent,
     UserMessage,
 )
+from agent.approvals import SessionApprovalMode
 from agent.skills import SkillSelection, decode_skill_selections
 
 from llm_providers import (
@@ -61,6 +62,7 @@ class DecodedRequest:
     user_message_id: str
     draft_attachments: tuple[DecodedDraftAttachment, ...] = ()
     requested_model_config: ModelRuntimeConfig | None = None
+    initial_approval_mode: SessionApprovalMode | None = None
     skills: tuple[SkillSelection, ...] = ()
 
     @property
@@ -150,6 +152,24 @@ def resolve_requested_model(payload: RunAgentInput) -> str | None:
     return config.model_id if config is not None else None
 
 
+def resolve_initial_approval_mode(payload: RunAgentInput) -> SessionApprovalMode | None:
+    """Decode the risk-acknowledged approval mode for a not-yet-created session."""
+
+    forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
+    if not isinstance(forwarded_props, dict):
+        return None
+    raw = forwarded_props.get("initialApprovalMode")
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise DecodeError("forwarded_props.initialApprovalMode 必须是对象")
+    if raw.get("mode") != "session_auto":
+        raise DecodeError("forwarded_props.initialApprovalMode.mode 只接受 session_auto")
+    if raw.get("riskAcknowledged") is not True:
+        raise DecodeError("进入本会话无需授权前必须重新确认风险")
+    return "session_auto"
+
+
 def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
     """从 :class:`RunAgentInput` 抽出 bridge 真正需要的三个字段。
 
@@ -200,5 +220,6 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         user_message_id=last.id,
         draft_attachments=tuple(drafts),
         requested_model_config=resolve_requested_model_config(payload),
+        initial_approval_mode=resolve_initial_approval_mode(payload),
         skills=skills,
     )

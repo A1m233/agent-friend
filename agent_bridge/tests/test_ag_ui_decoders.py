@@ -53,6 +53,36 @@ def test_decode_ignores_missing_desktop_requested_model() -> None:
     assert decoded.requested_model is None
 
 
+def test_decode_accepts_risk_acknowledged_initial_session_auto() -> None:
+    payload = _payload()
+    payload.forwarded_props = {
+        "initialApprovalMode": {
+            "mode": "session_auto",
+            "riskAcknowledged": True,
+        }
+    }
+
+    decoded = decode_run_agent_input(payload)
+
+    assert decoded.initial_approval_mode == "session_auto"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"mode": "session_auto"},
+        {"mode": "per_request", "riskAcknowledged": True},
+        "session_auto",
+    ],
+)
+def test_decode_rejects_invalid_initial_approval_mode(value: object) -> None:
+    payload = _payload()
+    payload.forwarded_props = {"initialApprovalMode": value}
+
+    with pytest.raises(DecodeError, match=r"initialApprovalMode|确认风险"):
+        decode_run_agent_input(payload)
+
+
 def test_decode_rejects_empty_user_content() -> None:
     payload = RunAgentInput.model_validate(
         {

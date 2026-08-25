@@ -64,6 +64,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 if decoded.requested_model_config is not None
                 else None
             ),
+            initial_approval_mode=decoded.initial_approval_mode,
         )
 
         effective_model = boot.default_model

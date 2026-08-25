@@ -402,12 +402,13 @@ Trigger: [每次授权 ▾]
    后续普通请求不再逐项询问
 ```
 
-- 与附件、模型控件放在 footer-prefix 左侧同一组。
+- footer-prefix 左侧放附件与授权模式，右侧放模型与语音入口，使模型靠近发送区域。
 - `per_request` 使用普通中性色并显式标注推荐。
-- `session_auto` trigger 持续使用 warning/danger token、风险图标和完整可访问名称；菜单关闭后仍可见。
+- `session_auto` trigger 持续使用 warning/danger token、风险图标、文字颜色和完整可访问名称；背景保持原输入区中性色，菜单关闭后仍可见。
 - 切回 `per_request` 直接提交，不弹窗。
 - 进入 `session_auto` 只打开共享确认 dialog，菜单选择本身不先改变 UI 或后端状态。
-- 模式控件不因当前 run 正在 streaming 而禁用，否则用户无法在授权等待期间调整后续请求；只在无 session、历史加载、bridge 离线或自身 mutation 中禁用。
+- 首页尚无持久 session 时，确认结果暂存在 home view；首次 `RunAgentInput.forwardedProps.initialApprovalMode` 携带 `{mode, riskAcknowledged}`，Bridge 只在 auto-create 新 session 时采纳，已有 session 忽略该字段。
+- 模式控件不因当前 run 正在 streaming 而禁用，否则用户无法在授权等待期间调整后续请求；只在历史加载、bridge 离线或自身 mutation 中禁用。
 
 ### 5.3 二次确认弹窗
 
@@ -433,7 +434,7 @@ Trigger: [每次授权 ▾]
 - sandboxed command 尚未完成系统权限准备时，保持“前往系统权限”主恢复动作，session-auto action 禁用并说明原因，避免切换 mode 后当前请求仍不能批准。
 - 当前卡片即使标记 catastrophic，仍允许用户通过这一个显式组合动作批准当前精确请求；dialog 额外展示该卡片的 risk label。未来新高危请求继续在免授权模式下拒绝。
 
-其它 pending 不变。输入区开启免授权后，已经排队的旧卡片仍只提供“拒绝 / 仅本次允许”；由于 effective mode 已经是 `session_auto`，不再显示重复的开启按钮。
+模式切换与 pending 收敛共用 session lock：普通 pending 取得其原始精确 full decision，灾难性 pending 取得 policy deny。卡片入口所对应的当前精确请求仍使用 `user_enable_session_auto` 显式批准；其它请求按新 mode 收敛。前端只在 `per_request` 渲染 pending panel，并在 mutation 返回后主动校准文件与命令请求，不能只隐藏后端仍在等待的请求。
 
 ### 5.5 视觉实现边界
 
@@ -460,7 +461,8 @@ Trigger: [每次授权 ▾]
 
 - 文件和命令工具继续先检查隐藏 surface 为 `desktop_chat`，通过后才调用 broker。
 - IM、scheduled task 和其它 headless surface 不读取 session-auto 来绕过原 fail-closed。
-- REST mode endpoint 只改变已有 session metadata，不直接创建 capability、process 或 pending decision。
+- REST mode endpoint 只操作已有 session：提交 mode metadata 后由 Broker 让该 session 的现有 pending 按新模式取得终态，但不创建新的 capability、process 或 approval request。
+- AG-UI 首轮请求可以携带已确认的 `initialApprovalMode`；该字段只在 `thread_id` 尚不存在、Bridge 正在 auto-create 时应用，不能覆盖已有会话。
 - 自动允许 `host_user` 仍要求工具请求显式写出 `execution="host_user"`；broker 不能把 sandboxed request 升级。
 
 ### 6.3 工具契约
@@ -490,9 +492,10 @@ Trigger: [每次授权 ▾]
 | `agent_bridge/src/agent_bridge/assembly.py` | mode store、policy、broker 和 critical roots 装配 |
 | `agent_bridge/src/agent_bridge/routes/meta.py` | session mode mutation 与 list/detail 投影 |
 | `agent_bridge/src/agent_bridge/routes/approvals.py`、`filesystem.py` | 一次性决定兼容与通用组合端点 |
+| `agent_bridge/src/agent_bridge/protocols/ag_ui/decoders.py`、`session_bridge.py` | 首轮风险确认字段校验与新 session 初始 mode 装配 |
 | `frontend/src/types/meta.ts`、`services/api/sessions.ts` | mode/version REST 类型与 mutation |
 | `frontend/src/services/api/commandRuntime.ts`、`filesystem.ts` | request version、risk/decision source 与组合动作 API |
-| `frontend/src/stores/conversation.ts` | 当前 session mode 真相、mutation sequence 与 stale guard |
+| `frontend/src/services/stream.ts`、`stores/conversation.ts` | 首页 mode 草稿、首轮 bootstrap、当前 session mode 真相与 stale guard |
 | `frontend/src/stores/commandRuntime.ts`、`filesystemApprovals.ts` | terminal auto/deny 投影、pending calibration |
 | `frontend/src/pages/chat/components/SessionApprovalModeControl.tsx` | Composer 两档模式菜单与持续风险状态 |
 | `frontend/src/pages/chat/components/SessionApprovalModeController.tsx` | 共享确认 dialog、intent 与提交协调 |
@@ -517,8 +520,8 @@ Trigger: [每次授权 ▾]
 
 - `per_request` 普通/高危都注册 pending；`session_auto` 普通自动完整批准，高危直接拒绝。
 - 自动 filesystem 决定严格等于请求的 permissions/actions；自动 command 仍为 lifetime once。
-- Composer 切换不决定已有 pending。
-- 卡片组合只批准当前 exact request，另一个同 session pending 保持等待。
+- Composer 切换自动批准已有普通 pending，并拒绝已有灾难性 pending。
+- 卡片组合显式批准当前 exact request，其它同 session pending 按 auto mode 收敛。
 - request stale、mode stale、sandbox not ready、metadata write failure 均不产生半完成状态。
 - 切换 mode 与新请求、cancel run、timeout 并发时满足固定线性化结果，不复活终态 request。
 - listener 抛错不改变已提交状态；transport 丢失后 GET/pending calibration 能恢复真相。
@@ -551,9 +554,9 @@ Trigger: [每次授权 ▾]
 - 输入区只显示两档，安全档有推荐标记，高风险 trigger 在菜单关闭后持续可见。
 - 每次进入 auto 都打开新 dialog；取消、Escape、关闭、切 session 不提交。
 - 切回 safe 不弹窗；409 conflict 刷新后不乐观保留错误状态。
-- active run/approval 等待期间模式控件仍可用；首页无 session 时显示安全默认但不可切换。
-- Composer 开启 auto 不处理旧 pending；ApprovalDock 组合动作只移除当前卡片。
-- 文件/命令卡片共享同一文案和 endpoint；auto 状态下旧 pending 不显示重复开启按钮。
+- active run/approval 等待期间模式控件仍可用；首页无 session 时也可确认并暂存模式，首轮创建后持久化。
+- Composer 或 ApprovalDock 开启 auto 都使旧 pending 取得终态；auto 状态不渲染授权卡片，但继续显示命令运行状态。
+- 文件/命令卡片共享同一文案和 endpoint；模式切换返回后主动校准两类 pending store。
 - sandbox setup required、request stale、loading 和 transport failure 的按钮/提示正确。
 - keyboard、focus、screen-reader label 与 destructive dialog 行为覆盖。
 

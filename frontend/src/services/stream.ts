@@ -13,6 +13,7 @@ import { AGUI_RUN_PATH, BRIDGE_BASE_URL } from "@/constants";
 import { ensureLocalServiceReady } from "@/services/runtime";
 import type { AttachmentDraft } from "./attachments";
 import type { ModelRuntimeConfig } from "@/lib/model-config";
+import type { SessionApprovalMode } from "./api/sessions";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -21,6 +22,8 @@ export interface RunStreamInput {
   runId: string;
   /** 本轮在接纳消息时冻结的会话模型；新 session 用它初始化。 */
   modelConfig: ModelRuntimeConfig;
+  /** 新 session 在首页完成风险确认后使用的初始授权模式；已有 session 忽略。 */
+  initialApprovalMode?: SessionApprovalMode;
   /** 本轮 user 新输入。 */
   text: string;
   messageId?: string;
@@ -119,6 +122,14 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
     state: {},
     forwardedProps: {
       modelConfig: input.modelConfig,
+      ...(input.initialApprovalMode === "session_auto"
+        ? {
+            initialApprovalMode: {
+              mode: "session_auto",
+              riskAcknowledged: true,
+            },
+          }
+        : {}),
     },
   };
 }

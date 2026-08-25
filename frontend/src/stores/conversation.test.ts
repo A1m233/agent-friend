@@ -211,6 +211,41 @@ beforeEach(() => {
 });
 
 describe("conversation store · session approval mode", () => {
+  it("stages the risky mode before the first message and bootstraps it with the run", async () => {
+    mockStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+
+    await expect(
+      useConversationStore.getState().setApprovalMode("session_auto", true),
+    ).resolves.toEqual({ status: "applied", mode: "session_auto", version: 0 });
+    expect(mockUpdateApprovalMode).not.toHaveBeenCalled();
+
+    await finishAcceptedSend(useConversationStore.getState().send("hello"));
+
+    expect(mockStream).toHaveBeenCalledWith(
+      expect.objectContaining({ initialApprovalMode: "session_auto" }),
+      expect.any(Object),
+    );
+    expect(useConversationStore.getState()).toMatchObject({
+      approvalMode: "session_auto",
+      approvalModeVersion: 1,
+    });
+  });
+
+  it("does not stage the risky mode without a fresh acknowledgement", async () => {
+    await expect(
+      useConversationStore.getState().setApprovalMode("session_auto", false),
+    ).resolves.toEqual({
+      status: "failed",
+      error: {
+        friendly: "进入本会话无需授权前必须重新确认风险。",
+        code: "approval_risk_acknowledgement_required",
+      },
+    });
+    expect(useConversationStore.getState().approvalMode).toBe("per_request");
+  });
+
   it("restores the persisted risky mode when opening a session", async () => {
     mockGet.mockResolvedValueOnce({
       ...sessionDetail("sid-mode", "history"),

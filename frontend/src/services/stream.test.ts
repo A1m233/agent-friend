@@ -31,6 +31,7 @@ describe("buildRunAgentInput", () => {
       threadId: "session-1",
       runId: "run-1",
       modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "on" },
+      initialApprovalMode: "session_auto",
       messageId: "user-message-1",
       text: "请分析",
       attachments: [
@@ -73,6 +74,10 @@ describe("buildRunAgentInput", () => {
     expect(payload.forwardedProps).not.toHaveProperty("attachments");
     expect(payload.forwardedProps).toEqual({
       modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "on" },
+      initialApprovalMode: {
+        mode: "session_auto",
+        riskAcknowledged: true,
+      },
     });
   });
 });
