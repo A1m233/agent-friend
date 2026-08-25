@@ -16,11 +16,12 @@ COMPLETED
 - [x] 补齐 Python、Rust、TypeScript 定向测试
 - [x] 运行项目统一检查并记录结果
 - [x] 完成用户验收
+- [x] 修正持久化会话排序为 session 最近真实用户消息，并覆盖旧 binding 数据
 
 ## AC 验证
 
 - [x] 创建 Reminder 只保存未来计划和 Reminder 自身来源会话
-- [x] 多 IM binding 到期时选择最新有效 binding session；offline 不影响持久化选择
+- [x] 多 IM binding 到期时，在其有效 session 中按最近真实用户消息选择；offline 不影响持久化选择
 - [x] 无有效 IM binding 时回退 Reminder 来源；两者缺失时不猜其他 session
 - [x] occurrence 的持久化 session、binding 与通知模式只冻结一次
 - [x] Reminder 卡片、Agent run 与回复始终在同一选定 session，并保持 conversation 可见
@@ -33,6 +34,8 @@ COMPLETED
 - [x] 自动化测试不调用真实 LLM、QQ 或外部付费服务
 - [x] 项目统一检查脚本通过
 - [x] 用户明确确认验收完成
+- [x] 桌面与 IM 用户消息统一参与候选会话排序；Agent、Reminder 和 binding 更新时间不参与
+- [x] 周期 Reminder 的新 occurrence 会在其他候选会话出现新用户消息后重新定位
 
 ## 实现日志
 
@@ -47,3 +50,4 @@ COMPLETED
 | 2026-08-23 | 完成真实 Tauri 设置页视觉与交互验收 | 当前 feature worktree 的真实 WebView DOM、CDP 截图与 Windows 桌面同步截图均确认布局、下拉选项及两套帮助文案；切换为“所有位置”后完整重启桌面进程仍保留选择，验收结束后已恢复默认“智能选择（推荐）”并核对落盘 |
 | 2026-08-23 | 用户确认验收并授权合入主干、推送远端 | 需求状态更新为 `COMPLETED`，进入 Guide 维护与合入流程 |
 | 2026-08-23 | rebase 最新 `origin/main` 后重跑项目统一检查 | backend：2126 passed / 4 skipped；frontend：604 passed + production build；Rust：216 passed / 1 ignored + installer helper tests + release check；三个 stage 均通过 |
+| 2026-08-25 | 临场修复持久化会话排序：改用 session active `user_message`，移除 binding 更新时间 fallback，保留 occurrence 单次冻结 | 聚焦回归 14 项通过；backend：2197 passed / 4 skipped；frontend：619 passed + production build；Rust：216 passed / 1 ignored + installer helper 6 项 + release check；未调用真实 LLM、QQ 或外部服务 |
