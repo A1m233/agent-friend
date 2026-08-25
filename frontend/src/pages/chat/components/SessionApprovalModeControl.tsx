@@ -18,7 +18,6 @@ import { useSessionApprovalModeActions } from "./SessionApprovalModeController";
 
 export function SessionApprovalModeControl() {
   const status = useConnectionStore((state) => state.status);
-  const currentSessionId = useConversationStore((state) => state.currentSessionId);
   const historyLoading = useConversationStore((state) => state.historyLoading);
   const mode = useConversationStore((state) => state.approvalMode);
   const changing = useConversationStore((state) => state.approvalModeChanging);
@@ -26,16 +25,14 @@ export function SessionApprovalModeControl() {
     requestSessionAutoFromComposer,
     switchToPerRequest,
   } = useSessionApprovalModeActions();
-  const disabled = !currentSessionId || historyLoading || status !== "online" || changing;
-  const disabledReason = !currentSessionId
-    ? "发送第一条消息创建会话后可调整授权模式"
-    : historyLoading
-      ? "正在加载会话"
-      : status !== "online"
-        ? "本机服务连接后可调整授权模式"
-        : changing
-          ? "正在切换授权模式"
-          : undefined;
+  const disabled = historyLoading || status !== "online" || changing;
+  const disabledReason = historyLoading
+    ? "正在加载会话"
+    : status !== "online"
+      ? "本机服务连接后可调整授权模式"
+      : changing
+        ? "正在切换授权模式"
+        : undefined;
   const auto = mode === "session_auto";
 
   return (
@@ -56,7 +53,7 @@ export function SessionApprovalModeControl() {
                 className={cn(
                   "gap-1 px-2",
                   auto
-                    ? "bg-warning/10 text-warning hover:bg-warning/15 hover:text-warning"
+                    ? "text-warning hover:text-warning"
                     : "text-muted hover:text-fg",
                 )}
               >
@@ -75,7 +72,7 @@ export function SessionApprovalModeControl() {
         <DropdownMenuLabel>本会话授权模式</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          className="items-start gap-2"
+          className="group items-start gap-2"
           onSelect={() => {
             if (auto) void switchToPerRequest();
           }}
@@ -83,12 +80,14 @@ export function SessionApprovalModeControl() {
           <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">
             <span className="block font-medium">每次授权（推荐）</span>
-            <span className="block text-xs text-muted">每个文件或命令请求都由你决定</span>
+            <span className="block text-xs text-muted group-focus:text-accent-fg">
+              每个文件或命令请求都由你决定
+            </span>
           </span>
           {!auto ? <Check className="mt-0.5 size-4" aria-label="当前模式" /> : null}
         </DropdownMenuItem>
         <DropdownMenuItem
-          className="items-start gap-2 text-warning focus:text-warning"
+          className="group items-start gap-2 text-warning focus:text-warning"
           onSelect={() => {
             if (!auto) requestSessionAutoFromComposer();
           }}
@@ -96,7 +95,9 @@ export function SessionApprovalModeControl() {
           <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">
             <span className="block font-medium">本会话无需授权</span>
-            <span className="block text-xs opacity-80">后续普通请求不再逐项询问</span>
+            <span className="block text-xs opacity-80 group-focus:text-warning">
+              后续普通请求不再逐项询问
+            </span>
           </span>
           {auto ? <Check className="mt-0.5 size-4" aria-label="当前模式" /> : null}
         </DropdownMenuItem>

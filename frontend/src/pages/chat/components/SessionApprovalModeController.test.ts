@@ -73,8 +73,15 @@ describe("SessionApprovalModeController", () => {
       approvalModeChanging: false,
       setApprovalMode,
     });
-    useCommandRuntimeStore.setState({ approvals: {}, submitting: new Set() });
-    useFilesystemApprovalsStore.setState({ entries: {} });
+    useCommandRuntimeStore.setState({
+      approvals: {},
+      submitting: new Set(),
+      refresh: vi.fn(async () => undefined),
+    });
+    useFilesystemApprovalsStore.setState({
+      entries: {},
+      refresh: vi.fn(async () => undefined),
+    });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -110,6 +117,20 @@ describe("SessionApprovalModeController", () => {
     await act(async () => Promise.resolve());
 
     expect(setApprovalMode).toHaveBeenCalledWith("session_auto", true);
+  });
+
+  it("allows selecting the risky mode before the first message creates a session", async () => {
+    await act(async () => {
+      useConversationStore.setState({ currentSessionId: null });
+    });
+
+    const trigger = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="当前授权模式：每次授权，推荐"]',
+    );
+    expect(trigger?.disabled).toBe(false);
+
+    await act(async () => capturedActions?.requestSessionAutoFromComposer());
+    expect(document.body.textContent).toContain("确认在本会话中免除后续授权？");
   });
 
   it("keeps the risky state visible on the closed composer trigger", async () => {

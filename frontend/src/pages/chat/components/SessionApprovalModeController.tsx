@@ -29,7 +29,7 @@ export interface SessionAutoApprovalTarget {
 }
 
 type ConfirmationIntent =
-  | { source: "composer"; sessionId: string }
+  | { source: "composer"; sessionId: string | null }
   | { source: "approval_card"; target: SessionAutoApprovalTarget };
 
 interface SessionApprovalModeActions {
@@ -82,7 +82,6 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
   }, [commandApprovals, filesystemEntries, intent]);
 
   const requestSessionAutoFromComposer = useCallback(() => {
-    if (!currentSessionId) return;
     setIntent({ source: "composer", sessionId: currentSessionId });
   }, [currentSessionId]);
 
@@ -111,6 +110,7 @@ export function SessionApprovalModeController({ children }: { children: ReactNod
           return;
         }
         if (result.status === "stale") return;
+        await Promise.allSettled([refreshCommands(), refreshFilesystem()]);
       } else {
         const target = intent.target;
         const state = await sessionsApi.enableSessionAutoForApproval({

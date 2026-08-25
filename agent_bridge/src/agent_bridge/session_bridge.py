@@ -21,6 +21,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+from agent.approvals import SessionApprovalMode
+
 from agent import Conversation, Message, Session, SessionNotFoundError
 from llm_providers import ModelRuntimeConfig, default_model_runtime_config
 
@@ -49,6 +51,7 @@ class PersistentBootstrap:
     default_persona: str
     default_model: str
     default_reasoning_preset: str | None = None
+    initial_approval_mode: SessionApprovalMode | None = None
 
     @property
     def default_model_config(self) -> ModelRuntimeConfig:
@@ -176,6 +179,7 @@ class SessionBridge:
             llm_providers.LLMAuthError: 工厂构造 :class:`LanguageModel` 失败。
         """
         mgr = self._runtime.persistent_session_manager
+        created = False
 
         try:
             session = mgr.open(boot.thread_id)
@@ -187,6 +191,17 @@ class SessionBridge:
                 reasoning_preset=boot.default_reasoning_preset,
                 persona_id=persona_info.id,
                 session_id=boot.thread_id,
+            )
+            created = True
+
+        if created and boot.initial_approval_mode == "session_auto":
+            broker = self._runtime.approval_broker
+            if broker is None:
+                raise RuntimeError("initial session approval mode is unavailable")
+            broker.set_session_mode(
+                boot.thread_id,
+                mode="session_auto",
+                expected_version=0,
             )
 
         return mgr.start_conversation(

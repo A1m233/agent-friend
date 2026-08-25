@@ -96,6 +96,8 @@ class ApprovalBroker:
     ) -> SessionApprovalModeState:
         lock = self._session_lock(session_id)
         changed = False
+        resolved: tuple[Any, ...] = ()
+        listeners: tuple[Callable[[dict[str, object]], None], ...] = ()
         with lock:
             self._require_session(session_id)
             state, changed = self._set_mode_locked(
@@ -103,8 +105,17 @@ class ApprovalBroker:
                 mode=mode,
                 expected_version=expected_version,
             )
+            if changed and state.mode == "session_auto":
+                with self._lock:
+                    resolved = self._resolve_pending_for_session_auto_locked(
+                        session_id,
+                        state,
+                    )
+                    listeners = tuple(self._listeners)
         if changed:
             self._notify_mode_changed(session_id, state)
+        for request in resolved:
+            self._notify(listeners, request)
         return state
 
     def request(self, request: Any, *, timeout_seconds: float) -> Any:
@@ -224,6 +235,7 @@ class ApprovalBroker:
         precondition: Callable[[Any], None] | None = None,
     ) -> SessionApprovalModeState:
         lock = self._session_lock(session_id)
+        resolved: tuple[Any, ...] = ()
         with lock:
             self._require_session(session_id)
             with self._lock:
@@ -264,8 +276,15 @@ class ApprovalBroker:
                 pending_request.approval_mode_version = state.version
                 pending_request.version += 1
                 pending_request._event.set()
+                resolved = self._resolve_pending_for_session_auto_locked(
+                    session_id,
+                    state,
+                    exclude_request_id=request_id,
+                )
                 listeners = tuple(self._listeners)
         self._notify(listeners, pending_request)
+        for request in resolved:
+            self._notify(listeners, request)
         if changed:
             self._notify_mode_changed(session_id, state)
         return state
@@ -326,6 +345,43 @@ class ApprovalBroker:
                 return state, False
             raise ApprovalModeConflictError(state)
         return state, True
+
+    def _resolve_pending_for_session_auto_locked(
+        self,
+        session_id: str,
+        state: SessionApprovalModeState,
+        *,
+        exclude_request_id: str | None = None,
+    ) -> tuple[Any, ...]:
+        """Resolve pre-existing pending requests after an acknowledged auto-mode switch.
+
+        The caller holds both the per-session lock and ``self._lock``.  Normal
+        requests receive their exact full decision; catastrophic requests are
+        denied by the same deterministic policy used for newly-created requests.
+        """
+
+        resolved = tuple(
+            request
+            for request in self._pending.values()
+            if request.session_id == session_id
+            and request.request_id != exclude_request_id
+            and not request._event.is_set()
+        )
+        for request in resolved:
+            assessment = request.risk_assessment
+            if assessment is not None and assessment.catastrophic:
+                request._decision = request.cancelled_decision()
+                request.decision_source = "catastrophic_policy"
+                request.status = "denied"
+            else:
+                request._decision = request.fully_approved_decision()
+                request.decision_source = "session_auto"
+                request.status = "approved"
+            request.approval_mode = state.mode
+            request.approval_mode_version = state.version
+            request.version += 1
+            request._event.set()
+        return resolved
 
     def _require_session(self, session_id: str) -> None:
         if self._session_exists is not None and not self._session_exists(session_id):

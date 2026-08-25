@@ -795,21 +795,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         openFileDialog();
                       }}
                     />
+                    <SessionApprovalModeControl />
+                  </div>
+                  <div className="flex min-w-0 items-center gap-1">
                     <ConversationModelSelector
                       selectedModel={selectedModel}
                       disabled={disabled || streaming || cancelling || editSubmitting}
                       disabledReason={composerControlDisabledReason}
                     />
-                    <SessionApprovalModeControl />
+                    <VoiceInputAction
+                      phase={voiceInputPhase}
+                      volumeLevel={voiceInputVolume}
+                      error={voiceInputError}
+                      disabled={voiceInputDisabled}
+                      disabledReason={composerControlDisabledReason}
+                      onToggle={toggleVoiceInput}
+                    />
                   </div>
-                  <VoiceInputAction
-                    phase={voiceInputPhase}
-                    volumeLevel={voiceInputVolume}
-                    error={voiceInputError}
-                    disabled={voiceInputDisabled}
-                    disabledReason={composerControlDisabledReason}
-                    onToggle={toggleVoiceInput}
-                  />
                 </TooltipProvider>
               </div>
             </ChatSenderBox>

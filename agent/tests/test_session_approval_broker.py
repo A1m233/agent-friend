@@ -125,7 +125,7 @@ def test_session_auto_denies_catastrophic_request(tmp_path: Path) -> None:
     assert request.to_dict()["risk"] == request.risk_assessment.to_dict()
 
 
-def test_composer_mode_switch_does_not_approve_existing_pending(tmp_path: Path) -> None:
+def test_composer_mode_switch_resolves_existing_normal_pending(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     request = _request()
     result: list[Any] = []
@@ -139,13 +139,32 @@ def test_composer_mode_switch_does_not_approve_existing_pending(tmp_path: Path) 
     state = broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
 
     assert state.mode == "session_auto"
-    assert broker.pending(session_id="sid-1") == (request,)
-    broker.deny_session("sid-1")
+    assert broker.pending(session_id="sid-1") == ()
+    thread.join(timeout=2)
+    assert result and result[0].approved is True
+    assert request.decision_source == "session_auto"
+
+
+def test_composer_mode_switch_denies_existing_catastrophic_pending(tmp_path: Path) -> None:
+    broker = _broker(tmp_path)
+    request = _request(target=Path("C:/"))
+    result: list[Any] = []
+    thread = threading.Thread(
+        target=lambda: result.append(broker.request(request, timeout_seconds=2)),
+        daemon=True,
+    )
+    thread.start()
+    _wait_pending(broker)
+
+    broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
+
     thread.join(timeout=2)
     assert result and result[0].approved is False
+    assert request.decision_source == "catastrophic_policy"
+    assert broker.pending(session_id="sid-1") == ()
 
 
-def test_card_combination_approves_only_current_request(tmp_path: Path) -> None:
+def test_card_combination_resolves_current_and_remaining_requests(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     first = _request()
     second = _request()
@@ -173,12 +192,13 @@ def test_card_combination_approves_only_current_request(tmp_path: Path) -> None:
     )
 
     assert state.mode == "session_auto"
-    assert broker.pending(session_id="sid-1") == (second,)
-    broker.deny_session("sid-1")
+    assert broker.pending(session_id="sid-1") == ()
     for thread in threads:
         thread.join(timeout=2)
     assert results[first.request_id].approved is True
-    assert results[second.request_id].approved is False
+    assert first.decision_source == "user_enable_session_auto"
+    assert results[second.request_id].approved is True
+    assert second.decision_source == "session_auto"
 
 
 def test_stale_card_request_does_not_change_mode(tmp_path: Path) -> None:

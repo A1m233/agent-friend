@@ -216,14 +216,12 @@ function PendingApprovalPanel({
   queuedCount,
   decide,
   enableSessionAuto,
-  showSessionAuto,
   sessionAutoSubmitting,
 }: {
   current: PendingApproval;
   queuedCount: number;
   decide: (approved: boolean) => void;
   enableSessionAuto: () => void;
-  showSessionAuto: boolean;
   sessionAutoSubmitting: boolean;
 }) {
   const actionDisabled = current.submitting || sessionAutoSubmitting;
@@ -246,11 +244,9 @@ function PendingApprovalPanel({
           </Button>
           {current.needsSandboxSetup ? (
             <>
-              {showSessionAuto ? (
-                <Button size="xs" variant="outline" disabled>
-                  本会话无需授权
-                </Button>
-              ) : null}
+              <Button size="xs" variant="outline" disabled>
+                本会话无需授权
+              </Button>
               <Button size="xs" onClick={() => void openSettings({ target: "permissions" })}>
                 前往系统权限
               </Button>
@@ -264,17 +260,15 @@ function PendingApprovalPanel({
               >
                 {current.submitting ? "处理中…" : "仅本次允许"}
               </Button>
-              {showSessionAuto ? (
-                <Button
-                  size="xs"
-                  variant="destructive"
-                  disabled={actionDisabled}
-                  loading={sessionAutoSubmitting}
-                  onClick={enableSessionAuto}
-                >
-                  本会话无需授权
-                </Button>
-              ) : null}
+              <Button
+                size="xs"
+                variant="destructive"
+                disabled={actionDisabled}
+                loading={sessionAutoSubmitting}
+                onClick={enableSessionAuto}
+              >
+                本会话无需授权
+              </Button>
             </>
           )}
         </div>
@@ -372,7 +366,7 @@ export function ApprovalDock() {
     currentSessionId,
   ]);
 
-  const current = pending[0];
+  const current = approvalMode === "per_request" ? pending[0] : undefined;
   const currentRunning = current ? null : running[0];
   if (!current && !currentRunning) return null;
 
@@ -393,7 +387,6 @@ export function ApprovalDock() {
             current={current}
             queuedCount={pending.length - 1}
             decide={decide}
-            showSessionAuto={approvalMode === "per_request"}
             sessionAutoSubmitting={submittingRequestId === current.requestId}
             enableSessionAuto={() => requestSessionAutoFromApproval({
               kind: current.kind,
