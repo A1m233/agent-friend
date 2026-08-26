@@ -30,6 +30,7 @@ FILESYSTEM_TOOL_NAMES = frozenset(
         "filesystem_list_directory",
         "filesystem_stat",
         "filesystem_read_text",
+        "filesystem_read_text_tail",
         "filesystem_write_text",
         "filesystem_apply_patch",
         "filesystem_create_directory",
@@ -478,6 +479,7 @@ class FilesystemOperationTool:
             "filesystem_list_directory",
             "filesystem_stat",
             "filesystem_read_text",
+            "filesystem_read_text_tail",
         }:
             self.execution_kind = "parallel_read"
 
@@ -650,7 +652,12 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": ["name", "content"],
                 "description": "按名称/相对路径检索用 name；按正文检索用 content。",
             },
-            "query": {"type": "string", "minLength": 1, "description": "要查找的文本。"},
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "description": "要查找的文本；content 模式最多 4096 字符。",
+            },
             "glob": {"type": "string", "description": "可选的相对路径 glob 过滤条件。"},
             "limit": {
                 "type": "integer",
@@ -715,6 +722,25 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
                     "本次最多返回的文本行数；结果还受单次 10000 字符上限约束。"
                     "truncated=true 时按 next_start_line/next_start_column 继续。"
                 ),
+            },
+            "encoding": {
+                "type": "string",
+                "enum": ["auto", "utf-8", "utf-8-sig", "utf-16", "gb18030"],
+                "description": "文本解码方式；通常使用 auto，仅在已有证据明确编码时指定。",
+            },
+        },
+        "required": ["filesystem_scope_id"],
+        "additionalProperties": False,
+    },
+    "filesystem_read_text_tail": {
+        "type": "object",
+        "properties": {
+            **_SCOPE_PATH_PROPERTIES,
+            "max_lines": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2000,
+                "description": ("保留文件末尾的最多行数；结果仍受单次 10000 字符上限约束。"),
             },
             "encoding": {
                 "type": "string",
@@ -913,10 +939,11 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     },
 }
 _DESCRIPTIONS = {
-    "filesystem_search": "在已授权目录中按名称/相对路径或文本正文做有界搜索；content 模式返回命中行、列和短片段，search_metadata 不返回正文。",
+    "filesystem_search": "在已授权目录中按名称/相对路径或文本正文做有界流式搜索；包括大文本，但正文扫描总量、命中数和片段长度都有上限。content 模式返回命中行、列和短片段，search_metadata 不返回正文。",
     "filesystem_list_directory": "列举已授权目录的直接子项，稳定排序并支持 continuation。",
     "filesystem_stat": "查询已授权相对路径的类型、大小、mtime、身份摘要和保护分类。",
-    "filesystem_read_text": "严格解码并有界分段读取已授权文本；单次正文最多 10000 字符，按返回的行/列游标继续；返回 SHA-256 供后续并发安全编辑。",
+    "filesystem_read_text": "严格解码并有界分段读取已授权文本，包括大文件；单次正文最多 10000 字符，按返回的行/列游标继续；返回 SHA-256 供后续并发安全编辑。读取日志末尾时优先使用 filesystem_read_text_tail。",
+    "filesystem_read_text_tail": "流式读取已授权文本的末尾若干行，适合大日志；内存与单次正文均有界，返回准确行号和 SHA-256。",
     "filesystem_write_text": "原子写入 UTF-8 文本。缺失目标需要 create；已有目标需要 edit、expected_sha256 和准确 overwrite action。edit 不包含 create。",
     "filesystem_apply_patch": "对单个已有文本应用严格 patch。必须使用字面量 *** Begin Patch / *** Update File: / @@ / *** End Patch，hunk 行以空格、+ 或 - 开头，并提供 expected_sha256。",
     "filesystem_create_directory": "在 create scope 内创建目录；edit 不能创建目录，也不会扩大授权范围。",

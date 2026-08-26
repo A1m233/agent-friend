@@ -285,8 +285,8 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert host_launch.judge is not None
     assert host_launch.judge.required_successful_tool_calls[0].args == {
         "argv": [r"C:\fixture\MuMuPlayer.exe", "-v", "2"],
-        "execution": "host_user",
     }
+    assert host_launch.judge.required_successful_tool_calls[0].name == "host_process_start"
     managed_update = next(item for item in c24.cases if item.id == "C24-05")
     assert managed_update.judge is not None
     assert [(item.name, item.source) for item in managed_update.expected_skill_catalog_entries] == [
@@ -308,7 +308,12 @@ def test_loads_fixture_session_and_case_judge() -> None:
     assert [
         (item.name, item.source) for item in confirmed_replacement.expected_skill_catalog_entries
     ] == [("skill-installer", "builtin")]
-    replacement_requirement = confirmed_replacement.judge.required_successful_tool_calls[0]
+    assert confirmed_replacement.judge.required_tool_sequence == [
+        "skill_read",
+        "exec_command",
+        "exec_command",
+    ]
+    replacement_requirement = confirmed_replacement.judge.required_successful_tool_calls[1]
     replacement_command = replacement_requirement.args["cmd"]
     assert "--replace-local-changes" in replacement_command
     assert "--force" not in replacement_command

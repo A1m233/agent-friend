@@ -22,7 +22,7 @@
       "source_commit": "9ded177ce7c1c0bd2047f902936c177612ab3434",
       "source_path": "codex-rs/skills/src/assets/samples/skill-installer",
       "license": "Apache-2.0",
-      "snapshot_sha256": "d1e07f1b88d839cb4e09dac5c212036785b02b801827971743fa0420ef01c44e",
+      "snapshot_sha256": "58db28a053c7876ef3324308b3b086619bcbbb45268fd4e4728917327109de82",
       "retrieved_at": "2026-08-17",
       "compatibility_patches": [
         "Added agent-friend runtime capability and governed command instructions to SKILL.md.",
@@ -31,6 +31,7 @@
         "Used the product-owned run temp directory instead of a Codex-specific temp namespace.",
         "Allowed auto mode to fall back from GitHub archive HTTP failures to git while preserving both HTTPS and SSH clone diagnostics.",
         "Added package-external source and content records plus deterministic same-source update, local-change confirmation, unmanaged adoption, staging validation, idempotence, and rollback.",
+        "Routed local-change replacement and unmanaged adoption through same-turn governed commands whose approval follows the current session mode.",
         "Documented the complete governed exec_command shape so updates use command-owned access approval instead of filesystem authoring approval.",
         "Marked bundled upstream scripts as excluded from the host application's strict mypy pass.",
         "Regenerated agents/openai.yaml with agent-friend-facing Chinese metadata.",

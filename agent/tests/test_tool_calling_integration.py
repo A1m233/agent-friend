@@ -135,6 +135,23 @@ class UserActionRequiredTool:
         )
 
 
+class ApprovalDeniedTool:
+    name: ClassVar[str] = "approval_denied"
+    description: ClassVar[str] = "模拟用户拒绝后未执行的工具。"
+    parameters_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+    def invoke(self, args: dict[str, Any]) -> ToolResult:
+        return ToolResult(
+            text='{"error":"approval_denied"}',
+            is_error=True,
+            meta={
+                "error_kind": "approval_denied",
+                "executed": False,
+                "authorization_requested": True,
+            },
+        )
+
+
 class SpyRecallTool:
     """记录 ``recall_past_chats`` 的真实 invoke 入参，验证隐藏上下文注入。"""
 
@@ -862,6 +879,39 @@ def test_malformed_tool_call_is_closed_as_failed_item_before_recovery(
         )
     assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
     assert [event.payload["content"] for event in assistant_events] == ["done"]
+
+
+def test_tool_result_execution_metadata_is_preserved_in_stream_and_session(
+    tmp_path: Path,
+) -> None:
+    fake = _ScriptedLLMClient(
+        script=[
+            [
+                LLMToolCallDelta(
+                    index=0,
+                    tool_call_id="approval-call",
+                    tool_name="approval_denied",
+                    args_json_delta="{}",
+                ),
+                LLMTurnDone(stop_reason="tool_use"),
+            ],
+            [LLMTextDelta(text="stopped"), LLMTurnDone(stop_reason="end_turn")],
+        ]
+    )
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        registry=ToolRegistry([ApprovalDeniedTool()]),
+    )
+
+    events = list(conv.stream("reject it"))
+
+    result = next(event for event in events if isinstance(event, ToolCallResult))
+    assert result.executed is False
+    assert result.authorization_requested is True
+    persisted = next(event for event in conv.session.events if event.type == "tool_call_result")
+    assert persisted.payload["executed"] is False
+    assert persisted.payload["authorization_requested"] is True
 
 
 def test_repeated_malformed_tool_calls_keep_recovering_until_valid_call(

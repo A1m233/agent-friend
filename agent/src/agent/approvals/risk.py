@@ -84,6 +84,7 @@ class CatastrophicActionPolicy:
         normalized_segments: list[dict[str, object]] = []
         for dialect, tokens in segments:
             normalized_segments.append({"dialect": dialect, "tokens": list(tokens)})
+        for dialect, tokens in segments:
             if _is_disk_wipe(dialect, tokens, workdir=workdir):
                 return self._catastrophic(
                     "disk-wipe",
@@ -118,6 +119,7 @@ class CatastrophicActionPolicy:
         segments: list[dict[str, object]],
     ) -> dict[str, object]:
         details = request.details
+        skill = details.skill
         return {
             "kind": "command",
             "session_id": request.session_id,
@@ -128,6 +130,16 @@ class CatastrophicActionPolicy:
             "workdir": self._path_key(details.launch_workdir or details.workdir, None),
             "filesystem_access": details.filesystem_access,
             "network_access": details.network_access,
+            "skill": (
+                {
+                    "skill_id": skill.skill_id,
+                    "entry": skill.entry,
+                    "workdir": skill.workdir,
+                    "fingerprint": skill.fingerprint,
+                }
+                if skill is not None
+                else None
+            ),
             "segments": segments,
         }
 

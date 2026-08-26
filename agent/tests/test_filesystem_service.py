@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
+import agent.filesystem.service as filesystem_service_module
 import pytest
 from agent.filesystem import (
     ApprovalAction,
@@ -14,6 +15,7 @@ from agent.filesystem import (
     FilesystemService,
     ProtectedPathPolicy,
 )
+from agent.filesystem.service import MAX_TEXT_FILE_BYTES
 
 
 def _policy(tmp_path: Path) -> ProtectedPathPolicy:
@@ -213,6 +215,83 @@ def test_read_text_bounds_large_single_line_without_losing_continuation(tmp_path
     assert remainder["truncated"] is False
     assert remainder["next_start_line"] is None
     assert remainder["next_start_column"] is None
+
+
+def test_large_text_search_streams_past_whole_file_read_limit(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "large.log"
+    target.write_bytes(b"x" * (MAX_TEXT_FILE_BYTES + 1024) + b"\nlate needle\n")
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "read_text")
+
+    payload = FilesystemService(_policy(tmp_path)).search(
+        ledger,
+        scope_id=scope_id,
+        mode="content",
+        query="late needle",
+    )
+
+    matches = cast(list[dict[str, object]], payload["matches"])
+    assert [item["path"] for item in matches] == ["large.log"]
+    assert cast(list[dict[str, object]], matches[0]["content_matches"])[0]["line"] == 2
+    assert cast(int, payload["content_bytes_scanned"]) > MAX_TEXT_FILE_BYTES
+
+
+def test_content_search_reports_truncation_when_stream_budget_is_exhausted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "large.log").write_bytes(b"x" * 8192 + b"needle\n")
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "read_text")
+    monkeypatch.setattr(filesystem_service_module, "MAX_CONTENT_SEARCH_BYTES", 1024)
+
+    payload = FilesystemService(_policy(tmp_path)).search(
+        ledger,
+        scope_id=scope_id,
+        mode="content",
+        query="needle",
+    )
+
+    assert payload["matches"] == []
+    assert payload["truncated"] is True
+    assert payload["content_bytes_scanned"] == 1024
+
+
+def test_large_text_supports_bounded_line_range_and_tail(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    target = root / "large.log"
+    target.write_bytes(
+        b"header\r\n" + b"x" * (MAX_TEXT_FILE_BYTES + 1024) + b"\r\npenultimate\r\nlast\r\n"
+    )
+    ledger = FilesystemAuthorizationLedger()
+    scope_id = _grant(ledger, root, "read_text")
+    service = FilesystemService(_policy(tmp_path))
+
+    ranged = service.read_text(
+        ledger,
+        scope_id=scope_id,
+        relative_path="large.log",
+        start_line=3,
+        max_lines=1,
+    )
+    tail = service.read_text_tail(
+        ledger,
+        scope_id=scope_id,
+        relative_path="large.log",
+        max_lines=2,
+    )
+
+    assert ranged["content"] == "penultimate\r\n"
+    assert ranged["next_start_line"] == 4
+    assert tail["content"] == "penultimate\r\nlast\r\n"
+    assert tail["start_line"] == 3
+    assert tail["total_lines"] == 4
+    assert tail["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
 
 
 def test_atomic_create_overwrite_and_patch_require_current_version(tmp_path: Path) -> None:

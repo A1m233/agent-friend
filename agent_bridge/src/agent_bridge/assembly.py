@@ -661,6 +661,7 @@ def build_runtime(
         from .protocols.im import IMRuntime as _IMRuntime
         from .protocols.im import OnboardSessionRegistry as _OnboardSessionRegistry
         from .protocols.im.attachments import IMAttachmentResolver
+        from .protocols.im.coalescing import QQAttachmentTextCoalescer
         from .protocols.im.dedupe import RecentMessageDeduper
         from .protocols.im.inbound_resolver import CompositeInboundResolver
         from .protocols.im.media import QQFaceResolver
@@ -725,6 +726,10 @@ def build_runtime(
         )
         im_state_store = IMStateStore(settings.im_state_path)
         im_binding_coordinator = IMBindingCoordinator()
+        im_inbound_coalescer = QQAttachmentTextCoalescer(
+            im_binding_coordinator,
+            window_seconds=3.0,
+        )
         im_control_service = IMControlService(
             sessions=persistent_session_manager,
             state_store=im_state_store,
@@ -758,6 +763,7 @@ def build_runtime(
             coordinator=im_binding_coordinator,
             control_service=im_control_service,
             session_exists=session_bridge.session_exists,
+            inbound_coalescer=im_inbound_coalescer,
         )
         im_onboard_registry = _OnboardSessionRegistry(im_runtime=im_runtime)
         social_auth_orchestrator = SocialAuthOrchestrator(

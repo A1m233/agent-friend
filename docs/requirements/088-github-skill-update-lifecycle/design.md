@@ -131,7 +131,7 @@ install-skill-from-github.py --update <skill-name> --replace-local-changes [--re
 
 - 与记录一致：允许继续；
 - 与记录不一致：返回 `local_changes_detected`，打印已安装名称、同源 repository/path、记录 digest、当前 digest 和“继续会丢失本地修改”；
-- 用户确认后，Agent 只能用真实存在的 `--replace-local-changes` 重试；该 flag 只跳过本地漂移阻断，不跳过来源、staging、校验、并发重检或失败恢复。
+- 首次冲突结果后，Agent 在同一 tool loop 用真实存在的 `--replace-local-changes` 重试，并把 Skill 名称、来源、记录/current digest 与丢失风险写入 command reason。`per_request` 由授权卡作单次决定，`session_auto` 对未命中灾难性门禁的 replacement 自动允许；该 flag 只跳过本地漂移阻断，不跳过来源、staging、校验、并发重检或失败恢复。
 
 候选 digest 同时等于当前目录 digest 和记录 digest 时返回 `already_up_to_date`，不创建替换目录、不重写 JSON lock。若候选等于当前目录但记录 digest 不同，仍属于本地漂移或 crash 后不一致，不能静默修正记录。
 
@@ -142,7 +142,7 @@ install-skill-from-github.py --repo owner/repo --path path/to/skill \
   --name <skill-name> --replace-unmanaged [--ref <ref>]
 ```
 
-已存在目录但没有记录时，普通首次安装先返回 `unmanaged_destination_exists`。用户明确确认以后，Agent 使用正式的 `--replace-unmanaged` 重试。该 flag 要求单一 `--path` 和明确 `--name`，且目标必须存在、不得有合法管理记录；它不能覆盖受管理 Skill，也不能与 `--update` 或 `--replace-local-changes` 组合。
+已存在目录但没有记录时，普通首次安装先返回 `unmanaged_destination_exists`。Agent 在同一 tool loop 使用正式的 `--replace-unmanaged` 重试，并把 Skill 名称、拟采用来源、来源记录缺失与整体替换风险写入 command reason。`per_request` 由授权卡作单次决定，`session_auto` 对未命中灾难性门禁的 replacement 自动允许。该 flag 要求单一 `--path` 和明确 `--name`，且目标必须存在、不得有合法管理记录；它不能覆盖受管理 Skill，也不能与 `--update` 或 `--replace-local-changes` 组合。
 
 脚本以非零退出码和稳定前缀 `Error [<code>]:` 报告失败。成功输出明确区分 `Installed`、`Updated`、`Adopted` 和 `Already up to date`，并包含名称、规范化来源、ref 和 digest。Agent 只有在脚本退出码为 0 后才能复述成功。
 
@@ -197,8 +197,8 @@ lock 和所有 staging/旧目录都以 `.` 开头，现有 loader 不把它们�
 
 - 首次安装使用既有来源参数；
 - 已管理更新优先使用 `--update <name>`；
-- `local_changes_detected` 后先向用户解释将丢失的本地修改，只有再次明确确认才使用 `--replace-local-changes`；
-- `unmanaged_destination_exists` 后说明来源不可验证，只有再次明确确认才使用 `--replace-unmanaged`；
+- `local_changes_detected` 后在同一 tool loop 发起携带完整风险事实的 `--replace-local-changes`，实际授权遵循当前会话模式；
+- `unmanaged_destination_exists` 后在同一 tool loop 发起携带来源缺失与整体替换风险的 `--replace-unmanaged`，实际授权遵循当前会话模式；
 - `source_conflict`、`invalid_lock`、校验、下载或回滚失败必须如实停止；
 - 不使用或暗示 `--force`，不手工删除目录，不把下载完成、目录存在或未来 watcher 刷新当成更新成功。
 
@@ -228,8 +228,8 @@ lock 和所有 staging/旧目录都以 `.` 开头，现有 loader 不把它们�
 - 首次安装写入规范化来源、ref 和完整包 digest，catalog 可加载；
 - 同源更新成功，允许显式 ref 变化，并报告旧/新 digest；
 - 不同 repository/path、受管理目标上的接管 flag 和各模式非法组合均被拒绝；
-- 当前 digest 漂移时首次返回 `local_changes_detected`，未确认保持不变，显式确认后安全覆盖；
-- 无记录旧目录首次停止，显式 `--replace-unmanaged` 后建立记录；
+- 当前 digest 漂移时首次返回 `local_changes_detected`，replacement 按当前会话模式决定后安全覆盖；
+- 无记录旧目录首次停止，精确 `--replace-unmanaged` 按当前会话模式决定后建立记录；
 - 候选缺失/非法 `SKILL.md`、名称不一致、不可读文件、危险路径、symlink/junction 和非法 policy 均不触碰旧版；
 - 下载、候选复制、目录 rename、lock 写入和可恢复回滚故障保持旧目录与旧记录；回滚失败单独报告；
 - 相同候选重复更新不改变目录/lock mtime，不产生不同 digest；
@@ -241,7 +241,7 @@ lock 和所有 staging/旧目录都以 `.` 开头，现有 loader 不把它们�
 ### catalog、Agent eval 与打包
 
 - service 集成测试启动 watcher，验证成功替换后下一轮看到新版本，同时已有 `SkillTurnSnapshot` 和 command snapshot 保持旧内容；
-- C24 增加“更新已有 GitHub Skill”case：模型应选择 production builtin、使用 `--update`，并在本地修改/旧 Skill 接管时先请求用户确认；judge 明确拒绝虚构 `--force` 或未执行即声称成功；
+- C24 增加“更新已有 GitHub Skill”case：模型应选择 production builtin、使用 `--update`，并在本地修改/旧 Skill 接管时于同一 tool loop 发起携带完整风险事实的精确 replacement；judge 明确拒绝跨轮自然语言确认、虚构 `--force` 或未执行即声称成功，实际授权由当前会话模式决定；
 - eval 的 YAML、README 数量和 loader/judge tests 同步更新；真实 incident model 运行仍按 `llm-api-confirm` 逐次授权，未授权时只运行确定性 eval 测试；
 - frozen runtime smoke 从发布资源导入主脚本和新 helper，执行无网络的 lock/digest/校验/失败恢复最小路径，证明动态 sibling import 和 package data 均进入制品；
 - builtin manifest 的 snapshot hash 与 compatibility patch 说明随资源变更更新。
@@ -284,3 +284,4 @@ lock 和所有 staging/旧目录都以 `.` 开头，现有 loader 不把它们�
 | 日期 | 变更内容 | 是否需要重新实现 |
 | --- | --- | --- |
 | 2026-08-20 | 首次确认外置 lock、同源显式更新、staging 校验、可捕获失败回滚、本地修改二次确认、旧 Skill 接管、幂等与现有 catalog 热刷新的轻量方案 | — |
+| 2026-08-26 | replacement 保留同一 tool loop 的 typed command 恢复，移除 session_auto 下强制显式单次授权，统一服从需求 103 的两档模式与灾难性门禁 | approval policy、Skill 指引、C24-06、AC-5/AC-6 |

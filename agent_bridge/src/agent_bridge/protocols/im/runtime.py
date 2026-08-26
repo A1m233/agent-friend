@@ -33,6 +33,7 @@ from portalocker.exceptions import LockException
 
 from ...presence import IMPresenceSnapshot
 from .adapters.qq import QQAdapter
+from .coalescing import CoalescingDecision, QQAttachmentTextCoalescer
 from .content import OutboundContent, OutboundTextFormat
 from .coordinator import IMBindingCoordinator
 from .credentials import CredentialStore, ImCredential
@@ -115,6 +116,7 @@ class IMRuntime:
         coordinator: IMBindingCoordinator | None = None,
         control_service: IMControlService | None = None,
         session_exists: Callable[[str], bool] | None = None,
+        inbound_coalescer: QQAttachmentTextCoalescer | None = None,
     ) -> None:
         self._router = router
         self._credentials = credentials
@@ -126,6 +128,7 @@ class IMRuntime:
         self._coordinator = coordinator or IMBindingCoordinator()
         self._control_service = control_service
         self._session_exists = session_exists or (lambda _session_id: False)
+        self._inbound_coalescer = inbound_coalescer
         self._providers: dict[tuple[str, str], IMProvider] = {}
         self._provider_locks: dict[tuple[str, str], Any] = {}
         self._desired_bindings: set[tuple[str, str]] = set()
@@ -165,6 +168,14 @@ class IMRuntime:
 
         幂等:无 provider 时静默 return。
         """
+        if self._inbound_coalescer is not None:
+            cancelled = await self._inbound_coalescer.cancel_all()
+            if cancelled:
+                logger.info(
+                    "IM inbound pending cancelled reason=runtime_stop message_ids=%s",
+                    ",".join(cancelled),
+                )
+
         records = [
             (key, provider, self._provider_locks.get(key))
             for key, provider in self._providers.items()
@@ -285,6 +296,7 @@ class IMRuntime:
             self._desired_bindings.add(key)
         old = self._providers.pop(key, None)
         if old is not None:
+            self._cancel_provider_pending(old, reason="provider_replaced")
             # 旧 provider 异步 stop;不 block onboard 调用方
             loop = asyncio.get_running_loop()
             task = loop.create_task(self._stop_one_silent(old))
@@ -313,6 +325,7 @@ class IMRuntime:
         provider = self._providers.pop(key, None)
         lock = self._provider_locks.pop(key, None)
         if provider is not None:
+            self._cancel_provider_pending(provider, reason="provider_unbound")
             try:
                 await self._stop_one_silent(provider)
             finally:
@@ -512,15 +525,121 @@ class IMRuntime:
                 chat_id=event.chat_id,
             )
             async with self._coordinator.turn(binding_key):
-                await self._handle_bound_inbound(provider, event, binding_key)
+                await self._handle_or_coalesce_inbound(provider, event, binding_key)
 
         return cb
+
+    async def _handle_or_coalesce_inbound(
+        self,
+        provider: IMProvider,
+        event: InboundEvent,
+        binding_key: IMBindingKey,
+    ) -> None:
+        coalescer = self._inbound_coalescer
+        binding = self._state.get_binding(binding_key)
+        if coalescer is None or binding is None or not self._session_exists(binding.session_id):
+            await self._handle_bound_inbound(provider, event, binding_key)
+            return
+
+        session_id = binding.session_id
+        decision = coalescer.offer(
+            provider=provider,
+            binding_key=binding_key,
+            session_id=session_id,
+            event=event,
+            on_timeout=lambda key, token: self._handle_coalescing_timeout(
+                provider,
+                key,
+                session_id,
+                token,
+            ),
+        )
+        await self._apply_coalescing_decision(
+            provider,
+            binding_key,
+            expected_session_id=session_id,
+            decision=decision,
+        )
+
+    async def _handle_coalescing_timeout(
+        self,
+        provider: IMProvider,
+        binding_key: IMBindingKey,
+        session_id: str,
+        token: str,
+    ) -> None:
+        coalescer = self._inbound_coalescer
+        if coalescer is None:
+            return
+        async with self._coordinator.turn(binding_key):
+            decision = coalescer.expire(
+                provider=provider,
+                binding_key=binding_key,
+                session_id=session_id,
+                token=token,
+            )
+            await self._apply_coalescing_decision(
+                provider,
+                binding_key,
+                expected_session_id=session_id,
+                decision=decision,
+            )
+
+    async def _apply_coalescing_decision(
+        self,
+        provider: IMProvider,
+        binding_key: IMBindingKey,
+        *,
+        expected_session_id: str,
+        decision: CoalescingDecision,
+    ) -> None:
+        coalescer = self._inbound_coalescer
+        if decision.dropped_message_ids:
+            logger.info(
+                "IM inbound pending cancelled reason=owner_changed im_type=%s "
+                "provider_bind=%s chat_id=%s message_ids=%s",
+                provider.type,
+                provider.bind_id,
+                binding_key.chat_id,
+                ",".join(decision.dropped_message_ids),
+            )
+        if decision.held_message_id is not None and coalescer is not None:
+            logger.info(
+                "IM inbound pending held im_type=%s provider_bind=%s chat_id=%s "
+                "message_id=%s window_ms=%d",
+                provider.type,
+                provider.bind_id,
+                binding_key.chat_id,
+                decision.held_message_id,
+                round(coalescer.window_seconds * 1000),
+            )
+        for dispatch in decision.dispatches:
+            if dispatch.reason != "direct":
+                logger.info(
+                    "IM inbound pending settled im_type=%s provider_bind=%s chat_id=%s "
+                    "reason=%s source_message_ids=%s reply_message_id=%s waited_ms=%d",
+                    provider.type,
+                    provider.bind_id,
+                    binding_key.chat_id,
+                    dispatch.reason,
+                    ",".join(dispatch.source_message_ids),
+                    dispatch.event.message_id,
+                    round((dispatch.waited_seconds or 0.0) * 1000),
+                )
+            await self._handle_bound_inbound(
+                provider,
+                dispatch.event,
+                binding_key,
+                expected_session_id=expected_session_id,
+            )
 
     async def _handle_bound_inbound(
         self,
         provider: IMProvider,
         event: InboundEvent,
         binding_key: IMBindingKey,
+        *,
+        expected_session_id: str | None = None,
     ) -> None:
         binding = self._state.get_binding(binding_key)
         if binding is None:
@@ -531,6 +650,18 @@ class IMRuntime:
                     text="还没有选择会话，请先在 agent-friend 的“接入 IM”窗口完成选择。",
                     reply_to_message_id=event.message_id,
                 )
+            )
+            return
+        if expected_session_id is not None and binding.session_id != expected_session_id:
+            logger.info(
+                "IM inbound stale binding ignored im_type=%s provider_bind=%s chat_id=%s "
+                "message_id=%s expected_session_id=%s actual_session_id=%s",
+                provider.type,
+                provider.bind_id,
+                event.chat_id,
+                event.message_id,
+                expected_session_id,
+                binding.session_id,
             )
             return
         if not self._session_exists(binding.session_id):
@@ -630,6 +761,20 @@ class IMRuntime:
             references=result.references,
             session_id=binding.session_id,
         )
+
+    def _cancel_provider_pending(self, provider: IMProvider, *, reason: str) -> None:
+        coalescer = self._inbound_coalescer
+        if coalescer is None:
+            return
+        cancelled = coalescer.cancel_provider(provider)
+        if cancelled:
+            logger.info(
+                "IM inbound pending cancelled reason=%s im_type=%s provider_bind=%s message_ids=%s",
+                reason,
+                provider.type,
+                provider.bind_id,
+                ",".join(cancelled),
+            )
 
     def _make_interaction_cb(
         self,
