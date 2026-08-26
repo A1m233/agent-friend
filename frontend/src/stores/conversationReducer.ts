@@ -35,6 +35,12 @@ import type { PushEvent } from "@/types/push";
 /** 工具结果里 bridge 用此前缀表达 is_error（006 encoders：无专用字段，约定前缀）。 */
 export const TOOL_ERROR_PREFIX = "[error] ";
 
+function eventTimestampIso(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const time = new Date(value);
+  return Number.isNaN(time.getTime()) ? null : time.toISOString();
+}
+
 /** 把一个 AG-UI 事件应用到 assistant 消息，返回新消息（不可变）。 */
 export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
   switch (evt.type) {
@@ -127,6 +133,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       const e = evt as RunFinishedEvent;
       return {
         ...msg,
+        createdAt: eventTimestampIso(e.timestamp) ?? msg.createdAt,
         status: isCancelledRunResult(e.result) ? "interrupted" : "complete",
         runStatus: undefined,
         blocks: removeRunningCompactions(msg.blocks),
@@ -138,6 +145,7 @@ export function applyAguiEvent(msg: ChatMessage, evt: BaseEvent): ChatMessage {
       // RUN_ERROR 是 turn 失败状态，不是 assistant 正常文本；文案由 bridge 按错误码清洗。
       return {
         ...msg,
+        createdAt: eventTimestampIso(e.timestamp) ?? msg.createdAt,
         status: "error",
         error: e.message,
         errorCode: e.code,
@@ -263,6 +271,7 @@ export function applyPushConversationEvent(
     case "done":
       return {
         ...msg,
+        createdAt: eventTimestampIso(evt.timestamp) ?? msg.createdAt,
         status: "complete",
         runStatus: undefined,
         blocks: removeRunningCompactions(msg.blocks),

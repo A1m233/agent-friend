@@ -112,7 +112,10 @@ export interface ChatTextReference {
 export interface ChatMessage {
   id: string;
   role: ChatRole;
-  /** 消息创建时间，ISO 字符串；历史消息来自后端事件 ts，实时消息由前端生成。 */
+  /**
+   * 消息展示时间，ISO 字符串：user 取发送时间，assistant 取本轮回答进入终态的时间。
+   * 实时 assistant 占位消息会先持有临时时间，并在完成 / 中断 / 失败时更新。
+   */
   createdAt: string;
   blocks: MessageBlock[];
   attachments?: ChatAttachment[];

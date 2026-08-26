@@ -27,11 +27,17 @@ describe("applyAguiEvent", () => {
       { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "你好" },
       { type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "，世界" },
       { type: EventType.TEXT_MESSAGE_END, messageId: "m1" },
-      { type: EventType.RUN_FINISHED, threadId: "t", runId: "r" },
+      {
+        type: EventType.RUN_FINISHED,
+        threadId: "t",
+        runId: "r",
+        timestamp: Date.parse("2026-06-10T00:00:03Z"),
+      },
     ]);
     expect(out.blocks).toHaveLength(1);
     expect((out.blocks[0] as TextBlock).text).toBe("你好，世界");
     expect(out.status).toBe("complete");
+    expect(out.createdAt).toBe("2026-06-10T00:00:03.000Z");
   });
 
   it("工具调用：START→ARGS→RESULT 推进卡片状态机到 done", () => {
@@ -65,11 +71,17 @@ describe("applyAguiEvent", () => {
   it("RUN_ERROR → 消息标记 error 并保留错误码", () => {
     const out = applyAguiEvent(
       base,
-      emit({ type: EventType.RUN_ERROR, message: "模型服务这会儿过载了", code: "rate_limit" }),
+      emit({
+        type: EventType.RUN_ERROR,
+        message: "模型服务这会儿过载了",
+        code: "rate_limit",
+        timestamp: Date.parse("2026-06-10T00:00:04Z"),
+      }),
     );
     expect(out.status).toBe("error");
     expect(out.error).toBe("模型服务这会儿过载了");
     expect(out.errorCode).toBe("rate_limit");
+    expect(out.createdAt).toBe("2026-06-10T00:00:04.000Z");
   });
 
   it("cancelled RUN_FINISHED → 标记为 interrupted，不冒充错误", () => {
@@ -278,7 +290,7 @@ describe("applyPushConversationEvent", () => {
         is_error: false,
       },
       { type: "text_delta", text: "再总结" },
-      { type: "done" },
+      { type: "done", timestamp: Date.parse("2026-06-10T00:00:05Z") },
     ];
     const out = events.reduce(
       (message, event) => applyPushConversationEvent(message, event, "run-1"),
@@ -296,6 +308,7 @@ describe("applyPushConversationEvent", () => {
     });
     expect((out.blocks[2] as TextBlock).text).toBe("再总结");
     expect(out.status).toBe("complete");
+    expect(out.createdAt).toBe("2026-06-10T00:00:05.000Z");
   });
 
   it("projects model response status and clears it on text", () => {
