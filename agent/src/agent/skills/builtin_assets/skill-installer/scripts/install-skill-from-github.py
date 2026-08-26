@@ -397,9 +397,12 @@ def _preflight_install(
             if not replace_unmanaged:
                 raise InstallError(
                     f"Skill {skill_name!r} exists without a source record. Its origin and local "
-                    "changes cannot be verified. Retry the same source in this tool loop with "
-                    "--replace-unmanaged and an explicit --name; agent-friend will hold that exact "
-                    "replacement for an explicit one-shot user decision before execution.",
+                    f"changes cannot be verified. Proposed source: {proposed.repository}:"
+                    f"{proposed.path}@{proposed.ref}. Continuing will replace the entire existing "
+                    "Skill directory. Retry the same source in this tool loop with "
+                    "--replace-unmanaged and an explicit --name, keep these facts in the command "
+                    "reason, and let the exact replacement follow the current session approval "
+                    "mode.",
                     code="unmanaged_destination_exists",
                 )
             planned[skill_name] = ("unmanaged", package_digest(destination))
@@ -475,8 +478,9 @@ def _run_update(args: Args, root: Path) -> None:
         if os.path.lexists(destination):
             raise InstallError(
                 f"Skill {skill_name!r} exists without a source record. Provide its GitHub source "
-                "and use the explicit unmanaged replacement flow; agent-friend will hold the "
-                "exact replacement for a one-shot user decision before execution.",
+                "and use the unmanaged replacement flow in this tool loop. Keep the missing-source "
+                "and full replacement risk in the command reason; the exact replacement follows "
+                "the current session approval mode.",
                 code="unmanaged_destination_exists",
             )
         raise InstallError(
@@ -494,10 +498,10 @@ def _run_update(args: Args, root: Path) -> None:
             f"{record.repository}:{record.path}@{record.ref}; recorded "
             f"sha256={record.content_sha256}; current sha256={current_sha256}. "
             "Continuing will discard those changes. Retry in this tool loop with "
-            f"this option order: --update {skill_name} --replace-local-changes; agent-friend will "
-            "hold that exact replacement for an explicit one-shot user decision. If the original "
-            "command included --ref, keep the same ref between the skill name and confirmation "
-            "flag.",
+            f"this option order: --update {skill_name} --replace-local-changes. Keep the Skill "
+            "name, source, both digests, and loss warning in the command reason; the exact "
+            "replacement follows the current session approval mode. If the original command "
+            "included --ref, keep the same ref between the skill name and replacement flag.",
             code="local_changes_detected",
         )
 

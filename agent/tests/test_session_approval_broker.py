@@ -157,38 +157,36 @@ def test_session_auto_keeps_explicit_host_user_command_once_scoped(tmp_path: Pat
             'set "PYTHONPATH=scripts" && python scripts\\install-skill-from-github.py '
             "--update demo --replace-local-changes",
         ),
+        (
+            "python",
+            "scripts/install-skill-from-github.py",
+            "--repo",
+            "owner/repo",
+            "--path",
+            "demo",
+            "--name",
+            "demo",
+            "--replace-unmanaged",
+        ),
     ],
 )
-def test_session_auto_keeps_skill_replacement_pending_for_explicit_user(
+def test_session_auto_fully_approves_skill_replacement_without_pending(
     tmp_path: Path,
     argv: tuple[str, ...],
 ) -> None:
     broker = _broker(tmp_path)
     broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
     request = _skill_replacement_request(argv)
-    result: list[Any] = []
-    thread = threading.Thread(
-        target=lambda: result.append(broker.request(request, timeout_seconds=2)),
-        daemon=True,
-    )
-    thread.start()
 
-    _wait_pending(broker)
+    decision = broker.request(request, timeout_seconds=0.1)
+
+    assert decision.approved is True
     assert request.approval_mode == "session_auto"
-    assert request.status == "pending"
+    assert request.status == "approved"
     assert request.risk_assessment is not None
-    assert request.risk_assessment.level == "explicit"
-    assert broker.decide(
-        request.request_id,
-        request.fully_approved_decision(),
-        session_id="sid-1",
-        run_id="run-1",
-        expected_kind="command",
-    )
-    thread.join(timeout=2)
-
-    assert result and result[0].approved is True
-    assert request.decision_source == "user_once"
+    assert request.risk_assessment.level == "normal"
+    assert request.decision_source == "session_auto"
+    assert broker.pending(session_id="sid-1") == ()
 
 
 def test_session_auto_denies_catastrophic_request(tmp_path: Path) -> None:
@@ -245,7 +243,7 @@ def test_composer_mode_switch_denies_existing_catastrophic_pending(tmp_path: Pat
     assert broker.pending(session_id="sid-1") == ()
 
 
-def test_composer_mode_switch_preserves_existing_explicit_user_request(
+def test_composer_mode_switch_approves_existing_skill_replacement(
     tmp_path: Path,
 ) -> None:
     broker = _broker(tmp_path)
@@ -260,18 +258,12 @@ def test_composer_mode_switch_preserves_existing_explicit_user_request(
 
     broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
 
-    assert request.status == "pending"
+    assert request.status == "approved"
     assert request.approval_mode == "session_auto"
-    assert broker.pending(session_id="sid-1") == (request,)
-    assert broker.decide(
-        request.request_id,
-        request.fully_approved_decision(),
-        session_id="sid-1",
-        run_id="run-1",
-        expected_kind="command",
-    )
+    assert broker.pending(session_id="sid-1") == ()
     thread.join(timeout=2)
     assert result and result[0].approved is True
+    assert request.decision_source == "session_auto"
 
 
 def test_card_combination_resolves_current_and_remaining_requests(tmp_path: Path) -> None:

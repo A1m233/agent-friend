@@ -184,7 +184,7 @@ def test_risk_fingerprint_changes_with_command_target() -> None:
     assert first.fingerprint != second.fingerprint
 
 
-def test_first_party_skill_replacement_flags_require_explicit_user() -> None:
+def test_first_party_skill_replacement_flags_remain_normal() -> None:
     policy = CatastrophicActionPolicy(
         path_flavor="windows",
         home=Path("C:/Users/test"),
@@ -236,16 +236,15 @@ def test_first_party_skill_replacement_flags_require_explicit_user() -> None:
         )
     )
 
-    assert local.level == "explicit"
-    assert local.requires_explicit_user is True
-    assert local.code == "skill-local-changes-replacement"
-    assert unmanaged.level == "explicit"
-    assert unmanaged.code == "skill-unmanaged-replacement"
-    assert cmd_prefixed.level == "explicit"
-    assert cmd_prefixed.code == "skill-local-changes-replacement"
+    assert local.level == "normal"
+    assert local.code is None
+    assert unmanaged.level == "normal"
+    assert unmanaged.code is None
+    assert cmd_prefixed.level == "normal"
+    assert cmd_prefixed.code is None
 
 
-def test_skill_replacement_detection_requires_exact_first_party_binding() -> None:
+def test_skill_binding_remains_part_of_normal_command_fingerprint() -> None:
     policy = CatastrophicActionPolicy(path_flavor="windows", home=Path("C:/Users/test"))
     argv = ("python", "custom.py", "--replace-local-changes")
 

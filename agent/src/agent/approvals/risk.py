@@ -1,4 +1,4 @@
-"""Deterministic risk policy for typed local approvals."""
+"""Deterministic catastrophic-action policy for typed local approvals."""
 
 from __future__ import annotations
 
@@ -24,13 +24,11 @@ _MAX_WRAPPER_DEPTH = 3
 
 
 class CatastrophicActionPolicy:
-    """Classify a deliberately narrow set of mechanically provable risks.
+    """Classify a deliberately narrow set of mechanically provable disasters.
 
     This is not a general script or intent analyzer.  Unknown executables remain
     normal so the product does not claim that arbitrary program semantics were
-    reviewed. In addition to catastrophic operations, first-party Skill replacement
-    flags are recognized as requiring an explicit one-shot user decision. Existing
-    sandbox and protected-path policies remain independent.
+    reviewed.  Existing sandbox and protected-path policies remain independent.
     """
 
     def __init__(
@@ -86,9 +84,6 @@ class CatastrophicActionPolicy:
         normalized_segments: list[dict[str, object]] = []
         for dialect, tokens in segments:
             normalized_segments.append({"dialect": dialect, "tokens": list(tokens)})
-        replacement = self._skill_replacement(request, segments, normalized_segments)
-        if replacement is not None:
-            return replacement
         for dialect, tokens in segments:
             if _is_disk_wipe(dialect, tokens, workdir=workdir):
                 return self._catastrophic(
@@ -117,37 +112,6 @@ class CatastrophicActionPolicy:
                         self._command_fingerprint_payload(request, normalized_segments),
                     )
         return self._normal(self._command_fingerprint_payload(request, normalized_segments))
-
-    def _skill_replacement(
-        self,
-        request: Any,
-        command_segments: tuple[tuple[str, tuple[str, ...]], ...],
-        segments: list[dict[str, object]],
-    ) -> RiskAssessment | None:
-        skill = getattr(request.details, "skill", None)
-        if (
-            skill is None
-            or skill.skill_id != "builtin/skill-installer"
-            or skill.entry != "scripts/install-skill-from-github.py"
-        ):
-            return None
-        flags = {token for _dialect, tokens in command_segments for token in tokens}
-        payload = self._command_fingerprint_payload(request, segments)
-        if "--replace-local-changes" in flags:
-            return self._explicit(
-                "skill-local-changes-replacement",
-                "继续会丢弃该 Skill 当前目录中的本地修改；本次必须由用户显式确认。",
-                ("first-party skill-installer uses --replace-local-changes",),
-                payload,
-            )
-        if "--replace-unmanaged" in flags:
-            return self._explicit(
-                "skill-unmanaged-replacement",
-                "继续会整体替换并接管一个没有可信来源记录的现有 Skill；本次必须由用户显式确认。",
-                ("first-party skill-installer uses --replace-unmanaged",),
-                payload,
-            )
-        return None
 
     def _command_fingerprint_payload(
         self,
@@ -249,21 +213,6 @@ class CatastrophicActionPolicy:
     ) -> RiskAssessment:
         return RiskAssessment(
             "catastrophic",
-            _fingerprint({"assessment_code": code, **payload}),
-            code=code,
-            message=message,
-            evidence=evidence,
-        )
-
-    @staticmethod
-    def _explicit(
-        code: str,
-        message: str,
-        evidence: tuple[str, ...],
-        payload: dict[str, object],
-    ) -> RiskAssessment:
-        return RiskAssessment(
-            "explicit",
             _fingerprint({"assessment_code": code, **payload}),
             code=code,
             message=message,

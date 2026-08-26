@@ -200,7 +200,7 @@ def test_idempotent_update_does_not_rewrite_skill_or_lock(
     assert (entry.stat().st_mtime_ns, lock.stat().st_mtime_ns, lock.read_bytes()) == before
 
 
-def test_local_changes_require_explicit_replacement(
+def test_local_changes_require_replacement_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = _load_installer()
@@ -220,7 +220,10 @@ def test_local_changes_require_explicit_replacement(
     assert blocked == 1
     assert "Error [local_changes_detected]" in blocked_output.err
     assert "--update fixture-skill --replace-local-changes" in blocked_output.err
-    assert "explicit one-shot user decision" in blocked_output.err
+    assert "current session approval mode" in blocked_output.err
+    assert "recorded sha256=" in blocked_output.err
+    assert "current sha256=" in blocked_output.err
+    assert "Continuing will discard those changes" in blocked_output.err
     assert script.read_text("utf-8") == "local edit\n"
     assert (personal / ".agent-friend-skill-lock.json").read_bytes() == before_lock
 
@@ -238,7 +241,7 @@ def test_local_changes_require_explicit_replacement(
     assert script.read_text("utf-8") == "upstream\n"
 
 
-def test_unmanaged_skill_requires_confirmation_before_adoption(
+def test_unmanaged_skill_requires_replacement_flag_before_adoption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = _load_installer()
@@ -271,7 +274,9 @@ def test_unmanaged_skill_requires_confirmation_before_adoption(
 
     assert blocked == 1
     assert "Error [unmanaged_destination_exists]" in blocked_output.err
-    assert "explicit one-shot user decision" in blocked_output.err
+    assert "current session approval mode" in blocked_output.err
+    assert "Proposed source: fixture/repo:skills/fixture-skill@main" in blocked_output.err
+    assert "replace the entire existing Skill directory" in blocked_output.err
     assert (installed / "local.txt").is_file()
     assert not (personal / ".agent-friend-skill-lock.json").exists()
 

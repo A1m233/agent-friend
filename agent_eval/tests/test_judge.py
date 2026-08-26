@@ -1448,7 +1448,7 @@ def test_managed_skill_update_accepts_catalog_skill_read_without_host_activation
     assert verdict.passed is True
 
 
-def test_same_turn_local_replacement_requires_activation_error_recovery_and_exact_command() -> None:
+def test_same_turn_local_replacement_requires_error_recovery_and_exact_command() -> None:
     contract = next(item for item in load_contracts(CASES_DIR) if item.id == "C24")
     case = next(item for item in contract.cases if item.id == "C24-06")
     access = {
@@ -1507,7 +1507,10 @@ def test_same_turn_local_replacement_requires_activation_error_recovery_and_exac
             "workdir": ".",
         },
         "access": access,
-        "reason": "覆盖已确认放弃的本地修改并更新 maa-daily",
+        "reason": (
+            "maa-daily 来源 fixture/repo:maa-daily@main，记录 sha256=111，"
+            "当前 sha256=333；继续会丢失本地修改"
+        ),
     }
     wrong_order_args = {
         **exact_args,

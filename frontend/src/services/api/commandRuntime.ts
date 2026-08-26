@@ -9,7 +9,7 @@ export type ApprovalDecisionSource =
   | "catastrophic_policy";
 
 export interface ApprovalRiskAssessment {
-  level: "normal" | "explicit" | "catastrophic";
+  level: "normal" | "catastrophic";
   fingerprint: string;
   code?: string | null;
   message?: string | null;

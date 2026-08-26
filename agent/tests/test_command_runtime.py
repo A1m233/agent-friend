@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from agent.approvals import ApprovalBroker
+from agent.approvals import ApprovalBroker, CatastrophicActionPolicy
 from agent.command_runtime import (
     CommandApprovalDecision,
     CommandApprovalDetails,
@@ -53,11 +53,13 @@ from agent.command_runtime.tools import (
     _result,
     make_command_tools,
 )
+from agent.sessions.metadata import SessionMetadataStore
 from agent.skills.models import (
     ActivatedSkill,
     RenderedSkillCatalog,
     SkillCatalogSnapshot,
     SkillRecord,
+    SkillSource,
     SkillTurnSnapshot,
 )
 from agent.tool_runtime import ToolRunContext
@@ -1755,6 +1757,179 @@ def test_skill_binding_approval_contains_content_fingerprint(
     assert json.loads(result_box[0].text)["status"] == "denied"
 
 
+@pytest.mark.parametrize(
+    "replacement_args",
+    [
+        "--update demo --replace-local-changes",
+        "--repo owner/repo --path demo --name demo --replace-unmanaged",
+    ],
+)
+def test_session_auto_executes_skill_replacement_without_pending(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+    replacement_args: str,
+) -> None:
+    package = tmp_path / "skill-installer"
+    scripts = package / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "install-skill-from-github.py").write_text("print('fixture')\n", encoding="utf-8")
+    activation = _activation(
+        package,
+        skill_id="builtin/skill-installer",
+        name="skill-installer",
+        source="builtin",
+    )
+    broker = _session_auto_broker(tmp_path)
+    context = ToolRunContext.create("")
+
+    result = ExecCommandTool(runtime, broker).invoke(
+        {
+            "cmd": f"python scripts/install-skill-from-github.py {replacement_args}",
+            "skill": {
+                "skill_id": activation.record.id,
+                "entry": "scripts/install-skill-from-github.py",
+                "workdir": ".",
+            },
+            "access": {
+                "filesystem": "read_write",
+                "additional_roots": [],
+                "network": "enabled",
+            },
+            "reason": "执行包含完整替换风险事实的 Skill 更新",
+            "mode": "streaming",
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "call-replacement",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: context,
+            COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert result.is_error is False
+    assert payload["status"] == "running"
+    assert payload["approval"]["approval_mode"] == "session_auto"
+    assert payload["approval"]["decision_source"] == "session_auto"
+    assert payload["approval"]["risk_code"] is None
+    assert broker.pending(session_id="session-a") == ()
+    process = next(item for item in runtime.snapshots() if item.process_id == payload["process_id"])
+    assert process.status == "running"
+    context.close_commands()
+
+
+def test_session_auto_catastrophic_command_is_denied_before_start(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+) -> None:
+    broker = _session_auto_broker(tmp_path)
+    result = ExecCommandTool(runtime, broker).invoke(
+        {
+            "cmd": "format.com C:",
+            "workdir": str(tmp_path.resolve()),
+            "access": {"filesystem": "read_write", "network": "disabled"},
+            "reason": "尝试清除磁盘分区",
+            COMMAND_SESSION_ID_ARG: "session-a",
+            COMMAND_RUN_ID_ARG: "run-a",
+            COMMAND_TOOL_CALL_ID_ARG: "call-catastrophic",
+            COMMAND_SURFACE_ARG: "desktop_chat",
+            COMMAND_RUN_CONTEXT_ARG: ToolRunContext.create(""),
+        }
+    )
+
+    payload = json.loads(result.text)
+    assert result.is_error is True
+    assert payload["error"] == "catastrophic_action_blocked_in_session_auto"
+    assert payload["approval"]["decision_source"] == "catastrophic_policy"
+    assert runtime.snapshots(session_id="session-a") == ()
+    assert broker.pending(session_id="session-a") == ()
+
+
+@pytest.mark.parametrize("allow", [True, False])
+def test_per_request_skill_replacement_preserves_risk_facts_and_single_decision(
+    runtime: CommandRuntime,
+    tmp_path: Path,
+    allow: bool,
+) -> None:
+    package = tmp_path / "skill-installer"
+    scripts = package / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "install-skill-from-github.py").write_text("print('fixture')\n", encoding="utf-8")
+    activation = _activation(
+        package,
+        skill_id="builtin/skill-installer",
+        name="skill-installer",
+        source="builtin",
+    )
+    broker = ApprovalBroker(
+        risk_policy=CatastrophicActionPolicy(path_flavor="windows", home=Path("C:/Users/test"))
+    )
+    context = ToolRunContext.create("")
+    reason = (
+        "maa-daily 本地内容偏离记录；来源 a1m233/maa-daily-skill:maa-daily@main；"
+        "记录 sha256=a7601146，当前 sha256=a4a37301；继续会丢失本地修改"
+    )
+    result_box = []
+    args = {
+        "cmd": (
+            "python scripts/install-skill-from-github.py --update maa-daily --replace-local-changes"
+        ),
+        "skill": {
+            "skill_id": activation.record.id,
+            "entry": "scripts/install-skill-from-github.py",
+            "workdir": ".",
+        },
+        "access": {
+            "filesystem": "read_write",
+            "additional_roots": [],
+            "network": "enabled",
+        },
+        "reason": reason,
+        "mode": "streaming",
+        COMMAND_SESSION_ID_ARG: "session-a",
+        COMMAND_RUN_ID_ARG: "run-a",
+        COMMAND_TOOL_CALL_ID_ARG: "call-replacement",
+        COMMAND_SURFACE_ARG: "desktop_chat",
+        COMMAND_RUN_CONTEXT_ARG: context,
+        COMMAND_SKILL_SNAPSHOT_ARG: _turn_snapshot(activation),
+    }
+    thread = threading.Thread(
+        target=lambda: result_box.append(ExecCommandTool(runtime, broker).invoke(args))
+    )
+    thread.start()
+    request = _wait_for_request(broker)
+
+    assert request.reason == reason
+    assert request.details.skill is not None
+    assert request.details.skill.skill_id == "builtin/skill-installer"
+    assert request.risk_assessment is not None
+    assert request.risk_assessment.level == "normal"
+    assert broker.decide(
+        request.request_id,
+        CommandApprovalDecision(allow=allow),
+        session_id="session-a",
+        run_id="run-a",
+        expected_kind="command",
+    )
+    thread.join(timeout=3)
+
+    assert not thread.is_alive()
+    payload = json.loads(result_box[0].text)
+    if allow:
+        assert payload["status"] == "running"
+        assert payload["approval"]["decision_source"] == "user_once"
+        process = next(
+            item for item in runtime.snapshots() if item.process_id == payload["process_id"]
+        )
+        assert process.status == "running"
+    else:
+        assert payload["error"] == "approval_denied"
+        assert result_box[0].meta["executed"] is False
+        assert result_box[0].meta["authorization_requested"] is True
+        assert runtime.snapshots(session_id="session-a") == ()
+    context.close_commands()
+
+
 def test_single_active_skill_binding_is_inferred_without_copying_skill_id(
     runtime: CommandRuntime, tmp_path: Path
 ) -> None:
@@ -2136,13 +2311,19 @@ def test_linked_workdir_is_rejected(runtime: CommandRuntime, tmp_path: Path) -> 
     assert json.loads(result.text)["error"] == "linked_path_not_allowed"
 
 
-def _activation(package: Path) -> ActivatedSkill:
+def _activation(
+    package: Path,
+    *,
+    skill_id: str = "skill_test",
+    name: str = "test",
+    source: SkillSource = "personal",
+) -> ActivatedSkill:
     entry = package / "SKILL.md"
-    entry.write_text("---\nname: test\ndescription: test\n---\n", encoding="utf-8")
+    entry.write_text(f"---\nname: {name}\ndescription: test\n---\n", encoding="utf-8")
     record = SkillRecord(
-        id="skill_test",
-        source="personal",
-        name="test",
+        id=skill_id,
+        source=source,
+        name=name,
         description="test",
         entry_path=entry,
         canonical_entry_path=entry,
@@ -2153,6 +2334,16 @@ def _activation(package: Path) -> ActivatedSkill:
     return ActivatedSkill(
         record=record, contents=entry.read_text(encoding="utf-8"), version=record.version
     )
+
+
+def _session_auto_broker(tmp_path: Path) -> ApprovalBroker:
+    broker = ApprovalBroker(
+        mode_store=SessionMetadataStore(tmp_path / "metadata.json"),
+        risk_policy=CatastrophicActionPolicy(path_flavor="windows", home=Path("C:/Users/test")),
+        session_exists=lambda session_id: session_id == "session-a",
+    )
+    broker.set_session_mode("session-a", mode="session_auto", expected_version=0)
+    return broker
 
 
 def _turn_snapshot(activation: ActivatedSkill) -> SkillTurnSnapshot:

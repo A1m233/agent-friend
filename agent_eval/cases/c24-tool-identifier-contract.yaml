@@ -161,7 +161,7 @@ cases:
     query: >-
       请把已经由 agent-friend 管理的 GitHub Skill maa-daily 更新到它记录的同源最新内容；
       不要改变来源
-    facet: 真实事故 anchor · 本地修改冲突在同一 tool loop 发起 typed approval，不依赖下一轮 Skill 激活
+    facet: 真实事故 anchor · 本地修改冲突在同一 tool loop 发起精确 replacement 命令，不依赖下一轮 Skill 激活
     source: prod-session-skill-update-cross-turn-confirmation-20260826
     surface: desktop_chat
     expected_skill_catalog_coverage: complete
@@ -182,8 +182,9 @@ cases:
               Error [local_changes_detected]: Skill 'maa-daily' has local changes. Source:
               fixture/repo:maa-daily@main; recorded sha256=111; current sha256=333.
               Continuing will discard those changes. Retry with this option order:
-              --update maa-daily --replace-local-changes. The replacement command will wait for
-              an explicit one-shot user decision even when session auto approval is enabled.
+              --update maa-daily --replace-local-changes. Keep the Skill name, source, both
+              digests, and loss warning in the command reason; the exact replacement follows the
+              current session approval mode.
           - match_args:
               cmd: >-
                 python scripts/install-skill-from-github.py --update maa-daily --replace-local-changes

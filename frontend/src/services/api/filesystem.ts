@@ -36,7 +36,7 @@ export interface FilesystemApprovalRequest {
     | "catastrophic_policy"
     | null;
   risk?: {
-    level: "normal" | "explicit" | "catastrophic";
+    level: "normal" | "catastrophic";
     fingerprint: string;
     code?: string | null;
     message?: string | null;
