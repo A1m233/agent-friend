@@ -3648,7 +3648,7 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
-        if name in {"exec_command", "write_stdin", "terminate_command"}:
+        if name in {"exec_command", "host_process_start", "write_stdin", "terminate_command"}:
             invocation_args.update(
                 {
                     COMMAND_SESSION_ID_ARG: self._session.session_id,
@@ -4207,7 +4207,7 @@ class Conversation:
                 tool_name=tc["name"],
                 text=result.text,
                 is_error=result.is_error,
-                executed=executed_call,
+                executed=bool(result.meta.get("executed", executed_call)),
                 authorization_requested=result.meta.get("authorization_requested") is True,
                 error_code=str(result.meta.get("error_kind") or ""),
                 duration_seconds=duration,

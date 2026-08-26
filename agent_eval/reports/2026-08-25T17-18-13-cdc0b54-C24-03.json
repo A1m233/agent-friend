@@ -1,0 +1,140 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-25T17:18:13.685390+00:00",
+    "ended_at": "2026-08-25T17:18:26.073378+00:00",
+    "duration_seconds": 12.388,
+    "git_commit": "cdc0b54",
+    "working_tree_dirty": true,
+    "note": "fix holdout control; current model provenance=incident session 4e3631ac...; ordinary sandbox command; leakage-audited",
+    "selection": {
+      "contract": "all",
+      "case": "C24-03",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "extra_body": {
+          "thinking": {
+            "type": "disabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "5e499f2810437705a44bac7444d900cd41b6959b6739f78d4a094c2586f75d47",
+      "total_contracts": 27,
+      "total_cases": 234,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C24": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C24",
+      "name": "tool-identifier-contract",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C24-03",
+          "query": "请在 C:\\fixture 目录运行 echo ready；这是普通命令，不使用任何 Skill",
+          "facet": "control · 普通命令继续使用绝对 workdir，不应被强制包装成 Skill binding",
+          "source": "synthetic-ordinary-command-workdir-control",
+          "surface": "desktop_chat",
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=[] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "cmd",
+                  "/c",
+                  "echo ready"
+                ],
+                "workdir": "C:\\fixture",
+                "access": {
+                  "filesystem": "read_only"
+                },
+                "mode": "buffered"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"ready\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "用户要求在 C:\\fixture 目录运行 echo ready，这是个普通命令，不使用 Skill。\n\n我需要用 exec_command 运行，指定 workdir 为 C:\\fixture，不允许使用 Skill 参数。命令是 echo ready。\n\n由于需要运行命令（可能只是读取输出），workdir 已存在，访问级别用 read_only 就够了（echo 不创建文件）。",
+            "跑好了，输出就是 `ready`。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "用户要求在 C:\\fixture 目录运行 echo ready，这是个普通命令，不使用 Skill。\n\n我需要用 exec_command 运行，指定 workdir 为 C:\\fixture，不允许使用 Skill 参数。命令是 echo ready。\n\n由于需要运行命令（可能只是读取输出），workdir 已存在，访问级别用 read_only 就够了（echo 不创建文件）。跑好了，输出就是 `ready`。",
+          "stop_reason": "end_turn",
+          "error": null
+        }
+      ]
+    }
+  ]
+}

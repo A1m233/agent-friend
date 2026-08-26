@@ -12,7 +12,11 @@ from agent.approvals import (
     ApprovalRequestStaleError,
     CatastrophicActionPolicy,
 )
-from agent.command_runtime.models import CommandApprovalDetails, PendingCommandApproval
+from agent.command_runtime.models import (
+    CommandApprovalDetails,
+    CommandSkillBinding,
+    PendingCommandApproval,
+)
 from agent.filesystem.models import (
     ApprovalAction,
     ApprovalItem,
@@ -36,15 +40,20 @@ def _request(*, target: Path | None = None) -> PendingFilesystemApproval:
     )
 
 
-def _command_request(*, execution: str = "host_user") -> PendingCommandApproval:
+def _command_request(
+    *,
+    execution: str = "host_user",
+    argv: tuple[str, ...] = ("echo", "ok"),
+    skill: CommandSkillBinding | None = None,
+) -> PendingCommandApproval:
     return PendingCommandApproval.create(
         session_id="sid-1",
         run_id="run-1",
         tool_call_id=f"tool-{time.monotonic_ns()}",
         reason="test command",
         details=CommandApprovalDetails(
-            cmd="echo ok",
-            argv=("echo", "ok"),
+            cmd=" ".join(argv),
+            argv=argv,
             execution=execution,  # type: ignore[arg-type]
             workdir="C:/work",
             cwd_source="explicit",
@@ -55,6 +64,28 @@ def _command_request(*, execution: str = "host_user") -> PendingCommandApproval:
             host_derived_roots=(),
             network_access="unrestricted" if execution == "host_user" else "disabled",
             interactive=False,
+            skill=skill,
+        ),
+    )
+
+
+def _skill_replacement_request(
+    argv: tuple[str, ...] = (
+        "python",
+        "scripts/install-skill-from-github.py",
+        "--update",
+        "demo",
+        "--replace-local-changes",
+    ),
+) -> PendingCommandApproval:
+    return _command_request(
+        execution="sandboxed",
+        argv=argv,
+        skill=CommandSkillBinding(
+            skill_id="builtin/skill-installer",
+            entry="scripts/install-skill-from-github.py",
+            workdir=".",
+            fingerprint="a" * 64,
         ),
     )
 
@@ -110,6 +141,54 @@ def test_session_auto_keeps_explicit_host_user_command_once_scoped(tmp_path: Pat
     assert request.to_dict()["decision_source"] == "session_auto"
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        (
+            "python",
+            "scripts/install-skill-from-github.py",
+            "--update",
+            "demo",
+            "--replace-local-changes",
+        ),
+        (
+            "cmd.exe",
+            "/c",
+            'set "PYTHONPATH=scripts" && python scripts\\install-skill-from-github.py '
+            "--update demo --replace-local-changes",
+        ),
+        (
+            "python",
+            "scripts/install-skill-from-github.py",
+            "--repo",
+            "owner/repo",
+            "--path",
+            "demo",
+            "--name",
+            "demo",
+            "--replace-unmanaged",
+        ),
+    ],
+)
+def test_session_auto_fully_approves_skill_replacement_without_pending(
+    tmp_path: Path,
+    argv: tuple[str, ...],
+) -> None:
+    broker = _broker(tmp_path)
+    broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
+    request = _skill_replacement_request(argv)
+
+    decision = broker.request(request, timeout_seconds=0.1)
+
+    assert decision.approved is True
+    assert request.approval_mode == "session_auto"
+    assert request.status == "approved"
+    assert request.risk_assessment is not None
+    assert request.risk_assessment.level == "normal"
+    assert request.decision_source == "session_auto"
+    assert broker.pending(session_id="sid-1") == ()
+
+
 def test_session_auto_denies_catastrophic_request(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
@@ -162,6 +241,29 @@ def test_composer_mode_switch_denies_existing_catastrophic_pending(tmp_path: Pat
     assert result and result[0].approved is False
     assert request.decision_source == "catastrophic_policy"
     assert broker.pending(session_id="sid-1") == ()
+
+
+def test_composer_mode_switch_approves_existing_skill_replacement(
+    tmp_path: Path,
+) -> None:
+    broker = _broker(tmp_path)
+    request = _skill_replacement_request()
+    result: list[Any] = []
+    thread = threading.Thread(
+        target=lambda: result.append(broker.request(request, timeout_seconds=2)),
+        daemon=True,
+    )
+    thread.start()
+    _wait_pending(broker)
+
+    broker.set_session_mode("sid-1", mode="session_auto", expected_version=0)
+
+    assert request.status == "approved"
+    assert request.approval_mode == "session_auto"
+    assert broker.pending(session_id="sid-1") == ()
+    thread.join(timeout=2)
+    assert result and result[0].approved is True
+    assert request.decision_source == "session_auto"
 
 
 def test_card_combination_resolves_current_and_remaining_requests(tmp_path: Path) -> None:

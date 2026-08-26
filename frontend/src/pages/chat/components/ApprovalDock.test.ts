@@ -5,7 +5,11 @@ import type {
   CommandRuntimeStatus,
 } from "@/services/api/commandRuntime";
 import type { FilesystemApprovalEntry } from "@/stores/filesystemApprovals";
-import { buildPendingApprovalQueue, buildRunningCommandQueue } from "./ApprovalDock";
+import {
+  buildPendingApprovalQueue,
+  buildRunningCommandQueue,
+  shouldRenderPendingApprovals,
+} from "./ApprovalDock";
 
 function command(overrides: Partial<CommandApprovalRequest> = {}): CommandApprovalRequest {
   return {
@@ -205,17 +209,18 @@ describe("buildPendingApprovalQueue", () => {
     });
   });
 
-  it("projects a backend risk code without classifying commands in the UI", () => {
+  it("projects backend catastrophic risk details without classifying commands in the UI", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
       activeRunIdBySession: { "session-a": "run-a" },
       commandApprovals: {
         current: command({
+          approval_mode: "per_request",
           risk: {
             level: "catastrophic",
             fingerprint: "risk-fingerprint",
-            code: "critical-root-recursive-delete",
-            message: "blocked in auto mode",
+            code: "disk-wipe",
+            message: "该命令会清除磁盘或分区。",
             evidence: [],
           },
         }),
@@ -225,7 +230,28 @@ describe("buildPendingApprovalQueue", () => {
       filesystemEntries: {},
     });
 
-    expect(queue[0].riskCode).toBe("critical-root-recursive-delete");
+    expect(queue[0].riskCode).toBe("disk-wipe");
+    expect(queue[0].riskMessage).toBe("该命令会清除磁盘或分区。");
+  });
+
+  it("keeps replacement source, digests, and loss warning in the per-request card reason", () => {
+    const reason = [
+      "maa-daily 本地内容偏离记录",
+      "来源 a1m233/maa-daily-skill:maa-daily@main",
+      "记录 sha256=a7601146，当前 sha256=a4a37301",
+      "继续会丢失本地修改",
+    ].join("；");
+    const queue = buildPendingApprovalQueue({
+      currentSessionId: "session-a",
+      activeRunIdBySession: { "session-a": "run-a" },
+      commandApprovals: { current: command({ reason }) },
+      commandSubmitting: new Set(),
+      commandRuntimeStatus: runtimeReady,
+      filesystemEntries: {},
+    });
+
+    expect(queue[0].reason).toBe(reason);
+    expect(queue[0].command).toBe("maa version");
   });
 
   it("labels managed Python without exposing internal paths", () => {
@@ -258,6 +284,13 @@ describe("buildPendingApprovalQueue", () => {
       "执行环境：产品 Python 3.12.14 · 当前会话隔离环境 · 依赖操作",
     );
     expect(JSON.stringify(queue[0])).not.toContain("execution-environments");
+  });
+});
+
+describe("shouldRenderPendingApprovals", () => {
+  it("shows cards only in per-request mode", () => {
+    expect(shouldRenderPendingApprovals("per_request")).toBe(true);
+    expect(shouldRenderPendingApprovals("session_auto")).toBe(false);
   });
 });
 
