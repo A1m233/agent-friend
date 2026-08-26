@@ -82,11 +82,17 @@ def test_fixture_web_tools_keep_production_specs_and_search_source_urls() -> Non
 
 
 def test_fixture_command_lifecycle_tools_keep_production_specs() -> None:
+    host_start = _FixtureTool(
+        FakeTool(name="host_process_start", result_text='{"status":"exited"}')
+    )
     write = _FixtureTool(FakeTool(name="write_stdin", result_text='{"status":"running"}'))
     terminate = _FixtureTool(
         FakeTool(name="terminate_command", result_text='{"status":"cancelled"}')
     )
 
+    assert host_start.parameters_schema["required"] == ["argv"]
+    assert host_start.parameters_schema["additionalProperties"] is False
+    assert "结构化本地进程" in host_start.description
     assert write.parameters_schema["required"] == ["process_id"]
     assert "等待" in write.description
     assert terminate.parameters_schema["required"] == ["process_id"]

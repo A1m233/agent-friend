@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 
 from agent.approvals import CatastrophicActionPolicy
-from agent.command_runtime.models import CommandApprovalDetails, PendingCommandApproval
+from agent.command_runtime.models import (
+    CommandApprovalDetails,
+    CommandSkillBinding,
+    PendingCommandApproval,
+)
 from agent.filesystem.models import ApprovalAction, PendingFilesystemApproval
 
 
@@ -12,6 +16,7 @@ def _command(
     *,
     workdir: str,
     execution: str = "host_user",
+    skill: CommandSkillBinding | None = None,
 ) -> PendingCommandApproval:
     return PendingCommandApproval.create(
         session_id="sid-1",
@@ -31,7 +36,17 @@ def _command(
             host_derived_roots=(),
             network_access="unrestricted",
             interactive=False,
+            skill=skill,
         ),
+    )
+
+
+def _installer_binding(*, fingerprint: str = "a" * 64) -> CommandSkillBinding:
+    return CommandSkillBinding(
+        skill_id="builtin/skill-installer",
+        entry="scripts/install-skill-from-github.py",
+        workdir=".",
+        fingerprint=fingerprint,
     )
 
 
@@ -167,3 +182,101 @@ def test_risk_fingerprint_changes_with_command_target() -> None:
     second = policy.assess(_command(("rm", "-rf", "/work/b"), workdir="/work"))
 
     assert first.fingerprint != second.fingerprint
+
+
+def test_first_party_skill_replacement_flags_remain_normal() -> None:
+    policy = CatastrophicActionPolicy(
+        path_flavor="windows",
+        home=Path("C:/Users/test"),
+    )
+
+    local = policy.assess(
+        _command(
+            (
+                "python",
+                "scripts/install-skill-from-github.py",
+                "--update",
+                "demo",
+                "--replace-local-changes",
+            ),
+            workdir="C:/skill-snapshot",
+            execution="sandboxed",
+            skill=_installer_binding(),
+        )
+    )
+    unmanaged = policy.assess(
+        _command(
+            (
+                "python",
+                "scripts/install-skill-from-github.py",
+                "--repo",
+                "owner/repo",
+                "--path",
+                "demo",
+                "--name",
+                "demo",
+                "--replace-unmanaged",
+            ),
+            workdir="C:/skill-snapshot",
+            execution="sandboxed",
+            skill=_installer_binding(),
+        )
+    )
+    cmd_prefixed = policy.assess(
+        _command(
+            (
+                "cmd.exe",
+                "/c",
+                'set "PYTHONPATH=scripts" && python scripts\\install-skill-from-github.py '
+                "--update demo --replace-local-changes",
+            ),
+            workdir="C:/skill-snapshot",
+            execution="sandboxed",
+            skill=_installer_binding(),
+        )
+    )
+
+    assert local.level == "normal"
+    assert local.code is None
+    assert unmanaged.level == "normal"
+    assert unmanaged.code is None
+    assert cmd_prefixed.level == "normal"
+    assert cmd_prefixed.code is None
+
+
+def test_skill_binding_remains_part_of_normal_command_fingerprint() -> None:
+    policy = CatastrophicActionPolicy(path_flavor="windows", home=Path("C:/Users/test"))
+    argv = ("python", "custom.py", "--replace-local-changes")
+
+    unrelated = policy.assess(_command(argv, workdir="C:/work", execution="sandboxed"))
+    changed_snapshot = policy.assess(
+        _command(
+            (
+                "python",
+                "scripts/install-skill-from-github.py",
+                "--update",
+                "demo",
+                "--replace-local-changes",
+            ),
+            workdir="C:/skill-snapshot",
+            execution="sandboxed",
+            skill=_installer_binding(fingerprint="b" * 64),
+        )
+    )
+    original_snapshot = policy.assess(
+        _command(
+            (
+                "python",
+                "scripts/install-skill-from-github.py",
+                "--update",
+                "demo",
+                "--replace-local-changes",
+            ),
+            workdir="C:/skill-snapshot",
+            execution="sandboxed",
+            skill=_installer_binding(),
+        )
+    )
+
+    assert unrelated.level == "normal"
+    assert changed_snapshot.fingerprint != original_snapshot.fingerprint

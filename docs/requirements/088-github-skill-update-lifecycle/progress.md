@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-COMPLETED
+COMPLETED · `fix/agent-execution-reliability` 授权契约回归修复
 
 ## 关联文档
 
@@ -13,7 +13,7 @@ COMPLETED
 
 - [x] 实现包外 lock schema、来源归一化和完整包内容 digest。
 - [x] 实现标准库 conservative validator、危险目录项拒绝和同文件系统 staging。
-- [x] 实现首次安装、受管理同源更新、本地修改显式覆盖和无来源旧 Skill 接管模式。
+- [x] 实现首次安装、受管理同源更新、本地修改 replacement 和无来源旧 Skill 接管模式。
 - [x] 实现 advisory commit lock、最终状态重检、目录替换、lock 原子写和可捕获失败回滚。
 - [x] 更新 builtin `skill-installer` 指引、UI metadata 和 provenance manifest。
 - [x] 补 installer、catalog watcher、轮次 snapshot、故障注入和冻结 runtime 自动化测试。
@@ -21,6 +21,8 @@ COMPLETED
 - [x] 运行 backend 和 package-sensitive frozen runtime 门禁。
 - [x] 经逐次授权运行 C24-05/C24-06 真实模型验证并复核 transcript。
 - [x] 用户确认验收完成。
+- [x] 移除 replacement 的隐藏第三种授权语义，恢复需求 103 的两档模式与灾难性门禁。
+- [x] 完成 backend/frontend/C24 与真实 Tauri/WebView2 无 LLM 复验。
 
 ## AC 验证
 
@@ -28,12 +30,12 @@ COMPLETED
 - [x] **AC-2 同源更新成功**：`test_managed_update_changes_content_and_ref` 验证从 lock 派生同源、显式 ref 更新、旧/新 digest 输出和内容替换。
 - [x] **AC-3 异源覆盖被拒绝**：`test_different_source_cannot_replace_managed_skill` 分别覆盖不同 repository 和不同仓库内 path，目录与 lock 均保持原值。
 - [x] **AC-4 staging 失败保留旧版**：`test_invalid_staging_keeps_previous_skill_and_record`、link 拒绝、首次/更新 lock 写失败测试及 frozen rollback smoke 覆盖候选无效、危险条目和提交失败。
-- [x] **AC-5 本地修改冲突与显式覆盖**：`test_local_changes_require_explicit_replacement` 验证首次返回 `local_changes_detected`，只有 `--replace-local-changes` 才覆盖。
-- [x] **AC-6 无来源旧 Skill 接管**：`test_unmanaged_skill_requires_confirmation_before_adoption` 验证普通尝试停止，只有显式 `--replace-unmanaged` 才替换并建立记录。
+- [x] **AC-5 本地修改冲突与模式感知覆盖**：`test_local_changes_require_replacement_flag` 验证首次返回 `local_changes_detected`，同一 tool loop 的 `--replace-local-changes` 携带完整风险事实；`per_request` 单次决定，`session_auto` 自动允许，业务一致性门禁继续 fail closed。真实 Tauri/WebView2 隔离 fixture 进一步验证 replacement 在 `windowsRestrictedToken` 下退出 0、`decision_source=session_auto`、零 pending/授权卡/`command-decision`，并实际移除本地 marker、更新 lock digest。
+- [x] **AC-6 无来源旧 Skill 模式感知接管**：`test_unmanaged_skill_requires_replacement_flag_before_adoption` 验证普通尝试停止，同一 tool loop 的 `--replace-unmanaged` 携带完整来源缺失与整体替换风险；`per_request` 单次决定，`session_auto` 自动允许。
 - [x] **AC-7 幂等更新**：`test_idempotent_update_does_not_rewrite_skill_or_lock` 验证相同候选不改 Skill/lock mtime 或内容，显式新 ref 但内容相同时仍保留原记录。
 - [x] **AC-8 catalog 热刷新与轮次隔离**：`test_successful_update_refreshes_later_turn_while_frozen_turn_keeps_old_content` 验证 watcher 后续轮刷新与既有 snapshot 冻结。
 - [x] **AC-9 Agent 使用真实更新路径**：C24-05 既有真实 report 经 judge 修正后离线重判通过；C24-06 真实运行使用 production builtin 的精确 `--update maa-daily --replace-local-changes` 命令、完整 Skill binding 与 write/network access，并基于成功结果反馈。
-- [x] **AC-10 范围隔离**：实现 diff 未修改 shared Skill 根、catalog service、命令运行时、Bridge、Tauri 或前端；没有批量/后台更新、市场、签名、历史版本或 UI。
+- [x] **AC-10 范围隔离**：没有新增 Skill 专用 API/UI，也没有修改 shared Skill 根、catalog service；通用授权控制面只负责遵循既有会话模式，没有批量/后台更新、市场、签名或历史版本能力。
 
 ## 实现日志
 
@@ -53,9 +55,13 @@ COMPLETED
 | 2026-08-20 | 收紧 C24-05/06 fixture 与 judge，并补精确命令/权限 deterministic 回归 | fixture 仅对精确 production 命令、binding 和 access 返回成功；目标套件 140 passed |
 | 2026-08-20 | 经授权只复验 Kimi K2.5 C24-06，并逐项复核真实 trace | [report](../../../agent_eval/reports/2026-08-19T17-47-59-3188766-C24-06.json)：1/1 passed；实际调用为 `--update maa-daily --replace-local-changes`，包含 personal Skills 写根、network 和 reason，成功结果与最终反馈一致 |
 | 2026-08-20 | 运行最终 `scripts/check/run.ps1 --stage backend` | lint、521 个源文件 typecheck、pytest 全部通过：1881 passed，4 skipped；`git diff --check` 无 whitespace error，仅有既有 Git 换行提示 |
+| 2026-08-26 | 修复 `b5e545e` 引入的 replacement 授权契约回归 | 删除 `explicit` / `requires_explicit_user` 与 Skill replacement 特判；`session_auto` 对所有非灾难性请求完整自动批准，`per_request` 保留完整风险事实的单次授权卡；同步 builtin Skill、C24-06 和需求文档 |
+| 2026-08-26 | 完成自动化与完整项目门禁 | replacement 目标套件 240 passed；deterministic `agent_eval` 136 passed；builtin Skill validator 与 snapshot 10 passed；完整 backend 2240 passed、4 skipped，frontend 628 passed + production build，Rust/Tauri 222 passed、1 ignored |
+| 2026-08-26 | 真实 Tauri/WebView2 无 LLM 隔离复验 | `hatch-pet` fixture 使用隔离 personal Skills/data/log 根；普通更新真实返回 `local_changes_detected`，同一驱动轮的精确 `--replace-local-changes` 自动批准并退出 0；两次 request 均为 `normal` / `session_auto`，零 pending、授权卡和 `command-decision`。证据位于项目外 `session-auto-replacement-e2e/evidence.json`、`final-dom.json`、`final-chat.png` |
 
 ## 待验收事项
 
 - C24-05 已用既有真实 report 离线重判通过，没有为 judge 修正重复调用真实模型。
 - C24-06 已在用户授权的单次范围内复验通过；不再需要额外真实模型调用。
 - 自动化、frozen runtime 和真实 Agent 行为证据已齐；用户已确认验收并要求合入 `main`、推送远端。
+- 2026-08-26 授权契约回归修复的实现、自动化和真实桌面复验已完成；按本次要求仅汇报，不自动 commit、merge 或 push。

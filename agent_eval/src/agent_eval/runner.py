@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from agent.command_runtime.tools import ExecCommandTool, TerminateCommandTool, WriteStdinTool
+from agent.command_runtime.tools import (
+    ExecCommandTool,
+    HostProcessStartTool,
+    TerminateCommandTool,
+    WriteStdinTool,
+)
 from agent.system_prompt import InteractionSurfaceId
 from agent.tool_runtime import ToolRunContext, ToolRunPolicy
 from agent.tools.builtin.skills import SkillReadTool
@@ -320,6 +325,9 @@ class _FixtureTool:
         elif fixture.name == "exec_command":
             self.description = ExecCommandTool.description
             self.parameters_schema = ExecCommandTool.parameters_schema
+        elif fixture.name == "host_process_start":
+            self.description = HostProcessStartTool.description
+            self.parameters_schema = HostProcessStartTool.parameters_schema
         elif fixture.name == "write_stdin":
             self.description = WriteStdinTool.description
             self.parameters_schema = WriteStdinTool.parameters_schema

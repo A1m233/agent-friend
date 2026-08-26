@@ -27,6 +27,7 @@ type PendingApproval = {
   submitting: boolean;
   needsSandboxSetup: boolean;
   riskCode: string | null;
+  riskMessage: string | null;
 };
 
 interface RunningCommand {
@@ -150,6 +151,7 @@ export function buildPendingApprovalQueue(input: {
         && !commandRuntimeStatus.sandbox_capability.ready,
       ),
       riskCode: request.risk?.code ?? null,
+      riskMessage: request.risk?.message ?? null,
     }));
   const files: PendingApproval[] = Object.values(filesystemEntries)
     .filter((entry) => (
@@ -169,6 +171,7 @@ export function buildPendingApprovalQueue(input: {
       submitting: entry.status === "submitting",
       needsSandboxSetup: false as const,
       riskCode: entry.request.risk?.code ?? null,
+      riskMessage: entry.request.risk?.message ?? null,
     }));
   return [...commands, ...files];
 }
@@ -283,6 +286,9 @@ function PendingApprovalPanel({
         {current.riskCode ? (
           <p className="text-warning">风险类别：{current.riskCode}</p>
         ) : null}
+        {current.riskMessage ? (
+          <p className="text-warning">{current.riskMessage}</p>
+        ) : null}
         {current.detailLines.map((line) => (
           <p key={line} className="break-all">{line}</p>
         ))}
@@ -366,7 +372,7 @@ export function ApprovalDock() {
     currentSessionId,
   ]);
 
-  const current = approvalMode === "per_request" ? pending[0] : undefined;
+  const current = shouldRenderPendingApprovals(approvalMode) ? pending[0] : undefined;
   const currentRunning = current ? null : running[0];
   if (!current && !currentRunning) return null;
 
@@ -406,4 +412,10 @@ export function ApprovalDock() {
       </div>
     </div>
   );
+}
+
+export function shouldRenderPendingApprovals(
+  approvalMode: "per_request" | "session_auto",
+): boolean {
+  return approvalMode === "per_request";
 }
