@@ -714,6 +714,30 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     );
   });
 
+  it("实时 Agent 消息在回答完成时更新左下角时间", async () => {
+    const sentAt = new Date("2026-08-27T01:00:00Z");
+    const completedAt = new Date("2026-08-27T01:00:08Z");
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(sentAt);
+      mockStream.mockImplementation(async function* () {
+        yield ev({ type: EventType.TEXT_MESSAGE_START, messageId: "m1", role: "assistant" });
+        yield ev({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: "m1", delta: "完成" });
+        vi.setSystemTime(completedAt);
+        yield ev({ type: EventType.RUN_FINISHED, threadId: "t", runId: "r" });
+      });
+
+      await finishAcceptedSend(useConversationStore.getState().send("开始"));
+
+      const [user, assistant] = useConversationStore.getState().messages;
+      expect(user.createdAt).toBe(sentAt.toISOString());
+      expect(assistant.createdAt).toBe(completedAt.toISOString());
+      expect(assistant.createdAt).not.toBe(user.createdAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("消息接纳不等待流式完成，调用方可立即清空草稿", async () => {
     const streamGate = deferred<void>();
     mockStream.mockImplementation(async function* () {

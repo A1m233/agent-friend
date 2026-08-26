@@ -234,6 +234,8 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       }
       const content = asString(p.content);
       const message = ensureAssistant(ev.uuid, ev.ts);
+      // 一轮 assistant 可能包含多段文本和工具调用；左下角展示整轮最后回复的完成时间。
+      message.createdAt = ev.ts;
       if (content) {
         message.blocks.push({ kind: "text", mid: ev.uuid, text: content });
       }
@@ -280,6 +282,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         continue;
       }
       const message = ensureAssistant(ev.uuid, ev.ts);
+      message.createdAt = ev.ts;
       message.status = "error";
       message.error = asString(p.message) || "这轮回答中断了，没有生成完整回复。请稍后重试。";
       const code = asString(p.code);

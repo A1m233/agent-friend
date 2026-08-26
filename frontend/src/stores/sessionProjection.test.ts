@@ -24,6 +24,30 @@ describe("projectSessionEvents", () => {
     expect(out[0].status).toBe("complete");
   });
 
+  it("聚合工具轮时用最后一条 assistant 事件作为回答完成时间", () => {
+    const out = projectSessionEvents([
+      { ...ev("user_message", { content: "查一下" }), ts: "2026-06-10T00:00:00Z" },
+      {
+        ...ev("assistant_message", { content: "我先查查", partial: false }),
+        ts: "2026-06-10T00:00:01Z",
+      },
+      {
+        ...ev("tool_call_request", { tool_call_id: "tool-1", tool_name: "search", args: {} }),
+        ts: "2026-06-10T00:00:02Z",
+      },
+      {
+        ...ev("tool_call_result", { tool_call_id: "tool-1", content: "结果" }),
+        ts: "2026-06-10T00:00:03Z",
+      },
+      {
+        ...ev("assistant_message", { content: "查完了", partial: false }),
+        ts: "2026-06-10T00:00:04Z",
+      },
+    ]);
+
+    expect(out[1].createdAt).toBe("2026-06-10T00:00:04Z");
+  });
+
   it("把持久化 compaction 恢复为按顺序排列的完成活动块", () => {
     const first = ev("compaction", { summary: "不得进入 UI" });
     const second = ev("compaction", { summary: "也不得进入 UI" });

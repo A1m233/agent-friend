@@ -7,7 +7,7 @@
  */
 
 import { create } from "zustand";
-import { EventType } from "@ag-ui/core";
+import { EventType, type BaseEvent } from "@ag-ui/core";
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
 import {
   credentialGroupForModel,
@@ -58,6 +58,31 @@ import { useRuntimeCredentialStore } from "./runtimeCredentials";
 
 /** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
 const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。请稍后重试。";
+
+function withObservedTerminalTimestamp(event: BaseEvent): BaseEvent {
+  if (event.type !== EventType.RUN_FINISHED && event.type !== EventType.RUN_ERROR) return event;
+  if (typeof event.timestamp === "number" && Number.isFinite(event.timestamp)) return event;
+  return { ...event, timestamp: Date.now() };
+}
+
+function withObservedPushTerminalTimestamp(event: PushEvent): PushEvent {
+  if (event.type !== "done") return event;
+  if (typeof event.timestamp === "number" && Number.isFinite(event.timestamp)) return event;
+  return { ...event, timestamp: Date.now() };
+}
+
+function markMessageTerminal(
+  message: ChatMessage,
+  status: Exclude<ChatMessage["status"], "streaming">,
+  updates: Partial<ChatMessage> = {},
+): ChatMessage {
+  return {
+    ...message,
+    ...updates,
+    status,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 export function runtimeCredentialGroupForModel(
   model: string,
@@ -689,7 +714,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             status: "streaming",
           };
       const nextAssistant = events.reduce(
-        (message, event) => applyPushConversationEvent(message, event, runId),
+        (message, event) => applyPushConversationEvent(
+          message,
+          withObservedPushTerminalTimestamp(event),
+          runId,
+        ),
         assistant,
       );
       const messages = [...view.messages];
@@ -1156,10 +1185,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               .reportAuthFailure(credentialGroup, credentialRevision)
               .catch(() => undefined);
           }
-          streamUpdates.enqueue(evt);
+          streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
         }
         streamUpdates.flush();
-        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
         const assistantStatus = get().sessionViews[sessionId]?.messages
           .find((message) => message.id === assistantId)?.status;
         outcome = assistantStatus === "error"
@@ -1172,9 +1201,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         admissionFailed = error instanceof StreamAdmissionError;
         if (controller.signal.aborted) {
           outcome = "interrupted";
-          patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
+          patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
         } else {
-          patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+          patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
         }
       } finally {
         streamUpdates.dispose();
@@ -1349,7 +1378,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           },
         },
       )) {
-        streamUpdates.enqueue(evt);
+        streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
       }
       streamUpdates.flush();
       const assistant = get().sessionViews[sessionId]?.messages.find(
@@ -1361,7 +1390,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       } else if (assistant?.status === "interrupted") {
         outcome = "interrupted";
       } else {
-        patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
       }
     } catch {
       streamUpdates.flush();
@@ -1377,11 +1406,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : current);
       } else if (controller.signal.aborted) {
         outcome = "interrupted";
-        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
+        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
       } else {
         outcome = "failed";
         failedError = FRIENDLY_FALLBACK;
-        patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+        patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
       }
     } finally {
       streamUpdates.dispose();
@@ -1526,16 +1555,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       for await (const evt of continueToolResultStream(sessionId, runId, {
         signal: controller.signal,
       })) {
-        streamUpdates.enqueue(evt);
+        streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
       }
       streamUpdates.flush();
-      patch((m) => (m.status === "streaming" ? { ...m, status: "complete" } : m));
+      patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "complete") : m));
     } catch {
       streamUpdates.flush();
       if (controller.signal.aborted) {
-        patch((m) => (m.status === "streaming" ? { ...m, status: "interrupted" } : m));
+        patch((m) => (m.status === "streaming" ? markMessageTerminal(m, "interrupted") : m));
       } else {
-        patch((m) => ({ ...m, status: "error", error: FRIENDLY_FALLBACK }));
+        patch((m) => markMessageTerminal(m, "error", { error: FRIENDLY_FALLBACK }));
       }
     } finally {
       streamUpdates.dispose();
