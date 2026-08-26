@@ -70,7 +70,14 @@ class AttachmentAwareResolver:
     def __init__(self) -> None:
         self.calls: list[tuple[str, InboundEvent]] = []
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
+        del provider_bind_id
         self.calls.append((im_type, event))
         if event.attachments:
             first = event.attachments[0]

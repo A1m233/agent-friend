@@ -40,7 +40,8 @@ COMPLETED
 | 2026-08-27 | 用户明确授权“开始实现”；创建阶段 3 进度文件并冻结任务与 AC 映射。 | 分支 `feature/106-message-text-quoting`；方案状态 `CONFIRMED`。 |
 | 2026-08-27 | 完成统一引用模型、桌面 AG-UI / 编辑重发、QQ whole-message 归一化与别名恢复、Codex 式多引用入口和来源回跳。 | 通用浮层使用 shadcn Popover；TDesign 仅保留消息内容和发送器边界。 |
 | 2026-08-27 | 补齐引用模型、上下文投影、AG-UI、QQ、草稿恢复、历史投影与 UTF-16 选区/高亮回归测试。 | 快速集：backend 28 passed；frontend 42 passed。 |
-| 2026-08-27 | 完成 backend / frontend 阶段门禁。 | Backend：ruff + mypy + `2235 passed, 4 skipped`；Frontend：lint/token/provenance + `633 passed` + production build。构建仅有既存 CSS Highlight / chunk-size warning。 |
+| 2026-08-27 | 完成 backend / frontend 阶段门禁。 | 初始 feature 基线：Backend `2235 passed, 4 skipped`；Frontend `633 passed`。合入最新 `origin/main` 后复验：Backend ruff + mypy + `2277 passed, 4 skipped`；Frontend lint/token/provenance + `635 passed` + production build。构建仅有既存 CSS Highlight / chunk-size warning。 |
 | 2026-08-27 | 完成 Rust / Tauri 门禁。 | `cargo fmt --check`、222 项 Rust test（221 passed / 1 ignored）、`cargo check --release` 通过；仅有既存 dead-code warning。 |
 | 2026-08-27 | 按用户授权执行桌面验收 preflight。 | `desktop-visual doctor` 通过，但共享 runtime 属于 `worktrees/2040` 的需求 105；未 takeover，结论为 `not verified`。 |
 | 2026-08-27 | 用户明确要求在普通验证节点不暂停，并授权收尾后合入 `main`、推送远端和构建 local-test。 | 需求按用户验收决定进入收口；AC-10 的真实 payload / group 既有缺口保留为明确 residual risk，不伪造通过。 |
+| 2026-08-27 | 将最新 `origin/main`（含需求 105 QQ 附件文字合并）合入 feature，并验证与引用 resolver 的组合链路。 | 无源码冲突；同步新增 resolver 参数的测试桩后，QQ coalescing / runtime / quote / assembly 交叉集 `55 passed`，随后 backend / frontend 全量复验通过。 |
