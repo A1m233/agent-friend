@@ -427,6 +427,31 @@ async def test_reasoning_switch_is_rejected_while_im_reply_is_running(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_reasoning_switch_is_rejected_while_im_attachment_turn_is_pending(
+    tmp_path: Path,
+) -> None:
+    service, provider, _state, coordinator, models = make_service(tmp_path)
+    await service.handle(cast(IMProvider, provider), interaction(MENU_PAYLOAD))
+    menu = provider.sent[-1]
+    assert menu.controls is not None
+    await service.handle(cast(IMProvider, provider), interaction(menu.controls.rows[0][1].payload))
+    page = provider.sent[-1]
+    assert page.controls is not None
+    low_payload = next(
+        action.payload for row in page.controls.rows for action in row if action.label == "低"
+    )
+    key = IMBindingKey("qq", "OPENID-USER", "c2c", "OPENID-USER")
+    reservation = coordinator.reserve_pending_turn(key)
+
+    await service.handle(cast(IMProvider, provider), interaction(low_payload))
+
+    assert models.calls == []
+    assert provider.sent[-1].text == "请等待当前回复完成后再调整推理强度。"
+    assert coordinator.release_pending_turn(reservation)
+    assert not coordinator.release_pending_turn(reservation)
+
+
+@pytest.mark.asyncio
 async def test_stale_reasoning_menu_cannot_mutate_a_new_model(tmp_path: Path) -> None:
     service, provider, _state, _coordinator, models = make_service(tmp_path)
     sessions = cast(Any, service._sessions)
