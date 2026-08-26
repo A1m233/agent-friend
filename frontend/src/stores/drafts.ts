@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { releaseAttachmentDraft, type AttachmentDraft } from "@/services";
-import type { ChatAttachment } from "@/types/chat";
+import type { ChatAttachment, ChatTextReference } from "@/types/chat";
 
 export const HOME_DRAFT_KEY = "__agent_friend_home_draft__";
 
@@ -32,6 +32,7 @@ export interface DraftValidationState {
 export interface DraftWorkspace {
   text: string;
   attachments: DraftAttachmentState[];
+  references: ChatTextReference[];
   validation: DraftValidationState | null;
   revision: number;
   updatedAt: number;
@@ -43,6 +44,7 @@ interface DraftSubmission {
   sourceKey: string;
   text: string;
   attachments: DraftAttachmentState[];
+  references: ChatTextReference[];
 }
 
 interface DraftState {
@@ -52,6 +54,7 @@ interface DraftState {
     key: string,
     text: string,
     attachments?: DraftAttachmentState[],
+    references?: ChatTextReference[],
   ) => void;
   setText: (key: string, text: string) => void;
   addAttachment: (key: string, attachment: DraftAttachmentState) => void;
@@ -61,6 +64,9 @@ interface DraftState {
     update: (current: DraftAttachmentState) => DraftAttachmentState,
   ) => boolean;
   removeAttachment: (key: string, localId: string) => void;
+  addReference: (key: string, reference: ChatTextReference) => void;
+  removeReference: (key: string, referenceId: string) => void;
+  clearReferences: (key: string) => void;
   setValidation: (key: string, validation: DraftValidationState) => void;
   claimHome: (sessionId: string) => void;
   beginSubmission: (key: string, sessionId: string, runId: string) => void;
@@ -79,6 +85,7 @@ export function editDraftKey(sessionId: string, messageId: string): string {
 export const EMPTY_DRAFT_WORKSPACE: DraftWorkspace = Object.freeze({
   text: "",
   attachments: [],
+  references: [],
   validation: null,
   revision: 0,
   updatedAt: 0,
@@ -101,13 +108,13 @@ export const useDraftStore = create<DraftState>((set, get) => ({
   workspaces: {},
   submissions: {},
 
-  initialize(key, text, attachments = []) {
+  initialize(key, text, attachments = [], references = []) {
     set((state) => {
       if (state.workspaces[key]) return state;
       return {
         workspaces: {
           ...state.workspaces,
-          [key]: changed(EMPTY_DRAFT_WORKSPACE, { text, attachments }),
+          [key]: changed(EMPTY_DRAFT_WORKSPACE, { text, attachments, references }),
         },
       };
     });
@@ -170,6 +177,48 @@ export const useDraftStore = create<DraftState>((set, get) => ({
     }
   },
 
+  addReference(key, reference) {
+    set((state) => {
+      const current = workspace(state, key);
+      if (current.references.some((item) => item.referenceId === reference.referenceId)) {
+        return state;
+      }
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(current, { references: [...current.references, reference] }),
+        },
+      };
+    });
+  },
+
+  removeReference(key, referenceId) {
+    set((state) => {
+      const current = workspace(state, key);
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(current, {
+            references: current.references.filter((item) => item.referenceId !== referenceId),
+          }),
+        },
+      };
+    });
+  },
+
+  clearReferences(key) {
+    set((state) => {
+      const current = workspace(state, key);
+      if (current.references.length === 0) return state;
+      return {
+        workspaces: {
+          ...state.workspaces,
+          [key]: changed(current, { references: [] }),
+        },
+      };
+    });
+  },
+
   setValidation(key, validation) {
     set((state) => ({
       workspaces: {
@@ -204,6 +253,7 @@ export const useDraftStore = create<DraftState>((set, get) => ({
             sourceKey: key,
             text: current.text,
             attachments: current.attachments,
+            references: current.references,
           },
         },
       };
@@ -220,6 +270,9 @@ export const useDraftStore = create<DraftState>((set, get) => ({
       const targetKey = submission.sessionId;
       const current = workspace(state, targetKey);
       const existingIds = new Set(current.attachments.map((item) => item.localId));
+      const existingReferenceIds = new Set(
+        current.references.map((item) => item.referenceId),
+      );
       const restoredText = [submission.text, current.text].filter(Boolean).join("\n");
       return {
         submissions,
@@ -230,6 +283,12 @@ export const useDraftStore = create<DraftState>((set, get) => ({
             attachments: [
               ...submission.attachments.filter((item) => !existingIds.has(item.localId)),
               ...current.attachments,
+            ],
+            references: [
+              ...submission.references.filter(
+                (item) => !existingReferenceIds.has(item.referenceId),
+              ),
+              ...current.references,
             ],
           }),
         },

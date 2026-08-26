@@ -18,6 +18,7 @@ import json
 import math
 from typing import Any
 
+from ..message_references import render_user_content_for_model
 from ..messages import Message
 from .protocol import BudgetSnapshot, RuntimeContext
 
@@ -55,7 +56,12 @@ def estimate_tokens(messages: list[Message]) -> int:
     """
     total_chars = 0
     for msg in messages:
-        total_chars += len(msg.content or "")
+        content = (
+            render_user_content_for_model(msg.content, msg.references)
+            if msg.role == "user" and msg.references
+            else msg.content
+        )
+        total_chars += len(content or "")
         # tool_calls 等结构化 meta 也占 token，粗略计入其字符串化长度
         tool_calls = msg.meta.get("tool_calls") if msg.meta else None
         if tool_calls:

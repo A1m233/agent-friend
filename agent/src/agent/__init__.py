@@ -42,6 +42,14 @@ from .errors import (
     PersonaUndoUnavailableError,
 )
 from .fallbacks import random_fallback
+from .message_references import (
+    QuotedTextLocator,
+    QuotedTextReference,
+    QuotedTextSource,
+    parse_quoted_text_references,
+    quoted_text_references_fingerprint,
+    quoted_text_references_to_dicts,
+)
 from .messages import Message, Role
 from .paths import (
     attachments_dir,
@@ -191,6 +199,9 @@ __all__ = [
     "PriorSummary",
     "PromptBuilder",
     "ProposePersonaTool",
+    "QuotedTextLocator",
+    "QuotedTextReference",
+    "QuotedTextSource",
     "RecurringSchedule",
     "Reminder",
     "ReminderOccurrence",
@@ -249,7 +260,10 @@ __all__ = [
     "make_default_registry",
     "make_default_social_platform_service",
     "memory_db_path",
+    "parse_quoted_text_references",
     "personas_dir",
+    "quoted_text_references_fingerprint",
+    "quoted_text_references_to_dicts",
     "random_fallback",
     "session_mutation_context",
     "sessions_dir",

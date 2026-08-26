@@ -14,6 +14,7 @@ import { ensureLocalServiceReady } from "@/services/runtime";
 import type { AttachmentDraft } from "./attachments";
 import type { ModelRuntimeConfig } from "@/lib/model-config";
 import type { SessionApprovalMode } from "./api/sessions";
+import type { ChatTextReference } from "@/types/chat";
 
 export interface RunStreamInput {
   /** AG-UI thread_id；bridge 直接当 session_id（缺则建，见 006 session_bridge）。 */
@@ -28,6 +29,7 @@ export interface RunStreamInput {
   text: string;
   messageId?: string;
   attachments?: AttachmentDraft[];
+  references?: ChatTextReference[];
 }
 
 export interface EditResendLatestInput {
@@ -43,6 +45,7 @@ export interface EditResendLatestInput {
   expectedUserContent?: string;
   /** 编辑稿最终完整附件集；空数组表示删除全部附件。 */
   attachments: EditResendAttachmentInput[];
+  references?: ChatTextReference[];
 }
 
 export type EditResendAttachmentInput =
@@ -80,6 +83,27 @@ function requireEventStreamResponse(
 
 function newId(): string {
   return crypto.randomUUID();
+}
+
+function referenceToWire(reference: ChatTextReference) {
+  return {
+    reference_id: reference.referenceId,
+    quoted_text: reference.quotedText,
+    source_role: reference.sourceRole,
+    availability: reference.availability,
+    source: {
+      kind: reference.source.kind,
+      message_event_uuid: reference.source.messageEventUuid,
+      text_block_id: reference.source.textBlockId,
+      external_source_key: reference.source.externalSourceKey,
+    },
+    locator: {
+      kind: reference.locator.kind,
+      coordinate_space: reference.locator.coordinateSpace,
+      start: reference.locator.start,
+      end: reference.locator.end,
+    },
+  };
 }
 
 /**
@@ -129,6 +153,9 @@ export function buildRunAgentInput(input: RunStreamInput): RunAgentInput {
               riskAcknowledged: true,
             },
           }
+        : {}),
+      ...(input.references?.length
+        ? { quotedTextReferences: input.references.map(referenceToWire) }
         : {}),
     },
   };
@@ -189,6 +216,9 @@ export async function* editResendLatestStream(
         expectedUserMessageId: input.expectedUserMessageId,
         expectedUserContent: input.expectedUserContent,
         attachments: input.attachments,
+        ...(input.references
+          ? { references: input.references.map(referenceToWire) }
+          : {}),
       }),
       signal: opts.signal,
     },

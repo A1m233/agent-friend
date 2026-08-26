@@ -41,6 +41,7 @@ from uuid import uuid4
 
 from agent.attachments import AttachmentRef
 from agent.latency import RunLatencyContext, log_run_latency, monotonic_ms
+from agent.message_references import QuotedTextReference
 from agent.runtime import AgentRuntime, RunOutcome, RunRequest, UserEvent
 from agent.system_prompt import IM_QQ_SURFACE, InteractionSurfaceId
 
@@ -54,6 +55,8 @@ from .control import menu_controls
 from .event import InboundEvent
 from .media import InboundMedia, render_model_media_context, render_user_media_notice
 from .provider import IMOutboundProvider, OutboundSendResult
+from .qq_references import qq_current_message_aliases
+from .reference_aliases import IMReferenceAliasIndex
 from .streaming import (
     IMStreamSession,
     IMTextStreamingProvider,
@@ -118,11 +121,13 @@ class IMRouter:
         default_persona: str,
         default_model: str,
         agent_runtime: AgentRuntime | None = None,
+        reference_aliases: IMReferenceAliasIndex | None = None,
     ) -> None:
         self._bridge = session_bridge
         self._default_persona = default_persona
         self._default_model = default_model
         self._agent_runtime = agent_runtime
+        self._reference_aliases = reference_aliases
 
     def session_id_for(self, im_type: str, event: InboundEvent) -> str:
         """计算 IM inbound 应该挂在哪个 session 上。**策略扩展点**。
@@ -155,6 +160,7 @@ class IMRouter:
         provider_or_send: IMOutboundProvider | SendCallback,
         attachments: tuple[AttachmentRef, ...] = (),
         media: tuple[InboundMedia, ...] = (),
+        references: tuple[QuotedTextReference, ...] = (),
         *,
         session_id: str | None = None,
     ) -> None:
@@ -174,6 +180,7 @@ class IMRouter:
         latency_started_ms = monotonic_ms()
         send_fn = _send_callback(provider_or_send)
         session_id = session_id or self.session_id_for(im_type, event)
+        user_event_id = uuid4().hex
         logger.info(
             "IM inbound router start im_type=%s session_id=%s chat_scope=%s chat_id=%s "
             "message_id=%s content_len=%d stripped_content_len=%d attachment_count=%d",
@@ -293,6 +300,7 @@ class IMRouter:
                 self._run_turn_sync,
                 boot,
                 attachments,
+                references,
                 on_text_delta,
                 on_compaction_progress,
                 run_id,
@@ -300,6 +308,7 @@ class IMRouter:
                 surface,
                 latency_started_ms,
                 origin_destination_id,
+                user_event_id,
             )
         except Exception as exc:
             fallback_text = map_exception(exc).message
@@ -321,6 +330,13 @@ class IMRouter:
                 stream_session.has_started if stream_session is not None else False,
             )
             if stream_session is not None and stream_session.has_started:
+                self._register_user_alias(
+                    provider_or_send,
+                    im_type=im_type,
+                    event=event,
+                    session_id=session_id,
+                    user_event_id=user_event_id,
+                )
                 interrupted = (partial_text or fallback_text) + _STREAM_INTERRUPTED_SUFFIX
                 await stream_session.abort(interrupted, type(exc).__name__)
                 log_run_latency(
@@ -344,6 +360,15 @@ class IMRouter:
             )
             await _finish_relay(delta_queue, relay_task, relay)
             text = reply_prefix + agent_text
+
+        self._register_user_alias(
+            provider_or_send,
+            im_type=im_type,
+            event=event,
+            session_id=session_id,
+            user_event_id=user_event_id,
+        )
+        assistant_event = self._bridge.assistant_event_after(session_id, user_event_id)
 
         # 跑通了但 agent 一字未输出(罕见):也回 fallback,避免发空消息给 IM
         if not agent_text:
@@ -369,6 +394,15 @@ class IMRouter:
 
         if stream_session is not None and stream_session.has_started:
             await stream_session.finish(text)
+            if stream_session.is_completed and assistant_event is not None:
+                self._register_outbound_alias(
+                    provider_or_send,
+                    im_type=im_type,
+                    event=event,
+                    session_id=session_id,
+                    event_uuid=assistant_event.uuid,
+                    provider_message_id=getattr(stream_session, "provider_message_id", None),
+                )
             logger.info(
                 "IM stream final result stream_trace=%s run_id=%s message_id=%s "
                 "content_len=%d completed=%s had_failure=%s duplicate_fallback=false",
@@ -418,7 +452,7 @@ class IMRouter:
                 _text_len(text),
             )
 
-        await send_fn(
+        send_result = await send_fn(
             OutboundContent(
                 chat_id=event.chat_id,
                 chat_scope=event.chat_scope,
@@ -428,6 +462,15 @@ class IMRouter:
                 controls=menu_controls() if include_menu else None,
             )
         )
+        if assistant_event is not None and send_result is not None:
+            self._register_outbound_alias(
+                provider_or_send,
+                im_type=im_type,
+                event=event,
+                session_id=session_id,
+                event_uuid=assistant_event.uuid,
+                provider_message_id=send_result.provider_message_id,
+            )
         log_run_latency(
             logger,
             run_latency,
@@ -441,6 +484,7 @@ class IMRouter:
         self,
         boot: PersistentBootstrap,
         attachments: tuple[AttachmentRef, ...] = (),
+        references: tuple[QuotedTextReference, ...] = (),
         on_text_delta: Callable[[str], None] | None = None,
         on_compaction_progress: Callable[[StreamProgressUpdate], None] | None = None,
         run_id: str | None = None,
@@ -448,6 +492,7 @@ class IMRouter:
         surface: InteractionSurfaceId | None = None,
         latency_started_ms: int | None = None,
         interaction_destination_id: str | None = None,
+        user_event_id: str | None = None,
     ) -> str:
         """跑一轮 :class:`Conversation`,聚合所有 :class:`TextDelta` 到完整文本。
 
@@ -507,6 +552,8 @@ class IMRouter:
                 conversation_runner=lambda conv, request, token: conv.stream(
                     boot.new_user_input,
                     attachments=list(attachments),
+                    references=list(references),
+                    user_event_id=user_event_id,
                     channel=request.channel,
                     surface=request.surface,
                     interaction_destination_id=(
@@ -541,6 +588,8 @@ class IMRouter:
                 for ev in conv.stream(
                     boot.new_user_input,
                     attachments=list(attachments),
+                    references=list(references),
+                    user_event_id=user_event_id,
                     channel="text",
                     turn_context=turn_context,
                     surface=surface,
@@ -556,6 +605,58 @@ class IMRouter:
                 self._persist_run_error(conv, exc, None)
                 raise
         return "".join(buf)
+
+    def _register_user_alias(
+        self,
+        provider_or_send: IMOutboundProvider | SendCallback,
+        *,
+        im_type: str,
+        event: InboundEvent,
+        session_id: str,
+        user_event_id: str,
+    ) -> None:
+        aliases = self._reference_aliases
+        bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
+        if aliases is None or not bind_id:
+            return
+        persisted = self._bridge.persistent_event(session_id, user_event_id)
+        if persisted is None or persisted.type != "user_message":
+            return
+        aliases.put(
+            im_type=im_type,
+            provider_bind_id=bind_id,
+            chat_scope=event.chat_scope,
+            chat_id=event.chat_id,
+            message_aliases=qq_current_message_aliases(event),
+            session_id=session_id,
+            event_uuid=user_event_id,
+            source_role="user",
+        )
+
+    def _register_outbound_alias(
+        self,
+        provider_or_send: IMOutboundProvider | SendCallback,
+        *,
+        im_type: str,
+        event: InboundEvent,
+        session_id: str,
+        event_uuid: str,
+        provider_message_id: str | None,
+    ) -> None:
+        aliases = self._reference_aliases
+        bind_id = str(getattr(provider_or_send, "bind_id", "") or "")
+        if aliases is None or not bind_id or not provider_message_id:
+            return
+        aliases.put(
+            im_type=im_type,
+            provider_bind_id=bind_id,
+            chat_scope=event.chat_scope,
+            chat_id=event.chat_id,
+            message_aliases=[provider_message_id],
+            session_id=session_id,
+            event_uuid=event_uuid,
+            source_role="assistant",
+        )
 
     @staticmethod
     def _open_stream(

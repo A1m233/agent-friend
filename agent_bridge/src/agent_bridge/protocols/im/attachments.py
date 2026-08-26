@@ -40,7 +40,13 @@ class IMAttachmentResolver:
         self._max_redirects = max_redirects
         self._transport = transport
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         del im_type
         candidates = [item for item in _all_attachments(event) if not is_voice_attachment(item)]
         if not candidates:

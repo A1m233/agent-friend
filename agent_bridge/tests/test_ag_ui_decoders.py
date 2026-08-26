@@ -100,6 +100,74 @@ def test_decode_rejects_empty_user_content() -> None:
         decode_run_agent_input(payload)
 
 
+def test_decode_accepts_quote_only_user_message() -> None:
+    payload = RunAgentInput.model_validate(
+        {
+            "thread_id": "thread-1",
+            "run_id": "run-1",
+            "messages": [{"id": "u-quote", "role": "user", "content": ""}],
+            "tools": [],
+            "context": [],
+            "forwarded_props": {
+                "quotedTextReferences": [
+                    {
+                        "reference_id": "ref-1",
+                        "quoted_text": "这段话",
+                        "source_role": "assistant",
+                        "availability": "available",
+                        "source": {
+                            "kind": "session_message",
+                            "message_event_uuid": "assistant-1",
+                            "text_block_id": "assistant-block-1",
+                            "external_source_key": None,
+                        },
+                        "locator": {
+                            "kind": "text_range",
+                            "coordinate_space": "rendered_text_utf16_v1",
+                            "start": 0,
+                            "end": 4,
+                        },
+                    }
+                ]
+            },
+            "state": {},
+        }
+    )
+
+    decoded = decode_run_agent_input(payload)
+
+    assert decoded.new_user_input == ""
+    assert decoded.references[0].quoted_text == "这段话"
+    assert decoded.references[0].source.message_event_uuid == "assistant-1"
+
+
+def test_decode_rejects_malformed_quote_instead_of_dropping_it() -> None:
+    payload = _payload()
+    payload.forwarded_props = {
+        "quotedTextReferences": [
+            {
+                "reference_id": "bad",
+                "quoted_text": "x",
+                "source_role": "assistant",
+                "availability": "available",
+                "source": {
+                    "kind": "external_message",
+                    "external_source_key": "opaque",
+                },
+                "locator": {
+                    "kind": "text_range",
+                    "coordinate_space": "rendered_text_utf16_v1",
+                    "start": 0,
+                    "end": 1,
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(DecodeError, match="quotedTextReferences"):
+        decode_run_agent_input(payload)
+
+
 def test_decode_accepts_standard_attachment_only_content() -> None:
     payload = RunAgentInput.model_validate(
         {

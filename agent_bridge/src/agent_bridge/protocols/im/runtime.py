@@ -723,7 +723,11 @@ class IMRuntime:
                 await provider.send(result.reply)
             return
 
-        if not (resolved_event.content or "").strip() and not result.attachments:
+        if (
+            not (resolved_event.content or "").strip()
+            and not result.attachments
+            and not result.references
+        ):
             logger.warning(
                 "IM inbound empty content ignored after resolver "
                 "(im_type=%s, chat_scope=%s, chat_id=%s, message_id=%s, "
@@ -754,6 +758,7 @@ class IMRuntime:
             provider_or_send=provider,
             attachments=result.attachments,
             media=result.media,
+            references=result.references,
             session_id=binding.session_id,
         )
 
@@ -808,7 +813,11 @@ class IMRuntime:
         event: InboundEvent,
     ) -> InboundResolveResult:
         try:
-            return await self._inbound_resolver.resolve(provider.type, event)
+            return await self._inbound_resolver.resolve(
+                provider.type,
+                event,
+                provider_bind_id=provider.bind_id,
+            )
         except Exception:
             logger.exception(
                 "IM inbound resolver failed (im_type=%s, chat_scope=%s, message_id=%s)",

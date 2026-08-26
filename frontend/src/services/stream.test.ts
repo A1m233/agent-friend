@@ -80,6 +80,55 @@ describe("buildRunAgentInput", () => {
       },
     });
   });
+
+  it("sends an ordered quote-only reference set through forwarded props", () => {
+    const payload = buildRunAgentInput({
+      threadId: "session-1",
+      runId: "run-quote",
+      modelConfig: { model: "kimi/kimi-k2.6", reasoningPreset: "on" },
+      text: "",
+      references: [
+        {
+          referenceId: "ref-1",
+          quotedText: "被引用的回答",
+          sourceRole: "assistant",
+          availability: "available",
+          source: {
+            kind: "session_message",
+            messageEventUuid: "assistant-1",
+            textBlockId: "block-1",
+            externalSourceKey: null,
+          },
+          locator: {
+            kind: "text_range",
+            coordinateSpace: "rendered_text_utf16_v1",
+            start: 0,
+            end: 7,
+          },
+        },
+      ],
+    });
+
+    expect(payload.messages[0].content).toBe("");
+    expect(payload.forwardedProps).toMatchObject({
+      quotedTextReferences: [
+        {
+          reference_id: "ref-1",
+          quoted_text: "被引用的回答",
+          source_role: "assistant",
+          source: {
+            message_event_uuid: "assistant-1",
+            text_block_id: "block-1",
+          },
+          locator: {
+            coordinate_space: "rendered_text_utf16_v1",
+            start: 0,
+            end: 7,
+          },
+        },
+      ],
+    });
+  });
 });
 
 describe("editResendLatestStream", () => {
@@ -122,6 +171,50 @@ describe("editResendLatestStream", () => {
     }
 
     expect(order).toEqual(["fetch", "admitted", "event"]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("includes the final edited reference set", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        references: [{ reference_id: "ref-edit", quoted_text: "旧回答" }],
+      });
+      return new Response('data: {"type":"RUN_FINISHED"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for await (const _event of editResendLatestStream({
+      sessionId: "session-1",
+      runId: "run-edit",
+      text: "改写",
+      attachments: [],
+      references: [
+        {
+          referenceId: "ref-edit",
+          quotedText: "旧回答",
+          sourceRole: "assistant",
+          availability: "available",
+          source: {
+            kind: "session_message",
+            messageEventUuid: "assistant-1",
+            textBlockId: "block-1",
+            externalSourceKey: null,
+          },
+          locator: {
+            kind: "whole_message",
+            coordinateSpace: null,
+            start: null,
+            end: null,
+          },
+        },
+      ],
+    })) {
+      // Drain the one-event stream.
+    }
+
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

@@ -665,6 +665,8 @@ def build_runtime(
         from .protocols.im.dedupe import RecentMessageDeduper
         from .protocols.im.inbound_resolver import CompositeInboundResolver
         from .protocols.im.media import QQFaceResolver
+        from .protocols.im.qq_references import QQReferenceResolver
+        from .protocols.im.reference_aliases import IMReferenceAliasIndex
         from .protocols.im.voice import QQVoiceMessageResolver, SafeAudioDownloader
         from .protocols.im.voice_bridge_client import VoiceBridgeTranscriptionClient
         from .session_bridge import SessionBridge as _SessionBridge
@@ -714,11 +716,13 @@ def build_runtime(
             execution_environment_manager=execution_environment_manager,
         )
         session_bridge = _SessionBridge(pre_runtime)
+        im_reference_aliases = IMReferenceAliasIndex(settings.im_reference_alias_path)
         im_router = IMRouter(
             session_bridge=session_bridge,
             default_persona=default_persona,
             default_model=default_model,
             agent_runtime=agent_runtime,
+            reference_aliases=im_reference_aliases,
         )
         im_state_store = IMStateStore(settings.im_state_path)
         im_binding_coordinator = IMBindingCoordinator()
@@ -737,6 +741,10 @@ def build_runtime(
             max_items=settings.im_voice_dedupe_max_items,
         )
         im_inbound_resolver = CompositeInboundResolver(
+            QQReferenceResolver(
+                im_reference_aliases,
+                persistent_session_manager.open,
+            ),
             QQFaceResolver(),
             QQVoiceMessageResolver(
                 downloader=SafeAudioDownloader(),

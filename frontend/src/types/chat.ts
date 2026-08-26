@@ -89,6 +89,25 @@ export interface ChatAttachment {
   sizeBytes: number;
 }
 
+export interface ChatTextReference {
+  referenceId: string;
+  quotedText: string | null;
+  sourceRole: "user" | "assistant" | "unknown";
+  availability: "available" | "unavailable";
+  source: {
+    kind: "session_message" | "external_message";
+    messageEventUuid: string | null;
+    textBlockId: string | null;
+    externalSourceKey: string | null;
+  };
+  locator: {
+    kind: "text_range" | "whole_message";
+    coordinateSpace: "rendered_text_utf16_v1" | null;
+    start: number | null;
+    end: number | null;
+  };
+}
+
 /** 一条对话消息（user 或一整轮 assistant，assistant 轮可含多块文本/工具）。 */
 export interface ChatMessage {
   id: string;
@@ -97,6 +116,7 @@ export interface ChatMessage {
   createdAt: string;
   blocks: MessageBlock[];
   attachments?: ChatAttachment[];
+  references?: ChatTextReference[];
   status: MessageStatus;
   /** status==='error' 时的用户可见错误文案（不含技术细节）。 */
   error?: string;

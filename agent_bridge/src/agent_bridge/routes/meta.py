@@ -44,8 +44,11 @@ from agent import (
     ConversationEvent,
     PersonaAmbiguousError,
     PersonaNotFoundError,
+    QuotedTextReference,
     SessionNotFoundError,
     SessionPersistError,
+    parse_quoted_text_references,
+    quoted_text_references_fingerprint,
 )
 
 from ..assembly import BridgeRuntime
@@ -140,6 +143,15 @@ class EditResendLatestBody(BaseModel):
     attachments: list[EditAttachmentBody] | None = Field(
         None,
         description="最终附件替换集；缺省时保留全部原附件，空数组表示删除全部",
+    )
+    references: list[dict[str, Any]] | None = Field(
+        None,
+        description="最终引用替换集；缺省时保留原引用，空数组表示删除全部",
+    )
+    expected_reference_fingerprint: str | None = Field(
+        None,
+        alias="expectedReferenceFingerprint",
+        description="客户端看到的旧引用集合指纹，用于并发变化保护",
     )
 
 
@@ -356,6 +368,25 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             )
 
         try:
+            original_references = parse_quoted_text_references(target.payload.get("references", []))
+            replacement_references: list[QuotedTextReference] = (
+                original_references
+                if body.references is None
+                else parse_quoted_text_references(body.references)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"引用数据无效: {exc}") from exc
+        if (
+            body.expected_reference_fingerprint is not None
+            and body.expected_reference_fingerprint
+            != quoted_text_references_fingerprint(original_references)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="最后一条用户消息的引用已变化，请刷新后再编辑重发",
+            )
+
+        try:
             original_attachments = [
                 AttachmentRef.from_dict(item)
                 for item in target.payload.get("attachments", [])
@@ -395,12 +426,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
             model_id=preflight_session.current_model,
             store=runtime.attachment_store,
         )
-        if not text and not attachment_plan.validated_refs:
+        if not text and not attachment_plan.validated_refs and not replacement_references:
             raise HTTPException(
                 status_code=400,
                 detail={
                     "error": "empty_edit_resend",
-                    "message": "编辑后的文字和附件不能同时为空。",
+                    "message": "编辑后的文字、附件和引用不能同时为空。",
                 },
             )
 
@@ -422,8 +453,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 return conv.edit_resend_latest(
                     text,
                     attachments=attachment_plan.resolve(),
+                    references=replacement_references,
                     expected_user_uuid=target.uuid,
                     expected_user_content=target_content,
+                    expected_reference_fingerprint=quoted_text_references_fingerprint(
+                        original_references
+                    ),
                     channel="text",
                     surface=run_request.surface,
                     run_id=run_request.run_id,
@@ -454,8 +489,12 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_conversation=lambda conv, value: conv.edit_resend_latest(
                     value,
                     attachments=attachment_plan.resolve(),
+                    references=replacement_references,
                     expected_user_uuid=target.uuid,
                     expected_user_content=target_content,
+                    expected_reference_fingerprint=quoted_text_references_fingerprint(
+                        original_references
+                    ),
                     channel="text",
                     surface=DESKTOP_CHAT_SURFACE,
                 ),

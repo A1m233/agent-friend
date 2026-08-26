@@ -27,6 +27,7 @@ import type {
   ChatMessage,
   ReminderBlock,
   TextBlock,
+  ChatTextReference,
   ToolBlock,
 } from "@/types/chat";
 import type { SessionEvent } from "@/types/meta";
@@ -73,6 +74,58 @@ function attachmentsOf(value: unknown): ChatAttachment[] {
       mediaType,
       kind,
       sizeBytes: typeof data.size_bytes === "number" ? data.size_bytes : 0,
+    }];
+  });
+}
+
+function referencesOf(value: unknown): ChatTextReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const source = raw.source;
+    const locator = raw.locator;
+    if (!source || typeof source !== "object" || !locator || typeof locator !== "object") {
+      return [];
+    }
+    const sourceRaw = source as Record<string, unknown>;
+    const locatorRaw = locator as Record<string, unknown>;
+    const availability = raw.availability;
+    const sourceRole = raw.source_role;
+    const sourceKind = sourceRaw.kind;
+    const locatorKind = locatorRaw.kind;
+    if (
+      typeof raw.reference_id !== "string"
+      || !["available", "unavailable"].includes(String(availability))
+      || !["user", "assistant", "unknown"].includes(String(sourceRole))
+      || !["session_message", "external_message"].includes(String(sourceKind))
+      || !["text_range", "whole_message"].includes(String(locatorKind))
+    ) return [];
+    return [{
+      referenceId: raw.reference_id,
+      quotedText: typeof raw.quoted_text === "string" ? raw.quoted_text : null,
+      sourceRole: sourceRole as ChatTextReference["sourceRole"],
+      availability: availability as ChatTextReference["availability"],
+      source: {
+        kind: sourceKind as ChatTextReference["source"]["kind"],
+        messageEventUuid: typeof sourceRaw.message_event_uuid === "string"
+          ? sourceRaw.message_event_uuid
+          : null,
+        textBlockId: typeof sourceRaw.text_block_id === "string"
+          ? sourceRaw.text_block_id
+          : null,
+        externalSourceKey: typeof sourceRaw.external_source_key === "string"
+          ? sourceRaw.external_source_key
+          : null,
+      },
+      locator: {
+        kind: locatorKind as ChatTextReference["locator"]["kind"],
+        coordinateSpace: locatorRaw.coordinate_space === "rendered_text_utf16_v1"
+          ? "rendered_text_utf16_v1"
+          : null,
+        start: typeof locatorRaw.start === "number" ? locatorRaw.start : null,
+        end: typeof locatorRaw.end === "number" ? locatorRaw.end : null,
+      },
     }];
   });
 }
@@ -165,6 +218,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
     if (ev.type === "user_message") {
       const message = textMessage(ev.uuid, "user", asString(p.content), ev.ts);
       message.attachments = attachmentsOf(p.attachments);
+      message.references = referencesOf(p.references);
       messages.push(message);
       currentAssistant = null;
       pendingSkipAssistant = false;

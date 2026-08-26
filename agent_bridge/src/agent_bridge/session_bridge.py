@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from agent.approvals import SessionApprovalMode
 
-from agent import Conversation, Message, Session, SessionNotFoundError
+from agent import Conversation, Event, Message, Session, SessionNotFoundError
 from llm_providers import ModelRuntimeConfig, default_model_runtime_config
 
 from .assembly import BridgeRuntime
@@ -101,6 +101,36 @@ class SessionBridge:
             return self._runtime.persistent_session_manager.open(session_id).current_model
         except SessionNotFoundError:
             return default
+
+    def persistent_event(self, session_id: str, event_uuid: str) -> Event | None:
+        """Read one active durable event for IM alias registration."""
+
+        try:
+            session = self._runtime.persistent_session_manager.open(session_id)
+        except SessionNotFoundError:
+            return None
+        return next((event for event in session.active_events if event.uuid == event_uuid), None)
+
+    def assistant_event_after(self, session_id: str, user_event_uuid: str) -> Event | None:
+        """Return the last complete assistant event in the accepted user turn."""
+
+        try:
+            session = self._runtime.persistent_session_manager.open(session_id)
+        except SessionNotFoundError:
+            return None
+        started = False
+        candidate: Event | None = None
+        for event in session.active_events:
+            if event.uuid == user_event_uuid and event.type == "user_message":
+                started = True
+                continue
+            if not started:
+                continue
+            if event.type == "user_message":
+                break
+            if event.type == "assistant_message" and event.payload.get("partial") is not True:
+                candidate = event
+        return candidate
 
     @contextmanager
     def session_turn(self, session_id: str) -> Iterator[None]:

@@ -120,6 +120,14 @@ from .latency import (
     log_voice_latency,
     monotonic_ms,
 )
+from .message_references import (
+    QuotedTextReference,
+    parse_quoted_text_references,
+    quoted_text_references_fingerprint,
+    quoted_text_references_to_dicts,
+    render_retrieval_query,
+    render_user_content_for_model,
+)
 from .messages import Message, escape_internal_prompt_markers, escape_user_messages_for_llm
 from .personas import PersonaCatalog
 from .prompt_cache_trace import PromptCacheTraceTracker, PromptRequestTrace
@@ -250,6 +258,7 @@ class _RewritePlan:
     target_user_uuid: str
     target_user_content: str
     target_user_attachments: list[AttachmentRef]
+    target_user_references: list[QuotedTextReference]
     inactive_event_uuids: list[str]
     prefix_events: list[Event]
 
@@ -574,6 +583,7 @@ class Conversation:
         user_input: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
         user_event_id: str | None = None,
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
@@ -633,6 +643,7 @@ class Conversation:
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
         turn_attachments = list(attachments or [])
+        requested_references = parse_quoted_text_references(references or [])
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
         previous_interaction_destination_id = self._interaction_destination_id_override
@@ -667,6 +678,10 @@ class Conversation:
             if existing_user_event is not None
             else self._session.active_events
         )
+        turn_references = self._validate_references_for_session(
+            requested_references,
+            events=selection_history,
+        )
         # Freeze the pre-turn model view before committing the durable user event.  The
         # first request still receives ``new_user_input`` separately, so reading live
         # session history after the append would send the same query twice.
@@ -689,9 +704,12 @@ class Conversation:
         if existing_user_event is not None:
             existing_attachments = existing_user_event.payload.get("attachments", [])
             requested_attachments = [item.to_dict() for item in turn_attachments]
+            existing_references = existing_user_event.payload.get("references", [])
+            requested_reference_dicts = quoted_text_references_to_dicts(turn_references)
             if (
                 existing_user_event.payload.get("content", "") != user_input
                 or existing_attachments != requested_attachments
+                or existing_references != requested_reference_dicts
             ):
                 raise ValueError("user_event_id_conflict: 相同消息标识不能对应不同内容。")
             if self._persisted_skill_selections(existing_user_event) != effective_skill_selections:
@@ -737,6 +755,7 @@ class Conversation:
                 yield from self._build_openai_messages_first_turn_stream(
                     user_input,
                     attachments=turn_attachments,
+                    references=turn_references,
                     history_override=prefix_history,
                     prior_summary_override=prefix_prior_summary,
                     catalog_message_override=first_turn_catalog_message,
@@ -751,6 +770,7 @@ class Conversation:
                 appended_user_id = self._append_user_event(
                     user_input,
                     attachments=turn_attachments,
+                    references=turn_references,
                     event_id=user_event_id,
                 )
                 self._append_skill_context_events(appended_user_id)
@@ -812,8 +832,10 @@ class Conversation:
         user_input: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
         expected_user_uuid: str | None = None,
         expected_user_content: str | None = None,
+        expected_reference_fingerprint: str | None = None,
         channel: PromptChannel | None = None,
         surface: InteractionSurfaceId | None = None,
         run_id: str | None = None,
@@ -829,12 +851,21 @@ class Conversation:
         plan = self._latest_active_user_rewrite_plan(
             expected_user_uuid=expected_user_uuid,
             expected_user_content=expected_user_content,
+            expected_reference_fingerprint=expected_reference_fingerprint,
         )
         replacement_attachments = (
             plan.target_user_attachments if attachments is None else list(attachments)
         )
-        if not user_input.strip() and not replacement_attachments:
-            raise AgentError("编辑后的文字和附件不能同时为空")
+        replacement_references = (
+            plan.target_user_references
+            if references is None
+            else self._validate_references_for_session(
+                parse_quoted_text_references(references),
+                events=plan.prefix_events,
+            )
+        )
+        if not user_input.strip() and not replacement_attachments and not replacement_references:
+            raise AgentError("编辑后的文字、附件和引用不能同时为空")
 
         previous_prompt_channel = self._prompt_channel_override
         previous_prompt_surface = self._prompt_surface_override
@@ -896,6 +927,7 @@ class Conversation:
                 appended_user_id = self._append_user_event(
                     user_input,
                     attachments=replacement_attachments,
+                    references=replacement_references,
                 )
                 self._append_skill_context_events(appended_user_id)
                 user_event_appended = True
@@ -903,6 +935,7 @@ class Conversation:
                 yield from self._build_openai_messages_first_turn_stream(
                     user_input,
                     attachments=replacement_attachments,
+                    references=replacement_references,
                     history_override=prefix_history,
                     prior_summary_override=prefix_prior_summary,
                     persist_compaction=False,
@@ -1773,6 +1806,7 @@ class Conversation:
         *,
         expected_user_uuid: str | None,
         expected_user_content: str | None,
+        expected_reference_fingerprint: str | None,
     ) -> _RewritePlan:
         active_events = self._session.active_events
         target_idx: int | None = None
@@ -1792,6 +1826,16 @@ class Conversation:
         if expected_user_content is not None and content != expected_user_content:
             raise AgentError("最后一条用户消息已变化，请刷新后再编辑重发")
 
+        try:
+            references = parse_quoted_text_references(target.payload.get("references", []))
+        except ValueError as exc:
+            raise AgentError(f"最后一条用户消息的引用数据已损坏: {exc}") from exc
+        if (
+            expected_reference_fingerprint is not None
+            and quoted_text_references_fingerprint(references) != expected_reference_fingerprint
+        ):
+            raise AgentError("最后一条用户消息的引用已变化，请刷新后再编辑重发")
+
         attachments = [
             AttachmentRef.from_dict(item)
             for item in target.payload.get("attachments", [])
@@ -1806,6 +1850,7 @@ class Conversation:
             target_user_uuid=target.uuid,
             target_user_content=content,
             target_user_attachments=attachments,
+            target_user_references=references,
             inactive_event_uuids=inactive,
             prefix_events=list(active_events[:target_idx]),
         )
@@ -1847,6 +1892,37 @@ class Conversation:
             return []
         return Session.from_events(list(events)).llm_messages
 
+    @staticmethod
+    def _validate_references_for_session(
+        references: list[QuotedTextReference],
+        *,
+        events: list[Event],
+    ) -> list[QuotedTextReference]:
+        """Validate same-session anchors and derive roles from durable events."""
+
+        events_by_uuid = {event.uuid: event for event in events}
+        validated: list[QuotedTextReference] = []
+        for reference in references:
+            if reference.source.kind == "external_message":
+                validated.append(reference)
+                continue
+            anchor_id = reference.source.message_event_uuid or ""
+            if anchor_id not in events_by_uuid:
+                raise AgentError("引用来源不属于当前会话或已经不可访问")
+            source_event = events_by_uuid[anchor_id]
+            if reference.locator.kind == "text_range":
+                block_id = reference.source.text_block_id or ""
+                source_event = events_by_uuid.get(block_id)  # type: ignore[assignment]
+                if source_event is None:
+                    raise AgentError("引用文本块不属于当前会话或已经不可访问")
+            if source_event.type not in {"user_message", "assistant_message"}:
+                raise AgentError("引用只能指向用户或 Agent 的文本消息")
+            derived_role: Literal["user", "assistant"] = (
+                "user" if source_event.type == "user_message" else "assistant"
+            )
+            validated.append(reference.with_source_role(derived_role))
+        return validated
+
     def _invalidate_rewrite_memory(self, inactive_event_uuids: list[str]) -> None:
         if self._memory is None or not inactive_event_uuids:
             return
@@ -1882,11 +1958,14 @@ class Conversation:
         content: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
         event_id: str | None = None,
     ) -> str:
         payload: dict[str, Any] = {"content": content}
         if attachments:
             payload["attachments"] = [item.to_dict() for item in attachments]
+        if references:
+            payload["references"] = quoted_text_references_to_dicts(references)
         event = Event(
             type="user_message",
             uuid=event_id or str(uuid4()),
@@ -2043,6 +2122,7 @@ class Conversation:
         user_input: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
@@ -2053,6 +2133,7 @@ class Conversation:
             self._build_openai_messages_first_turn_stream(
                 user_input,
                 attachments=attachments,
+                references=references,
                 extra_context=extra_context,
                 history_override=history_override,
                 prior_summary_override=prior_summary_override,
@@ -2066,6 +2147,7 @@ class Conversation:
         user_input: str,
         *,
         attachments: list[AttachmentRef] | None = None,
+        references: list[QuotedTextReference] | None = None,
         extra_context: list[Message] | None = None,
         history_override: list[Message] | None = None,
         prior_summary_override: PriorSummary | None | object = _UNSET,
@@ -2097,7 +2179,7 @@ class Conversation:
                 session_id=self._session.session_id,
             )
             ctx = self._memory.retrieve(
-                user_input,
+                render_retrieval_query(user_input, references or []),
                 persona_id=self._session.current_persona_id or "",
                 session_id=self._session.session_id,
                 automatic_recall_scope=CurrentSessionRecallScope(
@@ -2146,9 +2228,14 @@ class Conversation:
             if catalog_message_override is _UNSET
             else cast(Message | None, catalog_message_override)
         )
+        current_user_content = user_input or "\n".join(
+            f"[附件 {item.display_name}]" for item in attachments or []
+        )
         result = yield from self._assemble_stream(
-            new_user_input=(
-                user_input or "\n".join(f"[附件 {item.display_name}]" for item in attachments or [])
+            new_user_input=render_user_content_for_model(
+                current_user_content,
+                references or [],
+                escape=escape_internal_prompt_markers,
             ),
             new_user_attachments=attachments,
             pre_user_context=[catalog_message] if catalog_message is not None else None,

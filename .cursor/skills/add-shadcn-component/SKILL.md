@@ -10,7 +10,7 @@ description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shad
 ## 适用范围
 
 - 只管**通用纯 UI 件**（无业务、无 store、只吃 props：button / input / select / dialog / collapsible / scroll-area 等）。
-- 本 skill 不负责跳过组件选型直接把需求映射成 shadcn。必须先按 `frontend-ui-conventions.mdc` 的优先级确认：项目现有封装和已安装组件库中没有更匹配的专用组件，且 shadcn 的组件语义确实匹配。
+- 本 skill 不负责跳过组件选型直接把需求映射成 shadcn。必须先按 `frontend-ui-conventions.mdc` 的优先级确认：项目现有封装没有更匹配的组件，需求也不属于 `@tdesign-react/chat` 对话核心或不得不做的 TDesign 兼容，并且 shadcn 的组件语义确实匹配。`tdesign-react` 仅仅已经安装，不构成跳过 shadcn 的理由。
 - **页面私有、带业务的组件不走本流程**，按既有约定放 `pages/<页>/components/`（它们本就不是 shadcn）。
 - 动手前先读 `.cursor/rules/frontend-ui-conventions.mdc`（护栏：交互件一律用封装件 + 颜色走 token）。
 - Node 要求 ≥ 22.13：CLI / pnpm 操作前先 `nvm use 22`。
@@ -18,7 +18,7 @@ description: 在 agent-friend 前端（frontend/src/components/ui/）通过 shad
 
 ## Step 1 · 确定要哪个组件（别凭记忆猜）
 
-1. 先确认已执行 `frontend-ui-conventions.mdc` 的组件选型顺序，没有可复用的项目封装或已安装组件库专用组件；否则停止本流程，改用职责更匹配的组件。
+1. 先确认已执行 `frontend-ui-conventions.mdc` 的组件选型顺序，没有可复用的项目封装，并且需求不属于 `@tdesign-react/chat` 对话核心或不得不做的 TDesign 兼容；否则停止本流程，改用职责更匹配的组件。
 2. 把需求落成**语义职责与交互形态**：常驻 inline 列表 / 弹出菜单 / 浮层对话框 / 表单控件 / 反馈提示 / 数据展示 …；不能只因视觉结构相似就用 Dialog 等通用容器模拟图片预览、日期选择等专用能力。
 3. 用 **context7 查 `/shadcn-ui/ui`**（或官方 docs `ui.shadcn.com`）把职责与形态映射到组件，**不靠记忆**。
 4. 当心**同名陷阱**：`Menubar` / `NavigationMenu` / `DropdownMenu` 都是「trigger + 弹出 content」的**弹出式**菜单；常驻竖向可选中列表是 `Sidebar` 区块（`SidebarMenu` / `SidebarMenuItem` / `SidebarMenuButton`）。

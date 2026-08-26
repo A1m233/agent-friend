@@ -17,6 +17,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .attachments import AttachmentRef
+from .message_references import (
+    QuotedTextReference,
+    parse_quoted_text_references,
+    render_user_content_for_model,
+)
 
 Role = Literal["system", "user", "assistant", "tool"]
 """消息角色。``"tool"`` 起自 005，承载工具执行结果回喂给 LLM 的消息。"""
@@ -75,6 +80,7 @@ class Message:
     meta: dict[str, Any] = field(default_factory=dict)
     uuid: str = field(default_factory=lambda: str(uuid4()))
     attachments: list[AttachmentRef] = field(default_factory=list)
+    references: list[QuotedTextReference] = field(default_factory=list)
 
     def to_openai(self) -> dict[str, Any]:
         """转为 OpenAI / LiteLLM 期望的消息格式。
@@ -94,7 +100,15 @@ class Message:
             返回类型从 005 起放宽为 ``dict[str, Any]``（原 ``dict[str, str]``）；
             扩展字段含 ``list`` / 嵌套 ``dict``。详见 005 design §1.3 / §6.1。
         """
-        content = self.content
+        content = (
+            render_user_content_for_model(
+                self.content,
+                self.references,
+                escape=escape_internal_prompt_markers,
+            )
+            if self.role == "user" and self.references
+            else self.content
+        )
         if self.attachments and self.role == "user":
             markers = "\n".join(
                 f"[附件 {item.display_name} | {item.media_type} | {item.asset_id}]"
@@ -151,6 +165,7 @@ class Message:
                 for item in data.get("attachments", [])
                 if isinstance(item, dict)
             ],
+            "references": parse_quoted_text_references(data.get("references", [])),
         }
         if "uuid" in data:
             kwargs["uuid"] = data["uuid"]
@@ -162,9 +177,20 @@ def escape_user_messages_for_llm(messages: list[Message]) -> list[Message]:
 
     原 :class:`Message` 对象不被修改，session event / UI / memory 继续持有用户原文。
     """
-    return [
-        replace(message, content=escape_internal_prompt_markers(message.content))
-        if message.role == "user" and message.meta.get("synthetic") != "skill_instructions"
-        else message
-        for message in messages
-    ]
+    escaped: list[Message] = []
+    for message in messages:
+        if message.role != "user" or message.meta.get("synthetic") == "skill_instructions":
+            escaped.append(message)
+            continue
+        escaped.append(
+            replace(
+                message,
+                content=render_user_content_for_model(
+                    message.content,
+                    message.references,
+                    escape=escape_internal_prompt_markers,
+                ),
+                references=[],
+            )
+        )
+    return escaped

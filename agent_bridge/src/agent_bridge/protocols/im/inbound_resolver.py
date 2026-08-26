@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from agent.attachments import AttachmentRef
+from agent.message_references import QuotedTextReference
 
 from .content import OutboundContent
 from .event import InboundEvent
@@ -30,6 +31,7 @@ class InboundResolveResult:
     reply: OutboundContent | None = None
     reason: str = ""
     media: tuple[InboundMedia, ...] = ()
+    references: tuple[QuotedTextReference, ...] = ()
 
     @property
     def attachments(self) -> tuple[AttachmentRef, ...]:
@@ -42,12 +44,13 @@ class InboundResolveResult:
         *,
         attachments: tuple[AttachmentRef, ...] = (),
         media: tuple[InboundMedia, ...] = (),
+        references: tuple[QuotedTextReference, ...] = (),
     ) -> InboundResolveResult:
         if attachments:
             from .media import InboundMedia
 
             media = (*media, *(InboundMedia.readable_attachment(item) for item in attachments))
-        return cls(action="route", event=event, media=media)
+        return cls(action="route", event=event, media=media, references=references)
 
     @classmethod
     def direct_reply(cls, content: OutboundContent, *, reason: str = "") -> InboundResolveResult:
@@ -61,14 +64,26 @@ class InboundResolveResult:
 class InboundResolver(Protocol):
     """Protocol for platform-specific inbound event normalization."""
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         """Normalize an inbound event before it reaches the router."""
 
 
 class NoopInboundResolver:
     """Default resolver that preserves current text-only behavior."""
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         return InboundResolveResult.route(event)
 
 
@@ -78,13 +93,29 @@ class CompositeInboundResolver:
     def __init__(self, *resolvers: InboundResolver) -> None:
         self._resolvers = resolvers
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         current = event
         media: list[InboundMedia] = []
+        references: list[QuotedTextReference] = []
         for resolver in self._resolvers:
-            result = await resolver.resolve(im_type, current)
+            result = await resolver.resolve(
+                im_type,
+                current,
+                provider_bind_id=provider_bind_id,
+            )
             media.extend(result.media)
+            references.extend(result.references)
             if result.action != "route":
                 return result
             current = result.event or current
-        return InboundResolveResult.route(current, media=tuple(media))
+        return InboundResolveResult.route(
+            current,
+            media=tuple(media),
+            references=tuple(references),
+        )

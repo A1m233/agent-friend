@@ -119,6 +119,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 conversation_runner=lambda conv, run_request, token: conv.stream(
                     decoded.new_user_input,
                     attachments=attachment_plan.resolve(),
+                    references=list(decoded.references),
                     user_event_id=decoded.user_message_id,
                     channel=run_request.channel,
                     surface=run_request.surface,
@@ -144,6 +145,7 @@ def register_routes(app: FastAPI, runtime: BridgeRuntime) -> None:
                 run_conversation=lambda conv, text: conv.stream(
                     text,
                     attachments=attachment_plan.resolve(),
+                    references=list(decoded.references),
                     user_event_id=decoded.user_message_id,
                     channel="text",
                     surface=DESKTOP_CHAT_SURFACE,

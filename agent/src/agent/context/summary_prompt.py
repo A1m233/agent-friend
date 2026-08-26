@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..message_references import render_user_content_for_model
 from ..messages import Message
 
 SUMMARY_SYSTEM_PROMPT = """\
@@ -86,7 +87,8 @@ def render_transcript(messages: list[Message]) -> str:
             label = (
                 "[该用户轮选择的历史 Skill 指令]" if synthetic == "skill_instructions" else "用户"
             )
-            lines.append(f"{label}: {m.content} {attachment_markers}".rstrip())
+            content = render_user_content_for_model(m.content, m.references)
+            lines.append(f"{label}: {content} {attachment_markers}".rstrip())
         elif m.role == "assistant":
             if m.content:
                 lines.append(f"AI: {m.content}")

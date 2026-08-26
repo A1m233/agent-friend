@@ -71,6 +71,55 @@ describe("projectSessionEvents", () => {
     ]);
   });
 
+  it("把 user event 的有序文本引用投影到历史消息", () => {
+    const out = projectSessionEvents([
+      ev("user_message", {
+        content: "这句话什么意思？",
+        references: [
+          {
+            reference_id: "ref-1",
+            quoted_text: "先看证据",
+            source_role: "assistant",
+            availability: "available",
+            source: {
+              kind: "session_message",
+              message_event_uuid: "assistant-1",
+              text_block_id: "block-1",
+              external_source_key: null,
+            },
+            locator: {
+              kind: "text_range",
+              coordinate_space: "rendered_text_utf16_v1",
+              start: 1,
+              end: 5,
+            },
+          },
+        ],
+      }),
+    ]);
+
+    expect(out[0].references).toEqual([
+      {
+        referenceId: "ref-1",
+        quotedText: "先看证据",
+        sourceRole: "assistant",
+        availability: "available",
+        source: {
+          kind: "session_message",
+          messageEventUuid: "assistant-1",
+          textBlockId: "block-1",
+          externalSourceKey: null,
+        },
+        locator: {
+          kind: "text_range",
+          coordinateSpace: "rendered_text_utf16_v1",
+          start: 1,
+          end: 5,
+        },
+      },
+    ]);
+  });
+
   it("保留 partial assistant 内容并标记为 interrupted", () => {
     const out = projectSessionEvents([
       ev("assistant_message", { content: "半截", partial: true }),
