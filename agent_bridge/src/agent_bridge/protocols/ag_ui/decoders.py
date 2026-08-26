@@ -28,6 +28,7 @@ from ag_ui.core import (
     UserMessage,
 )
 from agent.approvals import SessionApprovalMode
+from agent.message_references import QuotedTextReference, parse_quoted_text_references
 from agent.skills import SkillSelection, decode_skill_selections
 
 from llm_providers import (
@@ -64,6 +65,7 @@ class DecodedRequest:
     requested_model_config: ModelRuntimeConfig | None = None
     initial_approval_mode: SessionApprovalMode | None = None
     skills: tuple[SkillSelection, ...] = ()
+    references: tuple[QuotedTextReference, ...] = ()
 
     @property
     def requested_model(self) -> str | None:
@@ -202,11 +204,18 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
             else:
                 raise DecodeError(f"暂不支持 AG-UI 内容类型：{getattr(part, 'type', 'unknown')}")
         content = "\n".join(item for item in text_parts if item)
-    if not content.strip() and not drafts:
-        raise DecodeError("messages 最后一条 user content 不能为空")
+    forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
+    raw_references = (
+        forwarded_props.get("quotedTextReferences") if isinstance(forwarded_props, dict) else None
+    )
+    try:
+        references = parse_quoted_text_references(raw_references)
+    except ValueError as exc:
+        raise DecodeError(f"forwarded_props.quotedTextReferences: {exc}") from exc
+    if not content.strip() and not drafts and not references:
+        raise DecodeError("messages 最后一条 user content 不能为空（除非提供附件或引用）")
     if len({item.draft_id for item in drafts}) != len(drafts):
         raise DecodeError("同一个附件草稿不能重复发送")
-    forwarded_props: Any = getattr(payload, "forwarded_props", None) or {}
     try:
         skills = decode_skill_selections(
             forwarded_props.get("skills") if isinstance(forwarded_props, dict) else None
@@ -222,4 +231,5 @@ def decode_run_agent_input(payload: RunAgentInput) -> DecodedRequest:
         requested_model_config=resolve_requested_model_config(payload),
         initial_approval_mode=resolve_initial_approval_mode(payload),
         skills=skills,
+        references=tuple(references),
     )

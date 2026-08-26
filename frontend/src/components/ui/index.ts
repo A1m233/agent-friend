@@ -13,6 +13,7 @@ export * from "./dialog";
 export * from "./dropdown-menu";
 export * from "./status-dot";
 export * from "./input";
+export * from "./popover";
 export * from "./scroll-area";
 export * from "./select";
 export * from "./separator";

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 from agent.runtime import AgentRuntime, RunOutcome
@@ -257,6 +257,8 @@ async def test_text_delta_aggregation(router: IMRouter, session_bridge: MagicMoc
     session_bridge.bind_persistent.return_value.stream.assert_called_once_with(
         "你好",
         attachments=[],
+        references=[],
+        user_event_id=ANY,
         channel="text",
         turn_context=None,
         surface=IM_QQ_SURFACE,
@@ -279,6 +281,8 @@ async def test_bound_provider_freezes_exact_im_destination_for_agent_tools(
     conv.stream.assert_called_once_with(
         "你好",
         attachments=[],
+        references=[],
+        user_event_id=ANY,
         channel="text",
         turn_context=None,
         surface=IM_QQ_SURFACE,

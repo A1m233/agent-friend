@@ -23,6 +23,7 @@ from memory import (
 )
 
 from .context import resolve_prior_summary
+from .message_references import parse_quoted_text_references, render_memory_user_text
 from .sessions import Event, Session
 
 __all__ = ["project_post_turn_observation", "project_turn"]
@@ -167,10 +168,11 @@ def project_post_turn_observation(
 def _project_utterance(event: Event, *, session_id: str) -> Utterance | None:
     if event.type == "user_message":
         content = event.payload.get("content", "")
-        if isinstance(content, str) and content.strip():
+        references = parse_quoted_text_references(event.payload.get("references", []))
+        if isinstance(content, str) and (content.strip() or references):
             return Utterance(
                 speaker="user",
-                text=content,
+                text=render_memory_user_text(content, references),
                 ts=event.ts,
                 source_ref=f"{session_id}#{event.uuid}",
             )

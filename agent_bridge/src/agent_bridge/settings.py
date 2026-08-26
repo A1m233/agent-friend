@@ -44,6 +44,12 @@ def _im_state_path() -> Path:
     return _user_data_dir() / "im_state.json"
 
 
+def _im_reference_alias_path() -> Path:
+    """Persistent opaque QQ/IM message alias index without message bodies."""
+
+    return _user_data_dir() / "im_reference_aliases.json"
+
+
 class BridgeSettings(BaseSettings):
     """bridge 启动配置。
 
@@ -138,6 +144,8 @@ class BridgeSettings(BaseSettings):
 
     im_state_path: Path = Field(default_factory=_im_state_path)
     """IM 会话绑定与消息按钮能力状态；默认 ``<user_data_dir>/im_state.json``。"""
+    im_reference_alias_path: Path = Field(default_factory=_im_reference_alias_path)
+    """IM 消息别名到 Session event 的有界索引；不保存消息正文。"""
 
     voice_bridge_base_url: str = "http://127.0.0.1:18900"
     """本机 voice_bridge 地址；QQ 语音消息 fallback ASR 通过此地址调用 one-shot 转写。"""

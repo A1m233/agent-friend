@@ -21,6 +21,7 @@ from llm_providers import (
 )
 
 from ..attachments import AttachmentRef
+from ..message_references import parse_quoted_text_references
 from ..messages import Message
 from .errors import SessionCorruptError
 from .events import SCHEMA_VERSION, Event, _ensure_utc, _parse_ts, _serialize_ts
@@ -503,6 +504,12 @@ class Session:
                     )
                 last_assistant = None
             elif ev.type == "user_message":
+                try:
+                    references = parse_quoted_text_references(ev.payload.get("references", []))
+                except ValueError as exc:
+                    raise SessionCorruptError(
+                        f"user_message {ev.uuid} 的 references 无效: {exc}"
+                    ) from exc
                 result.append(
                     Message(
                         role="user",
@@ -515,6 +522,7 @@ class Session:
                             for item in ev.payload.get("attachments", [])
                             if isinstance(item, dict)
                         ],
+                        references=references,
                     )
                 )
                 last_assistant = None

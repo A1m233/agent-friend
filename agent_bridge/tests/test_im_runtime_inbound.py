@@ -50,7 +50,13 @@ class StubResolver:
         self.result = result
         self.calls: list[tuple[str, InboundEvent]] = []
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         self.calls.append((im_type, event))
         return self.result
 

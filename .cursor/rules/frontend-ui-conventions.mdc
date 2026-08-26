@@ -11,26 +11,30 @@ alwaysApply: false
 ## 先按语义职责选组件，禁止用通用容器模拟专用组件
 
 - 先确认需求的**语义职责**（如图片预览、确认对话框、菜单、日期选择、轮播），不要只按“遮罩 + 居中内容”“点一下弹出来”等视觉形态选组件。
+- **组件生态边界**：除下面两类情况外，新增通用 UI 与交互默认使用 shadcn，不因为页面位于聊天区、仓库已安装 `tdesign-react` 或视觉上接近 TDesign 就扩大 TDesign 使用范围。
+  1. **对话核心**：消息列表、消息气泡、消息内容和发送器等由 `@tdesign-react/chat` 明确定义的核心对话组件。
+  2. **不得不做的 TDesign 兼容**：现有 TDesign Web Component 的 slot、CSS Parts / Shadow DOM、事件或生命周期要求同生态组件协作，且 shadcn 无法安全承接。使用前必须写清具体兼容原因，并把 TDesign 依赖限制在最小适配层。
+- 聊天页面里的菜单、浮层、确认框、引用预览、表单控件等仍是通用 UI，不自动归入“对话核心”。已有的非对话 TDesign 用法不要求在无关任务中主动迁移，但不得作为新增同类用法的依据。
 - 按以下顺序查找实现，前一层已有合适能力时不继续向后自造：
   1. 项目已有的封装组件或领域组件。
-  2. 项目已安装组件库或对应领域生态里的专用组件；对话相关既要查 `@tdesign-react/chat`，也要查配套的 `tdesign-react` 通用组件。
+  2. 若命中上面的“对话核心”或“不得不做的 TDesign 兼容”，使用对应 TDesign 能力；否则跳过 TDesign。
   3. shadcn 中语义匹配的组件；确认要引入时走 `add-shadcn-component` skill。
-  4. 以上均不满足时，才组合基础组件或自写，并说明现成组件不适用的具体原因。
+  4. shadcn 没有对应语义时，才组合已有 shadcn 基础组件、自写项目纯 UI 件或评估其它专用依赖，并说明现成组件不适用的具体原因。
 - 查询组件库能力与 props 时必须核对当前官方文档，不凭记忆猜 API。专用组件已经覆盖 portal、键盘操作、无障碍、开关状态或生命周期时，不得在页面层重复实现这些能力。
 - 已选中的第三方专用组件若会被多处复用，在 `src/components/ui/` 做项目级适配；仅服务单个页面或带业务状态时，放在 `pages/<页>/components/`。封装不能改变其原本的语义职责。
 
-### 反例：图片放大预览不是 Dialog
+### 反例：聊天页里的通用浮层不是 TDesign 对话组件
 
-- ❌ 为了放大附件图片，使用 `Dialog + img + 自定义 CSS` 模拟图片查看器，再手写全屏挂载、点击遮罩关闭、Esc 关闭和缩放逻辑。
-- ✅ 使用 TDesign React 的 `ImageViewer`，通过 `visible`、`images`、`closeOnOverlay`、`closeOnEscKeydown`、`attach` 等组件能力完成交互，只在项目层管理业务状态和必要适配。
-- `Dialog` 只承载对话框语义；即使它与图片查看器都表现为“遮罩 + 居中内容”，也不能因此互相替代。
+- ❌ 因为引用预览紧挨 `ChatSender`，就直接使用 `tdesign-react` 的 `Popup`。
+- ✅ 先按“悬停预览”或“可交互浮层”的真实语义选择 shadcn `HoverCard` / `Popover`；只有浮层必须穿过 TDesign Shadow DOM 或复用其专有生命周期时，才在最小兼容层使用 TDesign。
+- 页面位置不决定组件生态；只有职责属于 TDesign 对话核心，或存在可证明的兼容约束，才允许使用 TDesign。
 
 ## 交互件一律用封装组件，禁止散写原生件
 
 - 通用纯 UI 件 = 无业务逻辑、无 store 依赖、只吃 props 的展示型组件（button / input / select / textarea / modal / tag 等）。需要时：
   - 已存在于 `src/components/ui/` → 直接复用。
-  - 不存在 → 先按上一节完成语义选型。选中已安装组件库的专用组件时，在 `src/components/ui/` 做薄适配；选中 shadcn 时必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码，完整流程见 skill `add-shadcn-component`。只有各层都没有合适组件时才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
-- 对话域组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造。
+  - 不存在 → 先按上一节完成语义选型。非 TDesign 边界默认从 shadcn 引入，并且必须走 CLI（`pnpm dlx shadcn@latest add`），禁止手写 / 手抄后声称是 shadcn 源码，完整流程见 skill `add-shadcn-component`。只有 shadcn 没有合适语义且其它允许层级也不适用时，才自写项目纯 UI 件（注释标明「非 shadcn、自写」）。再 import 引用。
+- 对话核心组件（消息列表 / 气泡 / sender 等）用 `@tdesign-react/chat` 散件，不自造；围绕它们出现的通用交互仍按 shadcn 默认值处理。
 - 页面 / 业务代码里**不出现原生交互元素**。这条不靠"自觉"或"占位/MVP 也不例外"这类措辞维持，而是由机械门禁判定：
   - ESLint `react/forbid-elements` 见到 `<button>` / `<input>` 等原生交互件即报错，接入 `scripts/check`、合 main 前必过、IDE 内即时报错；门禁**不认**"临时 / 占位 / MVP"理由。
   - `src/components/ui/` 内部豁免该门禁——封装件本就要包原生件。

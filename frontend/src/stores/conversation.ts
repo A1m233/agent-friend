@@ -30,7 +30,12 @@ import type {
   EditResendAttachmentInput,
   FriendlyError,
 } from "@/services";
-import type { ChatAttachment, ChatMessage, TextBlock } from "@/types/chat";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  ChatTextReference,
+  TextBlock,
+} from "@/types/chat";
 import type { SessionDetail } from "@/types/meta";
 import type {
   SessionApprovalMode,
@@ -96,6 +101,7 @@ export interface EditingMessageDescriptor {
   draftKey: string;
   originalText: string;
   originalAttachments: ChatAttachment[];
+  originalReferences?: ChatTextReference[];
   phase: "editing" | "submitting";
 }
 
@@ -148,12 +154,17 @@ interface ConversationState {
   beginEditingMessage: (messageId: string) => boolean;
   cancelEditing: () => void;
   /** 接纳一条消息并启动流式回复；接纳结果与整轮完成结果分开返回。 */
-  send: (text: string, attachments?: AttachmentDraft[]) => SendStartResult;
+  send: (
+    text: string,
+    attachments?: AttachmentDraft[],
+    references?: ChatTextReference[],
+  ) => SendStartResult;
   /** 编辑并重发最后一条用户消息。 */
   editResendLatest: (
     text: string,
     attachments: EditResendAttachmentInput[],
     optimisticAttachments: ChatAttachment[],
+    references?: ChatTextReference[],
   ) => Promise<SendOutcome>;
   /** 不重跑工具，复用失败轮中已经完成的工具结果继续生成。 */
   continueToolResult: (messageId: string) => Promise<void>;
@@ -233,6 +244,7 @@ function userMessage(
   createdAt = new Date().toISOString(),
   attachments: ChatAttachment[] = [],
   id = newId(),
+  references: ChatTextReference[] = [],
 ): ChatMessage {
   const block: TextBlock = { kind: "text", mid: id, text };
   return {
@@ -241,6 +253,7 @@ function userMessage(
     createdAt,
     blocks: text ? [block] : [],
     attachments,
+    references,
     status: "complete",
   };
 }
@@ -801,7 +814,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         ...Object.keys(state.activeRunIdBySession),
       ]);
       for (const [key, draft] of Object.entries(draftWorkspaces)) {
-        if (draft.text || draft.attachments.length > 0) {
+        if (draft.text || draft.attachments.length > 0 || draft.references.length > 0) {
           protectedKeys.add(key === HOME_DRAFT_KEY ? HOME_VIEW_KEY : key);
         }
       }
@@ -969,7 +982,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         attachment,
       }),
     );
-    useDraftStore.getState().initialize(key, messageText(target), initialAttachments);
+    useDraftStore.getState().initialize(
+      key,
+      messageText(target),
+      initialAttachments,
+      [...(target.references ?? [])],
+    );
     set({
       editingMessage: {
         sessionId: current.currentSessionId,
@@ -977,6 +995,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         draftKey: key,
         originalText: messageText(target),
         originalAttachments: [...(target.attachments ?? [])],
+        originalReferences: [...(target.references ?? [])],
         phase: "editing",
       },
     });
@@ -994,9 +1013,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       : state);
   },
 
-  send(text, attachments = []) {
+  send(text, attachments = [], references = []) {
     const trimmed = text.trim();
-    if (!trimmed && attachments.length === 0) return { accepted: false, reason: "empty" };
+    if (!trimmed && attachments.length === 0 && references.length === 0) {
+      return { accepted: false, reason: "empty" };
+    }
     if (get().streaming) return { accepted: false, reason: "busy" };
     if (get().historyLoading) return { accepted: false, reason: "history-loading" };
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
@@ -1045,7 +1066,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set((s) => {
       const messages = [
         ...s.messages,
-        userMessage(trimmed, sentAt, chatAttachments, userMessageId),
+        userMessage(trimmed, sentAt, chatAttachments, userMessageId, references),
         placeholder,
       ];
       const view: SessionConversationView = {
@@ -1116,6 +1137,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             text: trimmed,
             messageId: userMessageId,
             attachments,
+            references,
           },
           { signal: controller.signal },
         )) {
@@ -1205,12 +1227,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return { accepted: true, sessionId, runId, completion };
   },
 
-  async editResendLatest(text, attachments, optimisticAttachments) {
+  async editResendLatest(text, attachments, optimisticAttachments, references) {
     const trimmed = text.trim();
     const state = get();
     const editing = state.editingMessage;
+    const effectiveReferences = references ?? editing?.originalReferences ?? [];
     if (
-      (!trimmed && attachments.length === 0) ||
+      (!trimmed && attachments.length === 0 && effectiveReferences.length === 0) ||
       state.streaming ||
       state.historyLoading ||
       state.modelSwitching ||
@@ -1244,7 +1267,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const admittedMessages = [
       ...state.messages.slice(0, targetIndex),
-      userMessage(trimmed, sentAt, optimisticAttachments),
+      userMessage(trimmed, sentAt, optimisticAttachments, newId(), effectiveReferences),
       placeholder,
     ];
     set((current) => current.editingMessage?.messageId === editing.messageId
@@ -1286,6 +1309,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           expectedUserMessageId: editing.messageId,
           expectedUserContent: editing.originalText,
           attachments,
+          ...(references !== undefined ? { references: effectiveReferences } : {}),
         },
         {
           signal: controller.signal,

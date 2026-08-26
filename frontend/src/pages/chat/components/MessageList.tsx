@@ -19,12 +19,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
-import { useConversationStore } from "@/stores";
+import { draftKey, useConversationStore } from "@/stores";
 import { runtimeCredentialGroupForModel } from "@/stores/conversation";
 import { isAttachmentAssetAvailable } from "@/services";
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatTextReference,
   CompactionBlock,
 } from "@/types/chat";
 import type { SearchNavigationTarget } from "@/types/search";
@@ -39,6 +40,7 @@ import { openSettings } from "@/lib/settings/navigation";
 import { EditMessageHint } from "./EditMessageHint";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionBar } from "./MessageActionBar";
+import { MessageQuoteSelectionAction } from "./MessageQuoteSelectionAction";
 import { ModelResponseStatus } from "./ModelResponseStatus";
 import {
   getMessageVirtualItemKey,
@@ -64,6 +66,12 @@ import { ToolCard } from "./ToolCard";
 import { buildMessagePresentationSegments } from "./toolActivityPresentation";
 import { CHAT_MARKDOWN_CONTENT_PROPS } from "./chatMarkdownConfig";
 import { useExternalLinkOpener } from "./useExternalLinkOpener";
+import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
+import {
+  findQuoteBlockHost,
+  findReferenceMessageIndex,
+  installReferenceHighlight,
+} from "./messageQuoteSelection";
 import {
   findSearchAnchor,
   findSearchMessageIndex,
@@ -78,6 +86,7 @@ const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 const SEARCH_FEEDBACK_MS = 2400;
 const SEARCH_ANCHOR_MOUNT_ATTEMPTS = 8;
+const REFERENCE_HIGHLIGHT_MS = 2400;
 const GOLDEN_SECTION = (Math.sqrt(5) - 1) / 2;
 const SCROLL_ACTIVITY_ARC_FRACTION = GOLDEN_SECTION / 2;
 const SCROLL_ACTIVITY_ARC_DEGREES = 180 * GOLDEN_SECTION;
@@ -195,12 +204,18 @@ const TextBubble = memo(function TextBubble({
   actionBar,
   attachments = EMPTY_CHAT_ATTACHMENTS,
   searchAnchor,
+  quoteSource,
 }: {
   role: "user" | "assistant";
   text: string;
   actionBar?: ReactNode;
   attachments?: ChatAttachment[];
   searchAnchor?: string;
+  quoteSource?: {
+    messageEventUuid: string;
+    textBlockId: string;
+    role: "user" | "assistant";
+  };
 }) {
   const [unavailableAssets, setUnavailableAssets] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -239,7 +254,7 @@ const TextBubble = memo(function TextBubble({
       chatContentProps={CHAT_MARKDOWN_CONTENT_PROPS}
     >
       {attachments.length > 0 && (
-        <div slot={MESSAGE_ATTACHMENTS_SLOT} className="contents">
+        <div slot={MESSAGE_ATTACHMENTS_SLOT} data-quote-exclude="true" className="contents">
           <MessageAttachments
             attachments={attachments}
             unavailableAssets={unavailableAssets}
@@ -247,15 +262,24 @@ const TextBubble = memo(function TextBubble({
         </div>
       )}
       {actionBar && (
-        <div slot="actionbar" className="contents">
+        <div slot="actionbar" data-quote-exclude="true" className="contents">
           {actionBar}
         </div>
       )}
     </TdChatMessage>
   );
-  return searchAnchor ? (
-    <div data-search-anchor={searchAnchor}>{bubble}</div>
-  ) : bubble;
+  return (
+    <div
+      className="contents"
+      data-search-anchor={searchAnchor}
+      data-quoteable-text={quoteSource ? "true" : undefined}
+      data-quote-message-id={quoteSource?.messageEventUuid}
+      data-quote-block-id={quoteSource?.textBlockId}
+      data-quote-role={quoteSource?.role}
+    >
+      {bubble}
+    </div>
+  );
 });
 
 const StreamingMarkdownBubble = memo(function StreamingMarkdownBubble({ text }: { text: string }) {
@@ -306,6 +330,7 @@ function MessageContent({
   onFocusComposer,
   onContinueToolResult,
   searchAnchorEventUuid,
+  onReferenceSelect,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
@@ -313,6 +338,7 @@ function MessageContent({
   onFocusComposer?: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
+  onReferenceSelect?: (reference: ChatTextReference) => void;
 }) {
   if (message.role === "user") {
     const text = message.blocks
@@ -322,24 +348,44 @@ function MessageContent({
     if (editing) {
       return (
         <div className="ml-auto flex w-full flex-col items-end gap-2">
+          <ReferenceSummaryPopover
+            references={message.references ?? []}
+            onSelect={onReferenceSelect}
+          />
           <TextBubble
             role="user"
             text={text}
             attachments={message.attachments}
             searchAnchor={message.id === searchAnchorEventUuid ? message.id : undefined}
+            quoteSource={{
+              messageEventUuid: message.id,
+              textBlockId: message.blocks.find((block) => block.kind === "text")?.mid ?? message.id,
+              role: "user",
+            }}
           />
           <EditMessageHint onFocusComposer={onFocusComposer ?? (() => undefined)} />
         </div>
       );
     }
     return (
-      <TextBubble
-        role="user"
-        text={text}
-        attachments={message.attachments}
-        actionBar={actionBar}
-        searchAnchor={message.id === searchAnchorEventUuid ? message.id : undefined}
-      />
+      <div className="ml-auto flex w-full flex-col items-end gap-1">
+        <ReferenceSummaryPopover
+          references={message.references ?? []}
+          onSelect={onReferenceSelect}
+        />
+        <TextBubble
+          role="user"
+          text={text}
+          attachments={message.attachments}
+          actionBar={actionBar}
+          searchAnchor={message.id === searchAnchorEventUuid ? message.id : undefined}
+          quoteSource={{
+            messageEventUuid: message.id,
+            textBlockId: message.blocks.find((block) => block.kind === "text")?.mid ?? message.id,
+            role: "user",
+          }}
+        />
+      </div>
     );
   }
 
@@ -368,6 +414,11 @@ function MessageContent({
               key={`t:${b.mid || i}`}
               role="assistant"
               text={b.text}
+              quoteSource={{
+                messageEventUuid: message.id,
+                textBlockId: b.mid,
+                role: "assistant",
+              }}
               actionBar={i === actionBarBlockIndex ? actionBar : undefined}
               searchAnchor={b.mid === searchAnchorEventUuid ? b.mid : undefined}
             />
@@ -443,6 +494,7 @@ const MessageItem = memo(function MessageItem({
   onFocusComposer,
   onContinueToolResult,
   searchAnchorEventUuid,
+  onReferenceSelect,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -451,6 +503,7 @@ const MessageItem = memo(function MessageItem({
   onFocusComposer: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
+  onReferenceSelect?: (reference: ChatTextReference) => void;
 }) {
   const actionBar =
     message.status === "streaming" || editing ? null : (
@@ -478,6 +531,7 @@ const MessageItem = memo(function MessageItem({
         onFocusComposer={onFocusComposer}
         onContinueToolResult={onContinueToolResult}
         searchAnchorEventUuid={searchAnchorEventUuid}
+        onReferenceSelect={onReferenceSelect}
       />
     </div>
   );
@@ -490,6 +544,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
     prev.editing === next.editing &&
     prev.onContinueToolResult === next.onContinueToolResult &&
     prev.searchAnchorEventUuid === next.searchAnchorEventUuid
+    && prev.onReferenceSelect === next.onReferenceSelect
   );
 }
 
@@ -501,6 +556,7 @@ interface MessageItemProps {
   onFocusComposer: () => void;
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
+  onReferenceSelect?: (reference: ChatTextReference) => void;
 }
 
 function HistoryLoadingState() {
@@ -635,6 +691,49 @@ export function MessageTimeline({
     searchHighlightCleanupRef.current = null;
     setActiveSearchAnchor(null);
   }, []);
+
+  const handleReferenceSelect = useCallback((reference: ChatTextReference) => {
+    if (reference.source.kind !== "session_message") {
+      toast.error("这条引用来自 QQ 外部消息，当前无法回到原文");
+      return;
+    }
+    const index = findReferenceMessageIndex(messages, reference);
+    if (index < 0) {
+      toast.error("引用来源已经不可访问");
+      return;
+    }
+    clearSearchFeedback();
+    const anchorMessage = messages[index];
+    setActiveSearchAnchor(anchorMessage.id);
+    virtualizer.scrollToIndex(index, { align: "center" });
+    let attempts = 0;
+    const locate = () => {
+      const root = scrollRef.current;
+      const blockId = reference.source.textBlockId;
+      const host = root && blockId ? findQuoteBlockHost(root, blockId) : null;
+      if (!host && attempts < SEARCH_ANCHOR_MOUNT_ATTEMPTS) {
+        attempts += 1;
+        searchScrollRafRef.current = window.requestAnimationFrame(locate);
+        return;
+      }
+      searchScrollRafRef.current = 0;
+      if (!host) {
+        toast.error("已定位到来源消息，但引用片段暂时无法高亮");
+      } else {
+        searchHighlightCleanupRef.current = installReferenceHighlight(host, reference);
+        if (!searchHighlightCleanupRef.current) {
+          toast("已定位到来源消息", {
+            description: "原文渲染发生变化，没有高亮未经确认的相似片段。",
+          });
+        }
+      }
+      searchFeedbackTimerRef.current = window.setTimeout(
+        clearSearchFeedback,
+        REFERENCE_HIGHLIGHT_MS,
+      );
+    };
+    searchScrollRafRef.current = window.requestAnimationFrame(locate);
+  }, [clearSearchFeedback, messages, virtualizer]);
 
   const applyFollowEvent = useCallback((event: MessageScrollFollowEvent) => {
     const next = reduceMessageScrollFollowing(followingRef.current, event);
@@ -1021,6 +1120,7 @@ export function MessageTimeline({
                       ? () => void onContinueToolResult?.(m.id)
                       : undefined}
                     searchAnchorEventUuid={searchAnchorEventUuid}
+                    onReferenceSelect={handleReferenceSelect}
                   />
                 </div>
               </div>
@@ -1107,6 +1207,9 @@ export function MessageList({
   const currentSearchTarget = searchTarget?.sessionId === currentSessionId
     ? searchTarget
     : null;
+  const quoteWorkspaceKey = editingMessage?.sessionId === currentSessionId
+    ? editingMessage.draftKey
+    : draftKey(currentSessionId);
 
   useEffect(() => {
     if (!editingMessageId) return;
@@ -1127,21 +1230,27 @@ export function MessageList({
   ]);
 
   return (
-    <MessageTimeline
-      messages={messages}
-      streaming={streaming}
-      historyLoading={historyLoading}
-      historyLoadSeq={historyLoadSeq}
-      syncRefreshSeq={syncRefreshSeq}
-      composerHeight={composerHeight}
-      editingMessageId={editingMessageId}
-      onBeginEditLatestUserMessage={(messageId) => {
-        if (beginEditingMessage(messageId)) onFocusComposer?.();
-      }}
-      onFocusComposer={onFocusComposer}
-      onContinueToolResult={continueToolResult}
-      searchTarget={currentSearchTarget}
-      onSearchTargetHandled={handleSearchTarget}
-    />
+    <>
+      <MessageTimeline
+        messages={messages}
+        streaming={streaming}
+        historyLoading={historyLoading}
+        historyLoadSeq={historyLoadSeq}
+        syncRefreshSeq={syncRefreshSeq}
+        composerHeight={composerHeight}
+        editingMessageId={editingMessageId}
+        onBeginEditLatestUserMessage={(messageId) => {
+          if (beginEditingMessage(messageId)) onFocusComposer?.();
+        }}
+        onFocusComposer={onFocusComposer}
+        onContinueToolResult={continueToolResult}
+        searchTarget={currentSearchTarget}
+        onSearchTargetHandled={handleSearchTarget}
+      />
+      <MessageQuoteSelectionAction
+        workspaceKey={quoteWorkspaceKey}
+        disabled={streaming || historyLoading}
+      />
+    </>
   );
 }

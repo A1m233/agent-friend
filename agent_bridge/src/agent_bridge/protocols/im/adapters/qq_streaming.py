@@ -67,6 +67,10 @@ class QQC2CStreamSession:
     def is_failed(self) -> bool:
         return self._had_failure
 
+    @property
+    def provider_message_id(self) -> str | None:
+        return self._stream_msg_id
+
     async def update(self, full_text: str) -> None:
         if not full_text or self._phase in {"completed", "failed"}:
             return

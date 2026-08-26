@@ -36,6 +36,7 @@ import { VoiceInputAction } from "./VoiceInputAction";
 import { ConversationModelSelector } from "./ConversationModelSelector";
 import { SessionApprovalModeControl } from "./SessionApprovalModeControl";
 import { ComposerEditStatus } from "./ComposerEditStatus";
+import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
   dropzoneAcceptFromMediaTypes,
@@ -140,10 +141,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const draftAttachments = useDraftStore(
     (state) => state.workspaces[workspaceKey]?.attachments ?? EMPTY_DRAFT_ATTACHMENTS,
   );
+  const draftReferences = useDraftStore(
+    (state) => state.workspaces[workspaceKey]?.references ?? [],
+  );
   const setWorkspaceText = useDraftStore((state) => state.setText);
   const addDraftAttachment = useDraftStore((state) => state.addAttachment);
   const updateDraftAttachment = useDraftStore((state) => state.updateAttachment);
   const removeDraftAttachment = useDraftStore((state) => state.removeAttachment);
+  const removeDraftReference = useDraftStore((state) => state.removeReference);
+  const clearDraftReferences = useDraftStore((state) => state.clearReferences);
   const setDraftValidation = useDraftStore((state) => state.setValidation);
   const claimHomeDraft = useDraftStore((state) => state.claimHome);
   const beginDraftSubmission = useDraftStore((state) => state.beginSubmission);
@@ -586,7 +592,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       (item): item is Extract<DraftAttachmentState, { status: "ready" }> =>
         item.status === "ready",
     );
-    if (!trimmed && readyAttachmentStates.length === 0) return;
+    if (!trimmed && readyAttachmentStates.length === 0 && draftReferences.length === 0) return;
     if (draftAttachments.some((item) => item.status !== "ready")) {
       toast.error("请等待附件上传完成，或移除失败的附件");
       return;
@@ -613,6 +619,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             const attachment = toChatAttachment(item);
             return attachment ? [attachment] : [];
           }),
+          draftReferences,
         );
         if (result === "rejected" && useConversationStore.getState().editingMessage) {
           toast.error("修改没有提交成功", {
@@ -626,7 +633,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         const attachment = toAttachmentDraft(item);
         return attachment ? [attachment] : [];
       });
-      const result = send(trimmed, readyAttachments);
+      const result = send(trimmed, readyAttachments, draftReferences);
       if (!result.accepted) return;
 
       // TDesign may echo the pre-send value through its native change/input listeners
@@ -684,6 +691,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const editSummary = editingMessage
     ? editingMessage.originalText.trim()
       || `${editingMessage.originalAttachments.length} 个附件`
+      || `${editingMessage.originalReferences?.length ?? 0} 个已选文本`
     : "";
 
   return (
@@ -714,6 +722,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               phase={editingMessage.phase}
               onCancel={handleCancelEditing}
             />
+          )}
+          {draftReferences.length > 0 && (
+            <div className="mb-2 px-1">
+              <ReferenceSummaryPopover
+                references={draftReferences}
+                removable={!streaming && !editSubmitting}
+                onRemove={(referenceId) => removeDraftReference(workspaceKey, referenceId)}
+                onClear={() => clearDraftReferences(workspaceKey)}
+              />
+            </div>
           )}
           <div
             {...getRootProps({
@@ -764,7 +782,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 || editSubmitting
                 || !attachmentCompatibility.compatible
                 || draftAttachments.some((item) => item.status !== "ready")
-                || (!value.trim() && !attachmentItems.some((item) => item.status === "success"))}
+                || (
+                  !value.trim()
+                  && !attachmentItems.some((item) => item.status === "success")
+                  && draftReferences.length === 0
+                )}
               attachmentsProps={{
                 items: attachmentItems,
                 overflow: "scrollX",

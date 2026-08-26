@@ -160,7 +160,13 @@ class QQVoiceMessageResolver:
         self._max_voice_attachments = max_voice_attachments
         self._failure_text = failure_text
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         if im_type != "qq" or event.chat_scope != "c2c":
             return InboundResolveResult.route(event)
 

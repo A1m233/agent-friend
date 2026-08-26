@@ -104,3 +104,7 @@ html[data-transparent-window] body {
 ::highlight(agent-friend-search-hit) {
   background-color: var(--search-hit);
 }
+
+::highlight(agent-friend-quoted-text) {
+  background-color: var(--search-hit);
+}

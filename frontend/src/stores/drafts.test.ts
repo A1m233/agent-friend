@@ -11,6 +11,25 @@ function file(name: string): File {
   return new File(["content"], name, { type: "text/plain" });
 }
 
+const reference = {
+  referenceId: "ref-1",
+  quotedText: "引用原文",
+  sourceRole: "assistant" as const,
+  availability: "available" as const,
+  source: {
+    kind: "session_message" as const,
+    messageEventUuid: "assistant-1",
+    textBlockId: "block-1",
+    externalSourceKey: null,
+  },
+  locator: {
+    kind: "text_range" as const,
+    coordinateSpace: "rendered_text_utf16_v1" as const,
+    start: 0,
+    end: 4,
+  },
+};
+
 describe("draft workspaces", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -133,5 +152,19 @@ describe("draft workspaces", () => {
 
     expect(updated).toBe(false);
     expect(useDraftStore.getState().workspaces[key]).toBeUndefined();
+  });
+
+  it("keeps ordered references through remove and rejected-submission restore", () => {
+    const state = useDraftStore.getState();
+    state.addReference("session-1", reference);
+    state.addReference("session-1", reference);
+    expect(useDraftStore.getState().workspaces["session-1"].references).toEqual([reference]);
+
+    state.beginSubmission("session-1", "session-1", "run-ref");
+    state.finishSubmission("run-ref", true);
+    expect(useDraftStore.getState().workspaces["session-1"].references).toEqual([reference]);
+
+    state.removeReference("session-1", reference.referenceId);
+    expect(useDraftStore.getState().workspaces["session-1"].references).toEqual([]);
   });
 });

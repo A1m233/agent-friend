@@ -50,7 +50,13 @@ class InboundMedia:
 class QQFaceResolver:
     """Preserve QQ built-in-face fidelity instead of flattening it to plain text."""
 
-    async def resolve(self, im_type: str, event: InboundEvent) -> InboundResolveResult:
+    async def resolve(
+        self,
+        im_type: str,
+        event: InboundEvent,
+        *,
+        provider_bind_id: str = "",
+    ) -> InboundResolveResult:
         if im_type != "qq":
             return InboundResolveResult.route(event)
         match = _QQ_FACE_PLACEHOLDER_RE.fullmatch(event.content.strip())

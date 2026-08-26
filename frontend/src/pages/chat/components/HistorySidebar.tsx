@@ -510,7 +510,9 @@ export function HistorySidebar({
                   const runIndicator = sessionRunIndicator(activeRun, unreadOutcome);
                   const awaitingFilesystemApproval = approvalSessionIds.has(s.session_id);
                   const draft = draftWorkspaces[s.session_id];
-                  const hasDraft = Boolean(draft?.text || draft?.attachments.length);
+                  const hasDraft = Boolean(
+                    draft?.text || draft?.attachments.length || draft?.references.length,
+                  );
                   const sessionActionContext = {
                     sessionId: s.session_id,
                     title,
