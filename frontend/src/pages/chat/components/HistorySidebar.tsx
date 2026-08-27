@@ -73,7 +73,7 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const NAVIGATION_BUTTON_CLASS =
-  "px-2 text-sm font-normal data-[active=true]:bg-bg data-[active=true]:font-semibold transition-none";
+  "px-2 text-sm font-normal data-[active=true]:bg-bg data-[active=true]:font-medium transition-none";
 
 interface MissingCurrentSessionResetInput {
   sessionsLoaded: boolean;
@@ -111,6 +111,25 @@ export function sessionRunIndicator(
   if (activeRun?.status === "queued") return "queued";
   if (activeRun?.status === "running") return "running";
   return unreadOutcome ?? null;
+}
+
+export function shouldShowSessionAge(
+  actionVisible: boolean,
+  runIndicator: SessionRunIndicator,
+): boolean {
+  return !actionVisible && runIndicator !== "running";
+}
+
+export function shouldRequestSessionOpen({
+  currentSessionId,
+  targetSessionId,
+  currentSessionReady,
+}: {
+  currentSessionId: string | null;
+  targetSessionId: string;
+  currentSessionReady: boolean;
+}): boolean {
+  return currentSessionId !== targetSessionId || !currentSessionReady;
 }
 
 export function shouldClearSessionActionFocusOnOpen(clickDetail: number): boolean {
@@ -195,6 +214,9 @@ export function HistorySidebar({
   const streaming = useConversationStore((s) => s.streaming);
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const messageCount = useConversationStore((s) => s.messages.length);
+  const currentSessionViewAvailable = useConversationStore((s) =>
+    Boolean(s.currentSessionId && s.sessionViews[s.currentSessionId]),
+  );
   const detachedSessionId = useConversationStore((s) => s.detachedSessionId);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
@@ -247,9 +269,24 @@ export function HistorySidebar({
     (sessionId: string) => {
       blockAutoRestore();
       navigateWorkspace("chat");
+      if (!shouldRequestSessionOpen({
+        currentSessionId,
+        targetSessionId: sessionId,
+        currentSessionReady: currentSessionViewAvailable || historyLoading || streaming,
+      })) {
+        return;
+      }
       void openSession(sessionId);
     },
-    [blockAutoRestore, navigateWorkspace, openSession],
+    [
+      blockAutoRestore,
+      currentSessionId,
+      currentSessionViewAvailable,
+      historyLoading,
+      navigateWorkspace,
+      openSession,
+      streaming,
+    ],
   );
 
   const handleOpenRename = useCallback((sessionId: string, title: string) => {
@@ -489,7 +526,7 @@ export function HistorySidebar({
             <TooltipTrigger asChild>
               <SidebarGroupAction aria-label="新对话" onClick={onNewConversation}>
                 <span className="flex size-3.5 items-center justify-center">
-                  <SquarePen className="size-full" strokeWidth={1.5} />
+                  <SquarePen className="size-full" />
                 </span>
               </SidebarGroupAction>
             </TooltipTrigger>
@@ -635,7 +672,7 @@ export function HistorySidebar({
                                   aria-label="有新回复"
                                 />
                               ) : null}
-                              {!actionVisible && ageText ? (
+                              {shouldShowSessionAge(actionVisible, runIndicator) && ageText ? (
                                 <span
                                   className="shrink-0 tabular-nums text-xs text-muted"
                                   title={ageText}
