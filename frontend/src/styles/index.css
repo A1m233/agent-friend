@@ -54,8 +54,10 @@
   --text-xl: var(--font-size-xl);
 
   /* 字重 */
+  --font-weight-normal: var(--font-weight-normal);
   --font-weight-medium: var(--font-weight-medium);
   --font-weight-semibold: var(--font-weight-semibold);
+  --font-weight-bold: var(--font-weight-bold);
 
   /* 行高（Tailwind token 命名是 --leading-{档}） */
   --leading-snug: var(--line-height-snug);
@@ -94,6 +96,28 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
+  font-weight: var(--font-weight-normal);
+}
+
+b,
+strong {
+  font-weight: var(--font-weight-bold);
+}
+
+/*
+ * Lucide 是描边 SVG，粗度由 stroke-width 而不是 font-weight 控制。
+ * 容器或图标自身可用 data-icon-weight 覆盖当前语义；未声明时使用 regular。
+ */
+[data-icon-weight="regular"] {
+  --icon-stroke-width: var(--icon-stroke-width-regular);
+}
+
+[data-icon-weight="strong"] {
+  --icon-stroke-width: var(--icon-stroke-width-strong);
+}
+
+.lucide {
+  stroke-width: var(--icon-stroke-width, var(--icon-stroke-width-regular));
 }
 
 html[data-transparent-window],

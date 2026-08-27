@@ -12,9 +12,23 @@
   --font-size-lg: 1.125rem;    /* 18px */
   --font-size-xl: 1.25rem;     /* 20px */
 
-  /* 字重 */
-  --font-weight-medium: 500;
+  /* 字重：正文层级更轻，强调层级避开 Windows 混合脚本会分裂字形的 500 档。 */
+  --font-weight-normal: 300;
+  --font-weight-medium: 400;
   --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* 描边图标粗度：与文字字重独立，按图标语义选择，不做数值换算。 */
+  --icon-stroke-width-regular: 1.75;
+  --icon-stroke-width-strong: 2;
+
+  /* 对话 Markdown 排版角色：TDesign 只暴露完整 font shorthand，集中在此保持层级一致。 */
+  --font-chat-markdown-h1: var(--font-weight-bold) 1.375rem / 1.6 var(--font-sans);
+  --font-chat-markdown-h2: var(--font-weight-semibold) var(--font-size-xl) / 1.6 var(--font-sans);
+  --font-chat-markdown-h3: var(--font-weight-semibold) var(--font-size-lg) / 1.6 var(--font-sans);
+  --font-chat-markdown-code-header: var(--font-weight-medium) var(--font-size-sm) / 1.6 var(--font-sans);
+  --font-chat-markdown-table-header: var(--font-weight-bold) var(--font-size-sm) / 1.6 var(--font-sans);
+  --font-chat-markdown-table-cell: var(--font-weight-normal) var(--font-size-sm) / 1.6 var(--font-sans);
 
   /* 行高 */
   --line-height-snug: 1.375;
@@ -33,8 +47,15 @@
 
   /* 对话附件 */
   --size-chat-attachment-image: 10rem;
+  --size-chat-composer-attachment-width: 10.5rem;
+  --size-chat-composer-attachment-height: 3.25rem;
+  --size-chat-composer-attachment-icon-slot: 2rem;
+  --size-chat-composer-attachment-icon: 1.5rem;
+  --size-chat-composer-remove-icon: 0.9375rem;
+  --size-chat-composer-remove-offset: 0.25rem;
 
   /* 对话滚动活动提示 */
+  --stroke-width-chat-scroll-activity: var(--icon-stroke-width-strong);
   --motion-duration-chat-scroll-activity: 1.8s;
   --motion-ease-chat-scroll-activity: cubic-bezier(0.45, 0.16, 0.55, 0.84);
 }

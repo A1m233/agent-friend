@@ -7,6 +7,7 @@ import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/utils/cn"
+import type { IconWeight } from "../icon-weight"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
@@ -500,12 +501,14 @@ function SidebarMenuButton({
   isActive = false,
   variant = "default",
   size = "default",
+  iconWeight = "regular",
   tooltip,
   className,
   ...props
 }: React.ComponentProps<"button"> & {
   asChild?: boolean
   isActive?: boolean
+  iconWeight?: IconWeight
   tooltip?: string | React.ComponentProps<typeof TooltipContent>
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const Comp = asChild ? Slot.Root : "button"
@@ -517,6 +520,7 @@ function SidebarMenuButton({
       data-sidebar="menu-button"
       data-size={size}
       data-active={isActive}
+      data-icon-weight={iconWeight}
       className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
       {...props}
     />

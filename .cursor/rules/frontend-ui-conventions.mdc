@@ -43,11 +43,11 @@ alwaysApply: false
 
 ## 设计 token：禁止硬编码，统一走 CSS 变量
 
-设计 token = 颜色 / 字体栈 / 字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影 / 动效时长 / 缓动 等所有视觉常量。一律走 CSS 变量，禁止硬编码，目的是 UI 一致性 + 可换肤 + 后续调整时一处改全局动。
+设计 token = 颜色 / 字体栈 / 字号 / 字重 / 图标描边粗度 / 行高 / 字间距 / 间距 / 圆角 / 阴影 / 动效时长 / 缓动 等所有视觉常量。一律走 CSS 变量，禁止硬编码，目的是 UI 一致性 + 可换肤 + 后续调整时一处改全局动。
 
 ### 禁止形式（适用于所有 token 维度，不只颜色）
 
-- **CSS / 内联 style 里的裸字面值**：`color: #1677ff` / `font-family: "Inter"` / `font-size: 16px` / `padding: 12px` / `border-radius: 8px` / `box-shadow: 0 2px 4px ...` 等。
+- **CSS / 内联 style 里的裸字面值**：`color: #1677ff` / `font-family: "Inter"` / `font-size: 16px` / `stroke-width: 2` / `strokeWidth={2}` / `padding: 12px` / `border-radius: 8px` / `box-shadow: 0 2px 4px ...` 等。
 - **Tailwind arbitrary value（带 `[...]` 的工具类）**：`text-[#333]` / `text-[16px]` / `font-[600]` / `leading-[1.5]` / `p-[12px]` / `rounded-[8px]` / `shadow-[...]` 等一律不写。
 - **Tailwind 内置色板类**：`bg-red-500` / `text-blue-600` 这类跟随 Tailwind 默认色板而非项目主题。
 - **例外（合法用法）**：**已映射到项目 token** 的 Tailwind 工具类（如 `bg-accent` / `text-fg` / `border-border`），以及走 `--spacing` 单位 token 的 `p-4` / `gap-6` 这类。即"工具类背后是项目变量"就行，"工具类背后是 Tailwind 默认值"就不行。
@@ -59,10 +59,23 @@ alwaysApply: false
 - **随主题变** = 颜色、阴影（阴影颜色随主题）、选中态背景等带色样式
   → `theme/light.css` / `theme/dark.css`（以及未来新增的主题文件），**同名、值不同**。
   新增此类 token 时**必须所有主题文件都补**，否则换肤会有漏。
-- **不随主题变** = 字体栈、字号、字重、行高、字间距、间距、圆角、动效时长、缓动等纯尺度量
+- **不随主题变** = 字体栈、字号、字重、图标描边粗度、行高、字间距、间距、圆角、动效时长、缓动等纯尺度量
   → `theme/tokens.css`（**首次需要时建立此文件**，挂在 `:root` 上）。仅一份，所有主题共用。
 
 新增 token 同步在 `src/styles/index.css` 的 `@theme inline` 块里映射成 Tailwind token（如 `--text-base: var(--font-size-base)` / `--radius-md: var(--radius-md)`），让 `text-base` / `rounded-md` 这类工具类直接走变量，否则 utility class 只能用 arbitrary value 写——又会触发禁止形式。
+
+### 字重与排版层级
+
+- 字重事实源是 `theme/tokens.css` 中完整的 `--font-weight-normal / medium / semibold / bold` 原语梯度；`body` 基线、`strong / b` 语义强调和 `index.css @theme inline` 必须同步映射完整梯度，让 `font-normal / font-medium / font-semibold / font-bold` 都由项目控制。
+- 不建立全局 `weight-offset`、`calc(... - 100)` 之类运行时偏移。调整风格时直接修改显式原语值，保持层级、字体实际可用字重与回滚边界可审查。
+- 同一排版角色若同时绑定字号、行高和字重，或第三方组件只暴露完整 `font` shorthand，建立语义排版 token（例如某级 Markdown 标题），不要在适配层重复拼裸值。
+- 做全局字重调整时，必须一起核对：正文继承、Tailwind 映射、shadcn 消费、第三方组件公开变量，以及 Shadow DOM 内部直写样式。稳定公开的变量 / CSS Parts 在 vendor 适配层映射到项目 token；没有稳定入口的第三方内部样式是明确兼容边界，不为追求表面上的“全部同步”注入运行时 style 或私自 fork 依赖，交付时说明未覆盖范围。
+
+### 图标粗度语义
+
+- 描边 SVG 的粗度是独立设计维度，不从文字 `font-weight` 做数学换算；在 `theme/tokens.css` 中维护少量语义档位，图标尺寸与粗度分开管理。
+- 拥有图标渲染职责的组件、封装或第三方适配层负责消费粗度 token，并向调用方暴露语义化覆盖入口；业务代码不得散写裸 `strokeWidth` / `stroke-width`。
+- 填充图标、预绘制粗度变体或无法稳定覆盖的第三方内部图标，遵守其资产与公开 API 边界，不伪装成可由描边 token 控制。
 
 ### 命名
 
@@ -71,9 +84,13 @@ alwaysApply: false
 
 ### 机械门禁
 
-颜色已由 `frontend/scripts/check-colors.mjs`（接入 `scripts/check`）覆盖：扫 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错。其他维度（字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影）由 `frontend/scripts/check-design-tokens.mjs`（接入 `scripts/check`）覆盖。`src/styles/theme/` 作为 token 定义源头、`src/components/ui/` 作为 shadcn vendored 区域，对本节约束与所有 token 维度门禁永久豁免：
+颜色已由 `frontend/scripts/check-colors.mjs`（接入 `scripts/check`）覆盖：扫 `src/`，命中色板类 / `#hex` / `rgb()/hsl()` / 任意值色即报错。其他维度（字号 / 字重 / 图标描边粗度 / 行高 / 字间距 / 间距 / 圆角 / 阴影）由 `frontend/scripts/check-design-tokens.mjs`（接入 `scripts/check`）覆盖。`src/styles/theme/` 作为 token 定义源头、`src/components/ui/` 作为 shadcn vendored 区域，对本节约束与所有 token 维度门禁永久豁免：
 
 - `src/styles/theme/` —— token 定义源头，硬编码是必然。
 - `src/components/ui/` —— shadcn 官方源码，通过 `pnpm dlx shadcn@latest add` 拉取后原样保留；其内部 arbitrary value 多为几何 calc 与组件专属 magic，不是项目级设计常量，改动会与上游 CLI 更新冲突。新增 shadcn 组件后无需为其内部 token 做适配，仅外层使用方按本规则约束。
 
 规则只讲"该怎么写"，"写错了拦下来"交给门禁。
+
+字重门禁必须覆盖 Tailwind `font-[...]`、CSS `font-weight`、带字重的 `font` shorthand，以及 TS / TSX 内联 style / JSX `fontWeight` 的裸数字或关键字；不能只检查带 `px / rem / em` 的声明。
+
+图标描边门禁必须覆盖 CSS `stroke-width`、TS / TSX 内联 style `strokeWidth` 和 JSX `strokeWidth` 的裸数字；业务代码只能通过主题 token 或组件提供的语义入口设置粗度。

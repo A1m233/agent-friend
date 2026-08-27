@@ -137,7 +137,6 @@ function ScrollActivityRing({ running }: { running: boolean }) {
         r={SCROLL_ACTIVITY_RING_RADIUS}
         fill="none"
         stroke={`url(#${gradientId})`}
-        strokeWidth="2"
         strokeLinecap="round"
         strokeDasharray={`${SCROLL_ACTIVITY_ARC_LENGTH} ${SCROLL_ACTIVITY_ARC_GAP}`}
         transform={`rotate(${SCROLL_ACTIVITY_ARC_START_DEGREES} ${SCROLL_ACTIVITY_RING_CENTER} ${SCROLL_ACTIVITY_RING_CENTER})`}
