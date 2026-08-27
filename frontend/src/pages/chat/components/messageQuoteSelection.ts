@@ -20,12 +20,18 @@ export interface CapturedQuoteSelection {
 
 export function captureQuoteSelection(selection: Selection | null): CapturedQuoteSelection | null {
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
-  const startHost = quoteHostFor(selection.getRangeAt(0).startContainer);
-  const endHost = quoteHostFor(selection.getRangeAt(0).endContainer);
+  const scopedRange = selection.getRangeAt(0);
+  const startHost = quoteHostFor(scopedRange.startContainer);
+  const endHost = quoteHostFor(scopedRange.endContainer);
   if (!startHost || startHost !== endHost) return null;
+
+  const range = composedSelectionRange(selection, startHost) ?? scopedRange;
+  const composedStartHost = quoteHostFor(range.startContainer);
+  const composedEndHost = quoteHostFor(range.endContainer);
+  if (composedStartHost !== startHost || composedEndHost !== startHost) return null;
   if (
-    isQuoteExcluded(selection.getRangeAt(0).startContainer, startHost)
-    || isQuoteExcluded(selection.getRangeAt(0).endContainer, startHost)
+    isQuoteExcluded(range.startContainer, startHost)
+    || isQuoteExcluded(range.endContainer, startHost)
   ) return null;
 
   const messageEventUuid = startHost.dataset.quoteMessageId;
@@ -36,11 +42,17 @@ export function captureQuoteSelection(selection: Selection | null): CapturedQuot
   }
 
   const chunks = collectRenderedTextChunks(startHost);
-  const range = selection.getRangeAt(0);
-  const start = boundaryOffset(chunks, range.startContainer, range.startOffset);
-  const end = boundaryOffset(chunks, range.endContainer, range.endOffset);
-  if (start === null || end === null || end <= start) return null;
+  let start = boundaryOffset(chunks, range.startContainer, range.startOffset);
+  let end = boundaryOffset(chunks, range.endContainer, range.endOffset);
   const projectedText = chunks.map((chunk) => chunk.node.data).join("");
+
+  if (start === null || end === null || end <= start) {
+    const selectedText = selection.toString();
+    const matches = occurrences(projectedText, selectedText);
+    if (matches.length !== 1) return null;
+    [start, end] = matches[0];
+  }
+  if (start === null || end === null || end <= start) return null;
   const quotedText = projectedText.slice(start, end);
   if (!quotedText.trim()) return null;
 
@@ -53,6 +65,46 @@ export function captureQuoteSelection(selection: Selection | null): CapturedQuot
     end,
     rect: range.getBoundingClientRect(),
   };
+}
+
+function composedSelectionRange(selection: Selection, host: HTMLElement): Range | null {
+  const getComposedRanges = (
+    selection as Partial<Pick<Selection, "getComposedRanges">>
+  ).getComposedRanges;
+  if (typeof getComposedRanges !== "function") return null;
+
+  const shadowRoots = collectOpenShadowRoots(host);
+  if (shadowRoots.length === 0) return null;
+
+  let staticRange: StaticRange | undefined;
+  try {
+    [staticRange] = getComposedRanges.call(selection, { shadowRoots });
+  } catch {
+    return null;
+  }
+  if (!staticRange) return null;
+
+  const range = hostDocument(staticRange.startContainer).createRange();
+  try {
+    range.setStart(staticRange.startContainer, staticRange.startOffset);
+    range.setEnd(staticRange.endContainer, staticRange.endOffset);
+  } catch {
+    return null;
+  }
+  return range;
+}
+
+function collectOpenShadowRoots(root: Node): ShadowRoot[] {
+  const roots: ShadowRoot[] = [];
+  const walk = (node: Node) => {
+    if (node instanceof Element && node.shadowRoot) {
+      roots.push(node.shadowRoot);
+      walk(node.shadowRoot);
+    }
+    for (const child of Array.from(node.childNodes)) walk(child);
+  };
+  walk(root);
+  return roots;
 }
 
 export function findReferenceMessageIndex(
