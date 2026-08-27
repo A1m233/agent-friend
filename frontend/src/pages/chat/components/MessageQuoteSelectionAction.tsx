@@ -24,25 +24,32 @@ export function MessageQuoteSelectionAction({
     }
     const update = () => setCaptured(captureQuoteSelection(window.getSelection()));
     const clear = () => setCaptured(null);
+    const clearIfSelectionEmpty = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || !selection.toString()) clear();
+    };
     window.addEventListener("pointerup", update, true);
     window.addEventListener("keyup", update, true);
     window.addEventListener("scroll", clear, true);
+    document.addEventListener("selectionchange", clearIfSelectionEmpty);
     return () => {
       window.removeEventListener("pointerup", update, true);
       window.removeEventListener("keyup", update, true);
       window.removeEventListener("scroll", clear, true);
+      document.removeEventListener("selectionchange", clearIfSelectionEmpty);
     };
   }, [disabled]);
 
   if (!captured) return null;
-  const top = Math.max(8, captured.rect.bottom + 8);
-  const left = Math.min(window.innerWidth - 72, Math.max(8, captured.rect.left));
+  const top = captured.rect.top;
+  const left = captured.rect.left + captured.rect.width / 2;
 
   return (
     <Button
       type="button"
+      variant="outline"
       size="sm"
-      className="fixed z-50 rounded-full shadow-md"
+      className="fixed z-50 -mt-2 -translate-x-1/2 -translate-y-full rounded-full shadow-md"
       style={{ top, left }}
       onPointerDown={(event) => event.preventDefault()}
       onClick={() => {

@@ -3,12 +3,14 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
 
 import { cn } from "@/utils/cn";
+import type { IconWeight } from "../icon-weight";
 import { Spinner } from "../spinner";
 
 /**
  * shadcn/ui Button（`pnpm dlx shadcn@latest add button` 拉取的官方源码，已按项目约定适配）。
  * 适配点：① 颜色 token 改用项目语义 token（accent / danger / surface / fg…，见 styles/theme）；
- * ② 去掉项目换肤模型用不到的 dark: 变体与 ring/input token；③ 补回项目用到的 pill size。
+ * ② 去掉项目换肤模型用不到的 dark: 变体与 ring/input token；③ 补回项目用到的 pill size；
+ * ④ 按项目图标 token 为按钮内 Lucide 声明 regular 粗度，调用方可用 iconWeight 覆盖。
  * asChild 走 radix-ui 的 Slot。页面/业务禁止散写原生 <button>（ESLint 门禁强制）。
  */
 const buttonVariants = cva(
@@ -47,6 +49,7 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  iconWeight = "regular",
   asChild = false,
   loading = false,
   disabled,
@@ -55,6 +58,7 @@ function Button({
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    iconWeight?: IconWeight;
     loading?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button";
@@ -64,6 +68,7 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
+      data-icon-weight={iconWeight}
       aria-busy={loading || undefined}
       disabled={disabled || loading}
       className={cn(buttonVariants({ variant, size, className }))}

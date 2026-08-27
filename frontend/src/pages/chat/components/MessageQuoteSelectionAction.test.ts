@@ -64,7 +64,8 @@ describe("MessageQuoteSelectionAction", () => {
     const scopedRange = document.createRange();
     scopedRange.selectNode(chatItem);
     const selection = {
-      isCollapsed: false,
+      // WebView2 retargets the nested Shadow DOM range and reports this as collapsed.
+      isCollapsed: true,
       rangeCount: 1,
       getRangeAt: () => scopedRange,
       getComposedRanges: () => [{
@@ -75,7 +76,7 @@ describe("MessageQuoteSelectionAction", () => {
       }],
       toString: () => "beta",
     } as unknown as Selection;
-    vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    const getSelection = vi.spyOn(window, "getSelection").mockReturnValue(selection);
 
     await act(async () => {
       selectable.dispatchEvent(new Event("pointerup", { bubbles: true, composed: true }));
@@ -84,5 +85,21 @@ describe("MessageQuoteSelectionAction", () => {
     const action = container.querySelector("button");
     expect(action).toBeInstanceOf(HTMLButtonElement);
     expect(action?.textContent).toContain("引用");
+    expect(action?.dataset.variant).toBe("outline");
+    expect(action?.style.top).toBe("16px");
+    expect(action?.style.left).toBe("26px");
+    expect(action?.className).toContain("-translate-x-1/2");
+    expect(action?.className).toContain("-translate-y-full");
+
+    getSelection.mockReturnValue({
+      isCollapsed: true,
+      rangeCount: 0,
+      toString: () => "",
+    } as unknown as Selection);
+    await act(async () => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    expect(container.querySelector("button")).toBeNull();
   });
 });

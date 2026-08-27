@@ -6,6 +6,35 @@
  * 在 styles/index.css 之后加载，TDesign 自己的 :root 默认值也不会盖掉这里。
  */
 #root {
+  /*
+   * TDesign 把字重封进完整 font shorthand；在稳定公开变量上接入项目字重梯度，
+   * 让普通正文、强调文字和标题与 Tailwind / shadcn 使用同一套权重。
+   */
+  --td-font-link-small: var(--font-weight-normal) var(--td-font-size-link-small) / var(--td-line-height-link-small) var(--td-font-family);
+  --td-font-link-medium: var(--font-weight-normal) var(--td-font-size-link-medium) / var(--td-line-height-link-medium) var(--td-font-family);
+  --td-font-link-large: var(--font-weight-normal) var(--td-font-size-link-large) / var(--td-line-height-link-large) var(--td-font-family);
+  --td-font-mark-small: var(--font-weight-semibold) var(--td-font-size-mark-small) / var(--td-line-height-mark-small) var(--td-font-family);
+  --td-font-mark-medium: var(--font-weight-semibold) var(--td-font-size-mark-medium) / var(--td-line-height-mark-medium) var(--td-font-family);
+  --td-font-body-small: var(--font-weight-normal) var(--td-font-size-body-small) / var(--td-line-height-body-small) var(--td-font-family);
+  --td-font-body-medium: var(--font-weight-normal) var(--td-font-size-body-medium) / var(--td-line-height-body-medium) var(--td-font-family);
+  --td-font-body-large: var(--font-weight-normal) var(--td-font-size-body-large) / var(--td-line-height-body-large) var(--td-font-family);
+  --td-font-title-small: var(--font-weight-semibold) var(--td-font-size-title-small) / var(--td-line-height-title-small) var(--td-font-family);
+  --td-font-title-medium: var(--font-weight-semibold) var(--td-font-size-title-medium) / var(--td-line-height-title-medium) var(--td-font-family);
+  --td-font-title-large: var(--font-weight-semibold) var(--td-font-size-title-large) / var(--td-line-height-title-large) var(--td-font-family);
+  --td-font-headline-small: var(--font-weight-semibold) var(--td-font-size-headline-small) / var(--td-line-height-headline-small) var(--td-font-family);
+  --td-font-headline-medium: var(--font-weight-semibold) var(--td-font-size-headline-medium) / var(--td-line-height-headline-medium) var(--td-font-family);
+  --td-font-headline-large: var(--font-weight-semibold) var(--td-font-size-headline-large) / var(--td-line-height-headline-large) var(--td-font-family);
+  --td-font-display-medium: var(--font-weight-semibold) var(--td-font-size-display-medium) / var(--td-line-height-display-medium) var(--td-font-family);
+  --td-font-display-large: var(--font-weight-semibold) var(--td-font-size-display-large) / var(--td-line-height-display-large) var(--td-font-family);
+
+  /* TDesign Chat Markdown 的稳定排版变量映射到项目语义角色。 */
+  --td-chat-md-h1-font: var(--font-chat-markdown-h1);
+  --td-chat-md-h2-font: var(--font-chat-markdown-h2);
+  --td-chat-md-h3-font: var(--font-chat-markdown-h3);
+  --td-chat-md-code-header-font: var(--font-chat-markdown-code-header);
+  --td-chat-md-table-th-font: var(--font-chat-markdown-table-header);
+  --td-chat-md-table-td-font: var(--font-chat-markdown-table-cell);
+
   --td-chat-font-size: var(--font-size-sm);
   --td-chat-input-font-size: var(--font-size-sm);
   --td-chat-input-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
@@ -67,6 +96,91 @@ t-chat-sender::part(t-textarea__inner) {
 
 .chat-message-attachments::part(t-attachment-list) {
   justify-content: flex-end;
+}
+
+/*
+ * 当前 TDesign ChatSender 没有自定义 attachment item slot。
+ * 用 inner-header 承载一个统一附件带：引用保持 shadcn Popover 语义，真实文件仍由
+ * TDesign Attachments 渲染；引用卡尺寸与本版本 t-filecard 的 168 × 52 对齐。
+ */
+.composer-attachment-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--td-comp-margin-s);
+  min-width: 0;
+  margin: var(--td-chat-input-attachments-margin);
+}
+
+.composer-draft-attachments {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-reference-card {
+  position: relative;
+  flex: 0 0 var(--size-chat-composer-attachment-width);
+  width: var(--size-chat-composer-attachment-width);
+  height: var(--size-chat-composer-attachment-height);
+}
+
+.composer-reference-card-trigger {
+  width: 100%;
+  height: 100%;
+  justify-content: flex-start;
+  border-radius: var(--td-radius-medium);
+  padding: var(--td-comp-paddingTB-m) var(--td-comp-paddingLR-m);
+  color: var(--td-text-color-primary);
+  background: var(--td-bg-color-secondarycontainer);
+  box-shadow: none;
+}
+
+.composer-reference-card-trigger:hover {
+  background: var(--td-bg-color-secondarycontainer-hover, var(--td-bg-color-secondarycontainer));
+}
+
+/* 与当前 TDesign t-filecard 的 32px 图标槽位、24px 正文图标保持一致。 */
+.composer-reference-card-icon {
+  display: flex;
+  flex: 0 0 var(--size-chat-composer-attachment-icon-slot);
+  align-items: center;
+  justify-content: center;
+  width: var(--size-chat-composer-attachment-icon-slot);
+  height: var(--size-chat-composer-attachment-icon-slot);
+}
+
+.composer-reference-card-icon > svg {
+  width: var(--size-chat-composer-attachment-icon);
+  height: var(--size-chat-composer-attachment-icon);
+}
+
+/* 复用 TDesign t-filecard 的右上角移除按钮尺寸与 hover 呈现。 */
+.composer-reference-card-remove {
+  position: absolute;
+  top: calc(var(--size-chat-composer-remove-offset) * -1);
+  right: calc(var(--size-chat-composer-remove-offset) * -1);
+  z-index: 1;
+  width: var(--size-chat-composer-remove-icon);
+  height: var(--size-chat-composer-remove-icon);
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0;
+}
+
+.composer-reference-card:hover .composer-reference-card-remove,
+.composer-reference-card-remove:focus-visible {
+  opacity: 1;
+}
+
+.composer-reference-card-remove:hover {
+  background: transparent;
+}
+
+.composer-reference-card-remove-icon {
+  width: var(--size-chat-composer-remove-icon);
+  height: var(--size-chat-composer-remove-icon);
 }
 
 t-chat-sender::part(t-chat__input__footer__left) {

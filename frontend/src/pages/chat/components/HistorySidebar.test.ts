@@ -5,7 +5,9 @@ import {
   resolveOpenSessionActionMenu,
   sessionRunIndicator,
   shouldClearSessionActionFocusOnOpen,
+  shouldRequestSessionOpen,
   shouldResetMissingCurrentSession,
+  shouldShowSessionAge,
 } from "./HistorySidebar";
 
 describe("HistorySidebar workspace selection", () => {
@@ -18,6 +20,30 @@ describe("HistorySidebar workspace selection", () => {
   it("clears chat selection while a utility surface is active", () => {
     expect(isNewConversationNavigationActive("settings", null)).toBe(false);
     expect(isSessionNavigationActive("im-connect", "session-1", "session-1")).toBe(false);
+  });
+
+  it("does not reload the current ready session, but keeps first-load retry available", () => {
+    expect(
+      shouldRequestSessionOpen({
+        currentSessionId: "session-1",
+        targetSessionId: "session-1",
+        currentSessionReady: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRequestSessionOpen({
+        currentSessionId: "session-1",
+        targetSessionId: "session-1",
+        currentSessionReady: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRequestSessionOpen({
+        currentSessionId: "session-1",
+        targetSessionId: "session-2",
+        currentSessionReady: true,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -130,6 +156,15 @@ describe("HistorySidebar run indicator", () => {
     expect(sessionRunIndicator(undefined, "completed")).toBe("completed");
     expect(sessionRunIndicator(undefined, "failed")).toBe("failed");
     expect(sessionRunIndicator(undefined, undefined)).toBeNull();
+  });
+
+  it("正在处理时隐藏更新时间，其它运行状态仍保留更新时间", () => {
+    expect(shouldShowSessionAge(false, "running")).toBe(false);
+    expect(shouldShowSessionAge(false, "queued")).toBe(true);
+    expect(shouldShowSessionAge(false, "failed")).toBe(true);
+    expect(shouldShowSessionAge(false, "completed")).toBe(true);
+    expect(shouldShowSessionAge(false, null)).toBe(true);
+    expect(shouldShowSessionAge(true, null)).toBe(false);
   });
 });
 

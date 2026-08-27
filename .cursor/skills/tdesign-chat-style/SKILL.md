@@ -1,6 +1,6 @@
 ---
 name: tdesign-chat-style
-description: 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage / ChatSender / @tdesign-react/chat 样式，例如消息气泡、用户或助手消息、chatmessage base/text/outline variant、消息字号、行高、padding、间距、圆角、对齐、输入框外观、hover/focus 态，或用户提到 TDesign Chat 自定义样式；实现时优先用 CSS 变量，必要时用 CSS Parts / ::part。
+description: 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉样式的标准流程。Use when 用户想修改对话页里的 TDesign Chat / ChatMessage / ChatSender / @tdesign-react/chat 样式，例如消息气泡、用户或助手消息、chatmessage base/text/outline variant、消息字号、字重、行高、padding、间距、圆角、对齐、输入框外观、hover/focus 态，或用户提到 TDesign Chat 自定义样式；实现时优先用 CSS 变量，必要时用 CSS Parts / ::part。
 ---
 
 # TDesign Chat 样式覆盖
@@ -44,6 +44,14 @@ description: 在 agent-friend 前端调整 TDesign Chat 对话组件具体视觉
 
 变量值优先引用项目 token 或 TDesign token，例如 `var(--font-size-sm)`、`var(--td-comp-paddingTB-s)`、`var(--td-comp-paddingLR-m)`。除非项目规则允许并且确有必要，不要直接写裸 `px`。
 
+### 全局排版与字重同步
+
+项目字重梯度和语义排版角色仍以 `frontend-ui-conventions.mdc` 与 `theme/tokens.css` 为事实源；本 Skill 只负责 TDesign 适配：
+
+1. 先查当前安装版本的 `--td-font-*`、`--td-chat-md-*-font` 等公开变量，把完整 `font` shorthand 在 `vendor/tdesign-chat.css` 的 `#root` 下映射到项目 token。
+2. 同时搜索依赖内部的 `font-weight` / `font` 直写值，并核对目标元素是否有可继承变量或导出的 CSS Part；不能因为外层变量已生效，就断言 Shadow DOM 内部全部同步。
+3. 没有稳定变量或 Part 的内部样式保持为明确兼容边界，并在交付时说明。不要为了强行统一而运行时向 Shadow Root 注入 style、修改 `node_modules` 或私自 fork 依赖；若确实要跨过该边界，应单独评估上游补丁、依赖升级或替换渲染器。
+
 ### CSS Parts 用于细节
 
 当找不到合适变量时，再用 `::part()`。先在 Chrome DevTools 里查看 web component 的 `exportparts` / shadow DOM `part` 名称，再写精确选择器：
@@ -58,12 +66,12 @@ t-chat-sender::part(t-chat__input__content) {
 
 ## 验证
 
-1. 运行 `./scripts/frontend/lint.sh` 和 `./scripts/frontend/test.sh`。
+1. 运行 `scripts/frontend/lint.{sh,ps1}` 和 `scripts/frontend/test.{sh,ps1}` 对应当前平台入口。
 2. 若样式看起来没生效，用浏览器 computed style 确认变量是否传到 `t-chat-item` / `t-chat-sender` host；再检查当前 variant 是否消费了目标变量。
 3. 若改了 `.cursor/skills/tdesign-chat-style/SKILL.md`，按项目规则运行 `./scripts/codex-adapters/run.sh sync` 和 `./scripts/codex-adapters/run.sh doctor`。
 
 ## 参考入口
 
 - 官方文档：https://tdesign.tencent.com/react-chat/custom-style
-- 变量表：https://github.com/TDesignOteam/tdesign-web-components/blob/develop/src/chatbot/style/_var.less
+- 官方源码：https://github.com/TDesignOteam/tdesign-web-components
 - 本地源码可用 `rg -- '--td-chat-' frontend/node_modules/.pnpm/tdesign-web-components*` 搜索。

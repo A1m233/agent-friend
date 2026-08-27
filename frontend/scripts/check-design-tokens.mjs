@@ -2,8 +2,8 @@
 /**
  * 设计 token 硬编码综合门禁（机械版）—— 配合 .cursor/rules/frontend-ui-conventions.mdc §设计 token。
  *
- * 扫描 frontend/src/ 下的 ts/tsx/css，命中字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影
- * 维度的 Tailwind arbitrary value 或 CSS 裸字面值即报错退出。
+ * 扫描 frontend/src/ 下的 ts/tsx/css，命中字号 / 字重 / 图标描边粗度 / 行高 / 字间距 /
+ * 间距 / 圆角 / 阴影维度的 Tailwind arbitrary value 或 CSS 裸字面值即报错退出。
  *
  * 豁免：
  * - src/styles/theme/ —— token 定义源头，硬编码是必然（与 color-guard 一致）。
@@ -13,7 +13,7 @@
  * 单实现（node ESM）跨平台，由 scripts/frontend/lint.{sh,ps1} 调用，语义两端一致。
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
@@ -23,6 +23,8 @@ const EXCLUDE_DIRS = new Set([
   join(SRC, "components", "ui"),
 ]);
 const EXTS = new Set([".ts", ".tsx", ".css"]);
+const CSS_EXTS = new Set([".css"]);
+const SCRIPT_EXTS = new Set([".ts", ".tsx"]);
 
 // 白名单：命中 arbitrary value 内容时跳过（几何计算 / 视口单位 / 已用变量 / 特殊关键字）。
 const ARB_WHITELIST_RE = /calc\(|min\(|max\(|clamp\(|var\(--|%|vh|vw|dvh|dvw|inherit|auto|100%/i;
@@ -32,7 +34,7 @@ const RULES = [
     name: "字号 arbitrary (text-[...])",
     re: /\btext-\[(?!.*\b(?:calc\(|min\(|max\(|clamp\(|var\(--|%|vh|vw|dvh|dvw|inherit|auto|100%))[^\]]+\]/,
   },
-  { name: "字重 arbitrary (font-[N])", re: /\bfont-\[\d+\]/ },
+  { name: "字重 arbitrary (font-[...])", re: /\bfont-\[[^\]]+\]/ },
   {
     name: "行高 arbitrary (leading-[...])",
     re: /\bleading-\[(?!.*\b(?:calc\(|min\(|max\(|clamp\(|var\(--))[^\]]+\]/,
@@ -54,13 +56,58 @@ const RULES = [
   // CSS 裸字面值：字体栈 / 字号 / 字重 / 行高 / 字间距 / 间距 / 圆角 / 阴影。
   {
     name: "CSS 字体栈裸字面值",
+    extensions: CSS_EXTS,
     re: /font-family\s*:\s*(?!.*var\()[^;]+;/,
   },
   {
+    name: "CSS 字重裸字面值",
+    extensions: CSS_EXTS,
+    re: /font-weight\s*:\s*(?:normal|bold|bolder|lighter|[1-9]00)\b/i,
+  },
+  {
+    name: "CSS font shorthand 字重裸字面值",
+    extensions: CSS_EXTS,
+    re: /(?:^|[;{])\s*font\s*:\s*(?:(?:italic|oblique|small-caps)\s+)*(?:normal|bold|bolder|lighter|[1-9]00)\b/i,
+  },
+  {
+    name: "内联 style 字重裸字面值",
+    extensions: SCRIPT_EXTS,
+    re: /\bfontWeight\s*:\s*["']?(?:normal|bold|bolder|lighter|[1-9]00)\b/i,
+  },
+  {
+    name: "JSX fontWeight 字重裸字面值",
+    extensions: SCRIPT_EXTS,
+    re: /\bfontWeight\s*=\s*\{?\s*["']?(?:normal|bold|bolder|lighter|[1-9]00)\b/i,
+  },
+  {
+    name: "CSS SVG 描边粗度裸字面值",
+    extensions: CSS_EXTS,
+    re: /stroke-width\s*:\s*\d/i,
+  },
+  {
+    name: "内联 style SVG 描边粗度裸字面值",
+    extensions: SCRIPT_EXTS,
+    re: /\bstrokeWidth\s*:\s*["']?\d/i,
+  },
+  {
+    name: "JSX strokeWidth 描边粗度裸字面值",
+    extensions: SCRIPT_EXTS,
+    re: /\bstrokeWidth\s*=\s*\{?\s*["']?\d/i,
+  },
+  {
     name: "CSS token 裸字面值",
-    re: /(?:font-size|font-weight|line-height|letter-spacing|padding|margin|gap|border-radius|box-shadow)\s*:\s*(?!.*var\()[^;]*\d+(?:px|rem|em)/,
+    extensions: CSS_EXTS,
+    re: /(?:font-size|line-height|letter-spacing|padding|margin|gap|border-radius|box-shadow)\s*:\s*(?!.*var\()[^;]*\d+(?:px|rem|em)/,
   },
 ];
+
+export function findDesignTokenViolation(line, extension) {
+  for (const rule of RULES) {
+    if (rule.extensions && !rule.extensions.has(extension)) continue;
+    if (rule.re.test(line)) return rule;
+  }
+  return null;
+}
 
 function collectFiles(dir, out) {
   for (const name of readdirSync(dir)) {
@@ -78,29 +125,33 @@ collectFiles(SRC, files);
 
 const violations = [];
 for (const file of files) {
+  const extension = extname(file);
   const lines = readFileSync(file, "utf8").split("\n");
   lines.forEach((line, i) => {
-    for (const rule of RULES) {
-      const m = rule.re.exec(line);
-      if (m) {
-        violations.push({ file, line: i + 1, rule: rule.name, text: line.trim() });
-        break;
-      }
+    const rule = findDesignTokenViolation(line, extension);
+    if (rule) {
+      violations.push({ file, line: i + 1, rule: rule.name, text: line.trim() });
     }
   });
 }
 
-if (violations.length > 0) {
-  console.error("✗ 发现硬编码设计 token（违反 frontend-ui-conventions §设计 token）：\n");
-  for (const v of violations) {
-    const rel = v.file.slice(FRONTEND.length);
-    console.error(`  ${rel}:${v.line}  [${v.rule}]`);
-    console.error(`    ${v.text}`);
+function runGuard() {
+  if (violations.length > 0) {
+    console.error("✗ 发现硬编码设计 token（违反 frontend-ui-conventions §设计 token）：\n");
+    for (const v of violations) {
+      const rel = v.file.slice(FRONTEND.length);
+      console.error(`  ${rel}:${v.line}  [${v.rule}]`);
+      console.error(`    ${v.text}`);
+    }
+    console.error(
+      "\n请改用 src/styles/theme/ 下的 CSS 变量 / 映射 token（新增 token 需在 index.css @theme inline 同步映射）。",
+    );
+    process.exit(1);
   }
-  console.error(
-    "\n请改用 src/styles/theme/ 下的 CSS 变量 / 映射 token（新增 token 需在 index.css @theme inline 同步映射）。",
-  );
-  process.exit(1);
+
+  console.log(`design-token-guard: ${files.length} 个文件，无硬编码设计 token ✓`);
 }
 
-console.log(`design-token-guard: ${files.length} 个文件，无硬编码设计 token ✓`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runGuard();
+}
