@@ -10,6 +10,12 @@
   --td-chat-input-font-size: var(--font-size-sm);
   --td-chat-input-padding: var(--td-comp-paddingTB-s) var(--td-comp-paddingLR-m);
   /*
+   * 高度只由 ChatSender 的 autosize minRows / maxRows 决定。
+   * TDesign 默认还会在 t-textarea host 上加一层固定 max-height，可能比
+   * autosize 算出的原生 textarea 更矮，形成第二个滚动 / 裁切容器。
+   */
+  --td-chat-input-textarea-max-height: none;
+  /*
    * 本项目不用 TDesign ChatList 管消息列表，而是由 MessageList 外层统一排布；
    * 清掉 t-chat-item 默认的 38px gap，避免与外层消息间距、回答内 block 间距叠加。
    */
@@ -45,6 +51,15 @@ t-chat-item::part(t-chat__text__markdown) {
   word-wrap: break-word;
 }
 
+/*
+ * ChatSender 已通过 footer margin 留出文本区与操作栏间距。
+ * 去掉 textarea 自身的额外底部 padding，让 maxRows 对齐完整行高，
+ * 避免滚动视口底边露出下一行的半截文字。
+ */
+t-chat-sender::part(t-textarea__inner) {
+  padding-bottom: 0;
+}
+
 .chat-message-attachments {
   --td-attachment-image-width: var(--size-chat-attachment-image);
   --td-attachment-image-height: var(--size-chat-attachment-image);
@@ -52,10 +67,6 @@ t-chat-item::part(t-chat__text__markdown) {
 
 .chat-message-attachments::part(t-attachment-list) {
   justify-content: flex-end;
-}
-
-t-chat-sender::part(t-textarea) {
-  overflow: hidden;
 }
 
 t-chat-sender::part(t-chat__input__footer__left) {
