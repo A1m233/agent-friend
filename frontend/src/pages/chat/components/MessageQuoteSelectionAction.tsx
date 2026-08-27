@@ -24,12 +24,12 @@ export function MessageQuoteSelectionAction({
     }
     const update = () => setCaptured(captureQuoteSelection(window.getSelection()));
     const clear = () => setCaptured(null);
-    document.addEventListener("pointerup", update);
-    document.addEventListener("keyup", update);
+    window.addEventListener("pointerup", update, true);
+    window.addEventListener("keyup", update, true);
     window.addEventListener("scroll", clear, true);
     return () => {
-      document.removeEventListener("pointerup", update);
-      document.removeEventListener("keyup", update);
+      window.removeEventListener("pointerup", update, true);
+      window.removeEventListener("keyup", update, true);
       window.removeEventListener("scroll", clear, true);
     };
   }, [disabled]);
