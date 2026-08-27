@@ -47,6 +47,10 @@
   animation-play-state: paused;
 }
 
+.chat-scroll-activity > circle {
+  stroke-width: var(--stroke-width-chat-scroll-activity);
+}
+
 .chat-scroll-activity[data-running="true"] {
   animation-play-state: running;
 }

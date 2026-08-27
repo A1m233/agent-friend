@@ -1,6 +1,8 @@
 import type { ChatMessage, ChatTextReference } from "@/types/chat";
 
 export const REFERENCE_HIGHLIGHT_NAME = "agent-friend-quoted-text";
+const RECT_TOLERANCE_PX = 1;
+const LINE_TOLERANCE_PX = 3;
 
 interface TextChunk {
   node: Text;
@@ -19,7 +21,12 @@ export interface CapturedQuoteSelection {
 }
 
 export function captureQuoteSelection(selection: Selection | null): CapturedQuoteSelection | null {
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  if (!selection || selection.rangeCount === 0) return null;
+  // WebView2 retargets selections inside TDesign shadow roots to the outer host. In that state
+  // `isCollapsed` can be true while `toString()` and `getComposedRanges()` still expose the real
+  // selected text, so the text snapshot is the reliable empty-selection signal at this boundary.
+  const selectedText = selection.toString();
+  if (!selectedText) return null;
   const scopedRange = selection.getRangeAt(0);
   const startHost = quoteHostFor(scopedRange.startContainer);
   const endHost = quoteHostFor(scopedRange.endContainer);
@@ -47,7 +54,6 @@ export function captureQuoteSelection(selection: Selection | null): CapturedQuot
   const projectedText = chunks.map((chunk) => chunk.node.data).join("");
 
   if (start === null || end === null || end <= start) {
-    const selectedText = selection.toString();
     const matches = occurrences(projectedText, selectedText);
     if (matches.length !== 1) return null;
     [start, end] = matches[0];
@@ -55,6 +61,10 @@ export function captureQuoteSelection(selection: Selection | null): CapturedQuot
   if (start === null || end === null || end <= start) return null;
   const quotedText = projectedText.slice(start, end);
   if (!quotedText.trim()) return null;
+  // A retargeted Shadow DOM selection can recover exact text offsets while its original Range
+  // still covers the outer markdown host. Rebuild a live text Range before measuring so floating
+  // UI is anchored to the selected glyphs rather than to the host element.
+  const measurementRange = rangeForOffsets(chunks, start, end) ?? range;
 
   return {
     messageEventUuid,
@@ -63,8 +73,53 @@ export function captureQuoteSelection(selection: Selection | null): CapturedQuot
     quotedText,
     start,
     end,
-    rect: range.getBoundingClientRect(),
+    rect: firstSelectedLineRect(measurementRange),
   };
+}
+
+function firstSelectedLineRect(range: Range): DOMRect {
+  const rects = typeof range.getClientRects === "function" ? range.getClientRects() : null;
+  const visibleRects = Array.from(rects ?? []).filter((rect) => rect.width > 0 && rect.height > 0);
+  const textRects = visibleRects.filter((candidate, candidateIndex) => (
+    !visibleRects.some((other, otherIndex) => (
+      candidateIndex !== otherIndex
+      && rectArea(other) < rectArea(candidate)
+      && rectContains(candidate, other)
+    ))
+  ));
+  textRects.sort((a, b) => (
+    Math.abs(a.top - b.top) <= LINE_TOLERANCE_PX ? a.left - b.left : a.top - b.top
+  ));
+  const first = textRects[0];
+  if (!first) return range.getBoundingClientRect();
+
+  // Inline markdown commonly splits one visual line into several client rects (plain text,
+  // <strong>, <a>, <code>, ...). Center over their union, not just the first fragment.
+  const firstLineRects = textRects.filter((rect) => sameVisualLine(first, rect));
+  const left = Math.min(...firstLineRects.map((rect) => rect.left));
+  const top = Math.min(...firstLineRects.map((rect) => rect.top));
+  const right = Math.max(...firstLineRects.map((rect) => rect.right));
+  const bottom = Math.max(...firstLineRects.map((rect) => rect.bottom));
+  return DOMRect.fromRect({ x: left, y: top, width: right - left, height: bottom - top });
+}
+
+function rectArea(rect: DOMRect): number {
+  return rect.width * rect.height;
+}
+
+function rectContains(outer: DOMRect, inner: DOMRect): boolean {
+  return (
+    outer.left <= inner.left + RECT_TOLERANCE_PX
+    && outer.top <= inner.top + RECT_TOLERANCE_PX
+    && outer.right >= inner.right - RECT_TOLERANCE_PX
+    && outer.bottom >= inner.bottom - RECT_TOLERANCE_PX
+  );
+}
+
+function sameVisualLine(anchor: DOMRect, candidate: DOMRect): boolean {
+  if (Math.abs(anchor.top - candidate.top) <= LINE_TOLERANCE_PX) return true;
+  const overlap = Math.min(anchor.bottom, candidate.bottom) - Math.max(anchor.top, candidate.top);
+  return overlap > Math.min(anchor.height, candidate.height) / 2;
 }
 
 function composedSelectionRange(selection: Selection, host: HTMLElement): Range | null {

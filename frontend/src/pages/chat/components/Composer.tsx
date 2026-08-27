@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,7 +11,7 @@ import {
 import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { Ban, Plus, Upload } from "lucide-react";
-import type { TdAttachmentItem } from "@tdesign-react/chat";
+import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
 import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
@@ -36,7 +37,7 @@ import { VoiceInputAction } from "./VoiceInputAction";
 import { ConversationModelSelector } from "./ConversationModelSelector";
 import { SessionApprovalModeControl } from "./SessionApprovalModeControl";
 import { ComposerEditStatus } from "./ComposerEditStatus";
-import { ReferenceSummaryPopover } from "./ReferenceSummaryPopover";
+import { ComposerAttachmentStrip } from "./ComposerAttachmentStrip";
 import { evaluateAttachmentCompatibility } from "./attachmentCompatibility";
 import {
   dropzoneAcceptFromMediaTypes,
@@ -132,6 +133,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const stopVoiceInput = useVoiceInputStore((s) => s.stop);
   const rootRef = useRef<HTMLDivElement>(null);
   const senderRef = useRef<HTMLElement>(null);
+  const attachmentsRef = useRef<HTMLElement | undefined>(undefined);
   const lastHeightRef = useRef(0);
   const prewarmRenewCountRef = useRef(0);
   const workspaceKey = editingMessage?.sessionId === currentSessionId
@@ -237,6 +239,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     })),
     [draftAttachments, incompatibleAttachmentNames],
   );
+
+  useLayoutEffect(() => {
+    const element = attachmentsRef.current as (HTMLElement & { update?: () => void }) | undefined;
+    element?.update?.();
+  }, [attachmentItems]);
 
   useEffect(() => {
     setDraftValidation(workspaceKey, {
@@ -394,13 +401,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const removeAttachment = useCallback((localId: string) => {
     removeDraftAttachment(workspaceKey, localId);
   }, [removeDraftAttachment, workspaceKey]);
-
-  const syncAttachmentsAfterSenderRemoval = useCallback((remaining: TdAttachmentItem[]) => {
-    const remainingIds = new Set(remaining.map((item) => String(item.key)));
-    for (const item of draftAttachments) {
-      if (!remainingIds.has(item.localId)) removeAttachment(item.localId);
-    }
-  }, [draftAttachments, removeAttachment]);
 
   const requestVoicePrewarm = useCallback(
     (reason: string) => {
@@ -723,16 +723,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               onCancel={handleCancelEditing}
             />
           )}
-          {draftReferences.length > 0 && (
-            <div className="mb-2 px-1">
-              <ReferenceSummaryPopover
-                references={draftReferences}
-                removable={!streaming && !editSubmitting}
-                onRemove={(referenceId) => removeDraftReference(workspaceKey, referenceId)}
-                onClear={() => clearDraftReferences(workspaceKey)}
-              />
-            </div>
-          )}
           <div
             {...getRootProps({
               className: cn(
@@ -777,7 +767,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   }
                 });
               }}
-              onFileRemove={(event) => syncAttachmentsAfterSenderRemoval(event.detail)}
               sendBtnDisabled={(value) => modelSwitching
                 || editSubmitting
                 || !attachmentCompatibility.compatible
@@ -787,18 +776,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   && !attachmentItems.some((item) => item.status === "success")
                   && draftReferences.length === 0
                 )}
-              attachmentsProps={{
-                items: attachmentItems,
-                overflow: "scrollX",
-                removable: !streaming && !editSubmitting,
-                imageViewer: false,
-                onFileClick: (event) => {
-                  const item = event.detail;
-                  if (item.fileType !== "image" || !item.url) return;
-                  setAttachmentPreview({ name: item.name ?? "图片预览", url: item.url });
-                },
-              }}
             >
+              <ComposerAttachmentStrip
+                attachmentContent={attachmentItems.length > 0 ? (
+                  <Attachments
+                    ref={attachmentsRef}
+                    className="composer-draft-attachments"
+                    items={attachmentItems}
+                    overflow="scrollX"
+                    removable={!streaming && !editSubmitting}
+                    imageViewer={false}
+                    onRemove={(event) => removeAttachment(String(event.detail.key))}
+                    onFileClick={(event) => {
+                      const item = event.detail;
+                      if (item.fileType !== "image" || !item.url) return;
+                      setAttachmentPreview({ name: item.name ?? "图片预览", url: item.url });
+                    }}
+                  />
+                ) : null}
+                references={draftReferences}
+                removable={!streaming && !editSubmitting}
+                onReferenceRemove={(referenceId) => removeDraftReference(workspaceKey, referenceId)}
+                onClearReferences={() => clearDraftReferences(workspaceKey)}
+              />
               <div slot="footer-prefix" className="flex min-h-8 w-full items-center justify-between overflow-visible px-1">
                 <TooltipProvider>
                   <div className="flex min-w-0 items-center gap-1">

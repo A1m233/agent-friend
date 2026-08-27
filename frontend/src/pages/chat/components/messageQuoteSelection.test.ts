@@ -52,25 +52,36 @@ describe("message quote selection", () => {
     const range = document.createRange();
     range.setStart(text, 1);
     range.setEnd(text, 3);
-    Object.defineProperty(range, "getBoundingClientRect", {
-      value: () => ({ left: 1, top: 2, right: 3, bottom: 4, width: 2, height: 2 }),
+    const originalRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [{ left: 1, top: 2, right: 3, bottom: 4, width: 2, height: 2 }],
     });
     const selection = {
       isCollapsed: false,
       rangeCount: 1,
       getRangeAt: () => range,
+      toString: () => "😀",
     } as unknown as Selection;
 
-    expect(captureQuoteSelection(selection)).toMatchObject({
-      quotedText: "😀",
-      start: 1,
-      end: 3,
-      messageEventUuid: "assistant-1",
-      textBlockId: "block-1",
-    });
+    try {
+      expect(captureQuoteSelection(selection)).toMatchObject({
+        quotedText: "😀",
+        start: 1,
+        end: 3,
+        messageEventUuid: "assistant-1",
+        textBlockId: "block-1",
+      });
+    } finally {
+      if (originalRects) {
+        Object.defineProperty(Range.prototype, "getClientRects", originalRects);
+      } else {
+        Reflect.deleteProperty(Range.prototype, "getClientRects");
+      }
+    }
   });
 
-  it("uses composed ranges for text selected inside nested shadow roots", () => {
+  it("uses composed ranges when WebView2 reports a nested shadow selection as collapsed", () => {
     const host = document.createElement("div");
     host.dataset.quoteableText = "true";
     host.dataset.quoteMessageId = "assistant-shadow";
@@ -88,14 +99,22 @@ describe("message quote selection", () => {
 
     const scopedRange = document.createRange();
     scopedRange.selectNode(chatItem);
-    const composedRect = { left: 4, top: 5, right: 8, bottom: 9, width: 4, height: 4 };
+    const firstLineStartRect = { left: 4, top: 5, right: 8, bottom: 9, width: 4, height: 4 };
+    const firstLineEndRect = { left: 8, top: 6, right: 12, bottom: 10, width: 4, height: 4 };
+    const secondLineRect = { left: 4, top: 12, right: 12, bottom: 20, width: 8, height: 8 };
+    const fullSelectionRect = { left: 4, top: 5, right: 12, bottom: 20, width: 8, height: 15 };
     const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const originalRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
     Object.defineProperty(Range.prototype, "getBoundingClientRect", {
       configurable: true,
-      value: () => composedRect,
+      value: () => fullSelectionRect,
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value: () => [fullSelectionRect, firstLineStartRect, secondLineRect, firstLineEndRect],
     });
     const selection = {
-      isCollapsed: false,
+      isCollapsed: true,
       rangeCount: 1,
       getRangeAt: () => scopedRange,
       getComposedRanges: ({ shadowRoots }: { shadowRoots: ShadowRoot[] }) => {
@@ -117,13 +136,18 @@ describe("message quote selection", () => {
         end: 10,
         messageEventUuid: "assistant-shadow",
         textBlockId: "block-shadow",
-        rect: composedRect,
+        rect: { left: 4, top: 5, right: 12, bottom: 10, width: 8, height: 5 },
       });
     } finally {
       if (originalRect) {
         Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRect);
       } else {
         Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+      }
+      if (originalRects) {
+        Object.defineProperty(Range.prototype, "getClientRects", originalRects);
+      } else {
+        Reflect.deleteProperty(Range.prototype, "getClientRects");
       }
     }
   });
@@ -136,14 +160,38 @@ describe("message quote selection", () => {
     host.dataset.quoteRole = "assistant";
     const markdown = document.createElement("t-chat-md-content");
     const markdownRoot = markdown.attachShadow({ mode: "open" });
-    markdownRoot.append(document.createTextNode("alpha beta gamma"));
+    const paragraph = document.createElement("p");
+    const prefix = document.createTextNode("alpha ");
+    const strong = document.createElement("strong");
+    const selectedText = document.createTextNode("beta");
+    const suffix = document.createTextNode(" gamma");
+    strong.append(selectedText);
+    paragraph.append(prefix, strong, suffix);
+    markdownRoot.append(paragraph);
     host.append(markdown);
     document.body.append(host);
 
     const scopedRange = document.createRange();
     scopedRange.selectNode(markdown);
-    const rect = { left: 1, top: 2, right: 3, bottom: 4, width: 2, height: 2 };
-    Object.defineProperty(scopedRange, "getBoundingClientRect", { value: () => rect });
+    const hostRect = { left: 1, top: 2, right: 101, bottom: 22, width: 100, height: 20 };
+    const selectedRect = { left: 42, top: 8, right: 74, bottom: 20, width: 32, height: 12 };
+    const originalRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    const originalRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () => hostRect,
+    });
+    Object.defineProperty(Range.prototype, "getClientRects", {
+      configurable: true,
+      value(this: Range) {
+        return this.startContainer === selectedText
+          && this.startOffset === 0
+          && this.endContainer === selectedText
+          && this.endOffset === selectedText.length
+          ? [selectedRect]
+          : [hostRect];
+      },
+    });
     const selection = {
       isCollapsed: false,
       rangeCount: 1,
@@ -151,12 +199,25 @@ describe("message quote selection", () => {
       toString: () => "beta",
     } as unknown as Selection;
 
-    expect(captureQuoteSelection(selection)).toMatchObject({
-      quotedText: "beta",
-      start: 6,
-      end: 10,
-      rect,
-    });
+    try {
+      expect(captureQuoteSelection(selection)).toMatchObject({
+        quotedText: "beta",
+        start: 6,
+        end: 10,
+        rect: selectedRect,
+      });
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRect);
+      } else {
+        Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+      }
+      if (originalRects) {
+        Object.defineProperty(Range.prototype, "getClientRects", originalRects);
+      } else {
+        Reflect.deleteProperty(Range.prototype, "getClientRects");
+      }
+    }
   });
 
   it("only falls back to snapshot search when the text is unique", () => {
