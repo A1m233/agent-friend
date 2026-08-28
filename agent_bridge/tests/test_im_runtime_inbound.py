@@ -80,16 +80,18 @@ class AttachmentAwareResolver:
         del provider_bind_id
         self.calls.append((im_type, event))
         if event.attachments:
-            first = event.attachments[0]
-            attachment = AttachmentRef(
-                asset_id=f"asset-{event.message_id}",
-                kind="image",
-                media_type="image/png",
-                display_name=first.filename or "attachment.png",
-                size_bytes=10,
-                sha256="0" * 64,
+            attachments = tuple(
+                AttachmentRef(
+                    asset_id=f"asset-{event.message_id}-{index}",
+                    kind="image",
+                    media_type="image/png",
+                    display_name=item.filename or "attachment.png",
+                    size_bytes=10,
+                    sha256=f"{index:064x}",
+                )
+                for index, item in enumerate(event.attachments)
             )
-            return InboundResolveResult.route(event, attachments=(attachment,))
+            return InboundResolveResult.route(event, attachments=attachments)
         return InboundResolveResult.route(event)
 
 
@@ -105,11 +107,16 @@ class ControlledSleep:
         await waiter
 
     async def wait_until_scheduled(self) -> None:
-        await wait_until(lambda: bool(self.waiters))
+        await wait_until(lambda: any(not waiter.done() for waiter in self.waiters))
 
     def release_next(self) -> None:
-        waiter = self.waiters.pop(0)
-        waiter.set_result(None)
+        while self.waiters:
+            waiter = self.waiters.pop(0)
+            if waiter.done():
+                continue
+            waiter.set_result(None)
+            return
+        raise AssertionError("no active controlled sleep waiter")
 
 
 async def wait_until(predicate: Callable[[], bool]) -> None:
@@ -398,7 +405,7 @@ async def test_runtime_plain_text_still_routes_immediately(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_runtime_second_attachment_flushes_first_without_aggregation(tmp_path: Path) -> None:
+async def test_runtime_five_fragmented_images_merge_into_one_user_turn(tmp_path: Path) -> None:
     router = MagicMock()
     router.handle_inbound = AsyncMock()
     resolver = AttachmentAwareResolver()
@@ -410,20 +417,83 @@ async def test_runtime_second_attachment_flushes_first_without_aggregation(tmp_p
     )
     callback = runtime._make_inbound_cb(StubProvider())
 
-    await callback(image_event("ATT-1", filename="one.png"))
-    await callback(image_event("ATT-2", filename="two.png"))
+    for index in range(1, 6):
+        await callback(image_event(f"ATT-{index}", filename=f"{index}.png"))
 
-    assert [event.message_id for _im_type, event in resolver.calls] == ["ATT-1"]
-    assert router.handle_inbound.await_count == 1
+    assert resolver.calls == []
+    router.handle_inbound.assert_not_awaited()
     assert coalescer.pending_count == 1
 
-    await callback(make_event(content="第二张的配文", message_id="TXT-2"))
+    await callback(make_event(content="五张图的配文", message_id="TXT-5"))
 
-    assert [event.message_id for _im_type, event in resolver.calls] == ["ATT-1", "TXT-2"]
-    second = resolver.calls[1][1]
-    assert [item.filename for item in second.attachments] == ["two.png"]
-    assert router.handle_inbound.await_count == 2
+    assert [event.message_id for _im_type, event in resolver.calls] == ["TXT-5"]
+    merged = resolver.calls[0][1]
+    assert [item.filename for item in merged.attachments] == [
+        "1.png",
+        "2.png",
+        "3.png",
+        "4.png",
+        "5.png",
+    ]
+    assert router.handle_inbound.await_count == 1
+    assert len(router.handle_inbound.await_args.kwargs["attachments"]) == 5
     assert coalescer.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_runtime_collects_next_attachment_batch_while_previous_reply_runs(
+    tmp_path: Path,
+) -> None:
+    router = MagicMock()
+    previous_started = asyncio.Event()
+    release_previous = asyncio.Event()
+
+    async def route_with_blocking_first_turn(
+        _im_type: str,
+        event: InboundEvent,
+        **_kwargs: object,
+    ) -> None:
+        if event.message_id == "TXT-OLD":
+            previous_started.set()
+            await release_previous.wait()
+
+    router.handle_inbound = AsyncMock(side_effect=route_with_blocking_first_turn)
+    resolver = AttachmentAwareResolver()
+    runtime, coalescer, coordinator = runtime_with_coalescer(
+        tmp_path,
+        router=router,
+        resolver=resolver,
+        sleeper=ControlledSleep(),
+    )
+    callback = runtime._make_inbound_cb(StubProvider())
+
+    previous_task: asyncio.Future[None] = asyncio.ensure_future(
+        callback(make_event(content="上一轮", message_id="TXT-OLD"))
+    )
+    await previous_started.wait()
+
+    await callback(image_event("ATT-1", filename="one.png"))
+    await callback(image_event("ATT-2", filename="two.png"))
+    assert coalescer.pending_count == 1
+    assert coordinator.has_pending_turn(IMBindingKey("qq", "OPENID-STUB", "c2c", "OPENID-USER"))
+
+    merged_task: asyncio.Future[None] = asyncio.ensure_future(
+        callback(make_event(content="一起看", message_id="TXT-BATCH"))
+    )
+    await wait_until(lambda: coalescer.pending_count == 0)
+    assert not merged_task.done()
+    assert [event.message_id for _im_type, event in resolver.calls] == ["TXT-OLD"]
+
+    release_previous.set()
+    await asyncio.gather(previous_task, merged_task)
+
+    assert [event.message_id for _im_type, event in resolver.calls] == [
+        "TXT-OLD",
+        "TXT-BATCH",
+    ]
+    merged = resolver.calls[1][1]
+    assert [item.filename for item in merged.attachments] == ["one.png", "two.png"]
+    assert router.handle_inbound.await_count == 2
 
 
 @pytest.mark.asyncio
