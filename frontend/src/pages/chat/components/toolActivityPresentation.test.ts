@@ -165,6 +165,34 @@ describe("tool activity presentation", () => {
     expect(toolPresentation(command).summary).not.toContain("secret-command");
   });
 
+  it("keeps weather, calculation, and date calculation as distinct activities", () => {
+    const weather = tool("weather", "weather_query");
+    const calculations = [
+      tool("calculation-1", "calculate"),
+      tool("calculation-2", "calculate"),
+      tool("calculation-3", "calculate"),
+      tool("calculation-4", "calculate"),
+    ];
+    const dateCalculation = tool("date-calculation", "datetime_calculate");
+
+    expect(toolPresentation(weather)).toMatchObject({
+      summary: "查询天气",
+      category: "weather",
+    });
+    expect(toolPresentation(calculations[0])).toMatchObject({
+      summary: "计算",
+      category: "calculation",
+    });
+    expect(toolPresentation(dateCalculation)).toMatchObject({
+      summary: "日期计算",
+      category: "dateCalculation",
+    });
+    expect(toolActivitySummary(calculations)).toBe("执行了 4 个步骤：计算");
+    expect(toolActivitySummary([weather, calculations[0], dateCalculation])).toBe(
+      "执行了 3 个步骤：查询天气、计算、日期计算",
+    );
+  });
+
   it("keeps full normalized summary text for TextEllipsis to measure", () => {
     const reason = "更新 maa-daily Skill 从 GitHub 仓库 A1m233/maa-daily 的最新版本并校验来源";
     const command = tool("command", "exec_command", {
