@@ -234,7 +234,7 @@ def test_deepseek_image_upload_uses_finite_ttl_and_nested_file_block(
     assert files.uploads == 1
     assert files.retrievals == 0
     assert files.purposes == ["user_data"]
-    assert files.expires_after == [{"anchor": "created_at", "seconds": 86_400}]
+    assert files.expires_after == [{"anchor": "created_at", "seconds": 2_592_000}]
 
 
 def test_deepseek_cache_is_isolated_by_api_key(
@@ -312,7 +312,7 @@ def test_deepseek_near_expiry_cache_reuploads_without_reusing_remote_id(
 
     adapter.render_message(message, client)
     now = files.expires_at - 299
-    files.expires_at = now + 86_400
+    files.expires_at = now + 2_592_000
     adapter.render_message(message, client)
 
     assert files.retrievals == 0
