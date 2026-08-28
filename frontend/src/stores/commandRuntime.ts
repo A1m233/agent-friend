@@ -10,16 +10,25 @@ import {
 import { friendlyErrorMessage } from "@/services/http";
 import type { PushEnvelope } from "@/types/push";
 import { isTauri } from "@/utils/tauri";
+import {
+  canReconcileSnapshotAbsence,
+  emptySnapshotFence,
+  touchSnapshotKey,
+  type SnapshotFenceState,
+} from "./snapshotFence";
 
 interface CommandRuntimeState {
   approvals: Record<string, CommandApprovalRequest>;
   processes: Record<string, CommandProcessSnapshot>;
   submitting: ReadonlySet<string>;
   runtimeStatus: CommandRuntimeStatus | null;
+  approvalFence: SnapshotFenceState;
+  processFence: SnapshotFenceState;
   settingUpSandbox: boolean;
   setupError: string | null;
   refresh: () => Promise<void>;
   handlePush: (envelope: PushEnvelope) => void;
+  finishRun: (runId: string) => void;
   decide: (requestId: string, allow: boolean) => Promise<void>;
   cancel: (processId: string) => Promise<void>;
   setupWindowsSandbox: () => Promise<CommandRuntimeStatus | null>;
@@ -76,48 +85,103 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
   processes: {},
   submitting: new Set(),
   runtimeStatus: null,
+  approvalFence: emptySnapshotFence(),
+  processFence: emptySnapshotFence(),
   settingUpSandbox: false,
   setupError: null,
   async refresh() {
+    const approvalRequestEpoch = get().approvalFence.mutationEpoch;
+    const processRequestEpoch = get().processFence.mutationEpoch;
     const [approvals, processes, runtimeStatus] = await Promise.all([
       commandRuntimeApi.pending(),
       commandRuntimeApi.processes(),
       commandRuntimeApi.status(),
     ]);
-    set((state) => ({
-      approvals: {
-        ...state.approvals,
-        ...Object.fromEntries(approvals.map((item) => [item.request_id, item])),
-      },
-      processes: {
-        ...state.processes,
-        ...Object.fromEntries(processes.map((item) => [item.process_id, item])),
-      },
-      runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
-    }));
+    set((state) => {
+      const nextApprovals = { ...state.approvals };
+      let approvalFence = state.approvalFence;
+      const approvalIds = new Set(approvals.map((item) => item.request_id));
+      for (const item of approvals) {
+        const current = nextApprovals[item.request_id];
+        const touchedDuringRequest = !canReconcileSnapshotAbsence(
+          state.approvalFence,
+          item.request_id,
+          approvalRequestEpoch,
+        );
+        if (!current || item.version > current.version || (!touchedDuringRequest && item.version === current.version)) {
+          nextApprovals[item.request_id] = item;
+        }
+        approvalFence = touchSnapshotKey(approvalFence, item.request_id);
+      }
+      for (const [requestId, request] of Object.entries(nextApprovals)) {
+        if (
+          request.status !== "pending"
+          || approvalIds.has(requestId)
+          || !canReconcileSnapshotAbsence(state.approvalFence, requestId, approvalRequestEpoch)
+        ) continue;
+        nextApprovals[requestId] = { ...request, status: "cancelled" };
+        approvalFence = touchSnapshotKey(approvalFence, requestId);
+      }
+
+      const nextProcesses = { ...state.processes };
+      let processFence = state.processFence;
+      const processIds = new Set(processes.map((item) => item.process_id));
+      for (const item of processes) {
+        const current = nextProcesses[item.process_id];
+        const touchedDuringRequest = !canReconcileSnapshotAbsence(
+          state.processFence,
+          item.process_id,
+          processRequestEpoch,
+        );
+        if (!current || item.version > current.version || (!touchedDuringRequest && item.version === current.version)) {
+          nextProcesses[item.process_id] = item;
+        }
+        processFence = touchSnapshotKey(processFence, item.process_id);
+      }
+      for (const [processId, process] of Object.entries(nextProcesses)) {
+        if (
+          process.status !== "running"
+          || processIds.has(processId)
+          || !canReconcileSnapshotAbsence(state.processFence, processId, processRequestEpoch)
+        ) continue;
+        nextProcesses[processId] = {
+          ...process,
+          status: "runtime_lost",
+          terminal_reason: "missing_from_authority_snapshot",
+        };
+        processFence = touchSnapshotKey(processFence, processId);
+      }
+      return {
+        approvals: nextApprovals,
+        processes: nextProcesses,
+        approvalFence,
+        processFence,
+        runtimeStatus: preferNewerCommandRuntimeStatus(state.runtimeStatus, runtimeStatus),
+      };
+    });
   },
   handlePush(envelope) {
     if (envelope.kind === "approval_changed" && validApproval(envelope.approval)) {
       const request = envelope.approval;
-      set((state) => ({
-        approvals: {
-          ...state.approvals,
-          [request.request_id]: request.version >= (state.approvals[request.request_id]?.version ?? 0)
-            ? request
-            : state.approvals[request.request_id],
-        },
-      }));
+      set((state) => {
+        const current = state.approvals[request.request_id];
+        if (current && request.version <= current.version) return {};
+        return {
+          approvals: { ...state.approvals, [request.request_id]: request },
+          approvalFence: touchSnapshotKey(state.approvalFence, request.request_id),
+        };
+      });
     }
     if (envelope.kind === "command_process_changed" && validProcess(envelope.command_process)) {
       const process = envelope.command_process;
-      set((state) => ({
-        processes: {
-          ...state.processes,
-          [process.process_id]: process.version >= (state.processes[process.process_id]?.version ?? 0)
-            ? process
-            : state.processes[process.process_id],
-        },
-      }));
+      set((state) => {
+        const current = state.processes[process.process_id];
+        if (current && process.version <= current.version) return {};
+        return {
+          processes: { ...state.processes, [process.process_id]: process },
+          processFence: touchSnapshotKey(state.processFence, process.process_id),
+        };
+      });
     }
     if (
       envelope.kind === "sandbox_capability_changed"
@@ -145,6 +209,30 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
         };
       });
     }
+  },
+  finishRun(runId) {
+    set((state) => {
+      let approvalFence = state.approvalFence;
+      let processFence = state.processFence;
+      const approvals = Object.fromEntries(Object.entries(state.approvals).map(([key, request]) => {
+        if (request.run_id !== runId || request.status !== "pending") return [key, request];
+        approvalFence = touchSnapshotKey(approvalFence, key);
+        return [key, { ...request, status: "cancelled" as const }];
+      }));
+      const processes = Object.fromEntries(Object.entries(state.processes).map(([key, process]) => {
+        if (process.run_id !== runId || process.status !== "running") return [key, process];
+        processFence = touchSnapshotKey(processFence, key);
+        return [
+          key,
+          {
+            ...process,
+            status: "runtime_lost" as const,
+            terminal_reason: "run_terminal",
+          },
+        ];
+      }));
+      return { approvals, processes, approvalFence, processFence };
+    });
   },
   async decide(requestId, allow) {
     const request = get().approvals[requestId];
@@ -203,6 +291,8 @@ export const useCommandRuntimeStore = create<CommandRuntimeState>((set, get) => 
       processes: {},
       submitting: new Set(),
       runtimeStatus: null,
+      approvalFence: emptySnapshotFence(),
+      processFence: emptySnapshotFence(),
       settingUpSandbox: false,
       setupError: null,
     });

@@ -396,6 +396,22 @@ describe("projectSessionEvents", () => {
     }
   });
 
+  it("按持久化 run_id 恢复消息归属，并在无 user 事件时切开不同 run", () => {
+    const out = projectSessionEvents([
+      ev("assistant_message", { content: "第一段", partial: false }, { run_id: "run-a" }),
+      ev("assistant_message", { content: "第二段", partial: false }, { run_id: "run-a" }),
+      ev("assistant_message", { content: "下一轮", partial: false }, { run_id: "run-b" }),
+    ]);
+
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ role: "assistant", runId: "run-a" });
+    expect(out[0].blocks).toHaveLength(2);
+    expect(out[1]).toMatchObject({ role: "assistant", runId: "run-b" });
+    expect(out[1].blocks).toEqual([
+      expect.objectContaining({ kind: "text", text: "下一轮" }),
+    ]);
+  });
+
   it("忽略 014 引入的 system_trigger / memory_observation 主动轮事件（015 R-4.5.1 / AC-6）", () => {
     const baseEvents: SessionEvent[] = [
       ev("user_message", { content: "在吗" }),

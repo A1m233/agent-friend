@@ -30,6 +30,8 @@ import {
   useModelCatalogStore,
 } from "@/lib/model-config";
 import { useConversationStore } from "@/stores/conversation";
+import { sessionRunPresentation } from "@/stores/runPresentation";
+import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/utils/cn";
 
 interface ConversationModelSelectorProps {
@@ -49,7 +51,10 @@ export function ConversationModelSelector({
   const currentReasoningPreset = useConversationStore(
     (state) => state.currentReasoningPreset,
   );
-  const streaming = useConversationStore((state) => state.streaming);
+  const runPresentation = useConversationStore(useShallow((state) => (
+    sessionRunPresentation(state, state.currentSessionId)
+  )));
+  const streaming = runPresentation.busy;
   const historyLoading = useConversationStore((state) => state.historyLoading);
   const selectRuntimeConfig = useConversationStore((state) => state.selectRuntimeConfig);
   const [announcement, setAnnouncement] = useState("");

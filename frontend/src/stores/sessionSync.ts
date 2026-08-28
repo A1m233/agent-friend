@@ -2,6 +2,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { PushEnvelope, PushEvent } from "@/types/push";
 import { isTauri } from "@/utils/tauri";
 import { useConversationStore } from "./conversation";
+import { isSessionBusy } from "./runPresentation";
+import { useCommandRuntimeStore } from "./commandRuntime";
+import { useFilesystemApprovalsStore } from "./filesystemApprovals";
 import { useArchivedSessionsStore, useSessionsStore } from "./sessions";
 import { createStreamUpdateScheduler, type StreamUpdateScheduler } from "./streamUpdateScheduler";
 
@@ -54,7 +57,7 @@ function scheduleDetailRefresh(
 ): void {
   const conversation = useConversationStore.getState();
   if (conversation.currentSessionId !== sessionId) return;
-  if (conversation.streaming) {
+  if (isSessionBusy(conversation, sessionId)) {
     pendingDetail.set(sessionId, Math.max(pendingDetail.get(sessionId) ?? 0, revision ?? 0));
     return;
   }
@@ -63,7 +66,7 @@ function scheduleDetailRefresh(
     detailTimer = null;
     if (activeGeneration !== generation) return;
     const state = useConversationStore.getState();
-    if (state.currentSessionId !== sessionId || state.streaming) {
+    if (state.currentSessionId !== sessionId || isSessionBusy(state, sessionId)) {
       if (state.currentSessionId === sessionId) pendingDetail.set(sessionId, revision ?? 0);
       return;
     }
@@ -89,7 +92,7 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
       sessionId: env.session_id,
       revision,
       currentSessionId: useConversationStore.getState().currentSessionId,
-      streaming: useConversationStore.getState().streaming,
+      runPhase: useConversationStore.getState().runCalibrationPhase,
     });
   }
   scheduleListRefresh(activeGeneration);
@@ -102,7 +105,19 @@ export function handleSessionChangedForSync(env: PushEnvelope, activeGeneration 
 export function handleRunChangedForSync(env: PushEnvelope): void {
   if (env.kind !== "run_changed" || !env.run) return;
   if (env.run.status === "terminal") flushRunEvents(env.run.session_id, env.run.run_id);
-  useConversationStore.getState().applyRunSnapshot(env.run);
+  const store = useConversationStore.getState();
+  store.applyRunSnapshot(env.run);
+  if (env.run.status === "terminal") {
+    useCommandRuntimeStore.getState().finishRun(env.run.run_id);
+    useFilesystemApprovalsStore.getState().finishRun(env.run.run_id);
+  }
+  if (
+    env.run.status === "terminal"
+    && useConversationStore.getState().currentSessionId === env.run.session_id
+    && !isSessionBusy(useConversationStore.getState(), env.run.session_id)
+  ) {
+    void useConversationStore.getState().refreshCurrentSession(env.run.session_id);
+  }
 }
 
 export function handleRunEventForSync(env: PushEnvelope): void {
@@ -133,15 +148,19 @@ export function handlePushReconnectedForSync(activeGeneration = generation): voi
       activeGeneration,
       generation,
       currentSessionId: useConversationStore.getState().currentSessionId,
-      streaming: useConversationStore.getState().streaming,
+      runPhase: useConversationStore.getState().runCalibrationPhase,
     });
   }
   scheduleListRefresh(activeGeneration);
-  void useConversationStore.getState().calibrateRuns();
+  const calibration = useConversationStore.getState().calibrateRuns();
   const sessionId = useConversationStore.getState().currentSessionId;
   if (sessionId) {
     void useConversationStore.getState().refreshApprovalMode(sessionId);
-    scheduleDetailRefresh(sessionId, undefined, activeGeneration);
+    void calibration.then(() => {
+      if (activeGeneration === generation) {
+        scheduleDetailRefresh(sessionId, undefined, activeGeneration);
+      }
+    });
   }
 }
 
@@ -179,7 +198,9 @@ export function startSessionSyncSubscriber(): () => void {
   }
 
   const unsubscribeConversation = useConversationStore.subscribe((state, previous) => {
-    if (previous.streaming && !state.streaming && state.currentSessionId) {
+    const previousBusy = isSessionBusy(previous, previous.currentSessionId);
+    const currentBusy = isSessionBusy(state, state.currentSessionId);
+    if (previousBusy && !currentBusy && state.currentSessionId) {
       const revision = pendingDetail.get(state.currentSessionId);
       if (revision !== undefined) {
         pendingDetail.delete(state.currentSessionId);

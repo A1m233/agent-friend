@@ -29,6 +29,25 @@ import {
   startSessionSyncSubscriber,
 } from "./sessionSync";
 import { useSessionsStore } from "./sessions";
+import { emptySnapshotFence } from "./snapshotFence";
+import { isSessionBusy, sessionActiveRun } from "./runPresentation";
+
+function activeRun(runId = "run-active", sessionId = "s1") {
+  return {
+    run_id: runId,
+    session_id: sessionId,
+    status: "running" as const,
+    outcome: null,
+    reason_code: "",
+    channel: "text" as const,
+    origin: "ag_ui",
+    control_scope: "desktop_text",
+    created_at: "2026-08-18T00:00:00Z",
+    started_at: "2026-08-18T00:00:01Z",
+    finished_at: null,
+    version: 1,
+  };
+}
 
 function changed(sessionId: string, revision: number) {
   return {
@@ -50,13 +69,13 @@ describe("sessionSync", () => {
     useConversationStore.setState({
       currentSessionId: "s1",
       messages: [],
-      streaming: false,
       historyLoading: false,
       historyLoadSeq: 0,
       syncRefreshSeq: 0,
       sessionViews: {},
       runSnapshots: {},
-      activeRunIdBySession: {},
+      runCalibrationPhase: "ready",
+      runFence: emptySnapshotFence(),
       unreadRunOutcomeBySession: {},
     });
     vi.mocked(sessionsApi.list).mockResolvedValue([]);
@@ -86,14 +105,22 @@ describe("sessionSync", () => {
   });
 
   it("defers current detail while streaming and flushes after settle", async () => {
-    useConversationStore.setState({ streaming: true });
+    const running = activeRun();
+    useConversationStore.setState({ runSnapshots: { [running.run_id]: running } });
+    vi.mocked(runsApi.list).mockResolvedValueOnce({ runs: [running] });
     const stop = startSessionSyncSubscriber();
     handleSessionChangedForSync(changed("s1", 1));
     await vi.runAllTimersAsync();
     expect(sessionsApi.get).not.toHaveBeenCalled();
-    useConversationStore.setState({ streaming: false });
+    useConversationStore.getState().applyRunSnapshot({
+      ...running,
+      status: "terminal",
+      outcome: "completed",
+      finished_at: "2026-08-18T00:00:02Z",
+      version: 2,
+    });
     await vi.runAllTimersAsync();
-    expect(sessionsApi.get).toHaveBeenCalledTimes(1);
+    expect(sessionsApi.get).toHaveBeenCalled();
     stop();
   });
 
@@ -124,9 +151,8 @@ describe("sessionSync", () => {
 
     const stop = startSessionSyncSubscriber();
     await vi.waitFor(() => {
-      expect(useConversationStore.getState().activeRunIdBySession.s1).toBe(
-        "run-awaiting-approval",
-      );
+      expect(sessionActiveRun(useConversationStore.getState(), "s1")?.run_id)
+        .toBe("run-awaiting-approval");
     });
     stop();
   });
@@ -154,8 +180,8 @@ describe("sessionSync", () => {
       },
     });
     const state = useConversationStore.getState();
-    expect(state.activeRunIdBySession.background).toBe("run-b");
-    expect(state.streaming).toBe(false);
+    expect(sessionActiveRun(state, "background")?.run_id).toBe("run-b");
+    expect(isSessionBusy(state, "s1")).toBe(false);
   });
 
   it("coalesces conversation run_event deltas and flushes before terminal refresh", async () => {

@@ -43,8 +43,8 @@ function textMessage(
   return { id, role, createdAt, blocks: [block], status: "complete" };
 }
 
-function assistantMessage(id: string, createdAt: string): ChatMessage {
-  return { id, role: "assistant", createdAt, blocks: [], status: "complete" };
+function assistantMessage(id: string, createdAt: string, runId?: string): ChatMessage {
+  return { id, role: "assistant", runId, createdAt, blocks: [], status: "complete" };
 }
 
 function asString(v: unknown): string {
@@ -143,9 +143,16 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
   // 这既保护固定事实优先级，也兼容修复前已落盘的 IM orphan response。
   let pendingReminderCard = false;
 
-  const ensureAssistant = (id: string, createdAt: string): ChatMessage => {
-    if (currentAssistant) return currentAssistant;
-    currentAssistant = assistantMessage(id, createdAt);
+  const ensureAssistant = (id: string, createdAt: string, runId?: string): ChatMessage => {
+    if (currentAssistant) {
+      if (runId && currentAssistant.runId && currentAssistant.runId !== runId) {
+        currentAssistant = null;
+      } else {
+        if (runId && !currentAssistant.runId) currentAssistant.runId = runId;
+        return currentAssistant;
+      }
+    }
+    currentAssistant = assistantMessage(id, createdAt, runId || undefined);
     messages.push(currentAssistant);
     return currentAssistant;
   };
@@ -200,14 +207,14 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
       };
       // 主动提醒是独立消息，不得并入此前仍打开的 assistant turn。
       currentAssistant = null;
-      ensureAssistant(`reminder:${block.occurrenceId}`, ev.ts).blocks.push(block);
+      ensureAssistant(`reminder:${block.occurrenceId}`, ev.ts, runId).blocks.push(block);
       pendingReminderCard = true;
       continue;
     }
 
     if (ev.type === "compaction") {
       if (pendingSkipAssistant) continue;
-      ensureAssistant(ev.uuid, ev.ts).blocks.push({
+      ensureAssistant(ev.uuid, ev.ts, runId).blocks.push({
         kind: "compaction",
         activityId: ev.uuid,
         status: "complete",
@@ -233,7 +240,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         continue;
       }
       const content = asString(p.content);
-      const message = ensureAssistant(ev.uuid, ev.ts);
+      const message = ensureAssistant(ev.uuid, ev.ts, runId);
       // 一轮 assistant 可能包含多段文本和工具调用；左下角展示整轮最后回复的完成时间。
       message.createdAt = ev.ts;
       if (content) {
@@ -271,7 +278,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
           : asString(p.error_message) || "Skill 加载失败",
         status,
       };
-      ensureAssistant(ev.uuid, ev.ts).blocks.push(block);
+      ensureAssistant(ev.uuid, ev.ts, runId).blocks.push(block);
       continue;
     }
 
@@ -281,7 +288,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         currentAssistant = null;
         continue;
       }
-      const message = ensureAssistant(ev.uuid, ev.ts);
+      const message = ensureAssistant(ev.uuid, ev.ts, runId);
       message.createdAt = ev.ts;
       message.status = "error";
       message.error = asString(p.message) || "这轮回答中断了，没有生成完整回复。请稍后重试。";
@@ -306,7 +313,7 @@ export function projectSessionEvents(events: SessionEvent[]): ChatMessage[] {
         status: "running",
       };
       toolBlocks.set(correlationId, block);
-      ensureAssistant(ev.uuid, ev.ts).blocks.push(block);
+      ensureAssistant(ev.uuid, ev.ts, runId).blocks.push(block);
       continue;
     }
 
