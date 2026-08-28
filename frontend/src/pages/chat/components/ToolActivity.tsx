@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
+  CalendarClock,
   Calculator,
   ChevronRight,
+  CloudSun,
   FilePenLine,
   FileText,
   ListTodo,
@@ -33,7 +35,9 @@ const CATEGORY_ICONS: Record<ToolActivityCategory, LucideIcon> = {
   command: SquareTerminal,
   skill: Sparkles,
   todo: ListTodo,
-  query: Calculator,
+  weather: CloudSun,
+  calculation: Calculator,
+  dateCalculation: CalendarClock,
   other: Wrench,
 };
 

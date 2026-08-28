@@ -23,7 +23,7 @@ from ..protocol import LanguageModel
 
 OpenAsset = Callable[[str], BinaryIO]
 
-DEEPSEEK_FILE_TTL_SECONDS = 24 * 60 * 60
+DEEPSEEK_FILE_TTL_SECONDS = 30 * 24 * 60 * 60
 DEEPSEEK_FILE_EXPIRY_MARGIN_SECONDS = 5 * 60
 
 
