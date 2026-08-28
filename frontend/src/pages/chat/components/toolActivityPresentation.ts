@@ -10,7 +10,9 @@ export type ToolActivityCategory =
   | "command"
   | "skill"
   | "todo"
-  | "query"
+  | "weather"
+  | "calculation"
+  | "dateCalculation"
   | "other";
 
 export interface ToolPresentation {
@@ -49,7 +51,9 @@ const CATEGORY_LABELS: Record<ToolActivityCategory, string> = {
   command: "运行命令",
   skill: "加载 Skill",
   todo: "管理待办",
-  query: "查询与计算",
+  weather: "查询天气",
+  calculation: "计算",
+  dateCalculation: "日期计算",
   other: "其它操作",
 };
 
@@ -186,11 +190,11 @@ function summaryFor(block: ToolBlock, args: Record<string, unknown>): string {
     case "todo_manage":
       return "管理待办与提醒";
     case "datetime_calculate":
-      return "处理日期时间";
+      return "日期计算";
     case "weather_query":
       return "查询天气";
     case "calculate":
-      return "进行计算";
+      return "计算";
     case "recover_tool_result":
       return "恢复工具结果";
     case "propose_persona":
@@ -211,7 +215,9 @@ function categoryFor(name: string): ToolActivityCategory {
   if (["exec_command", "host_process_start", "write_stdin", "terminate_command"].includes(name)) return "command";
   if (name === "skill_read") return "skill";
   if (name === "todo_manage") return "todo";
-  if (["weather_query", "calculate", "datetime_calculate"].includes(name)) return "query";
+  if (name === "weather_query") return "weather";
+  if (name === "calculate") return "calculation";
+  if (name === "datetime_calculate") return "dateCalculation";
   return "other";
 }
 

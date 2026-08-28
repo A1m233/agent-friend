@@ -79,6 +79,23 @@ describe("ToolActivity", () => {
     expect(container.textContent?.match(/执行了/g)).toHaveLength(1);
   });
 
+  it("does not invent query activity for a calculation-only group", async () => {
+    await render([
+      tool("calculation-1", "calculate"),
+      tool("calculation-2", "calculate"),
+      tool("calculation-3", "calculate"),
+      tool("calculation-4", "calculate"),
+    ]);
+
+    expect(container.textContent).toContain("执行了 4 个步骤：计算");
+    expect(container.textContent).not.toContain("查询");
+    expect(
+      container
+        .querySelector('[data-slot="tool-activity-icon"]')
+        ?.classList.contains("lucide-calculator"),
+    ).toBe(true);
+  });
+
   it("lets the compact trigger fit its content while keeping the activity width available", async () => {
     await render([tool("search", "web_search")]);
 
