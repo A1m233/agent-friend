@@ -10,8 +10,10 @@ export function modelResponseStatusLabel(
   {
     slow = false,
     staleActivity = false,
-  }: { slow?: boolean; staleActivity?: boolean } = {},
+    override,
+  }: { slow?: boolean; staleActivity?: boolean; override?: string } = {},
 ): string {
+  if (override) return override;
   if (!status) {
     return slow
       ? "准备回答所需内容花了较长时间，仍在继续…"
@@ -36,7 +38,13 @@ export function modelResponseStatusLabel(
   return status.afterTool ? "正在整理工具结果…" : "正在等待模型响应…";
 }
 
-export function ModelResponseStatus({ status }: { status?: ModelResponseProgress }) {
+export function ModelResponseStatus({
+  status,
+  label,
+}: {
+  status?: ModelResponseProgress;
+  label?: string;
+}) {
   const [slow, setSlow] = useState(false);
   const [staleActivity, setStaleActivity] = useState(false);
 
@@ -57,7 +65,7 @@ export function ModelResponseStatus({ status }: { status?: ModelResponseProgress
   return (
     <p className="flex items-center gap-2 px-1 text-xs text-muted" role="status">
       <StatusDot tone="muted" pulse />
-      {modelResponseStatusLabel(status, { slow, staleActivity })}
+      {modelResponseStatusLabel(status, { slow, staleActivity, override: label })}
     </p>
   );
 }

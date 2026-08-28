@@ -19,8 +19,19 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { Button, ScrollArea, Skeleton, StatusDot } from "@/components/ui";
-import { draftKey, useConversationStore } from "@/stores";
+import {
+  draftKey,
+  useCommandRuntimeStore,
+  useConversationStore,
+  useFilesystemApprovalsStore,
+} from "@/stores";
 import { runtimeCredentialGroupForModel } from "@/stores/conversation";
+import {
+  isActiveRunMessage,
+  sessionRunPresentation,
+  shouldShowMessageActionBar,
+} from "@/stores/runPresentation";
+import { useShallow } from "zustand/react/shallow";
 import { isAttachmentAssetAvailable } from "@/services";
 import type {
   ChatAttachment,
@@ -325,6 +336,9 @@ function lastRenderableBlockIndex(message: ChatMessage): number {
 function MessageContent({
   message,
   actionBar,
+  activeRunMessage,
+  activeRunActivityLabel,
+  suppressRunActivity,
   editing,
   onFocusComposer,
   onContinueToolResult,
@@ -333,6 +347,9 @@ function MessageContent({
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
+  activeRunMessage: boolean;
+  activeRunActivityLabel?: string;
+  suppressRunActivity?: boolean;
   editing?: boolean;
   onFocusComposer?: () => void;
   onContinueToolResult?: () => void;
@@ -470,14 +487,24 @@ function MessageContent({
       {message.status === "interrupted" && (
         <div className="flex items-center gap-1.5 px-1 text-xs text-muted" role="status">
           <StatusDot tone="muted" />
-          <span>已停止回答</span>
+          <span>{message.runOutcome === "expired"
+            ? "任务等待时间过长，已过期"
+            : message.runOutcome === "skipped"
+              ? "本轮任务未执行"
+              : message.runOutcome === "rejected"
+                ? "本轮任务未被接纳"
+                : "已停止回答"}</span>
         </div>
       )}
-      {message.status === "streaming" && message.runStatus && (
-        <ModelResponseStatus status={message.runStatus} />
+      {!suppressRunActivity
+        && (message.status === "streaming" || activeRunMessage)
+        && message.runStatus && (
+        <ModelResponseStatus status={message.runStatus} label={activeRunActivityLabel} />
       )}
-      {message.status === "streaming" && !hasContent && !message.runStatus && (
-        <ModelResponseStatus />
+      {!suppressRunActivity
+        && (activeRunMessage || (message.status === "streaming" && !hasContent))
+        && !message.runStatus && (
+        <ModelResponseStatus label={activeRunActivityLabel} />
       )}
       {((message.status === "streaming" && !hasContent) || shouldRenderExternalActionBar) &&
         actionBar}
@@ -487,6 +514,9 @@ function MessageContent({
 
 const MessageItem = memo(function MessageItem({
   message,
+  activeRunId,
+  activeRunActivityLabel,
+  suppressRunActivity,
   canEdit,
   editing,
   onEdit,
@@ -496,6 +526,9 @@ const MessageItem = memo(function MessageItem({
   onReferenceSelect,
 }: {
   message: ChatMessage;
+  activeRunId?: string;
+  activeRunActivityLabel?: string;
+  suppressRunActivity?: boolean;
   canEdit: boolean;
   editing: boolean;
   onEdit: () => void;
@@ -504,8 +537,9 @@ const MessageItem = memo(function MessageItem({
   searchAnchorEventUuid?: string;
   onReferenceSelect?: (reference: ChatTextReference) => void;
 }) {
+  const activeRunMessage = isActiveRunMessage(message, activeRunId);
   const actionBar =
-    message.status === "streaming" || editing ? null : (
+    !shouldShowMessageActionBar(message, activeRunId, editing) ? null : (
       <MessageActionBar
         role={message.role}
         createdAt={message.createdAt}
@@ -526,6 +560,9 @@ const MessageItem = memo(function MessageItem({
       <MessageContent
         message={message}
         actionBar={actionBar}
+        activeRunMessage={activeRunMessage}
+        activeRunActivityLabel={activeRunActivityLabel}
+        suppressRunActivity={suppressRunActivity}
         editing={editing}
         onFocusComposer={onFocusComposer}
         onContinueToolResult={onContinueToolResult}
@@ -539,6 +576,9 @@ const MessageItem = memo(function MessageItem({
 function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
   return (
     prev.message === next.message &&
+    prev.activeRunId === next.activeRunId &&
+    prev.activeRunActivityLabel === next.activeRunActivityLabel &&
+    prev.suppressRunActivity === next.suppressRunActivity &&
     prev.canEdit === next.canEdit &&
     prev.editing === next.editing &&
     prev.onContinueToolResult === next.onContinueToolResult &&
@@ -549,6 +589,9 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
 
 interface MessageItemProps {
   message: ChatMessage;
+  activeRunId?: string;
+  activeRunActivityLabel?: string;
+  suppressRunActivity?: boolean;
   canEdit: boolean;
   editing: boolean;
   onEdit: () => void;
@@ -594,6 +637,9 @@ function HistoryLoadingState() {
  */
 interface MessageTimelineProps {
   messages: ChatMessage[];
+  activeRunId?: string;
+  activeRunActivityLabel?: string;
+  suppressRunActivity?: boolean;
   streaming?: boolean;
   historyLoading?: boolean;
   historyLoadSeq?: number;
@@ -615,6 +661,9 @@ interface MessageTimelineProps {
  */
 export function MessageTimeline({
   messages,
+  activeRunId,
+  activeRunActivityLabel,
+  suppressRunActivity,
   streaming = false,
   historyLoading = false,
   historyLoadSeq = 0,
@@ -1111,6 +1160,9 @@ export function MessageTimeline({
                 <div className={CHAT_CONTENT_CONTAINER_CLASS}>
                   <MessageItem
                     message={m}
+                    activeRunId={activeRunId}
+                    activeRunActivityLabel={activeRunActivityLabel}
+                    suppressRunActivity={suppressRunActivity}
                     canEdit={canEdit}
                     editing={editing}
                     onEdit={() => onBeginEditLatestUserMessage?.(m.id)}
@@ -1180,7 +1232,32 @@ export function MessageList({
   onFocusComposer,
 }: MessageListProps) {
   const messages = useConversationStore((s) => s.messages);
-  const streaming = useConversationStore((s) => s.streaming);
+  const runPresentation = useConversationStore(useShallow((s) => (
+    sessionRunPresentation(s, s.currentSessionId)
+  )));
+  const streaming = runPresentation.busy;
+  const activeRunId = runPresentation.run?.run_id;
+  const activeRunActivityLabel = runPresentation.phase === "stopping"
+    ? "正在取消当前任务，任务尚未结束…"
+    : undefined;
+  const approvalMode = useConversationStore((s) => s.approvalMode);
+  const hasFilesystemApproval = useFilesystemApprovalsStore((state) => (
+    Boolean(activeRunId && Object.values(state.entries).some((entry) => (
+      entry.request.run_id === activeRunId
+      && (entry.status === "pending" || entry.status === "submitting")
+    )))
+  ));
+  const hasCommandApproval = useCommandRuntimeStore((state) => (
+    Boolean(activeRunId && approvalMode === "per_request" && Object.values(state.approvals)
+      .some((request) => request.run_id === activeRunId && request.status === "pending"))
+  ));
+  const hasRunningCommand = useCommandRuntimeStore((state) => (
+    Boolean(activeRunId && Object.values(state.processes)
+      .some((process) => process.run_id === activeRunId && process.status === "running"))
+  ));
+  const suppressRunActivity = (
+    approvalMode === "per_request" && (hasFilesystemApproval || hasCommandApproval)
+  ) || hasRunningCommand;
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const historyLoadSeq = useConversationStore((s) => s.historyLoadSeq);
   const syncRefreshSeq = useConversationStore((s) => s.syncRefreshSeq);
@@ -1232,6 +1309,9 @@ export function MessageList({
     <>
       <MessageTimeline
         messages={messages}
+        activeRunId={activeRunId}
+        activeRunActivityLabel={activeRunActivityLabel}
+        suppressRunActivity={suppressRunActivity}
         streaming={streaming}
         historyLoading={historyLoading}
         historyLoadSeq={historyLoadSeq}

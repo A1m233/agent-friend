@@ -15,6 +15,7 @@ import {
   useCommandRuntimeStore,
   useFilesystemApprovalsStore,
 } from "@/stores";
+import { sessionActiveRun } from "@/stores/runPresentation";
 import type {
   FilesystemAction,
   FilesystemApprovalRequest,
@@ -218,18 +219,18 @@ function FilesystemApprovalCard({
   const entry = useFilesystemApprovalsStore((state) =>
     Object.values(state.entries).find((value) => value.request.tool_call_id === block.toolCallId),
   );
-  const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const activeRunId = useConversationStore((state) => (
+    sessionActiveRun(state, state.currentSessionId)?.run_id
+  ));
   const args = parseFilesystemArgs(block.args);
   const resultStatus = parseFilesystemResult(block.result);
   const request: FilesystemApprovalRequest | undefined = entry?.request;
   const brokerPending = entry?.status === "pending" || entry?.status === "submitting";
   const runActive = Boolean(
-    request && activeRunIdBySession[request.session_id] === request.run_id,
+    request && activeRunId === request.run_id,
   );
-  const currentRunActive = Boolean(
-    currentSessionId && activeRunIdBySession[currentSessionId],
-  );
+  const currentRunActive = Boolean(currentSessionId && activeRunId);
 
   // Tool requests are persisted before the serial executor reaches them. Keep
   // future approvals out of the visible stack until their broker request is
@@ -269,7 +270,7 @@ function FilesystemApprovalCard({
     label = "已中断";
     tone = "warning";
     pulse = false;
-  } else if (!entry && block.status === "running" && currentSessionId && !activeRunIdBySession[currentSessionId]) {
+  } else if (!entry && block.status === "running" && currentSessionId && !activeRunId) {
     label = "已中断";
     tone = "warning";
     pulse = false;
@@ -371,8 +372,10 @@ function CommandRuntimeCard({
   );
   const cancel = useCommandRuntimeStore((state) => state.cancel);
   const runtimeStatus = useCommandRuntimeStore((state) => state.runtimeStatus);
-  const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
+  const activeRunId = useConversationStore((state) => (
+    sessionActiveRun(state, state.currentSessionId)?.run_id
+  ));
   let args: CommandArgs = {};
   try {
     args = JSON.parse(block.args) as CommandArgs;
@@ -381,11 +384,10 @@ function CommandRuntimeCard({
   }
   const details = approval?.details;
   const runActive = Boolean(
-    approval && activeRunIdBySession[approval.session_id] === approval.run_id,
+    approval && activeRunId === approval.run_id,
   );
-  const currentRunActive = Boolean(
-    currentSessionId && activeRunIdBySession[currentSessionId],
-  );
+  const processRunActive = Boolean(process && activeRunId === process.run_id);
+  const currentRunActive = Boolean(currentSessionId && activeRunId);
   if (block.status === "running" && !approval && !process && currentRunActive) {
     return null;
   }
@@ -396,11 +398,15 @@ function CommandRuntimeCard({
   const execution = details?.execution
     || (block.name === "host_process_start" ? "host_user" : args.execution || "sandboxed");
   const needsSandboxSetup = commandNeedsSandboxPreparation(resultError, runtimeStatus, execution);
-  const status = process?.status ?? result.status;
-  const exitCode = process?.exit_code ?? result.exitCode;
-  const sandboxDenied = process?.sandbox_denied ?? result.sandboxDenied;
-  const terminalReason = process?.terminal_reason ?? result.terminalReason;
-  const durationSeconds = process?.duration_seconds ?? result.durationSeconds;
+  const preferPersistedResult = block.status !== "running"
+    && result.status !== undefined
+    && result.status !== "running";
+  const presentedProcess = preferPersistedResult ? undefined : process;
+  const status = presentedProcess?.status ?? result.status;
+  const exitCode = presentedProcess?.exit_code ?? result.exitCode;
+  const sandboxDenied = presentedProcess?.sandbox_denied ?? result.sandboxDenied;
+  const terminalReason = presentedProcess?.terminal_reason ?? result.terminalReason;
+  const durationSeconds = presentedProcess?.duration_seconds ?? result.durationSeconds;
   let label = approval?.status === "pending" ? "等待授权" : "准备运行";
   let tone: StatusDotProps["tone"] = "warning";
   let pulse = approval?.status === "pending" && runActive;
@@ -449,13 +455,13 @@ function CommandRuntimeCard({
     pulse = false;
   }
   const output = [
-    process?.pty || result.pty,
-    process?.stdout || result.stdout,
-    process?.stderr || result.stderr,
+    presentedProcess?.pty || result.pty,
+    presentedProcess?.stdout || result.stdout,
+    presentedProcess?.stderr || result.stderr,
   ]
     .filter((value): value is string => Boolean(value))
     .join("");
-  const droppedBytes = Math.max(process?.dropped_bytes ?? 0, result.droppedBytes ?? 0);
+  const droppedBytes = Math.max(presentedProcess?.dropped_bytes ?? 0, result.droppedBytes ?? 0);
   const roots = details?.additional_roots ?? args.access?.additional_roots ?? [];
   const derivedRoots = details?.host_derived_roots ?? [];
   const cwdLabel = details?.cwd_source === "session_managed"
@@ -557,13 +563,13 @@ function CommandRuntimeCard({
         <p className="mt-2 text-muted">
           {runActive ? "请在输入框上方处理当前授权。" : "正在恢复任务状态。"}
         </p>
-      ) : approval?.status === "approved" && !process && block.status === "running" ? (
+      ) : approval?.status === "approved" && !presentedProcess && block.status === "running" ? (
         <p className="mt-2 text-muted">
           授权已完成，正在启动进程；启动阶段超过 60 秒会明确失败，不会无限等待。
         </p>
-      ) : process?.status === "running" ? (
+      ) : presentedProcess?.status === "running" && processRunActive ? (
         <div className="mt-3 flex justify-end">
-          <Button size="xs" variant="outline" onClick={() => void cancel(process.process_id)}>
+          <Button size="xs" variant="outline" onClick={() => void cancel(presentedProcess.process_id)}>
             停止
           </Button>
         </div>

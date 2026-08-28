@@ -6,6 +6,12 @@ import {
 } from "@/services/api/filesystem";
 import type { PushEnvelope } from "@/types/push";
 import { isTauri } from "@/utils/tauri";
+import {
+  canReconcileSnapshotAbsence,
+  emptySnapshotFence,
+  touchSnapshotKey,
+  type SnapshotFenceState,
+} from "./snapshotFence";
 
 export type FilesystemApprovalUiStatus =
   | "pending"
@@ -36,8 +42,10 @@ export interface FilesystemApprovalAttention {
 
 interface FilesystemApprovalState {
   entries: Record<string, FilesystemApprovalEntry>;
+  fence: SnapshotFenceState;
   refresh: () => Promise<void>;
   merge: (request: FilesystemApprovalRequest) => void;
+  finishRun: (runId: string) => void;
   decide: (requestId: string, approved: boolean) => Promise<void>;
   markDisconnected: () => void;
   clear: () => void;
@@ -81,14 +89,25 @@ function mergeRequest(
 
 export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set, get) => ({
   entries: {},
+  fence: emptySnapshotFence(),
   async refresh() {
+    const requestStartEpoch = get().fence.mutationEpoch;
     const pending = await filesystemApprovalsApi.pending();
     set((state) => {
       let next = state.entries;
+      let fence = state.fence;
       const activeIds = new Set(pending.map((request) => request.request_id));
       for (const request of pending) {
+        const current = next[request.request_id];
+        const touchedDuringRequest = !canReconcileSnapshotAbsence(
+          state.fence,
+          request.request_id,
+          requestStartEpoch,
+        );
+        if (current && touchedDuringRequest && request.version <= current.version) continue;
         const wasRecoverable = Boolean(next[request.request_id]?.recoverable);
         next = mergeRequest(next, request);
+        fence = touchSnapshotKey(fence, request.request_id);
         const restored = next[request.request_id];
         if (wasRecoverable && restored) {
           next = {
@@ -99,18 +118,40 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
       }
       for (const [requestId, entry] of Object.entries(next)) {
         if (activeIds.has(requestId)) continue;
+        if (!canReconcileSnapshotAbsence(state.fence, requestId, requestStartEpoch)) continue;
         if (entry.status === "pending" || entry.status === "submitting") {
           next = {
             ...next,
             [requestId]: { ...entry, status: "interrupted", recoverable: false },
           };
+          fence = touchSnapshotKey(fence, requestId);
         }
       }
-      return { entries: next };
+      return { entries: next, fence };
     });
   },
   merge(request) {
-    set((state) => ({ entries: mergeRequest(state.entries, request) }));
+    set((state) => ({
+      entries: mergeRequest(state.entries, request),
+      fence: touchSnapshotKey(state.fence, request.request_id),
+    }));
+  },
+  finishRun(runId) {
+    set((state) => {
+      let fence = state.fence;
+      const entries = Object.fromEntries(Object.entries(state.entries).map(([key, entry]) => {
+        if (
+          entry.request.run_id !== runId
+          || (entry.status !== "pending" && entry.status !== "submitting")
+        ) return [key, entry];
+        fence = touchSnapshotKey(fence, key);
+        return [
+          key,
+          { ...entry, status: "interrupted" as const, recoverable: false },
+        ];
+      }));
+      return { entries, fence };
+    });
   },
   async decide(requestId, approved) {
     const entry = get().entries[requestId];
@@ -120,6 +161,7 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
         ...state.entries,
         [requestId]: { ...entry, status: "submitting", error: undefined },
       },
+      fence: touchSnapshotKey(state.fence, requestId),
     }));
     try {
       await filesystemApprovalsApi.decide(entry.request, approved);
@@ -138,6 +180,7 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
               recoverable: false,
             },
           },
+          fence: touchSnapshotKey(state.fence, requestId),
         };
       });
     } catch (error) {
@@ -151,23 +194,30 @@ export const useFilesystemApprovalsStore = create<FilesystemApprovalState>((set,
             error: error instanceof Error ? error.message : "授权请求已失效",
           },
         },
+        fence: touchSnapshotKey(state.fence, requestId),
       }));
     }
   },
   markDisconnected() {
-    set((state) => ({
-      entries: Object.fromEntries(
-        Object.entries(state.entries).map(([requestId, entry]) => [
-          requestId,
-          entry.status === "pending" || entry.status === "submitting"
-            ? { ...entry, status: "interrupted" as const, recoverable: true }
-            : entry,
-        ]),
-      ),
-    }));
+    set((state) => {
+      let fence = state.fence;
+      const entries = Object.fromEntries(
+        Object.entries(state.entries).map(([requestId, entry]) => {
+          if (entry.status !== "pending" && entry.status !== "submitting") {
+            return [requestId, entry];
+          }
+          fence = touchSnapshotKey(fence, requestId);
+          return [
+            requestId,
+            { ...entry, status: "interrupted" as const, recoverable: true },
+          ];
+        }),
+      );
+      return { entries, fence };
+    });
   },
   clear() {
-    set({ entries: {} });
+    set({ entries: {}, fence: emptySnapshotFence() });
   },
 }));
 

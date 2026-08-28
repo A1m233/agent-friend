@@ -23,6 +23,13 @@ describe("modelResponseStatusLabel", () => {
     );
   });
 
+  it("uses a canonical run-level override for stopping state", () => {
+    expect(modelResponseStatusLabel(status("processing"), {
+      staleActivity: true,
+      override: "正在取消当前任务，任务尚未结束…",
+    })).toBe("正在取消当前任务，任务尚未结束…");
+  });
+
   it("preserves waiting and post-tool progress labels", () => {
     expect(modelResponseStatusLabel(status("waiting"))).toBe("正在等待模型响应…");
     expect(modelResponseStatusLabel(status("waiting", true))).toBe("正在整理工具结果…");

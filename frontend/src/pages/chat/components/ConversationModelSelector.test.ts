@@ -136,7 +136,8 @@ describe("ConversationModelSelector", () => {
       currentReasoningPreset: "high",
       modelSwitching: false,
       modelSwitchTarget: null,
-      streaming: false,
+      runCalibrationPhase: "ready",
+      runSnapshots: {},
       historyLoading: false,
       selectRuntimeConfig,
     });

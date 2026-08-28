@@ -11,6 +11,15 @@ export {
 export type { ConnectionStatus } from "./connection";
 export { useConversationStore } from "./conversation";
 export {
+  isSessionBusy,
+  sessionActiveRun,
+  sessionRunPresentation,
+} from "./runPresentation";
+export type {
+  RunCalibrationPhase,
+  SessionRunPresentation,
+} from "./runPresentation";
+export {
   pendingFilesystemApprovalSessionIds,
   startFilesystemApprovalSync,
   useFilesystemApprovalsStore,

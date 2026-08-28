@@ -6,6 +6,8 @@ import {
   useConversationStore,
   useFilesystemApprovalsStore,
 } from "@/stores";
+import { sessionRunPresentation } from "@/stores/runPresentation";
+import { useShallow } from "zustand/react/shallow";
 import type {
   CommandApprovalRequest,
   CommandProcessSnapshot,
@@ -112,7 +114,7 @@ function filesystemDetailLines(entry: FilesystemApprovalEntry): string[] {
 
 export function buildPendingApprovalQueue(input: {
   currentSessionId: string | null;
-  activeRunIdBySession: Record<string, string>;
+  activeRunId: string | null;
   commandApprovals: Record<string, CommandApprovalRequest>;
   commandSubmitting: ReadonlySet<string>;
   commandRuntimeStatus: CommandRuntimeStatus | null;
@@ -120,15 +122,13 @@ export function buildPendingApprovalQueue(input: {
 }): PendingApproval[] {
   const {
     currentSessionId,
-    activeRunIdBySession,
+    activeRunId,
     commandApprovals,
     commandSubmitting,
     commandRuntimeStatus,
     filesystemEntries,
   } = input;
-  if (!currentSessionId) return [];
-  const activeRunId = activeRunIdBySession[currentSessionId];
-  if (!activeRunId) return [];
+  if (!currentSessionId || !activeRunId) return [];
   const commands: PendingApproval[] = Object.values(commandApprovals)
     .filter((request) => (
       request.status === "pending"
@@ -178,19 +178,17 @@ export function buildPendingApprovalQueue(input: {
 
 export function buildRunningCommandQueue(input: {
   currentSessionId: string | null;
-  activeRunIdBySession: Record<string, string>;
+  activeRunId: string | null;
   commandApprovals: Record<string, CommandApprovalRequest>;
   commandProcesses: Record<string, CommandProcessSnapshot>;
 }): RunningCommand[] {
   const {
     currentSessionId,
-    activeRunIdBySession,
+    activeRunId,
     commandApprovals,
     commandProcesses,
   } = input;
-  if (!currentSessionId) return [];
-  const activeRunId = activeRunIdBySession[currentSessionId];
-  if (!activeRunId) return [];
+  if (!currentSessionId || !activeRunId) return [];
   return Object.values(commandProcesses)
     .filter((process) => (
       process.status === "running"
@@ -320,6 +318,15 @@ function RunningCommandPanel({
   );
 }
 
+function SessionRunPanel({ label }: { label: string }) {
+  return (
+    <div className="flex w-full items-center gap-3 rounded-lg border border-border bg-bg px-3 py-2 shadow-md">
+      <StatusDot tone="muted" pulse />
+      <span className="text-sm text-muted">{label}</span>
+    </div>
+  );
+}
+
 /**
  * The only automatic live command/filesystem action surface in chat.
  * Conversation history stays compact; complete cards appear only after the
@@ -327,7 +334,18 @@ function RunningCommandPanel({
  */
 export function ApprovalDock() {
   const currentSessionId = useConversationStore((state) => state.currentSessionId);
-  const activeRunIdBySession = useConversationStore((state) => state.activeRunIdBySession);
+  const runPresentation = useConversationStore(useShallow((state) => (
+    sessionRunPresentation(state, state.currentSessionId)
+  )));
+  const activeRunId = runPresentation.run?.run_id ?? null;
+  const hasActiveRunMessage = useConversationStore((state) => (
+    Boolean(
+      activeRunId
+      && state.messages.some((message) => (
+        message.role === "assistant" && message.runId === activeRunId
+      )),
+    )
+  ));
   const commandApprovals = useCommandRuntimeStore((state) => state.approvals);
   const commandProcesses = useCommandRuntimeStore((state) => state.processes);
   const commandSubmitting = useCommandRuntimeStore((state) => state.submitting);
@@ -345,14 +363,14 @@ export function ApprovalDock() {
   const pending = useMemo(() => {
     return buildPendingApprovalQueue({
       currentSessionId,
-      activeRunIdBySession,
+      activeRunId,
       commandApprovals,
       commandSubmitting,
       commandRuntimeStatus,
       filesystemEntries,
     });
   }, [
-    activeRunIdBySession,
+    activeRunId,
     commandApprovals,
     commandRuntimeStatus,
     commandSubmitting,
@@ -362,11 +380,11 @@ export function ApprovalDock() {
 
   const running = useMemo(() => buildRunningCommandQueue({
     currentSessionId,
-    activeRunIdBySession,
+    activeRunId,
     commandApprovals,
     commandProcesses,
   }), [
-    activeRunIdBySession,
+    activeRunId,
     commandApprovals,
     commandProcesses,
     currentSessionId,
@@ -374,7 +392,18 @@ export function ApprovalDock() {
 
   const current = shouldRenderPendingApprovals(approvalMode) ? pending[0] : undefined;
   const currentRunning = current ? null : running[0];
-  if (!current && !currentRunning) return null;
+  const genericLabel = !current && !currentRunning && !hasActiveRunMessage && runPresentation.busy
+    ? runPresentation.phase === "recovering"
+      ? "正在恢复这段对话的运行状态…"
+      : runPresentation.phase === "queued"
+        ? "任务正在等待处理…"
+        : runPresentation.phase === "stopping"
+          ? "正在取消当前任务…"
+          : runPresentation.run?.control_scope !== "desktop_text"
+            ? "这段对话正在其他入口处理中…"
+            : "任务仍在继续…"
+    : null;
+  if (!current && !currentRunning && !genericLabel) return null;
 
   const decide = (approved: boolean) => {
     if (!current) return;
@@ -408,6 +437,8 @@ export function ApprovalDock() {
             current={currentRunning}
             stop={() => void cancelCommand(currentRunning.processId)}
           />
+        ) : genericLabel ? (
+          <SessionRunPanel label={genericLabel} />
         ) : null}
       </div>
     </div>

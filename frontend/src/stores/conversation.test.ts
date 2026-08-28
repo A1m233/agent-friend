@@ -59,6 +59,8 @@ import {
 } from "./conversation";
 import { useDraftStore } from "./drafts";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
+import { emptySnapshotFence } from "./snapshotFence";
+import { isSessionBusy, sessionActiveRun } from "./runPresentation";
 
 const mockStream = vi.mocked(runAgentStream);
 const mockRunGet = vi.mocked(runsApi.get);
@@ -170,19 +172,29 @@ beforeEach(() => {
     approvalModeVersion: 0,
     approvalModeChanging: false,
     messages: [],
-    streaming: false,
     historyLoading: false,
     modelSwitching: false,
     modelSwitchTarget: null,
     editingMessage: null,
     sessionViews: {},
     runSnapshots: {},
+    runCalibrationPhase: "ready",
+    runFence: emptySnapshotFence(),
     viewAccessedAt: {},
-    activeRunIdBySession: {},
     stopRequestsByRun: {},
     unreadRunOutcomeBySession: {},
     detachedSessionId: null,
     searchTarget: null,
+  });
+  mockRunGet.mockImplementation(async (runId) => {
+    const current = useConversationStore.getState().runSnapshots[runId];
+    return runSnapshot(
+      runId,
+      current?.session_id ?? useConversationStore.getState().currentSessionId ?? "",
+      "terminal",
+      Math.max(3, (current?.version ?? 0) + 1),
+      "completed",
+    );
   });
   useDraftStore.setState({ workspaces: {}, submissions: {} });
   useRuntimeCredentialStore.setState({ groups: [], error: null, loading: false });
@@ -285,7 +297,9 @@ describe("conversation store · session approval mode", () => {
   it("refreshes only the approval mode while a run is active", async () => {
     mockGet.mockResolvedValueOnce(sessionDetail("sid-mode", "history"));
     await useConversationStore.getState().openSession("sid-mode");
-    useConversationStore.setState({ streaming: true });
+    useConversationStore.setState({
+      runSnapshots: { active: runSnapshot("active", "sid-mode", "running", 2) },
+    });
     mockGetApprovalMode.mockResolvedValueOnce({
       session_id: "sid-mode",
       approval_mode: "session_auto",
@@ -296,10 +310,10 @@ describe("conversation store · session approval mode", () => {
       useConversationStore.getState().refreshApprovalMode("sid-mode"),
     ).resolves.toBe("applied");
     expect(useConversationStore.getState()).toMatchObject({
-      streaming: true,
       approvalMode: "session_auto",
       approvalModeVersion: 3,
     });
+    expect(isSessionBusy(useConversationStore.getState(), "sid-mode")).toBe(true);
   });
 });
 
@@ -348,10 +362,9 @@ describe("conversation store · cancel lifecycle", () => {
     expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBe(
       "accepted",
     );
-    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBe(
-      sendResult.runId,
-    );
-    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(sessionActiveRun(useConversationStore.getState(), sendResult.sessionId)?.run_id)
+      .toBe(sendResult.runId);
+    expect(isSessionBusy(useConversationStore.getState(), sendResult.sessionId)).toBe(true);
     expect(useConversationStore.getState().send("不能抢跑下一条")).toEqual({
       accepted: false,
       reason: "busy",
@@ -362,8 +375,8 @@ describe("conversation store · cancel lifecycle", () => {
     );
     await expect(sendResult.completion).resolves.toBe("interrupted");
     expect(useConversationStore.getState().stopRequestsByRun[sendResult.runId]).toBeUndefined();
-    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBeUndefined();
-    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(sessionActiveRun(useConversationStore.getState(), sendResult.sessionId)).toBeNull();
+    expect(isSessionBusy(useConversationStore.getState(), sendResult.sessionId)).toBe(false);
     expect(lastMessage().status).toBe("interrupted");
   });
 
@@ -387,8 +400,14 @@ describe("conversation store · cancel lifecycle", () => {
   it("取消 API 失败时撤销取消中状态并触发权威状态校准", async () => {
     useConversationStore.setState({
       currentSessionId: "sid-cancel-failed",
-      streaming: true,
-      activeRunIdBySession: { "sid-cancel-failed": "run-cancel-failed" },
+      runSnapshots: {
+        "run-cancel-failed": runSnapshot(
+          "run-cancel-failed",
+          "sid-cancel-failed",
+          "running",
+          2,
+        ),
+      },
     });
     mockRunCancel.mockRejectedValueOnce(new Error("bridge offline"));
 
@@ -426,8 +445,8 @@ describe("conversation store · cancel lifecycle", () => {
 
     await expect(sendResult.completion).resolves.toBe("interrupted");
     expect(useConversationStore.getState().runSnapshots[sendResult.runId].version).toBe(4);
-    expect(useConversationStore.getState().activeRunIdBySession[sendResult.sessionId]).toBeUndefined();
-    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(sessionActiveRun(useConversationStore.getState(), sendResult.sessionId)).toBeNull();
+    expect(isSessionBusy(useConversationStore.getState(), sendResult.sessionId)).toBe(false);
   });
 
   it("终态先于取消响应到达时不会被旧响应重新写回取消中", async () => {
@@ -435,8 +454,9 @@ describe("conversation store · cancel lifecycle", () => {
     mockRunCancel.mockReturnValueOnce(cancelGate.promise);
     useConversationStore.setState({
       currentSessionId: "sid-race",
-      streaming: true,
-      activeRunIdBySession: { "sid-race": "run-race" },
+      runSnapshots: {
+        "run-race": runSnapshot("run-race", "sid-race", "running", 2),
+      },
     });
 
     const stopPromise = useConversationStore.getState().stop();
@@ -450,9 +470,28 @@ describe("conversation store · cancel lifecycle", () => {
 
     await expect(stopPromise).resolves.toBe("accepted");
     expect(useConversationStore.getState().runSnapshots["run-race"].status).toBe("terminal");
-    expect(useConversationStore.getState().activeRunIdBySession["sid-race"]).toBeUndefined();
+    expect(sessionActiveRun(useConversationStore.getState(), "sid-race")).toBeNull();
     expect(useConversationStore.getState().stopRequestsByRun["run-race"]).toBeUndefined();
-    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(isSessionBusy(useConversationStore.getState(), "sid-race")).toBe(false);
+  });
+
+  it("低版本 terminal 不会中断更高版本的同 run 或清除取消请求", () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-versioned",
+      runSnapshots: {
+        "run-versioned": runSnapshot("run-versioned", "sid-versioned", "running", 4),
+      },
+      stopRequestsByRun: { "run-versioned": "accepted" },
+    });
+
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-versioned", "sid-versioned", "terminal", 3, "cancelled"),
+    );
+
+    expect(sessionActiveRun(useConversationStore.getState(), "sid-versioned")?.run_id)
+      .toBe("run-versioned");
+    expect(useConversationStore.getState().stopRequestsByRun["run-versioned"])
+      .toBe("accepted");
   });
 });
 
@@ -471,7 +510,10 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(m.error && m.error.length).toBeGreaterThan(0);
     expect(m.error!).not.toMatch(TECH_LEAK);
     // 兜底后流式态应复位，可继续对话（"可恢复"）。
-    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(isSessionBusy(
+      useConversationStore.getState(),
+      useConversationStore.getState().currentSessionId,
+    )).toBe(false);
   });
 
   it("RUN_ERROR 事件 → 展示 bridge 清洗后的文案，不漏技术细节", async () => {
@@ -748,7 +790,10 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     const result = useConversationStore.getState().send("立即发送");
 
     expect(result.accepted).toBe(true);
-    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(isSessionBusy(
+      useConversationStore.getState(),
+      result.accepted ? result.sessionId : null,
+    )).toBe(true);
     expect(messageTexts()).toContain("立即发送");
     if (!result.accepted) throw new Error(`send rejected: ${result.reason}`);
 
@@ -874,10 +919,9 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     if (!result.accepted) return;
     expect(await result.completion).toBe("failed");
 
-    expect(useConversationStore.getState().streaming).toBe(true);
-    expect(useConversationStore.getState().activeRunIdBySession[result.sessionId]).toBe(
-      result.runId,
-    );
+    expect(isSessionBusy(useConversationStore.getState(), result.sessionId)).toBe(true);
+    expect(sessionActiveRun(useConversationStore.getState(), result.sessionId)?.run_id)
+      .toBe(result.runId);
     expect(useConversationStore.getState().send("不应重复接纳")).toEqual({
       accepted: false,
       reason: "busy",
@@ -1002,6 +1046,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
         onAdmitted: expect.any(Function),
       }),
     );
+    expect(mockGet).toHaveBeenCalledTimes(2);
     expect(messageTexts()).toEqual(["新问题", "新回答"]);
   });
 
@@ -1096,7 +1141,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(useConversationStore.getState().editingMessage?.phase).toBe("editing");
     expect(useDraftStore.getState().workspaces[draftKey].text).toBe("还要继续改");
     expect(messageTexts()).toEqual(["旧问题"]);
-    expect(useConversationStore.getState().streaming).toBe(false);
+    expect(isSessionBusy(useConversationStore.getState(), "sid-1")).toBe(false);
   });
 
   it("编辑重发后立即停止时，活跃 run 不用旧 detail 覆盖新分支", async () => {
@@ -1155,7 +1200,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     expect(mockGet).toHaveBeenCalledTimes(1);
     expect(messageTexts()).toEqual(["新问题", ""]);
     expect(lastMessage().status).toBe("interrupted");
-    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(isSessionBusy(useConversationStore.getState(), "sid-1")).toBe(true);
     expect(useConversationStore.getState().stopRequestsByRun[admittedRunId]).toBe(
       "accepted",
     );
@@ -1249,6 +1294,163 @@ describe("conversation store · continue tool result", () => {
 });
 
 describe("conversation store · background detail refresh", () => {
+  it("旧 run terminal 只结束自己，新 run 继续保持 active", () => {
+    const oldRun = runSnapshot("run-old", "sid-shared", "running", 2);
+    const newRun = {
+      ...runSnapshot("run-new", "sid-shared", "queued", 1),
+      created_at: "2026-07-25T00:00:02Z",
+      started_at: null,
+    };
+    useConversationStore.getState().applyRunSnapshot(oldRun);
+    useConversationStore.getState().applyRunSnapshot(newRun);
+
+    useConversationStore.getState().applyRunSnapshot({
+      ...oldRun,
+      status: "terminal",
+      outcome: "completed",
+      finished_at: "2026-07-25T00:00:03Z",
+      version: 3,
+    });
+
+    expect(sessionActiveRun(useConversationStore.getState(), "sid-shared")?.run_id)
+      .toBe("run-new");
+    expect(isSessionBusy(useConversationStore.getState(), "sid-shared")).toBe(true);
+  });
+
+  it("已知 terminal run 的迟到 conversation event 不会复活消息或 busy", () => {
+    useConversationStore.setState({
+      currentSessionId: "sid-late",
+      sessionViews: {
+        "sid-late": {
+          messages: [],
+          currentModel: "test",
+          currentReasoningPreset: "none",
+          approvalMode: "per_request",
+          approvalModeVersion: 0,
+          historyLoading: false,
+          historyLoadSeq: 0,
+          syncRefreshSeq: 0,
+          revision: 0,
+        },
+      },
+    });
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-late", "sid-late", "terminal", 3, "completed"),
+    );
+
+    useConversationStore.getState().applyRunEvents(
+      "sid-late",
+      "run-late",
+      [{ type: "text_delta", text: "迟到内容" }],
+    );
+
+    expect(useConversationStore.getState().messages).toEqual([]);
+    expect(isSessionBusy(useConversationStore.getState(), "sid-late")).toBe(false);
+  });
+
+  it("terminal 会立即收口同 run 的 streaming message，detail 失败也不恢复 busy", async () => {
+    const message = {
+      id: "assistant-active",
+      role: "assistant" as const,
+      runId: "run-terminal",
+      createdAt: "2026-07-25T00:00:00Z",
+      blocks: [],
+      status: "streaming" as const,
+    };
+    useConversationStore.setState({
+      currentSessionId: "sid-terminal",
+      messages: [message],
+      sessionViews: {
+        "sid-terminal": {
+          messages: [message],
+          currentModel: "test",
+          currentReasoningPreset: "none",
+          approvalMode: "per_request",
+          approvalModeVersion: 0,
+          historyLoading: false,
+          historyLoadSeq: 0,
+          syncRefreshSeq: 0,
+          revision: 0,
+        },
+      },
+    });
+    mockGet.mockRejectedValueOnce(new Error("detail unavailable"));
+
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-terminal", "sid-terminal", "terminal", 3, "completed"),
+    );
+
+    expect(lastMessage()).toMatchObject({ status: "complete", runOutcome: "completed" });
+    expect(isSessionBusy(useConversationStore.getState(), "sid-terminal")).toBe(false);
+  });
+
+  it("后台 completed 只在该 run 产生 conversation-visible 内容时标记有新回复", async () => {
+    useConversationStore.setState({ currentSessionId: "sid-current" });
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-visible",
+      title: "visible",
+      persona: "default",
+      model: "test",
+      active_events: [
+        {
+          type: "assistant_message",
+          uuid: "visible-message",
+          ts: "2026-07-25T00:00:01Z",
+          payload: { content: "后台新回复", partial: false },
+          meta: { run_id: "run-visible" },
+        },
+      ],
+    });
+
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-visible", "sid-visible", "terminal", 3, "completed"),
+    );
+
+    await vi.waitFor(() => {
+      expect(useConversationStore.getState().unreadRunOutcomeBySession["sid-visible"])
+        .toBe("completed");
+    });
+  });
+
+  it("隐藏完成和取消不会被归并为新回复或处理失败", async () => {
+    useConversationStore.setState({ currentSessionId: "sid-current" });
+    mockGet.mockResolvedValueOnce({
+      session_id: "sid-hidden",
+      title: "hidden",
+      persona: "default",
+      model: "test",
+      active_events: [
+        {
+          type: "system_trigger",
+          uuid: "hidden-trigger",
+          ts: "2026-07-25T00:00:00Z",
+          payload: { presentation: "none", output_visibility: "memory_only" },
+          meta: { run_id: "run-hidden" },
+        },
+        {
+          type: "assistant_message",
+          uuid: "hidden-message",
+          ts: "2026-07-25T00:00:01Z",
+          payload: { content: "不进入桌面对话", partial: false },
+          meta: { run_id: "run-hidden" },
+        },
+      ],
+    });
+
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-hidden", "sid-hidden", "terminal", 3, "completed"),
+    );
+    useConversationStore.getState().applyRunSnapshot(
+      runSnapshot("run-cancelled", "sid-cancelled", "terminal", 3, "cancelled"),
+    );
+    await Promise.resolve();
+
+    expect(useConversationStore.getState().unreadRunOutcomeBySession["sid-hidden"])
+      .toBeUndefined();
+    expect(useConversationStore.getState().unreadRunOutcomeBySession["sid-cancelled"])
+      .toBeUndefined();
+  });
+
   it("先收到 external active run，再打开 detail 时仍保持 busy", async () => {
     useConversationStore.getState().applyRunSnapshot({
       run_id: "external-run",
@@ -1268,7 +1470,7 @@ describe("conversation store · background detail refresh", () => {
 
     await useConversationStore.getState().openSession("sid-external");
 
-    expect(useConversationStore.getState().streaming).toBe(true);
+    expect(isSessionBusy(useConversationStore.getState(), "sid-external")).toBe(true);
     expect(useConversationStore.getState().send("不应接纳")).toEqual({
       accepted: false,
       reason: "busy",
@@ -1278,8 +1480,9 @@ describe("conversation store · background detail refresh", () => {
   it("重连 pull 中缺失的旧 active run 会解除 busy 并刷新当前 detail", async () => {
     useConversationStore.setState({
       currentSessionId: "sid-stale",
-      streaming: true,
-      activeRunIdBySession: { "sid-stale": "stale-run" },
+      runSnapshots: {
+        "stale-run": runSnapshot("stale-run", "sid-stale", "running", 2),
+      },
       sessionViews: {
         "sid-stale": {
           messages: [],
@@ -1287,7 +1490,6 @@ describe("conversation store · background detail refresh", () => {
           currentReasoningPreset: "none",
           approvalMode: "per_request",
           approvalModeVersion: 0,
-          streaming: true,
           historyLoading: false,
           historyLoadSeq: 0,
           syncRefreshSeq: 0,
@@ -1300,8 +1502,8 @@ describe("conversation store · background detail refresh", () => {
 
     await useConversationStore.getState().calibrateRuns();
 
-    expect(useConversationStore.getState().streaming).toBe(false);
-    expect(useConversationStore.getState().activeRunIdBySession).toEqual({});
+    expect(isSessionBusy(useConversationStore.getState(), "sid-stale")).toBe(false);
+    expect(sessionActiveRun(useConversationStore.getState(), "sid-stale")).toBeNull();
     await vi.waitFor(() => expect(firstText()).toBe("recovered"));
   });
 
@@ -1335,7 +1537,10 @@ describe("conversation store · background detail refresh", () => {
   });
 
   it("streaming 时拒绝后台 detail 替换", async () => {
-    useConversationStore.setState({ currentSessionId: "sid-1", streaming: true });
+    useConversationStore.setState({
+      currentSessionId: "sid-1",
+      runSnapshots: { active: runSnapshot("active", "sid-1", "running", 2) },
+    });
     expect(await useConversationStore.getState().refreshCurrentSession("sid-1")).toBe("stale");
     expect(mockGet).not.toHaveBeenCalled();
   });
@@ -1349,7 +1554,6 @@ describe("conversation store · bounded caches", () => {
       currentReasoningPreset: null,
       approvalMode: "per_request" as const,
       approvalModeVersion: 0,
-      streaming: false,
       historyLoading: false,
       historyLoadSeq: 0,
       syncRefreshSeq: 0,
@@ -1363,10 +1567,12 @@ describe("conversation store · bounded caches", () => {
       sessionViews: {
         ...idleEntries,
         current: { ...emptyView },
-        active: { ...emptyView, streaming: true },
+        active: { ...emptyView },
         draft: { ...emptyView },
       },
-      activeRunIdBySession: { active: "run-active" },
+      runSnapshots: {
+        "run-active": runSnapshot("run-active", "active", "running", 2),
+      },
       viewAccessedAt: Object.fromEntries(
         Array.from({ length: 25 }, (_, index) => [`idle-${index}`, index]),
       ),

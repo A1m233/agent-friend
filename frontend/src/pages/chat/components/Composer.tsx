@@ -21,6 +21,8 @@ import {
   uploadAttachment,
 } from "@/services";
 import { draftKey, HOME_DRAFT_KEY, useConversationStore, useDraftStore } from "@/stores";
+import { sessionRunPresentation } from "@/stores/runPresentation";
+import { useShallow } from "zustand/react/shallow";
 import type { DraftAttachmentState } from "@/stores/drafts";
 import { useVoiceInputStore } from "@/stores/voiceInput";
 import { isVoiceInputLive } from "@/stores/voiceInputStateMachine";
@@ -107,13 +109,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   onHeightChange,
   topSlot,
 }, forwardedRef) {
-  const streaming = useConversationStore((s) => s.streaming);
+  const runPresentation = useConversationStore(useShallow((s) => (
+    sessionRunPresentation(s, s.currentSessionId)
+  )));
+  const streaming = runPresentation.busy;
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
-  const cancellationPhase = useConversationStore((s) => {
-    const sessionId = s.currentSessionId;
-    const runId = sessionId ? s.activeRunIdBySession[sessionId] : undefined;
-    return runId ? s.stopRequestsByRun[runId] : undefined;
-  });
   const currentModel = useConversationStore((s) => s.currentModel);
   const modelSwitching = useConversationStore((s) => s.modelSwitching);
   const editingMessage = useConversationStore((s) => s.editingMessage);
@@ -169,7 +169,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const lastVoiceErrorToastKeyRef = useRef<string | null>(null);
   const voiceErrorToastReadyRef = useRef(false);
   const voiceInputLive = isVoiceInputLive(voiceInputPhase);
-  const cancelling = cancellationPhase !== undefined;
+  const cancelling = runPresentation.phase === "stopping";
+  const showStop = runPresentation.canStop || cancelling;
   const editSubmitting = editingMessage?.phase === "submitting";
   const voiceInputDisabled = disabled || streaming || cancelling || editSubmitting;
   const attachmentsDisabled = disabled
@@ -184,7 +185,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       : editSubmitting
         ? "正在提交修改…"
       : streaming
-      ? "请等待当前回复完成"
+      ? runPresentation.phase === "recovering"
+        ? "正在恢复这段对话的运行状态…"
+        : runPresentation.run?.control_scope !== "desktop_text"
+          ? "这段对话正在其他入口处理中，请从原入口处理或等待完成"
+          : "请等待当前回复完成"
       : undefined;
   const availableAttachmentSlots = capabilities?.attachments
     ? Math.max(0, capabilities.maxAttachmentsPerTurn - draftAttachments.length)
@@ -738,14 +743,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               ref={senderRef}
               value={draftText}
               autosize={COMPOSER_AUTOSIZE}
-              disabled={disabled || cancelling || editSubmitting}
-              loading={streaming}
+              disabled={disabled || (streaming && !showStop) || cancelling || editSubmitting}
+              loading={showStop}
               sendBtnLoading={cancelling}
               placeholder={
                 disabled
                   ? disabledReason ?? "暂时不能发送"
                   : editSubmitting
                     ? "正在提交修改…"
+                    : streaming && !showStop
+                      ? composerControlDisabledReason
                     : editingMessage
                       ? "修改后重新发送"
                       : "说点什么…（Enter 发送）"

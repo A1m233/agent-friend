@@ -112,6 +112,10 @@ export interface ChatTextReference {
 export interface ChatMessage {
   id: string;
   role: ChatRole;
+  /** 产生这条 assistant 消息的 Runtime run；旧历史和 user 消息可缺失。 */
+  runId?: string;
+  /** Runtime terminal outcome；用于区分失败、取消、跳过、过期和拒绝。 */
+  runOutcome?: import("./run").RunOutcome;
   /**
    * 消息展示时间，ISO 字符串：user 取发送时间，assistant 取本轮回答进入终态的时间。
    * 实时 assistant 占位消息会先持有临时时间，并在完成 / 中断 / 失败时更新。

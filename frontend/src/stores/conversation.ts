@@ -42,7 +42,7 @@ import type {
   SessionApprovalModeState,
 } from "@/services/api/sessions";
 import type { PushEvent } from "@/types/push";
-import type { RunSnapshot } from "@/types/run";
+import type { RunOutcome, RunSnapshot } from "@/types/run";
 import type { SearchNavigationTarget, SessionSearchResult } from "@/types/search";
 import { applyAguiEvent, applyPushConversationEvent } from "./conversationReducer";
 import { projectSessionEvents } from "./sessionProjection";
@@ -55,6 +55,19 @@ import {
 } from "./drafts";
 import { createStreamUpdateScheduler } from "./streamUpdateScheduler";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
+import {
+  isSessionBusy,
+  sessionActiveRun,
+  sessionRunPresentation,
+  type RunCalibrationPhase,
+} from "./runPresentation";
+import {
+  canReconcileSnapshotAbsence,
+  emptySnapshotFence,
+  pruneSnapshotFence,
+  touchSnapshotKey,
+  type SnapshotFenceState,
+} from "./snapshotFence";
 
 /** 前端本地网络/HTTP 失败兜底；RUN_ERROR 用 bridge 按错误码清洗后的文案。 */
 const FRIENDLY_FALLBACK = "这轮回答中断了，没有生成完整回复。请稍后重试。";
@@ -106,6 +119,7 @@ let modelMutationSeq = 0;
 let approvalModeMutationSeq = 0;
 let approvalModeRefreshSeq = 0;
 let searchNavigationToken = 0;
+let runCalibrationSeq = 0;
 
 type OpenSessionFailureMode = "message" | "home" | "previous";
 
@@ -130,7 +144,7 @@ export interface EditingMessageDescriptor {
   phase: "editing" | "submitting";
 }
 
-interface ConversationState {
+export interface ConversationState {
   currentSessionId: string | null;
   currentModel: string | null;
   currentReasoningPreset: string | null;
@@ -141,7 +155,6 @@ interface ConversationState {
   modelSwitchTarget: string | null;
   editingMessage: EditingMessageDescriptor | null;
   messages: ChatMessage[];
-  streaming: boolean;
   historyLoading: boolean;
   /** 历史会话加载完成事件序号；UI 用它触发一次 post-layout 滚动校正。 */
   historyLoadSeq: number;
@@ -149,8 +162,9 @@ interface ConversationState {
   syncRefreshSeq: number;
   sessionViews: Record<string, SessionConversationView>;
   runSnapshots: Record<string, RunSnapshot>;
+  runCalibrationPhase: RunCalibrationPhase;
+  runFence: SnapshotFenceState;
   viewAccessedAt: Record<string, number>;
-  activeRunIdBySession: Record<string, string>;
   stopRequestsByRun: Record<string, StopRequestPhase>;
   unreadRunOutcomeBySession: Record<string, "completed" | "failed">;
   detachedSessionId: string | null;
@@ -203,7 +217,6 @@ interface SessionConversationView {
   currentReasoningPreset: string | null;
   approvalMode: SessionApprovalMode;
   approvalModeVersion: number;
-  streaming: boolean;
   historyLoading: boolean;
   historyLoadSeq: number;
   syncRefreshSeq: number;
@@ -264,6 +277,27 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
+function optimisticRunSnapshot(
+  runId: string,
+  sessionId: string,
+  createdAt: string,
+): RunSnapshot {
+  return {
+    run_id: runId,
+    session_id: sessionId,
+    status: "queued",
+    outcome: null,
+    reason_code: "",
+    channel: "text",
+    origin: "ag_ui",
+    control_scope: "desktop_text",
+    created_at: createdAt,
+    started_at: null,
+    finished_at: null,
+    version: 0,
+  };
+}
+
 function userMessage(
   text: string,
   createdAt = new Date().toISOString(),
@@ -307,6 +341,109 @@ function projectSessionDetail(detail: SessionDetail) {
   return projectSessionEvents(events);
 }
 
+export function messageHasConversationContent(message: ChatMessage): boolean {
+  return Boolean(message.error) || message.blocks.some((block) => {
+    if (block.kind === "text" || block.kind === "thinking") return Boolean(block.text.trim());
+    return true;
+  });
+}
+
+function terminalStatusForOutcome(outcome: RunOutcome | null): ChatMessage["status"] {
+  if (outcome === "completed") return "complete";
+  if (outcome === "failed") return "error";
+  return "interrupted";
+}
+
+function terminalizeRunMessage(
+  message: ChatMessage,
+  snapshot: RunSnapshot,
+): ChatMessage {
+  if (message.role !== "assistant" || message.runId !== snapshot.run_id) return message;
+  const outcome = snapshot.outcome;
+  if (message.status !== "streaming") {
+    return {
+      ...message,
+      runOutcome: outcome ?? message.runOutcome,
+      runStatus: undefined,
+    };
+  }
+  const status = terminalStatusForOutcome(outcome);
+  return {
+    ...message,
+    status,
+    runOutcome: outcome ?? undefined,
+    createdAt: snapshot.finished_at ?? message.createdAt,
+    ...(status === "error" && !message.error
+      ? { error: FRIENDLY_FALLBACK, errorCode: snapshot.reason_code || "runtime_error" }
+      : {}),
+    runStatus: undefined,
+  };
+}
+
+function terminalizeRunMessages(
+  messages: ChatMessage[],
+  snapshot: RunSnapshot,
+): ChatMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    const terminal = terminalizeRunMessage(message, snapshot);
+    if (terminal !== message) changed = true;
+    return terminal;
+  });
+  return changed ? next : messages;
+}
+
+function hasVisibleRunMessage(messages: ChatMessage[], runId: string): boolean {
+  return messages.some((message) => (
+    message.role === "assistant"
+    && message.runId === runId
+    && messageHasConversationContent(message)
+  ));
+}
+
+async function markCompletedRunUnread(snapshot: RunSnapshot): Promise<void> {
+  if (snapshot.outcome !== "completed") return;
+  const initial = useConversationStore.getState();
+  if (initial.currentSessionId === snapshot.session_id) return;
+  let messages = initial.sessionViews[snapshot.session_id]?.messages;
+  if (!messages || !hasVisibleRunMessage(messages, snapshot.run_id)) {
+    try {
+      messages = projectSessionDetail(await sessionsApi.get(snapshot.session_id));
+    } catch {
+      return;
+    }
+  }
+  const state = useConversationStore.getState();
+  const latest = state.runSnapshots[snapshot.run_id];
+  if (
+    state.currentSessionId === snapshot.session_id
+    || latest?.status !== "terminal"
+    || latest.version !== snapshot.version
+    || !hasVisibleRunMessage(messages, snapshot.run_id)
+  ) return;
+  useConversationStore.setState((current) => ({
+    unreadRunOutcomeBySession: {
+      ...current.unreadRunOutcomeBySession,
+      [snapshot.session_id]: "completed",
+    },
+  }));
+}
+
+function dropOptimisticRun(runId: string): void {
+  useConversationStore.setState((state) => {
+    if (state.runSnapshots[runId]?.version !== 0) return state;
+    const runSnapshots = { ...state.runSnapshots };
+    const stopRequestsByRun = { ...state.stopRequestsByRun };
+    delete runSnapshots[runId];
+    delete stopRequestsByRun[runId];
+    return {
+      runSnapshots,
+      stopRequestsByRun,
+      runFence: pruneSnapshotFence(state.runFence, new Set(Object.keys(runSnapshots))),
+    };
+  });
+}
+
 function hasErrorMessage(messages: ChatMessage[], error: string): boolean {
   return messages.some((message) => message.status === "error" && message.error === error);
 }
@@ -332,7 +469,6 @@ function currentViewSnapshot(state: ConversationState): SessionConversationView 
     currentReasoningPreset: state.currentReasoningPreset,
     approvalMode: state.approvalMode,
     approvalModeVersion: state.approvalModeVersion,
-    streaming: state.streaming,
     historyLoading: state.historyLoading,
     historyLoadSeq: state.historyLoadSeq,
     syncRefreshSeq: state.syncRefreshSeq,
@@ -347,7 +483,6 @@ function emptyView(): SessionConversationView {
     currentReasoningPreset: null,
     approvalMode: "per_request",
     approvalModeVersion: 0,
-    streaming: false,
     historyLoading: false,
     historyLoadSeq: 0,
     syncRefreshSeq: 0,
@@ -362,7 +497,6 @@ function viewFields(view: SessionConversationView) {
     currentReasoningPreset: view.currentReasoningPreset,
     approvalMode: view.approvalMode,
     approvalModeVersion: view.approvalModeVersion,
-    streaming: view.streaming,
     historyLoading: view.historyLoading,
     historyLoadSeq: view.historyLoadSeq,
     syncRefreshSeq: view.syncRefreshSeq,
@@ -380,14 +514,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   modelSwitchTarget: null,
   editingMessage: null,
   messages: [],
-  streaming: false,
   historyLoading: false,
   historyLoadSeq: 0,
   syncRefreshSeq: 0,
   sessionViews: {},
   runSnapshots: {},
+  runCalibrationPhase: "calibrating",
+  runFence: emptySnapshotFence(),
   viewAccessedAt: {},
-  activeRunIdBySession: {},
   stopRequestsByRun: {},
   unreadRunOutcomeBySession: {},
   detachedSessionId: null,
@@ -441,15 +575,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     approvalModeRefreshSeq += 1;
     if (remember) rememberLastChatSession(sessionId);
     const cached = get().sessionViews[sessionId];
-    const hasActiveRun = Boolean(get().activeRunIdBySession[sessionId]);
+    const activeRun = sessionActiveRun(get(), sessionId);
     set((state) => ({
       ...viewFields(
         cached
-          ? { ...cached, streaming: cached.streaming || hasActiveRun }
-          : { ...emptyView(), streaming: hasActiveRun, historyLoading: true },
+          ? cached
+          : { ...emptyView(), historyLoading: true },
       ),
       currentSessionId: sessionId,
-      historyLoading: cached?.streaming ? false : true,
+      historyLoading: cached && activeRun ? false : true,
       modelSwitching: false,
       modelSwitchTarget: null,
       approvalModeChanging: false,
@@ -462,7 +596,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
       viewAccessedAt: { ...state.viewAccessedAt, [sessionId]: Date.now() },
     }));
-    if (cached?.streaming) {
+    if (cached && activeRun) {
       get().markSessionViewed(sessionId);
       get().pruneCaches();
       return true;
@@ -478,7 +612,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
           approvalMode: detail.approval_mode ?? "per_request",
           approvalModeVersion: detail.approval_mode_version ?? 0,
-          streaming: Boolean(s.activeRunIdBySession[sessionId]),
           historyLoading: false,
           historyLoadSeq: s.historyLoadSeq + 1,
           syncRefreshSeq: s.syncRefreshSeq,
@@ -604,14 +737,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const seq = detailRefreshSeq + 1;
     detailRefreshSeq = seq;
     const openToken = openSessionToken;
-    if (get().currentSessionId !== sessionId || get().streaming) return "stale";
+    if (get().currentSessionId !== sessionId || isSessionBusy(get(), sessionId)) return "stale";
     try {
       const detail = await sessionsApi.get(sessionId);
       if (
         seq !== detailRefreshSeq ||
         openToken !== openSessionToken ||
         get().currentSessionId !== sessionId ||
-        get().streaming
+        isSessionBusy(get(), sessionId)
       ) {
         return "stale";
       }
@@ -625,7 +758,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
           approvalMode: detail.approval_mode ?? "per_request",
           approvalModeVersion: detail.approval_mode_version ?? 0,
-          streaming: false,
           historyLoading: false,
           historyLoadSeq: state.historyLoadSeq,
           syncRefreshSeq: state.syncRefreshSeq + 1,
@@ -694,8 +826,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   applyRunEvents(sessionId, runId, events) {
     if (events.length === 0) return;
     set((state) => {
-      const activeRunId = state.activeRunIdBySession[sessionId];
-      if (activeRunId && activeRunId !== runId) return state;
+      const knownRun = state.runSnapshots[runId];
+      if (knownRun?.status === "terminal") return state;
+      const activeRun = sessionActiveRun(state, sessionId);
+      if (!knownRun && activeRun && activeRun.run_id !== runId) return state;
 
       const isCurrent = state.currentSessionId === sessionId;
       const existingView = state.sessionViews[sessionId];
@@ -709,6 +843,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         : {
             id: assistantId,
             role: "assistant",
+            runId,
             createdAt: new Date().toISOString(),
             blocks: [],
             status: "streaming",
@@ -724,40 +859,35 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const messages = [...view.messages];
       if (existingIndex >= 0) messages[existingIndex] = nextAssistant;
       else messages.push(nextAssistant);
-      const nextView: SessionConversationView = { ...view, messages, streaming: true };
+      const nextView: SessionConversationView = { ...view, messages };
 
       return {
         sessionViews: { ...state.sessionViews, [sessionId]: nextView },
-        activeRunIdBySession: { ...state.activeRunIdBySession, [sessionId]: runId },
-        ...(isCurrent ? { messages, streaming: true } : {}),
+        ...(isCurrent ? { messages } : {}),
       };
     });
   },
 
   applyRunSnapshot(snapshot) {
-    const previous = get().runSnapshots[snapshot.run_id];
-    if (previous && previous.version >= snapshot.version) return;
+    let accepted = false;
     set((state) => {
+      const previous = state.runSnapshots[snapshot.run_id];
+      if (previous && previous.version >= snapshot.version) return state;
+      accepted = true;
       const terminal = snapshot.status === "terminal";
-      const activeRunIdBySession = { ...state.activeRunIdBySession };
       const stopRequestsByRun = { ...state.stopRequestsByRun };
-      if (terminal) {
-        if (activeRunIdBySession[snapshot.session_id] === snapshot.run_id) {
-          delete activeRunIdBySession[snapshot.session_id];
-        }
-        delete stopRequestsByRun[snapshot.run_id];
-      } else {
-        activeRunIdBySession[snapshot.session_id] = snapshot.run_id;
-      }
+      if (terminal) delete stopRequestsByRun[snapshot.run_id];
       const view = state.sessionViews[snapshot.session_id];
       const nextView = view
-        ? { ...view, streaming: !terminal }
+        ? {
+            ...view,
+            messages: terminal ? terminalizeRunMessages(view.messages, snapshot) : view.messages,
+          }
         : view;
       const isCurrent = state.currentSessionId === snapshot.session_id;
       const unreadRunOutcomeBySession = { ...state.unreadRunOutcomeBySession };
-      if (terminal && !isCurrent) {
-        unreadRunOutcomeBySession[snapshot.session_id] =
-          snapshot.outcome === "completed" ? "completed" : "failed";
+      if (terminal && !isCurrent && snapshot.outcome === "failed") {
+        unreadRunOutcomeBySession[snapshot.session_id] = "failed";
       }
       const runSnapshots = { ...state.runSnapshots, [snapshot.run_id]: snapshot };
       const terminalRuns = Object.values(runSnapshots)
@@ -770,59 +900,66 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       for (const expired of terminalRuns.slice(MAX_RUN_SNAPSHOTS)) {
         delete runSnapshots[expired.run_id];
       }
+      const runFence = pruneSnapshotFence(
+        touchSnapshotKey(state.runFence, snapshot.run_id),
+        new Set(Object.keys(runSnapshots)),
+      );
       return {
         runSnapshots,
-        activeRunIdBySession,
+        runFence,
         stopRequestsByRun,
         unreadRunOutcomeBySession,
         sessionViews: nextView
           ? { ...state.sessionViews, [snapshot.session_id]: nextView }
           : state.sessionViews,
-        streaming: isCurrent ? !terminal : state.streaming,
+        ...(isCurrent && nextView ? { messages: nextView.messages } : {}),
       };
     });
+    if (!accepted) return;
     if (snapshot.status === "terminal") {
       activeTransports.delete(snapshot.run_id);
-      if (get().currentSessionId === snapshot.session_id) {
-        void get().refreshCurrentSession(snapshot.session_id);
-      }
+      void markCompletedRunUnread(snapshot);
     }
     get().pruneCaches();
   },
 
   async calibrateRuns() {
-    const response = await runsApi.list(true);
-    for (const snapshot of response.runs) get().applyRunSnapshot(snapshot);
-    const returnedRunIds = new Set(response.runs.map((snapshot) => snapshot.run_id));
-    const sessionsToRefresh: string[] = [];
-    set((state) => {
-      const activeRunIdBySession = { ...state.activeRunIdBySession };
-      const stopRequestsByRun = { ...state.stopRequestsByRun };
-      const sessionViews = { ...state.sessionViews };
-      for (const [sessionId, runId] of Object.entries(activeRunIdBySession)) {
-        if (returnedRunIds.has(runId)) continue;
-        delete activeRunIdBySession[sessionId];
-        delete stopRequestsByRun[runId];
-        const view = sessionViews[sessionId];
-        if (view) sessionViews[sessionId] = { ...view, streaming: false };
-        sessionsToRefresh.push(sessionId);
+    const calibrationSeq = runCalibrationSeq + 1;
+    runCalibrationSeq = calibrationSeq;
+    const requestStartEpoch = get().runFence.mutationEpoch;
+    set({ runCalibrationPhase: "calibrating" });
+    try {
+      const response = await runsApi.list(true);
+      if (calibrationSeq !== runCalibrationSeq) return;
+      for (const snapshot of response.runs) get().applyRunSnapshot(snapshot);
+      const returnedRunIds = new Set(response.runs.map((snapshot) => snapshot.run_id));
+      const sessionsToRefresh = new Set<string>();
+      set((state) => {
+        const runSnapshots = { ...state.runSnapshots };
+        const stopRequestsByRun = { ...state.stopRequestsByRun };
+        for (const [runId, run] of Object.entries(runSnapshots)) {
+          if (
+            run.status === "terminal"
+            || returnedRunIds.has(runId)
+            || !canReconcileSnapshotAbsence(state.runFence, runId, requestStartEpoch)
+          ) continue;
+          delete runSnapshots[runId];
+          delete stopRequestsByRun[runId];
+          sessionsToRefresh.add(run.session_id);
+        }
+        return {
+          runSnapshots,
+          stopRequestsByRun,
+          runCalibrationPhase: "ready",
+          runFence: pruneSnapshotFence(state.runFence, new Set(Object.keys(runSnapshots))),
+        };
+      });
+      const currentSessionId = get().currentSessionId;
+      if (currentSessionId && sessionsToRefresh.has(currentSessionId)) {
+        void get().refreshCurrentSession(currentSessionId);
       }
-      for (const runId of Object.keys(stopRequestsByRun)) {
-        if (!returnedRunIds.has(runId)) delete stopRequestsByRun[runId];
-      }
-      return {
-        activeRunIdBySession,
-        stopRequestsByRun,
-        sessionViews,
-        streaming:
-          state.currentSessionId && sessionsToRefresh.includes(state.currentSessionId)
-            ? false
-            : state.streaming,
-      };
-    });
-    const currentSessionId = get().currentSessionId;
-    if (currentSessionId && sessionsToRefresh.includes(currentSessionId)) {
-      void get().refreshCurrentSession(currentSessionId);
+    } catch {
+      if (calibrationSeq === runCalibrationSeq) set({ runCalibrationPhase: "degraded" });
     }
   },
 
@@ -840,7 +977,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const draftWorkspaces = useDraftStore.getState().workspaces;
       const protectedKeys = new Set<string>([
         sessionViewKey(state.currentSessionId),
-        ...Object.keys(state.activeRunIdBySession),
+        ...Object.values(state.runSnapshots)
+          .filter((run) => run.status !== "terminal")
+          .map((run) => run.session_id),
       ]);
       for (const [key, draft] of Object.entries(draftWorkspaces)) {
         if (draft.text || draft.attachments.length > 0 || draft.references.length > 0) {
@@ -885,7 +1024,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       };
     }
     if (
-      current.streaming
+      isSessionBusy(current, current.currentSessionId)
       || current.historyLoading
       || current.editingMessage?.phase === "submitting"
     ) {
@@ -993,7 +1132,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   beginEditingMessage(messageId) {
     const current = get();
     if (
-      current.streaming
+      isSessionBusy(current, current.currentSessionId)
       || current.historyLoading
       || !current.currentSessionId
       || current.editingMessage?.phase === "submitting"
@@ -1047,7 +1186,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     if (!trimmed && attachments.length === 0 && references.length === 0) {
       return { accepted: false, reason: "empty" };
     }
-    if (get().streaming) return { accepted: false, reason: "busy" };
+    if (isSessionBusy(get(), get().currentSessionId)) {
+      return { accepted: false, reason: "busy" };
+    }
     if (get().historyLoading) return { accepted: false, reason: "history-loading" };
     if (get().modelSwitching) return { accepted: false, reason: "model-switching" };
     if (get().editingMessage) return { accepted: false, reason: "editing" };
@@ -1088,6 +1229,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const placeholder: ChatMessage = {
       id: assistantId,
       role: "assistant",
+      runId,
       createdAt: sentAt,
       blocks: [],
       status: "streaming",
@@ -1104,7 +1246,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentReasoningPreset: initialConfig.reasoningPreset,
         approvalMode: initialApprovalMode,
         approvalModeVersion: initialApprovalModeVersion,
-        streaming: true,
         historyLoading: false,
         historyLoadSeq: s.historyLoadSeq,
         syncRefreshSeq: s.syncRefreshSeq,
@@ -1116,14 +1257,17 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         currentReasoningPreset: initialConfig.reasoningPreset,
         approvalMode: initialApprovalMode,
         approvalModeVersion: initialApprovalModeVersion,
-        streaming: true,
         messages,
         sessionViews: {
           ...s.sessionViews,
           [sessionId]: view,
           ...(s.currentSessionId === null ? { [HOME_VIEW_KEY]: emptyView() } : {}),
         },
-        activeRunIdBySession: { ...s.activeRunIdBySession, [sessionId]: runId },
+        runSnapshots: {
+          ...s.runSnapshots,
+          [runId]: optimisticRunSnapshot(runId, sessionId, sentAt),
+        },
+        runFence: touchSnapshotKey(s.runFence, runId),
         viewAccessedAt: { ...s.viewAccessedAt, [sessionId]: Date.now() },
       };
     });
@@ -1213,19 +1357,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           const snapshot = await runsApi.get(runId);
           get().applyRunSnapshot(snapshot);
           runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
+          if (snapshot.status === "terminal" && get().currentSessionId === sessionId) {
+            void get().refreshCurrentSession(sessionId);
+          }
           if (snapshot.outcome === "cancelled") outcome = "interrupted";
           else if (snapshot.outcome === "rejected") outcome = "rejected";
         } catch {
           // push/reconnect calibration remains the fallback when the transport vanished early.
           if (!sawStreamEvent && admissionFailed) outcome = "rejected";
           runStillActive = !sawTerminalEvent && !admissionFailed;
+          if (!runStillActive) dropOptimisticRun(runId);
         }
         set((s) => {
           const existing = s.sessionViews[sessionId];
           if (!existing) return s;
           const next = {
             ...existing,
-            streaming: runStillActive,
             messages:
               outcome === "rejected"
                 ? existing.messages.filter(
@@ -1234,17 +1381,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                   )
                 : existing.messages,
           };
-          const activeRunIdBySession = { ...s.activeRunIdBySession };
           const stopRequestsByRun = { ...s.stopRequestsByRun };
-          if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
-            delete activeRunIdBySession[sessionId];
-          }
           if (!runStillActive) delete stopRequestsByRun[runId];
+          const runSnapshots = { ...s.runSnapshots };
+          let runFence = s.runFence;
+          if (
+            outcome === "rejected"
+            && runSnapshots[runId]?.version === 0
+          ) {
+            delete runSnapshots[runId];
+            runFence = pruneSnapshotFence(runFence, new Set(Object.keys(runSnapshots)));
+          }
           return {
             sessionViews: { ...s.sessionViews, [sessionId]: next },
-            activeRunIdBySession,
+            runSnapshots,
+            runFence,
             stopRequestsByRun,
-            streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
             messages: s.currentSessionId === sessionId ? next.messages : s.messages,
           };
         });
@@ -1263,7 +1415,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const effectiveReferences = references ?? editing?.originalReferences ?? [];
     if (
       (!trimmed && attachments.length === 0 && effectiveReferences.length === 0) ||
-      state.streaming ||
+      isSessionBusy(state, state.currentSessionId) ||
       state.historyLoading ||
       state.modelSwitching ||
       !state.currentSessionId ||
@@ -1289,6 +1441,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const placeholder: ChatMessage = {
       id: assistantId,
       role: "assistant",
+      runId,
       createdAt: sentAt,
       blocks: [],
       status: "streaming",
@@ -1327,6 +1480,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     });
 
     let admitted = false;
+    let sawTerminalEvent = false;
     let outcome: SendOutcome = "completed";
     let failedError: string | null = null;
     try {
@@ -1355,11 +1509,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               const view = {
                 ...(current.sessionViews[sessionId] ?? emptyView()),
                 messages: admittedMessages,
-                streaming: true,
               };
               return {
                 ...(current.currentSessionId === sessionId
-                  ? { messages: admittedMessages, streaming: true }
+                  ? { messages: admittedMessages }
                   : {}),
                 editingMessage:
                   current.editingMessage?.messageId === editing.messageId
@@ -1369,15 +1522,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                   ...current.sessionViews,
                   [sessionId]: view,
                 },
-                activeRunIdBySession: {
-                  ...current.activeRunIdBySession,
-                  [sessionId]: runId,
+                runSnapshots: {
+                  ...current.runSnapshots,
+                  [runId]: optimisticRunSnapshot(runId, sessionId, sentAt),
                 },
+                runFence: touchSnapshotKey(current.runFence, runId),
               };
             });
           },
         },
       )) {
+        if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
+          sawTerminalEvent = true;
+        }
         streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
       }
       streamUpdates.flush();
@@ -1425,22 +1582,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
         } catch {
           // run_changed / reconnect calibration remains the fallback.
+          if (sawTerminalEvent) {
+            dropOptimisticRun(runId);
+            runStillActive = false;
+          }
         }
         set((s) => {
           const view = s.sessionViews[sessionId];
           if (!view) return s;
-          const next = { ...view, streaming: runStillActive };
-          const activeRunIdBySession = { ...s.activeRunIdBySession };
+          const next = view;
           const stopRequestsByRun = { ...s.stopRequestsByRun };
-          if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
-            delete activeRunIdBySession[sessionId];
-          }
           if (!runStillActive) delete stopRequestsByRun[runId];
           return {
             sessionViews: { ...s.sessionViews, [sessionId]: next },
-            activeRunIdBySession,
             stopRequestsByRun,
-            streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
           };
         });
         if (!runStillActive) {
@@ -1462,7 +1617,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
                   ?? defaultModelRuntimeConfig(detail.model).reasoningPreset,
                 approvalMode: detail.approval_mode ?? view.approvalMode,
                 approvalModeVersion: detail.approval_mode_version ?? view.approvalModeVersion,
-                streaming: false,
                 revision: detail.revision ?? view.revision,
                 historyLoadSeq: view.historyLoadSeq + 1,
               };
@@ -1492,7 +1646,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const state = get();
     const target = state.messages.at(-1);
     if (
-      state.streaming ||
+      isSessionBusy(state, state.currentSessionId) ||
       state.historyLoading ||
       state.modelSwitching ||
       !state.currentSessionId ||
@@ -1508,26 +1662,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const placeholder: ChatMessage = {
       id: assistantId,
       role: "assistant",
+      runId,
       createdAt: new Date().toISOString(),
       blocks: [],
       status: "streaming",
     };
     const messages = [...state.messages, placeholder];
     set((current) => ({
-      streaming: true,
       messages,
       sessionViews: {
         ...current.sessionViews,
         [sessionId]: {
           ...(current.sessionViews[sessionId] ?? emptyView()),
           messages,
-          streaming: true,
         },
       },
-      activeRunIdBySession: {
-        ...current.activeRunIdBySession,
-        [sessionId]: runId,
+      runSnapshots: {
+        ...current.runSnapshots,
+        [runId]: optimisticRunSnapshot(runId, sessionId, placeholder.createdAt),
       },
+      runFence: touchSnapshotKey(current.runFence, runId),
     }));
 
     const controller = new AbortController();
@@ -1550,11 +1704,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const streamUpdates = createStreamUpdateScheduler((events) => {
       patch((m) => applyStreamEvents(m, events));
     });
+    let sawTerminalEvent = false;
 
     try {
       for await (const evt of continueToolResultStream(sessionId, runId, {
         signal: controller.signal,
       })) {
+        if (evt.type === EventType.RUN_FINISHED || evt.type === EventType.RUN_ERROR) {
+          sawTerminalEvent = true;
+        }
         streamUpdates.enqueue(withObservedTerminalTimestamp(evt));
       }
       streamUpdates.flush();
@@ -1574,24 +1732,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const snapshot = await runsApi.get(runId);
         get().applyRunSnapshot(snapshot);
         runStillActive = (get().runSnapshots[runId] ?? snapshot).status !== "terminal";
+        if (snapshot.status === "terminal" && get().currentSessionId === sessionId) {
+          void get().refreshCurrentSession(sessionId);
+        }
       } catch {
         // run_changed / reconnect calibration remains the fallback.
+        if (sawTerminalEvent) {
+          dropOptimisticRun(runId);
+          runStillActive = false;
+        }
       }
       set((s) => {
         const view = s.sessionViews[sessionId];
         if (!view) return s;
-        const next = { ...view, streaming: runStillActive };
-        const activeRunIdBySession = { ...s.activeRunIdBySession };
         const stopRequestsByRun = { ...s.stopRequestsByRun };
-        if (!runStillActive && activeRunIdBySession[sessionId] === runId) {
-          delete activeRunIdBySession[sessionId];
-        }
         if (!runStillActive) delete stopRequestsByRun[runId];
         return {
-          sessionViews: { ...s.sessionViews, [sessionId]: next },
-          activeRunIdBySession,
+          sessionViews: s.sessionViews,
           stopRequestsByRun,
-          streaming: s.currentSessionId === sessionId ? runStillActive : s.streaming,
         };
       });
       void useSessionsStore.getState().refresh();
@@ -1602,9 +1760,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const initial = get();
     const sessionId = initial.currentSessionId;
     if (!sessionId) return "noop";
-    const runId = initial.activeRunIdBySession[sessionId];
+    const presentation = sessionRunPresentation(initial, sessionId);
+    const runId = presentation.run?.run_id;
     if (!runId) return "noop";
     if (initial.stopRequestsByRun[runId]) return "already-pending";
+    if (!presentation.canStop) return "noop";
 
     set((state) => ({
       stopRequestsByRun: {
@@ -1616,10 +1776,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       const { run } = await runsApi.cancel(sessionId, runId);
       get().applyRunSnapshot(run);
+      if (run.status === "terminal" && get().currentSessionId === sessionId) {
+        void get().refreshCurrentSession(sessionId);
+      }
       if (run.status !== "terminal") {
         set((state) => {
           if (
-            state.activeRunIdBySession[sessionId] !== runId
+            sessionActiveRun(state, sessionId)?.run_id !== runId
             || !state.stopRequestsByRun[runId]
           ) return state;
           return {

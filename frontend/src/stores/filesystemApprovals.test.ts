@@ -37,6 +37,12 @@ function request(
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe("filesystem approvals store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -135,5 +141,47 @@ describe("filesystem approvals store", () => {
 
     expect(useFilesystemApprovalsStore.getState().entries.one.status).toBe("cancelled");
     expect(useFilesystemApprovalsStore.getState().entries.one.version).toBe(2);
+  });
+
+  it("does not let an older pending response clear a newer push received in flight", async () => {
+    const gate = deferred<FilesystemApprovalRequest[]>();
+    vi.mocked(filesystemApprovalsApi.pending).mockReturnValueOnce(gate.promise);
+    const refresh = useFilesystemApprovalsStore.getState().refresh();
+    handleFilesystemApprovalPush({
+      kind: "filesystem_approval_changed",
+      session_id: "session-a",
+      seq: 2,
+      source_kind: null,
+      events: [],
+      filesystem_approval: request("one", "session-a", { version: 2 }),
+    });
+    gate.resolve([]);
+
+    await refresh;
+
+    expect(useFilesystemApprovalsStore.getState().entries.one).toMatchObject({
+      status: "pending",
+      version: 2,
+    });
+  });
+
+  it("run terminal immediately removes pending filesystem actions", () => {
+    useFilesystemApprovalsStore.setState({
+      entries: {
+        one: {
+          request: request("one", "session-a"),
+          status: "pending",
+          version: 1,
+          recoverable: false,
+        },
+      },
+    });
+
+    useFilesystemApprovalsStore.getState().finishRun("run-session-a");
+
+    expect(useFilesystemApprovalsStore.getState().entries.one).toMatchObject({
+      status: "interrupted",
+      recoverable: false,
+    });
   });
 });

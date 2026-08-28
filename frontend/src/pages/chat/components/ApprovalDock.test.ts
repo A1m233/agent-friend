@@ -106,7 +106,7 @@ describe("buildPendingApprovalQueue", () => {
   it("shows only pending approvals owned by the active run", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: {
         current: command(),
         stale: command({ request_id: "cmd-old", run_id: "run-old" }),
@@ -123,7 +123,7 @@ describe("buildPendingApprovalQueue", () => {
   it("turns sandbox preparation into the single current command action", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: { current: command() },
       commandSubmitting: new Set(),
       commandRuntimeStatus: {
@@ -149,7 +149,7 @@ describe("buildPendingApprovalQueue", () => {
   it("keeps host-user approval actionable when the sandbox is not prepared", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: {
         current: command({
           details: {
@@ -187,7 +187,7 @@ describe("buildPendingApprovalQueue", () => {
   it("keeps the complete command decision context in the dock model", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: { current: command() },
       commandSubmitting: new Set(),
       commandRuntimeStatus: runtimeReady,
@@ -212,7 +212,7 @@ describe("buildPendingApprovalQueue", () => {
   it("projects backend catastrophic risk details without classifying commands in the UI", () => {
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: {
         current: command({
           approval_mode: "per_request",
@@ -243,7 +243,7 @@ describe("buildPendingApprovalQueue", () => {
     ].join("；");
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: { current: command({ reason }) },
       commandSubmitting: new Set(),
       commandRuntimeStatus: runtimeReady,
@@ -273,7 +273,7 @@ describe("buildPendingApprovalQueue", () => {
     });
     const queue = buildPendingApprovalQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: { managed },
       commandSubmitting: new Set(),
       commandRuntimeStatus: runtimeReady,
@@ -298,7 +298,7 @@ describe("buildRunningCommandQueue", () => {
   it("shows only running commands owned by the active run", () => {
     const queue = buildRunningCommandQueue({
       currentSessionId: "session-a",
-      activeRunIdBySession: { "session-a": "run-a" },
+      activeRunId: "run-a",
       commandApprovals: { current: command({ status: "approved" }) },
       commandProcesses: {
         current: commandProcess(),

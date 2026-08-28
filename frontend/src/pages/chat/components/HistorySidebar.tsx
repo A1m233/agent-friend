@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
   Brain,
@@ -51,11 +51,10 @@ import {
   useConversationStore,
   useDraftStore,
   useFilesystemApprovalsStore,
-  pendingFilesystemApprovalSessionIds,
-  pendingCommandApprovalSessionIds,
   useCommandRuntimeStore,
   useSessionsStore,
 } from "@/stores";
+import { isSessionBusy, sessionActiveRun } from "@/stores/runPresentation";
 import type { RunSnapshot } from "@/types/run";
 import { isTauri } from "@/utils/tauri";
 import {
@@ -211,7 +210,7 @@ export function HistorySidebar({
   const sessionsLoaded = useSessionsStore((s) => s.loaded);
   const status = useConnectionStore((s) => s.status);
   const currentSessionId = useConversationStore((s) => s.currentSessionId);
-  const streaming = useConversationStore((s) => s.streaming);
+  const streaming = useConversationStore((s) => isSessionBusy(s, s.currentSessionId));
   const historyLoading = useConversationStore((s) => s.historyLoading);
   const messageCount = useConversationStore((s) => s.messages.length);
   const currentSessionViewAvailable = useConversationStore((s) =>
@@ -220,18 +219,10 @@ export function HistorySidebar({
   const detachedSessionId = useConversationStore((s) => s.detachedSessionId);
   const openSession = useConversationStore((s) => s.openSession);
   const newSession = useConversationStore((s) => s.newSession);
-  const activeRunIdBySession = useConversationStore((s) => s.activeRunIdBySession);
   const runSnapshots = useConversationStore((s) => s.runSnapshots);
   const unreadRunOutcomeBySession = useConversationStore((s) => s.unreadRunOutcomeBySession);
   const filesystemApprovalEntries = useFilesystemApprovalsStore((s) => s.entries);
   const commandApprovals = useCommandRuntimeStore((s) => s.approvals);
-  const approvalSessionIds = useMemo(
-    () => new Set([
-      ...pendingFilesystemApprovalSessionIds(filesystemApprovalEntries),
-      ...pendingCommandApprovalSessionIds(commandApprovals),
-    ]),
-    [commandApprovals, filesystemApprovalEntries],
-  );
   const draftWorkspaces = useDraftStore((s) => s.workspaces);
   const [renamingSession, setRenamingSession] = useState<{
     sessionId: string;
@@ -541,11 +532,18 @@ export function HistorySidebar({
                   const ageText = formatSessionAge(s.updated_at || s.created_at, now);
                   const title = s.title || "新对话";
                   const boundIMTypes = imTypesBySession[s.session_id] ?? [];
-                  const activeRunId = activeRunIdBySession[s.session_id];
-                  const activeRun = activeRunId ? runSnapshots[activeRunId] : undefined;
+                  const activeRun = sessionActiveRun({ runSnapshots }, s.session_id) ?? undefined;
                   const unreadOutcome = unreadRunOutcomeBySession[s.session_id];
                   const runIndicator = sessionRunIndicator(activeRun, unreadOutcome);
-                  const awaitingFilesystemApproval = approvalSessionIds.has(s.session_id);
+                  const awaitingFilesystemApproval = Boolean(activeRun && (
+                    Object.values(filesystemApprovalEntries).some((entry) => (
+                      entry.request.run_id === activeRun.run_id
+                      && (entry.status === "pending" || entry.status === "submitting")
+                    ))
+                    || Object.values(commandApprovals).some((request) => (
+                      request.run_id === activeRun.run_id && request.status === "pending"
+                    ))
+                  ));
                   const draft = draftWorkspaces[s.session_id];
                   const hasDraft = Boolean(
                     draft?.text || draft?.attachments.length || draft?.references.length,
