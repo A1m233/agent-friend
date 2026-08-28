@@ -28,6 +28,8 @@ def event(
     chat_id: str = "OPENID-USER",
     attachments: list[MessageAttachment] | None = None,
     msg_elements: list[MsgElement] | None = None,
+    timestamp: str = "2026-08-26T10:00:00Z",
+    raw: dict[str, object] | None = None,
 ) -> InboundEvent:
     return InboundEvent(
         event_type="C2C_MESSAGE_CREATE",
@@ -36,10 +38,11 @@ def event(
         chat_scope="c2c",
         content=content,
         message_id=message_id,
-        timestamp="2026-08-26T10:00:00Z",
+        timestamp=timestamp,
         message_type=0,
         attachments=attachments or [],
         msg_elements=msg_elements or [],
+        raw=raw,
     )
 
 
@@ -63,6 +66,14 @@ def key(chat_id: str = "OPENID-USER") -> IMBindingKey:
 
 async def no_timeout(_key: IMBindingKey, _token: str) -> None:
     raise AssertionError("timeout should not fire in this test")
+
+
+class MutableClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
 
 
 @pytest.mark.asyncio
@@ -203,7 +214,7 @@ async def test_first_pure_text_merges_pending_attachment_and_uses_text_identity(
 
 
 @pytest.mark.asyncio
-async def test_second_attachment_flushes_first_and_starts_a_fresh_window() -> None:
+async def test_fragmented_attachments_append_to_one_logical_batch() -> None:
     coordinator = IMBindingCoordinator()
     coalescer = QQAttachmentTextCoalescer(coordinator, sleep=NeverSleep())
     provider = object()
@@ -224,12 +235,259 @@ async def test_second_attachment_flushes_first_and_starts_a_fresh_window() -> No
     )
 
     assert first.held_message_id == "ATT-1"
-    assert [item.event.message_id for item in second.dispatches] == ["ATT-1"]
-    assert [item.reason for item in second.dispatches] == ["next_attachment"]
+    assert second.dispatches == ()
     assert second.held_message_id == "ATT-2"
+    assert second.held_source_message_ids == ("ATT-1", "ATT-2")
+    assert second.held_attachment_count == 2
+    assert second.held_reason == "appended"
     assert coalescer.pending_count == 1
     assert coordinator.has_pending_turn(key())
-    assert await coalescer.cancel_all() == ("ATT-2",)
+
+    merged = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("TXT-1", content="一起看"),
+        on_timeout=no_timeout,
+    )
+
+    assert len(merged.dispatches) == 1
+    dispatch = merged.dispatches[0]
+    assert dispatch.source_message_ids == ("ATT-1", "ATT-2", "TXT-1")
+    assert dispatch.event.message_id == "TXT-1"
+    assert [item.filename for item in dispatch.event.attachments] == ["one.png", "two.png"]
+    assert coalescer.pending_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_incident_timing_keeps_five_images_and_caption_in_one_batch() -> None:
+    coordinator = IMBindingCoordinator()
+    clock = MutableClock()
+    coalescer = QQAttachmentTextCoalescer(
+        coordinator,
+        window_seconds=3.0,
+        sleep=NeverSleep(),
+        clock=clock,
+    )
+    provider = object()
+
+    image_times = (0.0, 0.036, 1.554, 1.564, 2.563)
+    for index, observed_at in enumerate(image_times, start=1):
+        clock.now = observed_at
+        decision = coalescer.offer(
+            provider=provider,
+            binding_key=key(),
+            session_id="SESSION-A",
+            event=event(
+                f"ATT-{index}",
+                attachments=[attachment(f"{index}.png", "image/png")],
+            ),
+            on_timeout=no_timeout,
+        )
+        assert decision.dispatches == ()
+
+    clock.now = 3.056
+    merged = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("TXT-5", content="都看8月"),
+        on_timeout=no_timeout,
+    )
+
+    assert len(merged.dispatches) == 1
+    dispatch = merged.dispatches[0]
+    assert dispatch.source_message_ids == (
+        "ATT-1",
+        "ATT-2",
+        "ATT-3",
+        "ATT-4",
+        "ATT-5",
+        "TXT-5",
+    )
+    assert [item.filename for item in dispatch.event.attachments] == [
+        "1.png",
+        "2.png",
+        "3.png",
+        "4.png",
+        "5.png",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image_times",
+    [
+        (0.0, 0.038, 0.074, 0.579, 0.613),
+        (0.0, 0.522),
+    ],
+)
+async def test_observed_one_send_bursts_stay_in_one_batch(
+    image_times: tuple[float, ...],
+) -> None:
+    coordinator = IMBindingCoordinator()
+    clock = MutableClock()
+    coalescer = QQAttachmentTextCoalescer(
+        coordinator,
+        window_seconds=3.0,
+        sleep=NeverSleep(),
+        clock=clock,
+    )
+    provider = object()
+
+    decision = None
+    for index, observed_at in enumerate(image_times, start=1):
+        clock.now = observed_at
+        decision = coalescer.offer(
+            provider=provider,
+            binding_key=key(),
+            session_id="SESSION-A",
+            event=event(
+                f"ATT-{index}",
+                attachments=[attachment(f"{index}.png", "image/png")],
+            ),
+            on_timeout=no_timeout,
+        )
+        assert decision.dispatches == ()
+
+    assert decision is not None
+    assert decision.held_source_message_ids == tuple(
+        f"ATT-{index}" for index in range(1, len(image_times) + 1)
+    )
+    assert decision.held_attachment_count == len(image_times)
+    assert await coalescer.cancel_all() == decision.held_source_message_ids
+
+
+@pytest.mark.asyncio
+async def test_observed_independent_send_timing_starts_five_separate_batches() -> None:
+    coordinator = IMBindingCoordinator()
+    clock = MutableClock()
+    coalescer = QQAttachmentTextCoalescer(
+        coordinator,
+        window_seconds=3.0,
+        sleep=NeverSleep(),
+        clock=clock,
+    )
+    provider = object()
+    observed_times = (0.0, 4.543, 8.077, 11.619, 14.965)
+    for index, observed_at in enumerate(observed_times, start=1):
+        clock.now = observed_at
+        decision = coalescer.offer(
+            provider=provider,
+            binding_key=key(),
+            session_id="SESSION-A",
+            event=event(
+                f"ATT-{index}",
+                attachments=[attachment(f"{index}.png", "image/png")],
+            ),
+            on_timeout=no_timeout,
+        )
+        expected_dispatches = [] if index == 1 else ["timeout"]
+        assert [item.reason for item in decision.dispatches] == expected_dispatches
+        if decision.dispatches:
+            assert decision.dispatches[0].source_message_ids == (f"ATT-{index - 1}",)
+        assert decision.held_source_message_ids == (f"ATT-{index}",)
+
+    assert await coalescer.cancel_all() == ("ATT-5",)
+
+
+@pytest.mark.asyncio
+async def test_default_without_hard_limit_keeps_batch_open_while_attachments_arrive() -> None:
+    coordinator = IMBindingCoordinator()
+    clock = MutableClock()
+    coalescer = QQAttachmentTextCoalescer(
+        coordinator,
+        window_seconds=3.0,
+        sleep=NeverSleep(),
+        clock=clock,
+    )
+    provider = object()
+
+    for index, observed_at in enumerate((0.0, 2.9, 5.8, 8.7), start=1):
+        clock.now = observed_at
+        decision = coalescer.offer(
+            provider=provider,
+            binding_key=key(),
+            session_id="SESSION-A",
+            event=event(
+                f"ATT-{index}",
+                attachments=[attachment(f"{index}.png", "image/png")],
+            ),
+            on_timeout=no_timeout,
+        )
+        assert decision.dispatches == ()
+
+    clock.now = 8.8
+    merged = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("TXT-4", content="一起看"),
+        on_timeout=no_timeout,
+    )
+
+    assert len(merged.dispatches) == 1
+    assert merged.dispatches[0].source_message_ids == (
+        "ATT-1",
+        "ATT-2",
+        "ATT-3",
+        "ATT-4",
+        "TXT-4",
+    )
+    assert coalescer.max_batch_seconds is None
+
+
+@pytest.mark.asyncio
+async def test_hard_limit_cannot_be_extended_by_more_attachments() -> None:
+    coordinator = IMBindingCoordinator()
+    clock = MutableClock()
+    coalescer = QQAttachmentTextCoalescer(
+        coordinator,
+        window_seconds=3.0,
+        max_batch_seconds=5.0,
+        sleep=NeverSleep(),
+        clock=clock,
+    )
+    provider = object()
+    coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("ATT-1", attachments=[attachment("one.png", "image/png")]),
+        on_timeout=no_timeout,
+    )
+    clock.now = 2.9
+    appended = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("ATT-2", attachments=[attachment("two.png", "image/png")]),
+        on_timeout=no_timeout,
+    )
+    assert appended.dispatches == ()
+
+    clock.now = 4.9
+    appended_again = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("ATT-3", attachments=[attachment("three.png", "image/png")]),
+        on_timeout=no_timeout,
+    )
+    assert appended_again.dispatches == ()
+
+    clock.now = 5.1
+    after_limit = coalescer.offer(
+        provider=provider,
+        binding_key=key(),
+        session_id="SESSION-A",
+        event=event("TXT-LATE", content="已经是下一条"),
+        on_timeout=no_timeout,
+    )
+
+    assert [item.reason for item in after_limit.dispatches] == ["timeout", "direct"]
+    assert after_limit.dispatches[0].source_message_ids == ("ATT-1", "ATT-2", "ATT-3")
+    assert after_limit.dispatches[1].event.message_id == "TXT-LATE"
 
 
 @pytest.mark.asyncio

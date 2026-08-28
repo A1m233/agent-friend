@@ -477,11 +477,14 @@ class QQAdapter:
         """SDK 每收一条 dispatch payload → parse → 仅 c2c 转发到 router。"""
         logger.info(
             "QQ inbound raw event_type=%s bind=%s raw_keys=%s raw_message_id=%s "
-            "raw_content_len=%d raw_attachment_count=%d",
+            "raw_timestamp=%s raw_scene_ext_count=%d raw_content_len=%d "
+            "raw_attachment_count=%d",
             event_type,
             self.bind_id,
             _raw_keys(raw),
             _raw_message_id(raw),
+            _raw_timestamp(raw),
+            _raw_scene_ext_count(raw),
             _raw_content_len(raw),
             _raw_attachment_count(raw),
         )
@@ -877,3 +880,16 @@ def _raw_attachment_count(raw: dict[str, Any]) -> int:
     data = _raw_data(raw)
     attachments = data.get("attachments")
     return len(attachments) if isinstance(attachments, list) else 0
+
+
+def _raw_timestamp(raw: dict[str, Any]) -> str:
+    value = _raw_data(raw).get("timestamp")
+    return str(value) if isinstance(value, (str, int)) else ""
+
+
+def _raw_scene_ext_count(raw: dict[str, Any]) -> int:
+    scene = _raw_data(raw).get("message_scene")
+    if not isinstance(scene, dict):
+        return 0
+    ext = scene.get("ext")
+    return len(ext) if isinstance(ext, list) else 0

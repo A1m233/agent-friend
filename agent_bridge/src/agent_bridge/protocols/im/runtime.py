@@ -524,8 +524,7 @@ class IMRuntime:
                 chat_scope=event.chat_scope,
                 chat_id=event.chat_id,
             )
-            async with self._coordinator.turn(binding_key):
-                await self._handle_or_coalesce_inbound(provider, event, binding_key)
+            await self._handle_or_coalesce_inbound(provider, event, binding_key)
 
         return cb
 
@@ -538,7 +537,8 @@ class IMRuntime:
         coalescer = self._inbound_coalescer
         binding = self._state.get_binding(binding_key)
         if coalescer is None or binding is None or not self._session_exists(binding.session_id):
-            await self._handle_bound_inbound(provider, event, binding_key)
+            async with self._coordinator.turn(binding_key):
+                await self._handle_bound_inbound(provider, event, binding_key)
             return
 
         session_id = binding.session_id
@@ -554,7 +554,7 @@ class IMRuntime:
                 token,
             ),
         )
-        await self._apply_coalescing_decision(
+        await self._apply_coalescing_decision_ordered(
             provider,
             binding_key,
             expected_session_id=session_id,
@@ -571,17 +571,42 @@ class IMRuntime:
         coalescer = self._inbound_coalescer
         if coalescer is None:
             return
-        async with self._coordinator.turn(binding_key):
-            decision = coalescer.expire(
-                provider=provider,
-                binding_key=binding_key,
-                session_id=session_id,
-                token=token,
-            )
+        decision = coalescer.expire(
+            provider=provider,
+            binding_key=binding_key,
+            session_id=session_id,
+            token=token,
+        )
+        await self._apply_coalescing_decision_ordered(
+            provider,
+            binding_key,
+            expected_session_id=session_id,
+            decision=decision,
+        )
+
+    async def _apply_coalescing_decision_ordered(
+        self,
+        provider: IMProvider,
+        binding_key: IMBindingKey,
+        *,
+        expected_session_id: str,
+        decision: CoalescingDecision,
+    ) -> None:
+        """Log short state changes immediately and serialize only ready user turns."""
+
+        if not decision.dispatches:
             await self._apply_coalescing_decision(
                 provider,
                 binding_key,
-                expected_session_id=session_id,
+                expected_session_id=expected_session_id,
+                decision=decision,
+            )
+            return
+        async with self._coordinator.turn(binding_key):
+            await self._apply_coalescing_decision(
+                provider,
+                binding_key,
+                expected_session_id=expected_session_id,
                 decision=decision,
             )
 
@@ -604,25 +629,38 @@ class IMRuntime:
                 ",".join(decision.dropped_message_ids),
             )
         if decision.held_message_id is not None and coalescer is not None:
+            hard_limit_ms = (
+                "none"
+                if coalescer.max_batch_seconds is None
+                else str(round(coalescer.max_batch_seconds * 1000))
+            )
             logger.info(
                 "IM inbound pending held im_type=%s provider_bind=%s chat_id=%s "
-                "message_id=%s window_ms=%d",
+                "message_id=%s reason=%s source_count=%d attachment_count=%d "
+                "batch_basis=arrival_silence idle_window_ms=%d hard_limit_ms=%s",
                 provider.type,
                 provider.bind_id,
                 binding_key.chat_id,
                 decision.held_message_id,
+                decision.held_reason or "unknown",
+                len(decision.held_source_message_ids),
+                decision.held_attachment_count,
                 round(coalescer.window_seconds * 1000),
+                hard_limit_ms,
             )
         for dispatch in decision.dispatches:
             if dispatch.reason != "direct":
                 logger.info(
                     "IM inbound pending settled im_type=%s provider_bind=%s chat_id=%s "
-                    "reason=%s source_message_ids=%s reply_message_id=%s waited_ms=%d",
+                    "reason=%s source_message_ids=%s source_count=%d attachment_count=%d "
+                    "reply_message_id=%s waited_ms=%d",
                     provider.type,
                     provider.bind_id,
                     binding_key.chat_id,
                     dispatch.reason,
                     ",".join(dispatch.source_message_ids),
+                    len(dispatch.source_message_ids),
+                    _attachment_count(dispatch.event),
                     dispatch.event.message_id,
                     round((dispatch.waited_seconds or 0.0) * 1000),
                 )
