@@ -291,3 +291,35 @@ def test_deepseek_long_session_mode_routes_safe_ref(monkeypatch: Any) -> None:
             "dialogue_turns": 3,
         }
     ]
+
+
+def test_deepseek_dynamic_context_mode_routes_safe_ref(monkeypatch: Any) -> None:
+    module = _load_module()
+    received: list[dict[str, Any]] = []
+
+    def fake_dynamic_context(**kwargs: Any) -> dict[str, Any]:
+        received.append(dict(kwargs))
+        return {"experiment": "dynamic-context-dialogue"}
+
+    monkeypatch.setattr(
+        module,
+        "_run_deepseek_dynamic_context_dialogue",
+        fake_dynamic_context,
+    )
+
+    result = module.run(
+        model="deepseek/deepseek-v4-flash",
+        history_chars=8_000,
+        settle_seconds=0,
+        deepseek_dynamic_context_dialogue=True,
+        source_session_ref="safe-ref",
+    )
+
+    assert result == {"experiment": "dynamic-context-dialogue"}
+    assert received == [
+        {
+            "model": "deepseek/deepseek-v4-flash",
+            "history_chars": 8_000,
+            "source_session_ref": "safe-ref",
+        }
+    ]

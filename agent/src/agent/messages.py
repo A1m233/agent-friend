@@ -31,6 +31,16 @@ _INTERNAL_PROMPT_MARKERS = {
     "</system_trigger>": "&lt;/system_trigger&gt;",
     "<agent_friend_runtime_context": "&lt;agent_friend_runtime_context",
     "</agent_friend_runtime_context>": "&lt;/agent_friend_runtime_context&gt;",
+    "<agent_friend_environment_context": "&lt;agent_friend_environment_context",
+    "</agent_friend_environment_context>": "&lt;/agent_friend_environment_context&gt;",
+    "<agent_friend_channel_context": "&lt;agent_friend_channel_context",
+    "</agent_friend_channel_context>": "&lt;/agent_friend_channel_context&gt;",
+    "<agent_friend_permission_context": "&lt;agent_friend_permission_context",
+    "</agent_friend_permission_context>": "&lt;/agent_friend_permission_context&gt;",
+    "<agent_friend_runtime_capabilities": "&lt;agent_friend_runtime_capabilities",
+    "</agent_friend_runtime_capabilities>": "&lt;/agent_friend_runtime_capabilities&gt;",
+    "<agent_friend_capability_catalog": "&lt;agent_friend_capability_catalog",
+    "</agent_friend_capability_catalog>": "&lt;/agent_friend_capability_catalog&gt;",
     "<agent_friend_host_advisory": "&lt;agent_friend_host_advisory",
     "</agent_friend_host_advisory>": "&lt;/agent_friend_host_advisory&gt;",
 }
@@ -179,7 +189,11 @@ def escape_user_messages_for_llm(messages: list[Message]) -> list[Message]:
     """
     escaped: list[Message] = []
     for message in messages:
-        if message.role != "user" or message.meta.get("synthetic") == "skill_instructions":
+        if (
+            message.role != "user"
+            or message.meta.get("synthetic") == "skill_instructions"
+            or message.meta.get("trusted_host_context") is True
+        ):
             escaped.append(message)
             continue
         escaped.append(

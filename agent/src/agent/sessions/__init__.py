@@ -6,6 +6,12 @@ JSONL 实现 / 业务编排管理器 / 异常体系。
 详见 docs/requirements/002-engine-session-management/。
 """
 
+from .cache_epoch import (
+    CacheEnvelopeState,
+    CacheEpochUpdate,
+    PreparedCacheEpoch,
+    SessionCacheEpoch,
+)
 from .catalog import (
     SessionCatalog,
     SessionDescriptor,
@@ -33,6 +39,18 @@ from .manager import (
     TitleGenerator,
 )
 from .metadata import SessionMetadata, SessionMetadataStore
+from .model_context import (
+    CalendarState,
+    ModelContextPlan,
+    ModelContextSnapshot,
+    SessionModelContext,
+)
+from .model_history import (
+    HistoryRelation,
+    HistoryUpdate,
+    PreparedModelHistory,
+    SessionModelHistory,
+)
 from .search import (
     SearchTextSegment,
     SessionMessageSearchResult,
@@ -52,14 +70,24 @@ from .store import (
 __all__ = [
     "ALLOWED_EVENT_TYPES",
     "SCHEMA_VERSION",
+    "CacheEnvelopeState",
+    "CacheEpochUpdate",
+    "CalendarState",
     "Event",
     "EventType",
+    "HistoryRelation",
+    "HistoryUpdate",
     "JsonlSessionStore",
+    "ModelContextPlan",
+    "ModelContextSnapshot",
     "NotifyingSessionStore",
     "NullSessionStore",
+    "PreparedCacheEpoch",
+    "PreparedModelHistory",
     "PromptBuilderFactory",
     "SearchTextSegment",
     "Session",
+    "SessionCacheEpoch",
     "SessionCatalog",
     "SessionChange",
     "SessionChangeBroker",
@@ -70,6 +98,8 @@ __all__ = [
     "SessionMessageSearchResult",
     "SessionMetadata",
     "SessionMetadataStore",
+    "SessionModelContext",
+    "SessionModelHistory",
     "SessionMutationContext",
     "SessionNotFoundError",
     "SessionPersistError",

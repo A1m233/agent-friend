@@ -128,3 +128,9 @@ def load_default_channel_section(session: Session, key: str = "channel") -> Chan
     """
     voice_template = _load_section_text(key)
     return ChannelSection(key=key, session=session, voice_template=voice_template)
+
+
+def load_default_channel_instruction() -> str:
+    """Load the voice-only instruction used by append-only channel context."""
+
+    return _load_section_text("channel")

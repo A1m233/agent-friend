@@ -17,6 +17,22 @@ def test_calendar_month_clamps_to_last_day() -> None:
     assert payload["result"] == "2024-02-29"
 
 
+def test_current_returns_the_hidden_action_time() -> None:
+    payload = _payload(
+        operation="current",
+        __agent_friend_runtime_now="2026-08-29T12:34:56+08:00",
+        __agent_friend_runtime_timezone="Asia/Shanghai",
+    )
+
+    assert payload == {
+        "operation": "current",
+        "current_datetime": "2026-08-29T12:34:56+08:00",
+        "date": "2026-08-29",
+        "timezone": "Asia/Shanghai",
+        "utc_offset": "+08:00",
+    }
+
+
 def test_difference_weekday_and_leap_year() -> None:
     assert _payload(operation="difference", start="2024-02-28", end="2024-03-01")["days"] == 2
     assert _payload(operation="weekday", date="2026-07-26")["weekday"] == "Sunday"

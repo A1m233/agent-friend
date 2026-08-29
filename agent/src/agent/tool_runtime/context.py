@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 from uuid import uuid4
 
 from ..filesystem.models import FilesystemAuthorizationLedger
+from ..time_provider import (
+    CallableTimeProvider,
+    SystemTimeProvider,
+    TimeProvider,
+    read_host_time,
+)
 from .evidence import (
     EvidenceSource,
     PublicEvidence,
@@ -22,10 +28,6 @@ from .evidence import (
 
 _URL_PATTERN = re.compile(r"https?://[^\s<>\"'，。；：！？、）】》」』]+", re.IGNORECASE)
 _TRAILING_PUNCTUATION = ".,;:!?)]}，。；：！？）】》"
-
-
-def _system_now() -> datetime:
-    return datetime.now().astimezone()
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,7 @@ class ToolRunContext:
     filesystem_authorizations: FilesystemAuthorizationLedger = field(
         default_factory=FilesystemAuthorizationLedger
     )
-    _clock: Callable[[], datetime] = field(default=_system_now, repr=False)
+    _time_provider: TimeProvider = field(default_factory=SystemTimeProvider, repr=False)
     _command_handles: dict[str, Callable[[str], None]] = field(default_factory=dict, repr=False)
     _command_handles_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _command_resources: dict[str, object] = field(default_factory=dict, repr=False)
@@ -98,29 +100,37 @@ class ToolRunContext:
         *,
         now: datetime | None = None,
         clock: Callable[[], datetime] | None = None,
+        time_provider: TimeProvider | None = None,
     ) -> ToolRunContext:
-        if now is not None and clock is not None:
-            raise ValueError("now and clock cannot be provided together")
-        effective_clock = (lambda: now) if now is not None else clock or _system_now
-        trusted_now, trusted_timezone = _read_trusted_clock(effective_clock)
+        provided = sum(value is not None for value in (now, clock, time_provider))
+        if provided > 1:
+            raise ValueError("now, clock and time_provider are mutually exclusive")
+        if now is not None:
+            fixed_now = now
+            provider: TimeProvider = CallableTimeProvider(lambda: fixed_now)
+        elif clock is not None:
+            provider = CallableTimeProvider(clock)
+        else:
+            provider = time_provider or SystemTimeProvider()
+        trusted_now, trusted_timezone = read_host_time(provider)
         context = cls(
             f"toolrun_{uuid4().hex}",
             trusted_now,
             trusted_timezone,
-            _clock=effective_clock,
+            _time_provider=provider,
         )
         context.register_user_text_evidence(user_input, persistable_only=False)
         return context
 
     def refresh_time(self) -> None:
-        """Refresh the trusted clock immediately before one model inference.
+        """Compatibility refresh for non-model callers; tools use ``read_action_time``."""
 
-        Tool calls emitted by that inference continue using this exact snapshot.  The
-        next model continuation refreshes it again, so long-running tool loops do not
-        inherit stale wall-clock time.
-        """
+        self.trusted_now, self.trusted_timezone = read_host_time(self._time_provider)
 
-        self.trusted_now, self.trusted_timezone = _read_trusted_clock(self._clock)
+    def read_action_time(self) -> tuple[datetime, str]:
+        """Read a fresh host value at the actual tool invocation boundary."""
+
+        return read_host_time(self._time_provider)
 
     def register_command_handle(self, process_id: str, terminate: Callable[[str], None]) -> None:
         """Bind an interactive process handle to this single tool-running turn."""
@@ -277,27 +287,22 @@ class ToolRunContext:
         )
 
     def render_for_model(self) -> str:
-        """Render the same trusted clock snapshot that hidden tool args receive.
+        """Render turn-scoped filesystem scopes without exposing a precise clock."""
 
-        The block is transient input for one inference and is never persisted in session
-        history. Keeping it on this object prevents model-visible and tool-visible time
-        from drifting apart for tool calls emitted by the same inference.
-        """
-        current_datetime = self.trusted_now.isoformat(timespec="seconds")
-        today = self.trusted_now.date()
-        runtime_time = (
-            f'<runtime_now at="{current_datetime}" tz="{self.trusted_timezone}" '
-            f'yesterday="{today - timedelta(days=1)}" today="{today}" '
-            f'tomorrow="{today + timedelta(days=1)}" />\n'
-            "本轮时间以此为准；日历锚点同样可信，历史日期不覆盖，勿反推。"
-        )
+        return self.render_filesystem_scopes()
+
+    def render_filesystem_scopes(self, scope_ids: Collection[str] | None = None) -> str:
+        """Render only the requested Skill scope delta, without absolute host paths."""
+
+        selected = frozenset(scope_ids) if scope_ids is not None else None
         skill_scopes = [
             capability
             for capability in self.filesystem_authorizations.scopes()
             if capability.source == "skill"
+            and (selected is None or capability.scope_id in selected)
         ]
         if not skill_scopes:
-            return runtime_time
+            return ""
         scope_lines = [
             '<filesystem_scopes lifetime="current_user_turn" absolute_paths_exposed="false">'
         ]
@@ -314,22 +319,4 @@ class ToolRunContext:
             "scope 不提供包外权限。</instruction>"
         )
         scope_lines.append("</filesystem_scopes>")
-        return runtime_time + "\n" + "\n".join(scope_lines)
-
-
-def _read_trusted_clock(clock: Callable[[], datetime]) -> tuple[datetime, str]:
-    trusted_now = clock()
-    if trusted_now.tzinfo is None:
-        raise ValueError("trusted now must be timezone-aware")
-    zone = getattr(trusted_now.tzinfo, "key", None) or _offset_text(trusted_now)
-    return trusted_now, str(zone)
-
-
-def _offset_text(value: datetime) -> str:
-    offset = value.utcoffset()
-    if offset is None:
-        return "UTC"
-    total = int(offset.total_seconds() // 60)
-    sign = "+" if total >= 0 else "-"
-    hours, minutes = divmod(abs(total), 60)
-    return f"{sign}{hours:02d}:{minutes:02d}"
+        return "\n".join(scope_lines)

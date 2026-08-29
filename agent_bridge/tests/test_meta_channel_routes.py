@@ -653,7 +653,7 @@ class TestAgUiRunChannelBoundary:
             for index, message in enumerate(messages)
             if message.get("content") == "这是啥情况"
         )
-        assert user_index < context_index
+        assert context_index < user_index
 
     def test_text_run_error_persists_run_error_event(
         self, client: TestClient, runtime: BridgeRuntime, monkeypatch: pytest.MonkeyPatch

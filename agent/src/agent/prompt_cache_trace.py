@@ -61,7 +61,19 @@ def _optional_nonnegative_int(value: Any) -> int | None:
 
 
 def _is_runtime_message(message: dict[str, Any]) -> bool:
-    return "<agent_friend_runtime_context" in _canonical_json(message)
+    rendered = _canonical_json(message)
+    return any(
+        marker in rendered
+        for marker in (
+            "<agent_friend_runtime_context",
+            "<agent_friend_environment_context",
+            "<agent_friend_channel_context",
+            "<agent_friend_permission_context",
+            "<agent_friend_runtime_capabilities",
+            "<agent_friend_capability_catalog",
+            "<agent_friend_host_advisory",
+        )
+    )
 
 
 def _position_bucket(positions: tuple[int, ...], total_items: int) -> str:
@@ -383,6 +395,8 @@ class PromptCacheTraceTracker:
         *,
         messages: list[dict[str, Any]],
         message_domains: tuple[str, ...] | None = None,
+        current_input_position: int | None = None,
+        current_memory_positions: tuple[int, ...] | None = None,
         tools: list[dict[str, Any]] | None,
         provider_model: str,
         api_base: str | None,
@@ -423,13 +437,36 @@ class PromptCacheTraceTracker:
             for message, domain in zip(messages, message_domains, strict=True)
             if str(message.get("role", "")) == "system" and domain == "system"
         ]
-        memory_positions = tuple(
+        all_memory_positions = tuple(
             index for index, domain in enumerate(message_domains) if domain == "memory"
         )
-        memory_item_digests = tuple(
-            _fingerprint("memory-item", messages[index]) for index in memory_positions
+        selected_memory_positions = (
+            all_memory_positions
+            if current_memory_positions is None
+            else tuple(
+                index
+                for index in current_memory_positions
+                if 0 <= index < len(messages) and message_domains[index] == "memory"
+            )
         )
-        memory_position_bucket = _position_bucket(memory_positions, len(messages))
+        memory_item_digests = tuple(
+            _fingerprint("memory-item", messages[index]) for index in selected_memory_positions
+        )
+        memory_positions = (
+            tuple(index - current_input_position for index in selected_memory_positions)
+            if current_input_position is not None
+            else selected_memory_positions
+        )
+        memory_position_bucket = (
+            "none"
+            if not selected_memory_positions
+            else "after_current_user"
+            if current_input_position is not None
+            and all(index > current_input_position for index in selected_memory_positions)
+            else "before_current_user"
+            if current_input_position is not None
+            else _position_bucket(selected_memory_positions, len(messages))
+        )
         core_messages = [
             message
             for message in messages

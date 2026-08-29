@@ -254,8 +254,14 @@ class TestSessionIdHeader:
         assert resp.status_code == 200
         assert _ScriptedLLMClient.seen_messages
         system_prompt = _ScriptedLLMClient.seen_messages[-1][0]["content"]
-        assert "正在通过电话和用户对话" in system_prompt
-        assert system_prompt.count("正在通过电话和用户对话") == 1
+        assert "正在通过电话和用户对话" not in system_prompt
+        channel_context = next(
+            message["content"]
+            for message in _ScriptedLLMClient.seen_messages[-1]
+            if "<agent_friend_channel_context" in message.get("content", "")
+        )
+        assert "正在通过电话和用户对话" in channel_context
+        assert channel_context.count("正在通过电话和用户对话") == 1
         assert any(
             '<surface type="voice_call" />' in message.get("content", "")
             for message in _ScriptedLLMClient.seen_messages[-1]

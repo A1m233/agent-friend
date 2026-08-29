@@ -325,9 +325,8 @@ class TestSystemPromptComposerDefault:
             "runtime_context",
         )
 
-    def test_default_with_session_has_fourteen_slots_in_fixed_order(self, tmp_path: Path) -> None:
-        """传入 session 时，channel 槽位被插入在 output_contract 与
-        runtime_context 之间（007 起新增）。"""
+    def test_default_with_session_keeps_channel_out_of_stable_slots(self, tmp_path: Path) -> None:
+        """Channel guidance is an append-only model-context contributor."""
         from agent import Session
 
         catalog = PersonaCatalog(external_dir=tmp_path)
@@ -350,7 +349,6 @@ class TestSystemPromptComposerDefault:
             "memory_consistency",
             "output_contract",
             "interaction_context_contract",
-            "channel",
             "runtime_context",
         )
 
@@ -475,8 +473,8 @@ class TestSystemPromptComposerDefault:
             _builtin_default_persona_id(), catalog=catalog
         ).compose()
 
-        assert len(output) == 9381
-        assert estimate_tokens([Message(role="system", content=output)]) == 7035
+        assert len(output) == 9606
+        assert estimate_tokens([Message(role="system", content=output)]) == 7204
 
     def test_default_replaceable(self, tmp_path: Path) -> None:
         catalog = PersonaCatalog(external_dir=tmp_path)
