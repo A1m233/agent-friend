@@ -160,14 +160,28 @@ def test_load_and_aggregate_preserves_denominators_and_unknowns(tmp_path: Path) 
         "ratio": 0.5,
     }
     assert summary["tokens"]["cache_write"] == {"sum": 10, "known": 1, "unknown": 2}
-    assert summary["cross_user_turn"] == {
-        "observations": 2,
-        "relations": {"rebase": 1, "strict_extension": 1},
-        "normal_tail_appends": 1,
-        "rebases": 1,
-        "breakpoint_domains": {"none": 1, "settings": 1},
-        "lost_prefix_tokens_estimate": {"sum": 120, "known": 2, "unknown": 0},
+    cross_turn = summary["cross_user_turn"]
+    assert cross_turn["observations"] == 2
+    assert cross_turn["relations"] == {"rebase": 1, "strict_extension": 1}
+    assert cross_turn["normal_tail_appends"] == 1
+    assert cross_turn["rebases"] == 1
+    assert cross_turn["breakpoint_domains"] == {"none": 1, "settings": 1}
+    assert cross_turn["lost_prefix_tokens_estimate"] == {
+        "sum": 120,
+        "known": 2,
+        "unknown": 0,
     }
+    opportunities = cross_turn["breakpoint_opportunities"]
+    assert opportunities["attribution"] == "first_divergence_domain"
+    assert opportunities["rebase_observations"] == 1
+    assert opportunities["lost_prefix_tokens_estimate"] == {
+        "sum": 120,
+        "known": 1,
+        "unknown": 0,
+    }
+    assert opportunities["domains"]["settings"]["lost_prefix_tokens_estimate"]["sum"] == 120
+    assert opportunities["ranking"][0]["domain"] == "settings"
+    assert report["schema_revision"] == 2
     assert report["segments"]["operation"]["conversation"]["observations"] == 2
     assert report["segments"]["comparison_scope"]["cross_user_turn"]["observations"] == 2
     assert report["segments"]["first_divergence_domain"]["settings"]["observations"] == 1
@@ -258,7 +272,9 @@ def test_operation_memory_segments_and_contributor_matrix_are_explicit() -> None
         "unknown": 1,
     }
     assert memory["observations"] == 1
+    assert memory["attribution"] == "first_divergence_domain"
     assert memory["first_divergence_memory"] == 1
+    assert memory["shadowed_by_earlier_breakpoint"] == 0
     assert memory["flags"]["memory_content_changed"]["true"] == 1
     assert memory["lost_prefix_tokens_estimate"]["sum"] == 120
     assert (
@@ -293,3 +309,119 @@ def test_operation_memory_segments_and_contributor_matrix_are_explicit() -> None
     markdown = module.render_markdown(report)
     assert "Background operation lineage: 2 observations" in markdown
     assert "Memory breakpoints: 1 observations" in markdown
+
+
+def test_cross_turn_breakpoints_are_token_weighted_and_mutually_attributed() -> None:
+    module = _load_module()
+    observations = [
+        _observation(
+            input_total=600,
+            cache_read=100,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="runtime",
+            lost_prefix_tokens_estimate=300,
+            memory_content_changed=True,
+        ),
+        _observation(
+            input_total=500,
+            cache_read=100,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="memory",
+            lost_prefix_tokens_estimate=200,
+            memory_position_changed=True,
+        ),
+        _observation(
+            input_total=400,
+            cache_read=0,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="skills",
+            lost_prefix_tokens_estimate=100,
+        ),
+        _observation(
+            input_total=700,
+            cache_read=0,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="model-route",
+            lost_prefix_tokens_estimate=400,
+        ),
+        _observation(
+            input_total=300,
+            cache_read=0,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="settings",
+            lost_prefix_tokens_estimate=None,
+        ),
+    ]
+
+    report = module.aggregate_observations(observations)
+    cross_turn = report["summary"]["cross_user_turn"]
+    opportunities = cross_turn["breakpoint_opportunities"]
+    domains = opportunities["domains"]
+
+    assert opportunities["lost_prefix_tokens_estimate"] == {
+        "sum": 1_000,
+        "known": 4,
+        "unknown": 1,
+    }
+    assert opportunities["estimate_coverage"] == {
+        "known": 4,
+        "unknown": 1,
+        "ratio": 0.8,
+    }
+    assert domains["model-route"]["lost_prefix_tokens_estimate"]["sum"] == 400
+    assert domains["runtime"]["lost_prefix_tokens_estimate"]["sum"] == 300
+    assert domains["memory"]["lost_prefix_tokens_estimate"]["sum"] == 200
+    assert domains["tools"]["lost_prefix_tokens_estimate"]["sum"] == 100
+    assert domains["settings"]["lost_prefix_tokens_estimate"] == {
+        "sum": 0,
+        "known": 0,
+        "unknown": 1,
+    }
+    assert domains["model-route"]["share_of_known_lost_prefix_tokens"] == 0.4
+    assert [item["domain"] for item in opportunities["ranking"]] == [
+        "model-route",
+        "runtime",
+        "memory",
+        "tools",
+        "settings",
+    ]
+
+    memory = report["summary"]["memory_breakpoints"]
+    assert memory["observations"] == 2
+    assert memory["first_divergence_memory"] == 1
+    assert memory["shadowed_by_earlier_breakpoint"] == 1
+    assert memory["lost_prefix_tokens_estimate"] == {
+        "sum": 200,
+        "known": 1,
+        "unknown": 0,
+    }
+
+    markdown = module.render_markdown(report)
+    assert "Cross-user-turn breakpoint opportunities" in markdown
+    assert "| 1 | model-route | 1 | 400 | 40.00% | 1 | 0 |" in markdown
+    assert "shadowed by earlier breakpoint 1" in markdown

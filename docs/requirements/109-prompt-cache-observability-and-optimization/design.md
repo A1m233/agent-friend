@@ -431,6 +431,21 @@ revision。bundle 消费者可以按 observation schema 解析；旧 bundle 没�
   `first_divergence_domain=memory` 的请求数和 lost-prefix token estimate；within-operation 不与
   cross-user-turn 混成同一分母。
 
+`agent-friend.prompt-cache-report` revision 2 将跨用户回合机会排名固定为以下契约：
+
+- 只有 `comparison_scope=cross_user_turn` 且 `cross_turn_relation=rebase` 的样本进入
+  `breakpoint_opportunities`；strict extension 不冒充未复用机会。
+- 每个 rebase 按 final-wire 权威的最早 `first_divergence_domain` 只进入一个桶，保证各域
+  lost-prefix token estimate 之和与 rebase 总和可对账。固定桶至少包含 runtime、memory、
+  tools/Skill、settings、model-route、system、persona 和 messages；缺少断点域进入
+  `unknown`，未知新域保留原标签。
+- 每个桶输出 rebase 请求数、lost-prefix token estimate 的 sum/known/unknown、占全部已知
+  损失 token 的份额；排名按已知损失 token 降序，同 token 时优先显示 unknown estimate
+  更多的桶，最后以 domain 名确定性排序。unknown estimate 只计 coverage，不当作零 token。
+- memory presence/content/position flags 是伴随变化，不是第二套 token 归因。若最早断点
+  是 runtime 等其它域，Memory 摘要只增加 `shadowed_by_earlier_breakpoint`，不再累加该请求
+  的 lost-prefix token；只有 `first_divergence_domain=memory` 才进入 Memory token 贡献。
+
 分段结果使用相同 aggregation 函数，保证总量可复算。单请求比例不做简单平均。成本只消费 observation
 中实际 provider/gateway cost；本期不内置动态价格表。时延只报告分布/相关观测，不下因果结论。
 
@@ -442,6 +457,19 @@ revision。bundle 消费者可以按 observation schema 解析；旧 bundle 没�
    provider/model、样本数、排除项和 schema revision；原始日志不提交。
 2. **受控 provider 场景**：复用 `prompt-cache-smoke`，覆盖首次请求、strict continuation、rebase、恢复等；
    固定模型、消息/tool 规模和调用量。
+
+为验证普通问答在真实长历史上的跨回合缓存，`prompt-cache-smoke` 另提供受控的
+natural-history 场景：
+
+- 只按带域分离的不可逆 session ref 选择用户明确允许复用的本机会话，验证模型一致、
+  无附件、达到最小历史字符数且有足够完整问答轮；候选查找与输出不显示标题或消息正文。
+- 将源 Session 只读加载后原样写入 `TemporaryDirectory` 中的独立 store，新 user/assistant 事件只落在
+  临时副本，不污染原会话、memory 或产品 session 时间线。
+- 副本上连续发送两个或三个固定、短输出、不需工具的普通问答；同一次 smoke 内的调用复用
+  同一 `Conversation` 实例，第二及后续请求必须产生 `comparison_scope=cross_user_turn`。三轮模式用于验证
+  连续追加后的缓存变化；不返回或归档提问与回答正文。
+- smoke 结果只保留安全 session ref、模型、历史字符/消息/工具事件数、调用量与
+  prompt-cache observation；原始 session id、标题、prompt、response 和逐 item digest 不输出。
 
 任何新真实 LLM 请求在运行前都必须说明模型、场景和粗略调用量，并取得本次授权。没有授权时，AC-8
 标为待执行，不把 fixture 或历史需求 102 的结果冒充本需求 baseline。
@@ -583,3 +611,6 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
 | 2026-08-29 | 初版确认：provider 事实 + runtime context 双层责任；统一 `PromptCacheObservation v2`；复用现有日志/session/bundle；新增 JSON/Markdown 工程聚合；真实 baseline 单独授权 | 是，已授权进入实现 |
 | 2026-08-29 | 用户将跨独立用户回合升格为硬要求：增加 comparison scope、session exact lineage、跨进程 domain-only 恢复、断点域/变化标记/损失估算及独立报告；逐 item digest 只在进程内存 | 是，增量实现并重跑 AC |
 | 2026-08-29 | 用户确认 memory/后台 operation 增量：non-stream 使用真实 final-wire capture；新增 `within_operation` 与独立 lineage；memory 通过不进入 prompt 的 domain sidecar 提供 presence/content/position flags，跨进程不保存内容 fingerprint | 是，新增 AC-15～AC-17 后直接进入实现 |
+| 2026-08-29 | 补充聚合报告 revision 2：`cross_user_turn/rebase` 按最早断点域互斥归因 lost-prefix token，输出固定机会桶、known/unknown coverage 与排名；Memory 被更早断点遮蔽时不重复累加 token | 是，已按本契约实现并重跑聚合 fixture 与项目门禁 |
+| 2026-08-29 | 用户确认在真实长会话副本上执行普通问答 smoke：不可逆 ref 选择、临时 store 隔离、固定两次无工具请求、只输出规模与 observation | 是，需扩展 smoke harness、补隐私/选择 fixture 并运行本次真实 LLM 验收 |
+| 2026-08-29 | 用户追加第三次普通问答 smoke；由于上次临时副本已删除，将 natural-history 模式扩为可选两轮/三轮，三轮需从同一源会话完整重放 | 是，补轮数路由回归后执行 3 次真实 LLM 调用 |

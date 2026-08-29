@@ -2,7 +2,7 @@
 
 ## 总体状态
 
-IN_PROGRESS
+COMPLETED
 
 ## 任务列表
 
@@ -24,6 +24,9 @@ IN_PROGRESS
 - [x] T16：扩展报告的 operation 与 memory 断点分段、unavailable reason 和 lost-prefix 贡献。
 - [x] T17：补齐后台 operation、memory 断点矩阵、跨进程降级、operation × contributor 覆盖矩阵和隐私回归。
 - [x] T18：重跑受影响测试与完整项目门禁；必要真实 LLM 验收按本需求既有授权在执行前告知模型、场景和调用量。
+- [x] T19：将 `cross_user_turn` 的 lost-prefix token 按最早断点域互斥加权，单独输出 runtime、memory、tools/Skill、settings、model-route 等机会桶、unknown coverage 和排序。
+- [x] T20：扩展 `prompt-cache-smoke` 的真实长会话副本模式，以不可逆 ref 选择无附件候选，在临时 store 中执行两次普通无工具问答并回写跨回合缓存证据。
+- [x] T21：为 natural-history smoke 增加可选三轮模式，从同一只读源会话完整重放三次普通无工具问答，比较第二/第三请求的 cache read 与断点。
 
 ## AC 验证
 
@@ -40,10 +43,10 @@ IN_PROGRESS
 - [x] AC-11 连续无工具独立用户回合 exact final-wire comparison。
 - [x] AC-12 persona/system、runtime、Skill/tools、settings、model-route 与 message rewrite 断点域矩阵。
 - [x] AC-13 session 续开与应用重启的 exact/domain-only 范围和降级状态。
-- [x] AC-14 跨回合 lineage 隐私、rebase token 贡献和断点原因聚合。
+- [x] AC-14 跨回合 lineage 隐私、rebase token 贡献和断点原因聚合：报告 revision 2 按最早断点域互斥加权，保留 unknown coverage 与可复算总和。
 - [x] AC-15 context compaction、memory extraction/reconciliation 的后台 operation lineage 与跨进程降级。
 - [x] AC-16 memory recall presence/content/position 跨回合断点矩阵。
-- [x] AC-17 operation × contributor 覆盖矩阵、operation/memory 聚合与专项隐私验证。
+- [x] AC-17 operation × contributor 覆盖矩阵、operation/memory 聚合与专项隐私验证：Memory 伴随变化被更早断点遮蔽时只计 shadowed observation，不重复归因 lost-prefix token。
 
 ## 实现日志
 
@@ -65,3 +68,11 @@ IN_PROGRESS
 | 2026-08-29 | 完成 non-stream final HTTP witness 与 `OperationRequestLineageTracker` | 同步 completion 复用 per-call instrumented HTTP client；compaction、base extraction、reconciliation 分别按 session/operation/call kind/contract revision 隔离，第二次成功调用为 `within_operation/exact_item`；fresh tracker 明确 unavailable reason，交错完成不覆盖新 anchor |
 | 2026-08-29 | 完成 memory contributor sidecar、跨回合 flags 与聚合 | sidecar 不进入 prompt，仅在 prepared items 与 final wire 可证明对齐时标记 `memory`；覆盖 empty/出现/消失/稳定/内容改变/位置移动，保留 previous/current domain；跨进程不保存 memory 内容 fingerprint，报告增加 operation/memory/unavailable reason/lost-token 分段和完整 contributor 矩阵 |
 | 2026-08-29 | AC-15～AC-17 确定性回归与三阶段项目门禁通过 | 受影响回归 `161 passed`，追加 fresh-tracker restart `5 passed`；最终 backend ruff/mypy + `2338 passed, 4 skipped`，frontend `670 passed` + production build，Rust `222 passed, 1 ignored` + release check。真实 HTTP 序列化由 MockTransport 覆盖；未新增真实 LLM 请求，因为本次验证的是采集/lineage/分类机制，既有 E-020/E-021 已覆盖真实 provider baseline |
+| 2026-08-29 | 重新打开 cross-user-turn 机会桶聚合 | 现有实现只有断点域请求数和全局 lost-prefix token 总和；Memory flags 样本即使被更早断点遮蔽也会进入 Memory token 总和。新增 T19，将 AC-14/AC-17 恢复为待验证 |
+| 2026-08-29 | 完成 cross-user-turn 机会桶互斥加权与报告 revision 2 | 固定 fixture 将 model-route/runtime/memory/tools 分别计为 `400/300/200/100`，总和 `1000`，settings 缺失 estimate 进入 unknown coverage；Memory 被 runtime 遮蔽时不重复累加 token。backend ruff/mypy + `2339 passed, 4 skipped`；frontend `670 passed` + production build；Rust `222 passed, 1 ignored` + release check。当前本机日志 v2 observations=`0`，只验证空分母，不作自然 baseline |
+| 2026-08-29 | 回补 Phase 2 聚合契约并准备真实长会话普通问答 smoke | `design.md` 明确 report revision 2 互斥归因/排序与 natural-history 临时副本契约；只读候选筛选得到 ref `24f9616a08f5`，DeepSeek、约 83.6k 文本字符、13 个完整问答轮、无附件，原会话正文和标题未输出 |
+| 2026-08-29 | 完成真实长会话普通问答 smoke | 首次尝试因候选筛选与 harness ref 域标签不一致在本地拦截，实际 LLM 调用 `0`；统一域标签并增加精确回归后，在 ref `24f9616a08f5` 的临时副本上执行 `deepseek/deepseek-v4-flash` 2 次。第二请求 `cache_read/input_total=32768/37093=88.34%`，`cross_user_turn/rebase`，公共前缀 `82/83` items，首断点 runtime，lost `1` item / 约 `446` tokens，messages 为正常追加未重写。原 session 仍为 118 events，`updated_at=2026-08-11T17:51:28.445874Z`；没有输出标题、正文或原 session id |
+| 2026-08-29 | natural-history smoke 增量回归与最终 backend 门禁通过 | 专项 `11 passed`，ref 修正后 `7 passed`；backend ruff/mypy + `2341 passed, 4 skipped`。frontend `670 passed` + build 与 Rust `222 passed, 1 ignored` 在本轮 Python-only smoke 增量前已通过，相应源码未变 |
+| 2026-08-29 | 扩展 natural-history 三轮模式并执行第三问 smoke | 路由回归 `7 passed`后从同一源会话重放 `deepseek/deepseek-v4-flash` 3 次。由于前一次两问 smoke 已预热 provider cache，本次三请求分别为 `36864/36980=99.69%`、`36736/37090=99.05%`、`36736/37180=98.81%`，不与 cold-start replicate 混合。第三请求 `cross_user_turn/rebase`，common prefix `84/85`，首断点 runtime，lost `1` item / 约 `436` tokens，messages 正常追加未重写 |
+| 2026-08-29 | 三轮增量最终 backend 门禁通过 | ruff/mypy + `2341 passed, 4 skipped`；既有 bilibili atexit 与 duplicate `uv.exe` warning 为非阻断项 |
+| 2026-08-29 | 用户确认需求验收完成并授权合入 `main`、推送远端 | T1～T21 与 AC-1～AC-17 全部完成；动态上下文 append-only 与按需载入作为后续独立需求处理 |

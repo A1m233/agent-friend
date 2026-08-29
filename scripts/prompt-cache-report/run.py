@@ -99,6 +99,114 @@ def _distribution(values: Iterable[float | None]) -> dict[str, float | int | Non
     }
 
 
+_CROSS_TURN_BREAKPOINT_DOMAINS = (
+    "runtime",
+    "memory",
+    "tools",
+    "settings",
+    "model-route",
+    "system",
+    "persona",
+    "messages",
+)
+_BREAKPOINT_DOMAIN_ALIASES = {
+    "skill": "tools",
+    "skills": "tools",
+    "model_route": "model-route",
+}
+
+
+def _breakpoint_domain(observation: Mapping[str, Any]) -> str:
+    raw = _nested(observation, "structure", "first_divergence_domain")
+    if not isinstance(raw, str) or not raw.strip():
+        return "unknown"
+    normalized = raw.strip()
+    return _BREAKPOINT_DOMAIN_ALIASES.get(normalized, normalized)
+
+
+def _lost_prefix_summary(items: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    values = [
+        _nonnegative_int(_nested(item, "structure", "lost_prefix_tokens_estimate"))
+        for item in items
+    ]
+    return {
+        "sum": sum(value for value in values if value is not None),
+        "known": sum(value is not None for value in values),
+        "unknown": sum(value is None for value in values),
+    }
+
+
+def _cross_turn_breakpoint_opportunities(
+    cross_turn: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Attribute each rebase's lost-prefix estimate to one earliest domain."""
+
+    rebases = [
+        item for item in cross_turn if _nested(item, "structure", "cross_turn_relation") == "rebase"
+    ]
+    grouped: dict[str, list[Mapping[str, Any]]] = {
+        domain: [] for domain in _CROSS_TURN_BREAKPOINT_DOMAINS
+    }
+    grouped["unknown"] = []
+    for item in rebases:
+        grouped.setdefault(_breakpoint_domain(item), []).append(item)
+
+    total = _lost_prefix_summary(rebases)
+    domains: dict[str, dict[str, Any]] = {}
+    for domain in (*_CROSS_TURN_BREAKPOINT_DOMAINS, "unknown"):
+        domain_items = grouped.pop(domain, [])
+        lost = _lost_prefix_summary(domain_items)
+        domains[domain] = {
+            "rebase_observations": len(domain_items),
+            "lost_prefix_tokens_estimate": lost,
+            "share_of_known_lost_prefix_tokens": (
+                lost["sum"] / total["sum"] if total["sum"] > 0 else None
+            ),
+        }
+    for domain in sorted(grouped):
+        domain_items = grouped[domain]
+        lost = _lost_prefix_summary(domain_items)
+        domains[domain] = {
+            "rebase_observations": len(domain_items),
+            "lost_prefix_tokens_estimate": lost,
+            "share_of_known_lost_prefix_tokens": (
+                lost["sum"] / total["sum"] if total["sum"] > 0 else None
+            ),
+        }
+
+    ranking = [
+        {
+            "domain": domain,
+            "rebase_observations": item["rebase_observations"],
+            "lost_prefix_tokens_estimate": item["lost_prefix_tokens_estimate"]["sum"],
+            "known_estimates": item["lost_prefix_tokens_estimate"]["known"],
+            "unknown_estimates": item["lost_prefix_tokens_estimate"]["unknown"],
+            "share_of_known_lost_prefix_tokens": item["share_of_known_lost_prefix_tokens"],
+        }
+        for domain, item in domains.items()
+        if item["rebase_observations"] > 0
+    ]
+    ranking.sort(
+        key=lambda item: (
+            -item["lost_prefix_tokens_estimate"],
+            -item["unknown_estimates"],
+            str(item["domain"]),
+        )
+    )
+    return {
+        "attribution": "first_divergence_domain",
+        "rebase_observations": len(rebases),
+        "lost_prefix_tokens_estimate": total,
+        "estimate_coverage": {
+            "known": total["known"],
+            "unknown": total["unknown"],
+            "ratio": total["known"] / len(rebases) if rebases else None,
+        },
+        "domains": domains,
+        "ranking": ranking,
+    }
+
+
 def _cross_user_turn_summary(
     observations: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -135,6 +243,7 @@ def _cross_user_turn_summary(
             "known": sum(value is not None for value in lost_estimates),
             "unknown": sum(value is None for value in lost_estimates),
         },
+        "breakpoint_opportunities": _cross_turn_breakpoint_opportunities(cross_turn),
     }
 
 
@@ -185,21 +294,34 @@ def _memory_breakpoint_summary(
         "memory_content_changed",
         "memory_position_changed",
     )
-    items = [
+    cross_turn = [
         item
         for item in observations
+        if _nested(item, "structure", "comparison_scope") == "cross_user_turn"
+    ]
+    items = [
+        item
+        for item in cross_turn
         if _nested(item, "structure", "first_divergence_domain") == "memory"
         or any(_nested(item, "structure", "change_flags", flag) is True for flag in flag_names)
     ]
-    lost_estimates = [
-        _nonnegative_int(_nested(item, "structure", "lost_prefix_tokens_estimate"))
+    attributed = [
+        item
+        for item in cross_turn
+        if _nested(item, "structure", "cross_turn_relation") == "rebase"
+        and _breakpoint_domain(item) == "memory"
+    ]
+    shadowed = [
+        item
         for item in items
+        if _nested(item, "structure", "cross_turn_relation") == "rebase"
+        and _breakpoint_domain(item) not in {"memory", "unknown"}
     ]
     return {
+        "attribution": "first_divergence_domain",
         "observations": len(items),
-        "first_divergence_memory": sum(
-            _nested(item, "structure", "first_divergence_domain") == "memory" for item in items
-        ),
+        "first_divergence_memory": len(attributed),
+        "shadowed_by_earlier_breakpoint": len(shadowed),
         "flags": {
             flag: {
                 "true": sum(
@@ -211,11 +333,7 @@ def _memory_breakpoint_summary(
             }
             for flag in flag_names
         },
-        "lost_prefix_tokens_estimate": {
-            "sum": sum(value for value in lost_estimates if value is not None),
-            "known": sum(value is not None for value in lost_estimates),
-            "unknown": sum(value is None for value in lost_estimates),
-        },
+        "lost_prefix_tokens_estimate": _lost_prefix_summary(attributed),
     }
 
 
@@ -349,7 +467,7 @@ def aggregate_observations(observations: Sequence[dict[str, Any]]) -> dict[str, 
     }
     return {
         "schema": "agent-friend.prompt-cache-report",
-        "schema_revision": 1,
+        "schema_revision": 2,
         "summary": _summary(observations),
         "segments": segments,
         "operation_contributor_matrix": PROMPT_CACHE_OPERATION_CONTRIBUTORS,
@@ -364,6 +482,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     operation_lineage = _nested(summary, "operation_lineage") or {}
     memory_breakpoints = _nested(summary, "memory_breakpoints") or {}
     lost = cross_turn.get("lost_prefix_tokens_estimate", {})
+    opportunities = cross_turn.get("breakpoint_opportunities", {})
     lines = [
         "# Prompt cache report",
         "",
@@ -399,15 +518,41 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "- Memory breakpoints: "
             f"{memory_breakpoints.get('observations', 0)} observations; "
             f"first divergence memory {memory_breakpoints.get('first_divergence_memory', 0)}; "
+            "shadowed by earlier breakpoint "
+            f"{memory_breakpoints.get('shadowed_by_earlier_breakpoint', 0)}; "
             "estimated lost prefix tokens "
             f"{memory_breakpoints.get('lost_prefix_tokens_estimate', {}).get('sum', 0)}"
         ),
+        (
+            "- Cross-user-turn lost-prefix estimate coverage: "
+            f"{opportunities.get('estimate_coverage', {}).get('known', 0)} / "
+            f"{opportunities.get('rebase_observations', 0)} "
+            f"= {_format_ratio(opportunities.get('estimate_coverage', {}).get('ratio'))} "
+            f"(unknown {opportunities.get('estimate_coverage', {}).get('unknown', 0)})"
+        ),
         "",
-        "## Input buckets",
+        "## Cross-user-turn breakpoint opportunities",
         "",
-        "| Bucket | Sum | Known | Unknown |",
-        "| --- | ---: | ---: | ---: |",
+        "| Rank | Breakpoint domain | Rebase calls | Estimated lost prefix tokens | "
+        "Share of known lost tokens | Known estimates | Unknown estimates |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    for rank, item in enumerate(opportunities.get("ranking", []), start=1):
+        lines.append(
+            f"| {rank} | {item['domain']} | {item['rebase_observations']} | "
+            f"{item['lost_prefix_tokens_estimate']} | "
+            f"{_format_ratio(item['share_of_known_lost_prefix_tokens'])} | "
+            f"{item['known_estimates']} | {item['unknown_estimates']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Input buckets",
+            "",
+            "| Bucket | Sum | Known | Unknown |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+    )
     tokens = summary.get("tokens", {})
     for field in ("input_total", "cache_read", "cache_write", "input_other", "output"):
         item = tokens.get(field, {})
