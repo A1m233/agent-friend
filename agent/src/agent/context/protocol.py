@@ -206,9 +206,10 @@ class ContextManager(Protocol):
        确实需要成为稳定前缀的上下文，不承载每回合变化的记忆或运行时事实
     4. ``pre_user_context`` 若提供，放在 ``history`` 之后、当前真实 user 之前；用于
        新增的 append-only world state，不得承载本轮用户级指令
-    5. ``turn_context`` 若提供，作为非持久化消息放在当前真实 user 之后；用于
-       当前回合的记忆召回、可信运行时事实和 surface，不参与历史摘要，也不截断
-       可持续增长的历史缓存前缀
+    5. ``turn_context`` 若提供，作为 model-only staged tail 放在当前真实 user 之后；
+       ContextManager 自身不持久化它。调用方在 provider 接受后可以把实际 build
+       纳入进程内 model history，使记忆召回等 item 后续保持原位置；带
+       ``model_only`` 的消息不进入持久化摘要正文
     6. ``trailing_user`` 若提供，rendered 为 ``role="user"`` 消息，位置在
        ``turn_context`` 之后、``trailing_system`` 之前。语义：仅活在 LLM 视图、
        **不落盘**——主动 source（``system_trigger``）注入触发信号专用（021）。与
@@ -339,7 +340,7 @@ def assemble_messages(
                 role="user",
                 content=new_user_input,
                 attachments=list(new_user_attachments or []),
-                meta={"current_input": True} if new_user_attachments else {},
+                meta={"current_input": True},
             )
         )
     if turn_context:

@@ -27,6 +27,7 @@ class DateTimeCalculateTool:
     execution_kind: ClassVar[str] = "parallel_read"
     timeout_seconds: ClassVar[float] = 5.0
     description: ClassVar[str] = (
+        "询问具体当前日期时间或现在几点时，必须使用 current；current 读取工具执行当下的宿主可信时钟。"
         "把绝对日期时间说成今天、明天、今晚、明早或昨天时，若运行时日历锚点不能直接覆盖目标，"
         "必须调用此工具的 calendar_relation。"
         "calendar_relation 只传绝对目标到 target，参考时间由运行时自动提供；"
@@ -44,6 +45,7 @@ class DateTimeCalculateTool:
                 "type": "string",
                 "description": "日期时间计算类型；每种 operation 必须满足对应参数分支。",
                 "enum": [
+                    "current",
                     "difference",
                     "add",
                     "subtract",
@@ -96,6 +98,9 @@ class DateTimeCalculateTool:
         },
         "required": ["operation"],
         "oneOf": [
+            {
+                "properties": {"operation": {"const": "current"}},
+            },
             {
                 "properties": {"operation": {"const": "difference"}},
                 "required": ["start", "end"],
@@ -163,6 +168,18 @@ class DateTimeCalculateTool:
         fold = args.get("fold")
         if fold not in {None, 0, 1}:
             raise _DateTimeInputError("invalid_datetime", "fold 只接受 0 或 1")
+
+        if operation == "current":
+            if runtime_now is None:
+                raise _DateTimeInputError("invalid_datetime", "current 需要可信宿主时钟")
+            local_now = runtime_now.astimezone(_parse_timezone(runtime_zone))
+            return {
+                "operation": operation,
+                "current_datetime": local_now.isoformat(),
+                "date": local_now.date().isoformat(),
+                "timezone": runtime_zone,
+                "utc_offset": _offset_text(local_now),
+            }
 
         if operation == "weekday":
             raw = args.get("date") or args.get("datetime")

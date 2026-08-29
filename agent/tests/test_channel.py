@@ -232,15 +232,15 @@ class TestComposerDefaultWithSession:
         output = composer.compose()
         assert "正在通过电话和用户对话" not in output
 
-    def test_voice_session_channel_section_yields_voice_text(self, tmp_path: Path) -> None:
-        """voice session 装配后，compose 输出应包含通道指令文本。"""
+    def test_voice_session_does_not_change_stable_system_prompt(self, tmp_path: Path) -> None:
+        """Voice guidance is appended as model context, not rendered in the stable head."""
         catalog = PersonaCatalog(external_dir=tmp_path)
         s = Session.new(title="t", persona="default", model="m", channel="voice")
         composer = SystemPromptComposer.default(
             BUILTIN_DEFAULT_PERSONA_ID, catalog=catalog, session=s
         )
         output = composer.compose()
-        assert "正在通过电话和用户对话" in output
+        assert "正在通过电话和用户对话" not in output
 
 
 # ===== Conversation.switch_channel =====

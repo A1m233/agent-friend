@@ -269,6 +269,9 @@ class SummarizingContextManager:
 
         older = history[:cut]
         tail = history[cut:]
+        summarizable_older = [
+            message for message in older if not message.meta.get("model_only", False)
+        ]
         raw = ""
         summary_source: list[Message] = []
         attempts = 0
@@ -276,7 +279,11 @@ class SummarizingContextManager:
         for attempt in range(MAX_SUMMARY_CONTEXT_RETRIES + 1):
             attempts = attempt + 1
             ratio = 0.75**attempt
-            summary_source = self._bounded_summary_source(older, runtime, ratio=ratio)
+            summary_source = self._bounded_summary_source(
+                summarizable_older,
+                runtime,
+                ratio=ratio,
+            )
             if not summary_source:
                 return self._fallback_result(
                     history, parts, runtime, reason="summary_input_too_large"

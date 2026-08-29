@@ -58,7 +58,7 @@ def test_search_results_must_be_registered_by_successful_tool_result() -> None:
     assert authorization.source_call_id == "call-1"
 
 
-def test_transient_context_renders_the_same_trusted_clock_snapshot() -> None:
+def test_tool_run_context_does_not_render_a_precise_clock_for_the_model() -> None:
     context = ToolRunContext.create(
         "今天发工资",
         now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -66,16 +66,10 @@ def test_transient_context_renders_the_same_trusted_clock_snapshot() -> None:
 
     rendered = context.render_for_model()
 
-    assert 'at="2026-07-28T22:04:13+08:00"' in rendered
-    assert 'tz="Asia/Shanghai"' in rendered
-    assert 'yesterday="2026-07-27"' in rendered
-    assert 'today="2026-07-28"' in rendered
-    assert 'tomorrow="2026-07-29"' in rendered
-    assert "本轮时间以此为准" in rendered
-    assert "勿反推" in rendered
+    assert rendered == ""
 
 
-def test_refresh_time_uses_a_fresh_snapshot_for_the_next_inference() -> None:
+def test_action_time_reads_a_fresh_host_value_without_model_rendering() -> None:
     moments = iter(
         [
             datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -84,10 +78,12 @@ def test_refresh_time_uses_a_fresh_snapshot_for_the_next_inference() -> None:
     )
     context = ToolRunContext.create("继续", clock=lambda: next(moments))
 
-    context.refresh_time()
+    action_now, action_timezone = context.read_action_time()
 
-    assert context.trusted_now.isoformat() == "2026-07-28T22:06:40+08:00"
-    assert 'at="2026-07-28T22:06:40+08:00"' in context.render_for_model()
+    assert context.trusted_now.isoformat() == "2026-07-28T22:04:13+08:00"
+    assert action_now.isoformat() == "2026-07-28T22:06:40+08:00"
+    assert action_timezone == "Asia/Shanghai"
+    assert context.render_for_model() == ""
 
 
 def test_ledger_rejects_unsupported_schemes_and_ports() -> None:

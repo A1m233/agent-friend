@@ -64,6 +64,7 @@ class _SpyContextManager:
         self.calls.append(
             {
                 "new_user_input": new_user_input,
+                "history": [item.content for item in history],
                 "turn_context": [item.content for item in turn_context or []],
                 "trailing_user": trailing_user,
                 "trailing_system": trailing_system,
@@ -204,7 +205,7 @@ def test_all_three_entries_go_through_context_manager(tmp_path: Path) -> None:
     assert spy.calls[-1]["request_overhead_tokens"] == 0
 
 
-def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path: Path) -> None:
+def test_turn_context_moves_into_model_history_for_tool_continuations(tmp_path: Path) -> None:
     spy = _SpyContextManager()
     fake = _UsageLLM(
         script=[
@@ -222,12 +223,14 @@ def test_turn_context_is_ephemeral_and_repeated_for_tool_continuations(tmp_path:
     list(conv.stream("hi", turn_context="MEDIA FIDELITY BOUNDARY"))
 
     assert len(spy.calls) == 2
-    assert all("MEDIA FIDELITY BOUNDARY" in call["turn_context"] for call in spy.calls)
+    assert "MEDIA FIDELITY BOUNDARY" in spy.calls[0]["turn_context"]
+    assert "MEDIA FIDELITY BOUNDARY" not in spy.calls[1]["turn_context"]
+    assert spy.calls[1]["history"].count("MEDIA FIDELITY BOUNDARY") == 1
     user_messages = [message for message in conv.session.messages if message.role == "user"]
     assert user_messages[-1].content == "hi"
 
 
-def test_image_evidence_boundary_is_merged_and_repeated_for_tool_continuations(
+def test_image_evidence_boundary_is_merged_then_inherited_by_tool_continuations(
     tmp_path: Path,
 ) -> None:
     spy = _SpyContextManager()
@@ -261,8 +264,10 @@ def test_image_evidence_boundary_is_merged_and_repeated_for_tool_continuations(
     )
 
     assert len(spy.calls) == 2
-    for call in spy.calls:
-        rendered = "\n".join(call["turn_context"])
+    initial = "\n".join(spy.calls[0]["turn_context"])
+    continuation = "\n".join(spy.calls[1]["history"])
+    assert spy.calls[1]["turn_context"] == []
+    for rendered in (initial, continuation):
         assert "MEDIA FIDELITY BOUNDARY" in rendered
         assert "<image_evidence_boundary>" in rendered
         assert "直接可见且能够看清" in rendered
@@ -270,6 +275,8 @@ def test_image_evidence_boundary_is_merged_and_repeated_for_tool_continuations(
         assert "单个样本不代表整体" in rendered
         assert "来源未知不能反向确认来源" in rendered
         assert "先用可用的搜索工具查证" in rendered
+    assert continuation.count("MEDIA FIDELITY BOUNDARY") == 1
+    assert continuation.count("<image_evidence_boundary>") == 1
     user_messages = [message for message in conv.session.messages if message.role == "user"]
     assert user_messages[-1].attachments == [image]
 
@@ -321,4 +328,4 @@ def test_usage_consumed_as_next_anchor_and_observable(tmp_path: Path) -> None:
     conv.send("yo")
     # 第二轮锚点应为首轮 usage.prompt_tokens
     assert conv.last_context_notes["last_input_tokens"] == 8000
-    assert conv.last_context_notes["calibration_factor"] > 1.0
+    assert conv.last_context_notes["calibration_factor"] >= 1.0

@@ -50,6 +50,7 @@ from agent.scheduled_tasks import (
     ScheduledTaskStore,
 )
 from agent.scheduling import ScheduleCoordinator
+from agent.time_provider import SystemTimeProvider, TimeProvider
 from agent.todos import ReminderDriver, TodoService, TodoStore
 from agent.tools import ToolRegistry
 from runtime_config.build_identity import runtime_build_identity
@@ -184,6 +185,7 @@ class BridgeRuntime:
     prompt_builder_factory: Callable[[str], MarkdownPromptBuilder]
     default_persona: str
     default_model: str
+    time_provider: TimeProvider = field(default_factory=SystemTimeProvider)
     attachment_store: AttachmentStore | None = None
     llm_client_factory: LanguageModelFactory | None = None
     memory: Memory | None = None
@@ -263,6 +265,7 @@ class BridgeRuntime:
             context_manager_factory=default_context_manager,
             tool_registry=self.tool_registry,
             skill_service=self.skill_service,
+            time_provider=self.time_provider,
         )
 
     def close(self) -> None:
@@ -293,6 +296,7 @@ def _make_persistent_session_manager(
     session_change_broker: SessionChangeBroker | None = None,
     multimodal_adapter: MultimodalInputAdapter | None = None,
     skill_service: SkillCatalogService | None = None,
+    time_provider: TimeProvider | None = None,
 ) -> SessionManager:
     from agent.paths import command_workspaces_dir
 
@@ -308,6 +312,7 @@ def _make_persistent_session_manager(
         message_renderer=(multimodal_adapter.render_message if multimodal_adapter else None),
         skill_service=skill_service,
         command_workspaces_root=command_workspaces_dir(),
+        time_provider=time_provider,
     )
 
 
@@ -534,13 +539,14 @@ def build_runtime(
         except Exception:
             logger.warning("memory warmup failed; continuing startup", exc_info=True)
 
+    time_provider = SystemTimeProvider()
     todo_store = TodoStore(settings.todos_db or settings.sessions_dir.parent / "todos" / "todos.db")
-    todo_service = TodoService(todo_store)
+    todo_service = TodoService(todo_store, clock=time_provider.now)
     scheduled_task_store = ScheduledTaskStore(
         settings.scheduled_tasks_db
         or settings.sessions_dir.parent / "scheduled-tasks" / "scheduled-tasks.db"
     )
-    scheduled_task_service = ScheduledTaskService(scheduled_task_store)
+    scheduled_task_service = ScheduledTaskService(scheduled_task_store, clock=time_provider.now)
     presence_registry = PresenceRegistry()
     social_platform_service = make_default_social_platform_service()
 
@@ -587,6 +593,7 @@ def build_runtime(
         session_change_broker,
         multimodal_adapter,
         skill_service,
+        time_provider,
     )
 
     turn_coordinator = SessionTurnCoordinator()
@@ -693,6 +700,7 @@ def build_runtime(
             llm_client_factory=llm_client_factory,
             default_persona=default_persona,
             default_model=default_model,
+            time_provider=time_provider,
             attachment_store=attachment_store,
             memory=memory,
             recall_buffer=recall_buffer,
@@ -813,6 +821,7 @@ def build_runtime(
         llm_client_factory=llm_client_factory,
         default_persona=default_persona,
         default_model=default_model,
+        time_provider=time_provider,
         attachment_store=attachment_store,
         memory=memory,
         recall_buffer=recall_buffer,

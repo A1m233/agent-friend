@@ -804,9 +804,9 @@ def test_ac34_35_compaction_persisted_and_reused(
     caplog: Any,
 ) -> None:
     """AC-3.4/3.5：超阈值触发即落 compaction 事件；下一轮复用 prior_summary 不重摘。"""
-    # window 10000 → threshold 8000；折叠后的 summary + tail 留有稳定余量，
+    # window 14000 leaves headroom for the stable prompt plus initial model context；
     # 故第二轮复用折叠不再触发；首轮 seed 大量历史仍会越过阈值触发一次。
-    llm = _FakeLLM(context_window=10_000)
+    llm = _FakeLLM(context_window=14_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -839,7 +839,7 @@ def test_ac34_35_compaction_persisted_and_reused(
 
 
 def test_conversation_emits_completed_only_after_compaction_is_persisted(tmp_path: Path) -> None:
-    llm = _FakeLLM(context_window=10_000)
+    llm = _FakeLLM(context_window=14_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -857,7 +857,7 @@ def test_conversation_emits_completed_only_after_compaction_is_persisted(tmp_pat
 def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
     """AC-3.3：摘要连续失败跳闸退化 FIFO，对话不中断、不崩。"""
     # Keep fixed prompt headroom while leaving the seeded history over budget.
-    llm = _FakeLLM(context_window=12_000, fail=True)
+    llm = _FakeLLM(context_window=14_000, fail=True)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -866,14 +866,15 @@ def test_ac33_circuit_breaker_degrades_without_crash(tmp_path: Path) -> None:
     for _ in range(4):
         assert conv.send("x") == "ok"
 
-    # 摘要一直失败，但对话每轮都正常完成；3 次后跳闸不再调 complete
-    assert llm.complete_calls == 3
+    # The first failed compaction accepts an explicit FIFO rewrite; later turns
+    # continue from that smaller model history instead of reconstructing old input.
+    assert llm.complete_calls == 1
     assert _count_compactions(session) == 0
 
 
 def test_compaction_checkpoint_is_reused_after_real_instance_restart(tmp_path: Path) -> None:
     # Leave enough fixed-prompt headroom for the post-compaction summary + recent tail.
-    llm = _FakeLLM(context_window=10_000)
+    llm = _FakeLLM(context_window=14_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -915,7 +916,7 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
     # Keep the fixture comfortably above the default system-prompt baseline so
     # the emergency rebuild can still create (rather than FIFO-trim past) a
     # compaction candidate after the provider rejects the first request.
-    llm = _ContextRejectOnceLLM(context_window=12_000)
+    llm = _ContextRejectOnceLLM(context_window=14_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )
@@ -930,7 +931,7 @@ def test_provider_context_rejection_discards_candidate_and_commits_one_retry(
 
 def test_invalid_checkpoint_boundary_is_ignored_and_rebuilt(tmp_path: Path) -> None:
     # Leave enough fixed-prompt headroom for rebuilding a valid checkpoint.
-    llm = _FakeLLM(context_window=10_000)
+    llm = _FakeLLM(context_window=14_000)
     conv, session, store = _make_conversation(
         tmp_path, fake_llm=llm, context_manager=SummarizingContextManager()
     )

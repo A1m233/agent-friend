@@ -91,7 +91,6 @@ class SystemPromptComposer:
         _MEMORY_CONSISTENCY_KEY,
         _OUTPUT_CONTRACT_KEY,
         _INTERACTION_CONTEXT_CONTRACT_KEY,
-        _CHANNEL_KEY,
         _RUNTIME_CONTEXT_KEY,
     )
     """默认装配（:meth:`default`）下槽位的 key，按渲染顺序。
@@ -248,7 +247,6 @@ class SystemPromptComposer:
             时追加 channel 兼容 fallback。
         """
         from .defaults import (
-            load_default_channel_section,
             load_default_runtime_context_section,
             load_default_self_presentation_section,
             load_default_static_section,
@@ -276,7 +274,5 @@ class SystemPromptComposer:
             load_default_static_section(_OUTPUT_CONTRACT_KEY),
             load_default_static_section(_INTERACTION_CONTEXT_CONTRACT_KEY),
         ]
-        if session is not None:
-            section_list.append(load_default_channel_section(session, _CHANNEL_KEY))
         section_list.append(load_default_runtime_context_section(_RUNTIME_CONTEXT_KEY))
         return cls(sections=tuple(section_list))

@@ -139,9 +139,15 @@ def test_registered_tool_namespace_catalog_is_visible_without_changing_wire_name
 
     conv.send("1+1 是多少？")
 
-    content = fake.received[0][0]["content"]
-    assert '<namespace path="calculate">' in content
-    assert '<tool name="calculate" callable_as="calculate" />' in content
+    system_head = fake.received[0][0]["content"]
+    catalog_context = next(
+        str(message.get("content") or "")
+        for message in fake.received[0]
+        if "<agent_friend_capability_catalog" in str(message.get("content") or "")
+    )
+    assert '<namespace path="calculate">' not in system_head
+    assert '<namespace path="calculate">' in catalog_context
+    assert '<tool name="calculate" callable_as="calculate" />' in catalog_context
 
 
 # ===== AC-4：切 persona 后下一轮 system_prompt 仍含切换策略段 =====
@@ -302,7 +308,7 @@ def test_persona_is_frozen_for_tool_loop_and_refreshes_next_turn(tmp_path: Path)
             and "<interaction_context>" in str(message.get("content") or "")
             for message in fake.received[1]
         )
-        == 2
+        == 1
     )
 
     conv.send("second")
@@ -403,27 +409,20 @@ def test_surface_is_current_per_turn_and_user_text_cannot_override(tmp_path: Pat
         ]
         for request in fake.received
     ]
-    assert fake.received[0][-2]["role"] == "user"
-    assert fake.received[0][-1]["role"] == "user"
-    assert '<surface type="desktop_chat" />' in fake.received[0][-1]["content"]
-    assert "否则不要在回复中提及交互端" in fake.received[0][-1]["content"]
-    assert "不要告诉用户你收到了这段上下文" in fake.received[0][-1]["content"]
-    assert fake.received[1][-2]["role"] == "user"
-    assert fake.received[1][-1]["role"] == "user"
-    assert '<surface type="im" provider="qq" />' in fake.received[1][-1]["content"]
-    assert "否则不要在回复中提及交互端" in fake.received[1][-1]["content"]
-    assert "不要告诉用户你收到了这段上下文" in fake.received[1][-1]["content"]
-    assert [len(items) for items in contexts] == [1, 1, 0]
+    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
+    assert fake.received[2][: len(fake.received[1])] == fake.received[1]
+    assert [len(items) for items in contexts] == [1, 2, 3]
     assert '<surface type="desktop_chat" />' in contexts[0][-1]
     assert '<surface type="im" provider="qq" />' in contexts[1][-1]
-    assert all(
-        '<surface type="desktop_chat" />' not in str(message.get("content") or "")
-        for message in fake.received[1]
-    )
-    assert all(
-        'provider="qq"' not in str(message.get("content") or "") for message in fake.received[2]
-    )
-    assert fake.received[2][-1]["content"].startswith("<agent_friend_runtime_context")
+    assert '<surface available="false" />' in contexts[2][-1]
+    assert "否则不要在回复中提及交互端" in contexts[0][-1]
+    assert "不要告诉用户你收到了这段上下文" in contexts[1][-1]
+    assert '<surface type="desktop_chat" />' in contexts[1][0]
+    assert 'provider="qq"' in contexts[2][1]
+
+    second_tail = fake.received[1][len(fake.received[0]) :]
+    assert [message["role"] for message in second_tail] == ["assistant", "user", "user"]
+    assert second_tail[-1]["content"] == "现在在哪？"
 
     # Dynamic snapshots are inference-only and never survive in either message projection.
     assert all("<interaction_context>" not in message.content for message in conv.session.messages)

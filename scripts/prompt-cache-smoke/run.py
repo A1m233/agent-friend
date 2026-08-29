@@ -8,11 +8,14 @@ import json
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
+from agent.tools.builtin.datetime_calculate import DateTimeCalculateTool
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 
 from agent import (
@@ -24,6 +27,7 @@ from agent import (
     PersonaCatalog,
     PersonaNotFoundError,
     Session,
+    ToolRegistry,
     personas_dir,
     sessions_dir,
 )
@@ -79,6 +83,14 @@ class _LongSessionStats:
     complete_turns: int
     tool_events: int
     attachments: int
+
+
+@dataclass
+class _MutableTimeProvider:
+    value: datetime
+
+    def now(self) -> datetime:
+        return self.value
 
 
 def _client_for_model(runtime_config: Any, model: str) -> Any:
@@ -795,6 +807,21 @@ def _latest_prompt_cache_observation(
     return dict(observation)
 
 
+def _new_prompt_cache_observations(session: Session, *, start_index: int) -> list[dict[str, Any]]:
+    """Collect content-free provider observations attached to newly appended events."""
+
+    observations: list[dict[str, Any]] = []
+    for event in session.events[start_index:]:
+        usage = event.meta.get("context_usage")
+        cache_diagnostics = usage.get("cache_diagnostics") if isinstance(usage, dict) else None
+        observation = (
+            cache_diagnostics.get("observation") if isinstance(cache_diagnostics, dict) else None
+        )
+        if isinstance(observation, dict):
+            observations.append(dict(observation))
+    return observations
+
+
 def _run_deepseek_long_session_dialogue(
     *,
     model: str,
@@ -868,6 +895,148 @@ def _run_deepseek_long_session_dialogue(
         "experiment": "deepseek_long_session_ordinary_dialogue",
         "source_session": asdict(stats),
         "request_cache_read_ratios": cache_read_ratios,
+        "observations": observations,
+    }
+
+
+def _run_deepseek_dynamic_context_dialogue(
+    *,
+    model: str,
+    history_chars: int,
+    source_session_ref: str,
+) -> dict[str, Any]:
+    """Exercise current-time, cross-day and timezone deltas on a long-session clone."""
+
+    source_store = JsonlSessionStore(sessions_dir())
+    source_session, stats = _select_long_session(
+        store=source_store,
+        model=model,
+        source_session_ref=source_session_ref,
+        min_history_chars=history_chars,
+    )
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
+    client = runtime_config.llm_client_factory(source_session.current_model_config)
+    clock = _MutableTimeProvider(
+        datetime(2026, 8, 30, 23, 59, 40, tzinfo=ZoneInfo("Asia/Shanghai"))
+    )
+    phases: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    with TemporaryDirectory(prefix="agent-friend-prompt-cache-dynamic-context-") as temp_dir:
+        clone_store = JsonlSessionStore(base_dir=Path(temp_dir) / "sessions")
+        clone_store.create(source_session)
+        session = clone_store.load(source_session.session_id)
+        catalog = PersonaCatalog(external_dir=personas_dir())
+        persona_id = _active_persona_id(session, catalog)
+        conversation = Conversation(
+            session=session,
+            store=clone_store,
+            llm_client=client,
+            context_manager=NaiveContextManager(),
+            prompt_builder=MarkdownPromptBuilder(persona_id=persona_id, catalog=catalog),
+            prompt_builder_factory=lambda selected_persona_id: MarkdownPromptBuilder(
+                persona_id=selected_persona_id,
+                catalog=catalog,
+            ),
+            catalog=catalog,
+            tool_registry=ToolRegistry([DateTimeCalculateTool()]),
+            time_provider=clock,
+        )
+        scenarios = (
+            (
+                "current_time_tool",
+                "这是工具能力验收。必须先调用 datetime_calculate，operation=current；"
+                "拿到结果后只用一句话回答当前日期、时间和时区，不得猜测。",
+            ),
+            (
+                "cross_day",
+                "宿主日历已经跨日。请只根据当前可见的粗粒度 calendar context，"
+                "用一句话确认本地日期与 timezone；不需要调用时间工具。",
+            ),
+            (
+                "timezone_change",
+                "宿主 timezone 已改变。请只根据当前可见的粗粒度 calendar context，"
+                "用一句话确认本地日期与 timezone；不需要调用时间工具。",
+            ),
+        )
+        for index, (phase, prompt) in enumerate(scenarios, start=1):
+            if phase == "cross_day":
+                clock.value = datetime(
+                    2026,
+                    8,
+                    31,
+                    0,
+                    1,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                )
+            elif phase == "timezone_change":
+                clock.value = datetime(
+                    2026,
+                    8,
+                    30,
+                    9,
+                    5,
+                    tzinfo=ZoneInfo("America/Los_Angeles"),
+                )
+            start_index = len(session.events)
+            list(conversation.stream(prompt, run_id=f"dynamic-context-{index}"))
+            phase_observations = _new_prompt_cache_observations(
+                session,
+                start_index=start_index,
+            )
+            observations.extend(phase_observations)
+            model_history = conversation._session_model_history.snapshot()
+            calendar_items = [
+                message.content
+                for message in model_history
+                if 'contributor="calendar"' in message.content
+            ]
+            phases.append(
+                {
+                    "phase": phase,
+                    "provider_calls": len(phase_observations),
+                    "calendar_items": len(calendar_items),
+                    "latest_calendar_matches_host": (
+                        f'date="{clock.value.date().isoformat()}"' in calendar_items[-1]
+                        and f'timezone="{getattr(clock.value.tzinfo, "key", "")}"'
+                        in calendar_items[-1]
+                    ),
+                }
+            )
+
+        current_requests = [
+            event
+            for event in session.events
+            if event.type == "tool_call_request"
+            and event.payload.get("tool_name") == "datetime_calculate"
+            and event.payload.get("args", {}).get("operation") == "current"
+        ]
+        current_results = [
+            event
+            for event in session.events
+            if event.type == "tool_call_result"
+            and event.payload.get("tool_name") == "datetime_calculate"
+        ]
+        action_time_matches = False
+        if len(current_requests) == 1 and len(current_results) == 1:
+            result_payload = json.loads(str(current_results[0].payload.get("content") or "{}"))
+            action_time_matches = (
+                result_payload.get("current_datetime") == "2026-08-30T23:59:40+08:00"
+            )
+        precise_runtime_markers = sum(
+            marker in message.content
+            for message in conversation._session_model_history.snapshot()
+            for marker in ("<runtime_now", "<agent_friend_runtime_context")
+        )
+
+    return {
+        "model": model,
+        "real_llm_calls": len(observations),
+        "experiment": "deepseek_long_session_dynamic_context_dialogue",
+        "source_session": asdict(stats),
+        "phases": phases,
+        "current_tool_calls": len(current_requests),
+        "current_tool_action_time_matches": action_time_matches,
+        "precise_runtime_context_markers": precise_runtime_markers,
         "observations": observations,
     }
 
@@ -968,6 +1137,7 @@ def run(
     deepseek_tool_loop_ab: bool = False,
     deepseek_cross_user_turn: bool = False,
     deepseek_long_session_dialogue: bool = False,
+    deepseek_dynamic_context_dialogue: bool = False,
     source_session_ref: str | None = None,
     dialogue_turns: int = 2,
 ) -> dict[str, Any]:
@@ -993,6 +1163,14 @@ def run(
                 history_chars=history_chars,
                 source_session_ref=source_session_ref,
                 dialogue_turns=dialogue_turns,
+            )
+        if deepseek_dynamic_context_dialogue:
+            if source_session_ref is None:
+                raise ValueError("dynamic-context dialogue requires a safe source session ref")
+            return _run_deepseek_dynamic_context_dialogue(
+                model=model,
+                history_chars=history_chars,
+                source_session_ref=source_session_ref,
             )
         if deepseek_shape_matrix:
             return _run_deepseek_shape_matrix(
@@ -1055,6 +1233,11 @@ def main() -> None:
         help="clone one approved local long session and send two ordinary no-tool questions",
     )
     parser.add_argument(
+        "--deepseek-dynamic-context-dialogue",
+        action="store_true",
+        help="clone one approved long session and exercise current-time/day/timezone deltas",
+    )
+    parser.add_argument(
         "--source-session-ref",
         help="content-free safe ref of the approved local source session",
     )
@@ -1082,14 +1265,18 @@ def main() -> None:
             args.deepseek_tool_loop_ab,
             args.deepseek_cross_user_turn,
             args.deepseek_long_session_dialogue,
+            args.deepseek_dynamic_context_dialogue,
         )
     )
     if deepseek_modes > 1:
         parser.error("choose only one DeepSeek experiment mode")
-    if args.deepseek_long_session_dialogue and not args.source_session_ref:
-        parser.error("--deepseek-long-session-dialogue requires --source-session-ref")
-    if args.source_session_ref and not args.deepseek_long_session_dialogue:
-        parser.error("--source-session-ref is only valid for long-session dialogue")
+    source_session_mode = (
+        args.deepseek_long_session_dialogue or args.deepseek_dynamic_context_dialogue
+    )
+    if source_session_mode and not args.source_session_ref:
+        parser.error("selected long-session mode requires --source-session-ref")
+    if args.source_session_ref and not source_session_mode:
+        parser.error("--source-session-ref is only valid for long-session modes")
     if args.dialogue_turns != 2 and not args.deepseek_long_session_dialogue:
         parser.error("--dialogue-turns is only configurable for long-session dialogue")
     print(
@@ -1104,6 +1291,7 @@ def main() -> None:
                 deepseek_tool_loop_ab=args.deepseek_tool_loop_ab,
                 deepseek_cross_user_turn=args.deepseek_cross_user_turn,
                 deepseek_long_session_dialogue=args.deepseek_long_session_dialogue,
+                deepseek_dynamic_context_dialogue=(args.deepseek_dynamic_context_dialogue),
                 source_session_ref=args.source_session_ref,
                 dialogue_turns=args.dialogue_turns,
             ),

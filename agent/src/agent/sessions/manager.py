@@ -27,8 +27,13 @@ from llm_providers import LanguageModelFactory, ModelRuntimeConfig, default_mode
 from ..approvals.models import SessionApprovalModeState
 from ..command_runtime.workspace import session_workspace_path
 from ..errors import AgentError
+from ..prompt_cache_trace import PromptCacheTraceTracker
+from ..time_provider import SystemTimeProvider, TimeProvider
+from .cache_epoch import SessionCacheEpoch
 from .changes import SessionChangeBroker
 from .metadata import SessionMetadataStore
+from .model_context import SessionModelContext
+from .model_history import SessionModelHistory
 from .session import Session
 from .store import SessionStore, SessionSummary
 
@@ -53,6 +58,17 @@ TitleGenerator = Callable[[Session], str]
 PromptBuilderFactory = Callable[[str], "PromptBuilder"]
 ContextManagerFactory = Callable[[], "ContextManager"]
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass
+class _SessionRuntimeState:
+    """Process-local execution state shared by reconstructed Conversations."""
+
+    model_history: SessionModelHistory
+    model_context: SessionModelContext
+    context_manager: ContextManager
+    prompt_cache_trace_tracker: PromptCacheTraceTracker
+    cache_epoch: SessionCacheEpoch
 
 
 def _default_title(now: datetime | None = None) -> str:
@@ -100,6 +116,7 @@ class SessionManager:
         message_renderer: MessageRenderer | None = None,
         skill_service: SkillCatalogService | None = None,
         command_workspaces_root: Path | None = None,
+        time_provider: TimeProvider | None = None,
     ) -> None:
         self._store = store
         self._llm_client_factory = llm_client_factory
@@ -112,6 +129,8 @@ class SessionManager:
         self._session_change_broker = session_change_broker
         self._message_renderer = message_renderer
         self._skill_service = skill_service
+        self._time_provider = time_provider or SystemTimeProvider()
+        self._runtime_states: dict[str, _SessionRuntimeState] = {}
         self._command_workspaces_root = (
             command_workspaces_root.resolve() if command_workspaces_root is not None else None
         )
@@ -127,6 +146,11 @@ class SessionManager:
         """Return host security metadata without adding it to conversation events."""
 
         self._store.load(session_id)
+        return self._approval_mode_state_without_load(session_id)
+
+    def _approval_mode_state_without_load(self, session_id: str) -> SessionApprovalModeState:
+        """Read optional metadata for an already-bound persistent or transient session."""
+
         if self._metadata_store is None:
             return SessionApprovalModeState()
         metadata = self._metadata_store.get(session_id)
@@ -289,6 +313,7 @@ class SessionManager:
     def delete(self, session_id: str) -> None:
         """删除指定会话（hard delete）。"""
         self._store.delete(session_id)
+        self._runtime_states.pop(session_id, None)
         if self._metadata_store is not None:
             self._metadata_store.delete(session_id)
         self._delete_command_workspace(session_id)
@@ -428,9 +453,9 @@ class SessionManager:
 
         llm_client = self._llm_client_factory(session.current_model_config)
 
-        # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session，
-        # 使 ChannelSection 槽位能读 session.current_channel。如果 builder 没有
-        # ``with_session`` 方法（自定义实现），保持原行为——向后兼容。
+        # 007 起：把 factory 包一层，让返回的 PromptBuilder 实例绑当前 session。
+        # 动态 channel 已移出稳定 system prompt，但自定义 builder 仍可能依赖
+        # ``with_session``，因此保留兼容绑定。
         base_factory = self._prompt_builder_factory
 
         def _session_aware_factory(pid: str) -> PromptBuilder:
@@ -442,13 +467,28 @@ class SessionManager:
             return builder
 
         prompt_builder = _session_aware_factory(persona_id)
-        # 009：每个会话独立产一个 context manager 实例（摘要策略持会话级状态）。
-        context_manager = self._context_manager_factory()
+        runtime_state = self._runtime_states.get(session.session_id)
+        if runtime_state is None:
+            runtime_state = _SessionRuntimeState(
+                model_history=SessionModelHistory.from_session(
+                    session,
+                    reason=("process_resume_degraded" if session.llm_messages else "session_start"),
+                ),
+                model_context=SessionModelContext(),
+                context_manager=self._context_manager_factory(),
+                prompt_cache_trace_tracker=PromptCacheTraceTracker(),
+                cache_epoch=SessionCacheEpoch(
+                    reason=("process_resume_degraded" if session.llm_messages else "session_start")
+                ),
+            )
+            self._runtime_states[session.session_id] = runtime_state
+        else:
+            runtime_state.model_history.reconcile(session)
         return Conversation(
             session=session,
             store=self._store,
             llm_client=llm_client,
-            context_manager=context_manager,
+            context_manager=runtime_state.context_manager,
             prompt_builder=prompt_builder,
             llm_client_factory=self._llm_client_factory,
             prompt_builder_factory=_session_aware_factory,
@@ -463,4 +503,12 @@ class SessionManager:
             post_turn_external=post_turn_external,
             message_renderer=self._message_renderer,
             skill_service=self._skill_service,
+            session_model_history=runtime_state.model_history,
+            session_model_context=runtime_state.model_context,
+            prompt_cache_trace_tracker=runtime_state.prompt_cache_trace_tracker,
+            cache_epoch=runtime_state.cache_epoch,
+            time_provider=self._time_provider,
+            approval_mode_provider=lambda: self._approval_mode_state_without_load(
+                session.session_id
+            ),
         )

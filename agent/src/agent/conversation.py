@@ -73,6 +73,7 @@ from memory import (
     Utterance,
 )
 
+from .approvals.models import SessionApprovalModeState
 from .attachments import AttachmentRef
 from .command_runtime.tools import (
     COMMAND_RUN_CONTEXT_ARG,
@@ -138,8 +139,17 @@ from .prompt_cache_trace import (
     PromptRequestTrace,
 )
 from .prompts import PromptBuilder
-from .run_transcript import RunContinuationProjection
-from .sessions import Event, Session, SessionStore
+from .sessions import (
+    Event,
+    ModelContextPlan,
+    PreparedCacheEpoch,
+    PreparedModelHistory,
+    Session,
+    SessionCacheEpoch,
+    SessionModelContext,
+    SessionModelHistory,
+    SessionStore,
+)
 from .skills import (
     ActivatedSkill,
     SkillCatalogService,
@@ -149,11 +159,13 @@ from .skills import (
     render_activation_issue,
     render_runtime_capability_notice,
 )
+from .system_prompt.defaults import load_default_channel_instruction
 from .system_prompt.sections import PromptChannel
 from .system_prompt.surfaces import (
     DEFAULT_INTERACTION_CONTEXT_RENDERER,
     InteractionSurfaceId,
 )
+from .time_provider import SystemTimeProvider, TimeProvider, read_host_time
 from .tool_runtime import (
     ToolBatchExecutor,
     ToolProgressTracker,
@@ -385,6 +397,12 @@ class Conversation:
         message_renderer: MessageRenderer | None = None,
         tool_run_context_factory: Callable[[str], ToolRunContext] | None = None,
         skill_service: SkillCatalogService | None = None,
+        session_model_history: SessionModelHistory | None = None,
+        session_model_context: SessionModelContext | None = None,
+        prompt_cache_trace_tracker: PromptCacheTraceTracker | None = None,
+        cache_epoch: SessionCacheEpoch | None = None,
+        time_provider: TimeProvider | None = None,
+        approval_mode_provider: Callable[[], SessionApprovalModeState] | None = None,
     ):
         self._session = session
         self._store = store
@@ -403,14 +421,28 @@ class Conversation:
         self._tool_post_hook = tool_post_hook
         self._post_turn_external = post_turn_external
         self._message_renderer = message_renderer
-        self._tool_run_context_factory = tool_run_context_factory or ToolRunContext.create
+        self._time_provider = time_provider or SystemTimeProvider()
+        self._tool_run_context_factory = tool_run_context_factory or (
+            lambda user_input: ToolRunContext.create(
+                user_input,
+                time_provider=self._time_provider,
+            )
+        )
         self._skill_service = skill_service
+        self._session_model_history = session_model_history or SessionModelHistory.from_session(
+            session
+        )
+        self._session_model_context = session_model_context or SessionModelContext()
+        self._approval_mode_provider = approval_mode_provider
         self._active_skill_turn_snapshot: SkillTurnSnapshot | None = None
         self._active_skill_selections: tuple[SkillSelection, ...] = ()
         self._tool_run_policy = tool_run_policy or _resolve_tool_run_policy()
         self._tool_batch_executor = ToolBatchExecutor(self._tool_run_policy.max_parallel_read_tools)
         self._active_tool_run_state: ToolRunState | None = None
         self._active_tool_run_context: ToolRunContext | None = None
+        self._filesystem_scope_context_id: str | None = None
+        self._announced_filesystem_scope_ids: set[str] = set()
+        self._pending_filesystem_scope_announcements: dict[str, set[str]] = {}
         self._last_memory_context: MemoryContext | None = None
         # 009 M1：上下文管理的会话级运行时状态
         # ``_last_input_tokens``：上轮真实 usage.prompt_tokens 锚点（消费 LLMTurnDone.usage
@@ -419,7 +451,9 @@ class Conversation:
         self._last_input_tokens: int | None = None
         self._calibration_by_model: dict[str, float] = {}
         self._pending_context_usage: dict[str, Any] | None = None
-        self._prompt_cache_trace_tracker = PromptCacheTraceTracker()
+        self._prompt_cache_trace_tracker = prompt_cache_trace_tracker or PromptCacheTraceTracker()
+        self._cache_epoch = cache_epoch or SessionCacheEpoch()
+        self._last_cache_epoch_changed = False
         self._prompt_item_domain_by_identity: dict[str, str] = {}
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
         self._unscoped_llm_call_index = 0
@@ -443,9 +477,12 @@ class Conversation:
         self._run_id_override: str | None = None
         self._turn_context_override = ""
         self._turn_prompt_builder: PromptBuilder | None = None
-        self._active_run_transcript: RunContinuationProjection | None = None
-        self._runtime_snapshot_sequence = -1
-        self._last_runtime_snapshot_rendered: dict[str, Any] | None = None
+        self._last_built_model_messages: list[Message] | None = None
+        self._last_built_system_prompt = ""
+        self._pending_model_context_plan: ModelContextPlan | None = None
+        self._pending_model_history: PreparedModelHistory | None = None
+        self._pending_cache_epoch: PreparedCacheEpoch | None = None
+        self._last_model_history_relation = "baseline"
         # 007 起 ``_system_prompt`` 不再缓存；通道由本轮 override 优先决定。
         # ``__init__`` 时仍 build 一次做客户端预检（persona 不存在等错误尽早暴露）。
         prompt_builder.build()
@@ -479,6 +516,14 @@ class Conversation:
     def session(self) -> Session:
         """绑定的会话实例（只读引用，请勿直接修改 events）。"""
         return self._session
+
+    @property
+    def cache_epoch_diagnostics(self) -> dict[str, object]:
+        return {
+            "generation": self._cache_epoch.generation,
+            "reason": self._cache_epoch.reason,
+            "exact_process_continuation": (self._cache_epoch.reason != "process_resume_degraded"),
+        }
 
     @property
     def history(self) -> list[Message]:
@@ -540,6 +585,21 @@ class Conversation:
     def _active_model_config(self) -> ModelRuntimeConfig:
         snapshot = self._run_model_snapshot
         return snapshot.config if snapshot is not None else self._session.current_model_config
+
+    def _active_provider_route_identity(self) -> str:
+        """Return an in-memory route identity without including credentials."""
+
+        client = self._active_llm_client()
+        spec = getattr(client, "spec", None)
+        route = {
+            "model_id": self._active_model_id(),
+            "client_type": f"{type(client).__module__}.{type(client).__qualname__}",
+            "provider_id": getattr(spec, "provider_id", None),
+            "provider_model": getattr(spec, "model", None),
+            "product_model_id": getattr(spec, "product_model_id", None),
+            "api_base": getattr(spec, "api_base", None),
+        }
+        return json.dumps(route, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @property
     def last_memory_context(self) -> MemoryContext | None:
@@ -641,8 +701,9 @@ class Conversation:
 
         Args:
             user_input: 用户输入文本。
-            turn_context: 仅在当前运行的模型视图中生效、不落盘的系统上下文；
-                工具续轮会重复注入，适合承载通道已验证的输入边界。
+            turn_context: 不写业务 Session 的 model-only 系统上下文。首个 provider
+                请求接受后会进入进程内 session model history，工具续轮及后续请求
+                从历史自然继承，不重复注入。
 
         Yields:
             :class:`TextDelta` / :class:`ToolCallRequest` / :class:`ToolCallResult` /
@@ -660,6 +721,7 @@ class Conversation:
             ``KeyboardInterrupt`` 等 :class:`BaseException` 会被 ``finally``
             通过 :func:`sys.exc_info` 识别为中断，按"部分回复"语义落盘。
         """
+        self._session_model_history.reconcile(self._session)
         turn_attachments = list(attachments or [])
         requested_references = parse_quoted_text_references(references or [])
         previous_prompt_channel = self._prompt_channel_override
@@ -703,7 +765,7 @@ class Conversation:
         # Freeze the pre-turn model view before committing the durable user event.  The
         # first request still receives ``new_user_input`` separately, so reading live
         # session history after the append would send the same query twice.
-        prefix_history = self._messages_from_events(selection_history)
+        prefix_history = self._session_model_history.snapshot()
         prefix_prior_summary = self._derive_prior_summary_from_events(selection_history)
         if skill_turn_snapshot is not None:
             effective_skill_selections = self._normalize_selections(skill_selections)
@@ -867,6 +929,7 @@ class Conversation:
         ``turn_rewrite`` marker 和新 user 事件，让旧最后一轮在 active projection
         中失活，再进行可能较慢的上下文构建。后续生成失败或取消都保留已提交的新分支。
         """
+        self._session_model_history.reconcile(self._session)
         plan = self._latest_active_user_rewrite_plan(
             expected_user_uuid=expected_user_uuid,
             expected_user_content=expected_user_content,
@@ -1031,9 +1094,6 @@ class Conversation:
         previous_turn_prompt_builder = self._turn_prompt_builder
         previous_run_model_snapshot = self._run_model_snapshot
         previous_tool_run_context = self._active_tool_run_context
-        previous_projection = self._active_run_transcript
-        previous_snapshot_sequence = self._runtime_snapshot_sequence
-        previous_snapshot_rendered = self._last_runtime_snapshot_rendered
         self._prompt_channel_override = channel
         self._prompt_surface_override = surface
         self._run_id_override = run_id
@@ -1044,10 +1104,6 @@ class Conversation:
         self._turn_prompt_builder = self._snapshot_prompt_builder()
         self._run_model_snapshot = self._capture_run_model_snapshot()
         self._active_tool_run_context = self._make_tool_run_context("")
-        projection = RunContinuationProjection(continuation_id=run_id or str(uuid4()))
-        self._active_run_transcript = projection
-        self._runtime_snapshot_sequence = -1
-        self._last_runtime_snapshot_rendered = None
 
         persona_name = self._session.current_persona_name
         persona_id = self._session.current_persona_id
@@ -1100,7 +1156,7 @@ class Conversation:
                     self._consume_usage(ev)
                     turn_done = ev
 
-            self._append_assistant_event(
+            assistant_event = self._append_assistant_event(
                 "".join(current_text_buf),
                 partial=False,
                 persona_name=persona_name,
@@ -1110,6 +1166,13 @@ class Conversation:
             current_text_persisted = True
             if turn_done is not None and turn_done.reasoning_state is not None:
                 self._append_provider_reasoning_event(turn_done.reasoning_state)
+            self._append_completed_provider_assistant(
+                turn_done,
+                text="".join(current_text_buf),
+                event=assistant_event,
+            )
+            if turn_done is not None:
+                self._session_model_history.note_provider_request()
             yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
         finally:
             interrupted = sys.exc_info()[0] is not None
@@ -1131,10 +1194,6 @@ class Conversation:
             self._turn_prompt_builder = previous_turn_prompt_builder
             self._run_model_snapshot = previous_run_model_snapshot
             self._active_tool_run_context = previous_tool_run_context
-            projection.close()
-            self._active_run_transcript = previous_projection
-            self._runtime_snapshot_sequence = previous_snapshot_sequence
-            self._last_runtime_snapshot_rendered = previous_snapshot_rendered
 
     def continue_after_external_action(
         self,
@@ -1304,15 +1363,8 @@ class Conversation:
         previous_run_model_snapshot = self._run_model_snapshot
         previous_run_id = self._run_id_override
         previous_tool_run_context = self._active_tool_run_context
-        previous_projection = self._active_run_transcript
-        previous_snapshot_sequence = self._runtime_snapshot_sequence
-        previous_snapshot_rendered = self._last_runtime_snapshot_rendered
         self._run_model_snapshot = self._capture_run_model_snapshot()
         self._active_tool_run_context = self._make_tool_run_context(system_prompt_addendum)
-        projection = RunContinuationProjection(continuation_id=run_id or str(uuid4()))
-        self._active_run_transcript = projection
-        self._runtime_snapshot_sequence = -1
-        self._last_runtime_snapshot_rendered = None
         try:
             yield from self._dispatch_system_turn_impl(
                 source_kind=source_kind,
@@ -1327,10 +1379,6 @@ class Conversation:
             self._run_model_snapshot = previous_run_model_snapshot
             self._run_id_override = previous_run_id
             self._active_tool_run_context = previous_tool_run_context
-            projection.close()
-            self._active_run_transcript = previous_projection
-            self._runtime_snapshot_sequence = previous_snapshot_sequence
-            self._last_runtime_snapshot_rendered = previous_snapshot_rendered
 
     def _dispatch_system_turn_impl(
         self,
@@ -1430,7 +1478,7 @@ class Conversation:
 
         # 3. 按 visibility 分支落事件
         if output_visibility == "user":
-            self._append_assistant_event(
+            assistant_event = self._append_assistant_event(
                 full_text,
                 partial=False,
                 persona_name=persona_name,
@@ -1439,6 +1487,13 @@ class Conversation:
             )
             if turn_done is not None and turn_done.reasoning_state is not None:
                 self._append_provider_reasoning_event(turn_done.reasoning_state)
+            self._append_completed_provider_assistant(
+                turn_done,
+                text=full_text,
+                event=assistant_event,
+            )
+            if turn_done is not None:
+                self._session_model_history.note_provider_request()
             yield TurnDone(stop_reason="end_turn", total_tool_calls=0)
             self._run_id_override = previous_run_id
             return
@@ -1456,6 +1511,14 @@ class Conversation:
             source_kind=source_kind,
             persona_id=persona_id or "",
         )
+        self._append_completed_provider_assistant(
+            turn_done,
+            text=full_text,
+            event=None,
+            timestamp=now,
+        )
+        if turn_done is not None:
+            self._session_model_history.note_provider_request()
         if self._memory is not None and full_text:
             fragment = ConversationFragment(
                 session_id=self._session.session_id,
@@ -1703,7 +1766,11 @@ class Conversation:
         return Message(
             role="system",
             content=snapshot.rendered_catalog.content,
-            meta={"synthetic": "skill_catalog_state"},
+            meta={
+                "synthetic": "skill_catalog_state",
+                "model_only": True,
+                "prompt_cache_domain": "runtime",
+            },
         )
 
     def _skill_context_payloads(self) -> list[dict[str, Any]]:
@@ -1771,10 +1838,47 @@ class Conversation:
             Message(
                 role="user",
                 content=str(payload["rendered"]),
-                meta={"synthetic": "skill_instructions"},
+                meta={
+                    "synthetic": "skill_instructions",
+                    "model_only": True,
+                    "prompt_cache_domain": "runtime",
+                },
             )
             for payload in self._skill_context_payloads()
         ]
+
+    def _filesystem_scope_delta_message(self) -> Message | None:
+        context = self._active_tool_run_context
+        if context is None:
+            return None
+        if self._filesystem_scope_context_id != context.run_id:
+            self._filesystem_scope_context_id = context.run_id
+            self._announced_filesystem_scope_ids.clear()
+            self._pending_filesystem_scope_announcements.clear()
+        current_ids = {
+            capability.scope_id
+            for capability in context.filesystem_authorizations.scopes()
+            if capability.source == "skill"
+        }
+        new_ids = current_ids - self._announced_filesystem_scope_ids
+        if not new_ids:
+            return None
+        content = context.render_filesystem_scopes(new_ids)
+        if not content:
+            return None
+        message = Message(
+            role="user",
+            content=content,
+            meta={
+                "model_only": True,
+                "trusted_host_context": True,
+                "synthetic": "skill_filesystem_scope_delta",
+                "prompt_cache_domain": "runtime",
+                "scope_lifetime": "current_user_turn",
+            },
+        )
+        self._pending_filesystem_scope_announcements[message.uuid] = set(new_ids)
+        return message
 
     def _skill_activation_status_events(self) -> Iterator[ConversationEvent]:
         """Expose caller-selected Skill activation truth without leaking instructions."""
@@ -1810,7 +1914,11 @@ class Conversation:
                 "budget_profile": snapshot.rendered_catalog.budget_profile,
                 "content": snapshot.rendered_catalog.content,
             },
-            meta={"model": self._session.current_model},
+            meta={
+                "model": self._session.current_model,
+                "model_only": True,
+                "prompt_cache_domain": "runtime",
+            },
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
@@ -1822,7 +1930,13 @@ class Conversation:
                 uuid=str(uuid4()),
                 ts=datetime.now(UTC),
                 payload={**payload, "user_event_id": user_event_id},
-                meta=self._run_event_meta({"model": self._session.current_model}),
+                meta=self._run_event_meta(
+                    {
+                        "model": self._session.current_model,
+                        "model_only": True,
+                        "prompt_cache_domain": "runtime",
+                    }
+                ),
             )
             self._store.append_event(self._session.session_id, event)
             self._session.append(event)
@@ -2003,50 +2117,6 @@ class Conversation:
         self._session.append(event)
         return event.uuid
 
-    def _ephemeral_model_context_message(self) -> Message | None:
-        """Build one fresh, trusted host packet for the next inference."""
-        context = self._active_tool_run_context
-        if context is None:
-            return None
-        context.refresh_time()
-        self._runtime_snapshot_sequence += 1
-        sequence = self._runtime_snapshot_sequence
-        run_id = self._run_id_override or (
-            self._active_run_transcript.continuation_id
-            if self._active_run_transcript is not None
-            else "unscoped"
-        )
-        if self._prompt_surface_override is None:
-            kind = "runtime_context"
-            rendered_context = context.render_for_model()
-        else:
-            kind = "interaction_context"
-            rendered_context = DEFAULT_INTERACTION_CONTEXT_RENDERER.render_snapshot(
-                surface=self._prompt_surface_override,
-                runtime_context=context.render_for_model(),
-            )
-        content = (
-            '<agent_friend_runtime_context source="host" '
-            f'run="{html.escape(run_id, quote=True)}" sequence="{sequence}" '
-            f'supersedes="{sequence - 1}">\n'
-            f"{rendered_context}\n"
-            "</agent_friend_runtime_context>"
-        )
-        return Message(
-            role="user",
-            content=content,
-            timestamp=context.trusted_now,
-            meta={
-                **self._run_event_meta({"model": self._session.current_model}),
-                "synthetic": "run_runtime_snapshot",
-                "trusted_host_context": True,
-                "run_id": run_id,
-                "sequence": sequence,
-                "model_context_kind": kind,
-            },
-            uuid=f"runtime_{run_id}_{sequence}",
-        )
-
     def _append_assistant_event(
         self,
         content: str,
@@ -2056,7 +2126,7 @@ class Conversation:
         persona_id: str | None,
         model: str,
         interruption_reason: str | None = None,
-    ) -> None:
+    ) -> Event:
         meta: dict[str, Any] = self._run_event_meta(
             {
                 "persona": persona_name,
@@ -2083,6 +2153,7 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        return event
 
     def _append_provider_reasoning_event(self, state: ProviderReasoningState) -> None:
         event = Event(
@@ -2188,7 +2259,17 @@ class Conversation:
         """
         turn_context = self._skill_context_messages()
         if self._turn_context_override:
-            turn_context.append(Message(role="system", content=self._turn_context_override))
+            turn_context.append(
+                Message(
+                    role="system",
+                    content=self._turn_context_override,
+                    meta={
+                        "model_only": True,
+                        "synthetic": "turn_context_override",
+                        "prompt_cache_domain": "runtime",
+                    },
+                )
+            )
         if extra_context:
             turn_context.extend(extra_context)
         if self._memory is not None:
@@ -2242,12 +2323,23 @@ class Conversation:
                             "只使用其中实际支持的事实：\n\n"
                             + _render_untrusted_context("memory_retrieval", ctx.rendered)
                         ),
-                        meta={"prompt_cache_domain": "memory"},
+                        meta={
+                            "prompt_cache_domain": "memory",
+                            "model_only": True,
+                        },
                     )
                 )
         if self._voice_latency_short_reply_hint:
             turn_context.append(
-                Message(role="system", content=self._voice_latency_short_reply_hint)
+                Message(
+                    role="system",
+                    content=self._voice_latency_short_reply_hint,
+                    meta={
+                        "model_only": True,
+                        "synthetic": "voice_latency_short_reply_hint",
+                        "prompt_cache_domain": "runtime",
+                    },
+                )
             )
         assemble_start_ms = monotonic_ms()
         catalog_message = (
@@ -2306,13 +2398,46 @@ class Conversation:
                 domains.append(mapped)
                 continue
             rendered = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
-            if "<agent_friend_runtime_context" in rendered:
+            if any(
+                marker in rendered
+                for marker in (
+                    "<agent_friend_runtime_context",
+                    "<agent_friend_environment_context",
+                    "<agent_friend_channel_context",
+                    "<agent_friend_permission_context",
+                    "<agent_friend_runtime_capabilities",
+                    "<agent_friend_capability_catalog",
+                    "<agent_friend_host_advisory",
+                )
+            ):
                 domains.append("runtime")
             elif str(message.get("role", "")) in {"system", "developer", "instructions"}:
                 domains.append("system")
             else:
                 domains.append("messages")
         return tuple(domains)
+
+    def _current_turn_memory_trace_positions(self) -> tuple[int | None, tuple[int, ...]]:
+        """Locate the current input and its recall items without exposing their text."""
+
+        built = self._last_built_model_messages or []
+        current_input_position = next(
+            (
+                index
+                for index in range(len(built) - 1, -1, -1)
+                if built[index].meta.get("current_input") is True
+            ),
+            None,
+        )
+        if current_input_position is None:
+            return None, ()
+        memory_positions = tuple(
+            index
+            for index, message in enumerate(built)
+            if index > current_input_position
+            and message.meta.get("prompt_cache_domain") == "memory"
+        )
+        return current_input_position, memory_positions
 
     def _assemble_stream(
         self,
@@ -2333,9 +2458,9 @@ class Conversation:
 
         首轮 / 工具续轮 / 触上限兜底收尾都经此处，确保上下文管理（度量 /
         兜底截断 / 摘要压缩）覆盖每一次组装，差异只在 ``new_user_input`` /
-        ``extra_context`` / ``turn_context`` / ``trailing_user`` / ``trailing_system``。``history``
-        一律传**原始全量** :attr:`Session.messages`（折叠在 context manager 内部
-        发生，见 009 design §6.3）。
+        ``extra_context`` / ``turn_context`` / ``trailing_user`` / ``trailing_system``。正常
+        路径的 ``history`` 来自进程内 session model history；显式 rewrite 路径才会
+        由 context manager 折叠或截断。
 
         ``trailing_user``（021 新增）：主动 source 注入 ``role="user"`` 触发信号
         用，与 ``trailing_system`` 互不替代——前者是 turn 切换信号、后者是兜底
@@ -2351,12 +2476,16 @@ class Conversation:
             prior_summary_override=prior_summary_override,
             tool_specs=typed_tool_specs,
         )
-        raw_history = self._session.llm_messages if history_override is None else history_override
+        raw_history = (
+            self._session_model_history.snapshot() if history_override is None else history_override
+        )
         history_for_llm = escape_user_messages_for_llm(raw_history)
         user_input_for_llm = (
             escape_internal_prompt_markers(new_user_input) if new_user_input is not None else None
         )
         system_prompt = self._system_prompt
+        callable_names: set[str] = set()
+        capability_catalog: str | None = None
         if typed_tool_specs and self._tool_registry is not None:
             callable_names = {
                 str(spec.get("function", {}).get("name", ""))
@@ -2366,20 +2495,49 @@ class Conversation:
             capability_catalog = self._tool_registry.render_capability_catalog(
                 callable_names=callable_names
             )
-            if capability_catalog:
-                system_prompt = f"{system_prompt}\n\n{capability_catalog}"
-        active_turn_context: list[Message] = list(turn_context or [])
-        model_context = self._ephemeral_model_context_message()
-        if model_context is not None:
-            active_turn_context.append(model_context)
+        current_time, timezone = read_host_time(self._time_provider)
+        current_surface = (
+            str(self._prompt_surface_override)
+            if self._prompt_surface_override is not None
+            else None
+        )
+        current_channel = str(self._prompt_channel_override or self._session.current_channel)
+        approval_state = (
+            self._approval_mode_provider() if self._approval_mode_provider is not None else None
+        )
+        model_context_plan = self._session_model_context.plan(
+            current_time=current_time,
+            timezone=timezone,
+            surface=current_surface,
+            surface_context=DEFAULT_INTERACTION_CONTEXT_RENDERER.render_snapshot(
+                surface=self._prompt_surface_override
+            ),
+            channel=current_channel,
+            channel_instruction=(
+                load_default_channel_instruction() if current_channel == "voice" else None
+            ),
+            approval_mode=approval_state.mode if approval_state is not None else None,
+            approval_version=approval_state.version if approval_state is not None else None,
+            runtime_capabilities=render_runtime_capability_notice(
+                tuple(sorted(name for name in callable_names if name)),
+                surface=None,
+            ),
+            capability_catalog=capability_catalog,
+        )
+        self._pending_model_context_plan = model_context_plan
+        boundary_context = [*model_context_plan.messages, *(pre_user_context or [])]
+        active_turn_context = list(turn_context or [])
+        filesystem_scope_delta = self._filesystem_scope_delta_message()
+        if filesystem_scope_delta is not None:
+            active_turn_context.append(filesystem_scope_delta)
         logger.info(
             "[SurfaceContextDbg] prompt_build session_id=%s run_id=%s surface=%s "
-            "transient_model_context=%s trusted_time=%s system_prompt_chars=%d",
+            "model_context_deltas=%d trusted_calendar=%s system_prompt_chars=%d",
             self._session.session_id,
             self._run_id_override or "none",
             self._prompt_surface_override or "none",
-            "present" if model_context is not None else "none",
-            "present" if self._active_tool_run_context is not None else "none",
+            len(model_context_plan.messages),
+            "present",
             len(system_prompt),
         )
         context_stream = stream_build_messages(
@@ -2389,7 +2547,7 @@ class Conversation:
             new_user_input=user_input_for_llm,
             new_user_attachments=new_user_attachments,
             extra_context=extra_context,
-            pre_user_context=pre_user_context,
+            pre_user_context=boundary_context or None,
             turn_context=active_turn_context or None,
             trailing_user=trailing_user,
             trailing_system=trailing_system,
@@ -2406,6 +2564,54 @@ class Conversation:
                     activity_id=progress.activity_id,
                     phase=progress.phase,
                 )
+        if build.new_compaction is not None:
+            prior_context_uuids = {message.uuid for message in model_context_plan.messages}
+            insertion_candidates = [
+                index
+                for index, message in enumerate(build.messages)
+                if message.uuid in prior_context_uuids
+            ]
+            retained_messages = [
+                message for message in build.messages if message.uuid not in prior_context_uuids
+            ]
+            insertion_index = (
+                min(insertion_candidates)
+                if insertion_candidates
+                else next(
+                    (
+                        index
+                        for index, message in enumerate(retained_messages)
+                        if message.meta.get("current_input") is True
+                    ),
+                    len(retained_messages),
+                )
+            )
+            self._session_model_context.reset()
+            model_context_plan = self._session_model_context.plan(
+                current_time=current_time,
+                timezone=timezone,
+                surface=current_surface,
+                surface_context=DEFAULT_INTERACTION_CONTEXT_RENDERER.render_snapshot(
+                    surface=self._prompt_surface_override
+                ),
+                channel=current_channel,
+                channel_instruction=(
+                    load_default_channel_instruction() if current_channel == "voice" else None
+                ),
+                approval_mode=approval_state.mode if approval_state is not None else None,
+                approval_version=approval_state.version if approval_state is not None else None,
+                runtime_capabilities=render_runtime_capability_notice(
+                    tuple(sorted(name for name in callable_names if name)),
+                    surface=None,
+                ),
+                capability_catalog=capability_catalog,
+            )
+            build.messages[:] = [
+                *retained_messages[:insertion_index],
+                *model_context_plan.messages,
+                *retained_messages[insertion_index:],
+            ]
+            self._pending_model_context_plan = model_context_plan
         self._pending_compaction = (
             build.new_compaction
             if persist_compaction and build.new_compaction is not None
@@ -2416,10 +2622,11 @@ class Conversation:
             if persist_compaction and build.new_tool_context_edit is not None
             else None
         )
+        self._last_built_model_messages = list(build.messages)
+        self._last_built_system_prompt = system_prompt
         self._record_context_notes(build, runtime)
         client = self._active_llm_client()
         rendered_messages: list[dict[str, Any]] = []
-        self._last_runtime_snapshot_rendered = None
         for message in build.messages:
             rendered = (
                 message.to_openai()
@@ -2437,8 +2644,6 @@ class Conversation:
                     state_run_id=state_run_id if isinstance(state_run_id, str) else None,
                     active_run_id=self._run_id_override,
                 )
-            if message.meta.get("synthetic") == "run_runtime_snapshot":
-                self._last_runtime_snapshot_rendered = dict(rendered)
             prompt_cache_domain = message.meta.get("prompt_cache_domain")
             if isinstance(prompt_cache_domain, str):
                 self._remember_prompt_item_domain(rendered, prompt_cache_domain)
@@ -2699,8 +2904,38 @@ class Conversation:
             ):
                 self._last_input_tokens = prompt_tokens
 
+    def _commit_pending_model_request_state(self) -> None:
+        prepared = self._pending_model_history
+        if prepared is None:
+            return
+        self._pending_model_history = None
+        self._session_model_history.commit(prepared)
+        self._session_model_history.note_active_events(self._session)
+        built_uuids = {message.uuid for message in prepared.items}
+        plan = self._pending_model_context_plan
+        if plan is not None and all(message.uuid in built_uuids for message in plan.messages):
+            self._session_model_context.commit(plan)
+        self._pending_model_context_plan = None
+        for message_uuid, scope_ids in tuple(self._pending_filesystem_scope_announcements.items()):
+            if message_uuid in built_uuids:
+                self._announced_filesystem_scope_ids.update(scope_ids)
+        self._pending_filesystem_scope_announcements.clear()
+        prepared_epoch = self._pending_cache_epoch
+        self._pending_cache_epoch = None
+        if prepared_epoch is not None:
+            self._cache_epoch.commit(prepared_epoch)
+
+    def _discard_pending_model_request_state(self) -> None:
+        self._pending_model_history = None
+        self._pending_model_context_plan = None
+        self._pending_cache_epoch = None
+        self._pending_filesystem_scope_announcements.clear()
+        self._last_model_history_relation = self._session_model_history.last_relation
+        self._last_cache_epoch_changed = False
+
     def _commit_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
-        """幂等提交本次被 provider 接受的上下文投影候选。"""
+        """幂等提交本次被 provider 接受的 model history 与 checkpoint。"""
+        self._commit_pending_model_request_state()
         compaction = self._pending_compaction
         tool_context_edit = self._pending_tool_context_edit
         self._pending_compaction = None
@@ -2714,11 +2949,14 @@ class Conversation:
             )
         if tool_context_edit is not None:
             self._append_tool_context_edit_event(tool_context_edit)
+        if compaction is not None or tool_context_edit is not None:
+            self._session_model_history.note_active_events(self._session)
         return completed
 
     def _discard_pending_context_checkpoints(self) -> ContextCompactionStatus | None:
         """丢弃尚未被 provider 接受的候选，并返回可清理 UI 的活动事件。"""
 
+        self._discard_pending_model_request_state()
         compaction = self._pending_compaction
         self._pending_compaction = None
         self._pending_tool_context_edit = None
@@ -2763,7 +3001,6 @@ class Conversation:
                 if self._active_tool_run_state is not None:
                     self._active_tool_run_state.model_calls += 1
                 client = self._active_llm_client()
-                projection = self._active_run_transcript
                 trace_context = (
                     trace_context_builder(request_attempt)
                     if trace_context_builder is not None
@@ -2788,14 +3025,9 @@ class Conversation:
                     )
                 )
                 previous_request_witness = (
-                    projection.previous_witness
-                    if projection is not None and projection.previous_witness is not None
-                    else (
-                        comparison_witness_builder()
-                        if comparison_witness_builder is not None
-                        else None
-                    )
+                    comparison_witness_builder() if comparison_witness_builder is not None else None
                 )
+                continuation_disposition = self._model_history_disposition()
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
@@ -2806,14 +3038,8 @@ class Conversation:
                             cancel_check=cancel_check,
                             diagnostic_callback=diagnostic_callback,
                             previous_request_witness=previous_request_witness,
-                            continuation_disposition=(
-                                projection.current_disposition
-                                if projection is not None
-                                else "baseline"
-                            ),
-                            rebase_reason=(
-                                projection.current_rebase_reason if projection is not None else None
-                            ),
+                            continuation_disposition=continuation_disposition,
+                            rebase_reason=self._model_history_rebase_reason(),
                             trace_context=trace_context,
                             transcript_item_domains=self._prompt_item_domains(current_messages),
                         ),
@@ -2844,14 +3070,15 @@ class Conversation:
                 self._context_trigger_reason = "provider_context_exceeded"
                 try:
                     rebuilt = recovery_builder()
-                    current_messages = (
+                    rebuilt_messages = (
                         rebuilt if isinstance(rebuilt, list) else (yield from rebuilt)
                     )
-                    if self._active_run_transcript is not None:
-                        self._active_run_transcript.replace_prepared(
-                            current_messages,
-                            reason="provider_context_exceeded",
-                        )
+                    current_messages = self._prepare_run_continuation(
+                        rebuilt_messages,
+                        tools=tools,
+                        settings=request_overrides,
+                        forced_rebase_reason="provider_context_exceeded",
+                    )
                 finally:
                     self._context_emergency_ratio = previous_ratio
                     self._context_trigger_reason = previous_reason
@@ -2875,15 +3102,26 @@ class Conversation:
                     recovery_instruction,
                     kind="response_recovery",
                 )
+                self._commit_pending_model_request_state()
                 current_messages = [
                     *current_messages,
                     {"role": "user", "content": recovery_packet},
                 ]
-                if self._active_run_transcript is not None:
-                    self._active_run_transcript.replace_prepared(
-                        current_messages,
-                        reason="response_recovery_changed",
-                    )
+                recovery_message = Message(
+                    role="user",
+                    content=recovery_packet,
+                    meta={
+                        "model_only": True,
+                        "trusted_host_context": True,
+                        "synthetic": "host_advisory_response_recovery",
+                        "prompt_cache_domain": "runtime",
+                    },
+                )
+                self._session_model_history.append([recovery_message])
+                self._remember_prompt_item_domain(
+                    recovery_message.to_openai(),
+                    "runtime",
+                )
                 yield LLMRetryScheduled(
                     attempt=request_attempt + 1,
                     max_attempts=request_attempt + 1,
@@ -2931,11 +3169,9 @@ class Conversation:
             precision="unavailable",
         )
         provider_model = self._active_model_id()
-        projection = self._active_run_transcript
         comparison_run_id = (
             self._run_id_override
             or (context.run_id if context is not None else None)
-            or (projection.continuation_id if projection is not None else None)
             or f"unscoped-call-{call_index}"
         )
 
@@ -2946,6 +3182,9 @@ class Conversation:
         ) -> None:
             nonlocal request_comparison, request_trace
             skill_snapshot = self._active_skill_turn_snapshot
+            current_input_position, current_memory_positions = (
+                self._current_turn_memory_trace_positions()
+            )
             skill_scope = (
                 {
                     "catalog_fingerprint": skill_snapshot.rendered_catalog.fingerprint,
@@ -2967,6 +3206,8 @@ class Conversation:
             request_trace = self._prompt_cache_trace_tracker.begin(
                 messages=current_messages,
                 message_domains=self._prompt_item_domains(current_messages),
+                current_input_position=current_input_position,
+                current_memory_positions=current_memory_positions,
                 tools=tools,
                 provider_model=provider_model,
                 api_base=None,
@@ -2990,7 +3231,7 @@ class Conversation:
                 user_turn=user_turn,
             )
             fields = request_trace.log_fields()
-            projection = self._active_run_transcript
+            continuation_disposition = self._model_history_disposition()
             log_run_latency(
                 logger,
                 context,
@@ -3008,14 +3249,9 @@ class Conversation:
                 checkpoint_version=self._last_context_notes.get("checkpoint_version"),
                 dropped_count=self._last_context_notes.get("dropped_count"),
                 request_overhead_tokens=self._last_context_notes.get("request_overhead_tokens"),
-                continuation_id=(projection.continuation_id if projection is not None else None),
-                continuation_generation=(projection.generation if projection is not None else 0),
-                continuation_disposition=(
-                    projection.current_disposition if projection is not None else "baseline"
-                ),
-                rebase_reason=(
-                    projection.current_rebase_reason if projection is not None else None
-                ),
+                continuation_generation=self._session_model_history.generation,
+                continuation_disposition=continuation_disposition,
+                rebase_reason=self._model_history_rebase_reason(),
                 comparison_scope=request_comparison.scope,
                 comparison_precision=request_comparison.precision,
                 cross_turn_relation=request_comparison.coarse_relation,
@@ -3221,13 +3457,16 @@ class Conversation:
                     )
                 elif isinstance(event, LLMTurnDone):
                     turn_done = event
-                    projection = self._active_run_transcript
-                    if projection is not None:
-                        projection.observe_request_witness(
-                            event.diagnostics.request_witness
-                            if event.diagnostics is not None
-                            else None
-                        )
+                    request_disposition = self._model_history_disposition()
+                    request_rebase_reason = self._model_history_rebase_reason()
+                    if (
+                        event.diagnostics is not None
+                        and event.diagnostics.request_relation == "rebase"
+                        and not self._last_cache_epoch_changed
+                    ):
+                        self._cache_epoch.advance("provider_transform_rebase")
+                        request_disposition = "rebuilt"
+                        request_rebase_reason = "provider_transform_rebase"
                     cache_state = (
                         event.usage.cache_reporting_state
                         if event.usage is not None
@@ -3301,17 +3540,15 @@ class Conversation:
                             )
                             if event.diagnostics.cache_observation is not None:
                                 durable["observation"] = dict(event.diagnostics.cache_observation)
-                        projection = self._active_run_transcript
-                        if projection is not None:
-                            durable.update(
-                                {
-                                    "continuation_id": projection.continuation_id,
-                                    "continuation_generation": projection.generation,
-                                    "continuation_disposition": (projection.current_disposition),
-                                    "rebase_reason": projection.current_rebase_reason,
-                                }
-                            )
+                        durable.update(
+                            {
+                                "continuation_generation": (self._session_model_history.generation),
+                                "continuation_disposition": (request_disposition),
+                                "rebase_reason": request_rebase_reason,
+                            }
+                        )
                         self._last_prompt_cache_diagnostics = durable
+                    self._session_model_history.note_provider_request()
                 yield event
         except BaseException as exc:
             log_run_latency(
@@ -3566,30 +3803,16 @@ class Conversation:
         ``new_user_input=None``。009 起续轮也经过上下文管理——确保带工具的长会话
         续轮同样受度量 / 兜底 / 压缩保护，不再绕过 :class:`ContextManager`。
         """
-        turn_context = (
-            [Message(role="system", content=self._turn_context_override)]
-            if self._turn_context_override
-            else None
-        )
-        return self._assemble(
-            tool_specs=tool_specs,
-            turn_context=turn_context,
-        )
+        return self._assemble(tool_specs=tool_specs)
 
     def _build_openai_messages_continuation_stream(
         self,
         *,
         tool_specs: list[dict[str, Any]] | None | object = _UNSET,
     ) -> Generator[ConversationEvent, None, list[dict[str, Any]]]:
-        turn_context = (
-            [Message(role="system", content=self._turn_context_override)]
-            if self._turn_context_override
-            else None
-        )
         return (
             yield from self._assemble_stream(
                 tool_specs=tool_specs,
-                turn_context=turn_context,
             )
         )
 
@@ -3611,54 +3834,59 @@ class Conversation:
         host_advisory: str | None = None,
         forced_rebase_reason: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Accept a safe strict-append candidate or keep the canonical rebuild."""
-        projection = self._active_run_transcript
-        if projection is None:
-            return canonical_messages
+        """Stage canonical model items; provider acceptance commits them."""
 
-        pending = projection.pending_assistant
-        tool_messages: list[dict[str, Any]] = []
-        if pending is not None and pending.tool_calls:
-            expected_ids = [item.tool_call_id for item in pending.tool_calls]
-            if any(not item.tool_call_id or not item.tool_name for item in pending.tool_calls):
-                forced_rebase_reason = forced_rebase_reason or "provider_response_unreplayable"
-            by_call_id = {
-                str(message.get("tool_call_id")): message
-                for message in canonical_messages
-                if message.get("role") == "tool" and message.get("tool_call_id")
-            }
-            if len(set(expected_ids)) != len(expected_ids) or any(
-                call_id not in by_call_id for call_id in expected_ids
+        built = self._last_built_model_messages
+        if built is not None:
+            rewrite_reason = forced_rebase_reason
+            if rewrite_reason is None and (
+                self._last_context_notes.get("compacted")
+                or int(self._last_context_notes.get("dropped_count") or 0) > 0
+                or int(self._last_context_notes.get("tool_results_omitted") or 0) > 0
             ):
-                forced_rebase_reason = forced_rebase_reason or "tool_transaction_incomplete"
-            else:
-                tool_messages = [by_call_id[call_id] for call_id in expected_ids]
+                rewrite_reason = "context_rewritten"
+            prepared_history = self._session_model_history.prepare(
+                built,
+                stable_system_prompt=self._last_built_system_prompt,
+                reason=rewrite_reason,
+            )
+            self._pending_model_history = prepared_history
+            self._last_model_history_relation = prepared_history.update.relation
+            prepared_epoch = self._cache_epoch.prepare(
+                persona_id=self._session.current_persona_id,
+                system_prompt=self._last_built_system_prompt,
+                tools=tools,
+                settings={
+                    **settings,
+                    "__agent_friend_reasoning_preset": (
+                        self._active_model_config().reasoning_preset
+                    ),
+                },
+                model_route=self._active_provider_route_identity(),
+                history_rewrite_reason=(
+                    prepared_history.update.reason
+                    if prepared_history.update.relation == "rewrite"
+                    else None
+                ),
+            )
+            self._pending_cache_epoch = prepared_epoch
+            self._last_cache_epoch_changed = prepared_epoch.update.changed
+        return canonical_messages
 
-        host_tail: list[dict[str, Any]] = []
-        if self._last_runtime_snapshot_rendered is not None:
-            host_tail.append(dict(self._last_runtime_snapshot_rendered))
-        elif projection.previous_messages is not None:
-            forced_rebase_reason = forced_rebase_reason or "runtime_snapshot_unavailable"
-        if host_advisory is not None:
-            host_tail.append({"role": "user", "content": host_advisory})
+    def _model_history_disposition(self) -> str:
+        if self._session_model_history.provider_request_count == 0:
+            return "baseline"
+        if self._last_cache_epoch_changed or self._last_model_history_relation == "rewrite":
+            return "rebuilt"
+        return "continued"
 
-        projection_settings = {
-            **settings,
-            "__agent_friend_reasoning_preset": self._active_model_config().reasoning_preset,
-        }
-        prepared = projection.prepare(
-            canonical_messages=canonical_messages,
-            tools=tools,
-            settings=projection_settings,
-            model_identity=self._active_model_id(),
-            active_event_uuids=tuple(event.uuid for event in self._session.active_events),
-            event_cursor=len(self._session.events),
-            tool_messages=tool_messages,
-            host_tail=host_tail,
-            context_notes=self._last_context_notes,
-            forced_rebase_reason=forced_rebase_reason,
-        )
-        return prepared.messages
+    def _model_history_rebase_reason(self) -> str | None:
+        if self._model_history_disposition() != "rebuilt":
+            return None
+        if self._last_cache_epoch_changed:
+            pending = self._pending_cache_epoch
+            return pending.update.reason if pending is not None else self._cache_epoch.reason
+        return self._session_model_history.last_reason or "model_history_rewritten"
 
     def _accumulate_tool_call_delta(
         self,
@@ -3982,6 +4210,14 @@ class Conversation:
     ) -> dict[str, Any]:
         """给内置工具补运行时隐藏上下文；不改变 LLM 原始 tool args。"""
         invocation_args = dict(args)
+        action_time: tuple[datetime, str] | None = None
+        if tool_run_context is not None and name in {
+            "datetime_calculate",
+            "todo_manage",
+            "scheduled_task_manage",
+            _RECALL_PAST_CHATS_TOOL_NAME,
+        }:
+            action_time = tool_run_context.read_action_time()
         if name in {"exec_command", "host_process_start", "write_stdin", "terminate_command"}:
             invocation_args.update(
                 {
@@ -4020,13 +4256,21 @@ class Conversation:
                     _CURRENT_PERSONA_ID_ARG: self._session.current_persona_id or "",
                 }
             )
-            if tool_run_context is not None:
-                invocation_args[_RUNTIME_NOW_ARG] = tool_run_context.trusted_now.isoformat()
-        if name in {"datetime_calculate", "todo_manage"} and tool_run_context is not None:
+            if action_time is not None:
+                invocation_args[_RUNTIME_NOW_ARG] = action_time[0].isoformat()
+        if (
+            name
+            in {
+                "datetime_calculate",
+                "todo_manage",
+                "scheduled_task_manage",
+            }
+            and action_time is not None
+        ):
             invocation_args.update(
                 {
-                    "__agent_friend_runtime_now": tool_run_context.trusted_now.isoformat(),
-                    "__agent_friend_runtime_timezone": tool_run_context.trusted_timezone,
+                    "__agent_friend_runtime_now": action_time[0].isoformat(),
+                    "__agent_friend_runtime_timezone": action_time[1],
                 }
             )
         if name == "todo_manage":
@@ -4100,37 +4344,22 @@ class Conversation:
         user_turn: bool,
         cancel_check: Callable[[], None] | None,
     ) -> Iterator[ConversationEvent]:
-        """Own the non-persistent transcript projection for exactly one active run."""
+        """Run one turn against the session-owned model conversation history."""
 
-        previous_projection = self._active_run_transcript
-        previous_snapshot_sequence = self._runtime_snapshot_sequence
-        previous_snapshot_rendered = self._last_runtime_snapshot_rendered
-        projection = RunContinuationProjection(
-            continuation_id=self._run_id_override or str(uuid4())
+        yield from self._run_tool_loop_body(
+            prepare_first_turn=prepare_first_turn,
+            first_turn_prelude=first_turn_prelude,
+            persona_name=persona_name,
+            persona_id=persona_id,
+            model_snapshot=model_snapshot,
+            runtime=runtime,
+            context=context,
+            progress=progress,
+            frame=frame,
+            current_turn_start_idx=current_turn_start_idx,
+            user_turn=user_turn,
+            cancel_check=cancel_check,
         )
-        self._active_run_transcript = projection
-        self._runtime_snapshot_sequence = -1
-        self._last_runtime_snapshot_rendered = None
-        try:
-            yield from self._run_tool_loop_body(
-                prepare_first_turn=prepare_first_turn,
-                first_turn_prelude=first_turn_prelude,
-                persona_name=persona_name,
-                persona_id=persona_id,
-                model_snapshot=model_snapshot,
-                runtime=runtime,
-                context=context,
-                progress=progress,
-                frame=frame,
-                current_turn_start_idx=current_turn_start_idx,
-                user_turn=user_turn,
-                cancel_check=cancel_check,
-            )
-        finally:
-            projection.close()
-            self._active_run_transcript = previous_projection
-            self._runtime_snapshot_sequence = previous_snapshot_sequence
-            self._last_runtime_snapshot_rendered = previous_snapshot_rendered
 
     def _run_tool_loop_body(
         self,
@@ -4298,8 +4527,9 @@ class Conversation:
             )
 
             current_text = "".join(frame.current_text_buf)
+            assistant_event: Event | None = None
             if current_text:
-                self._append_assistant_event(
+                assistant_event = self._append_assistant_event(
                     current_text,
                     partial=False,
                     persona_name=persona_name,
@@ -4310,6 +4540,16 @@ class Conversation:
 
             if turn_done is not None and turn_done.reasoning_state is not None:
                 self._append_provider_reasoning_event(turn_done.reasoning_state)
+
+            self._session_model_history.append_provider_assistant(
+                completed_assistant_turn,
+                timestamp=(
+                    assistant_event.ts if assistant_event is not None else datetime.now(UTC)
+                ),
+                event_uuid=(assistant_event.uuid if assistant_event is not None else None),
+                run_id=self._run_id_override,
+            )
+            self._session_model_history.note_active_events(self._session)
 
             rejected_calls = [
                 item
@@ -4347,14 +4587,6 @@ class Conversation:
                 current_turn_start_idx=current_turn_start_idx,
                 cancel_check=cancel_check,
             )
-            projection = self._active_run_transcript
-            if projection is not None:
-                request_witness = (
-                    turn_done.diagnostics.request_witness
-                    if turn_done is not None and turn_done.diagnostics is not None
-                    else None
-                )
-                projection.record_completed_turn(completed_assistant_turn, request_witness)
             if runtime.stop_reason is not None:
                 yield from self._finalize_on_tool_run_stop(
                     persona_name=persona_name,
@@ -4642,7 +4874,7 @@ class Conversation:
                 turn_done = ev
             # 触上限兜底中不再处理 tool_call_delta（tools=None，理论上 LLM 不该返回）
 
-        self._append_assistant_event(
+        assistant_event = self._append_assistant_event(
             "".join(text_buf),
             partial=False,
             persona_name=persona_name,
@@ -4651,6 +4883,11 @@ class Conversation:
         )
         if turn_done is not None and turn_done.reasoning_state is not None:
             self._append_provider_reasoning_event(turn_done.reasoning_state)
+        self._append_completed_provider_assistant(
+            turn_done,
+            text="".join(text_buf),
+            event=assistant_event,
+        )
         yield self._turn_done(runtime, runtime.stop_reason or "tool_runtime_failed")
 
     def _on_interrupt(
@@ -4695,7 +4932,7 @@ class Conversation:
             interruption_reason=interruption_reason,
         )
 
-    def _append_tool_call_request_event(self, tc: dict[str, Any]) -> None:
+    def _append_tool_call_request_event(self, tc: dict[str, Any]) -> Event:
         """落 ``tool_call_request`` 事件。"""
         meta = self._run_event_meta({"tool_call_origin": tc.get("origin", "model")})
         if self._pending_context_usage is not None:
@@ -4725,12 +4962,39 @@ class Conversation:
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
 
+        self._session_model_history.note_active_events(self._session)
+        return event
+
+    def _append_completed_provider_assistant(
+        self,
+        turn_done: LLMTurnDone | None,
+        *,
+        text: str,
+        event: Event | None,
+        timestamp: datetime | None = None,
+    ) -> None:
+        assistant = (
+            turn_done.assistant_turn
+            if turn_done is not None and turn_done.assistant_turn is not None
+            else ProviderAssistantTurn(
+                content=text or None,
+                reasoning_state=(turn_done.reasoning_state if turn_done is not None else None),
+            )
+        )
+        self._session_model_history.append_provider_assistant(
+            assistant,
+            timestamp=event.ts if event is not None else timestamp or datetime.now(UTC),
+            event_uuid=event.uuid if event is not None else None,
+            run_id=self._run_id_override,
+        )
+        self._session_model_history.note_active_events(self._session)
+
     def _append_tool_call_result_event(
         self,
         tc: dict[str, Any],
         result: ToolResult,
         duration: float,
-    ) -> None:
+    ) -> Event:
         """落 ``tool_call_result`` 事件。"""
         meta: dict[str, Any] = self._run_event_meta(
             {
@@ -4779,6 +5043,16 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        self._session_model_history.append_tool_result(
+            content=result.text,
+            tool_call_id=str(tc["id"]),
+            tool_name=str(tc["name"]),
+            timestamp=event.ts,
+            event_uuid=event.uuid,
+            is_error=result.is_error,
+        )
+        self._session_model_history.note_active_events(self._session)
+        return event
 
     def _append_model_output_rejection_event(self, tc: dict[str, Any]) -> None:
         """Persist an unbindable model output without inventing a tool transaction."""
@@ -4819,6 +5093,25 @@ class Conversation:
         )
         self._store.append_event(self._session.session_id, event)
         self._session.append(event)
+        self._session_model_history.append(
+            [
+                Message(
+                    role="system",
+                    content=(
+                        "<model_output_rejection>\n"
+                        f"error_code={event.payload['error_code']}\n"
+                        f"{event.payload['model_message']}\n"
+                        "宿主没有执行工具，也没有请求授权。请根据当前工具 schema "
+                        "重新生成合法调用，或选择其它安全路线。\n"
+                        "</model_output_rejection>"
+                    ),
+                    timestamp=event.ts,
+                    meta={**event.meta, "synthetic": "model_output_rejection"},
+                    uuid=event.uuid,
+                )
+            ]
+        )
+        self._session_model_history.note_active_events(self._session)
 
     def _append_system_trigger_event(
         self,

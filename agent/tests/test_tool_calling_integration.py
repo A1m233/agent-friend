@@ -15,6 +15,7 @@ import logging
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, cast
@@ -360,6 +361,7 @@ class _WitnessingLLMClient:
     received: list[ModelRequest] = field(default_factory=list)
     relations: list[str] = field(default_factory=list)
     diagnostics: list[LLMResponseDiagnostics] = field(default_factory=list)
+    transform_identities: list[str] = field(default_factory=lambda: ["fake:v1"])
     context_window: int = 128000
 
     def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
@@ -381,7 +383,9 @@ class _WitnessingLLMClient:
             body,
             provider_id="deterministic-test",
             transport="fake",
-            transform_identity="fake:v1",
+            transform_identity=self.transform_identities[
+                min(len(self.received) - 1, len(self.transform_identities) - 1)
+            ],
         )
         domains = request.control.transcript_item_domains
         if domains is not None and len(domains) == len(witness.transcript_item_digests):
@@ -447,7 +451,7 @@ class _RecoveringResponseClient:
 
 
 class _DynamicMemory:
-    """按当前 query 返回不同记忆，验证召回只活在本轮尾部模型视图。"""
+    """按当前 query 返回不同记忆，验证召回进入 append-only model history。"""
 
     def observe(self, fragment: ConversationFragment) -> None:
         del fragment
@@ -455,6 +459,18 @@ class _DynamicMemory:
     def retrieve(self, query: str, **kwargs: Any) -> MemoryContext:
         del kwargs
         return MemoryContext(rendered=f"memory-for:{query}", items=[])
+
+
+@dataclass
+class _SequencedMemory:
+    contexts: list[MemoryContext]
+
+    def observe(self, fragment: ConversationFragment) -> None:
+        del fragment
+
+    def retrieve(self, query: str, **kwargs: Any) -> MemoryContext:
+        del query, kwargs
+        return self.contexts.pop(0)
 
 
 def _make_conversation(
@@ -465,6 +481,7 @@ def _make_conversation(
     llm_client_factory: Any | None = None,
     tool_run_policy: ToolRunPolicy | None = None,
     tool_run_context_factory: Any | None = None,
+    time_provider: Any | None = None,
     memory: Any | None = None,
     model: str = "deepseek/deepseek-chat",
     reasoning_preset: str | None = None,
@@ -498,6 +515,7 @@ def _make_conversation(
         tool_registry=registry,
         tool_run_policy=tool_run_policy,
         tool_run_context_factory=tool_run_context_factory,
+        time_provider=time_provider,
         memory=memory,
     )
 
@@ -547,7 +565,7 @@ def test_incomplete_model_response_fails_after_explicit_recovery_budget(
     assert not any(event.type == "assistant_message" for event in conv.session.events)
 
 
-def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
+def test_memory_recall_stays_append_only_after_its_user_turn(
     tmp_path: Path,
 ) -> None:
     fake = _WitnessingLLMClient()
@@ -567,12 +585,7 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
         for index, message in enumerate(first_request)
         if "memory-for:first" in str(message.get("content") or "")
     )
-    first_runtime_index = next(
-        index
-        for index, message in enumerate(first_request)
-        if str(message.get("content") or "").startswith("<agent_friend_runtime_context")
-    )
-    assert first_user_index < first_memory_index < first_runtime_index
+    assert first_user_index < first_memory_index
 
     second_user_index = next(
         index for index, message in enumerate(second_request) if message.get("content") == "second"
@@ -583,8 +596,9 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
         if "memory-for:second" in message.get("content", "")
     )
     assert second_user_index < second_memory_index
-    assert all(
-        "memory-for:first" not in str(message.get("content") or "") for message in second_request
+    assert second_request[: len(first_request)] == first_request
+    assert any(
+        "memory-for:first" in str(message.get("content") or "") for message in second_request
     )
     assert [message.content for message in conv.session.messages if message.role == "user"] == [
         "first",
@@ -594,14 +608,80 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
     assert first_model_request.control.transcript_item_domains[first_memory_index] == "memory"
     assert second_model_request.control.transcript_item_domains is not None
     assert second_model_request.control.transcript_item_domains[second_memory_index] == "memory"
-    assert fake.diagnostics[1].first_divergence_domain == "memory"
-    assert fake.diagnostics[1].first_divergence_previous_domain == "memory"
-    assert fake.diagnostics[1].first_divergence_current_domain == "messages"
+    assert fake.diagnostics[1].request_relation == "strict_extension"
+    assert fake.diagnostics[1].first_divergence_domain != "runtime"
     comparison = second_model_request.control.trace_context
     assert comparison is not None and comparison.comparison is not None
     flags = comparison.comparison["change_flags"]
     assert flags["memory_content_changed"] is True
-    assert flags["memory_position_changed"] is True
+    assert flags["memory_position_changed"] is False
+
+
+def test_memory_recall_presence_content_and_relative_position_are_diagnosed(
+    tmp_path: Path,
+) -> None:
+    fake = _WitnessingLLMClient()
+    memory = _SequencedMemory(
+        [
+            MemoryContext.empty(),
+            MemoryContext(rendered="memory-a", items=[]),
+            MemoryContext(rendered="memory-a", items=[]),
+            MemoryContext(rendered="memory-b", items=[]),
+            MemoryContext.empty(),
+        ]
+    )
+    conv = _make_conversation(tmp_path, fake_llm=fake, memory=memory)
+
+    for query in ("none", "first", "same", "changed", "gone"):
+        list(conv.stream(query))
+
+    requests = [request.messages for request in fake.received]
+    memory_counts = [
+        sum("memory-a" in str(item.get("content") or "") for item in request)
+        + sum("memory-b" in str(item.get("content") or "") for item in request)
+        for request in requests
+    ]
+    assert memory_counts == [0, 1, 2, 3, 3]
+    assert all(current[: len(previous)] == previous for previous, current in pairwise(requests))
+    for query, request_messages in zip(("first", "same", "changed"), requests[1:4], strict=True):
+        user_index = next(
+            index for index, item in enumerate(request_messages) if item["content"] == query
+        )
+        latest_memory_index = max(
+            index
+            for index, item in enumerate(request_messages)
+            if "memory-" in str(item.get("content") or "")
+        )
+        assert latest_memory_index > user_index
+
+    comparisons = []
+    for model_request in fake.received:
+        trace_context = model_request.control.trace_context
+        assert trace_context is not None and trace_context.comparison is not None
+        comparisons.append(trace_context.comparison)
+    assert comparisons[1]["change_flags"]["memory_presence_changed"] is True
+    assert comparisons[2]["change_flags"]["memory_presence_changed"] is False
+    assert comparisons[2]["change_flags"]["memory_content_changed"] is False
+    assert comparisons[2]["change_flags"]["memory_position_changed"] is False
+    assert comparisons[3]["change_flags"]["memory_content_changed"] is True
+    assert comparisons[3]["change_flags"]["memory_position_changed"] is False
+    assert comparisons[4]["change_flags"]["memory_presence_changed"] is True
+
+
+def test_provider_transform_rebase_starts_a_diagnostic_cache_epoch(tmp_path: Path) -> None:
+    fake = _WitnessingLLMClient(transform_identities=["fake:v1", "fake:v2"])
+    conv = _make_conversation(tmp_path, fake_llm=fake)
+
+    list(conv.stream("first"))
+    list(conv.stream("second"))
+
+    assert fake.diagnostics[1].request_relation == "rebase"
+    assert conv.cache_epoch_diagnostics["generation"] == 1
+    assert conv.cache_epoch_diagnostics["reason"] == "provider_transform_rebase"
+    assistant_events = [event for event in conv.session.events if event.type == "assistant_message"]
+    cache_diagnostics = assistant_events[-1].meta["context_usage"]["cache_diagnostics"]
+    assert cache_diagnostics["continuation_disposition"] == "rebuilt"
+    assert cache_diagnostics["rebase_reason"] == "provider_transform_rebase"
 
 
 def test_turn_uses_stable_provider_neutral_cache_key(tmp_path: Path) -> None:
@@ -2353,7 +2433,7 @@ def test_web_fetch_rejects_url_from_no_current_turn_source(tmp_path: Path) -> No
     assert "不在已有可信证据" in result.text
 
 
-def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
+def test_each_time_sensitive_tool_reads_fresh_action_time_without_prompt_clock(
     tmp_path: Path,
 ) -> None:
     seen_args: list[dict[str, Any]] = []
@@ -2390,44 +2470,28 @@ def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
         fake_llm=fake,
         registry=ToolRegistry([CaptureTodoTool()]),
         tool_run_context_factory=lambda _: trusted,
+        time_provider=SimpleNamespace(now=lambda: initial),
     )
     list(conv.stream("今天星期几"))
     assert len(seen_args) == 2
     assert {args["__agent_friend_runtime_now"] for args in seen_args} == {
-        first_inference.isoformat()
+        first_inference.isoformat(),
+        continuation.isoformat(),
     }
     assert {args["__agent_friend_runtime_timezone"] for args in seen_args} == {"Asia/Shanghai"}
-    assert (
-        sum(
-            first_inference.isoformat(timespec="seconds") in message.get("content", "")
-            for message in fake.received[0]
-        )
-        == 1
+    assert all(
+        first_inference.isoformat(timespec="seconds") not in str(message.get("content") or "")
+        and continuation.isoformat(timespec="seconds") not in str(message.get("content") or "")
+        for request in fake.received
+        for message in request
     )
     assert (
         sum(
-            continuation.isoformat(timespec="seconds") in str(message.get("content") or "")
+            'contributor="calendar"' in str(message.get("content") or "")
             for message in fake.received[1]
         )
         == 1
     )
-    # The prior snapshot remains byte-stable in the request prefix; the fresh
-    # sequence explicitly supersedes it at the tail.
-    assert (
-        sum(
-            first_inference.isoformat(timespec="seconds") in str(message.get("content") or "")
-            for message in fake.received[1]
-        )
-        == 1
-    )
-    runtime_packets = [
-        str(message.get("content") or "")
-        for message in fake.received[1]
-        if str(message.get("content") or "").startswith("<agent_friend_runtime_context")
-    ]
-    assert len(runtime_packets) == 2
-    assert 'sequence="0" supersedes="-1"' in runtime_packets[0]
-    assert 'sequence="1" supersedes="0"' in runtime_packets[1]
     assert fake.received[1][: len(fake.received[0])] == fake.received[0]
     first_appended_role = fake.received[1][len(fake.received[0])]["role"]
     assert first_appended_role == "assistant"
@@ -2435,8 +2499,7 @@ def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
         index for index, message in enumerate(fake.received[1]) if message.get("role") == "tool"
     ]
     assert tool_positions
-    assert all(index < len(fake.received[1]) - 1 for index in tool_positions)
-    assert fake.received[1][-1]["role"] == "user"
+    assert all(index > len(fake.received[0]) for index in tool_positions)
     request = next(event for event in conv.session.events if event.type == "tool_call_request")
     assert "__agent_friend_runtime_now" not in request.payload["args"]
     assert all("<runtime_now" not in message.content for message in conv.session.messages)
@@ -2444,7 +2507,7 @@ def test_each_inference_gets_fresh_transient_time_and_tools_share_its_snapshot(
     assert all("<runtime_now" not in message.content for message in conv.session.llm_messages)
 
 
-def test_repeated_turns_each_get_one_transient_context_without_persistence(
+def test_repeated_turns_keep_one_calendar_snapshot_without_persistence(
     tmp_path: Path,
 ) -> None:
     trusted = ToolRunContext.create(
@@ -2461,23 +2524,29 @@ def test_repeated_turns_each_get_one_transient_context_without_persistence(
         tmp_path,
         fake_llm=fake,
         tool_run_context_factory=lambda _: trusted,
+        time_provider=SimpleNamespace(now=lambda: trusted.trusted_now),
     )
 
     list(conv.stream("first"))
     list(conv.stream("second"))
 
     assert all(event.type != "model_context" for event in conv.session.events)
+    assert fake.received[1][: len(fake.received[0])] == fake.received[0]
     assert (
         sum(
-            trusted.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
+            'contributor="calendar"' in str(message.get("content") or "")
             for message in fake.received[1]
         )
         == 1
     )
+    assert all(
+        trusted.trusted_now.isoformat(timespec="seconds") not in str(message.get("content") or "")
+        for message in fake.received[1]
+    )
 
 
-def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> None:
-    """旧回答中的 31 号不能比本轮 7 月 28 日时钟更靠近当前输入。"""
+def test_current_calendar_delta_follows_conflicting_long_history(tmp_path: Path) -> None:
+    """旧回答中的 31 号不能覆盖当前用户前的新日历 delta。"""
     old_context = ToolRunContext.create(
         "旧问题",
         now=datetime(2026, 7, 27, 22, tzinfo=ZoneInfo("Asia/Shanghai")),
@@ -2487,6 +2556,7 @@ def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> 
         now=datetime(2026, 7, 28, 22, 4, 13, tzinfo=ZoneInfo("Asia/Shanghai")),
     )
     contexts = iter([old_context, current_context])
+    host_time = {"value": old_context.trusted_now}
     fake = _ScriptedLLMClient(
         script=[
             [LLMTextDelta(text="自然月到 31 号。"), LLMTurnDone(stop_reason="end_turn")],
@@ -2497,29 +2567,31 @@ def test_current_turn_clock_follows_conflicting_long_history(tmp_path: Path) -> 
         tmp_path,
         fake_llm=fake,
         tool_run_context_factory=lambda _: next(contexts),
+        time_provider=SimpleNamespace(now=lambda: host_time["value"]),
     )
 
     list(conv.stream("旧问题"))
+    host_time["value"] = current_context.trusted_now
     list(conv.stream("我是 20 号入职，今天发工资"))
 
     messages = fake.received[1]
     old_answer_index = next(
         index for index, message in enumerate(messages) if "31 号" in message.get("content", "")
     )
-    clock_index = next(
+    calendar_index = next(
         index
         for index, message in enumerate(messages)
-        if current_context.trusted_now.isoformat(timespec="seconds") in message.get("content", "")
+        if 'contributor="calendar" kind="delta"' in message.get("content", "")
     )
     current_user_index = next(
         index
         for index, message in enumerate(messages)
         if message.get("content") == "我是 20 号入职，今天发工资"
     )
-    assert old_answer_index < current_user_index < clock_index
-    assert "2026-07-28T22:04:13+08:00" in messages[clock_index]["content"]
-    assert all(
-        old_context.trusted_now.isoformat(timespec="seconds") not in message.get("content", "")
+    assert old_answer_index < calendar_index < current_user_index
+    assert 'date="2026-07-28" timezone="Asia/Shanghai"' in messages[calendar_index]["content"]
+    assert any(
+        'date="2026-07-27" timezone="Asia/Shanghai"' in message.get("content", "")
         for message in messages
     )
 
