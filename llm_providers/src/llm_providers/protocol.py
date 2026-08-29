@@ -52,6 +52,11 @@ class ModelCallControl:
     continuation_disposition: str = "baseline"
     rebase_reason: str | None = None
     trace_context: ModelCallTraceContext | None = None
+    transcript_item_domains: tuple[str, ...] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ from agent.context.summary_prompt import (
 from agent.messages import Message
 from agent.system_prompt import IM_QQ_SURFACE
 from agent.tools.builtin.tool_result_recovery import ToolResultRecoveryTool
+from llm_providers.request_witness import witness_from_body
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -54,6 +56,7 @@ from agent import (
 )
 from llm_providers import (
     LLMContextWindowError,
+    LLMResponseDiagnostics,
     LLMStreamEvent,
     LLMTextDelta,
     LLMTurnDone,
@@ -110,6 +113,27 @@ class _FakeLLM:
 
 
 @dataclass
+class _WitnessSummaryLLM(_FakeLLM):
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.complete_calls += 1
+        self.generate_requests.append(request)
+        witness = witness_from_body(
+            json.dumps({"messages": request.messages}).encode(),
+            provider_id="test",
+            transport="litellm",
+            transform_identity="test:v1",
+        )
+        return ModelResponse(
+            text=self.summary_text,
+            usage=LLMUsage(prompt_tokens=100),
+            diagnostics=LLMResponseDiagnostics(
+                request_witness=witness,
+                response_model="test-model",
+            ),
+        )
+
+
+@dataclass
 class _ContextRejectOnceLLM(_FakeLLM):
     stream_calls: int = 0
 
@@ -151,6 +175,7 @@ def _runtime(
         model_id="deepseek/test",
         prior_summary=prior,
         calibration_factor=calibration_factor,
+        session_id="test-session",
     )
 
 
@@ -376,6 +401,36 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     assert "压缩后的结构化摘要" in joined
     assert "U0-" not in joined
     assert "U5-" in joined
+
+
+def test_repeated_compaction_uses_operation_scoped_exact_lineage() -> None:
+    llm = _WitnessSummaryLLM()
+    cm = SummarizingContextManager()
+
+    first = cm.build_messages(
+        history=_turns(6, 100),
+        system_prompt="sys",
+        runtime=_runtime(llm, window=1000),
+    )
+    second = cm.build_messages(
+        history=_turns(7, 100),
+        system_prompt="sys",
+        runtime=_runtime(llm, window=1000),
+    )
+
+    assert first.new_compaction is not None
+    assert second.new_compaction is not None
+    assert len(llm.generate_requests) == 2
+    first_trace = llm.generate_requests[0].control.trace_context
+    second_trace = llm.generate_requests[1].control.trace_context
+    assert first_trace is not None
+    assert first_trace.comparison_scope == "unavailable"
+    assert first_trace.comparison is not None
+    assert first_trace.comparison["unavailable_reason"] == "no_previous_operation_request"
+    assert second_trace is not None
+    assert second_trace.comparison_scope == "within_operation"
+    assert second_trace.comparison_precision == "exact_item"
+    assert llm.generate_requests[1].control.previous_request_witness is not None
 
 
 def test_stream_build_yields_started_before_summary_call() -> None:

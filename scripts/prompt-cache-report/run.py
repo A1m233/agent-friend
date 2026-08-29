@@ -18,6 +18,7 @@ from llm_providers import (
     PROMPT_CACHE_OBSERVATION_LOG_PREFIX,
     PROMPT_CACHE_OBSERVATION_SCHEMA,
     PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION,
+    PROMPT_CACHE_OPERATION_CONTRIBUTORS,
 )
 
 
@@ -137,6 +138,87 @@ def _cross_user_turn_summary(
     }
 
 
+def _operation_lineage_summary(
+    observations: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    operation_names = {
+        "context_compaction",
+        "memory_extraction",
+        "memory_reconciliation",
+    }
+    items = [
+        item for item in observations if _nested(item, "identity", "operation") in operation_names
+    ]
+    scopes = Counter(
+        str(_nested(item, "structure", "comparison_scope") or "unavailable") for item in items
+    )
+    relations = Counter(
+        str(_nested(item, "structure", "cross_turn_relation") or "unavailable") for item in items
+    )
+    unavailable_reasons = Counter(
+        str(_nested(item, "structure", "unavailable_reason") or "none")
+        for item in items
+        if _nested(item, "structure", "comparison_scope") == "unavailable"
+    )
+    lost_estimates = [
+        _nonnegative_int(_nested(item, "structure", "lost_prefix_tokens_estimate"))
+        for item in items
+    ]
+    return {
+        "observations": len(items),
+        "scopes": dict(sorted(scopes.items())),
+        "relations": dict(sorted(relations.items())),
+        "unavailable_reasons": dict(sorted(unavailable_reasons.items())),
+        "lost_prefix_tokens_estimate": {
+            "sum": sum(value for value in lost_estimates if value is not None),
+            "known": sum(value is not None for value in lost_estimates),
+            "unknown": sum(value is None for value in lost_estimates),
+        },
+    }
+
+
+def _memory_breakpoint_summary(
+    observations: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    flag_names = (
+        "memory_presence_changed",
+        "memory_content_changed",
+        "memory_position_changed",
+    )
+    items = [
+        item
+        for item in observations
+        if _nested(item, "structure", "first_divergence_domain") == "memory"
+        or any(_nested(item, "structure", "change_flags", flag) is True for flag in flag_names)
+    ]
+    lost_estimates = [
+        _nonnegative_int(_nested(item, "structure", "lost_prefix_tokens_estimate"))
+        for item in items
+    ]
+    return {
+        "observations": len(items),
+        "first_divergence_memory": sum(
+            _nested(item, "structure", "first_divergence_domain") == "memory" for item in items
+        ),
+        "flags": {
+            flag: {
+                "true": sum(
+                    _nested(item, "structure", "change_flags", flag) is True for item in items
+                ),
+                "unknown": sum(
+                    _nested(item, "structure", "change_flags", flag) is None for item in items
+                ),
+            }
+            for flag in flag_names
+        },
+        "lost_prefix_tokens_estimate": {
+            "sum": sum(value for value in lost_estimates if value is not None),
+            "known": sum(value is not None for value in lost_estimates),
+            "unknown": sum(value is None for value in lost_estimates),
+        },
+    }
+
+
 def _summary(observations: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     fields = ("input_total", "cache_read", "cache_write", "input_other", "output")
     values = {
@@ -204,6 +286,8 @@ def _summary(observations: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             for name in ("stream_open_ms", "first_chunk_ms", "total_ms")
         },
         "cross_user_turn": _cross_user_turn_summary(observations),
+        "operation_lineage": _operation_lineage_summary(observations),
+        "memory_breakpoints": _memory_breakpoint_summary(observations),
     }
 
 
@@ -236,6 +320,10 @@ _SEGMENT_PATHS: dict[str, tuple[str, ...]] = {
     "comparison_scope": ("structure", "comparison_scope"),
     "cross_turn_relation": ("structure", "cross_turn_relation"),
     "first_divergence_domain": ("structure", "first_divergence_domain"),
+    "unavailable_reason": ("structure", "unavailable_reason"),
+    "memory_presence_changed": ("structure", "change_flags", "memory_presence_changed"),
+    "memory_content_changed": ("structure", "change_flags", "memory_content_changed"),
+    "memory_position_changed": ("structure", "change_flags", "memory_position_changed"),
     "rebase_reason": ("structure", "rebase_reason"),
     "interpretation": ("outcome", "interpretation"),
     "accounting": ("usage", "accounting"),
@@ -264,6 +352,7 @@ def aggregate_observations(observations: Sequence[dict[str, Any]]) -> dict[str, 
         "schema_revision": 1,
         "summary": _summary(observations),
         "segments": segments,
+        "operation_contributor_matrix": PROMPT_CACHE_OPERATION_CONTRIBUTORS,
     }
 
 
@@ -272,6 +361,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     weighted = _nested(summary, "token_weighted_cache_read") or {}
     requests = _nested(summary, "request_cache_read") or {}
     cross_turn = _nested(summary, "cross_user_turn") or {}
+    operation_lineage = _nested(summary, "operation_lineage") or {}
+    memory_breakpoints = _nested(summary, "memory_breakpoints") or {}
     lost = cross_turn.get("lost_prefix_tokens_estimate", {})
     lines = [
         "# Prompt cache report",
@@ -297,6 +388,20 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             f"estimated lost prefix tokens {lost.get('sum', 0)} "
             f"(known {lost.get('known', 0)}, unknown {lost.get('unknown', 0)})"
         ),
+        (
+            "- Background operation lineage: "
+            f"{operation_lineage.get('observations', 0)} observations; "
+            f"scopes {operation_lineage.get('scopes', {})}; "
+            "estimated lost prefix tokens "
+            f"{operation_lineage.get('lost_prefix_tokens_estimate', {}).get('sum', 0)}"
+        ),
+        (
+            "- Memory breakpoints: "
+            f"{memory_breakpoints.get('observations', 0)} observations; "
+            f"first divergence memory {memory_breakpoints.get('first_divergence_memory', 0)}; "
+            "estimated lost prefix tokens "
+            f"{memory_breakpoints.get('lost_prefix_tokens_estimate', {}).get('sum', 0)}"
+        ),
         "",
         "## Input buckets",
         "",
@@ -318,6 +423,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         "comparison_scope",
         "cross_turn_relation",
         "first_divergence_domain",
+        "unavailable_reason",
     ):
         lines.extend(
             [

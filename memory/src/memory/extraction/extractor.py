@@ -18,7 +18,12 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from llm_providers import ModelCallControl, ModelCallTraceContext, ModelRequest
+from llm_providers import (
+    ModelCallControl,
+    ModelCallTraceContext,
+    ModelRequest,
+    OperationRequestLineageTracker,
+)
 
 from .context import ExtractionContext
 from .result import (
@@ -89,6 +94,7 @@ class Extractor:
             else _RECONCILIATION_PROMPT_PATH.read_text(encoding="utf-8")
         )
         self._on_attempt = on_attempt
+        self._prompt_cache_lineage = OperationRequestLineageTracker()
         # Kept as an inert compatibility argument for older composition roots.  Core
         # classification is now exclusively an extractor schema decision.
         self._normalize_metadata = normalize_metadata
@@ -114,20 +120,32 @@ class Extractor:
             {"role": "user", "content": user_content},
         ]
         started = perf_counter()
+        lineage = self._prompt_cache_lineage.begin(
+            session_id=fragment.session_id,
+            operation="memory_extraction",
+            call_kind="base_extraction",
+            prompt_contract_revision="1",
+        )
         try:
-            raw = self._llm.generate(
+            response = self._llm.generate(
                 ModelRequest(
                     messages=messages,
                     control=ModelCallControl(
+                        previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_extraction",
                             session_id=fragment.session_id,
                             call_kind="base_extraction",
                             call_index=1,
-                        )
+                            comparison_scope=lineage.scope,
+                            comparison_precision=lineage.precision,
+                            comparison=lineage.comparison_fields(),
+                        ),
                     ),
                 )
-            ).text
+            )
+            self._prompt_cache_lineage.complete(lineage, response)
+            raw = response.text
         except Exception as exc:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
             self._report_attempt(
@@ -195,20 +213,32 @@ class Extractor:
             {"role": "user", "content": user_content},
         ]
         started = perf_counter()
+        lineage = self._prompt_cache_lineage.begin(
+            session_id=fragment.session_id,
+            operation="memory_reconciliation",
+            call_kind="semantic_reconciliation",
+            prompt_contract_revision="1",
+        )
         try:
-            raw = self._llm.generate(
+            response = self._llm.generate(
                 ModelRequest(
                     messages=messages,
                     control=ModelCallControl(
+                        previous_request_witness=lineage.previous_witness,
                         trace_context=ModelCallTraceContext(
                             operation="memory_reconciliation",
                             session_id=fragment.session_id,
                             call_kind="semantic_reconciliation",
                             call_index=2,
-                        )
+                            comparison_scope=lineage.scope,
+                            comparison_precision=lineage.precision,
+                            comparison=lineage.comparison_fields(),
+                        ),
                     ),
                 )
-            ).text
+            )
+            self._prompt_cache_lineage.complete(lineage, response)
+            raw = response.text
         except Exception as exc:
             logger.warning("Semantic reconciliation LLM 调用失败，回退基础抽取", exc_info=True)
             self._report_attempt(

@@ -65,10 +65,12 @@ from .errors import (
 )
 from .factory import create_language_model
 from .multimodal import MultimodalInputAdapter
+from .prompt_cache_lineage import OperationLineageBinding, OperationRequestLineageTracker
 from .prompt_cache_observation import (
     PROMPT_CACHE_OBSERVATION_LOG_PREFIX,
     PROMPT_CACHE_OBSERVATION_SCHEMA,
     PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION,
+    PROMPT_CACHE_OPERATION_CONTRIBUTORS,
     build_prompt_cache_observation,
     classify_prompt_cache_result,
 )
@@ -116,6 +118,7 @@ __all__ = [
     "PROMPT_CACHE_OBSERVATION_LOG_PREFIX",
     "PROMPT_CACHE_OBSERVATION_SCHEMA",
     "PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION",
+    "PROMPT_CACHE_OPERATION_CONTRIBUTORS",
     "CredentialValidationResult",
     "LLMActivity",
     "LLMAuthError",
@@ -155,6 +158,8 @@ __all__ = [
     "ModelRouteCapabilities",
     "ModelRuntimeConfig",
     "MultimodalInputAdapter",
+    "OperationLineageBinding",
+    "OperationRequestLineageTracker",
     "ProviderAssistantTurn",
     "ProviderConfig",
     "ProviderDefinition",

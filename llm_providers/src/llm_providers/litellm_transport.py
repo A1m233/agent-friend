@@ -29,11 +29,17 @@ def _provider_id(spec: ProviderSpec) -> str:
     return spec.model.split("/", 1)[0]
 
 
-def _capture(spec: ProviderSpec) -> ProviderRequestCapture:
+def _capture(
+    spec: ProviderSpec,
+    messages: list[dict[str, Any]] | None = None,
+    transcript_item_domains: tuple[str, ...] | None = None,
+) -> ProviderRequestCapture:
     return ProviderRequestCapture(
         provider_id=_provider_id(spec),
         transport="litellm",
         transform_identity=f"litellm:{_LITELLM_VERSION}:{spec.model}",
+        transcript_items=messages,
+        transcript_item_domains=transcript_item_domains,
     )
 
 
@@ -79,6 +85,47 @@ def _async_client(spec: ProviderSpec, capture: ProviderRequestCapture) -> tuple[
     return handler, handler
 
 
+@dataclass(frozen=True)
+class LiteLLMCompletion:
+    """One completed synchronous call plus its final-request witness."""
+
+    response: Any
+    request_witness: ProviderRequestWitness | None
+
+
+def complete_litellm(
+    spec: ProviderSpec,
+    messages: list[dict[str, Any]],
+    request_options: dict[str, Any],
+    *,
+    completion_call: Callable[..., Any],
+    transcript_item_domains: tuple[str, ...] | None = None,
+) -> LiteLLMCompletion:
+    """Execute a sync completion through an instrumented per-call client."""
+
+    options = dict(request_options)
+    options.pop("client", None)
+    capture = _capture(spec, messages, transcript_item_domains)
+    owner, client = _sync_client(spec, capture)
+    try:
+        response = completion_call(
+            model=spec.model,
+            api_key=spec.api_key,
+            api_base=spec.api_base,
+            messages=messages,
+            client=client,
+            **options,
+        )
+    except BaseException as exc:
+        _attach_request_witness(exc, capture.witness)
+        raise
+    finally:
+        close_owner = getattr(owner, "close", None)
+        if callable(close_owner):
+            close_owner()
+    return LiteLLMCompletion(response=response, request_witness=capture.witness)
+
+
 @dataclass
 class LiteLLMStream:
     """Own one sync LiteLLM stream and its per-call instrumented client."""
@@ -110,12 +157,13 @@ def open_litellm_stream(
     spec: ProviderSpec,
     messages: list[dict[str, Any]],
     request_options: dict[str, Any],
+    transcript_item_domains: tuple[str, ...] | None = None,
 ) -> LiteLLMStream:
     """Open a sync stream with a per-call final-request witness."""
 
     options = dict(request_options)
     options.pop("client", None)
-    capture = _capture(spec)
+    capture = _capture(spec, messages, transcript_item_domains)
     owner, client = _sync_client(spec, capture)
     try:
         response = litellm.completion(
@@ -148,6 +196,7 @@ class LiteLLMAsyncStreamSource:
     spec: ProviderSpec
     messages: list[dict[str, Any]]
     request_options: dict[str, Any]
+    transcript_item_domains: tuple[str, ...] | None = None
     request_id: str | None = field(default=None, init=False)
     request_witness: ProviderRequestWitness | None = field(default=None, init=False)
     _capture: ProviderRequestCapture = field(init=False, repr=False)
@@ -157,7 +206,11 @@ class LiteLLMAsyncStreamSource:
 
     def __post_init__(self) -> None:
         # Client construction is local CPU/setup work, not provider header idle.
-        self._capture = _capture(self.spec)
+        self._capture = _capture(
+            self.spec,
+            self.messages,
+            self.transcript_item_domains,
+        )
         self._owner, self._client = _async_client(self.spec, self._capture)
 
     async def open(self) -> AsyncIterator[Any]:
@@ -211,10 +264,16 @@ def open_cancellable_litellm_stream(
     cancel_check: Callable[[], None],
     *,
     timeout_seconds: float | None = None,
+    transcript_item_domains: tuple[str, ...] | None = None,
 ) -> CancellableAsyncStream:
     """Open any LiteLLM-backed provider with interruptible header waiting."""
     return open_cancellable_stream(
-        LiteLLMAsyncStreamSource(spec, messages, dict(request_options)),
+        LiteLLMAsyncStreamSource(
+            spec,
+            messages,
+            dict(request_options),
+            transcript_item_domains,
+        ),
         cancel_check,
         timeout_seconds=timeout_seconds,
         thread_name="litellm-cancellable-stream",

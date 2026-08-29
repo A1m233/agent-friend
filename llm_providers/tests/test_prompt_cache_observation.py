@@ -264,6 +264,63 @@ def test_non_stream_client_attaches_same_observation_schema(
     assert "response-secret-id" not in encoded
 
 
+def test_within_operation_reports_lost_prefix_and_unavailable_reason() -> None:
+    observation = build_prompt_cache_observation(
+        requested_model="test-model",
+        provider_id="test",
+        message_count=2,
+        tool_count=0,
+        usage=LLMUsage(prompt_tokens=220),
+        diagnostics=LLMResponseDiagnostics(
+            request_relation="rebase",
+            common_prefix_items=1,
+            previous_request_items=2,
+            first_divergence_index=1,
+            first_divergence_role="user",
+            first_divergence_domain="messages",
+            lost_prefix_items=1,
+        ),
+        control=ModelCallControl(
+            trace_context=ModelCallTraceContext(
+                operation="memory_extraction",
+                comparison_scope="within_operation",
+                comparison_precision="exact_item",
+                comparison={
+                    "previous_item_count": 2,
+                    "previous_input_tokens": 200,
+                    "unavailable_reason": None,
+                },
+            )
+        ),
+    )
+
+    assert observation["structure"]["cross_turn_relation"] == "rebase"
+    assert observation["structure"]["lost_prefix_items"] == 1
+    assert observation["structure"]["lost_prefix_tokens_estimate"] == 100
+    assert observation["structure"]["unavailable_reason"] is None
+
+    unavailable = build_prompt_cache_observation(
+        requested_model="test-model",
+        provider_id="test",
+        message_count=2,
+        tool_count=0,
+        usage=None,
+        diagnostics=LLMResponseDiagnostics(request_relation="baseline"),
+        control=ModelCallControl(
+            trace_context=ModelCallTraceContext(
+                operation="context_compaction",
+                comparison_scope="unavailable",
+                comparison_precision="unavailable",
+                comparison={
+                    "unavailable_reason": "no_previous_operation_request",
+                },
+            )
+        ),
+    )
+    assert unavailable["structure"]["final_wire_relation"] == "unavailable"
+    assert unavailable["structure"]["unavailable_reason"] == "no_previous_operation_request"
+
+
 def test_observation_failure_does_not_break_model_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

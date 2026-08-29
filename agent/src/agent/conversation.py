@@ -256,6 +256,17 @@ def _render_untrusted_context(source_type: str, text: str) -> str:
     )
 
 
+def _prompt_item_identity(message: dict[str, Any]) -> str:
+    payload = json.dumps(
+        message,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return sha256(b"agent-friend:prompt-item-domain:v1\0" + payload).hexdigest()
+
+
 _UNSET = object()
 
 
@@ -409,6 +420,7 @@ class Conversation:
         self._calibration_by_model: dict[str, float] = {}
         self._pending_context_usage: dict[str, Any] | None = None
         self._prompt_cache_trace_tracker = PromptCacheTraceTracker()
+        self._prompt_item_domain_by_identity: dict[str, str] = {}
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
         self._unscoped_llm_call_index = 0
         self._pending_compaction: CompactionRecord | None = None
@@ -2230,6 +2242,7 @@ class Conversation:
                             "只使用其中实际支持的事实：\n\n"
                             + _render_untrusted_context("memory_retrieval", ctx.rendered)
                         ),
+                        meta={"prompt_cache_domain": "memory"},
                     )
                 )
         if self._voice_latency_short_reply_hint:
@@ -2270,6 +2283,36 @@ class Conversation:
 
     def _assemble(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self._drain_assembled_messages(self._assemble_stream(**kwargs))
+
+    def _remember_prompt_item_domain(
+        self,
+        rendered: dict[str, Any],
+        domain: str,
+    ) -> None:
+        identity = _prompt_item_identity(rendered)
+        self._prompt_item_domain_by_identity[identity] = domain
+        while len(self._prompt_item_domain_by_identity) > 512:
+            oldest = next(iter(self._prompt_item_domain_by_identity))
+            self._prompt_item_domain_by_identity.pop(oldest, None)
+
+    def _prompt_item_domains(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, ...]:
+        domains: list[str] = []
+        for message in messages:
+            mapped = self._prompt_item_domain_by_identity.get(_prompt_item_identity(message))
+            if mapped is not None:
+                domains.append(mapped)
+                continue
+            rendered = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
+            if "<agent_friend_runtime_context" in rendered:
+                domains.append("runtime")
+            elif str(message.get("role", "")) in {"system", "developer", "instructions"}:
+                domains.append("system")
+            else:
+                domains.append("messages")
+        return tuple(domains)
 
     def _assemble_stream(
         self,
@@ -2396,6 +2439,9 @@ class Conversation:
                 )
             if message.meta.get("synthetic") == "run_runtime_snapshot":
                 self._last_runtime_snapshot_rendered = dict(rendered)
+            prompt_cache_domain = message.meta.get("prompt_cache_domain")
+            if isinstance(prompt_cache_domain, str):
+                self._remember_prompt_item_domain(rendered, prompt_cache_domain)
             rendered_messages.append(rendered)
         context_index = (
             self._run_latency_context.next_context_build_index()
@@ -2769,6 +2815,7 @@ class Conversation:
                                 projection.current_rebase_reason if projection is not None else None
                             ),
                             trace_context=trace_context,
+                            transcript_item_domains=self._prompt_item_domains(current_messages),
                         ),
                     )
                 )
@@ -2919,6 +2966,7 @@ class Conversation:
             )
             request_trace = self._prompt_cache_trace_tracker.begin(
                 messages=current_messages,
+                message_domains=self._prompt_item_domains(current_messages),
                 tools=tools,
                 provider_model=provider_model,
                 api_base=None,

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Generator, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -383,6 +383,13 @@ class _WitnessingLLMClient:
             transport="fake",
             transform_identity="fake:v1",
         )
+        domains = request.control.transcript_item_domains
+        if domains is not None and len(domains) == len(witness.transcript_item_digests):
+            witness = replace(
+                witness,
+                transcript_item_domains=domains,
+                contributor_mapping_precision="exact_item",
+            )
         previous = request.control.previous_request_witness
         relation = witness.relation_to(previous)
         self.relations.append(relation)
@@ -398,6 +405,9 @@ class _WitnessingLLMClient:
             first_divergence_index=witness.first_divergence_index(previous),
             first_divergence_role=witness.first_divergence_role(previous),
             first_divergence_domain=witness.first_divergence_domain(previous),
+            first_divergence_previous_domain=(witness.first_divergence_previous_domain(previous)),
+            first_divergence_current_domain=(witness.first_divergence_current_domain(previous)),
+            contributor_mapping_precision=witness.contributor_mapping_precision,
             lost_prefix_items=witness.lost_prefix_items(previous),
             request_witness=witness,
             response_model="deterministic-test-model",
@@ -540,18 +550,15 @@ def test_incomplete_model_response_fails_after_explicit_recovery_budget(
 def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
     tmp_path: Path,
 ) -> None:
-    fake = _ScriptedLLMClient(
-        script=[
-            [LLMTextDelta(text="one"), LLMTurnDone(stop_reason="end_turn")],
-            [LLMTextDelta(text="two"), LLMTurnDone(stop_reason="end_turn")],
-        ]
-    )
+    fake = _WitnessingLLMClient()
     conv = _make_conversation(tmp_path, fake_llm=fake, memory=_DynamicMemory())
 
     list(conv.stream("first"))
     list(conv.stream("second"))
 
-    first_request, second_request = fake.received
+    first_model_request, second_model_request = fake.received
+    first_request = first_model_request.messages
+    second_request = second_model_request.messages
     first_user_index = next(
         index for index, message in enumerate(first_request) if message.get("content") == "first"
     )
@@ -583,6 +590,18 @@ def test_dynamic_memory_and_runtime_follow_current_user_without_persisting(
         "first",
         "second",
     ]
+    assert first_model_request.control.transcript_item_domains is not None
+    assert first_model_request.control.transcript_item_domains[first_memory_index] == "memory"
+    assert second_model_request.control.transcript_item_domains is not None
+    assert second_model_request.control.transcript_item_domains[second_memory_index] == "memory"
+    assert fake.diagnostics[1].first_divergence_domain == "memory"
+    assert fake.diagnostics[1].first_divergence_previous_domain == "memory"
+    assert fake.diagnostics[1].first_divergence_current_domain == "messages"
+    comparison = second_model_request.control.trace_context
+    assert comparison is not None and comparison.comparison is not None
+    flags = comparison.comparison["change_flags"]
+    assert flags["memory_content_changed"] is True
+    assert flags["memory_position_changed"] is True
 
 
 def test_turn_uses_stable_provider_neutral_cache_key(tmp_path: Path) -> None:

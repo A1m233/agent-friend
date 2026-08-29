@@ -38,6 +38,10 @@ def _observation(
     lost_prefix_tokens_estimate: int | None = None,
     messages_appended: bool | None = None,
     messages_rewritten: bool | None = None,
+    unavailable_reason: str | None = None,
+    memory_presence_changed: bool | None = None,
+    memory_content_changed: bool | None = None,
+    memory_position_changed: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "schema": PROMPT_CACHE_OBSERVATION_SCHEMA,
@@ -60,10 +64,14 @@ def _observation(
             "comparison_scope": comparison_scope,
             "cross_turn_relation": cross_turn_relation,
             "first_divergence_domain": first_divergence_domain,
+            "unavailable_reason": unavailable_reason,
             "lost_prefix_tokens_estimate": lost_prefix_tokens_estimate,
             "change_flags": {
                 "messages_appended": messages_appended,
                 "messages_rewritten": messages_rewritten,
+                "memory_presence_changed": memory_presence_changed,
+                "memory_content_changed": memory_content_changed,
+                "memory_position_changed": memory_position_changed,
             },
             "rebase_reason": None,
         },
@@ -194,3 +202,94 @@ def test_source_identity_binds_commit_tracked_diff_and_untracked_content(
     assert identity["working_tree_dirty"] is True
     assert identity["untracked_files"] == 1
     assert len(identity["overlay_sha256"]) == 64
+
+
+def test_operation_memory_segments_and_contributor_matrix_are_explicit() -> None:
+    module = _load_module()
+    observations = [
+        _observation(
+            input_total=200,
+            cache_read=0,
+            cache_write=None,
+            input_other=None,
+            operation="memory_extraction",
+            relation="unavailable",
+            comparison_scope="unavailable",
+            unavailable_reason="no_previous_operation_request",
+        ),
+        _observation(
+            input_total=300,
+            cache_read=100,
+            cache_write=None,
+            input_other=None,
+            operation="memory_extraction",
+            relation="rebase",
+            comparison_scope="within_operation",
+            cross_turn_relation="rebase",
+            first_divergence_domain="messages",
+            lost_prefix_tokens_estimate=80,
+        ),
+        _observation(
+            input_total=400,
+            cache_read=100,
+            cache_write=None,
+            input_other=None,
+            operation="conversation",
+            relation="rebase",
+            comparison_scope="cross_user_turn",
+            cross_turn_relation="rebase",
+            first_divergence_domain="memory",
+            lost_prefix_tokens_estimate=120,
+            memory_content_changed=True,
+            memory_position_changed=True,
+        ),
+    ]
+
+    report = module.aggregate_observations(observations)
+    operation = report["summary"]["operation_lineage"]
+    memory = report["summary"]["memory_breakpoints"]
+
+    assert operation["observations"] == 2
+    assert operation["scopes"] == {"unavailable": 1, "within_operation": 1}
+    assert operation["unavailable_reasons"] == {"no_previous_operation_request": 1}
+    assert operation["lost_prefix_tokens_estimate"] == {
+        "sum": 80,
+        "known": 1,
+        "unknown": 1,
+    }
+    assert memory["observations"] == 1
+    assert memory["first_divergence_memory"] == 1
+    assert memory["flags"]["memory_content_changed"]["true"] == 1
+    assert memory["lost_prefix_tokens_estimate"]["sum"] == 120
+    assert (
+        report["segments"]["unavailable_reason"]["no_previous_operation_request"]["observations"]
+        == 1
+    )
+
+    matrix = report["operation_contributor_matrix"]
+    assert set(matrix) == {
+        "conversation",
+        "context_compaction",
+        "memory_extraction",
+        "memory_reconciliation",
+    }
+    expected_contributors = {
+        "system",
+        "persona",
+        "tools",
+        "skills",
+        "messages",
+        "memory",
+        "runtime",
+        "settings",
+        "model-route",
+    }
+    assert all(set(row) == expected_contributors for row in matrix.values())
+    assert all(
+        status == "covered" or status == "not_applicable"
+        for row in matrix.values()
+        for status in row.values()
+    )
+    markdown = module.render_markdown(report)
+    assert "Background operation lineage: 2 observations" in markdown
+    assert "Memory breakpoints: 1 observations" in markdown

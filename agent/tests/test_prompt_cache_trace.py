@@ -19,9 +19,11 @@ def _begin(
     settings: dict[str, Any] | None = None,
     model_route: dict[str, Any] | None = None,
     skills: dict[str, Any] | None = None,
+    message_domains: tuple[str, ...] | None = None,
 ) -> PromptRequestTrace:
     return tracker.begin(
         messages=messages,
+        message_domains=message_domains,
         tools=tools,
         provider_model="openai/kimi-k2.6",
         api_base="https://api.moonshot.cn/v1",
@@ -349,3 +351,181 @@ def test_skill_snapshot_change_is_classified_in_tools_domain() -> None:
     assert comparison.change_flags is not None
     assert comparison.change_flags["skills_changed"] is True
     assert comparison.change_flags["tools_changed"] is False
+
+
+@pytest.mark.parametrize(
+    (
+        "previous_messages",
+        "previous_domains",
+        "current_messages",
+        "current_domains",
+        "expected_presence",
+        "expected_content",
+        "expected_position",
+    ),
+    [
+        (
+            [{"role": "system", "content": "system"}, {"role": "user", "content": "q"}],
+            ("system", "messages"),
+            [{"role": "system", "content": "system"}, {"role": "user", "content": "q"}],
+            ("system", "messages"),
+            False,
+            False,
+            False,
+        ),
+        (
+            [{"role": "system", "content": "system"}, {"role": "user", "content": "q"}],
+            ("system", "messages"),
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            True,
+            False,
+            False,
+        ),
+        (
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            [{"role": "system", "content": "system"}, {"role": "user", "content": "q"}],
+            ("system", "messages"),
+            True,
+            False,
+            False,
+        ),
+        (
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            False,
+            False,
+            False,
+        ),
+        (
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-b"},
+            ],
+            ("system", "messages", "memory"),
+            False,
+            True,
+            False,
+        ),
+        (
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "memory"),
+            [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "q"},
+                {"role": "assistant", "content": "a"},
+                {"role": "system", "content": "memory-a"},
+            ],
+            ("system", "messages", "messages", "memory"),
+            False,
+            False,
+            True,
+        ),
+    ],
+)
+def test_memory_presence_content_and_position_matrix(
+    previous_messages: list[dict[str, Any]],
+    previous_domains: tuple[str, ...],
+    current_messages: list[dict[str, Any]],
+    current_domains: tuple[str, ...],
+    expected_presence: bool,
+    expected_content: bool,
+    expected_position: bool,
+) -> None:
+    tracker = PromptCacheTraceTracker()
+    previous = _begin(
+        tracker,
+        previous_messages,
+        message_domains=previous_domains,
+    )
+    tracker.finish(
+        previous,
+        cache_state="reported_zero",
+        run_id="run-a",
+        witness=_witness(previous_messages),
+    )
+    current = _begin(
+        tracker,
+        current_messages,
+        message_domains=current_domains,
+    )
+    comparison = tracker.comparison_for(current, run_id="run-b")
+
+    assert comparison.change_flags is not None
+    assert comparison.change_flags["memory_presence_changed"] is expected_presence
+    assert comparison.change_flags["memory_content_changed"] is expected_content
+    assert comparison.change_flags["memory_position_changed"] is expected_position
+    expected_domain = (
+        "memory" if expected_presence or expected_content or expected_position else None
+    )
+    assert comparison.first_divergence_domain == expected_domain
+
+
+def test_cross_process_memory_keeps_only_coarse_presence_and_position() -> None:
+    tracker = PromptCacheTraceTracker()
+    secret = "LOW_ENTROPY_PRIVATE_MEMORY"
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "q"},
+        {"role": "system", "content": secret},
+    ]
+    trace = _begin(
+        tracker,
+        messages,
+        message_domains=("system", "messages", "memory"),
+    )
+    durable = tracker.finish(
+        trace,
+        cache_state="reported_zero",
+        run_id="run-a",
+        witness=_witness(messages),
+    )
+    encoded = json.dumps(durable)
+
+    assert secret not in encoded
+    assert "memory_item_digests" not in encoded
+    assert durable["cross_turn_lineage"]["memory_present"] is True
+    assert durable["cross_turn_lineage"]["memory_item_count"] == 1
+
+    restored = PromptCacheTraceTracker()
+    restored.restore(durable, finished_at_unix_ms=durable["finished_at_unix_ms"])
+    current = _begin(
+        restored,
+        messages,
+        message_domains=("system", "messages", "memory"),
+    )
+    comparison = restored.comparison_for(current, run_id="run-b")
+    assert comparison.change_flags is not None
+    assert comparison.change_flags["memory_presence_changed"] is False
+    assert comparison.change_flags["memory_content_changed"] is None
+    assert comparison.change_flags["memory_position_changed"] is False

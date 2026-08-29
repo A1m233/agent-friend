@@ -64,6 +64,17 @@ def _is_runtime_message(message: dict[str, Any]) -> bool:
     return "<agent_friend_runtime_context" in _canonical_json(message)
 
 
+def _position_bucket(positions: tuple[int, ...], total_items: int) -> str:
+    if not positions:
+        return "none"
+    first = positions[0]
+    if first <= 1:
+        return "head"
+    if positions[-1] >= max(0, total_items - 2):
+        return "tail"
+    return "middle"
+
+
 def _optional_changed(previous: str | None, current: str | None) -> bool:
     return previous != current
 
@@ -80,6 +91,8 @@ def _exact_change_flags(
     )
     messages_appended = core_prefix_preserved and len(current_core) > len(previous_core)
     messages_changed = previous_core != current_core
+    previous_memory_present = bool(previous.memory_item_digests)
+    current_memory_present = bool(current.memory_item_digests)
     return {
         "system_changed": previous.system_fingerprint != current.system_fingerprint,
         "persona_changed": _optional_changed(
@@ -96,6 +109,17 @@ def _exact_change_flags(
         "model_route_changed": (
             previous.model_route_fingerprint != current.model_route_fingerprint
         ),
+        "memory_presence_changed": previous_memory_present != current_memory_present,
+        "memory_content_changed": (
+            previous_memory_present
+            and current_memory_present
+            and previous.memory_item_digests != current.memory_item_digests
+        ),
+        "memory_position_changed": (
+            previous_memory_present
+            and current_memory_present
+            and previous.memory_positions != current.memory_positions
+        ),
     }
 
 
@@ -107,6 +131,7 @@ def _coarse_change_flags(
         "core-message-sequence",
         current.core_message_digests,
     )
+    current_memory_present = bool(current.memory_item_digests)
     return {
         "system_changed": previous.system_fingerprint != current.system_fingerprint,
         "persona_changed": previous.persona_fingerprint != current.persona_fingerprint,
@@ -122,6 +147,20 @@ def _coarse_change_flags(
         "model_route_changed": (
             previous.model_route_fingerprint != current.model_route_fingerprint
         ),
+        "memory_presence_changed": (
+            previous.memory_present != current_memory_present
+            if previous.memory_present is not None
+            else None
+        ),
+        "memory_content_changed": None,
+        "memory_position_changed": (
+            previous.memory_present is True
+            and current_memory_present
+            and previous.memory_position_bucket is not None
+            and previous.memory_position_bucket != current.memory_position_bucket
+        )
+        if previous.memory_present is not None
+        else None,
     }
 
 
@@ -132,6 +171,9 @@ _BREAKPOINT_PRIORITY = (
     ("system_changed", "system"),
     ("skills_changed", "tools"),
     ("tools_changed", "tools"),
+    ("memory_presence_changed", "memory"),
+    ("memory_content_changed", "memory"),
+    ("memory_position_changed", "memory"),
     ("messages_rewritten", "messages"),
     ("runtime_changed", "runtime"),
 )
@@ -168,6 +210,10 @@ class PromptRequestTrace:
     core_message_digests: tuple[str, ...]
     message_chars: tuple[int, ...]
     message_roles: tuple[str, ...]
+    message_domains: tuple[str, ...]
+    memory_item_digests: tuple[str, ...]
+    memory_positions: tuple[int, ...]
+    memory_position_bucket: str
     prompt_payload_bytes: int
     role_counts: dict[str, int]
     total_message_chars: int
@@ -272,6 +318,9 @@ class _RestoredCrossTurn:
     transcript_item_count: int | None
     input_tokens: int | None
     response_model: str | None
+    memory_present: bool | None
+    memory_item_count: int | None
+    memory_position_bucket: str | None
     finished_at_unix_ms: int
 
 
@@ -318,6 +367,13 @@ class PromptCacheTraceTracker:
             transcript_item_count=_optional_nonnegative_int(lineage.get("transcript_item_count")),
             input_tokens=_optional_nonnegative_int(lineage.get("input_tokens")),
             response_model=_optional_text(lineage.get("response_model")),
+            memory_present=(
+                lineage.get("memory_present")
+                if isinstance(lineage.get("memory_present"), bool)
+                else None
+            ),
+            memory_item_count=_optional_nonnegative_int(lineage.get("memory_item_count")),
+            memory_position_bucket=_optional_text(lineage.get("memory_position_bucket")),
             finished_at_unix_ms=_optional_nonnegative_int(lineage.get("finished_at_unix_ms"))
             or finished_at_unix_ms,
         )
@@ -326,6 +382,7 @@ class PromptCacheTraceTracker:
         self,
         *,
         messages: list[dict[str, Any]],
+        message_domains: tuple[str, ...] | None = None,
         tools: list[dict[str, Any]] | None,
         provider_model: str,
         api_base: str | None,
@@ -346,13 +403,33 @@ class PromptCacheTraceTracker:
         message_digests = tuple(_fingerprint("message", message) for message in messages)
         message_chars = tuple(_rendered_chars(message) for message in messages)
         message_roles = tuple(str(message.get("role", "unknown")) for message in messages)
+        if message_domains is None or len(message_domains) != len(messages):
+            message_domains = tuple(
+                "runtime"
+                if _is_runtime_message(message)
+                else "system"
+                if str(message.get("role", "")) == "system"
+                else "messages"
+                for message in messages
+            )
         role_counts = dict(Counter(message_roles))
-        runtime_messages = [message for message in messages if _is_runtime_message(message)]
+        runtime_messages = [
+            message
+            for message, domain in zip(messages, message_domains, strict=True)
+            if domain == "runtime"
+        ]
         system_messages = [
             message
-            for message in messages
-            if str(message.get("role", "")) == "system" and not _is_runtime_message(message)
+            for message, domain in zip(messages, message_domains, strict=True)
+            if str(message.get("role", "")) == "system" and domain == "system"
         ]
+        memory_positions = tuple(
+            index for index, domain in enumerate(message_domains) if domain == "memory"
+        )
+        memory_item_digests = tuple(
+            _fingerprint("memory-item", messages[index]) for index in memory_positions
+        )
+        memory_position_bucket = _position_bucket(memory_positions, len(messages))
         core_messages = [
             message
             for message in messages
@@ -441,6 +518,10 @@ class PromptCacheTraceTracker:
             core_message_digests=core_message_digests,
             message_chars=message_chars,
             message_roles=message_roles,
+            message_domains=message_domains,
+            memory_item_digests=memory_item_digests,
+            memory_positions=memory_positions,
+            memory_position_bucket=memory_position_bucket,
             prompt_payload_bytes=len(_canonical_json(prompt_payload).encode("utf-8")),
             role_counts=role_counts,
             total_message_chars=sum(message_chars),
@@ -602,6 +683,9 @@ class PromptCacheTraceTracker:
                 "role_counts": dict(trace.role_counts),
                 "input_tokens": input_tokens,
                 "response_model": response_model,
+                "memory_present": bool(trace.memory_item_digests),
+                "memory_item_count": len(trace.memory_item_digests),
+                "memory_position_bucket": trace.memory_position_bucket,
                 "finished_at_unix_ms": finished_at_unix_ms,
             }
         return durable

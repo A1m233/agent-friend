@@ -193,6 +193,9 @@ class LLMResponseDiagnostics:
     first_divergence_index: int | None = None
     first_divergence_role: str | None = None
     first_divergence_domain: str | None = None
+    first_divergence_previous_domain: str | None = None
+    first_divergence_current_domain: str | None = None
+    contributor_mapping_precision: str = "generic"
     lost_prefix_items: int | None = None
     request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     stream_open_ms: int | None = None
@@ -224,6 +227,9 @@ class LLMTransportDiagnostic:
     first_divergence_index: int | None = None
     first_divergence_role: str | None = None
     first_divergence_domain: str | None = None
+    first_divergence_previous_domain: str | None = None
+    first_divergence_current_domain: str | None = None
+    contributor_mapping_precision: str = "generic"
     lost_prefix_items: int | None = None
     request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     provider_request_id: str | None = None

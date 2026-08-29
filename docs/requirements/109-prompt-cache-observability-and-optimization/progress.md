@@ -9,7 +9,7 @@ IN_PROGRESS
 - [x] T1：扩展 provider usage 归一化，支持 cache read/write/other/total、来源、推导和 accounting mode。
 - [x] T2：实现版本化、隐私安全的 `PromptCacheObservation` 与结构/结果解释矩阵。
 - [x] T3：在 stream/non-stream 统一模型调用边界产生 observation，正确处理 retry、失败与降级。
-- [x] T4：覆盖 Conversation、上下文压缩、memory extraction/reconciliation 的运行语义，并在 session 诊断保留同一 observation。
+- [x] T4：覆盖 Conversation、上下文压缩、memory extraction/reconciliation 的运行身份与 usage 语义，并在 session 诊断保留同一 observation。
 - [x] T5：实现 `scripts/prompt-cache-report/` 双端工程入口、JSON/Markdown 报告和聚合数学。
 - [x] T6：补齐 usage、observation、入口、隐私、兼容和报告的确定性回归。
 - [x] T7：运行受影响定向测试与 backend/frontend/rust 完整项目门禁。
@@ -19,6 +19,11 @@ IN_PROGRESS
 - [x] T11：补齐 system/persona/tools/messages/runtime/settings/model-route 变化标记及跨回合损失估算。
 - [x] T12：扩展报告的 cross-user-turn rebase token 贡献与主要断点域分段。
 - [x] T13：完成连续无工具回合、断点域矩阵、session 续开/应用重启和隐私确定性 AC，并重跑门禁。
+- [x] T14：为 non-stream final wire 补齐通用 witness 生成与 operation-scoped lineage，覆盖 context compaction、memory extraction 和 memory reconciliation。
+- [x] T15：将 memory recall 标记为独立 `memory` prompt contributor，并实现 presence/content/position 变化诊断。
+- [x] T16：扩展报告的 operation 与 memory 断点分段、unavailable reason 和 lost-prefix 贡献。
+- [x] T17：补齐后台 operation、memory 断点矩阵、跨进程降级、operation × contributor 覆盖矩阵和隐私回归。
+- [x] T18：重跑受影响测试与完整项目门禁；必要真实 LLM 验收按本需求既有授权在执行前告知模型、场景和调用量。
 
 ## AC 验证
 
@@ -36,6 +41,9 @@ IN_PROGRESS
 - [x] AC-12 persona/system、runtime、Skill/tools、settings、model-route 与 message rewrite 断点域矩阵。
 - [x] AC-13 session 续开与应用重启的 exact/domain-only 范围和降级状态。
 - [x] AC-14 跨回合 lineage 隐私、rebase token 贡献和断点原因聚合。
+- [x] AC-15 context compaction、memory extraction/reconciliation 的后台 operation lineage 与跨进程降级。
+- [x] AC-16 memory recall presence/content/position 跨回合断点矩阵。
+- [x] AC-17 operation × contributor 覆盖矩阵、operation/memory 聚合与专项隐私验证。
 
 ## 实现日志
 
@@ -53,3 +61,7 @@ IN_PROGRESS
 | 2026-08-29 | 完成跨用户回合 exact lineage、跨进程分类级恢复、断点域/损失估算、Skill/tools 变化标记和报告分段 | 受影响回归 `200 passed`；Conversation 连续无工具回合与重启、系统轮 anchor 隔离、persona/system/runtime/Skill/tools/messages/settings/model-route、隐私和聚合均有确定性断言 |
 | 2026-08-29 | 执行 16 次 DeepSeek 真实请求（14 个保留成功样本，另 2 个来自首次工具 smoke 尝试） | exact repeat 四组 probe 约 98.6%～99.8%；工具重组 `0/9843`，严格 append `9344/9508=98.28%`；跨用户回合为 `runtime` rebase、`4608/13929=33.08%`、估算损失 `4639` tokens。首次工具 probe 因 `max_tokens=64` 截断，harness 调至 256 后闭环 |
 | 2026-08-29 | 最终 overlay 三阶段项目门禁通过 | backend ruff/mypy + `2319 passed, 4 skipped`；frontend `670 passed` + production build；Rust `222 passed, 1 ignored` + release check。bilibili atexit、CSS highlight、chunk size 与 Rust dead-code 为既有非阻断 warning |
+| 2026-08-29 | checkpoint commit `fbc8eafe5dc29d46bd9381b7d8174222be711444` 后回溯 memory/后台 operation 覆盖 | 已确认 memory extraction/reconciliation 只有 identity/usage observation、non-stream final-wire 为 unavailable；memory recall 只归入 system/messages，缺少 memory 专项断点。用户确认回到 Phase 1，并新增 T14-T18、AC-15 至 AC-17；既有 AC-1 至 AC-14 证据保留但不代表新增范围完成 |
+| 2026-08-29 | 完成 non-stream final HTTP witness 与 `OperationRequestLineageTracker` | 同步 completion 复用 per-call instrumented HTTP client；compaction、base extraction、reconciliation 分别按 session/operation/call kind/contract revision 隔离，第二次成功调用为 `within_operation/exact_item`；fresh tracker 明确 unavailable reason，交错完成不覆盖新 anchor |
+| 2026-08-29 | 完成 memory contributor sidecar、跨回合 flags 与聚合 | sidecar 不进入 prompt，仅在 prepared items 与 final wire 可证明对齐时标记 `memory`；覆盖 empty/出现/消失/稳定/内容改变/位置移动，保留 previous/current domain；跨进程不保存 memory 内容 fingerprint，报告增加 operation/memory/unavailable reason/lost-token 分段和完整 contributor 矩阵 |
+| 2026-08-29 | AC-15～AC-17 确定性回归与三阶段项目门禁通过 | 受影响回归 `161 passed`，追加 fresh-tracker restart `5 passed`；最终 backend ruff/mypy + `2338 passed, 4 skipped`，frontend `670 passed` + production build，Rust `222 passed, 1 ignored` + release check。真实 HTTP 序列化由 MockTransport 覆盖；未新增真实 LLM 请求，因为本次验证的是采集/lineage/分类机制，既有 E-020/E-021 已覆盖真实 provider baseline |

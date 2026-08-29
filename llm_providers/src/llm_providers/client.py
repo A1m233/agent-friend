@@ -18,6 +18,7 @@ import logging
 import random
 import time
 from collections.abc import Callable, Iterator
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import Any, cast
@@ -41,7 +42,11 @@ from .kimi_transport import (
     open_kimi_stream,
     uses_kimi_stream_transport,
 )
-from .litellm_transport import open_cancellable_litellm_stream, open_litellm_stream
+from .litellm_transport import (
+    complete_litellm,
+    open_cancellable_litellm_stream,
+    open_litellm_stream,
+)
 from .prompt_cache_observation import (
     build_prompt_cache_observation,
     emit_prompt_cache_observation,
@@ -348,6 +353,8 @@ class LLMClient:
                     response = self._call_once(
                         self.spec,
                         request.messages,
+                        previous_request_witness=request.control.previous_request_witness,
+                        transcript_item_domains=request.control.transcript_item_domains,
                         **settings,
                     )
                     return self._observe_response(
@@ -363,13 +370,49 @@ class LLMClient:
                     self._wait_before_retry(exc, attempt, retry_limit, delay)
         except BaseException as exc:
             try:
+                failed_diagnostics: LLMResponseDiagnostics | None = None
+                failed_witness = getattr(exc, "request_witness", None)
+                previous_witness = request.control.previous_request_witness
+                if isinstance(failed_witness, ProviderRequestWitness):
+                    failed_diagnostics = LLMResponseDiagnostics(
+                        transport="litellm",
+                        request_bytes=failed_witness.request_bytes,
+                        request_fingerprint=failed_witness.request_fingerprint,
+                        request_relation=failed_witness.relation_to(previous_witness),
+                        common_prefix_items=failed_witness.common_prefix_items(previous_witness),
+                        previous_request_items=(
+                            len(previous_witness.transcript_item_digests)
+                            if previous_witness is not None
+                            else None
+                        ),
+                        first_divergence_index=failed_witness.first_divergence_index(
+                            previous_witness
+                        ),
+                        first_divergence_role=failed_witness.first_divergence_role(
+                            previous_witness
+                        ),
+                        first_divergence_domain=failed_witness.first_divergence_domain(
+                            previous_witness
+                        ),
+                        first_divergence_previous_domain=(
+                            failed_witness.first_divergence_previous_domain(previous_witness)
+                        ),
+                        first_divergence_current_domain=(
+                            failed_witness.first_divergence_current_domain(previous_witness)
+                        ),
+                        contributor_mapping_precision=(
+                            failed_witness.contributor_mapping_precision
+                        ),
+                        lost_prefix_items=failed_witness.lost_prefix_items(previous_witness),
+                        request_witness=failed_witness,
+                    )
                 observation = build_prompt_cache_observation(
                     requested_model=self.spec.model,
                     provider_id=_provider_id_for_spec(self.spec),
                     message_count=len(request.messages),
                     tool_count=len(request.tools or []),
                     usage=None,
-                    diagnostics=None,
+                    diagnostics=failed_diagnostics,
                     control=request.control,
                     total_elapsed_ms=round((time.perf_counter() - started) * 1000),
                     status="failed",
@@ -449,6 +492,7 @@ class LLMClient:
             diagnostic_callback = request.control.diagnostic_callback
             cancel_check = request.control.cancel_check
             previous_request_witness = request.control.previous_request_witness
+            transcript_item_domains = request.control.transcript_item_domains
             control = request.control
             if request.cache_key and uses_kimi_stream_transport(self.spec):
                 overrides.setdefault("prompt_cache_key", request.cache_key)
@@ -467,6 +511,7 @@ class LLMClient:
                 ProviderRequestWitness | None,
                 overrides.pop("_previous_request_witness", None),
             )
+            transcript_item_domains = None
         upstream = self._stream_with_network_retries(
             self.spec,
             messages,
@@ -474,6 +519,7 @@ class LLMClient:
             diagnostic_callback=diagnostic_callback,
             cancel_check=cancel_check,
             previous_request_witness=previous_request_witness,
+            transcript_item_domains=transcript_item_domains,
             **overrides,
         )
         return self._observe_stream(
@@ -552,6 +598,7 @@ class LLMClient:
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
+        transcript_item_domains: tuple[str, ...] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """仅在上游尚未产出任何事件时重试临时故障，避免重复文本或工具调用。"""
@@ -578,6 +625,7 @@ class LLMClient:
                 diagnostic_attempt=attempt + 1,
                 cancel_check=cancel_check,
                 previous_request_witness=relation_witness,
+                transcript_item_domains=transcript_item_domains,
                 **overrides,
             )
             try:
@@ -697,6 +745,9 @@ class LLMClient:
         self,
         spec: ProviderSpec,
         messages: list[dict[str, Any]],
+        *,
+        previous_request_witness: ProviderRequestWitness | None = None,
+        transcript_item_domains: tuple[str, ...] | None = None,
         **overrides: Any,
     ) -> ModelResponse:
         """单次同步调用 LiteLLM。
@@ -712,17 +763,62 @@ class LLMClient:
         # 让 attempt 数、总等待时间与可观测状态只有一个所有者。
         kwargs.setdefault("max_retries", 0)
         request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
-
+        prepared_item_domains = (
+            transcript_item_domains
+            if transcript_item_domains is not None
+            and len(transcript_item_domains) == len(request_messages)
+            else None
+        )
         try:
-            response = litellm.completion(
-                model=spec.model,
-                api_key=spec.api_key,
-                api_base=spec.api_base,
-                messages=request_messages,
-                **kwargs,
+            completion = complete_litellm(
+                spec,
+                request_messages,
+                kwargs,
+                completion_call=litellm.completion,
+                transcript_item_domains=prepared_item_domains,
             )
         except Exception as e:
-            raise _map_exception(e, provider_id=_provider_id_for_spec(spec)) from e
+            mapped = _map_exception(e, provider_id=_provider_id_for_spec(spec))
+            failed_witness = getattr(e, "request_witness", None)
+            if isinstance(failed_witness, ProviderRequestWitness):
+                with suppress(Exception):
+                    mapped.request_witness = failed_witness  # type: ignore[attr-defined]
+            raise mapped from e
+
+        response = completion.response
+        request_witness = completion.request_witness
+        request_relation = "unavailable"
+        common_prefix_items: int | None = None
+        previous_request_items = (
+            len(previous_request_witness.transcript_item_digests)
+            if previous_request_witness is not None
+            else None
+        )
+        first_divergence_index: int | None = None
+        first_divergence_role: str | None = None
+        first_divergence_domain: str | None = None
+        first_divergence_previous_domain: str | None = None
+        first_divergence_current_domain: str | None = None
+        contributor_mapping_precision = "generic"
+        lost_prefix_items: int | None = None
+        if request_witness is not None:
+            contributor_mapping_precision = request_witness.contributor_mapping_precision
+            request_relation = request_witness.relation_to(previous_request_witness)
+            common_prefix_items = request_witness.common_prefix_items(previous_request_witness)
+            first_divergence_index = request_witness.first_divergence_index(
+                previous_request_witness
+            )
+            first_divergence_role = request_witness.first_divergence_role(previous_request_witness)
+            first_divergence_domain = request_witness.first_divergence_domain(
+                previous_request_witness
+            )
+            first_divergence_previous_domain = request_witness.first_divergence_previous_domain(
+                previous_request_witness
+            )
+            first_divergence_current_domain = request_witness.first_divergence_current_domain(
+                previous_request_witness
+            )
+            lost_prefix_items = request_witness.lost_prefix_items(previous_request_witness)
 
         content = response.choices[0].message.content
         if content is None:
@@ -733,6 +829,21 @@ class LLMClient:
             usage=_extract_usage(response),
             diagnostics=LLMResponseDiagnostics(
                 transport="litellm",
+                request_bytes=(request_witness.request_bytes if request_witness else None),
+                request_fingerprint=(
+                    request_witness.request_fingerprint if request_witness else None
+                ),
+                request_relation=request_relation,
+                common_prefix_items=common_prefix_items,
+                previous_request_items=previous_request_items,
+                first_divergence_index=first_divergence_index,
+                first_divergence_role=first_divergence_role,
+                first_divergence_domain=first_divergence_domain,
+                first_divergence_previous_domain=first_divergence_previous_domain,
+                first_divergence_current_domain=first_divergence_current_domain,
+                contributor_mapping_precision=contributor_mapping_precision,
+                lost_prefix_items=lost_prefix_items,
+                request_witness=request_witness,
                 provider_request_id=_response_text_field(response, "request_id"),
                 response_id=_response_text_field(response, "id"),
                 response_model=_response_text_field(response, "model"),
@@ -753,6 +864,7 @@ class LLMClient:
         diagnostic_attempt: int = 1,
         cancel_check: Callable[[], None] | None = None,
         previous_request_witness: ProviderRequestWitness | None = None,
+        transcript_item_domains: tuple[str, ...] | None = None,
         **overrides: Any,
     ) -> Iterator[LLMStreamEvent]:
         """单次流式调用 LiteLLM（generator function）。
@@ -794,6 +906,17 @@ class LLMClient:
         # 009：默认请求尾 chunk 带 usage；调用方可经 defaults/overrides 覆盖
         kwargs.setdefault("stream_options", {"include_usage": True})
         request_messages, kwargs = prepare_litellm_request(spec, messages, kwargs)
+        prepared_item_domains = (
+            transcript_item_domains
+            if transcript_item_domains is not None
+            and len(transcript_item_domains) == len(request_messages)
+            else None
+        )
+        contributor_options = (
+            {"transcript_item_domains": prepared_item_domains}
+            if prepared_item_domains is not None
+            else {}
+        )
         transport = "kimi_direct" if uses_kimi_stream_transport(spec) else "litellm"
         request_witness: ProviderRequestWitness | None = None
         request_bytes: int | None = None
@@ -808,6 +931,9 @@ class LLMClient:
         first_divergence_index: int | None = None
         first_divergence_role: str | None = None
         first_divergence_domain: str | None = None
+        first_divergence_previous_domain: str | None = None
+        first_divergence_current_domain: str | None = None
+        contributor_mapping_precision = "generic"
         lost_prefix_items: int | None = None
         attempt_started = time.perf_counter()
         _emit_transport_diagnostic(
@@ -831,9 +957,15 @@ class LLMClient:
                         kwargs,
                         cancel_check,
                         timeout_seconds=self._stream_timeout_seconds,
+                        **contributor_options,
                     )
                     if cancel_check is not None
-                    else open_kimi_stream(spec, request_messages, kwargs)
+                    else open_kimi_stream(
+                        spec,
+                        request_messages,
+                        kwargs,
+                        **contributor_options,
+                    )
                 )
             elif cancel_check is not None:
                 response = open_cancellable_litellm_stream(
@@ -842,9 +974,15 @@ class LLMClient:
                     kwargs,
                     cancel_check,
                     timeout_seconds=self._stream_timeout_seconds,
+                    **contributor_options,
                 )
             else:
-                response = open_litellm_stream(spec, request_messages, kwargs)
+                response = open_litellm_stream(
+                    spec,
+                    request_messages,
+                    kwargs,
+                    **contributor_options,
+                )
         except BaseException as e:
             if cancel_check is not None:
                 cancel_check()
@@ -852,6 +990,7 @@ class LLMClient:
                 raise
             failed_witness = getattr(e, "request_witness", None)
             if isinstance(failed_witness, ProviderRequestWitness):
+                contributor_mapping_precision = failed_witness.contributor_mapping_precision
                 request_witness = failed_witness
                 request_bytes = failed_witness.request_bytes
                 request_fingerprint = failed_witness.request_fingerprint
@@ -864,6 +1003,12 @@ class LLMClient:
                     previous_request_witness
                 )
                 first_divergence_domain = failed_witness.first_divergence_domain(
+                    previous_request_witness
+                )
+                first_divergence_previous_domain = failed_witness.first_divergence_previous_domain(
+                    previous_request_witness
+                )
+                first_divergence_current_domain = failed_witness.first_divergence_current_domain(
                     previous_request_witness
                 )
                 lost_prefix_items = failed_witness.lost_prefix_items(previous_request_witness)
@@ -879,6 +1024,13 @@ class LLMClient:
                     request_fingerprint=request_fingerprint,
                     request_relation=request_relation,
                     common_prefix_items=common_prefix_items,
+                    first_divergence_index=first_divergence_index,
+                    first_divergence_role=first_divergence_role,
+                    first_divergence_domain=first_divergence_domain,
+                    first_divergence_previous_domain=first_divergence_previous_domain,
+                    first_divergence_current_domain=first_divergence_current_domain,
+                    contributor_mapping_precision=contributor_mapping_precision,
+                    lost_prefix_items=lost_prefix_items,
                     request_witness=request_witness,
                     provider_request_id=getattr(
                         mapped_error,
@@ -903,6 +1055,7 @@ class LLMClient:
         raw_witness = getattr(response, "request_witness", None)
         if isinstance(raw_witness, ProviderRequestWitness):
             request_witness = raw_witness
+            contributor_mapping_precision = request_witness.contributor_mapping_precision
             request_bytes = request_witness.request_bytes
             request_fingerprint = request_witness.request_fingerprint
             request_relation = request_witness.relation_to(previous_request_witness)
@@ -912,6 +1065,12 @@ class LLMClient:
             )
             first_divergence_role = request_witness.first_divergence_role(previous_request_witness)
             first_divergence_domain = request_witness.first_divergence_domain(
+                previous_request_witness
+            )
+            first_divergence_previous_domain = request_witness.first_divergence_previous_domain(
+                previous_request_witness
+            )
+            first_divergence_current_domain = request_witness.first_divergence_current_domain(
                 previous_request_witness
             )
             lost_prefix_items = request_witness.lost_prefix_items(previous_request_witness)
@@ -931,6 +1090,9 @@ class LLMClient:
                 first_divergence_index=first_divergence_index,
                 first_divergence_role=first_divergence_role,
                 first_divergence_domain=first_divergence_domain,
+                first_divergence_previous_domain=first_divergence_previous_domain,
+                first_divergence_current_domain=first_divergence_current_domain,
+                contributor_mapping_precision=contributor_mapping_precision,
                 lost_prefix_items=lost_prefix_items,
                 request_witness=request_witness,
                 provider_request_id=provider_request_id,
@@ -1164,6 +1326,9 @@ class LLMClient:
                 first_divergence_index=first_divergence_index,
                 first_divergence_role=first_divergence_role,
                 first_divergence_domain=first_divergence_domain,
+                first_divergence_previous_domain=first_divergence_previous_domain,
+                first_divergence_current_domain=first_divergence_current_domain,
+                contributor_mapping_precision=contributor_mapping_precision,
                 lost_prefix_items=lost_prefix_items,
                 request_witness=request_witness,
                 stream_open_ms=stream_open_ms,

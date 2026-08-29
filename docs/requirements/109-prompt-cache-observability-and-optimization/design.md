@@ -43,6 +43,22 @@ Conversation 知道 run、session、surface、call kind、call index、恢复与
 但不能替代 provider transform 后的 wire 事实；跨进程恢复更只剩 namespace/cache state。因此需要新增
 session 级、内容无关的跨回合 lineage owner，并把逐 item digest 严格限制在进程内存。
 
+### 已接入的后台调用仍缺少断点比较
+
+memory base extraction、semantic reconciliation 和 context compaction 已经传入 operation/call kind，并由
+统一 observation 记录 usage，但三者都走 non-stream `generate()`。当前同步 transport 没有安装与 stream
+相同的 final HTTP request capture，`ModelResponse.diagnostics` 因此没有 request witness；只要调用路径是
+non-stream，structure 就固定为 unavailable。“统一采集了调用身份”与“能够比较 provider 前缀”是两项
+独立能力，不能用前者代替后者。
+
+### Memory recall 不是可独立归因的 prompt contributor
+
+Conversation 把 recall 渲染为当前回合临时 system message，位于 current user 之后。下一用户回合重建
+history 时，上一回合的 assistant/history 会插入旧 memory 所在位置之前，即使 recall 内容相同也可能让
+旧 provider 前缀从该位置开始失效。现有 adapter trace 和 final-wire witness 只把它归入 system/messages，
+既没有 memory presence/content/position flags，也没有 previous/current domain 对照，无法判断断裂是否由
+memory 的出现、消失、改变或移动造成。
+
 ### 现有诊断包已经有受治理日志入口
 
 `agent_bridge.log` 使用现有 rotating file handler，并已被 diagnostic bundle 以有界 tail、脱敏规则
@@ -64,6 +80,10 @@ session 级、内容无关的跨回合 lineage owner，并把逐 item digest 严
 7. **先固定机制再采真实 baseline**：fixture、聚合数学和入口覆盖先自动化；真实 LLM 另按单次授权执行。
 8. **新用户回合不是新观测基线**：有上一成功用户回合时必须比较；无精确证据时标 unavailable 或
    precision-reduced，不能用 `baseline` 掩盖跨 run 边界。
+9. **调用入口与 contributor 交叉覆盖**：每个 production operation 都必须声明适用 contributor 和比较
+   能力；不能分别证明“调用已采集”和“断点域已实现”后推断交叉组合完整。
+10. **Final wire 不从 adapter input 猜测**：non-stream 与 stream 都从 provider transform 后的 HTTP body
+    生成 witness；sidecar 只有在能证明 item 对齐时才能补充语义域。
 
 ## 总体架构
 
@@ -83,6 +103,10 @@ flowchart LR
     Log --> Report["prompt-cache-report\nJSON + Markdown"]
     Session --> Lineage["SessionPromptCacheLineage\nexact in-process · coarse persisted"]
     Lineage --> Runtime
+    Runtime --> Contributors["Prompt contributor sidecar\nitem domains · memory position"]
+    Contributors --> Witness
+    Request --> OperationLineage["OperationRequestLineage\ncompaction · extraction · reconciliation"]
+    OperationLineage --> Request
 ```
 
 不引入外部 telemetry、常驻数据库或新的 diagnostic bundle capability。公共 observation 与报告逻辑
@@ -184,6 +208,12 @@ outcome               = interpretation、coverage、provider request safe ref
 公共日志不写 message digest 列表，也不写原始 provider request id。需要关联时使用带 schema 域的
 SHA-256 截断引用；相同本机记录可关联，无法反推原值。
 
+`ModelCallControl` 再增加仅进程内使用、`repr=False` 的 `transcript_item_domains`。它是与当前 adapter
+messages 对齐的语义 sidecar，只允许 `system/persona/tools/messages/memory/runtime/unknown` 等枚举，不含
+正文、digest 或原始 ID。transport 只有在 prepared messages 与 final-wire transcript 的 item 数量、顺序和
+内容无关 digest 对齐都可证明时才采用这些 domain；否则 final witness 保持通用域并记录 contributor
+mapping precision unavailable。
+
 ### 2.3 组合解释
 
 | final-wire relation | provider cache read | interpretation |
@@ -206,7 +236,7 @@ SHA-256 截断引用；相同本机记录可关联，无法反推原值。
 `ModelCallTraceContext` 增加：
 
 ```text
-comparison_scope       = within_run | cross_user_turn | cross_process_resume | unavailable
+comparison_scope       = within_run | within_operation | cross_user_turn | cross_process_resume | unavailable
 comparison_precision   = exact_item | domain_only | unavailable
 comparison             = previous item/input size、domain flags、coarse relation（内容无关）
 ```
@@ -218,12 +248,15 @@ cross_turn_relation
 first_divergence_domain
 first_divergence_index
 first_divergence_role
+first_divergence_previous_domain
+first_divergence_current_domain
 lost_prefix_items
 lost_prefix_tokens_estimate
 change_flags = {
   system_changed, persona_changed, tools_changed, skills_changed,
   messages_appended, messages_rewritten, runtime_changed,
-  settings_changed, model_route_changed
+  settings_changed, model_route_changed,
+  memory_presence_changed, memory_content_changed, memory_position_changed
 }
 ```
 
@@ -271,6 +304,41 @@ envelope 变化，估算上界为上一请求全部 input tokens。字段明确�
 `common_prefix_items`、精确 index/role、lost items 和 token estimate 保持 unavailable；relation 固定为
 `unavailable_precision_reduced` 或 `coarse_domain_change`，不声称 strict extension。
 
+### 2.7 `OperationRequestLineageTracker`
+
+在 `llm_providers` 增加 operation-neutral tracker，不依赖 Agent、Context 或 Memory：
+
+- key 使用域分离 digest，输入为 `session_id + operation + call_kind + prompt_contract_revision`；不在日志中
+  暴露原 session id。
+- `begin()` 返回 previous witness/input tokens/response model 和 `comparison_scope=within_operation`；无 anchor
+  时返回 unavailable + `no_previous_operation_request`，不伪装普通 baseline。
+- `complete()` 只在逻辑调用成功且 diagnostics 含 final witness 时更新 anchor；base extraction、semantic
+  reconciliation 和 summary generation 使用不同 key，永不互串。
+- 每 key 使用递增 generation，较早开始但较晚结束的并发调用不得覆盖更新的 anchor；tracker 同时设置
+  最大 key 数并按 LRU 淘汰，避免全局 worker 长期积累 session 状态。
+- tracker 只保留 witness digest tuple、计数、token、模型和时间，生命周期不超过 owning component。
+  `Extractor` 实例持有 memory tracker；每 session 独立的 `SummarizingContextManager` 持有 compaction tracker。
+- 本期不为后台 operation 新增 durable 存储。应用重启后的第一调用输出
+  `comparison_scope=unavailable`、`unavailable_reason=no_previous_operation_request`；tracker 保留未来接收安全
+  coarse snapshot 的接口，但不持久化逐 item digest。
+
+### 2.8 Memory contributor sidecar 与断点规则
+
+Conversation 在 assembly 阶段同时生成 `PromptContributorTrace`：
+
+- 每个 adapter message 对应一个 domain；内部创建的 recall message 标记 `memory`，runtime host packet 标记
+  `runtime`，其余沿用 system/messages。
+- sidecar 与 messages 一起经过 recovery/rebuild；只要 messages 被替换或重排，sidecar 必须在同一函数内
+  同步重建，禁止按旧 index 复用。
+- `PromptRequestTrace` 在进程内记录 memory item digest tuple、数量和 ordinal，计算 presence/content/position。
+  durable cross-turn snapshot 只保存 `memory_present`、item count 和位置 bucket；不保存 memory 内容 fingerprint，
+  因而跨进程 `memory_content_changed=None` 并明确 precision 降级。
+- `ProviderRequestWitness` 同时返回 first-divergence 的 previous/current domain。最早差异位置任一侧为 memory
+  时，规范化 `first_divergence_domain=memory`；这样旧 memory 被新 history 挤走不会被误写成普通 messages。
+  若更早位置已发生 system/runtime 等差异，仍以真正最早位置为准，memory flags 作为后续变化保留。
+- domain sidecar 无法与 final wire 证明对齐时，不用 JSON 文本或 recall 正文猜测 memory；输出 mapping
+  precision unavailable，adapter-level flags 仍可用但不得冒充权威 final-wire domain。
+
 ## 3. 采集边界
 
 ### 3.1 Stream
@@ -287,9 +355,12 @@ recovery/finalization 若重新调用 `stream()`，由新的 trace context 形�
 
 ### 3.2 Non-stream
 
-`LLMClient.generate(ModelRequest)` 在成功返回 `ModelResponse` 前执行同一组装与日志路径。当前 non-stream
-transport 没有 final-wire witness 时，structure 明确为 unavailable；usage、模型、operation 和调用身份
-仍完整采集。后续可以单独为 non-stream transport 增加 witness，不阻塞本期统一语义。
+`LLMClient.generate(ModelRequest)` 使用与 stream 相同的 per-call instrumented HTTP client。同步 completion
+transport 返回 raw response 与 `ProviderRequestWitness`，由 client 使用
+`request.control.previous_request_witness` 计算 relation/common prefix/first divergence/lost prefix，并写入
+`ModelResponse.diagnostics` 后再组装 observation。发送失败时 witness 附着到映射后的 error，failure
+observation 仍能表达结构事实；内部 retry 每个 attempt 可以留 transport diagnostic，但只产生一条逻辑
+observation。adapter input 不用于伪造 final wire。
 
 ### 3.3 调用入口
 
@@ -297,9 +368,9 @@ transport 没有 final-wire witness 时，structure 明确为 unavailable；usag
 | --- | --- | --- |
 | Conversation 普通与工具续轮 | `conversation` / 现有 call kind | `Conversation` |
 | response/context recovery | `conversation` / recovery kind + attempt | `Conversation` |
-| 上下文摘要 | `context_compaction` | summarizing context |
-| memory 基础提取 | `memory_extraction` | extractor |
-| memory 语义 reconciliation | `memory_reconciliation` | extractor |
+| 上下文摘要 | `context_compaction` / `summary_generation` | summarizing context + operation lineage tracker |
+| memory 基础提取 | `memory_extraction` / `base_extraction` | extractor + operation lineage tracker |
+| memory 语义 reconciliation | `memory_reconciliation` / `semantic_reconciliation` | extractor + operation lineage tracker |
 
 桌面、IM、voice、OpenAI compatible / AG-UI 和主动运行最终都进入 Conversation 的共享模型循环时，
 surface 从现有 run context 传入；若某 adapter 不提供 surface，则保留 unknown，但仍有 operation/call。
@@ -328,6 +399,9 @@ Memory/compaction 调用没有对应 assistant event，只进入统一日志。
 跨回合 durable lineage 也位于该 `cache_diagnostics`，但只包含分类 fingerprint、计数和 token 量级；
 final-wire `transcript_item_digests`、角色/域 tuple 与原始 ID 永不进入 Session。
 
+memory durable 分类只保存 present/count/position bucket，不保存 memory item digest 或 whole-content fingerprint。
+后台 operation tracker 本期不进入 Session；进程重启后第一调用必须显示 anchor 未恢复，而不是 baseline。
+
 ### 4.3 Bundle
 
 `agent_bridge.log*` 已由 diagnostic bundle 受治理收集，因此不新增 bundle entry、capability 或 contract
@@ -353,6 +427,9 @@ revision。bundle 消费者可以按 observation schema 解析；旧 bundle 没�
 - provider、requested/response model、surface、operation、call kind、call index/request-size bucket 分段。
 - comparison scope、cross-turn relation、first divergence domain、cross-user-turn rebase 数量和估算未复用
   input token 贡献；同 run 与跨回合指标分开。
+- operation/call kind/comparison scope、unavailable reason、memory presence/content/position flags，以及
+  `first_divergence_domain=memory` 的请求数和 lost-prefix token estimate；within-operation 不与
+  cross-user-turn 混成同一分母。
 
 分段结果使用相同 aggregation 函数，保证总量可复算。单请求比例不做简单平均。成本只消费 observation
 中实际 provider/gateway cost；本期不内置动态价格表。时延只报告分布/相关观测，不下因果结论。
@@ -381,11 +458,12 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
 | `llm_providers/src/llm_providers/protocol.py` | `ModelCallTraceContext` 与 `ModelCallControl.trace_context` |
 | `llm_providers/src/llm_providers/prompt_cache_observation.py`（新增） | schema、ref hash、解释、组装、日志输出与纯聚合输入语义 |
 | `llm_providers/src/llm_providers/client.py` | stream/non-stream 统一 observation emission |
-| `agent/src/agent/conversation.py` | 注入 call context；持久化同一 observation |
-| `agent/src/agent/prompt_cache_trace.py` | session 级 exact/coarse lineage、domain fingerprint、跨进程降级与变化标记 |
-| `llm_providers/src/llm_providers/request_witness.py` | final-wire item role/domain、首次断点和 lost item 计算 |
-| `agent/src/agent/context/summarizing.py` | compaction operation context |
-| `memory/src/memory/extraction/extractor.py` | extraction/reconciliation operation context |
+| `llm_providers/src/llm_providers/prompt_cache_lineage.py`（新增） | operation-scoped exact lineage、并发 generation 与有界淘汰 |
+| `agent/src/agent/conversation.py` | 注入 call context；构建 contributor sidecar；持久化同一 observation |
+| `agent/src/agent/prompt_cache_trace.py` | session exact/coarse lineage、memory trace/flags、跨进程降级 |
+| `llm_providers/src/llm_providers/request_witness.py` | final-wire item domain sidecar、previous/current 断点域和 lost item |
+| `agent/src/agent/context/summarizing.py` | compaction operation context 与独立 lineage owner |
+| `memory/src/memory/extraction/extractor.py` | extraction/reconciliation 独立 lineage owner |
 | `scripts/prompt-cache-report/`（新增） | 日志解析、聚合、JSON/Markdown 输出与双端入口 |
 | `scripts/README.md` | 工程报告入口说明 |
 | `llm_providers/tests/`、`agent/tests/`、`memory/tests/`、`scripts/check/` | 归一化、解释、入口、隐私、聚合数学和兼容测试 |
@@ -427,7 +505,21 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
   scope=`cross_process_resume`，精确字段 unavailable。
 - Session JSON、observation JSON、logger 和 repr 扫描已知敏感 marker 与逐 item digest，确保不持久化。
 
-### 8.5 报告
+### 8.5 后台 operation 与 memory
+
+- non-stream LiteLLM/Kimi-compatible fixture 证明 final HTTP body 产生 witness，success/failure/retry observation
+  与 stream 使用同一 relation 字段。
+- context compaction、base extraction、semantic reconciliation 各运行两次：第二次 scope 为
+  `within_operation` 且具有 exact relation；交错执行时 key 不串，旧并发 completion 不覆盖新 anchor。
+- 新 tracker/新进程第一次调用显示明确 unavailable reason；任何日志、repr、observation 不出现 witness digest
+  tuple 或输入正文。
+- memory 持续为空、出现、消失、内容稳定、内容改变、内容相同但位置移动分别断言 flags；与 history 正常
+  append 组合时，previous/current domain 能把旧 memory 被挤走识别为 memory breakpoint。
+- provider transform 无法证明 domain sidecar 对齐时断言 precision 降级，不把 adapter memory flag冒充
+  final-wire first divergence。
+- operation × contributor 表逐格绑定测试或明确 not-applicable/unavailable reason。
+
+### 8.6 报告
 
 - 固定 JSONL/log fixture 验证 token 加权比例、请求级比例、absolute buckets、coverage 和 unknown。
 - 各维度分段之和可复算；损坏/旧 revision/无关日志安全跳过并计数。
@@ -435,8 +527,10 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
 - Windows/Unix wrapper 参数语义一致，默认日志目录和显式 input 均有测试。
 - 固定 cross-turn fixture 验证 rebase 请求数、lost-token estimate、comparison scope 与 divergence-domain
   分段可复算，不与 within-run 请求混合。
+- 固定 operation/memory fixture 验证 within-operation、unavailable reason、memory flags 和 memory lost-token
+  分段可复算。
 
-### 8.6 项目门禁
+### 8.7 项目门禁
 
 - 先运行受影响模块定向测试。
 - 再分别执行 `scripts/check` backend、frontend、rust stage。
@@ -466,15 +560,21 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
 | 聚合把 unknown 当零 | aggregation 维护每个字段独立 known/unknown denominator；比例输出分子、分母、coverage |
 | 报告被误认为因果实验 | 输出只描述观测与分段；受控比较另记环境和变量，不自动归因 |
 | 真实 baseline 消耗或泄漏数据 | per-run LLM 授权；原始日志不提交；证据索引只保存脱敏汇总与 manifest |
+| operation tracker 跨 session 串 anchor 或无限增长 | 域分离 lineage key；operation/call kind/contract revision 隔离；有界 key/LRU；交错调用测试 |
+| memory domain sidecar 与 provider transform 错位 | 只有 item count/order/digest 对齐可证明时采用；否则 precision unavailable，绝不按正文猜测 |
+| 低熵 memory fingerprint 可被离线猜测 | whole-content/item digest 只在进程内；durable 仅保存 presence/count/position bucket |
 
 ## 11. 实施顺序
 
 1. 扩展 `LLMUsage` 与 `_normalize_usage`，用 provider fixture 固定互斥 bucket 与兼容行为。
 2. 增加 `ModelCallTraceContext`、`PromptCacheObservation` 和解释矩阵，接入 stream/non-stream client。
-3. 在 Conversation、compaction 和 memory 调用点注入运行语义；Conversation 持久化同一 observation。
-4. 增加跨平台 `prompt-cache-report` 和聚合数学测试，更新 scripts 索引。
-5. 运行定向测试和 backend/frontend/rust 完整门禁，回写 `progress.md` 与证据索引。
-6. 若用户另行授权，运行冻结场景的真实 baseline，再输出机会排序与后续需求建议。
+3. 为 non-stream completion 增加 final HTTP request capture，复用 stream relation/diagnostics；增加 operation
+   lineage tracker，并接入 compaction/extraction/reconciliation。
+4. 在 Conversation assembly 生成 memory contributor sidecar，扩展 trace/witness/change flags 与跨进程降级。
+5. 扩展 `prompt-cache-report` 的 operation/memory 分段和 AC-15～AC-17 确定性 fixture。
+6. 运行定向测试和 backend/frontend/rust 完整门禁，回写 `progress.md` 与证据索引。
+7. 若机制验证仍需要真实 provider，按本需求授权在执行前告知模型、场景和粗略调用量后运行；不以真实
+   LLM 替代确定性 AC。
 
 ## 12. 变更记录
 
@@ -482,3 +582,4 @@ baseline 汇总回写 `evidence-index.md`，每个机会桶记录未读取 token
 | --- | --- | --- |
 | 2026-08-29 | 初版确认：provider 事实 + runtime context 双层责任；统一 `PromptCacheObservation v2`；复用现有日志/session/bundle；新增 JSON/Markdown 工程聚合；真实 baseline 单独授权 | 是，已授权进入实现 |
 | 2026-08-29 | 用户将跨独立用户回合升格为硬要求：增加 comparison scope、session exact lineage、跨进程 domain-only 恢复、断点域/变化标记/损失估算及独立报告；逐 item digest 只在进程内存 | 是，增量实现并重跑 AC |
+| 2026-08-29 | 用户确认 memory/后台 operation 增量：non-stream 使用真实 final-wire capture；新增 `within_operation` 与独立 lineage；memory 通过不进入 prompt 的 domain sidecar 提供 presence/content/position flags，跨进程不保存内容 fingerprint | 是，新增 AC-15～AC-17 后直接进入实现 |

@@ -20,6 +20,8 @@ CONFIRMED
 
 此外，需求 102 的 final-wire witness 当前主要跟随单次 run 的 continuation projection。新用户回合开始后，上一 run 的逐 item witness 被销毁，第一请求通常退回 `baseline`；这使 adapter-input 虽能在同进程中提供方向性比较，最终 provider wire 却无法证明上一用户回合的稳定前缀是否仍被完整保留，也无法量化因 system/persona/tools/history/runtime/settings/model route 重新装配造成的跨回合缓存机会损失。跨独立用户回合恰恰可能承载最大输入量，因此必须在本需求内成为硬观测边界，而不是后续扩展。
 
+进一步核对已实现链路后还发现两个相互独立的缺口：一是 memory extraction、memory reconciliation 和 context compaction 等后台非流式模型调用虽然已有身份与 usage observation，却没有对应的 final-wire lineage，因调用接口不同而长期落入 `unavailable`；二是 memory recall 注入 Conversation 后只会被归入通用 `system` 或 `messages` 变化，无法判断 memory 的出现、消失、内容改变或位置移动是否造成跨回合前缀断裂。只覆盖主对话或只证明“调用已被采集”都不足以满足全链路缓存诊断。
+
 OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 Langfuse 的现有实践进一步表明，缓存读取、缓存写入、普通输入、请求结构连续性和 provider 实际结果必须分开表达；不同 provider 的原始 token 口径也不能未经归一化直接聚合。详细来源、当前代码锚点和证据局限见 [evidence-index.md](./evidence-index.md)。
 
 因此，本需求先建立统一、可解释、隐私安全的 prompt-cache 可观测与聚合基础，再用真实 baseline 对剩余机会排序。具体缓存行为优化根据证据拆分为后续独立需求，不在缺少可靠分母和归因时提前承诺整体命中率目标。
@@ -28,6 +30,8 @@ OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 
 
 - 让每次进入 provider 的模型请求产生语义一致的缓存观测，能够关联运行、调用位置、实际模型与 provider 路由，同时不记录 prompt 或工具正文。
 - 让同 session 新用户回合的第一次 provider 请求与上一用户回合最后一个可比较请求建立 lineage；同进程精确比较 final wire，跨进程至少提供分类级、明确降级的比较。
+- 让每一种生产 LLM operation 都声明自己的可比较对象、lineage、comparison scope 和定位精度；stream/non-stream 的接口差异不能成为永久缺失断点观测的理由。
+- 让 memory recall 作为独立 prompt contributor 被归因，能够区分 presence、content 和 position 变化，而不是被通用 system/messages 分类吞没。
 - 将缓存机会、请求结构连续性、provider 缓存读写结果和成本/时延结果分层表达，避免用单一命中率掩盖不同机制。
 - 统一不同 provider 的输入 token 口径，保留缓存读取、缓存写入、其他输入、总输入、输出及其来源、缺失和推导状态，防止聚合双计数。
 - 提供工程侧可重复执行的采集与聚合入口，能够按关键维度生成总量、比例、覆盖率、原因分布和未知项。
@@ -43,11 +47,14 @@ OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 
 - provider 返回的总输入、缓存读取、缓存写入、未读取/其他输入、输出、usage 来源、实际模型、实际路由和可用成本信息。
 - adapter-input 与 final-wire 两级内容无关指纹、连续性关系、首次分歧类别、重建原因、调用序号、请求规模、空闲间隔和必要 transport 元数据。
 - 跨用户回合和应用重启续开时的 comparison scope、断点域、变化标记、公共前缀规模和安全的丢失机会估算。
+- Conversation、context compaction、memory extraction、memory reconciliation 等生产 LLM operation 各自的比较语义、可比范围和明确降级状态。
+- memory recall 在 Conversation final wire 中的独立断点域，以及出现/消失、内容变化和位置移动标记。
 - 将“请求是否发生结构变化”与“provider 是否实际读取缓存”组合解释的稳定状态与原因分类。
 - 工程侧的结构化采集、持久化或诊断导出、聚合报告和确定性 fixture；具体存储位置和脚本形态由技术方案确定。
 - token 加权缓存读取比例、请求级非零读取比例、usage 覆盖率、缓存写入量、未读取输入量、成本与时延分布，以及明确的分子、分母和未知项。
 - 按 provider、请求模型、响应模型、路由、交互入口、调用类型、调用序号、请求规模、工具数量、连续性状态、重建原因和时间间隔等维度分段。
 - 独立报告 `cross_user_turn` 请求数、rebase 比例、估算未复用输入 token 贡献和主要 `first_divergence_domain`，不能被同 run 的高命中工具续轮稀释。
+- 按 operation、call kind 和 comparison scope 分段报告后台模型调用的 rebase、unavailable coverage 与估算未复用输入贡献；memory 断点贡献必须能被单独汇总。
 - 新用户回合、无工具对话、单步/多步工具循环、compaction、恢复、session 续开和应用重启等代表性场景的 baseline 采集计划与证据归档。
 - 根据 baseline 输出未命中输入机会排序、证据强度、下一项区分性实验和建议拆分的后续需求。
 
@@ -95,6 +102,22 @@ OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 
 - 变化标记至少覆盖 system、persona、tools/Skill、messages/history、runtime context、request settings 和 model/provider route；标记应区分正常尾部追加新用户消息与移动、替换或删除旧前缀。
 - 应用重启或 session 续开后，不持久化逐 item digest。可以持久化带版本域分离的分类级 fingerprint、计数、角色分布、最近 input token 和实际模型；此时 scope 为 `cross_process_resume`、precision 明确降级，公共前缀和精确断点不可得时保持 unavailable。
 - 上一用户回合没有成功 provider 请求、旧 schema 不兼容或安全 fingerprint 不足时 scope 为 `unavailable`；不得用首次请求、跨进程恢复或缺失证据伪造严格延续。
+
+### R-3B · 后台模型 operation lineage
+
+- Conversation 之外的生产 LLM operation，包括 context compaction、memory base extraction 和 memory reconciliation，必须与主对话使用同一 final-wire 比较语义；不能只有 operation identity、usage 和调用序号。
+- 每一种 operation 必须声明自己的可比较 predecessor、lineage namespace、comparison scope 和 precision。memory base extraction 与 reconciliation 的 prompt 契约不同，必须形成独立 lineage，不能互相比对或共享会产生误报的 anchor。
+- 当同一 session、同一 operation 存在稳定的逻辑 predecessor 时，应输出 relation、公共前缀、首次断点和安全的丢失规模；仅因使用 non-stream `generate` 路径不得永久降级为 `unavailable`。
+- operation 跨用户回合、同进程续开或跨进程恢复时，scope 必须表达实际生命周期关系；确实没有稳定 predecessor、旧 schema 不兼容或隐私安全 fingerprint 不足时才使用 `unavailable`，并保留机器可聚合的原因。
+- 跨进程继续遵守分类级安全 fingerprint 约束，不为提高后台 operation 的定位精度持久化逐 item digest、prompt、system 指令或待提取文本。
+
+### R-3C · Memory prompt contributor 归因
+
+- memory recall 被装配进 Conversation provider request 时，final-wire witness 必须把它识别为独立 `memory` 断点域，不能只归入通用 `system` 或 `messages`。
+- memory 变化至少提供 `memory_presence_changed`、`memory_content_changed` 和 `memory_position_changed` 标记；同一次请求可以同时出现多个标记，`first_divergence_domain` 仍只报告实际最早断点。
+- 比较必须区分 memory 在旧请求中不存在而新出现、原有 memory 消失、内容改变、内容相同但位置移动，以及 memory 稳定且仅在旧前缀尾部正常追加用户消息等情况。
+- memory 的分类不得依赖保存或输出 recall 正文。用于精确比较的内容无关 item digest 只保留在允许的同进程内存生命周期中；Session、日志、bundle 和报告只保留分类标记、计数和安全规模估算。
+- 聚合报告必须能单独显示由 memory presence/content/position 变化造成的跨用户回合 rebase 请求数与估算未复用输入贡献，并与 runtime、system、persona、tools/Skill、messages、settings 和 model-route 分开。
 
 ### R-4 · 机会、结构与结果分层
 
@@ -159,10 +182,14 @@ OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 
 - [ ] **AC-12 · 跨回合断点域矩阵**：分别改变 persona/system、runtime context、Skill/tools、request settings 和 model/provider route，并覆盖 history/message 移动、替换或删除；每项得到稳定变化标记和不越界的 `first_divergence_domain`。
 - [ ] **AC-13 · Session 续开与应用重启**：同进程 session 续开保持精确 item 比较；新进程只恢复分类级 fingerprint，scope=`cross_process_resume`、precision 降级，精确 common prefix/lost items 不可得时保持 unavailable，旧 schema 正常降级。
 - [ ] **AC-14 · 跨回合隐私与聚合**：Session、日志、bundle 和报告不保存逐 item digest、prompt、工具正文或可逆内容；报告能单独复算 cross-user-turn rebase 的请求数、估算 token 贡献和主要断点域。
+- [ ] **AC-15 · 后台 operation lineage**：对 context compaction、memory base extraction 和 memory reconciliation 分别构造至少两次可比较的 non-stream provider 请求；每种 operation 均输出正确的 operation/call kind、comparison scope、relation、公共前缀、首次断点和丢失规模，base extraction 与 reconciliation 不互串 lineage。应用重启后只能分类级比较时明确降级，确实不可比较时给出 unavailable reason，不能写成普通 baseline。
+- [ ] **AC-16 · Memory 跨回合断点矩阵**：确定性覆盖 memory 持续为空、由空变为非空、由非空变为空、内容保持且位置稳定、内容改变、内容相同但位置移动，并与正常尾部追加用户消息组合；每种情况得到不越界的 `memory` 首次断点与 `memory_presence_changed` / `memory_content_changed` / `memory_position_changed` 标记，或明确证明 memory 未造成断点。
+- [ ] **AC-17 · Operation × contributor 完整性**：用可复查矩阵枚举 Conversation、context compaction、memory extraction 和 memory reconciliation 对 system、persona、tools/Skill、messages/history、memory、runtime、settings、model-route 的适用性与比较能力；每格只能是已由确定性测试覆盖、明确不适用或带原因的 unavailable。报告能按 operation 和 memory 断点分段，且敏感内容扫描证明不保存 prompt、工具正文、memory 正文或逐 item digest。
 
 ## 方案阶段约束
 
 - 设计前必须对照当前 provider 最终 response usage、实际 wire witness 和所有模型调用入口，不能只根据公共 `LLMUsage` 类型推断完整链路。
+- 方案覆盖检查必须采用“每种生产 LLM operation × 每类 prompt contributor”矩阵，不能分别证明调用入口已采集、断点域已存在后就推断二者的交叉组合已经覆盖。
 - 公共字段优先参考 OpenTelemetry 的 GenAI usage 语义和成熟观测平台的互斥 bucket 原则，但不为追求标准形式引入当前不需要的外部 telemetry 基础设施。
 - Anthropic cache diagnostics 的“结构比较与实际读取分离”、最早分歧和内容无关指纹可作为主要参考；采用前仍需验证其约束是否适合 agent-friend 的 run/session 生命周期。
 - provider 文档与 SDK 字段是动态外部事实，技术方案必须记录访问日期、项目实际 LiteLLM/OpenAI SDK 版本和本仓库代码锚点。
@@ -193,3 +220,4 @@ OpenAI、Anthropic、DeepSeek、Kimi、OpenRouter、LiteLLM、OpenTelemetry 和 
 | --- | --- | --- |
 | 2026-08-29 | 初版确认：首期交付统一观测、工程聚合、真实 baseline 与机会排序；纳入 cache read/write 和互斥输入口径；不做用户 UI，不在本需求实施具体缓存行为优化 | Phase 1 |
 | 2026-08-29 | 跨独立用户回合缓存断点升格为硬要求：同进程精确 final-wire lineage、跨进程分类级降级、断点域/损失估算与独立聚合进入 109；不留作后续优化需求 | Phase 1/2 回溯 |
+| 2026-08-29 | memory 与后台 LLM operation 缺口回溯：所有生产 operation 必须声明比较语义；memory extraction/reconciliation 独立 lineage；memory recall 以统一 `memory` 断点域和 presence/content/position 标记进入确定性 AC；同时覆盖同类的 context compaction 非流式缺口 | Phase 1/2 回溯 |

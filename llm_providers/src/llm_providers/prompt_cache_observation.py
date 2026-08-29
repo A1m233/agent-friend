@@ -18,6 +18,53 @@ PROMPT_CACHE_OBSERVATION_SCHEMA = "agent-friend.prompt-cache-observation"
 PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION = 2
 PROMPT_CACHE_OBSERVATION_LOG_PREFIX = "prompt_cache_observation "
 
+PROMPT_CACHE_OPERATION_CONTRIBUTORS: dict[str, dict[str, str]] = {
+    "conversation": {
+        "system": "covered",
+        "persona": "covered",
+        "tools": "covered",
+        "skills": "covered",
+        "messages": "covered",
+        "memory": "covered",
+        "runtime": "covered",
+        "settings": "covered",
+        "model-route": "covered",
+    },
+    "context_compaction": {
+        "system": "covered",
+        "persona": "not_applicable",
+        "tools": "not_applicable",
+        "skills": "not_applicable",
+        "messages": "covered",
+        "memory": "not_applicable",
+        "runtime": "not_applicable",
+        "settings": "covered",
+        "model-route": "covered",
+    },
+    "memory_extraction": {
+        "system": "covered",
+        "persona": "not_applicable",
+        "tools": "not_applicable",
+        "skills": "not_applicable",
+        "messages": "covered",
+        "memory": "not_applicable",
+        "runtime": "not_applicable",
+        "settings": "covered",
+        "model-route": "covered",
+    },
+    "memory_reconciliation": {
+        "system": "covered",
+        "persona": "not_applicable",
+        "tools": "not_applicable",
+        "skills": "not_applicable",
+        "messages": "covered",
+        "memory": "not_applicable",
+        "runtime": "not_applicable",
+        "settings": "covered",
+        "model-route": "covered",
+    },
+}
+
 logger = logging.getLogger(__name__)
 
 _BUILD_IDENTITY_ENV = "AGENT_FRIEND_BUILD_IDENTITY_JSON"
@@ -113,6 +160,9 @@ _CHANGE_FLAG_FIELDS = frozenset(
         "runtime_changed",
         "settings_changed",
         "model_route_changed",
+        "memory_presence_changed",
+        "memory_content_changed",
+        "memory_position_changed",
     }
 )
 
@@ -129,6 +179,7 @@ def _safe_comparison(value: Mapping[str, Any] | None) -> dict[str, Any]:
         "first_divergence_index",
         "first_divergence_role",
         "coarse_relation",
+        "unavailable_reason",
     ):
         item = value.get(key)
         if item is None or isinstance(item, (str, int, float, bool)):
@@ -169,7 +220,7 @@ def _lost_prefix_fields(
     diagnostics: LLMResponseDiagnostics | None,
     comparison: Mapping[str, Any],
 ) -> tuple[int | None, int | None]:
-    if scope != "cross_user_turn" or diagnostics is None:
+    if scope not in {"cross_user_turn", "within_operation"} or diagnostics is None:
         return None, None
     previous_items = diagnostics.previous_request_items
     if previous_items is None:
@@ -314,8 +365,11 @@ def build_prompt_cache_observation(
     first_divergence_domain = _text(comparison.get("first_divergence_domain"))
     if change_flags.get("model_route_changed") is True:
         first_divergence_domain = "model-route"
-    if first_divergence_domain is None and diagnostics is not None:
-        first_divergence_domain = diagnostics.first_divergence_domain
+    if diagnostics is not None:
+        if diagnostics.first_divergence_domain == "memory":
+            first_divergence_domain = "memory"
+        elif first_divergence_domain is None:
+            first_divergence_domain = diagnostics.first_divergence_domain
     first_divergence_index = diagnostics.first_divergence_index if diagnostics is not None else None
     if first_divergence_index is None:
         first_divergence_index = _nonnegative_int(comparison.get("first_divergence_index"))
@@ -360,6 +414,7 @@ def build_prompt_cache_observation(
             "raw_final_wire_relation": wire_relation,
             "comparison_scope": comparison_scope,
             "comparison_precision": comparison_precision,
+            "unavailable_reason": _text(comparison.get("unavailable_reason")),
             "cross_turn_relation": cross_turn_relation,
             "common_prefix_items": (
                 diagnostics.common_prefix_items if diagnostics is not None else None
@@ -367,6 +422,17 @@ def build_prompt_cache_observation(
             "first_divergence_domain": first_divergence_domain,
             "first_divergence_index": first_divergence_index,
             "first_divergence_role": first_divergence_role,
+            "first_divergence_previous_domain": (
+                diagnostics.first_divergence_previous_domain if diagnostics is not None else None
+            ),
+            "first_divergence_current_domain": (
+                diagnostics.first_divergence_current_domain if diagnostics is not None else None
+            ),
+            "contributor_mapping_precision": (
+                diagnostics.contributor_mapping_precision
+                if diagnostics is not None
+                else "unavailable"
+            ),
             "lost_prefix_items": lost_prefix_items,
             "lost_prefix_tokens_estimate": lost_prefix_tokens_estimate,
             "change_flags": change_flags,

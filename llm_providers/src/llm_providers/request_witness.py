@@ -8,7 +8,7 @@ sizes; request/message/tool content never leaves the request hook.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import Any, Literal
 
@@ -75,6 +75,7 @@ class ProviderRequestWitness:
     envelope_digest: str | None
     request_digest: str
     request_bytes: int
+    contributor_mapping_precision: str = "generic"
     version: int = _WITNESS_VERSION
 
     def __repr__(self) -> str:
@@ -152,13 +153,46 @@ class ProviderRequestWitness:
         return None
 
     def first_divergence_domain(self, previous: ProviderRequestWitness | None) -> str | None:
+        if previous is not None and (
+            self.version != previous.version
+            or self.provider_id != previous.provider_id
+            or self.transport != previous.transport
+            or self.transform_identity != previous.transform_identity
+        ):
+            return "model-route"
+        if (
+            previous is not None
+            and self.envelope_digest is not None
+            and previous.envelope_digest is not None
+            and self.envelope_digest != previous.envelope_digest
+        ):
+            return "settings"
+        previous_domain = self.first_divergence_previous_domain(previous)
+        current_domain = self.first_divergence_current_domain(previous)
+        if "memory" in {previous_domain, current_domain}:
+            return "memory"
+        return current_domain or previous_domain
+
+    def first_divergence_previous_domain(
+        self,
+        previous: ProviderRequestWitness | None,
+    ) -> str | None:
+        index = self.first_divergence_index(previous)
+        if previous is None or index is None:
+            return None
+        if index < len(previous.transcript_item_domains):
+            return previous.transcript_item_domains[index]
+        return None
+
+    def first_divergence_current_domain(
+        self,
+        previous: ProviderRequestWitness | None,
+    ) -> str | None:
         index = self.first_divergence_index(previous)
         if previous is None or index is None:
             return None
         if index < len(self.transcript_item_domains):
             return self.transcript_item_domains[index]
-        if index < len(previous.transcript_item_domains):
-            return previous.transcript_item_domains[index]
         return None
 
     def lost_prefix_items(self, previous: ProviderRequestWitness | None) -> int | None:
@@ -224,19 +258,51 @@ def witness_from_body(
 class ProviderRequestCapture:
     """Per-call HTTPX hook target; safe to use across one request thread/task."""
 
-    def __init__(self, *, provider_id: str, transport: str, transform_identity: str) -> None:
+    def __init__(
+        self,
+        *,
+        provider_id: str,
+        transport: str,
+        transform_identity: str,
+        transcript_items: list[dict[str, Any]] | None = None,
+        transcript_item_domains: tuple[str, ...] | None = None,
+    ) -> None:
         self._provider_id = provider_id
         self._transport = transport
         self._transform_identity = transform_identity
+        self._transcript_item_domains = transcript_item_domains
+        self._source_item_digests = (
+            tuple(
+                _digest("provider-transcript-item", _canonical_json_bytes(item))
+                for item in transcript_items
+            )
+            if transcript_items is not None and transcript_item_domains is not None
+            else None
+        )
         self.witness: ProviderRequestWitness | None = None
 
     def observe(self, request: httpx.Request) -> None:
-        self.witness = witness_from_body(
+        witness = witness_from_body(
             request.content,
             provider_id=self._provider_id,
             transport=self._transport,
             transform_identity=self._transform_identity,
         )
+        domains = self._transcript_item_domains
+        source_digests = self._source_item_digests
+        if domains is not None and source_digests is not None:
+            if (
+                len(domains) == len(source_digests)
+                and witness.transcript_item_digests == source_digests
+            ):
+                witness = replace(
+                    witness,
+                    transcript_item_domains=domains,
+                    contributor_mapping_precision="exact_item",
+                )
+            else:
+                witness = replace(witness, contributor_mapping_precision="unavailable")
+        self.witness = witness
 
     async def observe_async(self, request: httpx.Request) -> None:
         self.observe(request)
