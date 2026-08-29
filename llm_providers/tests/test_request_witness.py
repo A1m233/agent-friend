@@ -85,6 +85,42 @@ def test_final_wire_witness_classifies_retry_extension_and_rebase() -> None:
     )
 
 
+def test_final_wire_witness_reports_item_role_domain_and_lost_prefix() -> None:
+    previous = _witness(
+        _body(
+            [
+                {"role": "system", "content": "stable"},
+                {
+                    "role": "system",
+                    "content": ("<agent_friend_runtime_context>old</agent_friend_runtime_context>"),
+                },
+                {"role": "user", "content": "history"},
+            ]
+        )
+    )
+    current = _witness(
+        _body(
+            [
+                {"role": "system", "content": "stable"},
+                {
+                    "role": "system",
+                    "content": ("<agent_friend_runtime_context>new</agent_friend_runtime_context>"),
+                },
+                {"role": "user", "content": "history"},
+            ]
+        )
+    )
+
+    assert previous.transcript_item_roles == ("system", "system", "user")
+    assert previous.transcript_item_domains == ("system", "runtime", "messages")
+    assert current.relation_to(previous) == "rebase"
+    assert current.common_prefix_items(previous) == 1
+    assert current.first_divergence_index(previous) == 1
+    assert current.first_divergence_role(previous) == "system"
+    assert current.first_divergence_domain(previous) == "runtime"
+    assert current.lost_prefix_items(previous) == 2
+
+
 def test_witness_diagnostics_retain_no_request_content() -> None:
     secret = "PRIVATE_USER_AND_TOOL_CONTENT"
     witness = _witness(

@@ -25,6 +25,24 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ModelCallTraceContext:
+    """Content-free runtime identity attached to one logical model call."""
+
+    operation: str = "unspecified"
+    surface: str | None = None
+    run_id: str | None = field(default=None, repr=False, compare=False)
+    session_id: str | None = field(default=None, repr=False, compare=False)
+    call_kind: str | None = None
+    call_index: int | None = None
+    turn_index: int | None = None
+    recovery_attempt: int | None = None
+    comparison_scope: str = "unavailable"
+    comparison_precision: str = "unavailable"
+    comparison: Mapping[str, Any] | None = field(default=None, repr=False, compare=False)
+    adapter_trace: Mapping[str, Any] | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass(frozen=True)
 class ModelCallControl:
     """Non-provider control signals for one model request."""
 
@@ -33,6 +51,7 @@ class ModelCallControl:
     previous_request_witness: ProviderRequestWitness | None = None
     continuation_disposition: str = "baseline"
     rebase_reason: str | None = None
+    trace_context: ModelCallTraceContext | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +95,7 @@ __all__ = [
     "LanguageModel",
     "LanguageModelFactory",
     "ModelCallControl",
+    "ModelCallTraceContext",
     "ModelRequest",
     "ModelResponse",
 ]

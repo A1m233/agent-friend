@@ -348,6 +348,72 @@ def test_extract_usage_does_not_let_litellm_private_zero_mask_openai_cache_detai
     assert usage.cache_miss_prompt_tokens == 40
 
 
+def test_extract_usage_reconciles_openai_inclusive_cache_write_buckets() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=200,
+                completion_tokens=8,
+                total_tokens=208,
+                prompt_tokens_details=SimpleNamespace(
+                    cached_tokens=100,
+                    cache_write_tokens=25,
+                ),
+            )
+        )
+    )
+
+    assert usage is not None
+    assert usage.cached_prompt_tokens == 100
+    assert usage.cache_write_prompt_tokens == 25
+    assert usage.input_other_prompt_tokens == 75
+    assert usage.input_other_prompt_tokens_derived is True
+    assert usage.input_token_accounting == "inclusive_total"
+    assert usage.input_buckets_reconciled is True
+
+
+def test_extract_usage_expands_anthropic_exclusive_input_components() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 60,
+                "cache_creation_input_tokens": 20,
+            }
+        )
+    )
+
+    assert usage is not None
+    assert usage.prompt_tokens == 180
+    assert usage.completion_tokens == 8
+    assert usage.cached_prompt_tokens == 60
+    assert usage.cache_write_prompt_tokens == 20
+    assert usage.input_other_prompt_tokens == 100
+    assert usage.input_token_accounting == "exclusive_components"
+    assert usage.input_buckets_reconciled is True
+
+
+def test_extract_usage_builds_deepseek_total_from_hit_and_miss() -> None:
+    usage = _extract_usage(
+        SimpleNamespace(
+            usage={
+                "completion_tokens": 5,
+                "prompt_cache_hit_tokens": 70,
+                "prompt_cache_miss_tokens": 50,
+            }
+        )
+    )
+
+    assert usage is not None
+    assert usage.prompt_tokens == 120
+    assert usage.cached_prompt_tokens == 70
+    assert usage.cache_write_prompt_tokens is None
+    assert usage.input_other_prompt_tokens == 50
+    assert usage.input_token_accounting == "exclusive_components"
+    assert usage.input_buckets_reconciled is False
+
+
 def test_extract_usage_prefers_deepseek_native_cache_counters_on_conflict() -> None:
     usage = _extract_usage(
         SimpleNamespace(
@@ -521,6 +587,12 @@ def test_kimi_stream_uses_direct_transport_and_preserves_choice_cache_usage(
     assert done.diagnostics.response_model == "kimi-k2.6"
     assert done.diagnostics.system_fingerprint == "route-a"
     assert done.diagnostics.service_tier == "default"
+    observation = done.diagnostics.cache_observation
+    assert observation is not None
+    assert observation["model"]["provider"] == "kimi"
+    assert observation["usage"]["input_total"] == 120
+    assert observation["usage"]["cache_read"] == 80
+    assert observation["outcome"]["status"] == "completed"
     assert [event.phase for event in transport_events] == [
         "request_started",
         "stream_opened",

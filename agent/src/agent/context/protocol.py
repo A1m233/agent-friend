@@ -156,6 +156,9 @@ class RuntimeContext:
     tool_result_recovery_available: bool = False
     calibration_factor: float = 1.0
     trigger_reason: str = "budget"
+    run_id: str | None = None
+    session_id: str | None = None
+    surface: str | None = None
 
 
 @dataclass

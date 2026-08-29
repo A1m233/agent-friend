@@ -6,6 +6,8 @@
 
 > `prompt-cache-smoke --deepseek-shape-matrix` 执行 8 次真实 DeepSeek 短输出请求，用完全相同的 warm/probe 对隔离 2/184 条消息与 0/26 个 tools 对缓存命中的影响；需授权并传 `--allow-llm`。
 
+> `prompt-cache-smoke --deepseek-cross-user-turn` 执行 2 次真实 DeepSeek 无工具用户回合，通过完整 `Conversation` 路径验证新用户回合首请求与上一用户回合 final-wire witness 的 lineage；输出仅含统一 observation，不保留 prompt 正文；需授权并传 `--allow-llm`。
+
 本目录包含项目所有"非写代码"操作的脚本。**开发者只应该接触：写代码 + 跑这里的脚本**，不需要记忆任何具体的 `uv run python -m ...` 命令。
 
 ## 新开发者起步（一键上手）
@@ -51,7 +53,8 @@
 | `voice-latency-lab/` | 语音延迟实验自动化：`fixtures` 本地解码火山 callback fixture；`replay` 对运行中的 voice_bridge 仿真火山 callback + CustomLLM 流式请求（默认不调真实 LLM，需显式 `--allow-llm`）；`matrix` 自动拉起隔离的 agent_bridge / voice_bridge，按 baseline / short_reply / max_tokens_64 做真实 LLM A/B smoke（需授权并传 `--allow-llm`）；`live` 自动拉起隔离服务 + cloudflared + Chromium fake microphone（生成音频默认带 8s 前置静音），跑真实火山 RTC/ASR/TTS + LLM 短通话（需授权并传 `--allow-live`）；`summarize` 按 trace_id 汇总日志分段 | `./scripts/voice-latency-lab/run.sh live --allow-live` | `.\scripts\voice-latency-lab\run.ps1 live --allow-live` |
 | `context-compaction-smoke/` | 063 上下文压缩真实 LLM 验收：在隔离临时会话中验证 usage 校准、长历史摘要质量、原始事件保留与进程重启后 checkpoint 复用；固定 1 次摘要 + 3 次对话调用，需授权并显式传 `--allow-llm` | `./scripts/context-compaction-smoke/run.sh --allow-llm` | `.\scripts\context-compaction-smoke\run.ps1 --allow-llm` |
 | `deepseek-vision-smoke/` | 094 DeepSeek 视觉与 Files API 真实验收：临时生成带固定可见码的 PNG/JPEG/WebP，验证三种格式、同图复用、仅图片消息、流式返回和函数工具续接；固定 6 次模型请求、预计 3 次上传 + 1 次查询，需授权并显式传 `--allow-llm` | `./scripts/deepseek-vision-smoke/run.sh --allow-llm` | `.\scripts\deepseek-vision-smoke\run.ps1 --allow-llm` |
-| `prompt-cache-smoke/` | Prompt cache 真实 A/B：Kimi 对比动态时间、动态 memory 与稳定 session cache key；DeepSeek 对比公共前缀与严格 append-only continuation，可用 `--deepseek-production-shape` 加入 184 条前缀消息和 26 个稳定工具 schema；固定最多 8 次短输出请求，只输出缓存 token、字段来源、wire relation/fingerprint 与延迟，需授权并显式传 `--allow-llm` | `./scripts/prompt-cache-smoke/run.sh --allow-llm` | `.\scripts\prompt-cache-smoke\run.ps1 --allow-llm` |
+| `prompt-cache-smoke/` | Prompt cache 真实 A/B：Kimi 对比动态时间、动态 memory 与稳定 session cache key；DeepSeek 对比公共前缀、严格 append-only continuation 与完整 Conversation 跨用户回合 lineage，可用 `--deepseek-production-shape` 加入 184 条前缀消息和 26 个稳定工具 schema；单次模式最多 8 次短输出请求，只输出缓存 token、字段来源、wire relation/fingerprint 与延迟，需授权并显式传 `--allow-llm` | `./scripts/prompt-cache-smoke/run.sh --allow-llm` | `.\scripts\prompt-cache-smoke\run.ps1 --allow-llm` |
+| `prompt-cache-report/` | 从现有 `agent_bridge.log*` 或显式日志文件聚合版本化 prompt-cache observation，输出 JSON / Markdown 的 token 加权比例、请求比例、read/write/other、coverage、时延和关键分段；只读，不调用 LLM | `./scripts/prompt-cache-report/run.sh [--input PATH] [--format json\|markdown] [--output PATH]` | `.\scripts\prompt-cache-report\run.ps1 [--input PATH] [--format json\|markdown] [--output PATH]` |
 | `test/` | 跑 pytest（参数透传） | `./scripts/test/run.sh` | `.\scripts\test\run.ps1` |
 | `memory-eval/` | 可恢复的 memory 召回评测：首次 ingest 触发真实 LLM（需授权），逐 fragment 记录抽取状态 / 原始响应并持久化 case DB / checkpoint；`--replay` 在同一抽取产物上对照结构化或生产 unified 检索，0 次 LLM；`--stability-probe` 可重复固定小样本并断点续跑；hybrid 未 ready 时 fail-closed | `./scripts/memory-eval/run.sh --retrieval-mode keyword\|hybrid\|legacy-keyword\|unified-keyword\|unified-hybrid [--workspace DIR] [--resume\|--replay]` 或 `./scripts/memory-eval/run.sh --stability-probe --stability-fragments 30 --stability-repeats 3 [...]` | `.\scripts\memory-eval\run.ps1 [...]` |
 | `memory-retrieval-benchmark/` | M48.0 本地检索底座 benchmark 与生产 ONNX 资产安装：默认验证 ONNXRuntime + 量化 BGE-small-zh + sqlite-vec；`--install-production-assets [DIR]` 只安装锁定 revision 的生产资产；**不调用外部 LLM**，首次运行会下载可选依赖和模型权重 | `./scripts/memory-retrieval-benchmark/run.sh [--install-production-assets [DIR]\|--corpus-size N]` | `.\scripts\memory-retrieval-benchmark\run.ps1 [...]` |

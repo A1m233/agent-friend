@@ -1,0 +1,88 @@
+# 109 · Prompt cache 可观测性与优化基线 - 证据索引
+
+## 用途与范围
+
+- 档案归属：[requirement.md](./requirement.md)
+- 本索引记录：需求 102 的既有结果、当前仓库 usage/trace/witness/smoke 现状、外部 provider 与观测实践、当前综合判断、未决问题和需求范围决定。
+- 本索引不记录：API key、完整 prompt、用户会话正文、工具参数/结果、reasoning、生产原始标识、未经授权的真实 LLM 输出或尚未执行的 baseline 结果。
+- 最近对账：2026-08-29，代码基线 `dc97ad8bfd6657f8fa23cc10eb70e64f70723b43`，真实 baseline 运行时 overlay `41b44baeab1bbc26e0f1cc89f696f107dbe332c864349b7013049ba42156af61`。
+
+## 当前综合判断
+
+1. 需求 102 已证明单次 run 内严格延续 provider transcript 能在受控 DeepSeek 工具续轮中取得约 `99.56%` 缓存读取比例，但其范围明确不覆盖跨独立用户回合、跨进程与整体自然流量，不能继续用该单点结果代表产品总体表现。（E-001）
+2. 当前实现已把 session 的上一用户回合最后一个可比较 final-wire witness 留在 Conversation 内存中，并在下一独立用户回合首请求建立 exact lineage；系统触发轮不挤掉用户 anchor。应用重启只恢复分类级 fingerprint，明确输出 `cross_process_resume/domain_only`，不持久化逐 item digest。（E-018～E-019）
+3. 外部 provider 的 usage 口径存在实质差异：OpenAI 风格总输入通常包含缓存详情，Anthropic 的 `input_tokens` 表示 breakpoint 后普通输入，DeepSeek 直接给互斥 hit/miss，Gemini 另给 cached content 计数。统一层必须保留来源并转换为不重叠的组成部分，不能仅做字段别名映射。（E-005～E-011）
+4. Anthropic 的 cache diagnostics 直接验证了“请求结构是否变化”和“缓存是否实际读取”应当是两个正交观测面；其最早分歧 taxonomy、内容无关 fingerprint 和 usage 组合矩阵与 agent-friend 需求 102 的设计约束高度一致，适合作为本需求结构诊断的首要外部参考。（E-005、E-006）
+5. OpenTelemetry、LiteLLM、Langfuse、OpenRouter 与 Codex 当前源码都已把 cache read 与 cache write 作为独立 usage 事实。仅记录 hit/miss 无法正确解释显式 cache 写入成本和净收益，因此 cache write 应进入本需求，而不是留作未来扩展。（E-007～E-010、E-014、E-015）
+6. 16 次 DeepSeek 受控真实请求已把统一 usage、工具续轮和跨用户回合产品路径绑定到同一 v2 observation。单个跨用户回合样本显示 runtime snapshot 重装配导致 `rebase`，安全估算损失约 `4,639` input tokens；这是当前观察到的首要候选机会，但样本不足以宣称它已是所有自然流量中的最大桶。（E-020～E-021）
+
+## 证据账本
+
+| ID | 日期 | 问题或主张 | 类型 | 关键锚点 | 摘要 | 置信度 | 状态 | 详细记录 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| E-001 | 2026-08-24 | 需求 102 是否已经解决整体缓存命中问题 | 受控实验 / 需求证据 | `102` progress；DeepSeek `deepseek-v4-flash-vision-exp`；4 次真实请求 | strict continuation probe 为 `43,008 / 43,197 = 99.5625%`；需求明确只覆盖单 run 工具续轮，不外推 dashboard，跨独立用户回合是重新打开条件 | confirmed | active | [102 progress](../102-provider-transcript-cache-reuse/progress.md)、[102 evidence](../102-provider-transcript-cache-reuse/evidence-index.md) |
+| E-002 | 2026-08-29 | 当前 usage 是否完整表达 cache read/write 和 provider 口径 | 代码 | commit `dc97ad8`；`usage.py` blob `a3c8dd6`；`stream_events.py` blob `4e2d5ed` | `LLMUsage` 保留 cached、cache miss、字段来源和 derived 标记；没有 cache write 字段；当前推导主要按总 prompt 减 cached，尚未形成跨 provider 互斥 bucket 契约 | confirmed | active | [`usage.py`](../../../llm_providers/src/llm_providers/usage.py)、[`stream_events.py`](../../../llm_providers/src/llm_providers/stream_events.py) |
+| E-003 | 2026-08-29 | 当前是否已能安全定位请求前缀变化 | 代码 | commit `dc97ad8`；prompt trace blob `c43ab0b`；request witness blob `57a7c47` | adapter-input tracker 使用内容 digest、角色和规模；provider witness 在 final transform 后判断 baseline/strict extension/rebase 与 common prefix；均不保留正文 | confirmed | active | [`prompt_cache_trace.py`](../../../agent/src/agent/prompt_cache_trace.py)、[`request_witness.py`](../../../llm_providers/src/llm_providers/request_witness.py) |
+| E-004 | 2026-08-29 | 当前观测是否已有统一采集与聚合入口 | 代码 / 工具 | commit `dc97ad8`；conversation blob `caab531`；smoke blob `ce6703f` | Conversation 将 cache usage、trace、wire relation 和 latency 分散写入 `run_latency`、`PromptCacheDbg` 与 assistant `context_usage`；smoke 有独立 Observation JSON；未发现共享 schema revision 或跨运行聚合报告 | strongly-supported | active | [`conversation.py`](../../../agent/src/agent/conversation.py)、[`prompt-cache-smoke`](../../../scripts/prompt-cache-smoke/run.py) |
+| E-005 | 2026-08-29 | 成熟系统如何区分结构变化与实际命中 | 外部官方文档 | Anthropic Cache diagnostics beta `cache-diagnosis-2026-04-07`，访问于 2026-08-29 | 以 previous response id 关联内容无关 fingerprint；先报告最早的 model/system/tools/messages 分歧，再与 cache-read token 组合解释；无分歧且零读取指向服务端缓存不可用而非客户端变化 | confirmed | active | [Anthropic Cache diagnostics](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics) |
+| E-006 | 2026-08-29 | 显式缓存下总输入如何对账 | 外部官方文档 | Anthropic Prompt caching，访问于 2026-08-29 | Anthropic 定义总输入为 cache read + cache creation + breakpoint 后 input，并按 TTL 拆 cache creation；证明 `input_tokens` 的包含关系不能跨 provider 假定一致 | confirmed | active | [Anthropic Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) |
+| E-007 | 2026-08-29 | 跨系统公共 telemetry 如何命名 cache read/write | 外部规范 | OpenTelemetry GenAI semantic conventions `main`，访问于 2026-08-29 | 推荐分别记录 provider-managed cache read 与 cache creation input tokens，并要求二者包含在总 input 中；provider name、request/response model 和 server address 用于区分实际系统 | strongly-supported | active | [OpenTelemetry GenAI spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md) |
+| E-008 | 2026-08-29 | 成熟观测平台如何避免 token 双计数 | 外部官方文档 | Langfuse Token & Cost Tracking，访问于 2026-08-29 | usage details 采用互斥 buckets；OpenAI inclusive input 会减去 cached detail，Anthropic exclusive input 则直接保留；ingested usage/cost 优先于推导值 | confirmed | active | [Langfuse Token & Cost Tracking](https://langfuse.com/docs/observability/features/token-and-cost-tracking) |
+| E-009 | 2026-08-29 | OpenAI 当前是否区分 cache read/write 并支持聚合 | 外部官方文档 | OpenAI Responses / organization Usage API，访问于 2026-08-29 | response usage 包含 cached 与 cache write；组织 Usage API 返回 cached、write、uncached input，并可按 model/project/service tier 等分组 | confirmed | active | [OpenAI Responses API](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)、[OpenAI Usage API](https://developers.openai.com/api/reference/ruby/resources/admin/subresources/organization/subresources/usage/methods/completions) |
+| E-010 | 2026-08-29 | DeepSeek 的命中与 miss 语义是什么 | 外部官方文档 | DeepSeek Context Caching，访问于 2026-08-29 | 自动 best-effort 缓存返回互斥 hit/miss；缓存构建可能需要数秒，公共前缀可能在多次请求后才形成，闲置缓存通常数小时至数天清理 | confirmed | active | [DeepSeek Context Caching](https://api-docs.deepseek.com/guides/kv_cache/) |
+| E-011 | 2026-08-29 | Gemini 的 cached token 与总输入关系如何表达 | 外部官方文档 | Gemini context caching / token usage，更新于 2026-08-17，访问于 2026-08-29 | `usage_metadata` 返回 prompt total 与 cached content count；cached tokens 仍计入 context/token limits，显式缓存还有 TTL 与存储成本 | confirmed | retained | [Gemini Context caching](https://ai.google.dev/gemini-api/docs/generate-content/caching)、[Gemini token counting](https://ai.google.dev/gemini-api/docs/generate-content/tokens) |
+| E-012 | 2026-08-29 | Kimi 如何帮助 Coding Agent 保持缓存路由身份 | 外部官方文档 | Kimi Chat API，访问于 2026-08-29 | `prompt_cache_key` 推荐使用 session/task id，退出并恢复同一会话时保持稳定；当前仓库已以 session id 传入该概念 | confirmed | active | [Kimi Chat API](https://platform.kimi.ai/docs/api/chat) |
+| E-013 | 2026-08-29 | 网关路由是否是缓存观测的重要维度 | 外部官方文档 | OpenRouter Prompt Caching / Usage Accounting，访问于 2026-08-29 | OpenRouter 按模型与会话 sticky route，并暴露 cached、cache write、cost 和 upstream cost；fallback 或手工 provider order 会改变实际路由与缓存条件 | confirmed | active | [OpenRouter Prompt Caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching)、[Usage Accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting) |
+| E-014 | 2026-08-29 | 当前项目使用的 provider 兼容层能否暴露 cache write | 外部库文档 / 版本锚点 | LiteLLM `1.83.14`（`uv.lock`）；Context7 查询于 2026-08-29 | LiteLLM 文档展示 cached、Anthropic cache creation 与 Gemini cache creation details，并能将 usage/cost 交给观测 callback；实际项目版本的字段投影仍需设计阶段用 fixture 核对 | strongly-supported | active | [LiteLLM Prompt Caching](https://docs.litellm.ai/docs/completion/prompt_caching)、[`uv.lock`](../../../uv.lock) |
+| E-015 | 2026-08-29 | 成熟 Agent runtime 是否把 cache write 贯穿协议并测试 | 外部官方源码 | `openai/codex` commit `60fc6995608e8188c0c9f8407d6cd98676efa247` | Codex Responses SSE parser 将 cached 与 cache-write input token 写入统一 `TokenUsage`，并有解析测试；支持把新增 usage 维度作为向后兼容协议字段而非临时日志 | confirmed | active | [Codex `responses.rs`](https://github.com/openai/codex/blob/60fc6995608e8188c0c9f8407d6cd98676efa247/codex-rs/codex-api/src/sse/responses.rs) |
+| E-016 | 2026-08-29 | 统一 observation 是否已经覆盖公共调用边界与受治理出口 | 代码实现 | branch `feature/109-prompt-cache-observability-and-optimization`；基线 `dc97ad8` + 当前 overlay | `LLMUsage` 增加 cache write/other/source/accounting；`LLMClient` 成功/失败、stream/non-stream 只产生一条 v2 observation；Conversation/session、compaction、memory 与真实 smoke 接入；日志继续进入既有 `agent_bridge.log*` 与 bundle。未覆盖跨用户回合 exact final-wire lineage | confirmed | retained | [design](./design.md)、[`prompt_cache_observation.py`](../../../llm_providers/src/llm_providers/prompt_cache_observation.py)、[`client.py`](../../../llm_providers/src/llm_providers/client.py) |
+| E-017 | 2026-08-29 | 互斥聚合、隐私和兼容是否有确定性与项目级验证 | 自动化验证 | 当前 overlay；backend/frontend/rust 三阶段 check | provider fixture、结构×usage 矩阵、内容泄漏扫描、入口 trace context、session 子树和固定日志聚合通过；定向 181 项，最终 backend 2302 passed/4 skipped，frontend 670 passed + build，Rust 222 passed/1 ignored + release check。新的 cross-turn AC 尚未覆盖 | confirmed | retained | [progress](./progress.md)、[`test_prompt_cache_observation.py`](../../../llm_providers/tests/test_prompt_cache_observation.py)、[`test_prompt_cache_report.py`](../../../scripts/check/test_prompt_cache_report.py) |
+| E-018 | 2026-08-29 | 当前 final-wire 能否回答跨独立用户回合断点 | 代码边界 / 用户需求修订 | `RunContinuationProjection.close()`；Conversation tracker restore；用户 2026-08-29 补充 | run-local projection 在结束时清除 `previous_witness`；adapter tracker 同进程保留 message digest、跨进程只恢复 namespace/cache state。新用户回合 provider final wire 因此通常只见 baseline，无法给出权威 common prefix、断点域与损失估算 | confirmed | active | [`run_transcript.py`](../../../agent/src/agent/run_transcript.py)、[`prompt_cache_trace.py`](../../../agent/src/agent/prompt_cache_trace.py)、[本次 design 2.4-2.6](./design.md) |
+| E-019 | 2026-08-29 | 跨用户回合与跨进程 measurement contract 是否确定性成立 | 代码实现 / 自动化验证 | 当前 feature overlay；受影响回归 `200 passed`；backend `2319 passed, 4 skipped`；frontend `670 passed` + build；Rust `222 passed, 1 ignored` + release check | exact witness 增加 item role/domain、首次断点和 lost-prefix；tracker 区分 `within_run/cross_user_turn/cross_process_resume/unavailable`，保留用户 anchor、排除系统轮；persona/system/runtime/Skill/tools/messages/settings/model-route 矩阵、Conversation 连续回合/重启与隐私通过。报告按 scope/relation/domain 分段并汇总 lost-prefix token 估算 | confirmed | active | [`prompt_cache_trace.py`](../../../agent/src/agent/prompt_cache_trace.py)、[`test_prompt_cache_trace.py`](../../../agent/tests/test_prompt_cache_trace.py)、[`test_tool_calling_integration.py`](../../../agent/tests/test_tool_calling_integration.py)、[`test_prompt_cache_report.py`](../../../scripts/check/test_prompt_cache_report.py) |
+| E-020 | 2026-08-29 | DeepSeek exact repeat 与工具 transcript 结构对缓存读取的影响 | 受控真实 LLM baseline | commit `dc97ad8` + runtime overlay `41b44bae...`；`deepseek/deepseek-v4-flash-vision-exp`；24k chars；UTC `20:09-20:11`；14 个保留成功请求 + 首次工具 smoke 的 2 个废弃尝试请求 | 4 组 exact-repeat probe 分别读取 `7424/7438`、`13696/13781`、`8576/8696`、`14976/15053`，说明 2/184 messages 与 0/26 tools 在请求完全相同时均可约 98.6%～99.8% 读取。工具尾部重组为 `rebase`、`0/9843`；真实 provider transcript append 为 `strict_extension`、`9344/9508=98.28%`。首次尝试的 warm 请求完成，但 probe 因 64-token 上限截断；harness 调到 256 后重跑 4 请求闭环，废弃尝试不计入成功比例 | confirmed | active | [`prompt-cache-smoke`](../../../scripts/prompt-cache-smoke/run.py)、[progress](./progress.md) |
+| E-021 | 2026-08-29 | 新用户回合首请求是否能给出权威断点与机会量级 | 受控真实产品路径 | 同一 runtime overlay/model；完整 `Conversation`；2 个无工具用户回合；首回合 24k chars | 第 2 回合 observation 为 `comparison_scope=cross_user_turn`、`precision=exact_item`、`cross_turn_relation=rebase`；provider common prefix `2/3` items，`first_divergence_domain=runtime`，`messages_appended=true`、`messages_rewritten=false`、`runtime_changed=true`，lost `1` item / 约 `4,639` tokens；provider 实际读 `4,608/13,929=33.08%`。证明正常历史尾增与 runtime 重装配可同时存在，不能用非零 cache read 掩盖断点 | confirmed | active | [`prompt-cache-smoke --deepseek-cross-user-turn`](../../../scripts/prompt-cache-smoke/run.py)、[`prompt_cache_observation.py`](../../../llm_providers/src/llm_providers/prompt_cache_observation.py) |
+
+## 未决问题
+
+| 问题 | 当前无法区分的解释 | 最有区分力的下一项证据 | 阻塞情况 |
+| --- | --- | --- | --- |
+| 当前所有 provider/model route 的真实 usage shape 是否被 LiteLLM 完整保留 | fixture 已覆盖公开对象/字典形状；真实 route 仍可能丢私有 cache-write 或 cost | 在获授权 baseline 中按 provider/response model 核对 source/accounting/coverage，不读取正文 | 不阻塞实现，影响真实 coverage 结论 |
+| 更新后的自然产品流量中最大未读取输入桶是什么 | 受控产品路径已看到 runtime rebase；自然流量中其频率、token 权重与 compaction/恢复等桶仍未知 | 在更新后桌面/IM 正常使用窗口中采集 v2 日志，按 comparison scope/domain 聚合；不得把 E-021 的单样本频率外推 | 不阻塞本期 measurement contract，阻塞“全局最大”结论 |
+| cache write 与其他输入能否对所有 provider 完整对账 | OpenAI/Anthropic 可拆；DeepSeek 只给 hit/miss；部分 route 只给 cached | provider fixture + 官方字段矩阵，明确每个 route 的 accounting mode 与 coverage | 阻塞统一计算细节，不阻塞公共可空语义 |
+| 请求结构稳定但零读取的主要原因是什么 | TTL/最小长度/缓存构建延迟；路由/fallback；provider best-effort | 先建立结构×usage 矩阵，再在最大样本桶上做固定请求、模型和路由的受控重复 | 不阻塞观测，阻塞具体优化选择 |
+| 跨独立用户回合是否是最大机会 | 首次请求输入占主要未读取量；工具续轮或重建仍占主导；usage coverage 不足 | 完成按 call kind、call index、session/run 边界分段的自然 baseline | 不阻塞本需求，决定后续需求 |
+
+## 决策影响
+
+| 决定 | 依赖证据 | 当前状态 | 重新打开条件 |
+| --- | --- | --- | --- |
+| 109 首期交付统一观测、工程聚合、baseline 与机会排序，不实现具体缓存行为优化 | E-001～E-015 | 当前 | baseline 出现单一、证据充分且不扩张设计边界的小型修复；仍需回到需求阶段确认是否纳入 |
+| cache write 进入公共需求范围 | E-006～E-009、E-013～E-015 | 当前 | 所有实际 provider route 均证明永远不提供、也不计费 cache write；否则保持可空字段 |
+| 请求结构诊断与 provider usage 结果分层 | E-003、E-005、E-010 | 当前 | provider 能提供覆盖所有 route、可审计且同等隐私安全的权威根因，且本地 witness 不再有独立价值 |
+| 公共 token 聚合采用互斥组成部分，保留 provider 原始来源 | E-006～E-011、E-014 | 当前 | 外部 provider 统一为同一包含关系并有稳定协议保证；仍需兼容历史数据 |
+| 参考 OpenTelemetry 命名与包含语义，但不引入外部 OTel/Langfuse 服务 | E-007、E-008 | 当前 | 项目另有跨模块 telemetry 需求并完成项目级基础设施决策 |
+| 首期只做工程入口，不做普通用户 UI | E-001、E-004 与用户 2026-08-29 确认 | 当前 | 用户出现可理解、可行动的缓存产品需求，而不只是开发/诊断诉求 |
+| 不设置自然流量固定整体命中率 | E-001、E-010 与当前 coverage gap | 当前 | 完成稳定 baseline、确定分母和受控外部条件后再为特定场景设目标，不外推全部流量 |
+| 下一优化候选优先调查跨用户回合 runtime snapshot 的稳定尾部装配 | E-020、E-021 | 候选，未在 109 实施 | 先用自然 v2 样本确认频率与 token 贡献；方案必须保持 runtime freshness、上下文预算和回答正确性 |
+
+## Artifact 映射
+
+| 证据 ID | 原始位置 | 归档位置 | 完整性 | 敏感性与访问说明 |
+| --- | --- | --- | --- | --- |
+| E-001 | `docs/requirements/102-provider-transcript-cache-reuse/` | 原位保留 | Git tracked；由需求 102 自有索引记录 | 脱敏聚合，无 API key 或完整 prompt |
+| E-002～E-004 | 当前仓库 commit `dc97ad8` 与表中 blob | 原位保留 | commit/blob SHA | 公开源码；不含运行时用户数据 |
+| E-005～E-013 | 表中官方公开文档 | 未归档第三方正文 | URL + 访问日期；动态页面可能变化 | 公开；后续需重新核验时不得把当前摘要当最新事实 |
+| E-014 | Context7 查询结果、LiteLLM 官方文档、项目 `uv.lock` | 仅保留摘要与 lock 锚点 | LiteLLM `1.83.14` | 公开文档与依赖元数据 |
+| E-015 | `openai/codex` 固定 commit 源码 | 未复制源码 | commit `60fc699...` + 固定链接 | 公开源码 |
+| E-016～E-017 | 当前 feature branch overlay 与验证输出 | 原位源码、测试与本进度/证据索引 | Git diff + 精确检查命令；实现尚未提交 | 只含内容无关 fixture 与脱敏汇总；未归档本机原始日志 |
+| E-019～E-021 | 当前 feature overlay、测试输出和 real smoke stdout | 仅在本索引保留脱敏汇总；不归档 prompt/response stdout | commit + runtime overlay hash + model/时间/场景/调用量 | smoke 使用合成内容；索引不保存 prompt、response、request id 或逐 item digest |
+| 后续自然 baseline | 当前本机旧日志没有 v2 observation | 尚未确定；公开仓库只保存脱敏汇总 | 采集时生成 manifest/hash | 原始日志可能含本机与用户数据，必须先审计并与提交物分离 |
+
+## 对账记录
+
+| 日期 | 对账范围 | 结果与修订 |
+| --- | --- | --- |
+| 2026-08-29 | `requirement.md`、需求 102 证据、当前 usage/trace/witness/conversation/smoke、OpenAI/Anthropic/DeepSeek/Kimi/Gemini/OpenRouter/OTel/Langfuse/LiteLLM/Codex 公开资料 | 一致。cache write 和互斥输入 bucket 补入需求范围；109 保持观测与 baseline 边界，不提前选择具体优化；尚未创建 design、progress 或运行新 baseline/真实 LLM。 |
+| 2026-08-29 | `design.md`、实现 overlay、provider/Agent/memory/smoke/report 测试与三阶段项目门禁 | 一致。统一 observation、现有日志/session/bundle 和工程聚合已落地；本机旧日志没有 v2 样本，真实 baseline、机会排序和后续需求分诊保持待授权，不外推需求 102 结果。 |
+| 2026-08-29 | 用户新增跨用户回合硬要求；`run_transcript.py`、`prompt_cache_trace.py`、observation/report 现状 | 原 E-016/E-017 的既有实现与验证仍有效但范围不足，降为 retained；E-018 确认 run-local witness 缺口。需求与方案已回溯，真实 baseline 延后到 cross-turn measurement AC 完成后。 |
+| 2026-08-29 | cross-turn 实现、确定性 AC、backend 门禁与 16 次 DeepSeek 真实请求 | E-019 确认 measurement contract；E-020/E-021 分开记录 controlled shape/tool A/B 与完整 Conversation 产品路径。runtime rebase 是首要候选但不外推为自然流量最大桶；旧本机日志仍为 v2 零样本。 |

@@ -6,17 +6,29 @@ import argparse
 import json
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 
+from agent import (
+    BUILTIN_DEFAULT_PERSONA_ID,
+    Conversation,
+    JsonlSessionStore,
+    MarkdownPromptBuilder,
+    NaiveContextManager,
+    PersonaCatalog,
+    Session,
+)
 from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
     LLMUsage,
     ModelCallControl,
+    ModelCallTraceContext,
     ModelRequest,
     ProviderRequestWitness,
     default_model_runtime_config,
@@ -38,6 +50,12 @@ class _Observation:
     total_ms: float
     request_relation: str = "unavailable"
     common_prefix_items: int | None = None
+    cache_write_prompt_tokens: int | None = None
+    input_other_prompt_tokens: int | None = None
+    cache_write_prompt_tokens_source: str | None = None
+    input_other_prompt_tokens_source: str | None = None
+    input_token_accounting: str = "unavailable"
+    prompt_cache_observation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +134,20 @@ def _request(
     request_fingerprint: str | None = None
     request_relation = "unavailable"
     common_prefix_items: int | None = None
-    for event in client.stream(messages, tools=tools, **overrides):
+    prompt_cache_observation: dict[str, Any] | None = None
+    request = ModelRequest(
+        messages=messages,
+        tools=tools,
+        settings=overrides,
+        cache_key=prompt_cache_key,
+        control=ModelCallControl(
+            trace_context=ModelCallTraceContext(
+                operation="prompt_cache_smoke",
+                call_kind=f"{scenario}:{phase}",
+            )
+        ),
+    )
+    for event in client.stream(request):
         if isinstance(event, LLMTextDelta) and first_text_ms is None:
             first_text_ms = (time.perf_counter() - started) * 1000
         elif isinstance(event, LLMTurnDone):
@@ -132,6 +163,11 @@ def _request(
             common_prefix_items = (
                 event.diagnostics.common_prefix_items if event.diagnostics is not None else None
             )
+            prompt_cache_observation = (
+                dict(event.diagnostics.cache_observation)
+                if event.diagnostics is not None and event.diagnostics.cache_observation is not None
+                else None
+            )
     total_ms = (time.perf_counter() - started) * 1000
     if usage is None:
         raise AssertionError(f"{scenario}/{phase}: provider did not return stream usage")
@@ -140,14 +176,20 @@ def _request(
         phase=phase,
         prompt_tokens=usage.prompt_tokens,
         cached_prompt_tokens=usage.cached_prompt_tokens,
+        cache_write_prompt_tokens=usage.cache_write_prompt_tokens,
+        input_other_prompt_tokens=usage.input_other_prompt_tokens,
         cache_miss_prompt_tokens=usage.cache_miss_prompt_tokens,
         cached_prompt_tokens_source=usage.cached_prompt_tokens_source,
+        cache_write_prompt_tokens_source=usage.cache_write_prompt_tokens_source,
+        input_other_prompt_tokens_source=usage.input_other_prompt_tokens_source,
         cache_miss_prompt_tokens_source=usage.cache_miss_prompt_tokens_source,
+        input_token_accounting=usage.input_token_accounting,
         request_fingerprint=request_fingerprint,
         first_text_ms=round(first_text_ms, 1) if first_text_ms is not None else None,
         total_ms=round(total_ms, 1),
         request_relation=request_relation,
         common_prefix_items=common_prefix_items,
+        prompt_cache_observation=prompt_cache_observation,
     )
 
 
@@ -173,10 +215,16 @@ def _tool_turn_request(
         messages=messages,
         tools=tools,
         settings={
-            "max_tokens": 64,
+            "max_tokens": 256,
             "tool_choice": {"type": "function", "function": {"name": tool_name}},
         },
-        control=ModelCallControl(previous_request_witness=previous_request_witness),
+        control=ModelCallControl(
+            previous_request_witness=previous_request_witness,
+            trace_context=ModelCallTraceContext(
+                operation="prompt_cache_smoke",
+                call_kind=f"{scenario}:{phase}",
+            ),
+        ),
     )
     for event in client.stream(request):
         if isinstance(event, LLMTextDelta):
@@ -240,9 +288,14 @@ def _tool_turn_request(
             phase=phase,
             prompt_tokens=usage.prompt_tokens,
             cached_prompt_tokens=usage.cached_prompt_tokens,
+            cache_write_prompt_tokens=usage.cache_write_prompt_tokens,
+            input_other_prompt_tokens=usage.input_other_prompt_tokens,
             cache_miss_prompt_tokens=usage.cache_miss_prompt_tokens,
             cached_prompt_tokens_source=usage.cached_prompt_tokens_source,
+            cache_write_prompt_tokens_source=usage.cache_write_prompt_tokens_source,
+            input_other_prompt_tokens_source=usage.input_other_prompt_tokens_source,
             cache_miss_prompt_tokens_source=usage.cache_miss_prompt_tokens_source,
+            input_token_accounting=usage.input_token_accounting,
             request_fingerprint=request_fingerprint,
             first_text_ms=round(first_text_ms, 1) if first_text_ms is not None else None,
             total_ms=round(total_ms, 1),
@@ -254,6 +307,12 @@ def _tool_turn_request(
             common_prefix_items=(
                 turn_done.diagnostics.common_prefix_items
                 if turn_done.diagnostics is not None
+                else None
+            ),
+            prompt_cache_observation=(
+                dict(turn_done.diagnostics.cache_observation)
+                if turn_done.diagnostics is not None
+                and turn_done.diagnostics.cache_observation is not None
                 else None
             ),
         ),
@@ -643,6 +702,91 @@ def _run_deepseek_tool_loop_ab(
     }
 
 
+def _run_deepseek_cross_user_turn(
+    *,
+    model: str,
+    history_chars: int,
+) -> dict[str, Any]:
+    """Run two real no-tool user turns through Conversation and inspect lineage."""
+
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
+    client = _client_for_model(runtime_config, model)
+    marker = uuid4().hex
+    stable = (f"[{marker}] stable cross-user-turn cache material. " * (history_chars // 48 + 1))[
+        :history_chars
+    ]
+    observations: list[dict[str, Any]] = []
+    with TemporaryDirectory(prefix="agent-friend-prompt-cache-") as temp_dir:
+        root = Path(temp_dir)
+        catalog = PersonaCatalog(external_dir=root / "personas")
+        store = JsonlSessionStore(base_dir=root / "sessions")
+        session = Session.new(
+            title="prompt-cache-cross-user-turn",
+            persona="default",
+            model=model,
+            persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        )
+        store.create(session)
+        builder = MarkdownPromptBuilder(
+            persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+            catalog=catalog,
+        )
+        conversation = Conversation(
+            session=session,
+            store=store,
+            llm_client=client,
+            context_manager=NaiveContextManager(),
+            prompt_builder=builder,
+            prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+                persona_id=persona_id,
+                catalog=catalog,
+            ),
+            catalog=catalog,
+        )
+        prompts = (
+            f"Treat this block as stable data and reply only OK.\n{stable}",
+            "Continue the same task and reply only OK.",
+        )
+        for index, prompt in enumerate(prompts, start=1):
+            list(conversation.stream(prompt, run_id=f"cross-user-turn-{index}"))
+            assistant = next(
+                event
+                for event in reversed(conversation.session.events)
+                if event.type == "assistant_message"
+            )
+            usage = assistant.meta.get("context_usage")
+            cache_diagnostics = usage.get("cache_diagnostics") if isinstance(usage, dict) else None
+            observation = (
+                cache_diagnostics.get("observation")
+                if isinstance(cache_diagnostics, dict)
+                else None
+            )
+            if not isinstance(observation, dict):
+                raise AssertionError(
+                    f"cross_user_turn/call_{index}: missing prompt-cache observation"
+                )
+            observations.append(dict(observation))
+
+    second_structure = observations[1].get("structure")
+    if not isinstance(second_structure, dict):
+        raise AssertionError("cross_user_turn/call_2: missing structure")
+    if second_structure.get("comparison_scope") != "cross_user_turn":
+        raise AssertionError(
+            "cross_user_turn/call_2: first request of the new user run was not linked"
+        )
+    if second_structure.get("cross_turn_relation") in {None, "baseline"}:
+        raise AssertionError(
+            "cross_user_turn/call_2: comparison was incorrectly reported as baseline"
+        )
+    return {
+        "model": model,
+        "real_llm_calls": 2,
+        "history_chars_in_first_user_turn": history_chars,
+        "experiment": "deepseek_conversation_cross_user_turn",
+        "observations": observations,
+    }
+
+
 def run(
     *,
     model: str,
@@ -652,6 +796,7 @@ def run(
     deepseek_production_shape: bool = False,
     deepseek_shape_matrix: bool = False,
     deepseek_tool_loop_ab: bool = False,
+    deepseek_cross_user_turn: bool = False,
 ) -> dict[str, Any]:
     if model.startswith("deepseek/"):
         if exact_repeat_only:
@@ -661,6 +806,11 @@ def run(
                 model=model,
                 history_chars=history_chars,
                 settle_seconds=settle_seconds,
+            )
+        if deepseek_cross_user_turn:
+            return _run_deepseek_cross_user_turn(
+                model=model,
+                history_chars=history_chars,
             )
         if deepseek_shape_matrix:
             return _run_deepseek_shape_matrix(
@@ -712,6 +862,11 @@ def main() -> None:
         action="store_true",
         help="send four forced-tool requests comparing tail rebuild with transcript append",
     )
+    parser.add_argument(
+        "--deepseek-cross-user-turn",
+        action="store_true",
+        help="send two no-tool user turns through Conversation and inspect cross-turn lineage",
+    )
     args = parser.parse_args()
     if not args.allow_llm:
         parser.error("real LLM calls require explicit --allow-llm")
@@ -727,6 +882,7 @@ def main() -> None:
             args.deepseek_production_shape,
             args.deepseek_shape_matrix,
             args.deepseek_tool_loop_ab,
+            args.deepseek_cross_user_turn,
         )
     )
     if deepseek_modes > 1:
@@ -741,6 +897,7 @@ def main() -> None:
                 deepseek_production_shape=args.deepseek_production_shape,
                 deepseek_shape_matrix=args.deepseek_shape_matrix,
                 deepseek_tool_loop_ab=args.deepseek_tool_loop_ab,
+                deepseek_cross_user_turn=args.deepseek_cross_user_turn,
             ),
             ensure_ascii=False,
             indent=2,

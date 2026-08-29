@@ -65,10 +65,18 @@ from .errors import (
 )
 from .factory import create_language_model
 from .multimodal import MultimodalInputAdapter
+from .prompt_cache_observation import (
+    PROMPT_CACHE_OBSERVATION_LOG_PREFIX,
+    PROMPT_CACHE_OBSERVATION_SCHEMA,
+    PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION,
+    build_prompt_cache_observation,
+    classify_prompt_cache_result,
+)
 from .protocol import (
     LanguageModel,
     LanguageModelFactory,
     ModelCallControl,
+    ModelCallTraceContext,
     ModelRequest,
     ModelResponse,
 )
@@ -105,6 +113,9 @@ __all__ = [
     "KIMI_PROVIDER_ID",
     "OPENROUTER_API_KEY",
     "OPENROUTER_PROVIDER_ID",
+    "PROMPT_CACHE_OBSERVATION_LOG_PREFIX",
+    "PROMPT_CACHE_OBSERVATION_SCHEMA",
+    "PROMPT_CACHE_OBSERVATION_SCHEMA_REVISION",
     "CredentialValidationResult",
     "LLMActivity",
     "LLMAuthError",
@@ -136,6 +147,7 @@ __all__ = [
     "LanguageModel",
     "LanguageModelFactory",
     "ModelCallControl",
+    "ModelCallTraceContext",
     "ModelPurpose",
     "ModelReasoningDefinition",
     "ModelRequest",
@@ -158,8 +170,10 @@ __all__ = [
     "ReasoningStateFormat",
     "ResolvedModelLimits",
     "all_model_ids",
+    "build_prompt_cache_observation",
     "build_provider_spec",
     "classify_credential_validation_error",
+    "classify_prompt_cache_result",
     "create_language_model",
     "default_model_for_provider",
     "default_model_runtime_config",

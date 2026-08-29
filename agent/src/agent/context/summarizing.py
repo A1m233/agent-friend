@@ -26,7 +26,12 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
-from llm_providers import LLMContextWindowError, ModelRequest
+from llm_providers import (
+    LLMContextWindowError,
+    ModelCallControl,
+    ModelCallTraceContext,
+    ModelRequest,
+)
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
@@ -280,6 +285,17 @@ class SummarizingContextManager:
                     ModelRequest(
                         messages=build_summary_messages(summary_text),
                         settings={"max_tokens": summary_output_budget},
+                        control=ModelCallControl(
+                            trace_context=ModelCallTraceContext(
+                                operation="context_compaction",
+                                surface=runtime.surface,
+                                run_id=runtime.run_id,
+                                session_id=runtime.session_id,
+                                call_kind="summary_generation",
+                                call_index=attempts,
+                                recovery_attempt=attempt,
+                            )
+                        ),
                     )
                 ).text
                 break

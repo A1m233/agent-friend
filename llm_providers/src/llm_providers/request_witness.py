@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import httpx
 
-_WITNESS_VERSION = 1
+_WITNESS_VERSION = 2
 _LOG_DIGEST_CHARS = 24
 
 ProviderRequestRelation = Literal[
@@ -40,6 +40,27 @@ def _digest(label: str, payload: bytes) -> str:
     return sha256(f"agent-friend:{label}:v{_WITNESS_VERSION}\0".encode() + payload).hexdigest()
 
 
+def _item_role(item: Any) -> str:
+    if not isinstance(item, dict):
+        return "unknown"
+    for name in ("role", "type"):
+        value = item.get(name)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
+
+
+def _item_domain(item: Any, role: str) -> str:
+    # Ordinary user content has agent-friend markers escaped before provider
+    # rendering.  Only the trusted host packet retains this exact marker.
+    rendered = _canonical_json_bytes(item)
+    if b"<agent_friend_runtime_context" in rendered:
+        return "runtime"
+    if role in {"system", "developer", "instructions"}:
+        return "system"
+    return "messages"
+
+
 @dataclass(frozen=True, repr=False)
 class ProviderRequestWitness:
     """Opaque, content-free identity of one final provider request."""
@@ -49,6 +70,8 @@ class ProviderRequestWitness:
     transform_identity: str
     transcript_field: str | None
     transcript_item_digests: tuple[str, ...]
+    transcript_item_roles: tuple[str, ...]
+    transcript_item_domains: tuple[str, ...]
     envelope_digest: str | None
     request_digest: str
     request_bytes: int
@@ -108,6 +131,42 @@ class ProviderRequestWitness:
             common += 1
         return common
 
+    def first_divergence_index(self, previous: ProviderRequestWitness | None) -> int | None:
+        common = self.common_prefix_items(previous)
+        if previous is None or common is None:
+            return None
+        if common == len(previous.transcript_item_digests) and common == len(
+            self.transcript_item_digests
+        ):
+            return None
+        return common
+
+    def first_divergence_role(self, previous: ProviderRequestWitness | None) -> str | None:
+        index = self.first_divergence_index(previous)
+        if previous is None or index is None:
+            return None
+        if index < len(self.transcript_item_roles):
+            return self.transcript_item_roles[index]
+        if index < len(previous.transcript_item_roles):
+            return previous.transcript_item_roles[index]
+        return None
+
+    def first_divergence_domain(self, previous: ProviderRequestWitness | None) -> str | None:
+        index = self.first_divergence_index(previous)
+        if previous is None or index is None:
+            return None
+        if index < len(self.transcript_item_domains):
+            return self.transcript_item_domains[index]
+        if index < len(previous.transcript_item_domains):
+            return previous.transcript_item_domains[index]
+        return None
+
+    def lost_prefix_items(self, previous: ProviderRequestWitness | None) -> int | None:
+        common = self.common_prefix_items(previous)
+        if previous is None or common is None:
+            return None
+        return max(0, len(previous.transcript_item_digests) - common)
+
 
 def witness_from_body(
     body: bytes,
@@ -120,6 +179,8 @@ def witness_from_body(
 
     transcript_field: str | None = None
     transcript_item_digests: tuple[str, ...] = ()
+    transcript_item_roles: tuple[str, ...] = ()
+    transcript_item_domains: tuple[str, ...] = ()
     envelope_digest: str | None = None
     try:
         parsed = json.loads(body)
@@ -134,6 +195,11 @@ def witness_from_body(
                     _digest("provider-transcript-item", _canonical_json_bytes(item))
                     for item in value
                 )
+                transcript_item_roles = tuple(_item_role(item) for item in value)
+                transcript_item_domains = tuple(
+                    _item_domain(item, role)
+                    for item, role in zip(value, transcript_item_roles, strict=True)
+                )
                 envelope = dict(parsed)
                 envelope.pop(candidate, None)
                 envelope_digest = _digest(
@@ -147,6 +213,8 @@ def witness_from_body(
         transform_identity=transform_identity,
         transcript_field=transcript_field,
         transcript_item_digests=transcript_item_digests,
+        transcript_item_roles=transcript_item_roles,
+        transcript_item_domains=transcript_item_domains,
         envelope_digest=envelope_digest,
         request_digest=_digest("provider-request-body", body),
         request_bytes=len(body),

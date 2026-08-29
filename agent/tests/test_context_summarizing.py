@@ -76,9 +76,11 @@ class _FakeLLM:
     cached_prompt_tokens: int | None = None
     complete_calls: int = 0
     received: list[list[dict[str, Any]]] = field(default_factory=list)
+    generate_requests: list[ModelRequest] = field(default_factory=list)
 
     def generate(self, request: ModelRequest) -> ModelResponse:
         self.complete_calls += 1
+        self.generate_requests.append(request)
         if self.fail:
             raise RuntimeError("boom")
         return ModelResponse(text=self.summary_text)
@@ -359,6 +361,11 @@ def test_over_threshold_triggers_summary_and_keeps_recent_tail() -> None:
     )
 
     assert llm.complete_calls == 1
+    trace = llm.generate_requests[0].control.trace_context
+    assert trace is not None
+    assert trace.operation == "context_compaction"
+    assert trace.call_kind == "summary_generation"
+    assert trace.recovery_attempt == 0
     assert result.new_compaction is not None
     assert result.new_compaction.covered_through_uuid == "a4"
     assert result.new_compaction.model == "deepseek/test"

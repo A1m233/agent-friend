@@ -18,7 +18,7 @@ import logging
 import random
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import Any, cast
 
@@ -42,7 +42,11 @@ from .kimi_transport import (
     uses_kimi_stream_transport,
 )
 from .litellm_transport import open_cancellable_litellm_stream, open_litellm_stream
-from .protocol import ModelRequest, ModelResponse
+from .prompt_cache_observation import (
+    build_prompt_cache_observation,
+    emit_prompt_cache_observation,
+)
+from .protocol import ModelCallControl, ModelRequest, ModelResponse
 from .reasoning import build_provider_reasoning_state, reasoning_detail_objects
 from .request_witness import ProviderRequestWitness
 from .spec import ProviderSpec
@@ -168,6 +172,17 @@ def _response_text_field(value: Any, name: str) -> str | None:
         return None
     text = str(raw).strip()
     return text or None
+
+
+def _response_cost(value: Any) -> tuple[float | None, str | None]:
+    direct = _usage_field(value, "response_cost")
+    if isinstance(direct, (int, float)) and not isinstance(direct, bool) and direct >= 0:
+        return float(direct), "response.response_cost"
+    hidden = _usage_field(value, "_hidden_params")
+    nested = _usage_field(hidden, "response_cost")
+    if isinstance(nested, (int, float)) and not isinstance(nested, bool) and nested >= 0:
+        return float(nested), "response._hidden_params.response_cost"
+    return None, None
 
 
 def _emit_transport_diagnostic(
@@ -322,24 +337,74 @@ class LLMClient:
     def generate(self, request: ModelRequest) -> ModelResponse:
         """Execute one provider-neutral non-streaming model request."""
 
+        started = time.perf_counter()
         max_retries = max(self._network_retries, self._engine_overload_retries)
-        for attempt in range(max_retries + 1):
+        try:
+            for attempt in range(max_retries + 1):
+                try:
+                    settings = dict(request.settings)
+                    if request.tools:
+                        settings["tools"] = request.tools
+                    response = self._call_once(
+                        self.spec,
+                        request.messages,
+                        **settings,
+                    )
+                    return self._observe_response(
+                        response,
+                        request=request,
+                        started=started,
+                    )
+                except (LLMNetworkError, LLMTransientProviderError) as exc:
+                    retry_limit = self._retry_limit(exc)
+                    if attempt >= retry_limit:
+                        raise
+                    delay = self._retry_delay(exc, attempt)
+                    self._wait_before_retry(exc, attempt, retry_limit, delay)
+        except BaseException as exc:
             try:
-                settings = dict(request.settings)
-                if request.tools:
-                    settings["tools"] = request.tools
-                return self._call_once(
-                    self.spec,
-                    request.messages,
-                    **settings,
+                observation = build_prompt_cache_observation(
+                    requested_model=self.spec.model,
+                    provider_id=_provider_id_for_spec(self.spec),
+                    message_count=len(request.messages),
+                    tool_count=len(request.tools or []),
+                    usage=None,
+                    diagnostics=None,
+                    control=request.control,
+                    total_elapsed_ms=round((time.perf_counter() - started) * 1000),
+                    status="failed",
+                    error_type=type(exc).__name__,
                 )
-            except (LLMNetworkError, LLMTransientProviderError) as exc:
-                retry_limit = self._retry_limit(exc)
-                if attempt >= retry_limit:
-                    raise
-                delay = self._retry_delay(exc, attempt)
-                self._wait_before_retry(exc, attempt, retry_limit, delay)
+                emit_prompt_cache_observation(observation)
+            except Exception:
+                logger.warning("prompt cache failure observation build failed", exc_info=True)
+            raise
         raise AssertionError("transient retry loop should always return or raise")
+
+    def _observe_response(
+        self,
+        response: ModelResponse,
+        *,
+        request: ModelRequest,
+        started: float,
+    ) -> ModelResponse:
+        diagnostics = response.diagnostics or LLMResponseDiagnostics(transport="litellm")
+        try:
+            observation = build_prompt_cache_observation(
+                requested_model=self.spec.model,
+                provider_id=_provider_id_for_spec(self.spec),
+                message_count=len(request.messages),
+                tool_count=len(request.tools or []),
+                usage=response.usage,
+                diagnostics=diagnostics,
+                control=request.control,
+                total_elapsed_ms=round((time.perf_counter() - started) * 1000),
+            )
+            emit_prompt_cache_observation(observation)
+            diagnostics = replace(diagnostics, cache_observation=observation)
+        except Exception:
+            logger.warning("prompt cache response observation build failed", exc_info=True)
+        return replace(response, diagnostics=diagnostics)
 
     def stream(
         self,
@@ -384,10 +449,12 @@ class LLMClient:
             diagnostic_callback = request.control.diagnostic_callback
             cancel_check = request.control.cancel_check
             previous_request_witness = request.control.previous_request_witness
+            control = request.control
             if request.cache_key and uses_kimi_stream_transport(self.spec):
                 overrides.setdefault("prompt_cache_key", request.cache_key)
         else:
             messages = request
+            control = ModelCallControl()
             diagnostic_callback = cast(
                 Callable[[LLMTransportDiagnostic], None] | None,
                 overrides.pop("_diagnostic_callback", None),
@@ -400,7 +467,7 @@ class LLMClient:
                 ProviderRequestWitness | None,
                 overrides.pop("_previous_request_witness", None),
             )
-        return self._stream_with_network_retries(
+        upstream = self._stream_with_network_retries(
             self.spec,
             messages,
             tools=tools,
@@ -409,6 +476,72 @@ class LLMClient:
             previous_request_witness=previous_request_witness,
             **overrides,
         )
+        return self._observe_stream(
+            upstream,
+            messages=messages,
+            tools=tools,
+            control=control,
+        )
+
+    def _observe_stream(
+        self,
+        upstream: Iterator[LLMStreamEvent],
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        control: ModelCallControl,
+    ) -> Iterator[LLMStreamEvent]:
+        """Attach and emit exactly one observation per logical stream call."""
+
+        started = time.perf_counter()
+        observation_emitted = False
+        try:
+            for event in upstream:
+                if not isinstance(event, LLMTurnDone):
+                    yield event
+                    continue
+                diagnostics = event.diagnostics or LLMResponseDiagnostics()
+                try:
+                    observation = build_prompt_cache_observation(
+                        requested_model=self.spec.model,
+                        provider_id=_provider_id_for_spec(self.spec),
+                        message_count=len(messages),
+                        tool_count=len(tools or []),
+                        usage=event.usage,
+                        diagnostics=diagnostics,
+                        control=control,
+                        total_elapsed_ms=round((time.perf_counter() - started) * 1000),
+                    )
+                    emit_prompt_cache_observation(observation)
+                    observation_emitted = True
+                    diagnostics = replace(diagnostics, cache_observation=observation)
+                except Exception:
+                    logger.warning("prompt cache stream observation build failed", exc_info=True)
+                yield replace(event, diagnostics=diagnostics)
+        except BaseException as exc:
+            if observation_emitted:
+                raise
+            try:
+                observation = build_prompt_cache_observation(
+                    requested_model=self.spec.model,
+                    provider_id=_provider_id_for_spec(self.spec),
+                    message_count=len(messages),
+                    tool_count=len(tools or []),
+                    usage=None,
+                    diagnostics=None,
+                    control=control,
+                    total_elapsed_ms=round((time.perf_counter() - started) * 1000),
+                    status="failed",
+                    error_type=type(exc).__name__,
+                )
+                emit_prompt_cache_observation(observation)
+            except Exception:
+                logger.warning("prompt cache failure observation build failed", exc_info=True)
+            raise
+        finally:
+            close = getattr(upstream, "close", None)
+            if callable(close):
+                close()
 
     def _stream_with_network_retries(
         self,
@@ -594,7 +727,21 @@ class LLMClient:
         content = response.choices[0].message.content
         if content is None:
             raise LLMProviderError("LLM 返回了空 content。")
-        return ModelResponse(text=content, usage=_extract_usage(response))
+        response_cost, response_cost_source = _response_cost(response)
+        return ModelResponse(
+            text=content,
+            usage=_extract_usage(response),
+            diagnostics=LLMResponseDiagnostics(
+                transport="litellm",
+                provider_request_id=_response_text_field(response, "request_id"),
+                response_id=_response_text_field(response, "id"),
+                response_model=_response_text_field(response, "model"),
+                system_fingerprint=_response_text_field(response, "system_fingerprint"),
+                service_tier=_response_text_field(response, "service_tier"),
+                response_cost=response_cost,
+                response_cost_source=response_cost_source,
+            ),
+        )
 
     def _stream_once(
         self,
@@ -653,6 +800,15 @@ class LLMClient:
         request_fingerprint: str | None = None
         request_relation = "unavailable"
         common_prefix_items: int | None = None
+        previous_request_items = (
+            len(previous_request_witness.transcript_item_digests)
+            if previous_request_witness is not None
+            else None
+        )
+        first_divergence_index: int | None = None
+        first_divergence_role: str | None = None
+        first_divergence_domain: str | None = None
+        lost_prefix_items: int | None = None
         attempt_started = time.perf_counter()
         _emit_transport_diagnostic(
             diagnostic_callback,
@@ -701,6 +857,16 @@ class LLMClient:
                 request_fingerprint = failed_witness.request_fingerprint
                 request_relation = failed_witness.relation_to(previous_request_witness)
                 common_prefix_items = failed_witness.common_prefix_items(previous_request_witness)
+                first_divergence_index = failed_witness.first_divergence_index(
+                    previous_request_witness
+                )
+                first_divergence_role = failed_witness.first_divergence_role(
+                    previous_request_witness
+                )
+                first_divergence_domain = failed_witness.first_divergence_domain(
+                    previous_request_witness
+                )
+                lost_prefix_items = failed_witness.lost_prefix_items(previous_request_witness)
             mapped_error = _map_exception(e, provider_id=_provider_id_for_spec(spec))
             _emit_transport_diagnostic(
                 diagnostic_callback,
@@ -741,6 +907,14 @@ class LLMClient:
             request_fingerprint = request_witness.request_fingerprint
             request_relation = request_witness.relation_to(previous_request_witness)
             common_prefix_items = request_witness.common_prefix_items(previous_request_witness)
+            first_divergence_index = request_witness.first_divergence_index(
+                previous_request_witness
+            )
+            first_divergence_role = request_witness.first_divergence_role(previous_request_witness)
+            first_divergence_domain = request_witness.first_divergence_domain(
+                previous_request_witness
+            )
+            lost_prefix_items = request_witness.lost_prefix_items(previous_request_witness)
         provider_request_id = _response_text_field(response, "request_id")
         _emit_transport_diagnostic(
             diagnostic_callback,
@@ -753,6 +927,11 @@ class LLMClient:
                 request_fingerprint=request_fingerprint,
                 request_relation=request_relation,
                 common_prefix_items=common_prefix_items,
+                previous_request_items=previous_request_items,
+                first_divergence_index=first_divergence_index,
+                first_divergence_role=first_divergence_role,
+                first_divergence_domain=first_divergence_domain,
+                lost_prefix_items=lost_prefix_items,
                 request_witness=request_witness,
                 provider_request_id=provider_request_id,
             ),
@@ -969,6 +1148,7 @@ class LLMClient:
             ),
             reasoning_state=reasoning_state,
         )
+        response_cost, response_cost_source = _response_cost(response)
         yield LLMTurnDone(
             stop_reason=stop_reason,
             usage=usage,
@@ -980,6 +1160,11 @@ class LLMClient:
                 request_fingerprint=request_fingerprint,
                 request_relation=request_relation,
                 common_prefix_items=common_prefix_items,
+                previous_request_items=previous_request_items,
+                first_divergence_index=first_divergence_index,
+                first_divergence_role=first_divergence_role,
+                first_divergence_domain=first_divergence_domain,
+                lost_prefix_items=lost_prefix_items,
                 request_witness=request_witness,
                 stream_open_ms=stream_open_ms,
                 first_chunk_ms=first_chunk_ms,
@@ -989,5 +1174,7 @@ class LLMClient:
                 response_model=response_model,
                 system_fingerprint=system_fingerprint,
                 service_tier=service_tier,
+                response_cost=response_cost,
+                response_cost_source=response_cost_source,
             ),
         )

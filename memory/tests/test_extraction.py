@@ -157,6 +157,14 @@ def test_semantic_reconciliation_only_replaces_semantic_changes() -> None:
     ).extract(fragment, context)
 
     assert len(llm.requests) == 2
+    base_trace = llm.requests[0].control.trace_context
+    reconciliation_trace = llm.requests[1].control.trace_context
+    assert base_trace is not None
+    assert base_trace.operation == "memory_extraction"
+    assert base_trace.session_id == "s1"
+    assert reconciliation_trace is not None
+    assert reconciliation_trace.operation == "memory_reconciliation"
+    assert reconciliation_trace.session_id == "s1"
     assert "只读邻近上下文" not in str(llm.requests[0].messages[1]["content"])
     assert "我问的是另一本指南" in str(llm.requests[1].messages[1]["content"])
     assert output.core_updates[0].value == "小陈"

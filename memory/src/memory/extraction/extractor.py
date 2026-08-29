@@ -18,7 +18,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
 
-from llm_providers import ModelRequest
+from llm_providers import ModelCallControl, ModelCallTraceContext, ModelRequest
 
 from .context import ExtractionContext
 from .result import (
@@ -115,7 +115,19 @@ class Extractor:
         ]
         started = perf_counter()
         try:
-            raw = self._llm.generate(ModelRequest(messages=messages)).text
+            raw = self._llm.generate(
+                ModelRequest(
+                    messages=messages,
+                    control=ModelCallControl(
+                        trace_context=ModelCallTraceContext(
+                            operation="memory_extraction",
+                            session_id=fragment.session_id,
+                            call_kind="base_extraction",
+                            call_index=1,
+                        )
+                    ),
+                )
+            ).text
         except Exception as exc:
             logger.warning("记忆抽取 LLM 调用失败，跳过本段", exc_info=True)
             self._report_attempt(
@@ -184,7 +196,19 @@ class Extractor:
         ]
         started = perf_counter()
         try:
-            raw = self._llm.generate(ModelRequest(messages=messages)).text
+            raw = self._llm.generate(
+                ModelRequest(
+                    messages=messages,
+                    control=ModelCallControl(
+                        trace_context=ModelCallTraceContext(
+                            operation="memory_reconciliation",
+                            session_id=fragment.session_id,
+                            call_kind="semantic_reconciliation",
+                            call_index=2,
+                        )
+                    ),
+                )
+            ).text
         except Exception as exc:
             logger.warning("Semantic reconciliation LLM 调用失败，回退基础抽取", exc_info=True)
             self._report_attempt(

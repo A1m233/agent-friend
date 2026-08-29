@@ -179,3 +179,31 @@ def test_deepseek_tool_loop_ab_uses_real_replay_and_four_requests(monkeypatch: A
     assert ledger_probe[: len(ledger_warm)] == ledger_warm
     assert calls[1][1] == calls[3][1] == "probe_after_tool"
     assert result["acceptance"]["scenario"] == "provider_transcript_continuation"
+
+
+def test_deepseek_cross_user_turn_mode_routes_to_conversation_smoke(
+    monkeypatch: Any,
+) -> None:
+    module = _load_module()
+    received: list[dict[str, Any]] = []
+
+    def fake_cross_user_turn(**kwargs: Any) -> dict[str, Any]:
+        received.append(dict(kwargs))
+        return {"experiment": "cross-user-turn"}
+
+    monkeypatch.setattr(module, "_run_deepseek_cross_user_turn", fake_cross_user_turn)
+
+    result = module.run(
+        model="deepseek/deepseek-v4-flash-vision-exp",
+        history_chars=24_000,
+        settle_seconds=0,
+        deepseek_cross_user_turn=True,
+    )
+
+    assert result == {"experiment": "cross-user-turn"}
+    assert received == [
+        {
+            "model": "deepseek/deepseek-v4-flash-vision-exp",
+            "history_chars": 24_000,
+        }
+    ]

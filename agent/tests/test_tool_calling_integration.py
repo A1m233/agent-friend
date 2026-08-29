@@ -47,6 +47,7 @@ from agent.tools.builtin.social_platforms import (
 from agent.tools.builtin.web_fetch import ExtractedContent, WebFetchTool
 from agent.tools.builtin.web_fetch.url_safety import UntrustedDnsResolutionError
 from litellm.exceptions import Timeout as LiteLLMTimeout
+from llm_providers.request_witness import witness_from_body
 
 from agent import (
     BUILTIN_DEFAULT_PERSONA_ID,
@@ -74,6 +75,7 @@ from llm_providers import (
     LLMEmptyResponseError,
     LLMNetworkError,
     LLMOutputBudgetExhaustedError,
+    LLMResponseDiagnostics,
     LLMStreamEvent,
     LLMTextDelta,
     LLMToolCallDelta,
@@ -81,6 +83,7 @@ from llm_providers import (
     LLMUsage,
     ModelRequest,
     ModelResponse,
+    ProviderAssistantTurn,
     ProviderReasoningState,
     ProviderSpec,
 )
@@ -351,6 +354,70 @@ class _ScriptedLLMClient:
 
 
 @dataclass
+class _WitnessingLLMClient:
+    """Build final-wire witnesses while returning deterministic no-tool turns."""
+
+    received: list[ModelRequest] = field(default_factory=list)
+    relations: list[str] = field(default_factory=list)
+    diagnostics: list[LLMResponseDiagnostics] = field(default_factory=list)
+    context_window: int = 128000
+
+    def generate(self, request: ModelRequest) -> ModelResponse:  # pragma: no cover
+        return ModelResponse(text="")
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        self.received.append(request)
+        body = json.dumps(
+            {
+                "messages": request.messages,
+                "tools": request.tools or [],
+                "settings": dict(request.settings),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        witness = witness_from_body(
+            body,
+            provider_id="deterministic-test",
+            transport="fake",
+            transform_identity="fake:v1",
+        )
+        previous = request.control.previous_request_witness
+        relation = witness.relation_to(previous)
+        self.relations.append(relation)
+        diagnostics = LLMResponseDiagnostics(
+            transport="fake",
+            request_bytes=witness.request_bytes,
+            request_fingerprint=witness.request_fingerprint,
+            request_relation=relation,
+            common_prefix_items=witness.common_prefix_items(previous),
+            previous_request_items=(
+                len(previous.transcript_item_digests) if previous is not None else None
+            ),
+            first_divergence_index=witness.first_divergence_index(previous),
+            first_divergence_role=witness.first_divergence_role(previous),
+            first_divergence_domain=witness.first_divergence_domain(previous),
+            lost_prefix_items=witness.lost_prefix_items(previous),
+            request_witness=witness,
+            response_model="deterministic-test-model",
+        )
+        self.diagnostics.append(diagnostics)
+        answer = f"answer-{len(self.received)}"
+        yield LLMTextDelta(text=answer)
+        yield LLMTurnDone(
+            stop_reason="end_turn",
+            usage=LLMUsage(
+                prompt_tokens=100 * len(self.received),
+                completion_tokens=5,
+                total_tokens=100 * len(self.received) + 5,
+            ),
+            diagnostics=diagnostics,
+            assistant_turn=ProviderAssistantTurn(content=answer),
+        )
+
+
+@dataclass
 class _RecoveringResponseClient:
     failures: list[Exception]
     received: list[list[dict[str, Any]]] = field(default_factory=list)
@@ -538,6 +605,95 @@ def test_turn_uses_stable_provider_neutral_cache_key(tmp_path: Path) -> None:
         conv.session.session_id,
         conv.session.session_id,
     ]
+
+
+def test_consecutive_no_tool_user_turns_bind_cross_turn_final_wire_lineage(
+    tmp_path: Path,
+) -> None:
+    fake = _WitnessingLLMClient()
+    conv = _make_conversation(
+        tmp_path,
+        fake_llm=fake,
+        model="kimi/kimi-k2.6",
+    )
+
+    list(conv.stream("first", run_id="run-one"))
+    list(conv.stream("second", run_id="run-two"))
+
+    assert len(fake.received) == 2
+    first_request, second_request = fake.received
+    assert first_request.control.previous_request_witness is None
+    assert second_request.control.previous_request_witness is not None
+    trace = second_request.control.trace_context
+    assert trace is not None
+    assert trace.comparison_scope == "cross_user_turn"
+    assert trace.comparison_precision == "exact_item"
+    assert fake.relations[1] != "baseline"
+    comparison = dict(trace.comparison or {})
+    flags = dict(comparison.get("change_flags") or {})
+    if fake.relations[1] == "strict_extension":
+        assert flags["messages_appended"] is True
+        assert flags["messages_rewritten"] is False
+    else:
+        assert fake.relations[1] == "rebase"
+        assert fake.diagnostics[1].first_divergence_domain is not None
+        assert fake.diagnostics[1].lost_prefix_items is not None
+
+
+def test_conversation_restart_restores_only_domain_level_cross_turn_lineage(
+    tmp_path: Path,
+) -> None:
+    first_llm = _WitnessingLLMClient()
+    first = _make_conversation(
+        tmp_path,
+        fake_llm=first_llm,
+        model="kimi/kimi-k2.6",
+    )
+    secret = "PRIVATE_RESTART_PROMPT"
+    list(first.stream(secret, run_id="run-one"))
+
+    assistant = next(
+        event for event in reversed(first.session.events) if event.type == "assistant_message"
+    )
+    cache_diagnostics = assistant.meta["context_usage"]["cache_diagnostics"]
+    encoded = json.dumps(cache_diagnostics, ensure_ascii=False)
+    assert secret not in encoded
+    assert "message_digests" not in encoded
+    assert "transcript_item_digests" not in encoded
+
+    store = JsonlSessionStore(base_dir=tmp_path / "sessions")
+    loaded = store.load(first.session.session_id)
+    catalog = PersonaCatalog(external_dir=tmp_path / "personas")
+    builder = MarkdownPromptBuilder(persona_id=BUILTIN_DEFAULT_PERSONA_ID, catalog=catalog)
+    second_llm = _WitnessingLLMClient()
+    restarted = Conversation(
+        session=loaded,
+        store=store,
+        llm_client=second_llm,
+        context_manager=NaiveContextManager(),
+        prompt_builder=builder,
+        prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+            persona_id=persona_id,
+            catalog=catalog,
+        ),
+        catalog=catalog,
+    )
+
+    list(restarted.stream("after restart", run_id="run-two"))
+
+    request = second_llm.received[0]
+    trace = request.control.trace_context
+    assert trace is not None
+    assert trace.comparison_scope == "cross_process_resume"
+    assert trace.comparison_precision == "domain_only"
+    assert request.control.previous_request_witness is None
+    comparison = dict(trace.comparison or {})
+    assert comparison["first_divergence_index"] is None
+    assert comparison["first_divergence_role"] is None
+    assert comparison["coarse_relation"] in {
+        "coarse_domain_change",
+        "unavailable_precision_reduced",
+    }
 
 
 def test_cache_key_does_not_leak_into_provider_settings(tmp_path: Path) -> None:
