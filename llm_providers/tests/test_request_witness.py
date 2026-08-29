@@ -6,7 +6,11 @@ from typing import Any
 import httpx
 import openai
 import pytest
-from llm_providers.request_witness import ProviderRequestWitness, witness_from_body
+from llm_providers.request_witness import (
+    ProviderRequestCapture,
+    ProviderRequestWitness,
+    witness_from_body,
+)
 
 from llm_providers import (
     LLMClient,
@@ -85,6 +89,42 @@ def test_final_wire_witness_classifies_retry_extension_and_rebase() -> None:
     )
 
 
+def test_final_wire_witness_reports_item_role_domain_and_lost_prefix() -> None:
+    previous = _witness(
+        _body(
+            [
+                {"role": "system", "content": "stable"},
+                {
+                    "role": "system",
+                    "content": ("<agent_friend_runtime_context>old</agent_friend_runtime_context>"),
+                },
+                {"role": "user", "content": "history"},
+            ]
+        )
+    )
+    current = _witness(
+        _body(
+            [
+                {"role": "system", "content": "stable"},
+                {
+                    "role": "system",
+                    "content": ("<agent_friend_runtime_context>new</agent_friend_runtime_context>"),
+                },
+                {"role": "user", "content": "history"},
+            ]
+        )
+    )
+
+    assert previous.transcript_item_roles == ("system", "system", "user")
+    assert previous.transcript_item_domains == ("system", "runtime", "messages")
+    assert current.relation_to(previous) == "rebase"
+    assert current.common_prefix_items(previous) == 1
+    assert current.first_divergence_index(previous) == 1
+    assert current.first_divergence_role(previous) == "system"
+    assert current.first_divergence_domain(previous) == "runtime"
+    assert current.lost_prefix_items(previous) == 2
+
+
 def test_witness_diagnostics_retain_no_request_content() -> None:
     secret = "PRIVATE_USER_AND_TOOL_CONTENT"
     witness = _witness(
@@ -110,6 +150,186 @@ def test_non_json_wire_body_degrades_without_guessing_transcript() -> None:
     assert witness.transcript_item_digests == ()
     assert witness.envelope_digest is None
     assert witness.relation_to(None) == "baseline"
+
+
+def test_memory_domain_sidecar_requires_exact_final_item_alignment() -> None:
+    messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "question"},
+        {"role": "system", "content": "memory payload"},
+    ]
+    capture = ProviderRequestCapture(
+        provider_id="test",
+        transport="litellm",
+        transform_identity="test:v1",
+        transcript_items=messages,
+        transcript_item_domains=("system", "messages", "memory"),
+    )
+    request = httpx.Request(
+        "POST",
+        "https://example.test/v1/chat/completions",
+        json={"messages": messages},
+    )
+    capture.observe(request)
+
+    assert capture.witness is not None
+    assert capture.witness.contributor_mapping_precision == "exact_item"
+    assert capture.witness.transcript_item_domains[-1] == "memory"
+
+    mismatched = ProviderRequestCapture(
+        provider_id="test",
+        transport="litellm",
+        transform_identity="test:v1",
+        transcript_items=messages,
+        transcript_item_domains=("system", "messages", "memory"),
+    )
+    mismatched.observe(
+        httpx.Request(
+            "POST",
+            "https://example.test/v1/chat/completions",
+            json={"messages": [*messages, {"role": "user", "content": "extra"}]},
+        )
+    )
+    assert mismatched.witness is not None
+    assert mismatched.witness.contributor_mapping_precision == "unavailable"
+    assert "memory" not in mismatched.witness.transcript_item_domains
+
+
+def test_moved_previous_memory_is_the_first_divergence_domain() -> None:
+    previous_messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "first"},
+        {"role": "system", "content": "memory"},
+    ]
+    current_messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "second"},
+        {"role": "system", "content": "memory"},
+    ]
+
+    def captured(
+        messages: list[dict[str, Any]],
+        domains: tuple[str, ...],
+    ) -> ProviderRequestWitness:
+        capture = ProviderRequestCapture(
+            provider_id="test",
+            transport="litellm",
+            transform_identity="test:v1",
+            transcript_items=messages,
+            transcript_item_domains=domains,
+        )
+        capture.observe(
+            httpx.Request(
+                "POST",
+                "https://example.test/v1/chat/completions",
+                json={"messages": messages},
+            )
+        )
+        assert capture.witness is not None
+        return capture.witness
+
+    previous = captured(previous_messages, ("system", "messages", "memory"))
+    current = captured(
+        current_messages,
+        ("system", "messages", "messages", "messages", "memory"),
+    )
+
+    assert current.first_divergence_index(previous) == 2
+    assert current.first_divergence_previous_domain(previous) == "memory"
+    assert current.first_divergence_current_domain(previous) == "messages"
+    assert current.first_divergence_domain(previous) == "memory"
+
+
+def test_non_stream_completion_captures_actual_http_body_and_compares_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": f"response-{len(bodies)}",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 1,
+                    "total_tokens": 11,
+                },
+            },
+        )
+
+    def instrumented_client(spec: ProviderSpec, capture: Any) -> tuple[Any, Any]:
+        session = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            event_hooks={"request": [capture.observe]},
+        )
+        client = openai.OpenAI(
+            api_key=spec.api_key,
+            base_url=spec.api_base,
+            max_retries=0,
+            http_client=session,
+        )
+        return client, client
+
+    monkeypatch.setattr("llm_providers.litellm_transport._sync_client", instrumented_client)
+    client = LLMClient(
+        ProviderSpec(
+            model="openai/test-model",
+            api_key="secret",
+            api_base="https://example.test/v1",
+            context_window=8_192,
+        ),
+        network_retries=0,
+    )
+    first_messages = [
+        {"role": "system", "content": "stable"},
+        {"role": "user", "content": "first"},
+    ]
+    first = client.generate(
+        ModelRequest(
+            messages=first_messages,
+            control=ModelCallControl(
+                transcript_item_domains=("system", "messages"),
+            ),
+        )
+    )
+    assert first.diagnostics is not None
+    first_witness = first.diagnostics.request_witness
+    assert first_witness is not None
+    assert first.diagnostics.request_relation == "baseline"
+    assert first_witness.contributor_mapping_precision == "exact_item"
+
+    second_messages = [
+        *first_messages,
+        {"role": "assistant", "content": "answer"},
+    ]
+    second = client.generate(
+        ModelRequest(
+            messages=second_messages,
+            control=ModelCallControl(
+                previous_request_witness=first_witness,
+                transcript_item_domains=("system", "messages", "messages"),
+            ),
+        )
+    )
+
+    assert bodies[1]["messages"][:2] == bodies[0]["messages"]
+    assert second.diagnostics is not None
+    assert second.diagnostics.request_relation == "strict_extension"
+    assert second.diagnostics.common_prefix_items == 2
 
 
 def test_kimi_direct_witness_comes_from_actual_http_body(

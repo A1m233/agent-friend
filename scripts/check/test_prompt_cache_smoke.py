@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from uuid import uuid4
 
+from agent import BUILTIN_DEFAULT_PERSONA_ID, Event, JsonlSessionStore, Session
 from llm_providers import default_model_runtime_config
 
 
@@ -179,3 +184,110 @@ def test_deepseek_tool_loop_ab_uses_real_replay_and_four_requests(monkeypatch: A
     assert ledger_probe[: len(ledger_warm)] == ledger_warm
     assert calls[1][1] == calls[3][1] == "probe_after_tool"
     assert result["acceptance"]["scenario"] == "provider_transcript_continuation"
+
+
+def test_deepseek_cross_user_turn_mode_routes_to_conversation_smoke(
+    monkeypatch: Any,
+) -> None:
+    module = _load_module()
+    received: list[dict[str, Any]] = []
+
+    def fake_cross_user_turn(**kwargs: Any) -> dict[str, Any]:
+        received.append(dict(kwargs))
+        return {"experiment": "cross-user-turn"}
+
+    monkeypatch.setattr(module, "_run_deepseek_cross_user_turn", fake_cross_user_turn)
+
+    result = module.run(
+        model="deepseek/deepseek-v4-flash-vision-exp",
+        history_chars=24_000,
+        settle_seconds=0,
+        deepseek_cross_user_turn=True,
+    )
+
+    assert result == {"experiment": "cross-user-turn"}
+    assert received == [
+        {
+            "model": "deepseek/deepseek-v4-flash-vision-exp",
+            "history_chars": 24_000,
+        }
+    ]
+
+
+def test_long_session_selector_uses_safe_ref_and_content_free_stats(tmp_path: Path) -> None:
+    module = _load_module()
+    model = "deepseek/deepseek-v4-flash"
+    store = JsonlSessionStore(tmp_path / "sessions")
+    session = Session.new(
+        title="private-title",
+        persona="default",
+        model=model,
+        persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+    )
+    store.create(session)
+    private_fragment = "private-history-fragment"
+    for index in range(5):
+        for event_type, content in (
+            ("user_message", f"user-{index}:" + private_fragment * 80),
+            ("assistant_message", f"assistant-{index}:" + private_fragment * 80),
+        ):
+            event = Event(
+                type=event_type,
+                uuid=str(uuid4()),
+                ts=datetime.now(UTC),
+                payload={"content": content},
+                meta={"model": model},
+            )
+            store.append_event(session.session_id, event)
+            session.append(event)
+
+    safe_ref = module._safe_session_ref(session.session_id)
+    expected_ref = hashlib.sha256(
+        ("prompt-cache-smoke\0" + session.session_id).encode()
+    ).hexdigest()[:12]
+    selected, stats = module._select_long_session(
+        store=store,
+        model=model,
+        source_session_ref=safe_ref,
+        min_history_chars=8_000,
+    )
+
+    assert selected.session_id == session.session_id
+    assert safe_ref == expected_ref
+    assert stats.session_ref == safe_ref
+    assert stats.complete_turns == 5
+    assert stats.attachments == 0
+    serialized_stats = str(asdict(stats))
+    assert session.session_id not in serialized_stats
+    assert private_fragment not in serialized_stats
+    assert "private-title" not in serialized_stats
+
+
+def test_deepseek_long_session_mode_routes_safe_ref(monkeypatch: Any) -> None:
+    module = _load_module()
+    received: list[dict[str, Any]] = []
+
+    def fake_long_session(**kwargs: Any) -> dict[str, Any]:
+        received.append(dict(kwargs))
+        return {"experiment": "long-session-dialogue"}
+
+    monkeypatch.setattr(module, "_run_deepseek_long_session_dialogue", fake_long_session)
+
+    result = module.run(
+        model="deepseek/deepseek-v4-flash",
+        history_chars=8_000,
+        settle_seconds=0,
+        deepseek_long_session_dialogue=True,
+        source_session_ref="safe-ref",
+        dialogue_turns=3,
+    )
+
+    assert result == {"experiment": "long-session-dialogue"}
+    assert received == [
+        {
+            "model": "deepseek/deepseek-v4-flash",
+            "history_chars": 8_000,
+            "source_session_ref": "safe-ref",
+            "dialogue_turns": 3,
+        }
+    ]

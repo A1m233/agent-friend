@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
+from llm_providers.request_witness import witness_from_body
 from memory.extraction import (
     AsyncExtractionWorker,
     CoreUpdate,
@@ -22,7 +24,13 @@ from memory.extraction.extractor import _PROMPT_PATH, _parse_output
 from memory.extraction.reconciler import ExtractionApplyError
 from memory.store import SemanticRow
 
-from llm_providers import LLMStreamEvent, ModelRequest, ModelResponse
+from llm_providers import (
+    LLMResponseDiagnostics,
+    LLMStreamEvent,
+    LLMUsage,
+    ModelRequest,
+    ModelResponse,
+)
 from memory import (
     ConversationFragment,
     SemanticUpdateContext,
@@ -57,6 +65,34 @@ class ScriptedFakeLLM:
         if isinstance(reply, Exception):
             raise reply
         return ModelResponse(text=reply)
+
+    def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
+        raise AssertionError(f"unexpected stream request: {request}")
+        yield  # pragma: no cover
+
+
+class WitnessFakeLLM:
+    context_window = 256 * 1024
+
+    def __init__(self) -> None:
+        self.requests: list[ModelRequest] = []
+
+    def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        witness = witness_from_body(
+            json.dumps({"messages": request.messages}).encode(),
+            provider_id="test",
+            transport="litellm",
+            transform_identity="test:v1",
+        )
+        return ModelResponse(
+            text='{"core_updates":[],"semantic_ops":[],"episodic_entries":[]}',
+            usage=LLMUsage(prompt_tokens=100),
+            diagnostics=LLMResponseDiagnostics(
+                request_witness=witness,
+                response_model="test-model",
+            ),
+        )
 
     def stream(self, request: ModelRequest) -> Iterator[LLMStreamEvent]:
         raise AssertionError(f"unexpected stream request: {request}")
@@ -157,6 +193,14 @@ def test_semantic_reconciliation_only_replaces_semantic_changes() -> None:
     ).extract(fragment, context)
 
     assert len(llm.requests) == 2
+    base_trace = llm.requests[0].control.trace_context
+    reconciliation_trace = llm.requests[1].control.trace_context
+    assert base_trace is not None
+    assert base_trace.operation == "memory_extraction"
+    assert base_trace.session_id == "s1"
+    assert reconciliation_trace is not None
+    assert reconciliation_trace.operation == "memory_reconciliation"
+    assert reconciliation_trace.session_id == "s1"
     assert "只读邻近上下文" not in str(llm.requests[0].messages[1]["content"])
     assert "我问的是另一本指南" in str(llm.requests[1].messages[1]["content"])
     assert output.core_updates[0].value == "小陈"
@@ -167,6 +211,29 @@ def test_semantic_reconciliation_only_replaces_semantic_changes() -> None:
         "s1#prior-user",
         "s1#prior-agent",
     )
+
+
+def test_repeated_memory_extraction_uses_operation_scoped_exact_lineage() -> None:
+    llm = WitnessFakeLLM()
+    extractor = Extractor(llm, prompt="stable prompt")
+
+    extractor.extract(_fragment("first"), [])
+    extractor.extract(_fragment("second"), [])
+
+    assert len(llm.requests) == 2
+    first = llm.requests[0]
+    second = llm.requests[1]
+    assert first.control.trace_context is not None
+    assert first.control.trace_context.comparison_scope == "unavailable"
+    assert first.control.trace_context.comparison is not None
+    assert (
+        first.control.trace_context.comparison["unavailable_reason"]
+        == "no_previous_operation_request"
+    )
+    assert second.control.trace_context is not None
+    assert second.control.trace_context.comparison_scope == "within_operation"
+    assert second.control.trace_context.comparison_precision == "exact_item"
+    assert second.control.previous_request_witness is not None
 
 
 def test_user_correction_can_retire_visible_semantic_with_target_user_origin() -> None:

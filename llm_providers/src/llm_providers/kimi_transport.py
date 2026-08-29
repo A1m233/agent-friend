@@ -25,11 +25,17 @@ from .spec import ProviderSpec
 _OPENAI_VERSION = version("openai")
 
 
-def _capture(spec: ProviderSpec) -> ProviderRequestCapture:
+def _capture(
+    spec: ProviderSpec,
+    messages: list[dict[str, Any]] | None = None,
+    transcript_item_domains: tuple[str, ...] | None = None,
+) -> ProviderRequestCapture:
     return ProviderRequestCapture(
         provider_id="kimi",
         transport="kimi_direct",
         transform_identity=f"openai:{_OPENAI_VERSION}:{spec.model}",
+        transcript_items=messages,
+        transcript_item_domains=transcript_item_domains,
     )
 
 
@@ -90,6 +96,7 @@ class KimiAsyncStreamSource:
     spec: ProviderSpec
     messages: list[dict[str, Any]]
     request_options: dict[str, Any]
+    transcript_item_domains: tuple[str, ...] | None = None
     request_id: str | None = field(default=None, init=False)
     request_witness: ProviderRequestWitness | None = field(default=None, init=False)
     _capture: ProviderRequestCapture = field(init=False, repr=False)
@@ -99,7 +106,11 @@ class KimiAsyncStreamSource:
     def __post_init__(self) -> None:
         # Build local SDK clients before the cancellation bridge starts its idle
         # clock.  Only the actual response-header wait counts as provider idle.
-        self._capture = _capture(self.spec)
+        self._capture = _capture(
+            self.spec,
+            self.messages,
+            self.transcript_item_domains,
+        )
         http_client = httpx.AsyncClient(event_hooks={"request": [self._capture.observe_async]})
         self._client = openai.AsyncOpenAI(
             api_key=self.spec.api_key,
@@ -142,6 +153,7 @@ def open_kimi_stream(
     spec: ProviderSpec,
     messages: list[dict[str, Any]],
     request_options: dict[str, Any],
+    transcript_item_domains: tuple[str, ...] | None = None,
 ) -> KimiStream:
     """Open a Kimi stream without passing provider chunks through LiteLLM."""
     if not spec.api_base:
@@ -149,7 +161,7 @@ def open_kimi_stream(
 
     options = dict(request_options)
     options.pop("max_retries", None)
-    capture = _capture(spec)
+    capture = _capture(spec, messages, transcript_item_domains)
     client = _sync_client(spec, capture)
     try:
         raw_response = client.chat.completions.with_raw_response.create(
@@ -178,6 +190,7 @@ def open_cancellable_kimi_stream(
     cancel_check: Callable[[], None],
     *,
     timeout_seconds: float | None = None,
+    transcript_item_domains: tuple[str, ...] | None = None,
 ) -> CancellableAsyncStream:
     """Open a Kimi stream whose response-header wait can be explicitly cancelled."""
     if not spec.api_base:
@@ -186,7 +199,7 @@ def open_cancellable_kimi_stream(
     options = dict(request_options)
     options.pop("max_retries", None)
     return open_cancellable_stream(
-        KimiAsyncStreamSource(spec, messages, options),
+        KimiAsyncStreamSource(spec, messages, options, transcript_item_domains),
         cancel_check,
         timeout_seconds=timeout_seconds,
         thread_name="kimi-cancellable-stream",

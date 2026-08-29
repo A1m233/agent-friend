@@ -54,10 +54,12 @@ from llm_providers import (
     LLMTransportDiagnostic,
     LLMTurnDone,
     ModelCallControl,
+    ModelCallTraceContext,
     ModelRequest,
     ModelRuntimeConfig,
     ProviderAssistantTurn,
     ProviderReasoningState,
+    ProviderRequestWitness,
     ProviderToolCall,
     default_model_runtime_config,
     render_provider_reasoning_state,
@@ -130,7 +132,11 @@ from .message_references import (
 )
 from .messages import Message, escape_internal_prompt_markers, escape_user_messages_for_llm
 from .personas import PersonaCatalog
-from .prompt_cache_trace import PromptCacheTraceTracker, PromptRequestTrace
+from .prompt_cache_trace import (
+    PromptCacheComparison,
+    PromptCacheTraceTracker,
+    PromptRequestTrace,
+)
 from .prompts import PromptBuilder
 from .run_transcript import RunContinuationProjection
 from .sessions import Event, Session, SessionStore
@@ -248,6 +254,17 @@ def _render_untrusted_context(source_type: str, text: str) -> str:
         ensure_ascii=False,
         indent=2,
     )
+
+
+def _prompt_item_identity(message: dict[str, Any]) -> str:
+    payload = json.dumps(
+        message,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return sha256(b"agent-friend:prompt-item-domain:v1\0" + payload).hexdigest()
 
 
 _UNSET = object()
@@ -403,6 +420,7 @@ class Conversation:
         self._calibration_by_model: dict[str, float] = {}
         self._pending_context_usage: dict[str, Any] | None = None
         self._prompt_cache_trace_tracker = PromptCacheTraceTracker()
+        self._prompt_item_domain_by_identity: dict[str, str] = {}
         self._last_prompt_cache_diagnostics: dict[str, Any] | None = None
         self._unscoped_llm_call_index = 0
         self._pending_compaction: CompactionRecord | None = None
@@ -792,6 +810,7 @@ class Conversation:
                 progress=no_progress,
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
+                user_turn=True,
                 cancel_check=cancel_check,
             )
         finally:
@@ -956,6 +975,7 @@ class Conversation:
                 progress=no_progress,
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
+                user_turn=True,
                 cancel_check=cancel_check,
             )
         finally:
@@ -1053,7 +1073,11 @@ class Conversation:
                 max_attempts=2,
             )
             turn_done: LLMTurnDone | None = None
-            for ev in self._iter_model_stream(openai_messages, tools=None):
+            for ev in self._iter_model_stream(
+                openai_messages,
+                tools=None,
+                trace_call_kind="tool_error_continuation",
+            ):
                 self._check_cancel(cancel_check)
                 if isinstance(ev, ContextCompactionStatus):
                     yield ev
@@ -1210,6 +1234,7 @@ class Conversation:
                 progress=no_progress,
                 frame=loop_frame,
                 current_turn_start_idx=turn_start_idx,
+                user_turn=False,
                 cancel_check=cancel_check,
             )
         finally:
@@ -1382,6 +1407,7 @@ class Conversation:
         for ev in self._iter_model_stream(
             openai_messages,
             tools=None,
+            trace_call_kind=f"system_turn:{source_kind}",
             recovery_builder=lambda: self._assemble_stream(
                 trailing_user=system_prompt_addendum,
                 tool_specs=None,
@@ -2216,6 +2242,7 @@ class Conversation:
                             "只使用其中实际支持的事实：\n\n"
                             + _render_untrusted_context("memory_retrieval", ctx.rendered)
                         ),
+                        meta={"prompt_cache_domain": "memory"},
                     )
                 )
         if self._voice_latency_short_reply_hint:
@@ -2256,6 +2283,36 @@ class Conversation:
 
     def _assemble(self, **kwargs: Any) -> list[dict[str, Any]]:
         return self._drain_assembled_messages(self._assemble_stream(**kwargs))
+
+    def _remember_prompt_item_domain(
+        self,
+        rendered: dict[str, Any],
+        domain: str,
+    ) -> None:
+        identity = _prompt_item_identity(rendered)
+        self._prompt_item_domain_by_identity[identity] = domain
+        while len(self._prompt_item_domain_by_identity) > 512:
+            oldest = next(iter(self._prompt_item_domain_by_identity))
+            self._prompt_item_domain_by_identity.pop(oldest, None)
+
+    def _prompt_item_domains(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> tuple[str, ...]:
+        domains: list[str] = []
+        for message in messages:
+            mapped = self._prompt_item_domain_by_identity.get(_prompt_item_identity(message))
+            if mapped is not None:
+                domains.append(mapped)
+                continue
+            rendered = json.dumps(message, ensure_ascii=False, sort_keys=True, default=str)
+            if "<agent_friend_runtime_context" in rendered:
+                domains.append("runtime")
+            elif str(message.get("role", "")) in {"system", "developer", "instructions"}:
+                domains.append("system")
+            else:
+                domains.append("messages")
+        return tuple(domains)
 
     def _assemble_stream(
         self,
@@ -2382,6 +2439,9 @@ class Conversation:
                 )
             if message.meta.get("synthetic") == "run_runtime_snapshot":
                 self._last_runtime_snapshot_rendered = dict(rendered)
+            prompt_cache_domain = message.meta.get("prompt_cache_domain")
+            if isinstance(prompt_cache_domain, str):
+                self._remember_prompt_item_domain(rendered, prompt_cache_domain)
             rendered_messages.append(rendered)
         context_index = (
             self._run_latency_context.next_context_build_index()
@@ -2437,6 +2497,20 @@ class Conversation:
             ),
             calibration_factor=self._calibration_by_model.get(model_id, 1.0),
             trigger_reason=self._context_trigger_reason,
+            run_id=(
+                self._run_id_override
+                or (
+                    self._run_latency_context.run_id
+                    if self._run_latency_context is not None
+                    else None
+                )
+            ),
+            session_id=self._session.session_id,
+            surface=(
+                str(self._prompt_surface_override)
+                if self._prompt_surface_override is not None
+                else None
+            ),
         )
 
     def _derive_prior_summary(self) -> PriorSummary | None:
@@ -2668,6 +2742,9 @@ class Conversation:
         | None = None,
         diagnostic_callback: Callable[[LLMTransportDiagnostic], None] | None = None,
         request_observer: Callable[[list[dict[str, Any]], int, dict[str, Any]], None] | None = None,
+        trace_context_builder: Callable[[int], ModelCallTraceContext] | None = None,
+        comparison_witness_builder: Callable[[], ProviderRequestWitness | None] | None = None,
+        trace_call_kind: str | None = None,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Stream one model response with context and incomplete-output recovery."""
@@ -2687,6 +2764,38 @@ class Conversation:
                     self._active_tool_run_state.model_calls += 1
                 client = self._active_llm_client()
                 projection = self._active_run_transcript
+                trace_context = (
+                    trace_context_builder(request_attempt)
+                    if trace_context_builder is not None
+                    else ModelCallTraceContext(
+                        operation="conversation",
+                        surface=(
+                            str(self._prompt_surface_override)
+                            if self._prompt_surface_override is not None
+                            else None
+                        ),
+                        run_id=(
+                            self._run_id_override
+                            or (
+                                self._run_latency_context.run_id
+                                if self._run_latency_context is not None
+                                else None
+                            )
+                        ),
+                        session_id=self._session.session_id,
+                        call_kind=trace_call_kind,
+                        recovery_attempt=request_attempt,
+                    )
+                )
+                previous_request_witness = (
+                    projection.previous_witness
+                    if projection is not None and projection.previous_witness is not None
+                    else (
+                        comparison_witness_builder()
+                        if comparison_witness_builder is not None
+                        else None
+                    )
+                )
                 stream = client.stream(
                     ModelRequest(
                         messages=current_messages,
@@ -2696,9 +2805,7 @@ class Conversation:
                         control=ModelCallControl(
                             cancel_check=cancel_check,
                             diagnostic_callback=diagnostic_callback,
-                            previous_request_witness=(
-                                projection.previous_witness if projection is not None else None
-                            ),
+                            previous_request_witness=previous_request_witness,
                             continuation_disposition=(
                                 projection.current_disposition
                                 if projection is not None
@@ -2707,6 +2814,8 @@ class Conversation:
                             rebase_reason=(
                                 projection.current_rebase_reason if projection is not None else None
                             ),
+                            trace_context=trace_context,
+                            transcript_item_domains=self._prompt_item_domains(current_messages),
                         ),
                     )
                 )
@@ -2799,6 +2908,7 @@ class Conversation:
             list[dict[str, Any]] | Generator[ConversationEvent, None, list[dict[str, Any]]],
         ]
         | None = None,
+        user_turn: bool = True,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[Any]:
         """Wrap every provider stream with run-correlated, content-free timings."""
@@ -2816,20 +2926,68 @@ class Conversation:
         retry_count = 0
         turn_done: LLMTurnDone | None = None
         request_trace: PromptRequestTrace | None = None
+        request_comparison = PromptCacheComparison(
+            scope="unavailable",
+            precision="unavailable",
+        )
         provider_model = self._active_model_id()
+        projection = self._active_run_transcript
+        comparison_run_id = (
+            self._run_id_override
+            or (context.run_id if context is not None else None)
+            or (projection.continuation_id if projection is not None else None)
+            or f"unscoped-call-{call_index}"
+        )
 
         def observe_request(
             current_messages: list[dict[str, Any]],
             recovery_attempt: int,
             request_overrides: dict[str, Any],
         ) -> None:
-            nonlocal request_trace
+            nonlocal request_comparison, request_trace
+            skill_snapshot = self._active_skill_turn_snapshot
+            skill_scope = (
+                {
+                    "catalog_fingerprint": skill_snapshot.rendered_catalog.fingerprint,
+                    "selections": [
+                        {
+                            "id": selection.id,
+                            "expected_version": selection.expected_version,
+                        }
+                        for selection in self._active_skill_selections
+                    ],
+                    "activations": [
+                        {"id": activation.record.id, "version": activation.version}
+                        for activation in skill_snapshot.activations
+                    ],
+                }
+                if skill_snapshot is not None
+                else None
+            )
             request_trace = self._prompt_cache_trace_tracker.begin(
                 messages=current_messages,
+                message_domains=self._prompt_item_domains(current_messages),
                 tools=tools,
                 provider_model=provider_model,
                 api_base=None,
                 prompt_cache_key=self._session.session_id,
+                persona_id=self._session.current_persona_id,
+                settings={
+                    **request_overrides,
+                    "__agent_friend_reasoning_preset": (
+                        self._active_model_config().reasoning_preset
+                    ),
+                },
+                model_route={
+                    "requested_model": self._active_model_id(),
+                    "provider_model": provider_model,
+                },
+                skills=skill_scope,
+            )
+            request_comparison = self._prompt_cache_trace_tracker.comparison_for(
+                request_trace,
+                run_id=comparison_run_id,
+                user_turn=user_turn,
             )
             fields = request_trace.log_fields()
             projection = self._active_run_transcript
@@ -2858,6 +3016,10 @@ class Conversation:
                 rebase_reason=(
                     projection.current_rebase_reason if projection is not None else None
                 ),
+                comparison_scope=request_comparison.scope,
+                comparison_precision=request_comparison.precision,
+                cross_turn_relation=request_comparison.coarse_relation,
+                first_divergence_domain=request_comparison.first_divergence_domain,
                 **fields,
             )
             logger.info(
@@ -2942,6 +3104,52 @@ class Conversation:
                 retry_after_seconds=event.retry_after_seconds,
             )
 
+        def build_trace_context(recovery_attempt: int) -> ModelCallTraceContext:
+            adapter_trace: dict[str, Any] | None = None
+            if request_trace is not None:
+                adapter_trace = {
+                    "namespace": request_trace.namespace,
+                    "prompt_fingerprint": request_trace.prompt_fingerprint,
+                    "system_fingerprint": request_trace.system_fingerprint,
+                    "tool_schema_fingerprint": request_trace.tool_schema_fingerprint,
+                    "lineage_state": request_trace.lineage_state,
+                    "cache_idle_ms": request_trace.cache_idle_ms,
+                    "previous_cache_state": request_trace.previous_cache_state,
+                    "previous_request_prefix_preserved": (
+                        request_trace.previous_request_prefix_preserved
+                    ),
+                    "common_prefix_messages": request_trace.common_prefix_messages,
+                    "common_prefix_estimated_tokens": (
+                        request_trace.common_prefix_estimated_tokens
+                    ),
+                    "first_divergence_index": request_trace.first_divergence_index,
+                    "first_divergence_role": request_trace.first_divergence_role,
+                    "tool_schema_preserved": request_trace.tool_schema_preserved,
+                    "prompt_payload_bytes": request_trace.prompt_payload_bytes,
+                    "total_message_chars": request_trace.total_message_chars,
+                    "tool_result_count": request_trace.tool_result_count,
+                    "tool_result_chars": request_trace.tool_result_chars,
+                    "max_tool_result_chars": request_trace.max_tool_result_chars,
+                }
+            return ModelCallTraceContext(
+                operation="conversation",
+                surface=(
+                    str(self._prompt_surface_override)
+                    if self._prompt_surface_override is not None
+                    else None
+                ),
+                run_id=(self._run_id_override or (context.run_id if context is not None else None)),
+                session_id=self._session.session_id,
+                call_kind=call_kind,
+                call_index=call_index,
+                turn_index=turn_idx,
+                recovery_attempt=recovery_attempt,
+                comparison_scope=request_comparison.scope,
+                comparison_precision=request_comparison.precision,
+                comparison=request_comparison.observation_fields(),
+                adapter_trace=adapter_trace,
+            )
+
         log_run_latency(
             logger,
             context,
@@ -2961,6 +3169,8 @@ class Conversation:
                 recovery_builder=recovery_builder,
                 diagnostic_callback=observe_transport,
                 request_observer=observe_request,
+                trace_context_builder=build_trace_context,
+                comparison_witness_builder=lambda: request_comparison.previous_witness,
                 cancel_check=cancel_check,
             ):
                 if (
@@ -3027,6 +3237,28 @@ class Conversation:
                         durable = self._prompt_cache_trace_tracker.finish(
                             request_trace,
                             cache_state=cache_state,
+                            run_id=comparison_run_id,
+                            witness=(
+                                event.diagnostics.request_witness
+                                if event.diagnostics is not None
+                                else None
+                            ),
+                            input_tokens=(
+                                event.usage.prompt_tokens if event.usage is not None else None
+                            ),
+                            response_model=(
+                                event.diagnostics.response_model
+                                if event.diagnostics is not None
+                                else None
+                            ),
+                            user_turn=user_turn,
+                        )
+                        durable.update(
+                            {
+                                "comparison_scope": request_comparison.scope,
+                                "comparison_precision": request_comparison.precision,
+                                "comparison": request_comparison.observation_fields(),
+                            }
                         )
                         if event.usage is not None:
                             durable.update(
@@ -3067,6 +3299,8 @@ class Conversation:
                                     "service_tier": event.diagnostics.service_tier,
                                 }
                             )
+                            if event.diagnostics.cache_observation is not None:
+                                durable["observation"] = dict(event.diagnostics.cache_observation)
                         projection = self._active_run_transcript
                         if projection is not None:
                             durable.update(
@@ -3210,9 +3444,18 @@ class Conversation:
                 {
                     "prompt_tokens": ev.usage.prompt_tokens,
                     "cached_prompt_tokens": ev.usage.cached_prompt_tokens,
+                    "cache_write_prompt_tokens": ev.usage.cache_write_prompt_tokens,
+                    "input_other_prompt_tokens": ev.usage.input_other_prompt_tokens,
                     "cache_miss_prompt_tokens": ev.usage.cache_miss_prompt_tokens,
                     "usage_source": ev.usage.usage_source,
+                    "input_total_prompt_tokens_source": (ev.usage.input_total_prompt_tokens_source),
                     "cached_prompt_tokens_source": ev.usage.cached_prompt_tokens_source,
+                    "cache_write_prompt_tokens_source": (ev.usage.cache_write_prompt_tokens_source),
+                    "input_other_prompt_tokens_source": (ev.usage.input_other_prompt_tokens_source),
+                    "input_token_accounting": ev.usage.input_token_accounting,
+                    "input_other_prompt_tokens_derived": (
+                        ev.usage.input_other_prompt_tokens_derived
+                    ),
                     "cache_miss_prompt_tokens_source": ev.usage.cache_miss_prompt_tokens_source,
                     "cache_miss_prompt_tokens_derived": (ev.usage.cache_miss_prompt_tokens_derived),
                     "raw_estimate": raw_estimate,
@@ -3222,6 +3465,10 @@ class Conversation:
         if self._last_prompt_cache_diagnostics is not None:
             pending_usage["cache_diagnostics"] = dict(self._last_prompt_cache_diagnostics)
             self._last_prompt_cache_diagnostics = None
+        elif ev.diagnostics is not None and ev.diagnostics.cache_observation is not None:
+            pending_usage["cache_diagnostics"] = {
+                "observation": dict(ev.diagnostics.cache_observation)
+            }
         if len(pending_usage) > 1:
             self._pending_context_usage = pending_usage
 
@@ -3850,6 +4097,7 @@ class Conversation:
         progress: ToolProgressTracker,
         frame: _ToolLoopFrame,
         current_turn_start_idx: int,
+        user_turn: bool,
         cancel_check: Callable[[], None] | None,
     ) -> Iterator[ConversationEvent]:
         """Own the non-persistent transcript projection for exactly one active run."""
@@ -3875,6 +4123,7 @@ class Conversation:
                 progress=progress,
                 frame=frame,
                 current_turn_start_idx=current_turn_start_idx,
+                user_turn=user_turn,
                 cancel_check=cancel_check,
             )
         finally:
@@ -3896,6 +4145,7 @@ class Conversation:
         progress: ToolProgressTracker,
         frame: _ToolLoopFrame,
         current_turn_start_idx: int,
+        user_turn: bool,
         cancel_check: Callable[[], None] | None,
     ) -> Iterator[ConversationEvent]:
         """Run the common model/tool continuation loop for send and edit-resend."""
@@ -3912,6 +4162,7 @@ class Conversation:
                         persona_id=persona_id,
                         model_snapshot=model_snapshot,
                         runtime=runtime,
+                        user_turn=user_turn,
                         cancel_check=cancel_check,
                     )
                     return
@@ -3987,6 +4238,7 @@ class Conversation:
                 call_kind="initial" if turn_idx == 0 else "tool_continuation",
                 turn_idx=turn_idx,
                 overrides=self._voice_latency_llm_overrides,
+                user_turn=user_turn,
                 cancel_check=cancel_check,
             ):
                 self._check_cancel(cancel_check)
@@ -4109,6 +4361,7 @@ class Conversation:
                     persona_id=persona_id,
                     model_snapshot=model_snapshot,
                     runtime=runtime,
+                    user_turn=user_turn,
                     cancel_check=cancel_check,
                 )
                 return
@@ -4344,6 +4597,7 @@ class Conversation:
         persona_id: str | None,
         model_snapshot: str,
         runtime: ToolRunState,
+        user_turn: bool,
         cancel_check: Callable[[], None] | None = None,
     ) -> Iterator[ConversationEvent]:
         """Finalize once with tools disabled after an explicit resource-policy stop."""
@@ -4370,6 +4624,7 @@ class Conversation:
             tools=None,
             call_kind="tool_finalization",
             turn_idx=runtime.model_continuations + 1,
+            user_turn=user_turn,
             recovery_builder=lambda: self._assemble_stream(
                 trailing_user=host_advisory,
                 tool_specs=None,

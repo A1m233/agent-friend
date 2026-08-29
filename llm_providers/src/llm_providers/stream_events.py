@@ -17,7 +17,7 @@ discriminated union（按 ``type`` 字段分派）。本期承载 4 类事件：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from .reasoning import ProviderReasoningState
 from .request_witness import ProviderRequestRelation, ProviderRequestWitness
@@ -142,10 +142,19 @@ class LLMUsage:
     completion_tokens: int = 0
     total_tokens: int = 0
     cached_prompt_tokens: int | None = None
+    cache_write_prompt_tokens: int | None = None
+    input_other_prompt_tokens: int | None = None
     cache_miss_prompt_tokens: int | None = None
     usage_source: str | None = field(default=None, compare=False)
+    input_total_prompt_tokens_source: str | None = field(default=None, compare=False)
+    completion_tokens_source: str | None = field(default=None, compare=False)
+    total_tokens_source: str | None = field(default=None, compare=False)
     cached_prompt_tokens_source: str | None = field(default=None, compare=False)
+    cache_write_prompt_tokens_source: str | None = field(default=None, compare=False)
+    input_other_prompt_tokens_source: str | None = field(default=None, compare=False)
     cache_miss_prompt_tokens_source: str | None = field(default=None, compare=False)
+    input_token_accounting: str = field(default="unavailable", compare=False)
+    input_other_prompt_tokens_derived: bool = field(default=False, compare=False)
     cache_miss_prompt_tokens_derived: bool = field(default=False, compare=False)
 
     @property
@@ -157,6 +166,19 @@ class LLMUsage:
             return "reported_zero"
         return "reported_nonzero"
 
+    @property
+    def input_buckets_reconciled(self) -> bool:
+        """Whether all mutually-exclusive input buckets reconcile to the total."""
+
+        values = (
+            self.cached_prompt_tokens,
+            self.cache_write_prompt_tokens,
+            self.input_other_prompt_tokens,
+        )
+        if any(value is None for value in values):
+            return False
+        return sum(value for value in values if value is not None) == self.prompt_tokens
+
 
 @dataclass(frozen=True)
 class LLMResponseDiagnostics:
@@ -167,6 +189,14 @@ class LLMResponseDiagnostics:
     request_fingerprint: str | None = None
     request_relation: ProviderRequestRelation = "unavailable"
     common_prefix_items: int | None = None
+    previous_request_items: int | None = None
+    first_divergence_index: int | None = None
+    first_divergence_role: str | None = None
+    first_divergence_domain: str | None = None
+    first_divergence_previous_domain: str | None = None
+    first_divergence_current_domain: str | None = None
+    contributor_mapping_precision: str = "generic"
+    lost_prefix_items: int | None = None
     request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     stream_open_ms: int | None = None
     first_chunk_ms: int | None = None
@@ -176,6 +206,9 @@ class LLMResponseDiagnostics:
     response_model: str | None = None
     system_fingerprint: str | None = None
     service_tier: str | None = None
+    response_cost: float | None = None
+    response_cost_source: str | None = None
+    cache_observation: dict[str, Any] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -190,6 +223,14 @@ class LLMTransportDiagnostic:
     request_fingerprint: str | None = None
     request_relation: ProviderRequestRelation = "unavailable"
     common_prefix_items: int | None = None
+    previous_request_items: int | None = None
+    first_divergence_index: int | None = None
+    first_divergence_role: str | None = None
+    first_divergence_domain: str | None = None
+    first_divergence_previous_domain: str | None = None
+    first_divergence_current_domain: str | None = None
+    contributor_mapping_precision: str = "generic"
+    lost_prefix_items: int | None = None
     request_witness: ProviderRequestWitness | None = field(default=None, repr=False, compare=False)
     provider_request_id: str | None = None
     response_id: str | None = None

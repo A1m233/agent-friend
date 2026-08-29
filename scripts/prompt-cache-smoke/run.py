@@ -3,20 +3,37 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
 from agent_bridge.runtime_config import resolve_bridge_runtime_config
 
+from agent import (
+    BUILTIN_DEFAULT_PERSONA_ID,
+    Conversation,
+    JsonlSessionStore,
+    MarkdownPromptBuilder,
+    NaiveContextManager,
+    PersonaCatalog,
+    PersonaNotFoundError,
+    Session,
+    personas_dir,
+    sessions_dir,
+)
 from llm_providers import (
     LLMTextDelta,
     LLMToolCallDelta,
     LLMTurnDone,
     LLMUsage,
     ModelCallControl,
+    ModelCallTraceContext,
     ModelRequest,
     ProviderRequestWitness,
     default_model_runtime_config,
@@ -38,6 +55,12 @@ class _Observation:
     total_ms: float
     request_relation: str = "unavailable"
     common_prefix_items: int | None = None
+    cache_write_prompt_tokens: int | None = None
+    input_other_prompt_tokens: int | None = None
+    cache_write_prompt_tokens_source: str | None = None
+    input_other_prompt_tokens_source: str | None = None
+    input_token_accounting: str = "unavailable"
+    prompt_cache_observation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +69,16 @@ class _ToolTurnResult:
     assistant_message: dict[str, Any]
     tool_message: dict[str, Any]
     request_witness: ProviderRequestWitness | None
+
+
+@dataclass(frozen=True)
+class _LongSessionStats:
+    session_ref: str
+    history_chars: int
+    history_messages: int
+    complete_turns: int
+    tool_events: int
+    attachments: int
 
 
 def _client_for_model(runtime_config: Any, model: str) -> Any:
@@ -116,7 +149,20 @@ def _request(
     request_fingerprint: str | None = None
     request_relation = "unavailable"
     common_prefix_items: int | None = None
-    for event in client.stream(messages, tools=tools, **overrides):
+    prompt_cache_observation: dict[str, Any] | None = None
+    request = ModelRequest(
+        messages=messages,
+        tools=tools,
+        settings=overrides,
+        cache_key=prompt_cache_key,
+        control=ModelCallControl(
+            trace_context=ModelCallTraceContext(
+                operation="prompt_cache_smoke",
+                call_kind=f"{scenario}:{phase}",
+            )
+        ),
+    )
+    for event in client.stream(request):
         if isinstance(event, LLMTextDelta) and first_text_ms is None:
             first_text_ms = (time.perf_counter() - started) * 1000
         elif isinstance(event, LLMTurnDone):
@@ -132,6 +178,11 @@ def _request(
             common_prefix_items = (
                 event.diagnostics.common_prefix_items if event.diagnostics is not None else None
             )
+            prompt_cache_observation = (
+                dict(event.diagnostics.cache_observation)
+                if event.diagnostics is not None and event.diagnostics.cache_observation is not None
+                else None
+            )
     total_ms = (time.perf_counter() - started) * 1000
     if usage is None:
         raise AssertionError(f"{scenario}/{phase}: provider did not return stream usage")
@@ -140,14 +191,20 @@ def _request(
         phase=phase,
         prompt_tokens=usage.prompt_tokens,
         cached_prompt_tokens=usage.cached_prompt_tokens,
+        cache_write_prompt_tokens=usage.cache_write_prompt_tokens,
+        input_other_prompt_tokens=usage.input_other_prompt_tokens,
         cache_miss_prompt_tokens=usage.cache_miss_prompt_tokens,
         cached_prompt_tokens_source=usage.cached_prompt_tokens_source,
+        cache_write_prompt_tokens_source=usage.cache_write_prompt_tokens_source,
+        input_other_prompt_tokens_source=usage.input_other_prompt_tokens_source,
         cache_miss_prompt_tokens_source=usage.cache_miss_prompt_tokens_source,
+        input_token_accounting=usage.input_token_accounting,
         request_fingerprint=request_fingerprint,
         first_text_ms=round(first_text_ms, 1) if first_text_ms is not None else None,
         total_ms=round(total_ms, 1),
         request_relation=request_relation,
         common_prefix_items=common_prefix_items,
+        prompt_cache_observation=prompt_cache_observation,
     )
 
 
@@ -173,10 +230,16 @@ def _tool_turn_request(
         messages=messages,
         tools=tools,
         settings={
-            "max_tokens": 64,
+            "max_tokens": 256,
             "tool_choice": {"type": "function", "function": {"name": tool_name}},
         },
-        control=ModelCallControl(previous_request_witness=previous_request_witness),
+        control=ModelCallControl(
+            previous_request_witness=previous_request_witness,
+            trace_context=ModelCallTraceContext(
+                operation="prompt_cache_smoke",
+                call_kind=f"{scenario}:{phase}",
+            ),
+        ),
     )
     for event in client.stream(request):
         if isinstance(event, LLMTextDelta):
@@ -240,9 +303,14 @@ def _tool_turn_request(
             phase=phase,
             prompt_tokens=usage.prompt_tokens,
             cached_prompt_tokens=usage.cached_prompt_tokens,
+            cache_write_prompt_tokens=usage.cache_write_prompt_tokens,
+            input_other_prompt_tokens=usage.input_other_prompt_tokens,
             cache_miss_prompt_tokens=usage.cache_miss_prompt_tokens,
             cached_prompt_tokens_source=usage.cached_prompt_tokens_source,
+            cache_write_prompt_tokens_source=usage.cache_write_prompt_tokens_source,
+            input_other_prompt_tokens_source=usage.input_other_prompt_tokens_source,
             cache_miss_prompt_tokens_source=usage.cache_miss_prompt_tokens_source,
+            input_token_accounting=usage.input_token_accounting,
             request_fingerprint=request_fingerprint,
             first_text_ms=round(first_text_ms, 1) if first_text_ms is not None else None,
             total_ms=round(total_ms, 1),
@@ -254,6 +322,12 @@ def _tool_turn_request(
             common_prefix_items=(
                 turn_done.diagnostics.common_prefix_items
                 if turn_done.diagnostics is not None
+                else None
+            ),
+            prompt_cache_observation=(
+                dict(turn_done.diagnostics.cache_observation)
+                if turn_done.diagnostics is not None
+                and turn_done.diagnostics.cache_observation is not None
                 else None
             ),
         ),
@@ -643,6 +717,246 @@ def _run_deepseek_tool_loop_ab(
     }
 
 
+def _safe_session_ref(session_id: str) -> str:
+    return hashlib.sha256(f"prompt-cache-smoke\0{session_id}".encode()).hexdigest()[:12]
+
+
+def _long_session_stats(session: Session) -> _LongSessionStats:
+    messages = session.llm_messages
+    counts = Counter(event.type for event in session.active_events)
+    return _LongSessionStats(
+        session_ref=_safe_session_ref(session.session_id),
+        history_chars=sum(
+            len(message.content) for message in messages if isinstance(message.content, str)
+        ),
+        history_messages=len(messages),
+        complete_turns=min(
+            counts.get("user_message", 0),
+            counts.get("assistant_message", 0),
+        ),
+        tool_events=(counts.get("tool_call_request", 0) + counts.get("tool_call_result", 0)),
+        attachments=sum(len(message.attachments) for message in messages),
+    )
+
+
+def _select_long_session(
+    *,
+    store: JsonlSessionStore,
+    model: str,
+    source_session_ref: str,
+    min_history_chars: int,
+) -> tuple[Session, _LongSessionStats]:
+    for summary in store.list():
+        if _safe_session_ref(summary.session_id) != source_session_ref:
+            continue
+        session = store.load(summary.session_id)
+        stats = _long_session_stats(session)
+        if session.current_model != model:
+            raise ValueError("selected long session does not use the requested model")
+        if stats.history_chars < min_history_chars:
+            raise ValueError("selected long session is below the requested history size")
+        if stats.complete_turns < 5:
+            raise ValueError("selected long session has fewer than five complete turns")
+        if stats.attachments:
+            raise ValueError("selected long session contains attachments")
+        return session, stats
+    raise ValueError(f"no local session matches safe ref {source_session_ref!r}")
+
+
+def _active_persona_id(session: Session, catalog: PersonaCatalog) -> str:
+    persona_id = session.current_persona_id
+    if persona_id is not None:
+        try:
+            catalog.get(persona_id)
+            return persona_id
+        except PersonaNotFoundError:
+            pass
+    try:
+        return catalog.find_by_name(session.current_persona_name).id
+    except PersonaNotFoundError:
+        return BUILTIN_DEFAULT_PERSONA_ID
+
+
+def _latest_prompt_cache_observation(
+    conversation: Conversation, *, call_index: int
+) -> dict[str, Any]:
+    assistant = next(
+        event
+        for event in reversed(conversation.session.events)
+        if event.type == "assistant_message"
+    )
+    usage = assistant.meta.get("context_usage")
+    cache_diagnostics = usage.get("cache_diagnostics") if isinstance(usage, dict) else None
+    observation = (
+        cache_diagnostics.get("observation") if isinstance(cache_diagnostics, dict) else None
+    )
+    if not isinstance(observation, dict):
+        raise AssertionError(f"cross_user_turn/call_{call_index}: missing prompt-cache observation")
+    return dict(observation)
+
+
+def _run_deepseek_long_session_dialogue(
+    *,
+    model: str,
+    history_chars: int,
+    source_session_ref: str,
+    dialogue_turns: int,
+) -> dict[str, Any]:
+    """Clone one selected long session and issue two or three ordinary questions."""
+
+    if dialogue_turns not in {2, 3}:
+        raise ValueError("long-session dialogue supports exactly two or three turns")
+
+    source_store = JsonlSessionStore(sessions_dir())
+    source_session, stats = _select_long_session(
+        store=source_store,
+        model=model,
+        source_session_ref=source_session_ref,
+        min_history_chars=history_chars,
+    )
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
+    client = runtime_config.llm_client_factory(source_session.current_model_config)
+    observations: list[dict[str, Any]] = []
+    with TemporaryDirectory(prefix="agent-friend-prompt-cache-long-session-") as temp_dir:
+        clone_store = JsonlSessionStore(base_dir=Path(temp_dir) / "sessions")
+        clone_store.create(source_session)
+        session = clone_store.load(source_session.session_id)
+        catalog = PersonaCatalog(external_dir=personas_dir())
+        persona_id = _active_persona_id(session, catalog)
+        builder = MarkdownPromptBuilder(persona_id=persona_id, catalog=catalog)
+        conversation = Conversation(
+            session=session,
+            store=clone_store,
+            llm_client=client,
+            context_manager=NaiveContextManager(),
+            prompt_builder=builder,
+            prompt_builder_factory=lambda selected_persona_id: MarkdownPromptBuilder(
+                persona_id=selected_persona_id,
+                catalog=catalog,
+            ),
+            catalog=catalog,
+        )
+        prompts = (
+            "请用两三句话解释，为什么刚烧开的水放在室温下会逐渐变凉？不需要使用工具。",
+            "沿着刚才的解释，再举一个日常生活中的类似例子，也用两三句话回答，不需要使用工具。",
+            "我们为啥之前的缓存情况好像很差来着？用两三句话回答，不需要使用工具。",
+        )
+        for index, prompt in enumerate(prompts[:dialogue_turns], start=1):
+            list(conversation.stream(prompt, run_id=f"long-session-dialogue-{index}"))
+            observations.append(_latest_prompt_cache_observation(conversation, call_index=index))
+
+    for call_index, observation in enumerate(observations[1:], start=2):
+        structure = observation.get("structure")
+        if not isinstance(structure, dict):
+            raise AssertionError(f"cross_user_turn/call_{call_index}: missing structure")
+        if structure.get("comparison_scope") != "cross_user_turn":
+            raise AssertionError(f"cross_user_turn/call_{call_index}: new user run was not linked")
+
+    cache_read_ratios: list[float | None] = []
+    for observation in observations:
+        usage = observation.get("usage")
+        input_total = usage.get("input_total") if isinstance(usage, dict) else None
+        cache_read = usage.get("cache_read") if isinstance(usage, dict) else None
+        cache_read_ratios.append(
+            cache_read / input_total
+            if isinstance(cache_read, int) and isinstance(input_total, int) and input_total > 0
+            else None
+        )
+    return {
+        "model": model,
+        "real_llm_calls": dialogue_turns,
+        "experiment": "deepseek_long_session_ordinary_dialogue",
+        "source_session": asdict(stats),
+        "request_cache_read_ratios": cache_read_ratios,
+        "observations": observations,
+    }
+
+
+def _run_deepseek_cross_user_turn(
+    *,
+    model: str,
+    history_chars: int,
+) -> dict[str, Any]:
+    """Run two real no-tool user turns through Conversation and inspect lineage."""
+
+    runtime_config = resolve_bridge_runtime_config(credential_source_for_mode("desktop"))
+    client = _client_for_model(runtime_config, model)
+    marker = uuid4().hex
+    stable = (f"[{marker}] stable cross-user-turn cache material. " * (history_chars // 48 + 1))[
+        :history_chars
+    ]
+    observations: list[dict[str, Any]] = []
+    with TemporaryDirectory(prefix="agent-friend-prompt-cache-") as temp_dir:
+        root = Path(temp_dir)
+        catalog = PersonaCatalog(external_dir=root / "personas")
+        store = JsonlSessionStore(base_dir=root / "sessions")
+        session = Session.new(
+            title="prompt-cache-cross-user-turn",
+            persona="default",
+            model=model,
+            persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+        )
+        store.create(session)
+        builder = MarkdownPromptBuilder(
+            persona_id=BUILTIN_DEFAULT_PERSONA_ID,
+            catalog=catalog,
+        )
+        conversation = Conversation(
+            session=session,
+            store=store,
+            llm_client=client,
+            context_manager=NaiveContextManager(),
+            prompt_builder=builder,
+            prompt_builder_factory=lambda persona_id: MarkdownPromptBuilder(
+                persona_id=persona_id,
+                catalog=catalog,
+            ),
+            catalog=catalog,
+        )
+        prompts = (
+            f"Treat this block as stable data and reply only OK.\n{stable}",
+            "Continue the same task and reply only OK.",
+        )
+        for index, prompt in enumerate(prompts, start=1):
+            list(conversation.stream(prompt, run_id=f"cross-user-turn-{index}"))
+            assistant = next(
+                event
+                for event in reversed(conversation.session.events)
+                if event.type == "assistant_message"
+            )
+            usage = assistant.meta.get("context_usage")
+            cache_diagnostics = usage.get("cache_diagnostics") if isinstance(usage, dict) else None
+            observation = (
+                cache_diagnostics.get("observation")
+                if isinstance(cache_diagnostics, dict)
+                else None
+            )
+            if not isinstance(observation, dict):
+                raise AssertionError(
+                    f"cross_user_turn/call_{index}: missing prompt-cache observation"
+                )
+            observations.append(dict(observation))
+
+    second_structure = observations[1].get("structure")
+    if not isinstance(second_structure, dict):
+        raise AssertionError("cross_user_turn/call_2: missing structure")
+    if second_structure.get("comparison_scope") != "cross_user_turn":
+        raise AssertionError(
+            "cross_user_turn/call_2: first request of the new user run was not linked"
+        )
+    if second_structure.get("cross_turn_relation") in {None, "baseline"}:
+        raise AssertionError(
+            "cross_user_turn/call_2: comparison was incorrectly reported as baseline"
+        )
+    return {
+        "model": model,
+        "real_llm_calls": 2,
+        "history_chars_in_first_user_turn": history_chars,
+        "experiment": "deepseek_conversation_cross_user_turn",
+        "observations": observations,
+    }
+
+
 def run(
     *,
     model: str,
@@ -652,6 +966,10 @@ def run(
     deepseek_production_shape: bool = False,
     deepseek_shape_matrix: bool = False,
     deepseek_tool_loop_ab: bool = False,
+    deepseek_cross_user_turn: bool = False,
+    deepseek_long_session_dialogue: bool = False,
+    source_session_ref: str | None = None,
+    dialogue_turns: int = 2,
 ) -> dict[str, Any]:
     if model.startswith("deepseek/"):
         if exact_repeat_only:
@@ -661,6 +979,20 @@ def run(
                 model=model,
                 history_chars=history_chars,
                 settle_seconds=settle_seconds,
+            )
+        if deepseek_cross_user_turn:
+            return _run_deepseek_cross_user_turn(
+                model=model,
+                history_chars=history_chars,
+            )
+        if deepseek_long_session_dialogue:
+            if source_session_ref is None:
+                raise ValueError("long-session dialogue requires a safe source session ref")
+            return _run_deepseek_long_session_dialogue(
+                model=model,
+                history_chars=history_chars,
+                source_session_ref=source_session_ref,
+                dialogue_turns=dialogue_turns,
             )
         if deepseek_shape_matrix:
             return _run_deepseek_shape_matrix(
@@ -712,6 +1044,27 @@ def main() -> None:
         action="store_true",
         help="send four forced-tool requests comparing tail rebuild with transcript append",
     )
+    parser.add_argument(
+        "--deepseek-cross-user-turn",
+        action="store_true",
+        help="send two no-tool user turns through Conversation and inspect cross-turn lineage",
+    )
+    parser.add_argument(
+        "--deepseek-long-session-dialogue",
+        action="store_true",
+        help="clone one approved local long session and send two ordinary no-tool questions",
+    )
+    parser.add_argument(
+        "--source-session-ref",
+        help="content-free safe ref of the approved local source session",
+    )
+    parser.add_argument(
+        "--dialogue-turns",
+        type=int,
+        choices=(2, 3),
+        default=2,
+        help="number of ordinary questions for long-session dialogue",
+    )
     args = parser.parse_args()
     if not args.allow_llm:
         parser.error("real LLM calls require explicit --allow-llm")
@@ -727,10 +1080,18 @@ def main() -> None:
             args.deepseek_production_shape,
             args.deepseek_shape_matrix,
             args.deepseek_tool_loop_ab,
+            args.deepseek_cross_user_turn,
+            args.deepseek_long_session_dialogue,
         )
     )
     if deepseek_modes > 1:
         parser.error("choose only one DeepSeek experiment mode")
+    if args.deepseek_long_session_dialogue and not args.source_session_ref:
+        parser.error("--deepseek-long-session-dialogue requires --source-session-ref")
+    if args.source_session_ref and not args.deepseek_long_session_dialogue:
+        parser.error("--source-session-ref is only valid for long-session dialogue")
+    if args.dialogue_turns != 2 and not args.deepseek_long_session_dialogue:
+        parser.error("--dialogue-turns is only configurable for long-session dialogue")
     print(
         json.dumps(
             run(
@@ -741,6 +1102,10 @@ def main() -> None:
                 deepseek_production_shape=args.deepseek_production_shape,
                 deepseek_shape_matrix=args.deepseek_shape_matrix,
                 deepseek_tool_loop_ab=args.deepseek_tool_loop_ab,
+                deepseek_cross_user_turn=args.deepseek_cross_user_turn,
+                deepseek_long_session_dialogue=args.deepseek_long_session_dialogue,
+                source_session_ref=args.source_session_ref,
+                dialogue_turns=args.dialogue_turns,
             ),
             ensure_ascii=False,
             indent=2,

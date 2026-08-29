@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import uuid4
 
-from llm_providers import LLMContextWindowError, ModelRequest
+from llm_providers import (
+    LLMContextWindowError,
+    ModelCallControl,
+    ModelCallTraceContext,
+    ModelRequest,
+    OperationRequestLineageTracker,
+)
 
 from ..attachments import AttachmentError, AttachmentRef
 from ..messages import Message
@@ -113,6 +119,7 @@ class SummarizingContextManager:
         self._max_failures = max_failures
         self._consecutive_failures = 0
         self._tripped = False
+        self._prompt_cache_lineage = OperationRequestLineageTracker(max_entries=8)
 
     def build_messages(
         self,
@@ -275,13 +282,36 @@ class SummarizingContextManager:
                     history, parts, runtime, reason="summary_input_too_large"
                 )
             summary_text = render_transcript(summary_source)
+            lineage = self._prompt_cache_lineage.begin(
+                session_id=runtime.session_id,
+                operation="context_compaction",
+                call_kind="summary_generation",
+                prompt_contract_revision=str(SUMMARY_PROMPT_VERSION),
+            )
             try:
-                raw = runtime.llm_client.generate(
+                response = runtime.llm_client.generate(
                     ModelRequest(
                         messages=build_summary_messages(summary_text),
                         settings={"max_tokens": summary_output_budget},
+                        control=ModelCallControl(
+                            previous_request_witness=lineage.previous_witness,
+                            trace_context=ModelCallTraceContext(
+                                operation="context_compaction",
+                                surface=runtime.surface,
+                                run_id=runtime.run_id,
+                                session_id=runtime.session_id,
+                                call_kind="summary_generation",
+                                call_index=attempts,
+                                recovery_attempt=attempt,
+                                comparison_scope=lineage.scope,
+                                comparison_precision=lineage.precision,
+                                comparison=lineage.comparison_fields(),
+                            ),
+                        ),
                     )
-                ).text
+                )
+                self._prompt_cache_lineage.complete(lineage, response)
+                raw = response.text
                 break
             except LLMContextWindowError:
                 if attempt >= MAX_SUMMARY_CONTEXT_RETRIES:
