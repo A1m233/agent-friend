@@ -211,7 +211,7 @@ def test_verify_package_checks_routes_metadata_and_provider_sections(
 
     result = guide.verify_package(package)
 
-    assert result["fileCount"] == 15
+    assert result["fileCount"] == 16
     assert result["source"]["reviewed_product_commit"] == "1" * 40
     assert len(result["snapshotSha256"]) == 64
 
@@ -265,7 +265,7 @@ def test_verify_package_allows_additional_references_scripts_and_assets(tmp_path
 
     result = guide.verify_package(package)
 
-    assert result["fileCount"] == 18
+    assert result["fileCount"] == 19
 
 
 def test_sync_requires_published_clean_exact_commit(tmp_path: Path) -> None:

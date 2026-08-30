@@ -27,6 +27,7 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 ROUTED_REFERENCE_RE = re.compile(r"`(references/[a-z0-9-]+\.md)`")
 MARKDOWN_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 EXPECTED_REFERENCES = {
+    "arknights-avatar-models.md",
     "data-and-privacy.md",
     "getting-started.md",
     "model-credentials.md",
@@ -45,6 +46,12 @@ RELEASE_PACKAGE_ASSET = f"{SKILL_NAME}.zip"
 RELEASE_TAG_RE = re.compile(rf"^{re.escape(SKILL_NAME)}-r([1-9][0-9]*)$")
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 REQUIRED_CONTENT = {
+    "arknights-avatar-models.md": (
+        "https://github.com/isHarryh/Ark-Models",
+        "Spine 3.8",
+        "非商用",
+        "scripts/ark-models.py",
+    ),
     "model-credentials.md": (
         "DeepSeek",
         "Kimi",
