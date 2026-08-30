@@ -263,6 +263,29 @@ def test_model_result_has_a_smaller_total_output_budget() -> None:
     assert payload["dropped_bytes"] == MAX_RESULT_OUTPUT_BYTES * 3 - retained
 
 
+def test_model_result_hides_process_audit_fields_but_keeps_live_handle() -> None:
+    snapshot = CommandProcessSnapshot(
+        process_id="process",
+        session_id="session",
+        run_id="run",
+        tool_call_id="call",
+        mode="streaming",
+        started_at="2026-08-30T04:00:00+00:00",
+    )
+
+    payload = _bounded_process_result(snapshot)
+
+    assert payload["process_id"] == "process"
+    assert {
+        "session_id",
+        "run_id",
+        "tool_call_id",
+        "started_at",
+        "finished_at",
+        "version",
+    }.isdisjoint(payload)
+
+
 def test_command_output_decoder_preserves_utf8_and_windows_code_page_text() -> None:
     message = "'maa' 不是内部或外部命令"
     assert decode_process_output(message.encode("utf-8"), fallback_encoding="cp936") == message
@@ -1301,6 +1324,19 @@ def test_command_tool_uses_shared_approval_and_buffered_semantics(
     payload = json.loads(result_box[0].text)
     assert payload["status"] == "exited"
     assert payload["stdout"] == "buffered output"
+    assert {
+        "process_id",
+        "session_id",
+        "run_id",
+        "tool_call_id",
+        "started_at",
+        "finished_at",
+        "version",
+    }.isdisjoint(payload)
+    process_meta = result_box[0].meta["command_process"]
+    assert process_meta["started_at_utc"].endswith("+00:00")
+    assert process_meta["finished_at_utc"].endswith("+00:00")
+    assert process_meta["process_id"]
     if os.name == "nt":
         assert payload["host_path_validation"] == {
             "workdir_existed_before_start": True,

@@ -110,6 +110,72 @@ def test_tool_must_be_called_fails_when_missing() -> None:
     assert "missing recall_past_chats" in verdict.reason
 
 
+def test_current_time_grounding_rejects_utc_clock_guess_and_preserves_duration_control() -> None:
+    contracts = load_contracts(CASES_DIR)
+    contract = next(item for item in contracts if item.id == "C28")
+    anchor = next(item for item in contract.cases if item.id == "C28-01")
+    control = next(item for item in contract.cases if item.id == "C28-02")
+    exec_result = (
+        '{"status":"exited","exit_code":0,"stdout":"daily-complete",'
+        '"finished_at":"2026-08-30T04:08:18+00:00"}'
+    )
+
+    original_bad = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "daily"]},
+                result_text=exec_result,
+                is_error=False,
+            )
+        ],
+        final_text="daily-complete。现在都凌晨四点多了。",
+        stop_reason="end_turn",
+    )
+    bad_verdict = judge_case(anchor, contract, original_bad)
+    assert bad_verdict.passed is False
+    assert "datetime_calculate" in bad_verdict.reason
+
+    grounded = Trace(
+        case_id=anchor.id,
+        tool_calls=[
+            original_bad.tool_calls[0],
+            ToolCallTrace(
+                name="datetime_calculate",
+                args={"operation": "current"},
+                result_text=(
+                    '{"operation":"current",'
+                    '"current_datetime":"2026-08-30T12:08:35+08:00",'
+                    '"timezone":"Asia/Shanghai"}'
+                ),
+                is_error=False,
+            ),
+        ],
+        final_text="daily-complete。现在是中午 12 点，不算深夜。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(anchor, contract, grounded).passed is True
+
+    duration_only = Trace(
+        case_id=control.id,
+        tool_calls=[
+            ToolCallTrace(
+                name="exec_command",
+                args={"argv": ["task-runner", "status"]},
+                result_text=(
+                    '{"status":"exited","exit_code":0,"stdout":"status-complete",'
+                    '"duration_seconds":180.0}'
+                ),
+                is_error=False,
+            )
+        ],
+        final_text="status-complete，状态检查成功，耗时 180 秒。",
+        stop_reason="end_turn",
+    )
+    assert judge_case(control, contract, duration_only).passed is True
+
+
 def test_maximum_tool_call_counts_rejects_same_tool_retry() -> None:
     case = _case(CaseJudge(maximum_tool_call_counts={"exec_command": 1}))
     contract = _contract(expected_behavior="response", expected_tool=None)

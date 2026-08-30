@@ -117,6 +117,7 @@ def _result(
     error: bool = False,
     executed: bool | None = None,
     authorization_requested: bool | None = None,
+    diagnostic_meta: dict[str, object] | None = None,
 ) -> ToolResult:
     error_kind = payload.get("error")
     meta: dict[str, object] = {}
@@ -146,6 +147,8 @@ def _result(
         "powershell_script_not_executed",
     }:
         meta["no_progress_family"] = error_kind
+    if diagnostic_meta:
+        meta.update(diagnostic_meta)
     return ToolResult(
         text=json.dumps(payload, ensure_ascii=False, sort_keys=True),
         is_error=error,
@@ -226,7 +229,24 @@ def _default_command_reason(details: CommandApprovalDetails) -> str:
 
 
 def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, object]:
-    payload = snapshot.to_dict(include_output=False)
+    # Absolute process timestamps and ownership identifiers are audit data, not
+    # command semantics. Exposing their UTC values to the model invites it to
+    # mistake an execution timestamp for the user's local clock. Keep the
+    # model-facing projection explicit and route the audit snapshot through
+    # ToolResult.meta instead.
+    payload: dict[str, object] = {
+        "status": snapshot.status,
+        "mode": snapshot.mode,
+        "duration_seconds": snapshot.duration_seconds,
+        "output_seq": snapshot.output_seq,
+        "dropped_bytes": snapshot.dropped_bytes,
+        "exit_code": snapshot.exit_code,
+        "sandbox_denied": snapshot.sandbox_denied,
+        "terminal_reason": snapshot.terminal_reason,
+        "sandbox_type": snapshot.sandbox_type,
+    }
+    if not snapshot.terminal():
+        payload["process_id"] = snapshot.process_id
     streams = [
         ("stdout", snapshot.stdout_tail),
         ("stderr", snapshot.stderr_tail),
@@ -241,6 +261,31 @@ def _bounded_process_result(snapshot: CommandProcessSnapshot) -> dict[str, objec
         payload[name] = decode_process_output(retained)
     payload["dropped_bytes"] = snapshot.dropped_bytes + omitted
     return payload
+
+
+def _process_diagnostic_meta(snapshot: CommandProcessSnapshot) -> dict[str, object]:
+    """Return the full process audit snapshot without exposing it to the model."""
+
+    return {
+        "command_process": {
+            "process_id": snapshot.process_id,
+            "session_id": snapshot.session_id,
+            "run_id": snapshot.run_id,
+            "tool_call_id": snapshot.tool_call_id,
+            "mode": snapshot.mode,
+            "status": snapshot.status,
+            "started_at_utc": snapshot.started_at,
+            "finished_at_utc": snapshot.finished_at,
+            "duration_seconds": snapshot.duration_seconds,
+            "output_seq": snapshot.output_seq,
+            "dropped_bytes": snapshot.dropped_bytes,
+            "exit_code": snapshot.exit_code,
+            "sandbox_denied": snapshot.sandbox_denied,
+            "terminal_reason": snapshot.terminal_reason,
+            "sandbox_type": snapshot.sandbox_type,
+            "version": snapshot.version,
+        }
+    }
 
 
 class ExecCommandTool:
@@ -757,6 +802,7 @@ class ExecCommandTool:
                     "process": _bounded_process_result(snapshot),
                 },
                 error=True,
+                diagnostic_meta=_process_diagnostic_meta(snapshot),
             )
         result_payload = _bounded_process_result(snapshot)
         result_payload.update(
@@ -840,6 +886,7 @@ class ExecCommandTool:
         return _result(
             result_payload,
             error=result_error,
+            diagnostic_meta=_process_diagnostic_meta(snapshot),
         )
 
     @staticmethod
@@ -1891,7 +1938,10 @@ class WriteStdinTool:
             )
             if snapshot.terminal():
                 context.release_command_handle(process_id)
-            return _result(_bounded_process_result(snapshot))
+            return _result(
+                _bounded_process_result(snapshot),
+                diagnostic_meta=_process_diagnostic_meta(snapshot),
+            )
         except (ValueError, CommandRuntimeError) as exc:
             return _result(
                 {
@@ -2002,7 +2052,11 @@ class TerminateCommandTool:
                         pass
                     else:
                         payload["process"] = _bounded_process_result(current)
-                return _result(payload, error=True)
+                return _result(
+                    payload,
+                    error=True,
+                    diagnostic_meta=_process_diagnostic_meta(current),
+                )
 
             if snapshot.terminal():
                 context.release_command_handle(process_id)
@@ -2014,8 +2068,12 @@ class TerminateCommandTool:
                         "message": ("命令运行时已失联，无法把该终态当作替代命令安全接管的依据。"),
                     }
                 )
-                return _result(payload, error=True)
-            return _result(payload)
+                return _result(
+                    payload,
+                    error=True,
+                    diagnostic_meta=_process_diagnostic_meta(snapshot),
+                )
+            return _result(payload, diagnostic_meta=_process_diagnostic_meta(snapshot))
         except CommandRuntimeError as exc:
             return _command_runtime_error_result(exc, fallback_status="failed")
         except (TypeError, ValueError) as exc:

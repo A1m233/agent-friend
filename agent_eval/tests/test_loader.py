@@ -40,6 +40,7 @@ def test_loads_builtin_cases() -> None:
         ("C25", "filesystem-authorization-claim-grounding", 2),
         ("C26", "agent-run-recovery", 6),
         ("C27", "command-lifecycle-handoff", 5),
+        ("C28", "current-time-grounding", 3),
     ]
 
 
@@ -435,8 +436,8 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
     contracts = load_contracts(CASES_DIR)
     meta = build_case_set_meta(CASES_DIR, contracts)
 
-    assert meta.total_contracts == 27
-    assert meta.total_cases == 234
+    assert meta.total_contracts == 28
+    assert meta.total_cases == 237
     assert meta.contract_counts == {
         "C1": 24,
         "C2": 46,
@@ -465,6 +466,7 @@ def test_case_set_meta_has_counts_and_stable_digest() -> None:
         "C25": 2,
         "C26": 6,
         "C27": 5,
+        "C28": 3,
     }
     assert len(meta.digest) == 64
 
@@ -511,6 +513,24 @@ def test_loads_fixed_runtime_clock_for_relative_calendar_case() -> None:
 
     assert case.runtime_now is not None
     assert case.runtime_now.isoformat() == "2026-07-29T01:12:32+08:00"
+
+
+def test_loads_current_time_grounding_anchor_and_duration_control() -> None:
+    contracts = load_contracts(CASES_DIR)
+    c28 = next(contract for contract in contracts if contract.id == "C28")
+    anchor = next(item for item in c28.cases if item.id == "C28-01")
+    control = next(item for item in c28.cases if item.id == "C28-02")
+
+    assert anchor.runtime_now is not None
+    assert anchor.runtime_now.isoformat() == "2026-08-30T12:08:35+08:00"
+    assert anchor.judge is not None
+    assert [item.name for item in anchor.judge.required_successful_tool_calls] == [
+        "exec_command",
+        "datetime_calculate",
+    ]
+    assert "凌晨四点" in anchor.judge.must_not_mention_any
+    assert control.judge is not None
+    assert control.judge.must_not_call_any == ["datetime_calculate"]
 
 
 def test_loads_interaction_surface_for_non_announcement_cases() -> None:
