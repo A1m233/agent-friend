@@ -103,5 +103,6 @@ describe("message scroll following", () => {
     expect(shouldFollowAfterTotalSizeChange(false, 1_000, 2_200)).toBe(false);
     expect(shouldFollowAfterTotalSizeChange(true, 2_200, 2_200)).toBe(false);
     expect(shouldFollowAfterTotalSizeChange(true, null, 2_200)).toBe(false);
+    expect(shouldFollowAfterTotalSizeChange(true, 1_000, 2_200, true)).toBe(false);
   });
 });

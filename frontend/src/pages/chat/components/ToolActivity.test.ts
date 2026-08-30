@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolBlock } from "@/types/chat";
 import { ToolActivity } from "./ToolActivity";
 
@@ -67,6 +67,40 @@ describe("ToolActivity", () => {
     await click(trigger as HTMLButtonElement);
 
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
+    expect(container.textContent).toContain("search result");
+  });
+
+  it("announces a user disclosure change before expanding its content", async () => {
+    const onDisclosureChange = vi.fn(() => {
+      expect(container.textContent).not.toContain("search result");
+    });
+    const blocks = [tool("search", "web_search", "search result")];
+    await act(async () => root.render(createElement(ToolActivity, {
+      blocks,
+      onDisclosureChange,
+    })));
+
+    await click(container.querySelector("button") as HTMLButtonElement);
+
+    expect(onDisclosureChange).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("search result");
+  });
+
+  it("announces both group and nested disclosure changes", async () => {
+    const onDisclosureChange = vi.fn();
+    const blocks = [
+      tool("search", "web_search", "search result"),
+      tool("fetch", "web_fetch", "page result"),
+    ];
+    await act(async () => root.render(createElement(ToolActivity, {
+      blocks,
+      onDisclosureChange,
+    })));
+
+    await click(container.querySelector("button") as HTMLButtonElement);
+    await click(container.querySelectorAll("button")[1] as HTMLButtonElement);
+
+    expect(onDisclosureChange).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("search result");
   });
 

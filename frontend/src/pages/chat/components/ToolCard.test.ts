@@ -2,7 +2,7 @@
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolBlock } from "@/types/chat";
 import { useCommandRuntimeStore } from "@/stores/commandRuntime";
 import { ToolCard } from "./ToolCard";
@@ -67,6 +67,29 @@ describe("ToolCard", () => {
       expect(viewport?.classList.contains("overscroll-auto")).toBe(true);
       expect(viewport?.classList.contains("overscroll-contain")).toBe(false);
     }
+  });
+
+  it("announces disclosure before expanding a standalone tool card", async () => {
+    const block: ToolBlock = {
+      kind: "tool",
+      toolCallId: "search",
+      name: "web_search",
+      args: JSON.stringify({ query: "Codex" }),
+      result: "search result",
+      status: "done",
+    };
+    const onDisclosureChange = vi.fn(() => {
+      expect(container.textContent).not.toContain("search result");
+    });
+    await act(async () => root.render(createElement(ToolCard, {
+      block,
+      onDisclosureChange,
+    })));
+
+    await act(async () => (container.querySelector("button") as HTMLButtonElement).click());
+
+    expect(onDisclosureChange).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("search result");
   });
 
   it("renders filesystem read content as text with paging metadata", async () => {

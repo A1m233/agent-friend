@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getMessageVirtualItemKey,
   getScrollToBottomBehavior,
+  shouldAdjustMessageScrollPositionOnItemSizeChange,
 } from "./messageVirtualization";
 
 describe("getMessageVirtualItemKey", () => {
@@ -29,5 +30,53 @@ describe("getScrollToBottomBehavior", () => {
 
   it("treats bottom overscroll as a nearby target", () => {
     expect(getScrollToBottomBehavior(1_000, 650, 400)).toBe("smooth");
+  });
+});
+
+describe("dynamic message measurement", () => {
+  it("does not compensate the message row whose disclosure the user toggled", () => {
+    expect(shouldAdjustMessageScrollPositionOnItemSizeChange({
+      activeMessageId: "message-2",
+      itemKey: "message-2",
+      itemStart: 200,
+      scrollOffset: 600,
+      scrollDirection: "forward",
+      previouslyMeasured: true,
+    })).toBe(false);
+  });
+
+  it("preserves the virtualizer default for unrelated row measurements", () => {
+    expect(shouldAdjustMessageScrollPositionOnItemSizeChange({
+      activeMessageId: "message-2",
+      itemKey: "message-1",
+      itemStart: 200,
+      scrollOffset: 600,
+      scrollDirection: "forward",
+      previouslyMeasured: true,
+    })).toBe(true);
+    expect(shouldAdjustMessageScrollPositionOnItemSizeChange({
+      activeMessageId: "message-2",
+      itemKey: "message-1",
+      itemStart: 200,
+      scrollOffset: 600,
+      scrollDirection: "backward",
+      previouslyMeasured: true,
+    })).toBe(false);
+    expect(shouldAdjustMessageScrollPositionOnItemSizeChange({
+      activeMessageId: "message-2",
+      itemKey: "message-1",
+      itemStart: 200,
+      scrollOffset: 600,
+      scrollDirection: "backward",
+      previouslyMeasured: false,
+    })).toBe(true);
+    expect(shouldAdjustMessageScrollPositionOnItemSizeChange({
+      activeMessageId: null,
+      itemKey: "message-3",
+      itemStart: 700,
+      scrollOffset: 600,
+      scrollDirection: null,
+      previouslyMeasured: true,
+    })).toBe(false);
   });
 });
