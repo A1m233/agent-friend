@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   type AvatarModelCatalogEntry,
 } from "./catalog";
@@ -12,7 +13,7 @@ import {
   type InstalledAvatarModelResources,
 } from "./installed";
 
-const toAssetUrl = (path: string) => `asset://${path}`;
+const toAssetUrl = (path: string, protocol = "asset") => `${protocol}://${path}`;
 
 describe("installed avatar model catalog", () => {
   it("merges installed Live2D resources into static metadata", () => {
@@ -150,7 +151,16 @@ describe("installed avatar model catalog", () => {
       source: "user",
       distribution: "user-local-only",
       contentRevision: "revision-1",
-      spine: { defaultAnimation: "Relax", runtime: "spine38-pixi7" },
+      spine: {
+        defaultAnimation: "Relax",
+        runtime: "spine38-pixi7",
+        fit: DEFAULT_SPINE38_PET_FIT,
+      },
+    });
+    expect(entries[0]?.resources).toEqual({
+      skeleton: "asset://C:/models/a/model.skel",
+      atlas: "asset://C:/models/a/model.atlas",
+      textures: ["asset://C:/models/a/model.png"],
     });
   });
 

@@ -5,6 +5,7 @@ import { isTauri } from "@/utils/tauri";
 import {
   AVATAR_MODEL_CATALOG,
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   type AvatarModelBackend,
   type AvatarModelCatalogEntry,
@@ -121,12 +122,13 @@ export function mergeInstalledAvatarModelResources(
       resources: {
         skeleton: convertPath(resource.resources.skeletonPath),
         atlas: convertPath(resource.resources.atlasPath),
-        textures: resource.resources.texturePaths?.map(convertPath),
+        textures: resource.resources.texturePaths?.map((path) => convertPath(path)),
       },
       spine: {
         format: "skel",
         runtime: "spine38-pixi7",
         defaultAnimation: resource.defaultAnimation,
+        fit: DEFAULT_SPINE38_PET_FIT,
       },
       capabilities: {
         motions: true,

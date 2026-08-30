@@ -6,6 +6,7 @@
 | --- | --- |
 | 产品定位、能力列表、整体限制 | `product-overview.md` |
 | 对话、会话、搜索、附件、人格、桌宠、Skill、后台在线 | `using-agent-friend.md` |
+| 从 Ark-Models 选择、下载和安装明日方舟 Spine 桌宠模型 | `arknights-avatar-models.md` |
 | 设置入口、字段分组、保存与生效方式 | `settings-reference.md` |
 | 模型供应商、模型选择、DeepSeek/Kimi Key | `model-credentials.md` |
 | 联网搜索与 Tavily | `web-search-credentials.md` |

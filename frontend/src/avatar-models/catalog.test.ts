@@ -6,6 +6,7 @@ import {
   BUILTIN_ARK_SPINE_MODEL_SLUGS,
   BUILTIN_ARK_SPINE_MODELS,
   DEFAULT_AVATAR_MODEL_ID,
+  DEFAULT_SPINE38_PET_FIT,
   HIYORI_LIVE2D_MODEL,
   findAvatarModelEntry,
   getDefaultLive2DConfig,
@@ -91,6 +92,7 @@ describe("avatar model catalog", () => {
         animation: "Relax",
         loop: true,
       });
+      expect(entry.spine.fit).toBe(DEFAULT_SPINE38_PET_FIT);
       expect(entry.spine.fit).toMatchObject({
         readerScale: 1,
         fitWidthPx: 320,
