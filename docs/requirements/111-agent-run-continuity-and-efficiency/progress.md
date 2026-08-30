@@ -38,3 +38,4 @@ COMPLETED
 | 2026-08-30 | 完成 Skill/scope delta 与命令双层状态 | 同 epoch 只追加 inactive/expired delta；命令公开稳定 process id、process/semantic status 与 resident-only recovery mode，未用 exit code伪造领域成功/失败 |
 | 2026-08-30 | 完成全部项目门禁 | backend lint + 600 source typecheck + `2372 passed, 4 skipped`；frontend lint/typecheck + `672 passed` + production build；Rust `218 passed, 1 ignored` + installer helper `6 passed` + release check。保留既有 bilibili atexit、duplicate `uv.exe`、CSS/chunk 和 Rust dead-code warning；无真实 LLM 调用，无桌面视觉布局变更 |
 | 2026-08-30 | 用户确认验收并授权合入 `main`、推送远端 | 合入前公开 Guide 复核结论为无需更新：既有内容已覆盖重连恢复与命令失联终态，111 的 cache epoch、strict extension 与 runtime identity 属于内部协议约束 |
+| 2026-08-30 | 无冲突同步最新 `origin/main` 并完成合入前复验 | backend lint + 600 source typecheck + `2372 passed, 4 skipped`；frontend lint/typecheck + `677 passed` + production build；Rust `218 passed, 1 ignored` + installer helper `6 passed` + release check；保留相同既有 warning |
