@@ -152,7 +152,7 @@ export const ARK_AMIYA_ACTION_MAPPING = {
 
 export const ARK_MODELS_NOTICE_PATH = "/spine-models/ark-models/NOTICE.md";
 
-const DEFAULT_ARK_SPINE_FIT = {
+export const DEFAULT_SPINE38_PET_FIT = {
   readerScale: 1,
   fitWidthPx: 320,
   fitHeightPx: 320,
@@ -206,7 +206,7 @@ function makeBuiltinArkSpineModel(slug: BuiltinArkSpineModelSlug): SpineAvatarMo
       runtime: "spine38-pixi7",
       defaultAnimation: "Relax",
       actionMapping: ARK_AMIYA_ACTION_MAPPING,
-      fit: DEFAULT_ARK_SPINE_FIT,
+      fit: DEFAULT_SPINE38_PET_FIT,
     },
     capabilities: ARK_AMIYA_CAPABILITIES,
   };
