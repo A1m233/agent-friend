@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "@/utils/cn";
 import {
   Collapsible,
@@ -585,10 +586,13 @@ function CommandRuntimeCard({
 export function ToolCard({
   block,
   embedded = false,
+  onDisclosureChange,
 }: {
   block: ToolBlock;
   embedded?: boolean;
+  onDisclosureChange?: () => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   if (block.name === "request_filesystem_access") {
     return <FilesystemApprovalCard block={block} embedded={embedded} />;
   }
@@ -619,7 +623,14 @@ export function ToolCard({
         <ToolDetails block={block} args={args} />
       )}
       {hasDetails && !embedded && (
-        <Collapsible className="mt-1.5">
+        <Collapsible
+          className="mt-1.5"
+          open={detailsOpen}
+          onOpenChange={(open) => {
+            onDisclosureChange?.();
+            setDetailsOpen(open);
+          }}
+        >
           <CollapsibleTrigger className="cursor-pointer select-none text-muted transition-colors hover:text-fg">
             参数 / 结果
           </CollapsibleTrigger>

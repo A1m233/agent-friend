@@ -60,6 +60,7 @@ import {
   MESSAGE_VIRTUALIZER_GAP_PX,
   MESSAGE_VIRTUALIZER_OVERSCAN,
   MESSAGE_VIRTUALIZER_PADDING_START_PX,
+  shouldAdjustMessageScrollPositionOnItemSizeChange,
 } from "./messageVirtualization";
 import {
   getMessageScrollDirection,
@@ -93,6 +94,7 @@ type TdContentProp = ComponentProps<typeof TdChatMessage>["content"];
 const SCROLL_BUTTON_GAP_PX = 12;
 const STREAMING_MARKDOWN_THROTTLE_MS = 100;
 const USER_SCROLL_IDLE_MS = 160;
+const USER_LAYOUT_MUTATION_TIMEOUT_MS = 1_000;
 const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 const MESSAGE_ATTACHMENTS_SLOT = "message-attachments";
 const SEARCH_FEEDBACK_MS = 2400;
@@ -344,6 +346,7 @@ function MessageContent({
   onContinueToolResult,
   searchAnchorEventUuid,
   onReferenceSelect,
+  onToolDisclosureChange,
 }: {
   message: ChatMessage;
   actionBar: ReactNode;
@@ -355,6 +358,7 @@ function MessageContent({
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
   onReferenceSelect?: (reference: ChatTextReference) => void;
+  onToolDisclosureChange?: () => void;
 }) {
   if (message.role === "user") {
     const text = message.blocks
@@ -412,11 +416,23 @@ function MessageContent({
     .map((segment) => {
       if (segment.kind === "toolActivity") {
         if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
-        return <ToolActivity key={segment.id} blocks={segment.blocks} />;
+        return (
+          <ToolActivity
+            key={segment.id}
+            blocks={segment.blocks}
+            onDisclosureChange={onToolDisclosureChange}
+          />
+        );
       }
       if (segment.kind === "interactiveTool") {
         if (segment.endIndex === actionBarBlockIndex) shouldRenderExternalActionBar = true;
-        return <ToolCard key={`c:${segment.block.toolCallId}`} block={segment.block} />;
+        return (
+          <ToolCard
+            key={`c:${segment.block.toolCallId}`}
+            block={segment.block}
+            onDisclosureChange={onToolDisclosureChange}
+          />
+        );
       }
 
       const b = segment.block;
@@ -524,6 +540,7 @@ const MessageItem = memo(function MessageItem({
   onContinueToolResult,
   searchAnchorEventUuid,
   onReferenceSelect,
+  onToolDisclosureChange,
 }: {
   message: ChatMessage;
   activeRunId?: string;
@@ -536,6 +553,7 @@ const MessageItem = memo(function MessageItem({
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
   onReferenceSelect?: (reference: ChatTextReference) => void;
+  onToolDisclosureChange: (messageId: string) => void;
 }) {
   const activeRunMessage = isActiveRunMessage(message, activeRunId);
   const actionBar =
@@ -568,6 +586,7 @@ const MessageItem = memo(function MessageItem({
         onContinueToolResult={onContinueToolResult}
         searchAnchorEventUuid={searchAnchorEventUuid}
         onReferenceSelect={onReferenceSelect}
+        onToolDisclosureChange={() => onToolDisclosureChange(message.id)}
       />
     </div>
   );
@@ -584,6 +603,7 @@ function areMessageItemsEqual(prev: MessageItemProps, next: MessageItemProps): b
     prev.onContinueToolResult === next.onContinueToolResult &&
     prev.searchAnchorEventUuid === next.searchAnchorEventUuid
     && prev.onReferenceSelect === next.onReferenceSelect
+    && prev.onToolDisclosureChange === next.onToolDisclosureChange
   );
 }
 
@@ -599,6 +619,7 @@ interface MessageItemProps {
   onContinueToolResult?: () => void;
   searchAnchorEventUuid?: string;
   onReferenceSelect?: (reference: ChatTextReference) => void;
+  onToolDisclosureChange: (messageId: string) => void;
 }
 
 function HistoryLoadingState() {
@@ -685,6 +706,7 @@ export function MessageTimeline({
   const supportsScrollEndRef = useRef(false);
   const pointerScrollActiveRef = useRef(false);
   const userScrollIdleTimerRef = useRef(0);
+  const userLayoutMutationTimerRef = useRef(0);
   const scrollRafRef = useRef(0);
   const searchScrollRafRef = useRef(0);
   const searchFeedbackTimerRef = useRef(0);
@@ -698,8 +720,12 @@ export function MessageTimeline({
   const prevMessagesRef = useRef<ChatMessage[]>([]);
   const prevSyncRefreshSeqRef = useRef(syncRefreshSeq);
   const scrollButtonVisibleRef = useRef(false);
+  const userLayoutMutationRef = useRef<{ messageId: string; scrollTop: number } | null>(null);
   const [isScrollButtonVisible, setIsScrollButtonVisible] = useState(false);
   const [activeSearchAnchor, setActiveSearchAnchor] = useState<string | null>(null);
+  const [userLayoutMutationMessageId, setUserLayoutMutationMessageId] = useState<string | null>(
+    null,
+  );
   const composerInset = overlayComposer
     ? Math.max(composerHeight, CHAT_COMPOSER_FALLBACK_HEIGHT_PX)
     : 0;
@@ -719,10 +745,22 @@ export function MessageTimeline({
     gap: MESSAGE_VIRTUALIZER_GAP_PX,
     paddingStart: MESSAGE_VIRTUALIZER_PADDING_START_PX,
     paddingEnd: composerInset,
-    anchorTo: "end",
+    // End anchoring intentionally bypasses the item-size predicate while physically at the end.
+    // Switch it off for the single commit that mounts/unmounts user-requested disclosure content.
+    anchorTo: userLayoutMutationMessageId !== null ? "start" : "end",
     followOnAppend: false,
     scrollEndThreshold: MESSAGE_SCROLL_BOTTOM_EPSILON_PX,
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = userLayoutMutationMessageId !== null
+    ? (item, _delta, instance) => shouldAdjustMessageScrollPositionOnItemSizeChange({
+        activeMessageId: userLayoutMutationMessageId,
+        itemKey: item.key,
+        itemStart: item.start,
+        scrollOffset: instance.scrollOffset ?? scrollRef.current?.scrollTop ?? 0,
+        scrollDirection: instance.scrollDirection,
+        previouslyMeasured: instance.itemSizeCache.has(item.key),
+      })
+    : undefined;
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTotalSize = virtualizer.getTotalSize();
 
@@ -808,6 +846,53 @@ export function MessageTimeline({
     }
   }, []);
 
+  const finishUserLayoutMutation = useCallback((messageId?: string) => {
+    const pending = userLayoutMutationRef.current;
+    if (!pending || (messageId && pending.messageId !== messageId)) return;
+    if (userLayoutMutationTimerRef.current) {
+      window.clearTimeout(userLayoutMutationTimerRef.current);
+      userLayoutMutationTimerRef.current = 0;
+    }
+
+    const viewport = scrollRef.current;
+    if (viewport) {
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollTop = Math.min(pending.scrollTop, maxScrollTop);
+    }
+    userLayoutMutationRef.current = null;
+    setUserLayoutMutationMessageId(null);
+    if (viewport) {
+      applyFollowEvent({
+        type: "viewport-scrolled",
+        atBottom: isNearBottom(viewport),
+        source: "user",
+        direction: "none",
+      });
+    }
+  }, [applyFollowEvent]);
+
+  const beginUserLayoutMutation = useCallback((messageId: string) => {
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    if (scrollRafRef.current) {
+      window.cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = 0;
+    }
+    if (userLayoutMutationTimerRef.current) {
+      window.clearTimeout(userLayoutMutationTimerRef.current);
+    }
+    endUserScrollSession();
+    // Inspecting details is an explicit request to hold the current viewport, even if streaming
+    // output had previously kept the conversation attached to the end.
+    applyFollowEvent({ type: "detach-requested" });
+    userLayoutMutationRef.current = { messageId, scrollTop: viewport.scrollTop };
+    setUserLayoutMutationMessageId(messageId);
+    userLayoutMutationTimerRef.current = window.setTimeout(
+      () => finishUserLayoutMutation(messageId),
+      USER_LAYOUT_MUTATION_TIMEOUT_MS,
+    );
+  }, [applyFollowEvent, endUserScrollSession, finishUserLayoutMutation]);
+
   const settleUserScrollSession = useCallback(() => {
     if (!userScrollSessionRef.current) return;
     const viewport = scrollRef.current;
@@ -846,12 +931,17 @@ export function MessageTimeline({
         endUserScrollSession();
         applyFollowEvent({ type: "follow-requested" });
       }
+      if (userLayoutMutationRef.current) return;
       if (!followingRef.current) return;
 
       if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
       scrollRafRef.current = window.requestAnimationFrame(() => {
         scrollRafRef.current = 0;
-        if (!followingRef.current || !scrollRef.current) return;
+        if (
+          userLayoutMutationRef.current
+          || !followingRef.current
+          || !scrollRef.current
+        ) return;
         virtualizer.scrollToEnd({ behavior: options.behavior ?? "auto" });
       });
     },
@@ -931,14 +1021,24 @@ export function MessageTimeline({
     if (searchTargetRef.current) return;
     const previousTotalSize = previousVirtualTotalSizeRef.current;
     previousVirtualTotalSizeRef.current = virtualTotalSize;
+    const activeUserLayoutMutation = userLayoutMutationRef.current;
+    if (
+      activeUserLayoutMutation
+      && previousTotalSize !== null
+      && previousTotalSize !== virtualTotalSize
+    ) {
+      finishUserLayoutMutation(activeUserLayoutMutation.messageId);
+      return;
+    }
     if (shouldFollowAfterTotalSizeChange(
       followingRef.current,
       previousTotalSize,
       virtualTotalSize,
+      Boolean(activeUserLayoutMutation),
     )) {
       scheduleScrollToBottom();
     }
-  }, [scheduleScrollToBottom, virtualTotalSize]);
+  }, [finishUserLayoutMutation, scheduleScrollToBottom, virtualTotalSize]);
 
   useLayoutEffect(() => {
     const prevMessages = prevMessagesRef.current;
@@ -1087,6 +1187,9 @@ export function MessageTimeline({
         window.removeEventListener("pointerup", handlePointerScrollEnd);
         window.removeEventListener("pointercancel", handlePointerScrollEnd);
         if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+        if (userLayoutMutationTimerRef.current) {
+          window.clearTimeout(userLayoutMutationTimerRef.current);
+        }
         clearSearchFeedback();
         if (userScrollIdleTimerRef.current) window.clearTimeout(userScrollIdleTimerRef.current);
       };
@@ -1172,6 +1275,7 @@ export function MessageTimeline({
                       : undefined}
                     searchAnchorEventUuid={searchAnchorEventUuid}
                     onReferenceSelect={handleReferenceSelect}
+                    onToolDisclosureChange={beginUserLayoutMutation}
                   />
                 </div>
               </div>
