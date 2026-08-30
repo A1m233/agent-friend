@@ -18,18 +18,16 @@ import {
   useModelCatalogStore,
 } from "@/lib/model-config";
 import {
-  persistBridgeRuntimeSetting,
   type RuntimeConfigGroup,
   type RuntimeCredentialFieldMutation,
   type RuntimeCredentialGroupSnapshot,
 } from "@/lib/runtime-config";
 import {
-  setSetting,
   useSetting,
   type ModelProvider,
   type ModelSelection,
 } from "@/lib/settings";
-import { modelsApi, type FriendlyError } from "@/services";
+import { type FriendlyError } from "@/services";
 import {
   startRuntimeCredentialSync,
   useRuntimeCredentialStore,
@@ -38,6 +36,10 @@ import { RuntimeCredentialGroupEditor } from "./RuntimeCredentialGroupEditor";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageLayout } from "./SettingsPageLayout";
 import { SettingsRow } from "./SettingsRow";
+import {
+  NEW_CONVERSATION_DEFAULT_MODEL_COPY,
+  persistModelSettingSelection,
+} from "./modelSettingPersistence";
 
 const GROUP_HELP: Record<RuntimeConfigGroup, string> = {
   deepseek: "保存新值时会调用模型列表接口校验，不会生成模型回答。",
@@ -235,22 +237,26 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
   ): Promise<void> {
     setSavingModel(key);
     try {
-      await modelsApi.validate(selection.model);
-      const result = await persistBridgeRuntimeSetting(
-        () => setSetting(key, selection),
-        key === "chatModel" ? "default_model_changed" : "request_settings_changed",
-      );
+      const result = await persistModelSettingSelection(key, selection);
+      if (result.scope === "newConversationDraft") {
+        toast.success(NEW_CONVERSATION_DEFAULT_MODEL_COPY.successTitle, {
+          description: NEW_CONVERSATION_DEFAULT_MODEL_COPY.successDescription,
+        });
+        return;
+      }
       if (result.applied) {
-        toast.success("模型设置已保存并生效", { description: "对话服务已自动重启" });
+        toast.success("记忆模型已保存并生效", { description: "对话服务已自动重启" });
       } else {
-        toast.warning("模型设置已保存，但尚未应用", {
+        toast.warning("记忆模型已保存，但尚未应用", {
           description: result.applyError ?? undefined,
         });
       }
     } catch (saveError) {
       const friendly = saveError as Partial<FriendlyError>;
       const credentialGroup = credentialGroupForModel(selection.model);
-      toast.error("模型设置未保存", {
+      toast.error(key === "chatModel"
+        ? NEW_CONVERSATION_DEFAULT_MODEL_COPY.errorTitle
+        : "记忆模型未保存", {
         description: friendly.friendly ?? String(saveError),
         action:
           friendly.code === "credential_missing" && credentialGroup
@@ -293,11 +299,14 @@ export function RuntimeConfigPanel({ focusGroup }: { focusGroup?: RuntimeConfigG
         </Button>
       }
     >
-      <SettingsGroup title="对话模型">
+      <SettingsGroup
+        title={NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupTitle}
+        description={NEW_CONVERSATION_DEFAULT_MODEL_COPY.groupDescription}
+      >
         <ModelSelectionRows
           selection={chatModel}
           purpose="chat"
-          modelLabel="主对话模型"
+          modelLabel={NEW_CONVERSATION_DEFAULT_MODEL_COPY.modelLabel}
           onChange={(selection) => saveModelSetting("chatModel", selection)}
           disabled={savingModel !== null}
         />

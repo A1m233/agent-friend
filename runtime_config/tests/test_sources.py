@@ -83,13 +83,13 @@ def test_desktop_settings_reader_supports_wrapped_and_flat_snapshots(tmp_path: P
     assert reader.read() == {"immersiveMode": True}
 
 
-def test_settings_file_source_uses_product_model_defaults_when_settings_are_missing(
+def test_settings_file_source_only_projects_memory_defaults_when_settings_are_missing(
     tmp_path: Path,
 ) -> None:
     source = SettingsFileSource(tmp_path / "missing-settings.json")
 
-    assert source.get(LLM_CHAT_PROVIDER).value == "kimi"  # type: ignore[union-attr]
-    assert source.get(LLM_CHAT_MODEL).value == "kimi/kimi-k2.5"  # type: ignore[union-attr]
+    assert source.get(LLM_CHAT_PROVIDER) is None
+    assert source.get(LLM_CHAT_MODEL) is None
     assert source.get(LLM_MEMORY_PROVIDER).value == "deepseek"  # type: ignore[union-attr]
     assert source.get(LLM_MEMORY_MODEL).value == "deepseek/deepseek-v4-flash"  # type: ignore[union-attr]
 
@@ -191,10 +191,8 @@ def test_settings_file_source_resolves_provider_aware_model_settings(tmp_path: P
     memory_provider = source.get(LLM_MEMORY_PROVIDER)
     memory_model = source.get(LLM_MEMORY_MODEL)
 
-    assert chat_provider is not None
-    assert chat_provider.value == "kimi"
-    assert chat_model is not None
-    assert chat_model.value == "kimi/kimi-k2.6"
+    assert chat_provider is None
+    assert chat_model is None
     assert memory_provider is not None
     assert memory_provider.value == "deepseek"
     assert memory_model is not None
@@ -209,10 +207,8 @@ def test_settings_file_source_reads_shared_desktop_settings_fixture() -> None:
     memory_provider = source.get(LLM_MEMORY_PROVIDER)
     memory_model = source.get(LLM_MEMORY_MODEL)
 
-    assert chat_provider is not None
-    assert chat_provider.value == "kimi"
-    assert chat_model is not None
-    assert chat_model.value == "kimi/kimi-k2.7-code-highspeed"
+    assert chat_provider is None
+    assert chat_model is None
     assert memory_provider is not None
     assert memory_provider.value == "deepseek"
     assert memory_model is not None
@@ -255,8 +251,8 @@ def test_settings_file_source_projects_legacy_deepseek_model_settings(
     )
     source = SettingsFileSource(settings)
 
-    assert source.get(LLM_CHAT_PROVIDER).value == "deepseek"  # type: ignore[union-attr]
-    assert source.get(LLM_CHAT_MODEL).value == "deepseek/deepseek-v4-flash"  # type: ignore[union-attr]
+    assert source.get(LLM_CHAT_PROVIDER) is None
+    assert source.get(LLM_CHAT_MODEL) is None
     assert source.get(LLM_MEMORY_PROVIDER).value == "deepseek"  # type: ignore[union-attr]
     assert source.get(LLM_MEMORY_MODEL).value == "deepseek/deepseek-v4-pro"  # type: ignore[union-attr]
 

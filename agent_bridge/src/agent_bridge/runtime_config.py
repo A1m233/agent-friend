@@ -32,6 +32,9 @@ from runtime_config import (
     require_secret,
 )
 
+DEFAULT_BRIDGE_CHAT_PROVIDER = "kimi"
+DEFAULT_BRIDGE_MEMORY_PROVIDER = "deepseek"
+
 
 @dataclass(frozen=True)
 class BridgeRuntimeConfig:
@@ -105,8 +108,9 @@ def _model_selection(
     provider_name: str,
     model_name: str,
     purpose: ModelPurpose,
+    default_provider_id: str,
 ) -> tuple[str, str]:
-    raw_provider_id = optional_secret(source, provider_name) or "deepseek"
+    raw_provider_id = optional_secret(source, provider_name) or default_provider_id
     provider_id = provider_definition(raw_provider_id).provider_id
     model_id = optional_secret(source, model_name) or default_model_for_provider(
         provider_id, purpose
@@ -143,12 +147,14 @@ def resolve_bridge_runtime_config(source: CredentialSource) -> BridgeRuntimeConf
         provider_name=LLM_CHAT_PROVIDER,
         model_name=LLM_CHAT_MODEL,
         purpose="chat",
+        default_provider_id=DEFAULT_BRIDGE_CHAT_PROVIDER,
     )
     memory_provider_id, memory_model = _model_selection(
         source,
         provider_name=LLM_MEMORY_PROVIDER,
         model_name=LLM_MEMORY_MODEL,
         purpose="memory",
+        default_provider_id=DEFAULT_BRIDGE_MEMORY_PROVIDER,
     )
 
     def memory_client_factory() -> LanguageModel:

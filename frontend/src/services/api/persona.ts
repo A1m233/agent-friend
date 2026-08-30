@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { http } from "../http";
 import { runAgentStreamAtPath } from "../stream";
 import type { BaseEvent } from "@ag-ui/core";
-import { resolveDefaultConversationRuntimeConfig } from "@/lib/model-config";
 import type { SessionEvent } from "@/types/meta";
 
 export type PersonaSource = "builtin" | "user" | "last_valid";
@@ -71,7 +70,6 @@ export async function* runPersonaEditor(
     {
       threadId,
       runId: crypto.randomUUID(),
-      modelConfig: resolveDefaultConversationRuntimeConfig(),
       text: message,
     },
     { signal },

@@ -15,7 +15,7 @@ import { Attachments, type TdAttachmentItem } from "@tdesign-react/chat";
 import { useDropzone } from "react-dropzone";
 import { Input, TooltipButton, TooltipProvider } from "@/components/ui";
 import { modelOption, useModelCatalogStore } from "@/lib/model-config";
-import { useSetting } from "@/lib/settings";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import {
   releaseAttachmentDraft,
   uploadAttachment,
@@ -156,9 +156,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const claimHomeDraft = useDraftStore((state) => state.claimHome);
   const beginDraftSubmission = useDraftStore((state) => state.beginSubmission);
   const finishDraftSubmission = useDraftStore((state) => state.finishSubmission);
-  const [chatModel] = useSetting("chatModel");
   const catalog = useModelCatalogStore((state) => state.catalog);
-  const selectedModel = currentModel ?? chatModel.model;
+  // 正常情况下新对话草稿和已有会话都持有自己的模型快照。固定默认值只用于
+  // history loading 等短暂空态，不能回读实时设置并改写已存在草稿的展示。
+  const selectedModel = currentModel ?? DEFAULT_SETTINGS.chatModel.model;
   const capabilities = modelOption(selectedModel)?.capabilities ?? null;
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentImagePreview | null>(null);
   const draftTextRef = useRef("");
@@ -587,6 +588,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const submit = (text: string) => {
     if (disabled || cancelling || editSubmitting) return;
+    if (!catalog) {
+      toast.error("模型信息正在加载，请稍后再发送");
+      return;
+    }
     if (modelSwitching) {
       toast.error("模型正在切换，请稍后再发送");
       return;
@@ -639,7 +644,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         return attachment ? [attachment] : [];
       });
       const result = send(trimmed, readyAttachments, draftReferences);
-      if (!result.accepted) return;
+      if (!result.accepted) {
+        if (result.reason === "model-unavailable") {
+          toast.error("当前模型尚未就绪，请重新进入新对话后再试");
+        }
+        return;
+      }
 
       // TDesign may echo the pre-send value through its native change/input listeners
       // after onSend returns. Keep that same-task echo from recreating the source draft.

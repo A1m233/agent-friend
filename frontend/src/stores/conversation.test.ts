@@ -40,7 +40,7 @@ vi.mock("@/lib/persistence/chatUi", () => ({
 }));
 
 import { setLastChatSessionId } from "@/lib/persistence/chatUi";
-import { setModelCatalogForTests } from "@/lib/model-config";
+import { setModelCatalogForTests, type ModelCatalog } from "@/lib/model-config";
 import {
   continueToolResultStream,
   editResendLatestStream,
@@ -57,7 +57,7 @@ import {
   useConversationStore,
   type SendStartResult,
 } from "./conversation";
-import { useDraftStore } from "./drafts";
+import { HOME_DRAFT_KEY, useDraftStore } from "./drafts";
 import { useRuntimeCredentialStore } from "./runtimeCredentials";
 import { emptySnapshotFence } from "./snapshotFence";
 import { isSessionBusy, sessionActiveRun } from "./runPresentation";
@@ -77,6 +77,45 @@ const mockSetLastChatSessionId = vi.mocked(setLastChatSessionId);
 
 /** 技术细节特征：HTTP 状态码 / 英文异常字样等——拟人文案里**不应**出现任何一项。 */
 const TECH_LEAK = /http|error|exception|status|\b[1-5]\d{2}\b|undefined|null|stack/i;
+
+const KIMI_REASONING_CATALOG: ModelCatalog = {
+  schemaVersion: 1,
+  catalogRevision: "test-kimi-reasoning",
+  providers: [{
+    id: "kimi",
+    label: "Kimi",
+    credentialGroup: "kimi",
+    defaultChatModel: "kimi/kimi-k2.6",
+    defaultMemoryModel: "kimi/kimi-k2.6",
+    models: [{
+      id: "kimi/kimi-k2.6",
+      label: "Kimi K2.6",
+      routeId: "kimi:test",
+      transportProfile: "openai-compatible",
+      processingProfile: "text-only-v1",
+      capabilities: {
+        inputModalities: ["text"],
+        acceptedMediaTypes: [],
+        maxAttachmentBytes: 0,
+        maxTotalAttachmentBytes: 0,
+        maxAttachmentsPerTurn: 0,
+        attachments: false,
+        toolCalling: true,
+        parallelToolCalls: true,
+        structuredOutput: false,
+        multimodalToolResults: false,
+      },
+      reasoning: {
+        control: "toggle",
+        defaultPreset: "on",
+        presets: [
+          { id: "off", label: "关闭" },
+          { id: "on", label: "开启" },
+        ],
+      },
+    }],
+  }],
+};
 
 function ev(e: Record<string, unknown>): BaseEvent {
   return e as unknown as BaseEvent;
@@ -163,16 +202,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGet.mockReset();
   mockRunCancel.mockReset();
-  useConversationStore.getState().newSession();
+  vi.stubGlobal("window", {
+    __AGENT_FRIEND_SETTINGS__: {
+      chatModel: { provider: "kimi", model: "kimi/kimi-k2.5" },
+    },
+  });
   useConversationStore.setState({
     currentSessionId: null,
-    currentModel: null,
-    currentReasoningPreset: null,
+    currentModel: "kimi/kimi-k2.5",
+    currentReasoningPreset: "none",
     approvalMode: "per_request",
     approvalModeVersion: 0,
     approvalModeChanging: false,
     messages: [],
     historyLoading: false,
+    historyLoadSeq: 0,
+    syncRefreshSeq: 0,
     modelSwitching: false,
     modelSwitchTarget: null,
     editingMessage: null,
@@ -186,6 +231,7 @@ beforeEach(() => {
     detachedSessionId: null,
     searchTarget: null,
   });
+  useConversationStore.getState().newSession();
   mockRunGet.mockImplementation(async (runId) => {
     const current = useConversationStore.getState().runSnapshots[runId];
     return runSnapshot(
@@ -853,6 +899,7 @@ describe("conversation store · 错误状态兜底 (AC-M3.4)", () => {
     const firstSession = useConversationStore.getState().currentSessionId!;
 
     useConversationStore.getState().newSession();
+    useConversationStore.setState({ currentReasoningPreset: "none" });
     const second = useConversationStore.getState().send("B reply");
     expect(second.accepted).toBe(true);
     const secondSession = useConversationStore.getState().currentSessionId!;
@@ -1590,6 +1637,90 @@ describe("conversation store · bounded caches", () => {
 });
 
 describe("conversation store · session model selection", () => {
+  it("模型目录加载后补全首帧草稿的默认 reasoning preset", () => {
+    window.__AGENT_FRIEND_SETTINGS__ = {
+      chatModel: { provider: "kimi", model: "kimi/kimi-k2.6" },
+    };
+    useConversationStore.setState({
+      currentSessionId: null,
+      currentModel: "kimi/kimi-k2.6",
+      currentReasoningPreset: null,
+      sessionViews: {},
+    });
+    setModelCatalogForTests(KIMI_REASONING_CATALOG);
+
+    useConversationStore.getState().resolveNewConversationDraftRuntimeConfig();
+
+    expect(useConversationStore.getState().currentReasoningPreset).toBe("on");
+  });
+
+  it("已打开的新对话草稿保持模型快照，下一份草稿才读取新默认值", async () => {
+    mockStream.mockImplementation(async function* () {
+      yield ev({ type: EventType.RUN_FINISHED });
+    });
+
+    useDraftStore.getState().initialize(
+      HOME_DRAFT_KEY,
+      "未发送草稿",
+      [
+        {
+          status: "ready",
+          source: "existing",
+          localId: "attachment-1",
+          attachment: {
+            assetId: "asset-1",
+            displayName: "notes.txt",
+            kind: "document",
+            mediaType: "text/plain",
+            sizeBytes: 12,
+          },
+        },
+      ],
+      [
+        {
+          referenceId: "reference-1",
+          quotedText: "保留这段引用",
+          sourceRole: "assistant",
+          availability: "available",
+          source: {
+            kind: "session_message",
+            messageEventUuid: "assistant-1",
+            textBlockId: "block-1",
+            externalSourceKey: null,
+          },
+          locator: {
+            kind: "whole_message",
+            coordinateSpace: null,
+            start: null,
+            end: null,
+          },
+        },
+      ],
+    );
+    const originalDraft = useDraftStore.getState().workspaces[HOME_DRAFT_KEY];
+    expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.5");
+    window.__AGENT_FRIEND_SETTINGS__ = {
+      chatModel: { provider: "deepseek", model: "deepseek/deepseek-v4-flash" },
+    };
+
+    useConversationStore.getState().newSession();
+    expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.5");
+    expect(useDraftStore.getState().workspaces[HOME_DRAFT_KEY]).toEqual(originalDraft);
+
+    await finishAcceptedSend(useConversationStore.getState().send("hello"));
+    expect(mockStream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelConfig: { model: "kimi/kimi-k2.5", reasoningPreset: "none" },
+      }),
+      expect.any(Object),
+    );
+
+    useConversationStore.getState().newSession();
+    expect(useConversationStore.getState().currentModel).toBe(
+      "deepseek/deepseek-v4-flash",
+    );
+  });
+
   it("新会话先校验 pending model，并把同一模型传给首次 run", async () => {
     mockStream.mockImplementation(async function* () {
       yield ev({ type: EventType.RUN_FINISHED });
@@ -1627,7 +1758,7 @@ describe("conversation store · session model selection", () => {
       status: "failed",
       error: { friendly: "模型凭据尚未配置", code: "credential_missing" },
     });
-    expect(useConversationStore.getState().currentModel).toBeNull();
+    expect(useConversationStore.getState().currentModel).toBe("kimi/kimi-k2.5");
   });
 
   it("已有会话只在后端成功后提交 effective model", async () => {

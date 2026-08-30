@@ -30,6 +30,7 @@ from llm_providers import (
     LLMPaymentRequiredError,
     LLMPermissionError,
     LLMStreamInterruptedAfterOutputError,
+    default_model_for_provider,
     default_model_runtime_config,
 )
 from runtime_config import (
@@ -363,10 +364,32 @@ def test_memory_model_allows_env_override(monkeypatch: pytest.MonkeyPatch) -> No
     assert runtime_config.memory_model == "deepseek/custom-memory"
 
 
+def test_desktop_chat_model_setting_does_not_change_bridge_fallback(
+    tmp_path: Any,
+) -> None:
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        """{
+  "settings": {
+    "chatModel": { "provider": "deepseek", "model": "deepseek/custom-chat" }
+  }
+}
+""",
+        encoding="utf-8",
+    )
+
+    runtime_config = resolve_bridge_runtime_config(
+        credential_source_for_mode("desktop", settings_path=settings, env={})
+    )
+
+    assert runtime_config.default_model == default_model_for_provider("kimi", "chat")
+
+
 def test_runtime_config_allows_provider_timeout_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fake-key")
+    monkeypatch.setenv("LLM_CHAT_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "12.5")
 
     captured: list[dict[str, Any]] = []

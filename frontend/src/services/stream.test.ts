@@ -26,6 +26,16 @@ describe("isEventStreamContentType", () => {
 });
 
 describe("buildRunAgentInput", () => {
+  it("lets a specialized Agent omit desktop conversation model preferences", () => {
+    const payload = buildRunAgentInput({
+      threadId: "persona-editor",
+      runId: "run-specialized",
+      text: "调整一下性格",
+    });
+
+    expect(payload.forwardedProps).not.toHaveProperty("modelConfig");
+  });
+
   it("uses standard ordered attachment parts and preserves message identity", () => {
     const payload = buildRunAgentInput({
       threadId: "session-1",
