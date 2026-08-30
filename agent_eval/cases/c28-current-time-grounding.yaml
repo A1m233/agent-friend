@@ -1,0 +1,87 @@
+# C28 · 当前时间证据落地（current-time-grounding）
+#
+# 来源于 2026-08-30 的真实桌面对话事故：命令结果暴露 UTC finished_at，模型在已经
+# 获得 Asia/Shanghai 日历上下文、且存在 datetime_calculate(current) 的情况下，把 04:08 UTC
+# 直接说成用户当地“凌晨四点”。本 contract 固化两层边界：命令执行时间不是当前本地时钟；
+# 用户要求当前时刻或基于当前时刻判断时，必须读取宿主可信 current 结果。
+
+contract:
+  id: C28
+  name: current-time-grounding
+  expected_behavior: response
+
+cases:
+  - id: C28-01
+    query: >-
+      用 argv ["task-runner", "daily"] 跑完这次日常并汇报结果；完成后再按我所在时区
+      告诉我现在是不是深夜。
+    facet: 真实事故 anchor：UTC 命令完成时间不能替代宿主可信本地当前时间
+    source: prod-diagnostics-command-finished-at-local-time-20260830
+    runtime_now: "2026-08-30T12:08:35+08:00"
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, daily]
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"daily-complete","duration_seconds":180.0,
+              "started_at":"2026-08-30T04:05:18+00:00","finished_at":"2026-08-30T04:08:18+00:00"}
+    tool_run_policy:
+      max_total_tool_calls: 2
+    judge:
+      maximum_tool_call_counts: {exec_command: 1, datetime_calculate: 1}
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, daily]
+          result_contains: daily-complete
+        - name: datetime_calculate
+          args: {operation: current}
+          result_contains: "2026-08-30T12:08:35+08:00"
+      require_non_empty_response: true
+      must_mention_any: [中午, 12点, 12 点, 不是深夜, 不算深夜]
+      must_not_mention_any: [凌晨四点, 凌晨 4 点, 凌晨4点]
+
+  - id: C28-02
+    query: >-
+      用 argv ["task-runner", "status"] 运行一次状态检查，只汇报完成状态和耗时；
+      我没有问现在几点，也不需要你判断早晚。
+    facet: control：只汇报相对耗时不应机械读取当前时钟
+    source: synthetic-command-duration-without-current-time-control
+    runtime_now: "2026-08-30T12:08:35+08:00"
+    fake_tools:
+      - name: exec_command
+        responses:
+          - match_args:
+              argv: [task-runner, status]
+            result_text: >-
+              {"status":"exited","exit_code":0,"stdout":"status-complete","duration_seconds":180.0}
+    tool_run_policy:
+      max_total_tool_calls: 1
+    judge:
+      must_not_call_any: [datetime_calculate]
+      maximum_tool_call_counts: {exec_command: 1}
+      required_successful_tool_calls:
+        - name: exec_command
+          args:
+            argv: [task-runner, status]
+          result_contains: status-complete
+      require_non_empty_response: true
+      must_mention_any: [status-complete, 已完成, 成功]
+      must_mention_any_groups:
+        - [180 秒, 180秒, 3 分钟, 3分钟]
+
+  - id: C28-03
+    query: 我这里现在几点？
+    facet: isolation：明确询问当前本地时间时直接读取宿主可信时钟
+    source: synthetic-explicit-current-local-time-isolation
+    runtime_now: "2026-08-30T12:08:35+08:00"
+    tool_run_policy:
+      max_total_tool_calls: 1
+    judge:
+      required_successful_tool_calls:
+        - name: datetime_calculate
+          args: {operation: current}
+          result_contains: "2026-08-30T12:08:35+08:00"
+      require_non_empty_response: true
+      must_mention_any: [中午, 12点, 12 点, "12:08"]

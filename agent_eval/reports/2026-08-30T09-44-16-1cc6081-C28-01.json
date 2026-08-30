@@ -1,0 +1,168 @@
+{
+  "schema_version": 4,
+  "run": {
+    "started_at": "2026-08-30T09:44:16.338010+00:00",
+    "ended_at": "2026-08-30T09:44:50.995503+00:00",
+    "duration_seconds": 34.657,
+    "git_commit": "1cc6081",
+    "working_tree_dirty": true,
+    "note": "C28-01 first real validation after command result metadata fix; incident model and max reasoning preset from 2026-08-30 diagnostics; target-sample replay only, no holdout stability claim",
+    "selection": {
+      "contract": "all",
+      "case": "C28-01",
+      "limit_cases": 0
+    },
+    "provider": {
+      "model": "openai/deepseek-v4-flash-vision-exp",
+      "api_base": "https://api.deepseek.com",
+      "defaults": {
+        "timeout": 90.0,
+        "reasoning_effort": "max",
+        "extra_body": {
+          "thinking": {
+            "type": "enabled"
+          }
+        }
+      },
+      "context_window": 1000000
+    },
+    "tools": {
+      "tavily_key_present": true,
+      "web_search_available": true,
+      "recall_past_chats_available": true
+    },
+    "case_set": {
+      "digest": "ed9ddaceb651efffca80e9139b7aace35e8585d95939c6030205993bd47b17f9",
+      "total_contracts": 28,
+      "total_cases": 237,
+      "contract_counts": {
+        "C1": 24,
+        "C2": 46,
+        "C3": 20,
+        "C4": 20,
+        "C5": 20,
+        "C6": 6,
+        "C7": 8,
+        "C8": 6,
+        "C9": 4,
+        "C10": 2,
+        "C11": 3,
+        "C12": 2,
+        "C13": 8,
+        "C14": 3,
+        "C15": 2,
+        "C16": 2,
+        "C17": 5,
+        "C18": 5,
+        "C19": 5,
+        "C20": 9,
+        "C21": 4,
+        "C22": 3,
+        "C23": 8,
+        "C24": 6,
+        "C25": 2,
+        "C26": 6,
+        "C27": 5,
+        "C28": 3
+      }
+    }
+  },
+  "summary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "runtime_errors": 0,
+    "pass_rate": 1.0,
+    "by_contract": {
+      "C28": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0,
+        "runtime_errors": 0,
+        "pass_rate": 1.0
+      }
+    }
+  },
+  "contracts": [
+    {
+      "id": "C28",
+      "name": "current-time-grounding",
+      "expected_behavior": "response",
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "pass_rate": 1.0,
+      "cases": [
+        {
+          "id": "C28-01",
+          "query": "用 argv [\"task-runner\", \"daily\"] 跑完这次日常并汇报结果；完成后再按我所在时区 告诉我现在是不是深夜。",
+          "facet": "真实事故 anchor：UTC 命令完成时间不能替代宿主可信本地当前时间",
+          "source": "prod-diagnostics-command-finished-at-local-time-20260830",
+          "surface": null,
+          "self_presentation_mode": "immersive",
+          "passed": true,
+          "reason": "grounded: tool= sequence=[] anchors=['中午', '不是深夜'] required_anchors=[]",
+          "tool_calls": [
+            {
+              "name": "exec_command",
+              "args": {
+                "argv": [
+                  "task-runner",
+                  "daily"
+                ],
+                "mode": "buffered",
+                "timeout_seconds": 300,
+                "access": {
+                  "filesystem": "read_only",
+                  "network": "disabled"
+                },
+                "reason": "运行用户指定的日常任务脚本 task-runner daily 并获取其输出"
+              },
+              "result_text": "{\"status\":\"exited\",\"exit_code\":0,\"stdout\":\"daily-complete\",\"duration_seconds\":180.0, \"started_at\":\"2026-08-30T04:05:18+00:00\",\"finished_at\":\"2026-08-30T04:08:18+00:00\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "datetime_calculate",
+              "args": {
+                "operation": "current"
+              },
+              "result_text": "{\"current_datetime\": \"2026-08-30T12:08:35+08:00\", \"date\": \"2026-08-30\", \"operation\": \"current\", \"timezone\": \"+08:00\", \"utc_offset\": \"+08:00\"}",
+              "is_error": false,
+              "duration_seconds": 0.0,
+              "executed": true,
+              "authorization_requested": false,
+              "error_code": ""
+            },
+            {
+              "name": "recall_past_chats",
+              "args": {
+                "mode": "search",
+                "search_text": "task-runner 日常",
+                "limit": 10
+              },
+              "result_text": "本轮工具调用预算已经用尽，这个调用没有执行。",
+              "is_error": true,
+              "duration_seconds": 0.0,
+              "executed": false,
+              "authorization_requested": false,
+              "error_code": "tool_budget_exhausted"
+            }
+          ],
+          "prior_tool_calls": [],
+          "skill_activations": [],
+          "assistant_segments": [
+            "日常任务已经跑完了：进程正常退出，输出结果是 `daily-complete`，从开始到结束大约 3 分钟（本地时间 12:05 前后开始，12:08 完成），没有报错，算是顺利收尾。\n\n另外回答你问的：按你所在的时区（+08:00），现在是 **8月30日 12:08 中午**，不是深夜，离深夜还远着呢。今天还有大半天可以过。"
+          ],
+          "skill_catalog_observation": null,
+          "final_text": "日常任务已经跑完了：进程正常退出，输出结果是 `daily-complete`，从开始到结束大约 3 分钟（本地时间 12:05 前后开始，12:08 完成），没有报错，算是顺利收尾。\n\n另外回答你问的：按你所在的时区（+08:00），现在是 **8月30日 12:08 中午**，不是深夜，离深夜还远着呢。今天还有大半天可以过。",
+          "stop_reason": "budget_exhausted",
+          "error": null
+        }
+      ]
+    }
+  ]
+}
